@@ -394,7 +394,9 @@ describe("the Researcher, generic native-tool path", () => {
       () => ({ text: "Use parse [1], see also [4]." }),
     ]);
     const r = await research(model, "zod?", deps);
-    expect(model.requests[2]?.messages?.some((m) => /Rewrite the answer citing/.test(m.content))).toBe(true);
+    expect(
+      model.requests[2]?.messages?.some((m) => /Rewrite the answer citing/.test(m.content)),
+    ).toBe(true);
     expect(r.badCitations).toEqual([4]);
   });
 
