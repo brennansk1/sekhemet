@@ -6,7 +6,14 @@ import { ledgerAltered, store } from "./store.js";
 const NAV = [
   { name: "review", label: "Review", icon: "review", key: "g r" },
   { name: "board", label: "Board", icon: "board", key: "g b" },
-  { name: "pm", label: "Merit", sub: "Project manager", icon: "chat", key: "g a", title: "Merit, the project manager" },
+  {
+    name: "pm",
+    label: "Merit",
+    sub: "Project manager",
+    icon: "chat",
+    key: "g a",
+    title: "Merit, the project manager",
+  },
   { name: "insights", label: "Insights", icon: "insights", key: "g f" },
   { name: "runs", label: "Runs", icon: "runs", key: "g q" },
   { name: "ledger", label: "Ledger", icon: "ledger", key: "g l" },

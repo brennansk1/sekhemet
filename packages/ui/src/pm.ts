@@ -560,7 +560,8 @@ export function activeCycle(
   if (marked) return marked;
   const today = new Date(now).toISOString().slice(0, 10);
   return cycles?.find(
-    (c) => c.state !== "closed" && c.startsOn.slice(0, 10) <= today && c.endsOn.slice(0, 10) >= today,
+    (c) =>
+      c.state !== "closed" && c.startsOn.slice(0, 10) <= today && c.endsOn.slice(0, 10) >= today,
   );
 }
 
