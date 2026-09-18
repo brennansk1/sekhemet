@@ -21,7 +21,9 @@ export interface SessionOptions {
   worktreePath: string;
   modelAdapter: LocalInferenceAdapter;
   gateRunner: GateRunner;
-  initialPrompt?: string;
+  initialPrompt?: string | undefined;
+  scopeFiles?: string[] | undefined;
+  agentRole?: string | undefined;
 }
 
 export interface CardExecutionSession {

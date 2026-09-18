@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { dirname, join, relative } from "node:path";
 import type { GateResult } from "@sekhemet/gates";
 import type { ToolCall } from "@sekhemet/models";
-import { type ExecutionResult, ProcessSandbox } from "@sekhemet/sandbox";
+import { type ExecutionResult, PermissionEngine, ProcessSandbox } from "@sekhemet/sandbox";
 import { OscillationDetector } from "./detector.js";
 import type {
   CardExecutionSession,
@@ -19,6 +19,8 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   private isFinished = false;
   private oscillationDetector = new OscillationDetector(3);
   private sandbox = new ProcessSandbox();
+  private permissionEngine = new PermissionEngine();
+  private notes: string[] = [];
 
   constructor(private options: SessionOptions) {
     this.cardId = options.cardId;
@@ -248,6 +250,90 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     return this.executeGrepSearch(symbolName, relDir);
   }
 
+  public async executeEdit(relativePath: string, search: string, replace: string): Promise<void> {
+    const content = await this.readFile(relativePath);
+    const occurrences = content.split(search).length - 1;
+    if (occurrences === 0) {
+      throw new Error(`Search string not found in ${relativePath}`);
+    }
+    if (occurrences > 1) {
+      throw new Error(
+        `Search string found ${occurrences} times in ${relativePath}. Target search chunk must be unique.`,
+      );
+    }
+    const updated = content.replace(search, replace);
+    await this.writeFile(relativePath, updated);
+  }
+
+  public async insertAfterSymbol(
+    relativePath: string,
+    symbolName: string,
+    contentToInsert: string,
+  ): Promise<void> {
+    const content = await this.readFile(relativePath);
+    const regex = new RegExp(
+      `(?:export\\s+)?(?:async\\s+)?(?:function|class|interface|type|const|let|var)\\s+${symbolName}\\b[^;{]*`,
+      "m",
+    );
+    const match = regex.exec(content);
+    if (!match) {
+      throw new Error(`Symbol "${symbolName}" not found in ${relativePath}`);
+    }
+
+    const startIndex = match.index;
+    const braceIndex = content.indexOf("{", startIndex);
+    const semiIndex = content.indexOf(";", startIndex);
+
+    let insertPos = -1;
+    if (braceIndex !== -1 && (semiIndex === -1 || braceIndex < semiIndex)) {
+      let depth = 0;
+      for (let i = braceIndex; i < content.length; i++) {
+        if (content[i] === "{") depth++;
+        else if (content[i] === "}") {
+          depth--;
+          if (depth === 0) {
+            insertPos = i + 1;
+            break;
+          }
+        }
+      }
+    } else if (semiIndex !== -1) {
+      insertPos = semiIndex + 1;
+    }
+
+    if (insertPos === -1) {
+      insertPos = content.length;
+    }
+
+    const updated = `${content.slice(0, insertPos)}\n\n${contentToInsert.trim()}\n${content.slice(insertPos)}`;
+    await this.writeFile(relativePath, updated);
+  }
+
+  public async executeNote(message: string): Promise<void> {
+    this.notes.push(message);
+  }
+
+  public getNotes(): string[] {
+    return [...this.notes];
+  }
+
+  public async executeDocs(query: string): Promise<string> {
+    const results: string[] = [];
+    const filesToSearch = ["README.md", "AGENTS.md", "CLAUDE.md"];
+    for (const f of filesToSearch) {
+      const p = join(this.worktreePath, f);
+      if (existsSync(p)) {
+        const text = readFileSync(p, "utf-8");
+        if (text.toLowerCase().includes(query.toLowerCase())) {
+          results.push(`--- ${f} ---\n${text.slice(0, 1000)}`);
+        }
+      }
+    }
+    return results.length > 0
+      ? results.join("\n\n")
+      : `No documentation found matching "${query}".`;
+  }
+
   public async executeTurn(): Promise<TurnResult> {
     this.stepsUsed++;
     const turnIndex = this.stepsUsed;
@@ -272,11 +358,33 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     // 3. Dispatch tool calls
     let finishRequested = false;
     for (const call of toolCalls) {
+      // Permission check
+      const targetPath = (call.arguments.path as string) || undefined;
+      const cmd = (call.arguments.command as string) || undefined;
+      const perm = this.permissionEngine.evaluate({
+        toolName: call.name,
+        targetPath,
+        command: cmd,
+        declaredScopeFiles: this.options.scopeFiles,
+        agentRole: this.options.agentRole ?? "implementer",
+      });
+
+      if (!perm.allowed) {
+        throw new Error(`Permission Denied [${perm.tier}]: ${perm.reason}`);
+      }
+
       if (call.name === "write_file") {
         const p = call.arguments.path as string;
         const c = call.arguments.content as string;
         if (p && c !== undefined) {
           await this.writeFile(p, c);
+        }
+      } else if (call.name === "edit") {
+        const p = call.arguments.path as string;
+        const s = call.arguments.search as string;
+        const r = call.arguments.replace as string;
+        if (p && s !== undefined && r !== undefined) {
+          await this.executeEdit(p, s, r);
         }
       } else if (call.name === "read_file") {
         const p = call.arguments.path as string;
@@ -292,10 +400,10 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
           await this.executeReplaceLines(p, s, e, r);
         }
       } else if (call.name === "run_cmd") {
-        const cmd = call.arguments.command as string;
+        const cmdStr = call.arguments.command as string;
         const args = (call.arguments.args as string[]) || [];
-        if (cmd) {
-          await this.executeRunCmd(cmd, args);
+        if (cmdStr) {
+          await this.executeRunCmd(cmdStr, args);
         }
       } else if (call.name === "list_dir") {
         const p = (call.arguments.path as string) || ".";
@@ -323,12 +431,27 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         if (p && s && b !== undefined) {
           await this.replaceSymbolBody(p, s, b);
         }
+      } else if (call.name === "insert_after_symbol") {
+        const p = call.arguments.path as string;
+        const s = call.arguments.symbol as string;
+        const c = call.arguments.content as string;
+        if (p && s && c !== undefined) {
+          await this.insertAfterSymbol(p, s, c);
+        }
       } else if (call.name === "find_references") {
         const s = call.arguments.symbol as string;
         const p = (call.arguments.path as string) || ".";
         if (s) {
           await this.findReferences(s, p);
         }
+      } else if (call.name === "note") {
+        const m = (call.arguments.message as string) || "";
+        if (m) {
+          await this.executeNote(m);
+        }
+      } else if (call.name === "docs") {
+        const q = (call.arguments.query as string) || "";
+        await this.executeDocs(q);
       } else if (call.name === "finish_card") {
         finishRequested = true;
       }

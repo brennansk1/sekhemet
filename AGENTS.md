@@ -145,6 +145,12 @@ All agents working on Sekhemet must strictly uphold these engineering laws:
    - No parallel file writes without worktree isolation.
    - No unbounded best-of-N sampling.
    - No vector embedding code RAG (use deterministic Tree-sitter + repo map + LSP).
+6. **Anti-Shallow Development & Testing Invariant (`DEFINITION_OF_DONE.md`)**:
+   - **Zero Vanity Testing:** No synthetic mocks for core runtime systems (must test against real native SQLite WAL, real OS child processes, real git worktrees).
+   - **Mandatory Fault Injection:** Every module must have negative test cases verifying behavior under malformed inputs, permission violations, and disk/hash tampering.
+   - **Deep Structural Assertions:** Trivial `toBeDefined()` smoke tests are banned. Tests must assert exact values, complete schemas, and cryptographic hash chains.
+   - **Subsystem Completeness:** Zero stubbed or naive implementations; full production enforcement of three-tier permissions, 10 lifecycle hooks, AST symbol tools, and RTK context condensing.
+   - All code must pass the binding criteria defined in [DEFINITION_OF_DONE.md](file:///Users/brennankelley/Desktop/Sekhemet/DEFINITION_OF_DONE.md).
 
 ---
 

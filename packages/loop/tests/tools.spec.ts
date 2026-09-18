@@ -136,4 +136,53 @@ describe("@sekhemet/loop Full Tool Catalog", () => {
     expect(refs.length).toBeGreaterThan(0);
     expect(refs[0]?.file).toBe("service.ts");
   });
+
+  it("executes edit with exact uniqueness requirement", async () => {
+    const session = new CardExecutionSessionImpl({
+      cardId: "card_t7",
+      stepBudget: 10,
+      worktreePath: tempWorktree,
+      modelAdapter: new MockInferenceAdapter("m"),
+      gateRunner,
+    });
+
+    await session.executeEdit("main.ts", "line 3", "line 3 (modified)");
+    const updated = await session.readFile("main.ts");
+    expect(updated).toContain("line 3 (modified)");
+
+    // Should throw if search string does not exist
+    await expect(session.executeEdit("main.ts", "non-existent", "bar")).rejects.toThrow(
+      "Search string not found",
+    );
+  });
+
+  it("executes insert_after_symbol, note, and docs", async () => {
+    writeFileSync(
+      join(tempWorktree, "api.ts"),
+      `export function endpoint() {
+  return 200;
+}
+`,
+    );
+
+    writeFileSync(join(tempWorktree, "README.md"), "# Sekhemet Test Docs\nAPI documentation\n");
+
+    const session = new CardExecutionSessionImpl({
+      cardId: "card_t8",
+      stepBudget: 10,
+      worktreePath: tempWorktree,
+      modelAdapter: new MockInferenceAdapter("m"),
+      gateRunner,
+    });
+
+    await session.insertAfterSymbol("api.ts", "endpoint", "export const version = '1.0.0';");
+    const updated = await session.readFile("api.ts");
+    expect(updated).toContain("export const version = '1.0.0';");
+
+    await session.executeNote("Execution note recorded");
+    expect(session.getNotes()).toContain("Execution note recorded");
+
+    const docResult = await session.executeDocs("API documentation");
+    expect(docResult).toContain("Sekhemet Test Docs");
+  });
 });
