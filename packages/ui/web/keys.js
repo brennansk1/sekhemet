@@ -7,6 +7,7 @@ import { openPalette } from "./palette.js";
 import { peekAct } from "./peek.js";
 import { togglePmPanel } from "./pm_panel.js";
 import { toggleTheme } from "./shell.js";
+import { store } from "./store.js";
 import { undoAccept } from "./triage.js";
 
 const CHORDS = {
@@ -56,6 +57,9 @@ export function initKeys() {
         closeTop();
       } else if (isTyping(e)) {
         e.target.blur();
+      } else if (store.state.selected.size) {
+        // PM_DESIGN §3.4: Esc clears the selection and the bulk bar.
+        store.set({ selected: new Set() });
       }
       return;
     }
@@ -86,7 +90,7 @@ export function initKeys() {
     }
     if (e.key === "/") {
       e.preventDefault();
-      openPalette("#", cardAction);
+      if (!view()?.focusFilter?.()) openPalette("#", cardAction);
       return;
     }
     if (e.key === "z" && undoAccept()) {

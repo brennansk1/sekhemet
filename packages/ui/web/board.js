@@ -8,12 +8,26 @@ import {
   columnLabel,
   formatDuration,
 } from "./lib/vocabulary.js";
+import { fieldKey, selectionOrFocused } from "./fields.js";
+import * as lanes from "./lanes.js";
+import { formatQuery, sortByPriority } from "./lib/pm.js";
+import * as listView from "./list.js";
 import { openMenu } from "./overlay.js";
 import { openPeek, peekOpenFor } from "./peek.js";
 import { setTopbar } from "./shell.js";
 import { store } from "./store.js";
 import { tileHtml } from "./tile.js";
 import { toast } from "./toast.js";
+import {
+  bindViewBar,
+  cycleGroup,
+  effectiveFilter,
+  filterCards,
+  focusFilter,
+  onViewChange,
+  paintViewBar,
+  vb,
+} from "./viewbar.js";
 
 /** Columns that collapse into a 36px rail when empty. Working and Review never do. */
 const RAILABLE = new Set(["backlog", "ready", "planning", "verify", "done", "parked"]);
@@ -32,8 +46,9 @@ const ui = {
   collapsed: new Set(),
   pendingScroll: new Map(),
   sort: {},
-  kind: null,
-  needsYou: false,
+  barHost: null,
+  cycHost: null,
+  mode: "columns",
   layoutKey: "",
   html: new Map(),
   unsub: null,
@@ -44,11 +59,7 @@ const ui = {
 /* ---------- Data shaping ---------- */
 
 function visibleCards() {
-  return store.state.cards.filter((c) => {
-    if (ui.kind && !(c.display?.kinds ?? []).includes(ui.kind)) return false;
-    if (ui.needsYou && !c.display?.needsYou) return false;
-    return true;
-  });
+  return filterCards(store.state.cards);
 }
 
 function waitMs(c) {
@@ -61,7 +72,8 @@ function sortCards(status, cards) {
     ui.sort[status] ?? (status === "review" || status === "parked" ? "wait" : "priority");
   if (mode === "wait") return [...cards].sort((a, b) => waitMs(b) - waitMs(a));
   if (mode === "recent") return [...cards].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  return cards;
+  // Priority 1 (urgent) first and 0 (none) last; the stored order breaks ties.
+  return sortByPriority(cards);
 }
 
 function byColumn(cards) {
@@ -117,14 +129,11 @@ function railHtml(status, count) {
 
 function renderTopbar() {
   const total = store.state.cards.length;
+  const shown = visibleCards().length;
   const project = store.state.meta?.project ?? "";
-  const kindLabel = ui.kind ? KIND_LABELS[ui.kind]?.label : null;
-  const filters = `<button class="filter" type="button" data-filter-kind aria-haspopup="menu" aria-pressed="${ui.kind ? "true" : "false"}">${icon(ui.kind ? "x" : "plus", 12, "ic s12")}${kindLabel ? `Kind: ${esc(kindLabel)}` : "Kind"}</button><button class="filter" type="button" data-filter-needs aria-pressed="${ui.needsYou}">${icon(ui.needsYou ? "x" : "plus", 12, "ic s12")}Needs you</button>`;
-  setTopbar({
-    title: "Board",
-    crumb: `${project}${project ? " · " : ""}${total} ${total === 1 ? "card" : "cards"}`,
-    filters,
-  });
+  const count = shown === total ? `${total} ${total === 1 ? "card" : "cards"}` : `${shown} of ${total} cards`;
+  setTopbar({ title: "Board", crumb: `${project}${project ? " · " : ""}${count}` });
+  paintViewBar(ui.barHost, ui.cycHost, "board");
 }
 
 function ensureLayout(columns) {
@@ -171,6 +180,8 @@ function tileOpts(card) {
       movedAt !== undefined &&
       Date.now() - movedAt < JUST_NOW_MS &&
       store.state.focusedId !== card.id,
+    pmPaused: Boolean(store.state.pm?.status?.workerPaused),
+    hidePriority: vb.group === "priority",
   };
 }
 
@@ -241,12 +252,7 @@ function fillList(list, status, cards) {
   const empty = $(":scope > .empty", list);
   if (cards.length === 0) {
     patchList(list, []);
-    const label = [
-      ui.kind ? `Kind: ${KIND_LABELS[ui.kind]?.label}` : "",
-      ui.needsYou ? "Needs you" : "",
-    ]
-      .filter(Boolean)
-      .join(", ");
+    const label = formatQuery(effectiveFilter());
     const text = label ? `No cards match “${label}”.` : COLUMN_EMPTY[status];
     if (!empty) {
       const li = document.createElement("li");
@@ -295,6 +301,21 @@ function render() {
   }
   $(".board-empty", ui.root)?.remove();
   $(".skeleton", ui.root)?.remove();
+
+  if (vb.group !== "none") {
+    if (ui.mode !== "lanes") {
+      ui.root.textContent = "";
+      ui.layoutKey = "";
+      ui.mode = "lanes";
+    }
+    lanes.render(ui.root, visibleCards(), { group: vb.group, sortCards, tileOpts });
+    return;
+  }
+  if (ui.mode === "lanes") {
+    ui.root.textContent = "";
+    ui.layoutKey = "";
+    ui.mode = "columns";
+  }
 
   const all = byColumn(s.cards);
   const cols = byColumn(visibleCards());
@@ -425,6 +446,17 @@ function toggleSelect(id) {
 export function onKey(e) {
   const k = e.key;
   const focused = store.state.focusedId;
+  if (k === "v") {
+    location.hash = "#/board/list";
+    return true;
+  }
+  if (k === "S" && e.shiftKey) {
+    cycleGroup();
+    return true;
+  }
+  const anchor = document.getElementById(`tile-${focused}`) ?? ui.root;
+  if (fieldKey(e, selectionOrFocused(), anchor)) return true;
+  if (vb.group !== "none") return lanes.onKey(e);
   if (k === "h" || k === "ArrowLeft") {
     move(-1, 0);
     return true;
@@ -554,46 +586,19 @@ function onClick(e) {
   }
 }
 
-function onTopbarClick(e) {
-  const t = e.target instanceof Element ? e.target : null;
-  if (!t || !ui.root) return;
-  const kindBtn = t.closest("[data-filter-kind]");
-  if (kindBtn) {
-    if (ui.kind) {
-      ui.kind = null;
-      render();
-      return;
-    }
-    const present = new Set(store.state.cards.flatMap((c) => c.display?.kinds ?? []));
-    const kinds = Object.keys(KIND_LABELS).filter((k) => present.has(k));
-    if (kinds.length === 0) {
-      toast({ text: "No card has a kind yet" });
-      return;
-    }
-    openMenu(
-      kindBtn,
-      kinds.map((k) => ({
-        label: KIND_LABELS[k].label,
-        run: () => {
-          ui.kind = k;
-          render();
-        },
-      })),
-      { heading: "Show only" },
-    );
-    return;
-  }
-  if (t.closest("[data-filter-needs]")) {
-    ui.needsYou = !ui.needsYou;
-    render();
-  }
-}
-
-export function mount(view) {
-  const container = document.createElement("div");
-  container.className = "view-host";
-  view.append(container);
+export function mount(view, route) {
+  if (route?.params?.[0] === "list") return listView.mount(view, route);
+  const outer = document.createElement("div");
+  outer.className = "view-host";
+  outer.innerHTML = '<div class="vbar-host"></div><div class="cyc-host"></div><div class="view-host board-host"></div>';
+  view.append(outer);
+  ui.barHost = outer.querySelector(".vbar-host");
+  ui.cycHost = outer.querySelector(".cyc-host");
+  bindViewBar(ui.barHost);
+  bindViewBar(ui.cycHost);
+  const container = outer.querySelector(".board-host");
   ui.root = container;
+  ui.mode = "columns";
   ui.layoutKey = "";
   ui.html.clear();
   container.addEventListener("click", onClick);
@@ -620,24 +625,30 @@ export function mount(view) {
     const p = e.target instanceof Element ? e.target.closest("[data-pips]") : null;
     if (p && !p.contains(e.relatedTarget)) hideTip();
   });
-  const top = document.getElementById("top");
-  top.addEventListener("click", onTopbarClick);
   const onResize = () => render();
   window.addEventListener("resize", onResize);
   ui.unsub = store.on((_s, patch) => {
     if ("focusedId" in patch && Object.keys(patch).length === 1) return;
     render();
   });
+  const offView = onViewChange(() => render());
+  const focusFirst = () => {
+    const first = $(".tile", ui.root);
+    if (first) focusTile(first.dataset.id);
+  };
+  view.addEventListener("sekhemet:focus-first", focusFirst);
   render();
   return {
     onKey,
+    focusFilter: () => focusFilter(outer),
     unmount() {
+      offView();
+      view.removeEventListener("sekhemet:focus-first", focusFirst);
       ui.unsub?.();
       hideTip();
       clearTimeout(ui.justNowTimer);
-      top.removeEventListener("click", onTopbarClick);
       window.removeEventListener("resize", onResize);
-      container.remove();
+      outer.remove();
       ui.root = null;
     },
   };
