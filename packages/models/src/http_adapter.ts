@@ -126,6 +126,13 @@ const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
 export class HttpInferenceAdapter implements LocalInferenceAdapter {
   public readonly modelId: string;
   public readonly supportedArms: ToolArm[] = ["arm_a_flat", "arm_b_json", "arm_c_sketch"];
+
+  /** The window this adapter was configured with, so callers can budget prompts. */
+  public get contextWindow(): { contextTokens: number; maxTokens: number } | undefined {
+    const contextTokens = this.options.contextTokens;
+    if (contextTokens === undefined) return undefined;
+    return { contextTokens, maxTokens: this.options.maxTokens ?? 2048 };
+  }
   private baseUrl: string;
   private apiFormat: "ollama" | "openai";
   private sampling: SamplingOptions;

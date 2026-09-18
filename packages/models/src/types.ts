@@ -43,5 +43,7 @@ export interface InferenceResponse {
 export interface LocalInferenceAdapter {
   readonly modelId: string;
   readonly supportedArms: ToolArm[];
+  /** Context size and reserved output tokens, when known; used to budget prompts. */
+  readonly contextWindow?: { contextTokens: number; maxTokens: number } | undefined;
   generate(req: InferenceRequest): Promise<InferenceResponse>;
 }

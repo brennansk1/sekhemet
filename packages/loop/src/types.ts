@@ -64,6 +64,11 @@ export interface SessionOptions {
    * this card failed. Rendered ahead of everything else the worker is told.
    */
   managerGuidance?: string | undefined;
+  /**
+   * Maximum tokens a request may occupy (prompt plus tool schemas). Defaults to
+   * the adapter's context window minus its reserved output tokens.
+   */
+  promptTokenBudget?: number | undefined;
   /** Tool interface rendered into the prompt. Defaults to the full catalog. */
   tools?: ToolInterfaceSpec[] | undefined;
   skillsRegistry?: SkillsRegistry | undefined;

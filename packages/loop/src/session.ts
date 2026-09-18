@@ -184,7 +184,62 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
    * the model retains the shape of what it already tried without paying full
    * token cost for outputs it has finished acting on.
    */
-  private buildPrompt(): { systemPrompt: string; prompt: string } {
+  /** Tool schemas sent alongside the prompt; they count against the window too. */
+  private toolDefinitions() {
+    const catalog = this.options.tools ?? TOOL_CATALOG;
+    return catalog.map((t) => ({
+      name: t.name,
+      description: t.summary,
+      parameters: {
+        type: "object",
+        properties: Object.fromEntries(
+          t.parameters.map((p) => [
+            p.name,
+            {
+              type: p.type,
+              description: p.description,
+              ...(p.type === "array" ? { items: { type: "string" } } : {}),
+            },
+          ]),
+        ),
+        required: t.parameters.filter((p) => p.required).map((p) => p.name),
+      },
+    }));
+  }
+
+  /** The request budget in tokens, if the adapter's window is known. */
+  private promptBudget(): number | undefined {
+    if (this.options.promptTokenBudget !== undefined) return this.options.promptTokenBudget;
+    const window = this.options.modelAdapter.contextWindow;
+    // A margin for tokenizer disagreement with the character estimate below.
+    return window ? window.contextTokens - window.maxTokens - 256 : undefined;
+  }
+
+  /**
+   * Build a prompt that fits the model's window, reducing context in stages.
+   *
+   * A long card's history grows every turn; on a live run the ledger card's
+   * request reached 8,224 tokens against an 8,192 window at turn 32 and the
+   * server rejected it. Reductions go from least to most informative lost:
+   * fewer verbatim turns, then the repo map, then the pinned scope files (the
+   * agent can read_file them), then all but the last turn, then trimmed tests.
+   */
+  private buildPrompt(): { systemPrompt: string; prompt: string; reduction: number } {
+    const budget = this.promptBudget();
+    const toolChars = JSON.stringify(this.toolDefinitions()).length;
+    // Code tokenizes denser than prose; ~3.2 chars per token errs on the safe side.
+    const estimate = (p: { systemPrompt: string; prompt: string }): number =>
+      Math.ceil((p.systemPrompt.length + p.prompt.length + toolChars) / 3.2);
+
+    let last: { systemPrompt: string; prompt: string } | undefined;
+    for (let level = 0; level <= 5; level++) {
+      last = this.buildPromptAt(level);
+      if (budget === undefined || estimate(last) <= budget) return { ...last, reduction: level };
+    }
+    return { ...(last as { systemPrompt: string; prompt: string }), reduction: 6 };
+  }
+
+  private buildPromptAt(level: number): { systemPrompt: string; prompt: string } {
     const skills =
       this.options.skillsRegistry?.resolveActiveSkills(
         this.card.title,
@@ -208,14 +263,26 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
 
     const pack = buildFullPromptPack({
       card: { ...this.card, stepsUsed: this.stepsUsed },
-      repoMap: this.repoMap(),
-      pinnedFiles: this.pinnedFiles(),
+      ...(level >= 2 ? {} : { repoMap: this.repoMap() }),
+      pinnedFiles: this.pinnedFiles()
+        .filter((f) => level < 3 || f.label !== "scope file")
+        .map((f) =>
+          level >= 5 && f.content.length > 4000
+            ? {
+                ...f,
+                content: `${f.content.slice(0, 4000)}\n… (truncated to fit the context window)`,
+              }
+            : f,
+        ),
       // Per-card, so it rides in the volatile zone: in the system zone it would
       // both break the cacheable prefix and overrun that zone's budget.
       ...(this.options.managerGuidance ? { managerGuidance: this.options.managerGuidance } : {}),
       activeSkills: skills,
       playbookRules,
-      recentTurns: maskOlderObservations(this.history, VERBATIM_TURN_WINDOW),
+      recentTurns: maskOlderObservations(
+        level >= 4 ? this.history.slice(-1) : this.history,
+        level >= 1 ? 1 : VERBATIM_TURN_WINDOW,
+      ),
       // The catalog is what tells the model these tools exist at all.
       tools: this.options.tools ?? TOOL_CATALOG,
       // What it has already done, and what remains. An agent with no record of
@@ -273,33 +340,14 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     const { systemPrompt, prompt } = this.buildPrompt();
     this.lastSystemPrompt = systemPrompt;
 
-    const catalog = this.options.tools ?? TOOL_CATALOG;
     const response = await this.options.modelAdapter.generate({
       systemPrompt,
       prompt,
       // Names travel with the request so the parser can recognise a call in
       // whatever syntax the model chose to emit it.
-      // Real JSON Schema, so servers with native tool calling (Ollama's
-      // `tools`, OpenAI-compatible `tools`) can constrain the call format
-      // instead of leaving the model to improvise one.
-      tools: catalog.map((t) => ({
-        name: t.name,
-        description: t.summary,
-        parameters: {
-          type: "object",
-          properties: Object.fromEntries(
-            t.parameters.map((p) => [
-              p.name,
-              {
-                type: p.type,
-                description: p.description,
-                ...(p.type === "array" ? { items: { type: "string" } } : {}),
-              },
-            ]),
-          ),
-          required: t.parameters.filter((p) => p.required).map((p) => p.name),
-        },
-      })),
+      // Real JSON Schema, so servers with native tool calling can constrain
+      // the call format instead of leaving the model to improvise one.
+      tools: this.toolDefinitions(),
       toolArm: this.options.toolArm ?? "arm_a_flat",
       ...(this.options.temperature !== undefined ? { temperature: this.options.temperature } : {}),
       ...(this.options.maxTokens !== undefined ? { maxTokens: this.options.maxTokens } : {}),

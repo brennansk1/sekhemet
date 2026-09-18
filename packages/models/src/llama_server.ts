@@ -218,7 +218,10 @@ export function createCyberTielWorker(
   return new ManagedLlamaServerAdapter({
     modelId: "cyber-tiel-coder-35b-a3b-mtp-iq3xxs",
     modelPath,
-    contextTokens: 8192,
+    // 16k: this hybrid-attention MoE keeps a small KV cache (the card documents
+    // ~5GB at 262k in f16, so ~0.16GB here at q8_0). At 8k the ledger card's
+    // prompt outgrew the window after 32 turns and the request was rejected.
+    contextTokens: 16384,
     mtp: true,
     maxTokens: 4096,
     sampling: { temperature: 0.6, topP: 0.95, topK: 20, minP: 0 },

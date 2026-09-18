@@ -170,7 +170,22 @@ export class CardRunner {
     let lastGateResult: GateResult | undefined = turns.at(-1)?.gateResult;
 
     while (session.getStepsUsed() < card.stepBudget) {
-      const turn = await session.executeTurn();
+      let turn: TurnResult;
+      try {
+        turn = await session.executeTurn();
+      } catch (err) {
+        // An inference or transport failure ends this card with a recorded
+        // reason; it must not take the queue down with it. A single rejected
+        // request on a live run previously killed the whole Chronicle gate.
+        const message = err instanceof Error ? err.message : String(err);
+        this.emit({
+          type: "status",
+          cardId: card.id,
+          message: `stopped on error: ${message.slice(0, 300)}`,
+        });
+        stopReason = "error";
+        break;
+      }
       turns.push(turn);
 
       this.emit({
