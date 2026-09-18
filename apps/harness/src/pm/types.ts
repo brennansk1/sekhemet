@@ -83,4 +83,5 @@ export const PM_EVENTS = {
   cycleCreated: "cycle/created",
   cycleUpdated: "cycle/updated",
   notify: "pm/notify",
+  summary: "pm/summary",
 } as const;

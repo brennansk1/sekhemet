@@ -216,6 +216,22 @@ export class PmStore {
     return undefined;
   }
 
+  // --- Conversation summary (hybrid compaction) --------------------------------
+
+  /** The latest rolling summary of the conversation, if one was written. */
+  public async summary(): Promise<{ upToSeq: number; text: string } | undefined> {
+    const last = (await this.events([PM_EVENTS.summary])).at(-1);
+    return last?.payload as { upToSeq: number; text: string } | undefined;
+  }
+
+  public async appendSummary(upToSeq: number, text: string): Promise<void> {
+    await this.log.append({
+      actor: "planner",
+      type: PM_EVENTS.summary,
+      payload: { upToSeq, text },
+    });
+  }
+
   // --- Cycles ----------------------------------------------------------------
 
   public async cycles(): Promise<Cycle[]> {

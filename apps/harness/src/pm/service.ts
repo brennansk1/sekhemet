@@ -4,7 +4,13 @@ import type { CardStore } from "@sekhemet/kernel";
 import { HttpInferenceAdapter, type LocalInferenceAdapter } from "@sekhemet/models";
 import type { QueueReport } from "../execute.js";
 import { LearningStore } from "../learning/store.js";
-import { type PmSnapshot, answer } from "./agent.js";
+import {
+  type PmSnapshot,
+  answer,
+  isStatusQuestion,
+  ledgerStandup,
+  summarizeConversation,
+} from "./agent.js";
 import { capabilityReport, capabilitySummary } from "./capability.js";
 import type { PmStore } from "./store.js";
 
@@ -206,6 +212,18 @@ export async function answerQueued(deps: AnswerDeps): Promise<boolean> {
   if (queued.length === 0) return false;
   const stepInfo = deps.step !== undefined ? { step: deps.step, workerPaused: true } : {};
 
+  // Status questions need facts, not judgement: answer from the ledger and
+  // never pay a 40-120 s model swap (research: swap-cost mitigation).
+  if (queued.every((m) => isStatusQuestion(m.text))) {
+    const snapshot = await buildSnapshot(deps.repoPath, deps.cardStore, deps.pmStore, deps.pmModel);
+    await deps.pmStore.appendReply({
+      replyTo: queued.map((m) => m.id),
+      text: ledgerStandup(snapshot),
+      model: "ledger",
+    });
+    return true;
+  }
+
   try {
     await deps.pmStore.setStatus({
       phase: "loading_pm",
@@ -222,8 +240,34 @@ export async function answerQueued(deps: AnswerDeps): Promise<boolean> {
       ...stepInfo,
     });
     const history = (await deps.pmStore.thread()).filter((m) => m.state === "done");
+    let summary = await deps.pmStore.summary();
+    const compactAsked = queued.some((m) => /^\s*\/compact\b/i.test(m.text));
+    // Fold everything but the last 8 messages into the summary once there are
+    // more than 16 unsummarised ones, or whenever the human asks (/compact).
+    const unsummarised = history.filter((m) => !summary || m.seq > summary.upToSeq);
+    if (compactAsked || unsummarised.length > 16) {
+      // An explicit /compact keeps only the last exchange verbatim.
+      const keep = compactAsked ? 2 : 8;
+      const fold = unsummarised.slice(0, Math.max(0, unsummarised.length - keep));
+      if (fold.length > 0) {
+        const text = await summarizeConversation(model, summary?.text, fold);
+        const upToSeq = fold.at(-1)?.seq ?? 0;
+        await deps.pmStore.appendSummary(upToSeq, text);
+        summary = { upToSeq, text };
+      }
+    }
+    if (compactAsked && queued.every((m) => /^\s*\/compact\b/i.test(m.text))) {
+      await deps.pmStore.appendReply({
+        replyTo: queued.map((m) => m.id),
+        text: summary
+          ? `Compacted. What I am carrying forward:\n\n${summary.text}`
+          : "Nothing to compact yet.",
+        model: deps.pmModel,
+      });
+      return true;
+    }
     const snapshot = await buildSnapshot(deps.repoPath, deps.cardStore, deps.pmStore, deps.pmModel);
-    const result = await answer(model, snapshot, history, queued);
+    const result = await answer(model, snapshot, history, queued, summary);
     await deps.pmStore.appendReply({
       replyTo: queued.map((m) => m.id),
       text: result.text,

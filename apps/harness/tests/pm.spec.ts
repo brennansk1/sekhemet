@@ -236,4 +236,49 @@ describe("project manager", () => {
   it("has no runner lease when no queue is running", () => {
     expect(runnerLease(repo)).toBeUndefined();
   });
+
+  it("answers a status question from the ledger without loading any model", async () => {
+    await cards.createCard({
+      tier: "task",
+      title: "Ledger (SPIDR: Rule)",
+      status: "ready",
+      priority: 1,
+    });
+    await pm.appendUserMessage("status?");
+    let loaded = false;
+    await answerQueued({
+      repoPath: repo,
+      cardStore: cards,
+      pmStore: pm,
+      pmModel: "dirk-27b",
+      acquire: async () => {
+        loaded = true;
+        throw new Error("must not load");
+      },
+    });
+    expect(loaded).toBe(false);
+    const reply = (await pm.thread()).at(-1);
+    expect(reply?.text).toContain("Next up: Ledger");
+    expect(reply?.text).toContain("without loading a model");
+  });
+
+  it("folds older messages into a rolling summary and honours /compact", async () => {
+    for (let i = 0; i < 3; i++) {
+      const m = await pm.appendUserMessage(`question ${i}`);
+      await pm.appendReply({ replyTo: [m.id], text: `answer ${i}` });
+    }
+    await pm.appendUserMessage("/compact");
+    const model = new MockInferenceAdapter("dirk-27b", [
+      { text: "Human asked three questions; all answered.", toolCalls: [], usage },
+    ]);
+    await answerQueued({
+      repoPath: repo,
+      cardStore: cards,
+      pmStore: pm,
+      pmModel: "dirk-27b",
+      acquire: async () => model,
+    });
+    expect((await pm.summary())?.text).toBe("Human asked three questions; all answered.");
+    expect((await pm.thread()).at(-1)?.text).toMatch(/^Compacted\./);
+  });
 });

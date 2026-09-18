@@ -107,10 +107,18 @@ export function boardDigest(s: PmSnapshot, maxChars = 9000): string {
   return `Today: ${s.today}${prefs}\n\nBOARD\n${digest || "(empty)"}\n\nCYCLES\n${cycles}\n\nRECENT WORKER ATTEMPTS\n${runs}\n\nWORKER CAPABILITY\n${capability}`;
 }
 
-/** The last few exchanges, so "split it" knows what "it" is. */
-export function conversationDigest(history: PmMessage[], maxChars = 3500): string {
-  const lines: string[] = [];
-  for (const m of history.slice(-10)) {
+/**
+ * The conversation as Merit reads it: the rolling summary of everything older,
+ * then the recent exchanges verbatim, so "split it" knows what "it" is.
+ */
+export function conversationDigest(
+  history: PmMessage[],
+  maxChars = 3500,
+  summary?: { upToSeq: number; text: string },
+): string {
+  const lines: string[] = summary ? [`(Summary of the earlier conversation) ${summary.text}`] : [];
+  const recent = summary ? history.filter((m) => m.seq > summary.upToSeq) : history;
+  for (const m of recent.slice(-10)) {
     const who = m.role === "user" ? "Human" : "You";
     lines.push(`${who}: ${m.text.replace(/\s+/g, " ").slice(0, 600)}`);
   }
@@ -397,6 +405,7 @@ export async function answer(
   snapshot: PmSnapshot,
   history: PmMessage[],
   queued: PmMessage[],
+  summary?: { upToSeq: number; text: string },
 ): Promise<PmAnswer> {
   const questions = queued
     .map((m) => {
@@ -404,7 +413,7 @@ export async function answer(
       return `Human${ctx}: ${m.text}`;
     })
     .join("\n");
-  const prompt = `${boardDigest(snapshot)}\n\nCONVERSATION SO FAR\n${conversationDigest(history) || "(new conversation)"}\n\nNEW MESSAGE${queued.length > 1 ? "S" : ""}\n${questions}\n\nReply to the human now. Use propose_* tools only for changes you recommend.`;
+  const prompt = `${boardDigest(snapshot)}\n\nCONVERSATION SO FAR\n${conversationDigest(history, 3500, summary) || "(new conversation)"}\n\nNEW MESSAGE${queued.length > 1 ? "S" : ""}\n${questions}\n\nReply to the human now. Use propose_* tools only for changes you recommend.`;
 
   const res = await model.generate({
     systemPrompt: pmSystemPrompt(snapshot),
@@ -423,4 +432,70 @@ export async function answer(
         : "I could not produce an answer to that. Could you rephrase it or point me at a card?";
   }
   return { text, proposals, cites: citesFrom(text, snapshot.cards) };
+}
+
+/**
+ * Hybrid compaction for Merit's own conversation (after "The Complexity Trap",
+ * NeurIPS 2025 DL4Code): recent messages stay verbatim; older ones are folded
+ * into a rolling summary by the model that is already loaded to answer. The
+ * 27B manager can summarise faithfully where the small Worker could not, and
+ * the full thread stays on the ledger regardless.
+ */
+export async function summarizeConversation(
+  model: LocalInferenceAdapter,
+  previous: string | undefined,
+  messages: PmMessage[],
+): Promise<string> {
+  const text = messages
+    .map(
+      (m) =>
+        `${m.role === "user" ? "Human" : "Merit"}: ${m.text.replace(/\s+/g, " ").slice(0, 700)}`,
+    )
+    .join("\n");
+  const res = await model.generate({
+    systemPrompt:
+      "You compress a project manager's conversation with the human who leads the project. Keep decisions, commitments, preferences the human stated, open questions and card ids. Drop pleasantries. Plain sentences, at most 150 words.",
+    prompt: `${previous ? `Summary so far: ${previous}\n\n` : ""}Conversation to fold in:\n${text}\n\nWrite the updated summary.`,
+    toolArm: "arm_a_flat",
+    temperature: 0.1,
+    maxTokens: 400,
+  });
+  return stripThinking(res.text).slice(0, 1500);
+}
+
+/** "status", "standup", "where are we?": answerable from the ledger alone. */
+export function isStatusQuestion(text: string): boolean {
+  return /^\s*(status|standup|stand-up|update|progress|where are we|how are we doing|what'?s (the )?(status|progress))\s*[?.!]*\s*$/i.test(
+    text,
+  );
+}
+
+/**
+ * A standup built from the board and run data without loading any model.
+ * Loading the 27B for a status question costs 40-120 s of swap on this host;
+ * the facts are already on the ledger.
+ */
+export function ledgerStandup(s: PmSnapshot): string {
+  const by = (status: string) => s.cards.filter((c) => c.status === status);
+  const name = (c: CardRecord) => `${c.title.replace(/\s*\(SPIDR:[^)]*\)\s*$/, "")} (\`${c.id}\`)`;
+  const lines: string[] = [];
+  const working = [...by("in_progress"), ...by("verify")];
+  lines.push(
+    working.length ? `Working: ${working.map(name).join(", ")}.` : "Nothing is running right now.",
+  );
+  const review = by("review");
+  if (review.length) lines.push(`Waiting for your review: ${review.map(name).join(", ")}.`);
+  const failed = s.cards.filter(
+    (c) => c.stopReason && c.stopReason !== "gate_passed" && c.status !== "done",
+  );
+  if (failed.length) {
+    lines.push(
+      `At risk: ${failed.map((c) => `${name(c)} stopped on ${c.stopReason}`).join("; ")}.`,
+    );
+  }
+  const ready = [...by("ready")].sort((a, b) => (a.priority || 9) - (b.priority || 9));
+  if (ready.length) lines.push(`Next up: ${ready.slice(0, 3).map(name).join(", ")}.`);
+  lines.push(`Done: ${by("done").length} of ${s.cards.length} cards.`);
+  if (s.worker) lines.push(`Worker record: ${s.worker.record}`);
+  return `${lines.join("\n")}\n\n_Answered from the ledger without loading a model. Ask a specific question for my judgement._`;
 }
