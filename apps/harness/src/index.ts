@@ -33,10 +33,13 @@ import {
   collectCardFiles,
   ensureRepoProject,
   executeCard,
+  forkCard,
   inferDependencies,
   nextAttemptNumber,
   pruneRunData,
   recordReview,
+  requestAbort,
+  rewindCard,
   writeQueueReport,
 } from "./execute.js";
 import { notifySlack } from "./integrations.js";
@@ -67,6 +70,10 @@ export interface CliConfig {
     | "accept"
     | "tune"
     | "research"
+    | "abort"
+    | "rewind"
+    | "fork"
+    | "resume"
     | "explore"
     | "queue"
     | "mcp"
@@ -139,6 +146,10 @@ export function parseCliArgs(argv: string[] = process.argv.slice(2)): CliConfig 
     "bake-off",
     "mcp",
     "research",
+    "abort",
+    "rewind",
+    "fork",
+    "resume",
   ] as const;
 
   for (let i = 0; i < argv.length; i++) {
@@ -514,6 +525,49 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     return;
   }
 
+  if (config.command === "abort") {
+    // `sekhemet abort <card> [reason]`: the running card stops before its next turn (L25).
+    const cardId = config.targetArg;
+    if (!cardId) {
+      console.error("Usage: sekhemet abort <card-id> [reason]");
+      process.exitCode = 1;
+      return;
+    }
+    const reason = argv
+      .slice(argv.indexOf(cardId) + 1)
+      .filter((a) => !a.startsWith("--"))
+      .join(" ");
+    await requestAbort(cardStore, cardId, reason || "stopped from the CLI");
+    console.log(`Stop requested for ${cardId}; it stops before its next turn.`);
+    return;
+  }
+
+  if (config.command === "rewind" || config.command === "fork") {
+    // `sekhemet rewind <card> <step>` (H19) / `sekhemet fork <card> <step> [--attempt <id>]` (H18).
+    const cardId = config.targetArg;
+    const step = Number(argv[argv.indexOf(cardId ?? "") + 1]);
+    if (!cardId || !Number.isInteger(step) || step < 0) {
+      console.error(`Usage: sekhemet ${config.command} <card-id> <step>`);
+      process.exitCode = 1;
+      return;
+    }
+    const ctx = { repoPath: config.repoPath, restrictedMode: false, cardStore, boardService };
+    try {
+      const attemptIdx = argv.indexOf("--attempt");
+      const r =
+        config.command === "fork"
+          ? await forkCard(ctx, cardId, step, attemptIdx !== -1 ? argv[attemptIdx + 1] : undefined)
+          : await rewindCard(ctx, cardId, step);
+      console.log(
+        `${config.command === "fork" ? "Forked" : "Rewound"} ${cardId} to step ${r.step} (${r.gitRef.slice(0, 10)}). The state it left is kept at ${r.preservedRef}. Its next run continues from step ${r.step}.`,
+      );
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exitCode = 1;
+    }
+    return;
+  }
+
   if (config.command === "replay") {
     const cardId = config.targetArg;
     if (!cardId) {
@@ -621,7 +675,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     return;
   }
 
-  if (config.command === "run") {
+  if (config.command === "run" || config.command === "resume") {
+    // `resume` is `run` on a card that stopped part-way: the runner restarts
+    // from its last checkpoint with the steps replayed from the log (H17).
     const cardId = config.targetArg;
     if (!cardId) {
       console.error("Usage: sekhemet run <card-id>");
@@ -645,9 +701,18 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       boardService,
     };
     let result: Awaited<ReturnType<typeof executeCard>>;
+    // Ctrl+C stops the card cleanly before its next turn (L25); a second exits.
+    const stop = new AbortController();
+    const onSigint = () => {
+      if (stop.signal.aborted) process.exit(130);
+      console.log("\nStopping after the current turn (Ctrl+C again to quit now)...");
+      stop.abort("stopped from the terminal");
+    };
+    process.on("SIGINT", onSigint);
     try {
-      result = await executeCard(ctx, card, model);
+      result = await executeCard(ctx, card, model, undefined, { signal: stop.signal });
     } finally {
+      process.off("SIGINT", onSigint);
       // Release the weights on every exit path, including a crash mid-card:
       // a resident 13GB checkpoint left behind by a failed run is how the host
       // ran out of memory overnight.
@@ -751,7 +816,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         ...(researcherModel
           ? { researcher: track(roster.factory(researcherModel, "researcher")) }
           : {}),
-        // A different model family for Merit's review (--reviewer <model>).
+        // A different model family for Seshat's review (--reviewer <model>).
         ...(reviewerModel ? { reviewer: track(roster.factory(reviewerModel, "reviewer")) } : {}),
         // The manager's (stronger, dense) model as a coder, for --escalate-retries.
         escalation: track(roster.factory(pmModelName, "escalation"), true),
@@ -800,14 +865,14 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     const pmModel = managerModel ?? DEFAULT_PM_MODEL;
     /** Run a question past the Researcher, then hand the manager back. */
     const askResearcher = researcherModel
-      ? async (question: string) => {
+      ? async (question: string, opts: { deep?: boolean } = {}) => {
           const { web } = await researchSources(config.repoPath);
           const r = await new ResearchService({
             repoPath: config.repoPath,
             web,
             cardStore,
             model: () => router.use("researcher"),
-          }).ask(question);
+          }).ask(question, opts);
           await router.use("manager");
           return r;
         }
@@ -838,13 +903,13 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
      * written to the PM, swap the Worker out, answer, swap it back. The card
      * resumes from its worktree, so nothing is lost; only the reload costs time.
      */
-    /** Worker questions waiting for Merit; answers are filed in each card's dossier. */
+    /** Worker questions waiting for Seshat; answers are filed in each card's dossier. */
     const workerQuestions = new QueuedWorkerQuestions();
     const isWorkerQuestion = (m: { context?: { view?: string } }) =>
       m.context?.view === "worker-question";
 
     /**
-     * Collaboration, shaped by the hardware. When Merit is resident, a
+     * Collaboration, shaped by the hardware. When Seshat is resident, a
      * Worker question the card's contract cannot answer is answered now; when
      * it is swapped out, the question is queued (never forcing a swap on its
      * own) and answered in the next manager batch, then handed to the card's
@@ -855,15 +920,15 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       question: string,
       meta: { questionEntryId?: string } = {},
     ): Promise<string | undefined> => {
-      // Only when Merit's weights are already loaded, and always hand back to
+      // Only when Seshat's weights are already loaded, and always hand back to
       // the role that was running: switching to "worker" during an escalated
-      // retry (which runs on Merit's weights) would load a second large model.
+      // retry (which runs on Seshat's weights) would load a second large model.
       const prior = router.activeRole;
       if (router.isResident("manager")) {
         const card = await cardStore.getCard(cardId);
         const res = await (await router.use("manager")).generate({
           systemPrompt:
-            "You are Merit, the project manager. A teammate (the coding Worker) is mid-card and asks a question its card's spec does not answer. Answer in at most three sentences, concretely, consistent with the spec and acceptance tests. If it is genuinely the lead's call, say so and give the most conservative choice.",
+            "You are Seshat, the project manager. A teammate (the coding Worker) is mid-card and asks a question its card's spec does not answer. Answer in at most three sentences, concretely, consistent with the spec and acceptance tests. If it is genuinely the lead's call, say so and give the most conservative choice.",
           prompt: `Card: ${card?.title ?? cardId}\nSpec: ${card?.spec ?? "(none)"}\nDone when: ${(card?.acceptanceCriteria ?? []).join("; ")}\n\nQuestion: ${question}`,
           toolArm: "arm_a_flat",
           temperature: 0.2,
@@ -886,13 +951,13 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       const now = (role: "manager" | "researcher" | "reviewer") =>
         router.isResident(role) ? "available now" : "loaded between cards";
       return [
-        `Merit (project manager, ${now("manager")}) answers ask() questions your card's contract does not${router.isResident("manager") ? "" : "; until then, proceed conservatively and note your assumption"}.`,
+        `Seshat (project manager, ${now("manager")}) answers ask() questions your card's contract does not${router.isResident("manager") ? "" : "; until then, proceed conservatively and note your assumption"}.`,
         router.has("researcher")
           ? `A Researcher (${now("researcher")}) investigates errors nothing explained, with sources; its findings reach you as rules.`
           : "",
         router.has("reviewer")
           ? "A Reviewer from a different model family checks passing work against the lead's preferences."
-          : "Merit reviews passing work against the lead's preferences.",
+          : "Seshat reviews passing work against the lead's preferences.",
         "Everything you learn here is kept: fixed errors and failed approaches carry to the next attempt.",
       ]
         .filter(Boolean)
@@ -900,13 +965,13 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     };
 
     /**
-     * File Merit's answers to queued Worker questions in each card's dossier,
+     * File Seshat's answers to queued Worker questions in each card's dossier,
      * threaded under the question, so the card's next attempt reads them.
      */
     const collectAnswers = async (): Promise<void> => {
       if (workerQuestions.size === 0) return;
       const filed = await workerQuestions.fileAnswers(await pmStore.thread(), cardStore);
-      if (filed > 0) console.log(`   filed ${filed} answer(s) from Merit in the cards' dossiers`);
+      if (filed > 0) console.log(`   filed ${filed} answer(s) from Seshat in the cards' dossiers`);
     };
 
     const answerPm = async (step?: number, batch = false): Promise<void> => {
@@ -970,6 +1035,15 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       },
     };
     const started = Date.now();
+    // Ctrl+C stops the running card before its next turn and ends the queue
+    // (L25); the card resumes from its checkpoint next time (H17).
+    const queueStop = new AbortController();
+    const onSigint = () => {
+      if (queueStop.signal.aborted) process.exit(130);
+      console.log("\nStopping after the current turn (Ctrl+C again to quit now)...");
+      queueStop.abort("stopped from the terminal");
+    };
+    process.on("SIGINT", onSigint);
     const entries: QueueEntry[] = [];
     const failed: { card: CardRecord; result: Awaited<ReturnType<typeof executeCard>> }[] = [];
     let halted = false;
@@ -988,9 +1062,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     const passedResults: { card: CardRecord; diff: string }[] = [];
     const reviewAll = argv.includes("--review");
     /**
-     * Merit reviews passing cards against the user's learned preferences
+     * Seshat reviews passing cards against the user's learned preferences
      * (AutoDev's AI Reviewer). Advice only, recorded on the ledger; it runs
-     * while Merit's model is resident, so it never forces an extra swap
+     * while Seshat's model is resident, so it never forces an extra swap
      * unless --review asked for it.
      */
     const reviewPassed = async (model: Awaited<ReturnType<typeof router.use>>) => {
@@ -1005,7 +1079,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
           () => [],
         );
         if (findings.length === 0) continue;
-        console.log(`   Merit's review of ${card.id}: ${findings.length} note(s)`);
+        console.log(`   Seshat's review of ${card.id}: ${findings.length} note(s)`);
         // Into the card's dossier: the Review surface shows it, and a
         // returned card's next attempt reads it.
         await recordReview(
@@ -1035,7 +1109,10 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       console.log(`\n=== ${card.id} (attempt ${attemptNo}): ${card.title} ===`);
       // What earlier attempts learned reaches this one through the card's
       // dossier (lessons, answers, reviews, send-backs), read by the runner.
-      const result = await executeCard(ctx, card, worker, guidance, { attempt: attemptNo });
+      const result = await executeCard(ctx, card, worker, guidance, {
+        attempt: attemptNo,
+        signal: queueStop.signal,
+      });
       if (result.passed) passedResults.push({ card, diff: result.evidence.diff ?? "" });
       for (const st of result.lessons.struggles) {
         const code = /\b(TS\d{4}|lint\/[\w/]+)\b/.exec(st.text)?.[1];
@@ -1076,6 +1153,10 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       );
       if (result.stopReason === "memory_pressure") {
         console.log("   queue halted: memory pressure");
+        halted = true;
+      }
+      if (queueStop.signal.aborted) {
+        console.log("   queue halted: stopped from the terminal");
         halted = true;
       }
       return result;
@@ -1230,11 +1311,11 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       if (!halted && managerModel && (reflections.length > 0 || passedResults.length > 0)) {
         const manager = await router.use("manager");
         const learned = await reflectWithManager(manager, ctx.learning, reflections).catch(() => 0);
-        if (learned > 0) console.log(`\n--- Merit proposed ${learned} rule(s) from this run ---`);
+        if (learned > 0) console.log(`\n--- Seshat proposed ${learned} rule(s) from this run ---`);
         const c = await consolidateWithManager(manager, ctx.learning).catch(() => undefined);
         if (c && c.merged + c.contradictions + c.duplicates > 0) {
           console.log(
-            `--- Merit consolidated rules: ${c.merged} merged, ${c.contradictions} contradiction(s) flagged, ${c.duplicates} duplicate(s) retired ---`,
+            `--- Seshat consolidated rules: ${c.merged} merged, ${c.contradictions} contradiction(s) flagged, ${c.duplicates} duplicate(s) retired ---`,
           );
         }
         await answerPm(undefined, true).catch(() => undefined);
@@ -1250,11 +1331,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         );
       }
       // The human's messages are answered before the run ends; queued Worker
-      // questions too when Merit is already resident (no extra swap).
+      // questions too when Seshat is already resident (no extra swap).
       await answerPm(undefined, router.isResident("manager")).catch(() => undefined);
       const held = await boardService.listHeld();
       for (const h of held) console.log(`\n--- ${h.id} is held: ${h.blockedReason} ---`);
     } finally {
+      process.off("SIGINT", onSigint);
       watchdog.stop();
       await router.releaseAll();
       releaseLease();
@@ -1315,6 +1397,10 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   );
   console.log("  sekhemet gate [card-id]     Run deterministic verification gates");
   console.log("  sekhemet replay <card-id>   Replay checkpoint trajectory for a card");
+  console.log("  sekhemet abort <card-id>    Stop a running card before its next turn");
+  console.log("  sekhemet rewind <card> <n>  Put a card back to its checkpoint at step n");
+  console.log("  sekhemet fork <card> <n>    Branch a new attempt from step n");
+  console.log("  sekhemet resume <card-id>   Continue a card that stopped part-way");
   console.log(
     "  sekhemet bake-off --workers a,b [--fixture f] [--manager m]  Compare workers on a release gate",
   );

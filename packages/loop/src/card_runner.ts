@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
+import type { TurnHistoryItem } from "@sekhemet/context";
 import type { GateResult } from "@sekhemet/gates";
 import {
   type EvidenceBundle,
@@ -159,7 +160,26 @@ export interface CardRunOptions extends Omit<SessionOptions, "cardId"> {
   signal?: AbortSignal | undefined;
   /** This run is a fork of an earlier attempt at a step (H18). */
   forkedFrom?: { attemptId: string; step: number } | undefined;
+  /**
+   * Start from this checkpoint instead of the card's start (H18 fork, H19
+   * rewind): the worktree is reset to `gitRef`, the step counter continues
+   * from `step`, and the earlier steps are replayed from the log into the
+   * Worker's history.
+   */
+  startFrom?: { step: number; gitRef: string; attemptId?: string } | undefined;
 }
+
+/**
+ * Stops a card resumes from rather than restarting (H17): the run was cut
+ * short by something other than its own work, so its last checkpoint is
+ * still the best state to continue from.
+ */
+export const RESUMABLE_STOPS: ReadonlySet<ExecutionStopReason> = new Set<ExecutionStopReason>([
+  "memory_pressure",
+  "human_abort",
+  "quota_suspended",
+  "error",
+]);
 
 export interface CardRunResult {
   cardId: string;
@@ -210,6 +230,8 @@ const SUSPENDING_STOPS = new Set<ExecutionStopReason>([
   "replan_requested",
   "done_pending_gates",
   "quota_suspended",
+  // An error is resumable (H17), so what it cut short is kept.
+  "error",
 ]);
 
 /** Stops that park the card for a human with a diagnosis (L15 rung 4). */
@@ -514,19 +536,58 @@ export class CardRunner {
   }
 
   /**
-   * The checkpoint a memory-pressure stop left behind, if this card should
-   * resume from it (H17).
+   * Where this run starts (H17, H18, H19): an explicit fork or rewind point,
+   * else the last checkpoint of a card whose previous run was cut short (a
+   * resumable stop, or an attempt still marked running because the process
+   * died), else the card's start.
    */
-  private async resumePoint(): Promise<{ step: number; gitRef: string } | undefined> {
+  private async resumePoint(): Promise<
+    { step: number; gitRef: string; attemptId?: string } | undefined
+  > {
     const { card, store } = this.options;
+    if (this.options.startFrom) return this.options.startFrom;
     if (!store || this.options.resume === false) return undefined;
-    if (card.stopReason !== "memory_pressure") return undefined;
+    const lastAttempt = store.runs?.listAttempts(card.id).at(-1);
+    const crashed = lastAttempt?.status === "running";
+    if (!crashed && !(card.stopReason && RESUMABLE_STOPS.has(card.stopReason))) return undefined;
     try {
       const checkpoints = await store.getCheckpoints(card.id);
       const last = checkpoints.at(-1);
-      return last ? { step: last.step, gitRef: last.gitRef } : undefined;
+      return last
+        ? {
+            step: last.step,
+            gitRef: last.gitRef,
+            ...(lastAttempt ? { attemptId: lastAttempt.id } : {}),
+          }
+        : undefined;
     } catch {
       return undefined;
+    }
+  }
+
+  /**
+   * The Worker's history up to `step`, replayed from the step rows of the
+   * attempt being resumed or forked (H17: "session resume from the log").
+   */
+  private replayHistory(attemptId: string | undefined, step: number): TurnHistoryItem[] {
+    const runs = this.options.store?.runs;
+    if (!runs || !attemptId) return [];
+    try {
+      return runs
+        .listSteps(attemptId)
+        .filter((s) => s.stepIndex <= step)
+        .map((s) => ({
+          turn: s.stepIndex,
+          action:
+            s.calls.map((c) => (c.target ? `${c.name}(${c.target})` : c.name)).join(", ") ||
+            "(no tool calls)",
+          result:
+            s.calls
+              .map((c) => `${c.ok === false ? "failed" : "ok"}: ${c.summary ?? ""}`.trim())
+              .join(" | ") || "(no observation recorded)",
+        }));
+    } catch {
+      return [];
     }
   }
 
@@ -604,7 +665,7 @@ export class CardRunner {
 
     let resumedFrom: { step: number; gitRef: string } | undefined;
     if (resumeFrom && this.restore(worktreePath, resumeFrom.gitRef)) {
-      resumedFrom = resumeFrom;
+      resumedFrom = { step: resumeFrom.step, gitRef: resumeFrom.gitRef };
       this.emit({
         type: "status",
         cardId: card.id,
@@ -713,9 +774,14 @@ export class CardRunner {
       ...(resumedFrom
         ? {
             startStep: resumedFrom.step,
+            priorHistory: this.replayHistory(resumeFrom?.attemptId, resumedFrom.step),
             priorLessons: [
               ...(this.options.priorLessons ?? []),
-              `resumed after a memory-pressure stop at step ${resumedFrom.step}`,
+              this.options.forkedFrom
+                ? `forked from attempt ${this.options.forkedFrom.attemptId} at step ${resumedFrom.step}`
+                : this.options.startFrom
+                  ? `rewound to the checkpoint at step ${resumedFrom.step}`
+                  : `resumed after ${card.stopReason ?? "an interrupted run"} at step ${resumedFrom.step}`,
             ],
           }
         : {}),

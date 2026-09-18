@@ -115,7 +115,7 @@ export interface SessionOptions {
   teamNote?: string | undefined;
   /**
    * Route a question the card's contract does not answer to the team. Resolves
-   * to an answer when someone can answer now (Merit resident), or undefined
+   * to an answer when someone can answer now (Seshat resident), or undefined
    * when it was queued for later.
    */
   askTeam?:
@@ -202,6 +202,8 @@ export interface SessionOptions {
   maxScopeDenials?: number | undefined;
   /** Resume at this step count (H17): the step counter continues from it. */
   startStep?: number | undefined;
+  /** Earlier steps replayed from the log, shown as history before the resume note (H17). */
+  priorHistory?: import("@sekhemet/context").TurnHistoryItem[] | undefined;
   /**
    * Fulfil a repair-rung-3 re-plan in-loop. Resolves to the new plan, or
    * undefined to stop the card with `replan_requested`.

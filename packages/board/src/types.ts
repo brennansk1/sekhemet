@@ -41,7 +41,9 @@ export type TransitionRefusalCode =
   | "back_pressure"
   | "wip_limit"
   | "illegal_transition"
-  | "card_not_found";
+  | "card_not_found"
+  /** A column's entry condition does not hold (B1). */
+  | "entry_condition";
 
 /**
  * A refused column move, typed so a caller can tell back-pressure (hold the
@@ -66,3 +68,16 @@ export class TransitionRefusedError extends Error {
 
 /** Prefix of `blockedReason` on a card the runner held at a refused move. */
 export const HELD_REASON_PREFIX = "held:";
+
+/** Evidence the Review entry condition reads (B1): the card's latest bundle. */
+export interface EvidenceSummary {
+  passed: boolean;
+  /** Gates that ran, so an empty bundle does not pass as complete. */
+  gatesRun: number;
+}
+
+/** Two cards that would edit the same file, so they must not run at once (B6). */
+export interface ScopeOverlap {
+  cardId: string;
+  files: string[];
+}

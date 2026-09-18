@@ -149,6 +149,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     // H17: a resumed card continues its step count from the checkpoint.
     if (options.startStep !== undefined && options.startStep > 0) {
       this.stepsUsed = Math.floor(options.startStep);
+      this.history.push(...(options.priorHistory ?? []));
       this.history.push({
         turn: this.stepsUsed,
         action: "resume",
@@ -406,7 +407,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     // the reviewer see what was unclear (integration review item 6).
     const questionEntryId = await this.options.recordQuestion?.(q).catch(() => undefined);
     if (scored.length === 0 && this.options.askTeam) {
-      // Not in the contract: ask the team. Merit answers now if it is
+      // Not in the contract: ask the team. Seshat answers now if it is
       // resident; otherwise the question waits for its next turn on the host.
       const reply = await this.options
         .askTeam(q, questionEntryId ? { questionEntryId } : {})
@@ -416,16 +417,16 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         return {
           tool: "ask",
           ok: true,
-          summary: "answered by Merit",
-          content: `Merit (project manager) answers: ${reply}`,
+          summary: "answered by Seshat",
+          content: `Seshat (project manager) answers: ${reply}`,
         };
       }
       return {
         tool: "ask",
         ok: true,
-        summary: "queued for Merit",
+        summary: "queued for Seshat",
         content:
-          'The contract does not answer that, and Merit is not loaded right now; your question is queued for it. Proceed with the most conservative reading the acceptance tests allow and record the assumption with note("Assumed: ...").',
+          'The contract does not answer that, and Seshat is not loaded right now; your question is queued for it. Proceed with the most conservative reading the acceptance tests allow and record the assumption with note("Assumed: ...").',
       };
     }
     if (scored.length === 0) {

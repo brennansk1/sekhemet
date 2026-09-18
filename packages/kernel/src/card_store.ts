@@ -631,6 +631,11 @@ export class CardStore {
     });
   }
 
+  /** One card's ledger events of the given types, oldest first. */
+  public async cardEvents(cardId: string, types: string[]): Promise<EventRecord[]> {
+    return this.eventLog.getEventsByCardAndTypes(cardId, types);
+  }
+
   /**
    * Append one fact to a card's dossier (integration review §3 item 6).
    *
@@ -707,7 +712,7 @@ export class CardStore {
    * Everything the team has recorded about one card, oldest first
    * (`dossierFor(cardId)` in the integration review's target architecture).
    *
-   * Answers are threaded under the question they name, so a reply Merit wrote
+   * Answers are threaded under the question they name, so a reply Seshat wrote
    * for another card can never be attached to this one.
    */
   public async getDossier(cardId: string): Promise<CardDossier> {

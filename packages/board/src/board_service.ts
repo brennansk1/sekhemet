@@ -1,9 +1,11 @@
-import type { CardRecord, CardStatus, CardStore } from "@sekhemet/kernel";
+import { type CardRecord, type CardStatus, type CardStore, matchesScope } from "@sekhemet/kernel";
 import {
   type BoardService,
   type BoardState,
   type CardTransition,
+  type EvidenceSummary,
   HELD_REASON_PREFIX,
+  type ScopeOverlap,
   TransitionRefusedError,
   type WipLimitStatus,
 } from "./types.js";
@@ -43,13 +45,46 @@ const LEGAL_TRANSITIONS: Record<CardStatus, CardStatus[]> = {
   rejected: ["backlog", "ready"],
 };
 
+/** The shortest legal route between two columns (for rollup), or undefined. */
+export function legalPath(from: CardStatus, to: CardStatus): CardStatus[] | undefined {
+  if (from === to) return [];
+  const queue: CardStatus[][] = [[from]];
+  const seen = new Set<CardStatus>([from]);
+  while (queue.length > 0) {
+    const path = queue.shift() as CardStatus[];
+    for (const next of LEGAL_TRANSITIONS[path[path.length - 1] as CardStatus] ?? []) {
+      if (seen.has(next)) continue;
+      if (next === to) return [...path.slice(1), next];
+      seen.add(next);
+      queue.push([...path, next]);
+    }
+  }
+  return undefined;
+}
+
 export interface BoardServiceOptions {
   customLimits?: Partial<Record<CardStatus, number>>;
   /** Minutes a human can spend reviewing per day, used to derive ReviewWIP. */
   reviewMinutesPerDay?: number;
-  /** Allow a transition the edge table forbids, recording the reason. */
+  /**
+   * Called for every override (an `override:` reason past an illegal edge or
+   * an entry condition). The board also records a `card/override` event.
+   */
   onOverride?: (t: CardTransition, reason: string) => void;
+  /**
+   * Check each column's entry condition (B1, design "Entry conditions").
+   * The harness turns this on; a bare board (and its unit tests) checks
+   * only the edge table and the WIP limits.
+   */
+  entryConditions?: boolean;
+  /** The card's latest evidence, for the Review entry condition. */
+  evidenceFor?: (
+    cardId: string,
+  ) => Promise<EvidenceSummary | undefined> | EvidenceSummary | undefined;
 }
+
+/** Who may record acceptance (the Done entry condition): a person, or the harness's --auto-accept. */
+const ACCEPTING_ACTORS = new Set(["human", "harness"]);
 
 export class BoardServiceImpl implements BoardService {
   private wipLimits: Record<CardStatus, number>;
@@ -72,6 +107,64 @@ export class BoardServiceImpl implements BoardService {
   }
 
   /**
+   * The entry condition a move into `to` fails, or undefined (B1). Checked
+   * after the edge table, before back-pressure and WIP.
+   */
+  public async entryConditionFailure(
+    card: CardRecord,
+    t: CardTransition,
+  ): Promise<string | undefined> {
+    const to = t.toStatus;
+    if (to === "ready" || to === "in_progress" || to === "planning") {
+      const waiting = this.cardStore.waitingOn(card.id);
+      if (waiting.length > 0) {
+        return `${card.id} waits on ${waiting.join(", ")}, which ${waiting.length === 1 ? "is" : "are"} not done`;
+      }
+    }
+    if (to === "ready" && t.fromStatus === "backlog") {
+      const criteria =
+        (card.acceptanceCriteria?.length ?? 0) > 0 || (card.acceptanceTests?.length ?? 0) > 0;
+      if (!criteria)
+        return `${card.id} has no acceptance criteria or tests; write them before it is Ready`;
+    }
+    // A parent's scope is its children's; it never runs itself (B7 rollup).
+    const isParent = (await this.cardStore.listCards({ parentId: card.id })).length > 0;
+    if (to === "in_progress" && card.scopeFiles.length === 0 && !isParent) {
+      return `${card.id} declares no scope files; declare what it may change before it starts`;
+    }
+    if (to === "review") {
+      const evidence = await this.options.evidenceFor?.(card.id);
+      if (!evidence) return `${card.id} has no evidence bundle; Review needs one`;
+      if (!evidence.passed || evidence.gatesRun === 0) {
+        return `${card.id}'s latest evidence ${evidence.gatesRun === 0 ? "ran no gates" : "did not pass every gate"}`;
+      }
+    }
+    if (to === "done" && !ACCEPTING_ACTORS.has(t.actor)) {
+      return `Only a person accepts a card (actor was ${t.actor})`;
+    }
+    return undefined;
+  }
+
+  /** Record an override on the ledger as the human decision it is (B1). */
+  private async recordOverride(t: CardTransition, what: string): Promise<void> {
+    this.options.onOverride?.(t, t.reason ?? "unspecified");
+    await this.cardStore
+      .recordEvent({
+        type: "card/override",
+        cardId: t.cardId,
+        actor: t.actor === "human" ? "human" : "system",
+        payload: {
+          id: t.cardId,
+          from: t.fromStatus,
+          to: t.toStatus,
+          overrode: what,
+          reason: t.reason ?? "",
+        },
+      })
+      .catch(() => undefined);
+  }
+
+  /**
    * ReviewWIP = floor(reviewMinutesPerDay / medianReviewMinutesPerCard), min 1.
    *
    * Derived from the project's own accepted-card history rather than fixed at a
@@ -82,11 +175,7 @@ export class BoardServiceImpl implements BoardService {
     const budget = reviewMinutesPerDay ?? this.options.reviewMinutesPerDay;
     if (!budget || budget <= 0) return this.wipLimits.review;
 
-    const accepted = await this.cardStore.listCards({ status: "done" });
-    const durations = accepted
-      .map((c) => this.reviewMinutes(c))
-      .filter((m): m is number => m !== undefined && m > 0)
-      .sort((a, b) => a - b);
+    const durations = (await this.measuredReviewMinutes()).sort((a, b) => a - b);
 
     if (durations.length === 0) return this.wipLimits.review;
 
@@ -99,12 +188,29 @@ export class BoardServiceImpl implements BoardService {
     return Math.max(1, Math.floor(budget / median));
   }
 
-  /** Minutes a card spent between its last update and creation, as a proxy. */
-  private reviewMinutes(card: CardRecord): number | undefined {
-    const created = Date.parse(card.createdAt);
-    const updated = Date.parse(card.updatedAt);
-    if (Number.isNaN(created) || Number.isNaN(updated) || updated <= created) return undefined;
-    return (updated - created) / 60_000;
+  /**
+   * Minutes each review took (B3): from a card entering Review to the
+   * person's verdict (accept, return, park), read from the ledger's status
+   * changes. Every review counts, not only accepted ones: a return costs the
+   * reviewer the same reading time.
+   */
+  public async measuredReviewMinutes(): Promise<number[]> {
+    const out: number[] = [];
+    for (const card of await this.cardStore.listCards()) {
+      const changes = await this.cardStore.cardEvents(card.id, ["card/status_changed"]);
+      let enteredAt: number | undefined;
+      for (const e of changes) {
+        const p = e.payload as { toStatus?: string; fromStatus?: string; updatedAt?: string };
+        const at = Date.parse(p.updatedAt ?? e.createdAt);
+        if (p.toStatus === "review") enteredAt = at;
+        else if (p.fromStatus === "review" && enteredAt !== undefined) {
+          const minutes = (at - enteredAt) / 60_000;
+          if (minutes > 0) out.push(minutes);
+          enteredAt = undefined;
+        }
+      }
+    }
+    return out;
   }
 
   /** Apply a history-derived ReviewWIP, replacing the static default. */
@@ -131,8 +237,8 @@ export class BoardServiceImpl implements BoardService {
     }
 
     const legal = LEGAL_TRANSITIONS[t.fromStatus] ?? [];
+    const override = t.reason?.startsWith("override:") === true;
     if (!legal.includes(t.toStatus)) {
-      const override = t.reason?.startsWith("override:");
       if (!override) {
         throw new TransitionRefusedError(
           "illegal_transition",
@@ -141,7 +247,15 @@ export class BoardServiceImpl implements BoardService {
           `Illegal transition '${t.fromStatus}' -> '${t.toStatus}' for card ${t.cardId}. Legal destinations: ${legal.join(", ")}`,
         );
       }
-      this.options.onOverride?.(t, t.reason ?? "unspecified");
+      await this.recordOverride(t, "edge");
+    }
+
+    if (this.options.entryConditions) {
+      const failure = await this.entryConditionFailure(card, t);
+      if (failure && !override) {
+        throw new TransitionRefusedError("entry_condition", t.cardId, t.toStatus, failure);
+      }
+      if (failure) await this.recordOverride(t, `entry condition: ${failure}`);
     }
 
     // Back-pressure blocks entry to VERIFY, not Review (design §392). Holding
@@ -254,8 +368,33 @@ export class BoardServiceImpl implements BoardService {
     }));
   }
 
-  public async getBoardState(): Promise<BoardState> {
-    const cards = await this.cardStore.listCards();
+  /**
+   * Running cards that would edit a file `card` declares (B6). Two cards
+   * that touch the same file must be serialised: their worktrees would
+   * merge into a conflict, and each gate run would measure the other's
+   * half-done change.
+   */
+  public async overlappingRunning(card: CardRecord): Promise<ScopeOverlap[]> {
+    const running = (await this.cardStore.listCards({ status: "in_progress" })).filter(
+      (c) => c.id !== card.id,
+    );
+    const out: ScopeOverlap[] = [];
+    for (const other of running) {
+      const files = card.scopeFiles.filter((f) =>
+        other.scopeFiles.some((g) => matchesScope(f, g) || matchesScope(g, f)),
+      );
+      if (files.length > 0) out.push({ cardId: other.id, files });
+    }
+    return out;
+  }
+
+  public async getBoardState(filter: { projectId?: string } = {}): Promise<BoardState> {
+    const all = await this.cardStore.listCards();
+    // B8: a project's board shows its own cards (cards from before projects
+    // existed have none and belong to every board).
+    const cards = filter.projectId
+      ? all.filter((c) => !c.projectId || c.projectId === filter.projectId)
+      : all;
     const reviewCount = cards.filter((c) => c.status === "review").length;
 
     return {

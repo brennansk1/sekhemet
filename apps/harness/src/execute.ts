@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
@@ -257,6 +257,16 @@ export async function executeCard(
 
   const worktreePath = join(ctx.repoPath, ".sekhemet", "worktrees", card.id);
   const baselineSwap = readSwapUsedBytes();
+  // A rewind or fork the human asked for (H18, H19) sets where this run starts.
+  const start = await pendingStartPoint(ctx.cardStore, card.id).catch(() => undefined);
+  // Stop requests from the dashboard or `sekhemet abort` (L25) arrive through
+  // the ledger; only those made after this run started count.
+  const abort = new AbortController();
+  options.signal?.addEventListener("abort", () => abort.abort(options.signal?.reason), {
+    once: true,
+  });
+  const startedAtSeq =
+    (await ctx.cardStore.cardEvents(card.id, [CONTROL_EVENTS.abortRequested])).at(-1)?.seq ?? 0;
   const runner = new CardRunner({
     card,
     repoRoot: ctx.repoPath,
@@ -277,7 +287,9 @@ export async function executeCard(
     restricted: ctx.restrictedMode,
     // Ask-tier commands wait for a person on the decision queue (S8, K20).
     onApproval: decisionApprover(ctx.cardStore, card.id, ctx.approvalTimeoutMs ?? 60_000),
-    ...(options.signal ? { signal: options.signal } : {}),
+    signal: abort.signal,
+    ...(start?.startFrom ? { startFrom: start.startFrom } : {}),
+    ...(start?.forkedFrom ? { forkedFrom: start.forkedFrom } : {}),
     // Stop before the host does: a paused card resumes, an OOM takes the
     // machine. The watchdog's pause is checked before every turn.
     memoryProbe: () => {
@@ -354,6 +366,11 @@ export async function executeCard(
         stepId: turn.stepId,
       });
       await ctx.afterTurn?.(cardId, turn);
+      const stop = await pendingAbort(ctx.cardStore, cardId, startedAtSeq).catch(() => undefined);
+      if (stop !== undefined && !abort.signal.aborted) {
+        log(`   stop requested: ${stop}`);
+        abort.abort(stop);
+      }
       // Between steps is where a card can wait out memory pressure without
       // losing work; if it does not fall, the next turn stops resumably.
       if (ctx.watchdog?.shouldPauseTurns()) {
@@ -408,6 +425,186 @@ export function unlessPlaybookCovers(
   guarded.propose = async (rule) =>
     playbook.coveringRule(rule.text) ? undefined : learning.propose(rule);
   return guarded;
+}
+
+// ---------------------------------------------------------------------------
+// Runner control: abort (L25), rewind (H19), fork (H18), resume (H17)
+// ---------------------------------------------------------------------------
+
+/** Ledger events that steer a card's next run. */
+export const CONTROL_EVENTS = {
+  abortRequested: "card/abort_requested",
+  rewound: "card/rewound",
+  forkRequested: "card/fork_requested",
+} as const;
+
+/**
+ * Ask the process running a card to stop it before its next turn (L25).
+ * The dashboard and `sekhemet abort` write this; the runner's `onTurn`
+ * polls for it, since the queue runs in another process.
+ */
+export async function requestAbort(
+  cardStore: CardStore,
+  cardId: string,
+  reason: string,
+  actor = "human",
+): Promise<void> {
+  if (!(await cardStore.getCard(cardId))) throw new Error(`Card not found: ${cardId}`);
+  await cardStore.recordEvent({
+    type: CONTROL_EVENTS.abortRequested,
+    cardId,
+    actor,
+    payload: { id: cardId, reason: reason.trim() || "stopped by a person" },
+  });
+}
+
+/** An abort requested after `sinceSeq`, if any. */
+async function pendingAbort(
+  cardStore: CardStore,
+  cardId: string,
+  sinceSeq: number,
+): Promise<string | undefined> {
+  const events = await cardStore.cardEvents(cardId, [CONTROL_EVENTS.abortRequested]);
+  const last = events.filter((e) => e.seq > sinceSeq).at(-1);
+  return last ? String((last.payload as { reason?: string }).reason ?? "stopped") : undefined;
+}
+
+/** The step's checkpoint commit at or before `step`, from the attempt's step rows or the checkpoints. */
+async function checkpointAtOrBefore(
+  cardStore: CardStore,
+  cardId: string,
+  step: number,
+  attemptId?: string,
+): Promise<{ step: number; gitRef: string; attemptId?: string } | undefined> {
+  const attempts = cardStore.runs.listAttempts(cardId);
+  const attempt = attemptId ? attempts.find((a) => a.id === attemptId) : attempts.at(-1);
+  if (attempt) {
+    const pinned = cardStore.runs
+      .listSteps(attempt.id)
+      .filter((s) => s.gitRef && s.stepIndex <= step)
+      .at(-1);
+    if (pinned?.gitRef) {
+      return { step: pinned.stepIndex, gitRef: pinned.gitRef, attemptId: attempt.id };
+    }
+  }
+  const cp = (await cardStore.getCheckpoints(cardId)).filter((c) => c.step <= step).at(-1);
+  return cp
+    ? { step: cp.step, gitRef: cp.gitRef, ...(attempt ? { attemptId: attempt.id } : {}) }
+    : undefined;
+}
+
+/**
+ * Put a card's worktree back to its checkpoint at or before `step` (H19) or
+ * branch a new attempt from it (H18). The state being left is kept under
+ * `refs/sekhemet/...`, so nothing is lost; the card returns to Ready and its
+ * next run continues from that step with the earlier steps replayed.
+ */
+async function moveCardBack(
+  ctx: ExecutionContext,
+  cardId: string,
+  step: number,
+  kind: "rewind" | "fork",
+  attemptId?: string,
+): Promise<{ step: number; gitRef: string; preservedRef: string }> {
+  const card = await ctx.cardStore.getCard(cardId);
+  if (!card) throw new Error(`Card not found: ${cardId}`);
+  if (card.status === "done") throw new Error(`${cardId} is done; reopen it before a ${kind}`);
+  const point = await checkpointAtOrBefore(ctx.cardStore, cardId, step, attemptId);
+  if (!point) throw new Error(`${cardId} has no checkpoint at or before step ${step}`);
+  const worktree = join(ctx.repoPath, ".sekhemet", "worktrees", cardId);
+  if (!existsSync(worktree)) throw new Error(`${cardId} has no worktree to ${kind}`);
+  const git = (...args: string[]) =>
+    execFileSync("git", args, { cwd: worktree, encoding: "utf8", timeout: 30_000 }).trim();
+  // Keep what is being left: the attempt's head (fork) or the pre-rewind state.
+  git("add", "-A");
+  let head = git("rev-parse", "HEAD");
+  try {
+    git(
+      "-c",
+      "user.name=Sekhemet",
+      "-c",
+      "user.email=sekhemet@localhost",
+      "commit",
+      "-q",
+      "--no-verify",
+      "-m",
+      `sekhemet: state before ${kind} to step ${point.step}`,
+    );
+    head = git("rev-parse", "HEAD");
+  } catch {
+    // Nothing uncommitted: HEAD already is the state being left.
+  }
+  const preservedRef = `refs/sekhemet/${kind}/${cardId}/${Date.now()}`;
+  git("update-ref", preservedRef, head);
+  git("reset", "--hard", point.gitRef);
+  git("clean", "-fdq");
+
+  if (card.status !== "ready") {
+    try {
+      await ctx.boardService.transitionCard({
+        cardId,
+        fromStatus: card.status,
+        toStatus: "ready",
+        actor: "human",
+        reason: `${kind} to step ${point.step}`,
+      });
+    } catch {
+      // A card that cannot go straight back to Ready keeps its column; the
+      // next run still starts from the checkpoint.
+    }
+  }
+  await ctx.cardStore.updateCard(cardId, { stepsUsed: point.step, blockedReason: null }, "human");
+  await ctx.cardStore.recordEvent({
+    type: kind === "fork" ? CONTROL_EVENTS.forkRequested : CONTROL_EVENTS.rewound,
+    cardId,
+    actor: "human",
+    payload: {
+      id: cardId,
+      step: point.step,
+      gitRef: point.gitRef,
+      preservedRef,
+      ...(point.attemptId ? { attemptId: point.attemptId } : {}),
+    },
+  });
+  return { step: point.step, gitRef: point.gitRef, preservedRef };
+}
+
+/** Rewind a card to its checkpoint at or before `step` (H19). */
+export function rewindCard(ctx: ExecutionContext, cardId: string, step: number) {
+  return moveCardBack(ctx, cardId, step, "rewind");
+}
+
+/**
+ * Fork an attempt at `step` (H18): the attempt's work is kept under a ref,
+ * and the card's next run is a new attempt that starts from that step.
+ */
+export function forkCard(ctx: ExecutionContext, cardId: string, step: number, attemptId?: string) {
+  return moveCardBack(ctx, cardId, step, "fork", attemptId);
+}
+
+/**
+ * A rewind or fork not yet consumed by a run: the latest such event after
+ * the card's last attempt started.
+ */
+async function pendingStartPoint(cardStore: CardStore, cardId: string) {
+  const events = await cardStore.cardEvents(cardId, [
+    CONTROL_EVENTS.rewound,
+    CONTROL_EVENTS.forkRequested,
+    "attempt/started",
+  ]);
+  const last = events.at(-1);
+  if (!last || last.type === "attempt/started") return undefined;
+  const p = last.payload as { step: number; gitRef: string; attemptId?: string };
+  return {
+    startFrom: {
+      step: p.step,
+      gitRef: p.gitRef,
+      ...(p.attemptId ? { attemptId: p.attemptId } : {}),
+    },
+    ...(last.type === CONTROL_EVENTS.forkRequested && p.attemptId
+      ? { forkedFrom: { attemptId: p.attemptId, step: p.step } }
+      : {}),
+  };
 }
 
 /** The column a held card was waiting for, from its `held: <column> refused (...)` reason. */
@@ -469,8 +666,8 @@ function latestEvidencePassed(repoPath: string, cardId: string): boolean {
 }
 
 /**
- * Worker questions queued for Merit while it was not resident (the hardware
- * decides: a question never forces a model swap on its own). Once Merit's
+ * Worker questions queued for Seshat while it was not resident (the hardware
+ * decides: a question never forces a model swap on its own). Once Seshat's
  * batch has answered one, the answer is filed in the card's dossier under
  * the question's entry, so the card's next attempt reads it as
  * "Q: ... A (manager): ...". This replaces handing answers over as lessons.
@@ -488,7 +685,7 @@ export class QueuedWorkerQuestions {
 
   /**
    * File every answered question's answer; unanswered ones stay queued.
-   * The answer is the first reply from Merit after the question.
+   * The answer is the first reply from Seshat after the question.
    */
   public async fileAnswers(
     thread: { id: string; seq: number; role: string; state: string; text: string }[],
@@ -646,7 +843,7 @@ export interface QueueReport {
   memory?: { level: string; reason: string };
 }
 
-/** A review finding (Merit's or the Reviewer's), as `learning/review.ts` returns it. */
+/** A review finding (Seshat's or the Reviewer's), as `learning/review.ts` returns it. */
 export interface ReviewFinding {
   severity: string;
   note: string;

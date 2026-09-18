@@ -9,3 +9,4 @@ export * from "./hooks.js";
 export * from "./toml.js";
 export * from "./blobs.js";
 export * from "./retention.js";
+export * from "./scope.js";
