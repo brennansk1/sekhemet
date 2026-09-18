@@ -11,3 +11,6 @@ export * from "./playbook.js";
 export * from "./evidence.js";
 export * from "./condenser.js";
 export * from "./pressure.js";
+export * from "./facts.js";
+export * from "./allocator.js";
+export * from "./worker_prompt.js";
