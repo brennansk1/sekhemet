@@ -21,6 +21,7 @@ const CARDS = [
     id: "card_chron_iface",
     title: "Define Chronicle contract interfaces (SPIDR: Interface)",
     scopeFiles: ["src/types.ts"],
+    acceptanceTests: ["types.spec.ts"],
     stepBudget: 24,
     spec: "Define ChronicleEvent<T> and AuditReport interfaces in src/types.ts. Types only, no implementation logic.",
     acceptanceCriteria: [

@@ -26,6 +26,7 @@ import {
   acceptCard,
   collectCardFiles,
   executeCard,
+  inferDependencies,
   writeQueueReport,
 } from "./execute.js";
 import { runMcpStdioServer } from "./mcp.js";
@@ -590,13 +591,38 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       return result;
     };
 
-    try {
-      for (const queued of ready) {
+    const deps = inferDependencies(ready);
+    const blockedBy = async (card: CardRecord): Promise<string[]> => {
+      const waiting: string[] = [];
+      for (const id of deps.get(card.id) ?? []) {
+        const dep = await cardStore.getCard(id);
+        // A prerequisite outside this queue counts as satisfied only when done.
+        if (dep && dep.status !== "done") waiting.push(id);
+      }
+      return waiting;
+    };
+    const deferred: CardRecord[] = [];
+
+    /** Run every runnable card; defer those whose prerequisites have not merged. */
+    const pass = async (cards: CardRecord[], n: number, plans?: Map<string, string>) => {
+      for (const queued of cards) {
         if (halted) break;
         const card = (await cardStore.getCard(queued.id)) ?? queued;
-        const result = await attempt(card, 1);
+        const waiting = await blockedBy(card);
+        if (waiting.length > 0) {
+          console.log(`\n--- ${card.id} waits on ${waiting.join(", ")}: deferred ---`);
+          if (!deferred.some((d) => d.id === card.id)) deferred.push(card);
+          continue;
+        }
+        const index = deferred.findIndex((d) => d.id === card.id);
+        if (index !== -1) deferred.splice(index, 1);
+        const result = await attempt(card, n, plans?.get(card.id));
         if (!result.passed) failed.push({ card, result });
       }
+    };
+
+    try {
+      await pass(ready, 1);
 
       if (!halted && managerModel && failed.length > 0) {
         // One swap to the manager for the whole batch of failures.
@@ -621,11 +647,22 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         }
 
         // One swap back, then retry each failure with its plan.
-        for (const { card } of failed) {
-          if (halted) break;
-          const current = (await cardStore.getCard(card.id)) ?? card;
-          await attempt(current, 2, plans.get(card.id));
-        }
+        const retry = failed.splice(0, failed.length).map(({ card }) => card);
+        await pass(retry, 2, plans);
+      }
+
+      // Cards held back for a prerequisite get their first attempt once it has
+      // merged. Repeat until a sweep makes no progress.
+      let progress = true;
+      while (!halted && progress && deferred.length > 0) {
+        const before = deferred.length;
+        await pass([...deferred], 1);
+        progress = deferred.length < before;
+      }
+      for (const card of deferred) {
+        console.log(
+          `\n--- ${card.id} never ran: prerequisites ${(await blockedBy(card)).join(", ")} did not merge ---`,
+        );
       }
     } finally {
       await router.releaseAll();

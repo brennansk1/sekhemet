@@ -192,3 +192,33 @@ export function collectCardFiles(
     return { path, content: existsSync(abs) ? readFileSync(abs, "utf8").slice(0, 8000) : "" };
   });
 }
+
+/**
+ * Infer which cards each card builds on.
+ *
+ * A card depends on another when its spec or criteria name that card's scope
+ * file ("use openDatabase from src/db.ts"), and every card depends on a
+ * contract card that owns a shared types file. Explicit `dependsOn` is honoured
+ * too. Running a card before its prerequisite has merged only spends its
+ * budget against an empty file — a live run lost two cards that way.
+ */
+export function inferDependencies(cards: CardRecord[]): Map<string, string[]> {
+  const owner = new Map<string, string>();
+  for (const card of cards) for (const file of card.scopeFiles) owner.set(file, card.id);
+
+  const contractCards = cards.filter((c) => c.scopeFiles.some((f) => /(^|\/)types\.ts$/.test(f)));
+
+  const deps = new Map<string, string[]>();
+  for (const card of cards) {
+    const text = `${card.spec ?? ""}\n${(card.acceptanceCriteria ?? []).join("\n")}`;
+    const found = new Set<string>(card.dependsOn ?? []);
+    for (const [file, id] of owner) {
+      if (id !== card.id && text.includes(file)) found.add(id);
+    }
+    for (const contract of contractCards) {
+      if (contract.id !== card.id) found.add(contract.id);
+    }
+    deps.set(card.id, [...found]);
+  }
+  return deps;
+}
