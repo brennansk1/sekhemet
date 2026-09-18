@@ -73,6 +73,9 @@ importers:
 
   packages/context:
     dependencies:
+      '@sekhemet/gates':
+        specifier: workspace:*
+        version: link:../gates
       '@sekhemet/kernel':
         specifier: workspace:*
         version: link:../kernel

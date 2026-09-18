@@ -9,6 +9,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@sekhemet/gates": "workspace:*",
     "@sekhemet/kernel": "workspace:*",
     "@sekhemet/models": "workspace:*"
   },

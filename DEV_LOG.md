@@ -38,6 +38,35 @@ If you are Claude reading this because Gemini reached quota limits or you were s
 
 ## Detailed Session Log
 
+### Entry 11 — 2026-09-17 22:24:00 MDT
+- **Agent**: Gemini 2.5 Pro (`antigravity-cli`)
+- **Role**: Subagent Implementer & Test Author
+- **Actions Taken**:
+  1. **Full Tool Catalog Onboarded**:
+     - Upgraded `CardExecutionSessionImpl` in `@sekhemet/loop` with AST/symbol editing: `read_symbol`, `replace_symbol_body`, `find_references`, surgical `replace_lines`, `read_file` with line slicing, `find_files`, `grep_search`, `list_dir`, `run_cmd` (sandboxed bash), and `finish_card`.
+     - Added comprehensive tests in `packages/loop/tests/tools.spec.ts` (6 tests passing).
+  2. **Open Agent Skills System & Built-in Skills**:
+     - Implemented `SkillsRegistry` in `@sekhemet/context` with progressive disclosure matching card scopes/triggers.
+     - Packaged 4 built-in production skills under `.sekhemet/skills/`: `tdd-contract`, `ast-refactor`, `gate-repair`, and `small-model-leverage`.
+  3. **Production 5-Zone Byte-Stable Prompt Engine**:
+     - Implemented `buildFullPromptPack` in `@sekhemet/context` dividing prompt into Zone 1 (invariants/laws), Zone 2 (playbook rules & matched skills), Zone 3 (architectural repo map), Zone 4 (card contract & scope bounds), and Zone 5 (turn history & typed `GateFailure` compiler/test feedback).
+  4. **Project Playbook TOML Registry**:
+     - Implemented `PlaybookRegistry` in `@sekhemet/context` serializing `.sekhemet/playbook.toml`, matching rules on gates and titles, and auditing context debt (>300 tokens) per Section 1186 of Design v2. Added `packages/context/tests/playbook.spec.ts`.
+  5. **Visual Basalt Dashboard HTTP Server**:
+     - Implemented `startDashboardServer` in `apps/harness/src/server.ts` rendering Egyptian Basalt theme, dual-axis kanban columns, live reload, gate strips, hardware telemetry, and REST endpoints (`/api/board`, `/api/events`, `/api/doctor`). Added `apps/harness/tests/server.spec.ts` (4 tests passing).
+  6. **Stdio MCP Server for External IDEs**:
+     - Implemented `runMcpStdioServer` in `apps/harness/src/mcp.ts` exposing tools (`sekhemet_list_cards`, `sekhemet_create_card`, `sekhemet_get_events`, `sekhemet_doctor`) via JSON-RPC for Cursor, VS Code, and Claude Code. Added `apps/harness/tests/mcp.spec.ts` (4 tests passing).
+  7. **Full CLI Subcommands & E2E Verification**:
+     - Completed CLI commands in `apps/harness/src/index.ts`: `doctor`, `board`, `log`, `plan`, `run`, `gate`, `replay`, `bake-off`, `serve` / `ui`, `mcp`.
+     - Verified E2E lifecycle in `apps/harness/tests/e2e_lifecycle.spec.ts` (worktree checkout, checkpoint write, gate verification).
+  8. **Public Release Packaging**:
+     - Created root `README.md` with architecture diagrams, quickstart, CLI reference, and MCP integration guide.
+     - Added MIT `LICENSE`.
+     - Updated root `package.json` with `pnpm sekhemet` and `pnpm dashboard` scripts.
+  9. **Monorepo Gate Verification**:
+     - 64/64 tests passing green across 19 test suites in 1.51s.
+     - 0 lint errors (`pnpm lint`), 0 formatting errors (`pnpm format`), 0 type errors (`pnpm typecheck`), and clean builds (`pnpm build`).
+
 ### Entry 10 — 2026-09-17 22:16:00 MDT
 - **Agent**: Gemini 2.5 Pro (`antigravity-cli`)
 - **Role**: Subagent Implementer & Test Author
