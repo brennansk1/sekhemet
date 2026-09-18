@@ -70,7 +70,8 @@ describe("PM and board-practice API", () => {
 
   afterAll(async () => {
     await server.close();
-    delete process.env.SEKHEMET_CONFIG_DIR;
+    // Assigning undefined would leave the string "undefined" in the environment.
+    Reflect.deleteProperty(process.env, "SEKHEMET_CONFIG_DIR");
     rmSync(repo, { recursive: true, force: true });
     rmSync(configDir, { recursive: true, force: true });
   });
