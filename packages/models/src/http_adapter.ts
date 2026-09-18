@@ -7,10 +7,19 @@ import type {
   ToolArm,
 } from "./types.js";
 
+export interface SamplingOptions {
+  temperature?: number;
+  topP?: number;
+  topK?: number;
+  minP?: number;
+  presencePenalty?: number;
+}
+
 export interface HttpAdapterOptions {
   modelId: string;
   baseUrl?: string;
   apiFormat?: "ollama" | "openai";
+  sampling?: SamplingOptions;
 }
 
 export class HttpInferenceAdapter implements LocalInferenceAdapter {
@@ -18,11 +27,13 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
   public readonly supportedArms: ToolArm[] = ["arm_a_flat", "arm_b_json", "arm_c_sketch"];
   private baseUrl: string;
   private apiFormat: "ollama" | "openai";
+  private sampling: SamplingOptions;
 
   constructor(options: HttpAdapterOptions) {
     this.modelId = options.modelId;
     this.baseUrl = options.baseUrl ?? "http://127.0.0.1:11434";
     this.apiFormat = options.apiFormat ?? "ollama";
+    this.sampling = options.sampling ?? {};
   }
 
   public async generate(req: InferenceRequest): Promise<InferenceResponse> {
@@ -81,15 +92,23 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
     }
     messages.push({ role: "user", content: req.prompt });
 
+    const body: Record<string, unknown> = {
+      model: this.modelId,
+      messages,
+      temperature: req.temperature ?? this.sampling.temperature ?? 0.2,
+      max_tokens: req.maxTokens ?? 2048,
+    };
+    if (this.sampling.topP !== undefined) body.top_p = this.sampling.topP;
+    if (this.sampling.topK !== undefined) body.top_k = this.sampling.topK;
+    if (this.sampling.minP !== undefined) body.min_p = this.sampling.minP;
+    if (this.sampling.presencePenalty !== undefined) {
+      body.presence_penalty = this.sampling.presencePenalty;
+    }
+
     const res = await fetch(`${this.baseUrl}/v1/chat/completions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: this.modelId,
-        messages,
-        temperature: req.temperature ?? 0.2,
-        max_tokens: req.maxTokens ?? 2048,
-      }),
+      body: JSON.stringify(body),
     });
 
     if (!res.ok) {
@@ -115,4 +134,19 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
       },
     };
   }
+}
+
+export function createQwen38_27BAdapter(baseUrl = "http://127.0.0.1:8099"): HttpInferenceAdapter {
+  return new HttpInferenceAdapter({
+    modelId: "qwen3.8-27b",
+    baseUrl,
+    apiFormat: "openai",
+    sampling: {
+      temperature: 0.2,
+      topP: 0.9,
+      topK: 20,
+      minP: 0.0,
+      presencePenalty: 1.5,
+    },
+  });
 }
