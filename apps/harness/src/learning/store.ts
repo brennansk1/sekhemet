@@ -34,6 +34,8 @@ export interface LearnedRule {
   source: RuleSource;
   evidence: { cardId?: string; note: string }[];
   createdAt: string;
+  /** Similar existing rules at the time it was added, for consolidation. */
+  related?: string[];
 }
 
 export type ProfileCategory = "code_style" | "planning" | "communication" | "priorities";
@@ -49,6 +51,36 @@ export interface ProfileEntry {
 }
 
 const DECAY = 0.1;
+
+const STOP = new Set(
+  "a an the and or of to in on for with is are be it this that use do not never always when your you its by as at from".split(
+    " ",
+  ),
+);
+const words = (t: string) =>
+  new Set(
+    t
+      .toLowerCase()
+      .replace(/[^a-z0-9_:.]+/g, " ")
+      .split(" ")
+      .map((w) => w.replace(/^[.:]+|[.:]+$/g, ""))
+      .filter((w) => w.length > 1 && !STOP.has(w)),
+  );
+
+/**
+ * Lexical similarity (Jaccard over content words). Mem0 compares a new
+ * memory with its top-k most similar existing ones before deciding what to
+ * do; embeddings would need a model call per memory, and at this scale word
+ * overlap separates near-duplicates from new facts well enough.
+ */
+export function similarity(a: string, b: string): number {
+  const x = words(a);
+  const y = words(b);
+  if (x.size === 0 || y.size === 0) return 0;
+  let inter = 0;
+  for (const w of x) if (y.has(w)) inter++;
+  return inter / (x.size + y.size - inter);
+}
 const EVENTS = {
   rule: "learn/rule",
   ruleOutcome: "learn/rule_outcome",
@@ -107,10 +139,19 @@ export class LearningStore {
       reach?: "project" | "global";
     },
   ): Promise<LearnedRule | undefined> {
-    const existing = await this.rules();
-    const norm = (t: string) => t.toLowerCase().replace(/\W+/g, " ").trim();
-    // A duplicate strengthens the existing rule's evidence instead of adding bloat.
-    const dup = existing.find((r) => r.role === rule.role && norm(r.text) === norm(rule.text));
+    const existing = (await this.rules()).filter(
+      (r) => r.role === rule.role && r.status !== "retired",
+    );
+    // Mem0's update step: compare with the most similar existing rules.
+    const ranked = existing
+      .map((r) => ({ r, sim: similarity(r.text, rule.text) }))
+      .sort((a, b) => b.sim - a.sim);
+    // NOOP: a near-duplicate strengthens the existing rule's evidence instead of adding bloat.
+    const dup = ranked[0] && ranked[0].sim >= 0.8 ? ranked[0].r : undefined;
+    const related = ranked
+      .filter((x) => x.sim >= 0.3 && x.sim < 0.8)
+      .slice(0, 3)
+      .map((x) => x.r.id);
     if (dup) {
       if (dup.reach === "project") {
         await this.writeRule(
@@ -124,6 +165,7 @@ export class LearningStore {
       ...rule,
       id: `rule_${randomUUID().slice(0, 8)}`,
       reach: rule.reach ?? "project",
+      ...(related.length > 0 ? { related } : {}),
       status: "candidate",
       helpful: 0,
       harmful: 0,
@@ -146,7 +188,12 @@ export class LearningStore {
   /** Human decisions: approve (optionally to every project), retire, or edit. */
   public async update(
     id: string,
-    change: { status?: RuleStatus; text?: string; reach?: "project" | "global" },
+    change: {
+      status?: RuleStatus;
+      text?: string;
+      reach?: "project" | "global";
+      evidence?: LearnedRule["evidence"];
+    },
   ): Promise<LearnedRule | undefined> {
     const rule = (await this.rules()).find((r) => r.id === id);
     if (!rule) return undefined;
@@ -230,7 +277,9 @@ export class LearningStore {
   ): Promise<ProfileEntry> {
     const all = await this.profile();
     const id = entry.key ? `pref_${entry.key}` : undefined;
-    const existing = all.find((p) => (id ? p.id === id : p.statement === entry.statement));
+    const existing = all.find((p) =>
+      id ? p.id === id : p.status === "active" && similarity(p.statement, entry.statement) >= 0.7,
+    );
     const at = new Date().toISOString();
     const next: ProfileEntry = existing
       ? {

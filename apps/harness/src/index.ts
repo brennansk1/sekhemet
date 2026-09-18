@@ -32,7 +32,7 @@ import {
 } from "./execute.js";
 import { notifySlack } from "./integrations.js";
 import { applyExploration, exploreProject } from "./learning/explore.js";
-import { reflectWithManager } from "./learning/reflect.js";
+import { consolidateWithManager, reflectWithManager } from "./learning/reflect.js";
 import { reviewCard } from "./learning/review.js";
 import { LearningStore } from "./learning/store.js";
 import { runMcpStdioServer } from "./mcp.js";
@@ -831,6 +831,13 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         // learning must never cost an extra swap.
         const learned = await reflectWithManager(manager, ctx.learning, reflections).catch(() => 0);
         await reviewPassed(manager);
+        // Mem0-style consolidation of what was learned, same residency.
+        const c = await consolidateWithManager(manager, ctx.learning).catch(() => undefined);
+        if (c && c.merged + c.contradictions + c.duplicates > 0) {
+          console.log(
+            `--- Merit consolidated rules: ${c.merged} merged, ${c.contradictions} contradiction(s) flagged, ${c.duplicates} duplicate(s) retired ---`,
+          );
+        }
         if (learned > 0) console.log(`\n--- Merit proposed ${learned} rule(s) from this run ---`);
         await pass(retry, 2, plans);
       }

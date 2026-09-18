@@ -6,6 +6,7 @@ import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { MockInferenceAdapter } from "@sekhemet/models";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  consolidateWithManager,
   learnFromAttempt,
   learnFromProposalChoices,
   learnFromSendBack,
@@ -157,5 +158,47 @@ describe("learning: playbook and user profile", () => {
     const [rule] = await store.rules();
     expect(rule).toMatchObject({ source: "reflection", status: "candidate" });
     expect(rule?.evidence[0]?.note).toMatch(/suggested reach: all projects/);
+  });
+
+  it("consolidates like Mem0: near-duplicates add evidence, related rules get a decision", async () => {
+    await store.propose({
+      role: "worker",
+      text: "Use node:sqlite exec for DDL statements.",
+      scope: {},
+      source: "seed",
+      evidence: [],
+    });
+    // Near-duplicate: NOOP at propose time, no second rule.
+    expect(
+      await store.propose({
+        role: "worker",
+        text: "use node:sqlite exec for DDL statements",
+        scope: {},
+        source: "seed",
+        evidence: [],
+      }),
+    ).toBeUndefined();
+    // Related but different: added, linked for Merit to decide.
+    const related = await store.propose({
+      role: "worker",
+      text: "Use node:sqlite prepare for inserts, not exec.",
+      scope: {},
+      source: "struggle",
+      evidence: [],
+    });
+    expect(related?.related?.length).toBe(1);
+
+    const model = new MockInferenceAdapter("dirk-27b", [
+      {
+        text: '{"decisions":[{"pair":1,"op":"UPDATE","merged":"Use node:sqlite exec for DDL and prepare(...).run for inserts."}]}',
+        toolCalls: [],
+        usage: { promptTokens: 1, completionTokens: 1, durationMs: 1 },
+      },
+    ]);
+    const c = await consolidateWithManager(model, store);
+    expect(c.merged).toBe(1);
+    const merged = (await store.rules()).find((r) => r.id === related?.id);
+    expect(merged?.text).toBe("Use node:sqlite exec for DDL and prepare(...).run for inserts.");
+    expect(merged?.evidence.at(-1)?.note).toMatch(/^merges/);
   });
 });
