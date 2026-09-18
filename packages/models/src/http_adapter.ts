@@ -932,6 +932,7 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
       stream,
     };
     if (stream) payload.stream_options = { include_usage: true };
+    if (req.slot !== undefined) payload.id_slot = req.slot;
 
     if (sampling.topP !== undefined) payload.top_p = sampling.topP;
     if (sampling.topK !== undefined) payload.top_k = sampling.topK;

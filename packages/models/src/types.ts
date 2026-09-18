@@ -70,6 +70,12 @@ export interface InferenceRequest {
    * forwarded (traces never leave the adapter).
    */
   onToken?: (delta: string) => void;
+  /**
+   * The server slot to run on (llama-server `id_slot`). Pin a long
+   * conversation to one slot and side calls to another so they do not
+   * evict each other's cached prefix. Ignored by Ollama.
+   */
+  slot?: number;
 }
 
 export interface TokenUsage {

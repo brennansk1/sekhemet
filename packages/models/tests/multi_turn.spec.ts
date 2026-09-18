@@ -163,7 +163,10 @@ describe("Apodex researcher profile", () => {
     const large = createApodexResearcher("/a.gguf", undefined, 128 * GB);
     expect(small.contextWindow).toEqual({ contextTokens: 16384, maxTokens: 1500 });
     expect(large.contextWindow).toEqual({ contextTokens: 32768, maxTokens: 1500 });
-    expect(large.launchArgs()[large.launchArgs().indexOf("-c") + 1]).toBe("32768");
+    // Two slots (conversation + extraction), each with the full window:
+    // -c is 2 x the per-slot context (the lead's slot change, intended).
+    expect(large.launchArgs()[large.launchArgs().indexOf("-c") + 1]).toBe("65536");
+    expect(large.launchArgs()[large.launchArgs().indexOf("-np") + 1]).toBe("2");
     expect(small.nativeTools).toBe(true);
     expect(small.samplingFor({})).toEqual({ temperature: 1.0, topP: 0.95, topK: 20, minP: 0 });
   });

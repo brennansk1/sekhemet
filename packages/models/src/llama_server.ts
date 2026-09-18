@@ -77,8 +77,16 @@ export interface LlamaServerProfile {
   threads?: number;
   /** `-ngl`: layers offloaded to the GPU. Default 99 (all). */
   gpuLayers?: number;
-  /** `-np`: server slots. Default 1. */
+  /** `-np`: server slots. Default 1. `-c` is `contextTokens`, shared by the slots. */
   parallel?: number;
+  /**
+   * `-np N` with every slot keeping the full `contextTokens` window: the
+   * server gets `-c contextTokens*N`. Requests pick a slot with
+   * `InferenceRequest.slot` (llama-server `id_slot`), so a short side call
+   * (an extraction) never evicts the long conversation's prefix. Takes
+   * precedence over `parallel`.
+   */
+  parallelSlots?: number;
   /**
    * Prompt-cache flags (M17). Unset uses `cacheProfileForHost()`; `false`
    * leaves every cache flag to the server's defaults.
@@ -159,7 +167,10 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
       baseUrl: `http://127.0.0.1:${port}`,
       apiFormat: "openai",
       // The window one request gets: `-c` is shared across `-np` slots.
-      contextTokens: Math.floor((profile.contextTokens ?? 8192) / (profile.parallel ?? 1)),
+      contextTokens:
+        profile.parallelSlots !== undefined
+          ? (profile.contextTokens ?? 8192)
+          : Math.floor((profile.contextTokens ?? 8192) / (profile.parallel ?? 1)),
       maxTokens: profile.maxTokens ?? 2048,
       disableReasoning: true,
       ...(profile.sampling ? { sampling: profile.sampling } : {}),
@@ -233,9 +244,20 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
     return args;
   }
 
+  /** Server slots (`-np`). */
+  public slotCount(): number {
+    return Math.max(1, this.profile.parallelSlots ?? this.profile.parallel ?? 1);
+  }
+
+  /** The server's total context (`-c`). */
+  public totalContextTokens(): number {
+    const ctx = this.profile.contextTokens ?? 8192;
+    return this.profile.parallelSlots !== undefined ? ctx * this.slotCount() : ctx;
+  }
+
   private buildLaunchArgs(): string[] {
     const p = this.profile;
-    const parallel = p.parallel ?? 1;
+    const parallel = this.slotCount();
     const cache = this.cacheSettings();
     return [
       "-m",
@@ -251,7 +273,7 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
       "on",
       "--jinja",
       "-c",
-      String(p.contextTokens ?? 8192),
+      String(this.totalContextTokens()),
       "-ctk",
       p.kvType ?? "q8_0",
       "-ctv",
@@ -286,7 +308,7 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
   public async trimCache(): Promise<number> {
     if (!(await this.healthy())) return 0;
     let erased = 0;
-    for (let slot = 0; slot < (this.profile.parallel ?? 1); slot++) {
+    for (let slot = 0; slot < this.slotCount(); slot++) {
       try {
         const res = await fetch(`${this.url}/slots/${slot}?action=erase`, {
           method: "POST",
@@ -420,7 +442,7 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
   public async footprintBytes(): Promise<number | undefined> {
     if (!existsSync(this.profile.modelPath)) return undefined;
     const weights = statSync(this.profile.modelPath).size;
-    const kv = (this.profile.contextTokens ?? 8192) * 64 * 1024; // hybrid MoE, q8_0: small
+    const kv = this.totalContextTokens() * 64 * 1024; // hybrid MoE, q8_0: small
     return Math.round(weights * 1.03 + kv + 1.2 * 1024 ** 3);
   }
 
@@ -504,8 +526,17 @@ export function createCyberTielWorker(
 export const APODEX_SYSTEM_PROMPT = (today: string): string =>
   `You are Apodex, an AI assistant developed by Apodex AI.\n\nApodex is the flagship agent of Apodex AI. Rather than a conventional conversational LLM, it is a general-purpose solver designed for mission-critical tasks.\n\nCurrent time: ${today}. In this environment you have access to a set of tools you can use to answer the user's question.\n\nYou only have access to the tools provided. You can use multiple tools per message, and will receive the results of those tools in the user's next response. You use tools step-by-step to accomplish a given task.\n\n# General Objective\n\nYou accomplish a given task iteratively, breaking it down into clear steps and working through them methodically.`;
 
-/** Apodex's context: 32k where the host has room for it, else 16k. */
-export function apodexContextTokens(totalBytes: number = totalmem()): number {
+/**
+ * Apodex's per-slot context: 32k where the host has room for it, else 16k.
+ * `SEKHEMET_RESEARCHER_CTX` (a token count) overrides it, for live
+ * measurement of larger windows.
+ */
+export function apodexContextTokens(
+  totalBytes: number = totalmem(),
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  const override = Number(env.SEKHEMET_RESEARCHER_CTX);
+  if (Number.isInteger(override) && override >= 2048) return override;
   // IQ3_M weights are ~16 GB; a 24 GB host keeps 16k so the KV cache and the
   // toolchain still fit. 32 GB and up take the 32k window research needs.
   return totalBytes >= 32 * 1024 ** 3 ? 32768 : 16384;
@@ -532,7 +563,12 @@ export function createApodexResearcher(
     slotCacheDir: process.env.SEKHEMET_SLOT_CACHE ?? `${tmpdir()}/sekhemet-slots`,
     ...(binary ? { binary } : {}),
     port: 8101,
+    // Slot 0: the research conversation. Slot 1: one-off web_fetch
+    // extractions, which otherwise evict the conversation's prefix (live
+    // hit rate 55-68% on one slot). Qwen3.5-A3B has full attention on only
+    // 1 layer in 4, so the second slot's KV cache is small.
     contextTokens: apodexContextTokens(totalBytes),
+    parallelSlots: 2,
     maxTokens: 1500,
     nativeTools: true,
     sampling: { temperature: 1.0, topP: 0.95, topK: 20, minP: 0 },
