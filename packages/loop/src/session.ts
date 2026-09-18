@@ -11,6 +11,7 @@ import type { GateFailure, GateResult } from "@sekhemet/gates";
 import type { CardRecord } from "@sekhemet/kernel";
 import { type ToolCall, checkExecutionHeadroom, readSwapUsedBytes } from "@sekhemet/models";
 import type { ExecutionResult } from "@sekhemet/sandbox";
+import { apiHints } from "./api_surface.js";
 import { OscillationDetector } from "./detector.js";
 import { type LadderState, RepairLadder, type RungPolicy } from "./ladder.js";
 import type { ToolObservation } from "./observation.js";
@@ -149,6 +150,12 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       }
       if (blocks.length >= 3) break;
     }
+    // A wrong member name is a knowledge gap, not a typo: name the real ones.
+    const hints = apiHints(
+      this.options.worktreePath,
+      failures.map((f) => f.errorExcerpt),
+    );
+    if (hints.length > 0) blocks.push(hints.join("\n"));
     return blocks.join("\n\n");
   }
 
@@ -197,6 +204,8 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       const action = f.suggestedAction ? `\n   fix: ${f.suggestedAction}` : "";
       return `${i + 1}. [${f.gate ?? f.rung}] ${where}${f.errorExcerpt.split("\n")[0]}${action}`;
     });
+    const code = this.failureCode(result.failures);
+    if (code) lines.push(`\nThe code at those lines:\n${code}`);
     return {
       tool: "check",
       ok: false,

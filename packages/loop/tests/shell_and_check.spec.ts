@@ -269,4 +269,52 @@ describe("@sekhemet/loop shell command lines and the check tool", () => {
     const log = readFileSync(join(root, "fix.log"), "utf8").trim().split("\n");
     expect(log).toEqual(["rule-one src/a.ts", "rule-two src/a.ts"]);
   });
+
+  it("names a type's real members when the code calls one that does not exist", async () => {
+    mkdirSync(join(root, "node_modules", "@types", "node"), { recursive: true });
+    writeFileSync(
+      join(root, "node_modules", "@types", "node", "sqlite.d.ts"),
+      `declare module "node:sqlite" {
+  class DatabaseSync {
+    constructor(path: string);
+    exec(sql: string): void;
+    prepare(sql: string): StatementSync;
+    close(): void;
+    readonly isOpen: boolean;
+  }
+}
+`,
+    );
+    const runner: GateRunner = {
+      runGates: async (): Promise<GateResult> => ({
+        passed: false,
+        durationMs: 1,
+        failures: [
+          {
+            rung: "typecheck",
+            gate: "typecheck",
+            exitCode: 2,
+            errorExcerpt:
+              "src/a.ts:2:5 TS2339: Property 'run' does not exist on type 'DatabaseSync'.",
+            suggestedFixFiles: ["src/a.ts"],
+            location: { file: "src/a.ts", line: 2 },
+          },
+        ],
+      }),
+    };
+    const usage = { promptTokens: 1, completionTokens: 1, durationMs: 1 };
+    const session = new CardExecutionSessionImpl({
+      cardId: "c",
+      stepBudget: 5,
+      worktreePath: root,
+      gateRunner: runner,
+      modelAdapter: new MockInferenceAdapter("m", [
+        { text: "", toolCalls: [{ id: "c", name: "check", arguments: {} }], usage },
+      ]),
+    });
+    const turn = await session.executeTurn();
+    expect(turn.observations[0]?.content).toContain(
+      "DatabaseSync has no 'run'. Its actual members are: close, exec, isOpen, prepare.",
+    );
+  });
 });
