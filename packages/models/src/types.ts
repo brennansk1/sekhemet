@@ -30,9 +30,26 @@ export type ReasoningLevel = "off" | "low" | "medium" | "high";
 /** What a request is for; selects the adapter's sampling profile (M5). */
 export type RequestPurpose = "code" | "planning";
 
+/**
+ * One turn of a native multi-turn conversation. An assistant turn may carry
+ * the tool calls it made; a `tool` turn answers one of them by `toolCallId`.
+ */
+export interface ChatTurn {
+  role: "system" | "user" | "assistant" | "tool";
+  content: string;
+  toolCalls?: ToolCall[];
+  toolCallId?: string;
+}
+
 export interface InferenceRequest {
   systemPrompt?: string;
+  /** The user message. Ignored when `messages` is set. */
   prompt: string;
+  /**
+   * A native multi-turn conversation, sent as-is (after `systemPrompt`, when
+   * given) instead of the single `prompt` user message.
+   */
+  messages?: ChatTurn[];
   tools?: ToolDefinition[];
   toolArm: ToolArm;
   temperature?: number;

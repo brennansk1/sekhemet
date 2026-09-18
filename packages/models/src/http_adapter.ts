@@ -2,6 +2,7 @@ import { performance } from "node:perf_hooks";
 import { currentMemoryPressure } from "./memory.js";
 import { parseToolCallsFromText, stripReasoning } from "./parser.js";
 import type {
+  ChatTurn,
   InferenceRequest,
   InferenceResponse,
   LocalInferenceAdapter,
@@ -76,8 +77,45 @@ export interface HttpAdapterOptions {
 }
 
 interface ChatMessage {
-  role: "system" | "user" | "assistant";
+  role: "system" | "user" | "assistant" | "tool";
   content: string;
+  tool_calls?: unknown[];
+  tool_call_id?: string;
+  tool_name?: string;
+}
+
+/**
+ * Wire form of a multi-turn conversation. OpenAI (llama-server): assistant
+ * `tool_calls` with JSON-string arguments, tool turns with `tool_call_id`.
+ * Ollama: arguments as objects, tool turns with `tool_name` (Ollama matches
+ * results by name, not id).
+ */
+export function chatTurnsToWire(turns: ChatTurn[], format: "openai" | "ollama"): ChatMessage[] {
+  const names = new Map<string, string>();
+  return turns.map((turn) => {
+    const message: ChatMessage = { role: turn.role, content: turn.content };
+    if (turn.role === "assistant" && turn.toolCalls?.length) {
+      for (const call of turn.toolCalls) names.set(call.id, call.name);
+      message.tool_calls = turn.toolCalls.map((call) =>
+        format === "openai"
+          ? {
+              id: call.id,
+              type: "function",
+              function: { name: call.name, arguments: JSON.stringify(call.arguments) },
+            }
+          : { function: { name: call.name, arguments: call.arguments } },
+      );
+    }
+    if (turn.role === "tool") {
+      if (format === "openai") {
+        if (turn.toolCallId !== undefined) message.tool_call_id = turn.toolCallId;
+      } else {
+        const name = turn.toolCallId !== undefined ? names.get(turn.toolCallId) : undefined;
+        if (name) message.tool_name = name;
+      }
+    }
+    return message;
+  });
 }
 
 /** Native tool-call payloads, when the server supports them. */
@@ -374,6 +412,10 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
     // The system message must stay byte-identical across turns for the server's
     // prefix cache to hit; per-turn state belongs in the user message.
     if (req.systemPrompt) messages.push({ role: "system", content: req.systemPrompt });
+    if (req.messages) {
+      messages.push(...chatTurnsToWire(req.messages, this.apiFormat));
+      return messages;
+    }
     messages.push({ role: "user", content: req.prompt });
     return messages;
   }
@@ -481,7 +523,7 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
       toolCalls,
       usage: {
         promptTokens:
-          promptTokens ?? Math.round((req.prompt.length + (req.systemPrompt?.length ?? 0)) / 4),
+          promptTokens ?? Math.round(messages.reduce((a, m) => a + m.content.length, 0) / 4),
         completionTokens: completionTokens ?? Math.round(visible.length / 4),
         durationMs: Math.round(performance.now() - start),
         ...measured,
@@ -575,6 +617,8 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
         type: "function",
         function: { name: t.name, description: t.description, parameters: t.parameters },
       }));
+      // Several independent calls in one step (the Researcher's parallel searches).
+      payload.parallel_tool_calls = true;
     }
     // llama.cpp honours this to reuse the KV cache for an unchanged prefix.
     if (this.options.promptCache !== false) payload.cache_prompt = true;

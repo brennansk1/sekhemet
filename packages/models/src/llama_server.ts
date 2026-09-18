@@ -79,6 +79,8 @@ export interface LlamaServerProfile {
   reasoning?: "on" | "off" | "auto";
   extraArgs?: string[];
   sampling?: HttpAdapterOptions["sampling"];
+  /** Send tool schemas natively (default true). */
+  nativeTools?: boolean;
   /** Sampling for `purpose: "planning"` requests (M5). */
   planningSampling?: HttpAdapterOptions["sampling"];
   maxTokens?: number;
@@ -141,6 +143,7 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
       disableReasoning: true,
       ...(profile.sampling ? { sampling: profile.sampling } : {}),
       ...(profile.planningSampling ? { planningSampling: profile.planningSampling } : {}),
+      ...(profile.nativeTools !== undefined ? { nativeTools: profile.nativeTools } : {}),
     });
     this.url = `http://127.0.0.1:${port}`;
   }
@@ -413,16 +416,33 @@ export function createCyberTielWorker(
 }
 
 /**
+ * The Apodex vendor system prompt (model card apodex/Apodex-1.1-mini §3.3),
+ * verbatim, with the current time filled in.
+ */
+export const APODEX_SYSTEM_PROMPT = (today: string): string =>
+  `You are Apodex, an AI assistant developed by Apodex AI.\n\nApodex is the flagship agent of Apodex AI. Rather than a conventional conversational LLM, it is a general-purpose solver designed for mission-critical tasks.\n\nCurrent time: ${today}. In this environment you have access to a set of tools you can use to answer the user's question.\n\nYou only have access to the tools provided. You can use multiple tools per message, and will receive the results of those tools in the user's next response. You use tools step-by-step to accomplish a given task.\n\n# General Objective\n\nYou accomplish a given task iteratively, breaking it down into clear steps and working through them methodically.`;
+
+/** Apodex's context: 32k where the host has room for it, else 16k. */
+export function apodexContextTokens(totalBytes: number = totalmem()): number {
+  // IQ3_M weights are ~16 GB; a 24 GB host keeps 16k so the KV cache and the
+  // toolchain still fit. 32 GB and up take the 32k window research needs.
+  return totalBytes >= 32 * 1024 ** 3 ? 32768 : 16384;
+}
+
+/**
  * Apodex-1.1-mini as the Researcher (the user's choice; arXiv 2608.23283,
  * Apache-2.0, a Qwen3.5-35B-A3B research fine-tune). IQ3_M (imatrix, 16 GB)
  * is the largest quant that runs alone on a 24 GB host; on a 128 GB host use
  * Q8_0 via SEKHEMET_RESEARCHER_GGUF. Its own port, so it never collides with
- * the worker's server when both are resident.
+ * the worker's server when both are resident. Sampling is the vendor's
+ * (model card §3.3: temperature 1.0, top_p 0.95); tools go natively, and
+ * several may be called per message. Pair with `APODEX_SYSTEM_PROMPT`.
  */
 export function createApodexResearcher(
   modelPath = process.env.SEKHEMET_RESEARCHER_GGUF ??
     "/Volumes/My Passport/AI-Models/llm/Apodex-1.1-mini-GGUF/Apodex-1.1-mini-IQ3_M.gguf",
   binary = process.env.SEKHEMET_LLAMA_SERVER,
+  totalBytes: number = totalmem(),
 ): ManagedLlamaServerAdapter {
   return new ManagedLlamaServerAdapter({
     modelId: "apodex-1.1-mini",
@@ -430,9 +450,10 @@ export function createApodexResearcher(
     slotCacheDir: process.env.SEKHEMET_SLOT_CACHE ?? `${tmpdir()}/sekhemet-slots`,
     ...(binary ? { binary } : {}),
     port: 8101,
-    contextTokens: 16384,
+    contextTokens: apodexContextTokens(totalBytes),
     maxTokens: 1500,
-    sampling: { temperature: 0.3, topP: 0.95, topK: 20, minP: 0 },
+    nativeTools: true,
+    sampling: { temperature: 1.0, topP: 0.95, topK: 20, minP: 0 },
   });
 }
 
