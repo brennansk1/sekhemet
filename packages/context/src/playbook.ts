@@ -460,3 +460,45 @@ export class PlaybookRegistry {
     return results;
   }
 }
+
+/**
+ * What to do about each audited rule (C12, design "Skill & playbook
+ * diagnostics"): the audit's two halves (over 300 tokens, under +3% pass
+ * rate) become a recommendation the doctor prints and a human applies.
+ *
+ * - `retire`: over budget and measured under the gain bar, or measured as
+ *   harmful at any size.
+ * - `shorten`: over budget and earning its keep; worth condensing.
+ * - `measure`: over budget with no measurement yet; run it both ways.
+ * - `keep`: within budget and not harmful.
+ */
+export interface ContextDebtRecommendation {
+  ruleId: string;
+  action: "retire" | "shorten" | "measure" | "keep";
+  tokens: number;
+  reason: string;
+}
+
+export function contextDebtRecommendations(
+  entries: readonly ContextDebtEntry[],
+): ContextDebtRecommendation[] {
+  return entries
+    .map((e): ContextDebtRecommendation => {
+      const harmful = e.hasMeasurement && (e.passRateDelta ?? 0) < 0;
+      const overBudget = e.reason.startsWith("costs");
+      let action: ContextDebtRecommendation["action"];
+      if (harmful || e.flaggedDebt) action = e.hasMeasurement ? "retire" : "measure";
+      else if (overBudget) action = "shorten";
+      else action = "keep";
+      const reason = harmful
+        ? `measured harmful (${(e.passRateDelta as number).toFixed(3)} pass rate)`
+        : e.reason;
+      return { ruleId: e.ruleId, action, tokens: e.tokenEstimate, reason };
+    })
+    .sort((a, b) => {
+      const order = { retire: 0, measure: 1, shorten: 2, keep: 3 } as const;
+      return (
+        order[a.action] - order[b.action] || b.tokens - a.tokens || a.ruleId.localeCompare(b.ruleId)
+      );
+    });
+}

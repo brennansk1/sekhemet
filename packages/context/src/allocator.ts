@@ -47,7 +47,13 @@ export type SectionKind =
   | "failure"
   | "remedy"
   | "notice"
-  | "goal";
+  | "goal"
+  | "conventions"
+  | "exemplars"
+  | "tool_index"
+  | "loaded_tools"
+  | "late_rules"
+  | "pinned_system";
 
 export interface ContextSection {
   id: string;

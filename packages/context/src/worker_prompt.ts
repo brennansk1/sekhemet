@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { GateFailure } from "@sekhemet/gates";
 import type { CardRecord } from "@sekhemet/kernel";
 import type { ToolDefinition } from "@sekhemet/models";
@@ -10,8 +11,10 @@ import {
 } from "./allocator.js";
 import { compactHistory, maskOlderObservations } from "./condenser.js";
 import type { EvidenceStore } from "./evidence.js";
+import { type Exemplar, renderExemplars } from "./exemplars.js";
 import { factKeysOf } from "./facts.js";
 import { type PlaybookRule, ruleFactKeys } from "./playbook.js";
+import type { PrefixStabilityGuard } from "./prefix_guard.js";
 import {
   DEFAULT_PRESSURE_THRESHOLDS,
   type PressureAssessment,
@@ -21,8 +24,11 @@ import {
   assessContextPressure,
 } from "./pressure.js";
 import { PROMPT_ZONE_1_SYSTEM, type SkillDisclosure, type TurnHistoryItem } from "./prompts.js";
+import { linesNamedFor, pruneLines } from "./pruner.js";
 import type { SkillManifest } from "./skills.js";
 import { type ToolInterfaceSpec, renderToolInterface } from "./tool_interface.js";
+import { renderToolSearchIndex } from "./tool_search.js";
+import { computeContextVersion } from "./versioning.js";
 import { computePrefixHash } from "./zones.js";
 
 /**
@@ -105,6 +111,59 @@ export interface WorkerPromptInput {
   maxRules?: number;
   /** Most error-scoped rules in the tail. Default 5. */
   maxErrorRules?: number;
+  /**
+   * Pins the system prompt for the card on its first build and reuses it
+   * verbatim afterwards (C4). Rules that enter later go to the tail.
+   */
+  prefixGuard?: PrefixStabilityGuard;
+  /**
+   * Project conventions from AGENTS.md / CLAUDE.md (`loadProjectConventions`,
+   * C22), folded into the system prompt.
+   */
+  conventions?: string;
+  /** Successful trajectories of this card's class (`ExemplarStore.topFor`, C13). */
+  exemplars?: Exemplar[];
+  /**
+   * Dynamic tool loading (C19): every tool in the catalog, shown as a
+   * one-line index in the system prompt. `tools` is then the set loaded
+   * from the start; `loadedTools` the specs `tool_search` loaded since,
+   * which go to the volatile tail so the prefix stays stable.
+   */
+  toolIndex?: ToolInterfaceSpec[];
+  loadedTools?: ToolInterfaceSpec[];
+}
+
+/**
+ * The context pack for a step (C14): an id and the per-zone token counts,
+ * with the prefix hashes and the joint version, for persistence with the
+ * attempt and the evidence bundle.
+ */
+export interface ContextPackRecord {
+  id: string;
+  cardId: string;
+  step: number;
+  zoneTokens: { system: number; static: number; volatile: number; toolSchemas: number };
+  prefixHash: string;
+  staticPrefixHash: string;
+  /** Joint prompt/playbook/tool version (C21). */
+  version: string;
+  tier: PressureTier;
+  cut: SectionKind[];
+}
+
+/** Per-step context metrics (C20). */
+export interface ContextStepMetrics {
+  step: number;
+  usedTokens: number;
+  budgetTokens: number | undefined;
+  utilization: number | undefined;
+  tier: PressureTier;
+  maskedObservations: number;
+  compactedTurns: number;
+  sectionsCut: number;
+  rulesInPrompt: number;
+  /** The system prompt matched the card's pin (C4); undefined without a guard. */
+  prefixStable: boolean | undefined;
 }
 
 export interface WorkerPromptResult {
@@ -125,6 +184,16 @@ export interface WorkerPromptResult {
   rulesUsed: string[];
   /** Kinds of sections that were cut, for the log. */
   cut: SectionKind[];
+  /** The context pack record (C14). */
+  pack: ContextPackRecord;
+  /** Joint prompt/playbook/tool version hash (C21). */
+  versionHash: string;
+  metrics: ContextStepMetrics;
+  /**
+   * Identical inputs have produced identical bytes every time this process
+   * has seen them (C15). False means a nondeterministic input slipped in.
+   */
+  deterministic: boolean;
 }
 
 const NATIVE_TOOLS_NOTE =
@@ -159,6 +228,26 @@ function shrinkFile(text: string, maxTokens: number): string | undefined {
   const head = Math.floor(room * 0.7);
   const tail = Math.floor(room * 0.3) - 4;
   return `${text.slice(0, head)}${marker}${tail > 0 ? text.slice(-tail) : ""}`;
+}
+
+/**
+ * Shrink a file section by relevance first (C3): keep the lines that matter
+ * to the goal and the failure, the lines the failure names, and their
+ * enclosing declarations. Head-and-tail cutting is the fallback.
+ */
+function pruningShrink(path: string, query: string, failure: string) {
+  const pinned = linesNamedFor(path, failure);
+  return (text: string, maxTokens: number): string | undefined => {
+    const nl = text.indexOf("\n");
+    const header = nl >= 0 ? text.slice(0, nl) : "";
+    const body = nl >= 0 ? text.slice(nl + 1) : text;
+    const room = maxTokens - estimatePromptTokens(header) - 1;
+    if (room > 40 && query.trim()) {
+      const pruned = pruneLines(body, query, { maxTokens: room, pinnedLines: pinned });
+      if (pruned.fits) return `${header}\n${pruned.text}`;
+    }
+    return shrinkFile(text, maxTokens);
+  };
 }
 
 function failureText(failures: GateFailure[], code: string | undefined): string {
@@ -214,11 +303,26 @@ interface Built {
   rules: PlaybookRule[];
 }
 
+function failureBlob(input: WorkerPromptInput): string {
+  return (input.gateFailures ?? []).map((f) => f.errorExcerpt).join("\n");
+}
+
+/** What pruning scores lines against: the goal, the criteria and the failure. */
+function pruneQuery(input: WorkerPromptInput): string {
+  return [
+    input.goal ?? input.card.title,
+    ...(input.acceptanceCriteria ?? []),
+    failureBlob(input),
+    input.failureCode ?? "",
+  ].join("\n");
+}
+
 function buildSections(
   input: WorkerPromptInput,
   turns: TurnHistoryItem[],
   repoMap: string,
   disclosure: SkillDisclosure,
+  pinned?: { systemPrompt: string; ruleIds: string[] },
 ): Built {
   const s: ContextSection[] = [];
   const add = (section: ContextSection): void => {
@@ -248,9 +352,41 @@ function buildSections(
     });
   }
   const all = input.rules ?? [];
-  const cardRules = all.filter((r) => !r.errorPattern).slice(0, input.maxRules ?? 8);
+  // Which rules make the cut follows their rank; the order they render in
+  // does not (by id), so a re-ranking alone never reorders the prefix (C4).
+  const cardRules = all
+    .filter((r) => !r.errorPattern)
+    .slice(0, input.maxRules ?? 8)
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const errorRules = all.filter((r) => r.errorPattern).slice(0, input.maxErrorRules ?? 5);
-  cardRules.forEach((r, i) =>
+  if (input.conventions?.trim()) {
+    add({
+      id: "conventions",
+      kind: "conventions",
+      placement: "system",
+      order: 5,
+      priority: 50,
+      capTokens: 350,
+      text: `=== PROJECT CONVENTIONS ===\n${input.conventions.trim()}`,
+    });
+  }
+  if (input.toolIndex?.length) {
+    add({
+      id: "tool_index",
+      kind: "tool_index",
+      placement: "system",
+      order: 2,
+      priority: 100,
+      required: true,
+      text: renderToolSearchIndex(input.toolIndex),
+    });
+  }
+  const lateRules: PlaybookRule[] = [];
+  cardRules.forEach((r, i) => {
+    if (pinned && !pinned.ruleIds.includes(r.id)) {
+      lateRules.push(r);
+      return;
+    }
     add({
       id: `rule:${r.id}`,
       kind: "rules",
@@ -260,24 +396,63 @@ function buildSections(
       capTokens: 160,
       factKeys: ruleFactKeys(r),
       text: `- ${r.instruction}`,
-    }),
-  );
+    });
+  });
   [...(input.skills ?? [])]
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
-    .forEach((skill, i) =>
+    .forEach((skill, i) => {
+      const mode = skill.disclosure ?? disclosure;
       add({
         id: `skill:${skill.name}`,
         kind: "skills",
         placement: "system",
         order: 40 + i,
-        priority: 48,
+        priority: mode === "manifest" ? 52 : 48,
         capTokens: 600,
         text:
-          disclosure === "manifest"
+          mode === "manifest"
             ? `- ${skill.name}: ${skill.description}`
             : `### Skill: ${skill.name}\n${skill.content}`,
-      }),
-    );
+      });
+    });
+  if (pinned) {
+    // The card's pinned system prompt replaces the freshly built one (C4).
+    for (let i = s.length - 1; i >= 0; i--) {
+      if (s[i]?.placement === "system") s.splice(i, 1);
+    }
+    add({
+      id: "pinned_system",
+      kind: "pinned_system",
+      placement: "system",
+      order: 0,
+      priority: 100,
+      required: true,
+      text: pinned.systemPrompt,
+    });
+  }
+  lateRules.forEach((r, i) =>
+    add({
+      id: `rule:${r.id}`,
+      kind: "late_rules",
+      placement: "volatile",
+      order: 205 + i,
+      priority: 55,
+      capTokens: 160,
+      factKeys: ruleFactKeys(r),
+      text: `- ${r.instruction}`,
+    }),
+  );
+  if (input.loadedTools?.length) {
+    add({
+      id: "loaded_tools",
+      kind: "loaded_tools",
+      placement: "volatile",
+      order: 50,
+      priority: 92,
+      required: true,
+      text: `=== TOOLS LOADED WITH tool_search ===\n${renderToolInterface(input.loadedTools)}`,
+    });
+  }
 
   // --- static: stable for the card, extends the cached prefix ---
   if (repoMap) {
@@ -289,6 +464,20 @@ function buildSections(
       priority: 10,
       text: `=== ARCHITECTURAL REPO MAP ===\n${repoMap}`,
     });
+  }
+  if (input.exemplars?.length) {
+    const rendered = renderExemplars(input.exemplars);
+    if (rendered) {
+      add({
+        id: "exemplars",
+        kind: "exemplars",
+        placement: "static",
+        order: 5,
+        priority: 35,
+        capTokens: 450,
+        text: `=== WORKED EXAMPLES FROM THIS REPO (same kind of card, passed) ===\n${rendered}`,
+      });
+    }
   }
   (input.acceptanceTests ?? []).forEach((f, i) =>
     add({
@@ -309,7 +498,7 @@ function buildSections(
       placement: "static",
       order: 20 + i,
       priority: 30,
-      shrink: shrinkFile,
+      shrink: pruningShrink(f.path, pruneQuery(input), failureBlob(input)),
       minTokens: 200,
       text: `=== REFERENCE FILE: ${f.path} ===\n${f.content || "(empty file)"}`,
     }),
@@ -382,7 +571,7 @@ function buildSections(
       order: 100 + i,
       priority: 90,
       minTokens: 400,
-      shrink: shrinkFile,
+      shrink: pruningShrink(f.path, pruneQuery(input), failureBlob(input)),
       text: `=== SCOPE FILE: ${f.path} (current content; edit it, do not read_file it) ===\n${f.content || "(empty file)"}`,
     }),
   );
@@ -519,6 +708,17 @@ const CUT_LABELS: Partial<Record<SectionKind, string>> = {
   scope_file: "part of a scope file (read_file with a line range)",
 };
 
+/** Recent input-hash -> output-hash pairs, for the runtime determinism check (C15). */
+const seenBuilds = new Map<string, string>();
+
+function inputKey(input: WorkerPromptInput, pinnedHash: string | undefined): string {
+  const { evidenceStore: _e, prefixGuard: _g, ...rest } = input;
+  return createHash("sha256")
+    .update(JSON.stringify(rest))
+    .update(pinnedHash ?? "")
+    .digest("hex");
+}
+
 export function buildWorkerPrompt(input: WorkerPromptInput): WorkerPromptResult {
   const thresholds = input.thresholds ?? DEFAULT_PRESSURE_THRESHOLDS;
   const overhead =
@@ -528,18 +728,29 @@ export function buildWorkerPrompt(input: WorkerPromptInput): WorkerPromptResult 
   const budget = input.budgetTokens;
   const store = input.evidenceStore ? { evidenceStore: input.evidenceStore } : {};
   const cardId = { cardId: input.card.id };
+  const guard = input.prefixGuard;
+  const pin = guard?.pinned(input.card.id);
+  const version = computeContextVersion({
+    tools: [...(input.toolIndex ?? []), ...input.tools],
+    rules: input.rules ?? [],
+    ...(input.conventions ? { templates: [input.conventions] } : {}),
+  });
 
   // Nominal history: compact long histories, mask all but the last two.
   const raw = input.turns ?? [];
   const compacted = raw.length > 8 ? compactHistory(raw, 6, { ...store, ...cardId }).turns : raw;
   const nominalTurns = maskOlderObservations(compacted, 2, { ...store, ...cardId });
   const repoMapIn = input.repoMap ?? "";
-  const pinnedDisclosure = input.skillDisclosure;
+  // With a pin, the disclosure in force when the card started stays (C4).
+  const pinnedDisclosure = pin?.disclosure ?? input.skillDisclosure;
+  const pinned = pin ? { systemPrompt: pin.systemPrompt, ruleIds: pin.ruleIds } : undefined;
 
   const measure = (b: Built): number =>
     overhead + b.sections.reduce((a, s) => a + estimatePromptTokens(s.text) + 1, 0);
 
-  let built = buildSections(input, nominalTurns, repoMapIn, pinnedDisclosure ?? "full");
+  let disclosureUsed: SkillDisclosure = pinnedDisclosure ?? "full";
+  let turnsUsed = nominalTurns;
+  let built = buildSections(input, nominalTurns, repoMapIn, disclosureUsed, pinned);
   const pressure = assessContextPressure(
     measure(built),
     budget ?? Number.POSITIVE_INFINITY,
@@ -552,12 +763,9 @@ export function buildWorkerPrompt(input: WorkerPromptInput): WorkerPromptResult 
       { turns: compacted, repoMap: repoMapIn, ...store, ...cardId },
       pressure,
     );
-    built = buildSections(
-      input,
-      applied.turns,
-      applied.repoMap,
-      pinnedDisclosure ?? (applied.skillBodiesDropped ? "manifest" : "full"),
-    );
+    disclosureUsed = pinnedDisclosure ?? (applied.skillBodiesDropped ? "manifest" : "full");
+    turnsUsed = applied.turns;
+    built = buildSections(input, applied.turns, applied.repoMap, disclosureUsed, pinned);
   }
 
   // Leave room for the line that names what was cut.
@@ -600,12 +808,91 @@ export function buildWorkerPrompt(input: WorkerPromptInput): WorkerPromptResult 
   const prompt = [staticPart, volatilePart].filter(Boolean).join("\n\n");
   const kept = new Set(sections.map((x) => x.id));
   const stop = budget !== undefined && !allocation.fits;
+  const prefixHash = computePrefixHash(systemPrompt);
+  const staticPrefixHash = computePrefixHash(`${systemPrompt}\n\n${staticPart}`);
+
+  // Pin on the first build; observe every build (C4).
+  let prefixStable: boolean | undefined;
+  if (guard) {
+    if (!pin) {
+      guard.pin({
+        cardId: input.card.id,
+        systemPrompt,
+        prefixHash,
+        ruleIds: built.rules
+          .filter((r) => kept.has(`rule:${r.id}`) && !r.errorPattern)
+          .map((r) => r.id),
+        disclosure: disclosureUsed,
+        versionHash: version.version,
+      });
+    }
+    prefixStable = guard.observe(input.card.id, prefixHash);
+  }
+
+  // Runtime determinism (C15): the same inputs must give the same bytes.
+  const key = inputKey(input, pin?.prefixHash);
+  const outHash = createHash("sha256")
+    .update(systemPrompt)
+    .update("\u0000")
+    .update(prompt)
+    .digest("hex");
+  const previous = seenBuilds.get(key);
+  const deterministic = previous === undefined || previous === outHash;
+  if (!deterministic) {
+    process.stderr.write(
+      `[context] nondeterministic prompt for card ${input.card.id}: identical inputs produced different bytes\n`,
+    );
+  }
+  seenBuilds.set(key, outHash);
+  if (seenBuilds.size > 512) seenBuilds.delete(seenBuilds.keys().next().value as string);
+
+  const zoneTokens = {
+    system: estimatePromptTokens(systemPrompt),
+    static: estimatePromptTokens(staticPart),
+    volatile: estimatePromptTokens(volatilePart),
+    toolSchemas: overhead,
+  };
+  const step = input.card.stepsUsed;
+  const pack: ContextPackRecord = {
+    id: `ctx_${createHash("sha256").update(`${input.card.id}:${step}:${outHash}`).digest("hex").slice(0, 16)}`,
+    cardId: input.card.id,
+    step,
+    zoneTokens,
+    prefixHash,
+    staticPrefixHash,
+    version: version.version,
+    tier: pressure.tier,
+    cut: cutKinds,
+  };
+  const rulesUsed = built.rules.filter((r) => kept.has(`rule:${r.id}`)).map((r) => r.id);
+  const pinnedRules = pin?.ruleIds ?? [];
+  const allRulesUsed = [
+    ...new Set([
+      ...rulesUsed,
+      ...pinnedRules.filter((id) => (input.rules ?? []).some((r) => r.id === id)),
+    ]),
+  ];
+  const metrics: ContextStepMetrics = {
+    step,
+    usedTokens: allocation.usedTokens,
+    budgetTokens: budget,
+    utilization:
+      budget !== undefined && budget > 0
+        ? Math.round((allocation.usedTokens / budget) * 1000) / 1000
+        : undefined,
+    tier: pressure.tier,
+    maskedObservations: turnsUsed.filter((t) => t.result.includes("EvidenceRef:")).length,
+    compactedTurns: raw.length > 8 ? raw.length - 6 : 0,
+    sectionsCut: allocation.events.filter((e) => e.action === "dropped").length,
+    rulesInPrompt: allRulesUsed.length,
+    prefixStable,
+  };
 
   return {
     systemPrompt,
     prompt,
-    prefixHash: computePrefixHash(systemPrompt),
-    staticPrefixHash: computePrefixHash(`${systemPrompt}\n\n${staticPart}`),
+    prefixHash,
+    staticPrefixHash,
     tier: pressure.tier,
     pressure,
     events: allocation.events,
@@ -613,9 +900,27 @@ export function buildWorkerPrompt(input: WorkerPromptInput): WorkerPromptResult 
     budgetTokens: budget,
     stop,
     ...(stop ? { stopReason: "budget_exhausted" as const } : {}),
-    rulesUsed: built.rules.filter((r) => kept.has(`rule:${r.id}`)).map((r) => r.id),
+    rulesUsed: allRulesUsed,
     cut: cutKinds,
+    pack,
+    versionHash: version.version,
+    metrics,
+    deterministic,
   };
+}
+
+/**
+ * Build twice and compare (C15): the explicit determinism assertion for
+ * tests and `sekhemet doctor`. Throws when the bytes differ.
+ */
+export function assertPromptDeterminism(input: WorkerPromptInput): WorkerPromptResult {
+  const { prefixGuard: _g, ...rest } = input;
+  const a = buildWorkerPrompt(rest);
+  const b = buildWorkerPrompt(rest);
+  if (a.systemPrompt !== b.systemPrompt || a.prompt !== b.prompt) {
+    throw new Error(`Prompt assembly is nondeterministic for card ${input.card.id}`);
+  }
+  return a;
 }
 
 /** Split matched rules the way `buildWorkerPrompt` places them. */
