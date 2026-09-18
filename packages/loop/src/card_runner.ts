@@ -1,3 +1,5 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { GateResult } from "@sekhemet/gates";
 import {
   type EvidenceBundle,
@@ -77,6 +79,40 @@ export class CardRunner {
 
   public get gatesConfigSha256(): string {
     return this.config.sha256;
+  }
+
+  /**
+   * Persist every model reply and tool call for this attempt.
+   *
+   * "Model-visible means logged" (design K11): when a card stalls, the only
+   * way to know whether the model reasoned badly, emitted an unparseable call,
+   * or said nothing is to read what it actually produced.
+   */
+  private writeTranscript(cardId: string, turns: TurnResult[]): void {
+    try {
+      const dir = join(this.options.repoRoot, ".sekhemet", "transcripts");
+      mkdirSync(dir, { recursive: true });
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const lines = turns.map((t) =>
+        JSON.stringify({
+          turn: t.turnIndex,
+          rawText: t.rawText ?? "",
+          toolCalls: t.toolCalls.map((c) => ({ name: c.name, arguments: c.arguments })),
+          observations: t.observations.map((o) => ({ tool: o.tool, ok: o.ok, summary: o.summary })),
+          gate: t.gateResult
+            ? {
+                passed: t.gateResult.passed,
+                failures: t.gateResult.failures.map((f) => f.errorExcerpt),
+              }
+            : undefined,
+          stopReason: t.stopReason,
+          usage: t.usage,
+        }),
+      );
+      writeFileSync(join(dir, `${cardId}-${stamp}.jsonl`), `${lines.join("\n")}\n`, "utf8");
+    } catch {
+      // Transcript loss must never fail a card.
+    }
   }
 
   private emit(event: RunProgressEvent): void {
@@ -195,6 +231,7 @@ export class CardRunner {
       }
     }
 
+    this.writeTranscript(card.id, turns);
     await lifecycle?.recordSteps?.(card.id, session.getStepsUsed());
 
     // Bounds are checked against the real diff, which is why the git adapter

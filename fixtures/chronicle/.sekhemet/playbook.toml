@@ -35,3 +35,11 @@ triggerGate = "test"
 pattern = "src/"
 instruction = "Once every declared scope file is written, call finish_card. Do not re-read files you have already read: verification gives you the authoritative answer, and re-reading spends the step budget without changing anything."
 effectiveDate = "2026-09-18"
+
+[[rule]]
+id = "rule_exact_optional"
+originCard = "card_chron_verifier"
+triggerGate = "typecheck"
+pattern = "src/"
+instruction = "tsconfig enables exactOptionalPropertyTypes: an optional property may be OMITTED but never set to undefined. Write `return { valid: true, totalEvents: n }`, not `{ valid: true, totalEvents: n, corruptedAtSequence: undefined }`. To set one conditionally use a spread: `...(seq !== undefined ? { corruptedAtSequence: seq } : {})`."
+effectiveDate = "2026-09-18"

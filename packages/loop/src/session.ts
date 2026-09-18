@@ -279,10 +279,26 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       prompt,
       // Names travel with the request so the parser can recognise a call in
       // whatever syntax the model chose to emit it.
+      // Real JSON Schema, so servers with native tool calling (Ollama's
+      // `tools`, OpenAI-compatible `tools`) can constrain the call format
+      // instead of leaving the model to improvise one.
       tools: catalog.map((t) => ({
         name: t.name,
         description: t.summary,
-        parameters: Object.fromEntries(t.parameters.map((p) => [p.name, p.type])),
+        parameters: {
+          type: "object",
+          properties: Object.fromEntries(
+            t.parameters.map((p) => [
+              p.name,
+              {
+                type: p.type,
+                description: p.description,
+                ...(p.type === "array" ? { items: { type: "string" } } : {}),
+              },
+            ]),
+          ),
+          required: t.parameters.filter((p) => p.required).map((p) => p.name),
+        },
       })),
       toolArm: this.options.toolArm ?? "arm_a_flat",
       ...(this.options.temperature !== undefined ? { temperature: this.options.temperature } : {}),
@@ -295,17 +311,22 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     // tell the model plainly rather than silently burning the step budget.
     if (toolCalls.length === 0) {
       this.emptyTurns++;
+      // Show the model what it actually said. A bare "no tool calls" gives it
+      // nothing to correct; quoting its own reply and the expected form does.
+      const said = response.text.trim().replace(/\s+/g, " ").slice(0, 240);
       this.history.push({
         turn: turnIndex,
         action: "(no tool calls)",
-        result:
-          "No tool calls were parsed from your response. Respond with tool calls only — no prose.",
+        result: `No tool call could be parsed from your reply${
+          said ? `, which began: "${said}"` : " (it was empty)"
+        }. Reply with a tool call only, for example: edit(path="src/file.ts", search="exact old text", replace="new text") or write_file(path="src/file.ts", content="...") or finish_card().`,
       });
       const result: TurnResult = {
         turnIndex,
         toolCalls: [],
         observations: [],
         usage: response.usage,
+        rawText: response.text,
       };
       if (this.emptyTurns >= 3) result.stopReason = "no_progress";
       else if (this.stepsUsed >= this.stepBudget) result.stopReason = "budget_exhausted";
@@ -440,7 +461,13 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       stopReason = "budget_exhausted";
     }
 
-    const result: TurnResult = { turnIndex, toolCalls, observations, usage: response.usage };
+    const result: TurnResult = {
+      turnIndex,
+      toolCalls,
+      observations,
+      usage: response.usage,
+      rawText: response.text,
+    };
     if (gateResult) result.gateResult = gateResult;
     if (stopReason) result.stopReason = stopReason;
     return result;

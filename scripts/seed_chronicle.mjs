@@ -24,7 +24,7 @@ const CARDS = [
     stepBudget: 24,
     spec: "Define ChronicleEvent<T> and AuditReport interfaces in src/types.ts. Types only, no implementation logic.",
     acceptanceCriteria: [
-      "ChronicleEvent has id, sequenceNumber, timestamp, type, payload, previousHash, hash, optional idempotencyKey",
+      "ChronicleEvent<T = unknown> — the type parameter MUST default to unknown, so later files can write plain ChronicleEvent — with id: string, sequenceNumber: number, timestamp: number, type: string, payload: T, previousHash: string, hash: string, idempotencyKey?: string",
       "AuditReport has valid, totalEvents, optional corruptedAtSequence, expectedHash, actualHash",
       "tsc -b and biome check both pass",
     ],

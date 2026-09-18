@@ -21,6 +21,8 @@ export interface TurnResult {
   toolCalls: ToolCall[];
   /** One observation per dispatched tool call, in call order. */
   observations: ToolObservation[];
+  /** The model's raw reply, kept for the transcript and for diagnosis. */
+  rawText?: string | undefined;
   /** Token cost of this turn, as reported by the inference server. */
   usage?: TokenUsage | undefined;
   gateResult?: GateResult | undefined;

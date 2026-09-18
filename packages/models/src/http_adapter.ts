@@ -47,6 +47,15 @@ export interface HttpAdapterOptions {
   disableReasoning?: boolean;
   /** Ask the server to reuse the cached prompt prefix across turns. */
   promptCache?: boolean;
+  /**
+   * Send tool schemas for server-side (native) tool-call parsing.
+   *
+   * Nail advertises the `tools` capability, but the adapter never sent a
+   * schema, so every call was free text the harness had to interpret — and
+   * some turns produced nothing parseable at all. Native parsing is tried
+   * first; the text parser remains the fallback when it returns no calls.
+   */
+  nativeTools?: boolean;
   /** How long the server should keep the model resident between turns. */
   keepAlive?: string;
   /**
@@ -300,6 +309,12 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
       },
     };
 
+    if (this.options.nativeTools !== false && req.tools && req.tools.length > 0) {
+      payload.tools = req.tools.map((t) => ({
+        type: "function",
+        function: { name: t.name, description: t.description, parameters: t.parameters },
+      }));
+    }
     if (this.options.disableReasoning !== false) {
       // Ollama otherwise routes the answer into `reasoning` and returns empty content.
       payload.think = false;
@@ -346,6 +361,12 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
     }
     if (this.sampling.repeatPenalty !== undefined) {
       payload.repeat_penalty = this.sampling.repeatPenalty;
+    }
+    if (this.options.nativeTools !== false && req.tools && req.tools.length > 0) {
+      payload.tools = req.tools.map((t) => ({
+        type: "function",
+        function: { name: t.name, description: t.description, parameters: t.parameters },
+      }));
     }
     // llama.cpp honours this to reuse the KV cache for an unchanged prefix.
     if (this.options.promptCache !== false) payload.cache_prompt = true;

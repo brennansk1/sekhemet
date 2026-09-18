@@ -1,0 +1,139 @@
+[
+  {
+    "id": "card_onyx_1_types",
+    "title": "Define Onyx contract types (SPIDR: Interface)",
+    "scopeFiles": ["src/types.ts"],
+    "stepBudget": 24,
+    "spec": "Write src/types.ts containing only exported TypeScript types, no runtime code. export interface CryptoEnvelope { salt: string; iv: string; tag: string; ciphertext: string } where every field is base64. export interface SecretRecord { project: string; key: string; value: string; updatedAt: number }. export interface VaultConfig { dbPath: string; passphrase: string; iterations?: number }. export type ScanRule = \"private-key\" | \"aws-access-key\" | \"github-pat\" | \"high-entropy\". export interface ScanMatch { file: string; line: number; rule: ScanRule; excerpt: string }.",
+    "acceptanceCriteria": [
+      "1. src/types.ts exports CryptoEnvelope, SecretRecord, VaultConfig, ScanRule and ScanMatch with exactly the fields named in the spec.",
+      "2. VaultConfig.iterations is optional; every other field is required.",
+      "3. The file contains no functions, classes or values: only interface and type declarations.",
+      "4. tsc -b and biome check . both pass."
+    ]
+  },
+  {
+    "id": "card_onyx_2_crypto",
+    "title": "AES-256-GCM envelopes with PBKDF2 key derivation (SPIDR: Rule)",
+    "scopeFiles": ["src/crypto.ts"],
+    "acceptanceTests": ["crypto.spec.ts"],
+    "stepBudget": 32,
+    "spec": "Write src/crypto.ts using only node:crypto. Import the CryptoEnvelope type with `import type { CryptoEnvelope } from \"./types.js\"` (relative imports must end in .js). Export: `export const DEFAULT_ITERATIONS = 100_000`; `export function deriveKey(passphrase: string, salt: Buffer, iterations: number = DEFAULT_ITERATIONS): Buffer` returning pbkdf2Sync(passphrase, salt, iterations, 32, \"sha256\"); `export function encrypt(plaintext: string, passphrase: string, iterations: number = DEFAULT_ITERATIONS): CryptoEnvelope` which generates a fresh randomBytes(16) salt and randomBytes(12) iv, derives the key, encrypts with createCipheriv(\"aes-256-gcm\", key, iv), and returns salt, iv, getAuthTag() and ciphertext all as base64 strings; `export function decrypt(envelope: CryptoEnvelope, passphrase: string, iterations: number = DEFAULT_ITERATIONS): string` which reverses it. decrypt must check that the decoded iv is exactly 12 bytes and the decoded tag exactly 16 bytes, and must wrap all of its work in try/catch so that ANY failure (wrong passphrase, tampered ciphertext, tampered tag, wrong lengths) throws `new Error(\"decryption failed\")`.",
+    "acceptanceCriteria": [
+      "1. deriveKey(\"password\", Buffer.from(\"salt\"), 1) returns hex 120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b.",
+      "2. DEFAULT_ITERATIONS is 100000 and deriveKey without an iterations argument uses it and returns 32 bytes.",
+      "3. decrypt(encrypt(x, p, n), p, n) returns x for ASCII, multi-byte UTF-8 and the empty string.",
+      "4. The envelope has exactly the keys salt, iv, tag, ciphertext; decoded lengths are 16, 12, 16 and the UTF-8 byte length of the plaintext.",
+      "5. Two encryptions of the same plaintext have different salt, iv and ciphertext.",
+      "6. Wrong passphrase, wrong iteration count, one flipped bit in ciphertext, tag, iv or salt, an 8-byte tag and a 16-byte iv all throw an Error whose message is exactly \"decryption failed\".",
+      "7. tests/crypto.spec.ts passes without modification."
+    ]
+  },
+  {
+    "id": "card_onyx_3_db",
+    "title": "node:sqlite WAL vault schema with constraints (SPIDR: Data)",
+    "scopeFiles": ["src/db.ts"],
+    "acceptanceTests": ["db.spec.ts"],
+    "stepBudget": 32,
+    "spec": "Write src/db.ts using the built-in node:sqlite module (`import { DatabaseSync } from \"node:sqlite\"`; do not use better-sqlite3). Export `export function openVaultDb(path: string): DatabaseSync` which opens the file, runs PRAGMA journal_mode = WAL, PRAGMA synchronous = NORMAL and PRAGMA foreign_keys = ON, then creates three tables with CREATE TABLE IF NOT EXISTS: projects (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, created_at INTEGER NOT NULL); secrets (id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, key TEXT NOT NULL, envelope_json TEXT NOT NULL, updated_at INTEGER NOT NULL, UNIQUE (project_id, key)); audit_events (id INTEGER PRIMARY KEY AUTOINCREMENT, action TEXT NOT NULL CHECK (action IN ('set', 'get', 'list', 'delete')), project TEXT NOT NULL, key TEXT, at INTEGER NOT NULL). Also export `export function monotonicNow(previous: number, now: number = Date.now()): number` which returns now when now > previous, otherwise previous + 1.",
+    "acceptanceCriteria": [
+      "1. PRAGMA journal_mode returns wal, PRAGMA synchronous returns 1 and PRAGMA foreign_keys returns 1 on the returned connection.",
+      "2. The three tables have exactly the columns listed in the spec, no more and no fewer.",
+      "3. A duplicate project name, a duplicate (project_id, key) pair, a secret whose project_id does not exist, and an audit action outside set/get/list/delete are all rejected by SQLite.",
+      "4. Deleting a project deletes its secrets.",
+      "5. Opening the same file twice keeps existing rows.",
+      "6. monotonicNow(100, 250) is 250, monotonicNow(250, 250) is 251, monotonicNow(1000, 10) is 1001.",
+      "7. tests/db.spec.ts passes without modification."
+    ]
+  },
+  {
+    "id": "card_onyx_4_vault",
+    "title": "Encrypted vault CRUD with transactions and audit log (SPIDR: Path)",
+    "scopeFiles": ["src/vault.ts"],
+    "acceptanceTests": ["vault.spec.ts"],
+    "stepBudget": 32,
+    "spec": "Write src/vault.ts exporting `export class Vault`. Imports (all relative imports end in .js): encrypt, decrypt, DEFAULT_ITERATIONS from \"./crypto.js\"; openVaultDb, monotonicNow from \"./db.js\"; types CryptoEnvelope, SecretRecord, VaultConfig from \"./types.js\". Members: `constructor(config: VaultConfig)` opens the db with openVaultDb(config.dbPath) and uses config.iterations ?? DEFAULT_ITERATIONS for every encrypt/decrypt call; `set(project: string, key: string, value: string): SecretRecord` inserts the project if missing (INSERT OR IGNORE), then upserts the secret row storing JSON.stringify(encrypt(value, ...)) in envelope_json (never the plaintext), then writes an audit_events row, all inside one BEGIN IMMEDIATE / COMMIT transaction with ROLLBACK on error, and returns { project, key, value, updatedAt }; `get(project: string, key: string): string | undefined` decrypts the stored envelope or returns undefined when absent; `list(project: string): string[]` returns the project's keys sorted ascending; `delete(project: string, key: string): boolean` returns true only if a row was deleted; `env(project: string): Record<string, string>` returns every key of the project mapped to its decrypted value; `close(): void`. Every set, get, list and delete call inserts one audit_events row with action 'set', 'get', 'list' or 'delete'. Timestamps (updated_at, created_at, at) come from monotonicNow(previousTimestamp) so they strictly increase. Validation runs BEFORE any database write: a project must match /^[a-z0-9][a-z0-9-]*$/ else throw new Error(`invalid project: ${project}`); a key must match /^[A-Z_][A-Z0-9_]*$/ else throw new Error(`invalid key: ${key}`).",
+    "acceptanceCriteria": [
+      "1. set then get returns the value; get of a missing key or missing project returns undefined.",
+      "2. The secrets.envelope_json column never contains the plaintext and parses to an object with keys ciphertext, iv, salt, tag.",
+      "3. Setting an existing key overwrites it, list still returns it once, and the second updatedAt is strictly greater than the first.",
+      "4. list returns keys sorted ascending and only for the requested project; an unknown project gives [].",
+      "5. delete returns true once, then false; env returns { KEY: value } for one project only.",
+      "6. set(\"api\", \"lower_case\", ...) throws \"invalid key: lower_case\"; set(\"Bad Project\", \"OK\", ...) throws \"invalid project: Bad Project\"; after these no secrets rows and no audit rows exist.",
+      "7. Operations set, set, get, list, delete produce audit actions exactly [\"set\", \"set\", \"get\", \"list\", \"delete\"].",
+      "8. Data survives close and reopen; reopening with the wrong passphrase makes get throw \"decryption failed\".",
+      "9. tests/vault.spec.ts passes without modification."
+    ]
+  },
+  {
+    "id": "card_onyx_5_scanner",
+    "title": "Signature and Shannon-entropy secret scanner for diffs (SPIDR: Rule)",
+    "scopeFiles": ["src/scanner.ts"],
+    "acceptanceTests": ["scanner.spec.ts"],
+    "stepBudget": 32,
+    "spec": "Write src/scanner.ts. Import types with `import type { ScanMatch, ScanRule } from \"./types.js\"`. Export `export const ENTROPY_THRESHOLD = 4.0`. Export `export function shannonEntropy(text: string): number` = the sum over distinct characters of -p * Math.log2(p), where p = count / text.length; the empty string returns 0. Export `export function scanLine(line: string): { rule: ScanRule; excerpt: string } | null` which checks, in this order, and returns the FIRST hit with excerpt set to the exact matched text: rule \"private-key\" for /-----BEGIN [A-Z ]*PRIVATE KEY-----/, rule \"aws-access-key\" for /\\b(?:AKIA|ASIA)[0-9A-Z]{16}\\b/, rule \"github-pat\" for /\\bghp_[A-Za-z0-9]{36}\\b/; if none match, it finds tokens with the global regex /[A-Za-z0-9+/_-]{20,}/g and returns rule \"high-entropy\" for the first token whose shannonEntropy is >= ENTROPY_THRESHOLD; otherwise it returns null. Export `export function scanText(text: string, file: string): ScanMatch[]` which splits on \"\\n\" and returns { file, line, rule, excerpt } for every line with a hit, where line is 1-based. Export `export function scanDiff(diff: string): ScanMatch[]` for unified git diffs: a line starting with \"+++ \" sets the current file to the rest of the line with a leading \"b/\" removed; lines starting with \"--- \" are skipped; a hunk header matching /^@@ -\\d+(?:,\\d+)? \\+(\\d+)(?:,\\d+)? @@/ sets the current new-file line number to the captured number; a line starting with \"+\" is scanned (without the \"+\") and then advances the line number; a line starting with \" \" (context) advances the line number but is not scanned; lines starting with \"-\" and all other lines are ignored.",
+    "acceptanceCriteria": [
+      "1. shannonEntropy(\"abcd\") is 2, shannonEntropy(\"aabb\") is 1, shannonEntropy(\"0123456789abcdef\") is 4, and shannonEntropy of \"\" or \"aaaaaaaa\" is 0.",
+      "2. scanLine returns { rule, excerpt } where excerpt is only the matched secret, e.g. { rule: \"aws-access-key\", excerpt: \"AKIAIOSFODNN7EXAMPLE\" } for the line aws_access_key_id = AKIAIOSFODNN7EXAMPLE.",
+      "3. Signature rules win over the entropy rule on the same line.",
+      "4. A token of 20+ characters with entropy exactly 4.0 is flagged high-entropy; a 19-character random token and long low-entropy identifiers are not flagged (scanLine returns null).",
+      "5. A 19-character AKIA prefix string and a lower-case akia string are not flagged.",
+      "6. scanText reports 1-based line numbers and the given file name.",
+      "7. scanDiff reports only added lines, with new-file line numbers from the hunk header and the file name from the +++ b/ header; removed lines, context lines and the +++ header itself are never reported.",
+      "8. tests/scanner.spec.ts passes without modification."
+    ]
+  },
+  {
+    "id": "card_onyx_6_injector",
+    "title": "Spawn child processes with secrets injected in memory (SPIDR: Path)",
+    "scopeFiles": ["src/injector.ts"],
+    "acceptanceTests": ["injector.spec.ts"],
+    "stepBudget": 32,
+    "spec": "Write src/injector.ts using spawn from node:child_process. Export `export interface RunResult { code: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string }` and `export interface RunOptions { cwd?: string; baseEnv?: NodeJS.ProcessEnv; timeoutMs?: number }`. Export `export function buildChildEnv(base: NodeJS.ProcessEnv, secrets: Record<string, string>): Record<string, string>` returning a NEW object with every base entry whose value is not undefined, then every secret (secrets override base); inputs are not mutated. Export `export function runWithSecrets(command: string, args: string[], secrets: Record<string, string>, options: RunOptions = {}): Promise<RunResult>` which calls spawn(command, args, { cwd: options.cwd ?? process.cwd(), env: buildChildEnv(options.baseEnv ?? process.env, secrets), stdio: [\"ignore\", \"pipe\", \"pipe\"], shell: false }), collects stdout and stderr as utf8 strings, resolves on the child's \"close\" event with { code, signal, stdout, stderr }, rejects on the child's \"error\" event (for example ENOENT), and when options.timeoutMs is set kills the child with child.kill(\"SIGTERM\") after that many milliseconds (clear the timer on close/error). Never write secrets to a file and never assign to process.env.",
+    "acceptanceCriteria": [
+      "1. buildChildEnv({ PATH: \"/bin\", TOKEN: \"old\" }, { TOKEN: \"new\", EXTRA: \"1\" }) equals { PATH: \"/bin\", TOKEN: \"new\", EXTRA: \"1\" }; undefined base values are dropped; neither input is mutated.",
+      "2. A child reading process.env.ONYX_API_KEY sees the injected secret; the result is exactly { code: 0, signal: null, stdout: \"sk_live_999\", stderr: \"\" }.",
+      "3. After a run, process.env of the parent does not contain the injected key and the child's working directory is still empty.",
+      "4. baseEnv replaces process.env as the base when given.",
+      "5. Exit code 3 and stderr text are propagated exactly; arguments are passed without a shell.",
+      "6. With timeoutMs 200 a never-ending child resolves with code null and signal \"SIGTERM\".",
+      "7. A command that does not exist rejects with an error mentioning ENOENT.",
+      "8. tests/injector.spec.ts passes without modification."
+    ]
+  },
+  {
+    "id": "card_onyx_7_cli",
+    "title": "CLI argument parser and ANSI color formatting (SPIDR: Interface)",
+    "scopeFiles": ["src/cli.ts"],
+    "acceptanceTests": ["cli.spec.ts"],
+    "stepBudget": 32,
+    "spec": "Write src/cli.ts with no imports. Export `export type Command = { kind: \"set\"; project: string; key: string; value: string } | { kind: \"get\"; project: string; key: string } | { kind: \"list\"; project: string } | { kind: \"run\"; project: string; command: string; args: string[] } | { kind: \"scan\" } | { kind: \"export\"; project: string; out: string } | { kind: \"error\"; message: string }`. Export `export type Color = \"red\" | \"green\" | \"yellow\"` and `export function colorize(text: string, color: Color, enabled: boolean): string` returning `\\x1b[31m` + text + `\\x1b[0m` for red (32 for green, 33 for yellow) when enabled, and text unchanged when not enabled. Export `export function parseArgs(argv: string[]): Command`. Parsing: split argv at the first \"--\"; everything after it is the run command and its args, kept verbatim. Before \"--\", a \"--project NAME\" pair may appear anywhere and sets project (default \"default\"); if \"--project\" has no following value return error \"missing value for --project\". The remaining words are the command name and its positional arguments. Grammar and error messages (return { kind: \"error\", message }): no command -> \"usage: onyx COMMAND\"; set needs exactly KEY VALUE -> \"usage: onyx set KEY VALUE\"; get needs exactly KEY -> \"usage: onyx get KEY\"; list takes no arguments -> \"usage: onyx list\"; run takes no positional arguments and requires \"--\" followed by at least a command -> \"usage: onyx run -- CMD ARGS...\"; scan takes no arguments -> \"usage: onyx scan\"; export needs exactly FILE -> \"usage: onyx export FILE\"; any other name -> `unknown command: ${name}`.",
+    "acceptanceCriteria": [
+      "1. parseArgs([\"set\", \"API_KEY\", \"abc\"]) equals { kind: \"set\", project: \"default\", key: \"API_KEY\", value: \"abc\" }.",
+      "2. --project works before or after the command name.",
+      "3. parseArgs([\"run\", \"--project\", \"api\", \"--\", \"pnpm\", \"dev\", \"--project\", \"x\"]) equals { kind: \"run\", project: \"api\", command: \"pnpm\", args: [\"dev\", \"--project\", \"x\"] }.",
+      "4. parseArgs([\"scan\"]) equals { kind: \"scan\" } with no other properties.",
+      "5. Every usage error in the spec returns exactly the listed message, including too many arguments.",
+      "6. colorize(\"ok\", \"green\", true) is \"\\x1b[32mok\\x1b[0m\" and colorize(\"plain\", \"red\", false) is \"plain\".",
+      "7. tests/cli.spec.ts passes without modification."
+    ]
+  },
+  {
+    "id": "card_onyx_8_e2e",
+    "title": "Wire the CLI to vault, injector, scanner and export (SPIDR: Integration)",
+    "scopeFiles": ["src/app.ts"],
+    "acceptanceTests": ["e2e.spec.ts"],
+    "stepBudget": 40,
+    "spec": "Write src/app.ts. Imports (relative imports end in .js): parseArgs from \"./cli.js\", encrypt from \"./crypto.js\", runWithSecrets from \"./injector.js\", scanDiff from \"./scanner.js\", Vault from \"./vault.js\", plus execFileSync from node:child_process, writeFileSync from node:fs and resolve from node:path. Export `export interface CliIO { dbPath: string; passphrase: string; cwd: string; iterations?: number; out: (line: string) => void; err: (line: string) => void }` and `export async function runCli(argv: string[], io: CliIO): Promise<number>` returning the exit code. Behaviour by parsed command: error -> io.err(message), return 2, and do NOT open the vault. scan -> run execFileSync(\"git\", [\"diff\", \"--cached\", \"--no-color\"], { cwd: io.cwd, encoding: \"utf8\" }), call scanDiff, io.out(`${file}:${line} ${rule}`) per match, return 1 if any match else 0 (no vault). All other commands open new Vault({ dbPath, passphrase, iterations }) (only pass iterations when io.iterations is defined) and always close it in a finally block: set -> vault.set, io.out(`set ${key}`), return 0; get -> io.out(value) and return 0, or io.err(`not found: ${key}`) and return 1; list -> io.out(key) per key, return 0; run -> runWithSecrets(command, args, vault.env(project), { cwd: io.cwd }), io.out(stdout) if stdout is non-empty, io.err(stderr) if non-empty, return code ?? 1; export -> encrypt(JSON.stringify(vault.env(project)), io.passphrase, io.iterations), write JSON.stringify(envelope) to resolve(io.cwd, out), io.out(`exported ${count} secrets to ${out}`), return 0. Any thrown Error in these commands -> io.err(error.message), return 1.",
+    "acceptanceCriteria": [
+      "1. set, set, list, get produce out lines exactly [\"set API_KEY\", \"set DB_URL\", \"API_KEY\", \"DB_URL\", \"sk_live_1\"] with exit codes 0.",
+      "2. get of a missing key returns 1 with err [\"not found: NOPE\"].",
+      "3. An unknown command returns 2, reports \"unknown command: frobnicate\", and does not create the database file.",
+      "4. set with an invalid key returns 1 with err [\"invalid key: bad-key\"].",
+      "5. run injects the project's secrets into the child (out contains \"token=tok_123\"), only that project's secrets, returns the child's exit code, and leaves the working directory empty.",
+      "6. export writes an encrypted file that does not contain the plaintext and decrypts with the passphrase to { A: \"alpha\", B: \"beta\" }.",
+      "7. scan returns 1 and outputs \"config.env:2 aws-access-key\" when a staged file contains an AWS key, and returns 0 with no output when only unstaged files contain secrets.",
+      "8. tests/e2e.spec.ts passes without modification."
+    ]
+  }
+]
