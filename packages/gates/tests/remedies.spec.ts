@@ -89,4 +89,10 @@ describe("@sekhemet/gates targeted remedies", () => {
     );
     expect(ranked[0]?.errorExcerpt).toBe("persists events across reopening");
   });
+
+  it("tells the model how to type database rows instead of casting blindly", () => {
+    expect(
+      remedyFor("TS2352", "Conversion of type 'Record<string, SQLOutputValue>[]' to type 'Row[]'"),
+    ).toMatch(/as unknown as Row\[\]/);
+  });
 });

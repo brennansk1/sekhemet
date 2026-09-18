@@ -92,6 +92,13 @@ export function remedyFor(code: string, message: string): string | undefined {
     case "TS2353":
     case "TS2561":
       return "That property is not part of the target type. Read the type's declaration (or the library's .d.ts) and use only the fields it declares.";
+    case "TS2352":
+      return /SQLOutputValue|Record<string, unknown>/.test(message)
+        ? "Database rows are untyped records. Map each row to your type field by field (`rows.map((r) => ({ id: String(r.id), seq: Number(r.seq) }))`), or cast through unknown: `stmt.all() as unknown as Row[]`."
+        : "The cast is between unrelated types. Build a value of the target type explicitly, or cast through unknown only if you have checked the shape.";
+    case "TS2741":
+    case "TS2739":
+      return "An object is missing required properties of its declared type. Add every required field listed (the code below shows the type's members), or change the type if the contract allows.";
     case "TS2305":
     case "TS2724":
       return "The module does not export that name. Read the module and use its actual export.";

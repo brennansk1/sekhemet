@@ -317,4 +317,19 @@ describe("@sekhemet/loop shell command lines and the check tool", () => {
       "DatabaseSync has no 'run'. Its actual members are: close, exec, isOpen, prepare.",
     );
   });
+
+  it("lists a contract type's members when a required property is missing", async () => {
+    const { apiHints } = await import("../src/api_surface.js");
+    writeFileSync(
+      join(root, "src", "types.ts"),
+      "export interface Event {\n  id: string;\n  timestamp: number;\n  hash: string;\n}\n",
+    );
+    expect(
+      apiHints(root, [
+        "src/l.ts:9:5 TS2741: Property 'timestamp' is missing in type '{ id: string; }' but required in type 'Event'.",
+      ]),
+    ).toEqual([
+      "Event requires timestamp. All of its members: hash, id, timestamp. Set every required one.",
+    ]);
+  });
 });
