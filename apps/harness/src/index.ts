@@ -34,6 +34,7 @@ import { runMcpStdioServer } from "./mcp.js";
 import { DEFAULT_PM_MODEL, answerQueued, createPmAdapter, holdRunnerLease } from "./pm/service.js";
 import { PmStore } from "./pm/store.js";
 import { DEFAULT_DASHBOARD_PORT, startDashboardServer } from "./server.js";
+import { loadAttempts, tune, writeTuningReport } from "./tune.js";
 
 export interface CliConfig {
   command:
@@ -47,6 +48,7 @@ export interface CliConfig {
     | "replay"
     | "bake-off"
     | "accept"
+    | "tune"
     | "queue"
     | "mcp"
     | "help";
@@ -103,6 +105,7 @@ export function parseCliArgs(argv: string[] = process.argv.slice(2)): CliConfig 
 
   const validCommands = [
     "accept",
+    "tune",
     "queue",
     "doctor",
     "board",
@@ -263,6 +266,29 @@ export async function printEventLog(log: EventLog): Promise<void> {
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
   const config = parseCliArgs(argv);
+
+  if (config.command === "tune") {
+    // `sekhemet tune [--from <repo> ...]`: replay recorded runs under candidate
+    // stopping policies (Dream-RSI style) and recommend one. Never applies it.
+    const argv = process.argv.slice(2);
+    const sources = argv.flatMap((a, i) => (argv[i - 1] === "--from" ? [a] : []));
+    const attempts = loadAttempts(sources.length > 0 ? sources : [config.repoPath]);
+    if (attempts.length === 0) {
+      console.log("No recorded Worker steps yet. Run `sekhemet queue` first.");
+      return;
+    }
+    const report = tune(attempts, { stepBudget: 40, maxFailedChecks: 4 });
+    const fmt = (s: typeof report.current) =>
+      `${s.policy.stepBudget} steps, ${s.policy.maxFailedChecks} failed checks: first try ${s.firstTry}/${s.cards}, eventually ${s.eventually}/${s.cards}, ${s.minutes} min`;
+    console.log(`Replayed ${attempts.length} attempts on ${report.current.cards} cards.`);
+    console.log(`Current:     ${fmt(report.current)}`);
+    console.log(`Recommended: ${fmt(report.best)}`);
+    console.log(
+      `Replay can only stop a recorded attempt earlier, so the recommendation never overstates. Apply it with: sekhemet queue --max-turns ${report.best.policy.stepBudget}`,
+    );
+    console.log(`Report: ${writeTuningReport(config.repoPath, report)}`);
+    return;
+  }
 
   if (config.command === "doctor") {
     const report = await runDoctor(config.repoPath);
@@ -599,7 +625,14 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     let halted = false;
 
     let workerModelId = workerModel ?? NAIL_WORKER_PROFILE.modelId;
-    const attempt = async (card: CardRecord, n: number, guidance?: string) => {
+    // --max-turns caps every card's step budget (the tuner's recommendation).
+    const maxTurnsIdx = argv.indexOf("--max-turns");
+    const maxTurns = maxTurnsIdx !== -1 ? Number(argv[maxTurnsIdx + 1]) : undefined;
+    const attempt = async (rawCard: CardRecord, n: number, guidance?: string) => {
+      const card =
+        maxTurns && maxTurns > 0 && rawCard.stepBudget > maxTurns
+          ? { ...rawCard, stepBudget: maxTurns }
+          : rawCard;
       const worker = await router.use("worker");
       workerModelId = worker.modelId;
       console.log(`\n=== ${card.id} (attempt ${n}): ${card.title} ===`);
