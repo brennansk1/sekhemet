@@ -564,7 +564,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       if (result.passed && autoAccept) {
         const reviewed = await cardStore.getCard(card.id);
         if (reviewed) {
-          const sha = await acceptCard(ctx, reviewed);
+          // --auto-accept is the harness's verdict, not a person's: the ledger
+          // must not credit a human with a merge nobody reviewed.
+          const sha = await acceptCard(ctx, reviewed, "harness");
           accepted = true;
           console.log(`   accepted -> main ${sha.slice(0, 10)}`);
         }

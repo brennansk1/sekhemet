@@ -39,6 +39,12 @@ export interface CardRunOptions extends Omit<SessionOptions, "cardId"> {
   coAuthors?: string[] | undefined;
   onProgress?: ((event: RunProgressEvent) => void) | undefined;
   /**
+   * Called once per completed turn with the full turn, so a caller can record
+   * it (the harness appends a `card/step` ledger event the dashboard follows
+   * live). Awaited; a throw is swallowed so recording can never fail a card.
+   */
+  onTurn?: ((cardId: string, turn: TurnResult) => Promise<void> | void) | undefined;
+  /**
    * Prepare the worktree after checkout, before the first turn.
    *
    * Contract-first projects use this to stage the card's own acceptance tests:
@@ -187,6 +193,11 @@ export class CardRunner {
         break;
       }
       turns.push(turn);
+      try {
+        await this.options.onTurn?.(card.id, turn);
+      } catch {
+        // Recording a step must never fail a card.
+      }
 
       this.emit({
         type: "turn",

@@ -3,8 +3,11 @@ import * as boardView from "./board.js";
 import * as cardView from "./card.js";
 import { getJSON } from "./dom.js";
 import { initKeys } from "./keys.js";
-import * as laterView from "./later.js";
+import * as ledgerView from "./ledger.js";
+import * as machineView from "./machine.js";
+import * as playbookView from "./playbook.js";
 import * as reviewView from "./review.js";
+import * as runsView from "./runs.js";
 import { initShell, setActiveNav } from "./shell.js";
 import { store } from "./store.js";
 
@@ -12,10 +15,10 @@ const VIEWS = {
   review: reviewView,
   board: boardView,
   card: cardView,
-  runs: laterView,
-  ledger: laterView,
-  machine: laterView,
-  playbook: laterView,
+  runs: runsView,
+  ledger: ledgerView,
+  machine: machineView,
+  playbook: playbookView,
 };
 
 let current = null;
@@ -72,6 +75,7 @@ function applyBoard(board) {
     cards: board.cards ?? [],
     wipLimits: board.wipLimits ?? {},
     backpressureActive: Boolean(board.backpressureActive),
+    feed: store.state.feed,
     moved,
     now,
   });
@@ -93,14 +97,16 @@ async function refreshDoctor() {
 }
 
 async function hydrate() {
-  const [board, events, meta, gates, queue] = await Promise.all([
+  const [board, events, meta, gates, queue, playbook] = await Promise.all([
     getJSON("/api/board"),
-    getJSON("/api/events"),
+    getJSON("/api/events?limit=1"),
     getJSON("/api/meta"),
     getJSON("/api/gates"),
     getJSON("/api/queue"),
+    getJSON("/api/playbook"),
   ]);
   if (meta.ok) store.state.meta = meta.data;
+  if (playbook.ok) store.state.playbook = playbook.data;
   if (gates.ok) store.state.gates = gates.data;
   if (queue.ok) store.state.queue = queue.data;
   if (events.ok) store.state.verification = events.data.verification;
@@ -147,10 +153,26 @@ export function connect() {
     try {
       const payload = JSON.parse(ev.data);
       if (payload.verification) store.state.verification = payload.verification;
+      // Views that follow the ledger (Steps, Thread, Ledger) read the new events.
+      store.state.feed = payload.events ?? [];
+      if (
+        (payload.events ?? []).some(
+          (e) => e.type === "card/status_changed" && /^returned/.test(e.payload?.reason ?? ""),
+        )
+      ) {
+        getJSON("/api/playbook").then((r) => r.ok && store.set({ playbook: r.data }));
+      }
       if (payload.board) applyBoard(payload.board);
-      else store.set({ verification: store.state.verification });
+      else store.set({ verification: store.state.verification, feed: store.state.feed });
     } catch {
       // A malformed frame is dropped; the next one carries the full board.
+    }
+  });
+  source.addEventListener("machine", (ev) => {
+    try {
+      store.set({ machine: JSON.parse(ev.data).memory });
+    } catch {
+      // Dropped; the next sample arrives in five seconds.
     }
   });
   source.addEventListener("error", () => {

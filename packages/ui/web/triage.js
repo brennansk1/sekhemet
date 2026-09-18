@@ -315,6 +315,13 @@ export function triageBarHtml(card, evidence, { hint = true } = {}) {
   if (s.meta && s.meta.triage === false) {
     return `<div class="triage readonly" role="note">${icon("lock", 14, "ic s14")}<span><b>Read-only.</b> This server was started without triage. Restart with <span class="mono">sekhemet serve</span> to accept or send back.</span></div>`;
   }
+  // A merged or closed card has no verdict left to give.
+  if (card?.status === "done" || card?.status === "rejected") {
+    const sha = card.display?.acceptedSha;
+    return card.status === "done"
+      ? `<div class="triage settled" role="note">${icon("merge", 14, "ic s14")}<span>${sha ? `Merged to main as <span class="mono">${esc(sha.slice(0, 7))}</span>` : "Accepted"}</span></div>`
+      : `<div class="triage settled" role="note"><span>Closed</span></div>`;
+  }
   const offline = s.connection === "offline";
   const dis = offline ? ' disabled title="Offline"' : "";
   const st = acceptState(card, evidence);

@@ -324,10 +324,16 @@ export class CardStore {
     return rows.map((r) => this.mapCardRow(r));
   }
 
+  /**
+   * `actor` names who moved the card. It defaults to the executor for the
+   * runner's own transitions; a human triaging from the dashboard passes
+   * "human", so the ledger does not credit the Worker with a person's verdict.
+   */
   public async updateCardStatus(
     id: string,
     status: CardStatus,
     reason?: string,
+    actor = "executor",
   ): Promise<CardRecord> {
     const existing = await this.getCard(id);
     if (!existing) {
@@ -345,7 +351,7 @@ export class CardStore {
 
     // Append event
     await this.eventLog.append({
-      actor: "executor",
+      actor,
       type: "card/status_changed",
       cardId: id,
       payload,
@@ -420,6 +426,25 @@ export class CardStore {
     const lower = after?.orderKey ?? null;
     const upper = before?.orderKey ?? null;
     return this.updateCard(id, { orderKey: keyBetween(lower, upper) });
+  }
+
+  /**
+   * Append a card-scoped fact to the ledger without changing the projection:
+   * a step the Worker took, the sha an accept merged as, the Planner's repair
+   * plan. The dashboard reads these back; the hash chain covers them.
+   */
+  public async recordEvent<T>(params: {
+    type: string;
+    cardId: string;
+    actor: string;
+    payload: T;
+  }): Promise<void> {
+    await this.eventLog.append({
+      actor: params.actor,
+      type: params.type,
+      cardId: params.cardId,
+      payload: params.payload,
+    });
   }
 
   public async recordCheckpoint(cp: CheckpointRecord): Promise<void> {

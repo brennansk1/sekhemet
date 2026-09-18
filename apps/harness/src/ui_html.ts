@@ -1,7 +1,7 @@
 import { generateTokenCss, icon } from "@sekhemet/ui";
 
 /** Stylesheets under `/app/`, in cascade order. */
-const STYLES = ["base.css", "shell.css", "board.css", "review.css", "diff.css"];
+const STYLES = ["base.css", "shell.css", "board.css", "review.css", "diff.css", "views.css"];
 
 /**
  * The dashboard shell: landmarks, the sidebar frame and a skeleton of the

@@ -398,7 +398,7 @@
 
 /* Cheat sheet (§2.5.12) */
 .cheats {
-  width: 720px;
+  width: 880px;
 }
 .cheats header {
   display: flex;
@@ -415,7 +415,7 @@
 }
 .cheat-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 16px 24px;
   padding: 16px;
   overflow-y: auto;

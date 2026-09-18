@@ -133,4 +133,32 @@ describe("@sekhemet/kernel CardStore", () => {
     expect(cp.length).toBe(1);
     expect(cp[0]?.gitRef).toBe("refs/checkpoints/c2/1");
   });
+
+  it("records who moved a card: executor by default, a person when named", async () => {
+    await store.createCard({ id: "c_actor", tier: "task", title: "Actor", scopeFiles: [] });
+    await store.updateCardStatus("c_actor", "in_progress", "runner started");
+    await store.updateCardStatus("c_actor", "parked", "parked: waiting on me", "human");
+    const events = (await log.getEventsByCard("c_actor")).filter(
+      (e) => e.type === "card/status_changed",
+    );
+    expect(events.map((e) => e.actor)).toEqual(["executor", "human"]);
+    expect((await store.getCard("c_actor"))?.status).toBe("parked");
+    expect((await log.verifyHashChain()).valid).toBe(true);
+  });
+
+  it("appends card-scoped facts to the ledger without touching the projection", async () => {
+    await store.createCard({ id: "c_fact", tier: "task", title: "Fact", scopeFiles: [] });
+    const before = await store.getCard("c_fact");
+    await store.recordEvent({
+      type: "card/accepted",
+      cardId: "c_fact",
+      actor: "human",
+      payload: { id: "c_fact", sha: "ba1338e" },
+    });
+    const last = await log.getLastEvent();
+    expect(last).toMatchObject({ type: "card/accepted", actor: "human", cardId: "c_fact" });
+    expect((last?.payload as { sha: string }).sha).toBe("ba1338e");
+    expect(await store.getCard("c_fact")).toEqual(before);
+    expect((await log.verifyHashChain()).valid).toBe(true);
+  });
 });

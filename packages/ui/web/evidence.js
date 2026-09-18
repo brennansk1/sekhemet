@@ -72,7 +72,9 @@ export class EvidencePane {
     const ev = detail?.evidence;
     const outcome = ev
       ? `${outcomeIcon(ev)}<span>${esc(outcomeSentence(ev, gatesFor(ev)))}</span>`
-      : `<span>No attempts yet · ${esc(card.stepBudget)}-step budget</span>`;
+      : card.status === "in_progress"
+        ? `<span class="dot run" aria-hidden="true"></span><span>${esc(card.display?.statusLine ?? "Working")}</span>`
+        : `<span>No attempts yet · ${esc(card.stepBudget)}-step budget</span>`;
     return `<div><div class="crumbs">${esc(project)} ${icon("chevron-right", 12, "ic s12")}<span class="mono">${esc(card.id)}</span>${att}</div>${withTitle ? `<h2 class="ttl">${esc(card.display?.title ?? card.title)}</h2>` : ""}<div class="outcome">${kindTags(card.display?.kinds)}${outcome}</div><div data-notice></div></div>`;
   }
 

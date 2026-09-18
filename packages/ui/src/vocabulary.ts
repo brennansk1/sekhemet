@@ -470,6 +470,8 @@ export interface CardDisplay {
   waitsOn?: { id: string; title: string }[];
   /** True for cards in the Review queue's "Need you" group. */
   needsYou: boolean;
+  /** The merge sha, once accepted. */
+  acceptedSha?: string;
   /** `8 of 32 steps`, only once the card has started. */
   budgetText?: string;
   budgetRatio?: number;
@@ -497,6 +499,58 @@ export interface DisplayContext {
   waitsOn?: { id: string; title: string }[];
   configuredGates?: { id: string; rung?: string }[];
   limits?: GateLimits;
+  /** The latest `card/step` of a running card: what it is doing right now. */
+  lastStep?: StepLike;
+  /** The sha an accept merged as, from the `card/accepted` ledger event. */
+  acceptedSha?: string;
+}
+
+/** A tool call as the ledger and transcript record it. */
+export interface CallLike {
+  name: string;
+  target?: string;
+}
+
+/** The subset of a `card/step` payload presentation reads. */
+export interface StepLike {
+  turn: number;
+  calls?: CallLike[];
+  gate?: { passed: boolean; failed?: string[] };
+}
+
+const CALL_VERBS: Record<string, string> = {
+  write_file: "editing",
+  edit_file: "editing",
+  replace_in_file: "editing",
+  apply_patch: "editing",
+  create_file: "creating",
+  read_file: "reading",
+  list_files: "listing",
+  search: "searching",
+  grep: "searching",
+  run_cmd: "running",
+  check: "checking",
+  run_tests: "running tests",
+  finish_card: "finishing",
+  note: "noting",
+};
+
+/** "editing src/hasher.ts", "running pnpm test", "finishing". */
+export function callPhrase(call: CallLike): string {
+  const verb = CALL_VERBS[call.name] ?? humanize(call.name).toLowerCase();
+  if (call.name === "finish_card") return "asking for verification";
+  if (call.name === "note") return call.target ? `noting "${call.target}"` : "noting";
+  return call.target ? `${verb} ${call.target}` : verb;
+}
+
+/** The phrase for a step: its most telling call, preferring edits to reads. */
+export function stepPhrase(step: StepLike): string {
+  const calls = step.calls ?? [];
+  const pick =
+    calls.find((c) => /write|edit|create|patch|replace/.test(c.name)) ??
+    calls.find((c) => c.name !== "finish_card") ??
+    calls[0];
+  return pick ? callPhrase(pick) : "thinking";
 }
 
 /** The one line that states a card's current truth, in words (§2.5.1 row 3). */
@@ -534,10 +588,19 @@ export function statusLine(
       return { text: `Ready · ${budget}`, tone: "neutral", mark: "none" };
     case "planning":
       return { text: "Planner is writing the plan", tone: "neutral", mark: "planning" };
-    case "in_progress":
+    case "in_progress": {
+      const step = ctx.lastStep;
+      if (step) {
+        return {
+          text: `Step ${step.turn} of ${card.stepBudget} · ${stepPhrase(step)}`,
+          tone: "running",
+          mark: "running",
+        };
+      }
       return card.stepsUsed > 0
         ? { text: `Step ${card.stepsUsed} of ${card.stepBudget}`, tone: "running", mark: "running" }
         : { text: `Starting · ${budget}`, tone: "running", mark: "running" };
+    }
     case "verify":
       if (!ev) return { text: "Running gates…", tone: "running", mark: "running" };
       if (!ev.passed) return { text: failText, tone: "fail", mark: "pips" };
@@ -550,7 +613,13 @@ export function statusLine(
       };
     case "done":
       return {
-        text: since !== undefined ? `Accepted · ${formatWait(since)} ago` : "Accepted",
+        text: [
+          "Accepted",
+          ctx.acceptedSha ? ctx.acceptedSha.slice(0, 7) : "",
+          since !== undefined ? `${formatWait(since)} ago` : "",
+        ]
+          .filter(Boolean)
+          .join(" · "),
         tone: "neutral",
         mark: "done",
       };
@@ -591,8 +660,13 @@ export function describeCard(card: CardRecord, ctx: DisplayContext = {}): CardDi
   };
   if (ev?.stopReason) display.stopLabel = stopReasonLabel(ev.stopReason).short;
   if (ctx.enteredColumnAt) display.enteredColumnAt = ctx.enteredColumnAt;
+  if (ctx.acceptedSha) display.acceptedSha = ctx.acceptedSha;
   if (ctx.waitsOn && ctx.waitsOn.length > 0) display.waitsOn = ctx.waitsOn;
-  if (started) {
+  if (ctx.lastStep && card.status === "in_progress" && ctx.lastStep.turn > card.stepsUsed) {
+    display.budgetText = `${ctx.lastStep.turn} of ${card.stepBudget} steps`;
+    display.budgetRatio =
+      card.stepBudget > 0 ? Math.min(1, ctx.lastStep.turn / card.stepBudget) : 0;
+  } else if (started) {
     display.budgetText = `${card.stepsUsed} of ${card.stepBudget} steps`;
     display.budgetRatio = card.stepBudget > 0 ? Math.min(1, card.stepsUsed / card.stepBudget) : 0;
   }
@@ -608,6 +682,296 @@ export function describeCard(card: CardRecord, ctx: DisplayContext = {}): CardDi
     };
   }
   return display;
+}
+
+// ---------------------------------------------------------------------------
+// Ledger sentences (§2.4.5, Thread tab)
+// ---------------------------------------------------------------------------
+
+export interface EventLike {
+  seq?: number;
+  type: string;
+  actor: string;
+  cardId?: string;
+  payload?: unknown;
+}
+
+/**
+ * One ledger event as a sentence: `{actor} {verb} **{title}** {rest}`, plus an
+ * optional quote (a send-back or park note, a repair plan). The title stays a
+ * separate field so the page can bold and link it after escaping.
+ */
+export interface EventSentence {
+  actor: string;
+  verb: string;
+  title?: string;
+  rest?: string;
+  quote?: string;
+  tone: Tone;
+}
+
+export function eventSentence(
+  event: EventLike,
+  titleOf: (cardId: string) => string | undefined = () => undefined,
+): EventSentence {
+  const p = (event.payload ?? {}) as Record<string, unknown>;
+  const id = event.cardId ?? (typeof p.id === "string" ? p.id : undefined);
+  const title = id ? (titleOf(id) ?? shortId(id)) : undefined;
+  const actor = actorLabel(event.actor);
+  const base = { actor, ...(title ? { title } : {}) };
+  switch (event.type) {
+    case "card/created": {
+      const created = typeof p.title === "string" ? parseTitle(p.title).title : title;
+      return { ...base, ...(created ? { title: created } : {}), verb: "created", tone: "neutral" };
+    }
+    case "card/status_changed": {
+      const from = columnLabel(String(p.fromStatus ?? ""));
+      const to = String(p.toStatus ?? "");
+      const reason = typeof p.reason === "string" ? p.reason : "";
+      const note = /^(returned|parked):\s*(.+)$/s.exec(reason)?.[2]?.trim();
+      if (to === "done") return { ...base, verb: "accepted", rest: "into Done", tone: "pass" };
+      if (reason.startsWith("returned")) {
+        return {
+          ...base,
+          verb: "sent back",
+          rest: "to Ready",
+          ...(note ? { quote: note } : {}),
+          tone: "neutral",
+        };
+      }
+      if (to === "parked") {
+        return { ...base, verb: "parked", ...(note ? { quote: note } : {}), tone: "parked" };
+      }
+      return {
+        ...base,
+        verb: "moved",
+        rest: `from ${from} to ${columnLabel(to)}`,
+        tone: "neutral",
+      };
+    }
+    case "card/updated": {
+      const patch = (p.patch ?? {}) as Record<string, unknown>;
+      const keys = Object.keys(patch);
+      if (keys.length === 1 && typeof patch.stepsUsed === "number") {
+        return {
+          ...base,
+          actor: "Worker",
+          verb: `finished step ${patch.stepsUsed} on`,
+          tone: "neutral",
+        };
+      }
+      return {
+        ...base,
+        verb: "updated",
+        rest: keys.length ? `(${keys.map((k) => humanize(k).toLowerCase()).join(", ")})` : "",
+        tone: "neutral",
+      };
+    }
+    case "card/step": {
+      const step = p as unknown as StepLike;
+      const gate = step.gate
+        ? step.gate.passed
+          ? " · gates passed"
+          : ` · ${(step.gate.failed ?? []).map(gateLabel).join(", ") || "gates"} failed`
+        : "";
+      return {
+        ...base,
+        verb: `took step ${step.turn ?? "?"} on`,
+        rest: `· ${stepPhrase(step)}${gate}`,
+        tone: step.gate ? (step.gate.passed ? "pass" : "fail") : "neutral",
+      };
+    }
+    case "card/accepted": {
+      const sha = typeof p.sha === "string" ? p.sha.slice(0, 7) : "";
+      return { ...base, verb: "merged", rest: sha ? `to main as ${sha}` : "to main", tone: "pass" };
+    }
+    case "card/repair_plan":
+      return {
+        ...base,
+        verb: "wrote a repair plan for",
+        ...(typeof p.plan === "string" ? { quote: p.plan } : {}),
+        tone: "neutral",
+      };
+    case "checkpoint/recorded":
+      return {
+        ...base,
+        actor: "Sekhemet",
+        verb: "checkpointed",
+        rest: typeof p.step === "number" ? `at step ${p.step}` : "",
+        tone: "neutral",
+      };
+    default:
+      return {
+        ...base,
+        verb: humanize(event.type.replace(/\//g, " ")).toLowerCase(),
+        tone: "neutral",
+      };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Runs (§2.4.4)
+// ---------------------------------------------------------------------------
+
+export interface QueueEntryLike {
+  cardId: string;
+  attempt?: number;
+  passed: boolean;
+  accepted?: boolean;
+  stopReason: string;
+  turns: number;
+  durationMs: number;
+  promptTokens: number;
+  completionTokens: number;
+}
+
+export interface RunLike {
+  startedAt: string;
+  model: string;
+  managerModel?: string;
+  entries: QueueEntryLike[];
+  modelSwaps?: number;
+  totalDurationMs: number;
+}
+
+export interface RunSummary {
+  cards: number;
+  firstTry: number;
+  retried: number;
+  passedAfterRetry: number;
+  totalMs: number;
+  failedMs: number;
+  promptTokens: number;
+  completionTokens: number;
+  tokensPerSecond: number;
+  stops: { reason: string; label: string; tone: Tone; count: number }[];
+  segments: {
+    cardId: string;
+    ms: number;
+    share: number;
+    tone: "pass" | "fail" | "parked";
+    label: string;
+  }[];
+  overheadShare: number;
+}
+
+/** Everything the Runs scorecard shows, computed once and tested here. */
+export function summarizeRun(run: RunLike): RunSummary {
+  const entries = run.entries ?? [];
+  const cards = new Set(entries.map((e) => e.cardId));
+  const firstTry = entries.filter((e) => (e.attempt ?? 1) === 1 && e.passed).length;
+  const retries = entries.filter((e) => (e.attempt ?? 1) > 1);
+  const worked = entries.reduce((n, e) => n + e.durationMs, 0);
+  const totalMs = Math.max(run.totalDurationMs ?? 0, worked);
+  const failedMs = entries.filter((e) => !e.passed).reduce((n, e) => n + e.durationMs, 0);
+  const promptTokens = entries.reduce((n, e) => n + e.promptTokens, 0);
+  const completionTokens = entries.reduce((n, e) => n + e.completionTokens, 0);
+  const counts = new Map<string, number>();
+  for (const e of entries) counts.set(e.stopReason, (counts.get(e.stopReason) ?? 0) + 1);
+  const stops = [...counts]
+    .map(([reason, count]) => {
+      const l = stopReasonLabel(reason);
+      return { reason, label: l.short, tone: l.tone, count };
+    })
+    .sort((a, b) =>
+      a.reason === "gate_passed" ? -1 : b.reason === "gate_passed" ? 1 : b.count - a.count,
+    );
+  const segments = entries.map((e) => {
+    const tone = e.passed
+      ? ("pass" as const)
+      : stopReasonLabel(e.stopReason).tone === "parked"
+        ? ("parked" as const)
+        : ("fail" as const);
+    return {
+      cardId: e.cardId,
+      ms: e.durationMs,
+      share: totalMs > 0 ? e.durationMs / totalMs : 0,
+      tone,
+      label: stopReasonLabel(e.stopReason).short,
+    };
+  });
+  const used = segments.reduce((n, s) => n + s.share, 0);
+  return {
+    cards: cards.size,
+    firstTry,
+    retried: retries.length,
+    passedAfterRetry: retries.filter((e) => e.passed).length,
+    totalMs,
+    failedMs,
+    promptTokens,
+    completionTokens,
+    tokensPerSecond: totalMs > 0 ? completionTokens / (totalMs / 1000) : 0,
+    stops,
+    segments,
+    overheadShare: Math.max(0, 1 - used),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Steps (§2.4.3) and machine checks (§2.4.6)
+// ---------------------------------------------------------------------------
+
+function callKey(c: CallLike): string {
+  return `${c.name}|${c.target ?? ""}`;
+}
+
+/**
+ * Where loop detection fired: the run of trailing steps that repeat actions
+ * without changing a file. Returns 1-based turn numbers, or null.
+ */
+export function loopRange(
+  steps: (StepLike & { stopReason?: string })[],
+): { from: number; to: number; lastChange?: number; repeated: string } | null {
+  const last = steps.at(-1);
+  if (!last || last.stopReason !== "oscillation_detected") return null;
+  const edits = (s: StepLike) =>
+    (s.calls ?? []).some((c) => /write|edit|create|patch|replace/.test(c.name));
+  let lastChangeIdx = -1;
+  for (let i = steps.length - 1; i >= 0; i--) {
+    const s = steps[i];
+    if (s && edits(s)) {
+      lastChangeIdx = i;
+      break;
+    }
+  }
+  // The loop is the tail after the last edit; if every step edits the same
+  // file identically, the whole tail repeating the final signature is it.
+  const sig = (s: StepLike) => (s.calls ?? []).map(callKey).join(",");
+  const tailSig = sig(last);
+  let fromIdx = steps.length - 1;
+  while (fromIdx > 0 && sig(steps[fromIdx - 1] as StepLike) === tailSig) fromIdx--;
+  if (lastChangeIdx >= 0 && lastChangeIdx < fromIdx) fromIdx = Math.min(fromIdx, lastChangeIdx + 1);
+  const repeated =
+    [...new Set((last.calls ?? []).map((c) => callPhrase(c)))].join(" and ") || "the same step";
+  return {
+    from: steps[fromIdx]?.turn ?? last.turn,
+    to: last.turn,
+    ...(lastChangeIdx >= 0 ? { lastChange: steps[lastChangeIdx]?.turn as number } : {}),
+    repeated,
+  };
+}
+
+/** A plain fix for a health check that is not passing. */
+export function checkFixHint(name: string, status: string, detail = ""): string | undefined {
+  if (status === "pass") return undefined;
+  switch (name) {
+    case "Skills registry":
+      return "Create .sekhemet/skills/ to load skills.";
+    case "Local inference socket":
+      return status === "fail"
+        ? "Start Ollama or llama-server, then re-run the checks."
+        : "Pull or load a model so the Worker has one to use.";
+    case "Sandbox confinement":
+      return /WROTE OUTSIDE/.test(detail)
+        ? "Stop: the sandbox let a command write outside its worktree. Do not run cards until this passes."
+        : "Commands run unconfined on this system. Use restricted mode only where confinement exists.";
+    case "Git worktree isolation":
+      return "Run Sekhemet from inside a git repository with at least one commit.";
+    case "Unified memory":
+      return "Close other apps or unload an idle model. Cards resume below 85% memory.";
+    default:
+      return undefined;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -645,6 +1009,7 @@ export function vocabularyTables(): Record<string, unknown> {
 /** `oscillation_detected` -> `Oscillation detected`. The fallback for unknown enums. */
 export function humanize(value: string): string {
   const text = String(value ?? "")
+    .replace(/([a-z])([A-Z])/g, (_m, a: string, b: string) => `${a} ${b.toLowerCase()}`)
     .replace(/[_-]+/g, " ")
     .trim();
   return text ? text.charAt(0).toUpperCase() + text.slice(1) : "";

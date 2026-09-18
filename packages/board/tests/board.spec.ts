@@ -101,4 +101,18 @@ describe("@sekhemet/board", () => {
     const updatedState = await board.getBoardState();
     expect(updatedState.backpressureActive).toBe(true);
   });
+
+  it("records the transition's actor in the ledger, not a fixed executor", async () => {
+    await cardStore.createCard({ id: "c_who", tier: "task", title: "Who", status: "ready" });
+    await board.transitionCard({
+      cardId: "c_who",
+      fromStatus: "ready",
+      toStatus: "parked",
+      actor: "human",
+      reason: "parked: not now",
+    });
+    const last = await log.getLastEvent();
+    expect(last?.type).toBe("card/status_changed");
+    expect(last?.actor).toBe("human");
+  });
 });

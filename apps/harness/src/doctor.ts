@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { freemem, platform, totalmem } from "node:os";
 import { join } from "node:path";
-import { classifyMemoryPressure } from "@sekhemet/models";
+import { classifyMemoryPressure, readKernelPressureLevel } from "@sekhemet/models";
 import { ProcessSandbox } from "@sekhemet/sandbox";
 
 export type CheckStatus = "pass" | "warn" | "fail";
@@ -141,6 +141,38 @@ function probeSkills(repoPath: string): DiagnosticCheck {
 }
 
 /**
+ * Memory health, judged by the signal the run guard acts on.
+ *
+ * On macOS used/total counts reclaimable file cache, so it read "97% used,
+ * critical" on a machine at normal pressure while the Machine view beside it
+ * said Normal. Where the kernel reports its pressure level (1 normal,
+ * 2 warning, 4 critical) that decides the status; the ratio remains as detail.
+ */
+export function memoryCheck(
+  pressure: ReturnType<typeof classifyMemoryPressure>,
+  free: number,
+  total: number,
+  gb: (n: number) => string,
+  // null: this platform reports no level (an explicit undefined would re-run the default).
+  kernelLevel: number | null = readKernelPressureLevel() ?? null,
+): DiagnosticCheck {
+  const used = `${gb(free)} GB free of ${gb(total)} GB (${(pressure.usedRatio * 100).toFixed(0)}% used`;
+  if (kernelLevel !== null) {
+    const level = kernelLevel >= 4 ? "critical" : kernelLevel >= 2 ? "warning" : "normal";
+    return check(
+      "Unified memory",
+      level === "normal" ? "pass" : level === "warning" ? "warn" : "fail",
+      `${used}, including reclaimable cache); system pressure ${level}`,
+    );
+  }
+  return check(
+    "Unified memory",
+    pressure.level === "normal" ? "pass" : pressure.level === "warning" ? "warn" : "fail",
+    `${used}, ${pressure.level})`,
+  );
+}
+
+/**
  * Run the real diagnostic suite.
  *
  * Every check probes something. A diagnostic that cannot fail is worse than no
@@ -153,11 +185,7 @@ export async function runDoctor(repoPath: string = process.cwd()): Promise<Docto
   const gb = (n: number): string => (n / 1024 ** 3).toFixed(1);
 
   const checks: DiagnosticCheck[] = [
-    check(
-      "Unified memory",
-      pressure.level === "normal" ? "pass" : pressure.level === "warning" ? "warn" : "fail",
-      `${gb(free)} GB free of ${gb(total)} GB (${(pressure.usedRatio * 100).toFixed(0)}% used, ${pressure.level})`,
-    ),
+    memoryCheck(pressure, free, total, gb),
     await probeInference(["http://127.0.0.1:11434", "http://127.0.0.1:8099"]),
     probeWorktrees(repoPath),
     await probeConfinement(repoPath),

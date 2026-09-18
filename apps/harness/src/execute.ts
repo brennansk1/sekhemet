@@ -4,7 +4,7 @@ import type { BoardServiceImpl } from "@sekhemet/board";
 import { PlaybookRegistry, SkillsRegistry } from "@sekhemet/context";
 import { DeterministicGateRunner, loadGatesConfig } from "@sekhemet/gates";
 import type { CardRecord, CardStore } from "@sekhemet/kernel";
-import { type CardRunResult, CardRunner } from "@sekhemet/loop";
+import { type CardRunResult, CardRunner, type TurnResult } from "@sekhemet/loop";
 import type { LocalInferenceAdapter } from "@sekhemet/models";
 import { ProcessSandbox } from "@sekhemet/sandbox";
 import { NodeGitSyncAdapter } from "@sekhemet/sync";
@@ -15,6 +15,47 @@ export interface ExecutionContext {
   cardStore: CardStore;
   boardService: BoardServiceImpl;
   log?: (line: string) => void;
+}
+
+/** What a tool call acted on, in a few characters: a path, a command, a note. */
+function callTarget(args: Record<string, unknown> | undefined): string | undefined {
+  const a = args ?? {};
+  const pick = a.path ?? a.file ?? a.command ?? a.cmd ?? a.message ?? a.query;
+  if (pick === undefined || pick === null) return undefined;
+  const text = typeof pick === "string" ? pick : JSON.stringify(pick);
+  return text.length > 120 ? `${text.slice(0, 117)}...` : text;
+}
+
+/**
+ * The `card/step` ledger payload for one turn (FRONTEND_DESIGN §2.6): enough
+ * for the dashboard to say "Step 5 of 32 · editing src/hasher.ts" live and to
+ * render the Steps tab before the transcript is written at the end.
+ */
+export function stepEventPayload(cardId: string, turn: TurnResult) {
+  return {
+    id: cardId,
+    turn: turn.turnIndex,
+    calls: turn.toolCalls.map((c, i) => {
+      const target = callTarget(c.arguments as Record<string, unknown> | undefined);
+      const obs = turn.observations[i];
+      return {
+        name: c.name,
+        ...(target !== undefined ? { target } : {}),
+        ...(obs ? { ok: obs.ok, summary: String(obs.summary ?? "").slice(0, 200) } : {}),
+      };
+    }),
+    ...(turn.gateResult
+      ? {
+          gate: {
+            passed: turn.gateResult.passed,
+            failed: [...new Set(turn.gateResult.failures.map((f) => String(f.gate ?? f.rung)))],
+            errors: turn.gateResult.failures.length,
+          },
+        }
+      : {}),
+    ...(turn.usage ? { usage: turn.usage } : {}),
+    ...(turn.stopReason ? { stopReason: turn.stopReason } : {}),
+  };
 }
 
 /**
@@ -32,6 +73,20 @@ export async function executeCard(
   managerGuidance?: string,
 ): Promise<CardRunResult> {
   const log = ctx.log ?? ((line: string) => console.log(line));
+  // The Planner's repair plan is what attempt 2 runs on; keep it in the ledger
+  // so the card's Plan tab can show what the Worker was told.
+  if (managerGuidance) {
+    try {
+      await ctx.cardStore.recordEvent({
+        type: "card/repair_plan",
+        cardId: card.id,
+        actor: "planner",
+        payload: { id: card.id, plan: managerGuidance },
+      });
+    } catch {
+      // A ledger hiccup must not cost the retry.
+    }
+  }
   const gitAdapter = new NodeGitSyncAdapter(ctx.repoPath);
   const gatesConfig = loadGatesConfig(ctx.repoPath);
   // Restricted mode refuses to execute where the OS cannot confine the
@@ -98,6 +153,16 @@ export async function executeCard(
         }
       }
     },
+    // One ledger event per turn, so the board and the Steps tab follow a
+    // running card live instead of waiting for the transcript at the end.
+    onTurn: async (cardId, turn) => {
+      await ctx.cardStore.recordEvent({
+        type: "card/step",
+        cardId,
+        actor: "executor",
+        payload: stepEventPayload(cardId, turn),
+      });
+    },
     onProgress: (event) => {
       const prefix = event.turn ? `  [turn ${event.turn}]` : "  ";
       log(`${prefix} ${event.type}: ${event.message}`);
@@ -112,7 +177,11 @@ export async function executeCard(
  *
  * Only a card in Review can be accepted: the harness verifies, a person accepts.
  */
-export async function acceptCard(ctx: ExecutionContext, card: CardRecord): Promise<string> {
+export async function acceptCard(
+  ctx: ExecutionContext,
+  card: CardRecord,
+  actor = "human",
+): Promise<string> {
   if (card.status !== "review") {
     throw new Error(
       `Card ${card.id} is in '${card.status}'. Only a card in Review can be accepted.`,
@@ -137,9 +206,20 @@ export async function acceptCard(ctx: ExecutionContext, card: CardRecord): Promi
     cardId: card.id,
     fromStatus: card.status,
     toStatus: "done",
-    actor: "human",
+    actor,
     reason: "accepted by operator",
   });
+  // The merge commit, on the ledger: Done tiles and the card's Thread show it.
+  try {
+    await ctx.cardStore.recordEvent({
+      type: "card/accepted",
+      cardId: card.id,
+      actor,
+      payload: { id: card.id, sha },
+    });
+  } catch {
+    // The merge already happened; a missing ledger line must not undo it.
+  }
   await gitAdapter.removeWorktree(card.id);
   return sha;
 }
@@ -175,6 +255,15 @@ export function writeQueueReport(repoPath: string, report: QueueReport): string 
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const path = join(dir, "queue_report.json");
   writeFileSync(path, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+  // Keep every run, not just the latest: the Runs view compares them.
+  try {
+    const runs = join(dir, "runs");
+    mkdirSync(runs, { recursive: true });
+    const stamp = report.startedAt.replace(/[:.]/g, "-");
+    writeFileSync(join(runs, `${stamp}.json`), `${JSON.stringify(report, null, 2)}\n`, "utf8");
+  } catch {
+    // History is a convenience; the latest report above is the record.
+  }
   return path;
 }
 

@@ -112,7 +112,7 @@ export class BoardServiceImpl implements BoardService {
     if (!card) throw new Error(`Card not found: ${t.cardId}`);
 
     if (t.toStatus === t.fromStatus) {
-      await this.cardStore.updateCardStatus(t.cardId, t.toStatus, t.reason);
+      await this.cardStore.updateCardStatus(t.cardId, t.toStatus, t.reason, t.actor);
       return;
     }
 
@@ -147,7 +147,7 @@ export class BoardServiceImpl implements BoardService {
       );
     }
 
-    await this.cardStore.updateCardStatus(t.cardId, t.toStatus, t.reason);
+    await this.cardStore.updateCardStatus(t.cardId, t.toStatus, t.reason, t.actor);
   }
 
   public async checkWipLimits(): Promise<WipLimitStatus[]> {

@@ -6,17 +6,23 @@ import {
   BOARD_COLUMN_ORDER,
   EMPTY_SHA256,
   KIND_LABELS,
+  callPhrase,
+  checkFixHint,
   columnLabel,
   describeCard,
+  eventSentence,
   formatDuration,
   formatTokens,
   formatWait,
   gateLabel,
   gateSummary,
+  humanize,
+  loopRange,
   outcomeSentence,
   parseTitle,
   statusLine,
   stopReasonLabel,
+  summarizeRun,
   vocabularyTables,
 } from "../src/vocabulary.js";
 
@@ -291,5 +297,220 @@ describe("statusLine and describeCard", () => {
   it("never lets an internal enum or tier through", () => {
     const d = describeCard(card({ status: "in_progress", tier: "story" }), { now });
     expect(JSON.stringify(d)).not.toMatch(/in_progress|story|SPIDR/);
+  });
+});
+
+describe("Phase 3 and 4 language", () => {
+  it("says what a running card is doing from its last step", () => {
+    const now = Date.parse("2026-09-18T14:12:00.000Z");
+    const line = statusLine(card({ status: "in_progress", stepsUsed: 0 }), {
+      now,
+      lastStep: {
+        turn: 5,
+        calls: [
+          { name: "read_file", target: "a.ts" },
+          { name: "write_file", target: "src/hasher.ts" },
+        ],
+      },
+    });
+    expect(line).toEqual({
+      text: "Step 5 of 32 · editing src/hasher.ts",
+      tone: "running",
+      mark: "running",
+    });
+    expect(callPhrase({ name: "run_cmd", target: "pnpm test" })).toBe("running pnpm test");
+    expect(callPhrase({ name: "finish_card" })).toBe("asking for verification");
+    const d = describeCard(card({ status: "in_progress", stepsUsed: 0 }), {
+      now,
+      lastStep: { turn: 5, calls: [] },
+    });
+    expect(d.budgetText).toBe("5 of 32 steps");
+  });
+
+  it("names the merge sha on a Done card", () => {
+    const now = Date.parse("2026-09-18T16:00:00.000Z");
+    expect(
+      statusLine(card({ status: "done" }), {
+        now,
+        enteredColumnAt: "2026-09-18T14:00:00.000Z",
+        acceptedSha: "ba1338e43b",
+      }).text,
+    ).toBe("Accepted · ba1338e · 2h ago");
+  });
+
+  it("writes ledger events as sentences with the actor named", () => {
+    const title = () => "Implement canonical JSON";
+    const moved = eventSentence(
+      {
+        type: "card/status_changed",
+        actor: "executor",
+        cardId: "c",
+        payload: { fromStatus: "in_progress", toStatus: "verify" },
+      },
+      title,
+    );
+    expect(moved).toMatchObject({
+      actor: "Worker",
+      verb: "moved",
+      title: "Implement canonical JSON",
+      rest: "from Working to Checking",
+    });
+    const back = eventSentence(
+      {
+        type: "card/status_changed",
+        actor: "human",
+        cardId: "c",
+        payload: { fromStatus: "review", toStatus: "ready", reason: "returned: Sort the keys" },
+      },
+      title,
+    );
+    expect(back).toMatchObject({ actor: "You", verb: "sent back", quote: "Sort the keys" });
+    const parked = eventSentence(
+      {
+        type: "card/status_changed",
+        actor: "human",
+        cardId: "c",
+        payload: { toStatus: "parked", reason: "parked: Not now" },
+      },
+      title,
+    );
+    expect(parked).toMatchObject({ verb: "parked", quote: "Not now", tone: "parked" });
+    expect(
+      eventSentence(
+        { type: "card/accepted", actor: "human", cardId: "c", payload: { sha: "ba1338e43b" } },
+        title,
+      ),
+    ).toMatchObject({
+      actor: "You",
+      verb: "merged",
+      rest: "to main as ba1338e",
+    });
+    expect(
+      eventSentence(
+        {
+          type: "card/updated",
+          actor: "planner",
+          cardId: "c",
+          payload: { patch: { stepsUsed: 8 } },
+        },
+        title,
+      ),
+    ).toMatchObject({ actor: "Worker", verb: "finished step 8 on" });
+    expect(
+      eventSentence({
+        type: "card/created",
+        actor: "planner",
+        cardId: "c",
+        payload: { title: "Hasher (SPIDR: Rule)" },
+      }),
+    ).toMatchObject({ actor: "Planner", verb: "created", title: "Hasher" });
+    const step = eventSentence(
+      {
+        type: "card/step",
+        actor: "executor",
+        cardId: "c",
+        payload: {
+          turn: 4,
+          calls: [{ name: "note", target: "stuck" }],
+          gate: { passed: false, failed: ["typecheck"] },
+        },
+      },
+      title,
+    );
+    expect(step.rest).toBe('· noting "stuck" · Types failed');
+    expect(step.tone).toBe("fail");
+    expect(
+      eventSentence(
+        { type: "card/repair_plan", actor: "planner", cardId: "c", payload: { plan: "1. Do x" } },
+        title,
+      ).quote,
+    ).toBe("1. Do x");
+    expect(humanize("dependsOn")).toBe("Depends on");
+  });
+
+  it("summarises a run: first try, retries, failed time, stops, and a timeline that fills 100%", () => {
+    const run = {
+      startedAt: "2026-09-18T14:16:10.135Z",
+      model: "m",
+      managerModel: "p",
+      totalDurationMs: 1_330_356,
+      entries: [
+        {
+          cardId: "a",
+          attempt: 1,
+          passed: true,
+          stopReason: "gate_passed",
+          turns: 2,
+          durationMs: 150_846,
+          promptTokens: 3437,
+          completionTokens: 124,
+        },
+        {
+          cardId: "b",
+          attempt: 1,
+          passed: false,
+          stopReason: "no_progress",
+          turns: 8,
+          durationMs: 281_463,
+          promptTokens: 23882,
+          completionTokens: 7651,
+        },
+        {
+          cardId: "c",
+          attempt: 1,
+          passed: false,
+          stopReason: "memory_pressure",
+          turns: 11,
+          durationMs: 524_000,
+          promptTokens: 40500,
+          completionTokens: 14800,
+        },
+        {
+          cardId: "b",
+          attempt: 2,
+          passed: true,
+          stopReason: "gate_passed",
+          turns: 3,
+          durationMs: 90_000,
+          promptTokens: 5000,
+          completionTokens: 300,
+        },
+      ],
+    };
+    const s = summarizeRun(run);
+    expect(s).toMatchObject({
+      cards: 3,
+      firstTry: 1,
+      retried: 1,
+      passedAfterRetry: 1,
+      failedMs: 805_463,
+    });
+    expect(s.stops.map((x) => [x.label, x.count])).toEqual([
+      ["Passed", 2],
+      ["Stalled", 1],
+      ["Paused for memory", 1],
+    ]);
+    expect(s.segments.map((x) => x.tone)).toEqual(["pass", "fail", "parked", "pass"]);
+    const total = s.segments.reduce((n, x) => n + x.share, 0) + s.overheadShare;
+    expect(total).toBeCloseTo(1, 10);
+  });
+
+  it("finds where loop detection fired", () => {
+    const steps = [
+      { turn: 1, calls: [{ name: "write_file", target: "src/h.ts" }] },
+      { turn: 2, calls: [{ name: "note", target: "stuck" }] },
+      { turn: 3, calls: [{ name: "note", target: "stuck" }] },
+      { turn: 4, calls: [{ name: "note", target: "stuck" }], stopReason: "oscillation_detected" },
+    ];
+    expect(loopRange(steps)).toEqual({ from: 2, to: 4, lastChange: 1, repeated: 'noting "stuck"' });
+    expect(loopRange([{ turn: 1, calls: [], stopReason: "gate_passed" }])).toBe(null);
+  });
+
+  it("offers a fix for every failing health check it knows", () => {
+    expect(checkFixHint("Skills registry", "warn")).toBe(
+      "Create .sekhemet/skills/ to load skills.",
+    );
+    expect(checkFixHint("Local inference socket", "fail")).toMatch(/Start Ollama/);
+    expect(checkFixHint("Skills registry", "pass")).toBeUndefined();
   });
 });

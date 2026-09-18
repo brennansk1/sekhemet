@@ -25,6 +25,8 @@ describe("@sekhemet/harness Dashboard Server", () => {
   let boardService: BoardServiceImpl;
   let serverInstance: { port: number; close: () => Promise<void> };
   let repo: string;
+  // The machine probe the server reads; tests move it across thresholds.
+  let memUsedRatio = 0.5;
 
   beforeAll(async () => {
     // A real database file on disk, as the DoD requires: an in-memory database
@@ -61,6 +63,9 @@ describe("@sekhemet/harness Dashboard Server", () => {
       cardStore,
       repoPath: repo,
       port: 0,
+      streamIntervalMs: 50,
+      machineEveryTicks: 2,
+      memoryProbe: () => ({ usedBytes: memUsedRatio * 1000, totalBytes: 1000 }),
     });
   });
 
@@ -471,5 +476,245 @@ describe("@sekhemet/harness Dashboard Server", () => {
     const meta = await (await fetch(`http://127.0.0.1:${serverInstance.port}/api/meta`)).json();
     expect(meta.reviewMinutesPerDay).toBe(60);
     expect(typeof meta.version).toBe("string");
+  });
+
+  /* ---------- Phase 3 and 4 endpoints ---------- */
+
+  const base = () => `http://127.0.0.1:${serverInstance.port}`;
+  const getJson = async (path: string) => {
+    const res = await fetch(`${base()}${path}`);
+    return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+  };
+
+  it("records the dashboard's triage as the human, not the executor", async () => {
+    const events = (await log.getEventsByCard("card_triage")).filter(
+      (e) => e.type === "card/status_changed",
+    );
+    // Created in review, then returned and parked from the dashboard.
+    expect(events.map((e) => e.actor)).toEqual(["human", "human"]);
+  });
+
+  it("serves a card's transcript per attempt, with the loop's stop on the last step", async () => {
+    const dir = join(repo, ".sekhemet", "transcripts");
+    mkdirSync(dir, { recursive: true });
+    const line = (turn: number, extra: Record<string, unknown> = {}) =>
+      JSON.stringify({
+        turn,
+        rawText: "",
+        toolCalls: [{ name: "note", arguments: { message: "stuck" } }],
+        observations: [{ tool: "note", ok: true, summary: `recorded note (${turn} total)` }],
+        usage: { promptTokens: 2100, completionTokens: 180, durationMs: 900 },
+        ...extra,
+      });
+    const first = [
+      JSON.stringify({
+        turn: 1,
+        toolCalls: [
+          { name: "write_file", arguments: { path: "src/hasher.ts", content: "export {};\n" } },
+          { name: "finish_card", arguments: {} },
+        ],
+        observations: [
+          { tool: "write_file", ok: true, summary: "overwrote src/hasher.ts (1 lines)" },
+          { tool: "finish_card", ok: true, summary: "requested verification" },
+        ],
+        gate: { passed: false, failures: ["tests/hasher.spec.ts:25:7 TS2353: x"] },
+      }),
+      ...[2, 3, 4, 5, 6, 7].map((t) => line(t)),
+      line(8, { stopReason: "oscillation_detected" }),
+    ];
+    writeFileSync(
+      join(dir, "card_chron_hasher-2026-09-18T14-42-30-382Z.jsonl"),
+      `${first.join("\n")}\n`,
+    );
+    writeFileSync(
+      join(dir, "card_chron_hasher-2026-09-18T15-00-00-000Z.jsonl"),
+      `${line(1, { stopReason: "gate_passed" })}\n`,
+    );
+    // A different card whose id shares the prefix must not be mixed in.
+    writeFileSync(join(dir, "card_chron_hasher2-2026-09-18T15-00-00-000Z.jsonl"), `${line(1)}\n`);
+
+    const one = await getJson("/api/cards/card_chron_hasher/transcript?attempt=1");
+    expect(one.status).toBe(200);
+    const steps = one.body.steps as {
+      turn: number;
+      stopReason?: string;
+      calls: { name: string; target?: string; content?: string }[];
+    }[];
+    expect(one.body).toMatchObject({ attempt: 1, attempts: 2, live: false });
+    expect(steps.length).toBe(8);
+    expect(steps[7]?.stopReason).toBe("oscillation_detected");
+    expect(steps[0]?.calls[0]).toMatchObject({
+      name: "write_file",
+      target: "src/hasher.ts",
+      content: "export {};\n",
+    });
+
+    const latest = await getJson("/api/cards/card_chron_hasher/transcript");
+    expect(latest.body).toMatchObject({ attempt: 2, attempts: 2 });
+    expect((await getJson("/api/cards/card_chron_hasher/transcript?attempt=3")).status).toBe(404);
+    expect((await getJson("/api/cards/card_nope/transcript")).status).toBe(404);
+  });
+
+  it("follows a running card live from card/step events, and shows the step on its tile", async () => {
+    await cardStore.recordEvent({
+      type: "card/step",
+      cardId: "card_ui_1",
+      actor: "executor",
+      payload: { id: "card_ui_1", turn: 3, calls: [{ name: "write_file", target: "src/x.ts" }] },
+    });
+    const live = await getJson("/api/cards/card_ui_1/transcript");
+    expect(live.body).toMatchObject({ live: true, file: null });
+    expect((live.body.steps as { turn: number }[]).map((s) => s.turn)).toEqual([3]);
+
+    const board = await getJson("/api/board");
+    const tile = (board.body.cards as { id: string; display: { statusLine: string } }[]).find(
+      (c) => c.id === "card_ui_1",
+    );
+    expect(tile?.display.statusLine).toMatch(/^Step 3 of \d+ · editing src\/x\.ts$/);
+  });
+
+  it("pages the ledger newest first, filtered by card, with a cursor", async () => {
+    const all = await getJson("/api/events?limit=5");
+    const events = all.body.events as { seq: number }[];
+    expect(events.length).toBe(5);
+    expect(events[0]?.seq).toBeGreaterThan(events[4]?.seq ?? 0);
+    expect(all.body.nextCursor).toBe(events[4]?.seq);
+    expect((all.body.verification as { valid: boolean }).valid).toBe(true);
+
+    const older = await getJson(`/api/events?limit=5&before=${all.body.nextCursor}`);
+    expect((older.body.events as { seq: number }[])[0]?.seq).toBeLessThan(events[4]?.seq ?? 0);
+
+    const card = await getJson("/api/events?card=card_triage&order=asc");
+    const mine = card.body.events as { cardId: string; type: string }[];
+    expect(mine.every((e) => e.cardId === "card_triage")).toBe(true);
+    expect(mine[0]?.type).toBe("card/created");
+    expect(card.body.nextCursor).toBe(null);
+
+    // Without query parameters the original contract holds.
+    const legacy = await getJson("/api/events");
+    expect((legacy.body.events as { seq: number }[])[0]?.seq).toBe(1);
+  });
+
+  it("lists every queue run and serves each one, keeping /api/queue", async () => {
+    const runs = join(repo, ".sekhemet", "runs");
+    mkdirSync(runs, { recursive: true });
+    const report = (startedAt: string, passed: boolean) => ({
+      startedAt,
+      model: "m",
+      entries: [
+        {
+          cardId: "a",
+          attempt: 1,
+          passed,
+          accepted: passed,
+          stopReason: passed ? "gate_passed" : "no_progress",
+          turns: 2,
+          durationMs: 1000,
+          promptTokens: 10,
+          completionTokens: 1,
+        },
+      ],
+      passAt1: passed ? 1 : 0,
+      passAfterEscalation: 0,
+      modelSwaps: 0,
+      totalDurationMs: 1200,
+    });
+    writeFileSync(
+      join(runs, "2026-09-17T10-00-00-000Z.json"),
+      JSON.stringify(report("2026-09-17T10:00:00.000Z", false)),
+    );
+    writeFileSync(
+      join(runs, "2026-09-18T10-00-00-000Z.json"),
+      JSON.stringify(report("2026-09-18T10:00:00.000Z", true)),
+    );
+    writeFileSync(
+      join(repo, ".sekhemet", "queue_report.json"),
+      JSON.stringify(report("2026-09-18T10:00:00.000Z", true)),
+    );
+
+    const list = await getJson("/api/runs");
+    const rows = list.body.runs as { id: string; firstTry: number; cards: number }[];
+    expect(rows.map((r) => r.id)).toEqual(["2026-09-18T10-00-00-000Z", "2026-09-17T10-00-00-000Z"]);
+    expect(rows[0]).toMatchObject({ firstTry: 1, cards: 1 });
+    const one = await getJson(`/api/runs/${rows[1]?.id}`);
+    expect((one.body.entries as { stopReason: string }[])[0]?.stopReason).toBe("no_progress");
+    expect((await getJson("/api/runs/nope")).status).toBe(404);
+    expect((await getJson("/api/queue")).body.startedAt).toBe("2026-09-18T10:00:00.000Z");
+  });
+
+  it("reports memory against its thresholds, and the level changes past 0.85", async () => {
+    memUsedRatio = 0.8;
+    const below = await getJson("/api/machine");
+    const mem = below.body.memory as {
+      level: string;
+      usedRatio: number;
+      thresholds: { warning: number };
+    };
+    expect(mem.level).toBe("normal");
+    expect(mem.thresholds.warning).toBe(0.85);
+    expect(Array.isArray(below.body.checks)).toBe(true);
+    expect(below.body.worktrees).toEqual([]);
+
+    memUsedRatio = 0.86;
+    expect(((await getJson("/api/machine")).body.memory as { level: string }).level).toBe(
+      "warning",
+    );
+    memUsedRatio = 0.95;
+    expect(((await getJson("/api/machine")).body.memory as { level: string }).level).toBe(
+      "critical",
+    );
+    memUsedRatio = 0.5;
+  });
+
+  it("pushes a machine event on the stream", async () => {
+    memUsedRatio = 0.9;
+    const res = await fetch(`${base()}/api/stream`);
+    const reader = res.body?.getReader();
+    let text = "";
+    const deadline = Date.now() + 3000;
+    while (reader && Date.now() < deadline && !text.includes("event: machine")) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      text += new TextDecoder().decode(value);
+    }
+    await reader?.cancel();
+    expect(text).toContain("event: machine");
+    const data = JSON.parse(/event: machine\ndata: (.+)\n/.exec(text)?.[1] ?? "{}");
+    expect(data.memory.level).toBe("warning");
+    memUsedRatio = 0.5;
+  });
+
+  it("serves the playbook: rules from playbook.toml and candidates from send-back notes", async () => {
+    writeFileSync(
+      join(repo, ".sekhemet", "playbook.toml"),
+      `[[rule]]\nid = "rule_a"\noriginCard = "card_triage"\ntriggerGate = "typecheck"\npattern = "src/"\ninstruction = "Use .js extensions."\neffectiveDate = "2026-09-18"\n`,
+    );
+    const pb = await getJson("/api/playbook");
+    const rules = pb.body.rules as { id: string; instruction: string }[];
+    expect(rules.map((r) => r.id)).toEqual(["rule_a"]);
+    const cands = pb.body.candidates as { cardId: string; reason: string }[];
+    expect(cands.some((c) => c.reason === "Handle the empty-chain case explicitly")).toBe(true);
+  });
+
+  it("shows the accept sha on a Done card from the card/accepted ledger event", async () => {
+    await cardStore.createCard({
+      id: "card_done",
+      tier: "task",
+      title: "Done (SPIDR: Path)",
+      status: "done",
+      scopeFiles: [],
+    });
+    await cardStore.recordEvent({
+      type: "card/accepted",
+      cardId: "card_done",
+      actor: "human",
+      payload: { id: "card_done", sha: "ba1338e43b5753ad" },
+    });
+    const board = await getJson("/api/board");
+    const done = (
+      board.body.cards as { id: string; display: { statusLine: string; acceptedSha?: string } }[]
+    ).find((c) => c.id === "card_done");
+    expect(done?.display.acceptedSha).toBe("ba1338e43b5753ad");
+    expect(done?.display.statusLine).toMatch(/^Accepted · ba1338e/);
   });
 });

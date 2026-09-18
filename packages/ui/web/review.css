@@ -806,3 +806,10 @@ dl.kv dd {
     display: none;
   }
 }
+.triage.settled {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+.triage.settled .mono {
+  color: var(--text-primary);
+}

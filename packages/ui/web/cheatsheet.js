@@ -56,6 +56,17 @@ const SECTIONS = [
       ["Send the note", [`${MOD}↵`]],
     ],
   },
+  {
+    name: "Card and lists",
+    views: ["card", "ledger", "runs", "machine"],
+    rows: [
+      ["Evidence, Plan, Steps, Thread, Files", ["1", "5"]],
+      ["Next or previous tab", ["←", "→"]],
+      ["Next or previous row", ["j", "k"]],
+      ["Open ledger entry", ["↵"]],
+      ["Re-run health checks", ["⇧", "R"]],
+    ],
+  },
 ];
 
 let open = null;

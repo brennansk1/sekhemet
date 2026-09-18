@@ -18,6 +18,11 @@ export const store = {
     gates: null,
     doctor: null,
     queue: null,
+    playbook: null,
+    /** Latest memory sample from the stream's `machine` event. */
+    machine: null,
+    /** Ledger events carried by the most recent stream frame. */
+    feed: [],
     /** The card the keyboard is on, shared by board, peek and palette. */
     focusedId: null,
     /** Cards selected with `x`. */

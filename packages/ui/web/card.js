@@ -1,12 +1,16 @@
-// Card view (FRONTEND_DESIGN §2.4.3), Evidence tab. Plan, Steps, Thread and
-// Files arrive with Phase 3; until then the view is the Review composition at
-// full width for any card, reachable with Enter from the board or Review.
+// Card view (FRONTEND_DESIGN §2.4.3): header with triage, then five tabs.
+// Evidence reuses the Review composition; Plan, Steps, Thread and Files are
+// their own modules. Route: #/card/:id/:tab, tabs on keys 1–5.
 import { loadDetail } from "./data.js";
-import { $, esc, icon } from "./dom.js";
+import { $, esc, getJSON, icon } from "./dom.js";
 import { EvidencePane } from "./evidence.js";
+import { filesCount, renderFiles } from "./files.js";
 import { columnLabel } from "./lib/vocabulary.js";
+import { renderPlan } from "./plan.js";
 import { setTopbar } from "./shell.js";
+import { renderSteps } from "./steps.js";
 import { store } from "./store.js";
+import { renderThread } from "./thread.js";
 import {
   accept,
   composerHtml,
@@ -16,15 +20,27 @@ import {
   wireComposer,
 } from "./triage.js";
 
+const TABS = [
+  { id: "evidence", label: "Evidence" },
+  { id: "plan", label: "Plan" },
+  { id: "steps", label: "Steps" },
+  { id: "thread", label: "Thread" },
+  { id: "files", label: "Files" },
+];
+
 const ui = {
   root: null,
   id: null,
+  tab: "evidence",
   detail: null,
+  events: null,
   pane: null,
   unsub: null,
   attempt: undefined,
   sig: "",
   closeComposer: null,
+  tabCtl: null,
+  loadSeq: 0,
 };
 
 const PILL_ICON = {
@@ -36,14 +52,30 @@ const PILL_ICON = {
   neutral: "",
 };
 
-function render({ keepScroll = true, headOnly = false } = {}) {
+function tabsHtml(card) {
+  const counts = {
+    steps:
+      card.status === "in_progress"
+        ? Number.parseInt(card.display?.budgetText ?? "", 10) || ""
+        : card.display?.evidence
+          ? ui.detail?.evidence?.turnsUsed
+          : card.stepsUsed || "",
+    thread: ui.events ? ui.events.length : "",
+    files: ui.detail ? filesCount(card, ui.detail) : "",
+  };
+  return `<div class="tabs" role="tablist" aria-label="Card sections">${TABS.map((t, i) => {
+    const sel = t.id === ui.tab;
+    const c = counts[t.id];
+    return `<button class="tab" type="button" role="tab" id="tab-${t.id}" data-tab="${t.id}" aria-selected="${sel}" aria-controls="panel" tabindex="${sel ? "0" : "-1"}" title="${esc(t.label)} (${i + 1})">${esc(t.label)}${c !== "" && c !== undefined && c !== 0 ? ` <span class="c tnum">${esc(c)}</span>` : ""}</button>`;
+  }).join("")}</div>`;
+}
+
+function renderHead() {
   const card = store.card(ui.id);
   const head = $(".cv-h", ui.root);
-  const scroll = $(".ev-scroll", ui.root);
   if (!card) {
     setTopbar({ title: "Card", crumb: store.state.meta?.project ?? "" });
     head.innerHTML = "";
-    scroll.innerHTML = `<div class="ev-empty">${icon("alert", 24, "ic s24")}<b>No card ${esc(ui.id)}.</b><span>It may have been removed. <a href="#/board">Back to the board</a></span></div>`;
     return;
   }
   const project = store.state.meta?.project ?? "";
@@ -51,7 +83,6 @@ function render({ keepScroll = true, headOnly = false } = {}) {
     title: "Card",
     crumb: `${project ? `${project} › ` : ""}${columnLabel(card.status)}`,
   });
-  const top = scroll.scrollTop;
   const d = ui.detail;
   const triage = triageBarHtml(card, d?.evidence, { hint: false }).replace(
     /^<div class="triage[^"]*"[^>]*>|<\/div>$/g,
@@ -59,32 +90,89 @@ function render({ keepScroll = true, headOnly = false } = {}) {
   );
   const pill = `<span class="pill">${PILL_ICON[card.display?.tone ?? "neutral"] ?? ""}${esc(columnLabel(card.status))}</span>`;
   const headHtml = ui.pane.headHtml(card, d, { attempt: ui.attempt, withTitle: false });
-  const headNext = `<div class="line"><div style="min-width:0;flex:1 1 420px">${headHtml.replace('<div class="outcome">', `<h2 class="ttl">${esc(card.display?.title ?? card.title)}</h2><div class="outcome">`).replace('<div class="outcome">', `<div class="outcome">${pill}`)}</div><div class="acts">${triage}</div></div>`;
-  if (head.dataset.html !== headNext) {
-    const which = ["data-accept", "data-back", "data-park"].find(
-      (a) => document.activeElement?.hasAttribute?.(a) && head.contains(document.activeElement),
+  const next = `<div class="line"><div style="min-width:0;flex:1 1 420px">${headHtml
+    .replace(
+      '<div class="outcome">',
+      `<h2 class="ttl">${esc(card.display?.title ?? card.title)}</h2><div class="outcome">`,
+    )
+    .replace(
+      '<div class="outcome">',
+      `<div class="outcome">${pill}`,
+    )}</div><div class="acts">${triage}</div></div>${tabsHtml(card)}`;
+  if (head.dataset.html !== next) {
+    const active = document.activeElement;
+    const which = ["data-accept", "data-back", "data-park", "data-tab"].find(
+      (a) => active?.hasAttribute?.(a) && head.contains(active),
     );
-    head.innerHTML = headNext;
-    head.dataset.html = headNext;
-    if (which) head.querySelector(`[${which}]`)?.focus();
+    const tabVal = active?.dataset?.tab;
+    head.innerHTML = next;
+    head.dataset.html = next;
+    if (which === "data-tab") head.querySelector(`[data-tab="${tabVal}"]`)?.focus();
+    else if (which) head.querySelector(`[${which}]`)?.focus();
   }
-  if (headOnly) return;
-  scroll.innerHTML = d ? ui.pane.bodyHtml(card, d) : ui.pane.loadingHtml();
-  $("[data-facts]", ui.root).innerHTML = d ? ui.pane.factsHtml(card, d) : "";
-  scroll.scrollTop = keepScroll ? top : 0;
+}
+
+function renderPanel({ keepScroll = true } = {}) {
+  const card = store.card(ui.id);
+  const body = $(".cv-body", ui.root);
+  ui.tabCtl?.destroy?.();
+  ui.tabCtl = null;
+  if (!card) {
+    body.innerHTML = `<div class="ev-scroll"><div class="ev-empty">${icon("alert", 24, "ic s24")}<b>No card ${esc(ui.id)}.</b><span>It may have been removed. <a href="#/board">Back to the board</a></span></div></div>`;
+    return;
+  }
+  const d = ui.detail;
+  if (ui.tab === "evidence") {
+    const old = $(".ev-scroll", body);
+    const top = old?.scrollTop ?? 0;
+    body.innerHTML = `<div class="ev-scroll" id="panel" role="tabpanel" aria-labelledby="tab-evidence" tabindex="-1">${d ? ui.pane.bodyHtml(card, d) : ui.pane.loadingHtml()}</div><div data-facts style="display:contents">${d ? ui.pane.factsHtml(card, d) : ""}</div>`;
+    if (keepScroll) $(".ev-scroll", body).scrollTop = top;
+    return;
+  }
+  body.innerHTML = `<div class="ev-scroll panel" id="panel" role="tabpanel" aria-labelledby="tab-${ui.tab}" tabindex="-1"></div>`;
+  const host = $("#panel", body);
+  const ctx = {
+    id: ui.id,
+    card: () => store.card(ui.id),
+    detail: () => ui.detail,
+    events: () => ui.events,
+    goTab: (t, hash) => {
+      location.hash = `#/card/${encodeURIComponent(ui.id)}/${t}${hash ?? ""}`;
+    },
+  };
+  const renderers = {
+    plan: renderPlan,
+    steps: renderSteps,
+    thread: renderThread,
+    files: renderFiles,
+  };
+  ui.tabCtl = renderers[ui.tab]?.(host, ctx) ?? null;
+}
+
+async function loadEvents() {
+  const id = ui.id;
+  const res = await getJSON(`/api/events?card=${encodeURIComponent(id)}&order=asc&limit=1000`);
+  if (ui.id !== id || !ui.root) return;
+  ui.events = res.ok ? res.data.events : [];
+  renderHead();
+  ui.tabCtl?.onEvents?.();
 }
 
 async function load(keepScroll = false) {
   const id = ui.id;
+  const seq = ++ui.loadSeq;
   const card = store.card(id);
   ui.pane.forCard(id);
   ui.sig = `${card?.status}|${card?.display?.evidence?.id ?? ""}`;
   if (!keepScroll) ui.detail = null;
-  render({ keepScroll });
+  renderHead();
+  if (!keepScroll) renderPanel({ keepScroll });
   const d = await loadDetail(id, ui.attempt);
-  if (ui.id !== id || !ui.root) return;
+  if (seq !== ui.loadSeq || ui.id !== id || !ui.root) return;
   ui.detail = d;
-  render({ keepScroll });
+  renderHead();
+  if (ui.tab === "evidence" || !ui.tabCtl) renderPanel({ keepScroll });
+  else ui.tabCtl.onDetail?.();
 }
 
 function runAction(key) {
@@ -92,7 +180,7 @@ function runAction(key) {
   if (!card) return false;
   const ev = ui.detail?.evidence;
   if (key === "a") {
-    accept(card, ev, { onChange: () => render(), onMerged: () => render() });
+    accept(card, ev, { onChange: () => renderHead(), onMerged: () => renderHead() });
     return true;
   }
   if (key === "r" && ev) {
@@ -118,12 +206,34 @@ function runAction(key) {
   return false;
 }
 
+function selectTab(tab, { focus = false } = {}) {
+  if (!TABS.some((t) => t.id === tab)) return;
+  history.replaceState(null, "", `#/card/${encodeURIComponent(ui.id)}/${tab}`);
+  ui.tab = tab;
+  renderHead();
+  renderPanel({ keepScroll: false });
+  if (focus) $(`[data-tab="${tab}"]`, ui.root)?.focus();
+}
+
 function onKey(e) {
   const k = e.key;
+  if (/^[1-5]$/.test(k)) {
+    selectTab(TABS[Number(k) - 1].id, { focus: false });
+    return true;
+  }
+  // WAI-ARIA tabs: arrows move between tabs when a tab has focus.
+  if ((k === "ArrowRight" || k === "ArrowLeft") && e.target.closest?.("[role=tab]")) {
+    const i = TABS.findIndex((t) => t.id === ui.tab);
+    const next = TABS[(i + (k === "ArrowRight" ? 1 : -1) + TABS.length) % TABS.length];
+    selectTab(next.id, { focus: true });
+    return true;
+  }
   if (k === "a" || k === "r" || k === "p") return runAction(k);
+  if (ui.tabCtl?.onKey?.(e)) return true;
+  if (ui.tab !== "evidence") return false;
   if (k === "u") {
     ui.pane.mode = ui.pane.mode === "split" ? "unified" : "split";
-    render();
+    renderPanel();
     return true;
   }
   if (k === "n" || k === "N") {
@@ -155,18 +265,26 @@ function onKey(e) {
 
 function setParams(params) {
   const id = params?.[0];
-  if (id === ui.id) return;
+  const tab = TABS.some((t) => t.id === params?.[1]) ? params[1] : "evidence";
+  if (id === ui.id) {
+    if (tab !== ui.tab) selectTab(tab);
+    return;
+  }
   ui.closeComposer?.();
   ui.id = id;
+  ui.tab = tab;
   ui.attempt = undefined;
+  ui.events = null;
   store.state.focusedId = id;
   load();
+  loadEvents();
 }
 
 export function mount(view, route) {
   const root = document.createElement("div");
   root.className = "view-host";
-  root.innerHTML = `<section class="cv" aria-label="Card"><div class="cv-h"></div><div class="cv-body"><div class="ev-scroll" tabindex="-1"></div><div data-facts style="display:contents"></div></div></section>`;
+  root.innerHTML =
+    '<section class="cv" aria-label="Card"><div class="cv-h"></div><div class="cv-body"></div></section>';
   view.append(root);
   ui.root = root;
   ui.id = null;
@@ -177,20 +295,33 @@ export function mount(view, route) {
       load();
     },
   });
-  ui.pane.bind(root, { rerender: () => render(), reload: () => load(true) });
+  ui.pane.bind(root, { rerender: () => renderPanel(), reload: () => load(true) });
   root.addEventListener("click", (e) => {
     const t = e.target instanceof Element ? e.target : null;
     if (!t) return;
-    if (t.closest("[data-accept]")) runAction("a");
+    const tab = t.closest("[data-tab]");
+    if (tab) selectTab(tab.dataset.tab);
+    else if (t.closest("[data-accept]")) runAction("a");
     else if (t.closest("[data-back]")) runAction("r");
     else if (t.closest("[data-park]")) runAction("p");
   });
   ui.unsub = store.on((_s, patch) => {
-    if (!ui.root || !("cards" in patch || "connection" in patch || "verification" in patch)) return;
+    if (!ui.root) return;
+    if (!("cards" in patch || "connection" in patch || "verification" in patch)) return;
+    const mine = (store.state.feed ?? []).filter((e) => e.cardId === ui.id);
+    if ("cards" in patch && mine.length && ui.events) {
+      const have = new Set(ui.events.map((e) => e.seq));
+      const fresh = mine.filter((e) => !have.has(e.seq));
+      if (fresh.length) {
+        ui.events = [...ui.events, ...fresh];
+        ui.tabCtl?.onEvents?.(fresh);
+      }
+    }
     const card = store.card(ui.id);
     const sig = `${card?.status}|${card?.display?.evidence?.id ?? ""}`;
     if (sig !== ui.sig && !$("[data-composer]", ui.root)) load(true);
-    else render({ headOnly: true });
+    else renderHead();
+    ui.tabCtl?.onStore?.(patch);
   });
   setParams(route.params);
   return {
@@ -202,9 +333,12 @@ export function mount(view, route) {
     },
     unmount() {
       ui.closeComposer?.();
+      ui.tabCtl?.destroy?.();
+      ui.tabCtl = null;
       ui.unsub?.();
       root.remove();
       ui.root = null;
+      ui.id = null;
     },
   };
 }

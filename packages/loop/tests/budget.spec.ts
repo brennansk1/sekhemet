@@ -126,4 +126,31 @@ describe("@sekhemet/loop context budget and error containment", () => {
     expect(result.stopReason).toBe("error");
     expect(result.evidence.stopReason).toBe("error");
   });
+
+  it("reports every completed turn to onTurn, and a failing recorder never fails the card", async () => {
+    const { adapter } = recorder(16384, 4096);
+    const seen: { cardId: string; turn: number; calls: string[] }[] = [];
+    let calls = 0;
+    const runner = new CardRunner({
+      card: card({ stepBudget: 2 }),
+      repoRoot: repo,
+      worktreePath: join(repo, ".sekhemet", "worktrees", "card_budget"),
+      stepBudget: 2,
+      modelAdapter: adapter,
+      gateRunner: new DeterministicGateRunner(new ProcessSandbox()),
+      syncAdapter: new NodeGitSyncAdapter(repo),
+      scopeFiles: ["src/big.ts"],
+      onTurn: (cardId, turn) => {
+        calls++;
+        seen.push({ cardId, turn: turn.turnIndex, calls: turn.toolCalls.map((c) => c.name) });
+        if (calls === 1) throw new Error("ledger unavailable");
+      },
+    });
+
+    const result = await runner.run();
+    expect(seen.length).toBe(result.turns.length);
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen[0]).toMatchObject({ cardId: "card_budget", calls: ["read_file"] });
+    expect(result.stopReason).not.toBe("error");
+  });
 });

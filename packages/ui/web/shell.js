@@ -55,7 +55,7 @@ function firstTryText(queue) {
 }
 
 /** Memory and model, from the health checks until /api/machine exists. */
-export function machineStatus(doctor) {
+export function machineStatus(doctor, live) {
   const checks = doctor?.checks ?? [];
   const mem = checks.find((c) => c.name === "Unified memory");
   const inf = checks.find((c) => c.name === "Local inference socket");
@@ -67,6 +67,17 @@ export function machineStatus(doctor) {
       .split(",")[0]
       .trim()
       .replace(/:latest$/, "");
+  }
+  if (live?.usedRatio !== undefined) {
+    // The guard's level (the kernel's, where it reports one) decides pauses.
+    const lvl = live.guardLevel ?? live.level;
+    return {
+      memoryPercent: Math.round(live.usedRatio * 100),
+      memoryLevel: lvl,
+      memoryStatus: lvl === "critical" ? "fail" : lvl === "warning" ? "warn" : "pass",
+      model,
+      inferenceUp: inf ? inf.status !== "fail" : undefined,
+    };
   }
   return {
     memoryPercent: Number.isFinite(pct) ? pct : undefined,
@@ -102,6 +113,12 @@ function renderSide() {
         ? { n: String(needYou), warn: true }
         : null,
     runs: runs ? { n: runs, long: true, title: `${runs} passed on the first try` } : null,
+    playbook: s.playbook?.rules?.length
+      ? {
+          n: String(s.playbook.rules.length),
+          title: `${s.playbook.rules.length} rules${s.playbook.candidates?.length ? `, ${s.playbook.candidates.length} suggested` : ""}`,
+        }
+      : null,
   };
   const nav = NAV.map((item) => {
     const c = counts[item.name];
@@ -125,7 +142,7 @@ function renderSide() {
     live = `<div class="row" title="Live. Ledger intact${v ? `, ${v.totalEvents} entries` : ""}"><span class="dot"></span><span class="lbl">Live · ledger intact${n}</span></div>`;
   }
 
-  const m = machineStatus(s.doctor);
+  const m = machineStatus(s.doctor, s.machine);
   const memCls = m.memoryStatus === "fail" ? " fail" : m.memoryStatus === "warn" ? " warn" : "";
   const mem =
     m.memoryPercent !== undefined
@@ -159,7 +176,7 @@ function renderBar() {
   if (!slot) return;
   let html = "";
   const v = s.verification;
-  const m = machineStatus(s.doctor);
+  const m = machineStatus(s.doctor, s.machine);
   const pausedCard = memoryPausedCard(s);
   const lastQueue = s.queue?.entries?.at?.(-1);
   if (ledgerAltered(s)) {
@@ -167,9 +184,10 @@ function renderBar() {
   } else if (s.connection === "offline") {
     html = `<div class="bar offline" role="status">${icon("alert")}<span><b>Offline since ${esc(clock(s.offlineSince || Date.now()))}.</b> <span class="sec">Showing the last known state. Actions are disabled.</span></span><button class="link-btn" type="button" data-retry>Retry</button></div>`;
   } else if (
-    m.memoryLevel === "critical" ||
+    (s.machine && m.memoryLevel === "critical") ||
     pausedCard ||
-    lastQueue?.stopReason === "memory_pressure"
+    (lastQueue?.stopReason === "memory_pressure" &&
+      !["done", undefined].includes(store.card(lastQueue.cardId)?.status))
   ) {
     const sentence = pausedCard
       ? `Sekhemet stopped “${pausedCard.display.title}” safely${pausedCard.stepsUsed ? ` at step ${pausedCard.stepsUsed}` : ""}. It can resume below 85% memory.`

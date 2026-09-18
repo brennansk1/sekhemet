@@ -29,6 +29,19 @@ import {
   vocabularyTables,
 } from "@sekhemet/ui";
 import { resolveConfig } from "./config.js";
+import {
+  type MemorySample,
+  latestByCard,
+  listRuns,
+  liveSteps,
+  machineMemory,
+  playbookSnapshot,
+  queryEvents,
+  readTranscript,
+  sampleMemory,
+  transcriptFiles,
+  worktrees,
+} from "./dashboard_api.js";
 import { runDoctor } from "./doctor.js";
 import { acceptCard } from "./execute.js";
 import { generateDashboardHtml } from "./ui_html.js";
@@ -46,6 +59,10 @@ export interface DashboardServerOptions {
   streamIntervalMs?: number;
   /** Enables the triage actions (accept, return, park). Read-only without it. */
   cardStore?: CardStore;
+  /** Memory reader for /api/machine; injectable so tests can cross thresholds. */
+  memoryProbe?: () => MemorySample;
+  /** How often the stream pushes a `machine` event, in stream ticks. */
+  machineEveryTicks?: number;
 }
 
 export { generateDashboardHtml };
@@ -140,6 +157,9 @@ function faviconSvg(): string {
 /** Card ids travel in URLs; anything else is refused before touching the disk. */
 const CARD_ID = "[A-Za-z0-9_.-]+";
 
+/** Ledger facts the board derives display from, besides status changes. */
+const FACT_TYPES = ["card/step", "card/accepted"];
+
 interface AttemptSummary {
   attempt: number;
   evidenceId: string;
@@ -195,6 +215,7 @@ export function startDashboardServer(
   };
 
   const repoPath = options.repoPath ?? process.cwd();
+  const memoryProbe = options.memoryProbe ?? sampleMemory;
   const evidenceDir = join(repoPath, ".sekhemet", "evidence");
 
   // Evidence files are rewritten only when an attempt ends, so reads are cached
@@ -271,16 +292,17 @@ export function startDashboardServer(
   const statusEntries = () => {
     const rows = options.db
       .prepare(
-        `SELECT e.card_id AS cardId, e.actor AS actor, e.payload AS payload, e.created_at AS at
+        `SELECT e.card_id AS cardId, e.actor AS actor, e.payload AS payload, e.created_at AS at,
+                e.seq AS seq
          FROM events e
          JOIN (SELECT card_id, MAX(seq) AS seq FROM events
                WHERE type = 'card/status_changed' GROUP BY card_id) last
            ON e.seq = last.seq`,
       )
-      .all() as { cardId: string; actor: string; payload: string; at: string }[];
+      .all() as { cardId: string; actor: string; payload: string; at: string; seq: number }[];
     const map = new Map<
       string,
-      { actor: string; toStatus?: string; reason?: string; at: string }
+      { actor: string; toStatus?: string; reason?: string; at: string; seq: number }
     >();
     for (const row of rows) {
       try {
@@ -291,6 +313,7 @@ export function startDashboardServer(
         };
         map.set(row.cardId, {
           actor: row.actor,
+          seq: row.seq,
           at: p.updatedAt ?? row.at,
           ...(p.toStatus ? { toStatus: p.toStatus } : {}),
           ...(p.reason ? { reason: p.reason } : {}),
@@ -308,9 +331,18 @@ export function startDashboardServer(
     all: CardRecord[],
     entries: ReturnType<typeof statusEntries>,
     now: number,
+    facts: ReturnType<typeof latestByCard> = latestByCard(options.db, FACT_TYPES),
   ) => {
     const config = gatesConfig();
     const entry = entries.get(card.id);
+    const mine = facts.get(card.id);
+    const step = mine?.get("card/step");
+    // Only a step from the attempt in progress describes what the card is doing.
+    const lastStep =
+      card.status === "in_progress" && step && step.seq > (entry?.seq ?? 0)
+        ? (step.payload as { turn: number; calls?: { name: string; target?: string }[] })
+        : undefined;
+    const accepted = mine?.get("card/accepted")?.payload as { sha?: string } | undefined;
     const current = entry && entry.toStatus === card.status ? entry : undefined;
     const waitsOn = (card.dependsOn ?? [])
       .map((id) => all.find((c) => c.id === id))
@@ -324,6 +356,8 @@ export function startDashboardServer(
       ...(current?.reason ? { statusReason: current.reason } : {}),
       ...(current?.actor ? { statusActor: current.actor } : {}),
       waitsOn,
+      ...(lastStep ? { lastStep } : {}),
+      ...(card.status === "done" && accepted?.sha ? { acceptedSha: accepted.sha } : {}),
       configuredGates: config.gates.map((g) => ({ id: g.id, rung: g.rung })),
       limits: { maxFiles: config.project.maxFiles, maxDiffLines: config.project.maxDiffLines },
     });
@@ -334,10 +368,11 @@ export function startDashboardServer(
   const boardWithEvidence = async () => {
     const state = await boardService.getBoardState();
     const entries = statusEntries();
+    const facts = latestByCard(options.db, FACT_TYPES);
     const now = Date.now();
     return {
       ...state,
-      cards: state.cards.map((card) => withDisplay(card, state.cards, entries, now)),
+      cards: state.cards.map((card) => withDisplay(card, state.cards, entries, now, facts)),
     };
   };
 
@@ -453,6 +488,10 @@ export function startDashboardServer(
         Connection: "keep-alive",
       });
       res.write("retry: 2000\n\n");
+      // The first memory reading goes out at once, not five seconds later.
+      res.write(
+        `event: machine\ndata: ${JSON.stringify({ memory: machineMemory(memoryProbe()) })}\n\n`,
+      );
       streams.add(res);
 
       const latest = await log.getLastEvent();
@@ -475,11 +514,122 @@ export function startDashboardServer(
     }
 
     if (url === "/api/events") {
-      const [events, verification] = await Promise.all([
-        log.getEvents(1, 200),
-        log.verifyHashChain(),
-      ]);
-      json(res, 200, { events, verification });
+      const paged = ["card", "since", "before", "limit", "order", "type", "actor"].some((k) =>
+        query.has(k),
+      );
+      if (!paged) {
+        // The original contract: the first 200 events, oldest first.
+        const [events, verification] = await Promise.all([
+          log.getEvents(1, 200),
+          log.verifyHashChain(),
+        ]);
+        json(res, 200, { events, verification });
+        return;
+      }
+      const num = (k: string) => {
+        const v = query.get(k);
+        return v !== null && /^\d+$/.test(v) ? Number(v) : undefined;
+      };
+      const q = {
+        ...(query.get("card") ? { card: query.get("card") as string } : {}),
+        ...(query.get("type") ? { type: query.get("type") as string } : {}),
+        ...(query.get("actor") ? { actor: query.get("actor") as string } : {}),
+        ...(num("since") !== undefined ? { since: num("since") } : {}),
+        ...(num("before") !== undefined ? { before: num("before") } : {}),
+        ...(num("limit") !== undefined ? { limit: num("limit") } : {}),
+        order: query.get("order") === "asc" ? ("asc" as const) : ("desc" as const),
+      };
+      const [page, verification] = [queryEvents(options.db, q), await log.verifyHashChain()];
+      json(res, 200, { ...page, verification });
+      return;
+    }
+
+    // One attempt's steps: the transcript file, or live `card/step` events
+    // while the card is still running and the transcript is not yet written.
+    const transcriptMatch = new RegExp(`^/api/cards/(${CARD_ID})/transcript$`).exec(url);
+    if (transcriptMatch) {
+      const cardId = transcriptMatch[1] as string;
+      const files = transcriptFiles(repoPath, cardId);
+      const card = (await boardService.getBoardState()).cards.find((c) => c.id === cardId);
+      if (!card) {
+        json(res, 404, { error: `No card ${cardId}` });
+        return;
+      }
+      const wanted = query.get("attempt");
+      const running = card.status === "in_progress";
+      const total = files.length + (running ? 1 : 0);
+      const n = wanted !== null ? Number(wanted) : total;
+      if (total === 0) {
+        json(res, 200, { attempt: 0, attempts: 0, file: null, live: false, steps: [] });
+        return;
+      }
+      if (!Number.isInteger(n) || n < 1 || n > total) {
+        json(res, 404, { error: `No attempt ${wanted} recorded for this card` });
+        return;
+      }
+      if (running && n === total) {
+        json(res, 200, {
+          attempt: n,
+          attempts: total,
+          file: null,
+          live: true,
+          steps: liveSteps(options.db, cardId),
+        });
+        return;
+      }
+      const file = files[n - 1] as string;
+      json(res, 200, {
+        attempt: n,
+        attempts: total,
+        file: basename(file),
+        live: false,
+        steps: readTranscript(file),
+      });
+      return;
+    }
+
+    // Run history: every queue scorecard, newest first.
+    if (url === "/api/runs") {
+      json(res, 200, { runs: listRuns(repoPath).runs });
+      return;
+    }
+    const runMatch = /^\/api\/runs\/([\w.-]+)$/.exec(url);
+    if (runMatch) {
+      const path = listRuns(repoPath).reports.get(runMatch[1] as string);
+      if (!path) {
+        json(res, 404, { error: `No run ${runMatch[1]}` });
+        return;
+      }
+      json(res, 200, { id: runMatch[1], ...JSON.parse(readFileSync(path, "utf8")) });
+      return;
+    }
+
+    // The machine: memory against its thresholds, the model, health checks.
+    if (url === "/api/machine") {
+      if (query.get("fresh") === "1") doctorCache = undefined;
+      const doctor = await cachedDoctor();
+      const inference = doctor.checks.find((c) => c.name === "Local inference socket");
+      const served = (/model\(s\): (.+)$/.exec(inference?.detail ?? "")?.[1] ?? "")
+        .split(",")
+        .map((m) => m.trim())
+        .filter(Boolean);
+      json(res, 200, {
+        memory: machineMemory(memoryProbe()),
+        models: {
+          endpoint: /^(\S+) reachable/.exec(inference?.detail ?? "")?.[1],
+          reachable: inference ? inference.status !== "fail" : false,
+          served,
+        },
+        checks: doctor.checks,
+        ok: doctor.ok,
+        checkedAt: new Date(doctorCache?.at ?? Date.now()).toISOString(),
+        worktrees: worktrees(repoPath),
+      });
+      return;
+    }
+
+    if (url === "/api/playbook") {
+      json(res, 200, playbookSnapshot(repoPath));
       return;
     }
 
@@ -631,6 +781,7 @@ export function startDashboardServer(
     }
 
     if (url === "/api/doctor") {
+      if (query.get("fresh") === "1") doctorCache = undefined;
       json(res, 200, await cachedDoctor());
       return;
     }
@@ -640,8 +791,22 @@ export function startDashboardServer(
 
   return new Promise((resolve, reject) => {
     server.listen(port, "127.0.0.1", () => {
+      let ticks = 0;
       timer = setInterval(() => {
         void pump();
+        // Memory is pushed on its own cadence: cheap to read, and the sidebar
+        // and Machine view should move without a ledger event to carry them.
+        ticks++;
+        if (streams.size > 0 && ticks % (options.machineEveryTicks ?? 5) === 0) {
+          const frame = `event: machine\ndata: ${JSON.stringify({ memory: machineMemory(memoryProbe()) })}\n\n`;
+          for (const res of streams) {
+            try {
+              res.write(frame);
+            } catch {
+              streams.delete(res);
+            }
+          }
+        }
       }, options.streamIntervalMs ?? 1000);
       // Never hold the process open for the stream ticker alone.
       timer.unref?.();
