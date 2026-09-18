@@ -7,8 +7,10 @@ import type { LocalInferenceAdapter } from "./types.js";
  * worker: the fast coder. manager: Merit, repair plans and reflection.
  * escalation: the manager's model driving the coding loop, for retries of
  * cards beyond the worker's measured capability.
+ * reviewer: an optional model from a different family for Merit's review
+ * (ARIS: cross-family review catches errors a same-family model shares).
  */
-export type ModelRole = "worker" | "manager" | "escalation";
+export type ModelRole = "worker" | "manager" | "escalation" | "reviewer";
 
 /** An adapter that can release its weights. HttpInferenceAdapter implements this. */
 export interface UnloadableAdapter extends LocalInferenceAdapter {

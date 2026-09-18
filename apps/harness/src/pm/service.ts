@@ -12,6 +12,7 @@ import {
   summarizeConversation,
 } from "./agent.js";
 import { capabilityReport, capabilitySummary } from "./capability.js";
+import { flowMetrics, monteCarloForecast } from "./metrics.js";
 import type { PmStore } from "./store.js";
 
 /** The PM's model unless the user names another: the 27B dense manager. */
@@ -172,8 +173,16 @@ export async function buildSnapshot(
   const worker = record
     ? { model: record.model, record: `${record.record} ${measured}` }
     : undefined;
+  const remaining = cards.filter((c) => !["done", "rejected", "parked"].includes(c.status)).length;
+  const cfd = (await flowMetrics(pmStore.log, 60)).cfd;
+  const daily = cfd.slice(1).map((d, i) => Math.max(0, d.done - (cfd[i]?.done ?? 0)));
+  const fc = monteCarloForecast(daily, remaining);
+  const forecast = fc
+    ? `${remaining} cards left: 50% likely within ${fc.p50Days} day(s), 85% within ${fc.p85Days} (from ${fc.samples} days of history).`
+    : undefined;
   return {
     project: basename(repoPath),
+    ...(forecast ? { forecast } : {}),
     cards,
     cycles: await pmStore.cycles(),
     recentRuns,

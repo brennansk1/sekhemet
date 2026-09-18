@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { join } from "node:path";
 import type { BoardService } from "@sekhemet/board";
@@ -9,7 +9,7 @@ import { learnFromProposalChoices } from "./learning/reflect.js";
 import { LearningStore } from "./learning/store.js";
 import { ProposalError, applyProposal } from "./pm/apply.js";
 import { capabilityReport } from "./pm/capability.js";
-import { flowMetrics } from "./pm/metrics.js";
+import { flowMetrics, pmQuality } from "./pm/metrics.js";
 import { DEFAULT_PM_MODEL, answerQueued, createPmAdapter, runnerLease } from "./pm/service.js";
 import { PmStore } from "./pm/store.js";
 import { PM_EVENTS, type PmMessage, type PmStatus } from "./pm/types.js";
@@ -336,6 +336,32 @@ export function createPmApi(ctx: PmApiContext) {
     if (url === "/api/capability" && req.method === "GET") {
       const cards = ctx.cardStore ? await ctx.cardStore.listCards() : [];
       ctx.json(res, 200, capabilityReport(ctx.repoPath, cards));
+      return true;
+    }
+
+    // --- Merit's own quality (measured) -------------------------------------
+    if (url === "/api/metrics/pm" && req.method === "GET") {
+      const cards = ctx.cardStore ? await ctx.cardStore.listCards() : [];
+      const remaining = cards.filter(
+        (c) => !["done", "rejected", "parked"].includes(c.status),
+      ).length;
+      const evDir = join(ctx.repoPath, ".sekhemet", "evidence");
+      const firstTry = new Map<string, boolean>();
+      if (existsSync(evDir)) {
+        for (const f of readdirSync(evDir).filter((n) => n.startsWith("ev_"))) {
+          try {
+            const e = JSON.parse(readFileSync(join(evDir, f), "utf8")) as {
+              cardId?: string;
+              attempt?: number;
+              passed?: boolean;
+            };
+            if (e.cardId && (e.attempt ?? 1) === 1) firstTry.set(e.cardId, e.passed === true);
+          } catch {
+            // skip partial bundles
+          }
+        }
+      }
+      ctx.json(res, 200, await pmQuality(ctx.log, remaining, (id) => firstTry.get(id)));
       return true;
     }
 

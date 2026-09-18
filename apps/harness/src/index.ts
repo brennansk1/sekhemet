@@ -564,6 +564,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     const autoAccept = argv.includes("--auto-accept");
     const managerIdx = argv.indexOf("--manager");
     const managerModel = managerIdx !== -1 ? argv[managerIdx + 1] : undefined;
+    const reviewerIdx = argv.indexOf("--reviewer");
+    const reviewerModel = reviewerIdx !== -1 ? argv[reviewerIdx + 1] : undefined;
     const workerIdx = argv.indexOf("--worker");
     const workerModel = workerIdx !== -1 ? argv[workerIdx + 1] : undefined;
 
@@ -596,6 +598,20 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
                 sampling: { temperature: 0.2, topP: 0.9, topK: 20, minP: 0 },
               })
             : createPmAdapter(DEFAULT_PM_MODEL),
+        // A different model family for Merit's review (--reviewer <model>).
+        ...(reviewerModel
+          ? {
+              reviewer: () =>
+                new HttpInferenceAdapter({
+                  modelId: reviewerModel,
+                  apiFormat: "ollama",
+                  contextTokens: 12288,
+                  maxTokens: 900,
+                  disableReasoning: true,
+                  sampling: { temperature: 0.1, topP: 0.9, topK: 20, minP: 0 },
+                }),
+            }
+          : {}),
         // The manager's (stronger, dense) model as a coder, for --escalate-retries.
         escalation: () =>
           new HttpInferenceAdapter({
@@ -830,7 +846,10 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         // Merit's reflection runs now, while its model is already resident:
         // learning must never cost an extra swap.
         const learned = await reflectWithManager(manager, ctx.learning, reflections).catch(() => 0);
-        await reviewPassed(manager);
+        // Cross-family review when a reviewer model is configured (one extra
+        // swap on a 24 GB host); otherwise Merit reviews while resident.
+        await reviewPassed(reviewerModel ? await router.use("reviewer") : manager);
+        if (reviewerModel) await router.use("manager");
         // Mem0-style consolidation of what was learned, same residency.
         const c = await consolidateWithManager(manager, ctx.learning).catch(() => undefined);
         if (c && c.merged + c.contradictions + c.duplicates > 0) {
@@ -858,7 +877,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       // Reviews still pending (no failures loaded Merit's model) run now only
       // when asked: on a 24 GB host that costs one swap.
       if (reviewAll && passedResults.length > 0) {
-        await reviewPassed(await router.use("manager")).catch(() => undefined);
+        await reviewPassed(await router.use(reviewerModel ? "reviewer" : "manager")).catch(
+          () => undefined,
+        );
       }
       // Anything asked during the last step is answered before the run ends.
       await answerPm().catch(() => undefined);

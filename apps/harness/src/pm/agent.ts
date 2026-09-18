@@ -16,6 +16,8 @@ export interface PmSnapshot {
   pmModel: string;
   /** Active statements from the user profile, strongest first. */
   preferences?: string[];
+  /** Monte Carlo delivery forecast, as a sentence. */
+  forecast?: string;
   today: string;
 }
 
@@ -106,7 +108,8 @@ export function boardDigest(s: PmSnapshot, maxChars = 9000): string {
     s.preferences && s.preferences.length > 0
       ? `\n\nWHAT THE HUMAN PREFERS (learned; adapt to it)\n${s.preferences.map((p) => `- ${p}`).join("\n")}`
       : "";
-  return `Today: ${s.today}${prefs}\n\nBOARD\n${digest || "(empty)"}\n\nCYCLES\n${cycles}\n\nRECENT WORKER ATTEMPTS\n${runs}\n\nWORKER CAPABILITY\n${capability}`;
+  const fc = s.forecast ? `\n\nFORECAST (Monte Carlo from real throughput)\n${s.forecast}` : "";
+  return `Today: ${s.today}${prefs}${fc}\n\nBOARD\n${digest || "(empty)"}\n\nCYCLES\n${cycles}\n\nRECENT WORKER ATTEMPTS\n${runs}\n\nWORKER CAPABILITY\n${capability}`;
 }
 
 /**
@@ -539,6 +542,7 @@ export function ledgerStandup(s: PmSnapshot): string {
   const ready = [...by("ready")].sort((a, b) => (a.priority || 9) - (b.priority || 9));
   if (ready.length) lines.push(`Next up: ${ready.slice(0, 3).map(name).join(", ")}.`);
   lines.push(`Done: ${by("done").length} of ${s.cards.length} cards.`);
+  if (s.forecast) lines.push(`Forecast: ${s.forecast}`);
   if (s.worker) lines.push(`Worker record: ${s.worker.record}`);
   return `${lines.join("\n")}\n\n_Answered from the ledger without loading a model. Ask a specific question for my judgement._`;
 }

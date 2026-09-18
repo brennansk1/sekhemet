@@ -129,3 +129,105 @@ function snapshotBefore(
 function round(n: number): number {
   return Math.round(n * 100) / 100;
 }
+
+/**
+ * Monte Carlo delivery forecast from throughput history (the Kanban Method's
+ * preferred forecast; research report 1). Resamples real days of completed
+ * cards until the remaining work is done, many times, and reports the day
+ * counts at the 50th and 85th percentiles: a range, not a promise.
+ */
+export function monteCarloForecast(
+  dailyDone: number[],
+  remaining: number,
+  trials = 2000,
+  random: () => number = Math.random,
+): { p50Days: number; p85Days: number; samples: number } | undefined {
+  if (remaining <= 0) return { p50Days: 0, p85Days: 0, samples: dailyDone.length };
+  const days = dailyDone.filter((d) => d >= 0);
+  if (days.length < 5 || days.every((d) => d === 0)) return undefined;
+  const results: number[] = [];
+  for (let t = 0; t < trials; t++) {
+    let left = remaining;
+    let n = 0;
+    while (left > 0 && n < 3650) {
+      left -= days[Math.floor(random() * days.length)] ?? 0;
+      n++;
+    }
+    results.push(n);
+  }
+  results.sort((a, b) => a - b);
+  const at = (q: number) =>
+    results[Math.min(results.length - 1, Math.floor(q * results.length))] ?? 0;
+  return { p50Days: at(0.5), p85Days: at(0.85), samples: days.length };
+}
+
+export interface PmQuality {
+  proposals: { applied: number; discarded: number; open: number; acceptanceRate?: number };
+  /** First-attempt pass rate of cards Merit's applied proposals created. */
+  plannedCards: { cards: number; passedFirstTry: number };
+  /** How often the human corrected the profile (edits and dismissals). */
+  profileCorrections: number;
+  forecast?: { remaining: number; p50Days: number; p85Days: number; samples: number };
+}
+
+/**
+ * How good Merit is, measured, not self-reported (research report 1, PM
+ * quality): proposal acceptance, how well the cards it planned go, how often
+ * the user corrects what it learned, and a calibrated forecast.
+ */
+export async function pmQuality(
+  log: EventLog,
+  remaining: number,
+  firstAttemptPassed: (cardId: string) => boolean | undefined,
+): Promise<PmQuality> {
+  const events = await log.getEventsByTypes([
+    "pm/proposal_state",
+    "pm/reply",
+    "learn/profile",
+    "card/status_changed",
+  ]);
+  const kinds = new Map<string, string>();
+  const created = new Set<string>();
+  let applied = 0;
+  let discarded = 0;
+  let total = 0;
+  let corrections = 0;
+  for (const e of events) {
+    if (e.type === "pm/reply") {
+      for (const p of (e.payload as { proposals?: { id: string; kind: string }[] }).proposals ??
+        []) {
+        kinds.set(p.id, p.kind);
+        total++;
+      }
+    } else if (e.type === "pm/proposal_state") {
+      const p = e.payload as { proposalId: string; state: string; cardIds?: string[] };
+      if (p.state === "applied") {
+        applied++;
+        const kind = kinds.get(p.proposalId);
+        if (kind === "create_card" || kind === "split_card")
+          for (const id of p.cardIds ?? []) created.add(id);
+      } else if (p.state === "discarded") discarded++;
+    } else if (e.type === "learn/profile" && e.actor === "human") {
+      corrections++;
+    }
+  }
+  const planned = [...created].map(firstAttemptPassed).filter((x) => x !== undefined);
+  const throughput = (await flowMetrics(log, 60)).cfd;
+  const daily = throughput.map((d, i) =>
+    i === 0 ? 0 : Math.max(0, d.done - (throughput[i - 1]?.done ?? 0)),
+  );
+  const forecast = monteCarloForecast(daily.slice(1), remaining);
+  return {
+    proposals: {
+      applied,
+      discarded,
+      open: Math.max(0, total - applied - discarded),
+      ...(applied + discarded > 0
+        ? { acceptanceRate: Math.round((applied / (applied + discarded)) * 100) / 100 }
+        : {}),
+    },
+    plannedCards: { cards: planned.length, passedFirstTry: planned.filter(Boolean).length },
+    profileCorrections: corrections,
+    ...(forecast ? { forecast: { remaining, ...forecast } } : {}),
+  };
+}
