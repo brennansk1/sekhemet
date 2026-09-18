@@ -51,3 +51,4 @@ Every document in `docs/` is listed here, and nowhere else is the source of trut
 |---|---|
 | [FEATURE_INVENTORY.md](reference/FEATURE_INVENTORY.md) | Every feature in the design and its implementation status. |
 | [FEATURE_INVENTORY_REAUDIT.md](reference/FEATURE_INVENTORY_REAUDIT.md) | The inventory re-audited against the current code: status per unit with its caller, and the remaining gaps ranked. |
+| [COMPLETION_PLAN.md](reference/COMPLETION_PLAN.md) | The gate: every inventory unit BUILT, in waves of two builders, verified by an independent re-audit. |
