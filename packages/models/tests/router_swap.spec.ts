@@ -44,4 +44,16 @@ describe("@sekhemet/models swap safety", () => {
     await router.use("worker");
     await expect(router.use("manager")).rejects.toBeInstanceOf(SwapHeadroomError);
   });
+
+  it("does not unload and reload when two roles share the same model", async () => {
+    const events: string[] = [];
+    const router = new ModelRouter(
+      { manager: () => adapter("dirk", events), escalation: () => adapter("dirk", events) },
+      { pressureLevel: () => 1, freeBytes: () => 0 },
+    );
+    await router.use("manager");
+    await router.use("escalation");
+    expect(events).toEqual([]);
+    expect(router.swapCount).toBe(0);
+  });
 });

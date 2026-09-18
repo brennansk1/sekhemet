@@ -574,6 +574,17 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
                 sampling: { temperature: 0.2, topP: 0.9, topK: 20, minP: 0 },
               })
             : createPmAdapter(DEFAULT_PM_MODEL),
+        // The manager's (stronger, dense) model as a coder, for --escalate-retries.
+        escalation: () =>
+          new HttpInferenceAdapter({
+            modelId: managerModel ?? DEFAULT_PM_MODEL,
+            apiFormat: "ollama",
+            // 12k keeps a dense 27B inside a 24 GB host; roomier hosts get 16k.
+            contextTokens: totalmem() >= 48 * 1024 ** 3 ? 16384 : 12288,
+            maxTokens: 3072,
+            disableReasoning: true,
+            sampling: { temperature: 0.2, topP: 0.9, topK: 20, minP: 0 },
+          }),
       },
       // Every swap proves the unload and waits for normal memory pressure.
       // With enough RAM (a 48 GB+ host) both stay resident and swaps vanish.
@@ -638,6 +649,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
 
     let workerModelId = workerModel ?? NAIL_WORKER_PROFILE.modelId;
     // --max-turns caps every card's step budget (the tuner's recommendation).
+    const escalateRetries = argv.includes("--escalate-retries");
     const maxTurnsIdx = argv.indexOf("--max-turns");
     const maxTurns = maxTurnsIdx !== -1 ? Number(argv[maxTurnsIdx + 1]) : undefined;
     // Lessons each attempt learned, handed to the next attempt at the same card.
@@ -647,8 +659,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         maxTurns && maxTurns > 0 && rawCard.stepBudget > maxTurns
           ? { ...rawCard, stepBudget: maxTurns }
           : rawCard;
-      const worker = await router.use("worker");
-      workerModelId = worker.modelId;
+      // A retry of a card the worker could not do runs on the stronger model
+      // when asked: capability-based routing, not the same model again.
+      const role = n >= 2 && escalateRetries ? "escalation" : "worker";
+      const worker = await router.use(role);
+      if (role === "escalation") console.log(`   escalating ${rawCard.id} to ${worker.modelId}`);
+      if (role === "worker") workerModelId = worker.modelId;
       console.log(`\n=== ${card.id} (attempt ${n}): ${card.title} ===`);
       const prior = lessonsByCard.get(card.id);
       const result = await executeCard(ctx, card, worker, guidance, prior);

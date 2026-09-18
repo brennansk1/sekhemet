@@ -9,7 +9,13 @@ import { describe, expect, it } from "vitest";
  */
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const DOCS = join(ROOT, "docs");
-const ROOT_ALLOWED = new Set(["README.md", "AGENTS.md", "CLAUDE.md", "DEFINITION_OF_DONE.md", "DEV_LOG.md"]);
+const ROOT_ALLOWED = new Set([
+  "README.md",
+  "AGENTS.md",
+  "CLAUDE.md",
+  "DEFINITION_OF_DONE.md",
+  "DEV_LOG.md",
+]);
 
 function markdownUnder(dir: string): string[] {
   const out: string[] = [];

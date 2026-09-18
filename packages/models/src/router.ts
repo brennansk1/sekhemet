@@ -3,7 +3,12 @@ import { readKernelPressureLevel } from "./memory.js";
 import type { LocalInferenceAdapter } from "./types.js";
 
 /** Roles the harness assigns to models. */
-export type ModelRole = "worker" | "manager";
+/**
+ * worker: the fast coder. manager: Merit, repair plans and reflection.
+ * escalation: the manager's model driving the coding loop, for retries of
+ * cards beyond the worker's measured capability.
+ */
+export type ModelRole = "worker" | "manager" | "escalation";
 
 /** An adapter that can release its weights. HttpInferenceAdapter implements this. */
 export interface UnloadableAdapter extends LocalInferenceAdapter {
@@ -75,8 +80,13 @@ export class ModelRouter {
   /** Return the adapter for `role`, unloading whichever other role was resident. */
   public async use(role: ModelRole): Promise<UnloadableAdapter> {
     if (this.active !== undefined && this.active !== role && !this.options.coResident) {
-      await this.swapOut(this.active, role);
-      this.swaps++;
+      // Two roles on the same weights (manager and escalation) share the
+      // resident model: unloading it only to load it again is pure swap cost.
+      const same = this.adapters.get(this.active)?.modelId === this.adapter(role).modelId;
+      if (!same) {
+        await this.swapOut(this.active, role);
+        this.swaps++;
+      }
     }
     this.active = role;
     return this.adapter(role);
