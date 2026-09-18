@@ -29,7 +29,7 @@ import {
   writeQueueReport,
 } from "./execute.js";
 import { runMcpStdioServer } from "./mcp.js";
-import { startDashboardServer } from "./server.js";
+import { DEFAULT_DASHBOARD_PORT, startDashboardServer } from "./server.js";
 
 export interface CliConfig {
   command:
@@ -143,7 +143,7 @@ export function parseCliArgs(argv: string[] = process.argv.slice(2)): CliConfig 
     repoPath = nextRepo;
   }
 
-  let port = 3333;
+  let port = DEFAULT_DASHBOARD_PORT;
   const portIdx = argv.indexOf("--port");
   const nextPort = portIdx !== -1 ? argv[portIdx + 1] : undefined;
   if (nextPort) {
@@ -294,6 +294,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       db,
       log,
       boardService,
+      cardStore,
+      repoPath: config.repoPath,
       port: config.port,
     });
     console.log("\n=================================================");

@@ -1,11 +1,12 @@
-import { existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { type IncomingMessage, type ServerResponse, createServer } from "node:http";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import type { BoardService } from "@sekhemet/board";
-import type { EventLog } from "@sekhemet/kernel";
+import type { CardStore, EventLog } from "@sekhemet/kernel";
 import { generateTokenCss, generateTokenJson } from "@sekhemet/ui";
 import { runDoctor } from "./doctor.js";
+import { acceptCard } from "./execute.js";
 import { generateDashboardHtml } from "./ui_html.js";
 
 /** The loopback port the design fixes for the dashboard. */
@@ -19,9 +20,43 @@ export interface DashboardServerOptions {
   repoPath?: string;
   /** How often the stream checks the log for new events. */
   streamIntervalMs?: number;
+  /** Enables the triage actions (accept, return, park). Read-only without it. */
+  cardStore?: CardStore;
 }
 
 export { generateDashboardHtml };
+
+/** Read a small JSON request body. Triage payloads are tiny; anything large is refused. */
+async function readJsonBody(
+  req: IncomingMessage,
+  limit = 16_384,
+): Promise<Record<string, unknown>> {
+  let raw = "";
+  for await (const chunk of req) {
+    raw += chunk;
+    if (raw.length > limit) throw new Error("request body too large");
+  }
+  if (!raw.trim()) return {};
+  const parsed = JSON.parse(raw) as unknown;
+  return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+}
+
+/**
+ * Mutations require a custom header. Browsers cannot attach one cross-origin
+ * without a CORS preflight, which this server never grants, so a web page the
+ * user happens to visit cannot trigger an accept (a git merge) on loopback.
+ */
+function isTrustedMutation(req: IncomingMessage): boolean {
+  if (req.headers["x-sekhemet-action"] !== "1") return false;
+  const origin = req.headers.origin;
+  if (!origin) return true;
+  try {
+    const host = new URL(origin).hostname;
+    return host === "127.0.0.1" || host === "localhost";
+  } catch {
+    return false;
+  }
+}
 
 /** Map a card's latest evidence onto the five-box gate strip. */
 function gateStripFor(repoPath: string, cardId: string): Record<string, string> | undefined {
@@ -207,6 +242,81 @@ export function startDashboardServer(
         return;
       }
       json(res, 200, JSON.parse(readFileSync(path, "utf8")));
+      return;
+    }
+
+    if (url === "/api/meta") {
+      json(res, 200, {
+        project: basename(repoPath),
+        repoPath,
+        triage: options.cardStore !== undefined,
+      });
+      return;
+    }
+
+    const action = /^\/api\/cards\/([A-Za-z0-9_.-]+)\/(accept|return|park)$/.exec(url);
+    if (action && req.method === "POST") {
+      if (!isTrustedMutation(req)) {
+        json(res, 403, { error: "Triage actions must come from the dashboard itself" });
+        return;
+      }
+      const store = options.cardStore;
+      if (!store) {
+        json(res, 501, { error: "This server was started read-only" });
+        return;
+      }
+      const [, cardId, verb] = action as unknown as [string, string, string];
+      const card = await store.getCard(cardId);
+      if (!card) {
+        json(res, 404, { error: `No card ${cardId}` });
+        return;
+      }
+      try {
+        if (verb === "accept") {
+          const sha = await acceptCard(
+            {
+              repoPath,
+              restrictedMode: false,
+              cardStore: store,
+              boardService: boardService as never,
+            },
+            card,
+          );
+          json(res, 200, { ok: true, status: "done", sha });
+          return;
+        }
+
+        const body = await readJsonBody(req);
+        const reason = typeof body.reason === "string" ? body.reason.trim().slice(0, 2000) : "";
+        if (verb === "return" && !reason) {
+          json(res, 400, { error: "A return needs a reason: it is what the agent is told next" });
+          return;
+        }
+
+        const to = verb === "return" ? "ready" : "parked";
+        await boardService.transitionCard({
+          cardId,
+          fromStatus: card.status,
+          toStatus: to,
+          actor: "human",
+          reason:
+            verb === "return" ? `returned: ${reason}` : `parked${reason ? `: ${reason}` : ""}`,
+        });
+
+        if (verb === "return") {
+          // Every return reason is a candidate playbook rule (design §820):
+          // the correction a human had to make once should not be needed twice.
+          const dir = join(repoPath, ".sekhemet");
+          mkdirSync(dir, { recursive: true });
+          appendFileSync(
+            join(dir, "playbook_candidates.jsonl"),
+            `${JSON.stringify({ cardId, reason, at: new Date().toISOString() })}\n`,
+          );
+        }
+        json(res, 200, { ok: true, status: to });
+      } catch (err) {
+        json(res, 409, { error: err instanceof Error ? err.message : String(err) });
+      }
       return;
     }
 

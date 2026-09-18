@@ -1,3 +1,6 @@
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { BoardServiceImpl } from "@sekhemet/board";
 import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
@@ -10,9 +13,13 @@ describe("@sekhemet/harness Dashboard Server", () => {
   let cardStore: CardStore;
   let boardService: BoardServiceImpl;
   let serverInstance: { port: number; close: () => Promise<void> };
+  let repo: string;
 
   beforeAll(async () => {
-    db = new DatabaseSync(":memory:");
+    // A real database file on disk, as the DoD requires: an in-memory database
+    // hides WAL and locking behaviour the dashboard runs against in practice.
+    repo = mkdtempSync(join(tmpdir(), "sekhemet-server-"));
+    db = new DatabaseSync(join(repo, "events.db"));
     initSchema(db);
     log = new EventLog(db);
     cardStore = new CardStore(db, log);
@@ -40,12 +47,16 @@ describe("@sekhemet/harness Dashboard Server", () => {
       db,
       log,
       boardService,
+      cardStore,
+      repoPath: repo,
       port: 0,
     });
   });
 
   afterAll(async () => {
     await serverInstance.close();
+    db.close();
+    rmSync(repo, { recursive: true, force: true });
   });
 
   it("serves the dashboard with the Basalt token stylesheet", async () => {
@@ -176,5 +187,66 @@ describe("@sekhemet/harness Dashboard Server", () => {
 
     // `ok` must remain derived from the checks rather than hardcoded.
     expect(data.ok).toBe(data.checks.every((c) => c.status !== "fail"));
+  });
+
+  const post = (path: string, body?: unknown, trusted = true) =>
+    fetch(`http://127.0.0.1:${serverInstance.port}${path}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(trusted ? { "X-Sekhemet-Action": "1" } : {}),
+      },
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    });
+
+  it("refuses a triage action that does not come from the dashboard", async () => {
+    await cardStore.createCard({
+      id: "card_triage",
+      tier: "task",
+      title: "Card awaiting review",
+      status: "review",
+      scopeFiles: ["src/a.ts"],
+    });
+    const res = await post("/api/cards/card_triage/park", undefined, false);
+    expect(res.status).toBe(403);
+    expect((await cardStore.getCard("card_triage"))?.status).toBe("review");
+  });
+
+  it("refuses a return without a reason, because the reason is the agent's next instruction", async () => {
+    const res = await post("/api/cards/card_triage/return", { reason: "   " });
+    expect(res.status).toBe(400);
+    expect((await cardStore.getCard("card_triage"))?.status).toBe("review");
+  });
+
+  it("returns a card to Ready and records the reason as a playbook candidate", async () => {
+    const res = await post("/api/cards/card_triage/return", {
+      reason: "Handle the empty-chain case explicitly",
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, status: "ready" });
+    expect((await cardStore.getCard("card_triage"))?.status).toBe("ready");
+
+    const candidates = join(repo, ".sekhemet", "playbook_candidates.jsonl");
+    expect(existsSync(candidates)).toBe(true);
+    const line = JSON.parse(readFileSync(candidates, "utf8").trim().split("\n").at(-1) ?? "{}");
+    expect(line.cardId).toBe("card_triage");
+    expect(line.reason).toBe("Handle the empty-chain case explicitly");
+  });
+
+  it("parks a card and reports illegal transitions instead of forcing them", async () => {
+    const parked = await post("/api/cards/card_triage/park", { reason: "waiting on API design" });
+    expect(parked.status).toBe(200);
+    expect((await cardStore.getCard("card_triage"))?.status).toBe("parked");
+
+    // Accepting is only legal from Review; the board's transition table rules.
+    const accept = await post("/api/cards/card_triage/accept");
+    expect(accept.status).toBe(409);
+    expect((await accept.json()).error).toContain("Review");
+  });
+
+  it("returns 404 for an unknown card and reports project metadata", async () => {
+    expect((await post("/api/cards/card_nope/park")).status).toBe(404);
+    const meta = await (await fetch(`http://127.0.0.1:${serverInstance.port}/api/meta`)).json();
+    expect(meta).toMatchObject({ triage: true, repoPath: repo });
   });
 });
