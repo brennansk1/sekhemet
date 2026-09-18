@@ -47,4 +47,22 @@ describe("@sekhemet/loop history and dependency tools", () => {
     expect(obs.content).toContain("zod@^3 (dependencies, not installed)");
     expect(obs.content).toContain("vitest@^3 (devDependencies");
   });
+
+  it("outlines a large file instead of flooding the window (delegated reading)", async () => {
+    const body = Array.from({ length: 260 }, (_, i) =>
+      i === 10
+        ? "export function openLedger() {"
+        : i === 120
+          ? "export class Ledger {"
+          : `  // line ${i + 1}`,
+    ).join("\n");
+    writeFileSync(join(root, "src", "big.ts"), body);
+    const outlined = await exec("read_file", { path: "src/big.ts" });
+    expect(outlined.content).toContain("has 260 lines");
+    expect(outlined.content).toMatch(/\s11\s+function openLedger/);
+    expect(outlined.content).toMatch(/\s121\s+class Ledger/);
+    expect(outlined.content).not.toContain("line 200");
+    const ranged = await exec("read_file", { path: "src/big.ts", start: 199, end: 201 });
+    expect(ranged.content).toContain("line 200");
+  });
 });

@@ -57,6 +57,22 @@ function isBinary(buf: Buffer): boolean {
  * observation is what gets fed back to the model: a failed edit that explains
  * *why* it failed is what lets the agent self-correct on the next turn.
  */
+/** Unranged reads above this many lines return an outline (delegated reading). */
+const OUTLINE_THRESHOLD = 200;
+
+/** Top-level declarations with their line numbers, for the outline. */
+function outlineOf(lines: string[]): string {
+  const re =
+    /^(?:export\s+)?(?:default\s+)?(?:abstract\s+)?(?:async\s+)?(function\s*\*?|class|interface|type|enum|const|let|var|describe|it|test)\s*\(?\s*['"`]?([A-Za-z_$][\w$ -]*)/;
+  const out: string[] = [];
+  lines.forEach((line, i) => {
+    const m = re.exec(line);
+    if (m?.[2])
+      out.push(`${String(i + 1).padStart(5)}  ${m[1]?.replace(/\s+/g, "")} ${m[2].trim()}`);
+  });
+  return out.slice(0, 80).join("\n");
+}
+
 export class ToolExecutor {
   public readonly root: string;
   private sandbox: ProcessSandbox;
@@ -315,6 +331,22 @@ export class ToolExecutor {
     }
 
     this.readFiles.add(path.replace(/^\.\//, ""));
+
+    // Delegated reading (SoL-Pi, arXiv 2609.20519): a whole large file floods
+    // a 16k window. Unranged reads of long files return an outline with line
+    // numbers plus the head; the Worker then reads exactly what it needs.
+    if (start === undefined && end === undefined && lines.length > OUTLINE_THRESHOLD) {
+      const outline = outlineOf(lines);
+      const head = lines
+        .slice(0, 40)
+        .map((l, i) => `${String(i + 1).padStart(5)}│${l}`)
+        .join("\n");
+      return ok(
+        "read_file",
+        `outlined ${path} (${lines.length} lines)`,
+        `${path} has ${lines.length} lines, so here is its outline instead of the whole file. Read a range with read_file(path, start, end) or a declaration with read_symbol(path, symbol).\n\nOUTLINE\n${outline || "(no top-level declarations found)"}\n\nFIRST 40 LINES\n${head}`,
+      );
+    }
 
     const numbered = lines
       .slice(from - 1, to)
