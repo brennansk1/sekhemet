@@ -31,6 +31,7 @@ const CARDS_TABLE_BODY = `
   steps_used INTEGER NOT NULL DEFAULT 0,
   spec TEXT,
   acceptance_criteria JSON NOT NULL DEFAULT '[]',
+  acceptance_tests JSON NOT NULL DEFAULT '[]',
   difficulty INTEGER CHECK(difficulty IS NULL OR (difficulty >= 1 AND difficulty <= 10)),
   token_budget INTEGER,
   seconds_budget INTEGER,
@@ -116,6 +117,7 @@ const ADDED_EVENT_COLUMNS: ReadonlyArray<[column: string, ddl: string]> = [
 const ADDED_CARD_COLUMNS: ReadonlyArray<[column: string, ddl: string]> = [
   ["spec", "spec TEXT"],
   ["acceptance_criteria", "acceptance_criteria JSON NOT NULL DEFAULT '[]'"],
+  ["acceptance_tests", "acceptance_tests JSON NOT NULL DEFAULT '[]'"],
   [
     "difficulty",
     "difficulty INTEGER CHECK(difficulty IS NULL OR (difficulty >= 1 AND difficulty <= 10))",

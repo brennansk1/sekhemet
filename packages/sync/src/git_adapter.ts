@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, symlinkSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
+import { basename, join } from "node:path";
 import type { CheckpointCommitParams, DiffStats, GitSyncAdapter, WorktreeRecord } from "./types.js";
 
 /** Convert a card title into a branch-safe slug. */
@@ -13,10 +13,17 @@ function slugify(input: string): string {
 }
 
 export class NodeGitSyncAdapter implements GitSyncAdapter {
+  private projectName: string;
+
   constructor(
     private repoRoot: string,
-    private projectName = "sekhemet",
-  ) {}
+    projectName?: string,
+  ) {
+    // Default to the repository's own directory name. A fixed "sekhemet"
+    // produced branches like sekhemet/sekhemet/<card>, which says nothing about
+    // which project the work belongs to.
+    this.projectName = projectName ?? (basename(repoRoot) || "sekhemet");
+  }
 
   private getWorktreePath(cardId: string): string {
     return join(this.repoRoot, ".sekhemet", "worktrees", cardId);
@@ -55,6 +62,23 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
     if (!existsSync(parentDir)) mkdirSync(parentDir, { recursive: true });
 
     const branchName = this.branchNameFor(cardId, title);
+
+    // Re-attach to an existing worktree rather than failing. A card is retried
+    // on repair, resumed after a quota handoff, and re-run after a crash; a
+    // create that only works once makes all three impossible.
+    if (existsSync(worktreePath)) {
+      const registered = this.runGit(["worktree", "list", "--porcelain"]).includes(
+        `worktree ${worktreePath}`,
+      );
+      if (registered) {
+        this.linkDependencies(worktreePath);
+        return worktreePath;
+      }
+      // A leftover directory with no registration: git refuses to reuse it.
+      rmSync(worktreePath, { recursive: true, force: true });
+      this.runGit(["worktree", "prune"]);
+    }
+
     this.runGit(["worktree", "add", "-B", branchName, worktreePath, baseBranch]);
     this.linkDependencies(worktreePath);
     return worktreePath;
@@ -106,7 +130,15 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
     const worktreePath = this.getWorktreePath(cardId);
     const cwd = existsSync(worktreePath) ? worktreePath : this.repoRoot;
     this.runGit(["add", "-A"], cwd);
-    return this.runGit(["diff", "--staged", `${baseBranch}...HEAD`, "--"], cwd);
+    // `--staged <ref>` compares the index against that ref. Combining it with a
+    // `a...b` range is not valid git and aborts the whole run at evidence time,
+    // after all the work is done.
+    try {
+      return this.runGit(["diff", "--staged", baseBranch], cwd);
+    } catch {
+      // A worktree with no merge base to compare against still has a diff.
+      return this.runGit(["diff", "--staged"], cwd);
+    }
   }
 
   /**

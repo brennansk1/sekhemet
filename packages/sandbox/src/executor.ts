@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { platform } from "node:os";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { platform, tmpdir } from "node:os";
+import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { generateSeatbeltProfile } from "./seatbelt.js";
 import type { ExecutionResult, ExecutionSandbox, SandboxOptions } from "./types.js";
@@ -108,7 +109,14 @@ export class ProcessSandbox implements ExecutionSandbox {
     }
 
     const maxBuffer = options.maxBufferBytes ?? DEFAULT_MAX_BUFFER;
-    const { file, argv } = this.wrap(command, args, options);
+
+    // A private scratch directory per execution: toolchains need a writable
+    // TMPDIR, but sharing the system one would let any confined process reach
+    // every other sandbox's temporary files.
+    const scratchDir = options.scratchDir ?? mkdtempSync(join(tmpdir(), "sekhemet-box-"));
+    const ownsScratch = options.scratchDir === undefined;
+    const effective: SandboxOptions = { ...options, scratchDir };
+    const { file, argv } = this.wrap(command, args, effective);
 
     return new Promise<ExecutionResult>((resolve) => {
       let stdout = "";
@@ -122,7 +130,7 @@ export class ProcessSandbox implements ExecutionSandbox {
 
       const child = spawn(file, argv, {
         cwd: options.cwd,
-        env: buildEnv(options.env),
+        env: buildEnv({ TMPDIR: scratchDir, ...options.env }),
         stdio: ["ignore", "pipe", "pipe"],
       });
 
@@ -161,6 +169,13 @@ export class ProcessSandbox implements ExecutionSandbox {
         finished = true;
         clearTimeout(timer);
         if (killTimer) clearTimeout(killTimer);
+        if (ownsScratch) {
+          try {
+            rmSync(scratchDir, { recursive: true, force: true });
+          } catch {
+            // Best effort; a leftover scratch directory is not worth failing on.
+          }
+        }
         resolve(result);
       };
 
@@ -178,11 +193,19 @@ export class ProcessSandbox implements ExecutionSandbox {
       child.on("close", (code, signal) => {
         if (signal === "SIGKILL" && !timedOut) oomKilled = true;
 
+        // Under sandbox-exec a missing binary surfaces as the wrapper's own
+        // status, so callers would see an arbitrary code instead of the
+        // conventional "command not found". Normalise it.
+        const notFound = /command not found|No such file or directory|execvp\(\) failed/i.test(
+          stderr,
+        );
+        const exitCode = notFound ? 127 : (code ?? (timedOut ? 124 : 1));
+
         const suffix = (truncated: boolean): string =>
           truncated ? `\n... [output truncated at ${maxBuffer} bytes] ...` : "";
 
         settle({
-          exitCode: code ?? (timedOut ? 124 : 1),
+          exitCode,
           stdout: stdout + suffix(stdoutTruncated),
           stderr: stderr + suffix(stderrTruncated),
           durationMs: Math.round(performance.now() - startTime),

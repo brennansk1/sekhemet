@@ -47,6 +47,16 @@ export interface PromptPackOptions {
   goal?: string;
   acceptanceCriteria?: string[];
   openTodos?: string[];
+  /** Files already written during this card, so the agent knows what it has done. */
+  completedWork?: string[];
+  /**
+   * Every declared scope file has been written.
+   *
+   * Without this the agent has no signal that it is finished and simply rewrites
+   * the same file until the oscillation breaker trips — observed against a real
+   * local model, which produced a correct file ten times in a row.
+   */
+  readyToVerify?: boolean;
   skillDisclosure?: SkillDisclosure;
   /** Number of verbatim turns rendered in Zone 4. */
   maxRecentTurns?: number;
@@ -110,13 +120,20 @@ function buildGoalTail(options: PromptPackOptions): string {
     parts.push(`Acceptance criteria:\n${renderList(criteria)}`);
   }
 
+  const completed = options.completedWork ?? [];
+  if (completed.length > 0) {
+    parts.push(`Already written this card:\n${renderList(completed)}`);
+  }
+
   const todos = options.openTodos ?? [];
   if (todos.length > 0) {
-    parts.push(`Open TODOs:\n${renderList(todos)}`);
+    parts.push(`Still to write:\n${renderList(todos)}`);
   }
 
   parts.push(
-    "Next action: emit exactly one tool call now. Call finish_card only once every criterion above holds.",
+    options.readyToVerify
+      ? "Next action: every declared scope file has been written. Do NOT write it again. If the content satisfies the criteria above, call finish_card now; otherwise read the file and correct it."
+      : "Next action: emit exactly one tool call now. Call finish_card only once every criterion above holds.",
   );
 
   return parts.join("\n");

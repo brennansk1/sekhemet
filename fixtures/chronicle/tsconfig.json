@@ -14,5 +14,6 @@
     "skipLibCheck": true
   },
   "include": ["src/**/*", "tests/**/*"],
-  "exclude": ["node_modules", "dist"]
+  "//": "acceptance/ is a staging library, not part of the build",
+  "exclude": ["node_modules", "dist", "acceptance"]
 }

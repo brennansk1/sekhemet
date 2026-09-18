@@ -111,6 +111,14 @@ export interface CardRecord {
   spec?: string;
   /** Checkable outcomes; a card is not done until every one holds. */
   acceptanceCriteria?: string[];
+  /**
+   * Acceptance test files this card is gated by.
+   *
+   * Staged into the worktree before the first turn so a card's gate measures
+   * that card. A project whose every suite is present from the start fails its
+   * early cards on work that belongs to later ones.
+   */
+  acceptanceTests?: string[];
   /** Planner-assigned 1..10, the input to model routing and budgeting. */
   difficulty?: number;
 

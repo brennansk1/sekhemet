@@ -53,6 +53,20 @@ export function startDashboardServer(
   let lastSeq = 0;
   let timer: NodeJS.Timeout | undefined;
 
+  // Diagnostics spawn real subprocesses, including a sandbox escape probe.
+  // The dashboard asks for them on every refresh, so the result is cached:
+  // probing the machine once a second is a cost with no added information.
+  let doctorCache: { at: number; report: Awaited<ReturnType<typeof runDoctor>> } | undefined;
+  const DOCTOR_TTL_MS = 15_000;
+
+  const cachedDoctor = async (): Promise<Awaited<ReturnType<typeof runDoctor>>> => {
+    const now = Date.now();
+    if (doctorCache && now - doctorCache.at < DOCTOR_TTL_MS) return doctorCache.report;
+    const report = await runDoctor(options.repoPath);
+    doctorCache = { at: now, report };
+    return report;
+  };
+
   /** Push any events appended since the last tick to every open stream. */
   const pump = async (): Promise<void> => {
     if (streams.size === 0) return;
@@ -140,7 +154,7 @@ export function startDashboardServer(
     }
 
     if (url === "/api/doctor") {
-      json(res, 200, await runDoctor(options.repoPath));
+      json(res, 200, await cachedDoctor());
       return;
     }
 

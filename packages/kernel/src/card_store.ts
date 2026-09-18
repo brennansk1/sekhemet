@@ -24,6 +24,7 @@ export interface CreateCardInput {
   /** What the card is supposed to do — the executor's brief (design §305). */
   spec?: string;
   acceptanceCriteria?: string[];
+  acceptanceTests?: string[];
   /** Planner-assigned 1..10; the CHECK constraint rejects anything else. */
   difficulty?: number;
   tokenBudget?: number;
@@ -54,6 +55,7 @@ export interface CardUpdate {
   stepsUsed?: number;
   spec?: string;
   acceptanceCriteria?: string[];
+  acceptanceTests?: string[];
   difficulty?: number;
   tokenBudget?: number;
   secondsBudget?: number;
@@ -83,7 +85,7 @@ type SqlParam = string | number | null;
 
 const CARD_COLUMNS = `
   id, tier, parent_id, title, status, scope_files, step_budget, steps_used,
-  spec, acceptance_criteria, difficulty, token_budget, seconds_budget,
+  spec, acceptance_criteria, acceptance_tests, difficulty, token_budget, seconds_budget,
   tokens_used, seconds_used, model_route_planner, model_route_executor,
   depends_on, context_pack_id, evidence_id, external_ref, stop_reason,
   priority, order_key, blocked_reason, created_at, updated_at
@@ -100,6 +102,7 @@ interface RawCardRow {
   steps_used: number;
   spec: string | null;
   acceptance_criteria: string;
+  acceptance_tests: string;
   difficulty: number | null;
   token_budget: number | null;
   seconds_budget: number | null;
@@ -167,6 +170,7 @@ export class CardStore {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       acceptanceCriteria: parseJsonColumn<string[]>(row.acceptance_criteria, []),
+      acceptanceTests: parseJsonColumn<string[]>(row.acceptance_tests, []),
       dependsOn: parseJsonColumn<string[]>(row.depends_on, []),
       tokensUsed: row.tokens_used,
       secondsUsed: row.seconds_used,
@@ -233,6 +237,7 @@ export class CardStore {
       stepsUsed: 0,
       spec: input.spec ?? null,
       acceptanceCriteria: input.acceptanceCriteria ?? [],
+      acceptanceTests: input.acceptanceTests ?? [],
       difficulty: input.difficulty ?? null,
       tokenBudget: input.tokenBudget ?? null,
       secondsBudget: input.secondsBudget ?? null,
@@ -448,7 +453,7 @@ export class CardStore {
     this.db
       .prepare(`
         INSERT OR REPLACE INTO cards (${CARD_COLUMNS})
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         payload.id as string,
@@ -461,6 +466,7 @@ export class CardStore {
         (payload.stepsUsed as number) ?? 0,
         (payload.spec as string) ?? null,
         JSON.stringify(payload.acceptanceCriteria ?? []),
+        JSON.stringify(payload.acceptanceTests ?? []),
         (payload.difficulty as number) ?? null,
         (payload.tokenBudget as number) ?? null,
         (payload.secondsBudget as number) ?? null,
@@ -498,6 +504,9 @@ export class CardStore {
     if (patch.stepBudget !== undefined) set("step_budget", patch.stepBudget);
     if (patch.stepsUsed !== undefined) set("steps_used", patch.stepsUsed);
     if (patch.spec !== undefined) set("spec", patch.spec);
+    if (patch.acceptanceTests !== undefined) {
+      set("acceptance_tests", JSON.stringify(patch.acceptanceTests));
+    }
     if (patch.acceptanceCriteria !== undefined) {
       set("acceptance_criteria", JSON.stringify(patch.acceptanceCriteria));
     }

@@ -217,8 +217,13 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
     // Reasoning text is never tool-bearing; strip before parsing so a worked
     // example inside the model's own deliberation is not executed.
     const visible = stripReasoning(data.text);
+    // Telling the parser which tools exist removes the ambiguity that forces it
+    // to guess whether `name(...)` in the output is a call or ordinary code.
+    const knownTools = req.tools?.map((t) => t.name);
     const toolCalls =
-      data.nativeCalls.length > 0 ? data.nativeCalls : parseToolCallsFromText(visible, req.toolArm);
+      data.nativeCalls.length > 0
+        ? data.nativeCalls
+        : parseToolCallsFromText(visible, req.toolArm, knownTools);
 
     return {
       text: visible,
@@ -369,8 +374,12 @@ export function createNail35BAdapter(baseUrl = "http://127.0.0.1:11434"): HttpIn
     modelId: "nail-35b-a3b-ctx:latest",
     baseUrl,
     apiFormat: "ollama",
-    contextTokens: 32768,
-    maxTokens: 4096,
+    // 8k, not the model's 262k ceiling. The weights are ~13GB on a 24GB box, so
+    // the KV cache is what decides whether the machine swaps: a 32k window
+    // drove this host to 9.4GB of swap and stalled the run outright. Card
+    // prompts measure ~1.1k tokens, so the larger window bought nothing.
+    contextTokens: 8192,
+    maxTokens: 2048,
     keepAlive: "5m",
     disableReasoning: true,
     sampling: {

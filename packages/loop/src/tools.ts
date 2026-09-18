@@ -61,6 +61,7 @@ export class ToolExecutor {
   private permissions: PermissionEngine;
   private notes: string[] = [];
   private finishRequested = false;
+  private readFiles = new Set<string>();
 
   constructor(private options: ToolExecutorOptions) {
     this.root = canonicalizeRoot(options.worktreePath);
@@ -78,6 +79,11 @@ export class ToolExecutor {
 
   public getNotes(): string[] {
     return [...this.notes];
+  }
+
+  /** Files already read this card, so the prompt can discourage re-reading them. */
+  public getReadFiles(): string[] {
+    return [...this.readFiles].sort();
   }
 
   // --- Structured accessors -------------------------------------------------
@@ -286,6 +292,8 @@ export class ToolExecutor {
     if (from > lines.length) {
       return fail("read_file", `start line ${from} is past end of file (${lines.length} lines)`);
     }
+
+    this.readFiles.add(path.replace(/^\.\//, ""));
 
     const numbered = lines
       .slice(from - 1, to)

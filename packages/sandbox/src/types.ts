@@ -1,5 +1,12 @@
 export interface SandboxOptions {
   allowedPaths: string[];
+  /**
+   * Private scratch directory granted for temporary files.
+   *
+   * Supplied per execution so toolchains have a TMPDIR without every sandbox
+   * sharing one writable directory.
+   */
+  scratchDir?: string;
   allowNetwork: boolean;
   timeoutMs: number;
   cwd: string;

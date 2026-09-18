@@ -135,13 +135,152 @@ function collect(parsed: unknown, sink: ToolCall[]): void {
 }
 
 /**
+ * Parse `tool_name(key="value", other=2)` call syntax.
+ *
+ * Local models frequently answer in this form rather than JSON, even when asked
+ * for JSON — it is how most tool-calling fine-tunes were trained. Rejecting it
+ * means a perfectly well-formed decision is discarded and the agent looks
+ * stalled, which is exactly what it did here. The `key=` form is required, so
+ * ordinary calls appearing in generated code are not mistaken for tool calls.
+ */
+export function parseFunctionCallSyntax(text: string, knownTools?: string[]): ToolCall[] {
+  const calls: ToolCall[] = [];
+  const known = knownTools && knownTools.length > 0 ? new Set(knownTools) : undefined;
+  const head = /(?:^|[\s`>])([a-z_][a-z0-9_]{2,40})\s*\(/gi;
+
+  let match: RegExpExecArray | null = head.exec(text);
+  while (match !== null) {
+    const name = match[1] as string;
+    const open = match.index + match[0].length - 1;
+    const args = readBalancedArgs(text, open);
+
+    if (args !== null && (known === undefined || known.has(name))) {
+      // With a known catalog an empty argument list is a real call — the model
+      // must be able to say finish_card(). Without one, requiring a `key=` pair
+      // is what keeps ordinary code in prose from being read as a tool call.
+      const parsed =
+        known?.has(name) && args.body.trim() === "" ? {} : parseNamedArguments(args.body);
+      if (parsed !== null) {
+        calls.push({
+          id: `call_${randomUUID().slice(0, 8)}`,
+          name,
+          arguments: parsed,
+          raw: `${name}(${args.body})`,
+        });
+      }
+      head.lastIndex = args.end;
+    }
+
+    match = head.exec(text);
+  }
+
+  return calls;
+}
+
+/** Read to the parenthesis matching `open`, respecting string literals. */
+function readBalancedArgs(text: string, open: number): { body: string; end: number } | null {
+  let depth = 0;
+  let quote: string | null = null;
+
+  for (let i = open; i < text.length; i++) {
+    const ch = text[i] as string;
+
+    if (quote) {
+      if (ch === "\\") i++;
+      else if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") {
+      quote = ch;
+      continue;
+    }
+    if (ch === "(") depth++;
+    else if (ch === ")") {
+      depth--;
+      if (depth === 0) return { body: text.slice(open + 1, i), end: i + 1 };
+    }
+  }
+
+  return null;
+}
+
+/** Split `key=value, key2=value2` into an argument object, or null if not that shape. */
+function parseNamedArguments(body: string): Record<string, unknown> | null {
+  const out: Record<string, unknown> = {};
+  let i = 0;
+  let sawPair = false;
+
+  while (i < body.length) {
+    while (i < body.length && /[\s,]/.test(body[i] as string)) i++;
+    if (i >= body.length) break;
+
+    const keyMatch = /^([A-Za-z_][\w]*)\s*=\s*/.exec(body.slice(i));
+    // Every argument must be named; a positional list is not this form.
+    if (!keyMatch) return sawPair ? out : null;
+
+    const key = keyMatch[1] as string;
+    i += keyMatch[0].length;
+
+    const ch = body[i];
+    if (ch === '"' || ch === "'" || ch === "`") {
+      const quote = ch;
+      let value = "";
+      i++;
+      while (i < body.length) {
+        const c = body[i] as string;
+        if (c === "\\") {
+          const next = body[i + 1] ?? "";
+          value += next === "n" ? "\n" : next === "t" ? "\t" : next === "r" ? "\r" : next;
+          i += 2;
+          continue;
+        }
+        if (c === quote) break;
+        value += c;
+        i++;
+      }
+      i++;
+      out[key] = value;
+      sawPair = true;
+      continue;
+    }
+
+    // Unquoted scalar, array or object: read to the next top-level comma.
+    let depth = 0;
+    const start = i;
+    while (i < body.length) {
+      const c = body[i] as string;
+      if (c === "[" || c === "{") depth++;
+      else if (c === "]" || c === "}") depth--;
+      else if (c === "," && depth === 0) break;
+      i++;
+    }
+    const raw = body.slice(start, i).trim();
+    if (raw === "true") out[key] = true;
+    else if (raw === "false") out[key] = false;
+    else if (raw === "null") out[key] = null;
+    else if (/^-?\d+(?:\.\d+)?$/.test(raw)) out[key] = Number(raw);
+    else {
+      const structured = tryParse(raw);
+      out[key] = structured === undefined ? raw : structured;
+    }
+    sawPair = true;
+  }
+
+  return sawPair ? out : null;
+}
+
+/**
  * Parse tool calls from a model response.
  *
  * Arm C is a distinct dialect: the model emits SEARCH/REPLACE blocks rather
  * than JSON, so it is translated into `edit` calls instead of being parsed as
  * JSON and coming back empty.
  */
-export function parseToolCallsFromText(text: string, arm: ToolArm): ToolCall[] {
+export function parseToolCallsFromText(
+  text: string,
+  arm: ToolArm,
+  knownTools?: string[],
+): ToolCall[] {
   const cleaned = stripReasoning(text);
 
   if (arm === "arm_c_sketch") {
@@ -178,6 +317,11 @@ export function parseToolCallsFromText(text: string, arm: ToolArm): ToolCall[] {
   // response are each recovered rather than swallowed by a greedy match.
   if (calls.length === 0) {
     for (const obj of extractJsonObjects(cleaned)) collect(tryParse(obj), calls);
+  }
+
+  // Last resort: `tool_name(key="value")` call syntax.
+  if (calls.length === 0) {
+    calls.push(...parseFunctionCallSyntax(cleaned, knownTools));
   }
 
   return calls;

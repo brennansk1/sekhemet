@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync, mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { freemem, totalmem } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -28,6 +28,7 @@ export interface CliConfig {
     | "gate"
     | "replay"
     | "bake-off"
+    | "accept"
     | "mcp"
     | "help";
   targetArg?: string | undefined;
@@ -82,6 +83,7 @@ export function parseCliArgs(argv: string[] = process.argv.slice(2)): CliConfig 
   let targetArg: string | undefined;
 
   const validCommands = [
+    "accept",
     "doctor",
     "board",
     "log",
@@ -372,6 +374,55 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     return;
   }
 
+  if (config.command === "accept") {
+    const cardId = config.targetArg;
+    if (!cardId) {
+      console.error("Usage: sekhemet accept <card-id>");
+      process.exit(1);
+    }
+    const card = await cardStore.getCard(cardId);
+    if (!card) {
+      console.error(`Card not found: ${cardId}`);
+      process.exit(1);
+    }
+    if (card.status !== "review") {
+      console.error(
+        `Card ${cardId} is in '${card.status}'. Only a card in Review can be accepted — the harness verifies, a person accepts.`,
+      );
+      process.exit(1);
+    }
+
+    const gitAdapter = new NodeGitSyncAdapter(config.repoPath);
+    // Squash the card's branch onto main so later cards build on accepted work.
+    // Without this every card starts from a tree its predecessors never touched.
+    const sha = await gitAdapter.squashAndMerge(
+      cardId,
+      "main",
+      `feat(${cardId}): ${card.title}`,
+      {
+        "Agent-Model": card.modelRoute?.executor ?? "local",
+        "Agent-Harness": "sekhemet",
+        "Agent-Role": "implementer",
+        GateStatus: "pass",
+      },
+      card.title,
+    );
+
+    await boardService.transitionCard({
+      cardId,
+      fromStatus: card.status,
+      toStatus: "done",
+      actor: "human",
+      reason: "accepted by operator",
+    });
+    await gitAdapter.removeWorktree(cardId);
+
+    console.log(
+      `\nAccepted ${cardId} — squashed to main as ${sha.slice(0, 10)}, card moved to Done.`,
+    );
+    return;
+  }
+
   if (config.command === "run") {
     const cardId = config.targetArg;
     if (!cardId) {
@@ -428,6 +479,24 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
           });
         },
       },
+      onWorktreeReady: async (worktreePath) => {
+        // Stage this card's acceptance tests. Contract-first means the oracle
+        // for THIS card is present and failing before any work begins, and the
+        // suites belonging to later cards are not there to fail it.
+        const staged = card.acceptanceTests ?? [];
+        if (staged.length === 0) return;
+
+        const testsDir = join(worktreePath, "tests");
+        if (!existsSync(testsDir)) mkdirSync(testsDir, { recursive: true });
+
+        for (const name of staged) {
+          const from = join(config.repoPath, "acceptance", name);
+          if (existsSync(from)) {
+            copyFileSync(from, join(testsDir, name));
+            console.log(`   staged acceptance test: tests/${name}`);
+          }
+        }
+      },
       onProgress: (event) => {
         const prefix = event.turn ? `  [turn ${event.turn}]` : "  ";
         console.log(`${prefix} ${event.type}: ${event.message}`);
@@ -463,6 +532,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   console.log("  sekhemet log                View cryptographic event log & SHA-256 chain");
   console.log("  sekhemet plan <spec>        Decompose feature into SPIDR cards");
   console.log("  sekhemet run <card-id>      Execute card unattended in worktree");
+  console.log("  sekhemet accept <card-id>   Squash-merge a reviewed card to main");
   console.log("  sekhemet gate [card-id]     Run deterministic verification gates");
   console.log("  sekhemet replay <card-id>   Replay checkpoint trajectory for a card");
   console.log("  sekhemet bake-off           Qualify and benchmark local models");

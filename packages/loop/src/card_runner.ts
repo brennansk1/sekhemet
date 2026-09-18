@@ -1,3 +1,4 @@
+import type { GateResult } from "@sekhemet/gates";
 import {
   type EvidenceBundle,
   type GatesConfig,
@@ -35,6 +36,14 @@ export interface CardRunOptions extends Omit<SessionOptions, "cardId"> {
   agentHarness?: string | undefined;
   coAuthors?: string[] | undefined;
   onProgress?: ((event: RunProgressEvent) => void) | undefined;
+  /**
+   * Prepare the worktree after checkout, before the first turn.
+   *
+   * Contract-first projects use this to stage the card's own acceptance tests:
+   * a gate must measure the card it is gating, so suites belonging to later
+   * cards must not be present to fail it.
+   */
+  onWorktreeReady?: ((worktreePath: string) => Promise<void> | void) | undefined;
   /** Skip worktree creation when the caller has already prepared one. */
   useExistingWorktree?: boolean | undefined;
 }
@@ -83,6 +92,7 @@ export class CardRunner {
       ? this.options.worktreePath
       : await syncAdapter.createWorktree(card.id, this.options.baseBranch ?? "main", card.title);
 
+    await this.options.onWorktreeReady?.(worktreePath);
     this.emit({ type: "status", cardId: card.id, message: `worktree ready at ${worktreePath}` });
     await lifecycle?.transition(card.id, "in_progress");
 
@@ -98,7 +108,7 @@ export class CardRunner {
     let promptTokens = 0;
     let completionTokens = 0;
     let stopReason = "budget_exhausted";
-    let lastGateResult = turns.at(-1)?.gateResult;
+    let lastGateResult: GateResult | undefined = turns.at(-1)?.gateResult;
 
     while (session.getStepsUsed() < card.stepBudget) {
       const turn = await session.executeTurn();
@@ -146,6 +156,45 @@ export class CardRunner {
       }
     }
 
+    // An agent can do the work and still never declare itself finished — it
+    // explores until the budget runs out. Discarding completed work because the
+    // agent failed to announce it is the worst available outcome, so any
+    // terminal stop with written scope and no gate run gets one verification.
+    if (!lastGateResult && session.isScopeComplete()) {
+      this.emit({
+        type: "status",
+        cardId: card.id,
+        message: `stopped as ${stopReason} with scope complete — verifying anyway`,
+      });
+
+      lastGateResult = await session.runVerification();
+      this.emit({
+        type: "gate",
+        cardId: card.id,
+        message: lastGateResult.passed
+          ? "gates PASSED on forced verification"
+          : `gates FAILED on forced verification: ${
+              lastGateResult.failures[0]?.errorExcerpt ?? "unknown"
+            }`,
+      });
+
+      if (lastGateResult.passed) {
+        stopReason = "gate_passed";
+        const sha = await syncAdapter.commitCheckpoint({
+          cardId: card.id,
+          step: session.getStepsUsed(),
+          totalSteps: card.stepBudget,
+          gateStatus: "pass",
+          agentModel: this.options.agentModel ?? this.options.modelAdapter.modelId,
+          agentHarness: this.options.agentHarness ?? "sekhemet",
+          agentRole: this.options.agentRole ?? "implementer",
+          ...(this.options.coAuthors ? { coAuthors: this.options.coAuthors } : {}),
+        });
+        checkpointShas.push(sha);
+        this.emit({ type: "checkpoint", cardId: card.id, message: sha.slice(0, 10) });
+      }
+    }
+
     await lifecycle?.recordSteps?.(card.id, session.getStepsUsed());
 
     // Bounds are checked against the real diff, which is why the git adapter
@@ -189,10 +238,14 @@ export class CardRunner {
     });
 
     const passed = stopReason === "gate_passed" && gateResult.passed;
-    // A passing card goes to review for a human, never straight to done:
-    // the harness verifies, a person accepts.
+
+    // Every finished card enters Verify first: that is the column the state
+    // machine routes through, and it is where back-pressure is applied. Only
+    // then does a passing card move to Review for a human — the harness
+    // verifies, a person accepts.
+    await lifecycle?.transition(card.id, "verify");
+    if (passed) await lifecycle?.transition(card.id, "review");
     const finalStatus: CardStatus = passed ? "review" : "verify";
-    await lifecycle?.transition(card.id, finalStatus);
 
     return {
       cardId: card.id,

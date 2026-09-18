@@ -25,6 +25,15 @@ import type {
 /** Turns of tool output kept verbatim before older ones are masked to pointers. */
 const VERBATIM_TURN_WINDOW = 2;
 
+/** Tools whose success means a scope file now has content. */
+const WRITE_TOOLS = new Set([
+  "write_file",
+  "edit",
+  "replace_lines",
+  "replace_symbol_body",
+  "insert_after_symbol",
+]);
+
 function synthesizeCard(options: SessionOptions): CardRecord {
   const now = new Date().toISOString();
   return {
@@ -65,6 +74,9 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   private lastSystemPrompt = "";
   private emptyTurns = 0;
   private ladder: RepairLadder;
+  private filesWritten = new Set<string>();
+  /** A stall has already been converted into one verification run. */
+  private forcedVerification = false;
   private activeRung: RungPolicy | undefined;
 
   constructor(private options: SessionOptions) {
@@ -96,6 +108,16 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   }
 
   /** Current position in the repair ladder. */
+  /** Scope-relative paths written during this card. */
+  public getFilesWritten(): string[] {
+    return [...this.filesWritten].sort();
+  }
+
+  /** True when every declared scope file has been written at least once. */
+  public isScopeComplete(): boolean {
+    return this.filesWritten.size > 0 && this.pendingScopeFiles().length === 0;
+  }
+
   public getLadderState(): LadderState {
     return this.ladder.snapshot;
   }
@@ -113,6 +135,12 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     } catch {
       return "";
     }
+  }
+
+  /** Declared scope files not yet written during this card. */
+  private pendingScopeFiles(): string[] {
+    const scope = this.options.scopeFiles ?? [];
+    return scope.filter((f) => !this.filesWritten.has(f.replace(/^\.\//, "")));
   }
 
   private repoMap(): string {
@@ -160,6 +188,21 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       recentTurns: maskOlderObservations(this.history, VERBATIM_TURN_WINDOW),
       // The catalog is what tells the model these tools exist at all.
       tools: this.options.tools ?? TOOL_CATALOG,
+      // What it has already done, and what remains. An agent with no record of
+      // its own progress repeats its last successful action indefinitely.
+      ...(this.filesWritten.size > 0 || this.tools.getReadFiles().length > 0
+        ? {
+            completedWork: [
+              ...[...this.filesWritten].sort().map((f) => `wrote ${f}`),
+              // Listing what was already read is what stops the agent spending
+              // its budget re-reading files it has in front of it.
+              ...this.tools.getReadFiles().map((f) => `read ${f} (do not re-read)`),
+            ],
+          }
+        : {}),
+      ...(this.pendingScopeFiles().length > 0
+        ? { openTodos: this.pendingScopeFiles() }
+        : { readyToVerify: this.filesWritten.size > 0 }),
       // The card's own contract. Without it the model has only a title to work
       // from and invents the rest — which is exactly what it does.
       ...(this.card.spec ? { goal: this.card.spec } : {}),
@@ -179,9 +222,17 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     const { systemPrompt, prompt } = this.buildPrompt();
     this.lastSystemPrompt = systemPrompt;
 
+    const catalog = this.options.tools ?? TOOL_CATALOG;
     const response = await this.options.modelAdapter.generate({
       systemPrompt,
       prompt,
+      // Names travel with the request so the parser can recognise a call in
+      // whatever syntax the model chose to emit it.
+      tools: catalog.map((t) => ({
+        name: t.name,
+        description: t.summary,
+        parameters: Object.fromEntries(t.parameters.map((p) => [p.name, p.type])),
+      })),
       toolArm: this.options.toolArm ?? "arm_a_flat",
       ...(this.options.temperature !== undefined ? { temperature: this.options.temperature } : {}),
       ...(this.options.maxTokens !== undefined ? { maxTokens: this.options.maxTokens } : {}),
@@ -213,6 +264,52 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
 
     const repoStateHash = await this.currentRepoStateHash();
     if (this.oscillationDetector.recordAndCheck(toolCalls, repoStateHash)) {
+      // A stalled agent that has already written every declared scope file has
+      // done the work and merely cannot tell that it is finished. Discarding
+      // that is the worst available outcome: verify it instead. If the gates
+      // pass the card is done; if they fail, the typed failure is exactly the
+      // feedback the agent was unable to obtain for itself.
+      const scopeComplete = this.filesWritten.size > 0 && this.pendingScopeFiles().length === 0;
+
+      if (scopeComplete && !this.forcedVerification) {
+        this.forcedVerification = true;
+        this.oscillationDetector.reset();
+
+        const forced = await this.runVerification();
+        this.history.push({
+          turn: turnIndex,
+          action: "forced verification",
+          result: forced.passed
+            ? "Repeated actions detected; verification was run and PASSED."
+            : `Repeated actions detected; verification was run and FAILED: ${
+                forced.failures[0]?.errorExcerpt ?? "unknown failure"
+              }`,
+        });
+
+        if (forced.passed) {
+          this.isFinished = true;
+          this.ladder.reset();
+          return {
+            turnIndex,
+            toolCalls,
+            observations: [],
+            usage: response.usage,
+            gateResult: forced,
+            stopReason: "gate_passed",
+          };
+        }
+
+        this.lastGateFailure = forced.failures[0];
+        this.activeRung = this.ladder.recordFailure();
+        return {
+          turnIndex,
+          toolCalls,
+          observations: [],
+          usage: response.usage,
+          gateResult: forced,
+        };
+      }
+
       this.history.push({
         turn: turnIndex,
         action: toolCalls.map((c) => c.name).join(", "),
@@ -230,7 +327,13 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     this.tools.resetFinish();
     const observations: ToolObservation[] = [];
     for (const call of toolCalls) {
-      observations.push(await this.tools.execute(call));
+      const observation = await this.tools.execute(call);
+      observations.push(observation);
+
+      if (observation.ok && WRITE_TOOLS.has(call.name)) {
+        const path = call.arguments.path;
+        if (typeof path === "string") this.filesWritten.add(path.replace(/^\.\//, ""));
+      }
     }
 
     this.history.push({

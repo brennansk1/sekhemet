@@ -1,5 +1,5 @@
-import { realpathSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, lstatSync, realpathSync } from "node:fs";
+import { join } from "node:path";
 import type { SandboxOptions } from "./types.js";
 
 /**
@@ -17,6 +17,33 @@ function realPath(p: string): string {
   }
 }
 
+/**
+ * Resolve dependency directories that are symlinked into an allowed root.
+ *
+ * Per-card worktrees link `node_modules` rather than copying it, so the real
+ * tree lives outside the worktree. Toolchains write inside it as a matter of
+ * course — vitest alone needs `node_modules/.vite-temp` — so without this every
+ * gate fails on EPERM rather than on the card's work. The grant is deliberately
+ * narrow: the dependency tree only, never its parent.
+ */
+function linkedDependencyTargets(roots: string[]): string[] {
+  const targets: string[] = [];
+
+  for (const root of roots) {
+    for (const name of ["node_modules", ".venv"]) {
+      const candidate = join(root, name);
+      if (!existsSync(candidate)) continue;
+      try {
+        if (lstatSync(candidate).isSymbolicLink()) targets.push(realpathSync(candidate));
+      } catch {
+        // Unreadable link: the gate reports the real consequence instead.
+      }
+    }
+  }
+
+  return targets;
+}
+
 /** Escape a path for embedding in a Seatbelt profile string literal. */
 function quote(p: string): string {
   return p.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
@@ -31,7 +58,12 @@ function quote(p: string): string {
  * are restricted to explicitly granted subpaths.
  */
 export function generateSeatbeltProfile(options: SandboxOptions): string {
-  const writeRoots = [...new Set([...options.allowedPaths, tmpdir()].map(realPath))];
+  // Only what the caller granted, plus an explicit scratch directory if one was
+  // supplied. Granting the whole of TMPDIR would let a confined process write
+  // into any other card's scratch space — which is still an escape, just a
+  // quieter one.
+  const roots = [...options.allowedPaths, ...(options.scratchDir ? [options.scratchDir] : [])];
+  const writeRoots = [...new Set([...roots, ...linkedDependencyTargets(roots)].map(realPath))];
 
   const writeRules = writeRoots
     .map((p) => `  (allow file-write* (subpath "${quote(p)}"))`)
