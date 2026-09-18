@@ -9,13 +9,23 @@ import {
   maskOlderObservations,
   retrieveMaskedObservation,
 } from "@sekhemet/context";
-import type { GateFailure, GateResult } from "@sekhemet/gates";
+import {
+  DEFAULT_PROJECT_CONFIG,
+  type GateFailure,
+  type GateResult,
+  checkBounds,
+} from "@sekhemet/gates";
 import type { CardRecord } from "@sekhemet/kernel";
 import { type ToolCall, checkExecutionHeadroom, readSwapUsedBytes } from "@sekhemet/models";
 import type { ExecutionResult } from "@sekhemet/sandbox";
 import { apiHints } from "./api_surface.js";
 import { OscillationDetector } from "./detector.js";
-import { integrityFailures, scanDiffIntegrity, worktreeDiff } from "./integrity.js";
+import {
+  integrityFailures,
+  scanDiffIntegrity,
+  worktreeDiff,
+  worktreeNumstat,
+} from "./integrity.js";
 import { type LadderState, RepairLadder, type RungPolicy } from "./ladder.js";
 import type { ToolObservation } from "./observation.js";
 import { buildRepoMap } from "./repo_map.js";
@@ -24,6 +34,8 @@ import { ToolExecutor } from "./tools.js";
 import type {
   CardExecutionSession,
   ExecutionStopReason,
+  ParkDiagnosis,
+  ReplanRequest,
   SessionOptions,
   TurnResult,
 } from "./types.js";
@@ -98,6 +110,15 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   /** Swap in use when the card started, to detect growth caused by this run. */
   private baselineSwap = readSwapUsedBytes();
   private activeRung: RungPolicy | undefined;
+  /** Set by `abort`; the next turn stops with `human_abort` without calling the model. */
+  private abortReason: string | undefined;
+  /** A re-plan has been applied to this card (from the start, or in-loop). */
+  private replanned: boolean;
+  /** The plan an in-loop re-plan produced, shown with the manager's guidance. */
+  private replanGuidance: string | undefined;
+  private replanRequest: ReplanRequest | undefined;
+  /** Successful writes this card, so the runner can tell when to checkpoint. */
+  private writeCount = 0;
 
   constructor(private options: SessionOptions) {
     if (options.priorLessons?.length) this.memory.seed(options.priorLessons);
@@ -106,6 +127,15 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     this.card = options.card ?? synthesizeCard(options);
     this.oscillationDetector = new OscillationDetector(options.oscillationThreshold ?? 3);
     this.ladder = new RepairLadder();
+    this.replanned = options.replanned ?? options.managerGuidance !== undefined;
+    // The staged acceptance tests are this card's oracle: always protected,
+    // on top of whatever the project declares (or the defaults).
+    const declared = options.protectedGlobs?.length
+      ? options.protectedGlobs
+      : DEFAULT_PROJECT_CONFIG.protected;
+    const staged = (this.card.acceptanceTests ?? []).map((t) =>
+      t.startsWith("tests/") ? t : `tests/${t}`,
+    );
     this.tools = new ToolExecutor({
       worktreePath: options.worktreePath,
       scopeFiles: options.scopeFiles,
@@ -113,7 +143,106 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       allowNetwork: options.allowNetwork,
       commandTimeoutMs: options.commandTimeoutMs,
       onApproval: options.onApproval,
+      requireConfinement: options.requireConfinement,
+      sandbox: options.sandbox,
+      protectedGlobs: [...new Set([...declared, ...staged])],
+      requireReadBeforeEdit: options.requireReadBeforeEdit,
     });
+    // H17: a resumed card continues its step count from the checkpoint.
+    if (options.startStep !== undefined && options.startStep > 0) {
+      this.stepsUsed = Math.floor(options.startStep);
+      this.history.push({
+        turn: this.stepsUsed,
+        action: "resume",
+        result: `Resumed from the checkpoint at step ${this.stepsUsed}. The files are as they were then; read what you need before editing.`,
+      });
+    }
+  }
+
+  /** Successful writes so far (the runner checkpoints when this moves). */
+  public getWriteCount(): number {
+    return this.writeCount;
+  }
+
+  /** The re-plan this card asked for, when it stopped with `replan_requested`. */
+  public getReplanRequest(): ReplanRequest | undefined {
+    return this.replanRequest;
+  }
+
+  public isReplanned(): boolean {
+    return this.replanned;
+  }
+
+  /** Why this card should be parked, for the human who picks it up (L15 rung 4). */
+  public getParkDiagnosis(stopReason: ParkDiagnosis["stopReason"]): ParkDiagnosis {
+    const failures = this.lastGateFailures.slice(0, 3).map((f) => ({
+      gate: f.gate ?? f.rung,
+      excerpt: f.errorExcerpt.split("\n")[0]?.slice(0, 300) ?? "",
+      ...(f.location?.file
+        ? { location: `${f.location.file}${f.location.line ? `:${f.location.line}` : ""}` }
+        : {}),
+    }));
+    const first = failures[0];
+    const suggestion =
+      stopReason === "capability_ceiling"
+        ? `A re-planned attempt also exhausted the repair ladder${first ? ` on ${first.gate}` : ""}. Split the card, give it to a stronger model, or fix ${first?.location ?? "the failing location"} by hand.`
+        : first
+          ? `Four repair rungs could not clear ${first.gate}${first.location ? ` at ${first.location}` : ""}. Re-plan the card or answer what the failure needs.`
+          : "The repair ladder ran out without a typed failure; re-run the gates by hand.";
+    return {
+      cardId: this.cardId,
+      stopReason,
+      attempts: this.ladder.snapshot.totalAttempts,
+      replanned: this.replanned,
+      failures,
+      filesWritten: this.getFilesWritten(),
+      lessons: this.memory.lines(),
+      suggestion,
+    };
+  }
+
+  /**
+   * Apply the ladder's verdict after a failed verification (L15).
+   *
+   * Rung 3 asks for a re-plan once per card: fulfilled in-loop when the
+   * harness supplied `onReplan`, otherwise the card stops so the harness can
+   * plan and retry. Rung 4 stops the card for parking; after a re-plan that is
+   * the model's capability ceiling on this card.
+   */
+  private async applyLadder(
+    policy: RungPolicy,
+    turnIndex: number,
+  ): Promise<ExecutionStopReason | undefined> {
+    if (this.ladder.exhausted) {
+      return this.replanned ? "capability_ceiling" : "repair_exhausted";
+    }
+    if (!policy.replan || this.replanned) return undefined;
+    const failures = this.lastGateFailures.slice(0, 3);
+    const request: ReplanRequest = {
+      cardId: this.cardId,
+      attempts: this.ladder.snapshot.totalAttempts,
+      failures,
+      filesWritten: this.getFilesWritten(),
+      lessons: this.memory.lines(),
+      summary: `Card ${this.cardId} failed verification ${this.ladder.snapshot.totalAttempts} time(s) through direct repair and a fresh context. Standing failure${failures.length === 1 ? "" : "s"}: ${
+        failures.map((f) => f.errorExcerpt.split("\n")[0]).join(" | ") || "unknown"
+      }. Files written: ${this.getFilesWritten().join(", ") || "none"}.`,
+    };
+    this.replanned = true;
+    const plan = this.options.onReplan
+      ? await this.options.onReplan(request).catch(() => undefined)
+      : undefined;
+    if (plan?.trim()) {
+      this.replanGuidance = plan.trim();
+      this.history.push({
+        turn: turnIndex,
+        action: "re-plan",
+        result: "The planner produced a new plan for this card; it is shown above. Follow it.",
+      });
+      return undefined;
+    }
+    this.replanRequest = request;
+    return "replan_requested";
   }
 
   public getStepsUsed(): number {
@@ -270,11 +399,17 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     this.tools
       .execute({ id: "ask-note", name: "note", arguments: { message: `Asked: ${q}` } })
       .catch(() => undefined);
+    // Every question goes into the card's dossier, so the next attempt and
+    // the reviewer see what was unclear (integration review item 6).
+    const questionEntryId = await this.options.recordQuestion?.(q).catch(() => undefined);
     if (scored.length === 0 && this.options.askTeam) {
       // Not in the contract: ask the team. Merit answers now if it is
       // resident; otherwise the question waits for its next turn on the host.
-      const reply = await this.options.askTeam(q).catch(() => undefined);
+      const reply = await this.options
+        .askTeam(q, questionEntryId ? { questionEntryId } : {})
+        .catch(() => undefined);
       if (reply) {
+        await this.options.recordAnswer?.(reply, questionEntryId).catch(() => undefined);
         return {
           tool: "ask",
           ok: true,
@@ -486,6 +621,25 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     return { ...(last as { systemPrompt: string; prompt: string }), reduction: 6 };
   }
 
+  /** The manager's plan and any in-loop re-plan, newest last. */
+  private guidance(): string | undefined {
+    const parts = [this.options.managerGuidance, this.replanGuidance].filter(
+      (p): p is string => typeof p === "string" && p.trim().length > 0,
+    );
+    return parts.length > 0 ? parts.join("\n\nRevised plan (repair rung 3):\n") : undefined;
+  }
+
+  /** The team note plus what the team has recorded about this card (its dossier). */
+  private teamBlock(): string | undefined {
+    const lines = (this.options.dossierLines ?? []).filter((l) => l.trim().length > 0);
+    const dossier =
+      lines.length > 0
+        ? `What the team has recorded about this card (newest last):\n${lines.map((l) => `- ${l}`).join("\n")}`
+        : undefined;
+    const parts = [this.options.teamNote, dossier].filter((p): p is string => Boolean(p));
+    return parts.length > 0 ? parts.join("\n\n") : undefined;
+  }
+
   private buildPromptAt(level: number): { systemPrompt: string; prompt: string } {
     const skills =
       this.options.skillsRegistry?.resolveActiveSkills(
@@ -493,12 +647,19 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         this.options.scopeFiles ?? [],
       ) ?? [];
 
-    const matched =
-      this.options.playbookRegistry?.matchRules({
-        cardTitle: this.card.title,
-        scopeFiles: this.options.scopeFiles ?? [],
-        ...(this.lastGateFailure ? { triggerGate: this.lastGateFailure.rung } : {}),
-      }) ?? [];
+    // The failure text lets error-scoped rules match only while their error
+    // stands (integration review item 3). Registries that predate the
+    // `failureText` option ignore the extra field.
+    type MatchOptions = Parameters<PlaybookRegistry["matchRules"]>[0] & { failureText?: string };
+    const matchOptions: MatchOptions = {
+      cardTitle: this.card.title,
+      scopeFiles: this.options.scopeFiles ?? [],
+      ...(this.lastGateFailure ? { triggerGate: this.lastGateFailure.rung } : {}),
+      ...(this.lastGateFailures.length > 0
+        ? { failureText: this.lastGateFailures.map((f) => f.errorExcerpt).join("\n") }
+        : {}),
+    };
+    const matched = this.options.playbookRegistry?.matchRules(matchOptions) ?? [];
     for (const r of matched) this.rulesUsed.add(r.id);
     const playbookRules = matched.map((r) => r.instruction);
 
@@ -523,8 +684,8 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         ),
       // Per-card, so it rides in the volatile zone: in the system zone it would
       // both break the cacheable prefix and overrun that zone's budget.
-      ...(this.options.managerGuidance ? { managerGuidance: this.options.managerGuidance } : {}),
-      ...(this.options.teamNote ? { teamNote: this.options.teamNote } : {}),
+      ...(this.guidance() ? { managerGuidance: this.guidance() as string } : {}),
+      ...(this.teamBlock() ? { teamNote: this.teamBlock() as string } : {}),
       activeSkills: skills,
       playbookRules,
       recentTurns: maskOlderObservations(
@@ -570,12 +731,22 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   }
 
   public async executeTurn(): Promise<TurnResult> {
+    if (this.abortReason !== undefined) {
+      return {
+        turnIndex: this.stepsUsed,
+        toolCalls: [],
+        observations: [],
+        stopReason: "human_abort",
+      };
+    }
     // Check headroom before spending a turn: stopping here is resumable,
     // letting the host run out of memory is not.
     // Enabled by the CLI and eval harness for real runs; unit tests with mock
     // adapters leave it off so their outcome does not depend on host swap.
-    if (this.options.memoryGuard) {
-      const verdict = checkExecutionHeadroom(this.baselineSwap, this.options.memoryGuard);
+    if (this.options.memoryProbe || this.options.memoryGuard) {
+      const verdict = this.options.memoryProbe
+        ? this.options.memoryProbe()
+        : checkExecutionHeadroom(this.baselineSwap, this.options.memoryGuard || {});
       if (!verdict.ok) {
         this.history.push({
           turn: this.stepsUsed,
@@ -679,12 +850,14 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         this.lastGateFailure = forced.failures[0];
         this.lastGateFailures = forced.failures;
         this.activeRung = this.ladder.recordFailure();
+        const ladderStop = await this.applyLadder(this.activeRung, turnIndex);
         return {
           turnIndex,
           toolCalls,
           observations: [],
           usage: response.usage,
           gateResult: forced,
+          ...(ladderStop ? { stopReason: ladderStop } : {}),
         };
       }
 
@@ -721,6 +894,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         const path = call.arguments.path;
         if (typeof path === "string") this.filesWritten.add(path.replace(/^\.\//, ""));
         this.writtenSinceCheck = true;
+        this.writeCount++;
         if (typeof path === "string") this.memory.noteWrite(path);
       }
     }
@@ -733,6 +907,25 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
 
     let gateResult: GateResult | undefined;
     let stopReason: ExecutionStopReason | undefined;
+
+    // A Worker that keeps writing outside its scope is working on a different
+    // card than the one it was given; more turns will not fix that.
+    const scopeDenials = this.tools.getDenialCounts().scope ?? 0;
+    if (scopeDenials >= (this.options.maxScopeDenials ?? 3)) {
+      this.history.push({
+        turn: turnIndex,
+        action: "scope",
+        result: `Stopped: ${scopeDenials} writes outside the declared scope were refused.`,
+      });
+      return {
+        turnIndex,
+        toolCalls,
+        observations,
+        usage: response.usage,
+        rawText: response.text,
+        stopReason: "scope_violation",
+      };
+    }
 
     // Re-check after every edit while a failure is outstanding. Without it the
     // agent edited blind: Chronicle's ledger card fixed the one error it was
@@ -790,7 +983,27 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     }
 
     if (!stopReason && this.tools.wantsFinish()) {
-      gateResult = await this.runVerification();
+      try {
+        gateResult = await this.runVerification();
+      } catch (err) {
+        // The Worker declared the work done and the gates could not run (a
+        // tampered gates.toml, a refused sandbox). The work is kept, and the
+        // card says exactly that rather than "error".
+        const message = err instanceof Error ? err.message : String(err);
+        this.history.push({
+          turn: turnIndex,
+          action: "verification",
+          result: `Gates could not run: ${message.slice(0, 300)}`,
+        });
+        return {
+          turnIndex,
+          toolCalls,
+          observations,
+          usage: response.usage,
+          rawText: response.text,
+          stopReason: "done_pending_gates",
+        };
+      }
 
       if (gateResult.passed) {
         this.isFinished = true;
@@ -825,9 +1038,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
           this.oscillationDetector.reset();
         }
 
-        if (this.ladder.exhausted) {
-          stopReason = "repair_exhausted";
-        }
+        stopReason = await this.applyLadder(policy, turnIndex);
       }
     }
 
@@ -893,11 +1104,49 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         };
       }
     }
+    // The card-size gate (G10): measured on the real diff at every
+    // verification, so an oversized change fails like any other gate.
+    const bounds = this.options.bounds;
+    if (bounds) {
+      const staged = new Set(
+        (this.card.acceptanceTests ?? []).map((t) => (t.startsWith("tests/") ? t : `tests/${t}`)),
+      );
+      const perFile = worktreeNumstat(this.tools.root, this.options.baseBranch ?? "main");
+      if (perFile) {
+        const own = perFile.filter((f) => !staged.has(f.file));
+        const verdict = checkBounds({
+          filesTouched: own.map((f) => f.file),
+          linesAdded: own.reduce((n, f) => n + f.added, 0),
+          linesRemoved: own.reduce((n, f) => n + f.removed, 0),
+          maxFiles: bounds.maxFiles,
+          maxLines: bounds.maxLines,
+        });
+        if (!verdict.passed && verdict.failure) {
+          result = {
+            ...result,
+            passed: false,
+            failures: [verdict.failure, ...result.failures],
+            rungResults: [
+              ...(result.rungResults ?? []),
+              {
+                gate: "bounds",
+                rung: "bounds",
+                layer: "hygiene",
+                passed: false,
+                exitCode: 1,
+                durationMs: 0,
+              },
+            ],
+          };
+        }
+      }
+    }
     this.memory.observe(result);
     return result;
   }
 
   public async abort(reason: string): Promise<void> {
+    this.abortReason = reason;
     this.isFinished = true;
     this.history.push({
       turn: this.stepsUsed,

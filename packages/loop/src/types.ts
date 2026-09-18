@@ -1,20 +1,54 @@
 import type { PlaybookRegistry, SkillsRegistry, ToolInterfaceSpec } from "@sekhemet/context";
-import type { GateResult, GateRung, GateRunner } from "@sekhemet/gates";
-import type { CardRecord } from "@sekhemet/kernel";
+import type { GateFailure, GateResult, GateRung, GateRunner } from "@sekhemet/gates";
+import type { CardRecord, CardStopReason } from "@sekhemet/kernel";
 import type { LocalInferenceAdapter, TokenUsage, ToolArm, ToolCall } from "@sekhemet/models";
+import type { ProcessSandbox } from "@sekhemet/sandbox";
 import type { GitSyncAdapter } from "@sekhemet/sync";
 import type { ToolObservation } from "./observation.js";
 import type { ApprovalHandler } from "./tools.js";
 
-export type ExecutionStopReason =
-  | "gate_passed"
-  | "budget_exhausted"
-  | "oscillation_detected"
-  | "no_progress"
-  | "repair_exhausted"
-  | "error"
-  | "memory_pressure"
-  | "quota_suspended";
+/**
+ * Why a card's execution stopped (L14). The kernel owns the union so the card
+ * record can persist it; the loop produces every member except
+ * `quota_suspended`, which the relay protocol sets.
+ */
+export type ExecutionStopReason = CardStopReason;
+
+/**
+ * Repair rung 3 (L15): the card needs a new plan, not another patch.
+ *
+ * Returned as a typed result so the harness can fulfil it (the manager
+ * model's `planRepair`) and start the next attempt with the plan, or answered
+ * in-loop through `SessionOptions.onReplan`.
+ */
+export interface ReplanRequest {
+  cardId: string;
+  /** Verification attempts spent before the request. */
+  attempts: number;
+  /** The standing failures, highest leverage first (at most 3). */
+  failures: GateFailure[];
+  filesWritten: string[];
+  /** What the Worker learned so far (working-memory lines). */
+  lessons: string[];
+  /** One paragraph for the planner. */
+  summary: string;
+}
+
+/**
+ * Repair rung 4 (L15): why a card was parked, for the human who picks it up.
+ */
+export interface ParkDiagnosis {
+  cardId: string;
+  stopReason: "repair_exhausted" | "capability_ceiling" | "vacuous_tests";
+  attempts: number;
+  /** True when a re-plan had already been tried on this card. */
+  replanned: boolean;
+  failures: { gate: string; excerpt: string; location?: string }[];
+  filesWritten: string[];
+  lessons: string[];
+  /** The smallest action that would unblock the card. */
+  suggestion: string;
+}
 
 export interface TurnResult {
   turnIndex: number;
@@ -68,7 +102,23 @@ export interface SessionOptions {
    * to an answer when someone can answer now (Merit resident), or undefined
    * when it was queued for later.
    */
-  askTeam?: ((question: string) => Promise<string | undefined>) | undefined;
+  askTeam?:
+    | ((question: string, meta?: { questionEntryId?: string }) => Promise<string | undefined>)
+    | undefined;
+  /**
+   * Record a Worker question in the card's dossier; resolves to its entry id,
+   * which is handed to `askTeam` so a later answer can name its question.
+   */
+  recordQuestion?: ((question: string) => Promise<string | undefined>) | undefined;
+  /** Record the team's in-run answer to a question in the card's dossier. */
+  recordAnswer?:
+    | ((answer: string, questionEntryId: string | undefined) => Promise<void>)
+    | undefined;
+  /**
+   * What the team has recorded about this card (the dossier: send-backs,
+   * review findings, answers, research, notes, lessons), one line each.
+   */
+  dossierLines?: string[] | undefined;
   /** Working-memory lines from earlier attempts at this card (never start blank). */
   priorLessons?: string[] | undefined;
   /** Gate rungs run when the agent calls `finish_card`. Defaults to typecheck + test. */
@@ -101,6 +151,40 @@ export interface SessionOptions {
   commandTimeoutMs?: number | undefined;
   /** Swap limits checked before every inference turn. Absent or false disables the guard. */
   memoryGuard?: import("@sekhemet/models").HeadroomLimits | false | undefined;
+  /**
+   * Replaces the built-in headroom check before each turn (a memory watchdog
+   * the harness runs, or a test). A not-ok verdict stops with `memory_pressure`.
+   */
+  memoryProbe?: (() => { ok: boolean; reason?: string | undefined }) | undefined;
+
+  /** Restricted mode: the agent's own commands refuse to run unconfined (defect 3). */
+  requireConfinement?: boolean | undefined;
+  /** Sandbox for the agent's tools; defaults to a new ProcessSandbox. */
+  sandbox?: ProcessSandbox | undefined;
+  /** The project's protected globs (`gates.toml [project] protected`, defect 5). */
+  protectedGlobs?: string[] | undefined;
+  /** Refuse edits to files not read this card (L17). Default on. */
+  requireReadBeforeEdit?: boolean | undefined;
+  /**
+   * Card size limits enforced at every verification (G10). The runner passes
+   * the `gates.toml` values; `false` or absent disables the bounds gate.
+   */
+  bounds?: { maxFiles: number; maxLines: number } | false | undefined;
+  /** Out-of-scope write denials tolerated before the card stops (`scope_violation`). */
+  maxScopeDenials?: number | undefined;
+  /** Resume at this step count (H17): the step counter continues from it. */
+  startStep?: number | undefined;
+  /**
+   * Fulfil a repair-rung-3 re-plan in-loop. Resolves to the new plan, or
+   * undefined to stop the card with `replan_requested`.
+   */
+  onReplan?: ((request: ReplanRequest) => Promise<string | undefined>) | undefined;
+  /**
+   * The card already had a re-plan (for example this attempt runs on one).
+   * Defaults to true when `managerGuidance` is set. A card that exhausts the
+   * ladder after a re-plan stops with `capability_ceiling`.
+   */
+  replanned?: boolean | undefined;
 }
 
 export interface CardExecutionSession {

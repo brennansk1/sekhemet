@@ -20,6 +20,10 @@ export interface RungPolicy {
   requireSketch: boolean;
   /** Guidance injected into the prompt at this rung. */
   directive: string;
+  /** Entering this rung asks for a new plan (rung 3). */
+  replan?: boolean;
+  /** Entering this rung stops the card for parking with a diagnosis (rung 4). */
+  park?: boolean;
 }
 
 /**
@@ -51,6 +55,7 @@ export const REPAIR_LADDER: RungPolicy[] = [
     maxAttempts: 1,
     resetContext: true,
     requireSketch: true,
+    replan: true,
     directive:
       "Direct repair has failed repeatedly. First state, in one short note, the root cause and the exact edit you intend to make. Then make only that edit.",
   },
@@ -59,6 +64,7 @@ export const REPAIR_LADDER: RungPolicy[] = [
     maxAttempts: 0,
     resetContext: false,
     requireSketch: false,
+    park: true,
     directive:
       "Repair ladder exhausted. Stopping for human review rather than continuing to consume budget.",
   },

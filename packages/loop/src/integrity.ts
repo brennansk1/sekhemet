@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import type { GateFailure } from "@sekhemet/gates";
+import { type GateFailure, parseNumstat } from "@sekhemet/gates";
 
 /**
  * The integrity gate: did the gates pass honestly?
@@ -100,6 +100,29 @@ export function worktreeDiff(root: string, base = "main"): string {
     });
   } catch {
     return "";
+  }
+}
+
+/**
+ * Per-file line deltas of the worktree against `base` (staging everything
+ * first, as `worktreeDiff` does), or undefined when git cannot say.
+ */
+export function worktreeNumstat(
+  root: string,
+  base = "main",
+): { file: string; added: number; removed: number }[] | undefined {
+  try {
+    execFileSync("git", ["add", "-A"], { cwd: root, stdio: "ignore", timeout: 15_000 });
+    const text = execFileSync("git", ["diff", "--cached", "--numstat", base], {
+      cwd: root,
+      encoding: "utf8",
+      timeout: 15_000,
+      maxBuffer: 16 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return parseNumstat(text);
+  } catch {
+    return undefined;
   }
 }
 
