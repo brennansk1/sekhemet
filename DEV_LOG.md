@@ -44,6 +44,96 @@ If you are Claude reading this because Gemini reached quota limits or you were s
 
 ## Detailed Session Log
 
+### Entry 14 — 2026-09-18 03:50 MDT
+- **Agent**: Claude Opus 5 (`claude-code`)
+- **Role**: Lead Driver & Delegator
+- **Subject**: Project Chronicle release gate — first real execution, and what it found
+
+#### A. The gate ran. That is the headline.
+Chronicle was executed end to end against the local `nail-35b-a3b-ctx` model on
+the M4. Cards are staged into isolated worktrees, gated, checkpointed, and
+squash-merged to `main` on acceptance. **Cards 1 and 2 now pass autonomously**:
+
+| Card | Result | Turns | Wall clock | Gates |
+| :--- | :--- | ---: | ---: | :--- |
+| `card_chron_iface` | **PASSED** | 4 | 11.9s | typecheck + unit |
+| `card_chron_hasher` | **PASSED** | 6 | 97.8s | typecheck + unit |
+| `card_chron_db` | failed (budget) | 32 | 458s | typecheck fail |
+| `card_chron_verifier` | failed (budget) | 32 | 856s | typecheck fail |
+| `card_chron_ledger` | failed (repair ladder exhausted) | 35 | 833s | typecheck fail |
+
+Scorecard against the Go/No-Go criteria: **Pass@1 is 2/6 (33%), below the ≥80%
+bar.** Sekhemet is *not* certified for public release on this benchmark, and
+that verdict is the gate working, not the gate failing.
+
+What the gate did prove: zero out-of-scope writes, zero test mutation, typed
+gate failures driving real repair cycles, checkpoints on every gate-passing
+step, and evidence bundles for every card including the failures.
+
+#### B. Nine defects found by running it that no amount of reading would have found
+1. **Tool calls were being discarded.** The model emits
+   `write_file(content="...", path="...")` — function-call syntax, not JSON,
+   because that is how most tool-calling fine-tunes were trained. The parser
+   accepted only JSON, so well-formed decisions were dropped and the agent
+   looked stalled. Tool names now travel with the request, so `finish_card()`
+   parses while ordinary code in prose still does not.
+2. **The agent had no memory of its own work.** It wrote a *correct* file ten
+   times in a row until the oscillation breaker tripped. The prompt now carries
+   what has been written, what remains, and what has already been read.
+3. **The model was never told its tools existed.** Fifteen were dispatched;
+   `InferenceRequest.tools` was never set.
+4. **Cards could not build on their predecessors.** `squashAndMerge` existed but
+   no CLI path called it, so card 2 branched from a tree without card 1's types.
+   Added `sekhemet accept`.
+5. **A card could never be retried.** `createWorktree` failed if the worktree
+   existed, so retry, resume and re-run were all impossible.
+6. **`generateDiff` was not valid git** (`--staged` with a commit range), which
+   aborted the run at evidence time — after all the work was done.
+7. **The sandbox broke the toolchain twice**: worktrees link `node_modules`, so
+   vitest's writes to `.vite-temp` hit EPERM; and `(allow signal (target self))`
+   made vitest fail with `kill EPERM` tearing down workers. A sandbox that
+   breaks the toolchain reports the sandbox, not the card.
+8. **The 32k context window drove the host to 9.4GB of swap** and stalled a run
+   outright. The weights are ~13GB on a 24GB box, so the KV cache is what
+   decides whether the machine swaps. Cut to 8k; card prompts measure ~1.1k.
+9. **`CardRunner` skipped Verify**, jumping straight to Review — caught by the
+   board's own legal-transition table.
+
+#### C. The playbook is the most interesting result
+`card_chron_hasher` failed three times in a row, burning a full 32-turn budget
+each time, on one recurring error: TS2835, ESM relative imports needing `.js`.
+Four rules were written into `.sekhemet/playbook.toml` from the observed return
+reasons — exactly the mechanism the design describes.
+
+**The same card then passed in 6 turns.** 32 turns of budget exhaustion to a
+6-turn pass, from four lines of accumulated project knowledge. That is the
+self-improvement loop earning its place, measured rather than asserted.
+
+#### D. Measured hardware facts
+- Cold start **258s** (13GB weight load); warm turn **2.3s**. Keep-alive, not
+  decode speed, is the dominant cost — so it no longer drops to zero under
+  pressure; the card runner unloads explicitly at card end.
+- Nail-35B-A3B (MoE, ~3B active) at 29–30 tok/s against 6.6–8.65 for the dense
+  Qwen3.8-27B: ~4.4x, which is why it is the default driver.
+
+#### E. Honest read on the remaining failures
+Cards 3–5 are at this model's capability ceiling, not the harness's. `card_chron_db`
+adopted the playbook's `node:sqlite` rule correctly, then corrupted its own brace
+structure across successive `edit` calls. The harness surfaced every failure with
+an exact location and a reproduction command; the model could not act on them.
+
+The next lever is not more harness: it is card sizing (these cards are larger than
+this model can hold), a stronger executor, or Pass@k with the eval harness that
+now genuinely measures it.
+
+- **Next Steps**:
+  - Split cards 3–6 into smaller SPIDR slices and re-run the gate.
+  - Extend the playbook from the failures recorded in this run.
+  - Continue the anti-shallow test pass; `FEATURE_INVENTORY.md` remains the
+    outstanding-work checklist.
+
+---
+
 ### Entry 13 — 2026-09-17 23:35 MDT
 - **Agent**: Claude Opus 5 (`claude-code`)
 - **Role**: Lead Driver & Delegator
