@@ -12,6 +12,7 @@ import type { ToolCall } from "@sekhemet/models";
 import { type ExecutionResult, PermissionEngine, ProcessSandbox } from "@sekhemet/sandbox";
 import { matchesGlob } from "./glob.js";
 import { type ToolObservation, clampObservation, denied, fail, ok } from "./observation.js";
+import { checkSyntax } from "./parse_gate.js";
 import { PathEscapeError, canonicalizeRoot, resolveInWorktree } from "./paths.js";
 import { findSymbol, listSymbolNames } from "./symbols.js";
 import { applyEol, detectEol, joinLines, reindentBlock, splitLines, toLf } from "./text.js";
@@ -176,6 +177,21 @@ export class ToolExecutor {
   }
 
   private writeText(abs: string, content: string): void {
+    // Refuse a write that would leave source unparseable. The thrown message is
+    // turned into the observation, so the model sees the exact line and error.
+    // The rule is "never break a parseable file", not "every write must parse":
+    // a file that is already broken has to be repairable one edit at a time.
+    const alreadyBroken = existsSync(abs) && checkSyntax(abs, readFileSync(abs, "utf8")).length > 0;
+    const problems = alreadyBroken ? [] : checkSyntax(abs, content);
+    if (problems.length > 0) {
+      const detail = problems
+        .map((p) => `${this.rel(abs)}:${p.line}:${p.column} ${p.message}`)
+        .join("; ");
+      throw new Error(
+        `write refused: the result would not parse (${detail}). The file on disk is unchanged. For a short file, rewrite it whole with write_file.`,
+      );
+    }
+
     const parent = dirname(abs);
     if (!existsSync(parent)) mkdirSync(parent, { recursive: true });
     writeFileSync(abs, content, "utf8");

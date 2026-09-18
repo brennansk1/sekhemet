@@ -31,6 +31,14 @@ export interface HttpAdapterOptions {
   /** Retries for transient transport failures (not for 4xx). */
   maxRetries?: number;
   /**
+   * Timeout for a request that must first load the weights.
+   *
+   * Nail cold-loads in 211-258s on the M4 reference box. A normal turn timeout
+   * would expire mid-load and retry, re-queueing behind the load it abandoned:
+   * a healthy machine reported as a dead model (Helga measured the same trap).
+   */
+  coldLoadTimeoutMs?: number;
+  /**
    * Disable the model's chain-of-thought channel.
    *
    * Qwen3.x routes output into `<think>` and leaves `content` empty unless this
@@ -156,8 +164,32 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
     return messages;
   }
 
+  /**
+   * Whether the model is already resident on an Ollama server.
+   *
+   * Unknown (unreachable, or not Ollama) returns true, so a genuinely dead host
+   * keeps the short timeout and fails fast rather than waiting out a cold load.
+   */
+  public async isResident(): Promise<boolean> {
+    if (this.apiFormat !== "ollama") return true;
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 3000);
+      const res = await fetch(`${this.baseUrl}/api/ps`, { signal: controller.signal });
+      clearTimeout(timer);
+      if (!res.ok) return true;
+      const body = (await res.json()) as { models?: { name?: string; model?: string }[] };
+      return (body.models ?? []).some((m) => m.name === this.modelId || m.model === this.modelId);
+    } catch {
+      return true;
+    }
+  }
+
   private async post(path: string, payload: unknown): Promise<unknown> {
-    const timeoutMs = this.options.requestTimeoutMs ?? 300_000;
+    const resident = path === "/api/chat" ? await this.isResident() : true;
+    const timeoutMs = resident
+      ? (this.options.requestTimeoutMs ?? 300_000)
+      : (this.options.coldLoadTimeoutMs ?? 480_000);
     const maxRetries = this.options.maxRetries ?? 2;
     let lastError: Error | undefined;
 

@@ -148,6 +148,9 @@ importers:
       '@sekhemet/sync':
         specifier: workspace:*
         version: link:../sync
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
     devDependencies:
       '@types/node':
         specifier: ^22.13.4
