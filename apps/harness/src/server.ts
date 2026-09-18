@@ -70,6 +70,8 @@ export interface DashboardServerOptions {
   pmModel?: string;
   /** Injectable PM model, for tests; production builds one from `pmModel`. */
   pmAdapter?: () => LocalInferenceAdapter;
+  /** Injectable memory-pressure reader, for tests. */
+  pressureLevel?: () => number | undefined;
 }
 
 export { generateDashboardHtml };
@@ -231,6 +233,7 @@ export function startDashboardServer(
     ...(options.cardStore ? { cardStore: options.cardStore } : {}),
     ...(options.pmModel ? { pmModel: options.pmModel } : {}),
     ...(options.pmAdapter ? { pmAdapter: options.pmAdapter } : {}),
+    ...(options.pressureLevel ? { pressureLevel: options.pressureLevel } : {}),
     json,
     readJsonBody,
     isTrustedMutation,

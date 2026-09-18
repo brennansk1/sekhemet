@@ -50,6 +50,7 @@ describe("PM and board-practice API", () => {
       repoPath: repo,
       port: 0,
       streamIntervalMs: 50,
+      pressureLevel: () => 1,
       pmAdapter: () =>
         new MockInferenceAdapter("dirk-27b", [
           {
@@ -225,5 +226,35 @@ describe("PM and board-practice API", () => {
       state: "swapped",
     });
     expect(body.roles.find((r) => r.role === "worker")?.state).toBe("unconfigured");
+  });
+
+  it("does not load Merit's model from the dashboard while memory is under pressure", async () => {
+    const db = new DatabaseSync(":memory:");
+    initSchema(db);
+    const log = new EventLog(db);
+    const store = new CardStore(db, log);
+    let loaded = false;
+    const s2 = await startDashboardServer({
+      db,
+      log,
+      boardService: new BoardServiceImpl(store),
+      cardStore: store,
+      repoPath: repo,
+      port: 0,
+      pressureLevel: () => 2,
+      pmAdapter: () => {
+        loaded = true;
+        return new MockInferenceAdapter("dirk", []);
+      },
+    });
+    const res = await fetch(`http://127.0.0.1:${s2.port}/api/pm/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Sekhemet-Action": "1" },
+      body: JSON.stringify({ text: "status of the api card?" }),
+    });
+    expect(res.status).toBe(200);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(loaded).toBe(false);
+    await s2.close();
   });
 });

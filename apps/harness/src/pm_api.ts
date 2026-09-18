@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { BoardService } from "@sekhemet/board";
 import type { CardStore, CardUpdate, EventLog } from "@sekhemet/kernel";
 import type { LocalInferenceAdapter } from "@sekhemet/models";
-import { HttpInferenceAdapter } from "@sekhemet/models";
+import { HttpInferenceAdapter, readKernelPressureLevel } from "@sekhemet/models";
 import { handleIntegrationsApi } from "./integrations.js";
 import { readSettings } from "./integrations.js";
 import { learnFromProposalChoices } from "./learning/reflect.js";
@@ -27,6 +27,8 @@ export interface PmApiContext {
   pmModel?: string;
   /** Injectable for tests: the PM model the server answers with. */
   pmAdapter?: () => LocalInferenceAdapter;
+  /** Injectable for tests: kernel memory-pressure level (1 normal). */
+  pressureLevel?: () => number | undefined;
   json: (res: ServerResponse, status: number, body: unknown) => void;
   readJsonBody: (req: IncomingMessage, limit?: number) => Promise<Record<string, unknown>>;
   isTrustedMutation: (req: IncomingMessage) => boolean;
@@ -76,6 +78,18 @@ export function createPmApi(ctx: PmApiContext) {
    */
   const kick = (): void => {
     if (answering || !ctx.cardStore || runnerLease(ctx.repoPath)) return;
+    // The dashboard loads a large model outside any queue: never on a host
+    // already under memory pressure. The message stays queued; it is answered
+    // on the next message once pressure is normal, or by the next queue run.
+    const level = (ctx.pressureLevel ?? readKernelPressureLevel)();
+    if (level !== undefined && level > 1) {
+      void pmStore.setStatus({
+        phase: "idle",
+        detail:
+          "Memory is under pressure, so Merit will answer once it eases or during the next run",
+      });
+      return;
+    }
     const cardStore = ctx.cardStore;
     const adapter = (ctx.pmAdapter ?? (() => createPmAdapter(pmModel)))();
     answering = (async () => {

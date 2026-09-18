@@ -57,7 +57,12 @@ export class PmStore {
     return this.log.getEventsByTypes(types);
   }
 
-  public async appendUserMessage(text: string, context?: PmContext): Promise<PmMessage> {
+  /** `actor` is "human" for the lead; the Worker's questions use "executor". */
+  public async appendUserMessage(
+    text: string,
+    context?: PmContext,
+    actor = "human",
+  ): Promise<PmMessage> {
     const payload: MessagePayload = {
       id: `pmm_${randomUUID().slice(0, 12)}`,
       text,
@@ -65,7 +70,7 @@ export class PmStore {
       ...(context && (context.cardId || context.view) ? { context } : {}),
     };
     const event = await this.log.append({
-      actor: "human",
+      actor,
       type: PM_EVENTS.message,
       payload,
       ...(context?.cardId ? { cardId: context.cardId } : {}),

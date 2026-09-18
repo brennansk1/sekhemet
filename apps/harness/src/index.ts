@@ -711,6 +711,10 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
      * next attempt.
      */
     const askTeam = async (cardId: string, question: string): Promise<string | undefined> => {
+      // Only when Merit's weights are already loaded, and always hand back to
+      // the role that was running: switching to "worker" during an escalated
+      // retry (which runs on Merit's weights) would load a second large model.
+      const prior = router.activeRole;
       if (router.isResident("manager")) {
         const card = await cardStore.getCard(cardId);
         const res = await (await router.use("manager")).generate({
@@ -721,13 +725,14 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
           temperature: 0.2,
           maxTokens: 300,
         });
-        await router.use("worker");
+        if (prior) await router.use(prior);
         return res.text.replace(/<think>[\s\S]*?<\/think>/g, "").trim() || undefined;
       }
-      const m = await pmStore.appendUserMessage(`[The Worker asks about ${cardId}] ${question}`, {
-        cardId,
-        view: "worker-question",
-      });
+      const m = await pmStore.appendUserMessage(
+        `[The Worker asks about ${cardId}] ${question}`,
+        { cardId, view: "worker-question" },
+        "executor",
+      );
       workerQuestions.set(cardId, [...(workerQuestions.get(cardId) ?? []), m.id]);
       return undefined;
     };

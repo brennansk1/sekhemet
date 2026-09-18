@@ -120,8 +120,17 @@ export async function executeCard(
   const playbook = new PlaybookRegistry(ctx.repoPath);
   // Learned rules the human approved join the seeded playbook for this card.
   // Their pattern is the card's own title, so matchRules selects them here.
+  // In memory only: addRule rewrites the project's playbook.toml, which let
+  // learned rules leak into the seeded file (integration review). Builder A's
+  // addTransientRule is used when present.
+  const transient = playbook as unknown as {
+    addTransientRule?: (r: { id: string; pattern: string; instruction: string }) => void;
+    rules?: Map<string, unknown>;
+  };
   for (const rule of (await ctx.learning?.activeFor("worker", card)) ?? []) {
-    playbook.addRule({ id: rule.id, pattern: card.title, instruction: rule.text });
+    const r = { id: rule.id, pattern: card.title, instruction: rule.text };
+    if (typeof transient.addTransientRule === "function") transient.addTransientRule(r);
+    else transient.rules?.set(r.id, r);
   }
 
   const runner = new CardRunner({
