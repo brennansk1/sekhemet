@@ -1,8 +1,8 @@
 # Sekhemet Development Log & Multi-Agent Relay Ledger
 
-> **Harness:** antigravity-cli  
-> **Active Agent:** Gemini (gemini-2.5-pro)  
-> **Collaboration Partner:** Claude (claude-3-7-sonnet-20250219 via claude-code)  
+> **Harness:** claude-code  
+> **Active Agent:** Claude Opus 5 (`claude-opus-5`)  
+> **Collaboration Partner:** Gemini (gemini-2.5-pro via antigravity-cli)  
 > **Protocol:** AGENTS.md Zero-Loss Quota Relay Protocol  
 > **Created:** 2026-09-17 22:05:01 MDT  
 
@@ -43,6 +43,119 @@ If you are Claude reading this because Gemini reached quota limits or you were s
 ---
 
 ## Detailed Session Log
+
+### Entry 13 — 2026-09-17 23:35 MDT
+- **Agent**: Claude Opus 5 (`claude-code`)
+- **Role**: Lead Driver & Delegator
+- **Context**: Summoned to complete the Definition of Done. Began with an independent
+  audit rather than continuing the build, because the suite was green (75/75) while
+  the implementation was 6,304 LOC across 13 packages — thin for what the design
+  claims. The audit found the green was measuring almost nothing.
+
+#### A. Audit findings (all verified against source, not inferred)
+A full feature inventory was compiled from Design v2, the DoD, AGENTS.md and both
+project specs: **~310 buildable units, of which ~5% were BUILT, ~15% SHALLOW, ~8%
+DEAD and ~72% MISSING**. Written to `FEATURE_INVENTORY.md` as the running checklist.
+
+Five structural findings dominated everything else:
+1. **The agent loop was open.** `session.ts` called the model with a constant string
+   every turn (`"Executing card X turn N. Proceed with edits."`), discarded every
+   tool result, and never surfaced gate failures. The agent could not observe the
+   consequences of its own edits, so it could not converge regardless of model quality.
+2. **`@sekhemet/context` was entirely dead code** — a declared dependency of loop,
+   planner and harness, imported by none of them.
+3. **The sandbox did not sandbox.** `generateSeatbeltProfile()` was referenced only
+   by its own test; the executor was a bare `spawn()` with full `process.env`
+   inherited. `allowedPaths` and `allowNetwork` were accepted and discarded.
+4. **There was no loop.** `sekhemet run` executed one turn and exited.
+5. **`gates.toml` was never read**, despite the permission engine defending it.
+
+Additional severe findings: shell injection in `sync` (`execSync` with
+model-authored commit messages), `doctor` returning three hardcoded PASS literals
+and `ok: true` unconditionally across three surfaces, `Pass@1` scored by "model
+emitted any tool call" so `bake-off` always printed 100%, and scope matching with
+no glob support so `scopeFiles: ["src/**"]` denied everything it declared.
+
+#### B. Work completed
+- **Loop closed** (`9b18b2f`): 5-zone prompt pack wired in, tool results returned as
+  observations the model actually sees, gate-failure repair cycle, real path
+  confinement with symlink resolution, CRLF- and indentation-correct edits, a symbol
+  locator that handles methods/arrow consts/`export default`/decorators, real globs,
+  and a byte-stable repo map so the prompt prefix stays cacheable.
+- **Sandbox made real** (`26de72d`): commands now run under `sandbox-exec` with the
+  generated Seatbelt profile; `/tmp` realpath'd (the previous profile would have
+  granted nothing even if applied); env reduced to an allowlist. Verified
+  empirically — a write to `$HOME` returns `EPERM`, `fetch()` is blocked, and
+  `SECRET_TOKEN` does not reach the child.
+- **Model adapter made to work** (`e5cefa6`): switched the default driver to
+  **Nail-Qwen3.6-35B-A3B** (MoE, ~3B active, measured 29–30 tok/s vs 6.6–8.65 for the
+  dense 27B on this M4 — ~4.4x, decisive for a multi-turn loop). Fixed three defects
+  that would each have produced a silently dead agent against real hardware:
+  `<think>` suppression and stripping (Qwen3.x otherwise returns empty `content`);
+  flat-argument tool calls (`{"tool":"write_file","path":...}`) which the parser read
+  as `{}`, making every such call a no-op; and prompt-cache requests. A `<think>`
+  block rehearsing `run_cmd("rm",["-rf","/"])` is now provably not executed.
+  Added a memory governor after a resident 14 GB checkpoint left ~69 MB free.
+- **Safety and honesty** (`4a42c74`): `execFileSync` throughout `sync`; real `doctor`
+  that probes the live inference socket, worktree listing, toolchain and sandbox
+  containment via an actual escape probe; glob scope matching; and the loop driver,
+  gates runner and sandbox sources added to the permanent deny list — a
+  self-improving harness must not be able to edit what constrains it.
+- **Verification spine** (`f75ff42`): `gates.toml` with SHA-256 pinning re-verified
+  per run, six-layer gate model, per-tool failure parsers producing typed failures
+  with `minimalRepro`, failures ranked by shared-file reference and capped at three,
+  the 2/1/1 repair ladder where each rung changes strategy rather than temperature,
+  `CardRunner` (worktree → turn loop → checkpoint per gate-passing step → bounds
+  against the measured diff → evidence bundle), and stall detection that includes a
+  `repoStateHash` so a legitimate retry is no longer misread as a loop.
+- **Eval made real**: the benchmark now provisions an ephemeral worktree, runs the
+  real session loop, and verifies by actually executing `failToPassTests` and
+  `passToPassTests`. Independently re-verified here: a model emitting one arbitrary
+  tool call without fixing anything scores **0.0** (previously 1.0); a real fix scores 1.0.
+- **Context deepened**: RTK's four strategies including the two that were missing,
+  with §430 losslessness — a `TS2322` buried in 120 lines of noise survives
+  truncation to 22 lines. Graduated pressure tiers, `EvidenceRef`-carrying masking,
+  enforced zone budgets, goal re-injection at the tail, byte-stable prefix hash.
+- **UI**: the specified Basalt/Sand palettes replacing generic Tailwind zinc (not one
+  value had matched), design tokens as the single source of truth in CSS and JSON,
+  true dual-axis virtualization (600 cards now yields <20 nodes; the previous code
+  allocated a node per card and merely tagged `isVisible`), SSE streaming in place of
+  2.5s polling, HTML escaping closing an XSS vector on model-authored card titles,
+  port corrected to 4040, and a `Cmd+K` command palette.
+  **Note for the record:** the design states all fifteen tokens exceed WCAG AA, but
+  three measured below it (`basalt.stateFail` 4.19, `sand.accent` 4.11,
+  `sand.stateBlocked` 4.39). The spec contradicts itself; the accessibility
+  guarantee was honoured over the incidental hex values and the three were minimally
+  adjusted within hue. All fifteen now clear AA in both themes, asserted by measured
+  contrast ratio rather than by prose.
+- **Board**: back-pressure now actually blocks entry to **Verify** (one column
+  upstream of where it had been implemented, per §392) rather than merely displaying
+  a banner; a legal-transition table (previously `backlog → done` was permitted); and
+  `ReviewWIP` derived from review-minutes ÷ median review time rather than a constant.
+- **Fixtures**: `fixtures/chronicle/` scaffolded with contract-first failing
+  acceptance tests, and `scripts/seed_chronicle.mjs` to seed the six release-gate cards.
+
+#### C. Tests replaced rather than weakened
+Four assertions encoded defects and were replaced with stronger ones, never relaxed:
+the `doctor` test asserted `ok === true` on a function that could only return true;
+the theme test asserted the wrong palette; the eval test asserted `passAt1 === 1.0`
+for a harness that ran no tests; the Seatbelt test asserted a profile *string* rather
+than containment. Each now asserts a behaviour that can fail — `doctor` genuinely
+reports `fail` outside a git repo, and contrast ratios are measured.
+
+#### D. Honest status
+This is substantial progress on the spine, not completion of the DoD. The design
+specifies ~310 units; a large majority remain. What now exists is a harness whose
+loop actually closes, whose sandbox actually confines, whose gates are configurable
+and hash-pinned, and whose benchmark can report failure — the preconditions for the
+remaining work to mean anything. `FEATURE_INVENTORY.md` tracks what is left.
+
+- **Next Steps**:
+  - Complete planner and kernel depth (in flight), then the comprehensive
+    anti-shallow test pass the DoD requires.
+  - Execute Project Chronicle against the local model and record the gate scorecard.
+
+---
 
 ### Entry 12 — 2026-09-17 22:38:00 MDT
 - **Agent**: Gemini 2.5 Pro (`antigravity-cli`)

@@ -84,6 +84,9 @@ describe("@sekhemet/board", () => {
     const reviewWip = wipStatus.find((w) => w.column === "review");
     expect(reviewWip?.currentCount).toBe(2);
     expect(reviewWip?.isExceeded).toBe(false);
+    // At the limit the column is full: the next transition in is refused, so
+    // capacity must report true even though nothing has exceeded the limit.
+    expect(reviewWip?.isAtCapacity).toBe(true);
 
     // Attempt to transition 3rd card into review should throw or activate backpressure!
     await expect(

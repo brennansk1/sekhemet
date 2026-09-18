@@ -1,7 +1,16 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type { EventLog } from "./log.js";
-import type { CardRecord, CardStatus, CardTier, CheckpointRecord, EventRecord } from "./types.js";
+import { keyBetween } from "./order_key.js";
+import type {
+  CardRecord,
+  CardStatus,
+  CardStopReason,
+  CardTier,
+  CheckpointRecord,
+  ExternalRef,
+  ModelRoute,
+} from "./types.js";
 
 export interface CreateCardInput {
   id?: string;
@@ -11,7 +20,74 @@ export interface CreateCardInput {
   status?: CardStatus;
   scopeFiles?: string[];
   stepBudget?: number;
+
+  /** What the card is supposed to do — the executor's brief (design §305). */
+  spec?: string;
+  acceptanceCriteria?: string[];
+  /** Planner-assigned 1..10; the CHECK constraint rejects anything else. */
+  difficulty?: number;
+  tokenBudget?: number;
+  secondsBudget?: number;
+  modelRoute?: ModelRoute;
+  dependsOn?: string[];
+  contextPackId?: string;
+  evidenceId?: string;
+  externalRef?: ExternalRef;
+  /** WSJF score; higher pulls sooner. */
+  priority?: number;
+  /** Explicit placement; generated after the last card when omitted. */
+  orderKey?: string;
+  blockedReason?: string;
 }
+
+/**
+ * Mutable card fields.
+ *
+ * `status` is deliberately absent: a column move must go through
+ * `updateCardStatus` (and above it, the board's legal-transition table), or the
+ * state machine can be bypassed by writing the column directly.
+ */
+export interface CardUpdate {
+  title?: string;
+  scopeFiles?: string[];
+  stepBudget?: number;
+  stepsUsed?: number;
+  spec?: string;
+  acceptanceCriteria?: string[];
+  difficulty?: number;
+  tokenBudget?: number;
+  secondsBudget?: number;
+  tokensUsed?: number;
+  secondsUsed?: number;
+  modelRoute?: ModelRoute;
+  dependsOn?: string[];
+  contextPackId?: string;
+  evidenceId?: string;
+  externalRef?: ExternalRef;
+  stopReason?: CardStopReason;
+  priority?: number;
+  orderKey?: string;
+  /** `null` clears the block. */
+  blockedReason?: string | null;
+}
+
+/** Where a dragged card lands, expressed as its new neighbours. */
+export interface CardPosition {
+  /** Card it should follow; `null`/omitted means "top of the column". */
+  afterCardId?: string | null;
+  /** Card it should precede; `null`/omitted means "bottom of the column". */
+  beforeCardId?: string | null;
+}
+
+type SqlParam = string | number | null;
+
+const CARD_COLUMNS = `
+  id, tier, parent_id, title, status, scope_files, step_budget, steps_used,
+  spec, acceptance_criteria, difficulty, token_budget, seconds_budget,
+  tokens_used, seconds_used, model_route_planner, model_route_executor,
+  depends_on, context_pack_id, evidence_id, external_ref, stop_reason,
+  priority, order_key, blocked_reason, created_at, updated_at
+`;
 
 interface RawCardRow {
   id: string;
@@ -22,6 +98,23 @@ interface RawCardRow {
   scope_files: string;
   step_budget: number;
   steps_used: number;
+  spec: string | null;
+  acceptance_criteria: string;
+  difficulty: number | null;
+  token_budget: number | null;
+  seconds_budget: number | null;
+  tokens_used: number;
+  seconds_used: number;
+  model_route_planner: string | null;
+  model_route_executor: string | null;
+  depends_on: string;
+  context_pack_id: string | null;
+  evidence_id: string | null;
+  external_ref: string | null;
+  stop_reason: string | null;
+  priority: number;
+  order_key: string;
+  blocked_reason: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -37,6 +130,16 @@ interface RawCheckpointRow {
   created_at: string;
 }
 
+/** Array/object fields are JSON-encoded; a malformed cell must not crash a read. */
+function parseJsonColumn<T>(raw: string | null, fallback: T): T {
+  if (!raw) return fallback;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
 export class CardStore {
   constructor(
     private db: DatabaseSync,
@@ -44,17 +147,43 @@ export class CardStore {
   ) {}
 
   private mapCardRow(row: RawCardRow): CardRecord {
+    const modelRoute: ModelRoute = {
+      ...(row.model_route_planner ? { planner: row.model_route_planner } : {}),
+      ...(row.model_route_executor ? { executor: row.model_route_executor } : {}),
+    };
+    const externalRef = row.external_ref
+      ? parseJsonColumn<ExternalRef | null>(row.external_ref, null)
+      : null;
+
     return {
       id: row.id,
       tier: row.tier,
       parentId: row.parent_id,
       title: row.title,
       status: row.status,
-      scopeFiles: JSON.parse(row.scope_files) as string[],
+      scopeFiles: parseJsonColumn<string[]>(row.scope_files, []),
       stepBudget: row.step_budget,
       stepsUsed: row.steps_used,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      acceptanceCriteria: parseJsonColumn<string[]>(row.acceptance_criteria, []),
+      dependsOn: parseJsonColumn<string[]>(row.depends_on, []),
+      tokensUsed: row.tokens_used,
+      secondsUsed: row.seconds_used,
+      priority: row.priority,
+      orderKey: row.order_key,
+      // `exactOptionalPropertyTypes` is on: an absent column must leave the
+      // property absent, never set it to undefined.
+      ...(row.spec !== null ? { spec: row.spec } : {}),
+      ...(row.difficulty !== null ? { difficulty: row.difficulty } : {}),
+      ...(row.token_budget !== null ? { tokenBudget: row.token_budget } : {}),
+      ...(row.seconds_budget !== null ? { secondsBudget: row.seconds_budget } : {}),
+      ...(Object.keys(modelRoute).length > 0 ? { modelRoute } : {}),
+      ...(row.context_pack_id !== null ? { contextPackId: row.context_pack_id } : {}),
+      ...(row.evidence_id !== null ? { evidenceId: row.evidence_id } : {}),
+      ...(externalRef ? { externalRef } : {}),
+      ...(row.stop_reason !== null ? { stopReason: row.stop_reason as CardStopReason } : {}),
+      ...(row.blocked_reason !== null ? { blockedReason: row.blocked_reason } : {}),
     };
   }
 
@@ -71,22 +200,53 @@ export class CardStore {
     };
   }
 
+  /**
+   * Fractional index placing a new card after every existing one.
+   *
+   * Appending never renumbers a sibling, so creating a card is one row write no
+   * matter how large the board is.
+   */
+  private nextOrderKey(): string {
+    const row = this.db.prepare("SELECT MAX(order_key) AS maxKey FROM cards").get() as {
+      maxKey?: string | null;
+    };
+    const max = row?.maxKey ? row.maxKey : null;
+    return keyBetween(max, null);
+  }
+
   public async createCard(input: CreateCardInput): Promise<CardRecord> {
     const id = input.id ?? `card_${randomUUID().slice(0, 8)}`;
     const now = new Date().toISOString();
     const status: CardStatus = input.status ?? "ready";
-    const scopeFiles = input.scopeFiles ?? [];
-    const stepBudget = input.stepBudget ?? 50;
 
+    // The payload is the record of truth: `rebuildProjections()` replays it, so
+    // every generated value (id, order key, timestamps) must be resolved here
+    // rather than at projection time, or a replay would not be byte-identical.
     const payload = {
       id,
       tier: input.tier,
       parentId: input.parentId ?? null,
       title: input.title,
       status,
-      scopeFiles,
-      stepBudget,
+      scopeFiles: input.scopeFiles ?? [],
+      stepBudget: input.stepBudget ?? 50,
       stepsUsed: 0,
+      spec: input.spec ?? null,
+      acceptanceCriteria: input.acceptanceCriteria ?? [],
+      difficulty: input.difficulty ?? null,
+      tokenBudget: input.tokenBudget ?? null,
+      secondsBudget: input.secondsBudget ?? null,
+      tokensUsed: 0,
+      secondsUsed: 0,
+      modelRoute: input.modelRoute ?? null,
+      dependsOn: input.dependsOn ?? [],
+      contextPackId: input.contextPackId ?? null,
+      evidenceId: input.evidenceId ?? null,
+      externalRef: input.externalRef ?? null,
+      stopReason: null,
+      priority: input.priority ?? 0,
+      orderKey: input.orderKey ?? this.nextOrderKey(),
+      blockedReason: input.blockedReason ?? null,
       createdAt: now,
       updatedAt: now,
     };
@@ -95,6 +255,7 @@ export class CardStore {
     await this.eventLog.append({
       actor: "planner",
       type: "card/created",
+      cardId: id,
       payload,
     });
 
@@ -110,7 +271,7 @@ export class CardStore {
 
   public async getCard(id: string): Promise<CardRecord | null> {
     const stmt = this.db.prepare(`
-      SELECT id, tier, parent_id, title, status, scope_files, step_budget, steps_used, created_at, updated_at
+      SELECT ${CARD_COLUMNS}
       FROM cards
       WHERE id = ?
     `);
@@ -127,11 +288,11 @@ export class CardStore {
     parentId?: string | null;
   }): Promise<CardRecord[]> {
     let sql = `
-      SELECT id, tier, parent_id, title, status, scope_files, step_budget, steps_used, created_at, updated_at
+      SELECT ${CARD_COLUMNS}
       FROM cards
       WHERE 1=1
     `;
-    const params: (string | number | null)[] = [];
+    const params: SqlParam[] = [];
 
     if (filter?.status) {
       sql += " AND status = ?";
@@ -150,7 +311,10 @@ export class CardStore {
       }
     }
 
-    sql += " ORDER BY created_at ASC";
+    // Manual order first, creation order as the tiebreaker for rows that
+    // somehow share a key. Both are BINARY-collated text, matching
+    // `compareOrderKeys` exactly.
+    sql += " ORDER BY order_key ASC, created_at ASC";
     const rows = this.db.prepare(sql).all(...params) as unknown as RawCardRow[];
     return rows.map((r) => this.mapCardRow(r));
   }
@@ -178,6 +342,7 @@ export class CardStore {
     await this.eventLog.append({
       actor: "executor",
       type: "card/status_changed",
+      cardId: id,
       payload,
     });
 
@@ -197,10 +362,66 @@ export class CardStore {
     return updated;
   }
 
+  /**
+   * Apply a partial update, recording the patch in the log first.
+   *
+   * The event carries only the changed fields, so a replay reconstructs the
+   * same sequence of states rather than a series of full snapshots — that is
+   * what makes "why does this card have a 90k token budget" answerable.
+   */
+  public async updateCard(id: string, patch: CardUpdate): Promise<CardRecord> {
+    const existing = await this.getCard(id);
+    if (!existing) {
+      throw new Error(`Card not found: ${id}`);
+    }
+
+    const now = new Date().toISOString();
+    const payload = { id, patch, updatedAt: now };
+
+    await this.eventLog.append({
+      actor: "planner",
+      type: "card/updated",
+      cardId: id,
+      payload,
+    });
+
+    this.projectCardUpdated(id, patch, now);
+
+    const updated = await this.getCard(id);
+    if (!updated) {
+      throw new Error(`Card vanished after update: ${id}`);
+    }
+    return updated;
+  }
+
+  /**
+   * Move a card between two neighbours without touching any other row.
+   *
+   * This is the whole point of the fractional index: a drag is one UPDATE and
+   * one event, so two concurrent reorders cannot interleave into a renumber
+   * that loses one of the moves.
+   */
+  public async reorderCard(id: string, position: CardPosition): Promise<CardRecord> {
+    const after = position.afterCardId ? await this.getCard(position.afterCardId) : null;
+    const before = position.beforeCardId ? await this.getCard(position.beforeCardId) : null;
+
+    if (position.afterCardId && !after) {
+      throw new Error(`Cannot reorder ${id}: predecessor ${position.afterCardId} not found`);
+    }
+    if (position.beforeCardId && !before) {
+      throw new Error(`Cannot reorder ${id}: successor ${position.beforeCardId} not found`);
+    }
+
+    const lower = after?.orderKey ?? null;
+    const upper = before?.orderKey ?? null;
+    return this.updateCard(id, { orderKey: keyBetween(lower, upper) });
+  }
+
   public async recordCheckpoint(cp: CheckpointRecord): Promise<void> {
     await this.eventLog.append({
       actor: "sync",
       type: "checkpoint/recorded",
+      cardId: cp.cardId,
       payload: cp,
     });
 
@@ -221,10 +442,13 @@ export class CardStore {
   }
 
   private projectCardCreated(payload: Record<string, unknown>): void {
+    const route = (payload.modelRoute ?? null) as ModelRoute | null;
+    const externalRef = (payload.externalRef ?? null) as ExternalRef | null;
+
     this.db
       .prepare(`
-        INSERT OR REPLACE INTO cards (id, tier, parent_id, title, status, scope_files, step_budget, steps_used, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT OR REPLACE INTO cards (${CARD_COLUMNS})
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         payload.id as string,
@@ -235,9 +459,71 @@ export class CardStore {
         JSON.stringify(payload.scopeFiles ?? []),
         (payload.stepBudget as number) ?? 50,
         (payload.stepsUsed as number) ?? 0,
+        (payload.spec as string) ?? null,
+        JSON.stringify(payload.acceptanceCriteria ?? []),
+        (payload.difficulty as number) ?? null,
+        (payload.tokenBudget as number) ?? null,
+        (payload.secondsBudget as number) ?? null,
+        (payload.tokensUsed as number) ?? 0,
+        (payload.secondsUsed as number) ?? 0,
+        route?.planner ?? null,
+        route?.executor ?? null,
+        JSON.stringify(payload.dependsOn ?? []),
+        (payload.contextPackId as string) ?? null,
+        (payload.evidenceId as string) ?? null,
+        externalRef ? JSON.stringify(externalRef) : null,
+        (payload.stopReason as string) ?? null,
+        (payload.priority as number) ?? 0,
+        // Events written before `order_key` existed carry no key; give those a
+        // generated one so replaying an old log still yields an ordered board.
+        (payload.orderKey as string) ?? this.nextOrderKey(),
+        (payload.blockedReason as string) ?? null,
         payload.createdAt as string,
         payload.updatedAt as string,
       );
+  }
+
+  /** Translate a patch into a single UPDATE over exactly the touched columns. */
+  private projectCardUpdated(id: string, patch: CardUpdate, updatedAt: string): void {
+    const sets: string[] = [];
+    const params: SqlParam[] = [];
+
+    const set = (column: string, value: SqlParam): void => {
+      sets.push(`${column} = ?`);
+      params.push(value);
+    };
+
+    if (patch.title !== undefined) set("title", patch.title);
+    if (patch.scopeFiles !== undefined) set("scope_files", JSON.stringify(patch.scopeFiles));
+    if (patch.stepBudget !== undefined) set("step_budget", patch.stepBudget);
+    if (patch.stepsUsed !== undefined) set("steps_used", patch.stepsUsed);
+    if (patch.spec !== undefined) set("spec", patch.spec);
+    if (patch.acceptanceCriteria !== undefined) {
+      set("acceptance_criteria", JSON.stringify(patch.acceptanceCriteria));
+    }
+    if (patch.difficulty !== undefined) set("difficulty", patch.difficulty);
+    if (patch.tokenBudget !== undefined) set("token_budget", patch.tokenBudget);
+    if (patch.secondsBudget !== undefined) set("seconds_budget", patch.secondsBudget);
+    if (patch.tokensUsed !== undefined) set("tokens_used", patch.tokensUsed);
+    if (patch.secondsUsed !== undefined) set("seconds_used", patch.secondsUsed);
+    if (patch.modelRoute !== undefined) {
+      set("model_route_planner", patch.modelRoute.planner ?? null);
+      set("model_route_executor", patch.modelRoute.executor ?? null);
+    }
+    if (patch.dependsOn !== undefined) set("depends_on", JSON.stringify(patch.dependsOn));
+    if (patch.contextPackId !== undefined) set("context_pack_id", patch.contextPackId);
+    if (patch.evidenceId !== undefined) set("evidence_id", patch.evidenceId);
+    if (patch.externalRef !== undefined) set("external_ref", JSON.stringify(patch.externalRef));
+    if (patch.stopReason !== undefined) set("stop_reason", patch.stopReason);
+    if (patch.priority !== undefined) set("priority", patch.priority);
+    if (patch.orderKey !== undefined) set("order_key", patch.orderKey);
+    if (patch.blockedReason !== undefined) set("blocked_reason", patch.blockedReason);
+
+    if (sets.length === 0) return;
+
+    set("updated_at", updatedAt);
+    params.push(id);
+    this.db.prepare(`UPDATE cards SET ${sets.join(", ")} WHERE id = ?`).run(...params);
   }
 
   private projectCheckpoint(cp: CheckpointRecord): void {
@@ -273,6 +559,9 @@ export class CardStore {
           this.db
             .prepare("UPDATE cards SET status = ?, updated_at = ? WHERE id = ?")
             .run(p.toStatus, p.updatedAt, p.id);
+        } else if (event.type === "card/updated") {
+          const p = event.payload as { id: string; patch: CardUpdate; updatedAt: string };
+          this.projectCardUpdated(p.id, p.patch, p.updatedAt);
         } else if (event.type === "checkpoint/recorded") {
           this.projectCheckpoint(event.payload as CheckpointRecord);
         }
