@@ -63,6 +63,13 @@ export interface InferenceRequest {
   reasoningBudgetTokens?: number;
   /** `planning` uses the adapter's planning sampling profile when it has one. */
   purpose?: RequestPurpose;
+  /**
+   * Token streaming (M2). When set, the adapter asks the server to stream
+   * and calls this with each visible text delta as it arrives; the returned
+   * response is identical to the non-streaming one. Reasoning deltas are not
+   * forwarded (traces never leave the adapter).
+   */
+  onToken?: (delta: string) => void;
 }
 
 export interface TokenUsage {
@@ -97,6 +104,21 @@ export interface InferenceResponse {
   usage: TokenUsage;
 }
 
+/**
+ * An adapter's health (M4). `ok` means a request sent now can be served:
+ * the server answers and the model is available (resident or loadable).
+ */
+export interface AdapterHealth {
+  ok: boolean;
+  modelId: string;
+  /** The server answered at all. */
+  reachable: boolean;
+  /** The weights are resident now (a request pays no load). */
+  loaded: boolean;
+  latencyMs: number;
+  detail?: string;
+}
+
 export interface LocalInferenceAdapter {
   readonly modelId: string;
   readonly supportedArms: ToolArm[];
@@ -108,5 +130,12 @@ export interface LocalInferenceAdapter {
    * text tool interface, so the tools are described once (C4).
    */
   readonly nativeTools?: boolean;
+  /**
+   * The tool arm measured best for this model (M9), from the registry's
+   * qualification record. Callers use it instead of a hard-coded arm.
+   */
+  readonly preferredToolArm?: ToolArm | undefined;
   generate(req: InferenceRequest): Promise<InferenceResponse>;
+  /** Health contract (M4); every adapter in this package implements it. */
+  healthCheck?(): Promise<AdapterHealth>;
 }

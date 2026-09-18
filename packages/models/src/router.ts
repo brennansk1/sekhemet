@@ -1,6 +1,6 @@
 import { freemem } from "node:os";
 import { readKernelPressureLevel } from "./memory.js";
-import type { LocalInferenceAdapter } from "./types.js";
+import type { AdapterHealth, LocalInferenceAdapter } from "./types.js";
 
 /** Roles the harness assigns to models. */
 /**
@@ -41,6 +41,12 @@ export interface RouterOptions {
   budgetBytes?: number;
   /** Resident size of each role's model (weights plus KV cache). */
   footprints?: Partial<Record<ModelRole, number>>;
+  /**
+   * Check a model's health (M4) before handing it out for the first time
+   * (and after each reload). Default true: an unavailable model fails fast
+   * with `ModelUnavailableError` instead of a request timeout minutes later.
+   */
+  healthCheck?: boolean;
   /** Injectable for tests. */
   pressureLevel?: () => number | undefined;
   freeBytes?: () => number;
@@ -90,6 +96,19 @@ export function planResidency(
 }
 
 export class SwapHeadroomError extends Error {}
+
+/** A role's model failed its health check (M4). */
+export class ModelUnavailableError extends Error {
+  constructor(
+    public readonly role: ModelRole,
+    public readonly health: AdapterHealth,
+  ) {
+    super(
+      `The ${role} model ${health.modelId} is unavailable: ${health.detail ?? "health check failed"}`,
+    );
+    this.name = "ModelUnavailableError";
+  }
+}
 
 /**
  * Hands out one model per role while guaranteeing only one is ever resident.
@@ -181,6 +200,14 @@ export class ModelRouter {
       entry.lastUsed = this.tick;
       this.last = role;
       return adapter;
+    }
+
+    if (this.options.healthCheck !== false && adapter.healthCheck) {
+      const health = await adapter.healthCheck();
+      this.options.log?.(
+        `health ${role} ${health.modelId}: ${health.ok ? "ok" : "UNAVAILABLE"}${health.detail ? ` (${health.detail})` : ""}`,
+      );
+      if (!health.ok) throw new ModelUnavailableError(role, health);
     }
 
     const budget = this.options.coResident ? Number.POSITIVE_INFINITY : this.options.budgetBytes;

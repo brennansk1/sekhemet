@@ -186,3 +186,67 @@ export function measureThroughput<
   (adapter as { generate: unknown }).generate = wrapped;
   return adapter;
 }
+
+export interface ModelTelemetrySnapshot {
+  throughput: ThroughputStats[];
+  /** Prefix-cache summary per model id. */
+  cache: Record<string, CacheSummary>;
+  /** Cache alerts (tool-result steps under the threshold), most recent last. */
+  alerts: (CacheStepRecord & { modelId: string })[];
+}
+
+/**
+ * The process-wide telemetry every `HttpInferenceAdapter` feeds (M3, M18).
+ *
+ * Each adapter records every response here, so throughput and prefix-cache
+ * hit rates are measured on the production path without any wrapping. The
+ * run report reads `snapshot()`; `ThroughputMeter.predictMs` turns the
+ * measured speeds into a time estimate for the budget.
+ */
+export class ModelTelemetry {
+  public meter = new ThroughputMeter();
+  private monitors = new Map<string, PrefixCacheMonitor>();
+  private steps = new Map<string, number>();
+  private alertLog: (CacheStepRecord & { modelId: string })[] = [];
+
+  /** Record one response. Returns the cache record when the server reported one. */
+  public record(
+    modelId: string,
+    kind: CacheStepKind,
+    usage: TokenUsage,
+    onAlert?: (record: CacheStepRecord) => void,
+  ): CacheStepRecord | undefined {
+    this.meter.record(modelId, usage);
+    let monitor = this.monitors.get(modelId);
+    if (!monitor) {
+      monitor = new PrefixCacheMonitor(CACHE_ALERT_THRESHOLD);
+      this.monitors.set(modelId, monitor);
+    }
+    const step = (this.steps.get(modelId) ?? 0) + 1;
+    this.steps.set(modelId, step);
+    const rec = monitor.record(step, kind, usage);
+    if (rec?.alert) {
+      this.alertLog.push({ ...rec, modelId });
+      if (this.alertLog.length > 200) this.alertLog.shift();
+      onAlert?.(rec);
+    }
+    return rec;
+  }
+
+  public snapshot(): ModelTelemetrySnapshot {
+    const cache: Record<string, CacheSummary> = {};
+    for (const [id, m] of [...this.monitors.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+      cache[id] = m.summary();
+    }
+    return { throughput: this.meter.all(), cache, alerts: [...this.alertLog] };
+  }
+
+  public reset(): void {
+    this.meter = new ThroughputMeter();
+    this.monitors.clear();
+    this.steps.clear();
+    this.alertLog = [];
+  }
+}
+
+export const modelTelemetry = new ModelTelemetry();

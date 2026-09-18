@@ -2,6 +2,8 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import { tmpdir, totalmem } from "node:os";
 import { type HttpAdapterOptions, HttpInferenceAdapter } from "./http_adapter.js";
+import { assertKvPolicy } from "./kv_policy.js";
+import type { AdapterHealth, ToolArm } from "./types.js";
 
 /**
  * Prompt-cache settings sized to the host (M17).
@@ -41,8 +43,20 @@ export interface LlamaServerProfile {
   binary?: string;
   port?: number;
   contextTokens?: number;
-  /** KV cache precision. 4-bit is prohibited for tool-calling models (design §572). */
-  kvType?: "f16" | "q8_0";
+  /**
+   * KV cache precision. 4-bit is prohibited for tool-calling models (design
+   * §572); below 8 bits needs `qualifiedBelow8BitKv` (M16). Checked against
+   * the final argv, `extraArgs` included.
+   */
+  kvType?: "f16" | "q8_0" | (string & {});
+  /** The model calls tools (default true); only then is 4-bit KV refused. */
+  toolCalling?: boolean;
+  /** The model passed qualification with a KV type below 8 bits. */
+  qualifiedBelow8BitKv?: boolean;
+  /** Grammar-constrained tool calls (M8); see `HttpAdapterOptions`. */
+  constrainedToolCalls?: boolean;
+  /** Measured tool arm (M9). */
+  preferredToolArm?: ToolArm;
   /** Enable the model's grafted multi-token-prediction head. */
   mtp?: boolean;
   /**
@@ -144,6 +158,10 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
       ...(profile.sampling ? { sampling: profile.sampling } : {}),
       ...(profile.planningSampling ? { planningSampling: profile.planningSampling } : {}),
       ...(profile.nativeTools !== undefined ? { nativeTools: profile.nativeTools } : {}),
+      ...(profile.constrainedToolCalls !== undefined
+        ? { constrainedToolCalls: profile.constrainedToolCalls }
+        : {}),
+      ...(profile.preferredToolArm ? { preferredToolArm: profile.preferredToolArm } : {}),
     });
     this.url = `http://127.0.0.1:${port}`;
   }
@@ -181,8 +199,21 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
     };
   }
 
-  /** The argv the server is launched with; exposed for doctor and tests. */
+  /**
+   * The argv the server is launched with; exposed for doctor and tests.
+   * Throws `KvPolicyError` when the KV type breaks the policy (M16), so a
+   * forbidden launch never starts.
+   */
   public launchArgs(): string[] {
+    const args = this.buildLaunchArgs();
+    assertKvPolicy(args, {
+      toolCalling: this.profile.toolCalling !== false,
+      qualifiedBelow8Bit: this.profile.qualifiedBelow8BitKv === true,
+    });
+    return args;
+  }
+
+  private buildLaunchArgs(): string[] {
     const p = this.profile;
     const parallel = p.parallel ?? 1;
     const cache = this.cacheSettings();
@@ -247,6 +278,37 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
       }
     }
     return erased;
+  }
+
+  /**
+   * Health contract (M4). A running server is ok and loaded. A stopped one
+   * is ok (not loaded) only when it can be started: the model file exists
+   * and the launch argv passes the KV policy.
+   */
+  public override async healthCheck(): Promise<AdapterHealth> {
+    const start = Date.now();
+    const base = { modelId: this.profile.modelId };
+    if (await this.healthy()) {
+      return { ...base, ok: true, reachable: true, loaded: true, latencyMs: Date.now() - start };
+    }
+    let detail: string | undefined;
+    if (!existsSync(this.profile.modelPath)) {
+      detail = `model file not found: ${this.profile.modelPath}`;
+    } else {
+      try {
+        this.launchArgs();
+      } catch (err) {
+        detail = err instanceof Error ? err.message : String(err);
+      }
+    }
+    return {
+      ...base,
+      ok: detail === undefined,
+      reachable: false,
+      loaded: false,
+      latencyMs: Date.now() - start,
+      ...(detail ? { detail } : { detail: "server stopped; starts on first request" }),
+    };
   }
 
   private async healthy(): Promise<boolean> {

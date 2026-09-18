@@ -9,3 +9,4 @@ export * from "./roster.js";
 export * from "./reasoning.js";
 export * from "./telemetry.js";
 export * from "./watchdog.js";
+export * from "./kv_policy.js";

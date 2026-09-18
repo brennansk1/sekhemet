@@ -1,7 +1,15 @@
 import { performance } from "node:perf_hooks";
+import { assertKvType } from "./kv_policy.js";
 import { currentMemoryPressure } from "./memory.js";
 import { parseToolCallsFromText, stripReasoning } from "./parser.js";
+import {
+  type CacheStepKind,
+  type CacheStepRecord,
+  type ModelTelemetry,
+  modelTelemetry,
+} from "./telemetry.js";
 import type {
+  AdapterHealth,
   ChatTurn,
   InferenceRequest,
   InferenceResponse,
@@ -10,6 +18,7 @@ import type {
   TokenUsage,
   ToolArm,
   ToolCall,
+  ToolDefinition,
 } from "./types.js";
 
 export interface SamplingOptions {
@@ -74,6 +83,104 @@ export interface HttpAdapterOptions {
    * responsive box and a swapping one.
    */
   memoryAware?: boolean;
+  /**
+   * Arm A with grammar-constrained decoding (M8), OpenAI-compatible path
+   * only: tool calls are forced through a `response_format` JSON schema
+   * built from the request's tools (llama-server compiles it to a GBNF
+   * grammar), so the model cannot emit a malformed call or an unknown tool.
+   * A server that rejects the schema falls back to native tools, and the
+   * tolerant text parser remains the last resort.
+   */
+  constrainedToolCalls?: boolean;
+  /**
+   * The KV cache type the Ollama server runs with (`OLLAMA_KV_CACHE_TYPE`).
+   * Defaults to this process's environment. 4-bit is refused for tool
+   * requests (M16).
+   */
+  ollamaKvCacheType?: string;
+  /** The tool arm the registry measured best for this model (M9). */
+  preferredToolArm?: ToolArm;
+  /**
+   * Where responses are recorded (M3, M18). Defaults to the process-wide
+   * `modelTelemetry`; `false` records nothing.
+   */
+  telemetry?: ModelTelemetry | false;
+  /**
+   * Called when a tool-result step's prefix-cache hit rate is under 85%
+   * (M18). Defaults to one line on stderr.
+   */
+  onCacheAlert?: (record: CacheStepRecord & { modelId: string }) => void;
+}
+
+/** A non-2xx inference response, with its status for callers that branch on it. */
+export class InferenceHttpError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+  ) {
+    super(message);
+    this.name = "InferenceHttpError";
+  }
+}
+
+/**
+ * The JSON schema for grammar-constrained tool calls (M8, Arm A). The reply
+ * is an object with an optional `message` and a `tool_calls` array whose
+ * items are exactly one of the known tools with its own parameter schema.
+ */
+export function constrainedToolSchema(tools: readonly ToolDefinition[]): Record<string, unknown> {
+  const call = (t: ToolDefinition) => ({
+    type: "object",
+    properties: {
+      name: { type: "string", const: t.name },
+      arguments:
+        t.parameters && Object.keys(t.parameters).length > 0
+          ? t.parameters
+          : { type: "object", properties: {} },
+    },
+    required: ["name", "arguments"],
+    additionalProperties: false,
+  });
+  return {
+    type: "object",
+    properties: {
+      message: { type: "string" },
+      tool_calls: { type: "array", items: { anyOf: tools.map(call) } },
+    },
+    required: ["tool_calls"],
+    additionalProperties: false,
+  };
+}
+
+/** Parse a constrained reply; undefined when it is not the expected JSON. */
+function parseConstrainedReply(
+  content: string,
+  known: Set<string>,
+): { message: string; calls: ToolCall[] } | undefined {
+  let data: unknown;
+  try {
+    data = JSON.parse(content);
+  } catch {
+    return undefined;
+  }
+  if (!data || typeof data !== "object") return undefined;
+  const obj = data as { message?: unknown; tool_calls?: unknown };
+  if (!Array.isArray(obj.tool_calls)) return undefined;
+  const calls: ToolCall[] = [];
+  for (const entry of obj.tool_calls) {
+    const e = entry as { name?: unknown; arguments?: unknown };
+    if (typeof e.name !== "string" || !known.has(e.name)) continue;
+    calls.push({
+      id: `call_${calls.length}`,
+      name: e.name,
+      arguments:
+        e.arguments && typeof e.arguments === "object"
+          ? (e.arguments as Record<string, unknown>)
+          : {},
+      raw: JSON.stringify(entry),
+    });
+  }
+  return { message: typeof obj.message === "string" ? obj.message : "", calls };
 }
 
 interface ChatMessage {
@@ -295,6 +402,10 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
     if (contextTokens === undefined) return undefined;
     return { contextTokens, maxTokens: this.options.maxTokens ?? 2048 };
   }
+  /** The measured tool arm (M9), when the registry supplied one. */
+  public get preferredToolArm(): ToolArm | undefined {
+    return this.options.preferredToolArm;
+  }
   /** Whether tool schemas travel natively (see `LocalInferenceAdapter.nativeTools`). */
   public get nativeTools(): boolean {
     return this.options.nativeTools !== false;
@@ -441,7 +552,15 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
     }
   }
 
-  private async post(path: string, payload: unknown): Promise<unknown> {
+  /**
+   * POST with the timeout and retry policy; resolves to an ok Response whose
+   * timeout keeps running until `release` is called (a streamed body is
+   * still covered by the request's wall-clock ceiling).
+   */
+  private async request(
+    path: string,
+    payload: unknown,
+  ): Promise<{ res: Response; release: () => void }> {
     const resident = path === "/api/chat" ? await this.isResident() : true;
     const timeoutMs = resident
       ? (this.options.requestTimeoutMs ?? 300_000)
@@ -452,6 +571,7 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
+      let handedOff = false;
 
       try {
         const res = await fetch(`${this.baseUrl}${path}`, {
@@ -463,17 +583,22 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
 
         if (!res.ok) {
           const detail = await res.text().catch(() => "");
-          const error = new Error(
+          const error = new InferenceHttpError(
             `Inference HTTP ${res.status} ${res.statusText} from ${this.baseUrl}${path}: ${detail.slice(0, 400)}`,
+            res.status,
           );
           // Client errors are deterministic; retrying just burns wall clock.
           if (!RETRYABLE_STATUS.has(res.status)) throw error;
           lastError = error;
         } else {
-          return await res.json();
+          handedOff = true;
+          return { res, release: () => clearTimeout(timer) };
         }
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err));
+        if (error instanceof InferenceHttpError && !RETRYABLE_STATUS.has(error.status)) {
+          throw error;
+        }
         if (error.name === "AbortError") {
           lastError = new Error(`Inference request timed out after ${timeoutMs}ms`);
         } else if (lastError === undefined) {
@@ -481,7 +606,7 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
         }
         if (attempt === maxRetries) break;
       } finally {
-        clearTimeout(timer);
+        if (!handedOff) clearTimeout(timer);
       }
 
       if (attempt < maxRetries) {
@@ -492,8 +617,124 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
     throw lastError ?? new Error("Inference request failed");
   }
 
+  private async post(path: string, payload: unknown): Promise<unknown> {
+    const { res, release } = await this.request(path, payload);
+    try {
+      return await res.json();
+    } finally {
+      release();
+    }
+  }
+
+  /**
+   * POST and read the body as lines (SSE `data:` lines or NDJSON), calling
+   * `onLine` for each non-empty line. Used for token streaming (M2).
+   */
+  private async postStream(
+    path: string,
+    payload: unknown,
+    onLine: (line: string) => void,
+  ): Promise<void> {
+    const { res, release } = await this.request(path, payload);
+    try {
+      const body = res.body;
+      if (!body) return;
+      const decoder = new TextDecoder();
+      let buffer = "";
+      for await (const chunk of body as unknown as AsyncIterable<Uint8Array>) {
+        buffer += decoder.decode(chunk, { stream: true });
+        let nl = buffer.indexOf("\n");
+        while (nl >= 0) {
+          const line = buffer.slice(0, nl).replace(/\r$/, "");
+          buffer = buffer.slice(nl + 1);
+          if (line.trim()) onLine(line);
+          nl = buffer.indexOf("\n");
+        }
+      }
+      buffer += decoder.decode();
+      if (buffer.trim()) onLine(buffer.trim());
+    } finally {
+      release();
+    }
+  }
+
+  /**
+   * Health contract (M4). Ollama: the server answers `/api/tags` and lists
+   * the model (available), and `/api/ps` says whether it is resident.
+   * OpenAI-compatible (llama-server): `/health` answers ok, else
+   * `/v1/models` does. Never throws.
+   */
+  public async healthCheck(): Promise<AdapterHealth> {
+    const start = performance.now();
+    const done = (h: Omit<AdapterHealth, "latencyMs" | "modelId">): AdapterHealth => ({
+      modelId: this.modelId,
+      latencyMs: Math.round(performance.now() - start),
+      ...h,
+    });
+    const getJson = async (path: string): Promise<{ ok: boolean; body: unknown }> => {
+      const res = await fetch(`${this.baseUrl}${path}`, { signal: AbortSignal.timeout(3000) });
+      const body = await res.json().catch(() => undefined);
+      return { ok: res.ok, body };
+    };
+    try {
+      if (this.apiFormat === "ollama") {
+        const tags = await getJson("/api/tags");
+        if (!tags.ok) {
+          return done({ ok: false, reachable: true, loaded: false, detail: "/api/tags failed" });
+        }
+        const names = (tags.body as { models?: { name?: string; model?: string }[] }).models ?? [];
+        const same = (n: string | undefined) =>
+          n !== undefined && normalizeTag(n) === normalizeTag(this.modelId);
+        if (!names.some((m) => same(m.name) || same(m.model))) {
+          return done({
+            ok: false,
+            reachable: true,
+            loaded: false,
+            detail: `model ${this.modelId} is not available on the server`,
+          });
+        }
+        const ps = await getJson("/api/ps").catch(() => ({ ok: false, body: undefined }));
+        const running =
+          (ps.body as { models?: { name?: string; model?: string }[] } | undefined)?.models ?? [];
+        return done({
+          ok: true,
+          reachable: true,
+          loaded: running.some((m) => same(m.name) || same(m.model)),
+        });
+      }
+      const health = await getJson("/health").catch(() => undefined);
+      if (health?.ok) return done({ ok: true, reachable: true, loaded: true });
+      const models = await getJson("/v1/models");
+      return models.ok
+        ? done({ ok: true, reachable: true, loaded: true })
+        : done({ ok: false, reachable: true, loaded: false, detail: "server not ready" });
+    } catch (err) {
+      return done({
+        ok: false,
+        reachable: false,
+        loaded: false,
+        detail: `unreachable: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+  }
+
+  /** What kind of step a request is, for the cache monitor. */
+  private stepKind(req: InferenceRequest): CacheStepKind {
+    const last = req.messages?.[req.messages.length - 1];
+    if (last?.role === "tool") return "tool_result";
+    return this.requests === 0 ? "first" : "other";
+  }
+
+  private requests = 0;
+  private constrainedUnsupported = false;
+
   public async generate(req: InferenceRequest): Promise<InferenceResponse> {
     const start = performance.now();
+    if (this.apiFormat === "ollama" && req.tools && req.tools.length > 0) {
+      const kv = this.options.ollamaKvCacheType ?? process.env.OLLAMA_KV_CACHE_TYPE;
+      if (kv) assertKvType(kv); // throws KvPolicyError for 4-bit (M16)
+    }
+    const kind = this.stepKind(req);
     const messages = this.messages(req);
     const level = this.reasoningFor(req);
     // Thinking tokens come out of the same allowance as the answer; without
@@ -518,17 +759,27 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
         : parseToolCallsFromText(visible, req.toolArm, knownTools);
 
     const { promptTokens, completionTokens, ...measured } = data.usage;
-    return {
-      text: visible,
-      toolCalls,
-      usage: {
-        promptTokens:
-          promptTokens ?? Math.round(messages.reduce((a, m) => a + m.content.length, 0) / 4),
-        completionTokens: completionTokens ?? Math.round(visible.length / 4),
-        durationMs: Math.round(performance.now() - start),
-        ...measured,
-      },
+    const usage: TokenUsage = {
+      promptTokens:
+        promptTokens ?? Math.round(messages.reduce((a, m) => a + m.content.length, 0) / 4),
+      completionTokens: completionTokens ?? Math.round(visible.length / 4),
+      durationMs: Math.round(performance.now() - start),
+      ...measured,
     };
+    this.requests++;
+    const telemetry = this.options.telemetry ?? modelTelemetry;
+    if (telemetry) {
+      telemetry.record(this.modelId, kind, usage, (rec) => {
+        const alert = { ...rec, modelId: this.modelId };
+        if (this.options.onCacheAlert) this.options.onCacheAlert(alert);
+        else {
+          process.stderr.write(
+            `[cache] ${this.modelId} step ${rec.step}: tool-result prefix-cache hit rate ${(rec.cacheHitRate * 100).toFixed(1)}% is under 85%\n`,
+          );
+        }
+      });
+    }
+    return { text: visible, toolCalls, usage };
   }
 
   private async generateOllama(
@@ -537,10 +788,11 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
     maxTokens: number,
   ): Promise<{ text: string; nativeCalls: ToolCall[]; usage: ServerUsage }> {
     const sampling = this.samplingFor(req);
+    const stream = req.onToken !== undefined;
     const payload: Record<string, unknown> = {
       model: this.modelId,
       messages,
-      stream: false,
+      stream,
       keep_alive: this.resolveKeepAlive(),
       options: {
         temperature: req.temperature ?? sampling.temperature ?? 0.2,
@@ -574,13 +826,38 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
       payload.think = true;
     }
 
-    const data = (await this.post("/api/chat", payload)) as {
+    type OllamaChunk = {
       message?: { content?: string; thinking?: string; tool_calls?: NativeToolCall[] };
+      done?: boolean;
       prompt_eval_count?: number;
       prompt_eval_duration?: number;
       eval_count?: number;
       eval_duration?: number;
     };
+
+    if (stream) {
+      let text = "";
+      const calls: NativeToolCall[] = [];
+      let final: OllamaChunk = {};
+      await this.postStream("/api/chat", payload, (line) => {
+        let chunk: OllamaChunk;
+        try {
+          chunk = JSON.parse(line) as OllamaChunk;
+        } catch {
+          return;
+        }
+        const delta = chunk.message?.content ?? "";
+        if (delta) {
+          text += delta;
+          req.onToken?.(delta);
+        }
+        if (Array.isArray(chunk.message?.tool_calls)) calls.push(...chunk.message.tool_calls);
+        if (chunk.done) final = chunk;
+      });
+      return { text, nativeCalls: nativeToToolCalls(calls), usage: usageFromOllama(final) };
+    }
+
+    const data = (await this.post("/api/chat", payload)) as OllamaChunk;
 
     return {
       text: data.message?.content ?? "",
@@ -595,13 +872,15 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
     maxTokens: number,
   ): Promise<{ text: string; nativeCalls: ToolCall[]; usage: ServerUsage }> {
     const sampling = this.samplingFor(req);
+    const stream = req.onToken !== undefined;
     const payload: Record<string, unknown> = {
       model: this.modelId,
       messages,
       temperature: req.temperature ?? sampling.temperature ?? 0.2,
       max_tokens: maxTokens,
-      stream: false,
+      stream,
     };
+    if (stream) payload.stream_options = { include_usage: true };
 
     if (sampling.topP !== undefined) payload.top_p = sampling.topP;
     if (sampling.topK !== undefined) payload.top_k = sampling.topK;
@@ -612,7 +891,19 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
     if (sampling.repeatPenalty !== undefined) {
       payload.repeat_penalty = sampling.repeatPenalty;
     }
-    if (this.options.nativeTools !== false && req.tools && req.tools.length > 0) {
+    const hasTools = req.tools !== undefined && req.tools.length > 0;
+    const constrained =
+      hasTools &&
+      this.options.constrainedToolCalls === true &&
+      !this.constrainedUnsupported &&
+      req.toolArm !== "arm_c_sketch";
+    if (constrained && req.tools) {
+      // Arm A, grammar-constrained (M8): the schema replaces native tools.
+      payload.response_format = {
+        type: "json_schema",
+        json_schema: { name: "tool_calls", strict: true, schema: constrainedToolSchema(req.tools) },
+      };
+    } else if (this.options.nativeTools !== false && hasTools && req.tools) {
       payload.tools = req.tools.map((t) => ({
         type: "function",
         function: { name: t.name, description: t.description, parameters: t.parameters },
@@ -637,7 +928,7 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
       payload.thinking_budget_tokens = this.thinkingBudget(req, level);
     }
 
-    const data = (await this.post("/v1/chat/completions", payload)) as {
+    type Completion = {
       choices?: {
         message?: { content?: string; reasoning_content?: string; tool_calls?: NativeToolCall[] };
       }[];
@@ -649,13 +940,120 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
       timings?: LlamaServerTimings;
     };
 
+    let data: Completion;
+    try {
+      data = stream
+        ? await this.streamOpenAi(payload, req)
+        : ((await this.post("/v1/chat/completions", payload)) as Completion);
+    } catch (err) {
+      if (
+        constrained &&
+        err instanceof InferenceHttpError &&
+        err.status >= 400 &&
+        err.status < 500
+      ) {
+        // The server cannot compile the schema: remember, then use native tools.
+        this.constrainedUnsupported = true;
+        return this.generateOpenAi(messages, req, maxTokens);
+      }
+      throw err;
+    }
+
     const message = data.choices?.[0]?.message;
+    const usage = usageFromLlamaServer(data.timings, data.usage);
+    if (constrained && req.tools) {
+      const parsed = parseConstrainedReply(
+        message?.content ?? "",
+        new Set(req.tools.map((t) => t.name)),
+      );
+      if (parsed) return { text: parsed.message, nativeCalls: parsed.calls, usage };
+    }
     return {
       text: message?.content ?? "",
       nativeCalls: nativeToToolCalls(message?.tool_calls),
-      usage: usageFromLlamaServer(data.timings, data.usage),
+      usage,
     };
   }
+
+  /**
+   * Stream an OpenAI-compatible completion (M2): forward content deltas,
+   * accumulate tool-call fragments by index, keep the last usage/timings.
+   */
+  private async streamOpenAi(
+    payload: Record<string, unknown>,
+    req: InferenceRequest,
+  ): Promise<{
+    choices: { message: { content: string; tool_calls: NativeToolCall[] } }[];
+    usage?: { prompt_tokens?: number; completion_tokens?: number };
+    timings?: LlamaServerTimings;
+  }> {
+    let content = "";
+    const calls: { id?: string; name: string; args: string }[] = [];
+    let usage: { prompt_tokens?: number; completion_tokens?: number } | undefined;
+    let timings: LlamaServerTimings | undefined;
+    await this.postStream("/v1/chat/completions", payload, (line) => {
+      if (!line.startsWith("data:")) return;
+      const body = line.slice(5).trim();
+      if (body === "[DONE]") return;
+      let chunk: {
+        choices?: {
+          delta?: {
+            content?: string | null;
+            tool_calls?: {
+              index?: number;
+              id?: string;
+              function?: { name?: string; arguments?: string };
+            }[];
+          };
+        }[];
+        usage?: { prompt_tokens?: number; completion_tokens?: number };
+        timings?: LlamaServerTimings;
+      };
+      try {
+        chunk = JSON.parse(body);
+      } catch {
+        return;
+      }
+      const delta = chunk.choices?.[0]?.delta;
+      if (delta?.content) {
+        content += delta.content;
+        // Constrained replies are JSON, not prose: nothing to show token by token.
+        if (!payload.response_format) req.onToken?.(delta.content);
+      }
+      for (const tc of delta?.tool_calls ?? []) {
+        const i = tc.index ?? calls.length;
+        const slot = calls[i] ?? { name: "", args: "" };
+        if (tc.id) slot.id = tc.id;
+        if (tc.function?.name) slot.name += tc.function.name;
+        if (tc.function?.arguments) slot.args += tc.function.arguments;
+        calls[i] = slot;
+      }
+      if (chunk.usage) usage = chunk.usage;
+      if (chunk.timings) timings = chunk.timings;
+    });
+    return {
+      choices: [
+        {
+          message: {
+            content,
+            tool_calls: calls
+              .filter((c) => c?.name)
+              .map((c) => ({
+                ...(c.id ? { id: c.id } : {}),
+                function: { name: c.name, arguments: c.args || "{}" },
+              })),
+          },
+        },
+      ],
+      ...(usage ? { usage } : {}),
+      ...(timings ? { timings } : {}),
+    };
+  }
+}
+
+/** Ollama tags match with or without the implicit `:latest`. */
+function normalizeTag(name: string): string {
+  return name.includes(":") ? name : `${name}:latest`;
 }
 
 /**
