@@ -61,6 +61,14 @@ export interface SessionOptions {
   baseBranch?: string | undefined;
   /** Scan the card's diff for disabled checks (default on). */
   integrityGate?: boolean | undefined;
+  /** One paragraph on the team: who can answer what, and whether now or later. */
+  teamNote?: string | undefined;
+  /**
+   * Route a question the card's contract does not answer to the team. Resolves
+   * to an answer when someone can answer now (Merit resident), or undefined
+   * when it was queued for later.
+   */
+  askTeam?: ((question: string) => Promise<string | undefined>) | undefined;
   /** Working-memory lines from earlier attempts at this card (never start blank). */
   priorLessons?: string[] | undefined;
   /** Gate rungs run when the agent calls `finish_card`. Defaults to typecheck + test. */

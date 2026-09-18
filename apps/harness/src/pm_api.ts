@@ -363,7 +363,12 @@ export function createPmApi(ctx: PmApiContext) {
     // --- Model roster (worker, Merit, reviewer, researcher) -------------------
     if (url === "/api/models" && req.method === "GET") {
       const lease = runnerLease(ctx.repoPath) as
-        | { roster?: { role: string; model?: string }[]; active?: string; coResident?: boolean }
+        | {
+            roster?: { role: string; model?: string }[];
+            active?: string;
+            resident?: string[];
+            coResident?: boolean;
+          }
         | undefined;
       const configured = new Map<string, string | undefined>(
         (lease?.roster ?? []).map((r) => [r.role, r.model]),
@@ -377,7 +382,7 @@ export function createPmApi(ctx: PmApiContext) {
         const model = configured.get(role);
         const state = !model
           ? "unconfigured"
-          : lease?.coResident || lease?.active === role
+          : lease?.coResident || lease?.resident?.includes(role) || lease?.active === role
             ? "resident"
             : "swapped";
         return {

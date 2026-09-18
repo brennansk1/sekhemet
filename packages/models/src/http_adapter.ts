@@ -172,6 +172,29 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
   }
 
   /**
+   * Resident size on an Ollama server: the model's reported size plus room
+   * for its KV cache and the runner. Undefined when it cannot be measured.
+   */
+  public async footprintBytes(): Promise<number | undefined> {
+    if (this.apiFormat !== "ollama") return undefined;
+    try {
+      const res = await fetch(`${this.baseUrl}/api/tags`, { signal: AbortSignal.timeout(5000) });
+      if (!res.ok) return undefined;
+      const body = (await res.json()) as {
+        models?: { name?: string; model?: string; size?: number }[];
+      };
+      const m = (body.models ?? []).find(
+        (x) => x.name === this.modelId || x.model === this.modelId,
+      );
+      if (!m?.size) return undefined;
+      const kv = (this.options.contextTokens ?? 8192) * 160 * 1024; // dense f16 KV, conservative
+      return Math.round(m.size + kv + 1.5 * 1024 ** 3);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
    * Wait until the server really has released the model, up to `timeoutMs`.
    * `keep_alive: 0` is a request, not a guarantee: Ollama can still be
    * finishing a generation or tearing down its runner when it returns.

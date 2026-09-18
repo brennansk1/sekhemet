@@ -233,7 +233,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
    * take the most conservative reading the acceptance tests allow and to
    * record the assumption, which the human then sees in review.
    */
-  private askObservation(question: unknown): ToolObservation {
+  private async askObservation(question: unknown): Promise<ToolObservation> {
     const q = typeof question === "string" ? question.trim() : "";
     if (!q)
       return {
@@ -270,6 +270,26 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     this.tools
       .execute({ id: "ask-note", name: "note", arguments: { message: `Asked: ${q}` } })
       .catch(() => undefined);
+    if (scored.length === 0 && this.options.askTeam) {
+      // Not in the contract: ask the team. Merit answers now if it is
+      // resident; otherwise the question waits for its next turn on the host.
+      const reply = await this.options.askTeam(q).catch(() => undefined);
+      if (reply) {
+        return {
+          tool: "ask",
+          ok: true,
+          summary: "answered by Merit",
+          content: `Merit (project manager) answers: ${reply}`,
+        };
+      }
+      return {
+        tool: "ask",
+        ok: true,
+        summary: "queued for Merit",
+        content:
+          'The contract does not answer that, and Merit is not loaded right now; your question is queued for it. Proceed with the most conservative reading the acceptance tests allow and record the assumption with note("Assumed: ...").',
+      };
+    }
     if (scored.length === 0) {
       return {
         tool: "ask",
@@ -499,6 +519,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       // Per-card, so it rides in the volatile zone: in the system zone it would
       // both break the cacheable prefix and overrun that zone's budget.
       ...(this.options.managerGuidance ? { managerGuidance: this.options.managerGuidance } : {}),
+      ...(this.options.teamNote ? { teamNote: this.options.teamNote } : {}),
       activeSkills: skills,
       playbookRules,
       recentTurns: maskOlderObservations(
@@ -687,7 +708,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
           : call.name === "recall"
             ? this.recallObservation(call.arguments.ref)
             : call.name === "ask"
-              ? this.askObservation(call.arguments.question)
+              ? await this.askObservation(call.arguments.question)
               : await this.tools.execute(call);
       observations.push(observation);
 

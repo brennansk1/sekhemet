@@ -47,6 +47,8 @@ interface Lease {
   roster?: RosterEntry[];
   /** The role whose model is resident right now. */
   active?: string;
+  /** Every role whose model is resident right now. */
+  resident?: string[];
   coResident?: boolean;
 }
 
@@ -62,7 +64,7 @@ const leasePath = (repoPath: string) => join(repoPath, ".sekhemet", "runner.lock
 export function holdRunnerLease(
   repoPath: string,
   pmModel?: string,
-  live?: () => { roster: RosterEntry[]; active?: string; coResident: boolean },
+  live?: () => { roster: RosterEntry[]; active?: string; resident?: string[]; coResident: boolean },
 ): () => void {
   mkdirSync(join(repoPath, ".sekhemet"), { recursive: true });
   const now = new Date().toISOString();
@@ -220,6 +222,8 @@ export interface AnswerDeps {
   acquire: () => Promise<LocalInferenceAdapter>;
   /** The Worker step the queue paused after, for the status line. */
   step?: number;
+  /** Who is on the team and what asking each costs right now. */
+  team?: string;
   /** The Researcher, when configured; Merit can delegate evidence questions. */
   researcher?: (question: string) => Promise<import("../research/researcher.js").ResearchAnswer>;
 }
@@ -290,7 +294,10 @@ export async function answerQueued(deps: AnswerDeps): Promise<boolean> {
       });
       return true;
     }
-    const snapshot = await buildSnapshot(deps.repoPath, deps.cardStore, deps.pmStore, deps.pmModel);
+    const snapshot = {
+      ...(await buildSnapshot(deps.repoPath, deps.cardStore, deps.pmStore, deps.pmModel)),
+      ...(deps.team ? { team: deps.team } : {}),
+    };
     const result = await answer(
       model,
       snapshot,

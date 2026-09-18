@@ -19,6 +19,8 @@ export interface PmSnapshot {
   preferences?: string[];
   /** Monte Carlo delivery forecast, as a sentence. */
   forecast?: string;
+  /** Who is on the team and what asking each costs right now (residency). */
+  team?: string;
   today: string;
 }
 
@@ -110,7 +112,8 @@ export function boardDigest(s: PmSnapshot, maxChars = 9000): string {
       ? `\n\nWHAT THE HUMAN PREFERS (learned; adapt to it)\n${s.preferences.map((p) => `- ${p}`).join("\n")}`
       : "";
   const fc = s.forecast ? `\n\nFORECAST (Monte Carlo from real throughput)\n${s.forecast}` : "";
-  return `Today: ${s.today}${prefs}${fc}\n\nBOARD\n${digest || "(empty)"}\n\nCYCLES\n${cycles}\n\nRECENT WORKER ATTEMPTS\n${runs}\n\nWORKER CAPABILITY\n${capability}`;
+  const team = s.team ? `\n\nYOUR TEAM\n${s.team}` : "";
+  return `Today: ${s.today}${prefs}${fc}${team}\n\nBOARD\n${digest || "(empty)"}\n\nCYCLES\n${cycles}\n\nRECENT WORKER ATTEMPTS\n${runs}\n\nWORKER CAPABILITY\n${capability}`;
 }
 
 /**

@@ -47,6 +47,8 @@ export interface PromptPackOptions {
   pinnedFiles?: { path: string; content: string; label: string }[];
   /** Repair plan from the manager model after an earlier failed attempt. */
   managerGuidance?: string;
+  /** Who else is on the team and how to reach them (hardware-aware). */
+  teamNote?: string;
   activeSkills?: SkillManifest[];
   playbookRules?: string[];
   recentTurns?: TurnHistoryItem[];
@@ -229,6 +231,7 @@ export function buildFullPromptPack(options: PromptPackOptions): BuiltPromptPack
     );
   }
 
+  if (options.teamNote) userParts.push(`=== YOUR TEAM ===\n${options.teamNote}`);
   if (options.managerGuidance) {
     userParts.push(
       `=== REPAIR PLAN FROM THE PLANNING MODEL ===\nA previous attempt at this card failed. This plan diagnoses why. Follow it exactly.\n${options.managerGuidance}`,

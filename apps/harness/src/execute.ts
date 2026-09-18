@@ -28,6 +28,10 @@ export interface ExecutionContext {
   afterTurn?: (cardId: string, turn: TurnResult) => Promise<void>;
   /** The learning store: active rules go into the prompt, outcomes come back. */
   learning?: LearningStore;
+  /** One paragraph on who is on the team right now (from the residency plan). */
+  teamNote?: () => string;
+  /** Route a Worker question the card's contract cannot answer to the team. */
+  askTeam?: (cardId: string, question: string) => Promise<string | undefined>;
 }
 
 /** What a tool call acted on, in a few characters: a path, a command, a note. */
@@ -138,6 +142,10 @@ export async function executeCard(
     useExistingWorktree: existsSync(join(ctx.repoPath, ".sekhemet", "worktrees", card.id)),
     ...(managerGuidance ? { managerGuidance } : {}),
     ...(priorLessons && priorLessons.length > 0 ? { priorLessons } : {}),
+    ...(ctx.teamNote ? { teamNote: ctx.teamNote() } : {}),
+    ...(ctx.askTeam
+      ? { askTeam: (q: string) => ctx.askTeam?.(card.id, q) ?? Promise.resolve(undefined) }
+      : {}),
     skillsRegistry: skills,
     playbookRegistry: playbook,
     lifecycle: {

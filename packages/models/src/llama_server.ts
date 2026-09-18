@@ -1,5 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { type HttpAdapterOptions, HttpInferenceAdapter } from "./http_adapter.js";
 
@@ -197,6 +197,14 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
       });
     }
     child.once("exit", () => process.removeListener("exit", kill));
+  }
+
+  /** Weights on disk, plus the KV cache for its context and runtime overhead. */
+  public async footprintBytes(): Promise<number | undefined> {
+    if (!existsSync(this.profile.modelPath)) return undefined;
+    const weights = statSync(this.profile.modelPath).size;
+    const kv = (this.profile.contextTokens ?? 8192) * 64 * 1024; // hybrid MoE, q8_0: small
+    return Math.round(weights * 1.03 + kv + 1.2 * 1024 ** 3);
   }
 
   private get slotFile(): string {

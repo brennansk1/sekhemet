@@ -14,7 +14,6 @@ import {
   HttpInferenceAdapter,
   ModelRouter,
   NAIL_WORKER_PROFILE,
-  canCoReside,
   createApodexResearcher,
   createCyberTielWorker,
   createNail35BAdapter,
@@ -651,11 +650,13 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
           }),
       },
       // Every swap proves the unload and waits for normal memory pressure.
-      // With enough RAM (a 48 GB+ host) both stay resident and swaps vanish.
-      {
-        log: (line) => console.log(`   ${line}`),
-        coResident: canCoReside(totalmem(), 14 * 1024 ** 3, 17 * 1024 ** 3),
-      },
+      { log: (line) => console.log(`   ${line}`) },
+    );
+    // Hardware-aware residency: measure every model, derive the budget from
+    // this host's RAM, keep the most valuable set resident, swap the rest.
+    const plan = await router.calibrate(totalmem());
+    console.log(
+      `Residency plan (${(plan.budgetBytes / 1024 ** 3).toFixed(0)} GB budget): resident ${plan.resident.join(", ") || "one at a time"}${plan.swapped.length ? `; swapped on demand: ${plan.swapped.join(", ")}` : "; nothing swaps"}.`,
     );
     const pmModel = managerModel ?? DEFAULT_PM_MODEL;
     /** Run a question past the Researcher, then hand the manager back. */
@@ -688,7 +689,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       ...(router.activeRole
         ? { active: router.activeRole === "escalation" ? "manager" : router.activeRole }
         : {}),
-      coResident: canCoReside(totalmem(), 14 * 1024 ** 3, 17 * 1024 ** 3),
+      resident: router.residentRoles().map((r) => (r === "escalation" ? "manager" : r)),
+      coResident: plan.swapped.length === 0,
     }));
 
     /**
@@ -696,8 +698,84 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
      * written to the PM, swap the Worker out, answer, swap it back. The card
      * resumes from its worktree, so nothing is lost; only the reload costs time.
      */
-    const answerPm = async (step?: number): Promise<void> => {
-      if ((await pmStore.queued()).length === 0) return;
+    /** Worker questions waiting for Merit, by card, and Merit's answers to them. */
+    const workerQuestions = new Map<string, string[]>();
+    const isWorkerQuestion = (m: { context?: { view?: string } }) =>
+      m.context?.view === "worker-question";
+
+    /**
+     * Collaboration, shaped by the hardware. When Merit is resident, a
+     * Worker question the card's contract cannot answer is answered now; when
+     * it is swapped out, the question is queued (never forcing a swap on its
+     * own) and answered in the next manager batch, then handed to the card's
+     * next attempt.
+     */
+    const askTeam = async (cardId: string, question: string): Promise<string | undefined> => {
+      if (router.isResident("manager")) {
+        const card = await cardStore.getCard(cardId);
+        const res = await (await router.use("manager")).generate({
+          systemPrompt:
+            "You are Merit, the project manager. A teammate (the coding Worker) is mid-card and asks a question its card's spec does not answer. Answer in at most three sentences, concretely, consistent with the spec and acceptance tests. If it is genuinely the lead's call, say so and give the most conservative choice.",
+          prompt: `Card: ${card?.title ?? cardId}\nSpec: ${card?.spec ?? "(none)"}\nDone when: ${(card?.acceptanceCriteria ?? []).join("; ")}\n\nQuestion: ${question}`,
+          toolArm: "arm_a_flat",
+          temperature: 0.2,
+          maxTokens: 300,
+        });
+        await router.use("worker");
+        return res.text.replace(/<think>[\s\S]*?<\/think>/g, "").trim() || undefined;
+      }
+      const m = await pmStore.appendUserMessage(`[The Worker asks about ${cardId}] ${question}`, {
+        cardId,
+        view: "worker-question",
+      });
+      workerQuestions.set(cardId, [...(workerQuestions.get(cardId) ?? []), m.id]);
+      return undefined;
+    };
+
+    /** One paragraph the Worker reads about its team, from the live residency. */
+    const teamNote = (): string => {
+      const now = (role: "manager" | "researcher" | "reviewer") =>
+        router.isResident(role) ? "available now" : "loaded between cards";
+      return [
+        `Merit (project manager, ${now("manager")}) answers ask() questions your card's contract does not${router.isResident("manager") ? "" : "; until then, proceed conservatively and note your assumption"}.`,
+        router.has("researcher")
+          ? `A Researcher (${now("researcher")}) investigates errors nothing explained, with sources; its findings reach you as rules.`
+          : "",
+        router.has("reviewer")
+          ? "A Reviewer from a different model family checks passing work against the lead's preferences."
+          : "Merit reviews passing work against the lead's preferences.",
+        "Everything you learn here is kept: fixed errors and failed approaches carry to the next attempt.",
+      ]
+        .filter(Boolean)
+        .join(" ");
+    };
+
+    /**
+     * Hand Merit's answers to queued Worker questions to each card's next
+     * attempt. One batch answers every queued question in one reply, so the
+     * latest reply after the batch is the answer.
+     */
+    const collectAnswers = async (): Promise<void> => {
+      if (workerQuestions.size === 0) return;
+      const thread = await pmStore.thread();
+      const latest = [...thread].reverse().find((m) => m.role === "pm");
+      for (const [cardId, ids] of workerQuestions) {
+        const asked = thread.filter((m) => ids.includes(m.id));
+        if (!latest || !asked.every((m) => m.state === "done")) continue;
+        lessonsByCard.set(cardId, [
+          ...(lessonsByCard.get(cardId) ?? []),
+          `Merit answered your earlier question: ${latest.text.slice(0, 400)}`,
+        ]);
+        workerQuestions.delete(cardId);
+      }
+    };
+
+    const answerPm = async (step?: number, batch = false): Promise<void> => {
+      const queuedNow = await pmStore.queued();
+      if (queuedNow.length === 0) return;
+      // Only the human's messages pause the Worker; Worker questions wait for
+      // the next manager batch instead of forcing a swap each.
+      if (!batch && queuedNow.every(isWorkerQuestion)) return;
       console.log(
         `   PM: pausing the Worker${step !== undefined ? ` after step ${step}` : ""} to answer`,
       );
@@ -709,6 +787,16 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         pmModel,
         acquire: () => router.use("manager"),
         ...(step !== undefined ? { step } : {}),
+        team: [
+          `Worker (${workerModelId}): ${router.isResident("worker") ? "resident" : "swapped out"}; it asks you questions its cards' contracts do not answer.`,
+          router.has("researcher")
+            ? `Researcher: ${router.isResident("researcher") ? "resident, asking is cheap" : "swapped out, asking costs a model load (~40 s): batch questions into one"}.`
+            : "No Researcher configured: use find_library for packages.",
+          router.has("reviewer")
+            ? "Reviewer (different model family): reviews passing cards at the end of a pass."
+            : "You review passing cards yourself at the end of a pass.",
+          `Residency: ${router.residentRoles().join(", ") || "none"} loaded now.`,
+        ].join("\n"),
         ...(askResearcher ? { researcher: askResearcher } : {}),
       });
       if (workerWasActive) {
@@ -729,6 +817,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       cardStore,
       boardService,
       learning: new LearningStore(log),
+      teamNote: () => teamNote(),
+      askTeam: (cardId: string, question: string) => askTeam(cardId, question),
       afterTurn: async (_cardId: string, turn: { turnIndex: number }) => {
         await answerPm(turn.turnIndex).catch((err) =>
           console.log(`   PM: could not answer (${err instanceof Error ? err.message : err})`),
@@ -905,6 +995,10 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         const retry = failed.splice(0, failed.length).map(({ card }) => card);
         // Merit's reflection runs now, while its model is already resident:
         // learning must never cost an extra swap.
+        // Worker questions queued during the pass are answered in this batch,
+        // while Merit is resident, and reach each card's retry.
+        await answerPm(undefined, true).catch(() => undefined);
+        await collectAnswers();
         const learned = await reflectWithManager(manager, ctx.learning, reflections).catch(() => 0);
         // Cross-family review when a reviewer model is configured (one extra
         // swap on a 24 GB host); otherwise Merit reviews while resident.
@@ -961,8 +1055,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
           () => undefined,
         );
       }
-      // Anything asked during the last step is answered before the run ends.
-      await answerPm().catch(() => undefined);
+      // The human's messages are answered before the run ends; queued Worker
+      // questions too when Merit is already resident (no extra swap).
+      await answerPm(undefined, router.isResident("manager")).catch(() => undefined);
     } finally {
       await router.releaseAll();
       releaseLease();

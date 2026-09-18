@@ -18,6 +18,8 @@ export interface UnloadableAdapter extends LocalInferenceAdapter {
   unload?(): Promise<void>;
   /** Resolves true once the weights are really gone (see HttpInferenceAdapter). */
   confirmUnloaded?(timeoutMs?: number): Promise<boolean>;
+  /** Bytes the model occupies when resident (weights, KV cache, runtime). */
+  footprintBytes?(): Promise<number | undefined>;
 }
 
 export interface RouterOptions {
@@ -30,9 +32,61 @@ export interface RouterOptions {
    * memory for it (see `canCoReside`); on a 24 GB machine it must stay false.
    */
   coResident?: boolean;
+  /**
+   * Memory the models may occupy together (total RAM minus a reserve for
+   * the OS, sandbox and gates). With a budget and footprints, the router keeps
+   * as many models resident as fit and evicts the least valuable one only
+   * when a load would not fit. Without one it keeps one model at a time.
+   */
+  budgetBytes?: number;
+  /** Resident size of each role's model (weights plus KV cache). */
+  footprints?: Partial<Record<ModelRole, number>>;
   /** Injectable for tests. */
   pressureLevel?: () => number | undefined;
   freeBytes?: () => number;
+}
+
+/**
+ * How valuable it is to keep a role resident. The worker runs every turn;
+ * Merit plans, answers and repairs; the researcher and reviewer work in
+ * batches at the end of passes. Escalation shares the manager's weights.
+ */
+export const ROLE_PRIORITY: Record<ModelRole, number> = {
+  worker: 4,
+  manager: 3,
+  escalation: 3,
+  researcher: 2,
+  reviewer: 1,
+};
+
+/**
+ * Which roles a host keeps resident together: the most valuable set that
+ * fits the budget, greedily by priority (roles on shared weights count once).
+ * Everything else swaps in on demand. Exposed for the Machine view and doctor.
+ */
+export function planResidency(
+  roles: { role: ModelRole; modelId: string; bytes: number }[],
+  budgetBytes: number,
+): { resident: ModelRole[]; swapped: ModelRole[]; usedBytes: number } {
+  const byPriority = [...roles].sort((a, b) => ROLE_PRIORITY[b.role] - ROLE_PRIORITY[a.role]);
+  const loaded = new Map<string, number>();
+  const resident: ModelRole[] = [];
+  const swapped: ModelRole[] = [];
+  let used = 0;
+  for (const r of byPriority) {
+    if (loaded.has(r.modelId)) {
+      resident.push(r.role);
+      continue;
+    }
+    if (used + r.bytes <= budgetBytes) {
+      loaded.set(r.modelId, r.bytes);
+      used += r.bytes;
+      resident.push(r.role);
+    } else {
+      swapped.push(r.role);
+    }
+  }
+  return { resident, swapped, usedBytes: used };
 }
 
 export class SwapHeadroomError extends Error {}
@@ -46,10 +100,22 @@ export class SwapHeadroomError extends Error {}
  * the internal SSD, minutes from the external drive), so callers should batch
  * work per role rather than alternate per turn.
  */
+/**
+ * Hands out one model per role while keeping memory safe.
+ *
+ * With a memory budget it keeps as many models resident as fit (all four on
+ * a 128 GB host) and evicts the lowest-priority, least-recently-used model
+ * only when a load would not fit. Without one (the 24 GB default) it keeps a
+ * single model resident and swaps. Every eviction proves the weights left
+ * and waits for normal memory pressure before the next load.
+ */
 export class ModelRouter {
   private adapters = new Map<ModelRole, UnloadableAdapter>();
-  private active: ModelRole | undefined;
+  /** Resident models by model id: which roles use them and when last used. */
+  private resident = new Map<string, { roles: Set<ModelRole>; lastUsed: number }>();
+  private last: ModelRole | undefined;
   private swaps = 0;
+  private tick = 0;
 
   constructor(
     private factories: Partial<Record<ModelRole, () => UnloadableAdapter>>,
@@ -60,13 +126,25 @@ export class ModelRouter {
     return this.factories[role] !== undefined;
   }
 
-  /** Number of role switches performed, for the run report. */
+  /** Number of evictions performed, for the run report. */
   public get swapCount(): number {
     return this.swaps;
   }
 
+  /** The role used most recently. */
   public get activeRole(): ModelRole | undefined {
-    return this.active;
+    return this.last;
+  }
+
+  /** Every role whose model is resident now. */
+  public residentRoles(): ModelRole[] {
+    return [...this.resident.values()].flatMap((r) => [...r.roles]);
+  }
+
+  /** Whether asking this role now costs no load (it, or its weights, are resident). */
+  public isResident(role: ModelRole): boolean {
+    if (!this.has(role)) return false;
+    return this.resident.has(this.adapter(role).modelId);
   }
 
   private adapter(role: ModelRole): UnloadableAdapter {
@@ -80,23 +158,57 @@ export class ModelRouter {
     return adapter;
   }
 
-  /** Return the adapter for `role`, unloading whichever other role was resident. */
-  public async use(role: ModelRole): Promise<UnloadableAdapter> {
-    if (this.active !== undefined && this.active !== role && !this.options.coResident) {
-      // Two roles on the same weights (manager and escalation) share the
-      // resident model: unloading it only to load it again is pure swap cost.
-      const same = this.adapters.get(this.active)?.modelId === this.adapter(role).modelId;
-      if (!same) {
-        await this.swapOut(this.active, role);
-        this.swaps++;
-      }
+  private footprint(role: ModelRole): number {
+    return this.options.footprints?.[role] ?? 0;
+  }
+
+  private residentBytes(): number {
+    let total = 0;
+    for (const r of this.resident.values()) {
+      total += Math.max(...[...r.roles].map((role) => this.footprint(role)));
     }
-    this.active = role;
-    return this.adapter(role);
+    return total;
+  }
+
+  /** Return the adapter for `role`, evicting others only if it would not fit. */
+  public async use(role: ModelRole): Promise<UnloadableAdapter> {
+    const adapter = this.adapter(role);
+    const key = adapter.modelId;
+    this.tick++;
+    const entry = this.resident.get(key);
+    if (entry) {
+      entry.roles.add(role);
+      entry.lastUsed = this.tick;
+      this.last = role;
+      return adapter;
+    }
+
+    const budget = this.options.coResident ? Number.POSITIVE_INFINITY : this.options.budgetBytes;
+    const need = this.footprint(role);
+    const mustEvict = (): boolean =>
+      this.resident.size > 0 &&
+      (budget === undefined ? true : this.residentBytes() + need > budget);
+    while (mustEvict()) {
+      // Evict the least valuable resident: lowest priority, then least recent.
+      const victim = [...this.resident.entries()].sort((a, b) => {
+        const pa = Math.max(...[...a[1].roles].map((r) => ROLE_PRIORITY[r]));
+        const pb = Math.max(...[...b[1].roles].map((r) => ROLE_PRIORITY[r]));
+        return pa - pb || a[1].lastUsed - b[1].lastUsed;
+      })[0];
+      if (!victim) break;
+      const [victimKey, victimEntry] = victim;
+      const victimRole = [...victimEntry.roles][0] as ModelRole;
+      await this.swapOut(victimRole, role);
+      this.resident.delete(victimKey);
+      this.swaps++;
+    }
+    this.resident.set(key, { roles: new Set([role]), lastUsed: this.tick });
+    this.last = role;
+    return adapter;
   }
 
   /**
-   * Unload the resident model and prove the memory came back before the next
+   * Unload a resident model and prove the memory came back before the next
    * one loads. Loading on top of a model that has not actually left is how
    * this 24 GB host ran out of memory: an unload request is not an unload.
    */
@@ -127,10 +239,44 @@ export class ModelRouter {
     }
   }
 
+  /**
+   * Measure every configured role's footprint and derive the memory budget
+   * (total RAM minus a reserve for the OS, the sandbox and the gates), then
+   * return the residency plan. Call once before a run; the router then keeps
+   * as many models resident as the plan allows. Roles whose size cannot be
+   * measured fall back to one-at-a-time swapping for safety.
+   */
+  public async calibrate(
+    totalBytes: number,
+    reserveBytes = Math.max(8 * 1024 ** 3, totalBytes * 0.2),
+  ): Promise<ReturnType<typeof planResidency> & { budgetBytes: number }> {
+    const roles = (Object.keys(this.factories) as ModelRole[]).filter((r) => this.has(r));
+    const measured: { role: ModelRole; modelId: string; bytes: number }[] = [];
+    const footprints: Partial<Record<ModelRole, number>> = {};
+    let unknown = false;
+    for (const role of roles) {
+      const a = this.adapter(role);
+      const bytes = await a.footprintBytes?.().catch(() => undefined);
+      if (bytes === undefined) {
+        unknown = true;
+        continue;
+      }
+      footprints[role] = bytes;
+      measured.push({ role, modelId: a.modelId, bytes });
+    }
+    const budgetBytes = Math.max(0, totalBytes - reserveBytes);
+    if (!unknown) {
+      this.options.footprints = footprints;
+      this.options.budgetBytes = budgetBytes;
+    }
+    return { ...planResidency(measured, unknown ? 0 : budgetBytes), budgetBytes };
+  }
+
   /** Unload everything. Call on every exit path. */
   public async releaseAll(): Promise<void> {
     for (const adapter of this.adapters.values()) await adapter.unload?.();
-    this.active = undefined;
+    this.resident.clear();
+    this.last = undefined;
   }
 }
 
