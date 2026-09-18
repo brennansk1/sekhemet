@@ -128,6 +128,7 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
       this.child = spawn(this.profile.binary ?? "llama-server", this.launchArgs(), {
         stdio: ["ignore", "ignore", "pipe"],
       });
+      this.bindToParentLifetime(this.child);
       let stderr = "";
       this.child.stderr?.on("data", (chunk: Buffer) => {
         stderr = (stderr + chunk.toString()).slice(-4000);
@@ -156,6 +157,33 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
   ): ReturnType<HttpInferenceAdapter["generate"]> {
     await this.ensureRunning();
     return super.generate(...args);
+  }
+
+  /**
+   * Take the server down with the harness process.
+   *
+   * A harness killed mid-run (Ctrl+C, a supervisor's SIGTERM) otherwise leaves
+   * an orphaned llama-server holding the full checkpoint in memory — on this
+   * host, 13GB that nothing will ever release.
+   */
+  private bindToParentLifetime(child: ChildProcess): void {
+    const kill = (): void => {
+      if (child.exitCode === null) {
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          // Already gone.
+        }
+      }
+    };
+    process.once("exit", kill);
+    for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+      process.once(signal, () => {
+        kill();
+        process.exit(128 + (signal === "SIGINT" ? 2 : signal === "SIGTERM" ? 15 : 1));
+      });
+    }
+    child.once("exit", () => process.removeListener("exit", kill));
   }
 
   /** Stop the server process, releasing its memory. */
