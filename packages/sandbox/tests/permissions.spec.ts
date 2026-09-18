@@ -66,4 +66,56 @@ describe("@sekhemet/sandbox PermissionEngine", () => {
     expect(res.allowed).toBe(true);
     expect(res.tier).toBe("allow");
   });
+
+  it("tags every refusal with the rule that produced it", () => {
+    const e = new PermissionEngine();
+    const rule = (req: Parameters<PermissionEngine["evaluate"]>[0]) => e.evaluate(req).rule;
+    expect(rule({ toolName: "read_file", targetPath: "../x" })).toBe("traversal");
+    expect(rule({ toolName: "write_file", targetPath: ".sekhemet/gates.toml" })).toBe(
+      "protected_system",
+    );
+    expect(rule({ toolName: "edit", targetPath: "src/a.spec.ts", agentRole: "implementer" })).toBe(
+      "protected_file",
+    );
+    expect(
+      rule({ toolName: "write_file", targetPath: "src/b.ts", declaredScopeFiles: ["src/a.ts"] }),
+    ).toBe("scope");
+    expect(rule({ toolName: "run_cmd", command: "rm -rf build" })).toBe("destructive");
+    expect(rule({ toolName: "run_cmd", command: "curl https://x" })).toBe("network");
+    expect(rule({ toolName: "read_file", targetPath: "src/a.ts" })).toBeUndefined();
+  });
+
+  it("honours a project's protected globs (gates.toml [project] protected)", () => {
+    const e = new PermissionEngine({
+      protectedGlobs: ["db/migrations/**", "fixtures/golden/*.json"],
+    });
+    const write = (targetPath: string) =>
+      e.evaluate({ toolName: "write_file", targetPath, agentRole: "implementer" });
+    expect(write("db/migrations/0001_init.sql")).toMatchObject({
+      tier: "deny",
+      allowed: false,
+      rule: "protected_file",
+    });
+    expect(write("fixtures/golden/out.json").allowed).toBe(false);
+    // The project's list replaces the defaults it chose not to declare.
+    expect(write("src/a.spec.ts").allowed).toBe(true);
+    // Reads of a protected file stay allowed; only writes are refused.
+    expect(
+      e.evaluate({
+        toolName: "read_file",
+        targetPath: "db/migrations/0001_init.sql",
+        agentRole: "implementer",
+      }).allowed,
+    ).toBe(true);
+    expect(e.protectedPatterns).toEqual(["db/migrations/**", "fixtures/golden/*.json"]);
+  });
+
+  it("falls back to the built-in test-immutability globs when the list is empty", () => {
+    const e = new PermissionEngine({ protectedGlobs: [] });
+    expect(e.protectedPatterns).toEqual(["**/*.spec.ts", "**/*.test.ts", "tests/acceptance/**"]);
+    expect(
+      e.evaluate({ toolName: "edit", targetPath: "tests/x.test.ts", agentRole: "implementer" })
+        .allowed,
+    ).toBe(false);
+  });
 });

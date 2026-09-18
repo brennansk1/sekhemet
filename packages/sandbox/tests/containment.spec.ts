@@ -155,6 +155,9 @@ describe("@sekhemet/sandbox containment", () => {
     expect(result.exitCode).toBe(126);
     expect(result.stderr).toContain("Refusing to execute");
     expect(result.stdout).not.toContain("ran");
+    expect(strict.requiresConfinement).toBe(true);
+    expect(strict.confinement).toBe("none");
+    expect(new ProcessSandbox().requiresConfinement).toBe(false);
   });
 
   it("truncates output beyond the buffer cap rather than growing without bound", async () => {

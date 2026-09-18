@@ -82,6 +82,11 @@ export class ProcessSandbox implements ExecutionSandbox {
           : "none";
   }
 
+  /** True when this sandbox refuses to run a command it cannot confine. */
+  public get requiresConfinement(): boolean {
+    return this.config.requireConfinement === true;
+  }
+
   /** The confinement mechanism in effect. Surfaced by `sekhemet doctor`. */
   public get confinement(): ConfinementMode {
     return this.mode;

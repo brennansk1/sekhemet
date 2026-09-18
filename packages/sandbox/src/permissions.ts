@@ -11,10 +11,21 @@ export interface PermissionCheckRequest {
   allowNetwork?: boolean | undefined;
 }
 
+/** Which rule produced a non-allow verdict, so callers can react per rule. */
+export type PermissionRule =
+  | "traversal"
+  | "protected_system"
+  | "protected_file"
+  | "scope"
+  | "destructive"
+  | "network";
+
 export interface PermissionCheckResult {
   tier: PermissionTier;
   allowed: boolean;
   reason?: string;
+  /** Set on every deny and ask verdict. */
+  rule?: PermissionRule;
 }
 
 /**
@@ -64,7 +75,17 @@ export class PermissionEngine {
   private protectedGlobs: string[];
 
   constructor(options: PermissionEngineOptions = {}) {
-    this.protectedGlobs = options.protectedGlobs ?? DEFAULT_PROTECTED_GLOBS;
+    // An empty list is treated as "not configured", never as "nothing is
+    // protected": dropping test immutability must be an explicit decision.
+    this.protectedGlobs =
+      options.protectedGlobs && options.protectedGlobs.length > 0
+        ? [...options.protectedGlobs]
+        : DEFAULT_PROTECTED_GLOBS;
+  }
+
+  /** The globs in force, for diagnostics and the tool prompt. */
+  public get protectedPatterns(): readonly string[] {
+    return this.protectedGlobs;
   }
 
   /** True when `target` matches any project-declared protected pattern. */
@@ -80,6 +101,7 @@ export class PermissionEngine {
         tier: "deny",
         allowed: false,
         reason: `Path traversal or absolute path outside worktree denied: ${req.targetPath}`,
+        rule: "traversal",
       };
     }
 
@@ -91,6 +113,7 @@ export class PermissionEngine {
             tier: "deny",
             allowed: false,
             reason: `Modifying protected gate or harness configuration denied: ${req.targetPath}`,
+            rule: "protected_system",
           };
         }
       }
@@ -111,6 +134,7 @@ export class PermissionEngine {
           tier: "deny",
           allowed: false,
           reason: `Implementer role is forbidden from modifying protected files (Test Immutability Law): ${req.targetPath}`,
+          rule: "protected_file",
         };
       }
     }
@@ -139,6 +163,7 @@ export class PermissionEngine {
             tier: "deny",
             allowed: false,
             reason: `File modification outside declared scope [${req.declaredScopeFiles.join(", ")}] denied: ${req.targetPath}`,
+            rule: "scope",
           };
         }
       }
@@ -152,6 +177,7 @@ export class PermissionEngine {
             tier: "ask",
             allowed: false,
             reason: `Destructive command requires explicit developer approval: ${req.command}`,
+            rule: "destructive",
           };
         }
       }
@@ -164,6 +190,7 @@ export class PermissionEngine {
               tier: "ask",
               allowed: false,
               reason: `Network command requires developer confirmation in offline mode: ${req.command}`,
+              rule: "network",
             };
           }
         }

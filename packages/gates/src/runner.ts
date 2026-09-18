@@ -31,6 +31,85 @@ export interface GateRunnerOptions {
   maxFailuresReported?: number;
 }
 
+/**
+ * The card-size gate (design: 3 files, 200 changed lines by default).
+ *
+ * A standalone function so the loop can run it on the measured diff at every
+ * verification; the runner method delegates here.
+ */
+export function checkBounds(options: BoundsCheckOptions): BoundsCheckResult {
+  const maxFiles = options.maxFiles ?? DEFAULT_PROJECT_CONFIG.maxFiles;
+  const maxLines = options.maxLines ?? DEFAULT_PROJECT_CONFIG.maxDiffLines;
+  if (!Number.isInteger(maxFiles) || maxFiles < 1 || !Number.isInteger(maxLines) || maxLines < 1) {
+    throw new Error(
+      `Bounds limits must be positive integers (files ${maxFiles}, lines ${maxLines})`,
+    );
+  }
+  if (options.linesAdded < 0 || options.linesRemoved < 0) {
+    throw new Error("Diff line counts cannot be negative");
+  }
+  const totalLines = options.linesAdded + options.linesRemoved;
+
+  if (options.filesTouched.length > maxFiles) {
+    return {
+      passed: false,
+      failure: {
+        rung: "bounds",
+        gate: "bounds",
+        layer: "hygiene",
+        exitCode: 1,
+        errorExcerpt: `Exceeded file limit: touched ${options.filesTouched.length} files (limit: ${maxFiles}): ${options.filesTouched.join(", ")}`,
+        suggestedFixFiles: options.filesTouched,
+        expected: `at most ${maxFiles} files changed`,
+        actual: `${options.filesTouched.length} files changed`,
+        suggestedAction: "Split this card: the change spans more files than one card may touch.",
+      },
+    };
+  }
+
+  if (totalLines > maxLines) {
+    return {
+      passed: false,
+      failure: {
+        rung: "bounds",
+        gate: "bounds",
+        layer: "hygiene",
+        exitCode: 1,
+        errorExcerpt: `Exceeded LOC diff limit: ${totalLines} diff lines (limit: ${maxLines}) across ${options.filesTouched.length} files`,
+        suggestedFixFiles: options.filesTouched,
+        expected: `at most ${maxLines} diff lines`,
+        actual: `${totalLines} diff lines`,
+        suggestedAction: "Split this card along a SPIDR boundary to fit the diff budget.",
+      },
+    };
+  }
+
+  return { passed: true };
+}
+
+/**
+ * Parse `git diff --numstat` output into per-file line deltas. Binary files
+ * ("-\t-\tpath") count as touched with zero lines.
+ */
+export function parseNumstat(text: string): { file: string; added: number; removed: number }[] {
+  const out: { file: string; added: number; removed: number }[] = [];
+  for (const line of text.split("\n")) {
+    const m = /^(\d+|-)\t(\d+|-)\t(.+)$/.exec(line.trim());
+    if (!m) continue;
+    const [, add, del, rawFile] = m as unknown as [string, string, string, string];
+    // Renames print as "old => new" or "dir/{old => new}"; count the new path.
+    const file = rawFile.includes("=>")
+      ? rawFile.replace(/\{[^}]*=> ([^}]*)\}/, "$1").replace(/^.* => /, "")
+      : rawFile;
+    out.push({
+      file: file.replace(/\/\//g, "/"),
+      added: add === "-" ? 0 : Number(add),
+      removed: del === "-" ? 0 : Number(del),
+    });
+  }
+  return out;
+}
+
 export class DeterministicGateRunner implements GateRunner {
   private config: GatesConfig | undefined;
 
@@ -56,45 +135,7 @@ export class DeterministicGateRunner implements GateRunner {
   }
 
   public checkBounds(options: BoundsCheckOptions): BoundsCheckResult {
-    const maxFiles = options.maxFiles ?? DEFAULT_PROJECT_CONFIG.maxFiles;
-    const maxLines = options.maxLines ?? DEFAULT_PROJECT_CONFIG.maxDiffLines;
-    const totalLines = options.linesAdded + options.linesRemoved;
-
-    if (options.filesTouched.length > maxFiles) {
-      return {
-        passed: false,
-        failure: {
-          rung: "bounds",
-          gate: "bounds",
-          layer: "hygiene",
-          exitCode: 1,
-          errorExcerpt: `Exceeded file limit: touched ${options.filesTouched.length} files (limit: ${maxFiles}): ${options.filesTouched.join(", ")}`,
-          suggestedFixFiles: options.filesTouched,
-          expected: `at most ${maxFiles} files changed`,
-          actual: `${options.filesTouched.length} files changed`,
-          suggestedAction: "Split this card: the change spans more files than one card may touch.",
-        },
-      };
-    }
-
-    if (totalLines > maxLines) {
-      return {
-        passed: false,
-        failure: {
-          rung: "bounds",
-          gate: "bounds",
-          layer: "hygiene",
-          exitCode: 1,
-          errorExcerpt: `Exceeded LOC diff limit: ${totalLines} diff lines (limit: ${maxLines}) across ${options.filesTouched.length} files`,
-          suggestedFixFiles: options.filesTouched,
-          expected: `at most ${maxLines} diff lines`,
-          actual: `${totalLines} diff lines`,
-          suggestedAction: "Split this card along a SPIDR boundary to fit the diff budget.",
-        },
-      };
-    }
-
-    return { passed: true };
+    return checkBounds(options);
   }
 
   /** Execute one declared gate and parse its output into typed failures. */
