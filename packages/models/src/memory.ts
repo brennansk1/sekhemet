@@ -109,8 +109,27 @@ export function readSwapUsedBytes(): number | undefined {
   return undefined;
 }
 
+/**
+ * The kernel's own memory-pressure level: 1 normal, 2 warning, 4 critical.
+ *
+ * This is the live signal. Swap in use is not: pages written out earlier stay
+ * on disk until touched, so a healthy machine can show gigabytes of stale swap.
+ */
+export function readKernelPressureLevel(): number | undefined {
+  if (platform() !== "darwin") return undefined;
+  try {
+    const out = execFileSync("sysctl", ["-n", "kern.memorystatus_vm_pressure_level"], {
+      encoding: "utf8",
+    });
+    const level = Number.parseInt(out.trim(), 10);
+    return Number.isFinite(level) ? level : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export interface HeadroomLimits {
-  /** Refuse a turn once swap in use exceeds this. Default 3GB. */
+  /** Refuse a turn once swap in use exceeds this. Default 6GB. */
   maxSwapBytes?: number;
   /** Refuse once swap has grown this much since the card started. Default 2GB. */
   maxSwapGrowthBytes?: number;
@@ -133,11 +152,21 @@ export function checkExecutionHeadroom(
   baselineSwapBytes: number | undefined,
   limits: HeadroomLimits = {},
 ): HeadroomVerdict {
+  const gb = (n: number): string => (n / 1024 ** 3).toFixed(1);
+
+  // The kernel's critical level means the next allocation is likely to stall
+  // or be killed, whatever swap says: stop immediately.
+  const level = readKernelPressureLevel();
+  if (level !== undefined && level >= 4) {
+    return { ok: false, reason: "the kernel reports critical memory pressure" };
+  }
+
   const swap = readSwapUsedBytes();
   if (swap === undefined) return { ok: true };
 
-  const gb = (n: number): string => (n / 1024 ** 3).toFixed(1);
-  const maxSwap = limits.maxSwapBytes ?? 3 * 1024 ** 3;
+  // Absolute cap is generous because stale swap is common; growth during the
+  // card is the signal that this run is the cause.
+  const maxSwap = limits.maxSwapBytes ?? 6 * 1024 ** 3;
   const maxGrowth = limits.maxSwapGrowthBytes ?? 2 * 1024 ** 3;
 
   if (swap > maxSwap) {
@@ -147,11 +176,16 @@ export function checkExecutionHeadroom(
       reason: `swap in use ${gb(swap)}GB exceeds the ${gb(maxSwap)}GB limit`,
     };
   }
-  if (baselineSwapBytes !== undefined && swap - baselineSwapBytes > maxGrowth) {
+  const growth = baselineSwapBytes !== undefined ? swap - baselineSwapBytes : 0;
+  // At the warning level, tolerate half the usual growth.
+  const effectiveGrowth = level !== undefined && level >= 2 ? maxGrowth / 2 : maxGrowth;
+  if (baselineSwapBytes !== undefined && growth > effectiveGrowth) {
     return {
       ok: false,
       swapUsedBytes: swap,
-      reason: `swap grew ${gb(swap - baselineSwapBytes)}GB during this card (limit ${gb(maxGrowth)}GB)`,
+      reason: `swap grew ${gb(growth)}GB during this card (limit ${gb(effectiveGrowth)}GB${
+        effectiveGrowth < maxGrowth ? ", halved at warning pressure" : ""
+      })`,
     };
   }
   return { ok: true, swapUsedBytes: swap };
