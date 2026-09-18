@@ -394,7 +394,11 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     const add = (path: string, label: string): void => {
       try {
         const content = this.tools.readRaw(path);
-        if (content.length <= MAX_CHARS) pinned.push({ path, content, label });
+        if (content.length <= MAX_CHARS) {
+          pinned.push({ path, content, label });
+          // Shown in full in the prompt (even when empty): it has been read (L17).
+          this.tools.markSeen(path);
+        }
       } catch {
         if (label === "scope file") pinned.push({ path, content: "", label });
       }
@@ -402,8 +406,6 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
 
     for (const name of this.card.acceptanceTests ?? []) add(`tests/${name}`, "acceptance test");
     for (const path of this.options.scopeFiles ?? []) add(path, "scope file");
-    // A file shown in full in the prompt has been read (L17 read-before-edit).
-    for (const f of pinned) if (f.content) this.tools.markSeen(f.path);
     return pinned;
   }
 
