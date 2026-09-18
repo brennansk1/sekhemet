@@ -1,23 +1,2 @@
-import type { CardRecord } from "@sekhemet/kernel";
-
-export interface DecisionRequest {
-  question: string;
-  options: string[];
-  previewSketches: string[];
-}
-
-export interface SPIDRDecomposition {
-  stories: CardRecord[];
-  spikeNeeded: boolean;
-  ambiguityScore: number;
-}
-
-export interface AmbiguityClassificationResult {
-  askUser: boolean;
-  decision?: DecisionRequest;
-}
-
-export interface PlannerService {
-  decomposeFeature(epicId: string, description: string): Promise<SPIDRDecomposition>;
-  classifyAmbiguity(taskDesc: string): Promise<AmbiguityClassificationResult>;
-}
+export * from "./types.js";
+export * from "./planner.js";

@@ -11,7 +11,7 @@
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
 If you are Claude reading this because Gemini reached quota limits or you were summoned to take the lead:
-1. **Current Milestone**: Milestone 8 (@sekhemet/board & @sekhemet/planner — Dual-Axis Kanban & SPIDR Planner)
+1. **Current Milestone**: Milestone 9 (@sekhemet/eval, @sekhemet/ui & apps/harness — End-to-End System)
 2. **Current State**:
    - Git repository initialized on branch `main`.
    - All 13 workspace projects linked and typechecked (`tsc -b`).
@@ -22,17 +22,32 @@ If you are Claude reading this because Gemini reached quota limits or you were s
    - `@sekhemet/gates` 100% complete (DeterministicGateRunner, BoundsCheck verification, typed GateFailure extraction from compiler/test outputs).
    - `@sekhemet/context` 100% complete (DefaultContextEngine, symbol outline extraction, budget fitting, byte-stable cache prefixes).
    - `@sekhemet/loop` 100% complete (CardExecutionSessionImpl, turn dispatcher, tool executors, 3-turn oscillation circuit breaker).
-   - 32 unit/integration tests passing green in 1.22s.
+   - `@sekhemet/board` 100% complete (BoardServiceImpl, lifecycle transitions, Review WIP limit backpressure).
+   - `@sekhemet/planner` 100% complete (SpidrFeaturePlanner, SPIDR story bounds, ClarEval ask-vs-assume classifier with preview sketches).
+   - 37 unit/integration tests passing green in 1.43s.
 3. **Immediate Next Task**:
-   - Implement `@sekhemet/board` & `@sekhemet/planner`:
-     - Board state machine with review WIP limit backpressure.
-     - SPIDR decomposition engine (Spike, Path, Interface, Data, Rule) and ClarEval ask-vs-assume classifier.
-     - Vitest tests in `packages/board/tests/board.spec.ts` & `packages/planner/tests/planner.spec.ts`.
+   - Implement `@sekhemet/eval` (SWE-bench benchmark runner, synthetic task generator).
+   - Implement `@sekhemet/ui` (Virtual kanban layout math, basalt theme tokens).
+   - Implement `apps/harness` (`sekhemet doctor`, `--restricted` safe execution mode, interactive CLI entrypoint).
+   - Vitest tests in `packages/eval/tests/eval.spec.ts` & `apps/harness/tests/harness.spec.ts`.
 4. **Active Checkpoint Git Ref**: `refs/heads/main`
 
 ---
 
 ## Detailed Session Log
+
+### Entry 9 — 2026-09-17 22:14:40 MDT
+- **Agent**: Gemini 2.5 Pro (`antigravity-cli`)
+- **Role**: Subagent Implementer & Test Author
+- **Actions Taken**:
+  1. Implemented `@sekhemet/board/src/board_service.ts`: `BoardServiceImpl` managing valid kanban lifecycle paths and enforcing Review WIP limit backpressure (throwing when review column hits capacity).
+  2. Implemented `@sekhemet/planner/src/planner.ts`:
+     - `ClarEvalAmbiguityClassifier`: calculates entropy/ambiguity score and provides `DecisionRequest` with 2–3 concrete `previewSketches` when $\theta_{\text{ambig}} \ge 0.5$.
+     - `SpidrFeaturePlanner`: decomposes epics/features into SPIDR stories touching $\le 3$ files each.
+  3. Added `packages/board/tests/board.spec.ts` (2 tests) and `packages/planner/tests/planner.spec.ts` (3 tests).
+  4. Full gates passed: 37/37 tests green across monorepo.
+- **Next Steps**:
+  - Implement `@sekhemet/eval` (SWE-bench benchmark runner), `@sekhemet/ui` (virtual layout canvas), and `apps/harness` (`sekhemet doctor`, `--restricted`).
 
 ### Entry 8 — 2026-09-17 22:13:48 MDT
 - **Agent**: Gemini 2.5 Pro (`antigravity-cli`)
