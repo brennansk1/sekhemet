@@ -152,6 +152,7 @@ const ui = {
   importList: null,
   importTitle: "",
   importError: "",
+  importContent: "",
 };
 
 function ago(iso) {
@@ -253,7 +254,7 @@ function importHtml() {
   const preview = ui.importList
     ? `${proposalGroupHtml(ui.importList, { title: ui.importTitle })}<p class="inote">The same preview is in Merit's thread. Nothing changes until you apply.</p>`
     : "";
-  return `<section class="isheet" aria-label="Import"><header><h2>Import</h2><button class="icon-btn" type="button" data-import-close aria-label="Close import">${icon("x", 14, "ic s14")}</button></header><form data-import-form><div class="irow"><label>Format <select name="format">${opts}</select></label><label class="file">File <input type="file" name="file" accept=".csv,.json,text/csv,application/json"></label></div><textarea name="content" rows="5" placeholder="Or paste the export here" spellcheck="false"></textarea><div class="iacts"><button class="btn sm primary" type="submit" ${ui.busy.has("import") ? "disabled" : ""}>${ui.busy.has("import") ? "Reading…" : "Preview as proposals"}</button><span class="sec">Import is never silent: each card becomes a proposal you apply or discard.</span></div>${ui.importError ? `<p class="ierr">${icon("alert", 12, "ic s12 i-fail")}${esc(ui.importError)}</p>` : ""}</form>${preview}</section>`;
+  return `<section class="isheet" aria-label="Import"><header><h2>Import</h2><button class="icon-btn" type="button" data-import-close aria-label="Close import">${icon("x", 14, "ic s14")}</button></header><form data-import-form><div class="irow"><label>Format <select name="format">${opts}</select></label><label class="file">File <input type="file" name="file" accept=".csv,.json,text/csv,application/json"></label></div><textarea name="content" rows="5" placeholder="Or paste the export here" spellcheck="false">${esc(ui.importContent ?? "")}</textarea><div class="iacts"><button class="btn sm primary" type="submit" ${ui.busy.has("import") ? "disabled" : ""}>${ui.busy.has("import") ? "Reading…" : "Preview as proposals"}</button><span class="sec">Import is never silent: each card becomes a proposal you apply or discard.</span></div>${ui.importError ? `<p class="ierr">${icon("alert", 12, "ic s12 i-fail")}${esc(ui.importError)}</p>` : ""}</form>${preview}</section>`;
 }
 
 function render() {
@@ -429,6 +430,7 @@ async function onSubmit(e) {
     const file = form.elements.file.files?.[0];
     const content = file ? await file.text() : form.elements.content.value;
     ui.importFormat = format;
+    ui.importContent = file ? "" : content;
     if (!content.trim()) {
       ui.importError = "Choose a file or paste an export first.";
       render();

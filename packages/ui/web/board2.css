@@ -469,6 +469,7 @@
   text-overflow: ellipsis;
 }
 .ltbl td.c-title .t {
+  display: inline;
   font-weight: 500;
   margin-right: 6px;
 }
@@ -1179,10 +1180,10 @@
   margin-top: 0;
 }
 
+.charts.one {
+  grid-template-columns: minmax(0, 1fr);
+}
 @media (max-width: 1279px) {
-  .charts {
-    grid-template-columns: minmax(0, 1fr);
-  }
   .ins,
   .ints {
     padding: 16px;

@@ -48,6 +48,8 @@ const ui = {
   sort: {},
   barHost: null,
   cycHost: null,
+  userScrolled: false,
+  autoScroll: false,
   mode: "columns",
   layoutKey: "",
   html: new Map(),
@@ -164,6 +166,14 @@ function ensureLayout(columns) {
   if (old) old.replaceWith(board);
   else ui.root.append(board);
   board.scrollLeft = scroll;
+  board.addEventListener(
+    "scroll",
+    () => {
+      if (ui.autoScroll) ui.autoScroll = false;
+      else ui.userScrolled = true;
+    },
+    { passive: true },
+  );
   for (const list of $$(".list", board)) {
     // Lists are empty until filled; restore their scroll once tiles exist.
     ui.pendingScroll.set(list.dataset.list, listScroll.get(list.dataset.list) ?? 0);
@@ -373,6 +383,17 @@ function pinQueueColumns() {
     col.classList.toggle("pinned", overflow);
     col.style.right = overflow ? `${right}px` : "";
     if (overflow) right += col.offsetWidth + GAP;
+  }
+  // Pinned columns must not hide the Worker: until the user scrolls, keep
+  // Working just left of them (e.g. beside the Merit dock).
+  const working = $('[data-col="in_progress"]', board);
+  if (overflow && working && !ui.userScrolled) {
+    const edge = board.clientWidth - right;
+    const end = working.offsetLeft + working.offsetWidth - board.scrollLeft;
+    if (end > edge) {
+      ui.autoScroll = true;
+      board.scrollLeft += end - edge + GAP;
+    }
   }
 }
 

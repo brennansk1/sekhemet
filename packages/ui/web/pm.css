@@ -268,7 +268,7 @@
   font-size: var(--text-sm);
   color: var(--text-secondary);
 }
-.steps-pm li.current {
+.steps-pm li.is-current {
   color: var(--text-primary);
   font-weight: 500;
 }
@@ -317,8 +317,7 @@
   line-height: var(--leading-normal);
 }
 .pend {
-  padding: 12px;
-  margin: -12px 0 0 -12px;
+  padding: 8px 12px 12px;
   border-left: 2px solid var(--state-running);
   background: var(--tint-running);
   border-radius: 0 var(--radius-card) var(--radius-card) 0;
@@ -862,9 +861,24 @@
   color: var(--state-running);
 }
 
+/* Beside the dock the board keeps more columns in view. */
+body.pm-open .col {
+  min-width: 184px;
+}
+/* 1024–1279: the panel overlays the view instead of narrowing it, so the
+   board keeps its width (PM_DESIGN §2.4). */
 @media (max-width: 1279px) {
   .pm-dock {
-    width: 360px;
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 25;
+    width: 380px;
+    border-left-color: var(--border-strong);
+  }
+  body.pm-open .col {
+    min-width: 220px;
   }
   .pm-rail {
     display: none;

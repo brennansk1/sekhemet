@@ -28,7 +28,8 @@ const CFD_LABEL = {
   done: "Done",
 };
 
-const W = 560;
+/** Drawn 1:1 at the panel's real width, so text is never scaled. */
+let W = 560;
 const H = 240;
 const M = { l: 44, r: 56, t: 12, b: 28 };
 
@@ -300,6 +301,10 @@ function render() {
     ui.root.innerHTML = `<div class="later">${icon("insights", 24, "ic s24")}<b>Not enough finished cards to measure flow yet.</b><span>Insights need at least 3 finished cards; this period has ${cycle.length}.</span></div>`;
     return;
   }
+  // Two charts a row from 1100px of content; one below that. 16px padding each side.
+  const inner = Math.min(1400, ui.root.clientWidth) - 48;
+  const perRow = inner >= 1100 ? 2 : 1;
+  W = Math.max(320, Math.floor((inner - 16 * (perRow - 1)) / perRow) - 34);
   const wip = (d.wipAge ?? [])
     .map((w) => {
       const c = store.card(w.cardId);
@@ -313,7 +318,7 @@ function render() {
         : null;
     })
     .filter((w) => w && w.status !== "done" && w.status !== "backlog");
-  ui.root.innerHTML = `<div class="ins">${numbers(stats, d.throughput ?? [], wip)}<div class="charts">${agingChart(wip, stats)}${cycleChart(cycle, stats)}${throughputChart(d.throughput ?? [])}${cfdChart(d.cfd ?? [])}</div></div>`;
+  ui.root.innerHTML = `<div class="ins">${numbers(stats, d.throughput ?? [], wip)}<div class="charts${perRow === 1 ? " one" : ""}">${agingChart(wip, stats)}${cycleChart(cycle, stats)}${throughputChart(d.throughput ?? [])}${cfdChart(d.cfd ?? [])}</div></div>`;
 }
 
 async function load() {
@@ -355,9 +360,16 @@ export function mount(view) {
       openPeek(g.dataset.card, { returnFocus: g });
     }
   });
+  let timer = 0;
+  const onResize = () => {
+    clearTimeout(timer);
+    timer = setTimeout(render, 150);
+  };
+  window.addEventListener("resize", onResize);
   load();
   return {
     unmount() {
+      window.removeEventListener("resize", onResize);
       document.getElementById("top").removeEventListener("click", onTop);
       host.remove();
       ui.root = null;

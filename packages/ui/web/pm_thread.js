@@ -122,7 +122,7 @@ function pendingHtml(user) {
         r.state === "current" && r.phase === "loading_pm" && eta
           ? `<span class="eta" data-eta="${eta * 1000}" data-from="${seen[r.phase] ?? Date.now()}"><i></i></span>`
           : "";
-      return `<li class="${r.state}"${r.state === "current" ? ' aria-current="step"' : ""}>${STATE_ICON[r.state]()}<span class="l">${esc(r.label)}</span>${bar}${right}</li>`;
+      return `<li class="is-${r.state}"${r.state === "current" ? ' aria-current="step"' : ""}>${STATE_ICON[r.state]()}<span class="l">${esc(r.label)}</span>${bar}${right}</li>`;
     })
     .join("");
   const step = pm.step;

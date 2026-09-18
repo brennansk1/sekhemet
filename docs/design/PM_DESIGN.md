@@ -3,7 +3,7 @@
 Status: design and build record for the lead engineer · Date: 2026-09-18
 Extends: `FRONTEND_DESIGN.md` (same tokens, voice, keyboard model and shell). Where this document is silent, that one rules.
 Backend contract: `PM_CONTRACT.md` (§2 card fields, §3 endpoints, §5 integration roadmap). Every surface here is built against those shapes and degrades to an honest empty or "not on this server" state while an endpoint returns 404.
-Mockups: `docs/design/mockups/{pm,board-v2,insights}.html`. Open them straight from disk; `t` switches between Basalt and Sand.
+Mockups: `docs/design/mockups/{pm,board-v2,insights}.html`. These are static snapshots of the built dashboard, rendered against contract-shaped fixtures with every stylesheet and the tokens inlined, so they show what ships today. Open them straight from disk; `t` switches between Basalt and Sand.
 
 The user's brief, in their words: *"I want it to reflect the top project management strategies that the top companies and people are using… so it integrates well with existing setup within the company. However I want the way you interact with the project manager to be more ui ux friendly. I want you to be able to chat and talk with it like you would a real project manager you hired for the job using the correct model."*
 
@@ -22,17 +22,17 @@ This document has four parts: **(1)** what the surveyed tools and methods do, an
 | **Epics / projects** | Jira epics; Linear projects; Shortcut epics; GitHub parent issues and milestones | A parent grouping with a progress bar, filterable and usable as a swimlane. | `epicId` pointing at a card with `tier: "epic"`. Progress comes from `/api/board` `epics[]`. Epics appear as swimlanes, as a filter and as a table column, never as a separate hierarchy screen. |
 | **Cycles / sprints / iterations** | Linear cycles (auto-rolling, with a cycle progress graph of scope, started and completed); Jira sprints (goal, dates, burndown); GitHub iterations; Shape Up six-week cycles with a cool-down | A time box with a goal, a start and end date, and a progress view. | A **cycle header** on the board: goal, dates, days left, and one progress bar split into done, in progress and not started points. Planning a cycle is a conversation with the PM that ends in proposals. |
 | **Swimlanes** | Jira (by epic, assignee, query, or none); Kanban Method (lanes per class of service); GitHub Projects "group by" | Horizontal bands across the columns. | Group by **Epic**, **Assignee**, **Priority** or **Cycle**. Each lane header carries its count, points and (for epics) progress. |
-| **Filters and saved views** | Linear views; Jira quick filters and JQL; GitHub Projects' filter bar (`label:bug priority:high`) with saved view tabs | A filter bar whose state can be named and kept. | A filter bar that is both clickable chips and a typed query (`priority:urgent,high label:api cycle:current`), the GitHub Projects syntax that developers already type. Views save the query, the grouping and the layout. |
+| **Filters and saved views** | Linear views; Jira quick filters and JQL; GitHub Projects' filter bar (`label:bug priority:high`) with saved view tabs | A filter bar whose state can be named and kept. | A filter bar that is both clickable chips and a typed query (`priority:urgent,high label:api cycle:current`), the GitHub Projects syntax that developers already type. Views save the query and the grouping. |
 | **List / table view** | Linear list; Jira list; GitHub Projects table; Height | The same items as rows with property columns, sortable, with inline edits. | `#/board/list`, switched with `v`. It shows the same filter and grouping as the board. |
 | **Keyboard triage** | Linear (single-letter property keys, `x` to select, ⌘K for everything); Superhuman's lineage | Every property editable from the keyboard without opening the item. | `⇧P` priority, `⇧E` estimate, `⇧L` labels, `⇧C` cycle, `⇧A` assignee and `.` for any field, on the focused card or the whole selection. These are uppercase so they never collide with the lowercase triage verbs (`a` accept, `r` send back, `p` park). |
-| **Multi-select and bulk edit** | Linear, Jira, GitHub | Select many and change one property on all of them. | `x` selects and `⇧J/⇧K` extends the selection. A bulk bar docks at the bottom of the view with the same field actions. Each change is its own PATCH, so the ledger records one event per card. |
+| **Multi-select and bulk edit** | Linear, Jira, GitHub | Select many and change one property on all of them. | `x` selects, and in the list `⇧J/⇧K` and shift-click extend the selection. A bulk bar docks at the bottom of the view with the same field actions. Each change is its own PATCH, so the ledger records one event per card. |
 
 ### 1.2 Flow method
 
 | Practice | Source | What Sekhemet takes |
 |---|---|---|
 | **WIP limits** | Kanban Method (Anderson) | Already built: `n / limit` headers and capacity bars (FRONTEND_DESIGN §2.4.2). The Review limit is derived from review minutes per day. |
-| **Classes of service** (Expedite, Fixed date, Standard, Intangible) | Kanban Method | These map onto what we already have: **Urgent** priority is Expedite, and a `dueDate` makes a card Fixed date. The Insights view reports how many Urgent cards were in flight at once, because Expedite only works when it is rare. We add no separate field. |
+| **Classes of service** (Expedite, Fixed date, Standard, Intangible) | Kanban Method | These map onto what we already have: **Urgent** priority is Expedite, and a `dueDate` makes a card Fixed date. The saved view *Urgent and high* shows the expedite lane at a glance; Expedite only works when it is rare, and Merit calls it out in *What's at risk* when it isn't. We add no separate field. |
 | **Cycle time** with percentiles | Kanban Method, Vacanti (*Actionable Agile Metrics*) | A scatter of each finished card's cycle time with 50th, 85th and 95th percentile lines, and the sentence: *85% of cards finish within 6.2 hours.* We use percentiles, not averages, because flow data is skewed. |
 | **Throughput** | Kanban Method | Cards done per day as bars, with the 7-day average as a line. |
 | **Cumulative flow diagram** | Kanban Method, Reinertsen | Stacked bands for Backlog → Done over 30 days. A widening band is a queue forming. |
@@ -152,7 +152,7 @@ Card chips are written `@hasher`. Proposal blocks are shown as they render.
 
 Merit lives in two places that share one thread.
 
-**The panel.** This is a persistent right-side dock, 400px wide (360px at 1024–1279), toggled with `⌘J` from any view. It is a dock, not an overlay: the view narrows, so the board stays usable next to the conversation. Its open or closed state is remembered per browser. It hides on `#/pm` and below 768px.
+**The panel.** This is a persistent right-side dock, 400px wide, toggled with `⌘J` from any view. From 1280px it is a dock, not an overlay: the view narrows (board columns relax to a 184px minimum, and when the columns overflow the board scrolls so Working sits beside the pinned Review and Parked columns), so the board stays usable next to the conversation. From 1024 to 1279px there is not enough width for both, so the panel overlays the view at 380px, like the peek drawer, and the board keeps its width. Its open or closed state is remembered per browser. It hides on `#/pm` and below 768px.
 
 **The full view** is `#/pm` (`g a`, for "ask"). It has the thread in a 720px reading column and a right rail (288px) with *Open proposals*, *Worker* (state, step, paused or not) and *What Merit can see* (board snapshot time, last run, ledger head).
 
@@ -351,9 +351,9 @@ Cycle 12  Ship the ledger end to end            Sep 15 – Sep 28 · 4 days left
 - **Epic** lanes show the epic's progress bar (`done / total` cards).
 - There is always a *No epic* lane (*No assignee*, *No cycle*, *No priority* for the other groupings), and it comes last.
 - Rails still collapse empty columns, board-wide.
-- A lane collapses with its chevron, or `⇧←` / `⇧→` on a focused tile.
+- A lane collapses with its chevron.
 - `j/k` cross lane boundaries, and `h/l` stay in the lane.
-- Lanes are not windowed. At 500 cards the lanes render in one pass (about 60ms measured), and the ungrouped board keeps its virtualization.
+- Lanes are not windowed; they are meant for a filtered view (a cycle, an epic). The ungrouped board keeps its virtualization for 500+ cards.
 
 ### 3.3 List / table view
 
@@ -365,11 +365,11 @@ Cycle 12  Ship the ledger end to end            Sep 15 – Sep 28 · 4 days left
 
 - **Rows** are 36px. The title column is fluid; the others are fixed and right-aligned where numeric.
 - **Groups** get a 32px header with count and points. `Space` on a group header collapses it.
-- **Sorting.** Click a header, or `s` then a letter. The sort is stable with priority as the tiebreak.
+- **Sorting.** Click a header (headers are buttons, reachable with `Tab`). A second click reverses. The sort is stable with priority as the tiebreak.
 - **Inline editing.** Click a Priority, Epic, Cycle, Points, Labels, Assignee or Due cell, or press its key on the focused row (`⇧P`, `⇧E`, `⇧L`, `⇧C`, `⇧A`, or `.` for any field):
   - A menu anchored to the cell shows the options with their number keys (`1`–`5`).
   - Labels is a checkable list with a *Create label "…"* row.
-  - Due is a date input.
+  - Due offers *Today*, *End of this week*, *End of the current cycle* and *No due date*.
   - The edit is **optimistic**: the cell changes at once, then `PATCH /api/cards/:id` runs. On failure the cell reverts and a toast gives the reason, e.g. *Couldn't set priority on hasher. The server returned 404: this server can't edit cards yet.*
 - **Selection.** `x` toggles, `⇧J/⇧K` extend, `⌘A` selects every visible row, and `Esc` clears. Shift-click selects a range.
 - **Keys** follow the board: `Enter` opens the card and `Space` peeks.
@@ -384,7 +384,7 @@ With one or more cards selected, a bar docks at the bottom-centre of the view (4
 
 - Field actions open the same menus as inline editing and apply to all selected cards.
 - **Park** asks for one reason and posts one park per card.
-- **Ask Merit** opens the panel with the selection as context: *Looking at: 3 selected cards*.
+- **Ask Merit** opens the panel with the selection already mentioned, not sent: *About @hasher @api @cli:*. The contract's `context` carries one card, so a selection travels as mentions.
 - **Results** are reported in one toast: *Set priority High on 3 cards*, or *Set on 2 of 3. hasher: the server returned 409.*
 
 ### 3.5 Integrations (`#/integrations`, `g s`)
@@ -395,13 +395,13 @@ The page follows the approved roadmap (contract §5), in three sections. Every c
 
 | Integration | Card body | Controls |
 |---|---|---|
-| **GitHub Issues + Projects** | Status (*Connected to acme/chronicle via gh* or *gh isn't signed in*) and *Last synced 12 minutes ago*. The last sync's result is shown as *4 created · 9 updated · 2 skipped · 0 errors*. | **Pull**, **Push**, **Sync both** (primary). A sync in progress shows *Syncing with GitHub…* on the button. Errors list verbatim. *Leaves this machine: card titles, specs, priority, points, cycle and state, as issues and Projects fields in the repo you choose. Uses your `gh` login; Sekhemet stores no token.* |
-| **GitHub PR on accept** | *Accept opens a pull request with the evidence as its body, instead of merging locally.* | A switch when the server exposes one; otherwise *Turn on with `sekhemet config set accept.mode pr`*. *Leaves this machine: the card branch, its diff, and the gate results.* |
+| **GitHub Issues + Projects** | Status (*Connected to acme/chronicle via gh* or *gh isn't signed in*) and *Last synced 12 minutes ago* (`lastSyncAt`). Linked cards show their `externalRef.id` (`owner/repo#n`) in the list view, linking to the issue. The last sync's result is shown as *4 created · 9 updated · 2 skipped · 0 errors*. | **Pull**, **Push**, **Sync both** (primary). A sync in progress shows *Syncing with GitHub…* on the button. Errors list verbatim. *Leaves this machine: card titles, specs, priority, points, cycle and state, as issues and Projects fields in the repo you choose. Uses your `gh` login; Sekhemet stores no token.* |
+| **GitHub PR on accept** | *Accept opens a pull request with the evidence as its body, instead of merging locally.* | A switch (`PUT /api/integrations/github-pr { enabled }`), with the current behaviour stated beside it: *Accept merges locally as one commit.* *Leaves this machine: the card branch, its diff, and the gate results.* |
 | **Jira** | Import and export in Jira's CSV columns (Summary, Issue Type, Priority, Story Points, Sprint, Epic Link, Labels, Description). | **Export Jira CSV**, **Import…** *Leaves this machine: nothing. Export writes a file; you upload it to Jira yourself.* |
 | **Linear** | The same, in Linear's fields. | **Export Linear CSV**, **Import…** Same data line. |
-| **Slack for the PM** | *Merit posts the daily standup, "needs you" alerts and run reports to one channel.* Connected: the channel's webhook host in mono, the last message sent, and whether it was delivered (`pm/notify` `ok`). | A webhook URL field with **Connect**, then **Send test message** and **Disconnect**. *Leaves this machine: standup text, card titles that need you, and run summaries. The webhook URL is stored in `.sekhemet/local.json`, which is git-ignored.* |
+| **Slack for the PM** | *Merit posts the daily standup, "needs you" alerts and run reports to one channel.* Connected: the channel's webhook host in mono, the last message sent, and whether it was delivered (`pm/notify` `ok`). | A webhook URL field with **Connect**, then **Send test message** and **Disconnect**. *Leaves this machine: standup text, card titles that need you, and run summaries.* A lock line says the webhook URL is a credential: *Sekhemet keeps it in `~/.config/sekhemet/repos/…` with mode 0600, never in the repository or the ledger.* |
 
-**Import** opens a sheet with a format picker (Jira CSV, Linear CSV, GitHub JSON, Sekhemet JSON), a file chooser and a paste box. **Preview** posts to `/api/import` and renders the returned proposals with the §2.4 component, headed *Import from Jira CSV · 42 proposed changes*. You apply one, some or all. Import never writes the board by itself.
+**Import** opens a sheet with a format picker (Jira CSV, Linear CSV, GitHub JSON, Sekhemet JSON), a file chooser and a paste box. **Preview** posts to `/api/import` and renders the returned proposals with the §2.4 component, headed *Import from Jira CSV · 42 proposed changes*. You apply one, some or all. Import never writes the board by itself. The server also posts the preview into Merit's thread (`messageId`), so it can be decided there too; the sheet says so. **Export** links download `/api/export?format=…`, which names the file `sekhemet-<project>-<format>.csv|json`.
 
 **Next: planned.** Each is a quiet card with its name, one sentence and *Planned*. There is no button.
 
@@ -418,6 +418,24 @@ The page follows the approved roadmap (contract §5), in three sections. Every c
 Each still states the data it would send. Listing them is honest and sets expectations; a dead Connect button would not.
 
 **Not on this server** (`/api/integrations` 404): the three sections still render from the design's catalogue so the roadmap is visible, but every Now card reads *Not available on this server yet* and has no controls.
+
+#### 3.5.1 The roadmap (PM_CONTRACT §5, approved 2026-09-18)
+
+The tiers follow what dev teams use most. From Stack Overflow 2025: GitHub 81%, Jira 46% and GitLab 36%; Slack is the top chat tool, Teams the top video tool and Confluence the top docs tool. JetBrains 2025 has GitHub Actions at 33%, the top CI. The UI keys its copy on these ids, and an unknown id still renders from the server's `name` and `detail`.
+
+| Tier | id | Integration | What it does | What leaves the machine |
+|---|---|---|---|---|
+| Now | `github` | GitHub Issues + Projects | Two-way sync via `gh`. Priority, points and cycle map to Projects fields; linked by `externalRef`. | Card fields, to the chosen repository |
+| Now | `github-pr` | GitHub PR on accept | Accept pushes the branch and opens a PR with the evidence as its body | Branch, diff, gate results |
+| Now | `jira` | Jira import/export | CSV in Jira's import columns; import previewed as proposals | Nothing (you upload the file) |
+| Now | `linear` | Linear import/export | CSV/JSON in Linear's fields | Nothing (you upload the file) |
+| Now | `slack` | Slack for the PM | Incoming webhook: standup, needs-you alerts, run reports (`pm/notify`) | Those messages |
+| Next | `jira-sync`, `linear-sync` | Live sync | REST/GraphQL with a token from the OS keychain | Card fields |
+| Next | `github-actions` | Gate mirror | Gate results as a check run on the PR | Gate results |
+| Next | `teams` | Microsoft Teams | The Slack messages via an incoming webhook | Those messages |
+| Next | `slack-replies` | Slack replies | Talk to Merit from a Slack thread | The conversation |
+| Later | `sentry`, `datadog`, `pagerduty` | Card sources | Errors, regressions and incidents arrive as proposals for bug cards | Nothing (data comes in) |
+| Later | `notion`, `confluence` | Publishing | Merit publishes cycle plans, run reports and decision logs; reads linked specs | Those pages |
 
 ### 3.6 Insights (`#/insights`, `g f`)
 
@@ -526,7 +544,7 @@ The priority bars use a thicker stroke through CSS (`.prio .ic path { stroke-wid
 
 ### 4.4 What is built, and what waits on the backend
 
-**Built** (`packages/ui`):
+**Built** (`packages/ui`; every item was checked in Basalt and Sand at 1440 and 1024):
 
 - `src/pm.ts`: pure logic, served to the browser as `/app/lib/pm.js`.
   - Priority scale and ordering.
@@ -541,10 +559,14 @@ The priority bars use a thicker stroke through CSS (`.prio .ic path { stroke-wid
 - `web/pm_panel.js`, `web/pm_view.js`, `web/proposals.js`: the chat surface.
 - `web/viewbar.js`: filters, views, grouping and the cycle header.
 - `web/lanes.js`, `web/list.js`, `web/fields.js`, `web/bulk.js`: swimlanes, table, inline editing and bulk actions.
+- `web/picker.js`: the anchored single/multi picker and one-field prompt used by filters, edits and saved views.
+- `web/marks.js`: the priority glyph, label chips, points and `@card` chips.
 - `web/insights.js` and `web/integrations.js`: the two new views.
 - `web/pm.css` and `web/board2.css`: their styles.
 - Icons in `src/icons.ts`.
 
 The board's tile, sort and keyboard were extended in place.
 
-**Waiting on the backend (lead):** `/api/pm/*`, `PATCH /api/cards/:id`, `/api/cycles`, `/api/metrics/flow`, `/api/integrations` (and its Slack and sync endpoints), `/api/export`, `/api/import`, and the new board fields. Every surface was checked against a contract-shaped fixture server and against the real server with those endpoints absent.
+**Backend:** the lead's `/api/pm/*`, `PATCH /api/cards/:id`, `/api/cycles`, `/api/metrics/flow`, `/api/integrations` (with Slack and sync), `/api/export` and `/api/import` landed during the build. The UI was checked against a contract-shaped fixture server, because a real PM reply loads a 27B model and the host was busy, and against a server with those endpoints absent (the *not on this server* states). The contract's optional fields are all used when present: `PmStatus.since`, `step` and `etaSeconds`; `cycleTime[].doneAt`; the thread's `model`; `epics[].progress.pointsDone`; and integration `enabled` and `lastSyncAt`.
+
+**Deliberately not built:** saved views sync (views stay in this browser until a `/api/views` exists); drag and drop (FRONTEND_DESIGN §2.4.2 still holds: moves are explicit and recorded); an Undo for applied proposals (the contract has none, so *Applied* is final and says so).
