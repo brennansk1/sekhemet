@@ -1,0 +1,73 @@
+# Implementation audit: requirements, research and papers against what is built
+
+The user's gate before the final evaluation: every feature, every research recommendation and every paper finding is either built (with its commit and the test that proves it), or deliberately not built for a stated reason. Every commit and test file below was checked to exist when this audit was written (see "Verification" at the end).
+
+Status: **Built**, **Not built (by design)**, or **Needs hardware** (waits on the 128 GB Ubuntu host).
+
+## 1. The user's requests, this cycle
+
+| Request | Status | Commits | Proof (tests) |
+|---|---|---|---|
+| Chat with a project manager like one you hired, on the right model | Built: Merit on the manager model; proposals, never silent edits | f99611d, 74ad6ec | apps/harness/tests/pm.spec.ts, pm_api.spec.ts |
+| Board practices of top teams (priority, estimates, epics, cycles, flow metrics) | Built | f99611d, 61f7a64, 3d044af | packages/kernel/tests/team_fields.spec.ts, pm_api.spec.ts |
+| Integrations a dev team uses (GitHub, Jira, Linear, Slack; roadmap for the rest) | Built | f99611d, 48eb93a, 515856c | pm_api.spec.ts |
+| Pause the Worker to answer chat | Built | 74ad6ec | pm.spec.ts |
+| Compaction on the level of Claude Code | Built: reversible compaction with `recall`, working memory, hybrid chat summary | 5fd3019, ae434fc, 2165493 | packages/context/tests/compaction.spec.ts, packages/loop/tests/working_memory.spec.ts |
+| Agents that read their own history | Built: `git_history`; retries inherit lessons | 6e8206e, 26b926e | packages/loop/tests/history_tools.spec.ts |
+| Do not reinvent the wheel; use legally usable libraries | Built: licence-checked library search, `dependencies` tool, the Researcher | d0626e3, b6eb636, 6e8206e, 764deec | apps/harness/tests/libraries.spec.ts, researcher.spec.ts |
+| Organised documentation | Built: index plus a build-failing docs test | b028fe0 | apps/harness/tests/docs.spec.ts |
+| Check RAM and unload during swaps | Built: unload confirmed, pressure waited out, swap refused otherwise | 26b926e | packages/models/tests/router_swap.spec.ts |
+| Be strategic about when each model loads; plan for new hardware | Built: role batching, same-weights sharing, co-residency on large hosts, KV slot cache | 84cffa4, d1033d7, 8f2c986 | router_swap.spec.ts, slot_cache.spec.ts |
+| Ubuntu AI node (128 GB) | Built: bubblewrap sandbox, PSI memory, configurable llama paths. End-to-end run: **needs hardware** | 79e0468 | packages/sandbox/tests/bubblewrap.spec.ts, packages/models/tests/memory_psi.spec.ts |
+| Themed names only where it causes no confusion | Built: NAMING.md | 3d044af | (UI tests) |
+| Self-improvement for Worker and manager; learning for the project and across projects; a user profile | Built | d1033d7, 520ae43, 3bfe6e1, c8d843f | apps/harness/tests/learning.spec.ts, tune.spec.ts, review.spec.ts |
+| Manager calls out issues and the Worker learns from them | Built: Merit's reflection, then candidate rules | d1033d7 | learning.spec.ts |
+| Four models: worker, manager, adversarial reviewer, researcher (Apodex) | Built: roles, `/api/models`, Researcher with evidence and sources | 764deec, 1117479, 8d2791f | researcher.spec.ts, pm_api.spec.ts |
+| Researcher browses the web and papers | Built: papers (HF, arXiv, S2), page fetch, GitHub, configured web search | 5e74e60, 4be429b | apps/harness/tests/web_research.spec.ts |
+| Frontend of Claude-desktop quality, visually inspected | Built: Merit, board v2, Insights and Integrations inspected by the lead. The latest learning, review and roster screens are inspected before the evaluation | 4dca1e5, 0560fbc, 61f7a64, 4f80811, e817749 | packages/ui/tests/*.spec.ts |
+
+## 2. Research synthesis (docs/research/PM_RESEARCH_SYNTHESIS.md)
+
+| Recommendation | Status | Commits / reason |
+|---|---|---|
+| Line-level localization (+4–8 pp) | Built | 8cecd2d (code at the failing line), c77c359 and 24f34b3 (real API members) |
+| Split by the hazard law; measured size horizon | Built | 1f8bb18 (80% horizon); Merit is told to split cards above it |
+| Cap retries; escalate rather than retry the weak model | Built | 3bfe6e1 (replay-tuned stopping), 84cffa4 (escalation routing) |
+| Reflection anchored to executable signals | Built | every learning loop starts from gate results or human actions (d1033d7) |
+| ACE playbook with helpful/harmful counters; human-approved | Built | d1033d7, 520ae43 |
+| Verify before persisting; prune skills that hurt | Built | rules are candidates until approved; retirement candidates at harmful minus helpful ≥ 3 |
+| Context budget; edges for critical facts; top-k rules | Built | window budget and staged reductions; at most 8 scoped rules per card; the goal at the tail |
+| Capability model from the ledger (Wilson, horizon) | Built | 1f8bb18 |
+| IRT / Bayesian (D-BIRD) capability model | Not built (by design) | Both reports say it needs dozens of outcomes per cell; Wilson intervals plus the size horizon are the right model until about 30 attempts per kind. Revisit once the Trifecta data exists. |
+| Preference learning from edits and send-backs; decay; scoping | Built | d1033d7, 520ae43 (Mem0-style consolidation, Erev-Roth value) |
+| Proactivity budget (3–5 a day, offer rather than nag) | Built by design | Merit speaks only when asked. The only unprompted messages are the run report (Slack, if connected) and review notes on cards. |
+| Swap cost: static prompt head, ledger answers, KV persistence | Built | 1f8bb18 (static system prompt), 2165493 (status answered from the ledger), 8f2c986 (slot cache) |
+| Measure Merit (acceptance, planned-card pass rate, corrections, forecast) | Built | 8d2791f (`/api/metrics/pm`, Monte Carlo forecast) |
+| Quantization versus scaffold isolation | **Needs hardware** | A Q6/Q8 worker does not fit next to anything on 24 GB. Planned first run on the 128 GB host, with the Q8_0 Researcher. |
+| Mutation testing of tests | Not built (by design) | The Worker never writes the acceptance tests: they are protected (the permission engine denies edits), proven fail-to-pass per card, and the integrity gate (816e5e4) rejects skipped, focused or vacuous tests and suppressions. Mutation testing guards agent-written tests, which this flow does not accept. |
+| Differential patch testing | Not built (by design) | It needs a human oracle patch per task, which user projects do not have. The fixtures' fail-to-pass proof covers the benchmark. |
+| Temporal knowledge graph memory | Not built (by design) | The ledger is already time-stamped and append-only, and the Mem0 operations (520ae43) handle updates and contradictions. A graph store adds a dependency without a measured gain at this scale. |
+| MLX-native MTP instead of llama.cpp | Not built (by design) | The target host is AMD on Linux (Vulkan/ROCm), where MLX does not run. |
+| Local LoRA fine-tuning | Not built (by design) | Both reports: the data is too small and forgetting too costly. |
+
+## 3. Papers the user asked to be read
+
+| Paper | Take-away built | Commits |
+|---|---|---|
+| Dream-RSI (2609.14858) | Replay tuner over recorded trajectories; the policy is tuned, not the weights | 3bfe6e1 |
+| AutoDev (2403.08299) | AI reviewer before the human; the Worker's `ask` | c8d843f, 777e5d9 |
+| RSIAgent (2609.15364) | Learn the environment first: configuration constraints, plus the curriculum's module APIs | 610b77a, d0ff42d |
+| SoL-Pi (2609.20519) | Delegated reading (outlines of large files); compaction and condensing already present | 01b6998 |
+| Mem0 (2504.19413) | ADD/UPDATE/DELETE/NOOP consolidation of rules and profile | 520ae43 |
+| ARIS (2605.03042) | Integrity gate against "plausible unsupported success"; cross-family reviewer role; rejected ideas kept on the ledger | 816e5e4, 8d2791f |
+| The Complexity Trap (2508.21433) | Masking plus structured compaction for the Worker; hybrid summary for Merit | 5fd3019, 2165493 |
+| Apodex 1.1 (2608.23283) | The Researcher model: IQ3_M for this host, Q8_0 on the 128 GB host | 764deec, 5e74e60 |
+
+## 4. Known deviations
+
+- **Commit trailers.** Feature commits carry Card, Agent-Model, Agent-Harness, Agent-Role and Co-authored-by, as CLAUDE.md specifies. `GateStatus` and `Step` appear on checkpoint commits only, as CLAUDE.md scopes them. DEFINITION_OF_DONE §6 lists `GateStatus` for every commit. The two documents disagree; this cycle followed CLAUDE.md.
+- **Two commits went in with a failing test** (d0626e3, 5e74e60). Each was fixed in the next commit (b6eb636, 4be429b). Commits now gate on the test runner's exit code.
+
+## Verification
+
+Checked with `git cat-file -e <sha>` for every commit and `test -f` for every test file named above, at the time of writing. The final evaluation (Chronicle plus the Showcase Trifecta, one run on the finished build) follows this audit.

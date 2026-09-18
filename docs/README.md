@@ -42,6 +42,7 @@ Every document in `docs/` is listed here, and nowhere else is the source of trut
 |---|---|
 | [PM_RESEARCH_SYNTHESIS.md](research/PM_RESEARCH_SYNTHESIS.md) | Deep Research findings mapped to what is built and what is planned. |
 | [MODEL_CANDIDATES.md](research/MODEL_CANDIDATES.md) | Local model candidates, benchmarks and the worker/manager choice. |
+| [IMPLEMENTATION_AUDIT.md](research/IMPLEMENTATION_AUDIT.md) | Every request, research recommendation and paper finding against its commit and test: the gate before the evaluation. |
 
 ## reference/: exhaustive inventories
 
