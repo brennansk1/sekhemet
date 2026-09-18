@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import {
   type Dirent,
   existsSync,
@@ -286,6 +287,10 @@ export class ToolExecutor {
         return this.note(str("message"));
       case "docs":
         return this.docs(str("query") ?? "");
+      case "git_history":
+        return this.gitHistory(str("query") ?? "", str("sha"));
+      case "dependencies":
+        return this.dependencies(str("query") ?? "");
       case "finish_card":
         this.finishRequested = true;
         return ok("finish_card", "requested verification", "Verification gates will now run.");
@@ -668,6 +673,88 @@ export class ToolExecutor {
     if (!message) return fail("note", "missing required argument: message");
     this.notes.push(message);
     return ok("note", `recorded note (${this.notes.length} total)`, "Note recorded.");
+  }
+
+  /**
+   * The project's own history, searchable.
+   *
+   * The failure the user sees most in AI coding agents is repeating a problem
+   * the repository already solved: the fix is in the commit log and nobody
+   * looked. With a query this searches commit messages and code changes
+   * (pickaxe); with a sha it shows that commit. Read-only, no shell.
+   */
+  private gitHistory(query: string, sha?: string): ToolObservation {
+    const git = (args: string[]) =>
+      execFileSync("git", args, {
+        cwd: this.root,
+        encoding: "utf8",
+        timeout: 15_000,
+        maxBuffer: 4 * 1024 * 1024,
+      }).trim();
+    try {
+      if (sha) {
+        if (!/^[0-9a-f]{4,40}$/i.test(sha))
+          return fail("git_history", "sha must be a hex commit id");
+        return ok(
+          "git_history",
+          `commit ${sha}`,
+          clampObservation(git(["show", "--stat", "--patch", "--format=%h %s%n%b", sha])),
+        );
+      }
+      if (!query.trim()) {
+        return ok(
+          "git_history",
+          "recent commits",
+          git(["log", "--oneline", "-n", "20"]) || "No commits yet.",
+        );
+      }
+      const messages = git(["log", "--oneline", "-n", "15", "-i", `--grep=${query}`]);
+      const code = git(["log", "--oneline", "-n", "10", "-S", query]);
+      const body = [
+        `Commits whose message mentions "${query}":\n${messages || "(none)"}`,
+        `Commits that added or removed "${query}" in code:\n${code || "(none)"}`,
+        "Use git_history(sha=...) to see how a commit did it.",
+      ].join("\n\n");
+      return ok("git_history", `history for ${query}`, body);
+    } catch (err) {
+      return fail(
+        "git_history",
+        err instanceof Error ? (err.message.split("\n")[0] ?? "git failed") : String(err),
+      );
+    }
+  }
+
+  /**
+   * What is already installed. Writing a helper the project already has a
+   * dependency for is the second most common waste; this lists package.json
+   * dependencies (and whether each is present in node_modules).
+   */
+  private dependencies(query: string): ToolObservation {
+    const pkgPath = join(this.root, "package.json");
+    if (!existsSync(pkgPath)) return fail("dependencies", "no package.json in this project");
+    try {
+      const pkg = JSON.parse(this.readText(pkgPath)) as Record<
+        string,
+        Record<string, string> | undefined
+      >;
+      const rows: string[] = [];
+      for (const field of ["dependencies", "devDependencies", "peerDependencies"]) {
+        for (const [name, version] of Object.entries(pkg[field] ?? {})) {
+          if (query && !name.toLowerCase().includes(query.toLowerCase())) continue;
+          const present = existsSync(join(this.root, "node_modules", name));
+          rows.push(`${name}@${version} (${field}${present ? "" : ", not installed"})`);
+        }
+      }
+      const note =
+        "Prefer these and Node's built-in modules (node:fs, node:path, node:crypto, node:sqlite, node:test...) over writing your own. New packages cannot be installed from here.";
+      return ok(
+        "dependencies",
+        `${rows.length} dependencies`,
+        `${rows.join("\n") || "(none match)"}\n\n${note}`,
+      );
+    } catch (err) {
+      return fail("dependencies", err instanceof Error ? err.message : String(err));
+    }
   }
 
   private docs(query: string): ToolObservation {

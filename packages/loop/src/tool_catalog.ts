@@ -226,6 +226,27 @@ export const TOOL_CATALOG: ToolInterfaceSpec[] = [
     ],
   },
   {
+    name: "git_history",
+    summary:
+      "Search this repository's history before solving something: commit messages and code changes that mention a term, or one commit's diff.",
+    parameters: [
+      {
+        name: "query",
+        type: "string",
+        required: false,
+        description: "Term, error code or symbol to search for",
+      },
+      { name: "sha", type: "string", required: false, description: "Show this commit instead" },
+    ],
+    returns: "Matching commits, or the commit's diff",
+  },
+  {
+    name: "dependencies",
+    summary: "List the packages this project already has, to use instead of writing your own.",
+    parameters: [{ name: "query", type: "string", required: false, description: "Filter by name" }],
+    returns: "Installed dependencies with versions",
+  },
+  {
     name: "recall",
     summary:
       "Fetch the full text of an earlier observation that was compacted. Use the EvidenceRef shown in its placeholder.",
