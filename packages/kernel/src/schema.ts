@@ -47,6 +47,12 @@ const CARDS_TABLE_BODY = `
   priority REAL NOT NULL DEFAULT 0.0,
   order_key TEXT NOT NULL DEFAULT '',
   blocked_reason TEXT,
+  estimate REAL,
+  labels JSON NOT NULL DEFAULT '[]',
+  epic_id TEXT,
+  cycle_id TEXT,
+  assignee TEXT,
+  due_date TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 `;
@@ -136,6 +142,13 @@ const ADDED_CARD_COLUMNS: ReadonlyArray<[column: string, ddl: string]> = [
   ["priority", "priority REAL NOT NULL DEFAULT 0.0"],
   ["order_key", "order_key TEXT NOT NULL DEFAULT ''"],
   ["blocked_reason", "blocked_reason TEXT"],
+  // Team practice fields (PM_CONTRACT §2): Linear/Jira/GitHub vocabulary.
+  ["estimate", "estimate REAL"],
+  ["labels", "labels JSON NOT NULL DEFAULT '[]'"],
+  ["epic_id", "epic_id TEXT"],
+  ["cycle_id", "cycle_id TEXT"],
+  ["assignee", "assignee TEXT"],
+  ["due_date", "due_date TEXT"],
 ];
 
 /** Columns copied when the `cards` table is rebuilt to widen its CHECK. */

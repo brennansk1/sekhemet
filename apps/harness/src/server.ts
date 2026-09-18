@@ -14,6 +14,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { BoardService } from "@sekhemet/board";
 import { type EvidenceBundle, type GatesConfig, loadGatesConfig } from "@sekhemet/gates";
 import type { CardRecord, CardStore, EventLog } from "@sekhemet/kernel";
+import type { LocalInferenceAdapter } from "@sekhemet/models";
 import {
   BASALT,
   EMPTY_SHA256,
@@ -44,6 +45,7 @@ import {
 } from "./dashboard_api.js";
 import { runDoctor } from "./doctor.js";
 import { acceptCard } from "./execute.js";
+import { createPmApi } from "./pm_api.js";
 import { generateDashboardHtml } from "./ui_html.js";
 
 /** The loopback port the design fixes for the dashboard. */
@@ -63,6 +65,10 @@ export interface DashboardServerOptions {
   memoryProbe?: () => MemorySample;
   /** How often the stream pushes a `machine` event, in stream ticks. */
   machineEveryTicks?: number;
+  /** The PM's model (default dirk-27b). */
+  pmModel?: string;
+  /** Injectable PM model, for tests; production builds one from `pmModel`. */
+  pmAdapter?: () => LocalInferenceAdapter;
 }
 
 export { generateDashboardHtml };
@@ -215,6 +221,19 @@ export function startDashboardServer(
   };
 
   const repoPath = options.repoPath ?? process.cwd();
+  // The PM conversation, proposals, cycles, inline edits, flow metrics and
+  // integrations (docs/design/PM_CONTRACT.md) live in their own module.
+  const pmApi = createPmApi({
+    repoPath,
+    log,
+    boardService,
+    ...(options.cardStore ? { cardStore: options.cardStore } : {}),
+    ...(options.pmModel ? { pmModel: options.pmModel } : {}),
+    ...(options.pmAdapter ? { pmAdapter: options.pmAdapter } : {}),
+    json,
+    readJsonBody,
+    isTrustedMutation,
+  });
   const memoryProbe = options.memoryProbe ?? sampleMemory;
   const evidenceDir = join(repoPath, ".sekhemet", "evidence");
 
@@ -370,9 +389,29 @@ export function startDashboardServer(
     const entries = statusEntries();
     const facts = latestByCard(options.db, FACT_TYPES);
     const now = Date.now();
+    const cycles = await pmApi.pmStore.cycles();
+    // Epics with roll-up progress (PM_CONTRACT §3): done/total cards and points.
+    const epics = state.cards
+      .filter((c) => c.tier === "epic")
+      .map((epic) => {
+        const children = state.cards.filter((c) => c.epicId === epic.id);
+        const done = children.filter((c) => c.status === "done");
+        return {
+          id: epic.id,
+          title: epic.title,
+          progress: {
+            done: done.length,
+            total: children.length,
+            points: children.reduce((n, c) => n + (c.estimate ?? 0), 0),
+            pointsDone: done.reduce((n, c) => n + (c.estimate ?? 0), 0),
+          },
+        };
+      });
     return {
       ...state,
       cards: state.cards.map((card) => withDisplay(card, state.cards, entries, now, facts)),
+      epics,
+      cycles,
     };
   };
 
@@ -411,10 +450,11 @@ export function startDashboardServer(
       const [board, verification] = await Promise.all([boardWithEvidence(), log.verifyHashChain()]);
 
       const frame = `event: append\ndata: ${JSON.stringify({ events, board, verification })}\n\n`;
+      const pmFrames = (await pmApi.streamFrames(events)).join("");
       for (const res of streams) {
         // A slow or dead client must not stall the others.
         try {
-          res.write(frame);
+          res.write(frame + pmFrames);
         } catch {
           streams.delete(res);
         }
@@ -785,6 +825,8 @@ export function startDashboardServer(
       json(res, 200, await cachedDoctor());
       return;
     }
+
+    if (url.startsWith("/api/") && (await pmApi.handle(req, res, url, query))) return;
 
     json(res, 404, { error: "Not Found", path: url });
   });

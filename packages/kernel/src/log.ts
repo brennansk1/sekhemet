@@ -256,6 +256,31 @@ export class EventLog {
   }
 
   /**
+   * Every event of the given types, in order, from `fromSeq`.
+   *
+   * Uses the `type` index: the PM conversation and cycles are a few hundred
+   * rows inside a ledger that grows by one `card/step` per Worker turn, and
+   * scanning the whole chain to find them would grow with every run.
+   */
+  public async getEventsByTypes(
+    types: string[],
+    fromSeq = 1,
+    limit = 10_000,
+  ): Promise<EventRecord[]> {
+    if (types.length === 0) return [];
+    const rows = this.db
+      .prepare(`
+        SELECT ${EVENT_COLUMNS}
+        FROM events
+        WHERE seq >= ? AND type IN (${types.map(() => "?").join(", ")})
+        ORDER BY seq ASC
+        LIMIT ?
+      `)
+      .all(fromSeq, ...types, limit) as unknown as RawEventRow[];
+    return rows.map((r) => this.mapRow(r));
+  }
+
+  /**
    * Every event belonging to one card, in order.
    *
    * This is the query the typed `card_id` column exists for: before it, card

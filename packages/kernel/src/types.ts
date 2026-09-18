@@ -138,8 +138,19 @@ export interface CardRecord {
   stopReason?: CardStopReason;
 
   // --- Board placement ---
-  /** WSJF score; higher pulls sooner. */
+  /** Team priority on Linear's scale: 0 none, 1 urgent, 2 high, 3 medium, 4 low. */
   priority?: number;
+  /** Points (1, 2, 3, 5, 8): Jira story points, Linear estimate. */
+  estimate?: number;
+  labels?: string[];
+  /** The epic card this card belongs to. */
+  epicId?: string;
+  /** The cycle (sprint) the card is planned into. */
+  cycleId?: string;
+  /** "worker", "human", or a person's name. */
+  assignee?: string;
+  /** ISO date. */
+  dueDate?: string;
   /** Lexicographic fractional index for manual ordering (see `order_key.ts`). */
   orderKey?: string;
   /** Why the card cannot proceed, shown on the board instead of silence. */

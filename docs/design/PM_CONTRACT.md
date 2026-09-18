@@ -28,7 +28,7 @@ against these shapes. Change this file first if a shape must change.
 | `cycleId` | string | Cycle (sprint) id | Sprint | cycle | iteration field |
 | `assignee` | `"worker"` \| `"human"` \| string | Who does it | Assignee | assignee | assignees |
 | `dueDate` | ISO date | Target date | Due date | dueDate | Projects date field |
-| `externalRef` | existing | `{ system: "github" \| "jira" \| "linear", key, url }` | issue key | identifier | `owner/repo#n` |
+| `externalRef` | existing | `{ system: "github" \| "forgejo", id, url }`; `id` is `owner/repo#n` for GitHub | issue key | identifier | `owner/repo#n` |
 
 Cycles are stored as ledger-backed records:
 `{ id, name, startsOn, endsOn, goal?, state: "planned" | "active" | "closed" }`.
@@ -163,8 +163,9 @@ URLs and stores no tokens in the repo.
 
 Slack endpoints (Now tier):
 - `PUT /api/integrations/slack` with `{ webhookUrl }`. The URL is stored in
-  `.sekhemet/local.json`, which is git-ignored and never written to the
-  ledger. It returns the integration entry.
+  the user's config directory (`~/.config/sekhemet/repos/<repo>-<hash>.json`,
+  mode 0600), never in the repo: `.sekhemet/` is committed in many projects.
+  It is never written to the ledger. It returns the integration entry.
 - `POST /api/integrations/slack/test` sends a test message and returns
   `{ ok, error? }`.
 - `DELETE /api/integrations/slack` disconnects.

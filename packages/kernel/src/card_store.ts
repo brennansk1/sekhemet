@@ -34,8 +34,14 @@ export interface CreateCardInput {
   contextPackId?: string;
   evidenceId?: string;
   externalRef?: ExternalRef;
-  /** WSJF score; higher pulls sooner. */
+  /** Team priority, 0 none, 1 urgent .. 4 low. */
   priority?: number;
+  estimate?: number;
+  labels?: string[];
+  epicId?: string;
+  cycleId?: string;
+  assignee?: string;
+  dueDate?: string;
   /** Explicit placement; generated after the last card when omitted. */
   orderKey?: string;
   blockedReason?: string;
@@ -68,6 +74,13 @@ export interface CardUpdate {
   externalRef?: ExternalRef;
   stopReason?: CardStopReason;
   priority?: number;
+  /** `null` clears the field. */
+  estimate?: number | null;
+  labels?: string[];
+  epicId?: string | null;
+  cycleId?: string | null;
+  assignee?: string | null;
+  dueDate?: string | null;
   orderKey?: string;
   /** `null` clears the block. */
   blockedReason?: string | null;
@@ -88,7 +101,8 @@ const CARD_COLUMNS = `
   spec, acceptance_criteria, acceptance_tests, difficulty, token_budget, seconds_budget,
   tokens_used, seconds_used, model_route_planner, model_route_executor,
   depends_on, context_pack_id, evidence_id, external_ref, stop_reason,
-  priority, order_key, blocked_reason, created_at, updated_at
+  priority, order_key, blocked_reason, estimate, labels, epic_id, cycle_id,
+  assignee, due_date, created_at, updated_at
 `;
 
 interface RawCardRow {
@@ -118,6 +132,12 @@ interface RawCardRow {
   priority: number;
   order_key: string;
   blocked_reason: string | null;
+  estimate: number | null;
+  labels: string | null;
+  epic_id: string | null;
+  cycle_id: string | null;
+  assignee: string | null;
+  due_date: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -188,6 +208,12 @@ export class CardStore {
       ...(externalRef ? { externalRef } : {}),
       ...(row.stop_reason !== null ? { stopReason: row.stop_reason as CardStopReason } : {}),
       ...(row.blocked_reason !== null ? { blockedReason: row.blocked_reason } : {}),
+      labels: parseJsonColumn<string[]>(row.labels, []),
+      ...(row.estimate !== null ? { estimate: row.estimate } : {}),
+      ...(row.epic_id !== null ? { epicId: row.epic_id } : {}),
+      ...(row.cycle_id !== null ? { cycleId: row.cycle_id } : {}),
+      ...(row.assignee !== null ? { assignee: row.assignee } : {}),
+      ...(row.due_date !== null ? { dueDate: row.due_date } : {}),
     };
   }
 
@@ -218,7 +244,8 @@ export class CardStore {
     return keyBetween(max, null);
   }
 
-  public async createCard(input: CreateCardInput): Promise<CardRecord> {
+  /** `actor` defaults to the planner; a human applying a PM proposal passes "human". */
+  public async createCard(input: CreateCardInput, actor = "planner"): Promise<CardRecord> {
     const id = input.id ?? `card_${randomUUID().slice(0, 8)}`;
     const now = new Date().toISOString();
     const status: CardStatus = input.status ?? "ready";
@@ -252,13 +279,19 @@ export class CardStore {
       priority: input.priority ?? 0,
       orderKey: input.orderKey ?? this.nextOrderKey(),
       blockedReason: input.blockedReason ?? null,
+      estimate: input.estimate ?? null,
+      labels: input.labels ?? [],
+      epicId: input.epicId ?? null,
+      cycleId: input.cycleId ?? null,
+      assignee: input.assignee ?? null,
+      dueDate: input.dueDate ?? null,
       createdAt: now,
       updatedAt: now,
     };
 
     // 1. Append immutable event to hash chain
     await this.eventLog.append({
-      actor: "planner",
+      actor,
       type: "card/created",
       cardId: id,
       payload,
@@ -380,7 +413,7 @@ export class CardStore {
    * same sequence of states rather than a series of full snapshots — that is
    * what makes "why does this card have a 90k token budget" answerable.
    */
-  public async updateCard(id: string, patch: CardUpdate): Promise<CardRecord> {
+  public async updateCard(id: string, patch: CardUpdate, actor = "planner"): Promise<CardRecord> {
     const existing = await this.getCard(id);
     if (!existing) {
       throw new Error(`Card not found: ${id}`);
@@ -390,7 +423,7 @@ export class CardStore {
     const payload = { id, patch, updatedAt: now };
 
     await this.eventLog.append({
-      actor: "planner",
+      actor,
       type: "card/updated",
       cardId: id,
       payload,
@@ -478,7 +511,7 @@ export class CardStore {
     this.db
       .prepare(`
         INSERT OR REPLACE INTO cards (${CARD_COLUMNS})
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         payload.id as string,
@@ -509,6 +542,13 @@ export class CardStore {
         // generated one so replaying an old log still yields an ordered board.
         (payload.orderKey as string) ?? this.nextOrderKey(),
         (payload.blockedReason as string) ?? null,
+        // Events written before these fields existed simply lack them.
+        (payload.estimate as number) ?? null,
+        JSON.stringify(payload.labels ?? []),
+        (payload.epicId as string) ?? null,
+        (payload.cycleId as string) ?? null,
+        (payload.assignee as string) ?? null,
+        (payload.dueDate as string) ?? null,
         payload.createdAt as string,
         payload.updatedAt as string,
       );
@@ -552,6 +592,12 @@ export class CardStore {
     if (patch.priority !== undefined) set("priority", patch.priority);
     if (patch.orderKey !== undefined) set("order_key", patch.orderKey);
     if (patch.blockedReason !== undefined) set("blocked_reason", patch.blockedReason);
+    if (patch.estimate !== undefined) set("estimate", patch.estimate);
+    if (patch.labels !== undefined) set("labels", JSON.stringify(patch.labels));
+    if (patch.epicId !== undefined) set("epic_id", patch.epicId);
+    if (patch.cycleId !== undefined) set("cycle_id", patch.cycleId);
+    if (patch.assignee !== undefined) set("assignee", patch.assignee);
+    if (patch.dueDate !== undefined) set("due_date", patch.dueDate);
 
     if (sets.length === 0) return;
 
