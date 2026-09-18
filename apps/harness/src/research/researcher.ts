@@ -2,6 +2,8 @@ import { execFileSync } from "node:child_process";
 import { moduleApiSummary } from "@sekhemet/loop";
 import type { ChatTurn, LocalInferenceAdapter, ToolCall, ToolDefinition } from "@sekhemet/models";
 import { formatHits, searchLibraries } from "../pm/libraries.js";
+import { researchAgentPrompt, stripThinking } from "./apodex.js";
+import { EvidenceLedger, apodexLoop, apodexTeam, verifyReferences } from "./apodex_loop.js";
 import { readDocs } from "./docs.js";
 import { type LoopFinding, type LoopResult, runResearchLoop } from "./loop.js";
 import { type Source, groundingConfidence, kindOfUrl } from "./sources.js";
@@ -69,7 +71,7 @@ const str = { type: "string" } as const;
 
 const WEB_TOOLS: ToolDefinition[] = [
   {
-    name: "search_papers",
+    name: "scholar_search",
     description:
       "Search research papers (Hugging Face Papers, arXiv, OpenAlex). Returns titles, arXiv ids, years, citation counts and abstracts.",
     parameters: { type: "object", properties: { query: str }, required: ["query"] },
@@ -96,13 +98,38 @@ const WEB_TOOLS: ToolDefinition[] = [
   },
   {
     name: "web_search",
-    description: "Search the web. Returns titles, URLs and snippets, official docs ranked first.",
-    parameters: { type: "object", properties: { query: str }, required: ["query"] },
+    description:
+      "Search the web. Returns titles, URLs and snippets, official docs ranked first. Optional: `site` (only these domains), `exclude` (never these), `recency` (day, week, month, year).",
+    parameters: {
+      type: "object",
+      properties: {
+        query: str,
+        site: { type: "array", items: str },
+        exclude: { type: "array", items: str },
+        recency: { type: "string", enum: ["day", "week", "month", "year"] },
+      },
+      required: ["query"],
+    },
   },
   {
-    name: "fetch_page",
-    description: "Read a public web page as plain text (docs, changelogs, blog posts, issues).",
-    parameters: { type: "object", properties: { url: str }, required: ["url"] },
+    name: "search_and_read",
+    description:
+      "Search the web and read the top results in one step: returns the parts of the best 3 pages about the query, each numbered as a source. The fastest way to settle a factual question; follow up with web_fetch for depth.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: str,
+        site: { type: "array", items: str },
+        recency: { type: "string", enum: ["day", "week", "month", "year"] },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "web_fetch",
+    description:
+      "Read a public web page (rendered in a browser) as markdown: docs, changelogs, issues, posts. `focus` says what you need from it, so long pages return that part.",
+    parameters: { type: "object", properties: { url: str, focus: str }, required: ["url"] },
   },
   {
     name: "read_docs",
@@ -153,8 +180,16 @@ const LOCAL_TOOLS: ToolDefinition[] = [
   },
 ];
 
+/** The only clean exit, as in Apodex's own harness (FrontierAgent). */
+export const FINALIZE_TOOL: ToolDefinition = {
+  name: "finalize_answer",
+  description:
+    "Finish: give the complete answer in Markdown, citing sources as [N]. Call this when you have enough evidence; it is the only way to end.",
+  parameters: { type: "object", properties: { content: str }, required: ["content"] },
+};
+
 export function researchTools(web: boolean): ToolDefinition[] {
-  return web ? [...LOCAL_TOOLS, ...WEB_TOOLS] : LOCAL_TOOLS;
+  return [...(web ? [...LOCAL_TOOLS, ...WEB_TOOLS] : LOCAL_TOOLS), FINALIZE_TOOL];
 }
 
 const defaultFetch = async (url: string): Promise<unknown> => {
@@ -166,6 +201,8 @@ const defaultFetch = async (url: string): Promise<unknown> => {
 interface ToolResult {
   text: string;
   source?: Source;
+  /** Several sources from one call (search_and_read); the text marks each as {{n}}. */
+  sources?: Source[];
 }
 
 const src = (kind: Source["kind"], ref: string, text: string, title?: string): Source => ({
@@ -214,7 +251,7 @@ export async function runResearchTool(call: ToolCall, deps: ResearchDeps): Promi
     }
     const web = deps.web;
     if (!web) return { text: `Tool ${call.name} needs web access, which is off for this project.` };
-    if (call.name === "search_papers") {
+    if (call.name === "scholar_search" || call.name === "search_papers") {
       const q = s("query");
       const text = formatWebHits(await searchPapers(q, web));
       return { text, source: src("paper", `paper search "${q}"`, text) };
@@ -239,16 +276,51 @@ export async function runResearchTool(call: ToolCall, deps: ResearchDeps): Promi
         ),
       };
     }
+    const searchOpts = () => ({
+      ...(Array.isArray(a.site) ? { site: (a.site as unknown[]).map(String).slice(0, 5) } : {}),
+      ...(Array.isArray(a.exclude)
+        ? { exclude: (a.exclude as unknown[]).map(String).slice(0, 10) }
+        : {}),
+      ...(["day", "week", "month", "year"].includes(String(a.recency))
+        ? { recency: a.recency as "day" | "week" | "month" | "year" }
+        : {}),
+    });
     if (call.name === "web_search") {
       const q = s("query");
-      const r = await webSearch(q, web);
+      const r = await webSearch(q, web, searchOpts());
       if (typeof r === "string") return { text: r };
       const text = formatWebHits(r);
       return { text, source: src("web", `web search "${q}"`, text) };
     }
-    if (call.name === "fetch_page") {
+    if (call.name === "search_and_read") {
+      const q = s("query");
+      const r = await webSearch(q, web, searchOpts());
+      if (typeof r === "string") return { text: r };
+      const top = r.slice(0, 3);
+      const pages = await Promise.all(
+        top.map((h) => fetchPage(h.url, web, 4000, q).catch(() => "")),
+      );
+      const sources: Source[] = [];
+      const parts: string[] = [];
+      top.forEach((h, i) => {
+        const body = pages[i] ?? "";
+        const read =
+          body.length > 200 && !/^(The page answered|Refusing|The site's robots)/.test(body);
+        if (read) sources.push(src(kindOfUrl(h.url), h.url, body, h.title));
+        parts.push(
+          `${read ? `{{${sources.length}}} ` : ""}${h.title}\n${h.url}\n${read ? body : `(not read: ${body.slice(0, 80) || "empty"}) ${h.snippet}`}`,
+        );
+      });
+      const rest = r.slice(3, 8).map((h) => `- ${h.title}: ${h.url}`);
+      return {
+        text: `${parts.join("\n\n---\n\n")}${rest.length ? `\n\nOther results:\n${rest.join("\n")}` : ""}`,
+        sources,
+      };
+    }
+    if (call.name === "web_fetch" || call.name === "fetch_page") {
       const url = s("url", 2000);
-      const text = await fetchPage(url, web);
+      const focus = typeof a.focus === "string" ? a.focus.slice(0, 200) : undefined;
+      const text = await fetchPage(url, web, 12_000, focus);
       return text.length > 200 ? { text, source: src(kindOfUrl(url), url, text) } : { text };
     }
     if (call.name === "read_docs") {
@@ -301,6 +373,29 @@ You only have access to the tools provided. You can use multiple tools per messa
 You accomplish a given task iteratively, breaking it down into clear steps and working through them methodically.`;
 }
 
+/**
+ * Research methodology for the system prompt, adapted from Apodex's own
+ * agent harness (ApodexAI/FrontierAgent, apodex/prompts_base.py, Apache-2.0):
+ * the workflow and citation rules the model was trained against, with the
+ * tool names mapped to this harness's tools. Static, so the prefix caches.
+ */
+export const RESEARCH_METHOD = `## Research workflow
+1. **Search**: use web_search with specific, varied keywords; never repeat a query. Use site and recency filters when they help. For methods, algorithms, benchmarks or anything needing peer-reviewed sources, prefer scholar_search. For a library's API, prefer read_docs, module_api and package_readme over posts.
+2. **Deep read**: use web_fetch (with a focus) on promising URLs, or search_and_read to search and read in one step. One search round is never enough. If a page fails, pick a different source rather than retrying the same link.
+3. **Cross-check**: verify claims across independent sources before accepting them. Official documentation and source code outrank posts.
+4. **Parallelize**: several independent tool calls in one turn run at once.
+5. **Finalize**: when you have enough evidence, call finalize_answer with the complete answer. That is the only clean exit.
+
+## Output rules
+- Cite sources with [N] notation, N being the source number shown with each tool result. Every factual claim needs at least one citation.
+- Present specific, concrete findings (versions, API names, commands, numbers), not vague summaries.
+- If the evidence does not settle it, begin with "Not settled:" and say what is missing.
+
+## Context discipline
+- Read selectively: search or focus within long pages rather than reading them whole.
+- Do not re-search or re-read sources already gathered; older results may be shortened, and their sources stay numbered.
+- A turn that states an intention to act must include that tool call.`;
+
 const GENERIC_SYSTEM =
   "You are the Researcher on a software team. Answer only from evidence you fetch with your tools. If the evidence does not settle it, say so plainly.";
 
@@ -314,7 +409,7 @@ You are the Researcher on a local software team (a coding Worker, a project mana
 
 const isApodex = (m: LocalInferenceAdapter) => /apodex/i.test(m.modelId);
 
-const strip = (t: string) => t.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+const strip = stripThinking;
 
 /** Citation markers that point outside the numbered source list. */
 export function checkCitations(answer: string, sourceCount: number): number[] {
@@ -355,9 +450,12 @@ export async function research(
   deps: ResearchDeps,
 ): Promise<ResearchAnswer> {
   const apodex = isApodex(model);
-  const system = apodex
-    ? apodexSystemPrompt(deps.today ?? new Date().toISOString().slice(0, 10))
-    : GENERIC_SYSTEM;
+  if (apodex && model.nativeTools) return apodexResearch(model, question, deps);
+  const system = `${
+    apodex
+      ? apodexSystemPrompt(deps.today ?? new Date().toISOString().slice(0, 10))
+      : GENERIC_SYSTEM
+  }\n\n${RESEARCH_METHOD}`;
   const tools = researchTools(Boolean(deps.web));
   const maxRounds = deps.maxRounds ?? (apodex ? 12 : 3);
   // Characters of evidence the window holds, leaving room for the answer and thinking.
@@ -384,14 +482,24 @@ export async function research(
   /** Run one turn's calls in parallel and number their sources. */
   const execute = async (calls: ToolCall[]) => {
     const results = await Promise.all(calls.map((c) => runResearchTool(c, deps)));
+    const number = (source: Source) => {
+      const at = evidence.findIndex((e) => e.ref === source.ref);
+      if (at !== -1) return at + 1;
+      evidence.push(source);
+      return evidence.length;
+    };
     return results.map((r) => {
+      let text = r.text.slice(0, 12_000);
       let tag = "";
-      if (r.source) {
-        const at = evidence.findIndex((e) => e.ref === r.source?.ref);
-        if (at === -1) evidence.push(r.source);
-        tag = `Source [${at === -1 ? evidence.length : at + 1}]: ${r.source.ref}\n`;
+      if (r.source) tag = `Source [${number(r.source)}]: ${r.source.ref}\n`;
+      if (r.sources) {
+        const nums = r.sources.map(number);
+        text = text.replace(/\{\{(\d+)\}\}/g, (m, k) => {
+          const n = nums[Number(k) - 1];
+          return n ? `Source [${n}]:` : m;
+        });
       }
-      return `${tag}${r.text.slice(0, 8000)}`;
+      return `${tag}${text}`;
     });
   };
 
@@ -535,9 +643,8 @@ export async function investigate(
   deps: ResearchDeps,
   opts: InvestigateOptions = {},
 ): Promise<ResearchAnswer> {
-  const system = isApodex(model)
-    ? apodexSystemPrompt(deps.today ?? new Date().toISOString().slice(0, 10))
-    : GENERIC_SYSTEM;
+  if (isApodex(model) && model.nativeTools) return apodexInvestigate(model, question, deps, opts);
+  const system = GENERIC_SYSTEM;
   const maxItems = opts.maxItems ?? 5;
   const plan = await model.generate({
     systemPrompt: system,
@@ -624,4 +731,83 @@ export async function investigate(
     badCitations: checkCitations(answer, evidence.length),
     coverage,
   };
+}
+
+/** What the team is and how the answer is used; the user turn, so the system prompt stays static. */
+export const APODEX_TEAM_BRIEF =
+  "You research for a local software team: a coding Worker, a project manager (Merit) and an adversarial reviewer act on your answer, so it must be right, specific and sourced. Prefer official documentation, type declarations and source code over posts; check licences before recommending a library. Keep the final answer under 300 words plus References.";
+
+const todayOf = (deps: ResearchDeps) => deps.today ?? new Date().toISOString().slice(0, 10);
+
+/** Characters of tool output the window holds before older results compact. */
+const budgetFor = (model: LocalInferenceAdapter) =>
+  Math.max(16_000, ((model.contextWindow?.contextTokens ?? 16_384) - 7000) * 3);
+
+function toAnswer(
+  text: string,
+  ledger: EvidenceLedger,
+  extra: Partial<ResearchAnswer> = {},
+): ResearchAnswer {
+  const answer = strip(text) || "No answer.";
+  const v = verifyReferences(answer, ledger);
+  const unsettled = /^not settled/i.test(answer) || answer === "No answer.";
+  const readRefs = v.references.filter((r) => r.read).length;
+  return {
+    answer,
+    sources: v.evidence.map((e) => e.ref),
+    evidence: v.evidence,
+    // Grounded: it cites something a tool actually returned and was read.
+    grounded: !unsettled && readRefs > 0,
+    confidence: unsettled ? 0 : v.confidence,
+    badCitations: v.badCitations,
+    ...extra,
+  };
+}
+
+/** One question, Apodex solo (its ReAct mode), on its trained tools. */
+export async function apodexResearch(
+  model: LocalInferenceAdapter,
+  question: string,
+  deps: ResearchDeps,
+): Promise<ResearchAnswer> {
+  const ledger = new EvidenceLedger();
+  const run = await apodexLoop(model, `${APODEX_TEAM_BRIEF}\n\nQUESTION\n${question}`, deps, {
+    role: "solo",
+    system: researchAgentPrompt(todayOf(deps), "See the task for who uses your answer."),
+    maxTurns: deps.maxRounds ?? 14,
+    extractor: model,
+    budgetChars: budgetFor(model),
+    ledger,
+  });
+  return toAnswer(run.text, ledger);
+}
+
+/** A deep question, Apodex's Agent Team. */
+export async function apodexInvestigate(
+  model: LocalInferenceAdapter,
+  question: string,
+  deps: ResearchDeps,
+  opts: InvestigateOptions = {},
+): Promise<ResearchAnswer> {
+  const team = await apodexTeam(model, question, deps, {
+    today: todayOf(deps),
+    maxAgents: Math.min(4, opts.maxItems ?? 4),
+    maxTasks: (opts.maxItems ?? 4) * 2,
+    subTurns: opts.subRounds ?? 8,
+    budgetChars: budgetFor(model),
+    brief: APODEX_TEAM_BRIEF,
+  });
+  return toAnswer(team.answer, team.ledger, {
+    coverage: {
+      ran: true,
+      rounds: team.coordinatorTurns,
+      items: team.tasks,
+      covered: team.reports.map((r) => r.agent),
+      outstanding: [],
+      coveragePct: team.tasks > 0 ? 100 : 0,
+      sources: team.ledger.read.size,
+      stoppedBecause: team.answer ? "covered" : "budget",
+      exitRule: "measured coverage of the checklist (no model judgement)",
+    },
+  });
 }

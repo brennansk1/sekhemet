@@ -1,0 +1,15 @@
+Sekhemet
+Copyright 2026 Brennan Kelley
+
+This product includes software developed by UncleCode (https://x.com/unclecode)
+as part of the Crawl4AI project (https://github.com/unclecode/crawl4ai).
+Crawl4AI is licensed under the Apache License 2.0 with an attribution
+requirement; Sekhemet runs it as an optional, separately installed sidecar
+for the Researcher's page reading (apps/harness/src/research/crawl4ai.ts).
+
+The Researcher's optional web search runs SearXNG (https://github.com/searxng/searxng,
+AGPL-3.0) as a separate, unmodified container; it is not linked into Sekhemet.
+
+The research service's rate limiting, robots handling, source ranking,
+documentation reader and research loop are ported from the Helga project's
+research service (same author).

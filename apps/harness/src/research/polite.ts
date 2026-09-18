@@ -303,6 +303,45 @@ export class PoliteFetcher {
     });
   }
 
+  /**
+   * The same courtesies for a read done by another client (the Crawl4AI
+   * browser): the private-address guard, robots.txt and the host's pacing.
+   * Returns undefined when allowed, or the reason it is not.
+   */
+  async permit(url: string): Promise<string | undefined> {
+    let u: URL;
+    try {
+      u = new URL(url);
+    } catch {
+      return "Invalid URL.";
+    }
+    if (!/^https?:$/.test(u.protocol)) return "Only http and https pages can be fetched.";
+    const allowed = (this.opts.allowHosts ?? []).includes(u.host);
+    if (!allowed && isPrivateHost(u.hostname))
+      return "Refusing to fetch a private or loopback address.";
+    let delayS = 0;
+    if (this.opts.robots !== false && !allowed) {
+      const r = await this.robots.check(url);
+      if (!r.allowed) {
+        this.stats.blocked++;
+        return "The site's robots.txt disallows fetching this page.";
+      }
+      delayS = r.delayS;
+    }
+    await this.pacer.wait(url, delayS);
+    return undefined;
+  }
+
+  cached(key: string): string | undefined {
+    const hit = this.opts.cache?.get(key);
+    if (hit) this.stats.cached++;
+    return hit?.body;
+  }
+
+  store(key: string, body: string): void {
+    this.opts.cache?.set(key, 200, "text/markdown", body);
+  }
+
   /** GET (or POST for APIs) with every courtesy; `respectRobots` for page reads. */
   async fetch(url: string, init: RequestInit = {}, respectRobots = false): Promise<Response> {
     const u = new URL(url);

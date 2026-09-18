@@ -46,6 +46,7 @@ import { LearningStore } from "./learning/store.js";
 import { runMcpStdioServer } from "./mcp.js";
 import { DEFAULT_PM_MODEL, answerQueued, createPmAdapter, holdRunnerLease } from "./pm/service.js";
 import { PmStore } from "./pm/store.js";
+import { CRAWL4AI_CREDIT, runResearchCommand } from "./research/cli.js";
 import { ResearchService, researchSources } from "./research/service.js";
 import { DEFAULT_DASHBOARD_PORT, startDashboardServer } from "./server.js";
 import { loadAttempts, tune, writeTuningReport } from "./tune.js";
@@ -63,6 +64,7 @@ export interface CliConfig {
     | "bake-off"
     | "accept"
     | "tune"
+    | "research"
     | "explore"
     | "queue"
     | "mcp"
@@ -134,6 +136,7 @@ export function parseCliArgs(argv: string[] = process.argv.slice(2)): CliConfig 
     "replay",
     "bake-off",
     "mcp",
+    "research",
   ] as const;
 
   for (let i = 0; i < argv.length; i++) {
@@ -282,6 +285,23 @@ export async function printEventLog(log: EventLog): Promise<void> {
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
   const config = parseCliArgs(argv);
+
+  if (config.command === "research") {
+    // `sekhemet research "<question>" [--deep]`: the Researcher, with sources.
+    const dbPath = join(config.repoPath, ".sekhemet", "events.db");
+    let store: CardStore | undefined;
+    if (existsSync(dbPath)) {
+      const db = new DatabaseSync(dbPath);
+      initSchema(db);
+      store = new CardStore(db, new EventLog(db));
+    }
+    process.exitCode = await runResearchCommand(
+      argv.slice(argv.indexOf("research") + 1),
+      config.repoPath,
+      store,
+    );
+    return;
+  }
 
   if (config.command === "explore") {
     // `sekhemet explore [--activate]`: learn the project's constraints from its
@@ -1271,6 +1291,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   );
   console.log("  sekhemet ui / serve         Launch local web visual dashboard");
   console.log("  sekhemet mcp                Run stdio MCP server for Cursor / Claude / IDEs");
+  console.log('  sekhemet research "<q>" [--deep]  Ask the Researcher; answers with sources');
+  console.log(`\n${CRAWL4AI_CREDIT}`);
   console.log("=================================================");
 }
 

@@ -246,3 +246,58 @@ export function excerptAround(text: string, q: string[], chars: number): string 
   }
   return `${bestAt > 0 ? "… " : ""}${text.slice(bestAt, bestAt + chars)}${bestAt + chars < text.length ? " …" : ""}`;
 }
+
+/**
+ * The parts of a long page about `focus`, in page order: the page is cut at
+ * headings and paragraphs, chunks are scored with BM25 against the focus
+ * terms, and the best are kept up to `maxChars`. Several relevant sections
+ * survive, not just the single densest window (what a coding agent's page
+ * fetch does when asked a question about a page).
+ */
+export function focusChunks(text: string, focus: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  const q = terms(focus);
+  if (q.length === 0) return `${text.slice(0, maxChars)}\n… (truncated)`;
+  // Chunks: split before headings, then pack paragraphs to ~1200 characters.
+  const chunks: string[] = [];
+  for (const section of text.split(/\n(?=#{1,6} )/)) {
+    let cur = "";
+    for (const para of section.split(/\n{2,}/)) {
+      if (cur.length + para.length > 1200 && cur) {
+        chunks.push(cur);
+        cur = "";
+      }
+      cur += (cur ? "\n\n" : "") + para;
+    }
+    if (cur) chunks.push(cur);
+  }
+  const docs = chunks.map((c) => c.toLowerCase());
+  const avg = docs.reduce((n, d) => n + d.length, 0) / Math.max(1, docs.length);
+  const df = new Map(q.map((w) => [w, docs.filter((d) => d.includes(w)).length]));
+  const N = docs.length;
+  const score = (d: string) =>
+    q.reduce((s, w) => {
+      const tf = d.split(w).length - 1;
+      if (tf === 0) return s;
+      const idf = Math.log(1 + (N - (df.get(w) ?? 0) + 0.5) / ((df.get(w) ?? 0) + 0.5));
+      return s + (idf * tf * 2.2) / (tf + 1.2 * (0.25 + (0.75 * d.length) / avg));
+    }, 0);
+  const ranked = docs.map((d, i) => ({ i, s: score(d) })).sort((a, b) => b.s - a.s);
+  const keep = new Set<number>([0]); // the page's opening says what the page is
+  let used = (chunks[0] ?? "").length;
+  for (const { i, s } of ranked) {
+    if (s <= 0) break;
+    const len = (chunks[i] ?? "").length;
+    if (used + len > maxChars) continue;
+    keep.add(i);
+    used += len;
+  }
+  const out: string[] = [];
+  let last = -1;
+  for (const i of [...keep].sort((a, b) => a - b)) {
+    if (last !== -1 && i > last + 1) out.push("…");
+    out.push(chunks[i] ?? "");
+    last = i;
+  }
+  return out.join("\n\n");
+}

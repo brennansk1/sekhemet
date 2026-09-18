@@ -1,6 +1,8 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { PoliteFetcher, ResearchCache, USER_AGENT } from "./polite.js";
+import { Crawl4AiSidecar, type PageCrawler, crawl4aiInstalled } from "./crawl4ai.js";
+import { focusChunks } from "./docs.js";
+import { PoliteFetcher, ResearchCache, USER_AGENT, isPrivateHost } from "./polite.js";
 import { rankHits } from "./sources.js";
 
 /**
@@ -28,6 +30,15 @@ export interface WebConfig {
   polite?: PoliteFetcher;
   /** A real contact for OpenAlex's polite pool (SEKHEMET_CONTACT); never invented. */
   contact?: string;
+  /** A browser-backed reader (Crawl4AI) for pages; the plain reader is the fallback. */
+  crawler?: PageCrawler;
+}
+
+let crawlerSingleton: Crawl4AiSidecar | undefined;
+/** One warm browser per process. */
+export function sharedCrawler(): Crawl4AiSidecar {
+  crawlerSingleton ??= new Crawl4AiSidecar();
+  return crawlerSingleton;
 }
 
 export function webConfigFromEnv(): WebConfig {
@@ -46,6 +57,7 @@ export function webConfigFromEnv(): WebConfig {
       ...(searxHost ? { allowHosts: [searxHost] } : {}),
     }),
     ...(env.SEKHEMET_CONTACT ? { contact: env.SEKHEMET_CONTACT } : {}),
+    ...(crawl4aiInstalled() && env.SEKHEMET_CRAWL4AI !== "off" ? { crawler: sharedCrawler() } : {}),
     ...(env.SEKHEMET_SEARXNG_URL ? { searxngUrl: env.SEKHEMET_SEARXNG_URL } : {}),
     ...(env.BRAVE_SEARCH_API_KEY ? { braveKey: env.BRAVE_SEARCH_API_KEY } : {}),
     ...(env.TAVILY_API_KEY ? { tavilyKey: env.TAVILY_API_KEY } : {}),
@@ -206,6 +218,7 @@ export async function fetchPage(
   url: string,
   cfg: WebConfig = {},
   maxChars = 12_000,
+  query?: string,
 ): Promise<string> {
   let u: URL;
   try {
@@ -215,12 +228,26 @@ export async function fetchPage(
   }
   if (!/^https?:$/.test(u.protocol)) return "Only http and https pages can be fetched.";
   // No reaching into the user's network from a model-chosen URL.
-  if (
-    /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|0\.|\[?::1\]?$|169\.254\.)/.test(
-      u.hostname,
-    )
-  ) {
-    return "Refusing to fetch a private or loopback address.";
+  if (isPrivateHost(u.hostname)) return "Refusing to fetch a private or loopback address.";
+  const fit = (text: string) => {
+    if (text.length <= maxChars) return text;
+    if (query) return focusChunks(text, query, maxChars);
+    return `${text.slice(0, maxChars)}\n… (truncated at ${maxChars} characters)`;
+  };
+  // A real browser first: most documentation is rendered by JavaScript.
+  if (cfg.crawler && !/\.(pdf|xml|json|txt)$/i.test(u.pathname)) {
+    const key = `crawl:${u.toString()}`;
+    const hit = cfg.polite?.cached(key);
+    if (hit) return fit(hit);
+    const refused = cfg.polite ? await cfg.polite.permit(u.toString()) : undefined;
+    if (refused) return refused;
+    const r = await cfg.crawler.crawl(u.toString());
+    if (r.ok && r.markdown && r.markdown.length > 200) {
+      const text = `${r.title ? `# ${r.title}\n\n` : ""}${r.markdown}`;
+      cfg.polite?.store(key, text);
+      return fit(text);
+    }
+    // Fall through to the plain reader.
   }
   const init: RequestInit = { headers: UA, signal: timeout(), redirect: "follow" };
   // Page reads honour robots.txt; API calls (search, registries) are not crawling.
@@ -231,10 +258,7 @@ export async function fetchPage(
   if (!res.ok) return `The page answered ${res.status}.`;
   const type = res.headers.get("content-type") ?? "";
   const body = await res.text();
-  const text = /html/i.test(type) || /^\s*</.test(body) ? htmlToText(body) : body;
-  return text.length > maxChars
-    ? `${text.slice(0, maxChars)}\n… (truncated at ${maxChars} characters)`
-    : text;
+  return fit(/html/i.test(type) || /^\s*</.test(body) ? htmlToText(body) : body);
 }
 
 /** Headings of a text produced by htmlToText ("# Title", "## 3 Method"). */
@@ -374,12 +398,62 @@ export async function paperCitations(
   return ((await list.json()) as { results?: OpenAlexWork[] }).results?.map(oaHit) ?? [];
 }
 
-/** General web search through the provider the user configured. */
-export async function webSearch(query: string, cfg: WebConfig = {}): Promise<Hit[] | string> {
+export interface SearchOptions {
+  /** Only these domains (and their subdomains). */
+  site?: string[];
+  /** Never these domains. */
+  exclude?: string[];
+  /** Only results from the last day, week, month or year. */
+  recency?: "day" | "week" | "month" | "year";
+}
+
+const bareDomain = (d: string) =>
+  d
+    .replace(/^https?:\/\//, "")
+    .replace(/\/.*$/, "")
+    .replace(/^www\./, "")
+    .toLowerCase();
+
+const onDomain = (url: string, domains: string[]) => {
+  try {
+    const h = new URL(url).hostname.replace(/^www\./, "");
+    return domains.some((d) => h === d || h.endsWith(`.${d}`));
+  } catch {
+    return false;
+  }
+};
+
+/** General web search with domain and recency filters (as Claude's and Gemini's tools offer). */
+export async function webSearch(
+  query: string,
+  cfg: WebConfig = {},
+  opts: SearchOptions = {},
+): Promise<Hit[] | string> {
+  const site = (opts.site ?? []).map(bareDomain).filter(Boolean);
+  const exclude = (opts.exclude ?? []).map(bareDomain).filter(Boolean);
+  const raw = await webSearchRaw(
+    site.length === 1 ? `${query} site:${site[0]}` : query,
+    cfg,
+    opts.recency,
+  );
+  if (typeof raw === "string") return raw;
+  const kept = raw.filter(
+    (h) => (site.length === 0 || onDomain(h.url, site)) && !onDomain(h.url, exclude),
+  );
+  return kept.length === 0 && raw.length > 0
+    ? `No results on ${site.join(", ") || "the allowed domains"} (${raw.length} elsewhere). Widen the domains or rephrase.`
+    : kept;
+}
+
+async function webSearchRaw(
+  query: string,
+  cfg: WebConfig,
+  recency: SearchOptions["recency"],
+): Promise<Hit[] | string> {
   const f = get(cfg);
   if (cfg.searxngUrl) {
     const res = await f(
-      `${cfg.searxngUrl.replace(/\/$/, "")}/search?q=${encodeURIComponent(query)}&format=json`,
+      `${cfg.searxngUrl.replace(/\/$/, "")}/search?q=${encodeURIComponent(query)}&format=json${recency ? `&time_range=${recency}` : ""}`,
       {
         headers: UA,
         signal: timeout(),
@@ -387,7 +461,13 @@ export async function webSearch(query: string, cfg: WebConfig = {}): Promise<Hit
     );
     const body = (await res.json()) as {
       results?: { title: string; url: string; content?: string; engine?: string }[];
+      unresponsive_engines?: [string, string][];
     };
+    // Helga's lesson: an empty page from failing engines is not "nothing exists".
+    const dead = (body.unresponsive_engines ?? []).map((e) => `${e[0]} (${e[1]})`);
+    if ((body.results ?? []).length === 0 && dead.length > 0) {
+      return `Web search is degraded, not empty: ${dead.join(", ")} did not answer. Try again, rephrase, or use scholar_search / read_docs / github_search.`;
+    }
     return rankHits(body.results ?? [])
       .slice(0, 8)
       .map((r) => ({
@@ -399,7 +479,7 @@ export async function webSearch(query: string, cfg: WebConfig = {}): Promise<Hit
   }
   if (cfg.braveKey) {
     const res = await f(
-      `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=8`,
+      `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=8${recency ? `&freshness=p${recency[0]}` : ""}`,
       {
         headers: { ...UA, Accept: "application/json", "X-Subscription-Token": cfg.braveKey },
         signal: timeout(),
@@ -418,7 +498,12 @@ export async function webSearch(query: string, cfg: WebConfig = {}): Promise<Hit
     const res = await f("https://api.tavily.com/search", {
       method: "POST",
       headers: { ...UA, "Content-Type": "application/json" },
-      body: JSON.stringify({ api_key: cfg.tavilyKey, query, max_results: 8 }),
+      body: JSON.stringify({
+        api_key: cfg.tavilyKey,
+        query,
+        max_results: 8,
+        ...(recency ? { time_range: recency } : {}),
+      }),
       signal: timeout(),
     });
     const body = (await res.json()) as {

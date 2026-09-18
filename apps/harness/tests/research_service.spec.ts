@@ -331,7 +331,7 @@ function scripted(
   const requests: InferenceRequest[] = [];
   let i = 0;
   return {
-    modelId: opts.id ?? "apodex-1.1-mini",
+    modelId: opts.id ?? "generic-researcher",
     supportedArms: ["arm_a_flat"],
     nativeTools: opts.native ?? true,
     contextWindow: { contextTokens: 16384, maxTokens: 1500 },
@@ -351,7 +351,7 @@ function scripted(
   };
 }
 
-describe("the Researcher, driven by Apodex", () => {
+describe("the Researcher, generic native-tool path", () => {
   const deps = {
     repoPath: process.cwd(),
     today: "2026-09-18",
@@ -361,7 +361,7 @@ describe("the Researcher, driven by Apodex", () => {
     }),
   };
 
-  it("uses the vendor prompt, native turns and parallel tool calls, and cites what it read", async () => {
+  it("uses native turns and parallel tool calls, and cites what it read", async () => {
     const model = scripted([
       () => ({
         text: "<think>two things</think>",
@@ -373,14 +373,13 @@ describe("the Researcher, driven by Apodex", () => {
       () => ({ text: "<think>ok</think>Use z.object().parse [1]." }),
     ]);
     const r = await research(model, "How do I validate input with zod?", deps);
-    expect(model.requests[0]?.systemPrompt).toBe(apodexSystemPrompt("2026-09-18"));
+    expect(model.requests[0]?.systemPrompt).toMatch(/## Research workflow/);
     expect(model.requests[0]?.tools?.map((t) => t.name)).toContain("package_readme");
     // Turn 2 carries the assistant's calls and one tool turn per call, by id.
     const turns = model.requests[1]?.messages ?? [];
     expect(turns.map((t) => t.role)).toEqual(["user", "assistant", "tool", "tool"]);
     expect(turns[2]?.toolCallId).toBe("c1");
     expect(turns[2]?.content).toMatch(/^Source \[1\]: npm README of zod/);
-    expect(model.requests[1]?.reasoning).toBe("low");
     expect(r.answer).toBe("Use z.object().parse [1].");
     expect(r.grounded).toBe(true);
     expect(r.evidence[0]?.kind).toBe("documentation");
@@ -395,7 +394,7 @@ describe("the Researcher, driven by Apodex", () => {
       () => ({ text: "Use parse [1], see also [4]." }),
     ]);
     const r = await research(model, "zod?", deps);
-    expect(model.requests[2]?.messages?.at(-1)?.content).toMatch(/Rewrite the answer citing/);
+    expect(model.requests[2]?.messages?.some((m) => /Rewrite the answer citing/.test(m.content))).toBe(true);
     expect(r.badCitations).toEqual([4]);
   });
 
@@ -462,5 +461,129 @@ describe("the Researcher, driven by Apodex", () => {
     expect(r.sources).toEqual(["npm README of zod", 'npm registry search "zod"']);
     expect(r.badCitations).toEqual([]);
     expect(r.grounded).toBe(true);
+  });
+});
+
+describe("research service wiring", () => {
+  it("reads pages through the crawler behind the robots gate, caching the result", async () => {
+    const { fetchPage } = await import("../src/research/web.js");
+    const crawled: string[] = [];
+    const crawler = {
+      crawl: async (url: string) => {
+        crawled.push(url);
+        return {
+          ok: true,
+          title: "Docs",
+          markdown: `rendered ${"text ".repeat(100)} transactions here`,
+        };
+      },
+    };
+    const polite = new PoliteFetcher({
+      fetch: async (url) =>
+        url.endsWith("/robots.txt")
+          ? new Response("User-agent: *\nDisallow: /private")
+          : new Response("<p>plain</p>", { headers: { "content-type": "text/html" } }),
+      pacer: new HostPacer(fakeClock()),
+      cache: new ResearchCache(mkdtempSync(join(tmpdir(), "rc-"))),
+    });
+    const cfg = { polite, crawler };
+    expect(await fetchPage("https://docs.example.dev/a", cfg)).toMatch(/^# Docs\n\nrendered/);
+    expect(await fetchPage("https://docs.example.dev/a", cfg)).toMatch(/^# Docs/);
+    expect(crawled).toEqual(["https://docs.example.dev/a"]); // second read from cache
+    expect(await fetchPage("https://docs.example.dev/private/x", cfg)).toMatch(/robots/);
+    expect(crawled).toHaveLength(1);
+    expect(await fetchPage("http://10.0.0.2/", cfg)).toMatch(/private/);
+    // A crawler failure falls back to the plain reader.
+    const broken = { ...cfg, crawler: { crawl: async () => ({ ok: false, error: "x" }) } };
+    expect(await fetchPage("https://docs.example.dev/b", broken)).toBe("plain");
+  });
+
+  it("never pulls the SearXNG image implicitly, and runs it on loopback when present", async () => {
+    const { ensureSearxng, searxngSettings } = await import("../src/research/searxng.js");
+    const down = async () => {
+      throw new Error("down");
+    };
+    const calls: string[][] = [];
+    const exec = (images: string) => async (_cmd: string, args: string[]) => {
+      calls.push(args);
+      if (args[0] === "images") return images;
+      return "";
+    };
+    expect(
+      await ensureSearxng({
+        exec: exec(""),
+        fetch: down,
+        configDir: mkdtempSync(join(tmpdir(), "sx-")),
+      }),
+    ).toBeUndefined();
+    expect(calls.some((a) => a[0] === "pull" || a[0] === "run")).toBe(false);
+    calls.length = 0;
+    let started = false;
+    const up = async () => {
+      if (!started) throw new Error("down");
+      return new Response("{}");
+    };
+    const exec2 = async (_cmd: string, args: string[]) => {
+      calls.push(args);
+      if (args[0] === "images") return "abc123\n";
+      if (args[0] === "run") started = true;
+      return "";
+    };
+    expect(
+      await ensureSearxng({
+        exec: exec2,
+        fetch: up as typeof fetch,
+        configDir: mkdtempSync(join(tmpdir(), "sx-")),
+      }),
+    ).toMatch(/^http:\/\/127\.0\.0\.1:/);
+    const run = calls.find((a) => a[0] === "run") ?? [];
+    expect(run.join(" ")).toMatch(/-p 127\.0\.0\.1:\d+:8080/);
+    const yml = searxngSettings("s3cret");
+    expect(yml).toMatch(/formats: \[html, json\]/);
+    expect(yml).toMatch(/limiter: false/);
+    expect(yml).toMatch(/name: google\n {4}engine: google\n {4}disabled: true/);
+  });
+
+  it("answers from memory when the same question was answered well, and files research on the card", async () => {
+    const { ResearchMemory, ResearchService } = await import("../src/research/service.js");
+    const memory = new ResearchMemory(join(mkdtempSync(join(tmpdir(), "mem-")), "m.jsonl"));
+    const dossier: { cardId: string; kind: string; text: string }[] = [];
+    const cardStore = {
+      recordDossierEntry: async (e: { cardId: string; kind: string; text: string }) => {
+        dossier.push(e);
+        return e;
+      },
+    };
+    let loads = 0;
+    const model = scripted([
+      () => ({ toolCalls: [{ id: "c1", name: "package_readme", arguments: { name: "zod" } }] }),
+      () => ({ text: "Use z.object().parse [1]." }),
+    ]);
+    const service = new ResearchService({
+      repoPath: process.cwd(),
+      memory,
+      cardStore: cardStore as never,
+      tools: { fetchJson: async () => ({ readme: "zod docs", license: "MIT" }) },
+      model: async () => {
+        loads++;
+        return model;
+      },
+    });
+    const first = await service.ask("How do I validate input with zod?", { cardId: "card_1" });
+    expect(first.fromMemory).toBe(false);
+    expect(loads).toBe(1);
+    const second = await service.ask("how do I validate input with zod", {});
+    expect(second.fromMemory).toBe(true);
+    expect(loads).toBe(1); // no model load for a remembered answer
+    expect(dossier[0]).toMatchObject({ cardId: "card_1", kind: "research" });
+    expect(dossier[0]?.text).toMatch(/Sources: npm README of zod/);
+    expect(
+      (await service.ask("How do I validate input with zod?", { fresh: true })).fromMemory,
+    ).toBe(false);
+  });
+
+  it("carries Crawl4AI's required attribution in the CLI help", async () => {
+    const { RESEARCH_USAGE } = await import("../src/research/cli.js");
+    expect(RESEARCH_USAGE).toMatch(/developed by UncleCode .* Crawl4AI project/);
   });
 });

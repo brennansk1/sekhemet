@@ -15,8 +15,7 @@ import { flowMetrics, pmQuality } from "./pm/metrics.js";
 import { DEFAULT_PM_MODEL, answerQueued, createPmAdapter, runnerLease } from "./pm/service.js";
 import { PmStore } from "./pm/store.js";
 import { PM_EVENTS, type PmMessage, type PmStatus } from "./pm/types.js";
-import { research } from "./research/researcher.js";
-import { webConfigFromEnv } from "./research/web.js";
+import { oneShotResearcher } from "./research/service.js";
 
 export interface PmApiContext {
   repoPath: string;
@@ -104,23 +103,7 @@ export function createPmApi(ctx: PmApiContext) {
           ...(researcherModel
             ? {
                 researcher: (q: string) =>
-                  research(
-                    new HttpInferenceAdapter({
-                      modelId: researcherModel,
-                      apiFormat: "ollama",
-                      contextTokens: 16384,
-                      maxTokens: 1200,
-                      disableReasoning: true,
-                    }),
-                    q,
-                    {
-                      repoPath: ctx.repoPath,
-                      ...(readSettings(ctx.repoPath).researchWeb
-                        ? { web: webConfigFromEnv() }
-                        : {}),
-                      maxRounds: 6,
-                    },
-                  ),
+                  oneShotResearcher(ctx.repoPath, researcherModel, cardStore)(q),
               }
             : {}),
         })
