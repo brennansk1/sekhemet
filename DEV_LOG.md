@@ -44,6 +44,91 @@ If you are Claude reading this because Gemini reached quota limits or you were s
 
 ## Detailed Session Log
 
+### Entry 15 — 2026-09-18 (post-OOM recovery session)
+- **Agent**: Claude Opus 5 (`claude-code`)
+- **Role**: Lead Driver & Delegator
+
+#### A. The overnight OOM, owned
+The previous session ended in a kernel OOM and reboot. Cause: the 13.7GB Nail
+checkpoint was kept resident for over an hour on the 24GB host while 32-40 turn
+cards ran back to back, with a dashboard preview spawning a sandbox probe every
+second. Swap had reached 9.4GB of 10GB and the warning signs were not acted on.
+All committed work survived; the `/tmp` Chronicle scratch repo did not.
+
+The memory governor read `os.freemem()`, which on macOS counts reclaimable cache
+as used and so gave no warning. **Swap is the real signal.** Added
+`checkExecutionHeadroom()`: a turn is refused once swap exceeds 3GB or grows 2GB
+within a card, stopping with a resumable `memory_pressure` reason. The CLI now
+unloads the model in a `finally`, so a crashed card cannot leave 13GB resident.
+
+#### B. Findings from the Helga project (read this session)
+- `docs/reference/MODEL.md`: Nail cold-loads in 211s; Helga distinguishes a cold
+  load from a dead server via `/api/ps`. Adopted: non-resident models get a 480s
+  budget, an unreachable server keeps the short timeout.
+- `docs/QWEN27B_HOSTING_MEASURED.md`: with the rest of the stack up, even the dense
+  Qwen pushes swap to 11GB. Both models are memory-bound on this host.
+- Helga documents Nail as having unreliable JSON and thinking leakage — matching
+  what this harness observed and now parses around.
+
+#### C. Measured: the model lives on a 90 MB/s disk
+Ollama's `OLLAMA_MODELS` symlinks to the external USB drive. Cold reads measured
+**0.09 GB/s** there against **3.30 GB/s** on the internal SSD (37x). Most of the
+211-258s cold load is that disk, and memory-mapped weights re-read from it under
+pressure. A full Nail copy already exists on the SSD; switching is the user's call
+because Helga shares the same Ollama. The internal disk is 95% full and hosts
+swap, so no more than one model should move there.
+
+#### D. What changed in the harness
+- **Parse gate (design G6):** a write that would turn a parseable TS/JS file
+  unparseable is refused with the exact location. Addresses card_chron_db, where
+  the model broke its own brace structure across chained edits.
+- **Pinned context:** acceptance tests and scope files are in the prompt from
+  turn 1; the agent had spent 2-4 turns per card reading them.
+- **`sekhemet queue`:** all Ready cards on one warm model, scorecard to
+  `.sekhemet/queue_report.json`.
+- **Manager/worker roles:** `ModelRouter` guarantees one resident model;
+  `planRepair()` has the manager diagnose failed cards from their evidence; the
+  queue batches escalations so a run costs two swaps, not one per card.
+- **Chronicle oracles:** db and api had no acceptance tests and now do; card specs
+  name exact signatures; the api card follows the spec (src/server.ts).
+
+- **Native tool calling.** Nail advertises Ollama's tools capability but the
+  adapter never sent a schema. Verified on the live model: with schemas it emits
+  clean `write_file` + `finish_card` calls; without, it wrote a Markdown code block
+  and no call at all — the failure that stalled card_chron_verifier.
+- **Transcripts (K11)** and **persisted evidence**; a Review drawer in the
+  dashboard renders evidence, and card gate strips now come from real results.
+
+#### E. Baseline result (Nail, no manager, before native tools)
+**Pass@1 3/6 (50%) in 22.2 min**, up from 2/6 at 7-20 min per failing card.
+iface, hasher and db each passed in 2 turns (14-150s; hasher went from 6 turns
+to 2, db from a 32-turn failure to a 2-turn pass). verifier stalled on
+unparseable turns; ledger exhausted its repair ladder; api was stopped by the
+**memory guard** when swap grew 2GB during two concurrent multi-GB model
+downloads — the harness paused itself, unloaded the model and left the host
+healthy, where the previous night the same pressure ended in a reboot.
+
+#### F. Bugs found by building and inspecting, not by reading
+- Card diffs counted `tsc -b` output: a one-file card measured 14 files, bounds
+  failed on every card, and acceptance would have merged dist/ into main.
+- Re-attaching a worktree deleted it: git reports realpaths, the harness held
+  symlinked /tmp and /var paths, so every retry discarded the work it resumed.
+- Two dashboard defects of my own (script inside the stylesheet; escapes that
+  became raw newlines) — caught by visual inspection, now covered by a test.
+
+#### G. Model research
+A research pass over the Hugging Face Hub (`MODEL_CANDIDATES.md`, all numbers
+sourced and tagged vendor/independent/quantizer). Findings: Nail is Unsloth's
+stock Qwen3.6-35B-A3B quant with an old chat template, not a fine-tune; the
+Ornith-1.5 family (Tiel-Coder, Cyber-Tiel) leads the fast-worker class
+(SWE-bench Verified 79.0 vs 73.4 [vendor]); Qwen3.8-27B remains the strongest
+manager that fits. Downloaded at the user's request: Ternary-Bonsai-2-27B PQ2_0
+(sha256 verified; needs the PrismML llama.cpp fork, not yet approved) and
+Cyber-Tiel-Coder-35B-A3B MTP UD-IQ3_XXS (the user's chosen worker), which runs
+under a harness-managed llama-server with its MTP head enabled.
+
+---
+
 ### Entry 14 — 2026-09-18 03:50 MDT
 - **Agent**: Claude Opus 5 (`claude-code`)
 - **Role**: Lead Driver & Delegator
