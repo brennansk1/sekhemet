@@ -207,13 +207,23 @@ export class LearningStore {
   }
 
   /** Active rules a card's prompt should carry, most valuable first. */
+  /**
+   * Rules a card's prompt should carry, most valuable first: approved rules,
+   * plus candidates learned this run from verified signals (`runRules`), which
+   * are in force for the rest of the run and wait for a human beyond it.
+   */
   public async activeFor(
     role: RuleRole,
     card: { title: string; scopeFiles: string[] },
+    runRules?: Set<string>,
   ): Promise<LearnedRule[]> {
     const kind = /\(SPIDR:\s*([A-Za-z]+)/.exec(card.title)?.[1];
     return (await this.rules())
-      .filter((r) => r.role === role && r.status === "active")
+      .filter(
+        (r) =>
+          r.role === role &&
+          (r.status === "active" || (r.status === "candidate" && runRules?.has(r.id) === true)),
+      )
       .filter(
         (r) =>
           (!r.scope.kind || r.scope.kind === kind) &&

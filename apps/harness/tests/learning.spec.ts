@@ -34,8 +34,9 @@ describe("learning: playbook and user profile", () => {
     rmSync(configDir, { recursive: true, force: true });
   });
 
-  it("turns a struggle into a candidate rule that is inert until a human approves it", async () => {
+  it("turns a struggle into a candidate rule: inert, except for the run that learned it", async () => {
     const card = await cards.createCard({ tier: "task", title: "Ledger (SPIDR: Rule)" });
+    const runRules = new Set<string>();
     const proposed = await learnFromAttempt(
       store,
       card,
@@ -44,19 +45,29 @@ describe("learning: playbook and user profile", () => {
         rulesUsed: [],
         lessons: {
           lines: [],
-          struggles: [{ text: "src/l.ts:9:5 TS2741: Property 'timestamp' is missing", edits: 2 }],
+          struggles: [
+            { text: "src/l.ts:9:5 TS2554: Expected 2 arguments, but got 1.", edits: 2 },
+            // Has a built-in remedy: the failure block already says the fix.
+            { text: "src/l.ts:9:5 TS2741: Property 'timestamp' is missing", edits: 2 },
+          ],
         },
       },
       1,
+      (id) => runRules.add(id),
     );
     expect(proposed).toBe(1);
     const [rule] = await store.rules();
     expect(rule).toMatchObject({
       status: "candidate",
       source: "struggle",
-      scope: { kind: "Rule", errorPattern: "TS2741" },
+      scope: { kind: "Rule", errorPattern: "TS2554" },
     });
+    // Not in force for a later run...
     expect(await store.activeFor("worker", { title: card.title, scopeFiles: [] })).toEqual([]);
+    // ...but in force for the rest of the run that learned it.
+    expect(
+      (await store.activeFor("worker", { title: card.title, scopeFiles: [] }, runRules)).length,
+    ).toBe(1);
 
     await store.update(rule?.id ?? "", { status: "active" });
     expect((await store.activeFor("worker", { title: card.title, scopeFiles: [] })).length).toBe(1);

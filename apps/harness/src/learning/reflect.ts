@@ -31,6 +31,8 @@ export async function learnFromAttempt(
   card: CardRecord,
   result: Pick<CardRunResult, "passed" | "rulesUsed" | "lessons">,
   attempt: number,
+  /** Called with each new rule id: the queue keeps them in force for the run. */
+  onProposed?: (ruleId: string) => void,
 ): Promise<number> {
   if (attempt === 1) {
     const learned = new Set((await store.rules()).map((r) => r.id));
@@ -44,19 +46,22 @@ export async function learnFromAttempt(
   for (const s of result.lessons.struggles) {
     const code = errorCode(s.text);
     const message = s.text.replace(/^\S+:\d+:\d+\s*/, "").slice(0, 200);
-    const remedy = code ? remedyFor(code, message) : undefined;
+    // A known code already carries its remedy in the failure block itself: a
+    // rule saying the same thing would only duplicate it in the window.
+    if (code && remedyFor(code, message)) continue;
     const rule = await store.propose({
       role: "worker",
-      text: remedy
-        ? `When you see ${code ?? "this error"} ("${message}"): ${remedy}`
-        : `"${message}" took ${s.edits + 1} attempts to fix on ${card.title.replace(/\s*\(SPIDR:[^)]*\)/, "")}. Before editing, read the declaration involved and check its real type or API.`,
+      text: `"${message}" took ${s.edits + 1} attempts to fix on ${card.title.replace(/\s*\(SPIDR:[^)]*\)/, "")}. Before editing, read the declaration involved and check its real type or API.`,
       scope: scopeOf(card, code),
       source: "struggle",
       evidence: [
         { cardId: card.id, note: `${s.text} survived ${s.edits} edit(s) before it was fixed` },
       ],
     });
-    if (rule) proposed++;
+    if (rule) {
+      proposed++;
+      onProposed?.(rule.id);
+    }
   }
   return proposed;
 }

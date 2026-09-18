@@ -567,6 +567,27 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     // alternated because only one model fits in memory and every swap
     // reloads weights. --auto-accept merges passing cards so later cards build
     // on them: a benchmarking convenience, since acceptance is a human call.
+    // One run profile, so a run exercises what was built (integration review):
+    // --profile full = exploration, escalated retries, review, and the step
+    // cap the replay tuner recommended (16 until a tuning report exists).
+    if (argv[argv.indexOf("--profile") + 1] === "full") {
+      let cap = 16;
+      try {
+        const t = JSON.parse(
+          readFileSync(join(config.repoPath, ".sekhemet", "tuning", "latest.json"), "utf8"),
+        ) as { best?: { policy?: { stepBudget?: number } } };
+        cap = t.best?.policy?.stepBudget ?? cap;
+      } catch {
+        // No tuning yet: the default cap.
+      }
+      for (const flag of ["--explore", "--escalate-retries", "--review"]) {
+        if (!argv.includes(flag)) argv.push(flag);
+      }
+      if (!argv.includes("--max-turns")) argv.push("--max-turns", String(cap));
+      console.log(
+        `Profile full: ${argv.filter((a) => a.startsWith("--") && a !== "--profile").join(" ")}`,
+      );
+    }
     const autoAccept = argv.includes("--auto-accept");
     const managerIdx = argv.indexOf("--manager");
     const managerModel = managerIdx !== -1 ? argv[managerIdx + 1] : undefined;
@@ -816,12 +837,15 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         await pmStore.setStatus({ phase: "idle" });
       }
     };
+    /** Rules learned during this run from verified signals: in force for this run. */
+    const runRules = new Set<string>();
     const ctx = {
       repoPath: config.repoPath,
       restrictedMode: config.restrictedMode,
       cardStore,
       boardService,
       learning: new LearningStore(log),
+      runRules,
       teamNote: () => teamNote(),
       askTeam: (cardId: string, question: string) => askTeam(cardId, question),
       afterTurn: async (_cardId: string, turn: { turnIndex: number }) => {
@@ -965,19 +989,72 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     };
 
     try {
-      await pass(ready, 1);
+      /**
+       * Rounds until nothing changes (integration review items 1 and 2).
+       * Each round: first attempts (with prerequisite sweeps), then ONE
+       * Researcher batch (one load for every question), then ONE manager
+       * batch (plans informed by the research, answers to Worker questions),
+       * then the retries. Cards that only became runnable later get the same
+       * plan-and-retry chance as the rest. Reflection, consolidation and the
+       * cross-family review run once at the end, after the retries, so they
+       * see whether the plans worked.
+       */
+      const retried = new Set<string>();
+      const reflections: {
+        card: CardRecord;
+        plan: string;
+        firstStop: string;
+        retryPassed: boolean;
+      }[] = [];
+      let firstAttempts: CardRecord[] = ready;
+      for (let round = 1; round <= 6 && !halted; round++) {
+        await pass(firstAttempts, 1);
+        firstAttempts = [];
+        let progress = true;
+        while (!halted && progress && deferred.length > 0) {
+          const before = deferred.length;
+          await pass([...deferred], 1);
+          progress = deferred.length < before;
+        }
 
-      if (!halted && managerModel && failed.length > 0) {
-        // One swap to the manager for the whole batch of failures.
+        const toRepair = failed
+          .splice(0, failed.length)
+          .filter(({ card }) => !retried.has(card.id));
+        if (halted || !managerModel || toRepair.length === 0) break;
+
+        // Researcher batch: one load, every unexplained struggle.
+        if (askResearcher && unexplained.length > 0) {
+          const researcher = await router.use("researcher");
+          const web = readSettings(config.repoPath).researchWeb ? webConfigFromEnv() : undefined;
+          for (const u of unexplained.splice(0, 4)) {
+            const r = await research(
+              researcher,
+              `A coding model working on this TypeScript project hit this error and needed several attempts to fix it: "${u.text}". What is the correct approach? Give one concrete rule.`,
+              {
+                repoPath: config.repoPath,
+                ...(web ? { web } : {}),
+                maxRounds: researcherModel === "apodex" ? 6 : 3,
+              },
+            ).catch(() => undefined);
+            if (!r?.grounded) continue;
+            const rule = await ctx.learning.propose({
+              role: "worker",
+              text: r.answer.slice(0, 500),
+              scope: {},
+              source: "research",
+              evidence: [
+                { cardId: u.cardId, note: `Researcher, sources: ${r.sources.join("; ")}` },
+              ],
+            });
+            if (rule) runRules.add(rule.id);
+            console.log(`   Researcher proposed a rule for ${u.cardId}`);
+          }
+        }
+
+        // Manager batch: plans (the research is now in the playbook), answers.
         const manager = await router.use("manager");
         const plans = new Map<string, string>();
-        const reflections: {
-          card: CardRecord;
-          plan: string;
-          firstStop: string;
-          retryPassed: boolean;
-        }[] = [];
-        for (const { card, result } of failed) {
+        for (const { card, result } of toRepair) {
           console.log(`\n--- manager reviewing ${card.id} ---`);
           const plan = await planRepair(manager, {
             card,
@@ -995,67 +1072,45 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
               .join("\n"),
           );
         }
-
-        // One swap back, then retry each failure with its plan.
-        const retry = failed.splice(0, failed.length).map(({ card }) => card);
-        // Merit's reflection runs now, while its model is already resident:
-        // learning must never cost an extra swap.
-        // Worker questions queued during the pass are answered in this batch,
-        // while Merit is resident, and reach each card's retry.
         await answerPm(undefined, true).catch(() => undefined);
         await collectAnswers();
-        const learned = await reflectWithManager(manager, ctx.learning, reflections).catch(() => 0);
-        // Cross-family review when a reviewer model is configured (one extra
-        // swap on a 24 GB host); otherwise Merit reviews while resident.
-        await reviewPassed(reviewerModel ? await router.use("reviewer") : manager);
-        if (reviewerModel) await router.use("manager");
-        // The Researcher investigates struggles nothing in the playbook
-        // explained, and each grounded answer becomes a candidate rule.
-        if (askResearcher && unexplained.length > 0) {
-          for (const u of unexplained.splice(0, 3)) {
-            const r = await askResearcher(
-              `A coding model working on this TypeScript project hit this error and needed several attempts to fix it: "${u.text}". What is the correct approach? Give one concrete rule.`,
-            ).catch(() => undefined);
-            if (!r?.grounded) continue;
-            await ctx.learning.propose({
-              role: "worker",
-              text: r.answer.slice(0, 500),
-              scope: {},
-              source: "research",
-              evidence: [
-                { cardId: u.cardId, note: `Researcher, sources: ${r.sources.join("; ")}` },
-              ],
-            });
-            console.log(`   Researcher proposed a rule for ${u.cardId}`);
-          }
-        }
-        // Mem0-style consolidation of what was learned, same residency.
-        const c = await consolidateWithManager(manager, ctx.learning).catch(() => undefined);
-        if (c && c.merged + c.contradictions + c.duplicates > 0) {
-          console.log(
-            `--- Merit consolidated rules: ${c.merged} merged, ${c.contradictions} contradiction(s) flagged, ${c.duplicates} duplicate(s) retired ---`,
+
+        // Retries, each once.
+        const retry = toRepair.map(({ card }) => card);
+        for (const card of retry) retried.add(card.id);
+        await pass(retry, 2, plans);
+        for (const r of reflections) {
+          r.retryPassed = entries.some(
+            (e) => e.cardId === r.card.id && e.attempt === 2 && e.passed,
           );
         }
-        if (learned > 0) console.log(`\n--- Merit proposed ${learned} rule(s) from this run ---`);
-        await pass(retry, 2, plans);
-      }
-
-      // Cards held back for a prerequisite get their first attempt once it has
-      // merged. Repeat until a sweep makes no progress.
-      let progress = true;
-      while (!halted && progress && deferred.length > 0) {
-        const before = deferred.length;
-        await pass([...deferred], 1);
-        progress = deferred.length < before;
+        failed.splice(0, failed.length); // a failed retry does not repeat
       }
       for (const card of deferred) {
         console.log(
           `\n--- ${card.id} never ran: prerequisites ${(await blockedBy(card)).join(", ")} did not merge ---`,
         );
       }
-      // Reviews still pending (no failures loaded Merit's model) run now only
-      // when asked: on a 24 GB host that costs one swap.
-      if (reviewAll && passedResults.length > 0) {
+
+      // End phase: learn from what happened, including the retries.
+      if (!halted && managerModel && (reflections.length > 0 || passedResults.length > 0)) {
+        const manager = await router.use("manager");
+        const learned = await reflectWithManager(manager, ctx.learning, reflections).catch(() => 0);
+        if (learned > 0) console.log(`\n--- Merit proposed ${learned} rule(s) from this run ---`);
+        const c = await consolidateWithManager(manager, ctx.learning).catch(() => undefined);
+        if (c && c.merged + c.contradictions + c.duplicates > 0) {
+          console.log(
+            `--- Merit consolidated rules: ${c.merged} merged, ${c.contradictions} contradiction(s) flagged, ${c.duplicates} duplicate(s) retired ---`,
+          );
+        }
+        await answerPm(undefined, true).catch(() => undefined);
+        // Review last, once: the reviewer model loads a single time.
+        if (reviewerModel || reviewAll) {
+          await reviewPassed(reviewerModel ? await router.use("reviewer") : manager).catch(
+            () => undefined,
+          );
+        }
+      } else if (reviewAll && passedResults.length > 0) {
         await reviewPassed(await router.use(reviewerModel ? "reviewer" : "manager")).catch(
           () => undefined,
         );

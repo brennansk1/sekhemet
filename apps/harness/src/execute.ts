@@ -28,6 +28,8 @@ export interface ExecutionContext {
   afterTurn?: (cardId: string, turn: TurnResult) => Promise<void>;
   /** The learning store: active rules go into the prompt, outcomes come back. */
   learning?: LearningStore;
+  /** Rules learned this run from verified signals: in force for the run. */
+  runRules?: Set<string>;
   /** One paragraph on who is on the team right now (from the residency plan). */
   teamNote?: () => string;
   /** Route a Worker question the card's contract cannot answer to the team. */
@@ -127,7 +129,7 @@ export async function executeCard(
     addTransientRule?: (r: { id: string; pattern: string; instruction: string }) => void;
     rules?: Map<string, unknown>;
   };
-  for (const rule of (await ctx.learning?.activeFor("worker", card)) ?? []) {
+  for (const rule of (await ctx.learning?.activeFor("worker", card, ctx.runRules)) ?? []) {
     const r = { id: rule.id, pattern: card.title, instruction: rule.text };
     if (typeof transient.addTransientRule === "function") transient.addTransientRule(r);
     else transient.rules?.set(r.id, r);
@@ -211,7 +213,13 @@ export async function executeCard(
   const result = await runner.run();
   if (ctx.learning) {
     try {
-      const proposed = await learnFromAttempt(ctx.learning, card, result, managerGuidance ? 2 : 1);
+      const proposed = await learnFromAttempt(
+        ctx.learning,
+        card,
+        result,
+        managerGuidance ? 2 : 1,
+        (id) => ctx.runRules?.add(id),
+      );
       if (proposed > 0) log(`   learning: ${proposed} candidate rule(s) from this attempt`);
     } catch {
       // Learning is a side channel; it must never fail a card.
