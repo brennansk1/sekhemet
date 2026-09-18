@@ -11,23 +11,36 @@
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
 If you are Claude reading this because Gemini reached quota limits or you were summoned to take the lead:
-1. **Current Milestone**: Milestone 2 (@sekhemet/sandbox — Process Isolation & Containment)
+1. **Current Milestone**: Milestone 3 (@sekhemet/sync — Git Worktree Isolation & Checkpoint Refs)
 2. **Current State**:
    - Git repository initialized on branch `main`.
-   - All 13 workspace projects scaffolded, linked, typechecked (`tsc -b`), and passing Biome linter/formatter.
-   - `@sekhemet/kernel` 100% complete and tested:
-     - `EventLog` with SHA-256 hash chaining and tamper detection.
-     - `CardStore` with SQLite WAL projections (`cards`, `checkpoints`) and complete single-source-of-truth projection replay (`rebuildProjections()`).
-     - 7 unit/integration tests passing green in <10ms.
+   - All 13 workspace projects linked and typechecked (`tsc -b`).
+   - `@sekhemet/kernel` 100% complete (EventLog, SQLite WAL CardStore, projection replay).
+   - `@sekhemet/sandbox` 100% complete (ProcessSandbox timeout containment, buffer limits, macOS Seatbelt profile generation).
+   - 12 unit/integration tests passing green.
 3. **Immediate Next Task**:
-   - Implement `@sekhemet/sandbox`:
-     - Safe process isolation with path confinement, timeout kill, memory limits, and macOS Seatbelt profile generation.
-     - Vitest tests in `packages/sandbox/tests/sandbox.spec.ts`.
+   - Implement `@sekhemet/sync`:
+     - Git worktree session manager (`git worktree add/remove`).
+     - Checkpoint commit reference writer (`refs/sekhemet/checkpoints/<card-id>/step_<N>`).
+     - Squashed acceptance merge with mandatory multi-agent attribution trailers.
+     - Vitest tests in `packages/sync/tests/sync.spec.ts`.
 4. **Active Checkpoint Git Ref**: `refs/heads/main`
 
 ---
 
 ## Detailed Session Log
+
+### Entry 3 — 2026-09-17 22:10:00 MDT
+- **Agent**: Gemini 2.5 Pro (`antigravity-cli`)
+- **Role**: Subagent Implementer & Test Author
+- **Actions Taken**:
+  1. Implemented `@sekhemet/sandbox/src/types.ts`: typed options, execution results, and interfaces.
+  2. Implemented `@sekhemet/sandbox/src/seatbelt.ts`: macOS Seatbelt scheme profile generator with scoped write paths and network denial.
+  3. Implemented `@sekhemet/sandbox/src/executor.ts`: `ProcessSandbox` with subprocess spawn, buffer limits, and hard `timeoutMs` termination (`SIGTERM` -> `SIGKILL`).
+  4. Added `packages/sandbox/tests/sandbox.spec.ts`: 5 tests verifying safe execution, exit code capture, timeout kills, and Seatbelt profile syntax. All passed green.
+  5. Gates passed: 12 tests green across kernel and sandbox.
+- **Next Steps**:
+  - Implement `@sekhemet/sync` Git worktree and checkpoint reference management.
 
 ### Entry 2 — 2026-09-17 22:09:15 MDT
 - **Agent**: Gemini 2.5 Pro (`antigravity-cli`)
