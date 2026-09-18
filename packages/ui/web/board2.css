@@ -1189,3 +1189,148 @@
     padding: 16px;
   }
 }
+
+/* ---------- Worker capability (Insights) ---------- */
+.ins .ins-later {
+  margin: 0;
+  max-width: none;
+  padding: 32px 24px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+}
+.capab {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.cap-h {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.cap-h h2 {
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+.cap-h .sec {
+  font-size: var(--text-sm);
+}
+.cap-empty,
+.cap-note {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+.cap-empty {
+  padding: 16px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+}
+.cap-empty .ic {
+  flex: none;
+  margin-top: 2px;
+}
+.cap-empty b {
+  color: var(--text-primary);
+}
+.cap-empty code {
+  font-size: var(--text-xs);
+  background: var(--bg-raised);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+.caprows {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.caprows li {
+  display: grid;
+  grid-template-columns: 96px minmax(120px, 1fr) auto;
+  grid-template-areas: "l t v" ". f f";
+  align-items: center;
+  column-gap: 12px;
+  min-height: 28px;
+  font-size: var(--text-sm);
+}
+.caprows .cap-l {
+  grid-area: l;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.caprows .cap-trk {
+  grid-area: t;
+  position: relative;
+  height: 16px;
+}
+.caprows li:not(.axis-row) .cap-trk::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 7px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--bg-overlay);
+}
+.caprows .cap-ci {
+  position: absolute;
+  top: 5px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--text-secondary);
+  opacity: 0.45;
+}
+.caprows .cap-pt {
+  position: absolute;
+  top: 2px;
+  width: 12px;
+  height: 12px;
+  margin-left: -6px;
+  border-radius: 50%;
+  background: var(--text-primary);
+  border: 2px solid var(--bg-surface);
+}
+.caprows .cap-v {
+  grid-area: v;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.caprows .few {
+  grid-area: f;
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  font-size: var(--text-xs);
+  color: var(--state-parked);
+  font-weight: 500;
+}
+.caprows li.untrusted .cap-pt {
+  background: var(--bg-surface);
+  border-color: var(--text-secondary);
+}
+.caprows li.untrusted .cap-l {
+  color: var(--text-secondary);
+}
+.caprows .axis-row {
+  min-height: 16px;
+}
+.caprows .cap-trk.axis span {
+  position: absolute;
+  transform: translateX(-50%);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.chart .bar.thin {
+  fill: var(--border-strong);
+}

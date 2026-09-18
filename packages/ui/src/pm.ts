@@ -1004,3 +1004,53 @@ export function formatClock(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
+
+// ---------------------------------------------------------------------------
+// Worker capability (GET /api/capability)
+// ---------------------------------------------------------------------------
+
+/** Below this many attempts a rate is shown but called out as untrustworthy. */
+export const MIN_TRUSTED_ATTEMPTS = 10;
+
+export interface CapabilityType {
+  type: string;
+  label: string;
+  attempts: number;
+  passes: number;
+  rate: number;
+  low: number;
+  high: number;
+}
+
+export interface CapabilityRow extends CapabilityType {
+  trusted: boolean;
+  /** `7 of 9 passed · 78% (45–94%)` */
+  text: string;
+}
+
+function pct(v: number): string {
+  return `${Math.round(Math.min(1, Math.max(0, v)) * 100)}%`;
+}
+
+/** Rows for the per-type chart, best-evidenced first, with plain words. */
+export function capabilityRows(types: CapabilityType[] | undefined): CapabilityRow[] {
+  return [...(types ?? [])]
+    .filter((t) => Number.isFinite(t.attempts) && t.attempts > 0)
+    .sort((a, b) => b.attempts - a.attempts || b.rate - a.rate)
+    .map((t) => {
+      const trusted = t.attempts >= MIN_TRUSTED_ATTEMPTS;
+      return {
+        ...t,
+        trusted,
+        text: `${t.passes} of ${t.attempts} passed · ${pct(t.rate)} (${pct(t.low).replace("%", "")}–${pct(t.high)})`,
+      };
+    });
+}
+
+/** The headline sentence for the size curve. */
+export function horizonSentence(lines: number | undefined): string {
+  if (typeof lines !== "number" || !Number.isFinite(lines) || lines <= 0) {
+    return "Not enough attempts yet to say how large a change the Worker handles reliably.";
+  }
+  return `The Worker passes 80% of cards that change up to about ${Math.round(lines)} lines.`;
+}

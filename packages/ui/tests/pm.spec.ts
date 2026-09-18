@@ -6,6 +6,7 @@ import {
   activeCycle,
   agingClass,
   applyAllLabel,
+  capabilityRows,
   cycleProgress,
   cycleTimeStats,
   extractMentions,
@@ -15,6 +16,7 @@ import {
   formatQuery,
   formatShortDate,
   groupCards,
+  horizonSentence,
   matchCard,
   movingAverage,
   parseQuery,
@@ -436,5 +438,30 @@ describe("waiting steps (PmStatus.phase)", () => {
     expect(pmSteps({ phase: "waiting_for_step", step: 7 })[0]?.label).toBe(
       "Pausing the Worker after step 7",
     );
+  });
+});
+
+describe("worker capability", () => {
+  it("orders by evidence, writes the interval, and flags small samples", () => {
+    const rows = capabilityRows([
+      { type: "ui", label: "UI", attempts: 4, passes: 3, rate: 0.75, low: 0.3, high: 0.954 },
+      {
+        type: "rules",
+        label: "Rules",
+        attempts: 20,
+        passes: 14,
+        rate: 0.7,
+        low: 0.481,
+        high: 0.855,
+      },
+      { type: "none", label: "None", attempts: 0, passes: 0, rate: 0, low: 0, high: 0 },
+    ]);
+    expect(rows.map((r) => r.type)).toEqual(["rules", "ui"]);
+    expect(rows[0]).toMatchObject({ trusted: true, text: "14 of 20 passed · 70% (48–86%)" });
+    expect(rows[1]?.trusted).toBe(false);
+    expect(horizonSentence(118.6)).toBe(
+      "The Worker passes 80% of cards that change up to about 119 lines.",
+    );
+    expect(horizonSentence(undefined)).toMatch(/^Not enough attempts/);
   });
 });

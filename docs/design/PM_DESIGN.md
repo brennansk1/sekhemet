@@ -471,6 +471,13 @@ Flow metrics for the last 30 days (`/api/metrics/flow?days=30`, with 7, 30 or 90
 - No gridlines beyond a baseline and the percentile rules.
 - Each chart carries a one-line text summary for screen readers (`<figcaption>`).
 
+**Worker capability** (`GET /api/capability`) is a second section under the flow charts. It answers "what can the Worker be trusted with?":
+
+- **Which kinds of card does it pass?** One row per kind. Each row has a point at the pass rate on a 0–100% track, a bar for its 95% Wilson interval (`low`–`high`), and the words *16 of 18 passed · 89% (67–97%)*. Rows are ordered by attempts, so the best-evidenced come first.
+- **Fewer than 10 attempts is called out in words**: *Too few attempts to trust*, in amber under the row. The point is hollow and the label secondary. The caption counts these rows: *2 of 5 kinds have fewer than 10 attempts; treat those rates as rough.* A wide bar is explained as uncertainty, not failure.
+- **How big a change can it handle?** Pass rate by change size (`sizeCurve`) as bars, with an 80% reference line. The caption is the horizon sentence: *The Worker passes 80% of cards that change up to about 62 lines* (`horizon80Lines`). Buckets with fewer than 10 attempts are faded and say so. The server's `note` is shown verbatim under the section.
+- **States:** a 404 shows *Worker capability isn't on this server yet*, naming the endpoint. `sampleSize` 0 shows *No finished attempts yet*. The section renders independently of the flow metrics, so either can be missing.
+
 **Empty** (under 3 finished cards): *Not enough finished cards to measure flow yet. Insights need at least 3; you have 1.* **Not on this server** (404): *Flow metrics aren't on this server yet (`/api/metrics/flow` returned 404).*
 
 ---

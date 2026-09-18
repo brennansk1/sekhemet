@@ -5,10 +5,13 @@
 import { esc, getJSON, icon } from "./dom.js";
 import {
   CFD_KEYS,
+  MIN_TRUSTED_ATTEMPTS,
   agingClass,
+  capabilityRows,
   cycleTimeStats,
   formatHours,
   formatShortDate,
+  horizonSentence,
   movingAverage,
   stackCfd,
 } from "./lib/pm.js";
@@ -17,7 +20,7 @@ import { openPeek } from "./peek.js";
 import { setTopbar } from "./shell.js";
 import { store } from "./store.js";
 
-const ui = { root: null, days: 30, data: null, status: 0, loading: false };
+const ui = { root: null, days: 30, data: null, status: 0, cap: null, capStatus: 0 };
 const AGING_COLS = ["ready", "planning", "in_progress", "verify", "review", "parked"];
 const CFD_LABEL = {
   backlog: "Backlog",
@@ -259,6 +262,90 @@ function cfdChart(rows) {
   );
 }
 
+/* ---------- Worker capability (GET /api/capability) ---------- */
+
+function pctText(v) {
+  return `${Math.round(Math.min(1, Math.max(0, v)) * 100)}%`;
+}
+
+function typeRows(rows) {
+  const items = rows
+    .map((r) => {
+      const lo = Math.min(100, Math.max(0, r.low * 100));
+      const hi = Math.min(100, Math.max(0, r.high * 100));
+      const at = Math.min(100, Math.max(0, r.rate * 100));
+      const flag = r.trusted
+        ? ""
+        : `<span class="few" title="${esc(`Fewer than ${MIN_TRUSTED_ATTEMPTS} attempts: the interval is wide and the rate can move a lot with the next few cards.`)}">${icon("alert", 12, "ic s12")}Too few attempts to trust</span>`;
+      return `<li class="${r.trusted ? "" : "untrusted"}"><span class="cap-l">${esc(r.label)}</span><span class="cap-trk" role="img" aria-label="${esc(`${r.label}: ${r.text}${r.trusted ? "" : ". Too few attempts to trust."}`)}"><span class="cap-ci" style="left:${lo}%;width:${Math.max(0.5, hi - lo)}%"></span><span class="cap-pt" style="left:${at}%"></span></span><span class="cap-v tnum">${esc(r.text)}</span>${flag}</li>`;
+    })
+    .join("");
+  const axis = `<li class="axis-row" aria-hidden="true"><span class="cap-l"></span><span class="cap-trk axis">${[0, 25, 50, 75, 100].map((t) => `<span style="left:${t}%">${t}%</span>`).join("")}</span><span class="cap-v"></span></li>`;
+  return `<ul class="caprows">${items}${axis}</ul>`;
+}
+
+function sizeCurve(curve, horizon) {
+  const n = curve.length;
+  const step = (W - M.l - M.r) / Math.max(1, n);
+  const bw = Math.max(6, Math.min(40, step * 0.6));
+  const parts = [yAxis(1, (v) => pctText(v), 4)];
+  parts.push(pctLine(0.8, 1, "80%", "p85"));
+  curve.forEach((b, i) => {
+    const x = M.l + i * step + (step - bw) / 2;
+    const y = yOf(b.rate, 1);
+    const h = yOf(0, 1) - y;
+    const thin = b.attempts < MIN_TRUSTED_ATTEMPTS;
+    const tip = `Up to ${b.maxLines} lines: ${pctText(b.rate)} of ${b.attempts} attempts${thin ? " (too few to trust)" : ""}`;
+    if (h > 0) {
+      parts.push(
+        `<path class="bar${thin ? " thin" : ""}" d="M${x} ${y + h}V${y + Math.min(2, h)}q0 -2 2 -2h${bw - 4}q2 0 2 2V${y + h}z"><title>${esc(tip)}</title></path>`,
+      );
+    }
+    parts.push(
+      `<text class="ax" x="${x + bw / 2}" y="${H - 8}" text-anchor="middle">≤${esc(b.maxLines)}</text>`,
+    );
+  });
+  const caption = `${horizonSentence(horizon)} Faded bars have fewer than ${MIN_TRUSTED_ATTEMPTS} attempts.`;
+  const table = tableHtml(
+    ["Changed lines up to", "Attempts", "Pass rate"],
+    curve.map((b) => [String(b.maxLines), String(b.attempts), pctText(b.rate)]),
+  );
+  return figure(
+    "Pass rate by change size",
+    "How big a change can it handle?",
+    caption,
+    parts.join(""),
+    table,
+  );
+}
+
+function capabilityHtml() {
+  const head = (sub) =>
+    `<header class="cap-h"><h2>Worker capability</h2><span class="sec">${esc(sub)}</span></header>`;
+  if (!ui.capStatus) return "";
+  if (ui.capStatus === 404) {
+    return `<section class="capab">${head("Pass rates by kind of card and by change size")}<p class="cap-empty">${icon("insights", 14, "ic s14")}<span><b>Worker capability isn't on this server yet.</b> <code>GET /api/capability</code> returned 404. Once it exists, this shows how often the Worker passes each kind of card and how that falls as changes grow, each with its uncertainty.</span></p></section>`;
+  }
+  if (ui.capStatus !== 200 || !ui.cap) {
+    return `<section class="capab">${head("")}<p class="cap-empty">${icon("alert", 14, "ic s14 i-fail")}<span><b>Couldn't load Worker capability.</b> The server returned ${esc(ui.capStatus > 0 ? ui.capStatus : "no response")}.</span></p></section>`;
+  }
+  const c = ui.cap;
+  const rows = capabilityRows(c.types);
+  if (!c.sampleSize || rows.length === 0) {
+    return `<section class="capab">${head("")}<p class="cap-empty">${icon("insights", 14, "ic s14")}<span><b>No finished attempts yet.</b> Pass rates appear once the Worker has run some cards.</span></p></section>`;
+  }
+  const few = rows.filter((r) => !r.trusted).length;
+  const sub = `${c.sampleSize} attempts · bars show the pass rate and its 95% interval`;
+  const rowsFig = `<figure class="chart"><header><h2>Which kinds of card does it pass?</h2><span class="sec">Pass rate by kind</span></header>${typeRows(rows)}<figcaption>${esc(
+    few
+      ? `${few} of ${rows.length} kinds have fewer than ${MIN_TRUSTED_ATTEMPTS} attempts; treat those rates as rough.`
+      : `Every kind has at least ${MIN_TRUSTED_ATTEMPTS} attempts.`,
+  )} A wide bar means the rate is uncertain.</figcaption></figure>`;
+  const curve = (c.sizeCurve ?? []).filter((b) => b.attempts > 0);
+  const curveFig = curve.length ? sizeCurve(curve, c.horizon80Lines) : "";
+  return `<section class="capab">${head(sub)}<div class="charts${ui.perRow === 1 ? " one" : ""}">${rowsFig}${curveFig}</div>${c.note ? `<p class="cap-note">${esc(c.note)}</p>` : ""}</section>`;
+}
+
 /* ---------- View ---------- */
 
 function numbers(stats, throughput, wip) {
@@ -279,32 +366,42 @@ function render() {
         `<button class="filter" type="button" data-days="${d}" aria-pressed="${ui.days === d}">${d} days</button>`,
     )
     .join("");
-  setTopbar({ title: "Insights", crumb: "Flow metrics", filters: daysSel });
+  setTopbar({ title: "Insights", crumb: "Flow metrics and Worker capability", filters: daysSel });
+  // Charts are drawn 1:1 at the panel's real width: two a row from 1100px of
+  // content, one below that.
+  const inner = Math.min(1400, ui.root.clientWidth) - 48;
+  ui.perRow = inner >= 1100 ? 2 : 1;
+  W = Math.max(320, Math.floor((inner - 16 * (ui.perRow - 1)) / ui.perRow) - 34);
+  const cap = capabilityHtml();
+  const paint = (flow) => {
+    ui.root.innerHTML = `<div class="ins">${flow}${cap}</div>`;
+  };
   if (ui.status === 404) {
-    ui.root.innerHTML = `<div class="later">${icon("insights", 24, "ic s24")}<b>Flow metrics aren't on this server yet.</b><span><code>GET /api/metrics/flow</code> returned 404. Update Sekhemet and restart <code>sekhemet serve</code>. Cycle time, throughput, cumulative flow and aging work appear here.</span></div>`;
-    return;
+    return paint(
+      `<div class="later ins-later">${icon("insights", 24, "ic s24")}<b>Flow metrics aren't on this server yet.</b><span><code>GET /api/metrics/flow</code> returned 404. Update Sekhemet and restart <code>sekhemet serve</code>. Cycle time, throughput, cumulative flow and aging work appear here.</span></div>`,
+    );
   }
   if (ui.status && ui.status !== 200) {
-    ui.root.innerHTML = `<div class="later">${icon("alert", 24, "ic s24")}<b>Couldn't load flow metrics.</b><span>The server returned ${esc(ui.status || "no response")}.</span><button class="btn sm" type="button" data-reload>Retry</button></div>`;
-    return;
+    return paint(
+      `<div class="later ins-later">${icon("alert", 24, "ic s24")}<b>Couldn't load flow metrics.</b><span>The server returned ${esc(ui.status || "no response")}.</span><button class="btn sm" type="button" data-reload>Retry</button></div>`,
+    );
   }
   if (!ui.data) {
     const num = '<div class="num"><div class="sk sk-line"></div></div>';
     const chart = '<div class="chart sk" style="height:300px"></div>';
-    ui.root.innerHTML = `<div class="ins"><div class="nums">${num.repeat(4)}</div><div class="charts">${chart.repeat(4)}</div></div>`;
-    return;
+    return paint(
+      `<div class="nums">${num.repeat(4)}</div><div class="charts">${chart.repeat(4)}</div>`,
+    );
   }
   const d = ui.data;
   const cycle = (d.cycleTime ?? []).filter((e) => Number.isFinite(e.hours));
   const stats = cycleTimeStats(cycle);
   if (cycle.length < 3) {
-    ui.root.innerHTML = `<div class="later">${icon("insights", 24, "ic s24")}<b>Not enough finished cards to measure flow yet.</b><span>Insights need at least 3 finished cards; this period has ${cycle.length}.</span></div>`;
-    return;
+    return paint(
+      `<div class="later ins-later">${icon("insights", 24, "ic s24")}<b>Not enough finished cards to measure flow yet.</b><span>Insights need at least 3 finished cards; this period has ${cycle.length}.</span></div>`,
+    );
   }
-  // Two charts a row from 1100px of content; one below that. 16px padding each side.
-  const inner = Math.min(1400, ui.root.clientWidth) - 48;
-  const perRow = inner >= 1100 ? 2 : 1;
-  W = Math.max(320, Math.floor((inner - 16 * (perRow - 1)) / perRow) - 34);
+  const perRow = ui.perRow;
   const wip = (d.wipAge ?? [])
     .map((w) => {
       const c = store.card(w.cardId);
@@ -318,7 +415,20 @@ function render() {
         : null;
     })
     .filter((w) => w && w.status !== "done" && w.status !== "backlog");
-  ui.root.innerHTML = `<div class="ins">${numbers(stats, d.throughput ?? [], wip)}<div class="charts${perRow === 1 ? " one" : ""}">${agingChart(wip, stats)}${cycleChart(cycle, stats)}${throughputChart(d.throughput ?? [])}${cfdChart(d.cfd ?? [])}</div></div>`;
+  paint(
+    `${numbers(stats, d.throughput ?? [], wip)}<div class="charts${perRow === 1 ? " one" : ""}">${agingChart(wip, stats)}${cycleChart(cycle, stats)}${throughputChart(d.throughput ?? [])}${cfdChart(d.cfd ?? [])}</div>`,
+  );
+}
+
+async function loadCapability() {
+  try {
+    const r = await getJSON("/api/capability");
+    ui.capStatus = r.status;
+    ui.cap = r.ok ? r.data : null;
+  } catch {
+    ui.capStatus = -1;
+  }
+  render();
 }
 
 async function load() {
@@ -367,6 +477,7 @@ export function mount(view) {
   };
   window.addEventListener("resize", onResize);
   load();
+  loadCapability();
   return {
     unmount() {
       window.removeEventListener("resize", onResize);
