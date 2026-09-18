@@ -31,9 +31,11 @@ import {
   proposalDiff,
   renderPmMarkdown,
   retireSuggested,
+  rosterRows,
   scopeChips,
   setTerm,
   sortByPriority,
+  sourceCites,
   stackCfd,
   strengthLabel,
   tuningSummary,
@@ -605,5 +607,38 @@ describe("learning (contract §6)", () => {
     });
     expect(same.same).toBe(true);
     expect(same.headline).toMatch(/already the fastest/);
+  });
+});
+
+describe("model roster and research sources", () => {
+  it("lists the four roles in order, filling unconfigured ones", () => {
+    const rows = rosterRows([
+      { role: "researcher", model: "apodex-1.1-mini", state: "swapped" },
+      { role: "worker", model: "nail-35b", state: "resident", note: "Loaded 3m ago" },
+      { role: "adversarial", state: "unconfigured" },
+    ]);
+    expect(rows.map((r) => [r.role, r.state, r.model ?? ""])).toEqual([
+      ["worker", "resident", "nail-35b"],
+      ["manager", "unconfigured", ""],
+      ["reviewer", "unconfigured", ""],
+      ["researcher", "swapped", "apodex-1.1-mini"],
+    ]);
+    expect(rows[0]?.note).toBe("Loaded 3m ago");
+    expect(rows[2]?.does).toMatch(/different model family/);
+  });
+
+  it("keeps only http(s) sources as links and skips card cites", () => {
+    expect(
+      sourceCites([
+        { url: "https://www.arxiv.org/abs/2609.14858", label: "Dream-RSI" },
+        { url: "javascript:alert(1)", label: "bad" },
+        { label: "Project ledger, run 14 Sep" },
+        { cardId: "card_x" },
+      ]),
+    ).toEqual([
+      { label: "Dream-RSI", href: "https://www.arxiv.org/abs/2609.14858", host: "arxiv.org" },
+      { label: "bad" },
+      { label: "Project ledger, run 14 Sep" },
+    ]);
   });
 });

@@ -29,6 +29,15 @@ const CATALOG = [
     leaves: "The card branch, its diff, and the gate results.",
   },
   {
+    id: "research-web",
+    tier: "now",
+    name: "Researcher web access",
+    mono: "RW",
+    does: "When on, the Researcher can search papers (Hugging Face, arXiv), read papers and web pages, and search GitHub. When off, it works only from this machine: the project's docs, history and registries.",
+    leaves:
+      "Search queries, and the URLs of the pages it reads. Private and local addresses are never fetched.",
+  },
+  {
     id: "jira",
     tier: "now",
     name: "Jira",
@@ -211,6 +220,10 @@ function controls(e) {
       const on = Boolean(e.enabled ?? e.connected);
       return `<div class="iacts"><button class="switch" type="button" role="switch" aria-checked="${on}" data-toggle-pr ${busy("pr") ? "disabled" : ""}><span></span></button><span class="sec">${on ? "Accept opens a pull request." : "Accept merges locally as one commit."}</span></div>`;
     }
+    case "research-web": {
+      const on = Boolean(e.enabled ?? e.connected);
+      return `<div class="iacts"><button class="switch" type="button" role="switch" aria-checked="${on}" aria-label="Researcher web access" data-toggle-web ${busy("web") ? "disabled" : ""}><span></span></button><span class="sec">${on ? "The Researcher may use the web." : "The Researcher stays on this machine."}</span></div>${e.detail ? `<p class="istatus">${esc(e.detail)}</p>` : ""}<p class="inote">${icon("search", 12, "ic s12")}<span>Web search needs a provider you configure: a self-hosted SearXNG (<code>SEKHEMET_SEARXNG_URL</code>), or a Brave or Tavily key in the environment (<code>BRAVE_SEARCH_API_KEY</code>, <code>TAVILY_API_KEY</code>). Papers, page reads and GitHub work without one.</span></p>`;
+    }
     case "jira":
     case "linear": {
       const f = `${e.id}-csv`;
@@ -367,6 +380,23 @@ async function onClick(e) {
     await withBusy("github-pr:pr", async () => {
       const r = await send("PUT", "/api/integrations/github-pr", { enabled: next });
       if (!r.ok) toast({ tone: "fail", text: "Couldn't change PR on accept.", detail: err(r) });
+      await load();
+    });
+    return;
+  }
+  if (t.closest("[data-toggle-web]") && !blocked()) {
+    const e2 = merged().find((x) => x.id === "research-web");
+    const next = !(e2?.enabled ?? e2?.connected);
+    await withBusy("research-web:web", async () => {
+      const r = await send("PUT", "/api/integrations/research-web", { enabled: next });
+      if (!r.ok)
+        toast({ tone: "fail", text: "Couldn't change Researcher web access.", detail: err(r) });
+      else
+        toast({
+          text: next
+            ? "Researcher web access is on."
+            : "Researcher web access is off. It works from this machine only.",
+        });
       await load();
     });
     return;

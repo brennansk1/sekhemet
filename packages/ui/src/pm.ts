@@ -1232,3 +1232,107 @@ export function tuningSummary(t: TuningReportLike): TuningSummary {
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// Model roster (GET /api/models) and research sources
+// ---------------------------------------------------------------------------
+
+export interface RosterRoleLike {
+  role: string;
+  model?: string;
+  state: "resident" | "swapped" | "unconfigured";
+  note?: string;
+}
+
+export const ROSTER_ROLES: { role: string; aliases: string[]; label: string; does: string }[] = [
+  {
+    role: "worker",
+    aliases: ["worker", "executor"],
+    label: "Worker",
+    does: "Writes the code for one card at a time, inside its worktree, until the gates pass.",
+  },
+  {
+    role: "manager",
+    aliases: ["manager", "pm", "merit", "planner"],
+    label: "Merit · Project manager",
+    does: "Plans cycles, answers you, and proposes changes you approve.",
+  },
+  {
+    role: "reviewer",
+    aliases: ["reviewer", "adversarial", "adversarial_reviewer", "critic"],
+    label: "Adversarial reviewer",
+    does: "Reviews passing work. A different model family, so it catches what the worker's family misses.",
+  },
+  {
+    role: "researcher",
+    aliases: ["researcher", "research"],
+    label: "Researcher",
+    does: "Evidence-gathering: papers, docs, registries, the project's history; every answer cites sources.",
+  },
+];
+
+export const ROSTER_STATE_LABELS: Record<string, string> = {
+  resident: "Resident",
+  swapped: "Swapped out",
+  unconfigured: "Not configured",
+};
+
+/** The four roles in a fixed order; a role the server omits reads as not configured. */
+export function rosterRows(
+  roles: RosterRoleLike[] | undefined,
+): (RosterRoleLike & { label: string; does: string })[] {
+  const list = roles ?? [];
+  return ROSTER_ROLES.map((r) => {
+    const hit = list.find((x) => r.aliases.includes(String(x.role).toLowerCase()));
+    const state = hit?.model ? (hit.state ?? "swapped") : "unconfigured";
+    const row: RosterRoleLike & { label: string; does: string } = {
+      role: r.role,
+      state,
+      label: r.label,
+      does: r.does,
+    };
+    if (hit?.model) row.model = hit.model;
+    if (hit?.note) row.note = hit.note;
+    return row;
+  });
+}
+
+export interface SourceCite {
+  url?: string;
+  label: string;
+}
+
+/**
+ * Research sources from a reply's `cites`: entries with a url or a bare label
+ * (card, run and evidence cites are rendered separately). Only http(s) URLs
+ * are kept as links; anything else is shown as text.
+ */
+export function sourceCites(
+  cites:
+    | { url?: string; label?: string; cardId?: string; runId?: string; evidenceId?: string }[]
+    | undefined,
+): { label: string; href?: string; host?: string }[] {
+  const out: { label: string; href?: string; host?: string }[] = [];
+  for (const c of cites ?? []) {
+    if (c.cardId || c.runId || c.evidenceId) continue;
+    if (!c.url && !c.label) continue;
+    let href: string | undefined;
+    let host: string | undefined;
+    if (c.url) {
+      try {
+        const u = new URL(c.url);
+        if (u.protocol === "https:" || u.protocol === "http:") {
+          href = u.href;
+          host = u.hostname.replace(/^www\./, "");
+        }
+      } catch {
+        // Not a URL: shown as text.
+      }
+    }
+    const item: { label: string; href?: string; host?: string } = { label: c.label || c.url || "" };
+    if (href) item.href = href;
+    if (host) item.host = host;
+    out.push(item);
+  }
+  return out;
+}

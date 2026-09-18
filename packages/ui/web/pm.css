@@ -889,3 +889,31 @@ body.pm-open .col {
     display: none;
   }
 }
+
+/* Research sources under a reply (cites with url/label). */
+.sources {
+  margin-top: 12px;
+  font-size: var(--text-xs);
+}
+.sources .sh-s {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+.sources ol {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sources li {
+  color: var(--text-secondary);
+}
+.sources a {
+  color: var(--text-primary);
+  text-underline-offset: 2px;
+}
+.sources .host {
+  margin-left: 6px;
+  color: var(--text-secondary);
+}

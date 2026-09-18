@@ -531,6 +531,18 @@ The `#/pm` rail carries a compact summary: the three strongest statements, *See 
 
 When the current policy is already best, the section says so and offers no command.
 
+### 3.8 The model roster and the Researcher
+
+Four roles, named by what they do (NAMING.md): the **Worker**; **Merit · Project manager**; the **Adversarial reviewer**, a different model family so it catches what the Worker's family misses; and the **Researcher** (Apodex-1.1-mini), which gathers evidence from papers, docs, registries and the project's history, and cites a source for every answer.
+
+- **Machine › Models** (`GET /api/models`) shows the four roles in that fixed order. Each has its model id in mono, its state with a dot (*Resident*, *Swapped out*, *Not configured*) and a one-line description. A note every role shares (*No run in progress*) is said once, in the footer line, rather than four times.
+- The footer also states the memory model:
+  - On a 24 GB host: *One model is resident at a time on this machine; Sekhemet swaps them as the work needs (about 40 seconds each).*
+  - When `coResident` is true: *This machine has room for all four at once, so nothing swaps.*
+- A 404 shows *The model roster isn't on this server yet*, naming the endpoint.
+- **Integrations › Researcher web access** is a Now card with a switch (`PUT /api/integrations/research-web { enabled }`). It shows the server's `detail`, which names the search provider or says how to set one. The configuration line reads *Web search needs a provider you configure: a self-hosted SearXNG, or a Brave or Tavily key in the environment; papers, page reads and GitHub work without one.* Under *Leaves this machine*: *Search queries, and the URLs of the pages it reads. Private and local addresses are never fetched.*
+- **Research answers in Merit's thread.** Reply `cites` entries with `{ url?, label }` render as a compact numbered **Sources** list under the reply: the label is a link (http and https only, opening in a new tab, `rel="noopener noreferrer"`) followed by the host in mono. Entries without a URL are plain text. Card, run and evidence cites keep their *Based on:* chips.
+
 ---
 
 ## Part 4: Specification

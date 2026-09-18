@@ -1,11 +1,19 @@
 // Machine (FRONTEND_DESIGN §2.4.6): memory against its thresholds, the model
 // server, health checks with fixes, the sandbox and the worktrees on disk.
 import { $, esc, getJSON, icon } from "./dom.js";
+import { ROSTER_STATE_LABELS, rosterRows } from "./lib/pm.js";
 import { checkFixHint, shortId } from "./lib/vocabulary.js";
 import { setTopbar } from "./shell.js";
 import { store } from "./store.js";
 
-const ui = { root: null, data: null, loading: false, error: null, last: "" };
+const ui = {
+  root: null,
+  data: null,
+  loading: false,
+  error: null,
+  last: "",
+  roster: { status: 0, data: null },
+};
 
 const gb = (b) => `${(b / 1024 ** 3).toFixed(1)} GB`;
 
@@ -55,6 +63,41 @@ function modelHtml(d) {
   return `<section class="mc-card"><h3 class="sh">Model <span class="sec">${models.reachable ? (working ? "Worker running" : "idle") : "server unreachable"}</span></h3><dl class="kv"><dt>Endpoint</dt><dd class="mono">${esc(models.endpoint ?? "—")}</dd><dt>Status</dt><dd>${models.reachable ? `${icon("check", 14, "ic s14 i-pass")} reachable` : `${icon("x", 14, "ic s14 i-fail")} not reachable`}</dd></dl><h4 class="sub">Models on the server</h4>${list}</section>`;
 }
 
+/** The four-model roster (GET /api/models): who does what, and what is loaded. */
+function rosterHtml() {
+  const r = ui.roster;
+  const head = (sub) => `<h3 class="sh">Models <span class="sec">${esc(sub)}</span></h3>`;
+  if (r.status === 0)
+    return `<section>${head("")}<div class="sk" style="height:120px"></div></section>`;
+  if (r.status !== 200 || !r.data) {
+    const why =
+      r.status === 404
+        ? "<b>The model roster isn't on this server yet.</b> <code>GET /api/models</code> returned 404. It will list the Worker, Merit, the adversarial reviewer and the Researcher, and which of them is loaded."
+        : `<b>Couldn't read the model roster.</b> The server returned ${esc(r.status > 0 ? r.status : "no response")}.`;
+    return `<section>${head("Worker, Merit, reviewer, Researcher")}<p class="roster-empty">${icon("machine", 14, "ic s14")}<span>${why}</span></p></section>`;
+  }
+  const rows = rosterRows(r.data.roles);
+  const resident = rows.filter((x) => x.state === "resident").length;
+  // A note every role shares ("No run in progress") is said once, not four times.
+  const notes = new Set(rows.map((x) => x.note ?? ""));
+  const shared = notes.size === 1 && rows[0]?.note ? rows[0].note : "";
+  const items = rows
+    .map((x) => {
+      const dot =
+        x.state === "resident"
+          ? '<span class="dot" aria-hidden="true"></span>'
+          : x.state === "swapped"
+            ? '<span class="dot idle" aria-hidden="true"></span>'
+            : '<span class="dot off" aria-hidden="true"></span>';
+      return `<li class="rrow ${esc(x.state)}"><div class="rl"><b>${esc(x.label)}</b><span class="mono">${x.model ? esc(x.model) : "—"}</span></div><div class="rs">${dot}<span>${esc(ROSTER_STATE_LABELS[x.state] ?? x.state)}</span></div><p class="rd">${esc(x.does)}</p>${x.note && !shared ? `<p class="rn">${esc(x.note)}</p>` : ""}</li>`;
+    })
+    .join("");
+  const mem = r.data.coResident
+    ? "This machine has room for all four at once, so nothing swaps."
+    : "One model is resident at a time on this machine; Sekhemet swaps them as the work needs (about 40 seconds each). With 128 GB, all four stay loaded.";
+  return `<section>${head(`${resident} of ${rows.length} resident`)}<ul class="roster">${items}</ul><p class="sec roster-note">${icon("memory", 12, "ic s12")}<span>${esc(shared ? `${shared}. ${mem}` : mem)}</span></p></section>`;
+}
+
 const ICON = { pass: ["check", "i-pass"], warn: ["alert", "i-park"], fail: ["x", "i-fail"] };
 
 function checksHtml(d) {
@@ -98,7 +141,7 @@ function render() {
   const err = ui.error
     ? `<div class="ev-error" role="alert">${icon("alert")}<span><b>Couldn't read the machine.</b> <span class="sec">The server returned ${esc(ui.error)}.</span></span><button class="btn sm" type="button" data-rerun>Retry</button></div>`
     : "";
-  const html = `${err}<div class="two">${memoryHtml(mem)}${modelHtml(d)}</div>${checksHtml(d)}${sandboxHtml(d)}`;
+  const html = `${err}<div class="two">${memoryHtml(mem)}${modelHtml(d)}</div>${rosterHtml()}${checksHtml(d)}${sandboxHtml(d)}`;
   if (html === ui.last) return;
   ui.last = html;
   const body = $(".mc", ui.root);
@@ -109,9 +152,20 @@ function render() {
   if (focusRerun) $("[data-rerun]", body)?.focus();
 }
 
+async function loadRoster() {
+  try {
+    const r = await getJSON("/api/models");
+    ui.roster = { status: r.status, data: r.ok ? r.data : null };
+  } catch {
+    ui.roster = { status: -1, data: null };
+  }
+  render();
+}
+
 async function load(fresh = false) {
   ui.loading = true;
   render();
+  loadRoster();
   const res = await getJSON(`/api/machine${fresh ? "?fresh=1" : ""}`);
   ui.loading = false;
   if (!ui.root) return;

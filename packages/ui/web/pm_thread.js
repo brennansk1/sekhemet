@@ -2,7 +2,7 @@
 // waiting procedure, the context chip and the composer. Mounted twice: in the
 // right-side panel and in the full #/pm view. Both render the one thread.
 import { $, esc, icon, isTyping, kbd } from "./dom.js";
-import { formatClock, pmSteps, renderPmMarkdown, statusEtaSeconds } from "./lib/pm.js";
+import { formatClock, pmSteps, renderPmMarkdown, sourceCites, statusEtaSeconds } from "./lib/pm.js";
 import { columnLabel } from "./lib/vocabulary.js";
 import { cardChip } from "./marks.js";
 import { openPeek } from "./peek.js";
@@ -30,6 +30,19 @@ function md(text) {
   return renderPmMarkdown(text, { chip: (id) => cardChip(id) });
 }
 
+/** Research sources (cites with a url or label): a compact numbered list. */
+function sourcesHtml(cites) {
+  const list = sourceCites(cites);
+  if (!list.length) return "";
+  const items = list
+    .map(
+      (s) =>
+        `<li>${s.href ? `<a href="${esc(s.href)}" target="_blank" rel="noopener noreferrer">${esc(s.label)}</a>${s.host ? `<span class="host mono">${esc(s.host)}</span>` : ""}` : `<span>${esc(s.label)}</span>`}</li>`,
+    )
+    .join("");
+  return `<div class="sources"><span class="sh-s">Sources</span><ol>${items}</ol></div>`;
+}
+
 function citesHtml(cites) {
   if (!cites?.length) return "";
   const parts = [];
@@ -47,7 +60,7 @@ function citesHtml(cites) {
       parts.push(cardChip(c.cardId) ?? `<span class="mono">${esc(c.cardId)}</span>`);
     }
   }
-  return `<p class="cites"><span>Based on:</span>${parts.join("")}</p>`;
+  return parts.length ? `<p class="cites"><span>Based on:</span>${parts.join("")}</p>` : "";
 }
 
 /** `run_2026-09-18T02-14` -> `run 18 Sep 02:14`; anything else as given. */
@@ -87,7 +100,7 @@ function messageHtml(m) {
     return `<article class="msg user" data-msg="${esc(m.id)}"><div class="bubble md">${md(m.text)}</div><div class="meta tnum">${esc(time(m.createdAt))}${note}</div></article>${err}`;
   }
   const proposals = proposalGroupHtml(m.proposals ?? [], { groupId: m.id });
-  return `<article class="msg pm" data-msg="${esc(m.id)}"><header>${avatar()}<b>${PM_NAME}</b><time class="tnum">${esc(time(m.createdAt))}</time></header><div class="md">${md(m.text)}</div>${proposals}${citesHtml(m.cites)}</article>`;
+  return `<article class="msg pm" data-msg="${esc(m.id)}"><header>${avatar()}<b>${PM_NAME}</b><time class="tnum">${esc(time(m.createdAt))}</time></header><div class="md">${md(m.text)}</div>${proposals}${sourcesHtml(m.cites)}${citesHtml(m.cites)}</article>`;
 }
 
 /* ---------- Waiting (PM_DESIGN §2.5) ---------- */
