@@ -16,10 +16,16 @@ function fake(id: string, log: string[]): UnloadableAdapter {
   };
 }
 
+/** Tests must not depend on this host's real memory pressure. */
+const QUIET = { pressureLevel: () => 1, freeBytes: () => 0 };
+
 describe("@sekhemet/models ModelRouter", () => {
   it("unloads the resident model before handing out another role", async () => {
     const log: string[] = [];
-    const router = new ModelRouter({ worker: () => fake("w", log), manager: () => fake("m", log) });
+    const router = new ModelRouter(
+      { worker: () => fake("w", log), manager: () => fake("m", log) },
+      QUIET,
+    );
 
     expect((await router.use("worker")).modelId).toBe("w");
     expect(log).toEqual([]);
@@ -32,7 +38,7 @@ describe("@sekhemet/models ModelRouter", () => {
 
   it("does not unload when the same role is requested again", async () => {
     const log: string[] = [];
-    const router = new ModelRouter({ worker: () => fake("w", log) });
+    const router = new ModelRouter({ worker: () => fake("w", log) }, QUIET);
     await router.use("worker");
     await router.use("worker");
     expect(log).toEqual([]);
@@ -41,7 +47,10 @@ describe("@sekhemet/models ModelRouter", () => {
 
   it("reuses one adapter per role across swaps", async () => {
     const log: string[] = [];
-    const router = new ModelRouter({ worker: () => fake("w", log), manager: () => fake("m", log) });
+    const router = new ModelRouter(
+      { worker: () => fake("w", log), manager: () => fake("m", log) },
+      QUIET,
+    );
     const first = await router.use("worker");
     await router.use("manager");
     const again = await router.use("worker");
@@ -51,7 +60,7 @@ describe("@sekhemet/models ModelRouter", () => {
 
   it("rejects an unconfigured role and releases everything on demand", async () => {
     const log: string[] = [];
-    const router = new ModelRouter({ worker: () => fake("w", log) });
+    const router = new ModelRouter({ worker: () => fake("w", log) }, QUIET);
     expect(router.has("manager")).toBe(false);
     await expect(router.use("manager")).rejects.toThrow("No model configured");
     await router.use("worker");

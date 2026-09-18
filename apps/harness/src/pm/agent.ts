@@ -1,5 +1,6 @@
 import type { CardRecord } from "@sekhemet/kernel";
 import type { LocalInferenceAdapter, ToolCall, ToolDefinition } from "@sekhemet/models";
+import type { ResearchAnswer } from "../research/researcher.js";
 import { formatHits, searchLibraries } from "./libraries.js";
 import type { Cycle, PmCite, PmMessage, PmProposal } from "./types.js";
 
@@ -133,6 +134,18 @@ export function conversationDigest(
 
 const str = { type: "string" } as const;
 const num = { type: "number" } as const;
+
+/** Offered only when a Researcher model is configured. */
+export const ASK_RESEARCHER_TOOL: ToolDefinition = {
+  name: "ask_researcher",
+  description:
+    "Delegate a question that needs evidence (a library's API or licence, how a module really works, what the project did before) to the Researcher. Its answer cites sources.",
+  parameters: {
+    type: "object",
+    properties: { question: { type: "string" } },
+    required: ["question"],
+  },
+};
 
 export const PM_TOOLS: ToolDefinition[] = [
   {
@@ -426,7 +439,10 @@ export async function answer(
   summary?: { upToSeq: number; text: string },
   /** Injectable registry search, for tests; production searches npm and PyPI. */
   libraries?: typeof searchLibraries,
+  /** The Researcher, when one is configured (the fourth model). */
+  researcher?: (question: string) => Promise<ResearchAnswer>,
 ): Promise<PmAnswer> {
+  const tools = researcher ? [...PM_TOOLS, ASK_RESEARCHER_TOOL] : PM_TOOLS;
   const questions = queued
     .map((m) => {
       const ctx = m.context?.cardId ? ` [looking at \`${m.context.cardId}\`]` : "";
@@ -442,17 +458,30 @@ export async function answer(
   let res = await model.generate({
     systemPrompt: pmSystemPrompt(snapshot),
     prompt: context,
-    tools: PM_TOOLS,
+    tools,
     toolArm: "arm_a_flat",
     temperature: 0.3,
     maxTokens: 1200,
   });
   for (let round = 0; round < 2; round++) {
-    const lookups = res.toolCalls.filter((c) => c.name === "find_library");
+    const isLookup = (c: ToolCall) => c.name === "find_library" || c.name === "ask_researcher";
+    const lookups = res.toolCalls.filter(isLookup);
     if (lookups.length === 0) break;
-    calls.push(...res.toolCalls.filter((c) => c.name !== "find_library"));
+    calls.push(...res.toolCalls.filter((c) => !isLookup(c)));
     const found: string[] = [];
     for (const c of lookups.slice(0, 3)) {
+      if (c.name === "ask_researcher" && researcher) {
+        const q = String(c.arguments?.question ?? "").slice(0, 500);
+        const r = await researcher(q).catch((err) => ({
+          answer: `The Researcher failed: ${err instanceof Error ? err.message : String(err)}`,
+          sources: [],
+          grounded: false,
+        }));
+        found.push(
+          `ask_researcher("${q}"):\n${r.answer}\nSources: ${r.sources.join("; ") || "none (treat as unverified)"}`,
+        );
+        continue;
+      }
       const q = String(c.arguments?.query ?? "").slice(0, 120);
       const eco = c.arguments?.ecosystem === "pypi" ? "pypi" : "npm";
       const hits = await (libraries ?? searchLibraries)(q, eco).catch(() => []);
@@ -462,13 +491,15 @@ export async function answer(
     res = await model.generate({
       systemPrompt: pmSystemPrompt(snapshot),
       prompt: context,
-      tools: PM_TOOLS,
+      tools,
       toolArm: "arm_a_flat",
       temperature: 0.3,
       maxTokens: 1200,
     });
   }
-  calls.push(...res.toolCalls.filter((c) => c.name !== "find_library"));
+  calls.push(
+    ...res.toolCalls.filter((c) => c.name !== "find_library" && c.name !== "ask_researcher"),
+  );
   const proposals = toProposals(calls, snapshot.cards);
   let text = stripThinking(res.text);
   if (!text) {

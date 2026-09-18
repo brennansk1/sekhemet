@@ -7,6 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { BoardServiceImpl } from "@sekhemet/board";
 import { DeterministicGateRunner, summarizeEvidence } from "@sekhemet/gates";
+import { remedyFor } from "@sekhemet/gates";
 import { type CardRecord, CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { planRepair } from "@sekhemet/loop";
 import {
@@ -14,6 +15,7 @@ import {
   ModelRouter,
   NAIL_WORKER_PROFILE,
   canCoReside,
+  createApodexResearcher,
   createCyberTielWorker,
   createNail35BAdapter,
 } from "@sekhemet/models";
@@ -38,6 +40,7 @@ import { LearningStore } from "./learning/store.js";
 import { runMcpStdioServer } from "./mcp.js";
 import { DEFAULT_PM_MODEL, answerQueued, createPmAdapter, holdRunnerLease } from "./pm/service.js";
 import { PmStore } from "./pm/store.js";
+import { research } from "./research/researcher.js";
 import { DEFAULT_DASHBOARD_PORT, startDashboardServer } from "./server.js";
 import { loadAttempts, tune, writeTuningReport } from "./tune.js";
 
@@ -566,6 +569,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     const autoAccept = argv.includes("--auto-accept");
     const managerIdx = argv.indexOf("--manager");
     const managerModel = managerIdx !== -1 ? argv[managerIdx + 1] : undefined;
+    const researcherIdx = argv.indexOf("--researcher");
+    const researcherModel =
+      researcherIdx !== -1 ? argv[researcherIdx + 1] : process.env.SEKHEMET_RESEARCHER;
     const reviewerIdx = argv.indexOf("--reviewer");
     const reviewerModel = reviewerIdx !== -1 ? argv[reviewerIdx + 1] : undefined;
     const workerIdx = argv.indexOf("--worker");
@@ -600,6 +606,22 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
                 sampling: { temperature: 0.2, topP: 0.9, topK: 20, minP: 0 },
               })
             : createPmAdapter(DEFAULT_PM_MODEL),
+        // The Researcher (--researcher <model>; the user's choice is Apodex-1.1-mini).
+        ...(researcherModel
+          ? {
+              researcher: () =>
+                researcherModel === "apodex"
+                  ? createApodexResearcher()
+                  : new HttpInferenceAdapter({
+                      modelId: researcherModel,
+                      apiFormat: "ollama",
+                      contextTokens: 16384,
+                      maxTokens: 1200,
+                      disableReasoning: true,
+                      sampling: { temperature: 0.2, topP: 0.9, topK: 20, minP: 0 },
+                    }),
+            }
+          : {}),
         // A different model family for Merit's review (--reviewer <model>).
         ...(reviewerModel
           ? {
@@ -634,6 +656,18 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       },
     );
     const pmModel = managerModel ?? DEFAULT_PM_MODEL;
+    /** Run a question past the Researcher, then hand the manager back. */
+    const askResearcher = researcherModel
+      ? async (question: string) => {
+          const r = await research(await router.use("researcher"), question, {
+            repoPath: config.repoPath,
+          });
+          await router.use("manager");
+          return r;
+        }
+      : undefined;
+    /** Struggles the playbook had no remedy for: the Researcher's queue. */
+    const unexplained: { cardId: string; text: string }[] = [];
     const pmStore = new PmStore(log);
     // Tells the dashboard this process holds the Worker, so PM messages are
     // answered here, between steps, instead of loading a second large model.
@@ -657,6 +691,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         pmModel,
         acquire: () => router.use("manager"),
         ...(step !== undefined ? { step } : {}),
+        ...(askResearcher ? { researcher: askResearcher } : {}),
       });
       if (workerWasActive) {
         await pmStore.setStatus({
@@ -747,6 +782,11 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       const result = await executeCard(ctx, card, worker, guidance, prior);
       if (result.passed) passedResults.push({ card, diff: result.evidence.diff ?? "" });
       if (result.lessons.lines.length > 0) lessonsByCard.set(card.id, result.lessons.lines);
+      for (const st of result.lessons.struggles) {
+        const code = /\b(TS\d{4}|lint\/[\w/]+)\b/.exec(st.text)?.[1];
+        if (!code || !remedyFor(code, st.text))
+          unexplained.push({ cardId: card.id, text: st.text });
+      }
 
       let accepted = false;
       if (result.passed && autoAccept) {
@@ -852,6 +892,26 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         // swap on a 24 GB host); otherwise Merit reviews while resident.
         await reviewPassed(reviewerModel ? await router.use("reviewer") : manager);
         if (reviewerModel) await router.use("manager");
+        // The Researcher investigates struggles nothing in the playbook
+        // explained, and each grounded answer becomes a candidate rule.
+        if (askResearcher && unexplained.length > 0) {
+          for (const u of unexplained.splice(0, 3)) {
+            const r = await askResearcher(
+              `A coding model working on this TypeScript project hit this error and needed several attempts to fix it: "${u.text}". What is the correct approach? Give one concrete rule.`,
+            ).catch(() => undefined);
+            if (!r?.grounded) continue;
+            await ctx.learning.propose({
+              role: "worker",
+              text: r.answer.slice(0, 500),
+              scope: {},
+              source: "research",
+              evidence: [
+                { cardId: u.cardId, note: `Researcher, sources: ${r.sources.join("; ")}` },
+              ],
+            });
+            console.log(`   Researcher proposed a rule for ${u.cardId}`);
+          }
+        }
         // Mem0-style consolidation of what was learned, same residency.
         const c = await consolidateWithManager(manager, ctx.learning).catch(() => undefined);
         if (c && c.merged + c.contradictions + c.duplicates > 0) {

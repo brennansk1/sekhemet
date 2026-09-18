@@ -207,6 +207,8 @@ export interface AnswerDeps {
   acquire: () => Promise<LocalInferenceAdapter>;
   /** The Worker step the queue paused after, for the status line. */
   step?: number;
+  /** The Researcher, when configured; Merit can delegate evidence questions. */
+  researcher?: (question: string) => Promise<import("../research/researcher.js").ResearchAnswer>;
 }
 
 /**
@@ -276,7 +278,15 @@ export async function answerQueued(deps: AnswerDeps): Promise<boolean> {
       return true;
     }
     const snapshot = await buildSnapshot(deps.repoPath, deps.cardStore, deps.pmStore, deps.pmModel);
-    const result = await answer(model, snapshot, history, queued, summary);
+    const result = await answer(
+      model,
+      snapshot,
+      history,
+      queued,
+      summary,
+      undefined,
+      deps.researcher,
+    );
     await deps.pmStore.appendReply({
       replyTo: queued.map((m) => m.id),
       text: result.text,

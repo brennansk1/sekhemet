@@ -233,3 +233,26 @@ export function createCyberTielWorker(
     sampling: { temperature: 0.6, topP: 0.95, topK: 20, minP: 0 },
   });
 }
+
+/**
+ * Apodex-1.1-mini as the Researcher (the user's choice; arXiv 2608.23283,
+ * Apache-2.0, a Qwen3.5-35B-A3B research fine-tune). IQ3_M (imatrix, 16 GB)
+ * is the largest quant that runs alone on a 24 GB host; on a 128 GB host use
+ * Q8_0 via SEKHEMET_RESEARCHER_GGUF. Its own port, so it never collides with
+ * the worker's server when both are resident.
+ */
+export function createApodexResearcher(
+  modelPath = process.env.SEKHEMET_RESEARCHER_GGUF ??
+    "/Volumes/My Passport/AI-Models/llm/Apodex-1.1-mini-GGUF/Apodex-1.1-mini-IQ3_M.gguf",
+  binary = process.env.SEKHEMET_LLAMA_SERVER,
+): ManagedLlamaServerAdapter {
+  return new ManagedLlamaServerAdapter({
+    modelId: "apodex-1.1-mini",
+    modelPath,
+    ...(binary ? { binary } : {}),
+    port: 8101,
+    contextTokens: 16384,
+    maxTokens: 1500,
+    sampling: { temperature: 0.3, topP: 0.95, topK: 20, minP: 0 },
+  });
+}

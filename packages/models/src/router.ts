@@ -9,8 +9,9 @@ import type { LocalInferenceAdapter } from "./types.js";
  * cards beyond the worker's measured capability.
  * reviewer: an optional model from a different family for Merit's review
  * (ARIS: cross-family review catches errors a same-family model shares).
+ * researcher: evidence-gathering questions (Apodex-1.1-mini by default).
  */
-export type ModelRole = "worker" | "manager" | "escalation" | "reviewer";
+export type ModelRole = "worker" | "manager" | "escalation" | "reviewer" | "researcher";
 
 /** An adapter that can release its weights. HttpInferenceAdapter implements this. */
 export interface UnloadableAdapter extends LocalInferenceAdapter {

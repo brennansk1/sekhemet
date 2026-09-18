@@ -18,7 +18,7 @@ import type { EventLog } from "@sekhemet/kernel";
 
 export type RuleRole = "worker" | "manager";
 export type RuleStatus = "candidate" | "active" | "retired";
-export type RuleSource = "struggle" | "send_back" | "reflection" | "seed";
+export type RuleSource = "struggle" | "send_back" | "reflection" | "seed" | "research";
 
 export interface LearnedRule {
   id: string;

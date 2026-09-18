@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { BoardService } from "@sekhemet/board";
 import type { CardStore, CardUpdate, EventLog } from "@sekhemet/kernel";
 import type { LocalInferenceAdapter } from "@sekhemet/models";
+import { HttpInferenceAdapter } from "@sekhemet/models";
 import { handleIntegrationsApi } from "./integrations.js";
 import { learnFromProposalChoices } from "./learning/reflect.js";
 import { LearningStore } from "./learning/store.js";
@@ -13,6 +14,7 @@ import { flowMetrics, pmQuality } from "./pm/metrics.js";
 import { DEFAULT_PM_MODEL, answerQueued, createPmAdapter, runnerLease } from "./pm/service.js";
 import { PmStore } from "./pm/store.js";
 import { PM_EVENTS, type PmMessage, type PmStatus } from "./pm/types.js";
+import { research } from "./research/researcher.js";
 
 export interface PmApiContext {
   repoPath: string;
@@ -61,6 +63,8 @@ export function createPmApi(ctx: PmApiContext) {
     await learnFromProposalChoices(learning, choices).catch(() => undefined);
   };
   const pmModel = ctx.pmModel ?? DEFAULT_PM_MODEL;
+  // On a host that can hold both, the dashboard's Merit can use the Researcher too.
+  const researcherModel = process.env.SEKHEMET_RESEARCHER;
   let answering: Promise<void> | undefined;
 
   /**
@@ -81,6 +85,22 @@ export function createPmApi(ctx: PmApiContext) {
           pmStore,
           pmModel,
           acquire: async () => adapter,
+          ...(researcherModel
+            ? {
+                researcher: (q: string) =>
+                  research(
+                    new HttpInferenceAdapter({
+                      modelId: researcherModel,
+                      apiFormat: "ollama",
+                      contextTokens: 16384,
+                      maxTokens: 1200,
+                      disableReasoning: true,
+                    }),
+                    q,
+                    { repoPath: ctx.repoPath },
+                  ),
+              }
+            : {}),
         })
       ) {
         // loop until the queue is empty
