@@ -80,6 +80,8 @@ export async function executeCard(
   card: CardRecord,
   model: LocalInferenceAdapter,
   managerGuidance?: string,
+  /** What earlier attempts at this card learned; a retry never starts blank. */
+  priorLessons?: string[],
 ): Promise<CardRunResult> {
   const log = ctx.log ?? ((line: string) => console.log(line));
   // The Planner's repair plan is what attempt 2 runs on; keep it in the ledger
@@ -126,6 +128,7 @@ export async function executeCard(
     // the worker resumes from its own last state rather than from scratch.
     useExistingWorktree: existsSync(join(ctx.repoPath, ".sekhemet", "worktrees", card.id)),
     ...(managerGuidance ? { managerGuidance } : {}),
+    ...(priorLessons && priorLessons.length > 0 ? { priorLessons } : {}),
     skillsRegistry: skills,
     playbookRegistry: playbook,
     lifecycle: {

@@ -35,4 +35,21 @@ describe("@sekhemet/loop working memory", () => {
     m.observe(result("a TS1"));
     expect(m.lines()).toEqual([]);
   });
+
+  it("starts a retry with what the earlier attempt learned, and records struggles", () => {
+    const m = new WorkingMemory();
+    m.seed([
+      "still failing after 3 edits to src/l.ts: TS2339 no 'run'. That approach is not working",
+    ]);
+    expect(m.lines()[0]).toMatch(/^from an earlier attempt: still failing after 3 edits/);
+
+    m.observe(result("src/l.ts:5:1 TS2741: missing timestamp"));
+    m.noteWrite("src/l.ts");
+    m.observe(result("src/l.ts:5:1 TS2741: missing timestamp"));
+    m.noteWrite("src/l.ts");
+    m.observe(result());
+    expect(m.getStruggles()).toEqual([
+      { text: "src/l.ts:5:1 TS2741: missing timestamp", edits: 1 },
+    ]);
+  });
 });

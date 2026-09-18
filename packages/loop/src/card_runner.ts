@@ -65,6 +65,10 @@ export interface CardRunResult {
   checkpointShas: string[];
   worktreePath: string;
   finalStatus: CardStatus;
+  /** What the Worker learned (working memory lines and fixed-after-struggle failures). */
+  lessons: { lines: string[]; struggles: { text: string; edits: number }[] };
+  /** Playbook rule ids that were in the prompt. */
+  rulesUsed: string[];
 }
 
 /**
@@ -363,6 +367,8 @@ export class CardRunner {
       checkpointShas,
       worktreePath,
       finalStatus,
+      lessons: session.getLessons(),
+      rulesUsed: session.getRulesUsed(),
     };
   }
 }

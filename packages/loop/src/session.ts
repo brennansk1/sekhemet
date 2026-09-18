@@ -85,6 +85,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   /** Facts from gate results that survive resets (see working_memory.ts). */
   private memory = new WorkingMemory();
   private compactedTurns = 0;
+  private rulesUsed = new Set<string>();
   private repairAttempts = 0;
   private repoMapCache: string | undefined;
   private lastSystemPrompt = "";
@@ -98,6 +99,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   private activeRung: RungPolicy | undefined;
 
   constructor(private options: SessionOptions) {
+    if (options.priorLessons?.length) this.memory.seed(options.priorLessons);
     this.cardId = options.cardId;
     this.stepBudget = options.stepBudget;
     this.card = options.card ?? synthesizeCard(options);
@@ -252,6 +254,16 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     return turns;
   }
 
+  /** What this attempt learned, for the next attempt and the playbook reflector. */
+  public getLessons(): { lines: string[]; struggles: { text: string; edits: number }[] } {
+    return { lines: this.memory.lines(), struggles: this.memory.getStruggles() };
+  }
+
+  /** Playbook rules that were in this card's prompt, for helpful/harmful counting. */
+  public getRulesUsed(): string[] {
+    return [...this.rulesUsed];
+  }
+
   /** How many turns the prompt has folded into a compacted entry, for evidence. */
   public getCompactedTurns(): number {
     return this.compactedTurns;
@@ -393,14 +405,14 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         this.options.scopeFiles ?? [],
       ) ?? [];
 
-    const playbookRules =
-      this.options.playbookRegistry
-        ?.matchRules({
-          cardTitle: this.card.title,
-          scopeFiles: this.options.scopeFiles ?? [],
-          ...(this.lastGateFailure ? { triggerGate: this.lastGateFailure.rung } : {}),
-        })
-        .map((r) => r.instruction) ?? [];
+    const matched =
+      this.options.playbookRegistry?.matchRules({
+        cardTitle: this.card.title,
+        scopeFiles: this.options.scopeFiles ?? [],
+        ...(this.lastGateFailure ? { triggerGate: this.lastGateFailure.rung } : {}),
+      }) ?? [];
+    for (const r of matched) this.rulesUsed.add(r.id);
+    const playbookRules = matched.map((r) => r.instruction);
 
     // The active rung's directive rides alongside playbook rules so escalation
     // changes what the model is told to do, not merely how often it retries.

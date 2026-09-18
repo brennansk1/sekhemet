@@ -57,6 +57,8 @@ export interface SessionOptions {
    * applies unsafe fixes reliably only one `--only` rule per invocation.
    */
   styleFixCommands?: string[][] | undefined;
+  /** Working-memory lines from earlier attempts at this card (never start blank). */
+  priorLessons?: string[] | undefined;
   /** Gate rungs run when the agent calls `finish_card`. Defaults to typecheck + test. */
   gateRungs?: GateRung[] | undefined;
   /** Failed verifications tolerated before the card stops for human review. */

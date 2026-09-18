@@ -43,6 +43,9 @@ export class WorkingMemory {
     for (const [key, track] of this.open) {
       if (!now.has(key)) {
         this.fixed.push(track.text);
+        if (track.survivedEdits > 0) {
+          this.struggles.push({ text: track.text, edits: track.survivedEdits });
+        }
         this.open.delete(key);
       }
     }
@@ -65,6 +68,19 @@ export class WorkingMemory {
     if (this.fixed.length > 6) this.fixed = this.fixed.slice(-6);
   }
 
+  /** Failures the Worker fixed only after at least one failed edit: lesson candidates. */
+  private struggles: { text: string; edits: number }[] = [];
+
+  public getStruggles(): { text: string; edits: number }[] {
+    return [...this.struggles];
+  }
+
+  /** Carry lessons from a previous attempt: prior failed approaches start known. */
+  public seed(lines: string[]): void {
+    this.seeded = lines.slice(0, 6);
+  }
+  private seeded: string[] = [];
+
   /** Prompt lines, most actionable first. Empty until something is known. */
   public lines(): string[] {
     const out: string[] = [];
@@ -75,7 +91,8 @@ export class WorkingMemory {
       );
     }
     for (const text of this.fixed.slice(-4)) out.push(`fixed: ${clip(text)} (do not reintroduce)`);
-    return out.slice(0, 8);
+    for (const line of this.seeded) out.push(`from an earlier attempt: ${clip(line, 220)}`);
+    return out.slice(0, 10);
   }
 }
 

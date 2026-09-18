@@ -171,6 +171,33 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
     }
   }
 
+  /**
+   * Wait until the server really has released the model, up to `timeoutMs`.
+   * `keep_alive: 0` is a request, not a guarantee: Ollama can still be
+   * finishing a generation or tearing down its runner when it returns.
+   */
+  public async confirmUnloaded(timeoutMs = 20_000): Promise<boolean> {
+    if (this.apiFormat !== "ollama") return true;
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      try {
+        const res = await fetch(`${this.baseUrl}/api/ps`, { signal: AbortSignal.timeout(3000) });
+        if (res.ok) {
+          const body = (await res.json()) as { models?: { name?: string; model?: string }[] };
+          const listed = (body.models ?? []).some(
+            (m) => m.name === this.modelId || m.model === this.modelId,
+          );
+          if (!listed) return true;
+        }
+      } catch {
+        // Server unreachable: nothing of ours can be resident on it.
+        return true;
+      }
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    return false;
+  }
+
   private messages(req: InferenceRequest): ChatMessage[] {
     const messages: ChatMessage[] = [];
     // The system message must stay byte-identical across turns for the server's

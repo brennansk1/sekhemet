@@ -1,3 +1,5 @@
+import { freemem } from "node:os";
+import { readKernelPressureLevel } from "./memory.js";
 import type { LocalInferenceAdapter } from "./types.js";
 
 /** Roles the harness assigns to models. */
@@ -6,7 +8,21 @@ export type ModelRole = "worker" | "manager";
 /** An adapter that can release its weights. HttpInferenceAdapter implements this. */
 export interface UnloadableAdapter extends LocalInferenceAdapter {
   unload?(): Promise<void>;
+  /** Resolves true once the weights are really gone (see HttpInferenceAdapter). */
+  confirmUnloaded?(timeoutMs?: number): Promise<boolean>;
 }
+
+export interface RouterOptions {
+  /** Swap log: what was unloaded, whether it was confirmed, free RAM before/after. */
+  log?: (line: string) => void;
+  /** Longest wait for memory pressure to return to normal after an unload. */
+  headroomWaitMs?: number;
+  /** Injectable for tests. */
+  pressureLevel?: () => number | undefined;
+  freeBytes?: () => number;
+}
+
+export class SwapHeadroomError extends Error {}
 
 /**
  * Hands out one model per role while guaranteeing only one is ever resident.
@@ -22,7 +38,10 @@ export class ModelRouter {
   private active: ModelRole | undefined;
   private swaps = 0;
 
-  constructor(private factories: Partial<Record<ModelRole, () => UnloadableAdapter>>) {}
+  constructor(
+    private factories: Partial<Record<ModelRole, () => UnloadableAdapter>>,
+    private options: RouterOptions = {},
+  ) {}
 
   public has(role: ModelRole): boolean {
     return this.factories[role] !== undefined;
@@ -51,11 +70,43 @@ export class ModelRouter {
   /** Return the adapter for `role`, unloading whichever other role was resident. */
   public async use(role: ModelRole): Promise<UnloadableAdapter> {
     if (this.active !== undefined && this.active !== role) {
-      await this.adapters.get(this.active)?.unload?.();
+      await this.swapOut(this.active, role);
       this.swaps++;
     }
     this.active = role;
     return this.adapter(role);
+  }
+
+  /**
+   * Unload the resident model and prove the memory came back before the next
+   * one loads. Loading on top of a model that has not actually left is how
+   * this 24 GB host ran out of memory: an unload request is not an unload.
+   */
+  private async swapOut(from: ModelRole, to: ModelRole): Promise<void> {
+    const log = this.options.log ?? (() => undefined);
+    const free = this.options.freeBytes ?? freemem;
+    const pressure = this.options.pressureLevel ?? readKernelPressureLevel;
+    const gb = (n: number) => `${(n / 1024 ** 3).toFixed(1)} GB`;
+    const before = free();
+    const outgoing = this.adapters.get(from);
+    await outgoing?.unload?.();
+    const confirmed = (await outgoing?.confirmUnloaded?.()) ?? true;
+
+    // Then wait for the kernel to report normal pressure (1) again.
+    const deadline = Date.now() + (this.options.headroomWaitMs ?? 30_000);
+    let level = pressure();
+    while (level !== undefined && level > 1 && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 1000));
+      level = pressure();
+    }
+    log(
+      `swap ${from} -> ${to}: unload ${confirmed ? "confirmed" : "NOT confirmed"}, free ${gb(before)} -> ${gb(free())}, pressure ${level === undefined ? "n/a" : level === 1 ? "normal" : level === 2 ? "warning" : "critical"}`,
+    );
+    if (!confirmed || (level !== undefined && level >= 4)) {
+      throw new SwapHeadroomError(
+        `Refusing to load the ${to} model: ${!confirmed ? `the ${from} model did not unload` : "memory pressure is still critical"}. Loading now could exhaust memory.`,
+      );
+    }
   }
 
   /** Unload everything. Call on every exit path. */

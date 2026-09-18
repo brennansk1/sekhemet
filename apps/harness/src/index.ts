@@ -548,29 +548,33 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       return;
     }
 
-    const router = new ModelRouter({
-      // "cyber-tiel" runs under a harness-managed llama-server so its MTP head
-      // and chat template are used; any other name is an Ollama model.
-      worker: () =>
-        workerModel === "cyber-tiel"
-          ? createCyberTielWorker()
-          : workerModel
-            ? new HttpInferenceAdapter({ ...NAIL_WORKER_PROFILE, modelId: workerModel })
-            : createNail35BAdapter(),
-      // The manager doubles as the PM you chat with during the run; without
-      // --manager it is still available for chat, just not for repair plans.
-      manager: () =>
-        managerModel
-          ? new HttpInferenceAdapter({
-              modelId: managerModel,
-              apiFormat: "ollama",
-              contextTokens: 8192,
-              maxTokens: 2048,
-              disableReasoning: true,
-              sampling: { temperature: 0.2, topP: 0.9, topK: 20, minP: 0 },
-            })
-          : createPmAdapter(DEFAULT_PM_MODEL),
-    });
+    const router = new ModelRouter(
+      {
+        // "cyber-tiel" runs under a harness-managed llama-server so its MTP head
+        // and chat template are used; any other name is an Ollama model.
+        worker: () =>
+          workerModel === "cyber-tiel"
+            ? createCyberTielWorker()
+            : workerModel
+              ? new HttpInferenceAdapter({ ...NAIL_WORKER_PROFILE, modelId: workerModel })
+              : createNail35BAdapter(),
+        // The manager doubles as the PM you chat with during the run; without
+        // --manager it is still available for chat, just not for repair plans.
+        manager: () =>
+          managerModel
+            ? new HttpInferenceAdapter({
+                modelId: managerModel,
+                apiFormat: "ollama",
+                contextTokens: 8192,
+                maxTokens: 2048,
+                disableReasoning: true,
+                sampling: { temperature: 0.2, topP: 0.9, topK: 20, minP: 0 },
+              })
+            : createPmAdapter(DEFAULT_PM_MODEL),
+      },
+      // Every swap proves the unload and waits for normal memory pressure.
+      { log: (line) => console.log(`   ${line}`) },
+    );
     const pmModel = managerModel ?? DEFAULT_PM_MODEL;
     const pmStore = new PmStore(log);
     // Tells the dashboard this process holds the Worker, so PM messages are
@@ -628,6 +632,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     // --max-turns caps every card's step budget (the tuner's recommendation).
     const maxTurnsIdx = argv.indexOf("--max-turns");
     const maxTurns = maxTurnsIdx !== -1 ? Number(argv[maxTurnsIdx + 1]) : undefined;
+    // Lessons each attempt learned, handed to the next attempt at the same card.
+    const lessonsByCard = new Map<string, string[]>();
     const attempt = async (rawCard: CardRecord, n: number, guidance?: string) => {
       const card =
         maxTurns && maxTurns > 0 && rawCard.stepBudget > maxTurns
@@ -636,7 +642,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       const worker = await router.use("worker");
       workerModelId = worker.modelId;
       console.log(`\n=== ${card.id} (attempt ${n}): ${card.title} ===`);
-      const result = await executeCard(ctx, card, worker, guidance);
+      const prior = lessonsByCard.get(card.id);
+      const result = await executeCard(ctx, card, worker, guidance, prior);
+      if (result.lessons.lines.length > 0) lessonsByCard.set(card.id, result.lessons.lines);
 
       let accepted = false;
       if (result.passed && autoAccept) {
