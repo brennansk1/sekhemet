@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
+import { BWRAP_CANDIDATES, bubblewrapArgv } from "./bubblewrap.js";
 import { generateSeatbeltProfile } from "./seatbelt.js";
 import type { ExecutionResult, ExecutionSandbox, SandboxOptions } from "./types.js";
 
@@ -11,7 +12,7 @@ const SIGKILL_GRACE_MS = 500;
 const SANDBOX_EXEC = "/usr/bin/sandbox-exec";
 
 /** How a subprocess is confined. `none` means the OS offers no supported mechanism. */
-export type ConfinementMode = "seatbelt" | "none";
+export type ConfinementMode = "seatbelt" | "bubblewrap" | "none";
 
 /**
  * Environment variables passed through to sandboxed subprocesses.
@@ -65,12 +66,20 @@ function buildEnv(overrides?: Record<string, string>): Record<string, string> {
  */
 export class ProcessSandbox implements ExecutionSandbox {
   private readonly mode: ConfinementMode;
+  private readonly bwrap: string | undefined;
 
   constructor(private readonly config: ProcessSandboxOptions = {}) {
-    this.mode =
-      !config.disableConfinement && platform() === "darwin" && existsSync(SANDBOX_EXEC)
+    // macOS: Seatbelt. Linux (the Ubuntu AI node): bubblewrap. Anything else,
+    // or a host without the tool, runs unconfined and `requireConfinement`
+    // refuses to execute there.
+    this.bwrap = BWRAP_CANDIDATES.find((p) => existsSync(p));
+    this.mode = config.disableConfinement
+      ? "none"
+      : platform() === "darwin" && existsSync(SANDBOX_EXEC)
         ? "seatbelt"
-        : "none";
+        : platform() === "linux" && this.bwrap
+          ? "bubblewrap"
+          : "none";
   }
 
   /** The confinement mechanism in effect. Surfaced by `sekhemet doctor`. */
@@ -84,6 +93,9 @@ export class ProcessSandbox implements ExecutionSandbox {
     args: string[],
     options: SandboxOptions,
   ): { file: string; argv: string[] } {
+    if (this.mode === "bubblewrap" && this.bwrap) {
+      return { file: this.bwrap, argv: bubblewrapArgv(options, command, args) };
+    }
     if (this.mode !== "seatbelt") return { file: command, argv: args };
     const profile = generateSeatbeltProfile(options);
     return { file: SANDBOX_EXEC, argv: ["-p", profile, command, ...args] };

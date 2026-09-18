@@ -110,12 +110,38 @@ export function readSwapUsedBytes(): number | undefined {
 }
 
 /**
+ * Linux Pressure Stall Information mapped onto the macOS scale.
+ *
+ * `some avg10` is the share of the last 10 s in which at least one task
+ * stalled on memory; `full avg10`, the share in which every task did. Any
+ * sustained full stall is critical (the machine is thrashing); a some-stall
+ * above 10% is the warning a swap storm starts with.
+ */
+export function psiPressureLevel(psi: string): number | undefined {
+  const some = /some\s+avg10=([\d.]+)/.exec(psi)?.[1];
+  const full = /full\s+avg10=([\d.]+)/.exec(psi)?.[1];
+  if (some === undefined) return undefined;
+  const s = Number(some);
+  const f = full === undefined ? 0 : Number(full);
+  if (f >= 5 || s >= 40) return 4;
+  if (s >= 10) return 2;
+  return 1;
+}
+
+/**
  * The kernel's own memory-pressure level: 1 normal, 2 warning, 4 critical.
  *
  * This is the live signal. Swap in use is not: pages written out earlier stay
  * on disk until touched, so a healthy machine can show gigabytes of stale swap.
  */
 export function readKernelPressureLevel(): number | undefined {
+  if (platform() === "linux") {
+    try {
+      return psiPressureLevel(readFileSync("/proc/pressure/memory", "utf8"));
+    } catch {
+      return undefined;
+    }
+  }
   if (platform() !== "darwin") return undefined;
   try {
     const out = execFileSync("sysctl", ["-n", "kern.memorystatus_vm_pressure_level"], {

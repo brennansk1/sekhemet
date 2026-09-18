@@ -9,7 +9,7 @@ import type { SandboxOptions } from "./types.js";
  * `/private/tmp`, so a profile written against the unresolved path silently
  * fails to grant the access it appears to grant.
  */
-function realPath(p: string): string {
+export function realPath(p: string): string {
   try {
     return realpathSync(p);
   } catch {
@@ -26,7 +26,7 @@ function realPath(p: string): string {
  * gate fails on EPERM rather than on the card's work. The grant is deliberately
  * narrow: the dependency tree only, never its parent.
  */
-function linkedDependencyTargets(roots: string[]): string[] {
+export function linkedDependencyTargets(roots: string[]): string[] {
   const targets: string[] = [];
 
   for (const root of roots) {

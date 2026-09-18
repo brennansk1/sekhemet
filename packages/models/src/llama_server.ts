@@ -213,11 +213,17 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
  * card's 262k: on a 24GB host the KV cache is what decides whether it swaps.
  */
 export function createCyberTielWorker(
-  modelPath = "/Volumes/My Passport/AI-Models/llm/Cyber-Tiel-Coder-35B-A3B-GGUF-MTP/Cyber-Tiel-Coder-35B-A3B-MTP-UD-IQ3_XXS.gguf",
+  // Portable across hosts: the Mac keeps models on an external drive, the
+  // Ubuntu AI node on its NVMe. SEKHEMET_WORKER_GGUF and SEKHEMET_LLAMA_SERVER
+  // point at the model file and the llama-server build (Metal, Vulkan, ROCm).
+  modelPath = process.env.SEKHEMET_WORKER_GGUF ??
+    "/Volumes/My Passport/AI-Models/llm/Cyber-Tiel-Coder-35B-A3B-GGUF-MTP/Cyber-Tiel-Coder-35B-A3B-MTP-UD-IQ3_XXS.gguf",
+  binary = process.env.SEKHEMET_LLAMA_SERVER,
 ): ManagedLlamaServerAdapter {
   return new ManagedLlamaServerAdapter({
     modelId: "cyber-tiel-coder-35b-a3b-mtp-iq3xxs",
     modelPath,
+    ...(binary ? { binary } : {}),
     // 16k: this hybrid-attention MoE keeps a small KV cache (the card documents
     // ~5GB at 262k in f16, so ~0.16GB here at q8_0). At 8k the ledger card's
     // prompt outgrew the window after 32 turns and the request was rejected.
