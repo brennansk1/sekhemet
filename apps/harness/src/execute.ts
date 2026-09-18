@@ -1,11 +1,11 @@
 import { execFile } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { promisify } from "node:util";
 import type { BoardServiceImpl } from "@sekhemet/board";
 import { PlaybookRegistry, SkillsRegistry, useFileEvidenceStore } from "@sekhemet/context";
 import { DeterministicGateRunner, loadGatesConfig } from "@sekhemet/gates";
-import type { CardRecord, CardStatus, CardStore } from "@sekhemet/kernel";
+import { type CardRecord, type CardStatus, type CardStore, pruneRetention } from "@sekhemet/kernel";
 import { type CardRunResult, CardRunner, type TurnResult } from "@sekhemet/loop";
 import {
   type CacheSummary,
@@ -57,6 +57,43 @@ export interface ExecutionContext {
   watchdog?: Pick<MemoryWatchdog, "shouldPauseTurns" | "waitUntilBelow">;
   /** How long a paused card waits for the watchdog before it stops. Default 120 s. */
   watchdogWaitMs?: number;
+  /**
+   * How long an ask-tier command waits for a person's answer on the
+   * dashboard's decision queue (K20, S8) before it is refused. Default 60 s;
+   * 0 refuses at once but still records the request.
+   */
+  approvalTimeoutMs?: number;
+}
+
+/**
+ * The ask permission tier (S8, defect 4): a decision request a person
+ * answers on the dashboard (`POST /api/decisions/:id`). Allowed only on an
+ * explicit "allow"; no answer in time is a refusal.
+ */
+export function decisionApprover(
+  cardStore: Pick<CardStore, "runs">,
+  cardId: string,
+  timeoutMs: number,
+  pollMs = 1000,
+) {
+  return async (request: {
+    tool: string;
+    reason: string;
+    targetPath?: string | undefined;
+    command?: string | undefined;
+  }): Promise<boolean> => {
+    const what = request.command ?? request.targetPath ?? request.tool;
+    const decision = await cardStore.runs.requestDecision({
+      cardId,
+      kind: "permission",
+      question: `Allow ${request.tool}: ${what}?`,
+      context: request.reason,
+      options: ["deny", "allow"],
+      recommendationIndex: 0,
+    });
+    const answer = await cardStore.runs.awaitDecision(decision.id, { timeoutMs, pollMs });
+    return answer === 1;
+  };
 }
 
 /** Options for one run of `executeCard`. */
@@ -69,6 +106,32 @@ export interface ExecuteCardOptions {
   attempt?: number;
   /** Stops the card before its next turn with `human_abort` (L25). */
   signal?: AbortSignal;
+}
+
+/**
+ * The repository's project row (K14): every card created without one joins
+ * it, and the board scopes to it (B8).
+ */
+export async function ensureRepoProject(cardStore: CardStore, repoPath: string) {
+  return cardStore.ensureProject({ rootPath: repoPath, name: basename(repoPath) || repoPath });
+}
+
+/**
+ * Retention (K27): prune context packs, observations and transcripts of
+ * cards closed more than 30 days ago. Evidence is never pruned.
+ */
+export async function pruneRunData(cardStore: CardStore, repoPath: string, now = Date.now()) {
+  const cards = await cardStore.listCards();
+  return pruneRetention(
+    repoPath,
+    cards.map((c) => ({
+      id: c.id,
+      status: c.status,
+      updatedAt: c.updatedAt,
+      packIds: cardStore.runs.contextPackIds(c.id),
+    })),
+    { now },
+  );
 }
 
 /** The attempt after the one in the card's latest evidence bundle (1 when none). */
@@ -122,6 +185,8 @@ export function stepEventPayload(cardId: string, turn: TurnResult) {
       : {}),
     ...(turn.usage ? { usage: turn.usage } : {}),
     ...(turn.stopReason ? { stopReason: turn.stopReason } : {}),
+    // The stored prompt this step's request carried (K11, K26).
+    ...(turn.contextPackId ? { contextPackId: turn.contextPackId } : {}),
   };
 }
 
@@ -141,7 +206,13 @@ export async function executeCard(
   options: ExecuteCardOptions = {},
 ): Promise<CardRunResult> {
   const log = ctx.log ?? ((line: string) => console.log(line));
-  const attempt = options.attempt ?? nextAttemptNumber(ctx.repoPath, card.id);
+  // The attempts table (K16) and the evidence files both count attempts.
+  const attempt =
+    options.attempt ??
+    Math.max(
+      nextAttemptNumber(ctx.repoPath, card.id),
+      ctx.cardStore.runs.nextAttemptNumber(card.id),
+    );
   // Masked and condensed observations persist under the main repository, so
   // recall(ref) still works after a restart and after the worktree is gone (C6).
   useFileEvidenceStore(ctx.repoPath);
@@ -204,6 +275,8 @@ export async function executeCard(
     requireConfinement: ctx.restrictedMode,
     // --restricted is a read-only audit: no run_cmd, no writes, static gates (S12).
     restricted: ctx.restrictedMode,
+    // Ask-tier commands wait for a person on the decision queue (S8, K20).
+    onApproval: decisionApprover(ctx.cardStore, card.id, ctx.approvalTimeoutMs ?? 60_000),
     ...(options.signal ? { signal: options.signal } : {}),
     // Stop before the host does: a paused card resumes, an OOM takes the
     // machine. The watchdog's pause is checked before every turn.
@@ -276,6 +349,9 @@ export async function executeCard(
         cardId,
         actor: "executor",
         payload: stepEventPayload(cardId, turn),
+        // The typed columns (K4): the step row and its attempt.
+        attemptId: turn.attemptId,
+        stepId: turn.stepId,
       });
       await ctx.afterTurn?.(cardId, turn);
       // Between steps is where a card can wait out memory pressure without

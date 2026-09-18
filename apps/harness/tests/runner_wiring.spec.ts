@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { BoardServiceImpl } from "@sekhemet/board";
 import { PlaybookRegistry } from "@sekhemet/context";
-import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
+import { BlobStore, CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import type { InferenceRequest, LocalInferenceAdapter, ToolCall } from "@sekhemet/models";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 // The browser module, imported as the page runs it.
@@ -288,6 +288,98 @@ describe("apps/harness executeCard wiring (wave 2, part 1)", () => {
     expect(result.passed).toBe(true);
     expect(result.evidence.rungResults?.map((r) => r.gate)).toEqual(["types"]);
     expect(result.evidence.filesTouched).toEqual([]);
+  });
+
+  it("records the attempt, its steps, gate results, evidence and competence, and logs every prompt by hash (K4, K11, K16-K22, K26)", async () => {
+    const card = await newCard("card_rec");
+    const { adapter, seen } = scripted([
+      [{ name: "read_file", arguments: { path: "src/a.ts" } }],
+      WRITE_A,
+    ]);
+    const result = await executeCard(ctx, card, adapter);
+    expect(result.passed).toBe(true);
+
+    const [attempt] = cardStore.runs.listAttempts(card.id);
+    expect(attempt).toMatchObject({
+      attemptNumber: 1,
+      status: "passed",
+      stopReason: "gate_passed",
+    });
+    const steps = cardStore.runs.listSteps(attempt?.id ?? "");
+    expect(steps.map((s) => s.stepIndex)).toEqual([1, 2]);
+    expect(steps[1]?.calls.map((c) => c.name)).toEqual(["write_file", "finish_card"]);
+    expect(cardStore.runs.listGateResults(attempt?.id ?? "")[0]).toMatchObject({
+      gate: "unit",
+      passed: true,
+      stepId: steps[1]?.id,
+    });
+    // The passing step's checkpoint commit is pinned to its step row.
+    expect(steps[1]?.gitRef).toMatch(/^[0-9a-f]{7,40}$/);
+
+    // K11/K26: every request's prompt is a stored pack, byte for byte.
+    const blobs = new BlobStore(repo);
+    for (const [i, step] of steps.entries()) {
+      const pack = JSON.parse(blobs.get(step.contextPackId ?? "") ?? "{}");
+      expect(pack.systemPrompt).toBe(seen[i]?.systemPrompt);
+      expect(pack.prompt).toBe(seen[i]?.prompt);
+    }
+    expect((await cardStore.getCard(card.id))?.contextPackId).toBe(steps[1]?.contextPackId);
+
+    // K4: the ledger's card/step events carry the typed ids.
+    const stepEvents = (await log.getEventsByCard(card.id)).filter((e) => e.type === "card/step");
+    expect(stepEvents.map((e) => e.stepId)).toEqual(steps.map((s) => s.id));
+    expect(stepEvents.every((e) => e.attemptId === attempt?.id)).toBe(true);
+
+    const [evidence] = cardStore.runs.listEvidence(card.id);
+    expect(evidence?.id).toBe(result.evidence.id);
+    expect(evidence?.trajectoryRef).toMatch(/transcripts/);
+    expect(cardStore.runs.competence("story").attempts).toBe(1);
+    // K8: all of it replays byte-identically from the ledger.
+    expect((await cardStore.verifyProjections()).identical).toBe(true);
+  });
+
+  it("asks a person on the decision queue for an ask-tier command, and runs it on allow (S8, K20)", async () => {
+    const card = await newCard("card_ask_tier");
+    ctx.approvalTimeoutMs = 10_000;
+    let answered = false;
+    const dashboard = setInterval(() => {
+      const pending = cardStore.runs.listDecisions("pending");
+      if (pending[0] && !answered) {
+        answered = true;
+        void cardStore.runs.answerDecision(pending[0].id, 1, "human");
+      }
+    }, 50);
+    try {
+      const { adapter } = scripted([
+        [{ name: "run_cmd", arguments: { command: "rm -rf build_output", description: "clean" } }],
+        WRITE_A,
+      ]);
+      const result = await executeCard(ctx, card, adapter);
+      const obs = result.turns[0]?.observations[0];
+      expect(obs?.denied).not.toBe(true);
+      const [decision] = cardStore.runs.listDecisions();
+      expect(decision).toMatchObject({
+        cardId: card.id,
+        kind: "permission",
+        status: "answered",
+        selectedOptionIndex: 1,
+      });
+      expect(decision?.question).toContain("rm -rf build_output");
+    } finally {
+      clearInterval(dashboard);
+    }
+  });
+
+  it("refuses an ask-tier command nobody answers in time", async () => {
+    const card = await newCard("card_ask_none");
+    ctx.approvalTimeoutMs = 0;
+    const { adapter } = scripted([
+      [{ name: "run_cmd", arguments: { command: "curl https://example.com", description: "x" } }],
+      WRITE_A,
+    ]);
+    const result = await executeCard(ctx, card, adapter);
+    expect(result.turns[0]?.observations[0]?.denied).toBe(true);
+    expect(cardStore.runs.listDecisions()[0]?.status).toBe("timed_out");
   });
 
   it("records a review in the dossier, which the Review surface reads as findings", async () => {

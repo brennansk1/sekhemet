@@ -31,9 +31,11 @@ import {
   QueuedWorkerQuestions,
   acceptCard,
   collectCardFiles,
+  ensureRepoProject,
   executeCard,
   inferDependencies,
   nextAttemptNumber,
+  pruneRunData,
   recordReview,
   writeQueueReport,
 } from "./execute.js";
@@ -359,6 +361,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   }
 
   const { db, log, cardStore, boardService } = initLocalKernel(config.repoPath);
+  // The repository is a project (K14); cards created without one join it.
+  await ensureRepoProject(cardStore, config.repoPath).catch(() => undefined);
 
   if (config.command === "mcp") {
     runMcpStdioServer({ db, log, cardStore, boardService, repoPath: config.repoPath });
@@ -394,6 +398,18 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
 
   if (config.command === "log") {
     await printEventLog(log);
+    // K8: the projections must be exactly what the ledger derives.
+    const verdict = await cardStore.verifyProjections();
+    console.log(
+      verdict.identical
+        ? ` Projections: rebuilt from ${verdict.eventsApplied} events, byte-identical.`
+        : ` Projections DRIFTED from the ledger: ${verdict.mismatched.join(", ")}.${argv.includes("--rebuild") ? "" : " Run `sekhemet log --rebuild` to rebuild them from the ledger."}`,
+    );
+    if (!verdict.identical && argv.includes("--rebuild")) {
+      await cardStore.rebuildProjections();
+      console.log(" Projections rebuilt from the ledger.");
+    }
+    if (!verdict.identical && !argv.includes("--rebuild")) process.exitCode = 1;
     return;
   }
 
@@ -693,6 +709,13 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     if (ready.length === 0) {
       console.log("No Ready cards.");
       return;
+    }
+    // Retention (K27): packs and transcripts of cards closed 30+ days ago.
+    const pruned = await pruneRunData(cardStore, config.repoPath).catch(() => undefined);
+    if (pruned && pruned.closedCards.length > 0) {
+      console.log(
+        `Retention: pruned ${pruned.removed.packs} pack(s), ${pruned.removed.observations} observation(s), ${pruned.removed.transcripts} transcript(s) of ${pruned.closedCards.length} closed card(s).`,
+      );
     }
 
     // Every role resolves through one roster (M5, C3): a managed name
@@ -1005,7 +1028,10 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       if (role === "escalation") console.log(`   escalating ${rawCard.id} to ${worker.modelId}`);
       if (role === "worker") workerModelId = worker.modelId;
       // The real attempt number (across queue runs), not the round.
-      const attemptNo = nextAttemptNumber(config.repoPath, card.id);
+      const attemptNo = Math.max(
+        nextAttemptNumber(config.repoPath, card.id),
+        cardStore.runs.nextAttemptNumber(card.id),
+      );
       console.log(`\n=== ${card.id} (attempt ${attemptNo}): ${card.title} ===`);
       // What earlier attempts learned reaches this one through the card's
       // dossier (lessons, answers, reviews, send-backs), read by the runner.
@@ -1055,16 +1081,19 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       return result;
     };
 
-    const deps = inferDependencies(ready);
-    const blockedBy = async (card: CardRecord): Promise<string[]> => {
-      const waiting: string[] = [];
-      for (const id of deps.get(card.id) ?? []) {
-        const dep = await cardStore.getCard(id);
-        // A prerequisite outside this queue counts as satisfied only when done.
-        if (dep && dep.status !== "done") waiting.push(id);
+    // Inferred prerequisites become checked edges in the dependency table
+    // (K15, B5): an edge that would close a cycle is refused and reported.
+    for (const [id, list] of inferDependencies(ready)) {
+      for (const dep of list) {
+        await cardStore.addDependency(id, dep, "inferred", "harness").catch((err) => {
+          console.log(
+            `   dependency ${id} -> ${dep} skipped: ${err instanceof Error ? err.message : err}`,
+          );
+        });
       }
-      return waiting;
-    };
+    }
+    /** Prerequisites not done yet, from the dependency table. */
+    const blockedBy = async (card: CardRecord): Promise<string[]> => cardStore.waitingOn(card.id);
     const deferred: CardRecord[] = [];
 
     /** Run every runnable card; defer those whose prerequisites have not merged. */

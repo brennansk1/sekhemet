@@ -846,9 +846,93 @@ export function startDashboardServer(
       return;
     }
 
+    // --- Run records, decisions, integrity (K8, K16-K20, S8) ------------------
+    if (url === "/api/integrity") {
+      const chain = await log.verifyHashChain();
+      const projections = options.cardStore
+        ? await options.cardStore.verifyProjections()
+        : undefined;
+      json(res, 200, { chain, ...(projections ? { projections } : {}) });
+      return;
+    }
+
+    const attemptsMatch = new RegExp(`^/api/cards/(${CARD_ID})/attempts$`).exec(url);
+    if (attemptsMatch && options.cardStore) {
+      const runs = options.cardStore.runs;
+      const attempts = runs.listAttempts(attemptsMatch[1] as string).map((a) => ({
+        ...a,
+        steps: runs.listSteps(a.id),
+        gates: runs.listGateResults(a.id),
+      }));
+      json(res, 200, { attempts, evidence: runs.listEvidence(attemptsMatch[1] as string) });
+      return;
+    }
+
+    if (url === "/api/decisions" && req.method !== "POST") {
+      if (!options.cardStore) {
+        json(res, 200, { decisions: [] });
+        return;
+      }
+      const status = query.get("status");
+      json(res, 200, {
+        decisions: options.cardStore.runs.listDecisions(
+          status === "pending" || status === "answered" || status === "timed_out"
+            ? status
+            : undefined,
+        ),
+      });
+      return;
+    }
+
+    const decisionMatch = /^\/api\/decisions\/(dec_[A-Za-z0-9_-]+)$/.exec(url);
+    if (decisionMatch && req.method === "POST") {
+      if (!isTrustedMutation(req)) {
+        json(res, 403, { error: "Decisions must come from the dashboard itself" });
+        return;
+      }
+      if (!options.cardStore) {
+        json(res, 501, { error: "This server was started read-only" });
+        return;
+      }
+      try {
+        const body = await readJsonBody(req);
+        const decision = options.cardStore.runs.getDecision(decisionMatch[1] as string);
+        const option =
+          typeof body.option === "number"
+            ? body.option
+            : typeof body.answer === "string"
+              ? (decision?.options.indexOf(body.answer) ?? -1)
+              : -1;
+        json(res, 200, {
+          decision: await options.cardStore.runs.answerDecision(
+            decisionMatch[1] as string,
+            option,
+            "human",
+          ),
+        });
+      } catch (err) {
+        json(res, 409, { error: err instanceof Error ? err.message : String(err) });
+      }
+      return;
+    }
+
     if (url.startsWith("/api/") && (await pmApi.handle(req, res, url, query))) return;
 
     json(res, 404, { error: "Not Found", path: url });
+  });
+
+  // K6: appends made in this process (triage, PM, decisions) reach the
+  // stream at once through the log's subscription; the timer below stays as
+  // the fallback for writers in other processes (the queue), which share
+  // only the database file.
+  let pumpQueued = false;
+  const unsubscribe = log.subscribe({}, () => {
+    if (pumpQueued || streams.size === 0) return;
+    pumpQueued = true;
+    setImmediate(() => {
+      pumpQueued = false;
+      void pump();
+    });
   });
 
   return new Promise((resolve, reject) => {
@@ -879,6 +963,7 @@ export function startDashboardServer(
         close: () =>
           new Promise<void>((done) => {
             if (timer) clearInterval(timer);
+            unsubscribe();
             for (const stream of streams) stream.end();
             streams.clear();
             server.close(() => done());

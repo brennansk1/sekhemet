@@ -1,0 +1,749 @@
+import { randomUUID } from "node:crypto";
+import type { DatabaseSync } from "node:sqlite";
+import type { EventLog } from "./log.js";
+import type {
+  AttemptRecord,
+  AttemptStatus,
+  CardStopReason,
+  CompetenceEntry,
+  CompetenceSummary,
+  CreateDecisionInput,
+  DecisionRequestRecord,
+  DecisionStatus,
+  EventRecord,
+  EvidenceBundleRecord,
+  FinishAttemptInput,
+  GateResultRecord,
+  RecordCompetenceInput,
+  RecordGateResultInput,
+  RecordStepInput,
+  StartAttemptInput,
+  StepRecord,
+  StepToolCall,
+} from "./types.js";
+
+/** Ledger event types for run records; each is replayed into its table (K8). */
+export const RUN_EVENTS = {
+  attemptStarted: "attempt/started",
+  attemptFinished: "attempt/finished",
+  stepRecorded: "step/recorded",
+  stepCheckpointed: "step/checkpointed",
+  gateResult: "gate/result",
+  evidenceRecorded: "evidence/recorded",
+  decisionRequested: "decision/requested",
+  decisionAnswered: "decision/answered",
+  decisionTimedOut: "decision/timed_out",
+  competenceRecorded: "competence/recorded",
+} as const;
+
+const GATE_LAYERS = new Set([
+  "static",
+  "functional",
+  "robustness",
+  "security",
+  "visual",
+  "hygiene",
+]);
+
+function json<T>(raw: unknown, fallback: T): T {
+  if (typeof raw !== "string" || !raw) return fallback;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function percentile(values: number[], p: number): number | undefined {
+  if (values.length === 0) return undefined;
+  const sorted = [...values].sort((a, b) => a - b);
+  const idx = Math.min(sorted.length - 1, Math.ceil(p * sorted.length) - 1);
+  return sorted[Math.max(0, idx)];
+}
+
+/**
+ * Attempts, steps, gate results, evidence bundles, decision requests and the
+ * competence model (K16-K21), as ledger-backed tables.
+ *
+ * Every write appends its event first (with the typed `cardId`,
+ * `attemptId` and `stepId` columns filled, K4) and then projects it, so the
+ * tables can be rebuilt from the log and verified byte-identical (K8). The
+ * payload carries every generated value (ids, timestamps) for that reason.
+ */
+export class RunLedger {
+  constructor(
+    private db: DatabaseSync,
+    private log: EventLog,
+  ) {}
+
+  // --- Attempts (K16) ---------------------------------------------------------
+
+  public async startAttempt(input: StartAttemptInput): Promise<AttemptRecord> {
+    if (!Number.isInteger(input.attemptNumber) || input.attemptNumber < 1) {
+      throw new Error(`Attempt number must be a positive integer, got ${input.attemptNumber}`);
+    }
+    const payload: AttemptRecord = {
+      id: `att_${randomUUID().slice(0, 12)}`,
+      cardId: input.cardId,
+      attemptNumber: input.attemptNumber,
+      modelId: input.modelId,
+      status: "running",
+      tokensUsed: 0,
+      secondsUsed: 0,
+      ...(input.forkedFrom ? { forkedFrom: input.forkedFrom } : {}),
+      ...(input.resumedFromStep !== undefined ? { resumedFromStep: input.resumedFromStep } : {}),
+      startedAt: new Date().toISOString(),
+    };
+    await this.log.append({
+      actor: "executor",
+      type: RUN_EVENTS.attemptStarted,
+      cardId: input.cardId,
+      attemptId: payload.id,
+      payload,
+    });
+    this.projectAttemptStarted(payload);
+    return payload;
+  }
+
+  public async finishAttempt(input: FinishAttemptInput): Promise<AttemptRecord> {
+    const attempt = this.getAttempt(input.attemptId);
+    if (!attempt) throw new Error(`Attempt not found: ${input.attemptId}`);
+    const payload = { ...input, completedAt: new Date().toISOString() };
+    await this.log.append({
+      actor: "executor",
+      type: RUN_EVENTS.attemptFinished,
+      cardId: attempt.cardId,
+      attemptId: attempt.id,
+      payload,
+    });
+    this.projectAttemptFinished(payload);
+    return this.getAttempt(input.attemptId) as AttemptRecord;
+  }
+
+  public getAttempt(id: string): AttemptRecord | undefined {
+    const r = this.db.prepare("SELECT * FROM attempts WHERE id = ?").get(id) as
+      | Record<string, unknown>
+      | undefined;
+    return r ? this.mapAttempt(r) : undefined;
+  }
+
+  public listAttempts(cardId: string): AttemptRecord[] {
+    return (
+      this.db
+        .prepare("SELECT * FROM attempts WHERE card_id = ? ORDER BY attempt_number, started_at")
+        .all(cardId) as unknown as Record<string, unknown>[]
+    ).map((r) => this.mapAttempt(r));
+  }
+
+  /** The next attempt number for a card (one past the highest recorded). */
+  public nextAttemptNumber(cardId: string): number {
+    const r = this.db
+      .prepare("SELECT MAX(attempt_number) AS n FROM attempts WHERE card_id = ?")
+      .get(cardId) as { n: number | null };
+    return (r.n ?? 0) + 1;
+  }
+
+  private mapAttempt(r: Record<string, unknown>): AttemptRecord {
+    return {
+      id: String(r.id),
+      cardId: String(r.card_id),
+      attemptNumber: Number(r.attempt_number),
+      modelId: String(r.model_id),
+      status: r.status as AttemptStatus,
+      ...(r.stop_reason ? { stopReason: r.stop_reason as CardStopReason } : {}),
+      tokensUsed: Number(r.tokens_used),
+      secondsUsed: Number(r.seconds_used),
+      ...(r.evidence_id ? { evidenceId: String(r.evidence_id) } : {}),
+      ...(r.forked_from_attempt
+        ? {
+            forkedFrom: {
+              attemptId: String(r.forked_from_attempt),
+              step: Number(r.forked_from_step ?? 0),
+            },
+          }
+        : {}),
+      ...(r.resumed_from_step !== null && r.resumed_from_step !== undefined
+        ? { resumedFromStep: Number(r.resumed_from_step) }
+        : {}),
+      startedAt: String(r.started_at),
+      ...(r.completed_at ? { completedAt: String(r.completed_at) } : {}),
+    };
+  }
+
+  private projectAttemptStarted(p: AttemptRecord): void {
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO attempts (id, card_id, attempt_number, model_id, status, stop_reason,
+          tokens_used, seconds_used, evidence_id, forked_from_attempt, forked_from_step,
+          resumed_from_step, started_at, completed_at)
+         VALUES (?, ?, ?, ?, 'running', NULL, 0, 0, NULL, ?, ?, ?, ?, NULL)`,
+      )
+      .run(
+        p.id,
+        p.cardId,
+        p.attemptNumber,
+        p.modelId,
+        p.forkedFrom?.attemptId ?? null,
+        p.forkedFrom?.step ?? null,
+        p.resumedFromStep ?? null,
+        p.startedAt,
+      );
+  }
+
+  private projectAttemptFinished(p: FinishAttemptInput & { completedAt: string }): void {
+    this.db
+      .prepare(
+        `UPDATE attempts SET status = ?, stop_reason = ?, tokens_used = ?, seconds_used = ?,
+          evidence_id = ?, completed_at = ? WHERE id = ?`,
+      )
+      .run(
+        p.status,
+        p.stopReason,
+        p.tokensUsed,
+        p.secondsUsed,
+        p.evidenceId ?? null,
+        p.completedAt,
+        p.attemptId,
+      );
+  }
+
+  // --- Steps (K17) ------------------------------------------------------------
+
+  public async recordStep(input: RecordStepInput): Promise<StepRecord> {
+    const payload: StepRecord = {
+      ...input,
+      id: `stp_${randomUUID().slice(0, 12)}`,
+      createdAt: new Date().toISOString(),
+    };
+    await this.log.append({
+      actor: "executor",
+      type: RUN_EVENTS.stepRecorded,
+      cardId: input.cardId,
+      attemptId: input.attemptId,
+      stepId: payload.id,
+      payload,
+    });
+    this.projectStep(payload);
+    return payload;
+  }
+
+  /** Attach the checkpoint commit taken at a step (what fork and rewind restore). */
+  public async markStepCheckpoint(stepId: string, gitRef: string): Promise<void> {
+    const step = this.getStep(stepId);
+    if (!step) throw new Error(`Step not found: ${stepId}`);
+    const payload = { stepId, gitRef };
+    await this.log.append({
+      actor: "sync",
+      type: RUN_EVENTS.stepCheckpointed,
+      cardId: step.cardId,
+      attemptId: step.attemptId,
+      stepId,
+      payload,
+    });
+    this.db.prepare("UPDATE steps SET git_ref = ? WHERE id = ?").run(gitRef, stepId);
+  }
+
+  public getStep(id: string): StepRecord | undefined {
+    const r = this.db.prepare("SELECT * FROM steps WHERE id = ?").get(id) as
+      | Record<string, unknown>
+      | undefined;
+    return r ? this.mapStep(r) : undefined;
+  }
+
+  public listSteps(attemptId: string): StepRecord[] {
+    return (
+      this.db
+        .prepare("SELECT * FROM steps WHERE attempt_id = ? ORDER BY step_index")
+        .all(attemptId) as unknown as Record<string, unknown>[]
+    ).map((r) => this.mapStep(r));
+  }
+
+  /** Every context pack a card's steps carried, for retention (K27). */
+  public contextPackIds(cardId: string): string[] {
+    return (
+      this.db
+        .prepare(
+          "SELECT DISTINCT context_pack_id AS p FROM steps WHERE card_id = ? AND context_pack_id IS NOT NULL",
+        )
+        .all(cardId) as unknown as { p: string }[]
+    ).map((r) => r.p);
+  }
+
+  private mapStep(r: Record<string, unknown>): StepRecord {
+    return {
+      id: String(r.id),
+      attemptId: String(r.attempt_id),
+      cardId: String(r.card_id),
+      stepIndex: Number(r.step_index),
+      calls: json<StepToolCall[]>(r.calls, []),
+      ...(r.context_pack_id ? { contextPackId: String(r.context_pack_id) } : {}),
+      ...(r.repo_state_hash ? { repoStateHash: String(r.repo_state_hash) } : {}),
+      promptTokens: Number(r.prompt_tokens),
+      completionTokens: Number(r.completion_tokens),
+      durationMs: Number(r.duration_ms),
+      ...(r.stop_reason ? { stopReason: r.stop_reason as CardStopReason } : {}),
+      ...(r.git_ref ? { gitRef: String(r.git_ref) } : {}),
+      createdAt: String(r.created_at),
+    };
+  }
+
+  private projectStep(p: StepRecord): void {
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO steps (id, attempt_id, card_id, step_index, calls, context_pack_id,
+          repo_state_hash, prompt_tokens, completion_tokens, duration_ms, stop_reason, git_ref, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
+      )
+      .run(
+        p.id,
+        p.attemptId,
+        p.cardId,
+        p.stepIndex,
+        JSON.stringify(p.calls),
+        p.contextPackId ?? null,
+        p.repoStateHash ?? null,
+        p.promptTokens,
+        p.completionTokens,
+        p.durationMs,
+        p.stopReason ?? null,
+        p.createdAt,
+      );
+  }
+
+  // --- Gate results (K18) -----------------------------------------------------
+
+  public async recordGateResult(input: RecordGateResultInput): Promise<GateResultRecord> {
+    const layer = GATE_LAYERS.has(input.layer) ? input.layer : "functional";
+    const payload: GateResultRecord = {
+      ...input,
+      layer,
+      id: `gr_${randomUUID().slice(0, 12)}`,
+      createdAt: new Date().toISOString(),
+    };
+    await this.log.append({
+      actor: "gate",
+      type: RUN_EVENTS.gateResult,
+      cardId: input.cardId,
+      attemptId: input.attemptId,
+      ...(input.stepId ? { stepId: input.stepId } : {}),
+      payload,
+    });
+    this.projectGateResult(payload);
+    return payload;
+  }
+
+  public listGateResults(attemptId: string): GateResultRecord[] {
+    return (
+      this.db
+        .prepare("SELECT * FROM gate_results WHERE attempt_id = ? ORDER BY created_at, id")
+        .all(attemptId) as unknown as Record<string, unknown>[]
+    ).map((r) => ({
+      id: String(r.id),
+      attemptId: String(r.attempt_id),
+      cardId: String(r.card_id),
+      ...(r.step_id ? { stepId: String(r.step_id) } : {}),
+      gate: String(r.gate),
+      layer: String(r.layer),
+      passed: r.status === "pass",
+      exitCode: Number(r.exit_code),
+      durationMs: Number(r.duration_ms),
+      failures: json<unknown[]>(r.failures, []),
+      createdAt: String(r.created_at),
+    }));
+  }
+
+  private projectGateResult(p: GateResultRecord): void {
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO gate_results (id, attempt_id, card_id, step_id, gate, layer, status,
+          exit_code, failures, duration_ms, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        p.id,
+        p.attemptId,
+        p.cardId,
+        p.stepId ?? null,
+        p.gate,
+        p.layer,
+        p.passed ? "pass" : "fail",
+        p.exitCode,
+        JSON.stringify(p.failures),
+        p.durationMs,
+        p.createdAt,
+      );
+  }
+
+  // --- Evidence bundles (K19) -------------------------------------------------
+
+  public async recordEvidence(
+    input: Omit<EvidenceBundleRecord, "createdAt">,
+  ): Promise<EvidenceBundleRecord> {
+    const payload: EvidenceBundleRecord = { ...input, createdAt: new Date().toISOString() };
+    await this.log.append({
+      actor: "gate",
+      type: RUN_EVENTS.evidenceRecorded,
+      cardId: input.cardId,
+      attemptId: input.attemptId,
+      payload,
+    });
+    this.projectEvidence(payload);
+    return payload;
+  }
+
+  public getEvidence(id: string): EvidenceBundleRecord | undefined {
+    const r = this.db.prepare("SELECT * FROM evidence_bundles WHERE id = ?").get(id) as
+      | Record<string, unknown>
+      | undefined;
+    return r ? this.mapEvidence(r) : undefined;
+  }
+
+  public listEvidence(cardId: string): EvidenceBundleRecord[] {
+    return (
+      this.db
+        .prepare("SELECT * FROM evidence_bundles WHERE card_id = ? ORDER BY created_at, id")
+        .all(cardId) as unknown as Record<string, unknown>[]
+    ).map((r) => this.mapEvidence(r));
+  }
+
+  private mapEvidence(r: Record<string, unknown>): EvidenceBundleRecord {
+    return {
+      id: String(r.id),
+      cardId: String(r.card_id),
+      attemptId: String(r.attempt_id),
+      passed: Number(r.passed) === 1,
+      stopReason: String(r.stop_reason),
+      path: String(r.path),
+      sha256: String(r.sha256),
+      filesTouched: json<string[]>(r.files_touched, []),
+      linesAdded: Number(r.lines_added),
+      linesRemoved: Number(r.lines_removed),
+      ...(r.trajectory_ref ? { trajectoryRef: String(r.trajectory_ref) } : {}),
+      createdAt: String(r.created_at),
+    };
+  }
+
+  private projectEvidence(p: EvidenceBundleRecord): void {
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO evidence_bundles (id, card_id, attempt_id, passed, stop_reason, path,
+          sha256, files_touched, lines_added, lines_removed, trajectory_ref, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        p.id,
+        p.cardId,
+        p.attemptId,
+        p.passed ? 1 : 0,
+        p.stopReason,
+        p.path,
+        p.sha256,
+        JSON.stringify(p.filesTouched),
+        p.linesAdded,
+        p.linesRemoved,
+        p.trajectoryRef ?? null,
+        p.createdAt,
+      );
+  }
+
+  // --- Decision requests (K20) ------------------------------------------------
+
+  public async requestDecision(input: CreateDecisionInput): Promise<DecisionRequestRecord> {
+    if (!input.question.trim()) throw new Error("A decision request needs a question");
+    if (input.options.length < 2) throw new Error("A decision request needs at least two options");
+    const rec = input.recommendationIndex ?? 0;
+    if (!Number.isInteger(rec) || rec < 0 || rec >= input.options.length) {
+      throw new Error(`Recommendation ${rec} is not one of the ${input.options.length} options`);
+    }
+    const payload: DecisionRequestRecord = {
+      id: `dec_${randomUUID().slice(0, 12)}`,
+      ...(input.cardId ? { cardId: input.cardId } : {}),
+      kind: input.kind,
+      question: input.question,
+      context: input.context,
+      options: input.options,
+      recommendationIndex: rec,
+      status: "pending",
+      createdAt: new Date().toISOString(),
+    };
+    await this.log.append({
+      actor: "executor",
+      type: RUN_EVENTS.decisionRequested,
+      ...(input.cardId ? { cardId: input.cardId } : {}),
+      payload,
+    });
+    this.projectDecisionRequested(payload);
+    return payload;
+  }
+
+  public async answerDecision(
+    id: string,
+    optionIndex: number,
+    answeredBy = "human",
+  ): Promise<DecisionRequestRecord> {
+    const d = this.getDecision(id);
+    if (!d) throw new Error(`Decision not found: ${id}`);
+    if (d.status !== "pending") throw new Error(`Decision ${id} is already ${d.status}`);
+    if (!Number.isInteger(optionIndex) || optionIndex < 0 || optionIndex >= d.options.length) {
+      throw new Error(`Option ${optionIndex} is not one of ${d.options.length}`);
+    }
+    const payload = { id, optionIndex, answeredBy, answeredAt: new Date().toISOString() };
+    await this.log.append({
+      actor: answeredBy === "human" ? "human" : "system",
+      type: RUN_EVENTS.decisionAnswered,
+      ...(d.cardId ? { cardId: d.cardId } : {}),
+      payload,
+    });
+    this.projectDecisionAnswered(payload);
+    return this.getDecision(id) as DecisionRequestRecord;
+  }
+
+  public async expireDecision(id: string): Promise<void> {
+    const d = this.getDecision(id);
+    if (!d || d.status !== "pending") return;
+    const payload = { id, at: new Date().toISOString() };
+    await this.log.append({
+      actor: "system",
+      type: RUN_EVENTS.decisionTimedOut,
+      ...(d.cardId ? { cardId: d.cardId } : {}),
+      payload,
+    });
+    this.db
+      .prepare("UPDATE decision_requests SET status = 'timed_out', answered_at = ? WHERE id = ?")
+      .run(payload.at, id);
+  }
+
+  public getDecision(id: string): DecisionRequestRecord | undefined {
+    const r = this.db.prepare("SELECT * FROM decision_requests WHERE id = ?").get(id) as
+      | Record<string, unknown>
+      | undefined;
+    return r ? this.mapDecision(r) : undefined;
+  }
+
+  public listDecisions(status?: DecisionStatus): DecisionRequestRecord[] {
+    const rows = status
+      ? this.db
+          .prepare("SELECT * FROM decision_requests WHERE status = ? ORDER BY created_at, id")
+          .all(status)
+      : this.db.prepare("SELECT * FROM decision_requests ORDER BY created_at, id").all();
+    return (rows as unknown as Record<string, unknown>[]).map((r) => this.mapDecision(r));
+  }
+
+  /**
+   * Ask a person and wait (K20, S8's ask tier). Polls the table, which a
+   * dashboard in another process answers; resolves to the chosen option, or
+   * undefined when nobody answered in time (the request is then timed out).
+   */
+  public async awaitDecision(
+    id: string,
+    options: { timeoutMs: number; pollMs?: number; sleep?: (ms: number) => Promise<void> },
+  ): Promise<number | undefined> {
+    const sleep = options.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+    const deadline = Date.now() + options.timeoutMs;
+    for (;;) {
+      const d = this.getDecision(id);
+      if (d?.status === "answered") return d.selectedOptionIndex;
+      if (!d || d.status === "timed_out") return undefined;
+      if (Date.now() >= deadline) {
+        await this.expireDecision(id);
+        return undefined;
+      }
+      await sleep(Math.min(options.pollMs ?? 1000, Math.max(1, deadline - Date.now())));
+    }
+  }
+
+  private mapDecision(r: Record<string, unknown>): DecisionRequestRecord {
+    return {
+      id: String(r.id),
+      ...(r.card_id ? { cardId: String(r.card_id) } : {}),
+      kind: String(r.kind),
+      question: String(r.question),
+      context: String(r.context),
+      options: json<string[]>(r.options, []),
+      recommendationIndex: Number(r.recommendation_index),
+      status: r.status as DecisionStatus,
+      ...(r.selected_option_index !== null && r.selected_option_index !== undefined
+        ? { selectedOptionIndex: Number(r.selected_option_index) }
+        : {}),
+      ...(r.answered_by ? { answeredBy: String(r.answered_by) } : {}),
+      createdAt: String(r.created_at),
+      ...(r.answered_at ? { answeredAt: String(r.answered_at) } : {}),
+    };
+  }
+
+  private projectDecisionRequested(p: DecisionRequestRecord): void {
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO decision_requests (id, card_id, kind, question, context, options,
+          recommendation_index, status, selected_option_index, answered_by, created_at, answered_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', NULL, NULL, ?, NULL)`,
+      )
+      .run(
+        p.id,
+        p.cardId ?? null,
+        p.kind,
+        p.question,
+        p.context,
+        JSON.stringify(p.options),
+        p.recommendationIndex,
+        p.createdAt,
+      );
+  }
+
+  private projectDecisionAnswered(p: {
+    id: string;
+    optionIndex: number;
+    answeredBy: string;
+    answeredAt: string;
+  }): void {
+    this.db
+      .prepare(
+        `UPDATE decision_requests SET status = 'answered', selected_option_index = ?,
+          answered_by = ?, answered_at = ? WHERE id = ?`,
+      )
+      .run(p.optionIndex, p.answeredBy, p.answeredAt, p.id);
+  }
+
+  // --- Competence model (K21) -------------------------------------------------
+
+  public async recordCompetence(input: RecordCompetenceInput): Promise<CompetenceEntry> {
+    const payload: CompetenceEntry = {
+      ...input,
+      id: `cmp_${randomUUID().slice(0, 12)}`,
+      recordedAt: new Date().toISOString(),
+    };
+    await this.log.append({ actor: "system", type: RUN_EVENTS.competenceRecorded, payload });
+    this.projectCompetence(payload);
+    return payload;
+  }
+
+  public listCompetence(filter: { cardClass?: string; modelId?: string } = {}): CompetenceEntry[] {
+    const where: string[] = [];
+    const params: string[] = [];
+    if (filter.cardClass) {
+      where.push("card_class = ?");
+      params.push(filter.cardClass);
+    }
+    if (filter.modelId) {
+      where.push("model_id = ?");
+      params.push(filter.modelId);
+    }
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM competence_entries ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY recorded_at, id`,
+      )
+      .all(...params) as unknown as Record<string, unknown>[];
+    return rows.map((r) => ({
+      id: String(r.id),
+      repoId: String(r.repo_id),
+      cardClass: String(r.card_class),
+      filesTouchedCount: Number(r.files_touched_count),
+      difficulty: String(r.difficulty),
+      modelId: String(r.model_id),
+      toolArm: String(r.tool_arm),
+      stepBudget: Number(r.step_budget),
+      stepsUsed: Number(r.steps_used),
+      stopReason: String(r.stop_reason),
+      passed: Number(r.passed) === 1,
+      tokensUsed: Number(r.tokens_used),
+      wallClockSeconds: Number(r.wall_clock_seconds),
+      recordedAt: String(r.recorded_at),
+    }));
+  }
+
+  /** Measured pass rate and step use for a card class (optionally one model). */
+  public competence(cardClass: string, modelId?: string): CompetenceSummary {
+    const rows = this.listCompetence({ cardClass, ...(modelId ? { modelId } : {}) });
+    const passing = rows.filter((r) => r.passed);
+    const tokens = percentile(
+      passing.map((r) => r.tokensUsed),
+      0.5,
+    );
+    const steps = percentile(
+      passing.map((r) => r.stepsUsed),
+      0.8,
+    );
+    return {
+      cardClass,
+      ...(modelId ? { modelId } : {}),
+      attempts: rows.length,
+      passed: passing.length,
+      passRate: rows.length > 0 ? passing.length / rows.length : 0,
+      ...(steps !== undefined ? { stepsP80: steps } : {}),
+      ...(tokens !== undefined ? { tokensMedian: tokens } : {}),
+    };
+  }
+
+  private projectCompetence(p: CompetenceEntry): void {
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO competence_entries (id, repo_id, card_class, files_touched_count,
+          difficulty, model_id, tool_arm, step_budget, steps_used, stop_reason, passed, tokens_used,
+          wall_clock_seconds, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        p.id,
+        p.repoId,
+        p.cardClass,
+        p.filesTouchedCount,
+        p.difficulty,
+        p.modelId,
+        p.toolArm,
+        p.stepBudget,
+        p.stepsUsed,
+        p.stopReason,
+        p.passed ? 1 : 0,
+        p.tokensUsed,
+        p.wallClockSeconds,
+        p.recordedAt,
+      );
+  }
+
+  // --- Replay (K8) ------------------------------------------------------------
+
+  /** Apply one ledger event to these tables; true when it was a run-record event. */
+  public applyEvent(event: EventRecord): boolean {
+    const p = event.payload as never;
+    switch (event.type) {
+      case RUN_EVENTS.attemptStarted:
+        this.projectAttemptStarted(p);
+        return true;
+      case RUN_EVENTS.attemptFinished:
+        this.projectAttemptFinished(p);
+        return true;
+      case RUN_EVENTS.stepRecorded:
+        this.projectStep(p);
+        return true;
+      case RUN_EVENTS.stepCheckpointed: {
+        const c = event.payload as { stepId: string; gitRef: string };
+        this.db.prepare("UPDATE steps SET git_ref = ? WHERE id = ?").run(c.gitRef, c.stepId);
+        return true;
+      }
+      case RUN_EVENTS.gateResult:
+        this.projectGateResult(p);
+        return true;
+      case RUN_EVENTS.evidenceRecorded:
+        this.projectEvidence(p);
+        return true;
+      case RUN_EVENTS.decisionRequested:
+        this.projectDecisionRequested(p);
+        return true;
+      case RUN_EVENTS.decisionAnswered:
+        this.projectDecisionAnswered(p);
+        return true;
+      case RUN_EVENTS.decisionTimedOut: {
+        const t = event.payload as { id: string; at: string };
+        this.db
+          .prepare(
+            "UPDATE decision_requests SET status = 'timed_out', answered_at = ? WHERE id = ?",
+          )
+          .run(t.at, t.id);
+        return true;
+      }
+      case RUN_EVENTS.competenceRecorded:
+        this.projectCompetence(p);
+        return true;
+      default:
+        return false;
+    }
+  }
+}

@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { GateResult } from "@sekhemet/gates";
 import {
   type EvidenceBundle,
@@ -9,20 +10,24 @@ import {
   compileEvidence,
   loadGatesConfig,
 } from "@sekhemet/gates";
-import type {
-  AgentRole,
-  CardDossier,
-  CardRecord,
-  CardStatus,
-  CardStore,
-  CheckpointRecord,
-  GateStatus,
+import {
+  type AgentRole,
+  BlobStore,
+  type CardDossier,
+  type CardRecord,
+  type CardStatus,
+  type CardStore,
+  type CheckpointRecord,
+  type GateStatus,
+  canonicalPayloadHash,
+  serializeContextPack,
 } from "@sekhemet/kernel";
 import type { GitSyncAdapter } from "@sekhemet/sync";
 import { CardExecutionSessionImpl } from "./session.js";
 import type {
   ExecutionStopReason,
   ParkDiagnosis,
+  PromptRecord,
   ReplanRequest,
   SessionOptions,
   TurnResult,
@@ -55,7 +60,23 @@ export type CardRunStore = Pick<
   | "recordEvent"
   | "recordDossierEntry"
   | "getDossier"
->;
+> &
+  Partial<Pick<CardStore, "runs">>;
+
+/** The card's class for the competence model: its SPIDR kind, else its tier (K21). */
+export function cardClassOf(card: Pick<CardRecord, "title" | "tier">): string {
+  return /\(SPIDR:\s*([A-Za-z]+)/.exec(card.title)?.[1] ?? card.tier;
+}
+
+/** Difficulty 1..10 as the design's XS..XL scale (K25). */
+export function difficultyLabel(difficulty: number | undefined): string {
+  if (difficulty === undefined) return "unknown";
+  if (difficulty <= 2) return "XS";
+  if (difficulty <= 4) return "S";
+  if (difficulty <= 6) return "M";
+  if (difficulty <= 8) return "L";
+  return "XL";
+}
 
 /** Emitted as the run progresses, so the CLI and dashboard can follow along. */
 export interface RunProgressEvent {
@@ -136,6 +157,8 @@ export interface CardRunOptions extends Omit<SessionOptions, "cardId"> {
   resume?: boolean | undefined;
   /** Stops the card with `human_abort` before its next turn (L25). */
   signal?: AbortSignal | undefined;
+  /** This run is a fork of an earlier attempt at a step (H18). */
+  forkedFrom?: { attemptId: string; step: number } | undefined;
 }
 
 export interface CardRunResult {
@@ -254,6 +277,12 @@ export class CardRunner {
   private config: GatesConfig;
   private session: CardExecutionSessionImpl | undefined;
   private pendingAbort: string | undefined;
+  /** The attempt row this run writes to (K16), when a store with `runs` is attached. */
+  private attemptId: string | undefined;
+  /** Step number -> step row id, so a checkpoint can be pinned to its step. */
+  private stepIds = new Map<number, string>();
+  private packIds: string[] = [];
+  private transcriptPath: string | undefined;
 
   constructor(private options: CardRunOptions) {
     // Pin the gate configuration at card start. Every later verification
@@ -281,7 +310,7 @@ export class CardRunner {
    * The bundle is what a human accepts or returns a card on. Building it and
    * then discarding it left the Review column with nothing behind it.
    */
-  private writeEvidence(evidence: EvidenceBundle): void {
+  private writeEvidence(evidence: EvidenceBundle): { path: string; sha256: string } | undefined {
     try {
       const dir = join(this.options.repoRoot, ".sekhemet", "evidence");
       mkdirSync(dir, { recursive: true });
@@ -289,8 +318,13 @@ export class CardRunner {
       writeFileSync(join(dir, `${evidence.id}.json`), body, "utf8");
       // Stable per-card pointer to the latest attempt.
       writeFileSync(join(dir, `latest-${evidence.cardId}.json`), body, "utf8");
+      return {
+        path: join(".sekhemet", "evidence", `${evidence.id}.json`),
+        sha256: createHash("sha256").update(body).digest("hex"),
+      };
     } catch {
       // Evidence loss must never fail a card.
+      return undefined;
     }
   }
 
@@ -320,11 +354,85 @@ export class CardRunner {
             : undefined,
           stopReason: t.stopReason,
           usage: t.usage,
+          ...(t.contextPackId ? { contextPackId: t.contextPackId } : {}),
+          ...(t.stepId ? { stepId: t.stepId } : {}),
         }),
       );
-      writeFileSync(join(dir, `${cardId}-${stamp}.jsonl`), `${lines.join("\n")}\n`, "utf8");
+      const path = join(dir, `${cardId}-${stamp}.jsonl`);
+      writeFileSync(path, `${lines.join("\n")}\n`, "utf8");
+      this.transcriptPath = path;
     } catch {
       // Transcript loss must never fail a card.
+    }
+  }
+
+  /**
+   * Store the exact prompt a request carries as a content-addressed context
+   * pack (K11, K26). Throws when it cannot be stored, which stops the
+   * request: nothing reaches a model that the log cannot reconstruct.
+   */
+  private logPrompt(record: PromptRecord): string {
+    const pack = serializeContextPack({
+      cardId: this.options.card.id,
+      ...(this.attemptId ? { attemptId: this.attemptId } : {}),
+      step: record.step,
+      modelId: this.options.modelAdapter.modelId,
+      systemPrompt: record.systemPrompt,
+      prompt: record.prompt,
+      tools: record.tools,
+      ...(record.reasoning ? { reasoning: record.reasoning } : {}),
+    });
+    return new BlobStore(this.options.repoRoot).put(pack);
+  }
+
+  /** The turn as a step row with its gate results (K17, K18); ids go back on the turn (K4). */
+  private async recordStep(turn: TurnResult): Promise<void> {
+    const runs = this.options.store?.runs;
+    if (!runs || !this.attemptId) return;
+    try {
+      const step = await runs.recordStep({
+        attemptId: this.attemptId,
+        cardId: this.options.card.id,
+        stepIndex: turn.turnIndex,
+        calls: turn.toolCalls.map((c, i) => {
+          const obs = turn.observations[i];
+          const a = (c.arguments ?? {}) as Record<string, unknown>;
+          const target = a.path ?? a.command ?? a.query ?? a.symbol;
+          return {
+            name: c.name,
+            argumentHash: canonicalPayloadHash(c.arguments ?? {}),
+            ...(typeof target === "string" ? { target: target.slice(0, 160) } : {}),
+            ...(obs ? { ok: obs.ok, summary: String(obs.summary ?? "").slice(0, 200) } : {}),
+          };
+        }),
+        ...(turn.contextPackId ? { contextPackId: turn.contextPackId } : {}),
+        promptTokens: turn.usage?.promptTokens ?? 0,
+        completionTokens: turn.usage?.completionTokens ?? 0,
+        durationMs: turn.durationMs ?? 0,
+        ...(turn.stopReason ? { stopReason: turn.stopReason } : {}),
+      });
+      turn.attemptId = this.attemptId;
+      turn.stepId = step.id;
+      this.stepIds.set(turn.turnIndex, step.id);
+      for (const r of turn.gateResult?.rungResults ?? []) {
+        await runs.recordGateResult({
+          attemptId: this.attemptId,
+          cardId: this.options.card.id,
+          stepId: step.id,
+          gate: r.gate,
+          layer: r.layer,
+          passed: r.passed,
+          exitCode: r.exitCode,
+          durationMs: r.durationMs,
+          failures: (turn.gateResult?.failures ?? []).filter((f) => (f.gate ?? f.rung) === r.gate),
+        });
+      }
+    } catch (err) {
+      this.emit({
+        type: "status",
+        cardId: this.options.card.id,
+        message: `step ${turn.turnIndex} not recorded: ${refusalReason(err)}`,
+      });
     }
   }
 
@@ -377,6 +485,10 @@ export class CardRunner {
       cardId: card.id,
       message: `${sha.slice(0, 10)} (${gateStatus})`,
     });
+    const stepId = this.stepIds.get(step);
+    if (stepId && store?.runs) {
+      await store.runs.markStepCheckpoint(stepId, sha).catch(() => undefined);
+    }
     if (store) {
       const record: CheckpointRecord = {
         cardId: card.id,
@@ -595,6 +707,8 @@ export class CardRunner {
           }
         : {}),
       ...(dossierLines.length > 0 ? { dossierLines } : {}),
+      // K11: every prompt is stored by hash before it is sent.
+      onPrompt: (record: PromptRecord) => this.logPrompt(record),
       ...this.options,
       ...(resumedFrom
         ? {
@@ -612,6 +726,27 @@ export class CardRunner {
     });
     this.session = session;
     if (this.pendingAbort !== undefined) await session.abort(this.pendingAbort);
+
+    // The attempt as a row (K16): steps, gate results and evidence hang off it.
+    if (store?.runs) {
+      try {
+        this.attemptId = (
+          await store.runs.startAttempt({
+            cardId: card.id,
+            attemptNumber: attempt,
+            modelId: this.options.modelAdapter.modelId,
+            ...(resumedFrom ? { resumedFromStep: resumedFrom.step } : {}),
+            ...(this.options.forkedFrom ? { forkedFrom: this.options.forkedFrom } : {}),
+          })
+        ).id;
+      } catch (err) {
+        this.emit({
+          type: "status",
+          cardId: card.id,
+          message: `attempt not recorded: ${refusalReason(err)}`,
+        });
+      }
+    }
 
     const turns: TurnResult[] = [];
     let tokens = 0;
@@ -656,6 +791,7 @@ export class CardRunner {
       }
 
       let turn: TurnResult;
+      const turnStarted = this.now();
       try {
         turn = await session.executeTurn();
       } catch (err) {
@@ -671,6 +807,13 @@ export class CardRunner {
         stopReason = "error";
         break;
       }
+      turn.durationMs = Math.max(0, this.now() - turnStarted);
+      const packId = session.getLastContextPackId();
+      if (packId) {
+        turn.contextPackId = packId;
+        this.packIds.push(packId);
+      }
+      await this.recordStep(turn);
       turns.push(turn);
       tokens += (turn.usage?.promptTokens ?? 0) + (turn.usage?.completionTokens ?? 0);
       try {
@@ -802,6 +945,79 @@ export class CardRunner {
     });
   }
 
+  /**
+   * Close the attempt row, index the evidence bundle (K19) and add the
+   * outcome to the competence model (K21). Never fails the card.
+   */
+  private async closeAttempt(p: {
+    passed: boolean;
+    stopReason: ExecutionStopReason;
+    tokensUsed: number;
+    secondsUsed: number;
+    evidence: EvidenceBundle;
+    written: { path: string; sha256: string } | undefined;
+    stepsUsed: number;
+  }): Promise<void> {
+    const runs = this.options.store?.runs;
+    const { card } = this.options;
+    if (!runs || !this.attemptId) return;
+    const halted = new Set<ExecutionStopReason>([
+      "memory_pressure",
+      "human_abort",
+      "quota_suspended",
+      "replan_requested",
+      "done_pending_gates",
+    ]);
+    try {
+      if (p.written) {
+        await runs.recordEvidence({
+          id: p.evidence.id,
+          cardId: card.id,
+          attemptId: this.attemptId,
+          passed: p.passed,
+          stopReason: p.stopReason,
+          path: p.written.path,
+          sha256: p.written.sha256,
+          filesTouched: p.evidence.filesTouched,
+          linesAdded: p.evidence.linesAdded,
+          linesRemoved: p.evidence.linesRemoved,
+          ...(this.transcriptPath ? { trajectoryRef: this.transcriptPath } : {}),
+        });
+      }
+      await runs.finishAttempt({
+        attemptId: this.attemptId,
+        status: p.passed ? "passed" : halted.has(p.stopReason) ? "halted" : "failed",
+        stopReason: p.stopReason,
+        tokensUsed: p.tokensUsed,
+        secondsUsed: p.secondsUsed,
+        evidenceId: p.evidence.id,
+      });
+      // A halt says nothing about what the model can do; only outcomes count.
+      if (!halted.has(p.stopReason) && p.stopReason !== "vacuous_tests") {
+        await runs.recordCompetence({
+          repoId: basename(this.options.repoRoot),
+          cardClass: cardClassOf(card),
+          filesTouchedCount: p.evidence.filesTouched.length,
+          difficulty: difficultyLabel(card.difficulty),
+          modelId: this.options.modelAdapter.modelId,
+          toolArm: this.options.toolArm ?? "arm_a_flat",
+          stepBudget: card.stepBudget,
+          stepsUsed: p.stepsUsed,
+          stopReason: p.stopReason,
+          passed: p.passed,
+          tokensUsed: p.tokensUsed,
+          wallClockSeconds: p.secondsUsed,
+        });
+      }
+    } catch (err) {
+      this.emit({
+        type: "status",
+        cardId: card.id,
+        message: `attempt not closed: ${refusalReason(err)}`,
+      });
+    }
+  }
+
   /** G12 refused the card: record why, park it, and return without a turn. */
   private async finishVacuous(
     worktreePath: string,
@@ -919,7 +1135,7 @@ export class CardRunner {
       settings,
       gatesConfigSha256: this.config.sha256,
     });
-    this.writeEvidence(evidence);
+    const written = this.writeEvidence(evidence);
 
     const passed = stopReason === "gate_passed" && gateResult.passed;
     const tokensUsed = promptTokens + completionTokens;
@@ -1022,6 +1238,8 @@ export class CardRunner {
             secondsUsed: (card.secondsUsed ?? 0) + secondsUsed,
             evidenceId: evidence.id,
             stepsUsed: params.stepsUsed,
+            // The last context pack the Worker saw (K22, K26).
+            ...(this.packIds.length > 0 ? { contextPackId: this.packIds.at(-1) as string } : {}),
             // A lifecycle hold already wrote its own reason.
             ...(held && lifecycle?.hold ? {} : { blockedReason }),
           },
@@ -1035,6 +1253,16 @@ export class CardRunner {
         });
       }
     }
+
+    await this.closeAttempt({
+      passed,
+      stopReason,
+      tokensUsed,
+      secondsUsed,
+      evidence,
+      written,
+      stepsUsed: params.stepsUsed,
+    });
 
     return {
       cardId: card.id,

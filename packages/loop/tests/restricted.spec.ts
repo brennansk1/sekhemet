@@ -47,7 +47,11 @@ describe("restricted mode is a read-only audit (S12, H27)", () => {
   });
 
   it("refuses writes and commands in the executor, whatever the model calls", async () => {
-    const tools = new ToolExecutor({ worktreePath: root, scopeFiles: ["src/a.ts"], readOnly: true });
+    const tools = new ToolExecutor({
+      worktreePath: root,
+      scopeFiles: ["src/a.ts"],
+      readOnly: true,
+    });
     tools.markSeen("src/a.ts");
     const write = await tools.execute({
       id: "w",
@@ -60,7 +64,11 @@ describe("restricted mode is a read-only audit (S12, H27)", () => {
     const run = await tools.execute({ id: "r", name: "run_cmd", arguments: { command: "ls" } });
     expect(run.denied).toBe(true);
     expect(readFileSync(join(root, "src", "a.ts"), "utf8")).toBe("export const a = 1;\n");
-    const read = await tools.execute({ id: "x", name: "read_file", arguments: { path: "src/a.ts" } });
+    const read = await tools.execute({
+      id: "x",
+      name: "read_file",
+      arguments: { path: "src/a.ts" },
+    });
     expect(read.ok).toBe(true);
     expect(tools.getDenialCounts().restricted).toBe(2);
   });

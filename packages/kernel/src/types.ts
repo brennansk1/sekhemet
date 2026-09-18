@@ -192,6 +192,8 @@ export interface CardRecord {
   orderKey?: string;
   /** Why the card cannot proceed, shown on the board instead of silence. */
   blockedReason?: string;
+  /** The project the card belongs to (K14). */
+  projectId?: string;
 }
 
 export interface CheckpointRecord {
@@ -301,4 +303,215 @@ export interface CardDossier {
   research: DossierEntry[];
   reviews: DossierEntry[];
   sendBacks: DossierEntry[];
+}
+
+// ---------------------------------------------------------------------------
+// Actors (K5)
+// ---------------------------------------------------------------------------
+
+/**
+ * Who may write to the ledger (K5). The design's five (`human`, `planner`,
+ * `executor`, `gate`, `system`) plus the documented extensions production
+ * writes: the harness process itself, the sync and GitHub adapters, the MCP
+ * server, and the team roles whose dossier entries carry their own name.
+ * Enforced by a CHECK on the `events` table and by `EventLog.append`.
+ */
+export const EVENT_ACTORS = [
+  "human",
+  "planner",
+  "executor",
+  "gate",
+  "system",
+  "harness",
+  "sync",
+  "github",
+  "mcp",
+  "worker",
+  "manager",
+  "researcher",
+  "reviewer",
+] as const;
+export type EventActor = (typeof EVENT_ACTORS)[number];
+
+// ---------------------------------------------------------------------------
+// Run records (K16-K20): attempts, steps, gate results, evidence, decisions
+// ---------------------------------------------------------------------------
+
+export type AttemptStatus = "running" | "passed" | "failed" | "halted";
+
+export interface AttemptRecord {
+  id: string;
+  cardId: string;
+  attemptNumber: number;
+  modelId: string;
+  status: AttemptStatus;
+  stopReason?: CardStopReason;
+  tokensUsed: number;
+  secondsUsed: number;
+  evidenceId?: string;
+  /** The attempt this one was forked from (H18), and at which step. */
+  forkedFrom?: { attemptId: string; step: number };
+  /** The step a resumed attempt restarted at (H17). */
+  resumedFromStep?: number;
+  startedAt: string;
+  completedAt?: string;
+}
+
+export interface StartAttemptInput {
+  cardId: string;
+  attemptNumber: number;
+  modelId: string;
+  forkedFrom?: { attemptId: string; step: number };
+  resumedFromStep?: number;
+}
+
+export interface FinishAttemptInput {
+  attemptId: string;
+  status: Exclude<AttemptStatus, "running">;
+  stopReason: CardStopReason;
+  tokensUsed: number;
+  secondsUsed: number;
+  evidenceId?: string;
+}
+
+export interface StepToolCall {
+  name: string;
+  /** Canonical-JSON SHA-256 of the arguments. */
+  argumentHash: string;
+  /** What it acted on (a path, a command), clipped. */
+  target?: string;
+  ok?: boolean;
+  summary?: string;
+}
+
+export interface StepRecord {
+  id: string;
+  attemptId: string;
+  cardId: string;
+  stepIndex: number;
+  calls: StepToolCall[];
+  /** The context pack (prompt) the model saw at this step (K11, K26). */
+  contextPackId?: string;
+  repoStateHash?: string;
+  promptTokens: number;
+  completionTokens: number;
+  durationMs: number;
+  stopReason?: CardStopReason;
+  /** The checkpoint commit taken at this step, if one was (H18/H19). */
+  gitRef?: string;
+  createdAt: string;
+}
+
+export interface RecordStepInput extends Omit<StepRecord, "id" | "createdAt" | "gitRef"> {}
+
+export interface GateResultRecord {
+  id: string;
+  attemptId: string;
+  cardId: string;
+  stepId?: string;
+  gate: string;
+  layer: string;
+  passed: boolean;
+  exitCode: number;
+  durationMs: number;
+  /** Typed failures (GateFailure[]), as JSON. */
+  failures: unknown[];
+  createdAt: string;
+}
+
+export interface RecordGateResultInput extends Omit<GateResultRecord, "id" | "createdAt"> {}
+
+export interface EvidenceBundleRecord {
+  id: string;
+  cardId: string;
+  attemptId: string;
+  passed: boolean;
+  stopReason: string;
+  /** Where the full bundle lives (`.sekhemet/evidence/<id>.json`). */
+  path: string;
+  /** SHA-256 of the bundle file as written. */
+  sha256: string;
+  filesTouched: string[];
+  linesAdded: number;
+  linesRemoved: number;
+  /** The transcript's path (the trajectory reference). */
+  trajectoryRef?: string;
+  createdAt: string;
+}
+
+export type DecisionStatus = "pending" | "answered" | "timed_out";
+
+export interface DecisionRequestRecord {
+  id: string;
+  cardId?: string;
+  /** What kind of decision: `permission` (ask tier), `escalation`, ... */
+  kind: string;
+  question: string;
+  context: string;
+  options: string[];
+  recommendationIndex: number;
+  status: DecisionStatus;
+  selectedOptionIndex?: number;
+  answeredBy?: string;
+  createdAt: string;
+  answeredAt?: string;
+}
+
+export interface CreateDecisionInput {
+  cardId?: string;
+  kind: string;
+  question: string;
+  context: string;
+  options: string[];
+  recommendationIndex?: number;
+}
+
+/** One card outcome for the competence model (K21). */
+export interface CompetenceEntry {
+  id: string;
+  repoId: string;
+  cardClass: string;
+  filesTouchedCount: number;
+  difficulty: string;
+  modelId: string;
+  toolArm: string;
+  stepBudget: number;
+  stepsUsed: number;
+  stopReason: string;
+  passed: boolean;
+  tokensUsed: number;
+  wallClockSeconds: number;
+  recordedAt: string;
+}
+
+export interface RecordCompetenceInput extends Omit<CompetenceEntry, "id" | "recordedAt"> {}
+
+/** Measured pass rates for a card class on this repo, for budgets and routing (K21, L21). */
+export interface CompetenceSummary {
+  cardClass: string;
+  modelId?: string;
+  attempts: number;
+  passed: number;
+  passRate: number;
+  /** Steps a passing attempt used, 80th percentile; undefined without passes. */
+  stepsP80?: number;
+  /** Median tokens of passing attempts. */
+  tokensMedian?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Projects (K14, B8, B13)
+// ---------------------------------------------------------------------------
+
+export type ProjectStatus = "active" | "paused" | "archived";
+
+export interface ProjectRecord {
+  id: string;
+  name: string;
+  rootPath: string;
+  gitBranch: string;
+  status: ProjectStatus;
+  reviewMinutesPerDay: number;
+  createdAt: string;
+  updatedAt: string;
 }

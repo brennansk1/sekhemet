@@ -114,6 +114,8 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   private writeCount = 0;
   /** The last prompt the allocator built (for the transcript and evidence). */
   private lastPrompt: WorkerPromptResult | undefined;
+  /** Where the last request's prompt was logged (K11). */
+  private lastContextPackId: string | undefined;
 
   constructor(private options: SessionOptions) {
     if (options.priorLessons?.length) this.memory.seed(options.priorLessons);
@@ -673,6 +675,11 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     return built;
   }
 
+  /** Where the last model request's prompt was logged (K11), when `onPrompt` is set. */
+  public getLastContextPackId(): string | undefined {
+    return this.lastContextPackId;
+  }
+
   /** The last prompt's allocation report (tier, cuts, prefix hashes), for evidence and the log. */
   public getLastPromptReport():
     | Pick<
@@ -694,6 +701,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   }
 
   public async executeTurn(): Promise<TurnResult> {
+    this.lastContextPackId = undefined;
     if (this.abortReason !== undefined) {
       return {
         turnIndex: this.stepsUsed,
@@ -749,6 +757,16 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       rung && rung !== "direct_repair" ? { purpose: "repair", rung } : { purpose: "mechanical" },
     );
 
+    const tools = this.toolDefinitions();
+    // K11: the prompt is logged before it is sent, or it is not sent.
+    this.lastContextPackId = this.options.onPrompt?.({
+      step: turnIndex,
+      systemPrompt,
+      prompt,
+      tools: tools.map((t) => t.name),
+      reasoning: thinking.reasoning,
+    });
+
     const response = await this.options.modelAdapter.generate({
       systemPrompt,
       prompt,
@@ -758,7 +776,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       // whatever syntax the model chose to emit it.
       // Real JSON Schema, so servers with native tool calling can constrain
       // the call format instead of leaving the model to improvise one.
-      tools: this.toolDefinitions(),
+      tools,
       toolArm: this.options.toolArm ?? "arm_a_flat",
       ...(this.options.temperature !== undefined ? { temperature: this.options.temperature } : {}),
       ...(this.options.maxTokens !== undefined ? { maxTokens: this.options.maxTokens } : {}),

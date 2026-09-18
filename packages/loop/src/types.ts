@@ -61,6 +61,22 @@ export interface TurnResult {
   usage?: TokenUsage | undefined;
   gateResult?: GateResult | undefined;
   stopReason?: ExecutionStopReason | undefined;
+  /** The stored context pack this turn's model request carried (K11, K26). */
+  contextPackId?: string | undefined;
+  /** Set by the runner once the step is recorded (K4, K16, K17). */
+  attemptId?: string | undefined;
+  stepId?: string | undefined;
+  /** Wall time of the turn, ms. */
+  durationMs?: number | undefined;
+}
+
+/** What one model request carried, handed to `onPrompt` before it is sent (K11). */
+export interface PromptRecord {
+  step: number;
+  systemPrompt: string;
+  prompt: string;
+  tools: string[];
+  reasoning?: string | undefined;
 }
 
 export interface SessionOptions {
@@ -157,6 +173,12 @@ export interface SessionOptions {
    */
   memoryProbe?: (() => { ok: boolean; reason?: string | undefined }) | undefined;
 
+  /**
+   * "Model-visible means logged" (K11): called with every request before it
+   * is sent; returns the id the prompt was stored under. If it throws, the
+   * request is not sent: a prompt that cannot be logged never reaches a model.
+   */
+  onPrompt?: ((record: PromptRecord) => string) | undefined;
   /** Restricted mode: the agent's own commands refuse to run unconfined (defect 3). */
   requireConfinement?: boolean | undefined;
   /**

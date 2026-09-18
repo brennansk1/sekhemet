@@ -1,7 +1,8 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type { EventLog } from "./log.js";
 import { keyBetween } from "./order_key.js";
+import { RunLedger } from "./records.js";
 import {
   CARD_STOP_REASONS,
   type CardDossier,
@@ -15,9 +16,34 @@ import {
   type DossierEntry,
   type DossierEntryInput,
   type DossierEntryKind,
+  type EventRecord,
   type ExternalRef,
   type ModelRoute,
+  type ProjectRecord,
+  type ProjectStatus,
 } from "./types.js";
+
+/**
+ * Card nesting under a project (K13): the design's four levels are workspace,
+ * project, card and subtask, so a card may have a parent card but a subtask
+ * may not have children. Deeper nesting is rejected at creation.
+ */
+export const MAX_CARD_DEPTH = 2;
+
+/** Projects that may be active at once (B13, design: workspace cap, default 3). */
+export const DEFAULT_ACTIVE_PROJECT_CAP = 3;
+
+/** A structural rule the store refuses to break (hierarchy, dependency cycle, project cap). */
+export class CardStructureError extends Error {
+  constructor(
+    public readonly code: "hierarchy_depth" | "dependency_cycle" | "unknown_card" | "project_cap",
+    message: string,
+    public readonly path?: string[],
+  ) {
+    super(message);
+    this.name = "CardStructureError";
+  }
+}
 
 /** Longest dossier text kept; longer text is cut with a marker, never silently. */
 export const MAX_DOSSIER_TEXT = 8000;
@@ -68,6 +94,8 @@ export interface CreateCardInput {
   /** Explicit placement; generated after the last card when omitted. */
   orderKey?: string;
   blockedReason?: string;
+  /** The project the card belongs to (K14); the default project when omitted. */
+  projectId?: string;
 }
 
 /**
@@ -107,6 +135,7 @@ export interface CardUpdate {
   orderKey?: string;
   /** `null` clears the block. */
   blockedReason?: string | null;
+  projectId?: string;
 }
 
 /** Where a dragged card lands, expressed as its new neighbours. */
@@ -125,7 +154,7 @@ const CARD_COLUMNS = `
   tokens_used, seconds_used, model_route_planner, model_route_executor,
   depends_on, context_pack_id, evidence_id, external_ref, stop_reason,
   priority, order_key, blocked_reason, estimate, labels, epic_id, cycle_id,
-  assignee, due_date, created_at, updated_at
+  assignee, due_date, project_id, created_at, updated_at
 `;
 
 interface RawCardRow {
@@ -161,6 +190,7 @@ interface RawCardRow {
   cycle_id: string | null;
   assignee: string | null;
   due_date: string | null;
+  project_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -187,10 +217,43 @@ function parseJsonColumn<T>(raw: string | null, fallback: T): T {
 }
 
 export class CardStore {
+  /** Attempts, steps, gate results, evidence, decisions, competence (K16-K21). */
+  public readonly runs: RunLedger;
+  /** Active projects allowed at once (B13). */
+  public activeProjectCap = DEFAULT_ACTIVE_PROJECT_CAP;
+
   constructor(
     private db: DatabaseSync,
     private eventLog: EventLog,
-  ) {}
+  ) {
+    this.runs = new RunLedger(db, eventLog);
+  }
+
+  /** The oldest active project, which cards created without one belong to. */
+  private defaultProjectId(): string | null {
+    const row = this.db
+      .prepare(
+        "SELECT id FROM projects WHERE status = 'active' ORDER BY created_at ASC, rowid ASC LIMIT 1",
+      )
+      .get() as { id?: string } | undefined;
+    return row?.id ?? null;
+  }
+
+  /** Nesting depth of a card: 1 for a top-level card, 2 for a subtask. */
+  private depthOf(id: string): number {
+    let depth = 0;
+    let current: string | null = id;
+    const seen = new Set<string>();
+    while (current && !seen.has(current)) {
+      seen.add(current);
+      depth++;
+      const row = this.db.prepare("SELECT parent_id FROM cards WHERE id = ?").get(current) as
+        | { parent_id: string | null }
+        | undefined;
+      current = row?.parent_id ?? null;
+    }
+    return depth;
+  }
 
   private mapCardRow(row: RawCardRow): CardRecord {
     const modelRoute: ModelRoute = {
@@ -237,6 +300,7 @@ export class CardStore {
       ...(row.cycle_id !== null ? { cycleId: row.cycle_id } : {}),
       ...(row.assignee !== null ? { assignee: row.assignee } : {}),
       ...(row.due_date !== null ? { dueDate: row.due_date } : {}),
+      ...(row.project_id !== null ? { projectId: row.project_id } : {}),
     };
   }
 
@@ -273,6 +337,23 @@ export class CardStore {
     const now = new Date().toISOString();
     const status: CardStatus = input.status ?? "ready";
 
+    // K13: refused before anything reaches the append-only ledger.
+    if (input.parentId) {
+      if (!(await this.getCard(input.parentId))) {
+        throw new CardStructureError(
+          "unknown_card",
+          `Cannot create ${id}: parent ${input.parentId} not found`,
+        );
+      }
+      const depth = this.depthOf(input.parentId) + 1;
+      if (depth > MAX_CARD_DEPTH) {
+        throw new CardStructureError(
+          "hierarchy_depth",
+          `Cannot create ${id} under ${input.parentId}: that would nest cards ${depth} deep, and the hierarchy stops at card and subtask (workspace, project, card, subtask).`,
+        );
+      }
+    }
+
     // The payload is the record of truth: `rebuildProjections()` replays it, so
     // every generated value (id, order key, timestamps) must be resolved here
     // rather than at projection time, or a replay would not be byte-identical.
@@ -308,6 +389,7 @@ export class CardStore {
       cycleId: input.cycleId ?? null,
       assignee: input.assignee ?? null,
       dueDate: input.dueDate ?? null,
+      projectId: input.projectId ?? this.defaultProjectId(),
       createdAt: now,
       updatedAt: now,
     };
@@ -322,6 +404,14 @@ export class CardStore {
 
     // 2. Project into SQLite WAL cards table
     this.projectCardCreated(payload);
+
+    // Declared dependencies on cards that exist become checked edges (K15).
+    // A new card has no dependents yet, so these can never close a cycle.
+    for (const dep of input.dependsOn ?? []) {
+      if (dep !== id && (await this.getCard(dep))) {
+        await this.addDependency(id, dep, "declared", actor);
+      }
+    }
 
     const card = await this.getCard(id);
     if (!card) {
@@ -452,6 +542,20 @@ export class CardStore {
       }
     }
 
+    // A replaced dependency list is checked for cycles before it is recorded (K15).
+    if (patch.dependsOn !== undefined) {
+      for (const dep of patch.dependsOn) {
+        const cycle = this.cyclePath(id, dep);
+        if (cycle) {
+          throw new CardStructureError(
+            "dependency_cycle",
+            `${id} cannot depend on ${dep}: ${cycle.join(" -> ")} would be a cycle`,
+            cycle,
+          );
+        }
+      }
+    }
+
     const now = new Date().toISOString();
     const payload = { id, patch, updatedAt: now };
 
@@ -463,6 +567,15 @@ export class CardStore {
     });
 
     this.projectCardUpdated(id, patch, now);
+
+    // A replaced dependency list replaces the checked edges too (K15).
+    if (patch.dependsOn !== undefined) {
+      const wanted = new Set(patch.dependsOn.filter((d) => d !== id && this.cardExists(d)));
+      for (const dep of this.getDependencies(id)) {
+        if (!wanted.has(dep)) await this.removeDependency(id, dep, actor);
+      }
+      for (const dep of wanted) await this.addDependency(id, dep, "declared", actor);
+    }
 
     const updated = await this.getCard(id);
     if (!updated) {
@@ -504,12 +617,17 @@ export class CardStore {
     cardId: string;
     actor: string;
     payload: T;
+    /** The attempt and step the fact belongs to, as typed columns (K4). */
+    attemptId?: string | undefined;
+    stepId?: string | undefined;
   }): Promise<void> {
     await this.eventLog.append({
       actor: params.actor,
       type: params.type,
       cardId: params.cardId,
       payload: params.payload,
+      ...(params.attemptId ? { attemptId: params.attemptId } : {}),
+      ...(params.stepId ? { stepId: params.stepId } : {}),
     });
   }
 
@@ -637,6 +755,254 @@ export class CardStore {
     };
   }
 
+  // --- Dependencies (K15, B5) -----------------------------------------------
+
+  /**
+   * The path that adding `cardId -> dependsOnId` would close into a cycle,
+   * or undefined. Follows existing edges from `dependsOnId`; reaching
+   * `cardId` means the new edge completes a loop.
+   */
+  public cyclePath(cardId: string, dependsOnId: string): string[] | undefined {
+    if (cardId === dependsOnId) return [cardId, cardId];
+    const edges = this.db.prepare(
+      "SELECT depends_on_card_id AS d FROM card_dependencies WHERE card_id = ?",
+    );
+    const stack: string[][] = [[dependsOnId]];
+    const seen = new Set<string>();
+    while (stack.length > 0) {
+      const path = stack.pop() as string[];
+      const at = path[path.length - 1] as string;
+      if (at === cardId) return [cardId, ...path];
+      if (seen.has(at)) continue;
+      seen.add(at);
+      for (const row of edges.all(at) as unknown as { d: string }[]) stack.push([...path, row.d]);
+    }
+    return undefined;
+  }
+
+  /** Record that `cardId` waits on `dependsOnId`, refusing any edge that closes a cycle. */
+  public async addDependency(
+    cardId: string,
+    dependsOnId: string,
+    source: "declared" | "inferred" | "planner" = "declared",
+    actor = "planner",
+  ): Promise<void> {
+    for (const id of [cardId, dependsOnId]) {
+      if (!(await this.getCard(id))) {
+        throw new CardStructureError("unknown_card", `Card not found: ${id}`);
+      }
+    }
+    const existing = this.db
+      .prepare("SELECT 1 AS x FROM card_dependencies WHERE card_id = ? AND depends_on_card_id = ?")
+      .get(cardId, dependsOnId);
+    if (existing) return;
+    const cycle = this.cyclePath(cardId, dependsOnId);
+    if (cycle) {
+      throw new CardStructureError(
+        "dependency_cycle",
+        `${cardId} cannot depend on ${dependsOnId}: ${cycle.join(" -> ")} would be a cycle`,
+        cycle,
+      );
+    }
+    const payload = { cardId, dependsOnId, source, createdAt: new Date().toISOString() };
+    await this.eventLog.append({ actor, type: "card/dependency_added", cardId, payload });
+    this.projectDependencyAdded(payload);
+  }
+
+  public async removeDependency(
+    cardId: string,
+    dependsOnId: string,
+    actor = "human",
+  ): Promise<void> {
+    const payload = { cardId, dependsOnId, removedAt: new Date().toISOString() };
+    await this.eventLog.append({ actor, type: "card/dependency_removed", cardId, payload });
+    this.projectDependencyRemoved(payload);
+  }
+
+  /** Cards `cardId` waits on. */
+  public getDependencies(cardId: string): string[] {
+    return (
+      this.db
+        .prepare(
+          "SELECT depends_on_card_id AS d FROM card_dependencies WHERE card_id = ? ORDER BY d",
+        )
+        .all(cardId) as unknown as { d: string }[]
+    ).map((r) => r.d);
+  }
+
+  /** Cards waiting on `cardId`. */
+  public getDependents(cardId: string): string[] {
+    return (
+      this.db
+        .prepare(
+          "SELECT card_id AS c FROM card_dependencies WHERE depends_on_card_id = ? ORDER BY c",
+        )
+        .all(cardId) as unknown as { c: string }[]
+    ).map((r) => r.c);
+  }
+
+  /** The prerequisites of `cardId` that are not done yet (B5 eligibility). */
+  public waitingOn(cardId: string): string[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT d.depends_on_card_id AS d FROM card_dependencies d
+           JOIN cards c ON c.id = d.depends_on_card_id
+           WHERE d.card_id = ? AND c.status != 'done' ORDER BY d.depends_on_card_id`,
+        )
+        .all(cardId) as unknown as { d: string }[]
+    ).map((r) => r.d);
+  }
+
+  private projectDependencyAdded(p: {
+    cardId: string;
+    dependsOnId: string;
+    source: string;
+    createdAt: string;
+  }): void {
+    this.db
+      .prepare(
+        "INSERT OR IGNORE INTO card_dependencies (card_id, depends_on_card_id, source, created_at) VALUES (?, ?, ?, ?)",
+      )
+      .run(p.cardId, p.dependsOnId, p.source, p.createdAt);
+    this.syncDependsOnColumn(p.cardId);
+  }
+
+  private projectDependencyRemoved(p: { cardId: string; dependsOnId: string }): void {
+    this.db
+      .prepare("DELETE FROM card_dependencies WHERE card_id = ? AND depends_on_card_id = ?")
+      .run(p.cardId, p.dependsOnId);
+    this.syncDependsOnColumn(p.cardId);
+  }
+
+  /** Keep `cards.depends_on` (what `CardRecord.dependsOn` reads) equal to the edges. */
+  private syncDependsOnColumn(cardId: string): void {
+    const row = this.db.prepare("SELECT depends_on FROM cards WHERE id = ?").get(cardId) as
+      | { depends_on: string }
+      | undefined;
+    if (!row) return;
+    const declared = parseJsonColumn<string[]>(row.depends_on, []);
+    const edges = this.getDependencies(cardId);
+    const merged = [...new Set([...declared.filter((d) => !this.cardExists(d)), ...edges])];
+    this.db
+      .prepare("UPDATE cards SET depends_on = ? WHERE id = ?")
+      .run(JSON.stringify(merged), cardId);
+  }
+
+  private cardExists(id: string): boolean {
+    return this.db.prepare("SELECT 1 AS x FROM cards WHERE id = ?").get(id) !== undefined;
+  }
+
+  // --- Projects (K14, B8, B13) ----------------------------------------------
+
+  private mapProjectRow(r: Record<string, unknown>): ProjectRecord {
+    return {
+      id: String(r.id),
+      name: String(r.name),
+      rootPath: String(r.root_path),
+      gitBranch: String(r.git_branch),
+      status: r.status as ProjectStatus,
+      reviewMinutesPerDay: Number(r.review_minutes_per_day),
+      createdAt: String(r.created_at),
+      updatedAt: String(r.updated_at),
+    };
+  }
+
+  public listProjects(): ProjectRecord[] {
+    return (
+      this.db
+        .prepare("SELECT * FROM projects ORDER BY created_at ASC, rowid ASC")
+        .all() as unknown as Record<string, unknown>[]
+    ).map((r) => this.mapProjectRow(r));
+  }
+
+  public getProject(id: string): ProjectRecord | undefined {
+    const row = this.db.prepare("SELECT * FROM projects WHERE id = ?").get(id) as
+      | Record<string, unknown>
+      | undefined;
+    return row ? this.mapProjectRow(row) : undefined;
+  }
+
+  /**
+   * The project rooted at `rootPath`, created when there is none. A new
+   * project starts active only while fewer than `activeProjectCap` are.
+   */
+  public async ensureProject(input: {
+    rootPath: string;
+    name: string;
+    gitBranch?: string;
+    reviewMinutesPerDay?: number;
+  }): Promise<ProjectRecord> {
+    const existing = this.db
+      .prepare("SELECT * FROM projects WHERE root_path = ?")
+      .get(input.rootPath) as Record<string, unknown> | undefined;
+    if (existing) return this.mapProjectRow(existing);
+    const now = new Date().toISOString();
+    const active = this.listProjects().filter((p) => p.status === "active").length;
+    const payload = {
+      id: `proj_${randomUUID().slice(0, 8)}`,
+      name: input.name,
+      rootPath: input.rootPath,
+      gitBranch: input.gitBranch ?? "main",
+      status: (active < this.activeProjectCap ? "active" : "paused") as ProjectStatus,
+      reviewMinutesPerDay: input.reviewMinutesPerDay ?? 60,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await this.eventLog.append({ actor: "system", type: "project/created", payload });
+    this.projectProjectCreated(payload);
+    return this.getProject(payload.id) as ProjectRecord;
+  }
+
+  /**
+   * Pause, resume or archive a project (B12 "pause project"). Activating one
+   * past the active-project cap is refused (B13).
+   */
+  public async setProjectStatus(
+    id: string,
+    status: ProjectStatus,
+    actor = "human",
+  ): Promise<ProjectRecord> {
+    const project = this.getProject(id);
+    if (!project) throw new CardStructureError("unknown_card", `Project not found: ${id}`);
+    if (status === "active" && project.status !== "active") {
+      const active = this.listProjects().filter((p) => p.status === "active").length;
+      if (active >= this.activeProjectCap) {
+        throw new CardStructureError(
+          "project_cap",
+          `${active} projects are already active (the cap is ${this.activeProjectCap}); pause one first.`,
+        );
+      }
+    }
+    const payload = { id, status, updatedAt: new Date().toISOString() };
+    await this.eventLog.append({ actor, type: "project/updated", payload });
+    this.projectProjectUpdated(payload);
+    return this.getProject(id) as ProjectRecord;
+  }
+
+  private projectProjectCreated(p: ProjectRecord): void {
+    this.db
+      .prepare(
+        "INSERT OR REPLACE INTO projects (id, name, root_path, git_branch, status, review_minutes_per_day, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        p.id,
+        p.name,
+        p.rootPath,
+        p.gitBranch,
+        p.status,
+        p.reviewMinutesPerDay,
+        p.createdAt,
+        p.updatedAt,
+      );
+  }
+
+  private projectProjectUpdated(p: { id: string; status: ProjectStatus; updatedAt: string }): void {
+    this.db
+      .prepare("UPDATE projects SET status = ?, updated_at = ? WHERE id = ?")
+      .run(p.status, p.updatedAt, p.id);
+  }
+
   public async recordCheckpoint(cp: CheckpointRecord): Promise<void> {
     // The relay protocol resumes from these rows; a bad one sends a resume to
     // the wrong commit, so it is refused before it reaches the ledger.
@@ -680,7 +1046,7 @@ export class CardStore {
     this.db
       .prepare(`
         INSERT OR REPLACE INTO cards (${CARD_COLUMNS})
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         payload.id as string,
@@ -718,6 +1084,7 @@ export class CardStore {
         (payload.cycleId as string) ?? null,
         (payload.assignee as string) ?? null,
         (payload.dueDate as string) ?? null,
+        (payload.projectId as string) ?? null,
         payload.createdAt as string,
         payload.updatedAt as string,
       );
@@ -767,6 +1134,7 @@ export class CardStore {
     if (patch.cycleId !== undefined) set("cycle_id", patch.cycleId);
     if (patch.assignee !== undefined) set("assignee", patch.assignee);
     if (patch.dueDate !== undefined) set("due_date", patch.dueDate);
+    if (patch.projectId !== undefined) set("project_id", patch.projectId);
 
     if (sets.length === 0) return;
 
@@ -793,34 +1161,106 @@ export class CardStore {
       );
   }
 
-  public async rebuildProjections(): Promise<{ cardsCount: number; checkpointsCount: number }> {
-    const events = await this.eventLog.getEvents(1, 1000000);
+  /** Tables derived from the ledger, cleared children first. */
+  public static readonly PROJECTION_TABLES = [
+    "competence_entries",
+    "decision_requests",
+    "evidence_bundles",
+    "gate_results",
+    "steps",
+    "attempts",
+    "card_dependencies",
+    "checkpoints",
+    "cards",
+    "projects",
+  ] as const;
 
+  /** Apply one ledger event to the projections this store owns. True when it did. */
+  public applyEvent(event: EventRecord): boolean {
+    switch (event.type) {
+      case "card/created":
+        this.projectCardCreated(event.payload as Record<string, unknown>);
+        return true;
+      case "card/status_changed": {
+        const p = event.payload as { id: string; toStatus: CardStatus; updatedAt: string };
+        this.db
+          .prepare("UPDATE cards SET status = ?, updated_at = ? WHERE id = ?")
+          .run(p.toStatus, p.updatedAt, p.id);
+        return true;
+      }
+      case "card/updated": {
+        const p = event.payload as { id: string; patch: CardUpdate; updatedAt: string };
+        this.projectCardUpdated(p.id, p.patch, p.updatedAt);
+        return true;
+      }
+      case "checkpoint/recorded":
+        this.projectCheckpoint(event.payload as CheckpointRecord);
+        return true;
+      case "card/dependency_added":
+        this.projectDependencyAdded(
+          event.payload as {
+            cardId: string;
+            dependsOnId: string;
+            source: string;
+            createdAt: string;
+          },
+        );
+        return true;
+      case "card/dependency_removed":
+        this.projectDependencyRemoved(event.payload as { cardId: string; dependsOnId: string });
+        return true;
+      case "project/created":
+        this.projectProjectCreated(event.payload as ProjectRecord);
+        return true;
+      case "project/updated":
+        this.projectProjectUpdated(
+          event.payload as { id: string; status: ProjectStatus; updatedAt: string },
+        );
+        return true;
+      default:
+        return this.runs.applyEvent(event);
+    }
+  }
+
+  /** Clear every projection and replay the whole ledger into it (no transaction). */
+  private async replayAll(): Promise<number> {
+    const events = await this.eventLog.getEvents(1, Number.MAX_SAFE_INTEGER);
+    for (const table of CardStore.PROJECTION_TABLES) this.db.exec(`DELETE FROM ${table}`);
+    let applied = 0;
+    for (const event of events) if (this.applyEvent(event)) applied++;
+    return applied;
+  }
+
+  /** Canonical content hash per projection table, for byte-identical comparison. */
+  public projectionDigest(): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const table of CardStore.PROJECTION_TABLES) {
+      const cols = (
+        this.db.prepare(`PRAGMA table_info(${table})`).all() as unknown as { name: string }[]
+      ).map((c) => c.name);
+      const rows = this.db
+        .prepare(`SELECT ${cols.join(", ")} FROM ${table} ORDER BY ${cols.join(", ")}`)
+        .all();
+      out[table] = createHash("sha256").update(JSON.stringify(rows)).digest("hex");
+    }
+    return out;
+  }
+
+  public async rebuildProjections(): Promise<{ cardsCount: number; checkpointsCount: number }> {
+    // Foreign keys are checked at the end of the swap, not row by row: a
+    // replay inserts children after their parents, but DELETE order and
+    // legacy rows are not guaranteed to agree.
+    this.db.exec("PRAGMA foreign_keys = OFF");
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      this.db.exec("DELETE FROM checkpoints; DELETE FROM cards;");
-
-      for (const event of events) {
-        if (event.type === "card/created") {
-          this.projectCardCreated(event.payload as Record<string, unknown>);
-        } else if (event.type === "card/status_changed") {
-          const p = event.payload as { id: string; toStatus: CardStatus; updatedAt: string };
-          this.db
-            .prepare("UPDATE cards SET status = ?, updated_at = ? WHERE id = ?")
-            .run(p.toStatus, p.updatedAt, p.id);
-        } else if (event.type === "card/updated") {
-          const p = event.payload as { id: string; patch: CardUpdate; updatedAt: string };
-          this.projectCardUpdated(p.id, p.patch, p.updatedAt);
-        } else if (event.type === "checkpoint/recorded") {
-          this.projectCheckpoint(event.payload as CheckpointRecord);
-        }
-      }
-
+      await this.replayAll();
       this.db.exec("COMMIT");
     } catch (err) {
       this.db.exec("ROLLBACK");
+      this.db.exec("PRAGMA foreign_keys = ON");
       throw err;
     }
+    this.db.exec("PRAGMA foreign_keys = ON");
 
     const cardsCount = (
       this.db.prepare("SELECT COUNT(*) as count FROM cards").get() as { count: number }
@@ -830,5 +1270,32 @@ export class CardStore {
     ).count;
 
     return { cardsCount, checkpointsCount };
+  }
+
+  /**
+   * Replay the ledger into the projections inside a transaction that is then
+   * rolled back, and compare (K8). `identical` is true when every projection
+   * table the ledger derives is byte-identical to what is stored, which is
+   * the property "state derives from the log" promises. Non-destructive.
+   */
+  public async verifyProjections(): Promise<{
+    identical: boolean;
+    mismatched: string[];
+    eventsApplied: number;
+  }> {
+    const before = this.projectionDigest();
+    this.db.exec("PRAGMA foreign_keys = OFF");
+    this.db.exec("BEGIN IMMEDIATE");
+    let after: Record<string, string>;
+    let eventsApplied = 0;
+    try {
+      eventsApplied = await this.replayAll();
+      after = this.projectionDigest();
+    } finally {
+      this.db.exec("ROLLBACK");
+      this.db.exec("PRAGMA foreign_keys = ON");
+    }
+    const mismatched = Object.keys(before).filter((t) => before[t] !== after[t]);
+    return { identical: mismatched.length === 0, mismatched, eventsApplied };
   }
 }

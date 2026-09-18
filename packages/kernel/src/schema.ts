@@ -1,5 +1,9 @@
 import type { DatabaseSync } from "node:sqlite";
 import { keyBetween } from "./order_key.js";
+import { EVENT_ACTORS } from "./types.js";
+
+/** The actor CHECK (K5): the design's five plus the documented extensions. */
+export const EVENT_ACTOR_CHECK = `actor IN (${EVENT_ACTORS.map((a) => `'${a}'`).join(",")})`;
 
 /**
  * Connection pragmas (design §2098-2101).
@@ -53,6 +57,7 @@ const CARDS_TABLE_BODY = `
   cycle_id TEXT,
   assignee TEXT,
   due_date TEXT,
+  project_id TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 `;
@@ -61,6 +66,7 @@ const CARD_INDEX_SQL = `
 CREATE INDEX IF NOT EXISTS idx_cards_status ON cards(status);
 CREATE INDEX IF NOT EXISTS idx_cards_parent ON cards(parent_id);
 CREATE INDEX IF NOT EXISTS idx_cards_order ON cards(status, order_key);
+CREATE INDEX IF NOT EXISTS idx_cards_project ON cards(project_id, status);
 `;
 
 const EVENT_INDEX_SQL = `
@@ -79,13 +85,22 @@ CREATE INDEX IF NOT EXISTS idx_events_step_id ON events(step_id);
  * a table that does not have it yet and the whole `initSchema` would fail. The
  * columns must land first.
  */
-export const KERNEL_INDEX_SQL = `${EVENT_INDEX_SQL}${CARD_INDEX_SQL}`;
+const RUN_INDEX_SQL = `
+CREATE INDEX IF NOT EXISTS idx_attempts_card ON attempts(card_id);
+CREATE INDEX IF NOT EXISTS idx_steps_attempt_index ON steps(attempt_id, step_index);
+CREATE INDEX IF NOT EXISTS idx_gate_results_attempt ON gate_results(attempt_id);
+CREATE INDEX IF NOT EXISTS idx_evidence_card ON evidence_bundles(card_id);
+CREATE INDEX IF NOT EXISTS idx_decisions_status ON decision_requests(status);
+CREATE INDEX IF NOT EXISTS idx_competence_class ON competence_entries(card_class, model_id);
+CREATE INDEX IF NOT EXISTS idx_deps_on ON card_dependencies(depends_on_card_id);
+`;
 
-export const KERNEL_SCHEMA_SQL = `
-CREATE TABLE IF NOT EXISTS events (
+export const KERNEL_INDEX_SQL = `${EVENT_INDEX_SQL}${CARD_INDEX_SQL}${RUN_INDEX_SQL}`;
+
+const EVENTS_TABLE_BODY = `
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
   id TEXT NOT NULL UNIQUE,
-  actor TEXT NOT NULL,
+  actor TEXT NOT NULL CHECK(${EVENT_ACTOR_CHECK}),
   type TEXT NOT NULL,
   card_id TEXT,
   attempt_id TEXT,
@@ -95,7 +110,131 @@ CREATE TABLE IF NOT EXISTS events (
   hash TEXT NOT NULL,
   prev_hash TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+`;
+
+/**
+ * Projections derived from the ledger (K8): every table below is rebuilt
+ * from events by `ProjectionEngine.rebuild`, and `verify` checks the rebuild
+ * is byte-identical to what is stored.
+ */
+const RUN_TABLES_SQL = `
+CREATE TABLE IF NOT EXISTS projects (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  root_path TEXT NOT NULL UNIQUE,
+  git_branch TEXT NOT NULL DEFAULT 'main',
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','paused','archived')),
+  review_minutes_per_day INTEGER NOT NULL DEFAULT 60,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS card_dependencies (
+  card_id TEXT NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+  depends_on_card_id TEXT NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+  source TEXT NOT NULL DEFAULT 'declared',
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (card_id, depends_on_card_id)
+);
+
+CREATE TABLE IF NOT EXISTS attempts (
+  id TEXT PRIMARY KEY,
+  card_id TEXT NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+  attempt_number INTEGER NOT NULL,
+  model_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('running','passed','failed','halted')),
+  stop_reason TEXT,
+  tokens_used INTEGER NOT NULL DEFAULT 0,
+  seconds_used REAL NOT NULL DEFAULT 0,
+  evidence_id TEXT,
+  forked_from_attempt TEXT,
+  forked_from_step INTEGER,
+  resumed_from_step INTEGER,
+  started_at TEXT NOT NULL,
+  completed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS steps (
+  id TEXT PRIMARY KEY,
+  attempt_id TEXT NOT NULL REFERENCES attempts(id) ON DELETE CASCADE,
+  card_id TEXT NOT NULL,
+  step_index INTEGER NOT NULL,
+  calls JSON NOT NULL DEFAULT '[]',
+  context_pack_id TEXT,
+  repo_state_hash TEXT,
+  prompt_tokens INTEGER NOT NULL DEFAULT 0,
+  completion_tokens INTEGER NOT NULL DEFAULT 0,
+  duration_ms INTEGER NOT NULL DEFAULT 0,
+  stop_reason TEXT,
+  git_ref TEXT,
+  created_at TEXT NOT NULL,
+  UNIQUE (attempt_id, step_index)
+);
+
+CREATE TABLE IF NOT EXISTS gate_results (
+  id TEXT PRIMARY KEY,
+  attempt_id TEXT NOT NULL REFERENCES attempts(id) ON DELETE CASCADE,
+  card_id TEXT NOT NULL,
+  step_id TEXT,
+  gate TEXT NOT NULL,
+  layer TEXT NOT NULL CHECK(layer IN ('static','functional','robustness','security','visual','hygiene')),
+  status TEXT NOT NULL CHECK(status IN ('pass','fail')),
+  exit_code INTEGER NOT NULL DEFAULT 0,
+  failures JSON NOT NULL DEFAULT '[]',
+  duration_ms INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS evidence_bundles (
+  id TEXT PRIMARY KEY,
+  card_id TEXT NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+  attempt_id TEXT NOT NULL REFERENCES attempts(id) ON DELETE CASCADE,
+  passed INTEGER NOT NULL CHECK(passed IN (0,1)),
+  stop_reason TEXT NOT NULL,
+  path TEXT NOT NULL,
+  sha256 TEXT NOT NULL,
+  files_touched JSON NOT NULL DEFAULT '[]',
+  lines_added INTEGER NOT NULL DEFAULT 0,
+  lines_removed INTEGER NOT NULL DEFAULT 0,
+  trajectory_ref TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS decision_requests (
+  id TEXT PRIMARY KEY,
+  card_id TEXT REFERENCES cards(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  question TEXT NOT NULL,
+  context TEXT NOT NULL,
+  options JSON NOT NULL,
+  recommendation_index INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL CHECK(status IN ('pending','answered','timed_out')),
+  selected_option_index INTEGER,
+  answered_by TEXT,
+  created_at TEXT NOT NULL,
+  answered_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS competence_entries (
+  id TEXT PRIMARY KEY,
+  repo_id TEXT NOT NULL,
+  card_class TEXT NOT NULL,
+  files_touched_count INTEGER NOT NULL,
+  difficulty TEXT NOT NULL,
+  model_id TEXT NOT NULL,
+  tool_arm TEXT NOT NULL,
+  step_budget INTEGER NOT NULL,
+  steps_used INTEGER NOT NULL,
+  stop_reason TEXT NOT NULL,
+  passed INTEGER NOT NULL CHECK(passed IN (0,1)),
+  tokens_used INTEGER NOT NULL,
+  wall_clock_seconds REAL NOT NULL,
+  recorded_at TEXT NOT NULL
+);
+`;
+
+export const KERNEL_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS events (${EVENTS_TABLE_BODY});
 
 CREATE TABLE IF NOT EXISTS cards (${CARDS_TABLE_BODY});
 
@@ -110,7 +249,7 @@ CREATE TABLE IF NOT EXISTS checkpoints (
   created_at TEXT NOT NULL,
   PRIMARY KEY (card_id, step)
 );
-`;
+${RUN_TABLES_SQL}`;
 
 /** Columns added after the first release, applied to databases already on disk. */
 const ADDED_EVENT_COLUMNS: ReadonlyArray<[column: string, ddl: string]> = [
@@ -149,6 +288,7 @@ const ADDED_CARD_COLUMNS: ReadonlyArray<[column: string, ddl: string]> = [
   ["cycle_id", "cycle_id TEXT"],
   ["assignee", "assignee TEXT"],
   ["due_date", "due_date TEXT"],
+  ["project_id", "project_id TEXT"],
 ];
 
 /** Columns copied when the `cards` table is rebuilt to widen its CHECK. */
@@ -172,6 +312,42 @@ export interface SchemaMigrationReport {
   rebuiltCardsTable: boolean;
   /** Rows given a generated `order_key` because they predate the column. */
   backfilledOrderKeys: number;
+  /** True when `events` was rebuilt to add the actor CHECK (K5). */
+  rebuiltEventsTable: boolean;
+}
+
+/**
+ * Add the actor CHECK (K5) to an `events` table created before it. A CHECK
+ * is part of the DDL, so this is copy-and-swap; the rows (and so the hash
+ * chain, which never covered the DDL) are copied verbatim. Skipped, leaving
+ * the table as it is, when an existing row carries an actor outside the
+ * enum: the ledger is append-only and is never rewritten to fit.
+ */
+function rebuildEventsTableIfUnchecked(db: DatabaseSync): boolean {
+  if (!tableExists(db, "events")) return false;
+  const row = db
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'events'")
+    .get() as { sql?: string } | undefined;
+  if ((row?.sql ?? "").includes("CHECK(actor IN")) return false;
+  const bad = db
+    .prepare(`SELECT COUNT(*) AS n FROM events WHERE NOT (${EVENT_ACTOR_CHECK})`)
+    .get() as {
+    n: number;
+  };
+  if (bad.n > 0) return false;
+  const cols = [...columnNames(db, "events")].join(", ");
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`CREATE TABLE events_checked (${EVENTS_TABLE_BODY})`);
+    db.exec(`INSERT INTO events_checked (${cols}) SELECT ${cols} FROM events`);
+    db.exec("DROP TABLE events");
+    db.exec("ALTER TABLE events_checked RENAME TO events");
+    db.exec("COMMIT");
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  }
+  return true;
 }
 
 function tableExists(db: DatabaseSync, table: string): boolean {
@@ -296,8 +472,10 @@ export function migrateSchema(db: DatabaseSync): SchemaMigrationReport {
   // Indexes over freshly added columns can only be created once they exist.
   db.exec(KERNEL_INDEX_SQL);
   const backfilledOrderKeys = backfillOrderKeys(db);
+  const rebuiltEventsTable = rebuildEventsTableIfUnchecked(db);
+  if (rebuiltEventsTable) db.exec(EVENT_INDEX_SQL);
 
-  return { addedColumns, rebuiltCardsTable, backfilledOrderKeys };
+  return { addedColumns, rebuiltCardsTable, backfilledOrderKeys, rebuiltEventsTable };
 }
 
 export function initSchema(db: DatabaseSync): SchemaMigrationReport {

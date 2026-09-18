@@ -1,11 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { canonicalPayloadHash } from "./canonical_json.js";
-import type {
-  AppendEventParams,
-  EventFilter,
-  EventRecord,
-  HashChainVerificationResult,
+import {
+  type AppendEventParams,
+  EVENT_ACTORS,
+  type EventFilter,
+  type EventRecord,
+  type HashChainVerificationResult,
 } from "./types.js";
 
 const GENESIS_PREV_HASH = "0000000000000000000000000000000000000000000000000000000000000000";
@@ -143,6 +144,12 @@ export class EventLog {
   }
 
   public async append<T = unknown>(params: AppendEventParams<T>): Promise<EventRecord<T>> {
+    // K5: the table's CHECK refuses an unknown actor too; this says which.
+    if (!(EVENT_ACTORS as readonly string[]).includes(params.actor)) {
+      throw new Error(
+        `Unknown event actor "${params.actor}"; the ledger accepts ${EVENT_ACTORS.join(", ")}`,
+      );
+    }
     const id = params.id ?? randomUUID();
     const payloadStr = JSON.stringify(params.payload);
     const payloadHash = canonicalPayloadHash(params.payload);

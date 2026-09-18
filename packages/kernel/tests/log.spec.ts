@@ -40,9 +40,9 @@ describe("@sekhemet/kernel EventLog", () => {
   });
 
   it("detects tampering when an event payload in the hash chain is modified", async () => {
-    await log.append({ actor: "user", type: "msg/1", payload: { text: "hello" } });
-    await log.append({ actor: "user", type: "msg/2", payload: { text: "world" } });
-    await log.append({ actor: "user", type: "msg/3", payload: { text: "end" } });
+    await log.append({ actor: "human", type: "msg/1", payload: { text: "hello" } });
+    await log.append({ actor: "human", type: "msg/2", payload: { text: "world" } });
+    await log.append({ actor: "human", type: "msg/3", payload: { text: "end" } });
 
     // Directly tamper with seq 2 payload behind the event log's back
     db.prepare("UPDATE events SET payload = ? WHERE seq = 2").run(
@@ -56,8 +56,8 @@ describe("@sekhemet/kernel EventLog", () => {
   });
 
   it("retrieves events chronologically", async () => {
-    await log.append({ actor: "agent", type: "step/1", payload: { step: 1 } });
-    await log.append({ actor: "agent", type: "step/2", payload: { step: 2 } });
+    await log.append({ actor: "executor", type: "step/1", payload: { step: 1 } });
+    await log.append({ actor: "executor", type: "step/2", payload: { step: 2 } });
 
     const events = await log.getEvents();
     expect(events.length).toBe(2);
@@ -71,8 +71,8 @@ describe("@sekhemet/kernel EventLog", () => {
   it("runs on a real WAL database file, and the chain survives a reopen", async () => {
     const mode = db.prepare("PRAGMA journal_mode").get() as { journal_mode: string };
     expect(mode.journal_mode).toBe("wal");
-    await log.append({ actor: "agent", type: "step/1", payload: { step: 1 } });
-    await log.append({ actor: "agent", type: "step/2", payload: { step: 2 } });
+    await log.append({ actor: "executor", type: "step/1", payload: { step: 1 } });
+    await log.append({ actor: "executor", type: "step/2", payload: { step: 2 } });
     disk.close();
 
     const reopened = new DatabaseSync(disk.path);
@@ -90,9 +90,9 @@ describe("@sekhemet/kernel EventLog", () => {
   });
 
   it("detects a single flipped bit in a payload byte on disk, naming the exact seq", async () => {
-    await log.append({ actor: "user", type: "msg/1", payload: { text: "alpha" } });
-    await log.append({ actor: "user", type: "msg/2", payload: { text: "bravo-target" } });
-    await log.append({ actor: "user", type: "msg/3", payload: { text: "charlie" } });
+    await log.append({ actor: "human", type: "msg/1", payload: { text: "alpha" } });
+    await log.append({ actor: "human", type: "msg/2", payload: { text: "bravo-target" } });
+    await log.append({ actor: "human", type: "msg/3", payload: { text: "charlie" } });
     // Move every page out of the WAL into the main file, then close.
     db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
     disk.close();
@@ -119,9 +119,9 @@ describe("@sekhemet/kernel EventLog", () => {
   });
 
   it("detects a flipped bit in a stored hash on disk", async () => {
-    await log.append({ actor: "user", type: "msg/1", payload: { n: 1 } });
-    const second = await log.append({ actor: "user", type: "msg/2", payload: { n: 2 } });
-    await log.append({ actor: "user", type: "msg/3", payload: { n: 3 } });
+    await log.append({ actor: "human", type: "msg/1", payload: { n: 1 } });
+    const second = await log.append({ actor: "human", type: "msg/2", payload: { n: 2 } });
+    await log.append({ actor: "human", type: "msg/3", payload: { n: 3 } });
     db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
     disk.close();
 
