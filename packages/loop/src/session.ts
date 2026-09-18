@@ -15,6 +15,7 @@ import { type ToolCall, checkExecutionHeadroom, readSwapUsedBytes } from "@sekhe
 import type { ExecutionResult } from "@sekhemet/sandbox";
 import { apiHints } from "./api_surface.js";
 import { OscillationDetector } from "./detector.js";
+import { integrityFailures, scanDiffIntegrity, worktreeDiff } from "./integrity.js";
 import { type LadderState, RepairLadder, type RungPolicy } from "./ladder.js";
 import type { ToolObservation } from "./observation.js";
 import { buildRepoMap } from "./repo_map.js";
@@ -783,7 +784,25 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       await this.tools.runCommandRaw(command, [...args, ...scope]).catch(() => undefined);
     }
     const rungs = this.options.gateRungs ?? ["typecheck", "test"];
-    const result = await this.options.gateRunner.runGates(rungs, this.tools.root);
+    let result = await this.options.gateRunner.runGates(rungs, this.tools.root);
+    // The integrity gate (ARIS: "plausible unsupported success"): a pass
+    // bought by switching a check off is not a pass.
+    if (this.options.integrityGate !== false) {
+      const protectedTests = (this.card.acceptanceTests ?? []).map((t) =>
+        t.startsWith("tests/") ? t : `tests/${t}`,
+      );
+      const violations = scanDiffIntegrity(
+        worktreeDiff(this.tools.root, this.options.baseBranch ?? "main"),
+        protectedTests,
+      );
+      if (violations.length > 0) {
+        result = {
+          ...result,
+          passed: false,
+          failures: [...integrityFailures(violations), ...result.failures],
+        };
+      }
+    }
     this.memory.observe(result);
     return result;
   }

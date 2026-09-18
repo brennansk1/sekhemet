@@ -57,6 +57,10 @@ export interface SessionOptions {
    * applies unsafe fixes reliably only one `--only` rule per invocation.
    */
   styleFixCommands?: string[][] | undefined;
+  /** Branch the card's diff is measured against (integrity gate). */
+  baseBranch?: string | undefined;
+  /** Scan the card's diff for disabled checks (default on). */
+  integrityGate?: boolean | undefined;
   /** Working-memory lines from earlier attempts at this card (never start blank). */
   priorLessons?: string[] | undefined;
   /** Gate rungs run when the agent calls `finish_card`. Defaults to typecheck + test. */
