@@ -10,7 +10,8 @@
       "2. VaultConfig.iterations is optional; every other field is required.",
       "3. The file contains no functions, classes or values: only interface and type declarations.",
       "4. tsc -b and biome check . both pass."
-    ]
+    ],
+    "acceptanceTests": ["types.spec.ts"]
   },
   {
     "id": "card_onyx_2_crypto",

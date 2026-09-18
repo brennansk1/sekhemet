@@ -11,7 +11,8 @@
       "3. WebhookEvent.body is typed Uint8Array (raw bytes, not a string, and not Buffer so the file compiles without Node type definitions).",
       "4. The file contains no functions, classes or values.",
       "5. tsc -b and biome check . both pass."
-    ]
+    ],
+    "acceptanceTests": ["types.spec.ts"]
   },
   {
     "id": "card_vang_2_hmac",
