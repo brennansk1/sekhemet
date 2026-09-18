@@ -13,6 +13,7 @@ import {
   MockInferenceAdapter,
   ModelRouter,
   NAIL_WORKER_PROFILE,
+  createCyberTielWorker,
   createNail35BAdapter,
 } from "@sekhemet/models";
 import { SpidrFeaturePlanner } from "@sekhemet/planner";
@@ -485,10 +486,14 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     }
 
     const router = new ModelRouter({
+      // "cyber-tiel" runs under a harness-managed llama-server so its MTP head
+      // and chat template are used; any other name is an Ollama model.
       worker: () =>
-        workerModel
-          ? new HttpInferenceAdapter({ ...NAIL_WORKER_PROFILE, modelId: workerModel })
-          : createNail35BAdapter(),
+        workerModel === "cyber-tiel"
+          ? createCyberTielWorker()
+          : workerModel
+            ? new HttpInferenceAdapter({ ...NAIL_WORKER_PROFILE, modelId: workerModel })
+            : createNail35BAdapter(),
       ...(managerModel
         ? {
             manager: () =>
@@ -514,8 +519,10 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     const failed: { card: CardRecord; result: Awaited<ReturnType<typeof executeCard>> }[] = [];
     let halted = false;
 
+    let workerModelId = workerModel ?? NAIL_WORKER_PROFILE.modelId;
     const attempt = async (card: CardRecord, n: number, guidance?: string) => {
       const worker = await router.use("worker");
+      workerModelId = worker.modelId;
       console.log(`\n=== ${card.id} (attempt ${n}): ${card.title} ===`);
       const result = await executeCard(ctx, card, worker, guidance);
 
@@ -598,7 +605,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     ).length;
     const report: QueueReport = {
       startedAt: new Date(started).toISOString(),
-      model: workerModel ?? NAIL_WORKER_PROFILE.modelId,
+      model: workerModelId,
       ...(managerModel ? { managerModel } : {}),
       entries,
       passAt1: cardIds.length > 0 ? firstTry / cardIds.length : 0,

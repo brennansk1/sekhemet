@@ -1,0 +1,64 @@
+# Project Onyx playbook.
+#
+# The first three rules are carried over from Project Chronicle, where each was
+# derived from a repeated gate failure against a local model. The rest were
+# found while writing the reference implementation for these cards: each names
+# an API gotcha that fails a gate in a way the error message does not explain.
+# Rules that only concern one file use that file as their pattern, so they are
+# injected only into the card that owns it.
+
+[[rule]]
+id = "rule_esm_extensions"
+originCard = "card_onyx_2_crypto"
+triggerGate = "typecheck"
+pattern = "src/"
+instruction = "This project is ESM with moduleResolution nodenext. EVERY relative import must end in .js, even when importing a .ts file: write `from './types.js'`, never `from './types'`. Omitting it fails typecheck with TS2835."
+effectiveDate = "2026-09-18"
+
+[[rule]]
+id = "rule_node_sqlite"
+originCard = "card_onyx_3_db"
+triggerGate = "typecheck"
+pattern = "src/"
+instruction = "Use the built-in `node:sqlite` module (`import { DatabaseSync } from 'node:sqlite'`). Do NOT use better-sqlite3 or any other database package: none is installed, and importing one fails typecheck with TS2307."
+effectiveDate = "2026-09-18"
+
+[[rule]]
+id = "rule_finish_promptly"
+originCard = "card_onyx_1_types"
+triggerGate = "test"
+pattern = "src/"
+instruction = "Once every declared scope file is written, call finish_card. Do not re-read files you have already read: verification gives you the authoritative answer, and re-reading spends the step budget without changing anything."
+effectiveDate = "2026-09-18"
+
+[[rule]]
+id = "rule_strict_ts_options"
+originCard = "card_onyx_8_e2e"
+triggerGate = "typecheck"
+pattern = "src/"
+instruction = "tsconfig enables exactOptionalPropertyTypes and noUncheckedIndexedAccess. Never assign `undefined` to an optional property: write `...(x === undefined ? {} : { iterations: x })` instead of `iterations: x`. An indexed read like `arr[i]` or `match[1]` has type `T | undefined`: check it or use `?? fallback` before using it."
+effectiveDate = "2026-09-18"
+
+[[rule]]
+id = "rule_gcm_decrypt_errors"
+originCard = "card_onyx_2_crypto"
+triggerGate = "test"
+pattern = "src/crypto.ts"
+instruction = "Node accepts AES-GCM auth tags shorter than 16 bytes, so a truncated tag is NOT rejected by setAuthTag. In decrypt, check `iv.length === 12` and `tag.length === 16` yourself, and wrap the whole body in try/catch that throws `new Error('decryption failed')`, so every failure (wrong key, tampered bytes, bad lengths) produces exactly that message."
+effectiveDate = "2026-09-18"
+
+[[rule]]
+id = "rule_sqlite_results"
+originCard = "card_onyx_4_vault"
+triggerGate = "typecheck"
+pattern = "src/vault.ts"
+instruction = "node:sqlite returns `unknown` rows: cast them, e.g. `stmt.get(a) as { id: number } | undefined` and `stmt.all(a) as { key: string }[]`. `stmt.run().changes` is `number | bigint`: wrap it in `Number(...)` before comparing. Use `db.exec('BEGIN IMMEDIATE')`, `db.exec('COMMIT')` and `db.exec('ROLLBACK')` for transactions; there is no db.transaction() helper."
+effectiveDate = "2026-09-18"
+
+[[rule]]
+id = "rule_child_close_event"
+originCard = "card_onyx_6_injector"
+triggerGate = "test"
+pattern = "src/injector.ts"
+instruction = "Resolve runWithSecrets on the child's 'close' event, not 'exit': 'exit' can fire before stdout is fully read, which truncates captured output. Reject on the 'error' event (that is how ENOENT arrives), and never touch process.env: pass the merged env object to spawn."
+effectiveDate = "2026-09-18"

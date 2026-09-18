@@ -370,7 +370,12 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
     }
     // llama.cpp honours this to reuse the KV cache for an unchanged prefix.
     if (this.options.promptCache !== false) payload.cache_prompt = true;
-    if (this.options.disableReasoning !== false) payload.reasoning_effort = "none";
+    if (this.options.disableReasoning !== false) {
+      payload.reasoning_effort = "none";
+      // Qwen-family jinja templates read this kwarg; reasoning_effort alone is
+      // ignored by some templates, leaving thinking on.
+      payload.chat_template_kwargs = { enable_thinking: false };
+    }
 
     const data = (await this.post("/v1/chat/completions", payload)) as {
       choices?: {

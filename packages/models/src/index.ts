@@ -4,3 +4,4 @@ export * from "./mock_adapter.js";
 export * from "./http_adapter.js";
 export * from "./memory.js";
 export * from "./router.js";
+export * from "./llama_server.js";
