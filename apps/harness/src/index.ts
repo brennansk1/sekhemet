@@ -33,6 +33,7 @@ import {
   writeQueueReport,
 } from "./execute.js";
 import { notifySlack } from "./integrations.js";
+import { readSettings } from "./integrations.js";
 import { applyExploration, exploreProject } from "./learning/explore.js";
 import { consolidateWithManager, reflectWithManager } from "./learning/reflect.js";
 import { reviewCard } from "./learning/review.js";
@@ -41,6 +42,7 @@ import { runMcpStdioServer } from "./mcp.js";
 import { DEFAULT_PM_MODEL, answerQueued, createPmAdapter, holdRunnerLease } from "./pm/service.js";
 import { PmStore } from "./pm/store.js";
 import { research } from "./research/researcher.js";
+import { webConfigFromEnv } from "./research/web.js";
 import { DEFAULT_DASHBOARD_PORT, startDashboardServer } from "./server.js";
 import { loadAttempts, tune, writeTuningReport } from "./tune.js";
 
@@ -659,8 +661,11 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     /** Run a question past the Researcher, then hand the manager back. */
     const askResearcher = researcherModel
       ? async (question: string) => {
+          const web = readSettings(config.repoPath).researchWeb ? webConfigFromEnv() : undefined;
           const r = await research(await router.use("researcher"), question, {
             repoPath: config.repoPath,
+            ...(web ? { web } : {}),
+            maxRounds: researcherModel === "apodex" ? 6 : 3,
           });
           await router.use("manager");
           return r;

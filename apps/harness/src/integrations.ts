@@ -24,6 +24,8 @@ const run = promisify(execFile);
 export interface IntegrationSettings {
   slackWebhookUrl?: string;
   githubPrOnAccept?: boolean;
+  /** The Researcher may search papers, the web and GitHub. */
+  researchWeb?: boolean;
   lastSync?: Record<string, string>;
 }
 
@@ -83,6 +85,7 @@ const CATALOGUE: Omit<IntegrationEntry, "connected">[] = [
   { id: "jira", name: "Jira import and export", tier: "now", via: "csv" },
   { id: "linear", name: "Linear import and export", tier: "now", via: "csv" },
   { id: "slack", name: "Slack for the PM", tier: "now", via: "webhook" },
+  { id: "research-web", name: "Researcher web access", tier: "now", via: "api" },
   { id: "jira-sync", name: "Jira live sync", tier: "next", via: "api" },
   { id: "linear-sync", name: "Linear live sync", tier: "next", via: "api" },
   { id: "github-actions", name: "GitHub Actions gate mirror", tier: "next", via: "gh-cli" },
@@ -147,6 +150,21 @@ export async function listIntegrations(repoPath: string): Promise<IntegrationEnt
       case "jira":
       case "linear":
         return { ...base, connected: true, detail: "CSV import and export, no account needed" };
+      case "research-web": {
+        const provider = process.env.SEKHEMET_SEARXNG_URL
+          ? "SearXNG"
+          : process.env.BRAVE_SEARCH_API_KEY
+            ? "Brave Search"
+            : process.env.TAVILY_API_KEY
+              ? "Tavily"
+              : undefined;
+        return {
+          ...base,
+          connected: settings.researchWeb === true,
+          enabled: settings.researchWeb === true,
+          detail: `${settings.researchWeb ? "On" : "Off"}: papers (arXiv, Hugging Face), page fetches and GitHub${provider ? `, web search via ${provider}` : "; set SEKHEMET_SEARXNG_URL, BRAVE_SEARCH_API_KEY or TAVILY_API_KEY for web search"}`,
+        };
+      }
       case "slack":
         return {
           ...base,
@@ -605,6 +623,18 @@ export async function handleIntegrationsApi(
 ): Promise<boolean> {
   if (url === "/api/integrations" && req.method === "GET") {
     ctx.json(res, 200, await listIntegrations(ctx.repoPath));
+    return true;
+  }
+
+  if (url === "/api/integrations/research-web" && req.method === "PUT") {
+    if (!ctx.mutationGuard(req, res)) return true;
+    const b = await ctx.readJsonBody(req);
+    writeSettings(ctx.repoPath, { researchWeb: b.enabled === true });
+    ctx.json(
+      res,
+      200,
+      (await listIntegrations(ctx.repoPath)).find((i) => i.id === "research-web"),
+    );
     return true;
   }
 

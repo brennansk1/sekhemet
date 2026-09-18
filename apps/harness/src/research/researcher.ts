@@ -2,6 +2,15 @@ import { execFileSync } from "node:child_process";
 import { moduleApiSummary } from "@sekhemet/loop";
 import type { LocalInferenceAdapter, ToolCall, ToolDefinition } from "@sekhemet/models";
 import { formatHits, searchLibraries } from "../pm/libraries.js";
+import {
+  type WebConfig,
+  fetchPage,
+  formatWebHits,
+  githubSearch,
+  readPaper,
+  searchPapers,
+  webSearch,
+} from "./web.js";
 
 /**
  * The Researcher: the fourth model in the roster (worker, manager,
@@ -27,7 +36,50 @@ export interface ResearchDeps {
   /** Injectable for tests. */
   fetchJson?: (url: string) => Promise<unknown>;
   libraries?: typeof searchLibraries;
+  /** Web, papers and GitHub access; undefined keeps the Researcher offline. */
+  web?: WebConfig | undefined;
+  /** Tool rounds before it must answer (Apodex is built for long research). */
+  maxRounds?: number;
 }
+
+const WEB_TOOLS: ToolDefinition[] = [
+  {
+    name: "search_papers",
+    description:
+      "Search research papers (Hugging Face Papers, arXiv). Returns titles, arXiv ids, dates and abstracts.",
+    parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+  },
+  {
+    name: "read_paper",
+    description:
+      "Read an arXiv paper's full text, optionally starting at a section heading or phrase.",
+    parameters: {
+      type: "object",
+      properties: { arxiv_id: { type: "string" }, section: { type: "string" } },
+      required: ["arxiv_id"],
+    },
+  },
+  {
+    name: "web_search",
+    description:
+      "Search the web through the configured provider. Returns titles, URLs and snippets.",
+    parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+  },
+  {
+    name: "fetch_page",
+    description: "Read a public web page as plain text (docs, blog posts, READMEs).",
+    parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+  },
+  {
+    name: "github_search",
+    description: "Search GitHub repositories (with licence and stars) or code.",
+    parameters: {
+      type: "object",
+      properties: { query: { type: "string" }, kind: { type: "string", enum: ["repos", "code"] } },
+      required: ["query"],
+    },
+  },
+];
 
 const RESEARCH_TOOLS: ToolDefinition[] = [
   {
@@ -109,13 +161,44 @@ async function runTool(
       }).trim();
       return { text: out || "(no commits mention it)", source: `git history for "${q}"` };
     }
+    if (deps.web) {
+      const web = deps.web;
+      if (call.name === "search_papers") {
+        const q = String(a.query ?? "").slice(0, 200);
+        return { text: formatWebHits(await searchPapers(q, web)), source: `paper search "${q}"` };
+      }
+      if (call.name === "read_paper") {
+        const id = String(a.arxiv_id ?? "");
+        const section = typeof a.section === "string" ? a.section : undefined;
+        return { text: await readPaper(id, section, web), source: `arXiv ${id}` };
+      }
+      if (call.name === "web_search") {
+        const q = String(a.query ?? "").slice(0, 200);
+        const r = await webSearch(q, web);
+        return typeof r === "string"
+          ? { text: r }
+          : { text: formatWebHits(r), source: `web search "${q}"` };
+      }
+      if (call.name === "fetch_page") {
+        const url = String(a.url ?? "");
+        const text = await fetchPage(url, web);
+        return { text, ...(text.length > 200 ? { source: url } : {}) };
+      }
+      if (call.name === "github_search") {
+        const q = String(a.query ?? "").slice(0, 200);
+        const r = await githubSearch(q, a.kind === "code" ? "code" : "repos", web);
+        return typeof r === "string"
+          ? { text: r }
+          : { text: formatWebHits(r), source: `GitHub search "${q}"` };
+      }
+    }
   } catch (err) {
     return { text: `Tool failed: ${err instanceof Error ? err.message : String(err)}` };
   }
-  return { text: `Unknown tool ${call.name}` };
+  return { text: `Unknown or unavailable tool ${call.name}` };
 }
 
-/** Investigate one question with evidence, in at most three tool rounds. */
+/** Investigate one question with evidence, in at most `maxRounds` tool rounds (default 3). */
 export async function research(
   model: LocalInferenceAdapter,
   question: string,
@@ -125,11 +208,13 @@ export async function research(
     "You are the Researcher on a software team. Answer only from evidence you fetch with your tools; cite what you used. If the evidence does not settle it, say so plainly. Be concise: the answer is read by a coding model and a project manager.";
   let context = `QUESTION\n${question}\n\nUse the tools to gather evidence, then answer.`;
   const sources: string[] = [];
-  for (let round = 0; round < 3; round++) {
+  const tools = deps.web ? [...RESEARCH_TOOLS, ...WEB_TOOLS] : RESEARCH_TOOLS;
+  const rounds = deps.maxRounds ?? 3;
+  for (let round = 0; round < rounds; round++) {
     const res = await model.generate({
       systemPrompt: system,
       prompt: context,
-      tools: RESEARCH_TOOLS,
+      tools,
       toolArm: "arm_a_flat",
       temperature: 0.2,
       maxTokens: 900,
@@ -144,7 +229,7 @@ export async function research(
       if (r.source) sources.push(r.source);
       results.push(`${call.name}(${JSON.stringify(call.arguments)}):\n${r.text}`);
     }
-    context = `${context}\n\nEVIDENCE\n${results.join("\n\n")}\n\n${round === 1 ? "Answer now." : "Gather more if needed, or answer."}`;
+    context = `${context}\n\nEVIDENCE\n${results.join("\n\n")}\n\n${round >= rounds - 2 ? "Answer now." : "Gather more if needed, or answer."}`;
   }
   const final = await model.generate({
     systemPrompt: system,

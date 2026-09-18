@@ -6,6 +6,7 @@ import type { CardStore, CardUpdate, EventLog } from "@sekhemet/kernel";
 import type { LocalInferenceAdapter } from "@sekhemet/models";
 import { HttpInferenceAdapter } from "@sekhemet/models";
 import { handleIntegrationsApi } from "./integrations.js";
+import { readSettings } from "./integrations.js";
 import { learnFromProposalChoices } from "./learning/reflect.js";
 import { LearningStore } from "./learning/store.js";
 import { ProposalError, applyProposal } from "./pm/apply.js";
@@ -15,6 +16,7 @@ import { DEFAULT_PM_MODEL, answerQueued, createPmAdapter, runnerLease } from "./
 import { PmStore } from "./pm/store.js";
 import { PM_EVENTS, type PmMessage, type PmStatus } from "./pm/types.js";
 import { research } from "./research/researcher.js";
+import { webConfigFromEnv } from "./research/web.js";
 
 export interface PmApiContext {
   repoPath: string;
@@ -97,7 +99,13 @@ export function createPmApi(ctx: PmApiContext) {
                       disableReasoning: true,
                     }),
                     q,
-                    { repoPath: ctx.repoPath },
+                    {
+                      repoPath: ctx.repoPath,
+                      ...(readSettings(ctx.repoPath).researchWeb
+                        ? { web: webConfigFromEnv() }
+                        : {}),
+                      maxRounds: 6,
+                    },
                   ),
               }
             : {}),
