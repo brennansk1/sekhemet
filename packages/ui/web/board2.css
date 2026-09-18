@@ -1334,3 +1334,311 @@
 .chart .bar.thin {
   fill: var(--border-strong);
 }
+
+/* ---------- Learning: Playbook rules and the user profile (PM_CONTRACT §6) ---------- */
+.lp {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  max-width: 1080px;
+}
+.lp-lede,
+.lp-banner,
+.lp-note {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  line-height: var(--leading-normal);
+}
+.lp-lede .ic,
+.lp-banner .ic,
+.lp-note .ic {
+  flex: none;
+  margin-top: 2px;
+}
+.lp-banner {
+  padding: 12px 16px;
+  border: 1px solid var(--border-subtle);
+  border-left: 2px solid var(--state-parked);
+  border-radius: var(--radius-card);
+  background: var(--bg-base);
+}
+.lp-banner b {
+  color: var(--text-primary);
+}
+.lp-banner code {
+  font-size: var(--text-xs);
+  background: var(--bg-raised);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+.lp-note {
+  font-size: var(--text-xs);
+  margin: -4px 0 12px;
+}
+.lsec > .sh {
+  margin-bottom: 12px;
+}
+.lsec .empty-l {
+  font-size: var(--text-sm);
+  max-width: 720px;
+}
+.lrules {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.lrule,
+.lentry {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  padding: 12px 16px;
+  background: var(--bg-base);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  position: relative;
+}
+.lrule.candidate {
+  border-color: var(--border-strong);
+}
+.lrule.warn::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: -1px;
+  bottom: -1px;
+  width: 2px;
+  border-radius: var(--radius-card) 0 0 var(--radius-card);
+  background: var(--state-parked);
+}
+.lrule.retired .lr-text,
+.lentry.dismissed .lr-text {
+  color: var(--text-secondary);
+}
+.lr-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.lr-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-xs);
+  flex-wrap: wrap;
+}
+.lr-text {
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+}
+.lr-scope {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.lchip {
+  font-size: var(--text-xs);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  padding: 0 6px;
+  line-height: 18px;
+  background: var(--bg-surface);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lr-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.lr-meta .cnt {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.valbar {
+  width: 72px;
+  height: 4px;
+  flex: none;
+  border-radius: 2px;
+  background: var(--bg-overlay);
+  overflow: hidden;
+  display: inline-block;
+}
+.valbar i {
+  display: block;
+  height: 100%;
+  background: var(--text-secondary);
+}
+.valbar.neg i {
+  background: var(--state-fail);
+}
+.lr-warn {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.lr-warn .ic {
+  flex: none;
+  margin-top: 1px;
+}
+.lr-ev {
+  list-style: none;
+  margin: 2px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--text-xs);
+}
+.lr-ev li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.lr-ev .q {
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.lr-ev .sec {
+  flex: none;
+}
+.lr-more summary {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  cursor: pointer;
+  width: max-content;
+  margin-top: 4px;
+}
+.lr-more > .lrules {
+  margin-top: 8px;
+}
+.lr-acts {
+  display: flex;
+  gap: 6px;
+  flex: none;
+  align-items: center;
+}
+.lr-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.lr-edit textarea {
+  width: 100%;
+  resize: vertical;
+  padding: 6px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  line-height: var(--leading-normal);
+}
+.lr-edit .acts {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.pgrp + .pgrp {
+  margin-top: 16px;
+}
+.pgrp h4 {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+.rail-learned {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+}
+.rail-learned li {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.rail-learned .valbar {
+  width: 24px;
+  position: relative;
+  top: -2px;
+}
+.pm-rail a {
+  color: var(--text-primary);
+  text-underline-offset: 2px;
+}
+
+/* ---------- Stopping policy (Insights) ---------- */
+.tune .chart {
+  gap: 12px;
+}
+.tune-head {
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+.tune-tbl {
+  max-width: 560px;
+}
+.tune-tbl th[scope="row"] {
+  font-weight: 400;
+  color: var(--text-secondary);
+  text-align: left;
+}
+.tune-tbl td.better {
+  font-weight: 600;
+}
+.tune-cmd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tune-cmd code {
+  font-size: var(--text-sm);
+  background: var(--bg-base);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  padding: 4px 8px;
+}
+.tune-caveat {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  max-width: 720px;
+  line-height: var(--leading-normal);
+}
+.tune-caveat .ic {
+  flex: none;
+  margin-top: 1px;
+}
+@media (max-width: 1279px) {
+  .lrule,
+  .lentry {
+    flex-direction: column;
+    gap: 8px;
+  }
+}

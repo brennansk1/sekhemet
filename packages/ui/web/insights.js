@@ -2,7 +2,8 @@
 // cycle time, throughput and cumulative flow, each answering one question.
 // SVG coloured only through token classes; every chart has a text summary
 // and a data table.
-import { esc, getJSON, icon } from "./dom.js";
+import { copyText, esc, getJSON, icon } from "./dom.js";
+import { loadLearning } from "./learning.js";
 import {
   CFD_KEYS,
   MIN_TRUSTED_ATTEMPTS,
@@ -14,11 +15,13 @@ import {
   horizonSentence,
   movingAverage,
   stackCfd,
+  tuningSummary,
 } from "./lib/pm.js";
 import { columnLabel } from "./lib/vocabulary.js";
 import { openPeek } from "./peek.js";
 import { setTopbar } from "./shell.js";
 import { store } from "./store.js";
+import { toast } from "./toast.js";
 
 const ui = { root: null, days: 30, data: null, status: 0, cap: null, capStatus: 0 };
 const AGING_COLS = ["ready", "planning", "in_progress", "verify", "review", "parked"];
@@ -346,6 +349,44 @@ function capabilityHtml() {
   return `<section class="capab">${head(sub)}<div class="charts${ui.perRow === 1 ? " one" : ""}">${rowsFig}${curveFig}</div>${c.note ? `<p class="cap-note">${esc(c.note)}</p>` : ""}</section>`;
 }
 
+/* ---------- Stopping policy (GET /api/learning `tuning`) ---------- */
+
+function checks(n) {
+  return n >= 99 ? "No limit" : String(n);
+}
+
+function tuningHtml() {
+  const t = store.state.learning?.data?.tuning;
+  if (!t?.current || !t?.best) return "";
+  const sum = tuningSummary(t);
+  const row = (label, a, b, better) =>
+    `<tr><th scope="row">${esc(label)}</th><td class="tnum">${esc(a)}</td><td class="tnum${better ? " better" : ""}">${esc(b)}</td></tr>`;
+  const c = t.current;
+  const b = t.best;
+  const table = `<table class="tbl tune-tbl"><thead><tr><th></th><th>Current</th><th>${sum.same ? "Recommended (same)" : "Recommended"}</th></tr></thead><tbody>${row("Step budget", `${c.policy.stepBudget} steps`, `${b.policy.stepBudget} steps`, b.policy.stepBudget < c.policy.stepBudget)}${row("Failed checks allowed", checks(c.policy.maxFailedChecks), checks(b.policy.maxFailedChecks), false)}${row("Time for the replayed cards", `${c.minutes} min`, `${b.minutes} min`, b.minutes < c.minutes)}${row("Passed on the first try", `${c.firstTry} of ${c.cards}`, `${b.firstTry} of ${b.cards}`, false)}${row("Passed eventually", `${c.eventually} of ${c.cards}`, `${b.eventually} of ${b.cards}`, false)}</tbody></table>`;
+  const cmd = sum.same
+    ? ""
+    : `<div class="tune-cmd"><code>${esc(sum.command)}</code><button class="btn sm" type="button" data-copy-cmd="${esc(sum.command)}">${icon("copy", 12, "ic s12")}Copy</button></div>${sum.checksNote ? `<p class="sec small">${esc(sum.checksNote)}</p>` : ""}`;
+  const when = t.at
+    ? ` · replayed ${new Date(t.at).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" })}`
+    : "";
+  const grid = (t.all ?? []).length
+    ? `<details class="data"><summary>All ${t.all.length} policies replayed</summary>${tableHtml(
+        ["Step budget", "Failed checks", "First try", "Eventually", "Minutes"],
+        [...t.all]
+          .sort((x, y) => x.minutes - y.minutes)
+          .map((p) => [
+            String(p.policy.stepBudget),
+            checks(p.policy.maxFailedChecks),
+            String(p.firstTry),
+            String(p.eventually),
+            String(p.minutes),
+          ]),
+      )}</details>`
+    : "";
+  return `<section class="capab tune"><header class="cap-h"><h2>Stopping policy</h2><span class="sec">From replaying recorded runs${esc(when)}</span></header><div class="chart"><p class="tune-head">${esc(sum.headline)}</p>${sum.same ? "" : `<p class="sec">${esc(`Saves ${sum.savedMinutes} minutes on these cards and keeps ${sum.firstTryKept} first-try passes. Nothing changes until you run with the new cap.`)}</p>`}${table}${cmd}<p class="tune-caveat">${icon("alert", 12, "ic s12")}<span>Replay only stops a recorded run earlier than it really stopped. It never credits a pass the Worker didn't make, so it can't overstate what a tighter cap keeps. It can't tell you whether a looser cap would have rescued a failure.</span></p>${grid}</div></section>`;
+}
+
 /* ---------- View ---------- */
 
 function numbers(stats, throughput, wip) {
@@ -372,7 +413,7 @@ function render() {
   const inner = Math.min(1400, ui.root.clientWidth) - 48;
   ui.perRow = inner >= 1100 ? 2 : 1;
   W = Math.max(320, Math.floor((inner - 16 * (ui.perRow - 1)) / ui.perRow) - 34);
-  const cap = capabilityHtml();
+  const cap = capabilityHtml() + tuningHtml();
   const paint = (flow) => {
     ui.root.innerHTML = `<div class="ins">${flow}${cap}</div>`;
   };
@@ -460,6 +501,16 @@ export function mount(view) {
   host.addEventListener("click", (e) => {
     const t = e.target instanceof Element ? e.target : null;
     if (t?.closest("[data-reload]")) return load();
+    const cp = t?.closest("[data-copy-cmd]");
+    if (cp) {
+      copyText(cp.dataset.copyCmd).then((ok) =>
+        toast({
+          tone: ok ? "pass" : "fail",
+          text: ok ? `Copied ${cp.dataset.copyCmd}` : "Couldn't copy to the clipboard.",
+        }),
+      );
+      return;
+    }
     const g = t?.closest("[data-card]");
     if (g) openPeek(g.dataset.card, { returnFocus: g });
   });
@@ -478,9 +529,14 @@ export function mount(view) {
   window.addEventListener("resize", onResize);
   load();
   loadCapability();
+  loadLearning();
+  const unsubL = store.on((_s, patch) => {
+    if ("learning" in patch) render();
+  });
   return {
     unmount() {
       window.removeEventListener("resize", onResize);
+      unsubL();
       document.getElementById("top").removeEventListener("click", onTop);
       host.remove();
       ui.root = null;

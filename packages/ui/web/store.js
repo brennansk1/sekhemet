@@ -19,6 +19,8 @@ export const store = {
     doctor: null,
     queue: null,
     playbook: null,
+    /** GET /api/learning (PM_CONTRACT §6): status 0 until fetched, 404 when absent. */
+    learning: { status: 0, data: null },
     /** Latest memory sample from the stream's `machine` event. */
     machine: null,
     /** Ledger events carried by the most recent stream frame. */

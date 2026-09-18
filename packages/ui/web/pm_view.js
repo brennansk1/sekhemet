@@ -1,7 +1,8 @@
 // #/pm: the full conversation with Merit (PM_DESIGN §2.4). The thread in a
 // reading column, and a rail with open proposals, the Worker and what Merit sees.
 import { esc, icon } from "./dom.js";
-import { proposalKind } from "./lib/pm.js";
+import { loadLearning } from "./learning.js";
+import { proposalKind, strengthLabel } from "./lib/pm.js";
 import { cardChip } from "./marks.js";
 import { PM_NAME, pmModel } from "./pm_client.js";
 import { setFullThread } from "./pm_panel.js";
@@ -45,7 +46,31 @@ function railHtml() {
   const model = pmModel();
   const sees = `<dl class="kv"><div><dt>Board</dt><dd>${s.cards.length} cards · live</dd></div><div><dt>Last run</dt><dd>${esc(runText)}</dd></div><div><dt>Ledger</dt><dd>${esc(ledger)}</dd></div><div><dt>Model</dt><dd class="mono">${esc(model)}</dd></div></dl>`;
 
-  return `<section><h3>Open proposals <span class="sec tnum">${open.length}</span></h3>${props}</section><section><h3>Worker</h3>${worker}</section><section><h3>What ${PM_NAME} can see</h3>${sees}<p class="sec small">${PM_NAME} reads these and proposes changes. It never edits the board itself.</p></section>`;
+  const l = s.learning;
+  let learned;
+  if (l.status === 200 && l.data) {
+    const top = (l.data.profile ?? [])
+      .filter((e) => e.status === "active")
+      .sort((a, b) => b.strength - a.strength);
+    learned = top.length
+      ? `<ul class="rail-learned">${top
+          .slice(0, 3)
+          .map(
+            (e) =>
+              `<li><span class="valbar" role="img" aria-label="${esc(`Strength ${strengthLabel(e.strength)}`)}"><i style="width:${Math.round(Math.min(1, Math.max(0, e.strength)) * 100)}%"></i></span><span>${esc(e.statement)}</span></li>`,
+          )
+          .join(
+            "",
+          )}</ul><p class="small"><a href="#/playbook/profile">See all ${top.length} and edit them in Playbook</a></p>`
+      : '<p class="sec">Nothing yet. Merit learns from your send-back notes, the proposals you apply or discard, and the fields you change.</p>';
+    learned += '<p class="sec small">Stays on this machine. You can edit or dismiss any of it.</p>';
+  } else if (l.status === 0) {
+    learned = '<p class="sec">Checking…</p>';
+  } else {
+    learned =
+      '<p class="sec">Arrives with an updated Sekhemet (<span class="mono">GET /api/learning</span>).</p>';
+  }
+  return `<section><h3>Open proposals <span class="sec tnum">${open.length}</span></h3>${props}</section><section><h3>Worker</h3>${worker}</section><section><h3>What ${PM_NAME} can see</h3>${sees}<p class="sec small">${PM_NAME} reads these and proposes changes. It never edits the board itself.</p></section><section><h3>What ${PM_NAME} has learned about you</h3>${learned}</section>`;
 }
 
 export function mount(view) {
@@ -75,6 +100,7 @@ export function mount(view) {
   });
   const unsub = store.on(render);
   render();
+  loadLearning();
   setTimeout(() => thread.focus(), 0);
   return {
     unmount() {

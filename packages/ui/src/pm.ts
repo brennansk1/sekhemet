@@ -1054,3 +1054,176 @@ export function horizonSentence(lines: number | undefined): string {
   }
   return `The Worker passes 80% of cards that change up to about ${Math.round(lines)} lines.`;
 }
+
+// ---------------------------------------------------------------------------
+// Learning: playbook rules, the user profile, the stopping-policy tuner
+// (PM_CONTRACT §6)
+// ---------------------------------------------------------------------------
+
+export interface LearnedRuleLike {
+  id: string;
+  role: "worker" | "manager";
+  text: string;
+  scope: { kind?: string; pathPattern?: string; errorPattern?: string };
+  status: "candidate" | "active" | "retired";
+  helpful: number;
+  harmful: number;
+  value: number;
+  source: "struggle" | "send_back" | "reflection" | "seed";
+  evidence: { cardId?: string; note: string }[];
+  createdAt: string;
+}
+
+export const RULE_SOURCE_LABELS: Record<string, string> = {
+  struggle: "From a fix that took the Worker several tries",
+  send_back: "From your send-back note",
+  reflection: "From Merit's end-of-run review",
+  seed: "Seeded with the project",
+};
+
+/** Retirement is proposed at 3 or more harmful uses over helpful ones (§6). */
+export function retireSuggested(
+  r: Pick<LearnedRuleLike, "status" | "helpful" | "harmful">,
+): boolean {
+  return r.status === "active" && r.harmful - r.helpful >= 3;
+}
+
+export function groupRules<R extends LearnedRuleLike>(
+  rules: R[],
+): { candidate: R[]; active: R[]; retired: R[] } {
+  const by = (s: string) => rules.filter((r) => r.status === s);
+  const newest = (a: R, b: R) => String(b.createdAt).localeCompare(String(a.createdAt));
+  return {
+    candidate: by("candidate").sort(newest),
+    // Rules proposed for retirement first, then the most valuable.
+    active: by("active").sort(
+      (a, b) => Number(retireSuggested(b)) - Number(retireSuggested(a)) || b.value - a.value,
+    ),
+    retired: by("retired").sort(newest),
+  };
+}
+
+/** Scope as readable chips: `Kind: Rules`, `Files: src/**`, `Error: TS2353`. */
+export function scopeChips(
+  scope: LearnedRuleLike["scope"] | undefined,
+  kindLabel: (k: string) => string = (k) => k,
+): { label: string; value: string }[] {
+  const out: { label: string; value: string }[] = [];
+  if (scope?.kind) out.push({ label: "Kind", value: kindLabel(scope.kind) });
+  if (scope?.pathPattern) out.push({ label: "Files", value: scope.pathPattern });
+  if (scope?.errorPattern) out.push({ label: "Error", value: scope.errorPattern });
+  if (out.length === 0) out.push({ label: "Applies to", value: "every card" });
+  return out;
+}
+
+/**
+ * The value bar: signed, relative to the largest |value| on the page, so the
+ * most valuable rule fills the bar and a negative one reads as harmful.
+ */
+export function valueBar(value: number, maxAbs: number): { ratio: number; negative: boolean } {
+  const m = Math.max(1e-9, Math.abs(maxAbs));
+  const v = Number.isFinite(value) ? value : 0;
+  return { ratio: Math.min(1, Math.abs(v) / m), negative: v < 0 };
+}
+
+export interface ProfileEntryLike {
+  id: string;
+  statement: string;
+  category: "code_style" | "planning" | "communication" | "priorities";
+  strength: number;
+  evidence: { note: string; at: string }[];
+  status: "active" | "dismissed";
+  source: "send_back" | "proposal_choices" | "edits" | "reflection";
+}
+
+export const PROFILE_CATEGORIES: { id: ProfileEntryLike["category"]; label: string }[] = [
+  { id: "code_style", label: "Code style" },
+  { id: "planning", label: "Planning" },
+  { id: "communication", label: "Communication" },
+  { id: "priorities", label: "Priorities" },
+];
+
+export const PROFILE_SOURCE_LABELS: Record<string, string> = {
+  send_back: "From your send-back notes",
+  proposal_choices: "From which proposals you apply or discard",
+  edits: "From fields you changed after Merit set them",
+  reflection: "From Merit's end-of-run review",
+};
+
+/** `Strong` from 0.7, `Moderate` from 0.4, else `Weak`. */
+export function strengthLabel(s: number): string {
+  if (!Number.isFinite(s)) return "Weak";
+  return s >= 0.7 ? "Strong" : s >= 0.4 ? "Moderate" : "Weak";
+}
+
+/** Active entries by category, strongest first; empty categories dropped. */
+export function profileByCategory<E extends ProfileEntryLike>(
+  entries: E[],
+): { id: string; label: string; entries: E[] }[] {
+  return PROFILE_CATEGORIES.map((c) => ({
+    ...c,
+    entries: entries
+      .filter((e) => e.status === "active" && e.category === c.id)
+      .sort((a, b) => b.strength - a.strength),
+  })).filter((g) => g.entries.length > 0);
+}
+
+export interface PolicyScoreLike {
+  policy: { stepBudget: number; maxFailedChecks: number };
+  firstTry: number;
+  eventually: number;
+  cards: number;
+  minutes: number;
+}
+
+export interface TuningReportLike {
+  at?: string;
+  method?: string;
+  current: PolicyScoreLike;
+  best: PolicyScoreLike;
+  all?: PolicyScoreLike[];
+}
+
+export interface TuningSummary {
+  same: boolean;
+  savedMinutes: number;
+  savedPercent: number;
+  /** `18 of 18` passes the recommendation keeps. */
+  passesKept: string;
+  firstTryKept: string;
+  command: string;
+  /** Set when the recommended failed-check limit differs and has no flag. */
+  checksNote?: string;
+  headline: string;
+}
+
+function checksText(n: number): string {
+  return n >= 99 ? "no limit" : `${n}`;
+}
+
+export function tuningSummary(t: TuningReportLike): TuningSummary {
+  const { current: c, best: b } = t;
+  const same =
+    b.policy.stepBudget === c.policy.stepBudget &&
+    b.policy.maxFailedChecks === c.policy.maxFailedChecks;
+  const saved = Math.max(0, Math.round((c.minutes - b.minutes) * 10) / 10);
+  const pct = c.minutes > 0 ? Math.round((saved / c.minutes) * 100) : 0;
+  const passesKept = `${b.eventually} of ${c.eventually}`;
+  const firstTryKept = `${b.firstTry} of ${c.firstTry}`;
+  const headline = same
+    ? "Your current stopping policy is already the fastest one that keeps every pass."
+    : `A ${b.policy.stepBudget}-step cap would have cut ${c.minutes} to ${b.minutes} minutes (${pct}% less) and kept ${passesKept} passes.`;
+  const out: TuningSummary = {
+    same,
+    savedMinutes: saved,
+    savedPercent: pct,
+    passesKept,
+    firstTryKept,
+    command: `sekhemet queue --max-turns ${b.policy.stepBudget}`,
+    headline,
+  };
+  if (!same && b.policy.maxFailedChecks !== c.policy.maxFailedChecks) {
+    out.checksNote = `The recommendation also allows ${checksText(b.policy.maxFailedChecks)} failed checks (now ${checksText(c.policy.maxFailedChecks)}); that limit has no command-line flag yet.`;
+  }
+  return out;
+}

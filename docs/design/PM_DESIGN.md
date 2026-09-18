@@ -480,6 +480,46 @@ Flow metrics for the last 30 days (`/api/metrics/flow?days=30`, with 7, 30 or 90
 
 **Empty** (under 3 finished cards): *Not enough finished cards to measure flow yet. Insights need at least 3; you have 1.* **Not on this server** (404): *Flow metrics aren't on this server yet (`/api/metrics/flow` returned 404).*
 
+### 3.7 Learning: Playbook, what Merit has learned about you, and the stopping policy (PM_CONTRACT §6)
+
+Everything learned is context, not weights. It comes from gate results and human actions, is recorded on the ledger, and takes effect only after approval. The UI's job is to make that visible and reversible, and it keeps the plain names (NAMING.md): Playbook, rules, *What Merit has learned about you*, Stopping policy.
+
+**Playbook (`#/playbook`).** A lede says, once, what the page is: *Learned from gate results and what you do, never from a model grading itself. Everything stays on this machine and is recorded on the ledger. A rule takes effect only after you approve it.* Rules are grouped by status:
+
+- **Needs your approval** (candidates, newest first): **Approve** (primary), **Edit** and **Retire**.
+- **Active**: **Edit** and **Retire**. Rules proposed for retirement (at least 3 more harmful than helpful uses) come first, with an amber rule and the sentence *Proposed for retirement: used 6 times on failing first attempts, 2 on passing ones.* Their Retire button is promoted. The rest follow by value.
+- **Retired**: collapsed.
+
+Each rule shows:
+
+- who it is for (*For the Worker* / *For Merit*);
+- its source in words (*From your send-back note*, *From a fix that took the Worker several tries*, *From Merit's end-of-run review*, *Seeded with the project*) and its age;
+- scope chips (*Kind: Rules*, *Files: `src/**/hash*.ts`*, *Error: `TS2353`*, or *Applies to: every card*);
+- for used rules, a signed value bar (relative to the page's largest |value|, red when negative), plus helpful and harmful counts with their icons;
+- its evidence as `@card` chips with the quoted note, the first two shown and the rest behind *n more signals*.
+
+Edit is inline (a textarea, `⌘↵` saves, `Esc` cancels). Every action is optimistic, reverts on failure and states the result: *Approved. The rule is given to the Worker from the next matching card.* When `/api/learning` returns 404, the page keeps the seeded rules and send-back suggestions from `/api/playbook` under a banner that names the endpoint.
+
+**What Merit has learned about you** is a section of Playbook (`#/playbook/profile`), because it is the same kind of thing: learned, local, editable. It has:
+
+- a lock line: *These stay on this machine, in the project's ledger. Edit a statement to correct it; dismiss it and Merit stops using it.*;
+- active statements grouped by category (Code style, Planning, Communication, Priorities), strongest first;
+- for each statement, a strength bar with a word (*Strong* ≥ 0.7, *Moderate* ≥ 0.4, *Weak*), its source in words, its evidence notes with dates, and **Edit** and **Dismiss**;
+- dismissed statements collapsed at the end.
+
+The `#/pm` rail carries a compact summary: the three strongest statements, *See all 4 and edit them in Playbook*, and *Stays on this machine*.
+
+**Stopping policy** (Insights, under Worker capability) appears when `/api/learning` returns `tuning`. It contains:
+
+- A headline: *A 12-step cap would have cut 50.4 to 31 minutes (38% less) and kept 18 of 18 passes.*
+- A current-versus-recommended table: step budget, failed checks allowed, minutes, first-try passes, eventual passes.
+- The copyable command `sekhemet queue --max-turns 12`.
+- A note when the failed-check limit also differs, because it has no flag yet.
+- The caveat: *Replay only stops a recorded run earlier than it really stopped. It never credits a pass the Worker didn't make, so it can't overstate what a tighter cap keeps. It can't tell you whether a looser cap would have rescued a failure.*
+- The full replay grid behind a disclosure.
+
+When the current policy is already best, the section says so and offers no command.
+
 ---
 
 ## Part 4: Specification

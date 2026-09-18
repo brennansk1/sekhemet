@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import { ICONS } from "../src/icons.js";
 import {
   type CycleLike,
+  type LearnedRuleLike,
   type PmCardLike,
+  type ProfileEntryLike,
   activeCycle,
   agingClass,
   applyAllLabel,
@@ -16,6 +18,7 @@ import {
   formatQuery,
   formatShortDate,
   groupCards,
+  groupRules,
   horizonSentence,
   matchCard,
   movingAverage,
@@ -24,11 +27,17 @@ import {
   pmSteps,
   priorityIcon,
   priorityOf,
+  profileByCategory,
   proposalDiff,
   renderPmMarkdown,
+  retireSuggested,
+  scopeChips,
   setTerm,
   sortByPriority,
   stackCfd,
+  strengthLabel,
+  tuningSummary,
+  valueBar,
 } from "../src/pm.js";
 
 const cycles: CycleLike[] = [
@@ -463,5 +472,119 @@ describe("worker capability", () => {
       "The Worker passes 80% of cards that change up to about 119 lines.",
     );
     expect(horizonSentence(undefined)).toMatch(/^Not enough attempts/);
+  });
+});
+
+describe("learning (contract §6)", () => {
+  const rule = (o: Partial<LearnedRuleLike>): LearnedRuleLike => ({
+    id: "r",
+    role: "worker",
+    text: "t",
+    scope: {},
+    status: "active",
+    helpful: 0,
+    harmful: 0,
+    value: 0,
+    source: "seed",
+    evidence: [],
+    createdAt: "2026-09-18T00:00:00Z",
+    ...o,
+  });
+
+  it("groups rules, puts retirement proposals first, and reads scope as chips", () => {
+    const g = groupRules([
+      rule({ id: "a", value: 2 }),
+      rule({ id: "b", value: 5 }),
+      rule({ id: "c", value: 9, helpful: 1, harmful: 4 }),
+      rule({ id: "d", status: "candidate", createdAt: "2026-09-17T00:00:00Z" }),
+      rule({ id: "e", status: "candidate", createdAt: "2026-09-18T00:00:00Z" }),
+      rule({ id: "f", status: "retired" }),
+    ]);
+    expect(g.active.map((r) => r.id)).toEqual(["c", "b", "a"]);
+    expect(g.candidate.map((r) => r.id)).toEqual(["e", "d"]);
+    expect(g.retired.map((r) => r.id)).toEqual(["f"]);
+    expect(retireSuggested(rule({ helpful: 1, harmful: 3 }))).toBe(false);
+    expect(scopeChips({ kind: "rules", pathPattern: "src/**" }, (k) => k.toUpperCase())).toEqual([
+      { label: "Kind", value: "RULES" },
+      { label: "Files", value: "src/**" },
+    ]);
+    expect(scopeChips({})).toEqual([{ label: "Applies to", value: "every card" }]);
+    expect(valueBar(-2, 4)).toEqual({ ratio: 0.5, negative: true });
+    expect(valueBar(9, 4).ratio).toBe(1);
+  });
+
+  it("groups the profile by category, strongest first, without dismissed entries", () => {
+    const e = (
+      id: string,
+      category: ProfileEntryLike["category"],
+      strength: number,
+      status: ProfileEntryLike["status"] = "active",
+    ): ProfileEntryLike => ({
+      id,
+      statement: id,
+      category,
+      strength,
+      evidence: [],
+      status,
+      source: "edits",
+    });
+    const g = profileByCategory([
+      e("a", "planning", 0.3),
+      e("b", "code_style", 0.9),
+      e("c", "planning", 0.8),
+      e("d", "planning", 1, "dismissed"),
+    ]);
+    expect(g.map((x) => [x.label, x.entries.map((y) => y.id)])).toEqual([
+      ["Code style", ["b"]],
+      ["Planning", ["c", "a"]],
+    ]);
+    expect([strengthLabel(0.75), strengthLabel(0.5), strengthLabel(0.1)]).toEqual([
+      "Strong",
+      "Moderate",
+      "Weak",
+    ]);
+  });
+
+  it("summarises a tuning report without overstating it", () => {
+    const s = tuningSummary({
+      current: {
+        policy: { stepBudget: 32, maxFailedChecks: 99 },
+        firstTry: 12,
+        eventually: 18,
+        cards: 24,
+        minutes: 50.4,
+      },
+      best: {
+        policy: { stepBudget: 12, maxFailedChecks: 4 },
+        firstTry: 12,
+        eventually: 18,
+        cards: 24,
+        minutes: 31,
+      },
+    });
+    expect(s.headline).toBe(
+      "A 12-step cap would have cut 50.4 to 31 minutes (38% less) and kept 18 of 18 passes.",
+    );
+    expect(s.command).toBe("sekhemet queue --max-turns 12");
+    expect(s.savedMinutes).toBe(19.4);
+    expect(s.checksNote).toMatch(/4 failed checks \(now no limit\)/);
+    const same = tuningSummary({
+      current: {
+        policy: { stepBudget: 20, maxFailedChecks: 3 },
+        firstTry: 1,
+        eventually: 2,
+        cards: 2,
+        minutes: 5,
+      },
+      best: {
+        policy: { stepBudget: 20, maxFailedChecks: 3 },
+        firstTry: 1,
+        eventually: 2,
+        cards: 2,
+        minutes: 5,
+      },
+    });
+    expect(same.same).toBe(true);
+    expect(same.headline).toMatch(/already the fastest/);
   });
 });

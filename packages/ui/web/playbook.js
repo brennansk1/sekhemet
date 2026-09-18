@@ -1,6 +1,8 @@
 // Playbook (FRONTEND_DESIGN §2.4.7): the learned rules the Worker is given, and
 // the suggestions that came from your send-back notes.
 import { $, copyText, esc, getJSON, icon } from "./dom.js";
+import { loadLearning } from "./learning.js";
+import { bindLearning, learningHtml, learningMissingHtml } from "./learning_view.js";
 import { gateLabel, parseTitle, shortId } from "./lib/vocabulary.js";
 import { setTopbar } from "./shell.js";
 import { store } from "./store.js";
@@ -31,8 +33,8 @@ function asToml(c, i) {
   return `[[rule]]\nid = ${q(id)}\noriginCard = ${q(c.cardId)}\ntriggerGate = "typecheck"\npattern = "src/"\ninstruction = ${q(c.reason)}\neffectiveDate = ${q(new Date().toISOString().slice(0, 10))}\n`;
 }
 
-function render() {
-  if (!ui.root) return;
+/** The pre-§6 page: seeded rules and send-back suggestions from /api/playbook. */
+function legacyHtml() {
   const p = store.state.playbook;
   setTopbar({
     title: "Playbook",
@@ -59,6 +61,20 @@ function render() {
       : '<p class="sec">No suggestions. Every note you write when sending a card back shows up here.</p>';
     html = `<section><h3 class="sh">Rules <span class="sec">${p.rules.length} · given to the Worker when a card's files match</span></h3>${rules}</section><section><h3 class="sh">Suggested rules <span class="sec">${p.candidates.length} from your send-back notes</span></h3>${cands}</section>`;
   }
+  return html;
+}
+
+function render() {
+  if (!ui.root) return;
+  const l = store.state.learning;
+  let html;
+  if (l.status === 200 && l.data) html = learningHtml(l.data, ui);
+  else if (l.status === 0) {
+    setTopbar({ title: "Playbook", crumb: store.state.meta?.project ?? "" });
+    html = '<div class="sk" style="height:160px"></div>';
+  } else {
+    html = `${learningMissingHtml(l.status)}${legacyHtml()}`;
+  }
   if (html === ui.last) return;
   ui.last = html;
   const body = $(".sc", ui.root);
@@ -67,13 +83,14 @@ function render() {
   body.scrollTop = top;
 }
 
-export function mount(view) {
+export function mount(view, route) {
   const root = document.createElement("div");
   root.className = "view-host";
   root.innerHTML = '<section class="sc pb-view" aria-label="Playbook"></section>';
   view.append(root);
   ui.root = root;
   ui.last = "";
+  bindLearning(root, ui, render);
   root.addEventListener("click", async (e) => {
     const t = e.target instanceof Element ? e.target : null;
     const rule = t?.closest("[data-rule]");
@@ -97,12 +114,28 @@ export function mount(view) {
     }
   });
   const unsub = store.on((_s, patch) => {
-    if ("playbook" in patch || "cards" in patch) render();
+    if ("playbook" in patch || "cards" in patch || "learning" in patch) {
+      render();
+      scrollToParam();
+    }
   });
+  let wanted = route?.params?.[0] ?? "";
+  const scrollToParam = () => {
+    if (!wanted) return;
+    const target = root.querySelector(`#pb-${CSS.escape(wanted)}`);
+    if (target) {
+      target.scrollIntoView({ block: "start" });
+      wanted = "";
+    }
+  };
   render();
   getJSON("/api/playbook").then((r) => r.ok && store.set({ playbook: r.data }));
+  loadLearning();
   return {
-    setParams() {},
+    setParams(params) {
+      wanted = params?.[0] ?? "";
+      scrollToParam();
+    },
     unmount() {
       unsub();
       root.remove();
