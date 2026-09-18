@@ -189,6 +189,7 @@ describe("PM and board-practice API", () => {
       "jira",
       "linear",
       "slack",
+      "research-web",
     ]);
     expect(
       (await post("/api/integrations/slack", { webhookUrl: "https://evil.example/x" }, "PUT"))
