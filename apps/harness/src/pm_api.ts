@@ -4,6 +4,7 @@ import type { CardStore, CardUpdate, EventLog } from "@sekhemet/kernel";
 import type { LocalInferenceAdapter } from "@sekhemet/models";
 import { handleIntegrationsApi } from "./integrations.js";
 import { ProposalError, applyProposal } from "./pm/apply.js";
+import { capabilityReport } from "./pm/capability.js";
 import { flowMetrics } from "./pm/metrics.js";
 import { DEFAULT_PM_MODEL, answerQueued, createPmAdapter, runnerLease } from "./pm/service.js";
 import { PmStore } from "./pm/store.js";
@@ -247,6 +248,13 @@ export function createPmApi(ctx: PmApiContext) {
       }
       const card = await cardStore.updateCard(id, patch as CardUpdate, "human");
       ctx.json(res, 200, { card, ...(rejected.length ? { ignored: rejected } : {}) });
+      return true;
+    }
+
+    // --- Worker capability --------------------------------------------------
+    if (url === "/api/capability" && req.method === "GET") {
+      const cards = ctx.cardStore ? await ctx.cardStore.listCards() : [];
+      ctx.json(res, 200, capabilityReport(ctx.repoPath, cards));
       return true;
     }
 

@@ -4,6 +4,7 @@ import type { CardStore } from "@sekhemet/kernel";
 import { HttpInferenceAdapter, type LocalInferenceAdapter } from "@sekhemet/models";
 import type { QueueReport } from "../execute.js";
 import { type PmSnapshot, answer } from "./agent.js";
+import { capabilityReport, capabilitySummary } from "./capability.js";
 import type { PmStore } from "./store.js";
 
 /** The PM's model unless the user names another: the 27B dense manager. */
@@ -158,10 +159,15 @@ export async function buildSnapshot(
       (e) =>
         `- \`${e.cardId}\` attempt ${e.attempt}: ${e.passed ? "passed" : `failed (${e.stopReason})`} in ${e.turns} turns, ${Math.round(e.durationMs / 1000)}s`,
     );
-  const worker = workerRecord(reports);
+  const cards = await cardStore.listCards();
+  const record = workerRecord(reports);
+  const measured = capabilitySummary(capabilityReport(repoPath, cards));
+  const worker = record
+    ? { model: record.model, record: `${record.record} ${measured}` }
+    : undefined;
   return {
     project: basename(repoPath),
-    cards: await cardStore.listCards(),
+    cards,
     cycles: await pmStore.cycles(),
     recentRuns,
     ...(worker ? { worker } : {}),

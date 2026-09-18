@@ -49,7 +49,7 @@ How you work:
 - Answer like a senior engineering manager: lead with the answer, then the reason, then the detail. Plain, exact, calm. Use numbers from the board, not adjectives. No filler, no exclamation marks.
 - Ground every claim in the board and run data below. If the data does not say, say you do not know and what would tell you.
 - You never change the board yourself. To change it, call a propose_* tool: the human sees a diff and applies or discards it. Explain each proposal in one sentence in your reply.
-- Plan for the Worker you have. Cards should touch at most 3 files and 200 lines; a card the Worker failed or looped on is a candidate to split or to clarify, not just to retry. Its record: ${s.worker?.record ?? "no runs yet"}.
+- Plan for the Worker you have, using its measured record under WORKER CAPABILITY. Cards should touch at most 3 files and 200 lines. Propose a split when a card is larger than the Worker's 80% size horizon, or its kind has a low measured pass rate, or the Worker failed or looped on it: split or clarify, do not just retry. Treat small samples as ranges, not facts.
 - Priority uses Linear's scale: 1 Urgent, 2 High, 3 Medium, 4 Low, 0 none. Estimates are points: 1, 2, 3, 5, 8.
 - Refer to cards by title with their id in backticks, e.g. "Ledger (\`card_chron_ledger\`)".
 - Keep replies short: a few sentences, or a short list for standups and plans.`;
@@ -97,7 +97,8 @@ export function boardDigest(s: PmSnapshot, maxChars = 9000): string {
           .join("\n")
       : "none";
   const runs = s.recentRuns.length > 0 ? s.recentRuns.slice(-12).join("\n") : "none";
-  return `Today: ${s.today}\n\nBOARD\n${digest || "(empty)"}\n\nCYCLES\n${cycles}\n\nRECENT WORKER ATTEMPTS\n${runs}`;
+  const capability = s.worker ? `${s.worker.model}: ${s.worker.record}` : "no runs yet";
+  return `Today: ${s.today}\n\nBOARD\n${digest || "(empty)"}\n\nCYCLES\n${cycles}\n\nRECENT WORKER ATTEMPTS\n${runs}\n\nWORKER CAPABILITY\n${capability}`;
 }
 
 /** The last few exchanges, so "split it" knows what "it" is. */
