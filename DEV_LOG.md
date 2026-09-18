@@ -11,32 +11,67 @@
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
 If you are Claude reading this because Gemini reached quota limits or you were summoned to take the lead:
-1. **Current Milestone**: All Core Milestones M1–M9 Complete & Operational!
+1. **Current Milestone**: All Monorepo Packages M1–M12, Visual Systems, MCP Server, Anti-Shallow DoD, and Showcase Trifecta Fully Operational!
 2. **Current State**:
-   - Git repository initialized on branch `main`.
-   - All 13 workspace projects linked, built (`tsc -b`), passing Biome linter/formatter, and passing all verification gates.
-   - 43/43 unit and integration tests passing green across 13 test suites in 1.30s.
-   - Package implementation breakdown:
-     - `@sekhemet/kernel`: SQLite WAL schema (`events`, `cards`, `checkpoints`), SHA-256 hash-chained `EventLog` with tamper detection, `CardStore` with complete single-source projection replay.
-     - `@sekhemet/sandbox`: `ProcessSandbox` with subprocess containment, hard `timeoutMs` termination (`SIGTERM` -> `SIGKILL`), and macOS Seatbelt profile generator.
+   - Git repository clean on branch `main` (commit `dcaa0a0`).
+   - All 13 workspace projects linked, built (`tsc -b`), passing Biome linter/formatter (`biome check .`), and passing all verification gates.
+   - **75/75 unit and integration tests passing green across 22 test suites in 1.56s**.
+   - Subsystems & Architecture Status:
+     - `@sekhemet/kernel`: Native `node:sqlite` WAL schema (`events`, `cards`, `checkpoints`), SHA-256 hash-chained `EventLog` with tamper detection, `CardStore` with single-source projection replay, and `LifecycleHookEngine` managing the 10 waterfall lifecycle hooks.
+     - `@sekhemet/sandbox`: `ProcessSandbox` with subprocess containment, hard `timeoutMs` termination (`SIGTERM` -> `SIGKILL`), macOS Seatbelt generator, and `PermissionEngine` enforcing strict three-tier (Allow/Ask/Deny) scope confinement, path traversal blocking, and the Test Immutability Law.
      - `@sekhemet/sync`: `NodeGitSyncAdapter` managing isolated worktrees (`.sekhemet/worktrees/<cardId>`), structured checkpoint commit trailers, `refs/sekhemet/checkpoints` updates, and squashed acceptance merges.
-     - `@sekhemet/models`: Tool Arms A/B/C, `MockInferenceAdapter`, `HttpInferenceAdapter` (Ollama & OpenAI-compatible llama.cpp/MLX endpoints), tool call and search/replace patch parsers.
+     - `@sekhemet/models`: Tool Arms A/B/C, `MockInferenceAdapter`, `HttpInferenceAdapter` (Ollama & OpenAI-compatible llama.cpp/MLX endpoints), tool call and text patch parsers, and dedicated `createQwen38_27BAdapter` tuned for `Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf` on port 8099.
      - `@sekhemet/gates`: `DeterministicGateRunner`, BoundsCheck verification ($<200$ LOC, 1-3 files), and typed `GateFailure` extraction from compiler and test failure stacks.
-     - `@sekhemet/context`: `DefaultContextEngine`, symbol outline extraction, budget fitting, and byte-stable cache prefixes.
-     - `@sekhemet/loop`: `CardExecutionSessionImpl` coordinating turn execution, tool actions, verification runs, budget limits, and a 3-turn oscillation circuit breaker.
+     - `@sekhemet/context`: `DefaultContextEngine`, symbol outline extraction, budget fitting, byte-stable cache prefixes, `SkillsRegistry` with progressive disclosure, `PlaybookRegistry` for `.sekhemet/playbook.toml`, and `ContextCondenser` (RTK command output condensing & in-place observation masking).
+     - `@sekhemet/loop`: `CardExecutionSessionImpl` coordinating turn execution, full tool catalog (`read_file`, `write_file`, `replace_lines`, `edit` with uniqueness check, `read_symbol`, `replace_symbol_body`, `insert_after_symbol`, `find_references`, `note`, `docs`, `list_dir`, `find_files`, `grep_search`, `run_cmd`, `finish_card`), permission validation, verification runs, budget limits, and a 3-turn oscillation circuit breaker.
      - `@sekhemet/board`: `BoardServiceImpl` managing kanban lifecycle transitions and Review WIP limit backpressure.
      - `@sekhemet/planner`: `SpidrFeaturePlanner` decomposing epics into SPIDR stories and `ClarEvalAmbiguityClassifier` generating `DecisionRequest` previews for high-entropy tasks.
      - `@sekhemet/eval`: `BenchmarkHarness` executing task suites and computing Pass@1 metrics.
      - `@sekhemet/ui`: `VirtualCanvasManager` computing dual-axis layout geometry and viewport culling for 500+ cards at 60 FPS, with Basalt theme tokens.
-     - `apps/harness`: CLI host supporting `sekhemet doctor`, `--restricted` safe execution mode, argument parser, and memory pressure watchdog.
-3. **Immediate Next Opportunities**:
-   - Run Phase 0 Spike benchmarking local models (Ollama/llama.cpp/MLX) on the host machine using `@sekhemet/eval` and tool arms.
-   - Add TanStack Virtual React/web canvas components in `@sekhemet/ui` for browser-based visual kanban monitoring.
-4. **Active Checkpoint Git Ref**: `refs/heads/main`
+     - `apps/harness`: CLI host supporting `sekhemet doctor`, `--restricted`, `board`, `log`, `plan`, `run`, `gate`, `replay`, `bake-off`, `serve` / `ui` (Basalt HTTP dashboard), and `mcp` (stdio JSON-RPC server).
+3. **Showcase Gate Projects Designed**:
+   - `SHOWCASE_TRIFECTA_SPEC.md` defines 3 complete showcase projects to execute as the final gate for `Qwen3.8-27B-GSQ-RCO` before public launch:
+     1. **Project "Onyx"** (Systems & Cryptography): Local secret vault, AES-256-GCM, in-memory process injection, Shannon entropy leak scanning.
+     2. **Project "Basalt Canvas"** (Visual & Frontend Design): High-density dual-axis kanban, interactive pan-and-zoom DAG canvas, gate strips, Basalt theme surface ladder.
+     3. **Project "Vanguard"** (Real-Time & Event Engines): Local webhook proxy, Stripe/GitHub HMAC signature verification, SSE stream, deterministic replay.
+4. **Anti-Shallow Standard**:
+   - Bound by `DEFINITION_OF_DONE.md` and Rule 6 in `AGENTS.md`. Zero synthetic mocks for core systems; mandatory fault injection; deep structural assertions; full permissions and hooks.
+5. **Immediate Next Step for Claude**:
+   - Launch execution of the 3 showcase projects using the local `llama-server` on port 8099, or begin autonomous feature expansion following the SPIDR boundaries.
+6. **Active Checkpoint Git Ref**: `refs/heads/main` (commit `dcaa0a0`).
 
 ---
 
 ## Detailed Session Log
+
+### Entry 12 — 2026-09-17 22:38:00 MDT
+- **Agent**: Gemini 2.5 Pro (`antigravity-cli`)
+- **Role**: Subagent Architect & Implementer
+- **Actions Taken**:
+  1. **Anti-Shallow Engineering Contract Codified**:
+     - Authored `DEFINITION_OF_DONE.md` establishing zero vanity testing, zero synthetic core mocking, mandatory fault injection, and strict structural assertions.
+     - Enshrined Anti-Shallow Development & Testing as Rule 6 in `AGENTS.md`.
+  2. **Three-Tier Permission Engine (`@sekhemet/sandbox`)**:
+     - Implemented `PermissionEngine` evaluating Allow, Ask, and Deny tiers.
+     - Enforced permanent deny on path traversal (`../`), gate config tampering (`gates.toml`), out-of-scope file modifications, and implementer edits to test fixtures (Test Immutability Law).
+     - Added `packages/sandbox/tests/permissions.spec.ts` (6 tests passing).
+  3. **10 Waterfall Lifecycle Hooks (`@sekhemet/kernel`)**:
+     - Implemented `LifecycleHookEngine` in `packages/kernel/src/hooks.ts` supporting `card/start`, `pre-step`, `pre-tool`, `post-tool`, `pre-gate`, `post-gate`, `card/end`, `review/return`, `playbook/propose`, `turn-stopping`.
+     - Added `packages/kernel/tests/hooks.spec.ts` (1 test passing).
+  4. **Context Condenser & Observation Masking (`@sekhemet/context`)**:
+     - Implemented `ContextCondenser` in `packages/context/src/condenser.ts` performing RTK output condensing (stripping ANSI, removing progress bars, budget truncation) and in-place observation masking (replacing outputs older than 2 turns with compact 15-token semantic pointers).
+     - Added `packages/context/tests/condenser.spec.ts` (2 tests passing).
+  5. **Complete Tool Catalog & Permission Integration (`@sekhemet/loop`)**:
+     - Added `edit` with exact uniqueness check, `insert_after_symbol`, `note`, and `docs` to `CardExecutionSessionImpl`.
+     - Integrated `PermissionEngine` into `executeTurn`, evaluating tool permissions before execution.
+     - Added unit tests in `packages/loop/tests/tools.spec.ts` (8 tests passing).
+  6. **Qwen3.8-27B Adapter Profile (`@sekhemet/models`)**:
+     - Added `createQwen38_27BAdapter` in `packages/models/src/http_adapter.ts` with exact sampling parameters (`temperature: 0.2`, `top_p: 0.9`, `top_k: 20`, `min_p: 0.0`, `presence_penalty: 1.5`) matching user hardware specs.
+  7. **Showcase Trifecta Specification**:
+     - Authored `SHOWCASE_TRIFECTA_SPEC.md` detailing the 3-project public release gate (Onyx, Basalt Canvas, Vanguard) across 24 atomic SPIDR cards.
+  8. **Full Verification Gate**:
+     - 75/75 tests passing green across 22 suites in 1.56s.
+     - All code committed to `main` (`dcaa0a0`). Ready for Claude Code takeover.
 
 ### Entry 11 — 2026-09-17 22:24:00 MDT
 - **Agent**: Gemini 2.5 Pro (`antigravity-cli`)
