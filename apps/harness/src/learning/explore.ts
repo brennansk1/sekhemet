@@ -1,5 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { CardRecord } from "@sekhemet/kernel";
+import { moduleApiSummary } from "@sekhemet/loop";
 import type { LearningStore } from "./store.js";
 
 /**
@@ -136,6 +138,30 @@ export function exploreProject(repo: string): Constraint[] {
 }
 
 /**
+ * Deep, curriculum-guided exploration (RSIAgent's second phase). The cards
+ * about to run name the modules they need; for each Node built-in they
+ * mention, read its real API from the installed type declarations and hand
+ * it over before the first attempt. Verified by construction: these are the
+ * declarations the compiler will check against.
+ */
+export function exploreCurriculum(repo: string, cards: CardRecord[]): Constraint[] {
+  const text = cards
+    .map((c) => [c.title, c.spec ?? "", ...(c.acceptanceCriteria ?? [])].join(" "))
+    .join(" ");
+  const modules = [...new Set([...text.matchAll(/\bnode:[a-z_]+\b/g)].map((m) => m[0]))];
+  const out: Constraint[] = [];
+  for (const mod of modules.slice(0, 6)) {
+    const api = moduleApiSummary(repo, mod);
+    if (!api) continue;
+    out.push({
+      key: `api_${mod.replace(":", "_")}`,
+      text: `The real API of ${mod} (from its type declarations): ${api}. Use exactly these names.`,
+    });
+  }
+  return out;
+}
+
+/**
  * Store what exploration found as project rules. Constraints read from the
  * project's own configuration are facts, not heuristics, so `activate`
  * switches them on directly; heuristic rules still wait for a human.
@@ -144,10 +170,11 @@ export async function applyExploration(
   store: LearningStore,
   repo: string,
   activate: boolean,
+  cards: CardRecord[] = [],
 ): Promise<{ proposed: number; activated: number }> {
   let proposed = 0;
   let activated = 0;
-  for (const c of exploreProject(repo)) {
+  for (const c of [...exploreProject(repo), ...exploreCurriculum(repo, cards)]) {
     const rule = await store.propose({
       role: "worker",
       text: c.text,

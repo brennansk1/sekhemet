@@ -281,10 +281,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     for (const c of found) console.log(`- ${c.key}: ${c.text}`);
     const db = new DatabaseSync(join(config.repoPath, ".sekhemet", "events.db"));
     initSchema(db);
+    const exploreLog = new EventLog(db);
     const r = await applyExploration(
-      new LearningStore(new EventLog(db)),
+      new LearningStore(exploreLog),
       config.repoPath,
       process.argv.includes("--activate"),
+      await new CardStore(db, exploreLog).listCards(),
     );
     console.log(
       `\n${found.length} constraint(s) found; ${r.proposed} new rule(s), ${r.activated} activated.${r.activated === 0 && r.proposed > 0 ? " Approve them in Playbook, or rerun with --activate." : ""}`,
@@ -691,7 +693,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     if (argv.includes("--explore")) {
       // Constraints read from the project's own config are facts, so they are
       // activated directly; heuristic rules still wait for a human.
-      const r = await applyExploration(ctx.learning, config.repoPath, true);
+      const r = await applyExploration(ctx.learning, config.repoPath, true, ready);
       console.log(`Explored the project: ${r.activated} constraint rule(s) active.`);
     }
     const maxTurnsIdx = argv.indexOf("--max-turns");

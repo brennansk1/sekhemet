@@ -1,10 +1,10 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { EventLog, initSchema } from "@sekhemet/kernel";
 import { afterEach, describe, expect, it } from "vitest";
-import { applyExploration, exploreProject } from "../src/learning/explore.js";
+import { applyExploration, exploreCurriculum, exploreProject } from "../src/learning/explore.js";
 import { LearningStore } from "../src/learning/store.js";
 
 describe("exploring a project before the work (RSIAgent)", () => {
@@ -52,5 +52,21 @@ describe("exploring a project before the work (RSIAgent)", () => {
     expect(again.activated).toBe(4); // ...but the earlier candidates are activated
     expect((await store.rules()).every((r) => r.status === "active")).toBe(true);
     Reflect.deleteProperty(process.env, "SEKHEMET_CONFIG_DIR");
+  });
+
+  it("reads the real API of the modules the upcoming cards mention", () => {
+    const repo = mkdtempSync(join(tmpdir(), "explore-api-"));
+    dirs.push(repo);
+    const types = join(repo, "node_modules", "@types", "node");
+    mkdirSync(types, { recursive: true });
+    writeFileSync(
+      join(types, "sqlite.d.ts"),
+      'declare module "node:sqlite" {\n  class DatabaseSync {\n    exec(sql: string): void;\n    prepare(sql: string): StatementSync;\n  }\n  class StatementSync {\n    run(): void;\n    all(): unknown[];\n  }\n}\n',
+    );
+    const found = exploreCurriculum(repo, [
+      { id: "c", title: "Ledger", spec: "Persist events with node:sqlite." } as never,
+    ]);
+    expect(found[0]?.text).toContain("DatabaseSync { exec, prepare }");
+    expect(found[0]?.text).toContain("StatementSync { all, run }");
   });
 });

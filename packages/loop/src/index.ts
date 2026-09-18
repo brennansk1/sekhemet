@@ -13,3 +13,5 @@ export * from "./card_runner.js";
 export * from "./tool_catalog.js";
 export * from "./parse_gate.js";
 export * from "./manager.js";
+export * from "./api_surface.js";
+export * from "./working_memory.js";
