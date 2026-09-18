@@ -1,16 +1,24 @@
-import type { GateResult, GateRunner } from "@sekhemet/gates";
-import type { LocalInferenceAdapter, ToolCall } from "@sekhemet/models";
+import type { PlaybookRegistry, SkillsRegistry } from "@sekhemet/context";
+import type { GateResult, GateRung, GateRunner } from "@sekhemet/gates";
+import type { CardRecord } from "@sekhemet/kernel";
+import type { LocalInferenceAdapter, ToolArm, ToolCall } from "@sekhemet/models";
+import type { ToolObservation } from "./observation.js";
+import type { ApprovalHandler } from "./tools.js";
 
 export type ExecutionStopReason =
   | "gate_passed"
   | "budget_exhausted"
   | "oscillation_detected"
+  | "no_progress"
+  | "repair_exhausted"
   | "error"
   | "quota_suspended";
 
 export interface TurnResult {
   turnIndex: number;
   toolCalls: ToolCall[];
+  /** One observation per dispatched tool call, in call order. */
+  observations: ToolObservation[];
   gateResult?: GateResult | undefined;
   stopReason?: ExecutionStopReason | undefined;
 }
@@ -21,14 +29,38 @@ export interface SessionOptions {
   worktreePath: string;
   modelAdapter: LocalInferenceAdapter;
   gateRunner: GateRunner;
-  initialPrompt?: string | undefined;
+
+  /** Full card record. When absent a minimal one is synthesized from `cardId`. */
+  card?: CardRecord | undefined;
+  cardTitle?: string | undefined;
+
   scopeFiles?: string[] | undefined;
   agentRole?: string | undefined;
+
+  toolArm?: ToolArm | undefined;
+  temperature?: number | undefined;
+  maxTokens?: number | undefined;
+
+  /** Gate rungs run when the agent calls `finish_card`. Defaults to typecheck + test. */
+  gateRungs?: GateRung[] | undefined;
+  /** Failed verifications tolerated before the card stops for human review. */
+  maxRepairAttempts?: number | undefined;
+  /** Identical turns tolerated before the oscillation breaker trips. */
+  oscillationThreshold?: number | undefined;
+
+  skillsRegistry?: SkillsRegistry | undefined;
+  playbookRegistry?: PlaybookRegistry | undefined;
+
+  /** Invoked for `ask`-tier permission checks. Absent means ask-tier is refused. */
+  onApproval?: ApprovalHandler | undefined;
+  allowNetwork?: boolean | undefined;
+  commandTimeoutMs?: number | undefined;
 }
 
 export interface CardExecutionSession {
   readonly cardId: string;
   executeTurn(): Promise<TurnResult>;
+  run(): Promise<TurnResult[]>;
   runVerification(): Promise<GateResult>;
   abort(reason: string): Promise<void>;
   getStepsUsed(): number;
