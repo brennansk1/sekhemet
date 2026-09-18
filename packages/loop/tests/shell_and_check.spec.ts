@@ -332,4 +332,45 @@ describe("@sekhemet/loop shell command lines and the check tool", () => {
       "Event requires timestamp. All of its members: hash, id, timestamp. Set every required one.",
     ]);
   });
+
+  it("answers the Worker's question from the card's contract, or tells it to proceed conservatively", async () => {
+    const runner: GateRunner = {
+      runGates: async (): Promise<GateResult> => ({ passed: false, durationMs: 1, failures: [] }),
+    };
+    const usage = { promptTokens: 1, completionTokens: 1, durationMs: 1 };
+    const ask = (question: string) => ({
+      text: "",
+      toolCalls: [{ id: "a", name: "ask", arguments: { question } }],
+      usage,
+    });
+    const session = new CardExecutionSessionImpl({
+      cardId: "c",
+      stepBudget: 5,
+      worktreePath: root,
+      gateRunner: runner,
+      card: {
+        id: "c",
+        tier: "task",
+        title: "Ledger",
+        status: "in_progress",
+        scopeFiles: [],
+        stepBudget: 5,
+        stepsUsed: 0,
+        createdAt: "",
+        updatedAt: "",
+        spec: "Append events to the ledger. Replaying an idempotency key returns the existing event.",
+        acceptanceCriteria: ["sequence numbers start at one"],
+      } as never,
+      modelAdapter: new MockInferenceAdapter("m", [
+        ask("What happens when an idempotency key is replayed?"),
+        ask("Which colour is the logo?"),
+      ]),
+    });
+    const answered = await session.executeTurn();
+    expect(answered.observations[0]?.content).toContain(
+      "(spec) Replaying an idempotency key returns the existing event.",
+    );
+    const unknown = await session.executeTurn();
+    expect(unknown.observations[0]?.content).toMatch(/most conservative reading/);
+  });
 });

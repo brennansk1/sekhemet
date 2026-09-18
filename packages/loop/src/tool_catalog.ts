@@ -247,6 +247,13 @@ export const TOOL_CATALOG: ToolInterfaceSpec[] = [
     returns: "Installed dependencies with versions",
   },
   {
+    name: "ask",
+    summary:
+      "Ask a question about what the card requires instead of guessing. Answered from the card's spec, Done-when list and rules.",
+    parameters: [{ name: "question", type: "string", required: true, description: "The question" }],
+    returns: "The relevant parts of the card's contract, or guidance to proceed conservatively",
+  },
+  {
     name: "recall",
     summary:
       "Fetch the full text of an earlier observation that was compacted. Use the EvidenceRef shown in its placeholder.",

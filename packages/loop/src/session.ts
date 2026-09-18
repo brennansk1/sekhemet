@@ -226,6 +226,68 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   }
 
   /**
+   * The Worker asks instead of guessing (AutoDev's ask command, arXiv
+   * 2403.08299). Unattended runs have no human to wait for, so the answer
+   * comes from the card's own contract: spec, Done-when and the rules in
+   * force, best matches first. When nothing covers it, the Worker is told to
+   * take the most conservative reading the acceptance tests allow and to
+   * record the assumption, which the human then sees in review.
+   */
+  private askObservation(question: unknown): ToolObservation {
+    const q = typeof question === "string" ? question.trim() : "";
+    if (!q)
+      return {
+        tool: "ask",
+        ok: false,
+        summary: "empty question",
+        content: "Ask a specific question.",
+      };
+    const words = new Set(
+      q
+        .toLowerCase()
+        .split(/[^a-z0-9_]+/)
+        .filter((w) => w.length > 3),
+    );
+    const sources = [
+      ...(this.card.spec ?? "").split(/(?<=[.!?])\s+|\n+/).map((t) => ({ from: "spec", t })),
+      ...(this.card.acceptanceCriteria ?? []).map((t) => ({ from: "done when", t })),
+      ...(this.options.playbookRegistry?.getAllRules() ?? []).map((r) => ({
+        from: "rule",
+        t: r.instruction,
+      })),
+    ].filter((x) => x.t.trim().length > 0);
+    const scored = sources
+      .map((x) => ({
+        ...x,
+        score: x.t
+          .toLowerCase()
+          .split(/[^a-z0-9_]+/)
+          .filter((w) => words.has(w)).length,
+      }))
+      .filter((x) => x.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 4);
+    this.tools
+      .execute({ id: "ask-note", name: "note", arguments: { message: `Asked: ${q}` } })
+      .catch(() => undefined);
+    if (scored.length === 0) {
+      return {
+        tool: "ask",
+        ok: true,
+        summary: "no answer in the contract",
+        content:
+          'Nothing in the card\'s spec, Done-when list or rules answers that. Take the most conservative reading that the acceptance tests allow, then record the assumption with note("Assumed: ...") so the reviewer sees it.',
+      };
+    }
+    return {
+      tool: "ask",
+      ok: true,
+      summary: `answered from ${scored.map((x) => x.from).join(", ")}`,
+      content: `From the card's contract:\n${scored.map((x) => `- (${x.from}) ${x.t.trim()}`).join("\n")}`,
+    };
+  }
+
+  /**
    * Bring a compacted observation back in full. Compaction is only safe if it
    * is reversible: Claude Code can re-read what it summarised, and so can the
    * Worker, by the EvidenceRef in the placeholder.
@@ -624,7 +686,9 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
           ? await this.checkObservation()
           : call.name === "recall"
             ? this.recallObservation(call.arguments.ref)
-            : await this.tools.execute(call);
+            : call.name === "ask"
+              ? this.askObservation(call.arguments.question)
+              : await this.tools.execute(call);
       observations.push(observation);
 
       if (observation.ok && WRITE_TOOLS.has(call.name)) {
