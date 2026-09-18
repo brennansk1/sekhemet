@@ -11,24 +11,36 @@
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
 If you are Claude reading this because Gemini reached quota limits or you were summoned to take the lead:
-1. **Current Milestone**: Milestone 3 (@sekhemet/sync — Git Worktree Isolation & Checkpoint Refs)
+1. **Current Milestone**: Milestone 4 (@sekhemet/models — Local Inference Adapters & Tool Arms)
 2. **Current State**:
    - Git repository initialized on branch `main`.
    - All 13 workspace projects linked and typechecked (`tsc -b`).
    - `@sekhemet/kernel` 100% complete (EventLog, SQLite WAL CardStore, projection replay).
-   - `@sekhemet/sandbox` 100% complete (ProcessSandbox timeout containment, buffer limits, macOS Seatbelt profile generation).
-   - 12 unit/integration tests passing green.
+   - `@sekhemet/sandbox` 100% complete (ProcessSandbox timeout containment, macOS Seatbelt profile generator).
+   - `@sekhemet/sync` 100% complete (NodeGitSyncAdapter worktree isolation, structured checkpoint refs, squashed acceptance merges).
+   - 16 unit/integration tests passing green.
 3. **Immediate Next Task**:
-   - Implement `@sekhemet/sync`:
-     - Git worktree session manager (`git worktree add/remove`).
-     - Checkpoint commit reference writer (`refs/sekhemet/checkpoints/<card-id>/step_<N>`).
-     - Squashed acceptance merge with mandatory multi-agent attribution trailers.
-     - Vitest tests in `packages/sync/tests/sync.spec.ts`.
+   - Implement `@sekhemet/models`:
+     - Tool Arms (Arm A: flat schema tools, Arm B: nested JSON schema, Arm C: text delimiter sketch/patch).
+     - Local inference client (Ollama HTTP / llama.cpp / MLX OpenAI-compatible endpoints) + `MockInferenceAdapter`.
+     - Token accounting and template formatting.
+     - Vitest tests in `packages/models/tests/models.spec.ts`.
 4. **Active Checkpoint Git Ref**: `refs/heads/main`
 
 ---
 
 ## Detailed Session Log
+
+### Entry 4 — 2026-09-17 22:10:55 MDT
+- **Agent**: Gemini 2.5 Pro (`antigravity-cli`)
+- **Role**: Subagent Implementer & Test Author
+- **Actions Taken**:
+  1. Implemented `@sekhemet/sync/src/types.ts`: typed options for checkpoints, worktrees, and squashes.
+  2. Implemented `@sekhemet/sync/src/git_adapter.ts`: `NodeGitSyncAdapter` supporting `createWorktree`, `commitCheckpoint` with full Git trailers and `refs/sekhemet/checkpoints` updates, and `squashAndMerge`.
+  3. Added `packages/sync/tests/sync.spec.ts`: 4 tests using isolated temporary Git repos. Verified worktree creation, commit trailer parsing, checkpoint ref updates, squash merges, and clean removal.
+  4. Full gates passed: 16/16 tests green across monorepo.
+- **Next Steps**:
+  - Implement `@sekhemet/models` local inference adapters (Ollama / llama.cpp / MLX), Tool Arms, and `MockInferenceAdapter`.
 
 ### Entry 3 — 2026-09-17 22:10:00 MDT
 - **Agent**: Gemini 2.5 Pro (`antigravity-cli`)
