@@ -148,4 +148,62 @@ describe("@sekhemet/loop shell command lines and the check tool", () => {
     expect(second.toolCalls.map((c) => c.name)).toEqual(["write_file"]);
     expect(session.getHistory().some((h) => h.action === "re-check after edit")).toBe(true);
   });
+
+  it("a repeated check with no edit in between does not re-run the gates", async () => {
+    let calls = 0;
+    const runner: GateRunner = {
+      runGates: async (): Promise<GateResult> => {
+        calls++;
+        return {
+          passed: false,
+          durationMs: 1,
+          failures: [
+            {
+              rung: "typecheck",
+              gate: "typecheck",
+              exitCode: 2,
+              errorExcerpt:
+                "src/a.ts:29:6 TS2339: Property 'run' does not exist on type 'DatabaseSync'.",
+              suggestedFixFiles: ["src/a.ts"],
+            },
+          ],
+        };
+      },
+    };
+    const usage = { promptTokens: 1, completionTokens: 1, durationMs: 1 };
+    const check = { text: "", toolCalls: [{ id: "c", name: "check", arguments: {} }], usage };
+    const session = new CardExecutionSessionImpl({
+      cardId: "c",
+      stepBudget: 5,
+      worktreePath: root,
+      gateRunner: runner,
+      modelAdapter: new MockInferenceAdapter("m", [check, check]),
+    });
+
+    await session.executeTurn();
+    // The check's failure is now the standing failure the prompt shows.
+    expect(session.getLastGateFailure()?.errorExcerpt).toContain("TS2339");
+    const second = await session.executeTurn();
+    expect(calls).toBe(1);
+    expect(second.observations[0]?.content).toContain("Nothing has changed");
+  });
+
+  it("a passing check finishes the card without a separate finish_card", async () => {
+    const runner: GateRunner = {
+      runGates: async (): Promise<GateResult> => ({ passed: true, durationMs: 1, failures: [] }),
+    };
+    const usage = { promptTokens: 1, completionTokens: 1, durationMs: 1 };
+    const session = new CardExecutionSessionImpl({
+      cardId: "c",
+      stepBudget: 5,
+      worktreePath: root,
+      gateRunner: runner,
+      modelAdapter: new MockInferenceAdapter("m", [
+        { text: "", toolCalls: [{ id: "c", name: "check", arguments: {} }], usage },
+      ]),
+    });
+    const turn = await session.executeTurn();
+    expect(turn.stopReason).toBe("gate_passed");
+    expect(turn.gateResult?.passed).toBe(true);
+  });
 });

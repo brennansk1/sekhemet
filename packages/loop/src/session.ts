@@ -71,6 +71,9 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   private lastGateFailure: GateFailure | undefined;
   /** Every failure from the last verification, ranked; the prompt shows several. */
   private lastGateFailures: GateFailure[] = [];
+  /** The last `check` result, and whether a file was written after it. */
+  private lastCheck: GateResult | undefined;
+  private writtenSinceCheck = true;
   private repairAttempts = 0;
   private repoMapCache: string | undefined;
   private lastSystemPrompt = "";
@@ -111,18 +114,37 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     return this.lastGateFailure;
   }
 
-  /** Current position in the repair ladder. */
-  /** Run the card's gates as a non-terminal self-check and describe the result. */
+  /**
+   * Run the card's gates as a non-terminal self-check and describe the result.
+   *
+   * The failures also become the session's standing failure, so the prompt's
+   * failure zone and the re-check after the next edit work from them. Without
+   * that, run 4's db card saw its errors only in a truncated history line and
+   * called `check` five times in a row until the loop detector stopped it.
+   */
   private async checkObservation(): Promise<ToolObservation> {
+    if (!this.writtenSinceCheck && this.lastCheck && !this.lastCheck.passed) {
+      return {
+        tool: "check",
+        ok: false,
+        summary: "no change since the last check",
+        content:
+          "Nothing has changed since your last check, so the same failures stand (listed under LAST GATE FAILURE). Edit the file at the reported line first; checking again without an edit cannot change the result.",
+      };
+    }
     const result = await this.runVerification();
+    this.lastCheck = result;
+    this.writtenSinceCheck = false;
     if (result.passed) {
       return {
         tool: "check",
         ok: true,
         summary: "all gates pass",
-        content: "All gates pass. Call finish_card to submit this card.",
+        content: "All gates pass. The card is complete.",
       };
     }
+    this.lastGateFailure = result.failures[0];
+    this.lastGateFailures = result.failures;
     const lines = result.failures.map((f, i) => {
       const where = f.location
         ? `${f.location.file}${f.location.line ? `:${f.location.line}` : ""} `
@@ -133,7 +155,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     return {
       tool: "check",
       ok: false,
-      summary: `gates failing: ${result.failures.map((f) => f.gate ?? f.rung).join(", ")}`,
+      summary: `gates failing: ${[...new Set(result.failures.map((f) => f.gate ?? f.rung))].join(", ")}`,
       content: `Gates failing (not submitted — keep working):\n${lines.join("\n")}`,
     };
   }
@@ -488,6 +510,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       if (observation.ok && WRITE_TOOLS.has(call.name)) {
         const path = call.arguments.path;
         if (typeof path === "string") this.filesWritten.add(path.replace(/^\.\//, ""));
+        this.writtenSinceCheck = true;
       }
     }
 
@@ -509,7 +532,25 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       (c, i) => WRITE_TOOLS.has(c.name) && observations[i]?.ok === true,
     );
     const checkedThisTurn = toolCalls.some((c) => c.name === "check");
-    if (!this.tools.wantsFinish() && this.lastGateFailure && wroteThisTurn && !checkedThisTurn) {
+
+    // A passing check with nothing written after it is a finished card: asking
+    // for a separate finish_card only costs a turn.
+    if (checkedThisTurn && this.lastCheck?.passed && !this.writtenSinceCheck) {
+      this.isFinished = true;
+      this.lastGateFailure = undefined;
+      this.lastGateFailures = [];
+      this.ladder.reset();
+      this.activeRung = undefined;
+      gateResult = this.lastCheck;
+      stopReason = "gate_passed";
+    }
+    if (
+      !stopReason &&
+      !this.tools.wantsFinish() &&
+      this.lastGateFailure &&
+      wroteThisTurn &&
+      !checkedThisTurn
+    ) {
       const recheck = await this.runVerification();
       if (recheck.passed) {
         this.isFinished = true;
