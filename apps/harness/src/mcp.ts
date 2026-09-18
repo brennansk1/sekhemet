@@ -2,7 +2,7 @@ import { createInterface } from "node:readline";
 import type { DatabaseSync } from "node:sqlite";
 import type { BoardService } from "@sekhemet/board";
 import type { CardStore, CardTier, EventLog } from "@sekhemet/kernel";
-import { runDoctor } from "./index.js";
+import { runDoctor } from "./doctor.js";
 
 export interface McpContext {
   db: DatabaseSync;
@@ -183,7 +183,7 @@ export async function handleMcpRequest(
     }
 
     if (name === "sekhemet_doctor") {
-      const report = runDoctor();
+      const report = await runDoctor(ctx.repoPath);
       return {
         jsonrpc: "2.0",
         id,

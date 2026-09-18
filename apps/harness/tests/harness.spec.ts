@@ -2,13 +2,13 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { runDoctor } from "../src/doctor.js";
 import {
   checkMemoryPressure,
   initLocalKernel,
   parseCliArgs,
   printEventLog,
   printTerminalBoard,
-  runDoctor,
 } from "../src/index.js";
 
 describe("@sekhemet/harness CLI", () => {
@@ -26,11 +26,38 @@ describe("@sekhemet/harness CLI", () => {
     }
   });
 
-  it("runDoctor verifies system prerequisites and returns passing status", () => {
-    const report = runDoctor();
-    expect(report.ok).toBe(true);
-    expect(report.checks.length).toBeGreaterThanOrEqual(4);
-    expect(report.checks.some((c) => c.includes("Unified memory"))).toBe(true);
+  it("runDoctor probes real subsystems and reports a status per check", async () => {
+    const report = await runDoctor(tempRepo);
+
+    // Every specified probe must actually run.
+    const names = report.checks.map((c) => c.name);
+    expect(names).toContain("Unified memory");
+    expect(names).toContain("Local inference socket");
+    expect(names).toContain("Git worktree isolation");
+    expect(names).toContain("Sandbox confinement");
+    expect(names).toContain("Node runtime");
+
+    // Statuses must be real verdicts, not decoration.
+    for (const c of report.checks) {
+      expect(["pass", "warn", "fail"]).toContain(c.status);
+      expect(c.detail.length).toBeGreaterThan(0);
+    }
+
+    // ok must be derived from the checks, not hardcoded.
+    expect(report.ok).toBe(report.checks.every((c) => c.status !== "fail"));
+
+    // The toolchain running this very test is present, so these cannot fail.
+    expect(report.checks.find((c) => c.name === "Node runtime")?.status).toBe("pass");
+    expect(report.checks.find((c) => c.name === "Node runtime")?.detail).toMatch(/^v\d+\./);
+  });
+
+  it("runDoctor reports a real git failure outside a repository", async () => {
+    // tempRepo is not a git repo, so worktree isolation must FAIL rather than
+    // report a hardcoded pass.
+    const report = await runDoctor(tempRepo);
+    const worktree = report.checks.find((c) => c.name === "Git worktree isolation");
+    expect(worktree?.status).toBe("fail");
+    expect(report.ok).toBe(false);
   });
 
   it("parseCliArgs parses all subcommands correctly", () => {

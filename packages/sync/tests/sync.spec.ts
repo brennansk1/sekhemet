@@ -59,7 +59,15 @@ describe("@sekhemet/sync NodeGitSyncAdapter", () => {
     expect(sha).toMatch(/^[0-9a-f]{40}$/);
 
     // Verify checkpoint ref exists and points to this SHA
-    const refSha = execSync("git rev-parse refs/sekhemet/checkpoints/card_check1/step_1", {
+    // The relay protocol reads the singular card ref; step history is namespaced
+    // separately under refs/sekhemet/steps/ to avoid a git D/F ref conflict.
+    const stepSha = execSync("git rev-parse refs/sekhemet/steps/card_check1/step_1", {
+      cwd: testRepoDir,
+      encoding: "utf8",
+    }).trim();
+    expect(stepSha).toBe(sha);
+
+    const refSha = execSync("git rev-parse refs/sekhemet/checkpoints/card_check1", {
       cwd: testRepoDir,
     })
       .toString()

@@ -12,6 +12,7 @@ import { HttpInferenceAdapter, MockInferenceAdapter } from "@sekhemet/models";
 import { SpidrFeaturePlanner } from "@sekhemet/planner";
 import { ProcessSandbox } from "@sekhemet/sandbox";
 import { NodeGitSyncAdapter } from "@sekhemet/sync";
+import { type DoctorReport, runDoctor } from "./doctor.js";
 import { runMcpStdioServer } from "./mcp.js";
 import { startDashboardServer } from "./server.js";
 
@@ -73,21 +74,6 @@ export function checkMemoryPressure(usedMb: number, totalMb: number): MemoryPres
     throttleWorktrees: false,
     pauseExecution: false,
   };
-}
-
-export function runDoctor(): { ok: boolean; checks: string[] } {
-  const freeBytes = freemem();
-  const totalBytes = totalmem();
-  const freeGb = (freeBytes / (1024 * 1024 * 1024)).toFixed(1);
-  const totalGb = (totalBytes / (1024 * 1024 * 1024)).toFixed(1);
-
-  const checks = [
-    `Unified memory check: PASS (${freeGb} GB free of ${totalGb} GB total)`,
-    "Local inference socket check: PASS (Ollama / llama.cpp ready)",
-    "Git worktree isolation check: PASS (clean worktree support)",
-    "Verification gates check: PASS (pnpm, tsc, vitest, biome functional)",
-  ];
-  return { ok: true, checks };
 }
 
 export function parseCliArgs(argv: string[] = process.argv.slice(2)): CliConfig {
@@ -253,12 +239,14 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   const config = parseCliArgs(argv);
 
   if (config.command === "doctor") {
-    const report = runDoctor();
+    const report = await runDoctor(config.repoPath);
     console.log("\n=== Sekhemet Doctor Diagnostics ===");
     for (const c of report.checks) {
-      console.log(`  ✓ ${c}`);
+      const mark = c.status === "pass" ? "\u2713" : c.status === "warn" ? "!" : "\u2717";
+      console.log(`  ${mark} ${c.name}: ${c.detail}`);
     }
-    console.log("");
+    console.log(report.ok ? "\nAll critical checks passed.\n" : "\nOne or more checks FAILED.\n");
+    if (!report.ok) process.exitCode = 1;
     return;
   }
 

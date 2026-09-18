@@ -1,3 +1,5 @@
+import { matchesGlob } from "./glob.js";
+
 export type PermissionTier = "allow" | "ask" | "deny";
 
 export interface PermissionCheckRequest {
@@ -15,11 +17,22 @@ export interface PermissionCheckResult {
   reason?: string;
 }
 
+/**
+ * Paths no agent may modify, at any tier.
+ *
+ * The loop driver, gates runner, sandbox and permission tables are included
+ * deliberately (design §1253): a self-improving harness must not be able to
+ * edit the machinery that constrains it.
+ */
 const PROTECTED_SYSTEM_PATTERNS = [
   /\bgates\.toml\b/i,
-  /\.sekhemet\/(?:events\.db|checkpoints)/i,
+  /\bconfig\.toml\b/i,
+  /\.sekhemet\/(?:events\.db|checkpoints|artifacts)/i,
   /\.githooks\//i,
   /\.git\//i,
+  /packages\/loop\/src\/(?:session|tools|paths)\.ts$/i,
+  /packages\/gates\/src\/runner\.ts$/i,
+  /packages\/sandbox\/src\/(?:executor|permissions|seatbelt)\.ts$/i,
 ];
 
 const DESTRUCTIVE_COMMAND_PATTERNS = [
@@ -85,9 +98,15 @@ export class PermissionEngine {
         req.toolName === "edit";
 
       if (isWriteTool) {
-        const isScopeMatch = req.declaredScopeFiles.some(
-          (scope) => req.targetPath === scope || req.targetPath?.endsWith(`/${scope}`),
-        );
+        const target = req.targetPath.replace(/^\.\//, "");
+        // Scope entries are globs: `src/**` must admit `src/a/b.ts`. Plain string
+        // equality made every glob-shaped scope deny everything it declared.
+        const isScopeMatch = req.declaredScopeFiles.some((scope) => {
+          const pattern = scope.replace(/^\.\//, "");
+          return (
+            target === pattern || target.endsWith(`/${pattern}`) || matchesGlob(target, pattern)
+          );
+        });
         if (!isScopeMatch) {
           return {
             tier: "deny",

@@ -3,7 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { BoardService } from "@sekhemet/board";
 import type { EventLog } from "@sekhemet/kernel";
 import { BASALT_THEME } from "@sekhemet/ui";
-import { runDoctor } from "./index.js";
+import { runDoctor } from "./doctor.js";
 
 export interface DashboardServerOptions {
   db: DatabaseSync;
@@ -392,7 +392,7 @@ export function startDashboardServer(
     }
 
     if (url === "/api/doctor") {
-      const report = runDoctor();
+      const report = await runDoctor();
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(report));
       return;
