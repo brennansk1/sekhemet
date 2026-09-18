@@ -1,225 +1,142 @@
-# Sekhemet — Board-Native Local-First AI Coding Harness
+# Sekhemet
 
-> *"She who is powerful; the one who heals what she breaks."*
+A local-first coding harness that runs AI agents against a kanban board. Work is
+cut into small cards; an agent executes each card in an isolated git worktree,
+inside an OS sandbox, until executable verification gates pass; a person reviews
+the evidence and accepts or returns it. Inference runs on your machine.
 
-[![Build & Test](https://img.shields.io/badge/tests-64%2F64%20passing-brightgreen)](#)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.7%20Strict-blue)](#)
-[![License](https://img.shields.io/badge/license-MIT-green)](#)
-[![Inference](https://img.shields.io/badge/inference-100%25%20Local-orange)](#)
-[![Architecture](https://img.shields.io/badge/state-SQLite%20WAL%20Event--Sourced-purple)](#)
+> **Status — honest, as of 2026-09-18.** The harness core is real and tested (183
+> tests, all green). It is **not yet certified for release**: on the Chronicle
+> release gate the current best run passes 3 of 6 cards on the first attempt,
+> against a bar of 5 of 6. See `DEV_LOG.md` for what has been measured and
+> `FEATURE_INVENTORY.md` for what the design specifies that is not built yet.
 
-**Sekhemet** is a local-first, board-native AI coding harness designed for solo developers. Instead of a conversational chat terminal that suffers from context decay, hallucinated success, and uncommitted edits, Sekhemet organizes all agentic engineering into a **dual-axis nested kanban**, isolated **Git worktrees**, deterministic **executable verification gates**, and an immutable, cryptographically hash-chained **SQLite WAL event log**.
+## How a card runs
 
----
+1. **Worktree.** The card gets its own git worktree and branch
+   (`sekhemet/<project>/<card>-<slug>`); dependencies are symlinked in and build
+   output is excluded from its diff.
+2. **Contract first.** The card's acceptance tests are staged into the worktree
+   before the first turn, so its gate measures that card and nothing else.
+3. **Closed loop.** Each turn the model sees the card's spec and numbered
+   acceptance criteria, the repository map, the pinned acceptance tests and scope
+   files, what it has already written and read, and the typed failure from the
+   last gate run. Tools return observations it acts on next turn.
+4. **Gates.** `finish_card` runs every blocking gate declared in
+   `.sekhemet/gates.toml` (hash-pinned; a changed file aborts verification).
+   Failures come back typed: location, expected, actual, and the exact command
+   that reproduces them.
+5. **Repair ladder.** Failed verification escalates by strategy, not temperature:
+   direct repair (2 attempts), fresh context (1), a written edit sketch (1), then
+   stop for a human. With a manager model configured, failed cards are reviewed
+   in one batch and retried with a repair plan.
+6. **Evidence.** Every attempt writes an evidence bundle (diff, per-gate results,
+   failures, turns, tokens, model settings) and a full transcript. A passing card
+   moves to Review — the harness verifies, a person accepts.
 
-## Key Differentiators
+## Safety model
 
-| Capability | Chat-Based Harnesses | Sekhemet |
-| :--- | :--- | :--- |
-| **Primary Interface** | Conversational chat stream | **Board-Native Nested Kanban** (Terminal TUI + Basalt Web Canvas) |
-| **Inference Source** | Cloud APIs (Anthropic, OpenAI) | **100% Local Only** (Ollama, llama.cpp, MLX); Zero telemetry |
-| **Definition of Done**| Agent self-reports "Done!" | **Deterministic Executable Gates** (`tsc`, `vitest`, `biome`); Agent self-certification is rejected |
-| **Context Longevity** | Long-running session decay / rot | **Fresh Context Per Card**; Byte-stable prefix caching; Zero drift |
-| **File Safety** | In-place workspace mutations | **Isolated Git Worktrees** (`.sekhemet/worktrees/<card>`) & ref checkpoints |
-| **State & Auditing** | Volatile in-memory JSON chat history | **Event-Sourced SQLite WAL** with SHA-256 hash chains |
-| **Model Collaboration**| Single vendor lock-in | **Claude + Gemini Multi-Agent Protocol** with structured Git trailers |
+These are enforced, and each is covered by tests that attempt the violation:
 
----
+- **OS sandbox.** On macOS every command runs under `sandbox-exec` with a
+  generated Seatbelt profile: writes only inside the worktree, the linked
+  dependency tree and a private scratch directory; network egress denied. The
+  parent environment is not inherited (an allowlist is passed instead).
+  `sekhemet doctor` proves confinement with a live escape attempt.
+- **Permission tiers.** Deny always wins: path traversal (symlink-resolved),
+  writes outside the card's declared scope, edits to protected paths (tests for
+  the implementer role, `gates.toml`, the harness's own loop, gate and sandbox
+  sources). Destructive and network commands need an approver.
+- **Parse gate.** A write that would turn a parseable source file unparseable is
+  refused before it reaches disk, with the exact location.
+- **Memory guard.** A turn is refused once swap exceeds 3 GB or grows 2 GB within
+  a card; the card stops with a resumable reason instead of taking the machine
+  down. Models are unloaded on every exit path.
 
-## Architecture Overview
+## Models
 
-Sekhemet is built as an acyclic monorepo of 12 focused packages and a unified CLI application:
+One model is resident at a time; `ModelRouter` unloads before it loads.
 
-```mermaid
-flowchart TD
-    kernel["@sekhemet/kernel<br/>(SQLite WAL, SHA-256 Event Log)"]
-    sandbox["@sekhemet/sandbox<br/>(Seatbelt/Landlock Process Isolation)"]
-    sync["@sekhemet/sync<br/>(Git Worktrees, Checkpoints, Merges)"]
-    models["@sekhemet/models<br/>(Local HTTP Adapters, Tool Arms A/B/C)"]
-    gates["@sekhemet/gates<br/>(Deterministic Verification Rungs)"]
-    context["@sekhemet/context<br/>(Repo Map, Skills Engine, Playbooks)"]
-    loop["@sekhemet/loop<br/>(Turn Session, Oscillation Detector, Tools)"]
-    board["@sekhemet/board<br/>(Dual-Axis Kanban, Review WIP Limits)"]
-    planner["@sekhemet/planner<br/>(SPIDR Decomposition, ClarEval Ambiguity)"]
-    eval["@sekhemet/eval<br/>(SWE-bench Harness, Pass@1 Calibration)"]
-    ui["@sekhemet/ui<br/>(Virtual Canvas Culling, Basalt Theme)"]
-    harness["apps/harness<br/>(CLI, Dashboard HTTP Server, Stdio MCP)"]
+| Role | Default | Notes |
+|---|---|---|
+| Worker | `nail-35b-a3b-ctx` via Ollama | 35B MoE, ~3B active, 29–30 tok/s measured on an M4 / 24 GB |
+| Worker (alt) | `--worker cyber-tiel` | Cyber-Tiel-Coder 35B-A3B MTP under a harness-managed llama-server with its MTP head |
+| Manager | `--manager <ollama model>` | Reviews failed cards in one batch and writes repair plans |
 
-    kernel --> sandbox
-    sandbox --> sync
-    sync --> models
-    models --> gates
-    gates --> context
-    context --> loop
-    loop --> board
-    board --> planner
-    planner --> eval
-    eval --> ui
-    ui --> harness
-```
-
----
-
-## 5-Zone Byte-Stable Prompt Architecture
-
-To maximize local inference speed, Sekhemet structures every turn prompt into 5 deterministic zones designed for KV-cache prefix reuse:
-
-```
-┌────────────────────────────────────────────────────────┐
-│ ZONE 1: System Invariants & Non-Negotiable Laws        │  ◄ Byte-stable cache prefix
-├────────────────────────────────────────────────────────┤
-│ ZONE 2: Project Playbook (.sekhemet/playbook.toml)     │  ◄ Progressive disclosure
-│         Active Loaded Skills (.sekhemet/skills/)       │
-├────────────────────────────────────────────────────────┤
-│ ZONE 3: Architectural Repo Map (Symbol Outlines)       │  ◄ Budget-fitted AST graph
-├────────────────────────────────────────────────────────┤
-│ ZONE 4: Active Card Contract (<200 LOC, 1-3 files)     │  ◄ Strict scope isolation
-├────────────────────────────────────────────────────────┤
-│ ZONE 5: Execution Turns & Typed GateFailure Feedback   │  ◄ Dynamic turn context
-└────────────────────────────────────────────────────────┘
-```
-
----
-
-## Complete Tool & Skills Catalog
-
-### Full Tool Catalog
-Sekhemet equips local models with a resilient, tolerant toolset:
-- **`read_file`**: Read file contents with optional 1-based line ranges.
-- **`write_file`**: Write full file contents safely to disk.
-- **`replace_lines`**: Surgical line replacement preserving indentation and whitespace.
-- **`read_symbol`**: AST/symbol reader extracting class/function/interface bodies.
-- **`replace_symbol_body`**: Surgical AST-scoped symbol body replacement.
-- **`find_references`**: Grep-powered symbol usage and reference finder.
-- **`list_dir`**: Directory lister omitting ignored build directories.
-- **`find_files`**: Fast glob-based file finder across the worktree.
-- **`grep_search`**: Ripgrep pattern search returning exact line numbers and excerpts.
-- **`run_cmd`**: Hard-sandboxed subprocess runner with strict CPU/memory timeouts.
-- **`finish_card`**: Initiates deterministic verification gates.
-
-### Open Agent Skills System
-Skills live under `.sekhemet/skills/<name>/SKILL.md` using the open Agent Skills standard:
-- `tdd-contract`: Enforces test-first discipline and test immutability.
-- `ast-refactor`: Symbol-level surgical refactoring.
-- `gate-repair`: Surgical triage for TypeScript and test failures.
-- `small-model-leverage`: Guidelines for 7B–14B models to prevent loop stalls.
-
----
-
-## Multi-Agent Collaboration Protocol
-
-Sekhemet implements a zero-loss collaboration protocol between **Claude Code** and **Google Gemini**:
-
-1. **Role Division**:
-   - **Claude (Lead Driver & Implementer)**: Plans high-level SPIDR breakdown, drafts core algorithms.
-   - **Gemini (Test Author, Subagent & Relay Finisher)**: Generates types & failing tests first, audits packages, and seamlessly takes over unfinished work when Claude hits hourly rate limits (`GateStatus: suspended-quota`).
-2. **Structured Git Trailers**:
-   Every commit is validated by `.githooks/commit-msg` to ensure full provenance:
-   ```git
-   feat(loop): add AST symbol replacement tools
-
-   Card: card_8f21
-   Agent-Model: gemini-2.5-pro
-   Agent-Harness: antigravity-cli
-   Agent-Role: implementer
-   GateStatus: pass
-   Co-authored-by: Gemini <gemini@antigravity.google>
-   Co-authored-by: Claude <claude@anthropic.com>
-   ```
-
----
+Tool calls use the server's native tool schema, with text parsing (JSON, fenced
+JSON, `name(key="value")` call syntax, SEARCH/REPLACE patches) as a fallback.
+Reasoning is suppressed and stripped before parsing. See `MODEL_CANDIDATES.md`
+for the model research, with every benchmark number sourced.
 
 ## Quickstart
 
-### 1. Prerequisites
-- **Node.js**: v22.0.0 or higher (Native `node:sqlite` WAL support)
-- **pnpm**: v10.0.0+
-- **Local Model Provider**: [Ollama](https://ollama.ai) or [llama.cpp](https://github.com/ggerganov/llama.cpp) (e.g. `qwen2.5-coder:7b` or `qwen2.5-coder:14b`)
+Requirements: Node 20+ (tested on 26), pnpm, git, and a local inference server
+(Ollama, or llama.cpp's `llama-server`).
 
-### 2. Installation
 ```bash
-# Clone the repository
-git clone https://github.com/brennankelley/Sekhemet.git
-cd Sekhemet
-
-# Install all workspace dependencies
 pnpm install
-
-# Build all packages
 pnpm build
-
-# Run complete test suite (64 tests across 19 suites)
 pnpm test
+node apps/harness/dist/index.js doctor
 ```
 
-### 3. Verify Hardware & Runtime Diagnostics
-```bash
-pnpm sekhemet doctor
+`doctor` probes real state and can fail; for example, on the reference machine:
+
 ```
-```
-=== Sekhemet Doctor Diagnostics ===
-  ✓ Unified memory check: PASS (24.0 GB total)
-  ✓ Local inference socket check: PASS (Ollama / llama.cpp ready)
-  ✓ Git worktree isolation check: PASS (clean worktree support)
-  ✓ Verification gates check: PASS (pnpm, tsc, vitest, biome functional)
+  ✓ Unified memory: 11.1 GB free of 24.0 GB (54% used, normal)
+  ✓ Local inference socket: http://127.0.0.1:11434 reachable — 22 model(s): …
+  ✓ Git worktree isolation: 2 worktree(s) registered
+  ✓ Sandbox confinement: seatbelt active — escape probe refused (exit 1)
+  ✓ Node runtime: v26.0.0
 ```
 
----
+## CLI
 
-## CLI Reference
+Run as `node apps/harness/dist/index.js <command> [--repo <path>]`.
 
-| Command | Description |
-| :--- | :--- |
-| `pnpm sekhemet doctor` | Run hardware, local socket, and toolchain diagnostics |
-| `pnpm sekhemet board` | Display live terminal dual-axis kanban board |
-| `pnpm sekhemet log` | View tamper-evident event log with SHA-256 chain verification |
-| `pnpm sekhemet plan "<spec>"` | Decompose feature into atomic SPIDR stories |
-| `pnpm sekhemet run <card-id>` | Execute card in an isolated git worktree |
-| `pnpm sekhemet gate [card-id]` | Run deterministic gates (`tsc`, `vitest`, `biome`) |
-| `pnpm sekhemet replay <card-id>` | Replay recorded execution events for an audit |
-| `pnpm sekhemet bake-off` | Benchmark local models on repo tasks |
-| `pnpm sekhemet serve [--port 3333]` | Launch visual Basalt web dashboard |
-| `pnpm sekhemet mcp` | Run stdio JSON-RPC MCP server for Cursor, VS Code, Claude Code |
+| Command | What it does |
+|---|---|
+| `doctor` | Probe memory, inference server, worktrees, sandbox containment, toolchain |
+| `board` / `log` | Terminal board; the SHA-256 hash-chained event log |
+| `plan <spec>` | Decompose a spec into cards |
+| `run <card>` | Execute one card end to end |
+| `queue [--auto-accept] [--worker m] [--manager m]` | Run every Ready card on one warm model; escalate failures to a manager |
+| `accept <card>` | Squash-merge a reviewed card to `main` |
+| `gate` | Run the verification gates in the current repository |
+| `bake-off --workers a,b [--fixture f] [--manager m]` | Run a release-gate fixture once per worker and compare scorecards |
+| `serve` | Dashboard on http://127.0.0.1:4040 (board, evidence, review triage) |
+| `mcp` | stdio MCP server: `sekhemet_list_cards`, `sekhemet_create_card`, `sekhemet_get_events`, `sekhemet_doctor` |
 
----
+## Release gates
 
-## Visual Basalt Dashboard
+`fixtures/` holds target projects the harness must build autonomously, each with
+contract-first acceptance tests. `scripts/run_gate.sh <fixture> [queue args]`
+runs one from a clean scratch repository.
 
-Sekhemet includes a built-in web dashboard rendered in the Egyptian Basalt theme:
-```bash
-pnpm dashboard
-# Dashboard running at http://127.0.0.1:3333
-```
-- Real-time column metrics (`BACKLOG`, `READY`, `IN_PROGRESS`, `VERIFY`, `REVIEW`, `DONE`)
-- Visual gate status indicators (Typecheck, Lint, Test, Bounds)
-- Hardware telemetry & Review WIP backpressure alerts
-- Cryptographic event stream viewer
+- **Chronicle** — a cryptographic event ledger, 6 cards. Bar: at least 5 of 6 pass
+  on the first attempt, repairs within 3 rungs, zero test mutation, zero
+  out-of-scope writes, under 18 minutes. Specified in
+  `CHRONICLE_GATE_PROJECT_SPEC.md`.
+- **Showcase Trifecta** — Onyx, Basalt Canvas, Vanguard; 24 cards. Specified in
+  `SHOWCASE_TRIFECTA_SPEC.md`.
 
----
+## Repository
 
-## External IDE Integration (MCP Server)
+| Path | Contents |
+|---|---|
+| `packages/kernel` | Event log (hash chain, canonical JSON), card store, lifecycle hooks, TOML |
+| `packages/sandbox` | Seatbelt executor, permission engine, globs |
+| `packages/sync` | Worktrees, checkpoints, diffs, squash-merge |
+| `packages/models` | Inference adapters, tool-call parsing, model router, memory guard |
+| `packages/gates` | gates.toml, gate runner, typed failure parsers, evidence bundles |
+| `packages/context` | Prompt zones, repo map, output condensing, playbook, skills |
+| `packages/loop` | Tool executor, parse gate, session, repair ladder, card runner, manager |
+| `packages/board`, `planner`, `eval`, `ui` | Board rules, decomposition, benchmarks, design tokens |
+| `apps/harness` | CLI, dashboard server, MCP server |
 
-Sekhemet provides a native Model Context Protocol (MCP) server over stdio. To use Sekhemet in Cursor, Claude Desktop, or VS Code, add this to your MCP configuration:
-
-```json
-{
-  "mcpServers": {
-    "sekhemet": {
-      "command": "node",
-      "args": ["/path/to/Sekhemet/apps/harness/dist/index.js", "mcp"]
-    }
-  }
-}
-```
-
-Exposed MCP Tools:
-- `sekhemet_list_cards`: Retrieve cards by kanban column.
-- `sekhemet_create_card`: Plan a new card into the event log.
-- `sekhemet_get_events`: Query the SHA-256 hash-chained WAL.
-- `sekhemet_doctor`: Check hardware and local inference health.
-
----
+Design and process documents: the design (`Board-Native Local-First AI Coding
+Harness — Design v2.md`), `DEFINITION_OF_DONE.md`, `AGENTS.md`, `DEV_LOG.md`.
 
 ## License
 
-MIT © Sekhemet Contributors
+MIT

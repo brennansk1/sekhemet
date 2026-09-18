@@ -1,16 +1,16 @@
 #!/usr/bin/env node
-import { existsSync, mkdirSync } from "node:fs";
-import { freemem, totalmem } from "node:os";
-import { join } from "node:path";
+import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { freemem, tmpdir, totalmem } from "node:os";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { fileURLToPath } from "node:url";
 import { BoardServiceImpl } from "@sekhemet/board";
-import { BenchmarkHarness } from "@sekhemet/eval";
 import { DeterministicGateRunner, summarizeEvidence } from "@sekhemet/gates";
 import { type CardRecord, CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { planRepair } from "@sekhemet/loop";
 import {
   HttpInferenceAdapter,
-  MockInferenceAdapter,
   ModelRouter,
   NAIL_WORKER_PROFILE,
   createCyberTielWorker,
@@ -365,30 +365,61 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   }
 
   if (config.command === "bake-off") {
-    console.log("\nRunning model qualification bake-off...");
-    const harness = new BenchmarkHarness();
-    const mockModel = new MockInferenceAdapter("candidate-local-model", [
-      {
-        text: "qualified",
-        toolCalls: [{ id: "1", name: "finish_card", arguments: {} }],
-        usage: { promptTokens: 100, completionTokens: 20, durationMs: 20 },
-      },
-    ]);
-    const res = await harness.runBenchmark(
-      [
-        {
-          id: "task_eval_1",
-          repoCommit: "HEAD",
-          issueDescription: "Spike test qualification",
-          failToPassTests: ["t1"],
-          passToPassTests: [],
-        },
-      ],
-      mockModel,
-    );
-    console.log(
-      `Bake-off Results: Pass@1 = ${(res.passAt1 * 100).toFixed(1)}%, Tokens = ${res.totalTokens}, Duration = ${res.totalTimeMs}ms\n`,
-    );
+    // Run the same release-gate fixture once per candidate worker, each from an
+    // identical clean repository, and compare the scorecards. The previous
+    // command scored a scripted mock against a task whose "test" was the string
+    // "t1", so its number measured nothing.
+    const flag = (name: string): string | undefined => {
+      const i = argv.indexOf(name);
+      return i !== -1 ? argv[i + 1] : undefined;
+    };
+    const workers = (flag("--workers") ?? NAIL_WORKER_PROFILE.modelId).split(",").filter(Boolean);
+    const fixture = flag("--fixture") ?? "chronicle";
+    const manager = flag("--manager");
+    const harnessRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+    const script = join(harnessRoot, "scripts", "run_gate.sh");
+    const base = join(tmpdir(), `sekhemet-bakeoff-${Date.now()}`);
+
+    const rows: { worker: string; report?: QueueReport; error?: string }[] = [];
+    for (const worker of workers) {
+      const runRoot = join(base, worker.replace(/[^A-Za-z0-9._-]/g, "_"));
+      mkdirSync(runRoot, { recursive: true });
+      console.log(`\n=== bake-off: ${worker} on ${fixture} ===`);
+      const code = await new Promise<number>((resolve) => {
+        const child = spawn(
+          "bash",
+          [script, fixture, "--worker", worker, ...(manager ? ["--manager", manager] : [])],
+          { stdio: "inherit", env: { ...process.env, GATE_RUN_DIR: runRoot } },
+        );
+        child.on("exit", (c) => resolve(c ?? 1));
+      });
+
+      const runDir = readdirSync(runRoot).map((d) => join(runRoot, d))[0];
+      const reportPath = runDir ? join(runDir, ".sekhemet", "queue_report.json") : "";
+      if (reportPath && existsSync(reportPath)) {
+        rows.push({ worker, report: JSON.parse(readFileSync(reportPath, "utf8")) as QueueReport });
+      } else {
+        rows.push({ worker, error: `no report (exit ${code})` });
+      }
+    }
+
+    console.log(`\nBake-off on ${fixture}${manager ? ` (manager: ${manager})` : ""}`);
+    console.log("worker                                   Pass@1  escalated  minutes  tokens");
+    for (const row of rows) {
+      if (!row.report) {
+        console.log(`${row.worker.padEnd(40)} ${row.error}`);
+        continue;
+      }
+      const r = row.report;
+      const tokens = r.entries.reduce((n, e) => n + e.promptTokens + e.completionTokens, 0);
+      console.log(
+        `${row.worker.padEnd(40)} ${(r.passAt1 * 100).toFixed(0).padStart(5)}%  ${(((r.passAfterEscalation ?? r.passAt1) as number) * 100).toFixed(0).padStart(8)}%  ${(r.totalDurationMs / 60000).toFixed(1).padStart(7)}  ${String(tokens).padStart(6)}`,
+      );
+    }
+    const out = join(config.repoPath, ".sekhemet", "bakeoff_report.json");
+    mkdirSync(dirname(out), { recursive: true });
+    writeFileSync(out, `${JSON.stringify({ fixture, manager, rows }, null, 2)}\n`);
+    console.log(`\nReport: ${out}`);
     return;
   }
 
@@ -644,7 +675,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   );
   console.log("  sekhemet gate [card-id]     Run deterministic verification gates");
   console.log("  sekhemet replay <card-id>   Replay checkpoint trajectory for a card");
-  console.log("  sekhemet bake-off           Qualify and benchmark local models");
+  console.log(
+    "  sekhemet bake-off --workers a,b [--fixture f] [--manager m]  Compare workers on a release gate",
+  );
   console.log("  sekhemet ui / serve         Launch local web visual dashboard");
   console.log("  sekhemet mcp                Run stdio MCP server for Cursor / Claude / IDEs");
   console.log("=================================================");
