@@ -95,6 +95,9 @@ importers:
       '@sekhemet/loop':
         specifier: workspace:*
         version: link:../loop
+      '@sekhemet/models':
+        specifier: workspace:*
+        version: link:../models
     devDependencies:
       '@types/node':
         specifier: ^22.13.4
