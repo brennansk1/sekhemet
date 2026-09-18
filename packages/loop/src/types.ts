@@ -52,6 +52,11 @@ export interface SessionOptions {
    * appended). Only scope files: protected tests are never rewritten.
    */
   autofixCommand?: string[] | undefined;
+  /**
+   * One argv per stylistic rule; scope files are appended to each. Biome
+   * applies unsafe fixes reliably only one `--only` rule per invocation.
+   */
+  styleFixCommands?: string[][] | undefined;
   /** Gate rungs run when the agent calls `finish_card`. Defaults to typecheck + test. */
   gateRungs?: GateRung[] | undefined;
   /** Failed verifications tolerated before the card stops for human review. */

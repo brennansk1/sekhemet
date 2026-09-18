@@ -162,6 +162,14 @@ export class CardRunner {
       // as the spec requires), unless the caller chose specific rungs.
       gateRungs: [...new Set(this.config.gates.filter((g) => g.blocking).map((g) => g.rung))],
       ...(this.config.project.autofix ? { autofixCommand: this.config.project.autofix } : {}),
+      ...(this.config.project.styleFix && this.config.project.styleFixRules
+        ? {
+            styleFixCommands: this.config.project.styleFixRules.map((rule) => [
+              ...(this.config.project.styleFix as string[]),
+              `--only=${rule}`,
+            ]),
+          }
+        : {}),
       ...this.options,
       cardId: card.id,
       card,

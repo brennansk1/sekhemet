@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { defaultParserRegistry, remedyFor } from "../src/parsers.js";
+import { defaultParserRegistry, rankFailures, remedyFor } from "../src/parsers.js";
+import type { GateFailure } from "../src/types.js";
 import type { GateDefinition } from "../src/types.js";
 
 const gate = (parser: string): GateDefinition => ({
@@ -65,5 +66,27 @@ describe("@sekhemet/gates targeted remedies", () => {
     expect(remedyFor("TS2375", "Type '{ x: undefined }' is not assignable")).toMatch(
       /Omit the property/,
     );
+  });
+
+  it("ranks a failing test above style nits, however many the nits are", () => {
+    const f = (rung: string, file: string, excerpt: string): GateFailure =>
+      ({
+        rung,
+        gate: rung,
+        exitCode: 1,
+        errorExcerpt: excerpt,
+        suggestedFixFiles: file ? [file] : [],
+      }) as GateFailure;
+    const ranked = rankFailures(
+      [
+        f("lint", "src/ledger.ts", "noUnusedTemplateLiteral"),
+        f("lint", "src/ledger.ts", "useTemplate"),
+        f("lint", "src/ledger.ts", "useLiteralKeys"),
+        // Protected test: no fix files, so reference weight alone ranked it last.
+        f("test", "", "persists events across reopening"),
+      ],
+      3,
+    );
+    expect(ranked[0]?.errorExcerpt).toBe("persists events across reopening");
   });
 });

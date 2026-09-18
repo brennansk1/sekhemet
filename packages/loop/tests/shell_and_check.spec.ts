@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, platform, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { GateResult, GateRunner } from "@sekhemet/gates";
@@ -246,5 +246,27 @@ describe("@sekhemet/loop shell command lines and the check tool", () => {
 
     const refused = await session.executeTurn();
     expect(refused.observations[0]?.content).toContain("return { valid: false, at: undefined }");
+  });
+
+  it("runs the stylistic fixer once per rule, on the scope files only", async () => {
+    const runner: GateRunner = {
+      runGates: async (): Promise<GateResult> => ({ passed: true, durationMs: 1, failures: [] }),
+    };
+    const session = new CardExecutionSessionImpl({
+      cardId: "c",
+      stepBudget: 5,
+      worktreePath: root,
+      gateRunner: runner,
+      scopeFiles: ["src/a.ts"],
+      // $0 is "sh"; the rule and the appended scope file follow.
+      styleFixCommands: [
+        ["/bin/sh", "-c", 'echo "$1 $2" >> fix.log', "sh", "rule-one"],
+        ["/bin/sh", "-c", 'echo "$1 $2" >> fix.log', "sh", "rule-two"],
+      ],
+      modelAdapter: new MockInferenceAdapter("m", []),
+    });
+    await session.runVerification();
+    const log = readFileSync(join(root, "fix.log"), "utf8").trim().split("\n");
+    expect(log).toEqual(["rule-one src/a.ts", "rule-two src/a.ts"]);
   });
 });

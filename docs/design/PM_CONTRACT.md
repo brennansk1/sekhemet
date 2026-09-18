@@ -62,6 +62,9 @@ interface PmStatus {
   detail?: string;              // "Pausing the Worker after step 5 · ~40s to load the PM"
   model?: string;               // "dirk-27b"
   workerPaused?: boolean;
+  since?: string;               // ISO time this phase started
+  step?: number;                // the Worker step it paused after
+  etaSeconds?: number;          // expected seconds left in this phase
 }
 ```
 
@@ -97,7 +100,7 @@ interface PmProposal {
 - `PATCH /api/cards/:id` with any of the section 2 fields (inline editing).
 - `GET /api/cycles`, `POST /api/cycles`, `PATCH /api/cycles/:id`.
 - `GET /api/metrics/flow?days=30` returns
-  `{ throughput: {date, done}[], cycleTime: {cardId, hours}[],
+  `{ throughput: {date, done}[], cycleTime: {cardId, hours, doneAt?}[],
      cfd: {date, backlog, ready, working, checking, review, done}[],
      wipAge: {cardId, hours}[] }`.
 
@@ -110,9 +113,16 @@ interface PmProposal {
   returns `{ created, updated, skipped, errors }`. It uses the local `gh` CLI
   and the user's own auth; no tokens are stored by Sekhemet.
 - `GET /api/export?format=jira-csv|linear-csv|github-json|json` downloads the
-  board in that tool's native import format.
-- `POST /api/import` with `{ format, content }` returns a preview of proposals
-  (the same `PmProposal` flow: import is never silent).
+  board in that tool's native import format, with
+  `Content-Disposition: attachment; filename="sekhemet-<project>-<format>.<csv|json>"`.
+- `POST /api/import` with `{ format, content }` returns `{ proposals: PmProposal[] }`,
+  a preview using the same `PmProposal` flow, so import is never silent. Their
+  ids work with `/api/pm/proposals/:id/apply` and `/discard`.
+- `PUT /api/integrations/github-pr` with `{ enabled: boolean }` returns the entry.
+- Integration ids (canonical):
+  - now: `github`, `github-pr`, `jira`, `linear`, `slack`
+  - next: `jira-sync`, `linear-sync`, `github-actions`, `teams`, `slack-replies`
+  - later: `sentry`, `datadog`, `pagerduty`, `notion`, `confluence`
 
 ## 4. Preemption protocol (backend only; the UI shows `PmStatus`)
 

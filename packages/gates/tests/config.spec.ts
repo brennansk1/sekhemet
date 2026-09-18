@@ -150,4 +150,32 @@ ratio = 0.01
     expect(config.project.protected).toEqual(["a/**", "b/**"]);
     expect(config.project.maxFiles).toBe(3);
   });
+
+  it("reads the stylistic fixer only when both the command and its rules are declared", () => {
+    writeConfig(`
+[project]
+style_fix = ["pnpm", "exec", "biome", "lint", "--write", "--unsafe"]
+style_fix_rules = ["style/noUnusedTemplateLiteral", "style/useTemplate"]
+`);
+    const config = loadGatesConfig(repo);
+    expect(config.project.styleFix).toEqual([
+      "pnpm",
+      "exec",
+      "biome",
+      "lint",
+      "--write",
+      "--unsafe",
+    ]);
+    expect(config.project.styleFixRules).toEqual([
+      "style/noUnusedTemplateLiteral",
+      "style/useTemplate",
+    ]);
+
+    // A command with no rules would run every unsafe fix: refuse it.
+    writeConfig(`
+[project]
+style_fix = ["pnpm", "exec", "biome", "lint", "--write", "--unsafe"]
+`);
+    expect(loadGatesConfig(repo).project.styleFix).toBeUndefined();
+  });
 });

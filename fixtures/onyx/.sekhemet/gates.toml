@@ -7,6 +7,10 @@ max_files = 3
 max_diff_lines = 200
 # Formatting is applied by the harness to scope files only, never to tests.
 autofix = ["pnpm", "exec", "biome", "check", "--write"]
+# Stylistic rules whose fixes Biome marks unsafe but which cannot change
+# behaviour. Applied to scope files only, like the formatter.
+style_fix = ["pnpm", "exec", "biome", "lint", "--write", "--unsafe"]
+style_fix_rules = ["style/noUnusedTemplateLiteral", "style/useTemplate", "complexity/useLiteralKeys", "style/noUselessElse"]
 
 [[gate]]
 id = "typecheck"

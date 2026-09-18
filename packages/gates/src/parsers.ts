@@ -17,11 +17,21 @@ function dedupe(values: string[]): string[] {
   return [...new Set(values)];
 }
 
+/** Lower sorts first: causes before symptoms, behaviour before style. */
+const RUNG_SEVERITY: Record<string, number> = {
+  parse: 0,
+  typecheck: 1,
+  test: 2,
+  default: 2,
+  bounds: 3,
+  lint: 4,
+};
+
 /**
  * Rank failures so the agent repairs causes before symptoms.
  *
- * Failures are grouped by file and ordered by how many other failures reference
- * that file: fixing the most-referenced file first typically clears the rest,
+ * Failures are ordered by severity, then by how many other failures reference
+ * their file: fixing the most-referenced file first typically clears the rest,
  * which is why the design caps a repair attempt at the top three rather than
  * handing over every error at once.
  */
@@ -36,7 +46,16 @@ export function rankFailures(failures: GateFailure[], limit = 3): GateFailure[] 
   const weight = (failure: GateFailure): number =>
     failure.suggestedFixFiles.reduce((max, f) => Math.max(max, references.get(f) ?? 0), 0);
 
-  return [...failures].sort((a, b) => weight(b) - weight(a)).slice(0, limit);
+  // Severity first: a style nit must never push a failing test out of the
+  // top three. Chronicle run 5's ledger card was shown three lint errors while
+  // a real persistence test failed unseen (its protected file carries no fix
+  // files, so reference weight ranked it last), and it ran out of attempts.
+  const severity = (failure: GateFailure): number =>
+    RUNG_SEVERITY[String(failure.rung)] ?? RUNG_SEVERITY.default ?? 2;
+
+  return [...failures]
+    .sort((a, b) => severity(a) - severity(b) || weight(b) - weight(a))
+    .slice(0, limit);
 }
 
 /**

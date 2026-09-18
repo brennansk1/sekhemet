@@ -142,6 +142,13 @@ export function loadGatesConfig(repoRoot: string): GatesConfig {
     ...(asStringArray(projectTable.autofix).length > 0
       ? { autofix: asStringArray(projectTable.autofix) }
       : {}),
+    ...(asStringArray(projectTable.style_fix).length > 0 &&
+    asStringArray(projectTable.style_fix_rules).length > 0
+      ? {
+          styleFix: asStringArray(projectTable.style_fix),
+          styleFixRules: asStringArray(projectTable.style_fix_rules),
+        }
+      : {}),
   };
 
   const rawGates = Array.isArray(parsed.gate) ? (parsed.gate as TomlTable[]) : [];

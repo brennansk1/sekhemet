@@ -93,6 +93,15 @@ export interface GateProjectConfig {
    * running it only on scope files keeps protected tests untouched.
    */
   autofix?: string[];
+  /**
+   * A second fixer for purely stylistic rules whose fixes the tool marks
+   * unsafe (Biome: noUnusedTemplateLiteral). It runs once per entry of
+   * `styleFixRules` as argv + `--only=<rule>` + the scope files.
+   * Chronicle run 5's ledger card was complete except for one template
+   * literal, and exhausted its repair ladder on it.
+   */
+  styleFix?: string[];
+  styleFixRules?: string[];
 }
 
 export interface GatesConfig {

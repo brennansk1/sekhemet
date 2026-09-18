@@ -704,6 +704,12 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       // Best effort: a formatter failure is reported by the lint gate itself.
       await this.tools.runCommandRaw(command, [...args, ...scope]).catch(() => undefined);
     }
+    // Purely stylistic rules the formatter will not fix, one rule per run.
+    for (const argv of scope.length > 0 ? (this.options.styleFixCommands ?? []) : []) {
+      const [command, ...args] = argv as [string, ...string[]];
+      if (!command) continue;
+      await this.tools.runCommandRaw(command, [...args, ...scope]).catch(() => undefined);
+    }
     const rungs = this.options.gateRungs ?? ["typecheck", "test"];
     return this.options.gateRunner.runGates(rungs, this.tools.root);
   }
