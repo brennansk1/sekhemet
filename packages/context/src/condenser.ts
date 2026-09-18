@@ -434,6 +434,114 @@ export function condenseOutput(raw: string, maxLines = 40): string {
   return condenseCommandOutput(raw, { maxLines }).condensed;
 }
 
+export interface ToolOutputOptions {
+  /** The command line, recorded with the evidence and in the footer. */
+  command?: string;
+  exitCode?: number;
+  /** Line ceiling for unprotected lines. Default 60. */
+  maxLines?: number;
+  /**
+   * Hard character ceiling for the whole observation. Default 6,000 (about
+   * 1,900 tokens). Only a flood of distinct error lines reaches it; then the
+   * first errors and the last line are kept and the count of the rest is
+   * named, with the ref that holds them.
+   */
+  maxChars?: number;
+  /** Where the raw output is kept. Default `defaultEvidenceStore`. */
+  evidenceStore?: EvidenceStore;
+  cardId?: string;
+  turn?: number;
+}
+
+export interface CondensedToolOutput {
+  /** The text to show the model, footer included. */
+  text: string;
+  /** Ref of the raw output; set whenever anything was condensed away. */
+  evidenceRef?: string;
+  /** Protected (error) lines cut by the character ceiling; normally 0. */
+  protectedLinesCut: number;
+  result: CondenseResult;
+}
+
+function capChars(
+  lines: string[],
+  maxChars: number,
+): { lines: string[]; cutProtected: number; cutOther: number } {
+  const size = (ls: string[]) => ls.reduce((a, l) => a + l.length + 1, 0);
+  if (size(lines) <= maxChars) return { lines, cutProtected: 0, cutOther: 0 };
+  // Drop unprotected lines from the middle first: protected lines are repair data.
+  const isProt = lines.map((l) => isProtectedLine(l));
+  const keep = lines.map(() => true);
+  let total = size(lines);
+  let cutOther = 0;
+  const order = lines.map((_, i) => i).filter((i) => !isProt[i] && i !== lines.length - 1);
+  for (const i of order) {
+    if (total <= maxChars) break;
+    keep[i] = false;
+    total -= (lines[i]?.length ?? 0) + 1;
+    cutOther++;
+  }
+  let cutProtected = 0;
+  if (total > maxChars) {
+    // Still too big: keep the first protected lines (the first errors are the
+    // ones a compiler reports most reliably) and the last line (the summary).
+    for (let i = lines.length - 2; i >= 0 && total > maxChars; i--) {
+      if (!keep[i]) continue;
+      keep[i] = false;
+      total -= (lines[i]?.length ?? 0) + 1;
+      if (isProt[i]) cutProtected++;
+      else cutOther++;
+    }
+  }
+  return { lines: lines.filter((_, i) => keep[i]), cutProtected, cutOther };
+}
+
+/**
+ * The output path for command output (C8): `run_cmd` and `check` call this
+ * instead of clamping head and tail.
+ *
+ * Four-strategy condensing (filter, group, dedupe, protected-line
+ * truncation) so an error line in the middle of long test output is never
+ * the thing that gets cut. The raw output goes to the evidence store first,
+ * and whenever anything was condensed away the observation ends with a
+ * footer naming the ref, so the Worker can `recall` it.
+ */
+export function condenseToolOutput(
+  raw: string,
+  options: ToolOutputOptions = {},
+): CondensedToolOutput {
+  const store = options.evidenceStore ?? defaultEvidenceStore;
+  const result = condenseCommandOutput(raw, {
+    maxLines: options.maxLines ?? 60,
+    ...(options.exitCode !== undefined ? { exitCode: options.exitCode } : {}),
+    ...(options.command ? { command: options.command } : {}),
+  });
+  const capped = capChars(result.condensed.split("\n"), options.maxChars ?? 6000);
+  const body = capped.lines.join("\n");
+  const lossy = body !== raw.trim();
+  if (!lossy) return { text: body || "(no output)", protectedLinesCut: 0, result };
+
+  const evidenceRef = store.put(raw, {
+    ...(options.command ? { producer: options.command } : {}),
+    ...(options.cardId ? { cardId: options.cardId } : {}),
+    ...(options.turn !== undefined ? { turn: options.turn } : {}),
+    ...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
+  });
+  const rawLines = raw.split("\n").length;
+  const notes = [
+    `${rawLines} lines condensed to ${capped.lines.length}`,
+    ...(capped.cutProtected > 0
+      ? [`${capped.cutProtected} further error line(s) cut for length`]
+      : []),
+  ];
+  return {
+    text: `${body}\n[${notes.join("; ")}. Full output: recall(ref="${evidenceRef}")]`,
+    evidenceRef,
+    protectedLinesCut: capped.cutProtected,
+    result: { ...result, evidenceRef },
+  };
+}
+
 export interface MaskOptions {
   /** Store the full observation text is written to before masking. */
   evidenceStore?: EvidenceStore;

@@ -109,15 +109,23 @@ export class InMemoryEvidenceStore implements EvidenceStore {
 }
 
 /**
- * Durable store under `<repoRoot>/.sekhemet/evidence`. Full observations stay
- * on disk for the EvidenceBundle and remain retrievable after the process that
- * masked them has exited.
+ * Where observations live under a repository. Not `.sekhemet/evidence`: that
+ * directory holds the per-card evidence bundles (`ev_*.json`) that the
+ * capability report and the dashboard parse, and an observation header there
+ * would be read as a bundle.
+ */
+export const OBSERVATION_STORE_SUBDIR = join(".sekhemet", "observations");
+
+/**
+ * Durable store under `<repoRoot>/.sekhemet/observations` (C6). Full
+ * observations stay on disk and remain retrievable by `recall` after the
+ * process that masked them has exited.
  */
 export class FileEvidenceStore implements EvidenceStore {
   private readonly dir: string;
   private cache: Map<string, EvidenceRecord> = new Map();
 
-  constructor(repoRoot: string, subdir = join(".sekhemet", "evidence")) {
+  constructor(repoRoot: string, subdir = OBSERVATION_STORE_SUBDIR) {
     this.dir = join(repoRoot, subdir);
   }
 
@@ -194,8 +202,59 @@ export class FileEvidenceStore implements EvidenceStore {
 }
 
 /**
- * Store used when a caller masks observations without supplying one. It keeps
- * the existing `maskOlderObservations(turns, keepRecentTurns)` signature honest:
- * the refs it mints are retrievable for the life of the process.
+ * A store whose backing can be switched at run start (C6).
+ *
+ * Masking, compaction, condensing and `recall` all default to
+ * `defaultEvidenceStore`. It starts in memory (tests, one-off calls); a real
+ * run points it at disk once with `useFileEvidenceStore(repoRoot)`, and every
+ * ref minted from then on survives a restart without threading a store
+ * through each call site.
  */
-export const defaultEvidenceStore = new InMemoryEvidenceStore();
+export class SwitchableEvidenceStore implements EvidenceStore {
+  constructor(private backing: EvidenceStore) {}
+
+  /** Replace the backing store; returns the previous one. */
+  public use(store: EvidenceStore): EvidenceStore {
+    const previous = this.backing;
+    this.backing = store;
+    return previous;
+  }
+
+  public get current(): EvidenceStore {
+    return this.backing;
+  }
+
+  public put(text: string, meta?: EvidenceMeta): string {
+    return this.backing.put(text, meta);
+  }
+  public get(ref: string): string | undefined {
+    return this.backing.get(ref);
+  }
+  public getRecord(ref: string): EvidenceRecord | undefined {
+    return this.backing.getRecord(ref);
+  }
+  public has(ref: string): boolean {
+    return this.backing.has(ref);
+  }
+  public refs(): string[] {
+    return this.backing.refs();
+  }
+}
+
+/**
+ * Store used when a caller masks observations without supplying one. In
+ * memory until `useFileEvidenceStore` points it at disk.
+ */
+export const defaultEvidenceStore = new SwitchableEvidenceStore(new InMemoryEvidenceStore());
+
+/**
+ * Persist every observation masked, compacted or condensed from now on under
+ * `<repoRoot>/.sekhemet/observations`, so `recall(ref)` still works after a
+ * restart (C6). Call once at run start with the main repository root (not a
+ * card worktree, which is deleted). Returns the store.
+ */
+export function useFileEvidenceStore(repoRoot: string): FileEvidenceStore {
+  const store = new FileEvidenceStore(repoRoot);
+  defaultEvidenceStore.use(store);
+  return store;
+}
