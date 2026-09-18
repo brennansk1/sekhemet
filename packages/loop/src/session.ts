@@ -24,6 +24,7 @@ import type {
   SessionOptions,
   TurnResult,
 } from "./types.js";
+import { WorkingMemory } from "./working_memory.js";
 
 /** Turns of tool output kept verbatim before older ones are masked to pointers. */
 const VERBATIM_TURN_WINDOW = 2;
@@ -77,6 +78,8 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   /** The last `check` result, and whether a file was written after it. */
   private lastCheck: GateResult | undefined;
   private writtenSinceCheck = true;
+  /** Facts from gate results that survive resets (see working_memory.ts). */
+  private memory = new WorkingMemory();
   private repairAttempts = 0;
   private repoMapCache: string | undefined;
   private lastSystemPrompt = "";
@@ -391,13 +394,16 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       tools: this.options.tools ?? TOOL_CATALOG,
       // What it has already done, and what remains. An agent with no record of
       // its own progress repeats its last successful action indefinitely.
-      ...(this.filesWritten.size > 0 || this.tools.getReadFiles().length > 0
+      ...(this.filesWritten.size > 0 ||
+      this.tools.getReadFiles().length > 0 ||
+      this.memory.lines().length > 0
         ? {
             completedWork: [
               ...[...this.filesWritten].sort().map((f) => `wrote ${f}`),
               // Listing what was already read is what stops the agent spending
               // its budget re-reading files it has in front of it.
               ...this.tools.getReadFiles().map((f) => `read ${f} (do not re-read)`),
+              ...this.memory.lines(),
             ],
           }
         : {}),
@@ -568,6 +574,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         const path = call.arguments.path;
         if (typeof path === "string") this.filesWritten.add(path.replace(/^\.\//, ""));
         this.writtenSinceCheck = true;
+        if (typeof path === "string") this.memory.noteWrite(path);
       }
     }
 
@@ -720,7 +727,9 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       await this.tools.runCommandRaw(command, [...args, ...scope]).catch(() => undefined);
     }
     const rungs = this.options.gateRungs ?? ["typecheck", "test"];
-    return this.options.gateRunner.runGates(rungs, this.tools.root);
+    const result = await this.options.gateRunner.runGates(rungs, this.tools.root);
+    this.memory.observe(result);
+    return result;
   }
 
   public async abort(reason: string): Promise<void> {
