@@ -110,6 +110,32 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   }
 
   /** Current position in the repair ladder. */
+  /** Run the card's gates as a non-terminal self-check and describe the result. */
+  private async checkObservation(): Promise<ToolObservation> {
+    const result = await this.runVerification();
+    if (result.passed) {
+      return {
+        tool: "check",
+        ok: true,
+        summary: "all gates pass",
+        content: "All gates pass. Call finish_card to submit this card.",
+      };
+    }
+    const lines = result.failures.map((f, i) => {
+      const where = f.location
+        ? `${f.location.file}${f.location.line ? `:${f.location.line}` : ""} `
+        : "";
+      const action = f.suggestedAction ? `\n   fix: ${f.suggestedAction}` : "";
+      return `${i + 1}. [${f.gate ?? f.rung}] ${where}${f.errorExcerpt.split("\n")[0]}${action}`;
+    });
+    return {
+      tool: "check",
+      ok: false,
+      summary: `gates failing: ${result.failures.map((f) => f.gate ?? f.rung).join(", ")}`,
+      content: `Gates failing (not submitted — keep working):\n${lines.join("\n")}`,
+    };
+  }
+
   /** Scope-relative paths written during this card. */
   public getFilesWritten(): string[] {
     return [...this.filesWritten].sort();
@@ -447,7 +473,10 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     this.tools.resetFinish();
     const observations: ToolObservation[] = [];
     for (const call of toolCalls) {
-      const observation = await this.tools.execute(call);
+      // `check` runs the real gates without ending the card: the agent was
+      // spending most of its turns trying to self-verify with shell commands.
+      const observation =
+        call.name === "check" ? await this.checkObservation() : await this.tools.execute(call);
       observations.push(observation);
 
       if (observation.ok && WRITE_TOOLS.has(call.name)) {

@@ -193,10 +193,22 @@ export const TOOL_CATALOG: ToolInterfaceSpec[] = [
     ],
   },
   {
+    name: "check",
+    summary:
+      "Run this card's verification gates now WITHOUT finishing. Returns typed failures. Use it instead of running tsc or tests yourself.",
+    parameters: [],
+    returns: "PASS, or the failing gates with file, line and message",
+  },
+  {
     name: "run_cmd",
-    summary: "Run a command in the sandbox. No network access.",
+    summary: "Run a shell command line in the sandbox (pipes allowed). No network access.",
     parameters: [
-      { name: "command", type: "string", required: true, description: "Executable name" },
+      {
+        name: "command",
+        type: "string",
+        required: true,
+        description: "A full command line, e.g. ls src",
+      },
       {
         name: "args",
         type: "array",

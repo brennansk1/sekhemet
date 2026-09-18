@@ -618,7 +618,15 @@ export class ToolExecutor {
   private async runCmd(command?: string, args: string[] = []): Promise<ToolObservation> {
     if (!command) return fail("run_cmd", "missing required argument: command");
 
-    const result = await this.sandbox.execute(command, args, {
+    // Models write commands the way developers type them: a whole line, often
+    // with pipes or redirects. Treating that line as a program name failed with
+    // "command not found" — on one live card, 17 of 20 run_cmd calls. A line
+    // with no separate args runs through /bin/sh, still inside the same
+    // sandbox, and the permission engine has already checked the full string.
+    const shellLine = args.length === 0 && /[\s|&;<>()$`]/.test(command.trim());
+    const [file, argv] = shellLine ? ["/bin/sh", ["-c", command]] : [command, args];
+
+    const result = await this.sandbox.execute(file, argv, {
       allowedPaths: [this.root],
       allowNetwork: this.options.allowNetwork ?? false,
       timeoutMs: this.options.commandTimeoutMs ?? 120_000,
