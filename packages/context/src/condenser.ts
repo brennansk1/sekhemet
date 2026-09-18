@@ -496,6 +496,48 @@ export function maskOlderObservations(
   });
 }
 
+/**
+ * Auto-compaction: fold every turn older than the last `keepRecent` into one
+ * structured entry, one line per turn, each with an EvidenceRef the agent can
+ * `recall`.
+ *
+ * This is the Claude Code /compact pattern made deterministic. A model-written
+ * summary on a small local model drops exactly the failure detail repair
+ * needs; here nothing is paraphrased, the full text stays retrievable, and
+ * the compacted entry costs about one line per turn instead of one masked
+ * block per turn.
+ */
+export function compactHistory(
+  turns: TurnHistoryItem[],
+  keepRecent: number,
+  options: MaskOptions = {},
+): { turns: TurnHistoryItem[]; compacted: number } {
+  if (turns.length <= keepRecent + 1) return { turns, compacted: 0 };
+  const store = options.evidenceStore ?? defaultEvidenceStore;
+  const older = turns.slice(0, turns.length - keepRecent);
+  const lines = older.map((t) => {
+    const ref = store.put(t.result, {
+      producer: t.action,
+      turn: t.turn,
+      ...(options.cardId ? { cardId: options.cardId } : {}),
+    });
+    return `- turn ${t.turn}: ${summarize(t.action, t.result)} [ref ${ref}]`;
+  });
+  const first = older[0]?.turn ?? 0;
+  const last = older.at(-1)?.turn ?? 0;
+  return {
+    compacted: older.length,
+    turns: [
+      {
+        turn: last,
+        action: "compacted history",
+        result: `Turns ${first}-${last} compacted (${older.length} turns). Use recall(ref) for any full text.\n${lines.join("\n")}`,
+      },
+      ...turns.slice(turns.length - keepRecent),
+    ],
+  };
+}
+
 /** Retrieves the full text behind a pointer emitted by {@link maskOlderObservations}. */
 export function retrieveMaskedObservation(
   ref: string,

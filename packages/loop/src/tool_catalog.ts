@@ -226,6 +226,20 @@ export const TOOL_CATALOG: ToolInterfaceSpec[] = [
     ],
   },
   {
+    name: "recall",
+    summary:
+      "Fetch the full text of an earlier observation that was compacted. Use the EvidenceRef shown in its placeholder.",
+    parameters: [
+      {
+        name: "ref",
+        type: "string",
+        required: true,
+        description: "The EvidenceRef from a compacted observation",
+      },
+    ],
+    returns: "The original observation text",
+  },
+  {
     name: "note",
     summary: "Record a short note for the human reviewer.",
     parameters: [{ name: "message", type: "string", required: true, description: "Note text" }],

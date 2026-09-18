@@ -5,7 +5,9 @@ import {
   type SkillsRegistry,
   type TurnHistoryItem,
   buildFullPromptPack,
+  compactHistory,
   maskOlderObservations,
+  retrieveMaskedObservation,
 } from "@sekhemet/context";
 import type { GateFailure, GateResult } from "@sekhemet/gates";
 import type { CardRecord } from "@sekhemet/kernel";
@@ -28,6 +30,8 @@ import { WorkingMemory } from "./working_memory.js";
 
 /** Turns of tool output kept verbatim before older ones are masked to pointers. */
 const VERBATIM_TURN_WINDOW = 2;
+/** Turns kept individually before older ones are compacted. */
+const COMPACT_AFTER = 8;
 
 /** Tools whose success means a scope file now has content. */
 const WRITE_TOOLS = new Set([
@@ -80,6 +84,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   private writtenSinceCheck = true;
   /** Facts from gate results that survive resets (see working_memory.ts). */
   private memory = new WorkingMemory();
+  private compactedTurns = 0;
   private repairAttempts = 0;
   private repoMapCache: string | undefined;
   private lastSystemPrompt = "";
@@ -215,6 +220,41 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       summary: `gates failing: ${[...new Set(result.failures.map((f) => f.gate ?? f.rung))].join(", ")}`,
       content: `Gates failing (not submitted — keep working):\n${lines.join("\n")}`,
     };
+  }
+
+  /**
+   * Bring a compacted observation back in full. Compaction is only safe if it
+   * is reversible: Claude Code can re-read what it summarised, and so can the
+   * Worker, by the EvidenceRef in the placeholder.
+   */
+  private recallObservation(ref: unknown): ToolObservation {
+    const text = typeof ref === "string" ? retrieveMaskedObservation(ref.trim()) : undefined;
+    return text === undefined
+      ? {
+          tool: "recall",
+          ok: false,
+          summary: "unknown ref",
+          content: `No compacted observation has the ref ${String(ref)}. Copy the EvidenceRef exactly as shown.`,
+        }
+      : { tool: "recall", ok: true, summary: `recalled ${text.length} chars`, content: text };
+  }
+
+  /**
+   * History as the prompt sees it. Past COMPACT_AFTER turns, or as soon as the
+   * prompt had to be reduced, older turns fold into one compacted entry; at
+   * the tightest level only the compacted index and the last turn remain.
+   */
+  private compactedHistory(level: number): TurnHistoryItem[] {
+    const keep = level >= 4 ? 1 : level >= 1 ? 3 : 6;
+    if (this.history.length <= COMPACT_AFTER && level === 0) return this.history;
+    const { turns, compacted } = compactHistory(this.history, keep, { cardId: this.cardId });
+    this.compactedTurns = Math.max(this.compactedTurns, compacted);
+    return turns;
+  }
+
+  /** How many turns the prompt has folded into a compacted entry, for evidence. */
+  public getCompactedTurns(): number {
+    return this.compactedTurns;
   }
 
   /** Scope-relative paths written during this card. */
@@ -387,7 +427,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       activeSkills: skills,
       playbookRules,
       recentTurns: maskOlderObservations(
-        level >= 4 ? this.history.slice(-1) : this.history,
+        this.compactedHistory(level),
         level >= 1 ? 1 : VERBATIM_TURN_WINDOW,
       ),
       // The catalog is what tells the model these tools exist at all.
@@ -567,7 +607,11 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       // `check` runs the real gates without ending the card: the agent was
       // spending most of its turns trying to self-verify with shell commands.
       const observation =
-        call.name === "check" ? await this.checkObservation() : await this.tools.execute(call);
+        call.name === "check"
+          ? await this.checkObservation()
+          : call.name === "recall"
+            ? this.recallObservation(call.arguments.ref)
+            : await this.tools.execute(call);
       observations.push(observation);
 
       if (observation.ok && WRITE_TOOLS.has(call.name)) {
