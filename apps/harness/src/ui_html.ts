@@ -150,6 +150,93 @@ td { padding: var(--space-1) var(--space-2); border-top: 1px solid var(--border-
 td.type { color: var(--accent); }
 td.hash { color: var(--text-muted); }
 
+
+/* ---------- Evidence drawer ---------- */
+const RUNG_LABELS = { typecheck: "Typecheck", test: "Unit tests", lint: "Lint", parse: "Parse", bounds: "Bounds", visual: "Visual" };
+
+function diffHtml(diff) {
+  if (!diff) return '<div class="ev-empty">No changes recorded</div>';
+  const lines = diff.split("\n").slice(0, 400);
+  return '<pre class="ev-diff">' + lines.map(function(l){
+    const cls = l.startsWith("+++") || l.startsWith("---") ? "" : l.startsWith("+") ? "add" : l.startsWith("-") ? "del" : l.startsWith("@@") ? "hunk" : "";
+    return '<span class="'+cls+'">'+esc(l || " ")+'</span>';
+  }).join("") + '</pre>';
+}
+
+async function openEvidence(cardId) {
+  const card = state.cards.find(function(c){ return c.id === cardId; });
+  document.getElementById("ev-id").textContent = cardId;
+  document.getElementById("ev-title").textContent = card ? card.title : "";
+  const body = document.getElementById("ev-body");
+  body.innerHTML = '<div class="ev-empty">Loading evidence…</div>';
+  document.getElementById("evidence").classList.add("on");
+
+  let ev;
+  try {
+    const res = await fetch("/api/evidence/" + encodeURIComponent(cardId));
+    if (res.status === 404) {
+      body.innerHTML = '<div class="ev-empty">This card has not run yet. Evidence appears here after its first attempt.</div>';
+      return;
+    }
+    ev = await res.json();
+  } catch (e) {
+    body.innerHTML = '<div class="ev-empty">Could not load evidence.</div>';
+    return;
+  }
+
+  const secs = (ev.durationMs / 1000).toFixed(1) + "s";
+  const metrics = [
+    ["Result", ev.passed ? "Passed" : "Failed"],
+    ["Stop reason", String(ev.stopReason).replace(/_/g, " ")],
+    ["Turns", ev.turnsUsed],
+    ["Duration", secs],
+    ["Tokens in / out", ev.tokens.promptTokens.toLocaleString() + " / " + ev.tokens.completionTokens.toLocaleString()],
+    ["Diff", ev.filesTouched.length + " file(s), +" + ev.linesAdded + " / −" + ev.linesRemoved],
+  ];
+
+  const gates = (ev.rungResults || []).map(function(r){
+    const st = r.skipped ? "skipped" : r.passed ? "pass" : "fail";
+    const mark = st === "pass" ? "✓" : st === "fail" ? "✗" : "–";
+    return '<div class="ev-gate"><span class="mark '+st+'">'+mark+'</span>'+esc(RUNG_LABELS[r.rung] || r.gate)
+      +'<span class="time">'+(r.skipped ? "skipped" : (r.durationMs/1000).toFixed(1)+"s")+'</span></div>';
+  }).join("") || '<div class="ev-empty">No gate ran</div>';
+
+  const failures = (ev.failures || []).map(function(f){
+    const loc = f.location ? f.location.file + (f.location.line ? ":" + f.location.line : "") : "";
+    return '<div class="ev-failure"><div class="msg">'+esc(f.errorExcerpt)+'</div>'
+      +(loc || f.minimalRepro ? '<div class="repro">'+esc(loc)+(f.minimalRepro ? (loc ? " · " : "")+"$ "+esc(f.minimalRepro) : "")+'</div>' : "")+'</div>';
+  }).join("");
+
+  body.innerHTML =
+    '<section class="ev-section"><div class="ev-metrics">' + metrics.map(function(m){
+      return '<div class="ev-metric"><div class="k">'+esc(m[0])+'</div><div class="v">'+esc(m[1])+'</div></div>';
+    }).join("") + '</div></section>'
+    + '<section class="ev-section"><h4>Gates</h4>' + gates + '</section>'
+    + (failures ? '<section class="ev-section"><h4>Failures</h4>' + failures + '</section>' : "")
+    + '<section class="ev-section"><h4>Diff</h4>' + diffHtml(ev.diff) + '</section>'
+    + '<section class="ev-section"><h4>Run settings</h4><div class="ev-failure" style="border-left-color:var(--state-running)"><div class="msg">'
+      + esc(ev.settings.modelId) + " · " + esc(ev.settings.toolArm)
+      + (ev.settings.temperature !== undefined ? " · temp " + esc(ev.settings.temperature) : "")
+      + "\ngates.toml " + esc(String(ev.gatesConfigSha256).slice(0, 12))
+      + (ev.checkpointShas.length ? "\ncheckpoint " + esc(ev.checkpointShas[ev.checkpointShas.length - 1].slice(0, 10)) : "")
+      + '</div></div></section>';
+}
+
+function closeEvidence() { document.getElementById("evidence").classList.remove("on"); }
+document.getElementById("ev-close").addEventListener("click", closeEvidence);
+
+async function loadQueue() {
+  try {
+    const q = await fetch("/api/queue").then(function(r){ return r.json(); });
+    if (!q.entries || q.entries.length === 0) return;
+    const ids = Array.from(new Set(q.entries.map(function(e){ return e.cardId; })));
+    const first = q.entries.filter(function(e){ return e.attempt !== 2 && e.passed; }).length;
+    const chip = document.getElementById("queue-chip");
+    chip.textContent = "Pass@1 " + first + "/" + ids.length + " · " + (q.totalDurationMs / 60000).toFixed(1) + " min";
+    chip.className = "chip " + (first / ids.length >= 0.8 ? "pass" : first > 0 ? "warn" : "fail");
+  } catch (e) { /* no report yet */ }
+}
+
 /* ---------- Command palette ---------- */
 .scrim { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: none; align-items: flex-start; justify-content: center; padding-top: 12vh; }
 .scrim.on { display: flex; }
@@ -160,6 +247,39 @@ td.hash { color: var(--text-muted); }
 .palette-item:hover, .palette-item.active { background: var(--bg-overlay); }
 .palette-item .muted { color: var(--text-muted); font-family: var(--font-mono); font-size: var(--text-xs); }
 .kbd { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-muted); border: 1px solid var(--border-subtle); border-radius: 3px; padding: 1px 4px; }
+
+/* ---------- Evidence drawer (Review surface) ---------- */
+.evidence {
+  position: fixed; top: 48px; right: 0; bottom: 0; width: min(480px, 100vw);
+  background: var(--bg-surface); border-left: 1px solid var(--border-strong);
+  transform: translateX(100%); transition: transform var(--motion);
+  display: flex; flex-direction: column; z-index: 5;
+}
+.evidence.on { transform: translateX(0); }
+.ev-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); padding: var(--space-4); border-bottom: 1px solid var(--border-subtle); }
+.ev-id { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-muted); }
+.ev-title { font-size: var(--text-md); font-weight: 600; line-height: var(--leading-tight); margin: var(--space-1) 0 0; }
+.ev-body { overflow-y: auto; padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-5); }
+.ev-section h4 { margin: 0 0 var(--space-2); font-size: var(--text-xs); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-secondary); }
+.ev-metrics { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--space-2); }
+.ev-metric { background: var(--bg-raised); border: 1px solid var(--border-subtle); border-radius: var(--radius-control); padding: var(--space-2) var(--space-3); }
+.ev-metric .k { font-size: var(--text-xs); color: var(--text-muted); }
+.ev-metric .v { font-size: var(--text-base); font-weight: 600; font-variant-numeric: tabular-nums; }
+.ev-gate { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); padding: 3px 0; }
+.ev-gate .mark { width: 16px; height: 16px; border-radius: 3px; display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; color: var(--bg-base); }
+.ev-gate .mark.pass { background: var(--state-pass); }
+.ev-gate .mark.fail { background: var(--state-fail); }
+.ev-gate .mark.skipped { background: var(--state-blocked); }
+.ev-gate .time { margin-left: auto; color: var(--text-muted); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
+.ev-failure { background: var(--bg-raised); border: 1px solid var(--border-subtle); border-left: 2px solid var(--state-fail); border-radius: var(--radius-control); padding: var(--space-2) var(--space-3); margin-bottom: var(--space-2); }
+.ev-failure .msg { font-family: var(--font-mono); font-size: var(--text-xs); white-space: pre-wrap; word-break: break-word; line-height: var(--leading-code); }
+.ev-failure .repro { margin-top: var(--space-1); font-size: var(--text-xs); color: var(--text-muted); font-family: var(--font-mono); }
+.ev-diff { background: var(--bg-base); border: 1px solid var(--border-subtle); border-radius: var(--radius-control); font-family: var(--font-mono); font-size: var(--text-xs); line-height: var(--leading-code); max-height: 360px; overflow: auto; padding: var(--space-2) 0; margin: 0; }
+.ev-diff span { display: block; padding: 0 var(--space-3); white-space: pre; }
+.ev-diff .add { color: var(--state-pass); background: color-mix(in srgb, var(--state-pass) 8%, transparent); }
+.ev-diff .del { color: var(--state-fail); background: color-mix(in srgb, var(--state-fail) 8%, transparent); }
+.ev-diff .hunk { color: var(--state-running); }
+.ev-empty { color: var(--text-muted); font-size: var(--text-sm); padding: var(--space-5) 0; text-align: center; }
 </style>
 </head>
 <body>
@@ -172,6 +292,7 @@ td.hash { color: var(--text-muted); }
     <span class="chip" id="chain-chip">chain &mdash;</span>
   </div>
   <div class="header-right">
+    <span id="queue-chip" class="chip" title="Latest queue run">no runs</span>
     <span id="model-chip" class="chip">model &mdash;</span>
     <span id="mem-chip" class="chip">memory &mdash;</span>
     <span class="chip" id="stream-chip">connecting</span>
@@ -205,6 +326,16 @@ td.hash { color: var(--text-muted); }
   </section>
 </main>
 
+
+<aside class="evidence" id="evidence" aria-label="Card evidence">
+  <div class="ev-head">
+    <div><div class="ev-id" id="ev-id"></div><h2 class="ev-title" id="ev-title"></h2></div>
+    <button class="icon-btn" id="ev-close" aria-label="Close evidence">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="ev-body" id="ev-body"></div>
+</aside>
 <div class="scrim" id="scrim">
   <div class="palette" role="dialog" aria-label="Command palette">
     <input id="palette-input" type="text" placeholder="Search cards and commands..." autocomplete="off" spellcheck="false">
@@ -311,7 +442,7 @@ function paintColumn(status) {
   sizer.innerHTML = html;
 
   sizer.querySelectorAll(".card").forEach(function(el){
-    el.addEventListener("click", function(){ selected = el.dataset.id; renderBoard(); });
+    el.addEventListener("click", function(){ selected = el.dataset.id; renderBoard(); openEvidence(el.dataset.id); });
   });
 }
 
@@ -370,7 +501,7 @@ function paletteItems(q) {
   const cards = state.cards
     .filter(function(c){ return (c.title+" "+c.id).toLowerCase().includes(query); })
     .slice(0, 8)
-    .map(function(c){ return { label: c.title, hint: c.id, run: function(){ selected = c.id; render(); } }; });
+    .map(function(c){ return { label: c.title, hint: c.id, run: function(){ selected = c.id; render(); openEvidence(c.id); } }; });
   const cmds = COMMANDS.filter(function(c){ return c.label.toLowerCase().includes(query); })
     .map(function(c){ return { label: c.label, hint: "command", run: c.run }; });
   return cmds.concat(cards);
@@ -404,7 +535,7 @@ function toggleTheme() {
 
 document.addEventListener("keydown", function(e){
   if ((e.metaKey || e.ctrlKey) && e.key === "k") { e.preventDefault(); openPalette(); return; }
-  if (e.key === "Escape") closePalette();
+  if (e.key === "Escape") { closePalette(); closeEvidence(); }
   const open = document.getElementById("scrim").classList.contains("on");
   if (open) {
     const items = paletteItems(document.getElementById("palette-input").value);
@@ -471,6 +602,7 @@ function connect() {
 }
 
 hydrate().then(connect);
+loadQueue();
 </script>
 </body>
 </html>`;

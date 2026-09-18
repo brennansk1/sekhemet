@@ -1,6 +1,14 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
-import { basename, join } from "node:path";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+} from "node:fs";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import type { CheckpointCommitParams, DiffStats, GitSyncAdapter, WorktreeRecord } from "./types.js";
 
 /** Convert a card title into a branch-safe slug. */
@@ -67,9 +75,22 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
     // on repair, resumed after a quota handoff, and re-run after a crash; a
     // create that only works once makes all three impossible.
     if (existsSync(worktreePath)) {
-      const registered = this.runGit(["worktree", "list", "--porcelain"]).includes(
-        `worktree ${worktreePath}`,
-      );
+      // Compare real paths: git reports the resolved path (/private/var/...)
+      // while callers may hold a symlinked one (/var/..., /tmp/...). A plain
+      // string match missed every such worktree and deleted it as an orphan,
+      // discarding the work a retry was meant to resume.
+      const real = realpathSync(worktreePath);
+      const registered = this.runGit(["worktree", "list", "--porcelain"])
+        .split("\n")
+        .filter((line) => line.startsWith("worktree "))
+        .some((line) => {
+          const listed = line.slice("worktree ".length).trim();
+          try {
+            return realpathSync(listed) === real;
+          } catch {
+            return listed === worktreePath;
+          }
+        });
       if (registered) {
         this.linkDependencies(worktreePath);
         return worktreePath;
@@ -79,9 +100,38 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
       this.runGit(["worktree", "prune"]);
     }
 
+    this.ensureHarnessExcludes();
     this.runGit(["worktree", "add", "-B", branchName, worktreePath, baseBranch]);
     this.linkDependencies(worktreePath);
     return worktreePath;
+  }
+
+  /**
+   * Keep generated artifacts out of every card's diff, whatever the project's
+   * .gitignore says.
+   *
+   * Gates run builds inside the worktree (`tsc -b` writes dist/ and
+   * .tsbuildinfo), and the diff is taken with `git add -A`. Without this, a
+   * one-file card measured as fourteen files, the bounds gate failed on every
+   * card, and acceptance would have squash-merged build output into main.
+   * `info/exclude` lives in the shared git dir, so it covers all worktrees.
+   */
+  private ensureHarnessExcludes(): void {
+    try {
+      const gitDir = this.runGit(["rev-parse", "--git-common-dir"]);
+      const absGitDir = isAbsolute(gitDir) ? gitDir : join(this.repoRoot, gitDir);
+      const excludePath = join(absGitDir, "info", "exclude");
+      const existing = existsSync(excludePath) ? readFileSync(excludePath, "utf8") : "";
+      const marker = "# sekhemet: generated artifacts";
+      if (existing.includes(marker)) return;
+      mkdirSync(dirname(excludePath), { recursive: true });
+      appendFileSync(
+        excludePath,
+        `\n${marker}\nnode_modules\n.venv\ndist/\n*.tsbuildinfo\ncoverage/\n.sekhemet/\n`,
+      );
+    } catch {
+      // Not fatal: the project's own .gitignore still applies.
+    }
   }
 
   /**

@@ -1,0 +1,8 @@
+node_modules
+dist
+*.tsbuildinfo
+.sekhemet/events.db*
+.sekhemet/worktrees
+.sekhemet/evidence
+.sekhemet/transcripts
+.sekhemet/queue_report.json

@@ -82,6 +82,25 @@ export class CardRunner {
   }
 
   /**
+   * Persist the evidence bundle where the Review surface can find it.
+   *
+   * The bundle is what a human accepts or returns a card on. Building it and
+   * then discarding it left the Review column with nothing behind it.
+   */
+  private writeEvidence(evidence: EvidenceBundle): void {
+    try {
+      const dir = join(this.options.repoRoot, ".sekhemet", "evidence");
+      mkdirSync(dir, { recursive: true });
+      const body = `${JSON.stringify(evidence, null, 2)}\n`;
+      writeFileSync(join(dir, `${evidence.id}.json`), body, "utf8");
+      // Stable per-card pointer to the latest attempt.
+      writeFileSync(join(dir, `latest-${evidence.cardId}.json`), body, "utf8");
+    } catch {
+      // Evidence loss must never fail a card.
+    }
+  }
+
+  /**
    * Persist every model reply and tool call for this attempt.
    *
    * "Model-visible means logged" (design K11): when a card stalls, the only
@@ -273,6 +292,8 @@ export class CardRunner {
       settings,
       gatesConfigSha256: this.config.sha256,
     });
+
+    this.writeEvidence(evidence);
 
     const passed = stopReason === "gate_passed" && gateResult.passed;
 

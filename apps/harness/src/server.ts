@@ -1,4 +1,6 @@
+import { existsSync, readFileSync } from "node:fs";
 import { type IncomingMessage, type ServerResponse, createServer } from "node:http";
+import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import type { BoardService } from "@sekhemet/board";
 import type { EventLog } from "@sekhemet/kernel";
@@ -20,6 +22,34 @@ export interface DashboardServerOptions {
 }
 
 export { generateDashboardHtml };
+
+/** Map a card's latest evidence onto the five-box gate strip. */
+function gateStripFor(repoPath: string, cardId: string): Record<string, string> | undefined {
+  const path = join(repoPath, ".sekhemet", "evidence", `latest-${cardId}.json`);
+  if (!existsSync(path)) return undefined;
+  try {
+    const evidence = JSON.parse(readFileSync(path, "utf8")) as {
+      passed: boolean;
+      rungResults?: { rung: string; passed: boolean; skipped?: boolean }[];
+      filesTouched?: string[];
+      linesAdded?: number;
+      linesRemoved?: number;
+    };
+    const strip: Record<string, string> = {};
+    for (const r of evidence.rungResults ?? []) {
+      strip[r.rung] = r.skipped ? "skipped" : r.passed ? "pass" : "fail";
+    }
+    // A card that reached a gate at all parsed; bounds come from the measured diff.
+    if (Object.keys(strip).length > 0) strip.parse = "pass";
+    if (evidence.filesTouched) {
+      const lines = (evidence.linesAdded ?? 0) + (evidence.linesRemoved ?? 0);
+      strip.bounds = evidence.filesTouched.length <= 3 && lines < 200 ? "pass" : "fail";
+    }
+    return strip;
+  } catch {
+    return undefined;
+  }
+}
 
 function json(res: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body);
@@ -68,6 +98,19 @@ export function startDashboardServer(
   };
 
   /** Push any events appended since the last tick to every open stream. */
+  const repoPath = options.repoPath ?? process.cwd();
+  /** Board state with each card's gate strip filled from its latest evidence. */
+  const boardWithEvidence = async () => {
+    const state = await boardService.getBoardState();
+    return {
+      ...state,
+      cards: state.cards.map((card) => {
+        const gateResults = gateStripFor(repoPath, card.id);
+        return gateResults ? { ...card, gateResults } : card;
+      }),
+    };
+  };
+
   const pump = async (): Promise<void> => {
     if (streams.size === 0) return;
     try {
@@ -75,10 +118,7 @@ export function startDashboardServer(
       if (events.length === 0) return;
 
       lastSeq = events[events.length - 1]?.seq ?? lastSeq;
-      const [board, verification] = await Promise.all([
-        boardService.getBoardState(),
-        log.verifyHashChain(),
-      ]);
+      const [board, verification] = await Promise.all([boardWithEvidence(), log.verifyHashChain()]);
 
       const frame = `event: append\ndata: ${JSON.stringify({ events, board, verification })}\n\n`;
       for (const res of streams) {
@@ -135,7 +175,7 @@ export function startDashboardServer(
     }
 
     if (url === "/api/board") {
-      json(res, 200, await boardService.getBoardState());
+      json(res, 200, await boardWithEvidence());
       return;
     }
 
@@ -150,6 +190,29 @@ export function startDashboardServer(
         log.verifyHashChain(),
       ]);
       json(res, 200, { events, verification });
+      return;
+    }
+
+    // Latest evidence bundle for a card: what Review is decided on.
+    const evidenceMatch = /^\/api\/evidence\/([A-Za-z0-9_.-]+)$/.exec(url);
+    if (evidenceMatch) {
+      const path = join(
+        options.repoPath ?? process.cwd(),
+        ".sekhemet",
+        "evidence",
+        `latest-${evidenceMatch[1]}.json`,
+      );
+      if (!existsSync(path)) {
+        json(res, 404, { error: "No evidence recorded for this card yet" });
+        return;
+      }
+      json(res, 200, JSON.parse(readFileSync(path, "utf8")));
+      return;
+    }
+
+    if (url === "/api/queue") {
+      const path = join(options.repoPath ?? process.cwd(), ".sekhemet", "queue_report.json");
+      json(res, 200, existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : { entries: [] });
       return;
     }
 
