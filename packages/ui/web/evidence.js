@@ -33,6 +33,27 @@ export function outcomeIcon(evidence) {
     : icon("x", 14, "ic s14 i-fail");
 }
 
+/**
+ * Merit's review (ledger `card/review`): the diff checked against what Merit
+ * has learned about you. Advice, not a gate; likely send-backs read as warnings.
+ */
+export function reviewHtml(review) {
+  const findings = [...(review.findings ?? [])].sort(
+    (a, b) => Number(b.severity === "likely_send_back") - Number(a.severity === "likely_send_back"),
+  );
+  const likely = findings.filter((f) => f.severity === "likely_send_back").length;
+  const head = likely
+    ? `${likely} likely send-${likely === 1 ? "back" : "backs"}`
+    : `${findings.length} ${findings.length === 1 ? "thing" : "things"} to consider`;
+  const items = findings
+    .map((f) => {
+      const warn = f.severity === "likely_send_back";
+      return `<li class="${warn ? "warn" : ""}">${icon(warn ? "alert" : "chat", 14, `ic s14${warn ? " i-park" : ""}`)}<div><b>${warn ? "Likely send-back" : "Consider"}</b><span>${esc(f.note)}</span></div></li>`;
+    })
+    .join("");
+  return `<section aria-label="Merit's review" class="mreview"><h3 class="sh">Merit's review <span class="sec">${esc(head)}</span></h3><p class="mr-why">Merit checked this diff against what it has learned about you (<a href="#/playbook/profile">Playbook</a>). It's advice, not a gate: Accept is still yours.</p><ul>${items}</ul></section>`;
+}
+
 export class EvidencePane {
   constructor({ onAttempt } = {}) {
     this.mode = "unified";
@@ -93,6 +114,7 @@ export class EvidencePane {
     parts.push(
       `<section aria-label="Gates"><h3 class="sh">Gates <span class="sec">${esc(gatesHeadline(gates))}</span></h3>${gatesStripHtml(gates, { failures: ev.failures, config, emptyContract: ev.gatesConfigSha256 === EMPTY_SHA256, sha: ev.gatesConfigSha256 })}</section>`,
     );
+    if (detail.review) parts.push(reviewHtml(detail.review));
     if (ev.failures?.length) {
       parts.push(
         `<section aria-label="Failures" data-failures><h3 class="sh">Failures <span class="sec">${esc(failuresHeadline(ev.failures))}</span></h3>${failuresHtml(ev.failures, { card: detail.card ?? card, gatesConfig: config })}</section>`,

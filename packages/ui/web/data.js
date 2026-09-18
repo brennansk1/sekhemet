@@ -6,6 +6,17 @@ import { store } from "./store.js";
 
 const cache = new Map();
 
+/** The newest `card/review` payload with findings, or null. */
+function latestReview(events) {
+  const ev = (events ?? [])
+    .filter((x) => x.type === "card/review")
+    .sort((a, b) => b.seq - a.seq)[0];
+  const p = ev?.payload;
+  return p && Array.isArray(p.findings) && p.findings.length
+    ? { ...p, at: ev.timestamp ?? ev.createdAt }
+    : null;
+}
+
 function key(id, attempt) {
   const ev = store.card(id)?.display?.evidence?.id ?? "none";
   return `${id}|${ev}|${attempt ?? "latest"}`;
@@ -27,13 +38,18 @@ export function loadDetail(id, attempt) {
     hasEvidence
       ? getJSON(`/api/evidence/${encodeURIComponent(id)}${q}`)
       : Promise.resolve({ ok: false, status: 404, data: null }),
+    // Merit's review of a passing card (ledger `card/review`); advice, not a gate.
+    getJSON(`/api/events?card=${encodeURIComponent(id)}&type=card/review&limit=1&order=desc`).catch(
+      () => ({ ok: false, status: 0, data: null }),
+    ),
   ])
-    .then(([c, e]) => {
+    .then(([c, e, rv]) => {
       const out = {
         card: c.ok ? c.data.card : store.card(id),
         attempts: c.ok ? c.data.attempts : [],
         acceptance: c.ok ? (c.data.acceptance ?? []) : [],
         evidence: e.ok ? e.data : null,
+        review: rv.ok ? latestReview(rv.data?.events) : null,
       };
       if (!e.ok && e.status !== 404) out.error = { status: e.status, message: e.data?.error ?? "" };
       if (!c.ok && c.status !== 404) out.error = { status: c.status, message: c.data?.error ?? "" };

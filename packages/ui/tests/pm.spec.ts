@@ -567,6 +567,25 @@ describe("learning (contract §6)", () => {
     );
     expect(s.command).toBe("sekhemet queue --max-turns 12");
     expect(s.savedMinutes).toBe(19.4);
+    expect(s.savedText).toBe("19.4 minutes");
+    expect(
+      tuningSummary({
+        current: {
+          policy: { stepBudget: 40, maxFailedChecks: 4 },
+          firstTry: 1,
+          eventually: 2,
+          cards: 3,
+          minutes: 0.38,
+        },
+        best: {
+          policy: { stepBudget: 12, maxFailedChecks: 2 },
+          firstTry: 1,
+          eventually: 2,
+          cards: 3,
+          minutes: 0.32,
+        },
+      }).savedText,
+    ).toBe("4 seconds");
     expect(s.checksNote).toMatch(/4 failed checks \(now no limit\)/);
     const same = tuningSummary({
       current: {

@@ -346,7 +346,16 @@ function capabilityHtml() {
   )} A wide bar means the rate is uncertain.</figcaption></figure>`;
   const curve = (c.sizeCurve ?? []).filter((b) => b.attempts > 0);
   const curveFig = curve.length ? sizeCurve(curve, c.horizon80Lines) : "";
-  return `<section class="capab">${head(sub)}<div class="charts${ui.perRow === 1 ? " one" : ""}">${rowsFig}${curveFig}</div>${c.note ? `<p class="cap-note">${esc(c.note)}</p>` : ""}</section>`;
+  // Retries on the escalation model (when the queue report records it per entry).
+  const q = store.state.queue;
+  const escalated = (q?.entries ?? []).filter(
+    (e) => e.attempt > 1 && (e.escalated === true || (e.model && q.model && e.model !== q.model)),
+  );
+  const escModel = escalated.find((e) => e.model)?.model ?? q?.escalationModel;
+  const escNote = escalated.length
+    ? `<p class="cap-note">${icon("runs", 14, "ic s14")}<span>${escalated.length} ${escalated.length === 1 ? "retry" : "retries"} in the last run used the escalation model${escModel ? ` (<span class="mono">${esc(escModel)}</span>)` : ""}, not the Worker. They aren't counted in these rates.</span></p>`
+    : "";
+  return `<section class="capab">${head(sub)}<div class="charts${ui.perRow === 1 ? " one" : ""}">${rowsFig}${curveFig}</div>${c.note ? `<p class="cap-note">${esc(c.note)}</p>` : ""}${escNote}</section>`;
 }
 
 /* ---------- Stopping policy (GET /api/learning `tuning`) ---------- */
@@ -384,7 +393,7 @@ function tuningHtml() {
           ]),
       )}</details>`
     : "";
-  return `<section class="capab tune"><header class="cap-h"><h2>Stopping policy</h2><span class="sec">From replaying recorded runs${esc(when)}</span></header><div class="chart"><p class="tune-head">${esc(sum.headline)}</p>${sum.same ? "" : `<p class="sec">${esc(`Saves ${sum.savedMinutes} minutes on these cards and keeps ${sum.firstTryKept} first-try passes. Nothing changes until you run with the new cap.`)}</p>`}${table}${cmd}<p class="tune-caveat">${icon("alert", 12, "ic s12")}<span>Replay only stops a recorded run earlier than it really stopped. It never credits a pass the Worker didn't make, so it can't overstate what a tighter cap keeps. It can't tell you whether a looser cap would have rescued a failure.</span></p>${grid}</div></section>`;
+  return `<section class="capab tune"><header class="cap-h"><h2>Stopping policy</h2><span class="sec">From replaying recorded runs${esc(when)}</span></header><div class="chart"><p class="tune-head">${esc(sum.headline)}</p>${sum.same ? "" : `<p class="sec">${esc(`Saves ${sum.savedText} on these cards and keeps ${sum.firstTryKept} first-try passes. Nothing changes until you run with the new cap.`)}</p>`}${table}${cmd}<p class="tune-caveat">${icon("alert", 12, "ic s12")}<span>Replay only stops a recorded run earlier than it really stopped. It never credits a pass the Worker didn't make, so it can't overstate what a tighter cap keeps. It can't tell you whether a looser cap would have rescued a failure.</span></p>${grid}</div></section>`;
 }
 
 /* ---------- View ---------- */

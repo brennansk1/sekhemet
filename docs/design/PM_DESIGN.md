@@ -500,6 +500,17 @@ Each rule shows:
 
 Edit is inline (a textarea, `⌘↵` saves, `Esc` cancels). Every action is optimistic, reverts on failure and states the result: *Approved. The rule is given to the Worker from the next matching card.* When `/api/learning` returns 404, the page keeps the seeded rules and send-back suggestions from `/api/playbook` under a banner that names the endpoint.
 
+**Reach.** Approve opens a two-option picker: *This project* (1) or *All projects* (2), sent as `{ reach: "global" }`. Its footer says *All-projects rules live in ~/.config/sekhemet and apply to every repository on this machine.* Active rules carry a reach chip (*This project* / *All projects*), and all-projects rules are drawn slightly stronger. The seeded rules from `.sekhemet/playbook.toml` stay visible as active, read-only rules (*Edit in playbook.toml*) whenever the learning store doesn't carry them itself.
+
+**Merit's review** (ledger `card/review`, written when Merit checks a passing card) appears in the evidence column of Review and of the card view, between Gates and Failures:
+
+- It is titled *Merit's review* with a count (*1 likely send-back*).
+- It has one line: *Merit checked this diff against what it has learned about you (Playbook). It's advice, not a gate: Accept is still yours.*
+- `likely_send_back` findings are amber warnings (an alert icon and a 2px parked rule) and come first; `consider` findings are quiet.
+- The section is absent when there is no review.
+
+**Escalated retries.** When a queue entry records that a retry ran on the escalation model (`escalated`, or a per-entry `model` that differs from the report's), Worker capability adds *2 retries in the last run used the escalation model (…), not the Worker. They aren't counted in these rates.* Today's `QueueEntry` carries no such field, so the note stays hidden.
+
 **What Merit has learned about you** is a section of Playbook (`#/playbook/profile`), because it is the same kind of thing: learned, local, editable. It has:
 
 - a lock line: *These stay on this machine, in the project's ledger. Edit a statement to correct it; dismiss it and Merit stops using it.*;

@@ -83,14 +83,19 @@ async function act({ method, path, body, kind, id, patch, done, failed }) {
 
 const enc = encodeURIComponent;
 
-export const approveRule = (r) =>
+/** `reach`: "project" (default) or "global", which applies in every repository. */
+export const approveRule = (r, reach = "project") =>
   act({
     method: "POST",
     path: `/api/learning/rules/${enc(r.id)}/approve`,
+    body: reach === "global" ? { reach: "global" } : {},
     kind: "rules",
     id: r.id,
-    patch: { status: "active" },
-    done: "Approved. The rule is given to the Worker from the next matching card.",
+    patch: { status: "active", reach },
+    done:
+      reach === "global"
+        ? "Approved for all projects. Every repository on this machine uses it from the next matching card."
+        : "Approved. The rule is given to the Worker from the next matching card.",
     failed: "Couldn't approve the rule.",
   });
 

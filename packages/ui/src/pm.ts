@@ -1187,6 +1187,8 @@ export interface TuningReportLike {
 export interface TuningSummary {
   same: boolean;
   savedMinutes: number;
+  /** `19.4 minutes`, or `4 seconds` under a minute. */
+  savedText: string;
   savedPercent: number;
   /** `18 of 18` passes the recommendation keeps. */
   passesKept: string;
@@ -1206,7 +1208,9 @@ export function tuningSummary(t: TuningReportLike): TuningSummary {
   const same =
     b.policy.stepBudget === c.policy.stepBudget &&
     b.policy.maxFailedChecks === c.policy.maxFailedChecks;
-  const saved = Math.max(0, Math.round((c.minutes - b.minutes) * 10) / 10);
+  const raw = Math.max(0, c.minutes - b.minutes);
+  const saved = Math.round(raw * 10) / 10;
+  const savedText = raw < 1 ? `${Math.round(raw * 60)} seconds` : `${saved} minutes`;
   const pct = c.minutes > 0 ? Math.round((saved / c.minutes) * 100) : 0;
   const passesKept = `${b.eventually} of ${c.eventually}`;
   const firstTryKept = `${b.firstTry} of ${c.firstTry}`;
@@ -1216,6 +1220,7 @@ export function tuningSummary(t: TuningReportLike): TuningSummary {
   const out: TuningSummary = {
     same,
     savedMinutes: saved,
+    savedText,
     savedPercent: pct,
     passesKept,
     firstTryKept,

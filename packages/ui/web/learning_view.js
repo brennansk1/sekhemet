@@ -13,8 +13,9 @@ import {
   strengthLabel,
   valueBar,
 } from "./lib/pm.js";
-import { KIND_LABELS, formatWait } from "./lib/vocabulary.js";
+import { formatWait, parseTitle, kindLabel as vocabKindLabel } from "./lib/vocabulary.js";
 import { cardChip } from "./marks.js";
+import { openPicker } from "./picker.js";
 import { setTopbar } from "./shell.js";
 import { store } from "./store.js";
 
@@ -25,7 +26,11 @@ function ago(iso) {
   return ms < 60_000 ? "just now" : `${formatWait(ms)} ago`;
 }
 
-const kindLabel = (k) => KIND_LABELS[k]?.label ?? k;
+/** Scope kinds arrive raw (`Rule`, `Interface`); show the product vocabulary. */
+const kindLabel = (k) => {
+  const spidr = parseTitle(`x (SPIDR: ${k})`).kinds[0];
+  return vocabKindLabel(spidr ?? k) || k;
+};
 
 function editForm(kind, id, text) {
   return `<form class="lr-edit" data-edit-form="${kind}:${esc(id)}"><textarea rows="3" aria-label="Edit the wording">${esc(text)}</textarea><div class="acts"><button class="btn ghost sm" type="button" data-edit-cancel>Cancel ${kbd("Esc")}</button><button class="btn sm primary" type="submit">Save ${kbd("⌘↵")}</button></div></form>`;
@@ -55,14 +60,17 @@ function ruleHtml(r, maxAbs, ui) {
     ? `<p class="lr-warn">${icon("alert", 12, "ic s12 i-park")}<span>Proposed for retirement: used ${r.harmful} times on failing first attempts, ${r.helpful} on passing ones.</span></p>`
     : "";
   let acts = "";
-  if (r.status === "candidate") {
-    acts = `<button class="btn sm primary" type="button" data-approve>${icon("check", 12, "ic s12")}Approve</button><button class="btn sm" type="button" data-edit>Edit</button><button class="btn sm ghost" type="button" data-retire>Retire</button>`;
+  if (r.readonly) {
+    acts =
+      '<span class="sec small" title="Seeded rules live in .sekhemet/playbook.toml">Edit in <span class="mono">playbook.toml</span></span>';
+  } else if (r.status === "candidate") {
+    acts = `<button class="btn sm primary" type="button" data-approve aria-haspopup="dialog">${icon("check", 12, "ic s12")}Approve…</button><button class="btn sm" type="button" data-edit>Edit</button><button class="btn sm ghost" type="button" data-retire>Retire</button>`;
   } else if (r.status === "active") {
     acts = `<button class="btn sm" type="button" data-edit>Edit</button><button class="btn sm ${retireSuggested(r) ? "" : "ghost"}" type="button" data-retire>Retire</button>`;
   }
   const role = r.role === "manager" ? "For Merit" : "For the Worker";
   const text = editing ? editForm("rule", r.id, r.text) : `<p class="lr-text">${esc(r.text)}</p>`;
-  return `<li class="lrule ${esc(r.status)}${retireSuggested(r) ? " warn" : ""}" data-rule-id="${esc(r.id)}"><div class="lr-main"><div class="lr-head"><span class="role">${esc(role)}</span><span class="sec">${esc(RULE_SOURCE_LABELS[r.source] ?? r.source)}${r.createdAt ? ` · ${esc(ago(r.createdAt))}` : ""}</span></div>${text}<div class="lr-scope">${chips}</div>${r.status === "candidate" ? "" : `<div class="lr-meta">${value}${counts}</div>`}${retire}${evidenceHtml(r.evidence)}</div>${editing ? "" : `<div class="lr-acts">${acts}</div>`}</li>`;
+  return `<li class="lrule ${esc(r.status)}${retireSuggested(r) ? " warn" : ""}" data-rule-id="${esc(r.id)}"><div class="lr-main"><div class="lr-head"><span class="role">${esc(role)}</span>${r.status === "active" && !r.readonly ? `<span class="role reach${r.reach === "global" ? " global" : ""}" title="${esc(r.reach === "global" ? "Lives in ~/.config/sekhemet and applies to every repository on this machine" : "Applies to this project only")}">${r.reach === "global" ? "All projects" : "This project"}</span>` : ""}<span class="sec">${esc(RULE_SOURCE_LABELS[r.source] ?? r.source)}${r.createdAt ? ` · ${esc(ago(r.createdAt))}` : ""}</span></div>${text}<div class="lr-scope">${chips}</div>${r.status === "candidate" || r.unused ? "" : `<div class="lr-meta">${value}${counts}</div>`}${retire}${evidenceHtml(r.evidence)}</div>${editing ? "" : `<div class="lr-acts">${acts}</div>`}</li>`;
 }
 
 function profileEntryHtml(e, ui) {
@@ -92,8 +100,35 @@ export function profileSectionHtml(profile, ui) {
   return `<section id="pb-profile" class="lsec"><h3 class="sh">What Merit has learned about you <span class="sec">${active} ${active === 1 ? "statement" : "statements"} Merit reads when it answers you</span></h3><p class="lp-note">${icon("lock", 12, "ic s12")}<span>These stay on this machine, in the project's ledger. Edit a statement to correct it; dismiss it and Merit stops using it.</span></p>${body}${gone}</section>`;
 }
 
+/**
+ * The playbook file's seeded rules, shown as active and read-only when the
+ * learning store doesn't carry them itself, so nothing already in force hides.
+ */
+function withSeeds(rules) {
+  const seeds = store.state.playbook?.rules ?? [];
+  const known = new Set(rules.flatMap((r) => [r.id, r.text]));
+  const extra = seeds
+    .filter((s) => !known.has(s.id) && !known.has(s.instruction))
+    .map((s) => ({
+      id: s.id,
+      role: "worker",
+      text: s.instruction,
+      scope: { ...(s.pattern ? { pathPattern: s.pattern } : {}) },
+      status: "active",
+      helpful: 0,
+      harmful: 0,
+      value: 0,
+      source: "seed",
+      evidence: s.originCard ? [{ cardId: s.originCard, note: "" }] : [],
+      createdAt: s.effectiveDate ?? "",
+      readonly: true,
+      unused: true,
+    }));
+  return [...rules, ...extra];
+}
+
 export function learningHtml(data, ui) {
-  const rules = data.rules ?? [];
+  const rules = withSeeds(data.rules ?? []);
   const g = groupRules(rules);
   const maxAbs = Math.max(1, ...rules.map((r) => Math.abs(r.value || 0)));
   const project = store.state.meta?.project ?? "";
@@ -140,8 +175,33 @@ export function bindLearning(root, ui, rerender) {
     const entryEl = t.closest("[data-entry-id]");
     const rule = ruleEl && find("rule", ruleEl.dataset.ruleId);
     const entry = entryEl && find("profile", entryEl.dataset.entryId);
-    if (t.closest("[data-approve]") && rule) approveRule(rule);
-    else if (t.closest("[data-retire]") && rule) retireRule(rule);
+    const ap = t.closest("[data-approve]");
+    if (ap && rule) {
+      openPicker(ap, {
+        heading: "Approve for",
+        search: false,
+        options: [
+          {
+            value: "project",
+            label: "This project",
+            detail: "Only this repository's cards",
+            plain: true,
+          },
+          {
+            value: "global",
+            label: "All projects",
+            detail: "Every repository on this machine",
+            plain: true,
+          },
+        ],
+        wide: true,
+        footer:
+          "All-projects rules live in ~/.config/sekhemet and apply to every repository on this machine.",
+        onPick: (reach) => approveRule(rule, reach),
+      });
+      return;
+    }
+    if (t.closest("[data-retire]") && rule) retireRule(rule);
     else if (t.closest("[data-dismiss]") && entry) dismissEntry(entry);
     else if (t.closest("[data-edit]") && (rule || entry)) {
       ui.editing = rule ? `rule:${rule.id}` : `profile:${entry.id}`;

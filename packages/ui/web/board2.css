@@ -1642,3 +1642,16 @@
     gap: 8px;
   }
 }
+.lr-head .reach.global {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+.lr-acts .small {
+  font-size: var(--text-xs);
+}
+.picker-menu.wide {
+  width: 320px;
+}
+.picker-menu .pl small:not(.mono) {
+  font-family: var(--font-sans);
+}

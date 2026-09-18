@@ -18,11 +18,21 @@ export function closePicker() {
  */
 export function openPicker(
   anchor,
-  { heading = "", options = [], multi = false, onPick, onChange, create, footer = "", search } = {},
+  {
+    heading = "",
+    options = [],
+    multi = false,
+    onPick,
+    onChange,
+    create,
+    footer = "",
+    search,
+    wide = false,
+  } = {},
 ) {
   closePicker();
   const node = document.createElement("div");
-  node.className = "menu picker-menu";
+  node.className = `menu picker-menu${wide ? " wide" : ""}`;
   node.setAttribute("role", "dialog");
   node.setAttribute("aria-label", heading || "Choose");
   const showSearch = search ?? (options.length > 8 || Boolean(create));
@@ -55,7 +65,7 @@ export function openPicker(
             multi && !o.create
               ? `<span class="cbx${on ? " on" : ""}" aria-hidden="true"></span>`
               : "";
-          return `<button type="button" role="option" data-i="${i}" aria-selected="${multi ? on : i === active}" class="${i === active ? "act" : ""}${!multi && o.checked ? " cur" : ""}">${box}${o.html ?? ""}<span class="pl">${esc(o.label)}${o.detail ? `<small class="mono">${esc(o.detail)}</small>` : ""}</span>${num}</button>`;
+          return `<button type="button" role="option" data-i="${i}" aria-selected="${multi ? on : i === active}" class="${i === active ? "act" : ""}${!multi && o.checked ? " cur" : ""}">${box}${o.html ?? ""}<span class="pl">${esc(o.label)}${o.detail ? `<small class="${o.plain ? "" : "mono"}">${esc(o.detail)}</small>` : ""}</span>${num}</button>`;
         })
         .join("") || '<div class="pk-none">No match</div>';
   }
