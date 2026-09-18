@@ -49,7 +49,9 @@ describe("@sekhemet/ui", () => {
     expect(BASALT.statePass).toBe("#4FA36B"); // Nile Green
     // Red Ochre, minimally lifted so it actually clears the AA bar the design
     // claims for it; the doc's own #C9503F measures 4.19:1 on this ground.
-    expect(BASALT.stateFail).toBe("#CC5A4A");
+    // Lifted once more (from #CC5A4A) so it also clears 4.5:1 on --bg-surface,
+    // where evidence panels render failure text; see tokens.spec.ts.
+    expect(BASALT.stateFail).toBe("#D2614F");
     expect(BASALT.stateRunning).toBe("#4C8ED9"); // Lapis Lazuli
     expect(SAND.bgBase).toBe("#F6F3EC");
 

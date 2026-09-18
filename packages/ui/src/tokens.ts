@@ -43,8 +43,10 @@ export const BASALT: ColorTokens = {
   accent: "#C8952A",
   statePass: "#4FA36B",
   // Red Ochre, lifted from the doc's #C9503F: that value measures 4.19:1 on
-  // this ground, below the AA bar the same spec claims it clears.
-  stateFail: "#CC5A4A",
+  // this ground, below the AA bar the same spec claims it clears. Lifted again
+  // from #CC5A4A (4.24:1 on --bg-surface) so failure text in evidence panels,
+  // which sit on the surface, clears 4.5:1 too (FRONTEND_DESIGN §3.9).
+  stateFail: "#D2614F",
   stateRunning: "#4C8ED9",
   stateParked: "#B08A3E",
   stateBlocked: "#8A7F70",
@@ -72,6 +74,48 @@ export const SAND: ColorTokens = {
 };
 
 export const THEMES: Record<ThemeName, ColorTokens> = { basalt: BASALT, sand: SAND };
+
+/**
+ * Roles derived from the fifteen (FRONTEND_DESIGN §3.1). Kept apart from
+ * {@link ColorTokens} because they are not all plain hex: the scrim carries
+ * alpha and the tints are mixed from the state roles at runtime.
+ */
+export interface DerivedTokens {
+  /** Text and glyphs on the primary (gold) button. */
+  onAccent: string;
+  /** Glyphs on pass/fail/running fills (gate pips). */
+  onState: string;
+  /** Palette and modal backdrop. */
+  scrim: string;
+  /** Percentage of a state colour mixed into its soft tint background. */
+  tintPercent: number;
+}
+
+export const DERIVED: Record<ThemeName, DerivedTokens> = {
+  basalt: { onAccent: "#14120F", onState: "#14120F", scrim: "rgb(8 7 6 / 0.6)", tintPercent: 12 },
+  sand: { onAccent: "#FFFFFF", onState: "#FFFFFF", scrim: "rgb(28 26 22 / 0.35)", tintPercent: 10 },
+};
+
+/** Layout constants shared by every view. */
+export const LAYOUT = {
+  sidebarW: "216px",
+  railW: "52px",
+  topbarH: "44px",
+} as const;
+
+function derivedVars(theme: ThemeName, indent = "  "): string {
+  const d = DERIVED[theme];
+  const tints = (["pass", "fail", "running", "parked"] as const).map(
+    (s) =>
+      `${indent}--tint-${s}: color-mix(in srgb, var(--state-${s}) ${d.tintPercent}%, transparent);`,
+  );
+  return [
+    `${indent}--on-accent: ${d.onAccent};`,
+    `${indent}--on-state: ${d.onState};`,
+    `${indent}--scrim: ${d.scrim};`,
+    ...tints,
+  ].join("\n");
+}
 
 export const TYPOGRAPHY = {
   fontSans: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
@@ -134,6 +178,7 @@ export function generateTokenCss(): string {
 
   return `:root {
 ${themeVars(BASALT)}
+${derivedVars("basalt")}
 
   --font-sans: ${TYPOGRAPHY.fontSans};
   --font-mono: ${TYPOGRAPHY.fontMono};
@@ -157,11 +202,16 @@ ${spacingVars}
 
   --motion: ${MOTION.transition};
 
+  --sidebar-w: ${LAYOUT.sidebarW};
+  --rail-w: ${LAYOUT.railW};
+  --topbar-h: ${LAYOUT.topbarH};
+
   color-scheme: dark;
 }
 
 [data-theme="sand"] {
 ${themeVars(SAND)}
+${derivedVars("sand")}
   color-scheme: light;
 }`;
 }
@@ -171,6 +221,8 @@ export function generateTokenJson(): string {
   return JSON.stringify(
     {
       themes: { basalt: BASALT, sand: SAND },
+      derived: DERIVED,
+      layout: LAYOUT,
       typography: TYPOGRAPHY,
       spacing: SPACING,
       radius: RADIUS,

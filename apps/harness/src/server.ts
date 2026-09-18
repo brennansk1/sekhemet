@@ -1,10 +1,34 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  statSync,
+} from "node:fs";
 import { type IncomingMessage, type ServerResponse, createServer } from "node:http";
-import { basename, join } from "node:path";
+import { basename, extname, join, resolve, sep } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import type { BoardService } from "@sekhemet/board";
-import type { CardStore, EventLog } from "@sekhemet/kernel";
-import { generateTokenCss, generateTokenJson } from "@sekhemet/ui";
+import { type EvidenceBundle, type GatesConfig, loadGatesConfig } from "@sekhemet/gates";
+import type { CardRecord, CardStore, EventLog } from "@sekhemet/kernel";
+import {
+  BASALT,
+  EMPTY_SHA256,
+  ICONS,
+  UI_LIB_DIR,
+  UI_LIB_MODULES,
+  UI_WEB_DIR,
+  describeCard,
+  gateLabel,
+  generateTokenCss,
+  generateTokenJson,
+  parseTitle,
+  vocabularyTables,
+} from "@sekhemet/ui";
+import { resolveConfig } from "./config.js";
 import { runDoctor } from "./doctor.js";
 import { acceptCard } from "./execute.js";
 import { generateDashboardHtml } from "./ui_html.js";
@@ -58,32 +82,70 @@ function isTrustedMutation(req: IncomingMessage): boolean {
   }
 }
 
-/** Map a card's latest evidence onto the five-box gate strip. */
-function gateStripFor(repoPath: string, cardId: string): Record<string, string> | undefined {
-  const path = join(repoPath, ".sekhemet", "evidence", `latest-${cardId}.json`);
-  if (!existsSync(path)) return undefined;
+const MIME: Record<string, string> = {
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".woff2": "font/woff2",
+};
+
+/**
+ * Resolve `/app/<rel>` inside `root`, or undefined when the path escapes it.
+ *
+ * Refuses encoded traversal (`%2e%2e`), backslashes and NUL outright, then
+ * checks the real path still sits under the real root, so a symlink inside the
+ * web directory cannot point the server at the rest of the disk.
+ */
+export function resolveStaticPath(root: string, rel: string): string | undefined {
+  let decoded: string;
   try {
-    const evidence = JSON.parse(readFileSync(path, "utf8")) as {
-      passed: boolean;
-      rungResults?: { rung: string; passed: boolean; skipped?: boolean }[];
-      filesTouched?: string[];
-      linesAdded?: number;
-      linesRemoved?: number;
-    };
-    const strip: Record<string, string> = {};
-    for (const r of evidence.rungResults ?? []) {
-      strip[r.rung] = r.skipped ? "skipped" : r.passed ? "pass" : "fail";
-    }
-    // A card that reached a gate at all parsed; bounds come from the measured diff.
-    if (Object.keys(strip).length > 0) strip.parse = "pass";
-    if (evidence.filesTouched) {
-      const lines = (evidence.linesAdded ?? 0) + (evidence.linesRemoved ?? 0);
-      strip.bounds = evidence.filesTouched.length <= 3 && lines < 200 ? "pass" : "fail";
-    }
-    return strip;
+    decoded = decodeURIComponent(rel);
   } catch {
     return undefined;
   }
+  if (!decoded || decoded.includes("\0") || decoded.includes("\\")) return undefined;
+  if (decoded.split("/").some((part) => part === ".." || part === ".")) return undefined;
+  if (!MIME[extname(decoded)]) return undefined;
+  const base = resolve(root);
+  const target = resolve(base, decoded);
+  if (!target.startsWith(base + sep)) return undefined;
+  if (!existsSync(target)) return undefined;
+  try {
+    const real = realpathSync(target);
+    if (!real.startsWith(realpathSync(base) + sep) || !statSync(real).isFile()) return undefined;
+    return real;
+  } catch {
+    return undefined;
+  }
+}
+
+function serveFile(res: ServerResponse, path: string): void {
+  const body = readFileSync(path);
+  res.writeHead(200, {
+    "Content-Type": MIME[extname(path)] ?? "application/octet-stream",
+    "Content-Length": body.length,
+    // Local and build-free: always revalidate so an edit shows on reload.
+    "Cache-Control": "no-cache",
+    "X-Content-Type-Options": "nosniff",
+  });
+  res.end(body);
+}
+
+/** The brand glyph on a base-coloured rounded square, from the tokens. */
+function faviconSvg(): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="${BASALT.bgBase}"/><g transform="translate(4 4)" fill="none" stroke="${BASALT.accent}" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">${ICONS.glyph}</g></svg>`;
+}
+
+/** Card ids travel in URLs; anything else is refused before touching the disk. */
+const CARD_ID = "[A-Za-z0-9_.-]+";
+
+interface AttemptSummary {
+  attempt: number;
+  evidenceId: string;
+  createdAt: string;
+  passed: boolean;
+  stopReason: string;
 }
 
 function json(res: ServerResponse, status: number, body: unknown): void {
@@ -132,19 +194,177 @@ export function startDashboardServer(
     return report;
   };
 
-  /** Push any events appended since the last tick to every open stream. */
   const repoPath = options.repoPath ?? process.cwd();
-  /** Board state with each card's gate strip filled from its latest evidence. */
+  const evidenceDir = join(repoPath, ".sekhemet", "evidence");
+
+  // Evidence files are rewritten only when an attempt ends, so reads are cached
+  // by mtime: the stream re-derives the board every tick an event lands.
+  const fileCache = new Map<string, { mtimeMs: number; value: unknown }>();
+  const readJsonCached = <T>(path: string): T | undefined => {
+    try {
+      const { mtimeMs } = statSync(path);
+      const hit = fileCache.get(path);
+      if (hit && hit.mtimeMs === mtimeMs) return hit.value as T;
+      const value = JSON.parse(readFileSync(path, "utf8")) as T;
+      fileCache.set(path, { mtimeMs, value });
+      return value;
+    } catch {
+      return undefined;
+    }
+  };
+  const latestEvidence = (cardId: string) =>
+    readJsonCached<EvidenceBundle>(join(evidenceDir, `latest-${cardId}.json`));
+
+  let gatesCache: { at: number; config: GatesConfig } | undefined;
+  const gatesConfig = (): GatesConfig => {
+    const now = Date.now();
+    if (!gatesCache || now - gatesCache.at > 5_000) {
+      gatesCache = { at: now, config: loadGatesConfig(repoPath) };
+    }
+    return gatesCache.config;
+  };
+
+  /** Every attempt recorded for a card, oldest first. */
+  const attemptsFor = (cardId: string): { summary: AttemptSummary; path: string }[] => {
+    if (!existsSync(evidenceDir)) return [];
+    const found: { summary: AttemptSummary; path: string }[] = [];
+    for (const name of readdirSync(evidenceDir)) {
+      if (!/^ev_[A-Za-z0-9]+\.json$/.test(name)) continue;
+      const path = join(evidenceDir, name);
+      const ev = readJsonCached<EvidenceBundle>(path);
+      if (!ev || ev.cardId !== cardId) continue;
+      found.push({
+        path,
+        summary: {
+          attempt: 0,
+          evidenceId: ev.id,
+          createdAt: ev.createdAt,
+          passed: ev.passed,
+          stopReason: ev.stopReason,
+        },
+      });
+    }
+    found.sort((a, b) => a.summary.createdAt.localeCompare(b.summary.createdAt));
+    found.forEach((f, i) => {
+      f.summary.attempt = i + 1;
+    });
+    return found;
+  };
+
+  /**
+   * The staged acceptance tests' source, so Review can show the lines a failure
+   * points at in a protected file the Worker never touched. Names come from the
+   * card record and are reduced to a basename inside `acceptance/`.
+   */
+  const acceptanceSources = (card: CardRecord) =>
+    (card.acceptanceTests ?? []).flatMap((name) => {
+      const file = join(repoPath, "acceptance", basename(name));
+      try {
+        if (!existsSync(file) || statSync(file).size > 256_000) return [];
+        return [{ name, path: `tests/${basename(name)}`, content: readFileSync(file, "utf8") }];
+      } catch {
+        return [];
+      }
+    });
+
+  /** The transition that put each card in its current column: when, by whom, why. */
+  const statusEntries = () => {
+    const rows = options.db
+      .prepare(
+        `SELECT e.card_id AS cardId, e.actor AS actor, e.payload AS payload, e.created_at AS at
+         FROM events e
+         JOIN (SELECT card_id, MAX(seq) AS seq FROM events
+               WHERE type = 'card/status_changed' GROUP BY card_id) last
+           ON e.seq = last.seq`,
+      )
+      .all() as { cardId: string; actor: string; payload: string; at: string }[];
+    const map = new Map<
+      string,
+      { actor: string; toStatus?: string; reason?: string; at: string }
+    >();
+    for (const row of rows) {
+      try {
+        const p = JSON.parse(row.payload) as {
+          toStatus?: string;
+          reason?: string;
+          updatedAt?: string;
+        };
+        map.set(row.cardId, {
+          actor: row.actor,
+          at: p.updatedAt ?? row.at,
+          ...(p.toStatus ? { toStatus: p.toStatus } : {}),
+          ...(p.reason ? { reason: p.reason } : {}),
+        });
+      } catch {
+        // A malformed payload leaves the card without a wait time, nothing worse.
+      }
+    }
+    return map;
+  };
+
+  /** A card with its presentation (`display`) derived by the shared vocabulary. */
+  const withDisplay = (
+    card: CardRecord,
+    all: CardRecord[],
+    entries: ReturnType<typeof statusEntries>,
+    now: number,
+  ) => {
+    const config = gatesConfig();
+    const entry = entries.get(card.id);
+    const current = entry && entry.toStatus === card.status ? entry : undefined;
+    const waitsOn = (card.dependsOn ?? [])
+      .map((id) => all.find((c) => c.id === id))
+      .filter((c): c is CardRecord => c !== undefined && c.status !== "done")
+      .map((c) => ({ id: c.id, title: parseTitle(c.title).title }));
+    const evidence = latestEvidence(card.id);
+    const display = describeCard(card, {
+      now,
+      ...(evidence ? { evidence } : {}),
+      enteredColumnAt: current?.at ?? card.createdAt,
+      ...(current?.reason ? { statusReason: current.reason } : {}),
+      ...(current?.actor ? { statusActor: current.actor } : {}),
+      waitsOn,
+      configuredGates: config.gates.map((g) => ({ id: g.id, rung: g.rung })),
+      limits: { maxFiles: config.project.maxFiles, maxDiffLines: config.project.maxDiffLines },
+    });
+    return { ...card, display };
+  };
+
+  /** Board state with every card's `display` filled in. */
   const boardWithEvidence = async () => {
     const state = await boardService.getBoardState();
+    const entries = statusEntries();
+    const now = Date.now();
     return {
       ...state,
-      cards: state.cards.map((card) => {
-        const gateResults = gateStripFor(repoPath, card.id);
-        return gateResults ? { ...card, gateResults } : card;
-      }),
+      cards: state.cards.map((card) => withDisplay(card, state.cards, entries, now)),
     };
   };
+
+  let reviewMinutesPerDay = 60;
+  try {
+    reviewMinutesPerDay = resolveConfig({ repoPath }).config.review.reviewMinutesPerDay;
+  } catch {
+    // An unreadable config keeps the documented default.
+  }
+  let gitUser: string | undefined;
+  try {
+    gitUser =
+      execFileSync("git", ["config", "user.name"], { cwd: repoPath, encoding: "utf8" }).trim() ||
+      undefined;
+  } catch {
+    gitUser = undefined;
+  }
+  let version = "0.0.0";
+  try {
+    version = (
+      JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+        version: string;
+      }
+    ).version;
+  } catch {
+    // Version is informational.
+  }
 
   const pump = async (): Promise<void> => {
     if (streams.size === 0) return;
@@ -170,11 +390,46 @@ export function startDashboardServer(
   };
 
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
-    const url = (req.url || "/").split("?")[0] ?? "/";
+    const [url = "/", search = ""] = (req.url || "/").split("?");
+    const query = new URLSearchParams(search);
 
     if (url === "/" || url === "/index.html") {
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.writeHead(200, {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-cache",
+      });
       res.end(html);
+      return;
+    }
+
+    // The page's ES modules and stylesheets, straight from packages/ui/web.
+    // The two pure presentation modules come from the compiled package, so the
+    // browser runs the same vocabulary the server used to build `display`.
+    if (url.startsWith("/app/")) {
+      const rel = url.slice("/app/".length);
+      const lib = /^lib\/([a-z]+\.js)$/.exec(rel)?.[1];
+      const path =
+        lib && (UI_LIB_MODULES as readonly string[]).includes(lib)
+          ? resolveStaticPath(UI_LIB_DIR, lib)
+          : lib
+            ? undefined
+            : resolveStaticPath(UI_WEB_DIR, rel);
+      if (!path) {
+        json(res, 404, { error: "Not Found", path: url });
+        return;
+      }
+      serveFile(res, path);
+      return;
+    }
+
+    if (url === "/vocab.json") {
+      json(res, 200, vocabularyTables());
+      return;
+    }
+
+    if (url === "/favicon.svg" || url === "/favicon.ico") {
+      res.writeHead(200, { "Content-Type": "image/svg+xml", "Cache-Control": "max-age=86400" });
+      res.end(faviconSvg());
       return;
     }
 
@@ -228,15 +483,22 @@ export function startDashboardServer(
       return;
     }
 
-    // Latest evidence bundle for a card: what Review is decided on.
-    const evidenceMatch = /^\/api\/evidence\/([A-Za-z0-9_.-]+)$/.exec(url);
+    // Evidence for a card: the latest attempt by default, or `?attempt=n`.
+    const evidenceMatch = new RegExp(`^/api/evidence/(${CARD_ID})$`).exec(url);
     if (evidenceMatch) {
-      const path = join(
-        options.repoPath ?? process.cwd(),
-        ".sekhemet",
-        "evidence",
-        `latest-${evidenceMatch[1]}.json`,
-      );
+      const cardId = evidenceMatch[1] as string;
+      const wanted = query.get("attempt");
+      if (wanted !== null) {
+        const n = Number(wanted);
+        const hit = attemptsFor(cardId).find((a) => a.summary.attempt === n);
+        if (!Number.isInteger(n) || !hit) {
+          json(res, 404, { error: `No attempt ${wanted} recorded for this card` });
+          return;
+        }
+        json(res, 200, readJsonCached(hit.path));
+        return;
+      }
+      const path = join(evidenceDir, `latest-${cardId}.json`);
       if (!existsSync(path)) {
         json(res, 404, { error: "No evidence recorded for this card yet" });
         return;
@@ -245,16 +507,58 @@ export function startDashboardServer(
       return;
     }
 
+    // One card with its presentation and its attempt history.
+    const cardMatch = new RegExp(`^/api/cards/(${CARD_ID})$`).exec(url);
+    if (cardMatch && req.method !== "POST") {
+      const state = await boardService.getBoardState();
+      const card = state.cards.find((c) => c.id === cardMatch[1]);
+      if (!card) {
+        json(res, 404, { error: `No card ${cardMatch[1]}` });
+        return;
+      }
+      json(res, 200, {
+        card: withDisplay(card, state.cards, statusEntries(), Date.now()),
+        attempts: attemptsFor(card.id).map((a) => a.summary),
+        acceptance: acceptanceSources(card),
+      });
+      return;
+    }
+
+    // The gate contract, in execution order, so the UI can show declared gates
+    // that never ran and flag a contract that hashed to nothing.
+    if (url === "/api/gates") {
+      const config = gatesConfig();
+      json(res, 200, {
+        gates: config.gates.map((g) => ({
+          id: g.id,
+          rung: g.rung,
+          layer: g.layer,
+          label: gateLabel(g.rung),
+          blocking: g.blocking,
+          command: [g.command, ...g.args].join(" "),
+        })),
+        protected: config.project.protected,
+        maxFiles: config.project.maxFiles,
+        maxDiffLines: config.project.maxDiffLines,
+        sha256: config.sha256,
+        empty: config.sha256 === EMPTY_SHA256,
+      });
+      return;
+    }
+
     if (url === "/api/meta") {
       json(res, 200, {
         project: basename(repoPath),
         repoPath,
         triage: options.cardStore !== undefined,
+        reviewMinutesPerDay,
+        version,
+        ...(gitUser ? { gitUser } : {}),
       });
       return;
     }
 
-    const action = /^\/api\/cards\/([A-Za-z0-9_.-]+)\/(accept|return|park)$/.exec(url);
+    const action = new RegExp(`^/api/cards/(${CARD_ID})/(accept|return|park)$`).exec(url);
     if (action && req.method === "POST") {
       if (!isTrustedMutation(req)) {
         json(res, 403, { error: "Triage actions must come from the dashboard itself" });
@@ -321,7 +625,7 @@ export function startDashboardServer(
     }
 
     if (url === "/api/queue") {
-      const path = join(options.repoPath ?? process.cwd(), ".sekhemet", "queue_report.json");
+      const path = join(repoPath, ".sekhemet", "queue_report.json");
       json(res, 200, existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : { entries: [] });
       return;
     }
