@@ -4,10 +4,13 @@ import type { CanvasDimensions, ColumnLayout, VirtualCardNode, VirtualWindow } f
 export const COLUMN_ORDER: CardStatus[] = [
   "backlog",
   "ready",
+  "planning",
   "in_progress",
   "verify",
   "review",
   "done",
+  // Parked cards must stay on the board: nothing may block silently.
+  "parked",
 ];
 
 /** Rows rendered beyond each edge of the viewport, so scrolling has no blank frame. */

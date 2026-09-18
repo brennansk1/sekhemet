@@ -259,7 +259,18 @@ export class CardRunner {
 
     // Bounds are checked against the real diff, which is why the git adapter
     // computes stats: the limit is meaningless without a measured diff.
-    const stats = await syncAdapter.getDiffStats(card.id, this.options.baseBranch ?? "main");
+    const rawStats = await syncAdapter.getDiffStats(card.id, this.options.baseBranch ?? "main");
+    // Acceptance tests are staged by the harness, not written by the agent, so
+    // they do not count against the card's size bounds. They stay in the diff.
+    const staged = new Set((card.acceptanceTests ?? []).map((t) => `tests/${t}`));
+    const own = (rawStats.perFile ?? []).filter((f) => !staged.has(f.file));
+    const stats = rawStats.perFile
+      ? {
+          filesTouched: own.map((f) => f.file),
+          linesAdded: own.reduce((n, f) => n + f.added, 0),
+          linesRemoved: own.reduce((n, f) => n + f.removed, 0),
+        }
+      : rawStats;
     const diff = await syncAdapter.generateDiff(card.id, this.options.baseBranch ?? "main");
 
     const gateResult = lastGateResult ?? {

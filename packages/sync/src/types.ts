@@ -48,4 +48,6 @@ export interface DiffStats {
   filesTouched: string[];
   linesAdded: number;
   linesRemoved: number;
+  /** Per-file deltas, so callers can exclude harness-staged files from bounds. */
+  perFile?: { file: string; added: number; removed: number }[];
 }

@@ -210,6 +210,7 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
     }
 
     const filesTouched: string[] = [];
+    const perFile: { file: string; added: number; removed: number }[] = [];
     let linesAdded = 0;
     let linesRemoved = 0;
 
@@ -219,11 +220,14 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
       if (!file) continue;
       filesTouched.push(file);
       // Binary files report "-" rather than a count.
-      linesAdded += added === "-" ? 0 : Number.parseInt(added ?? "0", 10) || 0;
-      linesRemoved += removed === "-" ? 0 : Number.parseInt(removed ?? "0", 10) || 0;
+      const a = added === "-" ? 0 : Number.parseInt(added ?? "0", 10) || 0;
+      const r = removed === "-" ? 0 : Number.parseInt(removed ?? "0", 10) || 0;
+      perFile.push({ file, added: a, removed: r });
+      linesAdded += a;
+      linesRemoved += r;
     }
 
-    return { filesTouched, linesAdded, linesRemoved };
+    return { filesTouched, linesAdded, linesRemoved, perFile };
   }
 
   public async commitCheckpoint(params: CheckpointCommitParams): Promise<string> {

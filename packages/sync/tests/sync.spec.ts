@@ -43,6 +43,8 @@ describe("@sekhemet/sync NodeGitSyncAdapter", () => {
     const stats = await adapter.getDiffStats("card_bounds", "main");
     expect(stats.filesTouched).toEqual(["src/a.ts"]);
     expect(stats.linesAdded).toBe(2);
+    // Per-file deltas let the runner exclude harness-staged tests from bounds.
+    expect(stats.perFile).toEqual([{ file: "src/a.ts", added: 2, removed: 0 }]);
 
     const diff = await adapter.generateDiff("card_bounds", "main");
     expect(diff).toContain("src/a.ts");

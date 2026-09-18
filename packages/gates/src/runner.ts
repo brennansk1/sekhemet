@@ -1,5 +1,5 @@
 import { performance } from "node:perf_hooks";
-import type { ProcessSandbox } from "@sekhemet/sandbox";
+import { type ProcessSandbox, matchesGlob } from "@sekhemet/sandbox";
 import {
   DEFAULT_GATES,
   DEFAULT_PROJECT_CONFIG,
@@ -218,6 +218,22 @@ export class DeterministicGateRunner implements GateRunner {
           });
         }
         break;
+      }
+    }
+
+    // A failure reported inside a protected test must not send the agent to
+    // edit that test: it cannot (the permission engine denies it), so the
+    // suggestion is a dead end that burns turns. Point it at the implementation.
+    for (const failure of failures) {
+      const onlyProtected =
+        failure.suggestedFixFiles.length > 0 &&
+        failure.suggestedFixFiles.every((f) =>
+          config.project.protected.some((pattern) => matchesGlob(f, pattern)),
+        );
+      if (onlyProtected) {
+        const where = failure.suggestedFixFiles.join(", ");
+        failure.suggestedFixFiles = [];
+        failure.suggestedAction = `Reported in ${where}, a protected test you may not edit. The test is the specification: change the implementation it exercises so this assertion holds.`;
       }
     }
 
