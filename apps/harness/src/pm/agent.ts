@@ -249,6 +249,11 @@ const UPDATE_FIELDS: [string, string, (v: unknown) => unknown][] = [
  * priority or an empty split becomes nothing rather than a broken proposal
  * the human would have to reason about.
  */
+const shortTitle = (t: string) => t.replace(/\s*\(SPIDR:[^)]*\)\s*$/, "");
+/** "the API waits on it" -> ". The API waits on it." */
+const because = (reason: string) =>
+  reason ? `. ${reason.charAt(0).toUpperCase()}${reason.slice(1).replace(/[.\s]+$/, "")}.` : "";
+
 export function toProposals(calls: ToolCall[], cards: CardRecord[]): ProposalDraft[] {
   const byId = new Map(cards.map((c) => [c.id, c]));
   const out: ProposalDraft[] = [];
@@ -274,7 +279,7 @@ export function toProposals(calls: ToolCall[], cards: CardRecord[]): ProposalDra
         cardId: card.id,
         patch,
         before,
-        summary: `Update ${card.title}: ${Object.keys(patch).join(", ")}${reason ? `. ${reason}` : ""}`,
+        summary: `Update ${shortTitle(card.title)}: ${Object.keys(patch).join(", ")}${because(reason)}`,
       });
     } else if (call.name === "propose_create_card") {
       const title = asString(a.title);
@@ -294,7 +299,7 @@ export function toProposals(calls: ToolCall[], cards: CardRecord[]): ProposalDra
       out.push({
         kind: "create_card",
         cards: [draft],
-        summary: `Create ${title}${reason ? `. ${reason}` : ""}`,
+        summary: `Create ${title}${because(reason)}`,
       });
     } else if (call.name === "propose_split_card") {
       const card = byId.get(String(a.card_id));
@@ -317,7 +322,7 @@ export function toProposals(calls: ToolCall[], cards: CardRecord[]): ProposalDra
         kind: "split_card",
         cardId: card.id,
         cards: drafts,
-        summary: `Split ${card.title} into ${drafts.length} cards${points ? ` (${points} pts)` : ""}${reason ? `. ${reason}` : ""}`,
+        summary: `Split ${shortTitle(card.title)} into ${drafts.length} cards${points ? ` (${points} pts)` : ""}${because(reason)}`,
       });
     } else if (call.name === "propose_move_card") {
       const card = byId.get(String(a.card_id));
@@ -329,7 +334,7 @@ export function toProposals(calls: ToolCall[], cards: CardRecord[]): ProposalDra
         cardId: card.id,
         patch: { status: to },
         before: { status: card.status },
-        summary: `Move ${card.title} to ${to}${reason ? `. ${reason}` : ""}`,
+        summary: `Move ${shortTitle(card.title)} to ${to}${because(reason)}`,
       });
     } else if (call.name === "propose_create_cycle") {
       const name = asString(a.name);
@@ -341,7 +346,7 @@ export function toProposals(calls: ToolCall[], cards: CardRecord[]): ProposalDra
       out.push({
         kind: "create_cycle",
         patch: { name, startsOn, endsOn, ...(goal ? { goal } : {}), cardIds },
-        summary: `Plan cycle ${name} (${startsOn} to ${endsOn})${cardIds.length ? ` with ${cardIds.length} cards` : ""}${reason ? `. ${reason}` : ""}`,
+        summary: `Plan cycle ${name} (${startsOn} to ${endsOn})${cardIds.length ? ` with ${cardIds.length} cards` : ""}${because(reason)}`,
       });
     }
   }

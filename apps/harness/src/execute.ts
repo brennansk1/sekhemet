@@ -1,5 +1,7 @@
+import { execFile } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import type { BoardServiceImpl } from "@sekhemet/board";
 import { PlaybookRegistry, SkillsRegistry } from "@sekhemet/context";
 import { DeterministicGateRunner, loadGatesConfig } from "@sekhemet/gates";
@@ -8,6 +10,7 @@ import { type CardRunResult, CardRunner, type TurnResult } from "@sekhemet/loop"
 import type { LocalInferenceAdapter } from "@sekhemet/models";
 import { ProcessSandbox } from "@sekhemet/sandbox";
 import { NodeGitSyncAdapter } from "@sekhemet/sync";
+import { readSettings } from "./integrations.js";
 
 export interface ExecutionContext {
   repoPath: string;
@@ -196,6 +199,32 @@ export async function acceptCard(
   }
 
   const gitAdapter = new NodeGitSyncAdapter(ctx.repoPath);
+
+  // With "GitHub PR on accept" on, a person's Accept opens a pull request
+  // instead of merging locally, so the team's normal review and CI apply.
+  // The queue's --auto-accept (actor "harness") always merges locally: the
+  // benchmark needs later cards to build on earlier ones.
+  if (actor !== "harness" && readSettings(ctx.repoPath).githubPrOnAccept) {
+    const url = await openPullRequest(ctx, card, gitAdapter.branchNameFor(card.id, card.title));
+    await ctx.boardService.transitionCard({
+      cardId: card.id,
+      fromStatus: card.status,
+      toStatus: "done",
+      actor,
+      reason: `accepted: pull request ${url}`,
+    });
+    await ctx.cardStore
+      .recordEvent({
+        type: "card/accepted",
+        cardId: card.id,
+        actor,
+        payload: { id: card.id, pr: url },
+      })
+      .catch(() => undefined);
+    await gitAdapter.removeWorktree(card.id);
+    return url;
+  }
+
   const sha = await gitAdapter.squashAndMerge(
     card.id,
     "main",
@@ -317,4 +346,50 @@ export function inferDependencies(cards: CardRecord[]): Map<string, string[]> {
     deps.set(card.id, [...found]);
   }
   return deps;
+}
+
+/**
+ * Push the card's branch and open a pull request whose body is the evidence.
+ * Uses the user's own git remote and `gh` login; Sekhemet holds no token.
+ */
+async function openPullRequest(
+  ctx: ExecutionContext,
+  card: CardRecord,
+  branch: string,
+): Promise<string> {
+  const run = promisify(execFile);
+  await run("git", ["push", "-u", "origin", `${branch}:${branch}`], {
+    cwd: ctx.repoPath,
+    timeout: 120_000,
+  });
+  const title = card.title.replace(/\s*\(SPIDR:[^)]*\)\s*$/, "");
+  let gates = "";
+  try {
+    const ev = JSON.parse(
+      readFileSync(join(ctx.repoPath, ".sekhemet", "evidence", `latest-${card.id}.json`), "utf8"),
+    ) as { rungResults?: { gate: string; passed: boolean; durationMs?: number }[] };
+    gates = (ev.rungResults ?? [])
+      .map(
+        (r) => `- ${r.passed ? "✓" : "✗"} ${r.gate}${r.durationMs ? ` (${r.durationMs} ms)` : ""}`,
+      )
+      .join("\n");
+  } catch {
+    // No evidence file: the body says so rather than inventing results.
+  }
+  const body = [
+    card.spec ?? "",
+    card.acceptanceCriteria?.length
+      ? `### Done when\n${card.acceptanceCriteria.map((c) => `- ${c}`).join("\n")}`
+      : "",
+    `### Gates\n${gates || "_No evidence file was found for this card._"}`,
+    `_Implemented by the Sekhemet Worker and accepted in the dashboard. Card \`${card.id}\`._`,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+  const { stdout } = await run(
+    "gh",
+    ["pr", "create", "--head", branch, "--base", "main", "--title", title, "--body", body],
+    { cwd: ctx.repoPath, timeout: 60_000 },
+  );
+  return stdout.trim().split("\n").at(-1) ?? "";
 }

@@ -77,7 +77,10 @@ describe("PM and board-practice API", () => {
   });
 
   it("answers a chat message with the PM model when no queue holds the Worker", async () => {
-    const sent = await post("/api/pm/messages", { text: "What's next?", context: { view: "board" } });
+    const sent = await post("/api/pm/messages", {
+      text: "What's next?",
+      context: { view: "board" },
+    });
     expect(sent.status).toBe(200);
 
     let thread: { messages: { role: string; proposals?: { id: string; state: string }[] }[] } = {
@@ -108,8 +111,15 @@ describe("PM and board-practice API", () => {
   });
 
   it("edits card fields inline and rejects invalid values", async () => {
-    const res = await post(`/api/cards/${ledgerId}`, { estimate: 5, dueDate: "2026-10-01", priority: 9 }, "PATCH");
-    const body = (await res.json()) as { card: { estimate: number; dueDate: string }; ignored: string[] };
+    const res = await post(
+      `/api/cards/${ledgerId}`,
+      { estimate: 5, dueDate: "2026-10-01", priority: 9 },
+      "PATCH",
+    );
+    const body = (await res.json()) as {
+      card: { estimate: number; dueDate: string };
+      ignored: string[];
+    };
     expect(body.card.estimate).toBe(5);
     expect(body.card.dueDate).toBe("2026-10-01");
     expect(body.ignored).toEqual(["priority"]);
@@ -131,9 +141,17 @@ describe("PM and board-practice API", () => {
 
   it("exports the board in Jira's CSV columns with a download filename", async () => {
     const res = await fetch(`${base}/api/export?format=jira-csv`);
-    expect(res.headers.get("content-disposition")).toMatch(/attachment; filename="sekhemet-.*-jira-csv\.csv"/);
+    expect(res.headers.get("content-disposition")).toMatch(
+      /attachment; filename="sekhemet-.*-jira-csv\.csv"/,
+    );
     const [header, row] = parseCsv(await res.text());
-    expect(header?.slice(0, 5)).toEqual(["Summary", "Issue Type", "Status", "Priority", "Story Points"]);
+    expect(header?.slice(0, 5)).toEqual([
+      "Summary",
+      "Issue Type",
+      "Status",
+      "Priority",
+      "Story Points",
+    ]);
     // The SPIDR suffix is ours, not the team's: it is stripped on export.
     expect(row?.[0]).toBe("Implement append-only ledger");
     expect(row?.[3]).toBe("High");
@@ -141,7 +159,8 @@ describe("PM and board-practice API", () => {
 
   it("imports a Linear CSV as proposals, never directly", async () => {
     const before = (await cards.listCards()).length;
-    const csv = 'Title,Description,Priority,Estimate,Labels\n"Add HTTP API","Expose the ledger",Urgent,5,"api,http"\n';
+    const csv =
+      'Title,Description,Priority,Estimate,Labels\n"Add HTTP API","Expose the ledger",Urgent,5,"api,http"\n';
     const res = await post("/api/import", { format: "linear-csv", content: csv });
     const { proposals } = (await res.json()) as {
       proposals: { id: string; cards: Record<string, unknown>[] }[];
@@ -171,7 +190,10 @@ describe("PM and board-practice API", () => {
       "linear",
       "slack",
     ]);
-    expect((await post("/api/integrations/slack", { webhookUrl: "https://evil.example/x" }, "PUT")).status).toBe(400);
+    expect(
+      (await post("/api/integrations/slack", { webhookUrl: "https://evil.example/x" }, "PUT"))
+        .status,
+    ).toBe(400);
     const ok = await post(
       "/api/integrations/slack",
       { webhookUrl: "https://hooks.slack.com/services/T000/B000/XXXX" },
