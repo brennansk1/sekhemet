@@ -1,19 +1,24 @@
 #!/usr/bin/env node
-import { copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { freemem, totalmem } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { BoardServiceImpl } from "@sekhemet/board";
-import { PlaybookRegistry, SkillsRegistry } from "@sekhemet/context";
 import { BenchmarkHarness } from "@sekhemet/eval";
-import { DeterministicGateRunner, loadGatesConfig, summarizeEvidence } from "@sekhemet/gates";
-import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
-import { CardRunner } from "@sekhemet/loop";
+import { DeterministicGateRunner, summarizeEvidence } from "@sekhemet/gates";
+import { type CardRecord, CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { HttpInferenceAdapter, MockInferenceAdapter, createNail35BAdapter } from "@sekhemet/models";
 import { SpidrFeaturePlanner } from "@sekhemet/planner";
 import { ProcessSandbox } from "@sekhemet/sandbox";
 import { NodeGitSyncAdapter } from "@sekhemet/sync";
 import { type DoctorReport, runDoctor } from "./doctor.js";
+import {
+  type QueueEntry,
+  type QueueReport,
+  acceptCard,
+  executeCard,
+  writeQueueReport,
+} from "./execute.js";
 import { runMcpStdioServer } from "./mcp.js";
 import { startDashboardServer } from "./server.js";
 
@@ -29,6 +34,7 @@ export interface CliConfig {
     | "replay"
     | "bake-off"
     | "accept"
+    | "queue"
     | "mcp"
     | "help";
   targetArg?: string | undefined;
@@ -84,6 +90,7 @@ export function parseCliArgs(argv: string[] = process.argv.slice(2)): CliConfig 
 
   const validCommands = [
     "accept",
+    "queue",
     "doctor",
     "board",
     "log",
@@ -385,41 +392,23 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       console.error(`Card not found: ${cardId}`);
       process.exit(1);
     }
-    if (card.status !== "review") {
-      console.error(
-        `Card ${cardId} is in '${card.status}'. Only a card in Review can be accepted — the harness verifies, a person accepts.`,
+    try {
+      const sha = await acceptCard(
+        {
+          repoPath: config.repoPath,
+          restrictedMode: config.restrictedMode,
+          cardStore,
+          boardService,
+        },
+        card,
       );
+      console.log(
+        `\nAccepted ${cardId} — squashed to main as ${sha.slice(0, 10)}, card moved to Done.`,
+      );
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
       process.exit(1);
     }
-
-    const gitAdapter = new NodeGitSyncAdapter(config.repoPath);
-    // Squash the card's branch onto main so later cards build on accepted work.
-    // Without this every card starts from a tree its predecessors never touched.
-    const sha = await gitAdapter.squashAndMerge(
-      cardId,
-      "main",
-      `feat(${cardId}): ${card.title}`,
-      {
-        "Agent-Model": card.modelRoute?.executor ?? "local",
-        "Agent-Harness": "sekhemet",
-        "Agent-Role": "implementer",
-        GateStatus: "pass",
-      },
-      card.title,
-    );
-
-    await boardService.transitionCard({
-      cardId,
-      fromStatus: card.status,
-      toStatus: "done",
-      actor: "human",
-      reason: "accepted by operator",
-    });
-    await gitAdapter.removeWorktree(cardId);
-
-    console.log(
-      `\nAccepted ${cardId} — squashed to main as ${sha.slice(0, 10)}, card moved to Done.`,
-    );
     return;
   }
 
@@ -439,81 +428,16 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     console.log(`Scope: [${card.scopeFiles.join(", ") || "unrestricted"}]`);
     console.log(`Budget: ${card.stepBudget} steps\n`);
 
-    const gitAdapter = new NodeGitSyncAdapter(config.repoPath);
-    const gatesConfig = loadGatesConfig(config.repoPath);
-    // Restricted mode refuses to execute where the OS cannot confine the
-    // subprocess, rather than quietly running the agent unsandboxed.
-    const sandbox = new ProcessSandbox({ requireConfinement: config.restrictedMode });
-    const gateRunner = new DeterministicGateRunner(sandbox, {
-      repoRoot: config.repoPath,
-      expectedConfigSha256: gatesConfig.sha256,
-    });
     const model = createNail35BAdapter();
-    const skills = new SkillsRegistry();
-    skills.loadFromDirectory(join(config.repoPath, ".sekhemet", "skills"));
-    const playbook = new PlaybookRegistry(config.repoPath);
-
-    const runner = new CardRunner({
-      card,
-      repoRoot: config.repoPath,
-      worktreePath: join(config.repoPath, ".sekhemet", "worktrees", cardId),
-      stepBudget: card.stepBudget,
-      modelAdapter: model,
-      gateRunner,
-      syncAdapter: gitAdapter,
-      scopeFiles: card.scopeFiles,
-      agentRole: "implementer",
-      agentHarness: "sekhemet",
-      // Stop before the host does: a paused card resumes, an OOM takes the machine.
-      memoryGuard: {},
-      skillsRegistry: skills,
-      playbookRegistry: playbook,
-      lifecycle: {
-        // Persist the real step count, or the board reports 0/32 for a card
-        // that exhausted its budget — the one number a human scanning the
-        // board most needs.
-        recordSteps: async (id, stepsUsed) => {
-          await cardStore.updateCard(id, { stepsUsed });
-        },
-        transition: async (id, to) => {
-          const current = await cardStore.getCard(id);
-          if (!current || current.status === to) return;
-          await boardService.transitionCard({
-            cardId: id,
-            fromStatus: current.status,
-            toStatus: to,
-            actor: "executor",
-            reason: `card runner advanced card to ${to}`,
-          });
-        },
-      },
-      onWorktreeReady: async (worktreePath) => {
-        // Stage this card's acceptance tests. Contract-first means the oracle
-        // for THIS card is present and failing before any work begins, and the
-        // suites belonging to later cards are not there to fail it.
-        const staged = card.acceptanceTests ?? [];
-        if (staged.length === 0) return;
-
-        const testsDir = join(worktreePath, "tests");
-        if (!existsSync(testsDir)) mkdirSync(testsDir, { recursive: true });
-
-        for (const name of staged) {
-          const from = join(config.repoPath, "acceptance", name);
-          if (existsSync(from)) {
-            copyFileSync(from, join(testsDir, name));
-            console.log(`   staged acceptance test: tests/${name}`);
-          }
-        }
-      },
-      onProgress: (event) => {
-        const prefix = event.turn ? `  [turn ${event.turn}]` : "  ";
-        console.log(`${prefix} ${event.type}: ${event.message}`);
-      },
-    });
-
-    let result: Awaited<ReturnType<CardRunner["run"]>>;
+    const ctx = {
+      repoPath: config.repoPath,
+      restrictedMode: config.restrictedMode,
+      cardStore,
+      boardService,
+    };
+    let result: Awaited<ReturnType<typeof executeCard>>;
     try {
-      result = await runner.run();
+      result = await executeCard(ctx, card, model);
     } finally {
       // Release the weights on every exit path, including a crash mid-card:
       // a resident 13GB checkpoint left behind by a failed run is how the host
@@ -532,6 +456,87 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     return;
   }
 
+  if (config.command === "queue") {
+    // Run every Ready card in board order on one resident model. With
+    // --auto-accept, each passing card is merged to main so the next builds on
+    // it; that is a benchmarking convenience for release gates, not the
+    // default, because acceptance is a human decision.
+    const autoAccept = argv.includes("--auto-accept");
+    const ready = (await cardStore.listCards({ status: "ready" })) as CardRecord[];
+    if (ready.length === 0) {
+      console.log("No Ready cards.");
+      return;
+    }
+
+    const model = createNail35BAdapter();
+    const ctx = {
+      repoPath: config.repoPath,
+      restrictedMode: config.restrictedMode,
+      cardStore,
+      boardService,
+    };
+    const started = Date.now();
+    const entries: QueueEntry[] = [];
+
+    try {
+      for (const queued of ready) {
+        const card = (await cardStore.getCard(queued.id)) ?? queued;
+        console.log(`\n=== ${card.id}: ${card.title} ===`);
+        const result = await executeCard(ctx, card, model);
+
+        let accepted = false;
+        if (result.passed && autoAccept) {
+          const reviewed = await cardStore.getCard(card.id);
+          if (reviewed) {
+            const sha = await acceptCard(ctx, reviewed);
+            accepted = true;
+            console.log(`   accepted -> main ${sha.slice(0, 10)}`);
+          }
+        }
+
+        entries.push({
+          cardId: card.id,
+          passed: result.passed,
+          accepted,
+          stopReason: result.stopReason,
+          turns: result.evidence.turnsUsed,
+          durationMs: result.evidence.durationMs,
+          promptTokens: result.evidence.tokens.promptTokens,
+          completionTokens: result.evidence.tokens.completionTokens,
+        });
+        console.log(
+          `   ${result.passed ? "PASSED" : "FAILED"} (${result.stopReason}) in ${result.evidence.turnsUsed} turns, ${(result.evidence.durationMs / 1000).toFixed(1)}s`,
+        );
+
+        // The memory guard stops a card; continuing the queue would just trip
+        // it again on the next one.
+        if (result.stopReason === "memory_pressure") {
+          console.log("   queue halted: memory pressure");
+          break;
+        }
+      }
+    } finally {
+      await model.unload();
+    }
+
+    const passed = entries.filter((e) => e.passed).length;
+    const report: QueueReport = {
+      startedAt: new Date(started).toISOString(),
+      model: model.modelId,
+      entries,
+      passAt1: entries.length > 0 ? passed / entries.length : 0,
+      totalDurationMs: Date.now() - started,
+    };
+    const path = writeQueueReport(config.repoPath, report);
+
+    console.log(
+      `\nScorecard: ${passed}/${entries.length} passed (${(report.passAt1 * 100).toFixed(0)}%) in ${(report.totalDurationMs / 60000).toFixed(1)} min`,
+    );
+    console.log(`Report: ${path}`);
+    if (passed < entries.length) process.exitCode = 1;
+    return;
+  }
+
   console.log("=================================================");
   console.log(" Sekhemet — Board-Native Local-First Coding Harness");
   console.log(` Model: ${config.modelId}`);
@@ -546,6 +551,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   console.log("  sekhemet plan <spec>        Decompose feature into SPIDR cards");
   console.log("  sekhemet run <card-id>      Execute card unattended in worktree");
   console.log("  sekhemet accept <card-id>   Squash-merge a reviewed card to main");
+  console.log("  sekhemet queue [--auto-accept]  Run all Ready cards on one warm model");
   console.log("  sekhemet gate [card-id]     Run deterministic verification gates");
   console.log("  sekhemet replay <card-id>   Replay checkpoint trajectory for a card");
   console.log("  sekhemet bake-off           Qualify and benchmark local models");

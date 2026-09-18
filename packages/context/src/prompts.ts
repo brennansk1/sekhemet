@@ -37,6 +37,14 @@ export type SkillDisclosure = "full" | "manifest";
 export interface PromptPackOptions {
   card: CardRecord;
   repoMap?: string;
+  /**
+   * Files shown in full: the card's acceptance tests and its scope files.
+   *
+   * Measured on Chronicle, the agent spent its first two to four turns on
+   * read_file for exactly these. Supplying them up front removes those turns,
+   * and turn count, not decode speed, is what dominates wall clock.
+   */
+  pinnedFiles?: { path: string; content: string; label: string }[];
   activeSkills?: SkillManifest[];
   playbookRules?: string[];
   recentTurns?: TurnHistoryItem[];
@@ -203,6 +211,14 @@ export function buildFullPromptPack(options: PromptPackOptions): BuiltPromptPack
   // Zone 3: Architectural Repo Map
   if (repoMap) {
     userParts.push(`=== ARCHITECTURAL REPO MAP ===\n${repoMap}`);
+  }
+
+  // Zone 3b: pinned files. Acceptance tests are immutable, so placing them
+  // ahead of the per-turn content keeps them inside the cacheable prefix.
+  for (const file of options.pinnedFiles ?? []) {
+    userParts.push(
+      `=== ${file.label.toUpperCase()}: ${file.path} (shown in full; do not read_file it) ===\n${file.content || "(empty file)"}`,
+    );
   }
 
   // Zone 4: Card Contract & Scope

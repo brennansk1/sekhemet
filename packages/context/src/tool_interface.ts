@@ -38,7 +38,7 @@ export interface ToolInterfaceSpec {
 export const TOOL_INTERFACE_HEADER = "=== TOOL INTERFACE ===";
 
 const PREAMBLE = [
-  "Emit tool calls, not prose. One call per step.",
+  "Emit tool calls, not prose. You may emit several calls in one step; batch independent work (for example write a file and then call finish_card) rather than spending a step on each.",
   "1. Arguments marked with a trailing asterisk are required.",
   "2. Pass arguments as JSON values of the declared type.",
   "3. Call only the tools named below. No other tool exists.",

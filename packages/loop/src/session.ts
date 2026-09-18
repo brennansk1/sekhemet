@@ -139,6 +139,30 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     }
   }
 
+  /**
+   * Acceptance tests and current scope-file contents, for the prompt.
+   *
+   * Capped per file so a large scope file cannot crowd out the rest of the
+   * context; anything larger is left for read_file with a line range.
+   */
+  private pinnedFiles(): { path: string; content: string; label: string }[] {
+    const MAX_CHARS = 6000;
+    const pinned: { path: string; content: string; label: string }[] = [];
+
+    const add = (path: string, label: string): void => {
+      try {
+        const content = this.tools.readRaw(path);
+        if (content.length <= MAX_CHARS) pinned.push({ path, content, label });
+      } catch {
+        if (label === "scope file") pinned.push({ path, content: "", label });
+      }
+    };
+
+    for (const name of this.card.acceptanceTests ?? []) add(`tests/${name}`, "acceptance test");
+    for (const path of this.options.scopeFiles ?? []) add(path, "scope file");
+    return pinned;
+  }
+
   /** Declared scope files not yet written during this card. */
   private pendingScopeFiles(): string[] {
     const scope = this.options.scopeFiles ?? [];
@@ -185,6 +209,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     const pack = buildFullPromptPack({
       card: { ...this.card, stepsUsed: this.stepsUsed },
       repoMap: this.repoMap(),
+      pinnedFiles: this.pinnedFiles(),
       activeSkills: skills,
       playbookRules,
       recentTurns: maskOlderObservations(this.history, VERBATIM_TURN_WINDOW),
