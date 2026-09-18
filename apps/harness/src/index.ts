@@ -31,6 +31,7 @@ import {
   writeQueueReport,
 } from "./execute.js";
 import { notifySlack } from "./integrations.js";
+import { applyExploration, exploreProject } from "./learning/explore.js";
 import { reflectWithManager } from "./learning/reflect.js";
 import { reviewCard } from "./learning/review.js";
 import { LearningStore } from "./learning/store.js";
@@ -53,6 +54,7 @@ export interface CliConfig {
     | "bake-off"
     | "accept"
     | "tune"
+    | "explore"
     | "queue"
     | "mcp"
     | "help";
@@ -110,6 +112,7 @@ export function parseCliArgs(argv: string[] = process.argv.slice(2)): CliConfig 
   const validCommands = [
     "accept",
     "tune",
+    "explore",
     "queue",
     "doctor",
     "board",
@@ -270,6 +273,24 @@ export async function printEventLog(log: EventLog): Promise<void> {
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
   const config = parseCliArgs(argv);
+
+  if (config.command === "explore") {
+    // `sekhemet explore [--activate]`: learn the project's constraints from its
+    // own configuration before any card runs (RSIAgent's exploration phase).
+    const found = exploreProject(config.repoPath);
+    for (const c of found) console.log(`- ${c.key}: ${c.text}`);
+    const db = new DatabaseSync(join(config.repoPath, ".sekhemet", "events.db"));
+    initSchema(db);
+    const r = await applyExploration(
+      new LearningStore(new EventLog(db)),
+      config.repoPath,
+      process.argv.includes("--activate"),
+    );
+    console.log(
+      `\n${found.length} constraint(s) found; ${r.proposed} new rule(s), ${r.activated} activated.${r.activated === 0 && r.proposed > 0 ? " Approve them in Playbook, or rerun with --activate." : ""}`,
+    );
+    return;
+  }
 
   if (config.command === "tune") {
     // `sekhemet tune [--from <repo> ...]`: replay recorded runs under candidate
@@ -651,6 +672,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     let workerModelId = workerModel ?? NAIL_WORKER_PROFILE.modelId;
     // --max-turns caps every card's step budget (the tuner's recommendation).
     const escalateRetries = argv.includes("--escalate-retries");
+    if (argv.includes("--explore")) {
+      // Constraints read from the project's own config are facts, so they are
+      // activated directly; heuristic rules still wait for a human.
+      const r = await applyExploration(ctx.learning, config.repoPath, true);
+      console.log(`Explored the project: ${r.activated} constraint rule(s) active.`);
+    }
     const maxTurnsIdx = argv.indexOf("--max-turns");
     const maxTurns = maxTurnsIdx !== -1 ? Number(argv[maxTurnsIdx + 1]) : undefined;
     // Lessons each attempt learned, handed to the next attempt at the same card.

@@ -174,7 +174,7 @@ export class LearningStore {
             card.scopeFiles.some((f) => f.includes(r.scope.pathPattern ?? ""))),
       )
       .sort((a, b) => b.value - a.value)
-      .slice(0, 6);
+      .slice(0, 8);
   }
 
   /** Helpful/harmful accounting after a first attempt that carried these rules. */
