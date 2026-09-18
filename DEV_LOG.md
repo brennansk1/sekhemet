@@ -44,6 +44,33 @@ If you are Claude reading this because Gemini reached quota limits or you were s
 
 ## Detailed Session Log
 
+### Entry 20 — 2026-09-18 (papers, four-model roster, audit gate)
+- **Agent**: Claude Opus 5 (`claude-code`), lead; one Claude UI subagent (Learning screens, review panel, roster UI)
+- **Role**: Lead Driver & Delegator
+- **Papers the user sent, and what each became:**
+
+  | Paper | What it became | Commit(s) |
+  |---|---|---|
+  | RSIAgent | Learn the environment first: configuration constraints, then the curriculum's module APIs | `610b77a`, `d0ff42d` |
+  | SoL-Pi | Delegated reading: large files come back as outlines | `01b6998` |
+  | Mem0 | ADD/UPDATE/DELETE/NOOP consolidation of rules and profile | `520ae43` |
+  | ARIS | An integrity gate against passes bought by disabling checks | `816e5e4` |
+  | ARIS | A cross-family `--reviewer` role | `8d2791f` |
+  | AutoDev | The Worker's `ask` | `777e5d9` |
+
+- **Four-model roster, at the user's request:**
+  - The roles are worker, manager (Merit), adversarial reviewer and researcher.
+  - The researcher is **Apodex-1.1-mini** (arXiv 2608.23283, Apache-2.0). The IQ3_M GGUF is downloading to the AI-Models folder; Q8_0 is for the 128 GB host.
+  - The Researcher answers from evidence with sources (`764deec`). It reads papers, the web (through the user's provider) and GitHub (`5e74e60`).
+  - `/api/models` reports the roster and structured research citations (`1117479`).
+  - The reviewer is Mistral-Small-3.2-24B, already in Ollama: a different family from the Qwen worker and manager.
+- **Remaining research items built:**
+  - Merit's quality metrics and a Monte Carlo forecast (`8d2791f`).
+  - A KV slot cache across model swaps (`8f2c986`).
+- **Audit gate:** docs/research/IMPLEMENTATION_AUDIT.md (`d289c51`) maps every request, recommendation and paper to its commit and test, or marks it not built by design (with the reason) or waiting on hardware. All 39 commits and all named tests are verified to exist.
+- **Process:** two commits went in with a failing test (`d0626e3`, `5e74e60`) and were fixed next (`b6eb636`, `4be429b`). Commits now gate on the test runner's exit code.
+- **Run 8** (the last diagnostic run, on the pre-feature build): Pass@1 4/6. Ledger failed both attempts; its retry used all 40 turns. 45.3 min.
+
 ### Entry 19 — 2026-09-18 (research implementation, RSI, learning, portability)
 - **Agent**: Claude Opus 5 (`claude-code`), lead; one Claude UI subagent (the Learning screens and naming guide)
 - **Role**: Lead Driver & Delegator
