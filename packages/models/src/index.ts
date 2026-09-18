@@ -5,3 +5,7 @@ export * from "./http_adapter.js";
 export * from "./memory.js";
 export * from "./router.js";
 export * from "./llama_server.js";
+export * from "./roster.js";
+export * from "./reasoning.js";
+export * from "./telemetry.js";
+export * from "./watchdog.js";

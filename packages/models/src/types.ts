@@ -19,6 +19,17 @@ export interface TextPatch {
   replace: string;
 }
 
+/**
+ * Per-request reasoning (M6). `off` suppresses the thinking channel (the
+ * default for mechanical steps: Qwen-family models otherwise spend the budget
+ * thinking and leave `content` empty); the other levels turn it on with that
+ * effort. See `reasoningForStep` for the policy the loop should apply.
+ */
+export type ReasoningLevel = "off" | "low" | "medium" | "high";
+
+/** What a request is for; selects the adapter's sampling profile (M5). */
+export type RequestPurpose = "code" | "planning";
+
 export interface InferenceRequest {
   systemPrompt?: string;
   prompt: string;
@@ -26,12 +37,41 @@ export interface InferenceRequest {
   toolArm: ToolArm;
   temperature?: number;
   maxTokens?: number;
+  /**
+   * Reasoning for this request only. Undefined keeps the adapter's default
+   * (`disableReasoning`). When on, `reasoningBudgetTokens` caps the thinking
+   * and is added to the output allowance so the answer is not starved.
+   */
+  reasoning?: ReasoningLevel;
+  reasoningBudgetTokens?: number;
+  /** `planning` uses the adapter's planning sampling profile when it has one. */
+  purpose?: RequestPurpose;
 }
 
 export interface TokenUsage {
   promptTokens: number;
   completionTokens: number;
   durationMs: number;
+  /**
+   * Prompt tokens the server reused from its prefix cache (llama-server
+   * `timings.cache_n`, or `usage.prompt_tokens_details.cached_tokens`).
+   * Undefined when the server does not report it (Ollama).
+   */
+  cachedPromptTokens?: number;
+  /**
+   * cached / (cached + evaluated) prompt tokens, in [0, 1] (M18). The
+   * Trifecta target is 0.98 on tool-result steps; see `PrefixCacheMonitor`.
+   */
+  cacheHitRate?: number;
+  /** Prompt tokens the server actually evaluated (not served from cache). */
+  evaluatedPromptTokens?: number;
+  /** Prefill (prompt evaluation) speed for this request, tokens/s (M3). */
+  prefillTokensPerSecond?: number;
+  /** Decode (generation) speed for this request, tokens/s (M3). */
+  decodeTokensPerSecond?: number;
+  /** Server-measured prefill and decode wall time, ms. */
+  prefillMs?: number;
+  decodeMs?: number;
 }
 
 export interface InferenceResponse {
@@ -45,5 +85,11 @@ export interface LocalInferenceAdapter {
   readonly supportedArms: ToolArm[];
   /** Context size and reserved output tokens, when known; used to budget prompts. */
   readonly contextWindow?: { contextTokens: number; maxTokens: number } | undefined;
+  /**
+   * True when the adapter sends `InferenceRequest.tools` as native schemas
+   * (the server's chat template renders them). Prompt builders then omit the
+   * text tool interface, so the tools are described once (C4).
+   */
+  readonly nativeTools?: boolean;
   generate(req: InferenceRequest): Promise<InferenceResponse>;
 }

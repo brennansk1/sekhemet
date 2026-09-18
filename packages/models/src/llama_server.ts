@@ -1,7 +1,37 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync, mkdirSync, statSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, totalmem } from "node:os";
 import { type HttpAdapterOptions, HttpInferenceAdapter } from "./http_adapter.js";
+
+/**
+ * Prompt-cache settings sized to the host (M17).
+ *
+ * llama-server's own default `--cache-ram` is 8192 MiB: on a 24 GB host that
+ * already holds a 12-14 GB checkpoint, an 8 GB host-side prompt cache is the
+ * difference between a warm cache and swap. CHRONICLE §2 fixes 2048 MiB and
+ * 6 context checkpoints for the 24 GB M4; larger hosts get more of both.
+ * Checkpoints are what let a hybrid-attention (SWA/recurrent) model reuse a
+ * prefix at all: without one near the divergence point the server re-reads
+ * the whole prompt.
+ */
+export interface CacheProfile {
+  /** `--cache-ram`, MiB. 0 disables the host-side prompt cache. */
+  cacheRamMiB: number;
+  /** `--ctx-checkpoints` per slot. */
+  ctxCheckpoints: number;
+  /**
+   * `-sps`: how closely a prompt must match a slot's cached prompt to be
+   * routed to it. Only meaningful with more than one slot.
+   */
+  slotPromptSimilarity: number;
+}
+
+export function cacheProfileForHost(totalBytes: number = totalmem()): CacheProfile {
+  const gb = totalBytes / 1024 ** 3;
+  if (gb <= 32) return { cacheRamMiB: 2048, ctxCheckpoints: 6, slotPromptSimilarity: 0.5 };
+  if (gb <= 64) return { cacheRamMiB: 4096, ctxCheckpoints: 8, slotPromptSimilarity: 0.5 };
+  return { cacheRamMiB: 8192, ctxCheckpoints: 16, slotPromptSimilarity: 0.5 };
+}
 
 export interface LlamaServerProfile {
   /** Model id reported to the harness (used in evidence and reports). */
@@ -22,8 +52,35 @@ export interface LlamaServerProfile {
    * swaps is the dominant swap cost; llama.cpp --slot-save-path).
    */
   slotCacheDir?: string;
+  /** `-t`: CPU threads. Unset leaves the server's default. */
+  threads?: number;
+  /** `-ngl`: layers offloaded to the GPU. Default 99 (all). */
+  gpuLayers?: number;
+  /** `-np`: server slots. Default 1. */
+  parallel?: number;
+  /**
+   * Prompt-cache flags (M17). Unset uses `cacheProfileForHost()`; `false`
+   * leaves every cache flag to the server's defaults.
+   */
+  cache?:
+    | (Partial<Omit<CacheProfile, "slotPromptSimilarity">> & {
+        /** `"server-default"` passes no `-sps`. */
+        slotPromptSimilarity?: number | "server-default";
+      })
+    | false;
+  /** `--metrics`: the Prometheus endpoint, for cache and throughput telemetry. */
+  metrics?: boolean;
+  /** `--no-webui` when false. */
+  webui?: boolean;
+  /**
+   * `--reasoning`. `off` forbids thinking at the server; leave it unset (or
+   * `auto`) when requests should be able to turn reasoning on (M6).
+   */
+  reasoning?: "on" | "off" | "auto";
   extraArgs?: string[];
   sampling?: HttpAdapterOptions["sampling"];
+  /** Sampling for `purpose: "planning"` requests (M5). */
+  planningSampling?: HttpAdapterOptions["sampling"];
   maxTokens?: number;
   /** Ollama endpoint to evict models from before loading. */
   ollamaBaseUrl?: string;
@@ -70,6 +127,7 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
   private child: ChildProcess | undefined;
   private starting: Promise<void> | undefined;
   private readonly url: string;
+  private mtpSuspended = false;
 
   constructor(private profile: LlamaServerProfile) {
     const port = profile.port ?? 8098;
@@ -77,17 +135,54 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
       modelId: profile.modelId,
       baseUrl: `http://127.0.0.1:${port}`,
       apiFormat: "openai",
-      contextTokens: profile.contextTokens ?? 8192,
+      // The window one request gets: `-c` is shared across `-np` slots.
+      contextTokens: Math.floor((profile.contextTokens ?? 8192) / (profile.parallel ?? 1)),
       maxTokens: profile.maxTokens ?? 2048,
       disableReasoning: true,
       ...(profile.sampling ? { sampling: profile.sampling } : {}),
+      ...(profile.planningSampling ? { planningSampling: profile.planningSampling } : {}),
     });
     this.url = `http://127.0.0.1:${port}`;
+  }
+
+  /** The launch profile, for doctor and the Machine view. */
+  public get launchProfile(): Readonly<LlamaServerProfile> {
+    return this.profile;
+  }
+
+  /**
+   * Suspend (or restore) the MTP head. A memory-watchdog action (M20): the
+   * draft head costs memory, and the change applies at the next launch,
+   * because llama-server cannot drop it from a running process.
+   */
+  public setMtpSuspended(suspended: boolean): void {
+    this.mtpSuspended = suspended;
+  }
+
+  public get isMtpSuspended(): boolean {
+    return this.mtpSuspended;
+  }
+
+  /** The cache flags this launch uses, after the host default. */
+  public cacheSettings():
+    | (Omit<CacheProfile, "slotPromptSimilarity"> & { slotPromptSimilarity?: number })
+    | undefined {
+    const cache = this.profile.cache;
+    if (cache === false) return undefined;
+    const host = cacheProfileForHost();
+    const sps = cache?.slotPromptSimilarity ?? host.slotPromptSimilarity;
+    return {
+      cacheRamMiB: cache?.cacheRamMiB ?? host.cacheRamMiB,
+      ctxCheckpoints: cache?.ctxCheckpoints ?? host.ctxCheckpoints,
+      ...(sps === "server-default" ? {} : { slotPromptSimilarity: sps }),
+    };
   }
 
   /** The argv the server is launched with; exposed for doctor and tests. */
   public launchArgs(): string[] {
     const p = this.profile;
+    const parallel = p.parallel ?? 1;
+    const cache = this.cacheSettings();
     return [
       "-m",
       p.modelPath,
@@ -95,8 +190,9 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
       "127.0.0.1",
       "--port",
       String(p.port ?? 8098),
+      ...(p.threads !== undefined ? ["-t", String(p.threads)] : []),
       "-ngl",
-      "99",
+      String(p.gpuLayers ?? 99),
       "-fa",
       "on",
       "--jinja",
@@ -107,11 +203,47 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
       "-ctv",
       p.kvType ?? "q8_0",
       "-np",
-      "1",
-      ...(p.mtp ? ["--spec-type", "draft-mtp"] : []),
+      String(parallel),
+      ...(cache
+        ? [
+            "--cache-ram",
+            String(cache.cacheRamMiB),
+            "--ctx-checkpoints",
+            String(cache.ctxCheckpoints),
+            // Slot routing by prompt similarity only matters with several slots.
+            ...(parallel > 1 && cache.slotPromptSimilarity !== undefined
+              ? ["-sps", String(cache.slotPromptSimilarity)]
+              : []),
+          ]
+        : []),
+      ...(p.metrics ? ["--metrics"] : []),
+      ...(p.webui === false ? ["--no-webui"] : []),
+      ...(p.reasoning ? ["--reasoning", p.reasoning] : []),
+      ...(p.mtp && !this.mtpSuspended ? ["--spec-type", "draft-mtp"] : []),
       ...(p.slotCacheDir ? ["--slot-save-path", p.slotCacheDir] : []),
       ...(p.extraArgs ?? []),
     ];
+  }
+
+  /**
+   * Erase every slot's KV cache (a watchdog action, M20). The server keeps
+   * running; the next request pays a cold prefill. Returns the slots erased.
+   */
+  public async trimCache(): Promise<number> {
+    if (!(await this.healthy())) return 0;
+    let erased = 0;
+    for (let slot = 0; slot < (this.profile.parallel ?? 1); slot++) {
+      try {
+        const res = await fetch(`${this.url}/slots/${slot}?action=erase`, {
+          method: "POST",
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (res.ok) erased++;
+      } catch {
+        // Best effort.
+      }
+    }
+    return erased;
   }
 
   private async healthy(): Promise<boolean> {
@@ -302,4 +434,94 @@ export function createApodexResearcher(
     maxTokens: 1500,
     sampling: { temperature: 0.3, topP: 0.95, topK: 20, minP: 0 },
   });
+}
+
+/** CHRONICLE §2 sampling for code and structured output. */
+export const QWEN38_CODE_SAMPLING = {
+  temperature: 0.2,
+  topP: 0.9,
+  topK: 20,
+  minP: 0,
+  presencePenalty: 1.5,
+} as const;
+
+/** CHRONICLE §2 sampling for planning: 0.7 / 0.8, the rest as for code. */
+export const QWEN38_PLANNING_SAMPLING = {
+  temperature: 0.7,
+  topP: 0.8,
+  topK: 20,
+  minP: 0,
+  presencePenalty: 1.5,
+} as const;
+
+/** The GGUF CHRONICLE §2 names, overridable per host. */
+export const DEFAULT_QWEN38_GGUF =
+  process.env.SEKHEMET_QWEN38_GGUF ??
+  "/Volumes/My Passport/AI-Models/llm/Dirk-Qwen3.8-27B-GGUF/Dirk-Qwen3.8-27B-GSQ-RCO-IQ3_S.gguf";
+
+export interface ChronicleProfileOptions {
+  modelPath?: string;
+  modelId?: string;
+  binary?: string;
+  /**
+   * `off` is CHRONICLE §2 verbatim (`--reasoning off`). `per-request` omits
+   * the flag, so a planning or repair request can turn thinking on (M6).
+   */
+  reasoning?: "off" | "per-request";
+  slotCacheDir?: string;
+}
+
+/**
+ * The CHRONICLE §2 llama-server launch profile (X29), as a selectable
+ * `LlamaServerProfile`:
+ *
+ *   llama-server -m <gguf> --host 127.0.0.1 --port 8099 -t 2 -ngl 999 -fa on
+ *     -ctk q8_0 -ctv q8_0 -np 2 -c 49152 --ctx-checkpoints 6 --cache-ram 2048
+ *     --jinja --metrics --no-webui --reasoning off
+ *
+ * MTP stays off: §2 measured it 21% slower on M4 Metal.
+ */
+export function chronicleLlamaServerProfile(
+  options: ChronicleProfileOptions = {},
+): LlamaServerProfile {
+  const binary = options.binary ?? process.env.SEKHEMET_LLAMA_SERVER;
+  return {
+    modelId: options.modelId ?? "qwen3.8-27b",
+    modelPath: options.modelPath ?? DEFAULT_QWEN38_GGUF,
+    ...(binary ? { binary } : {}),
+    port: 8099,
+    threads: 2,
+    gpuLayers: 999,
+    kvType: "q8_0",
+    parallel: 2,
+    contextTokens: 49152,
+    // Exactly §2: no -sps (the server default applies to its two slots).
+    cache: { cacheRamMiB: 2048, ctxCheckpoints: 6, slotPromptSimilarity: "server-default" },
+    metrics: true,
+    webui: false,
+    ...((options.reasoning ?? "off") === "off" ? { reasoning: "off" as const } : {}),
+    mtp: false,
+    ...(options.slotCacheDir ? { slotCacheDir: options.slotCacheDir } : {}),
+    maxTokens: 2048,
+    sampling: { ...QWEN38_CODE_SAMPLING },
+    planningSampling: { ...QWEN38_PLANNING_SAMPLING },
+  };
+}
+
+/**
+ * Qwen3.8-27B (the Dirk GSQ-RCO IQ3_S build) under a harness-managed
+ * llama-server with the CHRONICLE §2 profile (M5). One adapter serves both
+ * code and planning: requests with `purpose: "planning"` get 0.7 / 0.8, so
+ * the manager and escalation roles can share the same weights and server.
+ * Reasoning is per request (`reasoning: "per-request"` by default here), so
+ * repair rungs and plans can think while mechanical steps do not.
+ */
+export function createQwen38Managed(
+  options: ChronicleProfileOptions = {},
+): ManagedLlamaServerAdapter {
+  const slotCacheDir =
+    options.slotCacheDir ?? process.env.SEKHEMET_SLOT_CACHE ?? `${tmpdir()}/sekhemet-slots`;
+  return new ManagedLlamaServerAdapter(
+    chronicleLlamaServerProfile({ reasoning: "per-request", ...options, slotCacheDir }),
+  );
 }

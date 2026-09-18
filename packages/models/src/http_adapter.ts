@@ -5,6 +5,8 @@ import type {
   InferenceRequest,
   InferenceResponse,
   LocalInferenceAdapter,
+  ReasoningLevel,
+  TokenUsage,
   ToolArm,
   ToolCall,
 } from "./types.js";
@@ -23,6 +25,12 @@ export interface HttpAdapterOptions {
   baseUrl?: string;
   apiFormat?: "ollama" | "openai";
   sampling?: SamplingOptions;
+  /**
+   * Sampling for requests with `purpose: "planning"` (M5). CHRONICLE §2:
+   * 0.7 / 0.8 for planning against 0.2 / 0.9 for code. Fields not set here
+   * fall back to `sampling`.
+   */
+  planningSampling?: SamplingOptions;
   /** Context window, used to size num_ctx on Ollama. */
   contextTokens?: number;
   maxTokens?: number;
@@ -111,6 +119,122 @@ function nativeToToolCalls(raw: NativeToolCall[] | undefined): ToolCall[] {
   return calls;
 }
 
+/** llama-server's per-request `timings` block (tools/server, non-streaming). */
+export interface LlamaServerTimings {
+  cache_n?: number;
+  prompt_n?: number;
+  prompt_ms?: number;
+  prompt_per_second?: number;
+  predicted_n?: number;
+  predicted_ms?: number;
+  predicted_per_second?: number;
+}
+
+/** Server-reported accounting, before it is merged into `TokenUsage`. */
+export type ServerUsage = Omit<TokenUsage, "durationMs" | "promptTokens" | "completionTokens"> & {
+  promptTokens?: number;
+  completionTokens?: number;
+};
+
+function finite(n: unknown): n is number {
+  return typeof n === "number" && Number.isFinite(n);
+}
+
+function rate(tokens: number | undefined, ms: number | undefined): number | undefined {
+  if (!finite(tokens) || !finite(ms) || ms <= 0 || tokens <= 0) return undefined;
+  return Math.round((tokens / (ms / 1000)) * 100) / 100;
+}
+
+/**
+ * Prefix-cache and throughput accounting from a llama-server response (M18, M3).
+ *
+ * `timings.cache_n` is the prompt tokens reused from the slot's KV cache and
+ * `timings.prompt_n` the tokens actually evaluated, so the prompt was
+ * `cache_n + prompt_n` tokens and the hit rate is `cache_n` over that. Builds
+ * that omit `timings` but fill `usage.prompt_tokens_details.cached_tokens`
+ * (the OpenAI field) are read from there, against `usage.prompt_tokens`.
+ */
+export function usageFromLlamaServer(
+  timings: LlamaServerTimings | undefined,
+  usage:
+    | {
+        prompt_tokens?: number;
+        completion_tokens?: number;
+        prompt_tokens_details?: { cached_tokens?: number };
+      }
+    | undefined,
+): ServerUsage {
+  const out: ServerUsage = {};
+  if (finite(usage?.prompt_tokens)) out.promptTokens = usage.prompt_tokens;
+  if (finite(usage?.completion_tokens)) out.completionTokens = usage.completion_tokens;
+
+  if (finite(timings?.cache_n) && finite(timings?.prompt_n)) {
+    const cached = timings.cache_n;
+    const evaluated = timings.prompt_n;
+    out.cachedPromptTokens = cached;
+    out.evaluatedPromptTokens = evaluated;
+    const total = cached + evaluated;
+    if (total > 0) out.cacheHitRate = cached / total;
+    if (out.promptTokens === undefined) out.promptTokens = total;
+  } else {
+    const cached = usage?.prompt_tokens_details?.cached_tokens;
+    const total = usage?.prompt_tokens;
+    if (finite(cached) && finite(total) && total > 0) {
+      out.cachedPromptTokens = cached;
+      out.evaluatedPromptTokens = Math.max(0, total - cached);
+      out.cacheHitRate = Math.min(1, cached / total);
+    }
+  }
+
+  if (finite(timings?.prompt_ms)) out.prefillMs = timings.prompt_ms;
+  if (finite(timings?.predicted_ms)) out.decodeMs = timings.predicted_ms;
+  const prefill = finite(timings?.prompt_per_second)
+    ? timings.prompt_per_second
+    : rate(timings?.prompt_n, timings?.prompt_ms);
+  const decode = finite(timings?.predicted_per_second)
+    ? timings.predicted_per_second
+    : rate(timings?.predicted_n, timings?.predicted_ms);
+  // A fully cached prompt evaluates 0-1 tokens, and its "speed" is noise.
+  if (finite(prefill) && (timings?.prompt_n ?? 0) > 1) out.prefillTokensPerSecond = prefill;
+  if (finite(decode) && (timings?.predicted_n ?? 0) > 0) out.decodeTokensPerSecond = decode;
+  if (out.completionTokens === undefined && finite(timings?.predicted_n)) {
+    out.completionTokens = timings.predicted_n;
+  }
+  return out;
+}
+
+/**
+ * Throughput from an Ollama `/api/chat` response (M3). Durations are in
+ * nanoseconds. Ollama reports no prefix-cache figures, so the hit rate stays
+ * undefined rather than guessed.
+ */
+export function usageFromOllama(data: {
+  prompt_eval_count?: number;
+  prompt_eval_duration?: number;
+  eval_count?: number;
+  eval_duration?: number;
+}): ServerUsage {
+  const out: ServerUsage = {};
+  if (finite(data.prompt_eval_count)) out.promptTokens = data.prompt_eval_count;
+  if (finite(data.eval_count)) out.completionTokens = data.eval_count;
+  if (finite(data.prompt_eval_duration)) out.prefillMs = data.prompt_eval_duration / 1e6;
+  if (finite(data.eval_duration)) out.decodeMs = data.eval_duration / 1e6;
+  const prefill = rate(data.prompt_eval_count, out.prefillMs);
+  const decode = rate(data.eval_count, out.decodeMs);
+  if (prefill !== undefined && (data.prompt_eval_count ?? 0) > 1) {
+    out.prefillTokensPerSecond = prefill;
+  }
+  if (decode !== undefined) out.decodeTokensPerSecond = decode;
+  return out;
+}
+
+/** Default thinking allowance per level when the request names none. */
+export const REASONING_BUDGET_TOKENS: Record<Exclude<ReasoningLevel, "off">, number> = {
+  low: 512,
+  medium: 1024,
+  high: 2048,
+};
+
 const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
 
 /**
@@ -133,10 +257,34 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
     if (contextTokens === undefined) return undefined;
     return { contextTokens, maxTokens: this.options.maxTokens ?? 2048 };
   }
+  /** Whether tool schemas travel natively (see `LocalInferenceAdapter.nativeTools`). */
+  public get nativeTools(): boolean {
+    return this.options.nativeTools !== false;
+  }
   private baseUrl: string;
   private apiFormat: "ollama" | "openai";
   private sampling: SamplingOptions;
   private options: HttpAdapterOptions;
+
+  /** The sampling profile a request resolves to: planning overlays code. */
+  public samplingFor(req: Pick<InferenceRequest, "purpose">): SamplingOptions {
+    if (req.purpose === "planning" && this.options.planningSampling) {
+      return { ...this.sampling, ...this.options.planningSampling };
+    }
+    return this.sampling;
+  }
+
+  /** The reasoning level a request resolves to, after the adapter's default. */
+  public reasoningFor(req: Pick<InferenceRequest, "reasoning">): ReasoningLevel {
+    if (req.reasoning !== undefined) return req.reasoning;
+    return this.options.disableReasoning === false ? "medium" : "off";
+  }
+
+  /** Thinking tokens allowed for a request whose reasoning is on. */
+  private thinkingBudget(req: InferenceRequest, level: ReasoningLevel): number {
+    if (level === "off") return 0;
+    return req.reasoningBudgetTokens ?? REASONING_BUDGET_TOKENS[level];
+  }
 
   constructor(options: HttpAdapterOptions) {
     this.options = options;
@@ -305,7 +453,11 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
   public async generate(req: InferenceRequest): Promise<InferenceResponse> {
     const start = performance.now();
     const messages = this.messages(req);
-    const maxTokens = req.maxTokens ?? this.options.maxTokens ?? 2048;
+    const level = this.reasoningFor(req);
+    // Thinking tokens come out of the same allowance as the answer; without
+    // the extra room a reasoning turn ends mid-thought with no tool call.
+    const maxTokens =
+      (req.maxTokens ?? this.options.maxTokens ?? 2048) + this.thinkingBudget(req, level);
 
     const data =
       this.apiFormat === "ollama"
@@ -323,15 +475,16 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
         ? data.nativeCalls
         : parseToolCallsFromText(visible, req.toolArm, knownTools);
 
+    const { promptTokens, completionTokens, ...measured } = data.usage;
     return {
       text: visible,
       toolCalls,
       usage: {
         promptTokens:
-          data.promptTokens ??
-          Math.round((req.prompt.length + (req.systemPrompt?.length ?? 0)) / 4),
-        completionTokens: data.completionTokens ?? Math.round(visible.length / 4),
+          promptTokens ?? Math.round((req.prompt.length + (req.systemPrompt?.length ?? 0)) / 4),
+        completionTokens: completionTokens ?? Math.round(visible.length / 4),
         durationMs: Math.round(performance.now() - start),
+        ...measured,
       },
     };
   }
@@ -340,26 +493,23 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
     messages: ChatMessage[],
     req: InferenceRequest,
     maxTokens: number,
-  ): Promise<{
-    text: string;
-    nativeCalls: ToolCall[];
-    promptTokens?: number;
-    completionTokens?: number;
-  }> {
+  ): Promise<{ text: string; nativeCalls: ToolCall[]; usage: ServerUsage }> {
+    const sampling = this.samplingFor(req);
     const payload: Record<string, unknown> = {
       model: this.modelId,
       messages,
       stream: false,
       keep_alive: this.resolveKeepAlive(),
       options: {
-        temperature: req.temperature ?? this.sampling.temperature ?? 0.2,
+        temperature: req.temperature ?? sampling.temperature ?? 0.2,
         num_predict: maxTokens,
-        ...(this.sampling.topP !== undefined ? { top_p: this.sampling.topP } : {}),
-        ...(this.sampling.topK !== undefined ? { top_k: this.sampling.topK } : {}),
-        ...(this.sampling.minP !== undefined ? { min_p: this.sampling.minP } : {}),
-        ...(this.sampling.repeatPenalty !== undefined
-          ? { repeat_penalty: this.sampling.repeatPenalty }
+        ...(sampling.topP !== undefined ? { top_p: sampling.topP } : {}),
+        ...(sampling.topK !== undefined ? { top_k: sampling.topK } : {}),
+        ...(sampling.minP !== undefined ? { min_p: sampling.minP } : {}),
+        ...(sampling.presencePenalty !== undefined
+          ? { presence_penalty: sampling.presencePenalty }
           : {}),
+        ...(sampling.repeatPenalty !== undefined ? { repeat_penalty: sampling.repeatPenalty } : {}),
         ...(this.options.contextTokens !== undefined
           ? { num_ctx: this.options.contextTokens }
           : {}),
@@ -372,23 +522,28 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
         function: { name: t.name, description: t.description, parameters: t.parameters },
       }));
     }
-    if (this.options.disableReasoning !== false) {
+    if (this.reasoningFor(req) === "off") {
       // Ollama otherwise routes the answer into `reasoning` and returns empty content.
       payload.think = false;
       payload.reasoning_effort = "none";
+    } else {
+      // The thinking lands in `message.thinking`, which is dropped: reasoning
+      // traces never carry over into the next step's prompt.
+      payload.think = true;
     }
 
     const data = (await this.post("/api/chat", payload)) as {
       message?: { content?: string; thinking?: string; tool_calls?: NativeToolCall[] };
       prompt_eval_count?: number;
+      prompt_eval_duration?: number;
       eval_count?: number;
+      eval_duration?: number;
     };
 
     return {
       text: data.message?.content ?? "",
       nativeCalls: nativeToToolCalls(data.message?.tool_calls),
-      ...(data.prompt_eval_count !== undefined ? { promptTokens: data.prompt_eval_count } : {}),
-      ...(data.eval_count !== undefined ? { completionTokens: data.eval_count } : {}),
+      usage: usageFromOllama(data),
     };
   }
 
@@ -396,28 +551,24 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
     messages: ChatMessage[],
     req: InferenceRequest,
     maxTokens: number,
-  ): Promise<{
-    text: string;
-    nativeCalls: ToolCall[];
-    promptTokens?: number;
-    completionTokens?: number;
-  }> {
+  ): Promise<{ text: string; nativeCalls: ToolCall[]; usage: ServerUsage }> {
+    const sampling = this.samplingFor(req);
     const payload: Record<string, unknown> = {
       model: this.modelId,
       messages,
-      temperature: req.temperature ?? this.sampling.temperature ?? 0.2,
+      temperature: req.temperature ?? sampling.temperature ?? 0.2,
       max_tokens: maxTokens,
       stream: false,
     };
 
-    if (this.sampling.topP !== undefined) payload.top_p = this.sampling.topP;
-    if (this.sampling.topK !== undefined) payload.top_k = this.sampling.topK;
-    if (this.sampling.minP !== undefined) payload.min_p = this.sampling.minP;
-    if (this.sampling.presencePenalty !== undefined) {
-      payload.presence_penalty = this.sampling.presencePenalty;
+    if (sampling.topP !== undefined) payload.top_p = sampling.topP;
+    if (sampling.topK !== undefined) payload.top_k = sampling.topK;
+    if (sampling.minP !== undefined) payload.min_p = sampling.minP;
+    if (sampling.presencePenalty !== undefined) {
+      payload.presence_penalty = sampling.presencePenalty;
     }
-    if (this.sampling.repeatPenalty !== undefined) {
-      payload.repeat_penalty = this.sampling.repeatPenalty;
+    if (sampling.repeatPenalty !== undefined) {
+      payload.repeat_penalty = sampling.repeatPenalty;
     }
     if (this.options.nativeTools !== false && req.tools && req.tools.length > 0) {
       payload.tools = req.tools.map((t) => ({
@@ -427,53 +578,62 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
     }
     // llama.cpp honours this to reuse the KV cache for an unchanged prefix.
     if (this.options.promptCache !== false) payload.cache_prompt = true;
-    if (this.options.disableReasoning !== false) {
+    const level = this.reasoningFor(req);
+    if (level === "off") {
       payload.reasoning_effort = "none";
       // Qwen-family jinja templates read this kwarg; reasoning_effort alone is
       // ignored by some templates, leaving thinking on.
       payload.chat_template_kwargs = { enable_thinking: false };
+    } else {
+      // Qwen3.8 (Dirk) templates read the effort from the kwargs; llama-server
+      // caps the thinking with `thinking_budget_tokens` and returns it in
+      // `reasoning_content`, which is dropped so traces never reach the next step.
+      payload.reasoning_effort = level;
+      payload.chat_template_kwargs = { enable_thinking: true, reasoning_effort: level };
+      payload.thinking_budget_tokens = this.thinkingBudget(req, level);
     }
 
     const data = (await this.post("/v1/chat/completions", payload)) as {
       choices?: {
         message?: { content?: string; reasoning_content?: string; tool_calls?: NativeToolCall[] };
       }[];
-      usage?: { prompt_tokens?: number; completion_tokens?: number };
+      usage?: {
+        prompt_tokens?: number;
+        completion_tokens?: number;
+        prompt_tokens_details?: { cached_tokens?: number };
+      };
+      timings?: LlamaServerTimings;
     };
 
     const message = data.choices?.[0]?.message;
     return {
       text: message?.content ?? "",
       nativeCalls: nativeToToolCalls(message?.tool_calls),
-      ...(data.usage?.prompt_tokens !== undefined
-        ? { promptTokens: data.usage.prompt_tokens }
-        : {}),
-      ...(data.usage?.completion_tokens !== undefined
-        ? { completionTokens: data.usage.completion_tokens }
-        : {}),
+      usage: usageFromLlamaServer(data.timings, data.usage),
     };
   }
 }
 
 /**
- * Dense Qwen3.8-27B on llama-server.
+ * Dense Qwen3.8-27B on an already-running llama-server (CHRONICLE §2, port
+ * 8099). Code requests sample at 0.2 / 0.9; `purpose: "planning"` requests
+ * at 0.7 / 0.8 (M5). Use `createQwen38Managed` to have the harness start
+ * and stop the server itself.
  *
- * Measured at 6.6–8.65 tok/s on the M4 reference box. Retained for
- * quality comparison, but too slow to drive multi-turn cards interactively.
+ * Measured at 6.6-8.65 tok/s on the M4 reference box: strong, but slow for
+ * many-turn cards, so it suits planning, repair plans and escalated retries.
  */
 export function createQwen38_27BAdapter(baseUrl = "http://127.0.0.1:8099"): HttpInferenceAdapter {
   return new HttpInferenceAdapter({
     modelId: "qwen3.8-27b",
     baseUrl,
     apiFormat: "openai",
-    contextTokens: 32768,
-    sampling: {
-      temperature: 0.2,
-      topP: 0.9,
-      topK: 20,
-      minP: 0.0,
-      presencePenalty: 1.5,
-    },
+    // §2 runs -c 49152 across -np 2 slots: 24,576 tokens per request.
+    contextTokens: 24576,
+    maxTokens: 2048,
+    disableReasoning: true,
+    sampling: { temperature: 0.2, topP: 0.9, topK: 20, minP: 0.0, presencePenalty: 1.5 },
+    planningSampling: { temperature: 0.7, topP: 0.8, topK: 20, minP: 0.0, presencePenalty: 1.5 },
   });
 }
 
