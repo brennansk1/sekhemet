@@ -1,0 +1,36 @@
+# Basalt Canvas release-gate verification. Every card is verified against all three
+# blocking gates, exactly as Project Chronicle is.
+
+[project]
+protected = ["tests/**", "acceptance/**", ".sekhemet/gates.toml"]
+max_files = 3
+max_diff_lines = 200
+# Formatting is applied by the harness to scope files only, never to tests.
+autofix = ["pnpm", "exec", "biome", "check", "--write"]
+
+[[gate]]
+id = "typecheck"
+rung = "typecheck"
+layer = "static"
+command = "pnpm"
+args = ["typecheck"]
+timeout_s = 180
+parser = "tsc"
+
+[[gate]]
+id = "lint"
+rung = "lint"
+layer = "static"
+command = "pnpm"
+args = ["lint"]
+timeout_s = 120
+parser = "biome"
+
+[[gate]]
+id = "unit"
+rung = "test"
+layer = "functional"
+command = "pnpm"
+args = ["test"]
+timeout_s = 300
+parser = "vitest"

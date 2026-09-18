@@ -77,7 +77,13 @@ describe("basalt tokens: CSS output", () => {
       difficulty: 3,
       stepsUsed: 0,
       stepBudget: 32,
-      gates: { typecheck: "pass", lint: "pass", test: "fail", bounds: "pending", visual: "skipped" },
+      gates: {
+        typecheck: "pass",
+        lint: "pass",
+        test: "fail",
+        bounds: "pending",
+        visual: "skipped",
+      },
       dependsOn: [],
     };
     expect(Object.keys(card.gates)).toEqual(GATE_ORDER);

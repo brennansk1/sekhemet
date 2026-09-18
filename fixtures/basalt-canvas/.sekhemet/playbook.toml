@@ -1,0 +1,70 @@
+# Project Basalt Canvas playbook.
+#
+# The ESM and finish-promptly rules are carried over from Project Chronicle. The
+# rest were found while writing the reference implementation for these cards.
+# There is no DOM here: every component is a pure function returning an HTML
+# string, and the tests compare that string byte for byte.
+
+[[rule]]
+id = "rule_esm_extensions"
+originCard = "card_canvas_2_store"
+triggerGate = "typecheck"
+pattern = "src/"
+instruction = "This project is ESM with moduleResolution nodenext. EVERY relative import must end in .js, even when importing a .ts file: write `from './tokens.js'`, never `from './tokens'`. Omitting it fails typecheck with TS2835."
+effectiveDate = "2026-09-18"
+
+[[rule]]
+id = "rule_finish_promptly"
+originCard = "card_canvas_1_tokens"
+triggerGate = "test"
+pattern = "src/"
+instruction = "Once every declared scope file is written, call finish_card. Do not re-read files you have already read: verification gives you the authoritative answer, and re-reading spends the step budget without changing anything."
+effectiveDate = "2026-09-18"
+
+[[rule]]
+id = "rule_strict_ts_options"
+originCard = "card_canvas_8_e2e_ui"
+triggerGate = "typecheck"
+pattern = "src/"
+instruction = "tsconfig enables exactOptionalPropertyTypes and noUncheckedIndexedAccess. Never assign `undefined` to an optional property: write `...(x === undefined ? {} : { limit: x })` instead of `limit: x`. An indexed read like `arr[i]` or `match[1]` has type `T | undefined`: check it or use `?? fallback` before using it."
+effectiveDate = "2026-09-18"
+
+[[rule]]
+id = "rule_exact_markup"
+originCard = "card_canvas_3_card_tile"
+triggerGate = "test"
+pattern = "src/"
+instruction = "Rendered HTML is compared byte for byte. Copy the template literals from the card spec exactly: no newlines, indentation or spaces between tags, attribute order as written, double quotes around attribute values. Build with template literals and .join(''), never with a multi-line template string."
+effectiveDate = "2026-09-18"
+
+[[rule]]
+id = "rule_biome_use_template"
+originCard = "card_canvas_3_card_tile"
+triggerGate = "lint"
+pattern = "src/"
+instruction = "Biome's lint/style/useTemplate rejects string concatenation that mixes literals and variables, such as 'a' + name + 'b'. Write a template literal instead, e.g. `a${name}b`. Concatenating only string literals is allowed."
+effectiveDate = "2026-09-18"
+
+[[rule]]
+id = "rule_no_node_imports_in_ui"
+originCard = "card_canvas_1_tokens"
+triggerGate = "typecheck"
+pattern = "src/"
+instruction = "This project has no DOM library and no runtime dependencies. Do not import react, preact, jsdom or any npm package, and do not use document or window: components are plain functions that return strings or plain objects."
+effectiveDate = "2026-09-18"
+
+[[rule]]
+id = "rule_reducer_identity"
+originCard = "card_canvas_2_store"
+triggerGate = "test"
+pattern = "src/store.ts"
+instruction = "The tests check object identity with toBe. When an action changes nothing (same status, same gate state, same selection, back with empty history) return the SAME state object, not a copy. When it does change something, return new objects for the state and every changed card; never mutate the input."
+effectiveDate = "2026-09-18"
+
+[[rule]]
+id = "rule_zoom_anchor"
+originCard = "card_canvas_6_dag_canvas"
+triggerGate = "test"
+pattern = "src/dag_canvas.ts"
+instruction = "In zoomAt, compute the world point under the anchor with the OLD viewport first, then clamp the new scale, then set x = anchor.x - world.x * newScale (same for y). Reject factors with `if (!(factor > 0))` so NaN is rejected as well."
+effectiveDate = "2026-09-18"

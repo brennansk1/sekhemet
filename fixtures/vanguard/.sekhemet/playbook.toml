@@ -1,0 +1,87 @@
+# Project Vanguard playbook.
+#
+# The ESM, node:sqlite and finish-promptly rules are carried over from Project
+# Chronicle. The rest were found while writing the reference implementation for
+# these cards: each names a Node API gotcha that fails a gate in a way the error
+# message does not explain. Rules that only concern one file use that file as
+# their pattern, so they are injected only into the card that owns it.
+
+[[rule]]
+id = "rule_esm_extensions"
+originCard = "card_vang_2_hmac"
+triggerGate = "typecheck"
+pattern = "src/"
+instruction = "This project is ESM with moduleResolution nodenext. EVERY relative import must end in .js, even when importing a .ts file: write `from './types.js'`, never `from './types'`. Omitting it fails typecheck with TS2835."
+effectiveDate = "2026-09-18"
+
+[[rule]]
+id = "rule_node_sqlite"
+originCard = "card_vang_3_store"
+triggerGate = "typecheck"
+pattern = "src/"
+instruction = "Use the built-in `node:sqlite` module (`import { DatabaseSync } from 'node:sqlite'`). Do NOT use better-sqlite3 or any other database package: none is installed, and importing one fails typecheck with TS2307."
+effectiveDate = "2026-09-18"
+
+[[rule]]
+id = "rule_finish_promptly"
+originCard = "card_vang_1_types"
+triggerGate = "test"
+pattern = "src/"
+instruction = "Once every declared scope file is written, call finish_card. Do not re-read files you have already read: verification gives you the authoritative answer, and re-reading spends the step budget without changing anything."
+effectiveDate = "2026-09-18"
+
+[[rule]]
+id = "rule_strict_ts_options"
+originCard = "card_vang_8_e2e"
+triggerGate = "typecheck"
+pattern = "src/"
+instruction = "tsconfig enables exactOptionalPropertyTypes and noUncheckedIndexedAccess. Never assign `undefined` to an optional property: write `...(x === undefined ? {} : { now: x })` instead of `now: x`. An indexed read like `arr[i]` or `match[1]` has type `T | undefined`: check it or use `?? fallback` before using it."
+effectiveDate = "2026-09-18"
+
+[[rule]]
+id = "rule_timing_safe_hex"
+originCard = "card_vang_2_hmac"
+triggerGate = "test"
+pattern = "src/hmac.ts"
+instruction = "Compare signatures only with timingSafeEqual imported from 'node:crypto', never with ===. timingSafeEqual THROWS when the two buffers differ in length, and Buffer.from('zz', 'hex') silently returns an EMPTY buffer, so two garbage strings would compare equal. Before calling it, return false unless both strings match /^(?:[0-9a-f]{2})+$/i and have the same length."
+effectiveDate = "2026-09-18"
+
+[[rule]]
+id = "rule_stripe_signed_payload"
+originCard = "card_vang_2_hmac"
+triggerGate = "test"
+pattern = "src/hmac.ts"
+instruction = "The Stripe signed payload is the bytes of the timestamp, a dot, then the raw body: Buffer.concat([Buffer.from(`${t}.`), Buffer.from(payload)]). Do not JSON.parse or re-serialise the body, and check the timestamp tolerance before comparing signatures."
+effectiveDate = "2026-09-18"
+
+[[rule]]
+id = "rule_sqlite_blob_buffer"
+originCard = "card_vang_3_store"
+triggerGate = "test"
+pattern = "src/store.ts"
+instruction = "node:sqlite returns BLOB columns as Uint8Array, not Buffer, so Buffer.isBuffer fails and .equals is missing. Convert with Buffer.from(row.body) when mapping a row. Rows are typed unknown: cast them, e.g. `stmt.get(id) as Row | undefined`, and wrap `result.lastInsertRowid` in Number(...)."
+effectiveDate = "2026-09-18"
+
+[[rule]]
+id = "rule_http_body_then_respond"
+originCard = "card_vang_4_ingest"
+triggerGate = "test"
+pattern = "src/ingest.ts"
+instruction = "Read the request body to the end before answering, even when it is too large: count the bytes in the 'data' handler, stop keeping chunks past the limit, and send 413 from the 'end' handler. Answering and destroying the socket mid-upload makes the client's fetch fail with a socket error instead of seeing the 413."
+effectiveDate = "2026-09-18"
+
+[[rule]]
+id = "rule_server_close_connections"
+originCard = "card_vang_8_e2e"
+triggerGate = "test"
+pattern = "src/daemon.ts"
+instruction = "server.close() waits for every open connection, so an SSE client or a keep-alive fetch connection makes it hang until the test times out. In close(), end the SSE streams (bus.closeAll()), call server.closeAllConnections(), and only then await server.close()."
+effectiveDate = "2026-09-18"
+
+[[rule]]
+id = "rule_types_without_node"
+originCard = "card_vang_1_types"
+triggerGate = "typecheck"
+pattern = "src/types.ts"
+instruction = "src/types.ts is type-checked before any test is staged, when Node's type definitions are not loaded, so the global Buffer type does not exist there and `body: Buffer` fails with TS2580 'Cannot find name Buffer'. Type raw bytes as Uint8Array in types.ts. Every Buffer is a Uint8Array, so later files may still store and return Buffers."
+effectiveDate = "2026-09-18"

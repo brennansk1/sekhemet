@@ -1,0 +1,141 @@
+[
+  {
+    "id": "card_canvas_1_tokens",
+    "title": "Basalt design tokens and shared types (SPIDR: Interface)",
+    "scopeFiles": ["src/tokens.ts"],
+    "acceptanceTests": ["tokens.spec.ts"],
+    "stepBudget": 24,
+    "spec": "Write src/tokens.ts with no imports. Export these types: `export interface ThemeTokens { bgBase: string; bgSurface: string; bgRaised: string; bgOverlay: string; borderSubtle: string; textPrimary: string; textMuted: string; gold: string; nile: string; ochre: string; lapis: string }`; `export type CardStatus = \"backlog\" | \"ready\" | \"doing\" | \"review\" | \"done\"`; `export type CardClass = \"feature\" | \"bug\" | \"chore\" | \"spike\"`; `export type GateName = \"typecheck\" | \"lint\" | \"test\" | \"bounds\" | \"visual\"`; `export type GateState = \"pass\" | \"fail\" | \"pending\" | \"skipped\"`; `export interface CanvasCard { id: string; title: string; status: CardStatus; cardClass: CardClass; difficulty: 1 | 2 | 3 | 4 | 5; stepsUsed: number; stepBudget: number; gates: Record<GateName, GateState>; dependsOn: string[] }`; `export interface DagNode { id: string; rank: number; order: number; x: number; y: number; width: number; height: number }`; `export interface DagEdge { from: string; to: string; path: string }`. Export values: `export const THEME: ThemeTokens` with keys in exactly this order and these upper-case values: bgBase \"#14120F\", bgSurface \"#1C1A16\", bgRaised \"#24211C\", bgOverlay \"#2C2822\", borderSubtle \"#2E2A24\", textPrimary \"#EDE6DA\", textMuted \"#A39A8C\", gold \"#C8952A\", nile \"#4FA36B\", ochre \"#C9503F\", lapis \"#4C8ED9\". `export const GATE_ORDER: GateName[] = [\"typecheck\", \"lint\", \"test\", \"bounds\", \"visual\"]`. `export function cssVarName(token: string): string` turns camelCase into a CSS custom property: \"--\" followed by the name with each upper-case letter replaced by \"-\" plus its lower-case form (bgBase -> --bg-base). `export function tokensToCss(theme: ThemeTokens): string` returns \":root {\\n\" + one line per key in object order formatted as two spaces, cssVarName(key), \": \", value, \";\" joined with \"\\n\" + \"\\n}\\n\". This project is ESM with moduleResolution nodenext: any relative import must end in .js (for example from \"./tokens.js\").",
+    "acceptanceCriteria": [
+      "1. THEME has exactly the eleven keys in the listed order with the exact hex values from the spec.",
+      "2. GATE_ORDER equals [\"typecheck\", \"lint\", \"test\", \"bounds\", \"visual\"].",
+      "3. cssVarName(\"bgBase\") is \"--bg-base\", cssVarName(\"borderSubtle\") is \"--border-subtle\", cssVarName(\"gold\") is \"--gold\".",
+      "4. tokensToCss(THEME) split on \"\\n\" has 14 entries: \":root {\", eleven property lines such as \"  --bg-base: #14120F;\", \"}\" and \"\".",
+      "5. tokensToCss uses the values of the theme passed in, not THEME.",
+      "6. tests/tokens.spec.ts passes without modification and tsc -b passes."
+    ]
+  },
+  {
+    "id": "card_canvas_2_store",
+    "title": "Immutable board store with filters and selection history (SPIDR: Data)",
+    "scopeFiles": ["src/store.ts"],
+    "acceptanceTests": ["store.spec.ts"],
+    "stepBudget": 32,
+    "spec": "Write src/store.ts. Import types with `import type { CanvasCard, CardClass, CardStatus, GateName, GateState } from \"./tokens.js\"` (relative imports end in .js). Export `export interface BoardFilter { text: string; cardClass: CardClass | null }`, `export interface BoardState { cards: CanvasCard[]; filter: BoardFilter; selectedId: string | null; history: string[] }`, `export type Action = { type: \"addCard\"; card: CanvasCard } | { type: \"moveCard\"; id: string; status: CardStatus } | { type: \"updateGate\"; id: string; gate: GateName; state: GateState } | { type: \"select\"; id: string | null } | { type: \"back\" } | { type: \"setFilter\"; filter: Partial<BoardFilter> }`, and `export const HISTORY_LIMIT = 10`. Export `export function createInitialState(cards: CanvasCard[] = []): BoardState` returning { cards: a copy of cards, filter: { text: \"\", cardClass: null }, selectedId: null, history: [] }. Export `export function reduce(state: BoardState, action: Action): BoardState`, a pure function that never mutates its input and returns the SAME state object when nothing changes: addCard appends, or throws new Error(`duplicate card: ${id}`); moveCard and updateGate replace the card with an updated copy, or throw new Error(`unknown card: ${id}`) for an unknown id, and return state unchanged when the status/gate already has that value; select throws `unknown card: ${id}` for an unknown non-null id, returns state unchanged when id equals selectedId, otherwise sets selectedId and, if the previous selectedId was not null, appends it to history keeping only the last HISTORY_LIMIT entries; back pops the last history entry into selectedId, or returns state unchanged when history is empty; setFilter merges the partial filter into filter. Export `export function visibleCards(state: BoardState): CanvasCard[]` keeping cards whose lower-cased title contains the trimmed, lower-cased filter text (empty text matches all) and whose cardClass equals filter.cardClass when that is not null. Export `export interface Store { getState(): BoardState; dispatch(action: Action): void; subscribe(listener: (state: BoardState) => void): () => void }` and `export function createStore(initial: BoardState): Store`: dispatch runs reduce (letting errors propagate, leaving state unchanged), and only when the returned state is a different object stores it and calls every listener with it; subscribe returns an unsubscribe function.",
+    "acceptanceCriteria": [
+      "1. createInitialState() equals { cards: [], filter: { text: \"\", cardClass: null }, selectedId: null, history: [] }.",
+      "2. addCard with an existing id throws \"duplicate card: x\"; moveCard, updateGate and select with an unknown id throw \"unknown card: zz\".",
+      "3. reduce never mutates its input (a structuredClone snapshot still equals the old state) and returns the identical object for a no-op move or a back with empty history.",
+      "4. updateGate changes one gate of one card only.",
+      "5. Selecting a, b, c gives selectedId c and history [a, b]; back gives b and [a]; null and repeated selections are not recorded; history keeps only the last 10 ids.",
+      "6. Filter text \"  PARSE \" matches titles containing parse case-insensitively; text and cardClass filters combine.",
+      "7. Subscribers receive the new state, are not called for no-op actions, and stop receiving after unsubscribe; a throwing dispatch leaves getState() unchanged.",
+      "8. tests/store.spec.ts passes without modification."
+    ]
+  },
+  {
+    "id": "card_canvas_3_card_tile",
+    "title": "Card tile component with gate strip and budget bar (SPIDR: Visual)",
+    "scopeFiles": ["src/card_tile.ts"],
+    "acceptanceTests": ["card.spec.ts"],
+    "stepBudget": 32,
+    "spec": "Write src/card_tile.ts. There is no DOM: components are pure functions returning HTML strings with no whitespace or newlines between tags. Import `{ type CanvasCard, GATE_ORDER, type GateName, type GateState } from \"./tokens.js\"`. Export `export function escapeHtml(text: string): string` replacing & with &amp;, < with &lt;, > with &gt;, \" with &quot; and ' with &#39; in a single pass. Export `export function budgetPercent(stepsUsed: number, stepBudget: number): number` returning 100 when stepBudget <= 0, otherwise Math.round(stepsUsed / stepBudget * 100) clamped to 0..100. Export `export function renderGateStrip(gates: Record<GateName, GateState>): string` returning `<div class=\"gate-strip\">` + for each name in GATE_ORDER the template literal `<span class=\"gate gate-${gates[name]}\" data-gate=\"${name}\" title=\"${name}: ${gates[name]}\"></span>` + `</div>`. Export `export function renderCardTile(card: CanvasCard, options: { selected?: boolean } = {}): string` returning these template literals concatenated with no separator: `<article class=\"${classes}\" data-id=\"${escapeHtml(card.id)}\" data-status=\"${card.status}\">` where classes is \"card-tile is-selected\" when options.selected is true, else \"card-tile\"; `<span class=\"chip chip-${card.cardClass}\">${card.cardClass}</span>`; `<span class=\"difficulty\">D${card.difficulty}</span>`; `<h3 class=\"title\">${escapeHtml(card.title)}</h3>`; `<div class=\"budget\"><div class=\"${barClass}\" style=\"width: ${budgetPercent(card.stepsUsed, card.stepBudget)}%\"></div>` where barClass is \"budget-bar is-over\" only when stepsUsed > stepBudget, else \"budget-bar\"; `<span class=\"budget-label\">${card.stepsUsed}/${card.stepBudget}</span></div>`; renderGateStrip(card.gates); \"</article>\". This project is ESM with moduleResolution nodenext: any relative import must end in .js (for example from \"./tokens.js\").",
+    "acceptanceCriteria": [
+      "1. escapeHtml converts all five special characters and escapes \"&amp;\" to \"&amp;amp;\".",
+      "2. budgetPercent(8, 32) is 25, (1, 3) is 33, (2, 3) is 67, (50, 32) is 100, (-4, 32) is 0, (0, 0) is 100.",
+      "3. renderGateStrip renders exactly five spans in GATE_ORDER regardless of the key order of its input.",
+      "4. renderCardTile for the fixture card equals the exact markup in the test, byte for byte.",
+      "5. Selected tiles get class \"card-tile is-selected\"; an over-budget tile gets \"budget-bar is-over\" with width 100% and label 40/32; exactly-at-budget is not marked.",
+      "6. A hostile title or id cannot inject markup: no raw <script> appears in the output.",
+      "7. tests/card.spec.ts passes without modification."
+    ]
+  },
+  {
+    "id": "card_canvas_4_board",
+    "title": "Kanban board columns, WIP badges, backpressure and virtualization (SPIDR: Visual)",
+    "scopeFiles": ["src/board.ts"],
+    "acceptanceTests": ["board.spec.ts"],
+    "stepBudget": 32,
+    "spec": "Write src/board.ts. Import renderCardTile from \"./card_tile.js\" and types CanvasCard, CardStatus from \"./tokens.js\". Export `export const COLUMNS: CardStatus[] = [\"backlog\", \"ready\", \"doing\", \"review\", \"done\"]` and `export const WIP_LIMITS: Record<CardStatus, number | null> = { backlog: null, ready: null, doing: 3, review: 2, done: null }`. Export `export interface ColumnModel { status: CardStatus; cards: CanvasCard[]; count: number; limit: number | null; overLimit: boolean; backpressure: boolean }` and `export function buildColumns(cards: CanvasCard[]): ColumnModel[]` returning one model per COLUMNS entry in order, with that status's cards in input order; overLimit is true only when limit is not null and count > limit; backpressure is true only for the review column when count >= its limit. Export `export interface ScrollViewport { scrollTop: number; height: number }` and `export function visibleRange(count: number, rowHeight: number, viewport: ScrollViewport, overscan = 2): { start: number; end: number }`: throw new RangeError(\"rowHeight must be positive\") when rowHeight <= 0; return { start: 0, end: 0 } when count <= 0; otherwise start = max(0, floor(scrollTop / rowHeight) - overscan) and end = min(count, ceil((scrollTop + height) / rowHeight) + overscan), with start also capped at count. Export `export function renderColumnHeader(column: ColumnModel): string` returning the template literal `<header><span class=\"column-name\">${column.status}</span><span class=\"${badgeClass}\">${badge}</span>${warning}</header>` where badge is `${column.count}/${column.limit}`, or just `${column.count}` when limit is null; badgeClass is \"wip-badge over-limit\" when overLimit, else \"wip-badge\"; warning is '<span class=\"backpressure-warning\">Review is full</span>' when backpressure, else the empty string. Export `export function renderBoard(cards: CanvasCard[], selectedId: string | null = null): string` returning '<section class=\"board\">' + for each column of buildColumns(cards) the template literal `<div class=\"column\" data-status=\"${column.status}\">${renderColumnHeader(column)}${tiles}</div>` (tiles = the column's cards mapped to renderCardTile(card, { selected: card.id === selectedId }) and joined with \"\") + '</section>', with no whitespace between tags. This project is ESM with moduleResolution nodenext: any relative import must end in .js (for example from \"./tokens.js\").",
+    "acceptanceCriteria": [
+      "1. COLUMNS and WIP_LIMITS equal the values in the spec.",
+      "2. buildColumns groups cards by status in input order and counts them.",
+      "3. Doing with 3 cards is not overLimit; with 4 it is. Review with 1 card has no backpressure; with 2 it has backpressure and is not overLimit. No other column ever has backpressure.",
+      "4. visibleRange(1000, 40, { scrollTop: 400, height: 200 }) is { start: 8, end: 17 }; with overscan 0 it is { start: 10, end: 15 }; scrollTop 0 gives { start: 0, end: 7 }; count 10 at scrollTop 300 gives { start: 5, end: 10 }; count 0 gives { start: 0, end: 0 }.",
+      "5. visibleRange with rowHeight 0 or negative throws a RangeError with message \"rowHeight must be positive\".",
+      "6. Column headers render exactly as in the tests, including \"wip-badge over-limit\" 4/3 and the Review is full warning.",
+      "7. renderBoard renders five columns in order and exactly one is-selected tile for the selected id.",
+      "8. tests/board.spec.ts passes without modification."
+    ]
+  },
+  {
+    "id": "card_canvas_5_dag_layout",
+    "title": "Layered DAG layout with longest-path ranks and bezier edges (SPIDR: Rule)",
+    "scopeFiles": ["src/dag_layout.ts"],
+    "acceptanceTests": ["dag_layout.spec.ts"],
+    "stepBudget": 32,
+    "spec": "Write src/dag_layout.ts. Import types DagEdge, DagNode from \"./tokens.js\". Export `export interface EdgeInput { from: string; to: string }` (from is the dependency, to depends on it), `export interface LayoutOptions { nodeWidth?: number; nodeHeight?: number; rankGap?: number; nodeGap?: number }` and `export interface DagLayout { nodes: DagNode[]; edges: DagEdge[]; width: number; height: number }`. Export `export function computeRanks(ids: string[], edges: EdgeInput[]): Map<string, number>`: first, any edge endpoint not in ids throws new Error(`unknown node: ${id}`) (check from before to); rank is 0 for a node with no incoming edge, otherwise 1 + the maximum rank of its predecessors (longest path); any cycle, including a self-loop, throws new Error(\"cycle detected\") (use a depth-first search with a visiting set). Export `export function bezierPath(x1: number, y1: number, x2: number, y2: number): string` returning `M x1 y1 C mx y1 mx y2 x2 y2` with mx = (x1 + x2) / 2 and single spaces, numbers formatted by template literals. Export `export function layoutDag(ids: string[], edges: EdgeInput[], options: LayoutOptions = {}): DagLayout` with defaults nodeWidth 160, nodeHeight 40, rankGap 80, nodeGap 24: nodes are returned in ids order; order is the count of earlier ids with the same rank; x = rank * (nodeWidth + rankGap); y = order * (nodeHeight + nodeGap); width and height of every node are nodeWidth and nodeHeight. Edges are returned in input order with path = bezierPath(from.x + nodeWidth, from.y + nodeHeight / 2, to.x, to.y + nodeHeight / 2). Layout width = rankCount * nodeWidth + (rankCount - 1) * rankGap and height = rows * nodeHeight + (rows - 1) * nodeGap where rankCount is the highest rank + 1 and rows is the largest number of nodes in one rank; an empty graph returns { nodes: [], edges: [], width: 0, height: 0 }. This project is ESM with moduleResolution nodenext: any relative import must end in .js (for example from \"./tokens.js\").",
+    "acceptanceCriteria": [
+      "1. The diamond a->b, a->c, b->d, c->d ranks { a: 0, b: 1, c: 1, d: 2 }; with a->c, a->b, b->c the rank of c is 2 (longest path).",
+      "2. Isolated nodes have rank 0; a two-node cycle and a self-loop throw \"cycle detected\"; an edge to ghost throws \"unknown node: ghost\".",
+      "3. bezierPath(160, 20, 240, 84) is \"M 160 20 C 200 20 200 84 240 84\" and bezierPath(0, 0, 5, 0) is \"M 0 0 C 2.5 0 2.5 0 5 0\".",
+      "4. The diamond layout places c at x 240, y 64 and d at x 480, y 0, with width 640 and height 104.",
+      "5. Edge paths start at the source's right middle and end at the target's left middle.",
+      "6. Custom options are honoured; an empty graph has width 0 and height 0; one node has width 160 and height 40.",
+      "7. tests/dag_layout.spec.ts passes without modification."
+    ]
+  },
+  {
+    "id": "card_canvas_6_dag_canvas",
+    "title": "DAG canvas pan, zoom, hit testing and SVG rendering (SPIDR: Visual)",
+    "scopeFiles": ["src/dag_canvas.ts"],
+    "acceptanceTests": ["dag_canvas.spec.ts"],
+    "stepBudget": 32,
+    "spec": "Write src/dag_canvas.ts. Import escapeHtml from \"./card_tile.js\" and `import type { DagLayout } from \"./dag_layout.js\"`. Export `export interface Point { x: number; y: number }`, `export interface Viewport { x: number; y: number; scale: number }` (screen = world * scale + offset), `export const MIN_SCALE = 0.25` and `export const MAX_SCALE = 4`. Export `export function worldToScreen(v: Viewport, p: Point): Point` and `export function screenToWorld(v: Viewport, p: Point): Point` (screen to world is (p - offset) / scale). Export `export function pan(v: Viewport, dx: number, dy: number): Viewport` returning a new viewport offset by dx, dy. Export `export function zoomAt(v: Viewport, factor: number, anchor: Point): Viewport`: throw new RangeError(\"zoom factor must be positive\") unless factor > 0 (so NaN is rejected too); new scale = v.scale * factor clamped to MIN_SCALE..MAX_SCALE; the world point under the screen anchor must stay under it, so new x = anchor.x - world.x * newScale and likewise for y, where world = screenToWorld(v, anchor). Export `export function hitTest(layout: DagLayout, v: Viewport, screen: Point): string | null` converting the point to world space and returning the id of the LAST node in layout.nodes that contains it (x <= px < x + width and y <= py < y + height), or null. Export `export function renderDagSvg(layout: DagLayout, v: Viewport, selectedId: string | null): string` returning these template literals concatenated with no whitespace: `<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"${layout.width}\" height=\"${layout.height}\">`, `<g transform=\"translate(${v.x} ${v.y}) scale(${v.scale})\">`, then for each edge `<path class=\"edge\" d=\"${edge.path}\"/>`, then for each node (with id = escapeHtml(node.id) and cls = \"node is-selected\" when node.id === selectedId, else \"node\") `<g class=\"${cls}\" data-id=\"${id}\"><rect x=\"${node.x}\" y=\"${node.y}\" width=\"${node.width}\" height=\"${node.height}\" rx=\"4\"/><text x=\"${node.x + 8}\" y=\"${node.y + node.height / 2}\">${id}</text></g>`, then \"</g></svg>\". This project is ESM with moduleResolution nodenext: any relative import must end in .js (for example from \"./tokens.js\").",
+    "acceptanceCriteria": [
+      "1. With viewport { x: 10, y: 10, scale: 2 }, world (50, 10) maps to screen (110, 30) and back.",
+      "2. pan returns a new viewport and does not mutate its input; MIN_SCALE is 0.25 and MAX_SCALE is 4.",
+      "3. zoomAt({ x: 0, y: 0, scale: 1 }, 2, { x: 100, y: 50 }) is { x: -100, y: -50, scale: 2 } and the anchor maps to itself; scales clamp to 4 and 0.25.",
+      "4. zoomAt with factor 0, -2 or NaN throws RangeError \"zoom factor must be positive\".",
+      "5. hitTest returns the topmost (last) overlapping node, includes left/top edges, excludes right/bottom edges, and returns null for empty space or an empty layout.",
+      "6. renderDagSvg matches the exact markup in the test, marks only the selected node, and escapes ids.",
+      "7. tests/dag_canvas.spec.ts passes without modification."
+    ]
+  },
+  {
+    "id": "card_canvas_7_palette",
+    "title": "Accessible Cmd+K command palette with fuzzy search (SPIDR: Visual)",
+    "scopeFiles": ["src/palette.ts"],
+    "acceptanceTests": ["palette.spec.ts"],
+    "stepBudget": 32,
+    "spec": "Write src/palette.ts. Import escapeHtml from \"./card_tile.js\". Export `export interface PaletteItem { id: string; label: string; kind: \"card\" | \"dependency\" | \"setting\" }`, `export interface PaletteState { open: boolean; query: string; items: PaletteItem[]; results: PaletteItem[]; activeIndex: number }` and `export type PaletteKey = \"Mod+K\" | \"Escape\" | \"ArrowDown\" | \"ArrowUp\" | \"Enter\"`. Export `export function fuzzyScore(query: string, label: string): number | null`: compare lower-cased strings; walk the query characters left to right, finding each at the earliest label index after the previous match (greedy indexOf); return null if any is missing; each matched character scores 1, plus 2 if its index is exactly the previous match's index + 1, plus 3 if its index is 0 or the preceding label character is a space, \"-\" or \"_\"; the empty query scores 0. Export `export function search(items: PaletteItem[], query: string): PaletteItem[]`: for the empty query return all items sorted by label ascending (plain < comparison); otherwise drop items with a null score and sort by score descending, then label ascending. Export `export function createPalette(items: PaletteItem[]): PaletteState` (closed, query \"\", results = search(items, \"\"), activeIndex 0) and `export function setQuery(state: PaletteState, query: string): PaletteState` (new query, recomputed results, activeIndex 0). Export `export function paletteKey(state: PaletteState, key: PaletteKey): { state: PaletteState; chosen: PaletteItem | null }`: Mod+K closes an open palette, or opens a closed one with query reset to \"\" (results for \"\" and activeIndex 0); while closed every other key returns the state unchanged with chosen null; Escape closes; ArrowDown and ArrowUp move activeIndex by one, wrapping around, and do nothing when there are no results; Enter returns chosen = results[activeIndex] and closes, or chosen null and stays open when there are no results. Export `export function renderPalette(state: PaletteState): string` returning \"\" when closed. When open, let active = state.results[state.activeIndex] and activeAttr = active ? ` aria-activedescendant=\"opt-${escapeHtml(active.id)}\"` : \"\" (note the leading space), and return these template literals concatenated with no whitespace: `<div class=\"palette\" role=\"dialog\" aria-modal=\"true\" aria-label=\"Command palette\"><input class=\"palette-input\" role=\"combobox\" aria-expanded=\"true\" aria-controls=\"palette-list\"${activeAttr} value=\"${escapeHtml(state.query)}\"><ul id=\"palette-list\" role=\"listbox\">`, then for each result at index i `<li id=\"opt-${escapeHtml(item.id)}\" role=\"option\" aria-selected=\"${i === state.activeIndex}\" data-kind=\"${item.kind}\">${escapeHtml(item.label)}</li>`, then \"</ul></div>\". This project is ESM with moduleResolution nodenext: any relative import must end in .js (for example from \"./tokens.js\").",
+    "acceptanceCriteria": [
+      "1. fuzzyScore(\"abc\", \"abc\") is 10, (\"gt\", \"gate strip\") is 5, (\"gs\", \"gate strip\") is 8, (\"GS\", \"Gate Strip\") is 8, (\"\", \"anything\") is 0.",
+      "2. fuzzyScore returns null for \"xyz\", \"pg\" against \"gate strip\" and for \"gates\" against \"gate\"; \"b\" scores 4 in \"a-b\" and \"a_b\" but 1 in \"a.b\".",
+      "3. search sorts by score descending then label ascending; the empty query returns every item sorted by label; no match returns [].",
+      "4. Mod+K opens with every item and activeIndex 0, Mod+K or Escape closes, and reopening resets the query.",
+      "5. ArrowDown/ArrowUp wrap in both directions; changing the query resets activeIndex to 0.",
+      "6. Enter returns the active item and closes; with no results it returns null and stays open; closed palettes ignore every key except Mod+K.",
+      "7. renderPalette returns \"\" when closed and the exact dialog/combobox/listbox markup in the test when open; aria-activedescendant is omitted when there are no results; the query is escaped.",
+      "8. tests/palette.spec.ts passes without modification."
+    ]
+  },
+  {
+    "id": "card_canvas_8_e2e_ui",
+    "title": "WCAG contrast audit, drag and click transitions, full app render (SPIDR: Integration)",
+    "scopeFiles": ["src/app.ts"],
+    "acceptanceTests": ["e2e_ui.spec.ts"],
+    "stepBudget": 40,
+    "spec": "Write src/app.ts. Imports (relative imports end in .js): WIP_LIMITS, renderBoard from \"./board.js\"; layoutDag and type DagLayout from \"./dag_layout.js\"; reduce, visibleCards and type BoardState from \"./store.js\"; types CanvasCard, CardStatus, ThemeTokens from \"./tokens.js\". Export `export function contrastRatio(foreground: string, background: string): number` implementing WCAG 2.1: each color must match /^#[0-9A-Fa-f]{6}$/ else throw new Error(`invalid color: ${color}`); channel c = hex pair / 255, linearised as c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; luminance = 0.2126 R + 0.7152 G + 0.0722 B; ratio = (lighter + 0.05) / (darker + 0.05) rounded to 2 decimals with Math.round(ratio * 100) / 100. Export `export interface ContrastCheck { pair: string; ratio: number; required: number; pass: boolean }` and `export function auditTheme(theme: ThemeTokens): ContrastCheck[]` returning, in this order, text pairs requiring 4.5: textPrimary on bgBase, bgSurface, bgRaised, bgOverlay, then textMuted on bgBase, bgSurface, bgRaised; then accent pairs requiring 3: gold, nile, ochre, lapis each on bgRaised. pair is \"foreground/background\" using the token names (for example \"textPrimary/bgBase\") and pass is ratio >= required. Export `export interface DragResult { state: BoardState; ok: boolean; reason: string | null }` and `export function dragCard(state: BoardState, id: string, to: CardStatus): DragResult`, checking in this order: unknown id -> { state, ok: false, reason: `unknown card: ${id}` }; card already in `to` -> { state, ok: true, reason: null }; WIP_LIMITS[to] not null and the number of cards already in `to` >= that limit -> reason `WIP limit reached for ${to}`; moving to \"doing\" while any id in card.dependsOn is not a card with status \"done\" -> reason `blocked by ${firstSuchId}`; otherwise { state: reduce(state, { type: \"moveCard\", id, status: to }), ok: true, reason: null }. Failed drags return the original state object. Export `export function clickCard(state: BoardState, id: string): BoardState` dispatching select with null when id is already selected (toggle off), else id. Export `export function buildDag(cards: CanvasCard[]): DagLayout` calling layoutDag(card ids in order, edges { from: dependency, to: card.id } for each card and each of its dependsOn in order). Export `export function renderApp(state: BoardState): string` returning `<main class=\"app\">` + renderBoard(visibleCards(state), state.selectedId) + `</main>`.",
+    "acceptanceCriteria": [
+      "1. contrastRatio(\"#000000\", \"#FFFFFF\") is 21 in either order, (\"#777777\", \"#FFFFFF\") is 4.48, a color on itself is 1, lower-case hex works, and \"#FFF\" throws \"invalid color: #FFF\".",
+      "2. auditTheme(THEME) returns the eleven checks in the listed order with the exact ratios in the test, all passing.",
+      "3. With textMuted \"#3A362F\" exactly the three textMuted pairs fail.",
+      "4. dragCard moves a card whose dependencies are done; returns { state, ok: false, reason: \"blocked by tile\" } for an unmet dependency; reports \"WIP limit reached for review\" when Review holds 2 cards; reports \"unknown card: ghost\"; treats a same-column drop as ok with the same state.",
+      "5. clickCard selects, and a second click on the same card deselects with history [\"tile\"].",
+      "6. renderApp wraps the filtered board in <main class=\"app\"> and marks the selected tile.",
+      "7. buildDag lays out cards by dependsOn with the exact ranks, orders and coordinates in the test; a dependency on a missing card throws \"unknown node: missing\".",
+      "8. tests/e2e_ui.spec.ts passes without modification."
+    ]
+  }
+]

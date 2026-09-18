@@ -1,0 +1,142 @@
+[
+  {
+    "id": "card_vang_1_types",
+    "title": "Define Vanguard webhook contract types (SPIDR: Interface)",
+    "scopeFiles": ["src/types.ts"],
+    "stepBudget": 24,
+    "spec": "Write src/types.ts containing only exported TypeScript types, no runtime code and no imports. `export type VerificationStatus = \"verified\" | \"failed\" | \"unsigned\"`; `export type SignatureScheme = \"stripe\" | \"github\" | \"none\"`; `export interface VerificationResult { status: VerificationStatus; scheme: SignatureScheme; reason?: string }`; `export interface HmacConfig { stripeSecret?: string; githubSecret?: string; toleranceSeconds?: number }`; `export interface WebhookEvent { id: number; source: string; method: string; path: string; headers: Record<string, string>; body: Uint8Array; receivedAt: number; verification: VerificationStatus }`; `export interface ReplayRequest { eventId: number; targetUrl: string; headerOverrides?: Record<string, string> }`; `export interface ReplayResult { eventId: number; status: number; durationMs: number; responseBody: string }`. Use Uint8Array, NOT Buffer, for body: this file has no imports, and the Buffer type only exists once Node type definitions are loaded, so `body: Buffer` fails tsc -b with \"Cannot find name Buffer\" when no test is staged. At runtime the store will put a Buffer there, which is a Uint8Array. This project is ESM with moduleResolution nodenext: any relative import must end in .js (for example from \"./types.js\").",
+    "acceptanceCriteria": [
+      "1. src/types.ts exports VerificationStatus, SignatureScheme, VerificationResult, HmacConfig, WebhookEvent, ReplayRequest and ReplayResult with exactly the fields named in the spec.",
+      "2. Only VerificationResult.reason, the three HmacConfig fields and ReplayRequest.headerOverrides are optional.",
+      "3. WebhookEvent.body is typed Uint8Array (raw bytes, not a string, and not Buffer so the file compiles without Node type definitions).",
+      "4. The file contains no functions, classes or values.",
+      "5. tsc -b and biome check . both pass."
+    ]
+  },
+  {
+    "id": "card_vang_2_hmac",
+    "title": "Timing-safe Stripe and GitHub HMAC verification (SPIDR: Rule)",
+    "scopeFiles": ["src/hmac.ts"],
+    "acceptanceTests": ["hmac.spec.ts"],
+    "stepBudget": 32,
+    "spec": "Write src/hmac.ts. Use `import { createHmac, timingSafeEqual } from \"node:crypto\"` (named imports from node:crypto, exactly this module name) and `import type { VerificationResult } from \"./types.js\"`. Export `export const DEFAULT_TOLERANCE_SECONDS = 300`. Export `export function computeHmacHex(secret: string, payload: Buffer | string): string` = createHmac(\"sha256\", secret).update(payload).digest(\"hex\"). Export `export function safeEqualHex(a: string, b: string): boolean`: return false unless BOTH strings match /^(?:[0-9a-f]{2})+$/i (non-empty, even length, hex only; Buffer.from(\"zz\", \"hex\") silently decodes to an empty buffer, so this check is required) and have equal length; otherwise return timingSafeEqual(Buffer.from(a, \"hex\"), Buffer.from(b, \"hex\")). Never compare signatures with === . Export `export function signStripe(secret: string, payload: Buffer | string, timestamp: number): string` returning `t=${timestamp},v1=${hex}` where hex is computeHmacHex over the bytes of `${timestamp}.` followed by the payload bytes. Export `export function signGithub(secret: string, payload: Buffer | string): string` returning `sha256=${computeHmacHex(secret, payload)}`. Export `export function verifyStripe(header: string | undefined, payload: Buffer, secret: string, nowSeconds: number, toleranceSeconds: number = DEFAULT_TOLERANCE_SECONDS): VerificationResult`, checking in this order: header undefined or \"\" -> failed \"missing signature header\"; split the header on \",\" into key=value parts (split each at the first \"=\"), take the t value and every v1 value; no t, t not all digits, or no v1 -> failed \"malformed signature header\"; Math.abs(nowSeconds - t) > toleranceSeconds -> failed \"timestamp outside tolerance\"; if safeEqualHex(expected, v1) for ANY v1 -> { status: \"verified\", scheme: \"stripe\" }; else failed \"signature mismatch\". Export `export function verifyGithub(header: string | undefined, payload: Buffer, secret: string): VerificationResult`: missing -> \"missing signature header\"; not starting with \"sha256=\" -> \"malformed signature header\"; safeEqualHex of the expected hex and the text after \"sha256=\" -> { status: \"verified\", scheme: \"github\" }; else \"signature mismatch\". A failure is { status: \"failed\", scheme, reason } with scheme \"stripe\" or \"github\"; a success has no reason property. This project is ESM with moduleResolution nodenext: any relative import must end in .js (for example from \"./types.js\").",
+    "acceptanceCriteria": [
+      "1. computeHmacHex(\"key\", \"The quick brown fox jumps over the lazy dog\") is f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8.",
+      "2. safeEqualHex calls crypto.timingSafeEqual for equal-length hex, is case-insensitive, and returns false (never throws) for different lengths, empty strings, odd length and non-hex input such as \"zz\" vs \"yy\".",
+      "3. signStripe and signGithub produce `t=${timestamp},v1=${hex}` and `sha256=${hex}` exactly as the tests compute them.",
+      "4. A correctly signed payload verifies for both schemes, and the verification calls timingSafeEqual.",
+      "5. One flipped payload bit, a wrong secret, a truncated signature, a non-hex signature, a flipped hex digit and a signature reused with a forged timestamp all give reason \"signature mismatch\".",
+      "6. The Stripe timestamp tolerance defaults to 300 seconds and is inclusive: now = t + 300 verifies, t + 301 and t - 301 fail with \"timestamp outside tolerance\".",
+      "7. Missing, empty and malformed headers give \"missing signature header\" or \"malformed signature header\" exactly as tested; any matching v1 among several verifies.",
+      "8. tests/hmac.spec.ts passes without modification."
+    ]
+  },
+  {
+    "id": "card_vang_3_store",
+    "title": "node:sqlite WAL event store for raw webhooks (SPIDR: Data)",
+    "scopeFiles": ["src/store.ts"],
+    "acceptanceTests": ["store.spec.ts"],
+    "stepBudget": 32,
+    "spec": "Write src/store.ts using the built-in node:sqlite module (`import { DatabaseSync } from \"node:sqlite\"`; do not use better-sqlite3) and `import type { VerificationStatus, WebhookEvent } from \"./types.js\"`. Export `export type NewEvent = Omit<WebhookEvent, \"id\">`. Export `export class EventStore` with: `constructor(path: string)` which opens the database, runs PRAGMA journal_mode = WAL and PRAGMA synchronous = NORMAL, and creates (IF NOT EXISTS) table webhook_events (id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT NOT NULL, method TEXT NOT NULL, path TEXT NOT NULL, headers_json TEXT NOT NULL, body BLOB NOT NULL, received_at INTEGER NOT NULL, verification TEXT NOT NULL CHECK (verification IN ('verified', 'failed', 'unsigned'))); `insert(event: NewEvent): WebhookEvent` storing headers as JSON.stringify(headers) and the body Buffer directly as the BLOB, returning { ...event, id: Number(result.lastInsertRowid) }; `get(id: number): WebhookEvent | undefined`; `list(options: { source?: string; limit?: number } = {}): WebhookEvent[]` returning newest first (ORDER BY id DESC), optionally WHERE source = ?, with LIMIT defaulting to 50, throwing new RangeError(\"limit must be >= 1\") when limit is not an integer >= 1; `count(): number`; `close(): void`. Rows map back to WebhookEvent with headers = JSON.parse(headers_json), receivedAt = received_at, and body = Buffer.from(row.body), because node:sqlite returns BLOB columns as Uint8Array, not Buffer. A Buffer is a Uint8Array, so it satisfies WebhookEvent.body, and the tests check Buffer.isBuffer(event.body). This project is ESM with moduleResolution nodenext: any relative import must end in .js (for example from \"./types.js\").",
+    "acceptanceCriteria": [
+      "1. PRAGMA journal_mode is wal and webhook_events has exactly the eight columns in the spec.",
+      "2. Ids start at 1; count() reflects inserts.",
+      "3. The body bytes [0xff, 0x00, 0xfe, 0x0a, 0x80] round-trip exactly and get() returns them as a real Buffer (Buffer.isBuffer is true); an empty body round-trips with length 0.",
+      "4. Headers (including mixed-case names), method, path with query, receivedAt and verification round-trip exactly.",
+      "5. get of an unknown id returns undefined; an unknown verification value is rejected by the CHECK constraint and nothing is stored.",
+      "6. list returns newest first, filters by source, honours limit, defaults to 50, and list({ limit: 0 }) throws RangeError \"limit must be >= 1\".",
+      "7. Events persist across closing and reopening the database.",
+      "8. tests/store.spec.ts passes without modification."
+    ]
+  },
+  {
+    "id": "card_vang_4_ingest",
+    "title": "HTTP ingestion handler with verification and size limits (SPIDR: Path)",
+    "scopeFiles": ["src/ingest.ts"],
+    "acceptanceTests": ["ingest.spec.ts"],
+    "stepBudget": 32,
+    "spec": "Write src/ingest.ts. Imports (relative imports end in .js): `import type { IncomingMessage, ServerResponse } from \"node:http\"`; DEFAULT_TOLERANCE_SECONDS, verifyGithub, verifyStripe from \"./hmac.js\"; type EventStore from \"./store.js\"; types HmacConfig, VerificationResult, WebhookEvent from \"./types.js\". Export `export const DEFAULT_MAX_BODY_BYTES = 1024 * 1024` and `export interface IngestOptions { store: EventStore; hmac: HmacConfig; maxBodyBytes?: number; now?: () => number; onEvent?: (event: WebhookEvent) => void }` (now returns epoch milliseconds, default Date.now). Export `export function verifyForSource(source: string, headers: Record<string, string>, body: Buffer, hmac: HmacConfig, nowSeconds: number): VerificationResult`: source \"stripe\" with hmac.stripeSecret defined -> verifyStripe(headers[\"stripe-signature\"], body, stripeSecret, nowSeconds, hmac.toleranceSeconds ?? DEFAULT_TOLERANCE_SECONDS); source \"github\" with hmac.githubSecret defined -> verifyGithub(headers[\"x-hub-signature-256\"], body, githubSecret); otherwise { status: \"unsigned\", scheme: \"none\" }. Export `export function createIngestHandler(options: IngestOptions): (req: IncomingMessage, res: ServerResponse) => void`. Every response is JSON with content-type application/json. Take the path as req.url before any \"?\"; it must match /^\\/ingest\\/([a-z0-9-]{1,32})$/ else 404 { error: \"not found\" }. A method other than POST -> set header allow: POST and answer 405 { error: \"method not allowed\" }. Read the whole body as Buffer chunks, counting bytes; if the total exceeds maxBodyBytes (default DEFAULT_MAX_BODY_BYTES) answer 413 { error: \"payload too large\" } after the request ends and store nothing (a body of exactly maxBodyBytes is accepted). Otherwise build headers from req.headers (names are already lower-case; join array values with \", \"), set receivedAt = now(), call verifyForSource with Math.floor(receivedAt / 1000), store { source, method: \"POST\", path: req.url (including the query string), headers, body, receivedAt, verification: result.status }, call options.onEvent with the stored event, and answer 401 { id, verification: \"failed\", reason } when verification failed, else 202 { id, verification }. Failed webhooks ARE stored: this is an inspector.",
+    "acceptanceCriteria": [
+      "1. verifyForSource uses the Stripe scheme for source stripe, the GitHub scheme for source github, and returns { status: \"unsigned\", scheme: \"none\" } for other sources or when the secret is not configured; toleranceSeconds is honoured.",
+      "2. A signed Stripe POST to /ingest/stripe?attempt=1 answers 202 { id: 1, verification: \"verified\" } and stores source, method, path with query, exact body, headers and receivedAt; onEvent receives the stored event.",
+      "3. A tampered body answers 401 { id: 1, verification: \"failed\", reason: \"signature mismatch\" } and is stored with verification failed.",
+      "4. A signed GitHub POST verifies; a POST to /ingest/shopify answers 202 with verification unsigned.",
+      "5. With now() one hour after the signature, the reason is \"timestamp outside tolerance\".",
+      "6. A body of 65 bytes with maxBodyBytes 64 answers 413 { error: \"payload too large\" } and stores nothing; exactly 64 bytes is accepted.",
+      "7. GET /ingest/stripe answers 405 with header allow: POST; /, /ingest/, /ingest/Bad_Source, /ingest/a/b and /other answer 404; neither stores anything.",
+      "8. tests/ingest.spec.ts passes without modification."
+    ]
+  },
+  {
+    "id": "card_vang_5_replay",
+    "title": "Replay stored webhooks to a local URL with timing capture (SPIDR: Path)",
+    "scopeFiles": ["src/replay.ts"],
+    "acceptanceTests": ["replay.spec.ts"],
+    "stepBudget": 32,
+    "spec": "Write src/replay.ts. Import `{ performance } from \"node:perf_hooks\"`, type EventStore from \"./store.js\" and types ReplayRequest, ReplayResult, WebhookEvent from \"./types.js\". Use the global fetch (no npm packages). Export `export const HOP_BY_HOP_HEADERS = [\"host\", \"content-length\", \"connection\", \"keep-alive\", \"transfer-encoding\", \"upgrade\"]`. Export `export function buildReplayHeaders(event: WebhookEvent, overrides: Record<string, string> = {}): Record<string, string>` returning a NEW object: every stored header with a lower-cased name except those in HOP_BY_HOP_HEADERS, then every override with a lower-cased name (overrides replace stored values), then \"x-vanguard-replay\" set to String(event.id) last so an override cannot change it; the event is not mutated. Export `export async function replayEvent(store: EventStore, request: ReplayRequest, now: () => number = () => performance.now()): Promise<ReplayResult>`: load the event with store.get, or throw new Error(`event not found: ${request.eventId}`) before sending anything; parse new URL(request.targetUrl) and throw new Error(`unsupported protocol: ${url.protocol}`) unless the protocol is \"http:\" or \"https:\"; record started = now(); await fetch(url, { method: event.method, headers: buildReplayHeaders(event, request.headerOverrides), body: event.body }); read the response with await response.text(); return { eventId: event.id, status: response.status, durationMs: now() - started, responseBody }. Non-2xx responses are returned, not thrown. This project is ESM with moduleResolution nodenext: any relative import must end in .js (for example from \"./types.js\").",
+    "acceptanceCriteria": [
+      "1. HOP_BY_HOP_HEADERS equals the six names in the spec, in that order.",
+      "2. buildReplayHeaders drops host, content-length and connection, keeps content-type and stripe-signature, and adds x-vanguard-replay equal to the event id.",
+      "3. Overrides are applied with lower-cased names and replace stored values; an override of x-vanguard-replay is ignored; the stored headers are not mutated.",
+      "4. replayEvent sends the exact stored body bytes (including 0xff and 0x00) with method POST, the stored signature header and x-vanguard-replay, and returns status 200 and the response body \"ok\".",
+      "5. With an injected clock returning 1000 then 1250, durationMs is 250.",
+      "6. A 500 response is returned as { status: 500, responseBody: \"boom\" } rather than thrown.",
+      "7. An unknown id rejects with \"event not found: 404\" and ftp: or file: URLs reject with \"unsupported protocol: ftp:\" / \"unsupported protocol: file:\"; in both cases nothing is sent.",
+      "8. tests/replay.spec.ts passes without modification."
+    ]
+  },
+  {
+    "id": "card_vang_6_sse",
+    "title": "Server-Sent Events broadcast bus (SPIDR: Rule/Interface)",
+    "scopeFiles": ["src/sse.ts"],
+    "acceptanceTests": ["sse.spec.ts"],
+    "stepBudget": 32,
+    "spec": "Write src/sse.ts with `import type { ServerResponse } from \"node:http\"`. Export `export function formatSseEvent(event: string, data: unknown, id?: number): string`: throw new Error(\"invalid event name\") when event is empty or contains \\r or \\n; otherwise return (id === undefined ? \"\" : `id: ${id}\\n`) + `event: ${event}\\n` + `data: ${JSON.stringify(data)}\\n\\n`. Note that an id of 0 must still be written, so compare with undefined rather than testing truthiness. Export `export class SseBus` holding a Set<ServerResponse> of clients, with: `get clientCount(): number`; `addClient(res: ServerResponse): () => void` which calls res.writeHead(200, { \"content-type\": \"text/event-stream\", \"cache-control\": \"no-cache\", connection: \"keep-alive\" }), writes the comment \": connected\\n\\n\", adds res to the set, removes it again on res's \"close\" event, and returns a function that removes it; `broadcast(event: string, data: unknown, id?: number): number` which formats the frame ONCE first (so an invalid name throws before anything is written), writes it to every client and returns the number of clients written to; `closeAll(): void` which calls end() on every client and clears the set. This project is ESM with moduleResolution nodenext: any relative import must end in .js (for example from \"./types.js\").",
+    "acceptanceCriteria": [
+      "1. formatSseEvent(\"webhook\", { id: 3, source: \"stripe\" }, 3) is exactly 'id: 3\\nevent: webhook\\ndata: {\"id\":3,\"source\":\"stripe\"}\\n\\n'.",
+      "2. Without an id there is no id line; an id of 0 is written as \"id: 0\"; string data is JSON-encoded so a newline in data stays on one line.",
+      "3. An empty event name or one containing \\n or \\r throws \"invalid event name\".",
+      "4. broadcast with no clients returns 0.",
+      "5. A connecting client gets status 200, content-type text/event-stream, cache-control no-cache and the text \": connected\\n\\n\".",
+      "6. Two clients each receive two broadcasts in order and broadcast returns 2.",
+      "7. A client that disconnects, or is removed with the function returned by addClient, no longer counts; an invalid event name writes nothing; closeAll ends every stream.",
+      "8. tests/sse.spec.ts passes without modification."
+    ]
+  },
+  {
+    "id": "card_vang_7_cli",
+    "title": "Vanguard CLI argument parser and event line formatter (SPIDR: Interface)",
+    "scopeFiles": ["src/cli.ts"],
+    "acceptanceTests": ["cli.spec.ts"],
+    "stepBudget": 32,
+    "spec": "Write src/cli.ts with `import type { WebhookEvent } from \"./types.js\"`. Export `export type Command = { kind: \"start\"; port: number; db: string } | { kind: \"list\"; source: string | null; limit: number } | { kind: \"replay\"; id: number; to: string; headers: Record<string, string> } | { kind: \"tail\" } | { kind: \"error\"; message: string }` and `export function parseArgs(argv: string[]): Command`. Steps, each returning { kind: \"error\", message } on failure: (1) empty argv -> \"usage: vanguard start|list|replay|tail\". (2) The first word is the command; allowed flags per command are start: --port, --db; list: --source, --limit; replay: --to, -H; tail: none. Any other command -> `unknown command: ${name}` (checked before flags). (3) Scan the remaining arguments: an argument starting with \"-\" is a flag whose value is the next argument (even if that value starts with \"-\"); a flag with no next argument -> `missing value for ${flag}`; flags may repeat (the last value wins, except -H which accumulates); everything else is a positional word. (4) A flag not allowed for the command -> `unknown option: ${flag}`. (5) start: port from --port (default \"4040\") must match /^\\d+$/ and be <= 65535 else `invalid port: ${raw}`; any positional word -> \"usage: vanguard start\"; db from --db (default \"vanguard.db\"). list: limit from --limit (default \"20\") must match /^\\d+$/ and be >= 1 else `invalid limit: ${raw}`; any positional word -> \"usage: vanguard list\"; source from --source or null. replay: exactly one positional word and a --to value, else \"usage: vanguard replay ID --to URL\"; the word must match /^[1-9]\\d*$/ else `invalid event id: ${word}`; each -H value is split at its FIRST \":\" into a name (trimmed, lower-cased, must be non-empty) and a trimmed value, else `invalid header: ${value}`. tail: any positional word -> \"usage: vanguard tail\". Export `export function formatEventLine(event: WebhookEvent): string` returning `#${id} ${source} ${method} ${path} ${verification} ${event.body.length}B ${new Date(event.receivedAt).toISOString()}`. This project is ESM with moduleResolution nodenext: any relative import must end in .js (for example from \"./types.js\").",
+    "acceptanceCriteria": [
+      "1. parseArgs([\"start\"]) equals { kind: \"start\", port: 4040, db: \"vanguard.db\" }; ports 0 and 65535 are accepted; 65536, abc and -1 give \"invalid port: ...\" with the raw value.",
+      "2. parseArgs([\"list\"]) equals { kind: \"list\", source: null, limit: 20 }; --source and --limit work; limits 0 and ten are rejected.",
+      "3. replay parses the id, --to and repeated -H headers into lower-cased names, splitting only at the first colon (X-Origin: http://a:8080 keeps the value http://a:8080).",
+      "4. replay without --to, without an id, or with two ids gives \"usage: vanguard replay ID --to URL\"; ids abc and 0 are invalid; -H novalue and -H \": x\" are invalid headers.",
+      "5. tail parses; positional words after tail or list give their usage messages.",
+      "6. Empty argv, unknown command (even with a dangling flag), a flag with no value and an option the command does not accept give exactly the messages in the spec.",
+      "7. formatEventLine gives \"#7 stripe POST /ingest/stripe verified 6B 2026-09-18T12:00:00.000Z\" for a 6-byte UTF-8 body and \"0B\" for an empty body.",
+      "8. tests/cli.spec.ts passes without modification."
+    ]
+  },
+  {
+    "id": "card_vang_8_e2e",
+    "title": "Vanguard daemon: ingest, verify, stream and replay end to end (SPIDR: Integration)",
+    "scopeFiles": ["src/daemon.ts"],
+    "acceptanceTests": ["e2e.spec.ts"],
+    "stepBudget": 40,
+    "spec": "Write src/daemon.ts. Imports (relative imports end in .js): createServer and types IncomingMessage, ServerResponse from \"node:http\"; type AddressInfo from \"node:net\"; createIngestHandler from \"./ingest.js\"; replayEvent from \"./replay.js\"; SseBus from \"./sse.js\"; EventStore from \"./store.js\"; type HmacConfig from \"./types.js\". Export `export interface DaemonOptions { dbPath: string; port: number; hmac: HmacConfig; host?: string; now?: () => number; maxBodyBytes?: number }`, `export interface Daemon { port: number; store: EventStore; bus: SseBus; close(): Promise<void> }` and `export async function startDaemon(options: DaemonOptions): Promise<Daemon>`. It creates the EventStore and an SseBus, and an ingest handler whose onEvent calls bus.broadcast(\"webhook\", { id, source, verification, bytes: body.length }, id) with keys in exactly that order (pass now and maxBodyBytes to createIngestHandler only when they are defined). Routes, with the path taken before any \"?\" and every JSON answer using content-type application/json: any path starting with /ingest/ -> the ingest handler; GET /health -> 200 { status: \"ok\" }; GET /events/stream -> bus.addClient(res); GET /events -> 200 with store.list() mapped to { id, source, method, path, verification, receivedAt, bytes } (bytes = body length; newest first); POST /events/:id/replay (path /^\\/events\\/(\\d+)\\/replay$/) -> 404 { error: `event not found: ${id}` } if store.get(id) is undefined, else read the request body as JSON { to, headers? } (invalid JSON -> 400 { error: message }), missing string `to` -> 400 { error: \"missing to\" }, otherwise 200 with the ReplayResult from replayEvent(store, { eventId, targetUrl: to, headerOverrides only when headers is given }); anything else -> 404 { error: \"not found\" }. Wrap the async handler body in try/catch answering 400 { error: message }. Listen on options.port and options.host ?? \"127.0.0.1\" and resolve with the bound port from server.address(). close() must call bus.closeAll(), then server.closeAllConnections(), then await server.close(), then store.close(); without closeAllConnections an open SSE or keep-alive connection makes server.close() hang.",
+    "acceptanceCriteria": [
+      "1. startDaemon({ port: 0, ... }) binds 127.0.0.1 on a free port and GET /health answers 200 { status: \"ok\" }.",
+      "2. An SSE listener on /events/stream receives exactly ': connected\\n\\nid: 1\\nevent: webhook\\ndata: {\"id\":1,\"source\":\"stripe\",\"verification\":\"verified\",\"bytes\":65}\\n\\n' when a signed Stripe webhook is ingested with 202.",
+      "3. A webhook signed with the wrong secret answers 401 with reason \"signature mismatch\", is streamed with verification failed and appears in GET /events.",
+      "4. GET /events lists newest first with id, source, method, path, verification, receivedAt and bytes exactly.",
+      "5. POST /events/1/replay with { to } answers 200 with eventId 1, status 200 and the target's body, and the target receives the identical body, the original stripe-signature and x-vanguard-replay: 1; headers overrides are applied.",
+      "6. Replaying id 99 answers 404 { error: \"event not found: 99\" }; a missing to answers 400 { error: \"missing to\" }; invalid JSON answers 400; nothing is sent to the target in these cases. Unknown routes answer 404 { error: \"not found\" }.",
+      "7. close() returns promptly even with an SSE client connected.",
+      "8. tests/e2e.spec.ts passes without modification."
+    ]
+  }
+]
