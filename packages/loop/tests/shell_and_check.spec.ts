@@ -93,4 +93,59 @@ describe("@sekhemet/loop shell command lines and the check tool", () => {
     expect(turn.gateResult).toBeUndefined();
     expect(session.getLadderState().totalAttempts).toBe(0);
   });
+
+  it("re-checks after an edit while a failure stands, and finishes when the gates go green", async () => {
+    let calls = 0;
+    const failure = (n: number) => ({
+      rung: "typecheck" as const,
+      gate: "typecheck",
+      exitCode: 2,
+      errorExcerpt: `src/a.ts:${n}:1 TS2304: Cannot find name 'x${n}'.`,
+      suggestedFixFiles: ["src/a.ts"],
+    });
+    // Fails with two errors on submit, then passes on the re-check after the edit.
+    const runner: GateRunner = {
+      runGates: async (): Promise<GateResult> => {
+        calls++;
+        return calls === 1
+          ? { passed: false, durationMs: 1, failures: [failure(1), failure(2)] }
+          : { passed: true, durationMs: 1, failures: [] };
+      },
+    };
+    const usage = { promptTokens: 1, completionTokens: 1, durationMs: 1 };
+    const adapter = new MockInferenceAdapter("m", [
+      { text: "", toolCalls: [{ id: "1", name: "finish_card", arguments: {} }], usage },
+      {
+        text: "",
+        toolCalls: [
+          { id: "2", name: "write_file", arguments: { path: "src/a.ts", content: "ok\n" } },
+        ],
+        usage,
+      },
+    ]);
+    const session = new CardExecutionSessionImpl({
+      cardId: "c",
+      stepBudget: 5,
+      worktreePath: root,
+      gateRunner: runner,
+      modelAdapter: adapter,
+    });
+
+    const first = await session.executeTurn();
+    expect(first.stopReason).toBeUndefined();
+    // Both failures reach the next prompt, not just the first.
+    const prompt = (session as unknown as { buildPrompt(): { prompt: string } }).buildPrompt()
+      .prompt;
+    expect(prompt).toContain("x1");
+    expect(prompt).toContain("Also failing");
+    expect(prompt).toContain("x2");
+
+    const second = await session.executeTurn();
+    expect(calls).toBe(2);
+    expect(second.stopReason).toBe("gate_passed");
+    expect(second.gateResult?.passed).toBe(true);
+    // The pass came from the harness re-check, not from a second submission.
+    expect(second.toolCalls.map((c) => c.name)).toEqual(["write_file"]);
+    expect(session.getHistory().some((h) => h.action === "re-check after edit")).toBe(true);
+  });
 });

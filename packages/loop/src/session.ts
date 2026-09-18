@@ -69,6 +69,8 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
 
   private history: TurnHistoryItem[] = [];
   private lastGateFailure: GateFailure | undefined;
+  /** Every failure from the last verification, ranked; the prompt shows several. */
+  private lastGateFailures: GateFailure[] = [];
   private repairAttempts = 0;
   private repoMapCache: string | undefined;
   private lastSystemPrompt = "";
@@ -333,6 +335,9 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         ? { acceptanceCriteria: this.card.acceptanceCriteria }
         : {}),
       ...(this.lastGateFailure ? { gateFailure: this.lastGateFailure } : {}),
+      ...(this.lastGateFailures.length > 1
+        ? { otherGateFailures: this.lastGateFailures.slice(1) }
+        : {}),
     });
 
     return pack;
@@ -446,6 +451,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         }
 
         this.lastGateFailure = forced.failures[0];
+        this.lastGateFailures = forced.failures;
         this.activeRung = this.ladder.recordFailure();
         return {
           turnIndex,
@@ -494,12 +500,50 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     let gateResult: GateResult | undefined;
     let stopReason: ExecutionStopReason | undefined;
 
-    if (this.tools.wantsFinish()) {
+    // Re-check after every edit while a failure is outstanding. Without it the
+    // agent edited blind: Chronicle's ledger card fixed the one error it was
+    // shown, then spent 25 turns re-reading files while seven more stood, and
+    // ran out of budget without ever verifying again. This is feedback, not a
+    // submission: it does not climb the repair ladder.
+    const wroteThisTurn = toolCalls.some(
+      (c, i) => WRITE_TOOLS.has(c.name) && observations[i]?.ok === true,
+    );
+    const checkedThisTurn = toolCalls.some((c) => c.name === "check");
+    if (!this.tools.wantsFinish() && this.lastGateFailure && wroteThisTurn && !checkedThisTurn) {
+      const recheck = await this.runVerification();
+      if (recheck.passed) {
+        this.isFinished = true;
+        this.lastGateFailure = undefined;
+        this.lastGateFailures = [];
+        this.ladder.reset();
+        this.activeRung = undefined;
+        this.history.push({
+          turn: turnIndex,
+          action: "re-check after edit",
+          result: "All gates pass.",
+        });
+        gateResult = recheck;
+        stopReason = "gate_passed";
+      } else {
+        this.lastGateFailure = recheck.failures[0];
+        this.lastGateFailures = recheck.failures;
+        this.history.push({
+          turn: turnIndex,
+          action: "re-check after edit",
+          result: `Still failing (${recheck.failures.length} shown): ${recheck.failures
+            .map((f) => f.errorExcerpt.split("\n")[0])
+            .join(" | ")}`,
+        });
+      }
+    }
+
+    if (!stopReason && this.tools.wantsFinish()) {
       gateResult = await this.runVerification();
 
       if (gateResult.passed) {
         this.isFinished = true;
         this.lastGateFailure = undefined;
+        this.lastGateFailures = [];
         this.ladder.reset();
         this.activeRung = undefined;
         stopReason = "gate_passed";
@@ -508,6 +552,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         // it, and let the agent keep working rather than ending the card here.
         this.repairAttempts++;
         this.lastGateFailure = gateResult.failures[0];
+        this.lastGateFailures = gateResult.failures;
 
         const policy = this.ladder.recordFailure();
         this.activeRung = policy;

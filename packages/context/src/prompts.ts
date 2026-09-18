@@ -51,6 +51,8 @@ export interface PromptPackOptions {
   playbookRules?: string[];
   recentTurns?: TurnHistoryItem[];
   gateFailure?: GateFailure;
+  /** Further failures from the same verification, rendered after the first. */
+  otherGateFailures?: GateFailure[];
   /** Tool interface rendered into Zone 1 so the model knows what it may call. */
   tools?: ToolInterfaceSpec[];
   /** Overrides the card title as the restated goal. */
@@ -169,6 +171,7 @@ export function buildFullPromptPack(options: PromptPackOptions): BuiltPromptPack
     playbookRules = [],
     recentTurns = [],
     gateFailure,
+    otherGateFailures,
     tools = [],
     skillDisclosure = "full",
     maxRecentTurns = DEFAULT_RECENT_TURNS,
@@ -252,7 +255,16 @@ Step: ${card.stepsUsed}/${card.stepBudget}`;
 Gate Rung: ${gateFailure.rung} (Exit code: ${gateFailure.exitCode})
 Suggested Fix Files: ${renderScope(gateFailure.suggestedFixFiles)}
 Error Excerpt:
-${gateFailure.errorExcerpt}${gateFailure.suggestedAction ? `\nHow to fix: ${gateFailure.suggestedAction}` : ""}
+${gateFailure.errorExcerpt}${gateFailure.suggestedAction ? `\nHow to fix: ${gateFailure.suggestedAction}` : ""}${
+  otherGateFailures && otherGateFailures.length > 0
+    ? `\n\nAlso failing — fix these in the same pass:\n${otherGateFailures
+        .map(
+          (f, i) =>
+            `${i + 2}. ${f.errorExcerpt.split("\n")[0]}${f.suggestedAction ? `\n   How to fix: ${f.suggestedAction}` : ""}`,
+        )
+        .join("\n")}`
+    : ""
+}
 
 INSTRUCTION: Address the error above in declared scope files and call finish_card when tests pass.`;
     userParts.push(failureText);
