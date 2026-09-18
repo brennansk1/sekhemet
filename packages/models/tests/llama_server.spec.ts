@@ -10,10 +10,11 @@ describe("@sekhemet/models managed llama-server", () => {
     expect(args).toContain("--jinja");
     // Without draft-mtp the grafted head is dead weight.
     expect(flag("--spec-type")).toBe("draft-mtp");
-    // 4-bit KV is prohibited for tool-calling models; 8k keeps the host out of swap.
+    // 4-bit KV is prohibited for tool-calling models. 16k: this hybrid-attention
+    // MoE's KV cache is small enough that the larger window costs ~0.16GB.
     expect(flag("-ctk")).toBe("q8_0");
     expect(flag("-ctv")).toBe("q8_0");
-    expect(flag("-c")).toBe("8192");
+    expect(flag("-c")).toBe("16384");
     expect(flag("--host")).toBe("127.0.0.1");
   });
 
