@@ -464,6 +464,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       scopeFiles: card.scopeFiles,
       agentRole: "implementer",
       agentHarness: "sekhemet",
+      // Stop before the host does: a paused card resumes, an OOM takes the machine.
+      memoryGuard: {},
       skillsRegistry: skills,
       playbookRegistry: playbook,
       lifecycle: {
@@ -509,7 +511,15 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       },
     });
 
-    const result = await runner.run();
+    let result: Awaited<ReturnType<CardRunner["run"]>>;
+    try {
+      result = await runner.run();
+    } finally {
+      // Release the weights on every exit path, including a crash mid-card:
+      // a resident 13GB checkpoint left behind by a failed run is how the host
+      // ran out of memory overnight.
+      await model.unload();
+    }
 
     console.log(`\n${summarizeEvidence(result.evidence)}\n`);
     console.log(
@@ -518,9 +528,6 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         : `Card ${cardId} stopped: ${result.stopReason}. Left in ${result.finalStatus} for inspection.`,
     );
 
-    // Release the model before exiting: holding a resident MoE checkpoint on a
-    // constrained box is what starts swapping.
-    await model.unload();
     if (!result.passed) process.exitCode = 1;
     return;
   }

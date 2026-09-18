@@ -1,4 +1,6 @@
-import { freemem, totalmem } from "node:os";
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { freemem, platform, totalmem } from "node:os";
 
 export type MemoryPressureLevel = "normal" | "warning" | "critical";
 
@@ -73,4 +75,84 @@ export function classifyMemoryPressure(
 export function currentMemoryPressure(): MemoryPressureStatus {
   const total = totalmem();
   return classifyMemoryPressure(total - freemem(), total);
+}
+
+/**
+ * Bytes of swap currently in use, or undefined where it cannot be read.
+ *
+ * Swap is the signal that actually predicts an OOM on unified-memory Macs.
+ * `os.freemem()` counts reclaimable file cache as used, so it reads "high
+ * pressure" on a healthy machine and gave no warning before the host ran out
+ * of memory during a Chronicle run with 9.4GB of 10GB swap consumed.
+ */
+export function readSwapUsedBytes(): number | undefined {
+  try {
+    if (platform() === "darwin") {
+      const out = execFileSync("sysctl", ["-n", "vm.swapusage"], { encoding: "utf8" });
+      const match = /used\s*=\s*([\d.]+)([KMG])/i.exec(out);
+      if (!match) return undefined;
+      const unit = { K: 1024, M: 1024 ** 2, G: 1024 ** 3 }[
+        (match[2] ?? "M").toUpperCase() as "K" | "M" | "G"
+      ];
+      return Number.parseFloat(match[1] ?? "0") * unit;
+    }
+    if (platform() === "linux") {
+      const info = readFileSync("/proc/meminfo", "utf8");
+      const total = /SwapTotal:\s+(\d+)/.exec(info)?.[1];
+      const free = /SwapFree:\s+(\d+)/.exec(info)?.[1];
+      if (total === undefined || free === undefined) return undefined;
+      return (Number(total) - Number(free)) * 1024;
+    }
+  } catch {
+    // Unreadable: the guard treats unknown as "no evidence of danger".
+  }
+  return undefined;
+}
+
+export interface HeadroomLimits {
+  /** Refuse a turn once swap in use exceeds this. Default 3GB. */
+  maxSwapBytes?: number;
+  /** Refuse once swap has grown this much since the card started. Default 2GB. */
+  maxSwapGrowthBytes?: number;
+}
+
+export interface HeadroomVerdict {
+  ok: boolean;
+  swapUsedBytes?: number;
+  reason?: string;
+}
+
+/**
+ * Decide whether it is safe to issue another inference turn.
+ *
+ * The harness must stop itself before the host does. A card that halts with a
+ * recorded `memory_pressure` stop reason is resumable; a kernel OOM takes the
+ * whole machine, every uncommitted change, and the user's other work with it.
+ */
+export function checkExecutionHeadroom(
+  baselineSwapBytes: number | undefined,
+  limits: HeadroomLimits = {},
+): HeadroomVerdict {
+  const swap = readSwapUsedBytes();
+  if (swap === undefined) return { ok: true };
+
+  const gb = (n: number): string => (n / 1024 ** 3).toFixed(1);
+  const maxSwap = limits.maxSwapBytes ?? 3 * 1024 ** 3;
+  const maxGrowth = limits.maxSwapGrowthBytes ?? 2 * 1024 ** 3;
+
+  if (swap > maxSwap) {
+    return {
+      ok: false,
+      swapUsedBytes: swap,
+      reason: `swap in use ${gb(swap)}GB exceeds the ${gb(maxSwap)}GB limit`,
+    };
+  }
+  if (baselineSwapBytes !== undefined && swap - baselineSwapBytes > maxGrowth) {
+    return {
+      ok: false,
+      swapUsedBytes: swap,
+      reason: `swap grew ${gb(swap - baselineSwapBytes)}GB during this card (limit ${gb(maxGrowth)}GB)`,
+    };
+  }
+  return { ok: true, swapUsedBytes: swap };
 }

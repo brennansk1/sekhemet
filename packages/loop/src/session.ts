@@ -7,7 +7,7 @@ import {
 } from "@sekhemet/context";
 import type { GateFailure, GateResult } from "@sekhemet/gates";
 import type { CardRecord } from "@sekhemet/kernel";
-import type { ToolCall } from "@sekhemet/models";
+import { type ToolCall, checkExecutionHeadroom, readSwapUsedBytes } from "@sekhemet/models";
 import type { ExecutionResult } from "@sekhemet/sandbox";
 import { OscillationDetector } from "./detector.js";
 import { type LadderState, RepairLadder, type RungPolicy } from "./ladder.js";
@@ -77,6 +77,8 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   private filesWritten = new Set<string>();
   /** A stall has already been converted into one verification run. */
   private forcedVerification = false;
+  /** Swap in use when the card started, to detect growth caused by this run. */
+  private baselineSwap = readSwapUsedBytes();
   private activeRung: RungPolicy | undefined;
 
   constructor(private options: SessionOptions) {
@@ -216,6 +218,27 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   }
 
   public async executeTurn(): Promise<TurnResult> {
+    // Check headroom before spending a turn: stopping here is resumable,
+    // letting the host run out of memory is not.
+    // Enabled by the CLI and eval harness for real runs; unit tests with mock
+    // adapters leave it off so their outcome does not depend on host swap.
+    if (this.options.memoryGuard) {
+      const verdict = checkExecutionHeadroom(this.baselineSwap, this.options.memoryGuard);
+      if (!verdict.ok) {
+        this.history.push({
+          turn: this.stepsUsed,
+          action: "memory guard",
+          result: `Execution paused: ${verdict.reason}`,
+        });
+        return {
+          turnIndex: this.stepsUsed,
+          toolCalls: [],
+          observations: [],
+          stopReason: "memory_pressure",
+        };
+      }
+    }
+
     this.stepsUsed++;
     const turnIndex = this.stepsUsed;
 

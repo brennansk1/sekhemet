@@ -13,6 +13,7 @@ export type ExecutionStopReason =
   | "no_progress"
   | "repair_exhausted"
   | "error"
+  | "memory_pressure"
   | "quota_suspended";
 
 export interface TurnResult {
@@ -62,6 +63,8 @@ export interface SessionOptions {
   syncAdapter?: GitSyncAdapter | undefined;
   allowNetwork?: boolean | undefined;
   commandTimeoutMs?: number | undefined;
+  /** Swap limits checked before every inference turn. Absent or false disables the guard. */
+  memoryGuard?: import("@sekhemet/models").HeadroomLimits | false | undefined;
 }
 
 export interface CardExecutionSession {
