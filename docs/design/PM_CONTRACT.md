@@ -171,3 +171,57 @@ Slack endpoints (Now tier):
 - `DELETE /api/integrations/slack` disconnects.
 - The PM's scheduled messages are written to the ledger as `pm/notify`, with
   `{ channel: "slack", kind: "standup" | "needs_you" | "run_report", ok }`.
+
+## 6. Learning: self-improvement and the user profile (2026-09-18)
+
+The user asked that both the Worker and Merit get better over time, grow with the project, and build a profile of what the user wants. The design follows `docs/research/PM_RESEARCH_SYNTHESIS.md`. Everything learned is:
+- context, not weights: no fine-tuning;
+- extracted from gate results and human actions, never from a model's opinion of itself;
+- recorded on the ledger, so it can be audited and rolled back;
+- approved by a human before it takes effect.
+
+Three loops:
+
+1. **Playbook (ACE: Generator, Reflector, Curator).**
+   - **Where candidate rules come from:**
+     - a failure the Worker fixed only after at least one failed edit (from working memory);
+     - a send-back note;
+     - Merit's reflection at the end of a run, when the manager model is loaded.
+   - **Scope:** each rule is scoped by card kind, file pattern, and/or an error pattern.
+   - **Counters:** when an active rule was in a card's prompt, a passing first attempt counts helpful and a failing one counts harmful.
+   - **Value:** decays Erev-Roth style: `v ← (1 − 0.1)·v + reward` each time the rule is used.
+   - **Lifecycle:** a candidate becomes active only after human approval. An active rule is proposed for retirement when it has at least 3 more harmful than helpful counts.
+2. **Policy tuner (Dream-RSI).** `sekhemet tune` replays recorded trajectories and recommends stopping policies (`.sekhemet/tuning/latest.json`).
+3. **User profile.** Statements about what the user wants, each with its evidence and strength:
+   - **Categories:** code_style, planning, communication, priorities.
+   - **Sources:**
+     - send-back notes;
+     - which kinds of proposal the user applies or discards;
+     - fields the user edits after Merit changed them.
+   - **Refinement:** the manager model turns raw signals into statements at the end of a run.
+   - **Use:** Merit reads the active statements, and the user can edit or dismiss any of them.
+
+Endpoints:
+- `GET /api/learning` returns `{ rules: LearnedRule[], profile: ProfileEntry[], tuning?: TuningReport }`.
+- `POST /api/learning/rules/:id/(approve|retire)` and `PATCH /api/learning/rules/:id` with `{ text }`.
+- `POST /api/learning/profile/:id/dismiss` and `PATCH /api/learning/profile/:id` with `{ statement }`.
+
+```ts
+interface LearnedRule {
+  id: string; role: "worker" | "manager"; text: string;
+  scope: { kind?: string; pathPattern?: string; errorPattern?: string };
+  status: "candidate" | "active" | "retired";
+  helpful: number; harmful: number; value: number;
+  source: "struggle" | "send_back" | "reflection" | "seed";
+  evidence: { cardId?: string; note: string }[];
+  createdAt: string;
+}
+interface ProfileEntry {
+  id: string; statement: string;
+  category: "code_style" | "planning" | "communication" | "priorities";
+  strength: number;                       // 0..1, decays without new evidence
+  evidence: { note: string; at: string }[];
+  status: "active" | "dismissed";
+  source: "send_back" | "proposal_choices" | "edits" | "reflection";
+}
+```
