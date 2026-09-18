@@ -44,6 +44,51 @@ If you are Claude reading this because Gemini reached quota limits or you were s
 
 ## Detailed Session Log
 
+### Entry 19 — 2026-09-18 (research implementation, RSI, learning, portability)
+- **Agent**: Claude Opus 5 (`claude-code`), lead; one Claude UI subagent (the Learning screens and naming guide)
+- **Role**: Lead Driver & Delegator
+- **Process correction.** The user pointed out that benchmark runs were testing an unfinished harness. New benchmark runs are frozen until the feature list below is complete. Run 8 is the last diagnostic run. The final evaluation (Chronicle plus the Trifecta) runs once, on the finished build.
+
+#### A. Worker quality (from the research synthesis and run diagnostics)
+
+| Change | Commit |
+|---|---|
+| API member lookup extended to "missing required property" (TS2741), plus remedies for TS2352/TS2741/TS2739 | `24f34b3` |
+| Working memory per card (errors fixed; approaches that failed), surviving resets | `ae434fc` |
+| Reversible auto-compaction: older turns fold into one indexed entry; a `recall(ref)` tool restores any of them | `5fd3019` |
+| A retry inherits the previous attempt's lessons | `26b926e` |
+| `git_history` and `dependencies` tools, for the user's two biggest complaints: agents ignoring the project's history and reinventing libraries | `6e8206e` |
+| Escalation routing: `--escalate-retries` runs a retry on the manager's dense model | `84cffa4` |
+
+- **Compaction research:** "The Complexity Trap" (NeurIPS 2025 DL4Code, MIT, Python) found observation masking matches LLM summarisation at half the cost. Sekhemet's deterministic design follows that. The paper's code is not usable as a TypeScript library, so it is cited rather than reused.
+
+#### B. Self-improvement (RSI) and the user profile (PM_CONTRACT §6)
+- **Dream-RSI replay tuner** (`sekhemet tune`, `queue --max-turns`, `3bfe6e1`). On runs 4–8, a 12-step cap keeps 17 of 18 passes and cuts time from 50.4 to 31.0 min. Recommendations are proposals only.
+- **Capability model** (`/api/capability`, `1f8bb18`): Wilson intervals by card kind and an 80% size horizon (about 50 changed lines on run 7). Merit plans against it.
+- **Learning system** (`d1033d7`): an ACE-style playbook fed by struggles, send-backs and Merit's end-of-run reflection. Rules carry helpful/harmful counts and an Erev-Roth decaying value. They reach either this project (ledger) or all projects (user config), and every rule is human-approved. The user profile learns from send-backs and from which Merit proposals the user applies or declines.
+- **Merit's review** of passing cards against learned preferences (`c8d843f`), from AutoDev (arXiv 2403.08299), which the user asked me to read.
+
+#### C. Merit
+- **Status answers:** status and standup questions are answered from the ledger with no model load.
+- **Chat compaction:** hybrid, with a rolling summary and `/compact` (`2165493`).
+- **Library search:** `find_library` checks npm/PyPI results and their licences before Merit proposes building something itself (`d0626e3`, fixed in `b6eb636`).
+- **Other:** PR-on-accept now actually opens the pull request (`48eb93a`).
+
+#### D. Models and hosts
+- **Verified swaps:** an unload is confirmed and memory pressure must be back to normal before the next load (`26b926e`).
+- **Co-residency:** worker and manager stay resident together on hosts with enough RAM.
+- **Linux support** for the user's next machine, a 128 GB Ryzen AI Max+ 395 running Ubuntu (`79e0468`): a bubblewrap sandbox, PSI memory pressure, and configurable llama-server paths.
+
+#### E. Documentation (the user's third complaint)
+- **Root:** reduced to 5 files. The rest are indexed under `docs/`.
+- **Duplicate removed:** the byte-identical v1 design doc.
+- **Guard:** `docs.spec.ts` fails the build on a stray root file, an unindexed document or a broken link (`b028fe0`).
+
+#### F. State
+- 359 tests pass, and build and lint are clean.
+- Still to do before the evaluation: the UI subagent's review and learning-screen wiring, and the evaluation itself.
+- Nail was the worker in runs 1–2 (3/6 without a manager). Cyber-Tiel replaced it on measured speed and pass rate (docs/research/MODEL_CANDIDATES.md). The 128 GB host will allow a Q6/Q8 worker to test the quantization question the research raised.
+
 ### Entry 18 — 2026-09-18 (run 7, UI checkpoint, research synthesis)
 - **Agent**: Claude Opus 5 (`claude-code`)
 - **Role**: Lead Driver & Delegator
