@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { BoardServiceImpl } from "@sekhemet/board";
 import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
@@ -107,5 +110,99 @@ describe("@sekhemet/harness MCP Server", () => {
 
     const cards = await cardStore.listCards();
     expect(cards.length).toBe(2);
+  });
+});
+
+describe("MCP tools beyond the basics (H10)", () => {
+  let ctx: McpContext;
+  let cardStore: CardStore;
+  let repo: string;
+  const call = async (name: string, args: Record<string, unknown> = {}) => {
+    const res = await handleMcpRequest(
+      { jsonrpc: "2.0", id: 9, method: "tools/call", params: { name, arguments: args } },
+      ctx,
+    );
+    const r = res?.result as { isError?: boolean; content: { text: string }[] };
+    return { error: r.isError === true, text: r.content[0]?.text ?? "" };
+  };
+
+  beforeEach(async () => {
+    repo = mkdtempSync(join(tmpdir(), "mcp-"));
+    const db = new DatabaseSync(":memory:");
+    initSchema(db);
+    const log = new EventLog(db);
+    cardStore = new CardStore(db, log);
+    ctx = { db, log, cardStore, boardService: new BoardServiceImpl(cardStore), repoPath: repo };
+    await cardStore.createCard({ id: "card_a", tier: "task", title: "A", status: "backlog" });
+  });
+
+  it("offers only tiers the database accepts", async () => {
+    const res = await handleMcpRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" }, ctx);
+    const tools = (
+      res?.result as {
+        tools: { name: string; inputSchema: { properties: Record<string, { enum?: string[] }> } }[];
+      }
+    ).tools;
+    const create = tools.find((t) => t.name === "sekhemet_create_card");
+    expect(create?.inputSchema.properties.tier?.enum).not.toContain("spike");
+    expect(tools.every((t) => !("handler" in t))).toBe(true);
+    // Accepting stays a human action.
+    expect(tools.some((t) => /accept/.test(t.name))).toBe(false);
+    const epic = await call("sekhemet_create_card", { title: "Ledger", tier: "epic" });
+    expect(epic.error).toBe(false);
+  });
+
+  it("gets a card with its evidence, minus the raw diff", async () => {
+    mkdirSync(join(repo, ".sekhemet", "evidence"), { recursive: true });
+    writeFileSync(
+      join(repo, ".sekhemet", "evidence", "latest-card_a.json"),
+      JSON.stringify({ gatesPassed: false, diff: "x".repeat(50_000), failures: ["tsc"] }),
+    );
+    const r = await call("sekhemet_get_card", { card_id: "card_a" });
+    expect(r.text).toContain('"gatesPassed": false');
+    expect(r.text).not.toContain("xxxxx");
+    expect((await call("sekhemet_get_card", { card_id: "nope" })).error).toBe(true);
+  });
+
+  it("updates team fields only, and moves cards", async () => {
+    expect(
+      (await call("sekhemet_update_card", { card_id: "card_a", fields: { status: "done" } })).error,
+    ).toBe(true);
+    await call("sekhemet_update_card", {
+      card_id: "card_a",
+      fields: { priority: 1, labels: ["api"] },
+    });
+    const card = await cardStore.getCard("card_a");
+    expect(card?.priority).toBe(1);
+    expect(card?.status).toBe("backlog");
+    const moved = await call("sekhemet_move_card", { card_id: "card_a", to: "ready" });
+    expect(moved.error).toBe(false);
+    expect((await cardStore.getCard("card_a"))?.status).toBe("ready");
+  });
+
+  it("answers notifications with nothing and ping with an empty result", async () => {
+    expect(
+      await handleMcpRequest({ jsonrpc: "2.0", method: "notifications/initialized" }, ctx),
+    ).toBeUndefined();
+    expect(
+      (await handleMcpRequest({ jsonrpc: "2.0", id: 2, method: "ping" }, ctx))?.result,
+    ).toEqual({});
+  });
+
+  it("runs the declared gates in the repository", async () => {
+    mkdirSync(join(repo, ".sekhemet"), { recursive: true });
+    writeFileSync(
+      join(repo, ".sekhemet", "gates.toml"),
+      '[[gate]]\nid = "ok"\nrung = "test"\ncommand = "true"\n',
+    );
+    const r = await call("sekhemet_run_gates");
+    expect(r.error).toBe(false);
+    expect(r.text).toContain('"passed": true');
+  });
+
+  it("queues a message for Merit and shows it in the thread", async () => {
+    await call("sekhemet_ask_merit", { text: "What is blocking the ledger?" });
+    const thread = await call("sekhemet_pm_thread");
+    expect(thread.text).toContain("What is blocking the ledger?");
   });
 });
