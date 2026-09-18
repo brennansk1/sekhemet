@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src"
+  },
+  "references": [{ "path": "../kernel" }, { "path": "../board" }],
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "tests"]
+}

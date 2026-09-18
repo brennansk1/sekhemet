@@ -1,0 +1,22 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src"
+  },
+  "references": [
+    { "path": "../../packages/kernel" },
+    { "path": "../../packages/sandbox" },
+    { "path": "../../packages/sync" },
+    { "path": "../../packages/models" },
+    { "path": "../../packages/gates" },
+    { "path": "../../packages/context" },
+    { "path": "../../packages/loop" },
+    { "path": "../../packages/board" },
+    { "path": "../../packages/planner" },
+    { "path": "../../packages/eval" },
+    { "path": "../../packages/ui" }
+  ],
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "tests"]
+}

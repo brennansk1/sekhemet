@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src"
+  },
+  "references": [
+    { "path": "../kernel" },
+    { "path": "../sandbox" },
+    { "path": "../sync" },
+    { "path": "../models" },
+    { "path": "../gates" },
+    { "path": "../context" }
+  ],
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "tests"]
+}

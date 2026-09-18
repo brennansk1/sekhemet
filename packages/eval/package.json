@@ -1,0 +1,19 @@
+{
+  "name": "@sekhemet/eval",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@sekhemet/kernel": "workspace:*",
+    "@sekhemet/loop": "workspace:*",
+    "@sekhemet/gates": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4"
+  }
+}

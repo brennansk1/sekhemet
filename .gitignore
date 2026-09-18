@@ -1,0 +1,39 @@
+# Node & Package Managers
+node_modules/
+.pnpm-store/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Build Outputs
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# Test & Coverage
+coverage/
+.nyc_output/
+
+# Sekhemet Local Runtime & SQLite WAL
+.sekhemet/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.db
+*.db-wal
+*.db-shm
+
+# OS & Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+.env.*.local

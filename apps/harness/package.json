@@ -1,0 +1,30 @@
+{
+  "name": "@sekhemet/harness",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "sekhemet": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@sekhemet/kernel": "workspace:*",
+    "@sekhemet/sandbox": "workspace:*",
+    "@sekhemet/sync": "workspace:*",
+    "@sekhemet/models": "workspace:*",
+    "@sekhemet/gates": "workspace:*",
+    "@sekhemet/context": "workspace:*",
+    "@sekhemet/loop": "workspace:*",
+    "@sekhemet/board": "workspace:*",
+    "@sekhemet/planner": "workspace:*",
+    "@sekhemet/eval": "workspace:*",
+    "@sekhemet/ui": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4"
+  }
+}
