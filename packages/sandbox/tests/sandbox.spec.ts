@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { ProcessSandbox } from "../src/executor.js";
 import { generateSeatbeltProfile } from "../src/seatbelt.js";
@@ -61,7 +62,9 @@ describe("@sekhemet/sandbox", () => {
 
     expect(profile).toContain("(version 1)");
     expect(profile).toContain('(allow file-write* (subpath "/Users/test/workspace"))');
-    expect(profile).toContain('(allow file-write* (subpath "/tmp"))');
+    // Seatbelt matches real paths: on macOS /tmp is a symlink to /private/tmp,
+    // so the profile must name the resolved path or it grants nothing.
+    expect(profile).toContain(`(allow file-write* (subpath "${realpathSync("/tmp")}"))`);
     expect(profile).toContain("(deny network*)");
   });
 
