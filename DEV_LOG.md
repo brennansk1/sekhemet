@@ -44,6 +44,54 @@ If you are Claude reading this because Gemini reached quota limits or you were s
 
 ## Detailed Session Log
 
+### Entry 21 — 2026-09-18 (research service for Apodex, MCP, Seshat, wave 2)
+
+**Agent:** Claude Opus 5 (`claude-opus-5`), lead driver, in Claude Code. Builders A and B (wave 1) finished. Builders C and D (wave 2) are running; they are the only two agents. Builder C briefly spawned five sub-builders; the lead stopped them within two minutes, with nothing committed, and restated the two-agent limit.
+
+**Harness units**
+- H2 and H6 (`37c0d3c`): `board` opens the dashboard; `gate <card>` runs in the card's worktree.
+- H10 MCP server (`e9e6804`): a tool registry with get, update and move card, run gates, ask Seshat, the PM thread, capability and learning. Fixes defect 7 (the invalid "spike" tier). Accepting a card stays a human action. Proof: `apps/harness/tests/mcp.spec.ts`, 10 tests.
+
+**Research service** (`52dd5c4`, `91f79ab`, `1fc9ffb`, `3c96a7d`, `ccc7cdb`). The user asked for the service to be seeded from Helga's, cover papers and the web, run on Apodex, match Claude's and Gemini's web tools, and be tailored to Apodex in every way.
+- **Ported from Helga's services/research:**
+  - per-host pacing with the documented limits (arXiv 3 s), Retry-After, robots.txt with Crawl-delay, a 7-day cache;
+  - source-kind weights with family caps for grounding confidence, and docs-first ranking;
+  - a documentation reader (sitemap first, sections interleaved);
+  - the research loop: the model proposes, the code measures coverage and stops;
+  - degraded search is reported as degraded, not as empty.
+- **New sources:**
+  - Crawl4AI 0.9.3 as a warm sidecar for rendered pages, installed with the user's approval in a private venv (Apache-2.0 with attribution: NOTICE and the CLI help);
+  - a private SearXNG container on 127.0.0.1:8890, which starts on demand and never pulls an image implicitly;
+  - OpenAlex search, citation snowballing, paper outlines and sections.
+- **Parity with Claude's and Gemini's web tools:** domain and recency filters, BM25 page focus, and search-and-read in one step (for non-Apodex models).
+- **Tailored to Apodex,** from its vendor harness FrontierAgent (Apache-2.0), which states that tool outputs are part of the training distribution:
+  - the trained tool names, argument shapes and result formats (`web_search` q/tbs, `web_fetch` url/info_to_extract with the reference extraction prompt, `finalize_answer`, `submit_report`);
+  - its research, sub-agent, coordinator and verifier prompts;
+  - the Agent Team for `--deep`;
+  - its guards: duplicate-query refusal, the repetition guard, head-and-tail truncation, `[context compacted]`;
+  - a References contract: a cited URL must be one a tool returned;
+  - server slot 0 for the conversation and slot 1 for extraction (Builder C, `f7b0fcc`), because extraction had cut prefix-cache hits to 55–68%.
+- **Service:**
+  - `sekhemet research "<q>" [--deep] [--keep]`, with progress on stderr;
+  - cross-project memory of grounded answers, and answers filed on the card's record;
+  - Seshat's `ask_researcher` takes a depth and receives the verdict;
+  - the dashboard path no longer sends Apodex to Ollama.
+- **Proof:** `research_service.spec.ts`, `apodex_research.spec.ts`, `researcher.spec.ts`, `web_research.spec.ts` (42+ tests).
+- **Live, with Apodex IQ3_M on this Mac:** a node:sqlite transaction question came back correct and grounded (type declarations and Node docs), in 11 min, about 5 of it loading from the external drive. Decode runs at about 28 tok/s. Reasoning leaked into the answer; that is fixed (`stripThinking`).
+- **In progress when this entry was written:** five manager-style live tests (a library choice, a technology comparison, a papers question, a security advisory, a deep feature plan), with outputs in /private/tmp/claude-501/mgr. Next: measure a 32k or 64k context (`SEKHEMET_RESEARCHER_CTX`).
+
+**Naming:** the project-manager persona is renamed from Merit to **Seshat** at the user's request (`d9ae90a`). Seshat is the goddess of writing, measurement and records. Earlier entries keep the old name as history.
+
+**Waves:** wave 1 landed:
+- Builder A: `292496d`, `bcdb620`, `b9d3f51`, `381a741`, `2a7f9d7`;
+- Builder B: `2b3affe`, `415259f`, `215d64a`, `9062b33`, `4019f09`, `a262ab4`.
+
+Wave 2 is under way:
+- Builder C (models, context, planner, eval, sync): `7edd93d`, `cae542b`, `f7b0fcc`, and more;
+- Builder D (production wiring of wave 1, plus loop, gates, kernel, sandbox, board, and resume/fork/rewind): `9ac9a56`, and more.
+
+The gate is unchanged: every inventory unit BUILT, confirmed by a fresh independent re-audit, before the final evaluation.
+
 ### Entry 20 — 2026-09-18 (papers, four-model roster, audit gate)
 - **Agent**: Claude Opus 5 (`claude-code`), lead; one Claude UI subagent (Learning screens, review panel, roster UI)
 - **Role**: Lead Driver & Delegator
