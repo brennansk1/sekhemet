@@ -83,7 +83,9 @@ export function onPmEvent(payload) {
     const m = payload.message;
     if (m?.role === "pm" && m.state === "done" && !was) {
       const n = (m.proposals ?? []).filter((p) => p.state === "open").length;
-      announce(`${PM_NAME} replied.${n ? ` ${n} proposed ${n === 1 ? "change" : "changes"}.` : ""}`);
+      announce(
+        `${PM_NAME} replied.${n ? ` ${n} proposed ${n === 1 ? "change" : "changes"}.` : ""}`,
+      );
     }
   } else if (payload.kind === "status") {
     applyStatus(payload.status);
@@ -92,7 +94,9 @@ export function onPmEvent(payload) {
 
 /** The user message Merit is working on, if any. */
 export function pendingMessage(messages = store.state.pm.messages) {
-  return messages.find((m) => m.role === "user" && (m.state === "queued" || m.state === "thinking"));
+  return messages.find(
+    (m) => m.role === "user" && (m.state === "queued" || m.state === "thinking"),
+  );
 }
 
 export async function sendMessage(text, context) {
@@ -126,7 +130,10 @@ function patchProposal(proposal) {
   if (!proposal?.id) return;
   const messages = store.state.pm.messages.map((m) =>
     m.proposals?.some((p) => p.id === proposal.id)
-      ? { ...m, proposals: m.proposals.map((p) => (p.id === proposal.id ? { ...p, ...proposal } : p)) }
+      ? {
+          ...m,
+          proposals: m.proposals.map((p) => (p.id === proposal.id ? { ...p, ...proposal } : p)),
+        }
       : m,
   );
   setPm({ messages });
@@ -152,7 +159,11 @@ export async function decide(proposal, verb, { quiet = false } = {}) {
     }
     return { ok: false, error };
   }
-  const next = { ...proposal, ...(r.data?.proposal ?? {}), state: verb === "apply" ? "applied" : "discarded" };
+  const next = {
+    ...proposal,
+    ...(r.data?.proposal ?? {}),
+    state: verb === "apply" ? "applied" : "discarded",
+  };
   if (!next.decidedAt) next.decidedAt = new Date().toISOString();
   patchProposal(next);
   if (verb === "apply") window.dispatchEvent(new CustomEvent("sekhemet:refresh"));

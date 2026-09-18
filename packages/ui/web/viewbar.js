@@ -2,7 +2,6 @@
 // saved views, filter chips over a GitHub-style query, grouping, and the
 // active cycle's progress. One filter object, shared by board and list.
 import { esc, icon, kbd } from "./dom.js";
-import { KIND_LABELS, columnLabel, BOARD_COLUMN_ORDER } from "./lib/vocabulary.js";
 import {
   PRIORITY_LABELS,
   PRIORITY_NAMES,
@@ -19,6 +18,7 @@ import {
   slug,
   termValues,
 } from "./lib/pm.js";
+import { BOARD_COLUMN_ORDER, KIND_LABELS, columnLabel } from "./lib/vocabulary.js";
 import { prioMark } from "./marks.js";
 import { openMenu } from "./overlay.js";
 import { openPicker, openPrompt } from "./picker.js";
@@ -80,7 +80,7 @@ export const vb = {
   group: initial.group ?? "none",
   draft: "",
 };
-let listeners = new Set();
+const listeners = new Set();
 
 function persist() {
   save(STATE_KEY, { viewId: vb.viewId, query: formatQuery(vb.filter), group: vb.group });
@@ -127,7 +127,10 @@ export function filterCards(cards) {
 }
 
 export function isDirty() {
-  return formatQuery(vb.filter) !== formatQuery(parseQuery(currentView().query)) || vb.group !== (currentView().group ?? vb.group);
+  return (
+    formatQuery(vb.filter) !== formatQuery(parseQuery(currentView().query)) ||
+    vb.group !== (currentView().group ?? vb.group)
+  );
 }
 
 export function setGroup(g) {
@@ -169,7 +172,9 @@ function valueLabel(field, v) {
       return p !== undefined ? PRIORITY_LABELS[p] : v;
     }
     case "epic":
-      return v === "none" ? "No epic" : (s.epics.find((e) => e.id.toLowerCase() === v || slug(e.title) === slug(v))?.title ?? v);
+      return v === "none"
+        ? "No epic"
+        : (s.epics.find((e) => e.id.toLowerCase() === v || slug(e.title) === slug(v))?.title ?? v);
     case "cycle":
       if (v === "current") return activeCycle(s.cycles)?.name ?? "Current";
       if (v === "next") return "Next";
@@ -182,7 +187,17 @@ function valueLabel(field, v) {
     case "state":
       return columnLabel(v);
     case "is":
-      return { "needs-you": "Needs you", blocked: "Blocked", running: "Running", unestimated: "Unestimated", done: "Done", open: "Open", started: "Started" }[v] ?? v;
+      return (
+        {
+          "needs-you": "Needs you",
+          blocked: "Blocked",
+          running: "Running",
+          unestimated: "Unestimated",
+          done: "Done",
+          open: "Open",
+          started: "Started",
+        }[v] ?? v
+      );
     default:
       return v;
   }
@@ -191,21 +206,33 @@ function valueLabel(field, v) {
 function optionsFor(field) {
   const s = store.state;
   const cur = new Set(termValues(vb.filter, field));
-  const opt = (value, label, html = "", detail = "") => ({ value, label, html, detail, checked: cur.has(value) });
+  const opt = (value, label, html = "", detail = "") => ({
+    value,
+    label,
+    html,
+    detail,
+    checked: cur.has(value),
+  });
   switch (field) {
     case "priority":
       return PRIORITY_ORDER.map((p) => opt(PRIORITY_NAMES[p], PRIORITY_LABELS[p], prioMark(p)));
     case "label": {
       const all = new Set();
       for (const c of s.cards) for (const l of c.labels ?? []) all.add(l.toLowerCase());
-      return [...[...all].sort().map((l) => opt(l, l, icon("tag", 12, "ic s12"))), opt("none", "No labels")];
+      return [
+        ...[...all].sort().map((l) => opt(l, l, icon("tag", 12, "ic s12"))),
+        opt("none", "No labels"),
+      ];
     }
     case "epic":
       return [...s.epics.map((e) => opt(slug(e.title), e.title)), opt("none", "No epic")];
     case "cycle": {
       const list = [];
-      if (activeCycle(s.cycles)) list.push(opt("current", `Current · ${activeCycle(s.cycles).name}`));
-      for (const c of s.cycles) if (c.state !== "active") list.push(opt(slug(c.name), c.name, "", c.state === "planned" ? "Planned" : "Closed"));
+      if (activeCycle(s.cycles))
+        list.push(opt("current", `Current · ${activeCycle(s.cycles).name}`));
+      for (const c of s.cycles)
+        if (c.state !== "active")
+          list.push(opt(slug(c.name), c.name, "", c.state === "planned" ? "Planned" : "Closed"));
       list.push(opt("none", "No cycle"));
       return list;
     }
@@ -216,7 +243,9 @@ function optionsFor(field) {
     case "state":
       return BOARD_COLUMN_ORDER.map((st) => opt(st, columnLabel(st)));
     case "is":
-      return ["needs-you", "blocked", "running", "unestimated", "open", "done"].map((v) => opt(v, valueLabel("is", v)));
+      return ["needs-you", "blocked", "running", "unestimated", "open", "done"].map((v) =>
+        opt(v, valueLabel("is", v)),
+      );
     default:
       return [];
   }
@@ -240,7 +269,8 @@ function editTerm(field, anchor) {
 function chipHtml(t) {
   const name = FIELD_NAMES[t.field] ?? t.field;
   const vals = t.values.map((v) => valueLabel(t.field, v));
-  const shown = vals.length > 2 ? `${vals.slice(0, 2).join(", ")} +${vals.length - 2}` : vals.join(", ");
+  const shown =
+    vals.length > 2 ? `${vals.slice(0, 2).join(", ")} +${vals.length - 2}` : vals.join(", ");
   return `<span class="fchip${t.negate ? " neg" : ""}"><button type="button" data-edit-term="${esc(t.field)}"${t.negate ? " disabled" : ""} title="${esc(`${name} ${t.negate ? "is not" : "is"} ${vals.join(", ")}`)}"><span class="sec">${esc(name)}${t.negate ? " is not" : ""}:</span> ${esc(shown)}</button><button type="button" class="x" data-rm-term="${esc(`${t.negate ? "-" : ""}${t.field}`)}" aria-label="${esc(`Remove ${name} filter`)}">${icon("x", 12, "ic s12")}</button></span>`;
 }
 
@@ -248,9 +278,12 @@ export function viewBarHtml(layout) {
   const v = currentView();
   const chips = vb.filter.terms.map(chipHtml).join("");
   const group = GROUPS.find((g) => g.id === vb.group) ?? GROUPS[0];
-  const save = isDirty() && !isFilterEmpty(vb.filter) ? `<button class="btn sm ghost" type="button" data-save-view>Save view</button>` : "";
+  const save =
+    isDirty() && !isFilterEmpty(vb.filter)
+      ? `<button class="btn sm ghost" type="button" data-save-view>Save view</button>`
+      : "";
   return `<div class="vbar" role="toolbar" aria-label="View and filters">
-<div class="seg" role="tablist" aria-label="Layout"><a role="tab" href="#/board" aria-selected="${layout === "board"}" title="Board (v)">${icon("board", 14, "ic s14")}<span>Board</span></a><a role="tab" href="#/board/list" aria-selected="${layout === "list"}" title="List (v)">${icon("list", 14, "ic s14")}<span>List</span></a></div>
+<div class="lseg" role="tablist" aria-label="Layout"><a role="tab" href="#/board" aria-selected="${layout === "board"}" title="Board (v)">${icon("board", 14, "ic s14")}<span>Board</span></a><a role="tab" href="#/board/list" aria-selected="${layout === "list"}" title="List (v)">${icon("list", 14, "ic s14")}<span>List</span></a></div>
 <button class="vsel" type="button" data-view-menu aria-haspopup="dialog"><span class="sec">View:</span> <b>${esc(v.name)}</b>${icon("chevron-down", 12, "ic s12")}</button>
 <div class="chips">${chips}<button class="filter" type="button" data-add-filter aria-haspopup="menu">${icon("filter", 12, "ic s12")}Filter</button></div>
 <label class="q">${icon("search", 12, "ic s12")}<input type="text" data-q value="${esc([vb.filter.text, vb.draft].filter(Boolean).join(" "))}" placeholder="Filter by title, or type label:api" aria-label="Filter cards. Accepts priority:, label:, epic:, cycle:, assignee:, kind:, is:" spellcheck="false">${kbd("/")}</label>
@@ -262,7 +295,10 @@ export function viewBarHtml(layout) {
 
 export function showsCycle() {
   const vals = termValues(vb.filter, "cycle");
-  return Boolean(activeCycle(store.state.cycles)) && (vals.includes("current") || vals.includes(slug(activeCycle(store.state.cycles).name)));
+  return (
+    Boolean(activeCycle(store.state.cycles)) &&
+    (vals.includes("current") || vals.includes(slug(activeCycle(store.state.cycles).name)))
+  );
 }
 
 export function cycleHeaderHtml() {
@@ -272,8 +308,14 @@ export function cycleHeaderHtml() {
   const p = cycleProgress(cycle, s.cards, s.now);
   const pts = p.points;
   const pct = (n) => (pts.total ? `${(n / pts.total) * 100}%` : "0%");
-  const left = p.daysLeft === 0 ? "Ends today" : `${p.daysLeft} ${p.daysLeft === 1 ? "day" : "days"} left`;
-  const leftTitle = p.behindBy > 0 ? `Behind the linear pace by ${p.behindBy} pts.` : p.behindBy < 0 ? `Ahead of the linear pace by ${-p.behindBy} pts.` : "On the linear pace.";
+  const left =
+    p.daysLeft === 0 ? "Ends today" : `${p.daysLeft} ${p.daysLeft === 1 ? "day" : "days"} left`;
+  const leftTitle =
+    p.behindBy > 0
+      ? `Behind the linear pace by ${p.behindBy} pts.`
+      : p.behindBy < 0
+        ? `Ahead of the linear pace by ${-p.behindBy} pts.`
+        : "On the linear pace.";
   const unest = p.unestimated ? ` · ${p.unestimated} unestimated, counted as 1 pt` : "";
   return `<section class="cyc" aria-label="${esc(`${cycle.name} progress`)}">
 <div class="cyc-a"><b>${esc(cycle.name)}</b>${cycle.goal ? `<span class="goal">${esc(cycle.goal)}</span>` : ""}<span class="dates tnum">${esc(formatShortDate(cycle.startsOn))} – ${esc(formatShortDate(cycle.endsOn))} · <span class="${p.atRisk ? "risk" : ""}" title="${esc(leftTitle)}">${esc(left)}</span></span></div>
@@ -290,7 +332,11 @@ function commitDraft(input) {
   if (typed.terms.length) {
     let f = vb.filter;
     for (const t of typed.terms) {
-      if (t.negate) f = { terms: [...f.terms.filter((x) => !(x.field === t.field && x.negate)), t], text: f.text };
+      if (t.negate)
+        f = {
+          terms: [...f.terms.filter((x) => !(x.field === t.field && x.negate)), t],
+          text: f.text,
+        };
       else f = setTerm(f, t.field, [...new Set([...termValues(f, t.field), ...t.values])]);
     }
     vb.filter = { terms: f.terms, text: typed.text };
@@ -305,7 +351,8 @@ function commitDraft(input) {
 export function bindViewBar(host) {
   let timer = 0;
   host.addEventListener("input", (e) => {
-    const input = e.target instanceof HTMLInputElement && e.target.matches("[data-q]") ? e.target : null;
+    const input =
+      e.target instanceof HTMLInputElement && e.target.matches("[data-q]") ? e.target : null;
     if (!input) return;
     clearTimeout(timer);
     // A completed field token (`label:api `) becomes a chip at once.
@@ -320,14 +367,20 @@ export function bindViewBar(host) {
     }, 120);
   });
   host.addEventListener("keydown", (e) => {
-    const input = e.target instanceof HTMLInputElement && e.target.matches("[data-q]") ? e.target : null;
+    const input =
+      e.target instanceof HTMLInputElement && e.target.matches("[data-q]") ? e.target : null;
     if (!input) return;
     if (e.key === "Enter") {
       e.preventDefault();
       commitDraft(input);
       input.blur();
       document.getElementById("view")?.dispatchEvent(new CustomEvent("sekhemet:focus-first"));
-    } else if (e.key === "Backspace" && input.selectionStart === 0 && input.selectionEnd === 0 && vb.filter.terms.length) {
+    } else if (
+      e.key === "Backspace" &&
+      input.selectionStart === 0 &&
+      input.selectionEnd === 0 &&
+      vb.filter.terms.length
+    ) {
       vb.filter = { terms: vb.filter.terms.slice(0, -1), text: vb.filter.text };
       changed();
     }
@@ -342,7 +395,10 @@ export function bindViewBar(host) {
       const key = rm.dataset.rmTerm;
       const neg = key.startsWith("-");
       const field = key.replace(/^-/, "");
-      vb.filter = { terms: vb.filter.terms.filter((x) => !(x.field === field && Boolean(x.negate) === neg)), text: vb.filter.text };
+      vb.filter = {
+        terms: vb.filter.terms.filter((x) => !(x.field === field && Boolean(x.negate) === neg)),
+        text: vb.filter.text,
+      };
       changed();
       return;
     }
@@ -350,7 +406,10 @@ export function bindViewBar(host) {
     if (add) {
       openMenu(
         add,
-        Object.keys(FIELD_NAMES).map((f) => ({ label: FIELD_NAMES[f], run: () => setTimeout(() => editTerm(f, add), 0) })),
+        Object.keys(FIELD_NAMES).map((f) => ({
+          label: FIELD_NAMES[f],
+          run: () => setTimeout(() => editTerm(f, add), 0),
+        })),
         { heading: "Filter by" },
       );
       return;
@@ -362,13 +421,23 @@ export function bindViewBar(host) {
         heading: "Views",
         search: false,
         options: [
-          ...allViews().map((v) => ({ value: v.id, label: v.name, detail: v.query || "Everything on the board", checked: v.id === vb.viewId })),
-          ...(saved.some((v) => v.id === vb.viewId) ? [{ value: " delete", label: `Delete “${currentView().name}”` }] : []),
+          ...allViews().map((v) => ({
+            value: v.id,
+            label: v.name,
+            detail: v.query || "Everything on the board",
+            checked: v.id === vb.viewId,
+          })),
+          ...(saved.some((v) => v.id === vb.viewId)
+            ? [{ value: "__delete__", label: `Delete “${currentView().name}”` }]
+            : []),
         ],
         footer: "Saved views are kept in this browser.",
         onPick: (id) => {
-          if (id === " delete") {
-            save(VIEWS_KEY, saved.filter((v) => v.id !== vb.viewId));
+          if (id === "__delete__") {
+            save(
+              VIEWS_KEY,
+              saved.filter((v) => v.id !== vb.viewId),
+            );
             applyView("all");
             return;
           }
@@ -381,7 +450,11 @@ export function bindViewBar(host) {
     if (gm) {
       openMenu(
         gm,
-        GROUPS.map((g) => ({ label: g.label, checked: g.id === vb.group, run: () => setGroup(g.id) })),
+        GROUPS.map((g) => ({
+          label: g.label,
+          checked: g.id === vb.group,
+          run: () => setGroup(g.id),
+        })),
         { heading: "Group into swimlanes" },
       );
       return;
@@ -393,7 +466,10 @@ export function bindViewBar(host) {
         placeholder: "e.g. API work this cycle",
         onSubmit: (name) => {
           const id = `v_${Date.now().toString(36)}`;
-          save(VIEWS_KEY, [...savedViews(), { id, name, query: formatQuery(vb.filter), group: vb.group }]);
+          save(VIEWS_KEY, [
+            ...savedViews(),
+            { id, name, query: formatQuery(vb.filter), group: vb.group },
+          ]);
           vb.viewId = id;
           changed();
           toast({ tone: "pass", text: `Saved view “${name}”`, detail: "Kept in this browser." });
@@ -436,7 +512,10 @@ export function paintViewBar(barHost, cycHost, layout) {
     if (had) {
       const next = barHost.querySelector("[data-q]");
       next.focus();
-      next.setSelectionRange(Math.min(sel[0], next.value.length), Math.min(sel[1], next.value.length));
+      next.setSelectionRange(
+        Math.min(sel[0], next.value.length),
+        Math.min(sel[1], next.value.length),
+      );
     }
   }
   if (cycHost) {

@@ -12,7 +12,8 @@ import { store } from "./store.js";
 function railHtml() {
   const s = store.state;
   const open = [];
-  for (const m of s.pm.messages) for (const p of m.proposals ?? []) if (p.state === "open") open.push(p);
+  for (const m of s.pm.messages)
+    for (const p of m.proposals ?? []) if (p.state === "open") open.push(p);
   const props = open.length
     ? `<ul class="rail-props">${open
         .map((p) => {
@@ -30,9 +31,17 @@ function railHtml() {
 
   const lastRun = s.queue?.startedAt ?? s.queue?.finishedAt;
   const runText = lastRun
-    ? new Date(lastRun).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" })
+    ? new Date(lastRun).toLocaleString([], {
+        day: "numeric",
+        month: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+      })
     : "No runs yet";
-  const ledger = s.verification ? `${s.verification.totalEvents} entries${s.verification.valid === false ? " · altered" : " · intact"}` : "Checking…";
+  const ledger = s.verification
+    ? `${s.verification.totalEvents} entries${s.verification.valid === false ? " · altered" : " · intact"}`
+    : "Checking…";
   const model = pmModel();
   const sees = `<dl class="kv"><div><dt>Board</dt><dd>${s.cards.length} cards · live</dd></div><div><dt>Last run</dt><dd>${esc(runText)}</dd></div><div><dt>Ledger</dt><dd>${esc(ledger)}</dd></div><div><dt>Model</dt><dd class="mono">${esc(model)}</dd></div></dl>`;
 
@@ -43,7 +52,8 @@ export function mount(view) {
   setTopbar({ title: PM_NAME, crumb: "Project manager" });
   const host = document.createElement("div");
   host.className = "pm-page";
-  host.innerHTML = '<div class="pm-main"></div><aside class="pm-rail" aria-label="Conversation facts"></aside>';
+  host.innerHTML =
+    '<div class="pm-main"></div><aside class="pm-rail" aria-label="Conversation facts"></aside>';
   view.append(host);
   const thread = mountThread(host.querySelector(".pm-main"), { variant: "full" });
   setFullThread(thread);

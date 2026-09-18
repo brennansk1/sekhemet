@@ -1,7 +1,6 @@
 // Proposal groups (PM_DESIGN §2.4): field diffs with Apply / Discard, one by
 // one or all together. Used by the PM thread and by Import on Integrations.
 import { esc, icon, kbd } from "./dom.js";
-import { KIND_LABELS } from "./lib/vocabulary.js";
 import {
   applyAllLabel,
   formatFieldValue,
@@ -10,6 +9,7 @@ import {
   proposalDiff,
   proposalKind,
 } from "./lib/pm.js";
+import { KIND_LABELS } from "./lib/vocabulary.js";
 import { cardChip, diffContext, prioMark } from "./marks.js";
 import { applyAll, decide, discardAll } from "./pm_client.js";
 import { store } from "./store.js";
@@ -19,7 +19,11 @@ const busy = new Set();
 function clock(iso) {
   const t = Date.parse(iso ?? "");
   if (!Number.isFinite(t)) return "";
-  return new Date(t).toLocaleTimeString([], { hourCycle: "h23", hour: "2-digit", minute: "2-digit" });
+  return new Date(t).toLocaleTimeString([], {
+    hourCycle: "h23",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function valueHtml(row, which) {
@@ -75,7 +79,8 @@ function cycleRows(p) {
   const x = p.patch ?? {};
   const rows = [];
   if (x.name) rows.push(["Name", x.name]);
-  if (x.startsOn || x.endsOn) rows.push(["Dates", `${formatShortDate(x.startsOn)} – ${formatShortDate(x.endsOn)}`]);
+  if (x.startsOn || x.endsOn)
+    rows.push(["Dates", `${formatShortDate(x.startsOn)} – ${formatShortDate(x.endsOn)}`]);
   if (x.goal) rows.push(["Goal", x.goal]);
   if (!rows.length) return "";
   return `<dl class="pdiff new">${rows.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd><span class="a"><span>${esc(v)}</span></span></dd></div>`).join("")}</dl>`;
@@ -104,7 +109,8 @@ export function proposalHtml(p, ctx = diffContext()) {
   if (p.state === "applied" || p.state === "discarded") {
     const when = clock(p.decidedAt);
     const verb = p.state === "applied" ? "Applied" : "Discarded";
-    const mark = p.state === "applied" ? icon("check", 12, "ic s12 i-pass") : icon("x", 12, "ic s12");
+    const mark =
+      p.state === "applied" ? icon("check", 12, "ic s12 i-pass") : icon("x", 12, "ic s12");
     return `<li class="prop ${p.state}" data-prop="${esc(p.id)}">${mark}<b>${verb}</b><span class="sum">${esc(p.summary)}</span>${when ? `<span class="when tnum">${p.state === "applied" ? "by you " : ""}at ${esc(when)}</span>` : ""}</li>`;
   }
   const isBusy = busy.has(p.id);

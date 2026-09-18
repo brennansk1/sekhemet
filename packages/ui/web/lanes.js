@@ -15,16 +15,15 @@ let bound = null;
 
 function columnsFor(cards) {
   const present = new Set(cards.map((c) => c.status));
-  return BOARD_COLUMN_ORDER.filter(
-    (s) => present.has(s) || s === "in_progress" || s === "review",
-  );
+  return BOARD_COLUMN_ORDER.filter((s) => present.has(s) || s === "in_progress" || s === "review");
 }
 
 function progressHtml(g) {
   const p = g.epic?.progress;
   if (!p || !p.total) return "";
   const pct = Math.round((p.done / p.total) * 100);
-  const pts = typeof p.pointsDone === "number" && p.points ? ` · ${p.pointsDone} of ${p.points} pts` : "";
+  const pts =
+    typeof p.pointsDone === "number" && p.points ? ` · ${p.pointsDone} of ${p.points} pts` : "";
   return `<span class="eprog" title="${esc(`${p.done} of ${p.total} cards done${pts}`)}"><span class="ebar"><i style="width:${pct}%"></i></span><span class="tnum">${p.done} of ${p.total} done${esc(pts)}</span></span>`;
 }
 
@@ -33,7 +32,10 @@ export function render(root, cards, { group, sortCards, tileOpts }) {
   const cols = columnsFor(cards);
   const totals = new Map(cols.map((s) => [s, cards.filter((c) => c.status === s).length]));
   const head = `<div class="lane-cols" style="--cols:${cols.length}">${cols
-    .map((s) => `<div class="lc-h"><h2>${esc(columnLabel(s))}</h2><span class="c tnum">${totals.get(s)}</span></div>`)
+    .map(
+      (s) =>
+        `<div class="lc-h"><h2>${esc(columnLabel(s))}</h2><span class="c tnum">${totals.get(s)}</span></div>`,
+    )
     .join("")}</div>`;
   const body = groups
     .map((g) => {
@@ -132,23 +134,42 @@ export function onKey(e) {
   const { l, c, r } = at;
   if (k === "j" || k === "ArrowDown") {
     if (r + 1 < g[l][c].length) focus(g[l][c][r + 1]);
-    else for (let n = l + 1; n < g.length; n++) if (g[n][c]?.length) return focus(g[n][c][0]), true;
+    else
+      for (let n = l + 1; n < g.length; n++)
+        if (g[n][c]?.length) {
+          focus(g[n][c][0]);
+          return true;
+        }
     return true;
   }
   if (k === "k" || k === "ArrowUp") {
     if (r > 0) focus(g[l][c][r - 1]);
-    else for (let n = l - 1; n >= 0; n--) if (g[n][c]?.length) return focus(g[n][c].at(-1)), true;
+    else
+      for (let n = l - 1; n >= 0; n--)
+        if (g[n][c]?.length) {
+          focus(g[n][c].at(-1));
+          return true;
+        }
     return true;
   }
   if (k === "h" || k === "l" || k === "ArrowLeft" || k === "ArrowRight") {
     const dir = k === "h" || k === "ArrowLeft" ? -1 : 1;
     for (let n = c + dir; n >= 0 && n < g[l].length; n += dir) {
-      if (g[l][n].length) return focus(g[l][n][Math.min(r, g[l][n].length - 1)]), true;
+      if (g[l][n].length) {
+        focus(g[l][n][Math.min(r, g[l][n].length - 1)]);
+        return true;
+      }
     }
     return true;
   }
-  if (k === "Home") return focus(g[l][c][0]), true;
-  if (k === "End") return focus(g[l][c].at(-1)), true;
+  if (k === "Home") {
+    focus(g[l][c][0]);
+    return true;
+  }
+  if (k === "End") {
+    focus(g[l][c].at(-1));
+    return true;
+  }
   if (k === " ") {
     openPeek(id, { returnFocus: document.getElementById(`tile-${id}`) });
     return true;

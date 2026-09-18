@@ -15,7 +15,11 @@ const IDLE_STARTERS_MS = 12 * 3600_000;
 function time(iso) {
   const t = Date.parse(iso ?? "");
   if (!Number.isFinite(t)) return "";
-  return new Date(t).toLocaleTimeString([], { hourCycle: "h23", hour: "2-digit", minute: "2-digit" });
+  return new Date(t).toLocaleTimeString([], {
+    hourCycle: "h23",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 export function avatar(who = "M") {
@@ -32,9 +36,13 @@ function citesHtml(cites) {
   for (const c of cites) {
     if (c.evidenceId) {
       const href = c.cardId ? `#/card/${encodeURIComponent(c.cardId)}/evidence` : "#/ledger";
-      parts.push(`<a class="cchip" href="${esc(href)}" title="Evidence ${esc(c.evidenceId)}">${icon("file-diff", 12, "ic s12")}<span class="mono">${esc(c.evidenceId)}</span></a>`);
+      parts.push(
+        `<a class="cchip" href="${esc(href)}" title="Evidence ${esc(c.evidenceId)}">${icon("file-diff", 12, "ic s12")}<span class="mono">${esc(c.evidenceId)}</span></a>`,
+      );
     } else if (c.runId) {
-      parts.push(`<a class="cchip" href="#/runs/${esc(encodeURIComponent(c.runId))}">${icon("runs", 12, "ic s12")}<span class="t">${esc(runLabel(c.runId))}</span></a>`);
+      parts.push(
+        `<a class="cchip" href="#/runs/${esc(encodeURIComponent(c.runId))}">${icon("runs", 12, "ic s12")}<span class="t">${esc(runLabel(c.runId))}</span></a>`,
+      );
     } else if (c.cardId) {
       parts.push(cardChip(c.cardId) ?? `<span class="mono">${esc(c.cardId)}</span>`);
     }
@@ -46,7 +54,20 @@ function citesHtml(cites) {
 function runLabel(id) {
   const m = /(\d{4})-(\d{2})-(\d{2})T(\d{2})[-:](\d{2})/.exec(id);
   if (!m) return id;
-  const month = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][Number(m[2]) - 1];
+  const month = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ][Number(m[2]) - 1];
   return `run ${Number(m[3])} ${month} ${m[4]}:${m[5]}`;
 }
 
@@ -164,7 +185,8 @@ export function currentContext() {
   const r = s.route ?? { name: "", params: [] };
   let cardId;
   if ((r.name === "card" || r.name === "review") && r.params[0]) cardId = r.params[0];
-  else if (r.name === "board" && s.focusedId && document.getElementById(`tile-${s.focusedId}`)) cardId = s.focusedId;
+  else if (r.name === "board" && s.focusedId && document.getElementById(`tile-${s.focusedId}`))
+    cardId = s.focusedId;
   else if (r.name === "board" && s.focusedId && r.params[0] === "list") cardId = s.focusedId;
   const viewName = r.name === "board" && r.params[0] === "list" ? "list" : r.name || "board";
   const ctx = { view: viewName };
@@ -199,12 +221,15 @@ function contextHtml(ctx, dismissed) {
 
 function costLine() {
   const s = store.state;
-  if (s.meta && s.meta.triage === false) return "Read-only server. Restart with sekhemet serve to talk to Merit.";
+  if (s.meta && s.meta.triage === false)
+    return "Read-only server. Restart with sekhemet serve to talk to Merit.";
   if (s.connection === "offline") return `Offline. Your message would not reach ${PM_NAME}.`;
   const running = s.cards.find((c) => c.status === "in_progress");
   const model = pmModel();
   if (running) {
-    const step = running.stepsUsed ? `on step ${running.stepsUsed} of ${running.stepBudget}` : "starting a card";
+    const step = running.stepsUsed
+      ? `on step ${running.stepsUsed} of ${running.stepBudget}`
+      : "starting a card";
     return `The Worker is ${step}. Sending pauses it at the next step while ${PM_NAME} loads (about 40s).`;
   }
   return `${PM_NAME} runs locally on ${model}. Replies take about a minute.`;
@@ -243,7 +268,15 @@ function matchCards(q) {
   for (const c of store.state.cards) {
     const title = (c.display?.title ?? c.title ?? "").toLowerCase();
     const short = (c.display?.shortId ?? c.id).toLowerCase();
-    const hit = !q ? 1 : short.startsWith(q) ? 3 : c.id.toLowerCase().includes(q) ? 2 : title.includes(q) ? 1 : 0;
+    const hit = !q
+      ? 1
+      : short.startsWith(q)
+        ? 3
+        : c.id.toLowerCase().includes(q)
+          ? 2
+          : title.includes(q)
+            ? 1
+            : 0;
     if (hit) scored.push([hit, c]);
   }
   return scored
@@ -279,7 +312,8 @@ export function mountThread(host, { variant = "panel" } = {}) {
     } else if (pm.error && !pm.messages.length) {
       html = `<div class="pm-empty">${icon("alert", 24, "ic s24")}<b>Couldn't load the conversation.</b><span>${esc(pm.error.status ? `The server returned ${pm.error.status}.` : pm.error.message || "Sekhemet is not reachable.")}</span><button class="btn sm" type="button" data-reload>Retry</button></div>`;
     } else if (pm.available === null) {
-      html = '<div class="pm-skel"><div class="sk sk-line"></div><div class="sk sk-line"></div><div class="sk sk-line" style="width:60%"></div></div>';
+      html =
+        '<div class="pm-skel"><div class="sk sk-line"></div><div class="sk sk-line"></div><div class="sk sk-line" style="width:60%"></div></div>';
     } else {
       const project = store.state.meta?.project ?? "this project";
       const intro = `<article class="msg pm intro">${avatar()}<div><header><b>${PM_NAME}</b><span class="sec">Project manager</span></header><div class="md"><p>I'm ${PM_NAME}, the project manager for ${esc(project)}. I read the board, the runs and the ledger, and I propose changes you approve. I never change the board myself.</p></div></div></article>`;
@@ -292,7 +326,8 @@ export function mountThread(host, { variant = "panel" } = {}) {
     const focusId = document.activeElement?.closest?.("[data-prop]")?.dataset.prop;
     log.innerHTML = html;
     lastLog = html;
-    if (focusId) log.querySelector(`[data-prop="${CSS.escape(focusId)}"] button:not([disabled])`)?.focus();
+    if (focusId)
+      log.querySelector(`[data-prop="${CSS.escape(focusId)}"] button:not([disabled])`)?.focus();
     if (stick) log.scrollTop = log.scrollHeight;
     tick(log);
   }
@@ -316,7 +351,10 @@ export function mountThread(host, { variant = "panel" } = {}) {
     const sHtml =
       idle && pm.available === true
         ? starters()
-            .map((t) => `<button class="starter" type="button" data-starter="${esc(t)}">${esc(t)}</button>`)
+            .map(
+              (t) =>
+                `<button class="starter" type="button" data-starter="${esc(t)}">${esc(t)}</button>`,
+            )
             .join("")
         : "";
     if (st.dataset.html !== sHtml) {
@@ -397,7 +435,8 @@ export function mountThread(host, { variant = "panel" } = {}) {
   ta.addEventListener("keydown", (e) => {
     if (!picker.hidden) {
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-        pick.i = (pick.i + (e.key === "ArrowDown" ? 1 : -1) + pick.items.length) % pick.items.length;
+        pick.i =
+          (pick.i + (e.key === "ArrowDown" ? 1 : -1) + pick.items.length) % pick.items.length;
         renderPicker();
         e.preventDefault();
         return;
@@ -451,7 +490,9 @@ export function mountThread(host, { variant = "panel" } = {}) {
       renderCompose();
     } else if (t.closest("[data-reload]")) loadThread();
     else if (t.closest("[data-retry]")) {
-      const m = store.state.pm.messages.find((x) => x.id === t.closest("[data-retry]").dataset.retry);
+      const m = store.state.pm.messages.find(
+        (x) => x.id === t.closest("[data-retry]").dataset.retry,
+      );
       if (m) sendMessage(m.text, m.context);
     }
   });

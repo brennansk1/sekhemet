@@ -1,8 +1,8 @@
 // Small shared marks for team-practice fields: the priority glyph, labels,
 // points and card chips (PM_DESIGN §3.1, §2.4). Every string is escaped.
 import { esc, icon } from "./dom.js";
-import { columnLabel } from "./lib/vocabulary.js";
 import { PRIORITY_LABELS, formatPoints, priorityIcon, priorityOf } from "./lib/pm.js";
+import { columnLabel } from "./lib/vocabulary.js";
 import { store } from "./store.js";
 
 /** The fixed-slot priority glyph; the shape carries the meaning, not colour. */
@@ -15,7 +15,9 @@ export function labelChips(labels = [], max = 2) {
   if (!labels?.length) return "";
   const shown = labels.slice(0, max).map((l) => `<span class="lbl-chip">${esc(l)}</span>`);
   if (labels.length > max) {
-    shown.push(`<span class="lbl-more" title="${esc(labels.slice(max).join(", "))}">+${labels.length - max}</span>`);
+    shown.push(
+      `<span class="lbl-more" title="${esc(labels.slice(max).join(", "))}">+${labels.length - max}</span>`,
+    );
   }
   return shown.join("");
 }

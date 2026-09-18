@@ -74,6 +74,36 @@ function views() {
   return [
     { label: "Go to Review", keys: ["g", "r"], run: goTo("#/review") },
     { label: "Go to Board", keys: ["g", "b"], run: goTo("#/board") },
+    {
+      label: "Go to List",
+      search: "Board list table view",
+      keys: ["v"],
+      run: goTo("#/board/list"),
+    },
+    {
+      label: "Talk to Merit, the project manager",
+      search: "Merit PM project manager chat ask",
+      keys: [`${MOD}J`],
+      run: () => window.dispatchEvent(new CustomEvent("sekhemet:open-pm")),
+    },
+    {
+      label: "Go to Merit (full conversation)",
+      search: "Merit PM conversation",
+      keys: ["g", "a"],
+      run: goTo("#/pm"),
+    },
+    {
+      label: "Go to Insights",
+      search: "Insights flow metrics cycle time throughput",
+      keys: ["g", "f"],
+      run: goTo("#/insights"),
+    },
+    {
+      label: "Go to Integrations",
+      search: "Integrations GitHub Jira Linear Slack import export",
+      keys: ["g", "s"],
+      run: goTo("#/integrations"),
+    },
     { label: "Go to Runs", keys: ["g", "q"], run: goTo("#/runs") },
     { label: "Go to Ledger", keys: ["g", "l"], run: goTo("#/ledger") },
     { label: "Go to Playbook", keys: ["g", "p"], run: goTo("#/playbook") },

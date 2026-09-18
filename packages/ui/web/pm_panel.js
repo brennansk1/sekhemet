@@ -39,7 +39,9 @@ function statusLine() {
   const model = pmModel();
   if (pm.available === false) return { text: "Not on this server", busy: false };
   if (s.phase === "idle") return { text: `Project manager · ${model}`, busy: false, mono: model };
-  const row = pmSteps(s, { workerInvolved: pm.workerInvolved, step: pm.step }).find((r) => r.state === "current");
+  const row = pmSteps(s, { workerInvolved: pm.workerInvolved, step: pm.step }).find(
+    (r) => r.state === "current",
+  );
   const since = pm.phaseSeenAt[s.phase];
   return { text: row?.label ?? "Working", busy: true, since };
 }
@@ -47,7 +49,9 @@ function statusLine() {
 function renderHead() {
   if (!aside) return;
   const st = statusLine();
-  const clock = st.since ? ` · <span class="tnum" data-head-since="${st.since}">${formatClock(Date.now() - st.since)}</span>` : "";
+  const clock = st.since
+    ? ` · <span class="tnum" data-head-since="${st.since}">${formatClock(Date.now() - st.since)}</span>`
+    : "";
   const line = st.mono
     ? `Project manager · <span class="mono">${esc(st.mono)}</span>`
     : `${st.busy ? '<span class="dot run" aria-hidden="true"></span>' : ""}${esc(st.text)}${clock}`;
@@ -126,6 +130,7 @@ export function initPmPanel() {
   window.addEventListener("sekhemet:open-pm", () => togglePmPanel(true));
   setInterval(() => {
     const n = aside?.querySelector("[data-head-since]");
-    if (n && store.state.connection !== "offline") n.textContent = formatClock(Date.now() - Number(n.dataset.headSince));
+    if (n && store.state.connection !== "offline")
+      n.textContent = formatClock(Date.now() - Number(n.dataset.headSince));
   }, 1000);
 }

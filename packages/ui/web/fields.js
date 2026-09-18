@@ -18,7 +18,13 @@ import { toast } from "./toast.js";
 import { mutationsBlocked } from "./triage.js";
 
 /** Uppercase keys, so they never collide with the triage verbs a / r / p. */
-export const FIELD_KEYS = { P: "priority", E: "estimate", L: "labels", C: "cycleId", A: "assignee" };
+export const FIELD_KEYS = {
+  P: "priority",
+  E: "estimate",
+  L: "labels",
+  C: "cycleId",
+  A: "assignee",
+};
 
 export const EDITABLE = [
   { field: "priority", label: "Priority", key: "⇧P" },
@@ -89,7 +95,10 @@ export async function setField(ids, field, value) {
   }
   store.set({ cards: [...store.state.cards] });
   const results = await Promise.all(
-    [...before.keys()].map(async (id) => [id, await patchJSON(`/api/cards/${encodeURIComponent(id)}`, { [field]: value ?? null })]),
+    [...before.keys()].map(async (id) => [
+      id,
+      await patchJSON(`/api/cards/${encodeURIComponent(id)}`, { [field]: value ?? null }),
+    ]),
   );
   const failed = results.filter(([, r]) => !r.ok);
   for (const [id] of failed) {
@@ -101,17 +110,27 @@ export async function setField(ids, field, value) {
   }
   if (failed.length) store.set({ cards: [...store.state.cards] });
   const label = EDITABLE.find((f) => f.field === field)?.label.toLowerCase() ?? field;
-  const shown = formatFieldValue(field, value, { cycles: store.state.cycles, epics: store.state.epics, cards: store.state.cards });
+  const shown = formatFieldValue(field, value, {
+    cycles: store.state.cycles,
+    epics: store.state.epics,
+    cards: store.state.cards,
+  });
   const n = before.size;
   if (failed.length === 0) {
     toast({
       tone: "pass",
-      text: n === 1 ? `Set ${label} to ${shown} on ${shortName(ids[0])}` : `Set ${label} to ${shown} on ${n} cards`,
+      text:
+        n === 1
+          ? `Set ${label} to ${shown} on ${shortName(ids[0])}`
+          : `Set ${label} to ${shown} on ${n} cards`,
     });
   } else if (failed.length === n) {
     toast({
       tone: "fail",
-      text: n === 1 ? `Couldn't set ${label} on ${shortName(failed[0][0])}.` : `Couldn't set ${label} on ${n} cards.`,
+      text:
+        n === 1
+          ? `Couldn't set ${label} on ${shortName(failed[0][0])}.`
+          : `Couldn't set ${label} on ${n} cards.`,
       detail: why(failed[0][1]),
     });
   } else {
@@ -128,8 +147,8 @@ function common(ids, field) {
 }
 
 /** Open the edit menu for `field` on `ids`, anchored to `anchor`. */
-export function editField(field, ids, anchor) {
-  ids = ids.filter((id) => store.card(id));
+export function editField(field, cardIds, anchor) {
+  const ids = cardIds.filter((id) => store.card(id));
   if (!ids.length || !anchor) return;
   const cur = common(ids, field);
   const heading = `${EDITABLE.find((f) => f.field === field)?.label ?? field}${ids.length > 1 ? ` · ${ids.length} cards` : ""}`;
@@ -138,7 +157,12 @@ export function editField(field, ids, anchor) {
     case "priority":
       openPicker(anchor, {
         heading,
-        options: PRIORITY_ORDER.map((p) => ({ value: p, label: PRIORITY_LABELS[p], html: prioMark(p), checked: (cur ?? 0) === p })),
+        options: PRIORITY_ORDER.map((p) => ({
+          value: p,
+          label: PRIORITY_LABELS[p],
+          html: prioMark(p),
+          checked: (cur ?? 0) === p,
+        })),
         onPick: (v) => setField(ids, field, v),
       });
       return;
@@ -155,13 +179,21 @@ export function editField(field, ids, anchor) {
     case "cycleId": {
       const cycles = [...s.cycles].filter((c) => c.state !== "closed");
       if (!cycles.length) {
-        toast({ text: "No cycles yet.", detail: "Ask Merit to plan one, or create one with POST /api/cycles." });
+        toast({
+          text: "No cycles yet.",
+          detail: "Ask Merit to plan one, or create one with POST /api/cycles.",
+        });
         return;
       }
       openPicker(anchor, {
         heading,
         options: [
-          ...cycles.map((c) => ({ value: c.id, label: c.name, detail: c.state === "active" ? "Current" : "Next", checked: cur === c.id })),
+          ...cycles.map((c) => ({
+            value: c.id,
+            label: c.name,
+            detail: c.state === "active" ? "Current" : "Next",
+            checked: cur === c.id,
+          })),
           { value: "", label: "No cycle", checked: !cur },
         ],
         onPick: (v) => setField(ids, field, v || null),
@@ -186,7 +218,13 @@ export function editField(field, ids, anchor) {
       openPicker(anchor, {
         heading,
         options: [
-          ...[...people].map((a) => ({ value: a, label: assigneeLabel(a), detail: a === "worker" ? "The local model" : a === "human" ? s.meta?.gitUser ?? "" : "", checked: cur === a })),
+          ...[...people].map((a) => ({
+            value: a,
+            label: assigneeLabel(a),
+            detail:
+              a === "worker" ? "The local model" : a === "human" ? (s.meta?.gitUser ?? "") : "",
+            checked: cur === a,
+          })),
           { value: "", label: "Unassigned", checked: !cur },
         ],
         onPick: (v) => setField(ids, field, v || null),
@@ -210,7 +248,9 @@ export function editField(field, ids, anchor) {
             for (const l of chosen) next.add(l);
             if (c) c._nextLabels = [...next].sort();
           }
-          Promise.all(ids.map((id) => setField([id], "labels", store.card(id)?._nextLabels ?? []))).catch(() => {});
+          Promise.all(
+            ids.map((id) => setField([id], "labels", store.card(id)?._nextLabels ?? [])),
+          ).catch(() => {});
         }
       };
       let timer = 0;
@@ -218,7 +258,12 @@ export function editField(field, ids, anchor) {
         heading,
         multi: true,
         search: true,
-        options: [...all].sort().map((l) => ({ value: l, label: l, html: icon("tag", 12, "ic s12"), checked: chosen.has(l) })),
+        options: [...all].sort().map((l) => ({
+          value: l,
+          label: l,
+          html: icon("tag", 12, "ic s12"),
+          checked: chosen.has(l),
+        })),
         onChange: (vals) => {
           chosen = new Set(vals);
           clearTimeout(timer);
@@ -251,7 +296,8 @@ export function editField(field, ids, anchor) {
           else if (v === "week") {
             d.setDate(d.getDate() + ((5 - d.getDay() + 7) % 7));
             out = d.toISOString().slice(0, 10);
-          } else if (v === "cycle") out = s.cycles.find((c) => c.state === "active")?.endsOn ?? null;
+          } else if (v === "cycle")
+            out = s.cycles.find((c) => c.state === "active")?.endsOn ?? null;
           setField(ids, field, out);
         },
       });
@@ -265,7 +311,10 @@ export function editField(field, ids, anchor) {
 export function fieldMenu(ids, anchor) {
   openMenu(
     anchor,
-    EDITABLE.map((f) => ({ label: f.key ? `${f.label}  ${f.key}` : f.label, run: () => setTimeout(() => editField(f.field, ids, anchor), 0) })),
+    EDITABLE.map((f) => ({
+      label: f.key ? `${f.label}  ${f.key}` : f.label,
+      run: () => setTimeout(() => editField(f.field, ids, anchor), 0),
+    })),
     { heading: ids.length > 1 ? `Edit ${ids.length} cards` : "Edit field" },
   );
 }

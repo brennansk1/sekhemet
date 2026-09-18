@@ -81,7 +81,8 @@ describe("priority and points (contract §2)", () => {
     expect(priorityOf("1")).toBe(0);
     expect(priorityIcon(1)).toBe("priority-urgent");
     expect(priorityIcon(0)).toBe("priority-none");
-    for (const p of [0, 1, 2, 3, 4]) expect(ICONS[priorityIcon(p) as keyof typeof ICONS]).toBeTruthy();
+    for (const p of [0, 1, 2, 3, 4])
+      expect(ICONS[priorityIcon(p) as keyof typeof ICONS]).toBeTruthy();
   });
 
   it("sorts urgent first and none last, stable within a priority", () => {
@@ -106,7 +107,12 @@ describe("priority and points (contract §2)", () => {
 });
 
 describe("proposal field diffs", () => {
-  const ctx = { cycles, epics, cards, statusLabel: (s: string) => ({ ready: "Ready", backlog: "Backlog" })[s] ?? s };
+  const ctx = {
+    cycles,
+    epics,
+    cards,
+    statusLabel: (s: string) => ({ ready: "Ready", backlog: "Backlog" })[s] ?? s,
+  };
 
   it("formats each field as people read it, with before from the proposal", () => {
     const rows = proposalDiff(
@@ -115,8 +121,21 @@ describe("proposal field diffs", () => {
         kind: "update_card",
         summary: "Raise hasher",
         cardId: "card_hasher",
-        patch: { priority: 1, estimate: 5, cycleId: "cy13", epicId: "ep_api", assignee: "human", dueDate: "2026-10-02" },
-        before: { priority: 3, estimate: 3, cycleId: "cy12", epicId: "ep_ledger", assignee: "worker" },
+        patch: {
+          priority: 1,
+          estimate: 5,
+          cycleId: "cy13",
+          epicId: "ep_api",
+          assignee: "human",
+          dueDate: "2026-10-02",
+        },
+        before: {
+          priority: 3,
+          estimate: 3,
+          cycleId: "cy12",
+          epicId: "ep_ledger",
+          assignee: "worker",
+        },
         state: "open",
       },
       ctx,
@@ -133,7 +152,14 @@ describe("proposal field diffs", () => {
 
   it("falls back to the card's current value and drops unchanged fields", () => {
     const rows = proposalDiff(
-      { id: "p2", kind: "update_card", summary: "", cardId: "card_hasher", patch: { priority: 3, estimate: 2 }, state: "open" },
+      {
+        id: "p2",
+        kind: "update_card",
+        summary: "",
+        cardId: "card_hasher",
+        patch: { priority: 3, estimate: 2 },
+        state: "open",
+      },
       ctx,
     );
     expect(rows).toHaveLength(1);
@@ -142,7 +168,14 @@ describe("proposal field diffs", () => {
 
   it("diffs labels as a set", () => {
     const [row] = proposalDiff(
-      { id: "p3", kind: "update_card", summary: "", cardId: "card_hasher", patch: { labels: ["api", "security"] }, state: "open" },
+      {
+        id: "p3",
+        kind: "update_card",
+        summary: "",
+        cardId: "card_hasher",
+        patch: { labels: ["api", "security"] },
+        state: "open",
+      },
       ctx,
     );
     expect(row).toMatchObject({ type: "labels", added: ["security"], removed: ["later"] });
@@ -150,31 +183,54 @@ describe("proposal field diffs", () => {
 
   it("uses the status vocabulary and says None for empty values", () => {
     const rows = proposalDiff(
-      { id: "p4", kind: "move_card", summary: "", cardId: "card_http", patch: { status: "backlog", labels: [] }, before: { status: "ready", labels: [] }, state: "open" },
+      {
+        id: "p4",
+        kind: "move_card",
+        summary: "",
+        cardId: "card_http",
+        patch: { status: "backlog", labels: [] },
+        before: { status: "ready", labels: [] },
+        state: "open",
+      },
       ctx,
     );
     expect(rows.map((r) => `${r.before}->${r.after}`)).toEqual(["Ready->Backlog"]);
-    expect(proposalDiff({ id: "p5", kind: "update_card", summary: "", patch: { priority: 0 }, before: { priority: 2 }, state: "open" })[0]?.after).toBe(
-      "No priority",
-    );
+    expect(
+      proposalDiff({
+        id: "p5",
+        kind: "update_card",
+        summary: "",
+        patch: { priority: 0 },
+        before: { priority: 2 },
+        state: "open",
+      })[0]?.after,
+    ).toBe("No priority");
   });
 
   it("states what Apply all does", () => {
     expect(
       applyAllLabel([
         { id: "a", kind: "update_card", summary: "", cardId: "x", state: "open" },
-        { id: "b", kind: "split_card", summary: "", cardId: "y", cards: [{}, {}, {}], state: "open" },
+        {
+          id: "b",
+          kind: "split_card",
+          summary: "",
+          cardId: "y",
+          cards: [{}, {}, {}],
+          state: "open",
+        },
         { id: "c", kind: "update_card", summary: "", cardId: "z", state: "applied" },
       ]),
     ).toBe("Apply 2 changes to 5 cards");
-    expect(applyAllLabel([{ id: "a", kind: "create_card", summary: "", cards: [{}], state: "open" }])).toBe(
-      "Apply 1 change to 1 card",
-    );
+    expect(
+      applyAllLabel([{ id: "a", kind: "create_card", summary: "", cards: [{}], state: "open" }]),
+    ).toBe("Apply 1 change to 1 card");
   });
 });
 
 describe("PM markdown", () => {
-  const chip = (id: string) => (id === "card_a_b" ? `<a class="chip" data-card="${id}">A</a>` : null);
+  const chip = (id: string) =>
+    id === "card_a_b" ? `<a class="chip" data-card="${id}">A</a>` : null;
 
   it("escapes model text before formatting", () => {
     const html = renderPmMarkdown('<img src=x onerror="alert(1)"> **bold** `<b>`');
@@ -185,7 +241,9 @@ describe("PM markdown", () => {
   });
 
   it("renders lists, headings, paragraphs and fenced code", () => {
-    const html = renderPmMarkdown("### Done\n- one\n- two\n\n1. first\n2. second\n\nline a\nline b\n```\nx < y\n```");
+    const html = renderPmMarkdown(
+      "### Done\n- one\n- two\n\n1. first\n2. second\n\nline a\nline b\n```\nx < y\n```",
+    );
     expect(html).toBe(
       "<h4>Done</h4><ul><li>one</li><li>two</li></ul><ol><li>first</li><li>second</li></ol><p>line a<br>line b</p><pre><code>x &lt; y</code></pre>",
     );
@@ -206,13 +264,18 @@ describe("PM markdown", () => {
   });
 
   it("extracts mentions in order without duplicates or emails", () => {
-    expect(extractMentions("@hasher then @http, again @hasher; mail a@b.com")).toEqual(["hasher", "http"]);
+    expect(extractMentions("@hasher then @http, again @hasher; mail a@b.com")).toEqual([
+      "hasher",
+      "http",
+    ]);
   });
 });
 
 describe("filter language", () => {
   it("parses fields, aliases, negation, quotes and free text, and round-trips", () => {
-    const f = parseQuery('priority:urgent,high -label:later epic:"Ledger core" sprint:current canonical json');
+    const f = parseQuery(
+      'priority:urgent,high -label:later epic:"Ledger core" sprint:current canonical json',
+    );
     expect(f.terms).toEqual([
       { field: "priority", values: ["urgent", "high"] },
       { field: "label", values: ["later"], negate: true },
@@ -220,13 +283,16 @@ describe("filter language", () => {
       { field: "cycle", values: ["current"] },
     ]);
     expect(f.text).toBe("canonical json");
-    expect(formatQuery(f)).toBe('priority:urgent,high -label:later epic:"ledger core" cycle:current canonical json');
+    expect(formatQuery(f)).toBe(
+      'priority:urgent,high -label:later epic:"ledger core" cycle:current canonical json',
+    );
     expect(parseQuery(formatQuery(f))).toEqual(f);
   });
 
   it("ANDs terms and ORs values", () => {
     const ctx = { cycles, epics };
-    const ids = (q: string) => cards.filter((c) => matchCard(c, parseQuery(q), ctx)).map((c) => c.id);
+    const ids = (q: string) =>
+      cards.filter((c) => matchCard(c, parseQuery(q), ctx)).map((c) => c.id);
     expect(ids("priority:urgent,medium")).toEqual(["card_hasher", "card_http"]);
     expect(ids("label:api -label:later")).toEqual(["card_http"]);
     expect(ids("epic:ledger")).toEqual(["card_hasher"]);
@@ -259,9 +325,21 @@ describe("grouping", () => {
   });
 
   it("orders priority lanes urgent first and assignee lanes Worker, You, then none", () => {
-    expect(groupCards(cards, "priority").map((g) => g.label)).toEqual(["Urgent", "High", "Medium", "No priority"]);
-    expect(groupCards(cards, "assignee").map((g) => g.label)).toEqual(["Worker", "You", "No assignee"]);
-    expect(groupCards(cards, "cycle", { cycles }).map((g) => g.label)).toEqual(["Cycle 12", "No cycle"]);
+    expect(groupCards(cards, "priority").map((g) => g.label)).toEqual([
+      "Urgent",
+      "High",
+      "Medium",
+      "No priority",
+    ]);
+    expect(groupCards(cards, "assignee").map((g) => g.label)).toEqual([
+      "Worker",
+      "You",
+      "No assignee",
+    ]);
+    expect(groupCards(cards, "cycle", { cycles }).map((g) => g.label)).toEqual([
+      "Cycle 12",
+      "No cycle",
+    ]);
   });
 });
 
@@ -276,7 +354,9 @@ describe("cycle progress", () => {
     expect(p.cards).toEqual({ done: 1, total: 3 });
     expect(p.behindBy).toBe(Math.round(12 * p.elapsedRatio - 1));
     expect(p.atRisk).toBe(false);
-    expect(cycleProgress(cycles[0] as CycleLike, cards, Date.UTC(2026, 8, 28, 12)).atRisk).toBe(true);
+    expect(cycleProgress(cycles[0] as CycleLike, cards, Date.UTC(2026, 8, 28, 12)).atRisk).toBe(
+      true,
+    );
   });
 });
 
@@ -318,7 +398,11 @@ describe("flow metrics", () => {
 
 describe("waiting steps (PmStatus.phase)", () => {
   it("shows the Worker rows when a Worker is paused, with step and ETA from detail", () => {
-    const rows = pmSteps({ phase: "loading_pm", workerPaused: true, detail: "Pausing the Worker after step 5 · ~40s to load the PM" });
+    const rows = pmSteps({
+      phase: "loading_pm",
+      workerPaused: true,
+      detail: "Pausing the Worker after step 5 · ~40s to load the PM",
+    });
     expect(rows.map((r) => `${r.state}:${r.label}`)).toEqual([
       "done:Paused the Worker after step 5",
       "current:Loading the PM · about 40s",
@@ -329,7 +413,12 @@ describe("waiting steps (PmStatus.phase)", () => {
 
   it("omits the Worker rows when nothing was running, and prefers structured fields", () => {
     const rows = pmSteps({ phase: "thinking", etaSeconds: 35 });
-    expect(rows.map((r) => `${r.state}:${r.label}`)).toEqual(["done:Loaded the PM", "current:Thinking"]);
-    expect(pmSteps({ phase: "waiting_for_step", step: 7 })[0]?.label).toBe("Pausing the Worker after step 7");
+    expect(rows.map((r) => `${r.state}:${r.label}`)).toEqual([
+      "done:Loaded the PM",
+      "current:Thinking",
+    ]);
+    expect(pmSteps({ phase: "waiting_for_step", step: 7 })[0]?.label).toBe(
+      "Pausing the Worker after step 7",
+    );
   });
 });

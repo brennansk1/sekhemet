@@ -1,5 +1,8 @@
 // Board (FRONTEND_DESIGN §2.4.2): columns, rails, keyed tile patching, keyboard.
 import { $, $$, esc, icon } from "./dom.js";
+import { fieldKey, selectionOrFocused } from "./fields.js";
+import * as lanes from "./lanes.js";
+import { formatQuery, sortByPriority } from "./lib/pm.js";
 import {
   BOARD_COLUMN_ORDER,
   COLUMN_EMPTY,
@@ -8,9 +11,6 @@ import {
   columnLabel,
   formatDuration,
 } from "./lib/vocabulary.js";
-import { fieldKey, selectionOrFocused } from "./fields.js";
-import * as lanes from "./lanes.js";
-import { formatQuery, sortByPriority } from "./lib/pm.js";
 import * as listView from "./list.js";
 import { openMenu } from "./overlay.js";
 import { openPeek, peekOpenFor } from "./peek.js";
@@ -131,7 +131,8 @@ function renderTopbar() {
   const total = store.state.cards.length;
   const shown = visibleCards().length;
   const project = store.state.meta?.project ?? "";
-  const count = shown === total ? `${total} ${total === 1 ? "card" : "cards"}` : `${shown} of ${total} cards`;
+  const count =
+    shown === total ? `${total} ${total === 1 ? "card" : "cards"}` : `${shown} of ${total} cards`;
   setTopbar({ title: "Board", crumb: `${project}${project ? " · " : ""}${count}` });
   paintViewBar(ui.barHost, ui.cycHost, "board");
 }
@@ -590,7 +591,8 @@ export function mount(view, route) {
   if (route?.params?.[0] === "list") return listView.mount(view, route);
   const outer = document.createElement("div");
   outer.className = "view-host";
-  outer.innerHTML = '<div class="vbar-host"></div><div class="cyc-host"></div><div class="view-host board-host"></div>';
+  outer.innerHTML =
+    '<div class="vbar-host"></div><div class="cyc-host"></div><div class="view-host board-host"></div>';
   view.append(outer);
   ui.barHost = outer.querySelector(".vbar-host");
   ui.cycHost = outer.querySelector(".cyc-host");
@@ -632,6 +634,7 @@ export function mount(view, route) {
     render();
   });
   const offView = onViewChange(() => render());
+  window.addEventListener("sekhemet:refresh-view", render);
   const focusFirst = () => {
     const first = $(".tile", ui.root);
     if (first) focusTile(first.dataset.id);
@@ -643,6 +646,7 @@ export function mount(view, route) {
     focusFilter: () => focusFilter(outer),
     unmount() {
       offView();
+      window.removeEventListener("sekhemet:refresh-view", render);
       view.removeEventListener("sekhemet:focus-first", focusFirst);
       ui.unsub?.();
       hideTip();

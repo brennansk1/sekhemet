@@ -176,7 +176,8 @@ function isEmpty(v: unknown): boolean {
 
 /** One field value as a person reads it. */
 export function formatFieldValue(field: string, value: unknown, ctx: DiffContext = {}): string {
-  if (field === "priority") return isEmpty(value) ? "No priority" : PRIORITY_LABELS[priorityOf(value)];
+  if (field === "priority")
+    return isEmpty(value) ? "No priority" : PRIORITY_LABELS[priorityOf(value)];
   if (isEmpty(value)) return "None";
   switch (field) {
     case "estimate":
@@ -293,7 +294,9 @@ export function applyAllLabel(proposals: ProposalLike[]): string {
   const open = proposals.filter((p) => p.state === "open");
   const cards = open.reduce((n, p) => n + proposalCardCount(p), 0);
   const changes = `${open.length} ${open.length === 1 ? "change" : "changes"}`;
-  return cards > 0 ? `Apply ${changes} to ${cards} ${cards === 1 ? "card" : "cards"}` : `Apply ${changes}`;
+  return cards > 0
+    ? `Apply ${changes} to ${cards} ${cards === 1 ? "card" : "cards"}`
+    : `Apply ${changes}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -341,13 +344,13 @@ function inline(raw: string, opts: MarkdownOptions): string {
           const chip = opts.chip?.(id);
           if (!chip) return whole;
           chips.push(chip);
-          return `${pre}\u0000${chips.length - 1}\u0000`;
+          return `${pre}\uE000${chips.length - 1}\uE000`;
         });
       }
       s = s.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
       s = s.replace(/(^|[^*\w])\*([^*\n]+)\*(?!\w)/g, "$1<em>$2</em>");
       s = s.replace(/(^|[^\w])_([^_\n]+)_(?!\w)/g, "$1<em>$2</em>");
-      return s.replace(/\u0000(\d+)\u0000/g, (_m, i: string) => chips[Number(i)] ?? "");
+      return s.replace(/\uE000(\d+)\uE000/g, (_m, i: string) => chips[Number(i)] ?? "");
     })
     .join("");
 }
@@ -358,7 +361,9 @@ function inline(raw: string, opts: MarkdownOptions): string {
  * Everything is escaped before formatting, and links are left as text.
  */
 export function renderPmMarkdown(text: string, opts: MarkdownOptions = {}): string {
-  const lines = String(text ?? "").replace(/\r\n?/g, "\n").split("\n");
+  const lines = String(text ?? "")
+    .replace(/\r\n?/g, "\n")
+    .split("\n");
   const out: string[] = [];
   let para: string[] = [];
   let list: { tag: "ul" | "ol"; items: string[] } | null = null;
@@ -368,7 +373,10 @@ export function renderPmMarkdown(text: string, opts: MarkdownOptions = {}): stri
     para = [];
   };
   const flushList = () => {
-    if (list) out.push(`<${list.tag}>${list.items.map((i) => `<li>${inline(i, opts)}</li>`).join("")}</${list.tag}>`);
+    if (list)
+      out.push(
+        `<${list.tag}>${list.items.map((i) => `<li>${inline(i, opts)}</li>`).join("")}</${list.tag}>`,
+      );
     list = null;
   };
 
@@ -379,7 +387,8 @@ export function renderPmMarkdown(text: string, opts: MarkdownOptions = {}): stri
       flushList();
       const code: string[] = [];
       i++;
-      while (i < lines.length && !/^\s*```/.test(lines[i] as string)) code.push(lines[i++] as string);
+      while (i < lines.length && !/^\s*```/.test(lines[i] as string))
+        code.push(lines[i++] as string);
       out.push(`<pre><code>${escapeHtml(code.join("\n"))}</code></pre>`);
       continue;
     }
@@ -549,7 +558,9 @@ function termMatches(card: PmCardLike, t: FilterTerm, ctx: MatchContext): boolea
   switch (t.field) {
     case "priority": {
       const p = priorityOf(card.priority);
-      return vals.some((v) => v === String(p) || v === PRIORITY_NAMES[p] || (v === "no" && p === 0));
+      return vals.some(
+        (v) => v === String(p) || v === PRIORITY_NAMES[p] || (v === "no" && p === 0),
+      );
     }
     case "label": {
       const labels = (card.labels ?? []).map((l) => l.toLowerCase());
@@ -578,7 +589,9 @@ function termMatches(card: PmCardLike, t: FilterTerm, ctx: MatchContext): boolea
     case "assignee": {
       const a = (card.assignee ?? "").toLowerCase();
       return vals.some((v) =>
-        v === "none" ? !a : v === a || (v === "me" && a === "human") || (v === "you" && a === "human"),
+        v === "none"
+          ? !a
+          : v === a || (v === "me" && a === "human") || (v === "you" && a === "human"),
       );
     }
     case "kind":
@@ -623,7 +636,8 @@ export function matchCard(card: PmCardLike, f: CardFilter, ctx: MatchContext = {
   }
   const words = f.text.toLowerCase().split(/\s+/).filter(Boolean);
   if (words.length) {
-    const hay = `${card.display?.title ?? card.title ?? ""} ${card.id} ${card.display?.shortId ?? ""}`.toLowerCase();
+    const hay =
+      `${card.display?.title ?? card.title ?? ""} ${card.id} ${card.display?.shortId ?? ""}`.toLowerCase();
     if (!words.every((w) => hay.includes(w))) return false;
   }
   return true;
@@ -649,7 +663,10 @@ export interface CardGroup<C extends PmCardLike = PmCardLike> {
 }
 
 export function sumPoints(cards: PmCardLike[]): number {
-  return cards.reduce((n, c) => n + (typeof c.estimate === "number" && c.estimate > 0 ? c.estimate : 0), 0);
+  return cards.reduce(
+    (n, c) => n + (typeof c.estimate === "number" && c.estimate > 0 ? c.estimate : 0),
+    0,
+  );
 }
 
 const CYCLE_STATE_ORDER = { active: 0, planned: 1, closed: 2 } as const;
@@ -701,7 +718,8 @@ export function groupCards<C extends PmCardLike>(
       const i = ctx.epics?.findIndex((e) => e.id === g.key) ?? -1;
       return [i < 0 ? 50 : i, g.label.toLowerCase()];
     }
-    if (by === "assignee") return [g.key === "worker" ? 0 : g.key === "human" ? 1 : 2, g.label.toLowerCase()];
+    if (by === "assignee")
+      return [g.key === "worker" ? 0 : g.key === "human" ? 1 : 2, g.label.toLowerCase()];
     if (by === "cycle") {
       const st = g.cycle ? CYCLE_STATE_ORDER[g.cycle.state] : 3;
       return [st, g.cycle?.startsOn ?? g.label];
@@ -750,14 +768,19 @@ export interface CycleProgress {
   atRisk: boolean;
 }
 
-export function cycleProgress(cycle: CycleLike, cards: PmCardLike[], now = Date.now()): CycleProgress {
+export function cycleProgress(
+  cycle: CycleLike,
+  cards: PmCardLike[],
+  now = Date.now(),
+): CycleProgress {
   const start = dayStart(cycle.startsOn);
   const end = dayStart(cycle.endsOn) + DAY; // the end date is inclusive
   const totalDays = Math.max(1, Math.round((end - start) / DAY));
   const elapsedRatio = Math.min(1, Math.max(0, (now - start) / (end - start)));
   const daysLeft = Math.max(0, Math.ceil((end - now) / DAY));
   const inCycle = cards.filter((c) => c.cycleId === cycle.id && c.status !== "rejected");
-  const pts = (c: PmCardLike) => (typeof c.estimate === "number" && c.estimate > 0 ? c.estimate : 1);
+  const pts = (c: PmCardLike) =>
+    typeof c.estimate === "number" && c.estimate > 0 ? c.estimate : 1;
   const points = { done: 0, started: 0, notStarted: 0, total: 0 };
   let doneCards = 0;
   let unestimated = 0;
@@ -838,9 +861,10 @@ export type CfdKey = (typeof CFD_KEYS)[number];
  * Stack CFD rows bottom-up in `CFD_KEYS` order: for each row, each key gets
  * `[y0, y1]`. `max` is the tallest stack, for the y scale.
  */
-export function stackCfd(
-  rows: Partial<Record<CfdKey, number>>[],
-): { bands: Record<CfdKey, [number, number][]>; max: number } {
+export function stackCfd(rows: Partial<Record<CfdKey, number>>[]): {
+  bands: Record<CfdKey, [number, number][]>;
+  max: number;
+} {
   const bands = Object.fromEntries(CFD_KEYS.map((k) => [k, [] as [number, number][]])) as Record<
     CfdKey,
     [number, number][]
@@ -883,7 +907,12 @@ export interface PmStatusLike {
   etaSeconds?: number;
 }
 
-export const PM_PHASES: PmPhase[] = ["waiting_for_step", "loading_pm", "thinking", "resuming_worker"];
+export const PM_PHASES: PmPhase[] = [
+  "waiting_for_step",
+  "loading_pm",
+  "thinking",
+  "resuming_worker",
+];
 
 export function statusStep(s: PmStatusLike): number | undefined {
   if (typeof s.step === "number") return s.step;
@@ -921,7 +950,16 @@ export function pmSteps(
   const step = statusStep(status) ?? opts.step;
   const eta = statusEtaSeconds(status) ?? opts.eta;
   return phases.map((phase, i) => {
-    const state = cur < 0 ? (status.phase === "idle" ? "done" : "todo") : i < cur ? "done" : i === cur ? "current" : "todo";
+    const state =
+      cur < 0
+        ? status.phase === "idle"
+          ? "done"
+          : "todo"
+        : i < cur
+          ? "done"
+          : i === cur
+            ? "current"
+            : "todo";
     let label = "";
     switch (phase) {
       case "waiting_for_step":
@@ -931,7 +969,8 @@ export function pmSteps(
             : `Pausing the Worker${step ? ` after step ${step}` : " at its next step"}`;
         break;
       case "loading_pm":
-        label = state === "done" ? "Loaded the PM" : `Loading the PM${eta ? ` · about ${eta}s` : ""}`;
+        label =
+          state === "done" ? "Loaded the PM" : `Loading the PM${eta ? ` · about ${eta}s` : ""}`;
         break;
       case "thinking":
         label = state === "done" ? "Replied" : "Thinking";

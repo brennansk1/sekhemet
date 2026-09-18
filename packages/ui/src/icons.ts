@@ -63,7 +63,8 @@ export const ICONS = {
   "priority-low": '<path d="M6 19v-5"/><path class="off" d="M12 19v-9M18 19V6"/>',
   "priority-medium": '<path d="M6 19v-5M12 19v-9"/><path class="off" d="M18 19V6"/>',
   "priority-high": '<path d="M6 19v-5M12 19v-9M18 19V6"/>',
-  "priority-urgent": '<rect x="3.5" y="3.5" width="17" height="17" rx="3.5"/><path d="M12 7.5v5.5M12 16.5h.01"/>',
+  "priority-urgent":
+    '<rect x="3.5" y="3.5" width="17" height="17" rx="3.5"/><path d="M12 7.5v5.5M12 16.5h.01"/>',
   chat: '<path d="M4 5.5h16v10.5H10l-6 4z"/><path d="M8 9.5h8M8 12.5h5"/>',
   insights: '<path d="M4 4v16h16"/><path d="m7.5 15 4-5 3 3 5-6"/>',
   plug: '<path d="M9 3v4M15 3v4M6 7h12v3a6 6 0 0 1-12 0zM12 16v5"/>',
@@ -76,7 +77,8 @@ export const ICONS = {
   send: '<path d="M4 12 20 4l-5 16-3-7z"/><path d="m12 13 8-9"/>',
   expand: '<path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/>',
   tag: '<path d="M4 4h7l9 9-7 7-9-9z"/><path d="M8 8h.01"/>',
-  calendar: '<rect x="4" y="5.5" width="16" height="14" rx="1.5"/><path d="M4 10h16M8 3.5v4M16 3.5v4"/>',
+  calendar:
+    '<rect x="4" y="5.5" width="16" height="14" rx="1.5"/><path d="M4 10h16M8 3.5v4M16 3.5v4"/>',
   user: '<circle cx="12" cy="8.5" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/>',
   download: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
   upload: '<path d="M12 15V4M7 9l5-5 5 5M5 20h14"/>',

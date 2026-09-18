@@ -1,9 +1,10 @@
 // Entry point: hydrate, subscribe to the ledger stream, route, and mount views.
 import * as boardView from "./board.js";
-import * as insightsView from "./insights.js";
-import * as integrationsView from "./integrations.js";
+import { initBulk } from "./bulk.js";
 import * as cardView from "./card.js";
 import { getJSON } from "./dom.js";
+import * as insightsView from "./insights.js";
+import * as integrationsView from "./integrations.js";
 import { initKeys } from "./keys.js";
 import * as ledgerView from "./ledger.js";
 import * as machineView from "./machine.js";
@@ -236,6 +237,7 @@ async function boot() {
   route();
   initPm();
   initPmPanel();
+  initBulk();
   connect();
   refreshDoctor();
   setInterval(refreshDoctor, 30_000);
