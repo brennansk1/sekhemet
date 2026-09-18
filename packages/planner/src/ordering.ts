@@ -39,14 +39,18 @@ function numbers(v: TomlValue | undefined): Record<string, number> | undefined {
   return out;
 }
 
-export function parsePrioritizationConfig(table: TomlTable | undefined): PrioritizationConfig | undefined {
+export function parsePrioritizationConfig(
+  table: TomlTable | undefined,
+): PrioritizationConfig | undefined {
   const t = table?.prioritization;
   if (!t || typeof t !== "object" || Array.isArray(t)) return undefined;
   const model = t.model === "rice" ? "rice" : "wsjf";
   const valueByPriority = numbers(t.value_by_priority);
   if (model === "wsjf" && !valueByPriority) return undefined;
-  const opt = <K extends keyof PrioritizationConfig>(k: K, v: PrioritizationConfig[K] | undefined) =>
-    v === undefined ? {} : { [k]: v };
+  const opt = <K extends keyof PrioritizationConfig>(
+    k: K,
+    v: PrioritizationConfig[K] | undefined,
+  ) => (v === undefined ? {} : { [k]: v });
   return {
     model,
     valueByPriority: valueByPriority ?? {},

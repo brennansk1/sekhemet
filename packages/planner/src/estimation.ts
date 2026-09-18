@@ -54,8 +54,7 @@ export function estimationClass(input: {
   difficulty?: number | undefined;
 }): string {
   const slice =
-    input.labels?.find((l) => ["spike", "interface", "data", "path", "rule"].includes(l)) ??
-    "any";
+    input.labels?.find((l) => ["spike", "interface", "data", "path", "rule"].includes(l)) ?? "any";
   const d = input.difficulty ?? 5;
   const band = d < 4 ? "low" : d <= 7 ? "mid" : "high";
   return `${input.tier}:${slice}:${band}`;

@@ -60,9 +60,7 @@ export class DecisionStore {
   public async all(): Promise<PlannerDecision[]> {
     const outcomes = await plannerEvents(this.ledger, Object.values(DECISION_OUTCOME_EVENTS));
     const ids = (type: string) =>
-      new Set(
-        outcomes.filter((e) => e.type === type).map((e) => (e.payload as { id: string }).id),
-      );
+      new Set(outcomes.filter((e) => e.type === type).map((e) => (e.payload as { id: string }).id));
     const defaulted = ids(DECISION_OUTCOME_EVENTS.defaultApplied);
     const parked = ids(DECISION_OUTCOME_EVENTS.parked);
     const out: PlannerDecision[] = [];
@@ -122,8 +120,17 @@ export class DecisionStore {
       recommendationIndex: req.recommendation.optionIndex,
     });
     if (park && card && card.status !== "parked") {
-      await store.updateCardStatus(req.cardId, "parked", `awaiting decision ${record.id}`, "planner");
-      await store.updateCard(req.cardId, { blockedReason: `Decision needed: ${req.question}` }, "planner");
+      await store.updateCardStatus(
+        req.cardId,
+        "parked",
+        `awaiting decision ${record.id}`,
+        "planner",
+      );
+      await store.updateCard(
+        req.cardId,
+        { blockedReason: `Decision needed: ${req.question}` },
+        "planner",
+      );
     }
     if (card) {
       const previews = req.previewSketches.length
@@ -134,7 +141,9 @@ export class DecisionStore {
         kind: "question",
         text: `${req.question}\nOptions: ${req.options
           .map((o, i) => `${i + 1}. ${o.label} (${o.consequence}; ${o.effortDelta})`)
-          .join("; ")}\nRecommended: ${req.options[req.recommendation.optionIndex]?.label ?? "none"}: ${req.recommendation.rationale}\nIf unanswered by ${req.defaultIfNoAnswer.deadline}: ${req.policy === "safe_default" ? "the default applies" : "the card stays parked"}.${previews}`,
+          .join(
+            "; ",
+          )}\nRecommended: ${req.options[req.recommendation.optionIndex]?.label ?? "none"}: ${req.recommendation.rationale}\nIf unanswered by ${req.defaultIfNoAnswer.deadline}: ${req.policy === "safe_default" ? "the default applies" : "the card stays parked"}.${previews}`,
         actor: "planner",
       });
     }
@@ -167,7 +176,10 @@ export class DecisionStore {
         );
         await this.ledger.store.runs.answerDecision(d.id, res.optionIndex, "safe_default");
         const label = d.request.options[res.optionIndex]?.label ?? "default";
-        await this.resume(d, `Decision (no answer by the deadline; safe default applied): ${label}`);
+        await this.resume(
+          d,
+          `Decision (no answer by the deadline; safe default applied): ${label}`,
+        );
       } else {
         // default_deny: the K20 record stays pending (a human can still answer
         // it); the card stays parked and the ledger says why.
@@ -188,7 +200,12 @@ export class DecisionStore {
     const waitingOn = waitingReason(d.id);
     for (const child of await store.listCards()) {
       if (child.status !== "planning" || child.blockedReason !== waitingOn) continue;
-      await store.recordDossierEntry({ cardId: child.id, kind: "answer", text: note, actor: "planner" });
+      await store.recordDossierEntry({
+        cardId: child.id,
+        kind: "answer",
+        text: note,
+        actor: "planner",
+      });
       await store.updateCardStatus(
         child.id,
         (child.dependsOn ?? []).length === 0 ? "ready" : "backlog",
@@ -199,7 +216,12 @@ export class DecisionStore {
     }
     const card = d.record.cardId ? await store.getCard(d.record.cardId) : null;
     if (!card) return;
-    await store.recordDossierEntry({ cardId: card.id, kind: "answer", text: note, actor: "planner" });
+    await store.recordDossierEntry({
+      cardId: card.id,
+      kind: "answer",
+      text: note,
+      actor: "planner",
+    });
     const others = (await this.waiting()).filter(
       (x) => x.record.cardId === card.id && x.id !== d.id,
     );

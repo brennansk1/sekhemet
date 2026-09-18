@@ -224,7 +224,8 @@ export async function persistPlan(
   }
 
   const previous = await ledger.log.getEventsByTypes(["plan/created"]);
-  result.version = previous.filter((e) => (e.payload as { epicId?: string }).epicId === options.epicId).length + 1;
+  result.version =
+    previous.filter((e) => (e.payload as { epicId?: string }).epicId === options.epicId).length + 1;
   await appendPlannerEvent(
     ledger,
     "plan/created",
@@ -269,7 +270,9 @@ export function formatPlanReport(result: PersistPlanResult): string {
     lines.push(`  ${check.passed ? "pass" : "FAIL"} ${check.check}: ${check.detail}`);
   }
   if (result.decisionId) {
-    lines.push(`Decision ${result.decisionId} is waiting on you; the new cards stay in Planning until it is answered.`);
+    lines.push(
+      `Decision ${result.decisionId} is waiting on you; the new cards stay in Planning until it is answered.`,
+    );
   }
   return lines.join("\n");
 }

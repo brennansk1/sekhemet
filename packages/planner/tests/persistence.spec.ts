@@ -63,7 +63,9 @@ describe("P1/P5/P6/P7: plans persist with their whole contract (defect 6)", () =
         expect(JSON.stringify(dossier)).toContain("Edit sketch from the planner");
       }
     }
-    const withDeps = result.created.filter((c) => (plan.stories.find((s) => s.card.id === c.id)?.dependsOn.length ?? 0) > 0);
+    const withDeps = result.created.filter(
+      (c) => (plan.stories.find((s) => s.card.id === c.id)?.dependsOn.length ?? 0) > 0,
+    );
     for (const c of withDeps) {
       expect((await l.store.getCard(c.id))?.dependsOn?.length).toBeGreaterThan(0);
     }
@@ -111,14 +113,23 @@ describe("P2: INVEST is enforced and shown", () => {
   });
 });
 
-function request(cardId: string, policy: "safe_default" | "default_deny", deadline: string): DecisionRequest {
+function request(
+  cardId: string,
+  policy: "safe_default" | "default_deny",
+  deadline: string,
+): DecisionRequest {
   return {
     id: `req_${policy}`,
     cardId,
     question: "Which store?",
     options: [
       { label: "SQLite", consequence: "local", effortDelta: "+0", riskNote: "Low risk." },
-      { label: "Postgres", consequence: "server", effortDelta: "+20 min", riskNote: "Needs a server." },
+      {
+        label: "Postgres",
+        consequence: "server",
+        effortDelta: "+20 min",
+        riskNote: "Needs a server.",
+      },
     ],
     previewSketches: ["src/db.ts: sqlite adapter", "src/db.ts: pg adapter"],
     recommendation: { optionIndex: 0, rationale: "already a dependency" },
@@ -133,7 +144,9 @@ describe("P9/P10/P11/P25: durable decision requests", () => {
   it("parks the card, survives a new store instance, and an answer resumes it", async () => {
     const l = ledger();
     await l.store.createCard({ id: "c1", tier: "task", title: "store", status: "ready" });
-    const id = await new DecisionStore(l).request(request("c1", "safe_default", "2099-01-01T00:00:00Z"));
+    const id = await new DecisionStore(l).request(
+      request("c1", "safe_default", "2099-01-01T00:00:00Z"),
+    );
     expect((await l.store.getCard("c1"))?.status).toBe("parked");
     // A fresh store over the same ledger sees the pending decision (restart).
     const again = new DecisionStore({ log: l.log, store: l.store });
@@ -228,7 +241,13 @@ describe("P4: estimation learns from written-back actuals", () => {
     });
     expect(prior.basis.kind).toBe("prior");
     const m = EstimationModel.fromCards(cards);
-    const e = m.estimate({ tier: "story", labels: ["path"], difficulty: 4, basePackTokens: 2000, stepBudget: 20 });
+    const e = m.estimate({
+      tier: "story",
+      labels: ["path"],
+      difficulty: 4,
+      basePackTokens: 2000,
+      stepBudget: 20,
+    });
     expect(e.basis).toEqual({ kind: "measured", samples: 3, cardClass: "story:path:mid" });
     expect(e.tokens).toBe(2000 + 4 * 20_000);
     expect(e.seconds).toBe(800);
@@ -262,11 +281,18 @@ describe("P3: WSJF / RICE ordering from config.toml", () => {
         risk_by_label: { security: 5 },
       },
     });
-    const cards = [card("low", 4, 2), card("urgent_hard", 1, 8), card("secure", 3, 2, ["security"]), card("unset", 0, 2)];
+    const cards = [
+      card("low", 4, 2),
+      card("urgent_hard", 1, 8),
+      card("secure", 3, 2, ["security"]),
+      card("unset", 0, 2),
+    ];
     const r = orderReadyCards(cards, cfg);
     expect(r.cards.map((c) => c.id)).toEqual(["secure", "urgent_hard", "low", "unset"]);
     expect(r.unscored).toEqual(["unset"]);
-    expect(orderReadyCards(cards, undefined).cards.map((c) => c.id)).toEqual(cards.map((c) => c.id));
+    expect(orderReadyCards(cards, undefined).cards.map((c) => c.id)).toEqual(
+      cards.map((c) => c.id),
+    );
     expect(parsePrioritizationConfig({})).toBeUndefined();
   });
 });
@@ -284,7 +310,11 @@ describe("P15: calibration persists across processes", () => {
       });
     }
     const log = await loadCalibrationLog(l);
-    expect(log.calibrationFor("storage")).toMatchObject({ observed: 5, overridden: 1, shifted: true });
+    expect(log.calibrationFor("storage")).toMatchObject({
+      observed: 5,
+      overridden: 1,
+      shifted: true,
+    });
     const planner = new SpidrFeaturePlanner({ calibration: log });
     expect(planner.calibrationSnapshot().categories[0]?.disposition).toBe("ask");
   });
@@ -308,8 +338,28 @@ describe("P12/P13/P14: replan with diffs, review, standup, escalation", () => {
       expect((await l.store.getCard(id))?.blockedReason).toMatch(/Removed by replan v2/);
     }
     const d = diffPlans(
-      [{ id: "a", title: "A", slice: "path", scopeFiles: ["x"], difficulty: 3, routing: "direct", dependsOn: [] }],
-      [{ id: "b", title: "a", slice: "path", scopeFiles: ["y"], difficulty: 3, routing: "direct", dependsOn: [] }],
+      [
+        {
+          id: "a",
+          title: "A",
+          slice: "path",
+          scopeFiles: ["x"],
+          difficulty: 3,
+          routing: "direct",
+          dependsOn: [],
+        },
+      ],
+      [
+        {
+          id: "b",
+          title: "a",
+          slice: "path",
+          scopeFiles: ["y"],
+          difficulty: 3,
+          routing: "direct",
+          dependsOn: [],
+        },
+      ],
     );
     expect(d.changed).toEqual([{ id: "b", title: "a", fields: ["scope"] }]);
   });
@@ -317,7 +367,12 @@ describe("P12/P13/P14: replan with diffs, review, standup, escalation", () => {
   it("review recommends return on a failing gate; standup lists decisions with wait times", async () => {
     const l = ledger();
     await l.store.createCard({ id: "r1", tier: "task", title: "review me", status: "review" });
-    await l.log.append({ actor: "executor", type: "gate/result", cardId: "r1", payload: { gate: "unit", status: "fail" } });
+    await l.log.append({
+      actor: "executor",
+      type: "gate/result",
+      cardId: "r1",
+      payload: { gate: "unit", status: "fail" },
+    });
     expect((await reviewSession(l, "r1")).recommendation).toBe("return");
     await l.store.createCard({ id: "p1", tier: "task", title: "parked one", status: "ready" });
     await new DecisionStore(l).request(request("p1", "safe_default", "2099-01-01T00:00:00Z"));
@@ -342,7 +397,10 @@ describe("P12/P13/P14: replan with diffs, review, standup, escalation", () => {
       stopReason: "repair_exhausted" as const,
     };
     const env = diagnoseEscalation(card, [
-      { type: "gate/result", payload: { error: "Error: getaddrinfo ENOTFOUND api.rates.example" } } as never,
+      {
+        type: "gate/result",
+        payload: { error: "Error: getaddrinfo ENOTFOUND api.rates.example" },
+      } as never,
     ]);
     expect(env.category).toBe("external_dependency");
     expect(env.smallestHumanAction).toMatch(/service/);

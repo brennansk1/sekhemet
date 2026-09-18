@@ -52,7 +52,11 @@ export async function latestPlan(
   return { epicId, version: p.version, stories: p.stories };
 }
 
-const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+const norm = (t: string) =>
+  t
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
 
 /** Diff two plans: by id, falling back to the normalised title. */
 export function diffPlans(
@@ -153,7 +157,12 @@ export async function replanSession(
     for (const r of diff.removed) {
       const card = await ledger.store.getCard(r.id);
       if (!card || !["backlog", "ready", "planning"].includes(card.status)) continue;
-      await ledger.store.updateCardStatus(r.id, "parked", `removed by replan v${version}`, "planner");
+      await ledger.store.updateCardStatus(
+        r.id,
+        "parked",
+        `removed by replan v${version}`,
+        "planner",
+      );
       await ledger.store.updateCard(
         r.id,
         { blockedReason: `Removed by replan v${version}: ${input.reason}` },
@@ -240,7 +249,12 @@ export interface StandupReport {
  */
 export async function standupReport(
   ledger: PlannerLedger,
-  options: { now?: Date; sinceHours?: number; estimator?: EstimationModel; windowCards?: number } = {},
+  options: {
+    now?: Date;
+    sinceHours?: number;
+    estimator?: EstimationModel;
+    windowCards?: number;
+  } = {},
 ): Promise<StandupReport> {
   const now = options.now ?? new Date();
   const since = now.getTime() - (options.sinceHours ?? 24) * 3_600_000;
@@ -254,7 +268,8 @@ export async function standupReport(
   for (const c of work) {
     const updated = Date.parse(c.updatedAt);
     if (c.status === "done" && updated >= since) put("passed", c, `${c.id} ${c.title}`);
-    else if (c.status === "parked") put("parked", c, `${c.id} ${c.title}: ${c.blockedReason ?? c.stopReason ?? "parked"}`);
+    else if (c.status === "parked")
+      put("parked", c, `${c.id} ${c.title}: ${c.blockedReason ?? c.stopReason ?? "parked"}`);
     else if (c.status === "review") put("review", c, `${c.id} ${c.title}: waiting on your review`);
     else if (c.status === "in_progress" || c.status === "verify") {
       put("in_progress", c, `${c.id} ${c.title} (${c.stepsUsed}/${c.stepBudget} steps)`);
@@ -287,15 +302,33 @@ export async function standupReport(
   const section = (title: string, lines: string[]) =>
     lines.length > 0 ? [`${title}:`, ...lines.map((l) => `  ${l}`)] : [];
   const text = [
-    ...section("Passed", (byState.passed ?? []).map((x) => x.line)),
-    ...section("In progress", (byState.in_progress ?? []).map((x) => x.line)),
-    ...section("In review", (byState.review ?? []).map((x) => x.line)),
-    ...section("Parked", (byState.parked ?? []).map((x) => x.line)),
+    ...section(
+      "Passed",
+      (byState.passed ?? []).map((x) => x.line),
+    ),
+    ...section(
+      "In progress",
+      (byState.in_progress ?? []).map((x) => x.line),
+    ),
+    ...section(
+      "In review",
+      (byState.review ?? []).map((x) => x.line),
+    ),
+    ...section(
+      "Parked",
+      (byState.parked ?? []).map((x) => x.line),
+    ),
     ...section(
       "Waiting on you",
-      decisionsWaiting.map((d) => `${d.id}${d.cardId ? ` (${d.cardId})` : ""}: ${d.question} - waiting ${d.waitingHours}h`),
+      decisionsWaiting.map(
+        (d) =>
+          `${d.id}${d.cardId ? ` (${d.cardId})` : ""}: ${d.question} - waiting ${d.waitingHours}h`,
+      ),
     ),
-    ...section("Next window", nextWindow.map((n) => `${n.id} ${n.title}: ${n.estimate}`)),
+    ...section(
+      "Next window",
+      nextWindow.map((n) => `${n.id} ${n.title}: ${n.estimate}`),
+    ),
   ].join("\n");
   return { text: text || "Nothing to report.", byState, decisionsWaiting, nextWindow };
 }
@@ -319,11 +352,31 @@ export interface EscalationDiagnostic {
 }
 
 const ENV_PATTERNS: [RegExp, string, EscalationDiagnostic["category"]][] = [
-  [/(EACCES|permission denied)/i, "a file or directory the gate needs is not writable", "environment"],
-  [/(ENOENT|command not found|not recognized as)/i, "a tool or file the gate calls is missing on this machine", "environment"],
-  [/(api[_ ]?key|credential|unauthori[sz]ed|401|403|token (is )?(missing|invalid))/i, "a credential the code or a test needs is missing", "environment"],
-  [/(ECONNREFUSED|ENOTFOUND|getaddrinfo|network|ETIMEDOUT)/i, "the code or a test needs a network service that is not reachable", "external_dependency"],
-  [/(Cannot find module|Module not found|ERR_MODULE_NOT_FOUND)/i, "a dependency is not installed", "environment"],
+  [
+    /(EACCES|permission denied)/i,
+    "a file or directory the gate needs is not writable",
+    "environment",
+  ],
+  [
+    /(ENOENT|command not found|not recognized as)/i,
+    "a tool or file the gate calls is missing on this machine",
+    "environment",
+  ],
+  [
+    /(api[_ ]?key|credential|unauthori[sz]ed|401|403|token (is )?(missing|invalid))/i,
+    "a credential the code or a test needs is missing",
+    "environment",
+  ],
+  [
+    /(ECONNREFUSED|ENOTFOUND|getaddrinfo|network|ETIMEDOUT)/i,
+    "the code or a test needs a network service that is not reachable",
+    "external_dependency",
+  ],
+  [
+    /(Cannot find module|Module not found|ERR_MODULE_NOT_FOUND)/i,
+    "a dependency is not installed",
+    "environment",
+  ],
 ];
 
 /**
@@ -384,7 +437,8 @@ export function diagnoseEscalation(
         category: "budget",
         diagnosis: `The card ran out of its ${card.stopReason.replace(/_/g, " ")} before its gates passed.`,
         tried,
-        smallestHumanAction: "Approve a larger budget for this card once, or split it along its scope files.",
+        smallestHumanAction:
+          "Approve a larger budget for this card once, or split it along its scope files.",
       };
     case "scope_violation":
       return {
@@ -400,7 +454,8 @@ export function diagnoseEscalation(
         category: "specification",
         diagnosis: "The acceptance tests pass before any change, so they cannot prove the card.",
         tried,
-        smallestHumanAction: "Write one assertion that fails today and passes when the card is done.",
+        smallestHumanAction:
+          "Write one assertion that fails today and passes when the card is done.",
       };
     case "memory_pressure":
       return {
@@ -408,16 +463,19 @@ export function diagnoseEscalation(
         category: "memory",
         diagnosis: "The host ran out of memory headroom mid-card.",
         tried,
-        smallestHumanAction: "Close memory-heavy apps (or pick a smaller model) and resume the card.",
+        smallestHumanAction:
+          "Close memory-heavy apps (or pick a smaller model) and resume the card.",
       };
     case "oscillation_detected":
     case "no_progress":
       return {
         cardId: card.id,
         category: "specification",
-        diagnosis: "The worker kept undoing or repeating its own edits: the goal is ambiguous to it.",
+        diagnosis:
+          "The worker kept undoing or repeating its own edits: the goal is ambiguous to it.",
         tried,
-        smallestHumanAction: "Add one sentence to the spec saying what the finished code must do differently.",
+        smallestHumanAction:
+          "Add one sentence to the spec saying what the finished code must do differently.",
       };
     default:
       return {
@@ -425,7 +483,8 @@ export function diagnoseEscalation(
         category: "unknown",
         diagnosis: `Stopped with ${card.stopReason ?? "no recorded reason"}.`,
         tried,
-        smallestHumanAction: "Read the card's last step and either answer its question or unpark it.",
+        smallestHumanAction:
+          "Read the card's last step and either answer its question or unpark it.",
       };
   }
 }
