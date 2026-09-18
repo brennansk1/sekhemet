@@ -58,7 +58,7 @@ const CATALOG = [
     tier: "now",
     name: "Slack for the PM",
     mono: "SL",
-    does: "Merit posts the daily standup, “needs you” alerts and run reports to one channel.",
+    does: "Seshat posts the daily standup, “needs you” alerts and run reports to one channel.",
     leaves:
       "Standup text, the titles of cards that need you, and run summaries, to the channel behind the webhook.",
   },
@@ -99,8 +99,8 @@ const CATALOG = [
     tier: "next",
     name: "Slack replies",
     mono: "SL",
-    does: "Talk to Merit from a Slack thread.",
-    leaves: "Your messages and Merit's replies.",
+    does: "Talk to Seshat from a Slack thread.",
+    leaves: "Your messages and Seshat's replies.",
   },
   {
     id: "sentry",
@@ -131,7 +131,7 @@ const CATALOG = [
     tier: "later",
     name: "Notion",
     mono: "NO",
-    does: "Merit publishes cycle plans, run reports and decision logs, and reads linked specs as card context.",
+    does: "Seshat publishes cycle plans, run reports and decision logs, and reads linked specs as card context.",
     leaves: "Cycle plans, run reports and decision logs.",
   },
   {
@@ -265,7 +265,7 @@ function importHtml() {
       `<option value="${f.id}"${f.id === ui.importFormat ? " selected" : ""}>${esc(f.label)}</option>`,
   ).join("");
   const preview = ui.importList
-    ? `${proposalGroupHtml(ui.importList, { title: ui.importTitle })}<p class="inote">The same preview is in Merit's thread. Nothing changes until you apply.</p>`
+    ? `${proposalGroupHtml(ui.importList, { title: ui.importTitle })}<p class="inote">The same preview is in Seshat's thread. Nothing changes until you apply.</p>`
     : "";
   return `<section class="isheet" aria-label="Import"><header><h2>Import</h2><button class="icon-btn" type="button" data-import-close aria-label="Close import">${icon("x", 14, "ic s14")}</button></header><form data-import-form><div class="irow"><label>Format <select name="format">${opts}</select></label><label class="file">File <input type="file" name="file" accept=".csv,.json,text/csv,application/json"></label></div><textarea name="content" rows="5" placeholder="Or paste the export here" spellcheck="false">${esc(ui.importContent ?? "")}</textarea><div class="iacts"><button class="btn sm primary" type="submit" ${ui.busy.has("import") ? "disabled" : ""}>${ui.busy.has("import") ? "Reading…" : "Preview as proposals"}</button><span class="sec">Import is never silent: each card becomes a proposal you apply or discard.</span></div>${ui.importError ? `<p class="ierr">${icon("alert", 12, "ic s12 i-fail")}${esc(ui.importError)}</p>` : ""}</form>${preview}</section>`;
 }
@@ -447,7 +447,7 @@ async function onSubmit(e) {
     await withBusy("slack:connect", async () => {
       const r = await send("PUT", "/api/integrations/slack", { webhookUrl: url });
       if (r.ok)
-        toast({ tone: "pass", text: "Connected Slack. Merit will post the standup there." });
+        toast({ tone: "pass", text: "Connected Slack. Seshat will post the standup there." });
       else toast({ tone: "fail", text: "Couldn't connect Slack.", detail: err(r) });
       await load();
     });

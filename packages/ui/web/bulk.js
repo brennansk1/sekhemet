@@ -1,5 +1,5 @@
 // Bulk bar (PM_DESIGN §3.4): with cards selected, one toolbar docks at the
-// bottom of the board or list with the same field actions and Ask Merit.
+// bottom of the board or list with the same field actions and Ask Seshat.
 import { esc, icon, kbd, postJSON } from "./dom.js";
 import { editField } from "./fields.js";
 import { sumPoints } from "./lib/pm.js";
@@ -20,7 +20,7 @@ function html(list) {
   const pts = sumPoints(list.map((id) => store.card(id)));
   const btn = (field, label, key) =>
     `<button class="btn ghost sm" type="button" data-bulk="${field}">${esc(label)}${key ? ` ${kbd(key)}` : ""}</button>`;
-  return `<span class="n tnum"><b>${list.length} selected</b>${pts ? ` · ${pts} pts` : ""}</span><span class="sep"></span>${btn("priority", "Priority", "⇧P")}${btn("estimate", "Points", "⇧E")}${btn("cycleId", "Cycle", "⇧C")}${btn("labels", "Labels", "⇧L")}${btn("assignee", "Assignee", "⇧A")}<span class="sep"></span><button class="btn ghost sm" type="button" data-bulk-park>${icon("park", 12, "ic s12")}Park</button><button class="btn ghost sm" type="button" data-bulk-ask>${icon("chat", 12, "ic s12")}Ask Merit</button><button class="icon-btn" type="button" data-bulk-clear aria-label="Clear selection (Esc)" title="Clear selection (Esc)">${icon("x", 14, "ic s14")}</button>`;
+  return `<span class="n tnum"><b>${list.length} selected</b>${pts ? ` · ${pts} pts` : ""}</span><span class="sep"></span>${btn("priority", "Priority", "⇧P")}${btn("estimate", "Points", "⇧E")}${btn("cycleId", "Cycle", "⇧C")}${btn("labels", "Labels", "⇧L")}${btn("assignee", "Assignee", "⇧A")}<span class="sep"></span><button class="btn ghost sm" type="button" data-bulk-park>${icon("park", 12, "ic s12")}Park</button><button class="btn ghost sm" type="button" data-bulk-ask>${icon("chat", 12, "ic s12")}Ask Seshat</button><button class="icon-btn" type="button" data-bulk-clear aria-label="Clear selection (Esc)" title="Clear selection (Esc)">${icon("x", 14, "ic s14")}</button>`;
 }
 
 function render() {

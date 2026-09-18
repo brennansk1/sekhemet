@@ -81,14 +81,14 @@ function views() {
       run: goTo("#/board/list"),
     },
     {
-      label: "Talk to Merit, the project manager",
-      search: "Merit PM project manager chat ask",
+      label: "Talk to Seshat, the project manager",
+      search: "Seshat PM project manager chat ask",
       keys: [`${MOD}J`],
       run: () => window.dispatchEvent(new CustomEvent("sekhemet:open-pm")),
     },
     {
-      label: "Go to Merit, the project manager",
-      search: "Merit PM conversation",
+      label: "Go to Seshat, the project manager",
+      search: "Seshat PM conversation",
       keys: ["g", "a"],
       run: goTo("#/pm"),
     },

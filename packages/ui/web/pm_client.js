@@ -5,7 +5,7 @@ import { statusStep } from "./lib/pm.js";
 import { store } from "./store.js";
 import { toast } from "./toast.js";
 
-export const PM_NAME = "Merit";
+export const PM_NAME = "Seshat";
 
 /** The manager model's name as people read it: `dirk-27b:latest` -> `dirk-27b`. */
 export function pmModel() {
@@ -92,7 +92,7 @@ export function onPmEvent(payload) {
   }
 }
 
-/** The user message Merit is working on, if any. */
+/** The user message Seshat is working on, if any. */
 export function pendingMessage(messages = store.state.pm.messages) {
   return messages.find(
     (m) => m.role === "user" && (m.state === "queued" || m.state === "thinking"),

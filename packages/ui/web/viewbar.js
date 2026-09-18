@@ -154,7 +154,7 @@ export function applyView(id) {
   changed();
 }
 
-/** A short phrase for Merit's context chip: `Current cycle · 2 filters`. */
+/** A short phrase for Seshat's context chip: `Current cycle · 2 filters`. */
 export function viewContextLabel() {
   const v = currentView();
   const n = vb.filter.terms.length + (vb.filter.text ? 1 : 0);
@@ -327,7 +327,7 @@ export function cycleHeaderHtml() {
 <div class="cyc-a"><b>${esc(cycle.name)}</b>${cycle.goal ? `<span class="goal">${esc(cycle.goal)}</span>` : ""}<span class="dates tnum">${esc(formatShortDate(cycle.startsOn))} – ${esc(formatShortDate(cycle.endsOn))} · <span class="${p.atRisk ? "risk" : ""}" title="${esc(leftTitle)}">${esc(left)}</span></span></div>
 <div class="cyc-b"><div class="cbar" role="img" aria-label="${esc(`${pts.done} of ${pts.total} points done, ${pts.started} in progress, ${pts.notStarted} not started`)}"><i class="d" style="width:${pct(pts.done)}"></i><i class="s" style="width:${pct(pts.started)}"></i><span class="pace" style="left:${(p.elapsedRatio * 100).toFixed(1)}%" title="${esc(`Where a straight line would be today. ${leftTitle}`)}"></span></div>
 <span class="cnums tnum"><b>${pts.done} of ${pts.total} pts done</b> · ${pts.started} in progress · ${pts.notStarted} not started${esc(unest)}</span>
-<button class="btn sm" type="button" data-plan-cycle>${icon("chat", 12, "ic s12")}Plan next cycle with Merit</button></div>
+<button class="btn sm" type="button" data-plan-cycle>${icon("chat", 12, "ic s12")}Plan next cycle with Seshat</button></div>
 </section>`;
 }
 

@@ -206,7 +206,7 @@ const MCP_TOOLS: McpTool[] = [
   {
     name: "sekhemet_ask_merit",
     description:
-      "Send a message to Merit, the project manager. Its reply appears in the PM thread.",
+      "Send a message to Seshat, the project manager. Its reply appears in the PM thread.",
     inputSchema: { type: "object", properties: { text: str, card_id: str }, required: ["text"] },
     handler: async (a, ctx) => {
       const m = await new PmStore(ctx.log).appendUserMessage(
@@ -214,12 +214,12 @@ const MCP_TOOLS: McpTool[] = [
         typeof a.card_id === "string" ? { cardId: a.card_id, view: "mcp" } : { view: "mcp" },
         "mcp",
       );
-      return `Queued for Merit as ${m.id}. Read the reply with sekhemet_pm_thread.`;
+      return `Queued for Seshat as ${m.id}. Read the reply with sekhemet_pm_thread.`;
     },
   },
   {
     name: "sekhemet_pm_thread",
-    description: "The PM conversation: messages, Merit's replies and open proposals.",
+    description: "The PM conversation: messages, Seshat's replies and open proposals.",
     inputSchema: { type: "object", properties: { since: { type: "number" } } },
     handler: async (a, ctx) => new PmStore(ctx.log).thread(Number(a.since ?? 0) || 0),
   },

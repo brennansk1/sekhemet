@@ -48,7 +48,7 @@ export function initKeys() {
     }
     const top = topOverlay();
     // A non-modal drawer (peek) must not read keys typed into a field
-    // elsewhere, e.g. the Merit composer: `a` there is a letter, not Accept.
+    // elsewhere, e.g. the Seshat composer: `a` there is a letter, not Accept.
     const typingOutside = isTyping(e) && top && !top.modal && !top.node?.contains?.(e.target);
     if (!typingOutside && top?.onKey?.(e)) return;
     if (e.key === "Escape") {

@@ -1,4 +1,4 @@
-// Review findings from the ledger: Merit's or the Reviewer's review of a
+// Review findings from the ledger: Seshat's or the Reviewer's review of a
 // passing card, either the old `{findings}` payload or a dossier entry.
 
 /**

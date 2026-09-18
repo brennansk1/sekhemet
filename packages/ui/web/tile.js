@@ -55,9 +55,9 @@ const MARK = {
 /** The tile's live wait text, recomputed from enteredColumnAt so it counts up. */
 function statusText(card, now, opts = {}) {
   const d = card.display;
-  // PM_DESIGN §2.5: the Worker waits at a step boundary while Merit replies.
+  // PM_DESIGN §2.5: the Worker waits at a step boundary while Seshat replies.
   if (opts.pmPaused && card.status === "in_progress") {
-    return `Paused for Merit${card.stepsUsed ? ` · step ${card.stepsUsed} of ${card.stepBudget}` : ""}`;
+    return `Paused for Seshat${card.stepsUsed ? ` · step ${card.stepsUsed} of ${card.stepBudget}` : ""}`;
   }
   if (card.status === "review" && d.enteredColumnAt) {
     return `Waiting ${formatWait(now - Date.parse(d.enteredColumnAt))}`;

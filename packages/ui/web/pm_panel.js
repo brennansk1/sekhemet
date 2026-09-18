@@ -1,4 +1,4 @@
-// The Merit panel (PM_DESIGN §2.4): a persistent right-side dock, toggled with
+// The Seshat panel (PM_DESIGN §2.4): a persistent right-side dock, toggled with
 // ⌘J from anywhere. A dock, not an overlay: the view narrows beside it.
 import { MOD, esc, icon, kbd } from "./dom.js";
 import { formatClock, pmSteps } from "./lib/pm.js";
@@ -101,7 +101,7 @@ export function togglePmPanel(force) {
   else if (!open) document.getElementById("view")?.focus({ preventScroll: true });
 }
 
-/** Open Merit with `text` in the composer, not sent (PM_DESIGN §3.2). */
+/** Open Seshat with `text` in the composer, not sent (PM_DESIGN §3.2). */
 export function askMerit(text) {
   if (onPmRoute()) {
     fullThread?.prefill(text);

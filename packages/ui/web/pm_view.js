@@ -1,5 +1,5 @@
-// #/pm: the full conversation with Merit (PM_DESIGN §2.4). The thread in a
-// reading column, and a rail with open proposals, the Worker and what Merit sees.
+// #/pm: the full conversation with Seshat (PM_DESIGN §2.4). The thread in a
+// reading column, and a rail with open proposals, the Worker and what Seshat sees.
 import { esc, icon } from "./dom.js";
 import { loadLearning } from "./learning.js";
 import { proposalKind, strengthLabel } from "./lib/pm.js";
@@ -22,13 +22,13 @@ function railHtml() {
           return `<li><button type="button" data-goto-prop="${esc(p.id)}">${icon(k.icon, 12, "ic s12")}<span>${esc(p.summary)}</span></button></li>`;
         })
         .join("")}</ul>`
-    : '<p class="sec">Nothing waiting. Proposals Merit makes appear here until you apply or discard them.</p>';
+    : '<p class="sec">Nothing waiting. Proposals Seshat makes appear here until you apply or discard them.</p>';
 
   const running = s.cards.find((c) => c.status === "in_progress");
   const paused = s.pm.status?.workerPaused;
   const worker = running
     ? `<p class="wk">${paused ? icon("pause", 12, "ic s12 i-run") : '<span class="dot run" aria-hidden="true"></span>'}<span>${paused ? `Paused for ${PM_NAME}` : "Working"}${running.stepsUsed ? ` · step ${running.stepsUsed} of ${running.stepBudget}` : ""}</span></p><p>${cardChip(running.id, { max: 40 }) ?? ""}</p>`
-    : '<p class="sec">Idle. Nothing is running, so talking to Merit pauses nothing.</p>';
+    : '<p class="sec">Idle. Nothing is running, so talking to Seshat pauses nothing.</p>';
 
   const lastRun = s.queue?.startedAt ?? s.queue?.finishedAt;
   const runText = lastRun
@@ -62,7 +62,7 @@ function railHtml() {
           .join(
             "",
           )}</ul><p class="small"><a href="#/playbook/profile">See all ${top.length} and edit them in Playbook</a></p>`
-      : '<p class="sec">Nothing yet. Merit learns from your send-back notes, the proposals you apply or discard, and the fields you change.</p>';
+      : '<p class="sec">Nothing yet. Seshat learns from your send-back notes, the proposals you apply or discard, and the fields you change.</p>';
     learned += '<p class="sec small">Stays on this machine. You can edit or dismiss any of it.</p>';
   } else if (l.status === 0) {
     learned = '<p class="sec">Checking…</p>';

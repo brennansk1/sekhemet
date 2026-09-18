@@ -2,7 +2,7 @@ import type { CardRecord } from "@sekhemet/kernel";
 import type { LocalInferenceAdapter } from "@sekhemet/models";
 
 /**
- * Merit reviews a passing card before the human does.
+ * Seshat reviews a passing card before the human does.
  *
  * AutoDev (Microsoft, arXiv 2403.08299) found an AI Reviewer "could
  * pre-emptively identify AI Developer mistakes". Sekhemet's gates already
@@ -23,7 +23,7 @@ export async function reviewCard(
   if (input.preferences.length === 0 && input.rules.length === 0) return [];
   const res = await model.generate({
     systemPrompt:
-      "You are Merit, reviewing a teammate's change before the human lead sees it. The tests and type checks already pass; do not re-check correctness. Judge only whether the change follows the lead's stated preferences and the team's rules. Answer with JSON only.",
+      "You are Seshat, reviewing a teammate's change before the human lead sees it. The tests and type checks already pass; do not re-check correctness. Judge only whether the change follows the lead's stated preferences and the team's rules. Answer with JSON only.",
     prompt: `Card: ${input.card.title}\n\nTHE LEAD'S PREFERENCES\n${input.preferences.map((p) => `- ${p}`).join("\n") || "(none)"}\n\nTEAM RULES\n${input.rules.map((r) => `- ${r}`).join("\n") || "(none)"}\n\nDIFF\n${input.diff.slice(0, 12_000)}\n\nList only concrete violations you can point to in the diff (file and what to change). Say "likely_send_back" when it breaks a stated preference, "consider" for a softer issue. If there are none, return an empty list.\nReturn: {"findings":[{"severity":"consider"|"likely_send_back","note":"..."}]}`,
     toolArm: "arm_b_json",
     temperature: 0.1,

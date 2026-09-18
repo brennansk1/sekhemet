@@ -385,7 +385,7 @@ function pinQueueColumns() {
     if (overflow) right += col.offsetWidth + GAP;
   }
   // Pinned columns must not hide the Worker: until the user scrolls, keep
-  // Working just left of them (e.g. beside the Merit dock).
+  // Working just left of them (e.g. beside the Seshat dock).
   const working = $('[data-col="in_progress"]', board);
   if (overflow && working && !ui.userScrolled) {
     const edge = board.clientWidth - right;

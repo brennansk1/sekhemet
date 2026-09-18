@@ -38,7 +38,7 @@ describe("@sekhemet/models hardware-aware residency", () => {
     expect(plan.swapped).toEqual(["manager", "escalation", "researcher", "reviewer"]);
   });
 
-  it("keeps worker and Merit together on a 36 GB budget, swapping the others", () => {
+  it("keeps worker and Seshat together on a 36 GB budget, swapping the others", () => {
     expect(planResidency(roster, 36 * GB).resident).toEqual(["worker", "manager", "escalation"]);
   });
 
@@ -62,7 +62,7 @@ describe("@sekhemet/models hardware-aware residency", () => {
     expect(events).toEqual([]); // both fit: no swap
     expect(router.isResident("worker") && router.isResident("manager")).toBe(true);
 
-    await router.use("researcher"); // 45 GB > 36: evict the lower-priority resident (Merit)
+    await router.use("researcher"); // 45 GB > 36: evict the lower-priority resident (Seshat)
     expect(events).toEqual(["unload dirk"]);
     expect(router.isResident("worker")).toBe(true);
     expect(router.residentRoles().sort()).toEqual(["researcher", "worker"]);

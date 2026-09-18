@@ -807,7 +807,7 @@ export function startDashboardServer(
           await store
             .recordDossierEntry({ cardId, kind: "send_back", text: reason, actor: "human" })
             .catch(() => undefined);
-          // The note teaches both the Worker (a candidate rule) and Merit (the profile).
+          // The note teaches both the Worker (a candidate rule) and Seshat (the profile).
           await learnFromSendBack(pmApi.learning, card, reason).catch(() => undefined);
           // Every return reason is a candidate playbook rule (design §820):
           // the correction a human had to make once should not be needed twice.

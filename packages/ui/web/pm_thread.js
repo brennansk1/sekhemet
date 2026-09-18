@@ -1,4 +1,4 @@
-// The conversation with Merit (PM_DESIGN §2.4–2.6): messages, proposals, the
+// The conversation with Seshat (PM_DESIGN §2.4–2.6): messages, proposals, the
 // waiting procedure, the context chip and the composer. Mounted twice: in the
 // right-side panel and in the full #/pm view. Both render the one thread.
 import { $, esc, icon, isTyping, kbd } from "./dom.js";
@@ -22,7 +22,7 @@ function time(iso) {
   });
 }
 
-export function avatar(who = "M") {
+export function avatar(who = "S") {
   return `<span class="av" aria-hidden="true">${esc(who)}</span>`;
 }
 
@@ -89,7 +89,7 @@ function messageHtml(m) {
   if (m.role === "user") {
     const note =
       m.state === "queued" && pendingMessage() !== m
-        ? " · Queued · Merit answers in order"
+        ? " · Queued · Seshat answers in order"
         : m.state === "queued"
           ? " · Queued"
           : "";
@@ -192,7 +192,7 @@ function tick(root) {
 
 /* ---------- Context and composer ---------- */
 
-/** What Merit will be told you're looking at (PM_DESIGN §2.4). */
+/** What Seshat will be told you're looking at (PM_DESIGN §2.4). */
 export function currentContext() {
   const s = store.state;
   const r = s.route ?? { name: "", params: [] };
@@ -235,7 +235,7 @@ function contextHtml(ctx, dismissed) {
 function costLine() {
   const s = store.state;
   if (s.meta && s.meta.triage === false)
-    return "Read-only server. Restart with sekhemet serve to talk to Merit.";
+    return "Read-only server. Restart with sekhemet serve to talk to Seshat.";
   if (s.connection === "offline") return `Offline. Your message would not reach ${PM_NAME}.`;
   const running = s.cards.find((c) => c.status === "in_progress");
   const model = pmModel();

@@ -947,7 +947,7 @@ export interface PmStepRow {
 }
 
 /**
- * The procedure shown while Merit replies. The Worker rows appear only when
+ * The procedure shown while Seshat replies. The Worker rows appear only when
  * a Worker is involved (it was paused, or a Worker phase was seen).
  */
 export function pmSteps(
@@ -1077,7 +1077,7 @@ export interface LearnedRuleLike {
 export const RULE_SOURCE_LABELS: Record<string, string> = {
   struggle: "From a fix that took the Worker several tries",
   send_back: "From your send-back note",
-  reflection: "From Merit's end-of-run review",
+  reflection: "From Seshat's end-of-run review",
   seed: "Seeded with the project",
 };
 
@@ -1146,8 +1146,8 @@ export const PROFILE_CATEGORIES: { id: ProfileEntryLike["category"]; label: stri
 export const PROFILE_SOURCE_LABELS: Record<string, string> = {
   send_back: "From your send-back notes",
   proposal_choices: "From which proposals you apply or discard",
-  edits: "From fields you changed after Merit set them",
-  reflection: "From Merit's end-of-run review",
+  edits: "From fields you changed after Seshat set them",
+  reflection: "From Seshat's end-of-run review",
 };
 
 /** `Strong` from 0.7, `Moderate` from 0.4, else `Weak`. */
@@ -1253,8 +1253,8 @@ export const ROSTER_ROLES: { role: string; aliases: string[]; label: string; doe
   },
   {
     role: "manager",
-    aliases: ["manager", "pm", "merit", "planner"],
-    label: "Merit · Project manager",
+    aliases: ["manager", "pm", "seshat", "planner"],
+    label: "Seshat · Project manager",
     does: "Plans cycles, answers you, and proposes changes you approve.",
   },
   {

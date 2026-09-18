@@ -4,10 +4,10 @@ import type { AdapterHealth, LocalInferenceAdapter } from "./types.js";
 
 /** Roles the harness assigns to models. */
 /**
- * worker: the fast coder. manager: Merit, repair plans and reflection.
+ * worker: the fast coder. manager: Seshat, repair plans and reflection.
  * escalation: the manager's model driving the coding loop, for retries of
  * cards beyond the worker's measured capability.
- * reviewer: an optional model from a different family for Merit's review
+ * reviewer: an optional model from a different family for Seshat's review
  * (ARIS: cross-family review catches errors a same-family model shares).
  * researcher: evidence-gathering questions (Apodex-1.1-mini by default).
  */
@@ -54,7 +54,7 @@ export interface RouterOptions {
 
 /**
  * How valuable it is to keep a role resident. The worker runs every turn;
- * Merit plans, answers and repairs; the researcher and reviewer work in
+ * Seshat plans, answers and repairs; the researcher and reviewer work in
  * batches at the end of passes. Escalation shares the manager's weights.
  */
 export const ROLE_PRIORITY: Record<ModelRole, number> = {

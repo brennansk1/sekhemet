@@ -1,5 +1,5 @@
 // Playbook with learning (PM_CONTRACT §6): rules grouped by status with their
-// scope, counts, value and evidence, and what Merit has learned about you.
+// scope, counts, value and evidence, and what Seshat has learned about you.
 // Nothing learned takes effect until you approve it; everything is editable.
 import { esc, icon, kbd } from "./dom.js";
 import { approveRule, dismissEntry, editEntry, editRule, retireRule } from "./learning.js";
@@ -68,7 +68,7 @@ function ruleHtml(r, maxAbs, ui) {
   } else if (r.status === "active") {
     acts = `<button class="btn sm" type="button" data-edit>Edit</button><button class="btn sm ${retireSuggested(r) ? "" : "ghost"}" type="button" data-retire>Retire</button>`;
   }
-  const role = r.role === "manager" ? "For Merit" : "For the Worker";
+  const role = r.role === "manager" ? "For Seshat" : "For the Worker";
   const text = editing ? editForm("rule", r.id, r.text) : `<p class="lr-text">${esc(r.text)}</p>`;
   return `<li class="lrule ${esc(r.status)}${retireSuggested(r) ? " warn" : ""}" data-rule-id="${esc(r.id)}"><div class="lr-main"><div class="lr-head"><span class="role">${esc(role)}</span>${r.status === "active" && !r.readonly ? `<span class="role reach${r.reach === "global" ? " global" : ""}" title="${esc(r.reach === "global" ? "Lives in ~/.config/sekhemet and applies to every repository on this machine" : "Applies to this project only")}">${r.reach === "global" ? "All projects" : "This project"}</span>` : ""}<span class="sec">${esc(RULE_SOURCE_LABELS[r.source] ?? r.source)}${r.createdAt ? ` · ${esc(ago(r.createdAt))}` : ""}</span></div>${text}<div class="lr-scope">${chips}</div>${r.status === "candidate" || r.unused ? "" : `<div class="lr-meta">${value}${counts}</div>`}${retire}${evidenceHtml(r.evidence)}</div>${editing ? "" : `<div class="lr-acts">${acts}</div>`}</li>`;
 }
@@ -93,11 +93,11 @@ export function profileSectionHtml(profile, ui) {
             `<div class="pgrp"><h4>${esc(g.label)}</h4><ul class="lrules">${g.entries.map((e) => profileEntryHtml(e, ui)).join("")}</ul></div>`,
         )
         .join("")
-    : '<p class="sec empty-l">Nothing yet. Merit learns from your send-back notes, the proposals you apply or discard, and the fields you change after it sets them. Statements appear here after a run.</p>';
+    : '<p class="sec empty-l">Nothing yet. Seshat learns from your send-back notes, the proposals you apply or discard, and the fields you change after it sets them. Statements appear here after a run.</p>';
   const gone = dismissed.length
     ? `<details class="lr-more"><summary>${dismissed.length} dismissed</summary><ul class="lrules quiet">${dismissed.map((e) => `<li class="lentry dismissed"><p class="lr-text">${esc(e.statement)}</p></li>`).join("")}</ul></details>`
     : "";
-  return `<section id="pb-profile" class="lsec"><h3 class="sh">What Merit has learned about you <span class="sec">${active} ${active === 1 ? "statement" : "statements"} Merit reads when it answers you</span></h3><p class="lp-note">${icon("lock", 12, "ic s12")}<span>These stay on this machine, in the project's ledger. Edit a statement to correct it; dismiss it and Merit stops using it.</span></p>${body}${gone}</section>`;
+  return `<section id="pb-profile" class="lsec"><h3 class="sh">What Seshat has learned about you <span class="sec">${active} ${active === 1 ? "statement" : "statements"} Seshat reads when it answers you</span></h3><p class="lp-note">${icon("lock", 12, "ic s12")}<span>These stay on this machine, in the project's ledger. Edit a statement to correct it; dismiss it and Seshat stops using it.</span></p>${body}${gone}</section>`;
 }
 
 /**
@@ -140,14 +140,14 @@ export function learningHtml(data, ui) {
     `<ul class="lrules">${items.map((r) => ruleHtml(r, maxAbs, ui)).join("")}</ul>`;
   const cand = g.candidate.length
     ? list(g.candidate)
-    : '<p class="sec empty-l">Nothing awaiting approval. New rules come from fixes that took the Worker several tries, your send-back notes, and Merit\'s review at the end of a run.</p>';
+    : '<p class="sec empty-l">Nothing awaiting approval. New rules come from fixes that took the Worker several tries, your send-back notes, and Seshat\'s review at the end of a run.</p>';
   const active = g.active.length ? list(g.active) : '<p class="sec empty-l">No active rules.</p>';
   const retired = g.retired.length
     ? `<details class="lr-more"><summary>${g.retired.length} retired</summary>${list(g.retired)}</details>`
     : '<p class="sec empty-l">None retired.</p>';
   return `<div class="lp"><p class="lp-lede">${icon("lock", 14, "ic s14")}<span>Learned from gate results and what you do, never from a model grading itself. Everything stays on this machine and is recorded on the ledger. A rule takes effect only after you approve it, and you can edit or retire any of them.</span></p>
 <section id="pb-candidates" class="lsec"><h3 class="sh">Needs your approval <span class="sec">${g.candidate.length} ${g.candidate.length === 1 ? "candidate" : "candidates"}</span></h3>${cand}</section>
-<section id="pb-active" class="lsec"><h3 class="sh">Active <span class="sec">${g.active.length} · given to the Worker or Merit when their scope matches · value rises with each helpful use and decays over time</span></h3>${active}</section>
+<section id="pb-active" class="lsec"><h3 class="sh">Active <span class="sec">${g.active.length} · given to the Worker or Seshat when their scope matches · value rises with each helpful use and decays over time</span></h3>${active}</section>
 <section id="pb-retired" class="lsec"><h3 class="sh">Retired</h3>${retired}</section>
 ${profileSectionHtml(data.profile, ui)}</div>`;
 }
@@ -155,7 +155,7 @@ ${profileSectionHtml(data.profile, ui)}</div>`;
 export function learningMissingHtml(status) {
   const text =
     status === 404
-      ? "<b>Learning isn't on this server yet.</b> <code>GET /api/learning</code> returned 404. Below are the seeded rules and your send-back suggestions; approvals, counts and what Merit has learned about you arrive with an updated Sekhemet."
+      ? "<b>Learning isn't on this server yet.</b> <code>GET /api/learning</code> returned 404. Below are the seeded rules and your send-back suggestions; approvals, counts and what Seshat has learned about you arrive with an updated Sekhemet."
       : `<b>Couldn't load what Sekhemet has learned.</b> The server returned ${esc(status > 0 ? status : "no response")}. Showing the playbook file instead.`;
   return `<p class="lp-banner">${icon("alert", 14, "ic s14 i-park")}<span>${text}</span></p>`;
 }

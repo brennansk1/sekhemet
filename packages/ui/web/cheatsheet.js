@@ -23,13 +23,13 @@ const SECTIONS = [
       ["Ledger", ["g", "l"]],
       ["Playbook", ["g", "p"]],
       ["Machine", ["g", "m"]],
-      ["Merit", ["g", "a"]],
+      ["Seshat", ["g", "a"]],
       ["Insights", ["g", "f"]],
       ["Integrations", ["g", "s"]],
     ],
   },
   {
-    name: "Merit · Project manager",
+    name: "Seshat · Project manager",
     rows: [
       ["Open or close the panel", [`${MOD}J`]],
       ["Send", ["↵"]],

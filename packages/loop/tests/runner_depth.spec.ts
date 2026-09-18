@@ -617,7 +617,7 @@ describe("the card dossier reaches the Worker (integration review item 6)", () =
       attempt: 2,
       askTeam: async (question, meta) => {
         asked.push({ q: question, meta });
-        return "Merit says: fine";
+        return "Seshat says: fine";
       },
     }).run();
 
@@ -628,7 +628,7 @@ describe("the card dossier reaches the Worker (integration review item 6)", () =
       ["Assumed: a is an integer", 2],
     ]);
     const thread = dossier.questions.find((t) => t.question.text === "zzqx unrelated puzzle?");
-    expect(thread?.answers.map((a) => a.text)).toEqual(["Merit says: fine"]);
+    expect(thread?.answers.map((a) => a.text)).toEqual(["Seshat says: fine"]);
     expect(asked[0]?.meta).toEqual({ questionEntryId: thread?.question.entryId });
   });
 });

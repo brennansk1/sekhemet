@@ -83,7 +83,7 @@ function base(stepsUsed: number, extra: Partial<WorkerPromptInput> = {}): Worker
     repoMap: "src/types.ts:\n  export interface ChronicleEvent",
     acceptanceTests: [{ path: "tests/ledger.spec.ts", content: "it('appends', () => {});" }],
     scopeFiles: [{ path: "src/ledger.ts", content: `export const version = ${stepsUsed};` }],
-    teamNote: "Merit plans; ask(question) reaches it.",
+    teamNote: "Seshat plans; ask(question) reaches it.",
     repairPlan: "1. Map rows explicitly.",
     rules,
     evidenceStore: new InMemoryEvidenceStore(),

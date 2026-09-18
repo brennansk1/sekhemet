@@ -32,7 +32,7 @@ This document has four parts: **(1)** what the surveyed tools and methods do, an
 | Practice | Source | What Sekhemet takes |
 |---|---|---|
 | **WIP limits** | Kanban Method (Anderson) | Already built: `n / limit` headers and capacity bars (FRONTEND_DESIGN §2.4.2). The Review limit is derived from review minutes per day. |
-| **Classes of service** (Expedite, Fixed date, Standard, Intangible) | Kanban Method | These map onto what we already have: **Urgent** priority is Expedite, and a `dueDate` makes a card Fixed date. The saved view *Urgent and high* shows the expedite lane at a glance; Expedite only works when it is rare, and Merit calls it out in *What's at risk* when it isn't. We add no separate field. |
+| **Classes of service** (Expedite, Fixed date, Standard, Intangible) | Kanban Method | These map onto what we already have: **Urgent** priority is Expedite, and a `dueDate` makes a card Fixed date. The saved view *Urgent and high* shows the expedite lane at a glance; Expedite only works when it is rare, and Seshat calls it out in *What's at risk* when it isn't. We add no separate field. |
 | **Cycle time** with percentiles | Kanban Method, Vacanti (*Actionable Agile Metrics*) | A scatter of each finished card's cycle time with 50th, 85th and 95th percentile lines, and the sentence: *85% of cards finish within 6.2 hours.* We use percentiles, not averages, because flow data is skewed. |
 | **Throughput** | Kanban Method | Cards done per day as bars, with the 7-day average as a line. |
 | **Cumulative flow diagram** | Kanban Method, Reinertsen | Stacked bands for Backlog → Done over 30 days. A widening band is a queue forming. |
@@ -57,20 +57,20 @@ The long-wait pattern in all four is weak. They show a spinner with no explanati
 
 ### 2.1 Who it is
 
-The project manager is **Merit**. The name comes from Merit-Ptah, the earliest named physician on record, and it also reads as the English word. It is short, it is a name rather than a mascot, and it sits in the same world as Sekhemet without costume.
+The project manager is **Seshat** (renamed from Seshat on 2026-09-18, at the user's request). Seshat is the Egyptian goddess of writing, measurement and records, who kept the annals and measured out the foundations of temples. A keeper of plans and records is what a project manager is. It is short, it is a name rather than a mascot, and it sits in the same world as Sekhemet without costume.
 
-Merit runs on the **manager model** (`dirk-27b`, contract §1), never on the Worker. The panel header always says so: *Merit · Project manager · dirk-27b*. The user asked for "the correct model", and seeing the model named is how they know they have it.
+Seshat runs on the **manager model** (`dirk-27b`, contract §1), never on the Worker. The panel header always says so: *Seshat · Project manager · dirk-27b*. The user asked for "the correct model", and seeing the model named is how they know they have it.
 
 The avatar is a 24px rounded square in `--bg-overlay` with a single "M" in 600 weight, `--text-primary`. It carries no gold, no face and no gradient. The Worker, when it is quoted, uses the same shape with "W", and You use your git initial.
 
 ### 2.2 Voice
 
-Merit follows the product voice (FRONTEND_DESIGN §2.3) and adds the habits of a good hired PM:
+Seshat follows the product voice (FRONTEND_DESIGN §2.3) and adds the habits of a good hired PM:
 
 1. **The answer first, then the evidence.** *"Two things are at risk: the ledger and the HTTP API."* comes before any explanation.
 2. **Numbers, with a basis.** *"13 of 21 points done with 4 days left"*, never "going well".
 3. **Names the card, links the card.** Every card it mentions is an `@card` chip.
-4. **Proposes and never does.** Every change is a proposal you apply. Merit says *"I've proposed…"*, never *"I've changed…"*.
+4. **Proposes and never does.** Every change is a proposal you apply. Seshat says *"I've proposed…"*, never *"I've changed…"*.
 5. **Says what it doesn't know.** *"I can't see why the run stopped; there's no evidence for attempt 2."* Guesses are marked as guesses: *"My read (not verified):"*.
 6. **Short.** Most replies are under 120 words. Long answers use the three-heading standup shape.
 7. **No flattery or filler.** No "Great question", no exclamation marks, no emoji, no sign-off.
@@ -83,7 +83,7 @@ Card chips are written `@hasher`. Proposal blocks are shown as they render.
 
 > **You:** standup
 >
-> **Merit:** Since yesterday: 2 cards done, 1 waiting on you, 1 stuck.
+> **Seshat:** Since yesterday: 2 cards done, 1 waiting on you, 1 stuck.
 >
 > **Done** · @iface *Define Chronicle contract interfaces* (1 step, 1.2s) · @canon *Canonical key order* (6 steps)
 > **In flight** · @hasher is on step 5 of 32, and Types has failed twice on the same line.
@@ -97,7 +97,7 @@ Card chips are written `@hasher`. Proposal blocks are shown as they render.
 
 > **You:** why did the ledger card fail?
 >
-> **Merit:** @ledger stopped on **Looping** at step 8: steps 6–8 repeated `note "stuck"` without changing a file.
+> **Seshat:** @ledger stopped on **Looping** at step 8: steps 6–8 repeated `note "stuck"` without changing a file.
 >
 > The cause is upstream of the loop. Types failed three times with `TS2353` at `tests/hasher.spec.ts:25`. That file is a protected acceptance test, so the fix belongs in `src/hasher.ts`: `hashEvent` takes `ChronicleEvent` where the test passes `{ payload, prev }`. The Worker kept trying to edit the test, was refused, and ran out of ideas.
 >
@@ -113,7 +113,7 @@ Card chips are written `@hasher`. Proposal blocks are shown as they render.
 
 > **You:** split this card
 >
-> **Merit:** @http is 8 points and touches 5 files, which is over the 3-file bound, so the Worker will hit Size before it finishes. It splits cleanly along the routes:
+> **Seshat:** @http is 8 points and touches 5 files, which is over the 3-file bound, so the Worker will hit Size before it finishes. It splits cleanly along the routes:
 >
 > ▸ **Split @http into 3 cards · 3 + 3 + 2 pts**
 > 1. *Read routes: GET /events and /verify* · Flow · 3 pts · `src/http/read.ts`
@@ -125,7 +125,7 @@ Card chips are written `@hasher`. Proposal blocks are shown as they render.
 
 > **You:** plan next cycle
 >
-> **Merit:** Cycle 12 ends Friday with about 8 points left. For Cycle 13 (Sep 29 – Oct 10) I suggest betting 18 points, not the 24 you've averaged. Two of the last three cycles carried work over, and the 85th-percentile cycle time rose from 4.1h to 6.2h.
+> **Seshat:** Cycle 12 ends Friday with about 8 points left. For Cycle 13 (Sep 29 – Oct 10) I suggest betting 18 points, not the 24 you've averaged. Two of the last three cycles carried work over, and the 85th-percentile cycle time rose from 4.1h to 6.2h.
 >
 > The goal I'd write: *Chronicle is usable over HTTP.*
 > In: @http split (8), @auth (5), @tamper (3), @docs (2) = 18.
@@ -139,7 +139,7 @@ Card chips are written `@hasher`. Proposal blocks are shown as they render.
 
 > **You:** what's at risk this week?
 >
-> **Merit:** Two things.
+> **Seshat:** Two things.
 >
 > 1. **@hasher** is 22h old. 85% of finished cards took under 6.2h, so it's older than almost everything we've shipped. It has failed Types four times.
 > 2. **Review is full (3 of 3).** Finished cards are waiting in Checking, so the cycle is blocked on review time rather than Worker time. The oldest, @api, has waited 3h 10m.
@@ -150,28 +150,28 @@ Card chips are written `@hasher`. Proposal blocks are shown as they render.
 
 ### 2.4 The chat surface
 
-Merit lives in two places that share one thread.
+Seshat lives in two places that share one thread.
 
 **The panel.** This is a persistent right-side dock, 400px wide, toggled with `⌘J` from any view. From 1280px it is a dock, not an overlay: the view narrows (board columns relax to a 184px minimum, and when the columns overflow the board scrolls so Working sits beside the pinned Review and Parked columns), so the board stays usable next to the conversation. From 1024 to 1279px there is not enough width for both, so the panel overlays the view at 380px, like the peek drawer, and the board keeps its width. Its open or closed state is remembered per browser. It hides on `#/pm` and below 768px.
 
-**The full view** is `#/pm` (`g a`, for "ask"). It has the thread in a 720px reading column and a right rail (288px) with *Open proposals*, *Worker* (state, step, paused or not) and *What Merit can see* (board snapshot time, last run, ledger head).
+**The full view** is `#/pm` (`g a`, for "ask"). It has the thread in a 720px reading column and a right rail (288px) with *Open proposals*, *Worker* (state, step, paused or not) and *What Seshat can see* (board snapshot time, last run, ledger head).
 
 ```
-┌ side ┬ Board · Chronicle ─────────────────────────────── ⌘K ┬ Merit ─────────────── ⤢ ✕ ┐
-│      │ [Board|List] View: Cycle 12 ▾  Priority: High ✕ + Filter │ M  Merit                   │
+┌ side ┬ Board · Chronicle ─────────────────────────────── ⌘K ┬ Seshat ─────────────── ⤢ ✕ ┐
+│      │ [Board|List] View: Cycle 12 ▾  Priority: High ✕ + Filter │ M  Seshat                   │
 │      │ Cycle 12 · Ship the ledger · 4 days left ▬▬▬▬▬▬░░ 13/21  │    Project manager · dirk-27b│
 │      │ ┌Backlog┐┌Ready┐┌Working┐┌Checking┐┌Review┐              ├────────────────────────────┤
 │      │ │ ▮▮▮   ││     ││       ││        ││      │              │ You               09:02    │
 │      │ │ tile  ││tile ││ tile  ││        ││ tile │              │ what's at risk this week?  │
 │      │ │       ││     ││       ││        ││      │              │                            │
-│      │ │       ││     ││       ││        ││      │              │ M Merit            09:03   │
+│      │ │       ││     ││       ││        ││      │              │ M Seshat            09:03   │
 │      │ │       ││     ││       ││        ││      │              │ Two things. …              │
 │      │ │       ││     ││       ││        ││      │              │ ┌ Proposed changes · 1 ──┐ │
 │      │ │       ││     ││       ││        ││      │              │ │ Priority  Medium → Urg │ │
 │      │ │       ││     ││       ││        ││      │              │ │        Discard  Apply y│ │
 │      │ │       ││     ││       ││        ││      │              │ └────────────────────────┘ │
 │      │ │       ││     ││       ││        ││      │              │ Looking at: Board · Cycle 12 ✕│
-│      │ │       ││     ││       ││        ││      │              │ [Ask Merit…            ↵ ] │
+│      │ │       ││     ││       ││        ││      │              │ [Ask Seshat…            ↵ ] │
 │      │ └───────┘└─────┘└───────┘└────────┘└──────┘              │ Sending pauses the Worker… │
 └──────┴──────────────────────────────────────────────────────────┴────────────────────────────┘
 ```
@@ -179,9 +179,9 @@ Merit lives in two places that share one thread.
 **Messages.**
 
 - **Your messages** sit on a quiet `--bg-raised` block, right-aligned, max 85% wide, with the time in 11px secondary.
-- **Merit's replies** are full-width prose with no bubble, under a one-line header (avatar, *Merit*, time). This is the Claude pattern: the reply is a document, not a text message.
-- **System messages** (e.g. *Merit was restarted; the thread continues.*) are a single centred 11px secondary line.
-- Markdown is limited to paragraphs, bullet and numbered lists, **bold**, `code`, fenced code blocks and `###` headings. It is rendered by a pure, escape-first renderer (`renderPmMarkdown`, unit-tested), so model text can never inject markup. Raw links render as text: Merit points at cards and runs, not at the web.
+- **Seshat's replies** are full-width prose with no bubble, under a one-line header (avatar, *Seshat*, time). This is the Claude pattern: the reply is a document, not a text message.
+- **System messages** (e.g. *Seshat was restarted; the thread continues.*) are a single centred 11px secondary line.
+- Markdown is limited to paragraphs, bullet and numbered lists, **bold**, `code`, fenced code blocks and `###` headings. It is rendered by a pure, escape-first renderer (`renderPmMarkdown`, unit-tested), so model text can never inject markup. Raw links render as text: Seshat points at cards and runs, not at the web.
 
 **Card and run references.**
 
@@ -190,16 +190,16 @@ Merit lives in two places that share one thread.
 - Typing `@` in the composer opens a card picker that fuzzy-matches titles and ids; `↵` inserts the chip token.
 - **Cites** (`cites[]`) render under the reply as one line: *Based on:* followed by chips for cards, runs (`run 18 Sep 02:14` → `#/runs/<id>`) and evidence (`ev_7f3a` → the card's evidence tab).
 
-**The context chip.** Above the composer a chip states what Merit will be told you're looking at: *Looking at: Board · Cycle 12 · 2 filters*, or *Looking at: @hasher* when a card is focused or open. It is sent as `context: { cardId?, view }`. `✕` removes it for the next message, and it comes back when you move. The chip keeps the context visible; a PM that silently knows what you're looking at feels like surveillance, and one that doesn't makes you repeat yourself.
+**The context chip.** Above the composer a chip states what Seshat will be told you're looking at: *Looking at: Board · Cycle 12 · 2 filters*, or *Looking at: @hasher* when a card is focused or open. It is sent as `context: { cardId?, view }`. `✕` removes it for the next message, and it comes back when you move. The chip keeps the context visible; a PM that silently knows what you're looking at feels like surveillance, and one that doesn't makes you repeat yourself.
 
 **The composer.**
 
 - The textarea grows from 1 to 8 lines. `↵` sends, `⇧↵` adds a newline, and `Esc` returns focus to the page without closing the panel.
 - **Starter prompts** appear when the thread is empty or has been idle for 12h: *Standup* · *What's at risk this week?* · *Plan the next cycle*, plus a contextual one, *Why did @hasher fail?* when the focused card has failed, or *Split @http* when it is over 5 points.
 - **The cost line.** Under the composer, in 11px secondary, one sentence says what sending will do, because it is not free:
-  - Worker running: *The Worker is on step 5 of 32. Sending pauses it at the next step while Merit loads (about 40s).*
-  - Idle: *Merit runs locally on dirk-27b. Replies take about a minute.*
-  - Read-only: *Read-only server. Restart with `sekhemet serve` to talk to Merit.* (The composer is disabled.)
+  - Worker running: *The Worker is on step 5 of 32. Sending pauses it at the next step while Seshat loads (about 40s).*
+  - Idle: *Seshat runs locally on dirk-27b. Replies take about a minute.*
+  - Read-only: *Read-only server. Restart with `sekhemet serve` to talk to Seshat.* (The composer is disabled.)
 
 **Proposals.** A reply with `proposals[]` ends in a **proposal group**:
 
@@ -229,7 +229,7 @@ Merit lives in two places that share one thread.
   - *Open* (actions shown).
   - *Applied* collapses to one line with a pass check and *by you at 09:05*.
   - *Discarded* collapses to one struck line.
-  - *Stale* shows the diff with an amber rule and *@hasher changed after Merit proposed this. Ask again for a fresh proposal.* Apply is disabled and the reason is stated inline.
+  - *Stale* shows the diff with an amber rule and *@hasher changed after Seshat proposed this. Ask again for a fresh proposal.* Apply is disabled and the reason is stated inline.
 - **Apply all** says what it does: *Apply 3 changes to 5 cards*. It applies in order, stops at the first failure and reports it: *Applied 2 of 3. "Split @http" failed: card is in Working.* Applied changes are ledger events with actor *You* (contract §3).
 - **Keys** (when a proposal or its group has focus): `y` apply, `n` discard, `⇧Y` apply all open in this group, `j/k` move between proposals.
 - **Import uses the same component** (§3.5). An import is never silent; it is a proposal group titled *Import from Jira CSV · 42 cards*.
@@ -238,16 +238,16 @@ Merit lives in two places that share one thread.
 
 A reply takes 40–120 seconds on a 24 GB machine: the Worker must reach a step boundary, unload, and the manager model must load. A spinner would make that feel broken. Instead the wait is **a visible procedure with times**, driven by `PmStatus.phase`.
 
-Where the reply will appear, the thread shows a **pending reply** block under Merit's header:
+Where the reply will appear, the thread shows a **pending reply** block under Seshat's header:
 
 ```
-M  Merit                                                          1:04
+M  Seshat                                                          1:04
    ✓ Paused the Worker after step 5                               0:07
    ◌ Loading the PM · about 40s  ▬▬▬▬▬▬▬▬▬▬▬░░░░                  0:31
    ○ Thinking
    ○ Resuming the Worker
    Only one model fits in memory, so the Worker waits at a safe step
-   boundary and continues from step 6 once Merit has replied. You can
+   boundary and continues from step 6 once Seshat has replied. You can
    keep working; the reply lands here.
 ```
 
@@ -266,18 +266,18 @@ M  Merit                                                          1:04
 - If no runner holds the lease (contract §4.3), the Worker rows are omitted: *Loading the PM → Thinking*.
 - **The header timer** (top right of the block) is the total since your message was queued.
 - **The panel header** repeats the current phase in one line (*Loading the PM · 0:31*) so the state is visible when the thread is scrolled.
-- **The shell bar** (FRONTEND_DESIGN §2.4, lowest priority) shows, while `workerPaused` is true: *Worker paused after step 5 while Merit replies.* `Open Merit`. It uses the lapis running rule, not amber: nothing is wrong.
-- **The running tile** reads *Paused for Merit · step 5 of 32* instead of its step line.
-- **Queued messages.** A second message sent during a wait shows *Queued · Merit answers in order* under it. The contract answers messages in sequence, and the UI does not pretend otherwise.
-- **Errors.** A message in state `error` shows *Merit couldn't reply.* with the server's text verbatim, and `Retry`, which resends the same text and context.
-- **Offline** (FRONTEND_DESIGN §2.4 shell) freezes timers and disables the composer with *Offline. Your message would not reach Merit.*
+- **The shell bar** (FRONTEND_DESIGN §2.4, lowest priority) shows, while `workerPaused` is true: *Worker paused after step 5 while Seshat replies.* `Open Seshat`. It uses the lapis running rule, not amber: nothing is wrong.
+- **The running tile** reads *Paused for Seshat · step 5 of 32* instead of its step line.
+- **Queued messages.** A second message sent during a wait shows *Queued · Seshat answers in order* under it. The contract answers messages in sequence, and the UI does not pretend otherwise.
+- **Errors.** A message in state `error` shows *Seshat couldn't reply.* with the server's text verbatim, and `Retry`, which resends the same text and context.
+- **Offline** (FRONTEND_DESIGN §2.4 shell) freezes timers and disables the composer with *Offline. Your message would not reach Seshat.*
 
 ### 2.6 States of the whole surface
 
 | State | Trigger | Treatment |
 |---|---|---|
-| Not on this server | `GET /api/pm/thread` returns 404 | Panel body: **Merit isn't on this server yet.** *This Sekhemet server has no project-manager endpoints (`GET /api/pm/thread` returned 404). Update Sekhemet and restart `sekhemet serve`.* The composer is disabled with the reason stated. The nav item still shows so the feature is discoverable. |
-| First conversation | Thread empty | Merit introduces itself in one paragraph (rendered locally, not sent): *I'm Merit, the project manager for Chronicle. I read the board, the runs and the ledger, and I propose changes you approve. I never change the board myself.* Then the starter prompts. |
+| Not on this server | `GET /api/pm/thread` returns 404 | Panel body: **Seshat isn't on this server yet.** *This Sekhemet server has no project-manager endpoints (`GET /api/pm/thread` returned 404). Update Sekhemet and restart `sekhemet serve`.* The composer is disabled with the reason stated. The nav item still shows so the feature is discoverable. |
+| First conversation | Thread empty | Seshat introduces itself in one paragraph (rendered locally, not sent): *I'm Seshat, the project manager for Chronicle. I read the board, the runs and the ledger, and I propose changes you approve. I never change the board myself.* Then the starter prompts. |
 | Loading the thread | First fetch | Three skeleton lines in the thread. |
 | Error | Thread fetch 5xx | **Couldn't load the conversation.** *The server returned 500.* `Retry` |
 
@@ -336,14 +336,14 @@ M  Merit                                                          1:04
 
 ```
 Cycle 12  Ship the ledger end to end            Sep 15 – Sep 28 · 4 days left
-▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▒▒▒▒▒▒░░░░░░░░   13 of 21 pts done · 5 in progress · 3 not started      Plan next cycle with Merit
+▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▒▒▒▒▒▒░░░░░░░░   13 of 21 pts done · 5 in progress · 3 not started      Plan next cycle with Seshat
 ```
 
 - The progress bar is one bar with three segments: done (`--state-pass`), in progress (`--state-running`) and not started (`--bg-overlay`), each sized by points.
 - A thin tick marks where the cycle *should* be if work were linear (elapsed days ÷ total days). This is Linear's scope-versus-time read without a second chart.
 - When there are fewer than 2 days left and under 70% of points are done, *4 days left* becomes amber and the tooltip reads *Behind the linear pace by 5 pts.*
 - Unestimated cards count as 1 point, and the header says so: *2 cards unestimated, counted as 1 pt.*
-- **Plan next cycle with Merit** opens the panel with that prompt filled in, not sent.
+- **Plan next cycle with Seshat** opens the panel with that prompt filled in, not sent.
 
 **Swimlanes.** When grouped, the board becomes lanes:
 
@@ -379,12 +379,12 @@ Cycle 12  Ship the ledger end to end            Sep 15 – Sep 28 · 4 days left
 With one or more cards selected, a bar docks at the bottom-centre of the view (48px, `--bg-overlay`, 1px `--border-strong`):
 
 ```
-3 selected · 8 pts   Priority ⇧P   Points ⇧E   Cycle ⇧C   Labels ⇧L   Assignee ⇧A   Park   Ask Merit   ✕ Esc
+3 selected · 8 pts   Priority ⇧P   Points ⇧E   Cycle ⇧C   Labels ⇧L   Assignee ⇧A   Park   Ask Seshat   ✕ Esc
 ```
 
 - Field actions open the same menus as inline editing and apply to all selected cards.
 - **Park** asks for one reason and posts one park per card.
-- **Ask Merit** opens the panel with the selection already mentioned, not sent: *About @hasher @api @cli:*. The contract's `context` carries one card, so a selection travels as mentions.
+- **Ask Seshat** opens the panel with the selection already mentioned, not sent: *About @hasher @api @cli:*. The contract's `context` carries one card, so a selection travels as mentions.
 - **Results** are reported in one toast: *Set priority High on 3 cards*, or *Set on 2 of 3. hasher: the server returned 409.*
 
 ### 3.5 Integrations (`#/integrations`, `g s`)
@@ -399,9 +399,9 @@ The page follows the approved roadmap (contract §5), in three sections. Every c
 | **GitHub PR on accept** | *Accept opens a pull request with the evidence as its body, instead of merging locally.* | A switch (`PUT /api/integrations/github-pr { enabled }`), with the current behaviour stated beside it: *Accept merges locally as one commit.* *Leaves this machine: the card branch, its diff, and the gate results.* |
 | **Jira** | Import and export in Jira's CSV columns (Summary, Issue Type, Priority, Story Points, Sprint, Epic Link, Labels, Description). | **Export Jira CSV**, **Import…** *Leaves this machine: nothing. Export writes a file; you upload it to Jira yourself.* |
 | **Linear** | The same, in Linear's fields. | **Export Linear CSV**, **Import…** Same data line. |
-| **Slack for the PM** | *Merit posts the daily standup, "needs you" alerts and run reports to one channel.* Connected: the channel's webhook host in mono, the last message sent, and whether it was delivered (`pm/notify` `ok`). | A webhook URL field with **Connect**, then **Send test message** and **Disconnect**. *Leaves this machine: standup text, card titles that need you, and run summaries.* A lock line says the webhook URL is a credential: *Sekhemet keeps it in `~/.config/sekhemet/repos/…` with mode 0600, never in the repository or the ledger.* |
+| **Slack for the PM** | *Seshat posts the daily standup, "needs you" alerts and run reports to one channel.* Connected: the channel's webhook host in mono, the last message sent, and whether it was delivered (`pm/notify` `ok`). | A webhook URL field with **Connect**, then **Send test message** and **Disconnect**. *Leaves this machine: standup text, card titles that need you, and run summaries.* A lock line says the webhook URL is a credential: *Sekhemet keeps it in `~/.config/sekhemet/repos/…` with mode 0600, never in the repository or the ledger.* |
 
-**Import** opens a sheet with a format picker (Jira CSV, Linear CSV, GitHub JSON, Sekhemet JSON), a file chooser and a paste box. **Preview** posts to `/api/import` and renders the returned proposals with the §2.4 component, headed *Import from Jira CSV · 42 proposed changes*. You apply one, some or all. Import never writes the board by itself. The server also posts the preview into Merit's thread (`messageId`), so it can be decided there too; the sheet says so. **Export** links download `/api/export?format=…`, which names the file `sekhemet-<project>-<format>.csv|json`.
+**Import** opens a sheet with a format picker (Jira CSV, Linear CSV, GitHub JSON, Sekhemet JSON), a file chooser and a paste box. **Preview** posts to `/api/import` and renders the returned proposals with the §2.4 component, headed *Import from Jira CSV · 42 proposed changes*. You apply one, some or all. Import never writes the board by itself. The server also posts the preview into Seshat's thread (`messageId`), so it can be decided there too; the sheet says so. **Export** links download `/api/export?format=…`, which names the file `sekhemet-<project>-<format>.csv|json`.
 
 **Next: planned.** Each is a quiet card with its name, one sentence and *Planned*. There is no button.
 
@@ -433,9 +433,9 @@ The tiers follow what dev teams use most. From Stack Overflow 2025: GitHub 81%, 
 | Next | `jira-sync`, `linear-sync` | Live sync | REST/GraphQL with a token from the OS keychain | Card fields |
 | Next | `github-actions` | Gate mirror | Gate results as a check run on the PR | Gate results |
 | Next | `teams` | Microsoft Teams | The Slack messages via an incoming webhook | Those messages |
-| Next | `slack-replies` | Slack replies | Talk to Merit from a Slack thread | The conversation |
+| Next | `slack-replies` | Slack replies | Talk to Seshat from a Slack thread | The conversation |
 | Later | `sentry`, `datadog`, `pagerduty` | Card sources | Errors, regressions and incidents arrive as proposals for bug cards | Nothing (data comes in) |
-| Later | `notion`, `confluence` | Publishing | Merit publishes cycle plans, run reports and decision logs; reads linked specs | Those pages |
+| Later | `notion`, `confluence` | Publishing | Seshat publishes cycle plans, run reports and decision logs; reads linked specs | Those pages |
 
 ### 3.6 Insights (`#/insights`, `g f`)
 
@@ -480,9 +480,9 @@ Flow metrics for the last 30 days (`/api/metrics/flow?days=30`, with 7, 30 or 90
 
 **Empty** (under 3 finished cards): *Not enough finished cards to measure flow yet. Insights need at least 3; you have 1.* **Not on this server** (404): *Flow metrics aren't on this server yet (`/api/metrics/flow` returned 404).*
 
-### 3.7 Learning: Playbook, what Merit has learned about you, and the stopping policy (PM_CONTRACT §6)
+### 3.7 Learning: Playbook, what Seshat has learned about you, and the stopping policy (PM_CONTRACT §6)
 
-Everything learned is context, not weights. It comes from gate results and human actions, is recorded on the ledger, and takes effect only after approval. The UI's job is to make that visible and reversible, and it keeps the plain names (NAMING.md): Playbook, rules, *What Merit has learned about you*, Stopping policy.
+Everything learned is context, not weights. It comes from gate results and human actions, is recorded on the ledger, and takes effect only after approval. The UI's job is to make that visible and reversible, and it keeps the plain names (NAMING.md): Playbook, rules, *What Seshat has learned about you*, Stopping policy.
 
 **Playbook (`#/playbook`).** A lede says, once, what the page is: *Learned from gate results and what you do, never from a model grading itself. Everything stays on this machine and is recorded on the ledger. A rule takes effect only after you approve it.* Rules are grouped by status:
 
@@ -492,8 +492,8 @@ Everything learned is context, not weights. It comes from gate results and human
 
 Each rule shows:
 
-- who it is for (*For the Worker* / *For Merit*);
-- its source in words (*From your send-back note*, *From a fix that took the Worker several tries*, *From Merit's end-of-run review*, *Seeded with the project*) and its age;
+- who it is for (*For the Worker* / *For Seshat*);
+- its source in words (*From your send-back note*, *From a fix that took the Worker several tries*, *From Seshat's end-of-run review*, *Seeded with the project*) and its age;
 - scope chips (*Kind: Rules*, *Files: `src/**/hash*.ts`*, *Error: `TS2353`*, or *Applies to: every card*);
 - for used rules, a signed value bar (relative to the page's largest |value|, red when negative), plus helpful and harmful counts with their icons;
 - its evidence as `@card` chips with the quoted note, the first two shown and the rest behind *n more signals*.
@@ -502,18 +502,18 @@ Edit is inline (a textarea, `⌘↵` saves, `Esc` cancels). Every action is opti
 
 **Reach.** Approve opens a two-option picker: *This project* (1) or *All projects* (2), sent as `{ reach: "global" }`. Its footer says *All-projects rules live in ~/.config/sekhemet and apply to every repository on this machine.* Active rules carry a reach chip (*This project* / *All projects*), and all-projects rules are drawn slightly stronger. The seeded rules from `.sekhemet/playbook.toml` stay visible as active, read-only rules (*Edit in playbook.toml*) whenever the learning store doesn't carry them itself.
 
-**Merit's review** (ledger `card/review`, written when Merit checks a passing card) appears in the evidence column of Review and of the card view, between Gates and Failures:
+**Seshat's review** (ledger `card/review`, written when Seshat checks a passing card) appears in the evidence column of Review and of the card view, between Gates and Failures:
 
-- It is titled *Merit's review* with a count (*1 likely send-back*).
-- It has one line: *Merit checked this diff against what it has learned about you (Playbook). It's advice, not a gate: Accept is still yours.*
+- It is titled *Seshat's review* with a count (*1 likely send-back*).
+- It has one line: *Seshat checked this diff against what it has learned about you (Playbook). It's advice, not a gate: Accept is still yours.*
 - `likely_send_back` findings are amber warnings (an alert icon and a 2px parked rule) and come first; `consider` findings are quiet.
 - The section is absent when there is no review.
 
 **Escalated retries.** When a queue entry records that a retry ran on the escalation model (`escalated`, or a per-entry `model` that differs from the report's), Worker capability adds *2 retries in the last run used the escalation model (…), not the Worker. They aren't counted in these rates.* Today's `QueueEntry` carries no such field, so the note stays hidden.
 
-**What Merit has learned about you** is a section of Playbook (`#/playbook/profile`), because it is the same kind of thing: learned, local, editable. It has:
+**What Seshat has learned about you** is a section of Playbook (`#/playbook/profile`), because it is the same kind of thing: learned, local, editable. It has:
 
-- a lock line: *These stay on this machine, in the project's ledger. Edit a statement to correct it; dismiss it and Merit stops using it.*;
+- a lock line: *These stay on this machine, in the project's ledger. Edit a statement to correct it; dismiss it and Seshat stops using it.*;
 - active statements grouped by category (Code style, Planning, Communication, Priorities), strongest first;
 - for each statement, a strength bar with a word (*Strong* ≥ 0.7, *Moderate* ≥ 0.4, *Weak*), its source in words, its evidence notes with dates, and **Edit** and **Dismiss**;
 - dismissed statements collapsed at the end.
@@ -533,7 +533,7 @@ When the current policy is already best, the section says so and offers no comma
 
 ### 3.8 The model roster and the Researcher
 
-Four roles, named by what they do (NAMING.md): the **Worker**; **Merit · Project manager**; the **Adversarial reviewer**, a different model family so it catches what the Worker's family misses; and the **Researcher** (Apodex-1.1-mini), which gathers evidence from papers, docs, registries and the project's history, and cites a source for every answer.
+Four roles, named by what they do (NAMING.md): the **Worker**; **Seshat · Project manager**; the **Adversarial reviewer**, a different model family so it catches what the Worker's family misses; and the **Researcher** (Apodex-1.1-mini), which gathers evidence from papers, docs, registries and the project's history, and cites a source for every answer.
 
 - **Machine › Models** (`GET /api/models`) shows the four roles in that fixed order. Each has its model id in mono, its state with a dot (*Resident*, *Swapped out*, *Not configured*) and a one-line description. A note every role shares (*No run in progress*) is said once, in the footer line, rather than four times.
 - The footer also states the memory model:
@@ -541,7 +541,7 @@ Four roles, named by what they do (NAMING.md): the **Worker**; **Merit · Projec
   - When `coResident` is true: *This machine has room for all four at once, so nothing swaps.*
 - A 404 shows *The model roster isn't on this server yet*, naming the endpoint.
 - **Integrations › Researcher web access** is a Now card with a switch (`PUT /api/integrations/research-web { enabled }`). It shows the server's `detail`, which names the search provider or says how to set one. The configuration line reads *Web search needs a provider you configure: a self-hosted SearXNG, or a Brave or Tavily key in the environment; papers, page reads and GitHub work without one.* Under *Leaves this machine*: *Search queries, and the URLs of the pages it reads. Private and local addresses are never fetched.*
-- **Research answers in Merit's thread.** Reply `cites` entries with `{ url?, label }` render as a compact numbered **Sources** list under the reply: the label is a link (http and https only, opening in a new tab, `rel="noopener noreferrer"`) followed by the host in mono. Entries without a URL are plain text. Card, run and evidence cites keep their *Based on:* chips.
+- **Research answers in Seshat's thread.** Reply `cites` entries with `{ url?, label }` render as a compact numbered **Sources** list under the reply: the label is a link (http and https only, opening in a new tab, `rel="noopener noreferrer"`) followed by the host in mono. Entries without a URL are plain text. Card, run and evidence cites keep their *Based on:* chips.
 
 ---
 
@@ -551,8 +551,8 @@ Four roles, named by what they do (NAMING.md): the **Worker**; **Merit · Projec
 
 | Route | Key | View |
 |---|---|---|
-| `#/pm` | `g a` | Merit, full view |
-| (panel) | `⌘J` | Toggle the Merit panel from anywhere |
+| `#/pm` | `g a` | Seshat, full view |
+| (panel) | `⌘J` | Toggle the Seshat panel from anywhere |
 | `#/board` · `#/board/list` | `g b`, then `v` | Board and list |
 | `#/insights` | `g f` | Flow metrics |
 | `#/integrations` | `g s` | Integrations |
@@ -575,7 +575,7 @@ No new colour roles are needed; everything is built from the fifteen roles plus 
 | `priority-none` | three short dashes | No priority |
 | `priority-low` / `-medium` / `-high` | three rising bars, 1–3 lit (unlit bars use class `off`) | Priority |
 | `priority-urgent` | rounded square with an exclamation | Urgent |
-| `chat` | speech bubble with two lines | Merit nav, Ask Merit |
+| `chat` | speech bubble with two lines | Seshat nav, Ask Seshat |
 | `insights` | three rising bars with a trend line | Insights nav |
 | `plug` | two-prong plug | Integrations nav |
 | `split` | one line forking into two | Split proposal |
@@ -591,7 +591,7 @@ The priority bars use a thicker stroke through CSS (`.prio .ic path { stroke-wid
 
 | Component | Size |
 |---|---|
-| Merit panel | 400px wide (360 at 1024–1279); header 52px; composer min 44px; padding 16px; message gap 24px |
+| Seshat panel | 400px wide (360 at 1024–1279); header 52px; composer min 44px; padding 16px; message gap 24px |
 | Proposal group | `--bg-surface`, 1px `--border-subtle`, radius 6. Header 36px; each proposal 12px 16px; diff rows 24px |
 | Pending block | Rows 24px, 12px icons, 11px times right-aligned tabular; ETA bar 2px |
 | View bar | 40px, 16px padding, 8px gaps |
@@ -603,8 +603,8 @@ The priority bars use a thicker stroke through CSS (`.prio .ic path { stroke-wid
 
 ### 4.3 Accessibility
 
-- **The panel** is a `complementary` landmark labelled *Merit, project manager*.
-  - The thread is `role="log"` with `aria-live="polite"`. Only Merit's final replies are announced (*Merit replied. 2 proposed changes.*); timer ticks are not.
+- **The panel** is a `complementary` landmark labelled *Seshat, project manager*.
+  - The thread is `role="log"` with `aria-live="polite"`. Only Seshat's final replies are announced (*Seshat replied. 2 proposed changes.*); timer ticks are not.
   - The pending block's current row has `aria-busy="true"`.
 - **Proposals** are a `list`. Each proposal is a `group` labelled by its summary. Apply and Discard are buttons whose accessible names include the summary.
 - **Field diffs** are a `dl` read as *Priority: Medium, changes to Urgent*.

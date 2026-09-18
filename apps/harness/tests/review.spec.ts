@@ -6,7 +6,7 @@ import { reviewCard } from "../src/learning/review.js";
 const usage = { promptTokens: 1, completionTokens: 1, durationMs: 1 };
 const card = { id: "c", title: "Api (SPIDR: Path)" } as unknown as CardRecord;
 
-describe("Merit's review against learned preferences", () => {
+describe("Seshat's review against learned preferences", () => {
   it("returns concrete findings and normalises severities", async () => {
     const model = new MockInferenceAdapter("dirk-27b", [
       {

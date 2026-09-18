@@ -2,10 +2,10 @@
  * "Is there already a library for this?" - asked before a card is written.
  *
  * The user's second most common complaint about AI coding agents is that they
- * reinvent what a well-maintained, legally usable package already does. Merit
+ * reinvent what a well-maintained, legally usable package already does. Seshat
  * searches the public registries and checks each result's licence before it
  * ever suggests one. Only the search text leaves the machine, and only when
- * Merit decides to search; the Worker stays offline in its sandbox.
+ * Seshat decides to search; the Worker stays offline in its sandbox.
  */
 
 export interface LibraryHit {

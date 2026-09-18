@@ -34,7 +34,7 @@ export function outcomeIcon(evidence) {
 }
 
 /**
- * Merit's review (ledger `card/review`): the diff checked against what Merit
+ * Seshat's review (ledger `card/review`): the diff checked against what Seshat
  * has learned about you. Advice, not a gate; likely send-backs read as warnings.
  */
 export function reviewHtml(review) {
@@ -51,7 +51,7 @@ export function reviewHtml(review) {
       return `<li class="${warn ? "warn" : ""}">${icon(warn ? "alert" : "chat", 14, `ic s14${warn ? " i-park" : ""}`)}<div><b>${warn ? "Likely send-back" : "Consider"}</b><span>${esc(f.note)}</span></div></li>`;
     })
     .join("");
-  return `<section aria-label="Merit's review" class="mreview"><h3 class="sh">Merit's review <span class="sec">${esc(head)}</span></h3><p class="mr-why">Merit checked this diff against what it has learned about you (<a href="#/playbook/profile">Playbook</a>). It's advice, not a gate: Accept is still yours.</p><ul>${items}</ul></section>`;
+  return `<section aria-label="Seshat's review" class="mreview"><h3 class="sh">Seshat's review <span class="sec">${esc(head)}</span></h3><p class="mr-why">Seshat checked this diff against what it has learned about you (<a href="#/playbook/profile">Playbook</a>). It's advice, not a gate: Accept is still yours.</p><ul>${items}</ul></section>`;
 }
 
 export class EvidencePane {

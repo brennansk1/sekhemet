@@ -215,7 +215,7 @@ describe("PM and board-practice API", () => {
     expect(res.cfd.at(-1)?.ready).toBeGreaterThan(0);
   });
 
-  it("reports the model roster; without a running queue only Merit is known", async () => {
+  it("reports the model roster; without a running queue only Seshat is known", async () => {
     const body = (await (await fetch(`${base}/api/models`)).json()) as {
       roles: { role: string; model?: string; state: string }[];
       coResident: boolean;
@@ -228,7 +228,7 @@ describe("PM and board-practice API", () => {
     expect(body.roles.find((r) => r.role === "worker")?.state).toBe("unconfigured");
   });
 
-  it("does not load Merit's model from the dashboard while memory is under pressure", async () => {
+  it("does not load Seshat's model from the dashboard while memory is under pressure", async () => {
     const db = new DatabaseSync(":memory:");
     initSchema(db);
     const log = new EventLog(db);

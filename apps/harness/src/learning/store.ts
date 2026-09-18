@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import type { EventLog } from "@sekhemet/kernel";
 
 /**
- * What Sekhemet has learned: playbook rules for the Worker and Merit, and a
+ * What Sekhemet has learned: playbook rules for the Worker and Seshat, and a
  * profile of the user. Docs: PM_CONTRACT §6.
  *
  * Two scopes, because the user asked the Worker to learn "both for the project

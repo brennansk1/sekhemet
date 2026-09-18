@@ -89,7 +89,7 @@ export async function learnFromSendBack(
   });
 }
 
-/** Which kinds of Merit proposal the user applies versus discards. */
+/** Which kinds of Seshat proposal the user applies versus discards. */
 export async function learnFromProposalChoices(
   store: LearningStore,
   choices: { kind: string; state: "applied" | "discarded" }[],
@@ -117,8 +117,8 @@ export async function learnFromProposalChoices(
       key: `proposals_${kind}`,
       statement:
         rate >= 0.7
-          ? `Usually accepts Merit's proposals for ${label[kind] ?? kind} (${t.applied} of ${total}).`
-          : `Usually declines Merit's proposals for ${label[kind] ?? kind} (${t.discarded} of ${total}): propose these sparingly and explain why.`,
+          ? `Usually accepts Seshat's proposals for ${label[kind] ?? kind} (${t.applied} of ${total}).`
+          : `Usually declines Seshat's proposals for ${label[kind] ?? kind} (${t.discarded} of ${total}): propose these sparingly and explain why.`,
       category: "planning",
       source: "proposal_choices",
       evidence: `${t.applied} applied, ${t.discarded} discarded`,
@@ -134,7 +134,7 @@ export interface ReflectionInput {
 }
 
 /**
- * Merit's end-of-run reflection: the issues it called out in its repair
+ * Seshat's end-of-run reflection: the issues it called out in its repair
  * plans, generalised into rules the Worker can reuse, each marked as specific
  * to this project or general enough to carry across projects. Candidates
  * only: a human approves every rule and chooses its reach.
@@ -153,7 +153,7 @@ export async function reflectWithManager(
     .join("\n\n");
   const res = await model.generate({
     systemPrompt:
-      "You are Merit, the project manager. You turn what went wrong on cards into short, reusable rules for a small coding model. Answer with JSON only.",
+      "You are Seshat, the project manager. You turn what went wrong on cards into short, reusable rules for a small coding model. Answer with JSON only.",
     prompt: `${cases}\n\nFor each case whose lesson would help on future cards, write one rule: imperative, one or two sentences, concrete (name the API, type rule or pattern), no card-specific names. Say whether it is "project" (only this codebase) or "global" (any TypeScript project).\nReturn: {"rules":[{"case":1,"text":"...","reach":"project"|"global"}]}`,
     toolArm: "arm_b_json",
     temperature: 0.2,
@@ -179,7 +179,7 @@ export async function reflectWithManager(
       evidence: [
         {
           cardId: it.card.id,
-          note: `Merit's reflection after ${it.firstStop}; suggested reach: ${r.reach === "global" ? "all projects" : "this project"}`,
+          note: `Seshat's reflection after ${it.firstStop}; suggested reach: ${r.reach === "global" ? "all projects" : "this project"}`,
         },
       ],
     });
@@ -189,7 +189,7 @@ export async function reflectWithManager(
 }
 
 /**
- * Mem0's update step, decided by Merit while its model is resident: for each
+ * Mem0's update step, decided by Seshat while its model is resident: for each
  * candidate rule linked to similar existing rules, choose ADD (keep both),
  * UPDATE (merge into one better rule), DELETE (the new rule contradicts an
  * old one) or NOOP (same meaning). Active rules are never removed here: a

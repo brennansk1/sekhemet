@@ -129,7 +129,7 @@ export const dismissEntry = (e) =>
     kind: "profile",
     id: e.id,
     patch: { status: "dismissed" },
-    done: "Dismissed. Merit no longer uses it.",
+    done: "Dismissed. Seshat no longer uses it.",
     failed: "Couldn't dismiss it.",
   });
 
@@ -141,6 +141,6 @@ export const editEntry = (e, statement) =>
     kind: "profile",
     id: e.id,
     patch: { statement },
-    done: "Saved. Merit uses your wording from now on.",
+    done: "Saved. Seshat uses your wording from now on.",
     failed: "Couldn't save it.",
   });

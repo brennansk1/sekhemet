@@ -174,7 +174,7 @@ Slack endpoints (Now tier):
 
 ## 6. Learning: self-improvement and the user profile (2026-09-18)
 
-The user asked that both the Worker and Merit get better over time, grow with the project, and build a profile of what the user wants. The design follows `docs/research/PM_RESEARCH_SYNTHESIS.md`. Everything learned is:
+The user asked that both the Worker and Seshat get better over time, grow with the project, and build a profile of what the user wants. The design follows `docs/research/PM_RESEARCH_SYNTHESIS.md`. Everything learned is:
 - context, not weights: no fine-tuning;
 - extracted from gate results and human actions, never from a model's opinion of itself;
 - recorded on the ledger, so it can be audited and rolled back;
@@ -186,7 +186,7 @@ Three loops:
    - **Where candidate rules come from:**
      - a failure the Worker fixed only after at least one failed edit (from working memory);
      - a send-back note;
-     - Merit's reflection at the end of a run, when the manager model is loaded.
+     - Seshat's reflection at the end of a run, when the manager model is loaded.
    - **Scope:** each rule is scoped by card kind, file pattern, and/or an error pattern.
    - **Counters:** when an active rule was in a card's prompt, a passing first attempt counts helpful and a failing one counts harmful.
    - **Value:** decays Erev-Roth style: `v ← (1 − 0.1)·v + reward` each time the rule is used.
@@ -197,9 +197,9 @@ Three loops:
    - **Sources:**
      - send-back notes;
      - which kinds of proposal the user applies or discards;
-     - fields the user edits after Merit changed them.
+     - fields the user edits after Seshat changed them.
    - **Refinement:** the manager model turns raw signals into statements at the end of a run.
-   - **Use:** Merit reads the active statements, and the user can edit or dismiss any of them.
+   - **Use:** Seshat reads the active statements, and the user can edit or dismiss any of them.
 
 Endpoints:
 - `GET /api/learning` returns `{ rules: LearnedRule[], profile: ProfileEntry[], tuning?: TuningReport }`.

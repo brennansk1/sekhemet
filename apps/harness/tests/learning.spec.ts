@@ -148,7 +148,7 @@ describe("learning: playbook and user profile", () => {
     expect((await store.profile()).find((p) => p.id === entry?.id)?.status).toBe("dismissed");
   });
 
-  it("lets Merit generalise the issues it called out into candidate rules", async () => {
+  it("lets Seshat generalise the issues it called out into candidate rules", async () => {
     const card = await cards.createCard({ tier: "task", title: "Ledger (SPIDR: Rule)" });
     const model = new MockInferenceAdapter("dirk-27b", [
       {
@@ -189,7 +189,7 @@ describe("learning: playbook and user profile", () => {
         evidence: [],
       }),
     ).toBeUndefined();
-    // Related but different: added, linked for Merit to decide.
+    // Related but different: added, linked for Seshat to decide.
     const related = await store.propose({
       role: "worker",
       text: "Use node:sqlite prepare for inserts, not exec.",

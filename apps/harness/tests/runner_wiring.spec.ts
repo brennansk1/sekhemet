@@ -160,7 +160,7 @@ describe("apps/harness executeCard wiring (wave 2, part 1)", () => {
     const questionId = asked[0]?.meta.questionEntryId;
     expect(questionId).toBeTruthy();
 
-    // Merit's batch answered it (the thread as PmStore.thread() returns it).
+    // Seshat's batch answered it (the thread as PmStore.thread() returns it).
     const filed = await queued.fileAnswers(
       [
         { id: "pmm_q1", seq: 5, role: "user", state: "done", text: "Should zebras..." },

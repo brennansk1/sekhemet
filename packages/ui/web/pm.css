@@ -1,4 +1,4 @@
-/* Merit, the project manager (PM_DESIGN §2): dock, thread, proposals, waiting. Tokens only. */
+/* Seshat, the project manager (PM_DESIGN §2): dock, thread, proposals, waiting. Tokens only. */
 
 /* ---------- Dock ---------- */
 .pm-dock {
@@ -853,7 +853,7 @@
   margin: 0;
 }
 
-/* Worker paused for Merit: the running rule, not amber (§2.5). */
+/* Worker paused for Seshat: the running rule, not amber (§2.5). */
 .bar.run {
   border-bottom-color: var(--state-running);
 }

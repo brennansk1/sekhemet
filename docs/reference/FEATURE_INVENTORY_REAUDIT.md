@@ -23,7 +23,7 @@ This re-audits every unit in [FEATURE_INVENTORY.md](FEATURE_INVENTORY.md) (writt
 | **[SRV]** | `apps/harness/src/server.ts` `startDashboardServer` ← `index.ts` `sekhemet serve` / `ui` |
 | **[WEB]** | a `packages/ui/web/*.js` module imported by `app.js`, served by [SRV] under `/app/` |
 | **[ACCEPT]** | `apps/harness/src/execute.ts` `acceptCard` ← `sekhemet accept`, `queue --auto-accept`, and [SRV] `POST /api/cards/:id/accept` |
-| **[PM]** | `apps/harness/src/pm/*` (Merit) ← [SRV] `/api/pm/*` and the queue's `answerPm` |
+| **[PM]** | `apps/harness/src/pm/*` (Seshat) ← [SRV] `/api/pm/*` and the queue's `answerPm` |
 | **[PLAN]** | `packages/planner/src/planner.ts` `SpidrFeaturePlanner.decomposeFeature` ← `index.ts` `sekhemet plan` (the planner package's only production caller) |
 
 ## Summary
@@ -62,7 +62,7 @@ How the old counts were normalised: the inventory has 302 numbered units (K1 to 
 
 ### What changed, in one paragraph
 
-The five structural findings of the original audit are fixed. `@sekhemet/context` is wired into the loop. The executor gets a real four-zone prompt with its tool catalog. Commands run under Seatbelt on macOS and bubblewrap on Linux. A card runs a real loop: turns, re-checks, a repair ladder, checkpoints and an evidence bundle. `gates.toml` is parsed, pinned by hash and executed. The new code also covers a lot the design never itemised: Merit (the PM), learning rules, the Researcher, model swapping, the integrity gate and a much larger dashboard.
+The five structural findings of the original audit are fixed. `@sekhemet/context` is wired into the loop. The executor gets a real four-zone prompt with its tool catalog. Commands run under Seatbelt on macOS and bubblewrap on Linux. A card runs a real loop: turns, re-checks, a repair ladder, checkpoints and an evidence bundle. `gates.toml` is parsed, pinned by hash and executed. The new code also covers a lot the design never itemised: Seshat (the PM), learning rules, the Researcher, model swapping, the integrity gate and a much larger dashboard.
 
 What is still thin is everything around that loop. Most of the planner's output is discarded. Several finished modules have no production caller: the condenser, the hook engine, the benchmark harness, task synthesis, the context-pressure tiers and the bounds gate. The whole GitHub App, visual-gate, air-gap and self-improvement surface is still missing. So is anything that lets the dashboard run, rewind or fork a card.
 
@@ -105,7 +105,7 @@ Test notes follow DEFINITION_OF_DONE §2. "Real" means a real SQLite file, real 
 | K18 | `gate_results` table | MISSING | MISSING | — | Gate outcomes live in evidence JSON and `card/step` payloads. |
 | K19 | `evidence_bundles` table | MISSING | MISSING | — | Bundles are files, see G11. |
 | K20 | `decision_requests` table | MISSING | MISSING | — | |
-| K21 | `competence_entries` / competence model | MISSING | SHALLOW | `apps/harness/src/pm/capability.ts` (Wilson intervals per SPIDR kind, 80% size horizon) ← [PM] prompt and `/api/capability` | Derived from evidence files, not a table. It informs Merit's advice, but no budget or route is set from it. |
+| K21 | `competence_entries` / competence model | MISSING | SHALLOW | `apps/harness/src/pm/capability.ts` (Wilson intervals per SPIDR kind, 80% size horizon) ← [PM] prompt and `/api/capability` | Derived from evidence files, not a table. It informs Seshat's advice, but no budget or route is set from it. |
 | K22 | Full card record shape | SHALLOW | SHALLOW | `kernel/src/types.ts` `CardRecord`, `schema.ts` | Every field now exists. The runner writes only `stepsUsed`. `stopReason`, `tokensUsed`, `secondsUsed`, `evidenceId` and `contextPackId` are never set (defect 8). |
 | K23 | `busy_timeout = 5000` | MISSING | BUILT | `schema.ts` `KERNEL_PRAGMA_SQL` ← `initSchema` ← `initLocalKernel` | |
 | K24 | Column enum incl. Planning | SHALLOW | BUILT | `schema.ts` `CARD_STATUS_CHECK`, migration `rebuildCardsTableIfStale` | `rejected` is kept as an extra status. |
@@ -127,7 +127,7 @@ Test notes follow DEFINITION_OF_DONE §2. "Real" means a real SQLite file, real 
 | S7 | Buffer cap / OOM detection | SHALLOW | SHALLOW | `executor.ts` | Truncation now leaves a marker. `oomKilled` is still inferred as "SIGKILL and not timed out". |
 | S8 | Allow / Ask / Deny permissions | SHALLOW | SHALLOW | `sandbox/src/permissions.ts` `PermissionEngine.evaluate` ← [TOOL] `authorize` | Close to BUILT: glob scopes, and the loop driver, gates runner and sandbox files are on the deny list. Missing: an ask-tier approver (defect 4), the project's protected list (defect 5), a domain allowlist and the external-binary ask tier. |
 | S9 | Untrusted-content tagging | MISSING | MISSING | — | Web text the Researcher fetches (`research/web.ts`) is not tagged. |
-| S10 | Supply-chain registry/age/typosquat check | MISSING | MISSING | — | `pm/libraries.ts` checks licences for Merit's library suggestions. That is not an install gate. |
+| S10 | Supply-chain registry/age/typosquat check | MISSING | MISSING | — | `pm/libraries.ts` checks licences for Seshat's library suggestions. That is not an install gate. |
 | S11 | `osv-scanner` | MISSING | MISSING | — | |
 | S12 | Restricted mode | SHALLOW | SHALLOW | `index.ts` `--restricted` → `execute.ts` `requireConfinement` | `run` is not stripped from the tools, and it does not switch to read-only inspection (defect 3). |
 | S13 | Worktree manager contract | MISSING | BUILT | `sync/src/git_adapter.ts` `createWorktree/removeWorktree` ← [RUN], [ACCEPT] | Lives in `@sekhemet/sync` rather than sandbox, a package-boundary deviation only. |
@@ -298,19 +298,19 @@ Test notes follow DEFINITION_OF_DONE §2. "Real" means a real SQLite file, real 
 | B8 | Project-scoped board with lanes | SHALLOW | SHALLOW | `getBoardState` ← [SRV] `/api/board`; lanes in [WEB] `lanes.js` | Swimlanes exist in the UI. No project scoping. |
 | B9 | `createCard` | MISSING | BUILT | `kernel/src/card_store.ts` `createCard` ← [PM] `apply.ts`, MCP, GitHub import, `plan` | Lives in the kernel, not the board engine. |
 | B10 | WIP evaluation | SHALLOW | BUILT | `checkWipLimits` (`isAtCapacity`, the off-by-one fixed) ← [SRV] `/api/wip` | |
-| B11 | `order_key` fractional index | MISSING | SHALLOW | `kernel/src/order_key.ts` `keyBetween`; lists sorted by `order_key` | Keys are assigned on create. `CardStore.reorderCard` has no caller: Merit's `reorder` proposal kind is not applied (`apply.ts`), and the UI cannot drag to reorder. |
+| B11 | `order_key` fractional index | MISSING | SHALLOW | `kernel/src/order_key.ts` `keyBetween`; lists sorted by `order_key` | Keys are assigned on create. `CardStore.reorderCard` has no caller: Seshat's `reorder` proposal kind is not applied (`apply.ts`), and the UI cannot drag to reorder. |
 | B12 | Human commands | MISSING | SHALLOW | [SRV] `POST /api/cards/:id/accept|return|park`, `PATCH /api/cards/:id` (priority and fields), `sekhemet accept`; split and unpark through [PM] proposals | Missing: override gate, reroute, explain, pause project, set hours, rewind. A return reason becomes a candidate rule but is not handed to the next attempt as guidance. |
 | B13 | Active project cap | MISSING | MISSING | — | |
 
 ### `@sekhemet/planner`
 
-The planner package was rewritten. It is now heuristic and deterministic: spec clauses, then slices, then recursive split, INVEST, difficulty, routing, edit sketches and decision requests. Its only production caller is `sekhemet plan`, which constructs it with no model and no codebase map, and persists only `story.card` (defect 6). In practice Merit's LLM proposals ([PM]) are how cards get planned. Planner tests: 3 cases in `planner.spec.ts`.
+The planner package was rewritten. It is now heuristic and deterministic: spec clauses, then slices, then recursive split, INVEST, difficulty, routing, edit sketches and decision requests. Its only production caller is `sekhemet plan`, which constructs it with no model and no codebase map, and persists only `story.card` (defect 6). In practice Seshat's LLM proposals ([PM]) are how cards get planned. Planner tests: 3 cases in `planner.spec.ts`.
 
 | # | Unit | Old | New | Evidence | Notes |
 | --- | --- | --- | --- | --- | --- |
 | P1 | SPIDR decomposition, 5 heuristics, split until it fits | SHALLOW | SHALLOW | `planner/src/spidr.ts` `decomposeSpidr`, `proposeSlices`, `splitStory` ← [PLAN] | Spec-driven now, not a template, with all five kinds. It is keyword classification with no model and no codebase map on the production path, and it discards everything but title, scope and budget. |
 | P2 | INVEST pre-flight | MISSING | SHALLOW | `planner/src/invest.ts` `validateInvest` (six checks) ← [PLAN] | Computed, then neither enforced nor shown. `plan` creates the cards whatever the report says. |
-| P3 | WSJF prioritisation | MISSING | DEAD | `planner/src/prioritization.ts` `scoreWsjf`, `prioritize` | No caller. Priority is set by hand or by Merit on Linear's 0–4 scale. |
+| P3 | WSJF prioritisation | MISSING | DEAD | `planner/src/prioritization.ts` `scoreWsjf`, `prioritize` | No caller. Priority is set by hand or by Seshat on Linear's 0–4 scale. |
 | P4 | Estimation in tokens, seconds, steps | MISSING | SHALLOW | `scope.ts` `estimatePackTokens` ([PLAN], discarded); `pm/metrics.ts` `monteCarloForecast` ← [PM] | Actuals are not written back per class. |
 | P5 | Difficulty scoring | MISSING | SHALLOW | `difficulty.ts` `scoreDifficulty` ← [PLAN] | Never persisted (K25). |
 | P6 | Difficulty routing (under 4 / 4–7 / over 7) | MISSING | SHALLOW | `difficulty.ts` `routeByDifficulty` ← [PLAN] | Routing is discarded. The live route is `queue --escalate-retries`, which is capability-based. |
@@ -332,7 +332,7 @@ The planner package was rewritten. It is now heuristic and deterministic: spec c
 | P22 | Honest stopping of goals | MISSING | MISSING | — | |
 | P23 | Board operations tool | MISSING | BUILT | `pm/agent.ts` `PM_TOOLS` (create, update, split, move, park, cycles) → `toProposals` → `pm/apply.ts` on human apply ← [PM] | Proposals only, as the PM contract requires. `reorder` is not applied (B11). |
 | P24 | LSP-based impact analysis | MISSING | MISSING | — | `inferDependencies` is text matching. |
-| P25 | Approach previews (2–3 options) | SHALLOW | DEAD | `decision.ts` `previewSketches` | Built inside [PLAN], discarded. Merit offers single proposals, not option sets. |
+| P25 | Approach previews (2–3 options) | SHALLOW | DEAD | `decision.ts` `previewSketches` | Built inside [PLAN], discarded. Seshat offers single proposals, not option sets. |
 
 ### `@sekhemet/eval`
 
@@ -370,7 +370,7 @@ The planner package was rewritten. It is now heuristic and deterministic: spec c
 | U4 | Typography tokens, tabular numerals | MISSING | BUILT | `tokens.ts` `TYPOGRAPHY`; `.tnum` / `tabular-nums` in the CSS | |
 | U5 | Spacing, radius, elevation, motion | SHALLOW | BUILT | `tokens.ts` `SPACING`, `RADIUS`, `MOTION` | No drop shadows. |
 | U6 | Dual-axis virtualization | DEAD | SHALLOW | [WEB] `board.js` `paintVirtual` (above 60 cards, overscan 3) | Vertical only, and only in the board's column view. No horizontal virtualization. Lanes and list render every card. `ui/src/canvas.ts` `VirtualCanvasManager` is still dead. 60 FPS on 500 cards is unmeasured. |
-| U7 | Six views | SHALLOW | SHALLOW | [WEB] `app.js` routes: review, board, card (5 tabs), runs, ledger, machine, playbook, Merit, insights, integrations | No master multi-project board, no Registry view. |
+| U7 | Six views | SHALLOW | SHALLOW | [WEB] `app.js` routes: review, board, card (5 tabs), runs, ledger, machine, playbook, Seshat, insights, integrations | No master multi-project board, no Registry view. |
 | U8 | Review view | MISSING | SHALLOW | [WEB] `review.js`, `gates.js`, `diff.js`, `triage.js` | Gate strip and a/r/p triage work. Diffs are grouped by file role, not intent, not structural, and there are no screenshot diffs. |
 | U9 | Live stream (WebSocket, replay from genesis) | MISSING | SHALLOW | [SRV] `/api/stream` (SSE) ← [WEB] `app.js` `EventSource` | SSE rather than WebSocket. On reconnect the page re-fetches state; nothing replays the log from genesis or a checkpoint. |
 | U10 | Keyboard system | MISSING | BUILT | [WEB] `keys.js` `initKeys` plus per-view `onKey` | Cmd+K, ?, Esc, h/j/k/l, `g` chords, Space, Enter, x and a/r/p are all there. `c` only shows a toast, and there is no `g i`. |

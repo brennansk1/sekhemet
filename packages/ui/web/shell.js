@@ -8,11 +8,11 @@ const NAV = [
   { name: "board", label: "Board", icon: "board", key: "g b" },
   {
     name: "pm",
-    label: "Merit",
+    label: "Seshat",
     sub: "Project manager",
     icon: "chat",
     key: "g a",
-    title: "Merit, the project manager",
+    title: "Seshat, the project manager",
   },
   { name: "insights", label: "Insights", icon: "insights", key: "g f" },
   { name: "runs", label: "Runs", icon: "runs", key: "g q" },
@@ -135,7 +135,7 @@ function renderSide() {
     0,
   );
   if (s.pm.status?.phase && s.pm.status.phase !== "idle") {
-    counts.pm = { n: "…", title: "Merit is replying" };
+    counts.pm = { n: "…", title: "Seshat is replying" };
   } else if (openProposals) {
     counts.pm = { n: String(openProposals), title: `${openProposals} open proposals` };
   }
@@ -226,12 +226,12 @@ function renderBar() {
   } else if (s.pm.status?.workerPaused && s.pm.status.phase !== "idle") {
     // PM_DESIGN §2.5: nothing is wrong, so the running rule, not amber.
     const step = s.pm.step;
-    const head = `Worker paused${step ? ` after step ${step}` : ""} while Merit replies.`;
+    const head = `Worker paused${step ? ` after step ${step}` : ""} while Seshat replies.`;
     const tail =
       s.pm.status.phase === "resuming_worker"
         ? "Reloading the Worker now."
         : `It continues from ${step ? `step ${step + 1}` : "its next step"} when the reply is in.`;
-    html = `<div class="bar run" role="status">${icon("pause")}<span><b>${esc(head)}</b> <span class="sec">${esc(tail)}</span></span>${s.route?.name === "pm" ? "" : '<button class="link-btn" type="button" data-open-pm>Open Merit</button>'}</div>`;
+    html = `<div class="bar run" role="status">${icon("pause")}<span><b>${esc(head)}</b> <span class="sec">${esc(tail)}</span></span>${s.route?.name === "pm" ? "" : '<button class="link-btn" type="button" data-open-pm>Open Seshat</button>'}</div>`;
   }
   if (html !== lastBar) {
     slot.innerHTML = html;

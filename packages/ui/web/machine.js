@@ -72,9 +72,9 @@ function rosterHtml() {
   if (r.status !== 200 || !r.data) {
     const why =
       r.status === 404
-        ? "<b>The model roster isn't on this server yet.</b> <code>GET /api/models</code> returned 404. It will list the Worker, Merit, the adversarial reviewer and the Researcher, and which of them is loaded."
+        ? "<b>The model roster isn't on this server yet.</b> <code>GET /api/models</code> returned 404. It will list the Worker, Seshat, the adversarial reviewer and the Researcher, and which of them is loaded."
         : `<b>Couldn't read the model roster.</b> The server returned ${esc(r.status > 0 ? r.status : "no response")}.`;
-    return `<section>${head("Worker, Merit, reviewer, Researcher")}<p class="roster-empty">${icon("machine", 14, "ic s14")}<span>${why}</span></p></section>`;
+    return `<section>${head("Worker, Seshat, reviewer, Researcher")}<p class="roster-empty">${icon("machine", 14, "ic s14")}<span>${why}</span></p></section>`;
   }
   const rows = rosterRows(r.data.roles);
   const resident = rows.filter((x) => x.state === "resident").length;

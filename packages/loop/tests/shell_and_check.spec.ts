@@ -377,7 +377,7 @@ describe("@sekhemet/loop shell command lines and the check tool", () => {
     expect(unknown.observations[0]?.content).toMatch(/most conservative reading/);
   });
 
-  it("routes a question the contract cannot answer to the team: now if Merit is resident, queued otherwise", async () => {
+  it("routes a question the contract cannot answer to the team: now if Seshat is resident, queued otherwise", async () => {
     const runner: GateRunner = {
       runGates: async (): Promise<GateResult> => ({ passed: false, durationMs: 1, failures: [] }),
     };
@@ -395,13 +395,13 @@ describe("@sekhemet/loop shell command lines and the check tool", () => {
         stepBudget: 3,
         worktreePath: root,
         gateRunner: runner,
-        teamNote: "Merit answers questions.",
+        teamNote: "Seshat answers questions.",
         askTeam: async () => reply,
         modelAdapter: new MockInferenceAdapter("m", [ask]),
       });
     const now = await make("Use port 0 and read the bound port back.").executeTurn();
     expect(now.observations[0]?.content).toBe(
-      "Merit (project manager) answers: Use port 0 and read the bound port back.",
+      "Seshat (project manager) answers: Use port 0 and read the bound port back.",
     );
     const later = await make(undefined).executeTurn();
     expect(later.observations[0]?.content).toMatch(/queued for it/);

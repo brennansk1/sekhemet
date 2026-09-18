@@ -163,7 +163,7 @@ export function monteCarloForecast(
 
 export interface PmQuality {
   proposals: { applied: number; discarded: number; open: number; acceptanceRate?: number };
-  /** First-attempt pass rate of cards Merit's applied proposals created. */
+  /** First-attempt pass rate of cards Seshat's applied proposals created. */
   plannedCards: { cards: number; passedFirstTry: number };
   /** How often the human corrected the profile (edits and dismissals). */
   profileCorrections: number;
@@ -171,7 +171,7 @@ export interface PmQuality {
 }
 
 /**
- * How good Merit is, measured, not self-reported (research report 1, PM
+ * How good Seshat is, measured, not self-reported (research report 1, PM
  * quality): proposal acceptance, how well the cards it planned go, how often
  * the user corrects what it learned, and a calibrated forecast.
  */

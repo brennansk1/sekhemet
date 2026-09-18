@@ -181,7 +181,7 @@ export function editField(field, cardIds, anchor) {
       if (!cycles.length) {
         toast({
           text: "No cycles yet.",
-          detail: "Ask Merit to plan one, or create one with POST /api/cycles.",
+          detail: "Ask Seshat to plan one, or create one with POST /api/cycles.",
         });
         return;
       }

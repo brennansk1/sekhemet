@@ -814,7 +814,7 @@ dl.kv dd {
   color: var(--text-primary);
 }
 
-/* Merit's review (ledger card/review): advice beside the gates, never a gate. */
+/* Seshat's review (ledger card/review): advice beside the gates, never a gate. */
 .mreview .mr-why {
   font-size: var(--text-xs);
   color: var(--text-secondary);

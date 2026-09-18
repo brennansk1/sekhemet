@@ -24,9 +24,9 @@ Every document in `docs/` is listed here, and nowhere else is the source of trut
 |---|---|
 | [HARNESS_DESIGN.md](design/HARNESS_DESIGN.md) | The full harness design: kernel, loop, gates, board, planner. |
 | [FRONTEND_DESIGN.md](design/FRONTEND_DESIGN.md) | Dashboard information architecture, voice, tokens and phases. |
-| [PM_DESIGN.md](design/PM_DESIGN.md) | Merit (the project manager), team practices, Insights, Integrations. |
-| [PM_CONTRACT.md](design/PM_CONTRACT.md) | Backend and dashboard contract for Merit, integrations and learning. |
-| [INTEGRATION_REVIEW.md](design/INTEGRATION_REVIEW.md) | How the Worker, Merit, reviewer, Researcher, learning and scheduling fit together; findings, ranked fixes and a target architecture. |
+| [PM_DESIGN.md](design/PM_DESIGN.md) | Seshat (the project manager), team practices, Insights, Integrations. |
+| [PM_CONTRACT.md](design/PM_CONTRACT.md) | Backend and dashboard contract for Seshat, integrations and learning. |
+| [INTEGRATION_REVIEW.md](design/INTEGRATION_REVIEW.md) | How the Worker, Seshat, reviewer, Researcher, learning and scheduling fit together; findings, ranked fixes and a target architecture. |
 | [NAMING.md](design/NAMING.md) | The naming rule: what keeps its professional name, what is themed. |
 | [mockups/](design/mockups/) | Static HTML mockups of the dashboard surfaces. |
 

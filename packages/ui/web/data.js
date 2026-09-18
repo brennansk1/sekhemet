@@ -28,7 +28,7 @@ export function loadDetail(id, attempt) {
     hasEvidence
       ? getJSON(`/api/evidence/${encodeURIComponent(id)}${q}`)
       : Promise.resolve({ ok: false, status: 404, data: null }),
-    // Merit's review of a passing card (ledger `card/review`); advice, not a gate.
+    // Seshat's review of a passing card (ledger `card/review`); advice, not a gate.
     getJSON(`/api/events?card=${encodeURIComponent(id)}&type=card/review&limit=1&order=desc`).catch(
       () => ({ ok: false, status: 0, data: null }),
     ),

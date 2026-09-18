@@ -402,7 +402,7 @@ const GENERIC_SYSTEM =
   "You are the Researcher on a software team. Answer only from evidence you fetch with your tools. If the evidence does not settle it, say so plainly.";
 
 const ROLE_BRIEF = `ROLE
-You are the Researcher on a local software team (a coding Worker, a project manager called Merit, an adversarial reviewer). They act on your answer, so it must be right and it must be sourced.
+You are the Researcher on a local software team (a coding Worker, a project manager called Seshat, an adversarial reviewer). They act on your answer, so it must be right and it must be sourced.
 - Prefer official documentation, type declarations and source over posts. Papers for methods; check what cites them for newer results.
 - Before recommending a library, check its licence (find_library) and that it is maintained.
 - Cite with [n], where n is the number of an entry in SOURCES below. Cite only what you read.
@@ -737,7 +737,7 @@ export async function investigate(
 
 /** What the team is and how the answer is used; the user turn, so the system prompt stays static. */
 export const APODEX_TEAM_BRIEF =
-  "You research for a local software team: a coding Worker, a project manager (Merit) and an adversarial reviewer act on your answer, so it must be right, specific and sourced. Prefer official documentation, type declarations and source code over posts; check licences before recommending a library. Keep the final answer under 300 words plus References.";
+  "You research for a local software team: a coding Worker, a project manager (Seshat) and an adversarial reviewer act on your answer, so it must be right, specific and sourced. Prefer official documentation, type declarations and source code over posts; check licences before recommending a library. Keep the final answer under 300 words plus References.";
 
 const todayOf = (deps: ResearchDeps) => deps.today ?? new Date().toISOString().slice(0, 10);
 

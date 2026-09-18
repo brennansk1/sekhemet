@@ -40,7 +40,7 @@ describe("library reuse with licence checks", () => {
     ]);
   });
 
-  it("lets Merit search before proposing, and keeps its proposals", async () => {
+  it("lets Seshat search before proposing, and keeps its proposals", async () => {
     const db = new DatabaseSync(":memory:");
     initSchema(db);
     const cards = new CardStore(db, new EventLog(db));

@@ -16,7 +16,7 @@ import { type WebConfig, webConfigFromEnv } from "./web.js";
 
 /**
  * The research service: one entry point for every role that needs the
- * Researcher (Merit's questions, the queue's unexplained errors, the worker's
+ * Researcher (Seshat's questions, the queue's unexplained errors, the worker's
  * `ask`, the CLI), so each gets the same model, sources, memory and record.
  *
  * - Model: Apodex through the managed llama-server (never Ollama, which cannot
@@ -223,7 +223,7 @@ export class ResearchService {
 
 /**
  * A one-shot Researcher for callers that do not hold a model router (the
- * dashboard's Merit): load, ask, unload. A 16 GB model is not left resident
+ * dashboard's Seshat): load, ask, unload. A 16 GB model is not left resident
  * behind a chat message.
  */
 export function oneShotResearcher(
