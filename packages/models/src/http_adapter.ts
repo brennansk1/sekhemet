@@ -401,25 +401,31 @@ export function createQwen38_27BAdapter(baseUrl = "http://127.0.0.1:8099"): Http
  * same box: roughly 4.4x the dense 27B. For an agentic loop, where a card costs
  * many turns, that ratio is the difference between usable and unusable.
  */
+/**
+ * Settings for the fast MoE worker.
+ *
+ * 8k context, not the model's 262k ceiling: the weights are ~13GB on a 24GB
+ * box, so the KV cache decides whether the machine swaps. A 32k window drove
+ * the host to 9.4GB of swap and stalled a run; card prompts measure ~1.1-3k.
+ */
+export const NAIL_WORKER_PROFILE: HttpAdapterOptions & { modelId: string } = {
+  modelId: "nail-35b-a3b-ctx:latest",
+  baseUrl: "http://127.0.0.1:11434",
+  apiFormat: "ollama",
+  contextTokens: 8192,
+  maxTokens: 2048,
+  keepAlive: "5m",
+  disableReasoning: true,
+  sampling: { temperature: 0.2, topP: 0.9, topK: 20, minP: 0.0, repeatPenalty: 1.05 },
+};
+
+/**
+ * Nail-Qwen3.6-35B-A3B — the default worker.
+ *
+ * A 34.7B MoE with ~3B active parameters, measured at 29.0-30.1 tok/s on the
+ * reference M4 against 6.6-8.65 for the dense 27B. For an agentic loop, where
+ * a card costs many turns, that ratio decides whether the loop is usable.
+ */
 export function createNail35BAdapter(baseUrl = "http://127.0.0.1:11434"): HttpInferenceAdapter {
-  return new HttpInferenceAdapter({
-    modelId: "nail-35b-a3b-ctx:latest",
-    baseUrl,
-    apiFormat: "ollama",
-    // 8k, not the model's 262k ceiling. The weights are ~13GB on a 24GB box, so
-    // the KV cache is what decides whether the machine swaps: a 32k window
-    // drove this host to 9.4GB of swap and stalled the run outright. Card
-    // prompts measure ~1.1k tokens, so the larger window bought nothing.
-    contextTokens: 8192,
-    maxTokens: 2048,
-    keepAlive: "5m",
-    disableReasoning: true,
-    sampling: {
-      temperature: 0.2,
-      topP: 0.9,
-      topK: 20,
-      minP: 0.0,
-      repeatPenalty: 1.05,
-    },
-  });
+  return new HttpInferenceAdapter({ ...NAIL_WORKER_PROFILE, baseUrl });
 }

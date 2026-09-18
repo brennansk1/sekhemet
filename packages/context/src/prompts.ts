@@ -45,6 +45,8 @@ export interface PromptPackOptions {
    * and turn count, not decode speed, is what dominates wall clock.
    */
   pinnedFiles?: { path: string; content: string; label: string }[];
+  /** Repair plan from the manager model after an earlier failed attempt. */
+  managerGuidance?: string;
   activeSkills?: SkillManifest[];
   playbookRules?: string[];
   recentTurns?: TurnHistoryItem[];
@@ -218,6 +220,12 @@ export function buildFullPromptPack(options: PromptPackOptions): BuiltPromptPack
   for (const file of options.pinnedFiles ?? []) {
     userParts.push(
       `=== ${file.label.toUpperCase()}: ${file.path} (shown in full; do not read_file it) ===\n${file.content || "(empty file)"}`,
+    );
+  }
+
+  if (options.managerGuidance) {
+    userParts.push(
+      `=== REPAIR PLAN FROM THE PLANNING MODEL ===\nA previous attempt at this card failed. This plan diagnoses why. Follow it exactly.\n${options.managerGuidance}`,
     );
   }
 

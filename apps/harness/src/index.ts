@@ -7,7 +7,14 @@ import { BoardServiceImpl } from "@sekhemet/board";
 import { BenchmarkHarness } from "@sekhemet/eval";
 import { DeterministicGateRunner, summarizeEvidence } from "@sekhemet/gates";
 import { type CardRecord, CardStore, EventLog, initSchema } from "@sekhemet/kernel";
-import { HttpInferenceAdapter, MockInferenceAdapter, createNail35BAdapter } from "@sekhemet/models";
+import { planRepair } from "@sekhemet/loop";
+import {
+  HttpInferenceAdapter,
+  MockInferenceAdapter,
+  ModelRouter,
+  NAIL_WORKER_PROFILE,
+  createNail35BAdapter,
+} from "@sekhemet/models";
 import { SpidrFeaturePlanner } from "@sekhemet/planner";
 import { ProcessSandbox } from "@sekhemet/sandbox";
 import { NodeGitSyncAdapter } from "@sekhemet/sync";
@@ -16,6 +23,7 @@ import {
   type QueueEntry,
   type QueueReport,
   acceptCard,
+  collectCardFiles,
   executeCard,
   writeQueueReport,
 } from "./execute.js";
@@ -457,18 +465,44 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   }
 
   if (config.command === "queue") {
-    // Run every Ready card in board order on one resident model. With
-    // --auto-accept, each passing card is merged to main so the next builds on
-    // it; that is a benchmarking convenience for release gates, not the
-    // default, because acceptance is a human decision.
+    // Run every Ready card in board order on one resident worker. With
+    // --manager <ollama-model>, cards that fail are then reviewed in one batch
+    // by the manager, which writes a repair plan per card, and the worker
+    // retries each once with its plan. Roles are batched rather than
+    // alternated because only one model fits in memory and every swap
+    // reloads weights. --auto-accept merges passing cards so later cards build
+    // on them: a benchmarking convenience, since acceptance is a human call.
     const autoAccept = argv.includes("--auto-accept");
+    const managerIdx = argv.indexOf("--manager");
+    const managerModel = managerIdx !== -1 ? argv[managerIdx + 1] : undefined;
+    const workerIdx = argv.indexOf("--worker");
+    const workerModel = workerIdx !== -1 ? argv[workerIdx + 1] : undefined;
+
     const ready = (await cardStore.listCards({ status: "ready" })) as CardRecord[];
     if (ready.length === 0) {
       console.log("No Ready cards.");
       return;
     }
 
-    const model = createNail35BAdapter();
+    const router = new ModelRouter({
+      worker: () =>
+        workerModel
+          ? new HttpInferenceAdapter({ ...NAIL_WORKER_PROFILE, modelId: workerModel })
+          : createNail35BAdapter(),
+      ...(managerModel
+        ? {
+            manager: () =>
+              new HttpInferenceAdapter({
+                modelId: managerModel,
+                apiFormat: "ollama",
+                contextTokens: 8192,
+                maxTokens: 2048,
+                disableReasoning: true,
+                sampling: { temperature: 0.2, topP: 0.9, topK: 20, minP: 0 },
+              }),
+          }
+        : {}),
+    });
     const ctx = {
       repoPath: config.repoPath,
       restrictedMode: config.restrictedMode,
@@ -477,63 +511,108 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     };
     const started = Date.now();
     const entries: QueueEntry[] = [];
+    const failed: { card: CardRecord; result: Awaited<ReturnType<typeof executeCard>> }[] = [];
+    let halted = false;
+
+    const attempt = async (card: CardRecord, n: number, guidance?: string) => {
+      const worker = await router.use("worker");
+      console.log(`\n=== ${card.id} (attempt ${n}): ${card.title} ===`);
+      const result = await executeCard(ctx, card, worker, guidance);
+
+      let accepted = false;
+      if (result.passed && autoAccept) {
+        const reviewed = await cardStore.getCard(card.id);
+        if (reviewed) {
+          const sha = await acceptCard(ctx, reviewed);
+          accepted = true;
+          console.log(`   accepted -> main ${sha.slice(0, 10)}`);
+        }
+      }
+
+      entries.push({
+        cardId: card.id,
+        attempt: n,
+        passed: result.passed,
+        accepted,
+        stopReason: result.stopReason,
+        turns: result.evidence.turnsUsed,
+        durationMs: result.evidence.durationMs,
+        promptTokens: result.evidence.tokens.promptTokens,
+        completionTokens: result.evidence.tokens.completionTokens,
+      });
+      console.log(
+        `   ${result.passed ? "PASSED" : "FAILED"} (${result.stopReason}) in ${result.evidence.turnsUsed} turns, ${(result.evidence.durationMs / 1000).toFixed(1)}s`,
+      );
+      if (result.stopReason === "memory_pressure") {
+        console.log("   queue halted: memory pressure");
+        halted = true;
+      }
+      return result;
+    };
 
     try {
       for (const queued of ready) {
+        if (halted) break;
         const card = (await cardStore.getCard(queued.id)) ?? queued;
-        console.log(`\n=== ${card.id}: ${card.title} ===`);
-        const result = await executeCard(ctx, card, model);
+        const result = await attempt(card, 1);
+        if (!result.passed) failed.push({ card, result });
+      }
 
-        let accepted = false;
-        if (result.passed && autoAccept) {
-          const reviewed = await cardStore.getCard(card.id);
-          if (reviewed) {
-            const sha = await acceptCard(ctx, reviewed);
-            accepted = true;
-            console.log(`   accepted -> main ${sha.slice(0, 10)}`);
-          }
+      if (!halted && managerModel && failed.length > 0) {
+        // One swap to the manager for the whole batch of failures.
+        const manager = await router.use("manager");
+        const plans = new Map<string, string>();
+        for (const { card, result } of failed) {
+          console.log(`\n--- manager reviewing ${card.id} ---`);
+          const plan = await planRepair(manager, {
+            card,
+            stopReason: result.stopReason,
+            failures: result.evidence.failures,
+            files: collectCardFiles(result.worktreePath, card),
+          });
+          plans.set(card.id, plan);
+          console.log(
+            plan
+              .split("\n")
+              .slice(0, 6)
+              .map((l) => `   | ${l}`)
+              .join("\n"),
+          );
         }
 
-        entries.push({
-          cardId: card.id,
-          passed: result.passed,
-          accepted,
-          stopReason: result.stopReason,
-          turns: result.evidence.turnsUsed,
-          durationMs: result.evidence.durationMs,
-          promptTokens: result.evidence.tokens.promptTokens,
-          completionTokens: result.evidence.tokens.completionTokens,
-        });
-        console.log(
-          `   ${result.passed ? "PASSED" : "FAILED"} (${result.stopReason}) in ${result.evidence.turnsUsed} turns, ${(result.evidence.durationMs / 1000).toFixed(1)}s`,
-        );
-
-        // The memory guard stops a card; continuing the queue would just trip
-        // it again on the next one.
-        if (result.stopReason === "memory_pressure") {
-          console.log("   queue halted: memory pressure");
-          break;
+        // One swap back, then retry each failure with its plan.
+        for (const { card } of failed) {
+          if (halted) break;
+          const current = (await cardStore.getCard(card.id)) ?? card;
+          await attempt(current, 2, plans.get(card.id));
         }
       }
     } finally {
-      await model.unload();
+      await router.releaseAll();
     }
 
-    const passed = entries.filter((e) => e.passed).length;
+    const cardIds = [...new Set(entries.map((e) => e.cardId))];
+    const firstTry = entries.filter((e) => e.attempt === 1 && e.passed).length;
+    const eventually = cardIds.filter((id) =>
+      entries.some((e) => e.cardId === id && e.passed),
+    ).length;
     const report: QueueReport = {
       startedAt: new Date(started).toISOString(),
-      model: model.modelId,
+      model: workerModel ?? NAIL_WORKER_PROFILE.modelId,
+      ...(managerModel ? { managerModel } : {}),
       entries,
-      passAt1: entries.length > 0 ? passed / entries.length : 0,
+      passAt1: cardIds.length > 0 ? firstTry / cardIds.length : 0,
+      passAfterEscalation: cardIds.length > 0 ? eventually / cardIds.length : 0,
+      modelSwaps: router.swapCount,
       totalDurationMs: Date.now() - started,
     };
     const path = writeQueueReport(config.repoPath, report);
 
     console.log(
-      `\nScorecard: ${passed}/${entries.length} passed (${(report.passAt1 * 100).toFixed(0)}%) in ${(report.totalDurationMs / 60000).toFixed(1)} min`,
+      `\nScorecard: Pass@1 ${firstTry}/${cardIds.length} (${(report.passAt1 * 100).toFixed(0)}%), after escalation ${eventually}/${cardIds.length}, ${router.swapCount} model swap(s), ${(report.totalDurationMs / 60000).toFixed(1)} min`,
     );
     console.log(`Report: ${path}`);
-    if (passed < entries.length) process.exitCode = 1;
+    if (eventually < cardIds.length) process.exitCode = 1;
     return;
   }
 
@@ -551,7 +630,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   console.log("  sekhemet plan <spec>        Decompose feature into SPIDR cards");
   console.log("  sekhemet run <card-id>      Execute card unattended in worktree");
   console.log("  sekhemet accept <card-id>   Squash-merge a reviewed card to main");
-  console.log("  sekhemet queue [--auto-accept]  Run all Ready cards on one warm model");
+  console.log(
+    "  sekhemet queue [--auto-accept] [--worker m] [--manager m]  Run Ready cards; escalate failures to a manager",
+  );
   console.log("  sekhemet gate [card-id]     Run deterministic verification gates");
   console.log("  sekhemet replay <card-id>   Replay checkpoint trajectory for a card");
   console.log("  sekhemet bake-off           Qualify and benchmark local models");

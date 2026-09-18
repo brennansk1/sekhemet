@@ -52,6 +52,11 @@ export interface SessionOptions {
   /** Identical turns tolerated before the oscillation breaker trips. */
   oscillationThreshold?: number | undefined;
 
+  /**
+   * A repair plan from the manager model, produced after an earlier attempt at
+   * this card failed. Rendered ahead of everything else the worker is told.
+   */
+  managerGuidance?: string | undefined;
   /** Tool interface rendered into the prompt. Defaults to the full catalog. */
   tools?: ToolInterfaceSpec[] | undefined;
   skillsRegistry?: SkillsRegistry | undefined;

@@ -210,6 +210,9 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       card: { ...this.card, stepsUsed: this.stepsUsed },
       repoMap: this.repoMap(),
       pinnedFiles: this.pinnedFiles(),
+      // Per-card, so it rides in the volatile zone: in the system zone it would
+      // both break the cacheable prefix and overrun that zone's budget.
+      ...(this.options.managerGuidance ? { managerGuidance: this.options.managerGuidance } : {}),
       activeSkills: skills,
       playbookRules,
       recentTurns: maskOlderObservations(this.history, VERBATIM_TURN_WINDOW),

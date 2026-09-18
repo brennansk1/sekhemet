@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { BoardServiceImpl } from "@sekhemet/board";
 import { PlaybookRegistry, SkillsRegistry } from "@sekhemet/context";
@@ -29,6 +29,7 @@ export async function executeCard(
   ctx: ExecutionContext,
   card: CardRecord,
   model: LocalInferenceAdapter,
+  managerGuidance?: string,
 ): Promise<CardRunResult> {
   const log = ctx.log ?? ((line: string) => console.log(line));
   const gitAdapter = new NodeGitSyncAdapter(ctx.repoPath);
@@ -57,6 +58,10 @@ export async function executeCard(
     agentHarness: "sekhemet",
     // Stop before the host does: a paused card resumes, an OOM takes the machine.
     memoryGuard: {},
+    // A retry after a manager review re-attaches to the existing worktree, so
+    // the worker resumes from its own last state rather than from scratch.
+    useExistingWorktree: existsSync(join(ctx.repoPath, ".sekhemet", "worktrees", card.id)),
+    ...(managerGuidance ? { managerGuidance } : {}),
     skillsRegistry: skills,
     playbookRegistry: playbook,
     lifecycle: {
@@ -141,6 +146,8 @@ export async function acceptCard(ctx: ExecutionContext, card: CardRecord): Promi
 
 export interface QueueEntry {
   cardId: string;
+  /** 1 for the worker's first attempt, 2 for the retry after a manager plan. */
+  attempt: number;
   passed: boolean;
   accepted: boolean;
   stopReason: string;
@@ -155,6 +162,10 @@ export interface QueueReport {
   model: string;
   entries: QueueEntry[];
   passAt1: number;
+  /** Cards passing after at most one manager-guided retry. */
+  passAfterEscalation: number;
+  managerModel?: string;
+  modelSwaps: number;
   totalDurationMs: number;
 }
 
@@ -165,4 +176,19 @@ export function writeQueueReport(repoPath: string, report: QueueReport): string 
   const path = join(dir, "queue_report.json");
   writeFileSync(path, `${JSON.stringify(report, null, 2)}\n`, "utf8");
   return path;
+}
+
+/**
+ * Collect the evidence a manager needs to diagnose a failed card: its
+ * acceptance tests and the scope files exactly as the worker left them.
+ */
+export function collectCardFiles(
+  worktreePath: string,
+  card: CardRecord,
+): { path: string; content: string }[] {
+  const paths = [...(card.acceptanceTests ?? []).map((t) => `tests/${t}`), ...card.scopeFiles];
+  return paths.map((path) => {
+    const abs = join(worktreePath, path);
+    return { path, content: existsSync(abs) ? readFileSync(abs, "utf8").slice(0, 8000) : "" };
+  });
 }
