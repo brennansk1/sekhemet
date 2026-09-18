@@ -26,6 +26,7 @@ Every document in `docs/` is listed here, and nowhere else is the source of trut
 | [FRONTEND_DESIGN.md](design/FRONTEND_DESIGN.md) | Dashboard information architecture, voice, tokens and phases. |
 | [PM_DESIGN.md](design/PM_DESIGN.md) | Merit (the project manager), team practices, Insights, Integrations. |
 | [PM_CONTRACT.md](design/PM_CONTRACT.md) | Backend and dashboard contract for Merit, integrations and learning. |
+| [INTEGRATION_REVIEW.md](design/INTEGRATION_REVIEW.md) | How the Worker, Merit, reviewer, Researcher, learning and scheduling fit together; findings, ranked fixes and a target architecture. |
 | [NAMING.md](design/NAMING.md) | The naming rule: what keeps its professional name, what is themed. |
 | [mockups/](design/mockups/) | Static HTML mockups of the dashboard surfaces. |
 
@@ -49,3 +50,4 @@ Every document in `docs/` is listed here, and nowhere else is the source of trut
 | File | Purpose |
 |---|---|
 | [FEATURE_INVENTORY.md](reference/FEATURE_INVENTORY.md) | Every feature in the design and its implementation status. |
+| [FEATURE_INVENTORY_REAUDIT.md](reference/FEATURE_INVENTORY_REAUDIT.md) | The inventory re-audited against the current code: status per unit with its caller, and the remaining gaps ranked. |
