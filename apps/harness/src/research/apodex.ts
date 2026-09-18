@@ -94,6 +94,8 @@ export async function extractInfo(
       reasoning: "off",
       maxTokens: 1200,
       temperature: 0.2,
+      // Its own server slot, so the research conversation's cached prefix survives.
+      slot: 1,
     });
     const text = stripThinking(r.text);
     return text || body.slice(0, 12_000);

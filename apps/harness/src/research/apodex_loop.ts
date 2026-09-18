@@ -482,6 +482,7 @@ export async function apodexLoop(
       reasoningBudgetTokens: 1536,
       maxTokens: 3000,
       purpose: "planning",
+      slot: 0,
     });
     const text = stripThinking(res.text);
     const end = res.toolCalls.find((c) => c.name === terminal.name);
@@ -511,6 +512,15 @@ export async function apodexLoop(
       }
       return { text, ended: last ? "budget" : "text", turns: turn };
     }
+    deps.onEvent?.(
+      `${opts.role === "subagent" ? "  · " : ""}turn ${turn}: ${
+        res.toolCalls.length
+          ? res.toolCalls
+              .map((c) => `${c.name}(${JSON.stringify(c.arguments).slice(0, 140)})`)
+              .join(", ")
+          : "text"
+      } [${res.usage.completionTokens} tok, ${(res.usage.durationMs / 1000).toFixed(0)}s]`,
+    );
     const calls = res.toolCalls
       .filter((c) => c.name !== terminal.name)
       .slice(0, 6)
@@ -656,6 +666,7 @@ export async function apodexTeam(
       reasoningBudgetTokens: 2048,
       maxTokens: 3500,
       purpose: "planning",
+      slot: 0,
     });
     if (res.toolCalls.length === 0) {
       const text = stripThinking(res.text);
@@ -669,6 +680,9 @@ export async function apodexTeam(
       }
       return { answer: text, ledger, tasks: tasksRun, coordinatorTurns: turn, reports };
     }
+    deps.onEvent?.(
+      `coordinator ${turn}: ${res.toolCalls.map((c) => `${c.name}(${JSON.stringify(c.arguments).slice(0, 160)})`).join(", ")}`,
+    );
     const calls = res.toolCalls
       .slice(0, 4)
       .map((c, i) => ({ ...c, id: c.id || `co_${turn}_${i}` }));

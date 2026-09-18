@@ -427,3 +427,47 @@ describe("reasoning never leaks into answers", () => {
     expect(stripThinking("Answer <think>unfinished")).toBe("Answer");
   });
 });
+
+describe("server slots", () => {
+  it("keeps the conversation on slot 0 and extraction on slot 1", async () => {
+    const { research } = await import("../src/research/researcher.js");
+    const page = `<html><body><p>${"content ".repeat(100)}</p></body></html>`;
+    const web = {
+      fetch: async (url: string) =>
+        url.endsWith("/robots.txt")
+          ? new Response("")
+          : new Response(page, { headers: { "content-type": "text/html" } }),
+    };
+    const requests: { slot?: number; extraction: boolean }[] = [];
+    let i = 0;
+    const steps = [
+      {
+        toolCalls: [
+          {
+            id: "a",
+            name: "web_fetch",
+            arguments: { url: "https://docs.example.dev/a", info_to_extract: "x" },
+          },
+        ],
+      },
+      { toolCalls: [{ id: "b", name: "finalize_answer", arguments: { content: "done" } }] },
+    ];
+    const model = {
+      modelId: "apodex-1.1-mini",
+      supportedArms: ["arm_a_flat" as const],
+      nativeTools: true,
+      async generate(req: { prompt: string; slot?: number }) {
+        const extraction = req.prompt.startsWith("You are given a piece of content");
+        requests.push({ ...(req.slot !== undefined ? { slot: req.slot } : {}), extraction });
+        const usage = { promptTokens: 1, completionTokens: 1, durationMs: 1 };
+        return extraction
+          ? { text: "info", toolCalls: [], usage }
+          : { text: "", usage, ...steps[i++] };
+      },
+    };
+    await research(model as never, "q", { repoPath: process.cwd(), web });
+    expect(requests.filter((r) => r.extraction).every((r) => r.slot === 1)).toBe(true);
+    expect(requests.filter((r) => !r.extraction).every((r) => r.slot === 0)).toBe(true);
+    expect(requests.some((r) => r.extraction)).toBe(true);
+  });
+});

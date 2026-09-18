@@ -65,6 +65,8 @@ export interface ResearchDeps {
   maxRounds?: number;
   /** Today's date for the vendor prompt (injectable for tests). */
   today?: string;
+  /** Progress: one line per turn and tool call (the CLI prints it). */
+  onEvent?: (line: string) => void;
 }
 
 const str = { type: "string" } as const;

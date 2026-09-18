@@ -161,6 +161,7 @@ export class ResearchService {
       maxRounds?: number;
       /** Tool dependencies passed through (registries, fetchers; injectable for tests). */
       tools?: Pick<ResearchDeps, "fetchJson" | "libraries">;
+      onEvent?: (line: string) => void;
     },
   ) {}
 
@@ -187,6 +188,7 @@ export class ResearchService {
         repoPath: this.deps.repoPath,
         web: this.deps.web,
         ...this.deps.tools,
+        ...(this.deps.onEvent ? { onEvent: this.deps.onEvent } : {}),
         ...(this.deps.today ? { today: this.deps.today } : {}),
         ...(this.deps.maxRounds ? { maxRounds: this.deps.maxRounds } : {}),
       };

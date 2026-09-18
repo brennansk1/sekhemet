@@ -13,3 +13,9 @@ AGPL-3.0) as a separate, unmodified container; it is not linked into Sekhemet.
 The research service's rate limiting, robots handling, source ranking,
 documentation reader and research loop are ported from the Helga project's
 research service (same author).
+
+The Researcher's prompts, tool shapes and result formats for Apodex are
+adapted from FrontierAgent (https://github.com/ApodexAI/FrontierAgent,
+Apache License 2.0, Copyright Apodex AI): apodex/prompts_base.py,
+workflows/agent_team/prompts.py and plugins/tools/*_aligned.py. See
+apps/harness/src/research/apodex.ts.

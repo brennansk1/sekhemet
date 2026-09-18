@@ -62,6 +62,7 @@ export async function runResearchCommand(
     web,
     ...(cardStore ? { cardStore } : {}),
     ...(rounds ? { maxRounds: rounds } : {}),
+    onEvent: (line) => process.stderr.write(`${line}\n`),
     model: async () => {
       adapter ??= researcherAdapter(modelName);
       return adapter;
