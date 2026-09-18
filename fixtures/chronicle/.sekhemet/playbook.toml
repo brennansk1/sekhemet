@@ -1,0 +1,37 @@
+# Project Chronicle playbook.
+#
+# Each rule was derived from an observed, repeated gate failure during real runs
+# against a local model. The design's rule is that every review return reason
+# becomes a candidate playbook rule; these are the ones that earned their place.
+
+[[rule]]
+id = "rule_esm_extensions"
+originCard = "card_chron_hasher"
+triggerGate = "typecheck"
+pattern = "chronicle"
+instruction = "This project is ESM with moduleResolution nodenext. EVERY relative import must end in .js, even when importing a .ts file: write `from './types.js'`, never `from './types'`. Omitting it fails typecheck with TS2835."
+effectiveDate = "2026-09-18"
+
+[[rule]]
+id = "rule_node_sqlite"
+originCard = "card_chron_db"
+triggerGate = "typecheck"
+pattern = "chronicle"
+instruction = "Use the built-in `node:sqlite` module (`import { DatabaseSync } from 'node:sqlite'`). Do NOT use better-sqlite3 or any other database package: none is installed, and importing one fails typecheck with TS2307."
+effectiveDate = "2026-09-18"
+
+[[rule]]
+id = "rule_hash_input_type"
+originCard = "card_chron_hasher"
+triggerGate = "typecheck"
+pattern = "chronicle"
+instruction = "A function that computes a hash cannot require the hash as input. Type such a parameter `Omit<ChronicleEvent<T>, 'hash'>`, not `ChronicleEvent<T>`."
+effectiveDate = "2026-09-18"
+
+[[rule]]
+id = "rule_finish_promptly"
+originCard = "card_chron_iface"
+triggerGate = "test"
+pattern = "chronicle"
+instruction = "Once every declared scope file is written, call finish_card. Do not re-read files you have already read: verification gives you the authoritative answer, and re-reading spends the step budget without changing anything."
+effectiveDate = "2026-09-18"

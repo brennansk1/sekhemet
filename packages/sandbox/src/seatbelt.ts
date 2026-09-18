@@ -90,7 +90,11 @@ export function generateSeatbeltProfile(options: SandboxOptions): string {
 ;; Process primitives required to run a toolchain at all.
 (allow process-exec)
 (allow process-fork)
-(allow signal (target self))
+;; Test runners and build tools manage worker pools, so they must be able to
+;; signal their own descendants. Restricting this to self made vitest fail
+;; with kill EPERM while tearing down workers: a sandbox that breaks the
+;; toolchain reports the sandbox, not the card.
+(allow signal (target same-sandbox))
 (allow sysctl-read)
 (allow mach-lookup)
 (allow ipc-posix-shm)
