@@ -6,10 +6,13 @@ import { ledgerAltered, store } from "./store.js";
 const NAV = [
   { name: "review", label: "Review", icon: "review", key: "g r" },
   { name: "board", label: "Board", icon: "board", key: "g b" },
+  { name: "pm", label: "Merit", icon: "chat", key: "g a", title: "Merit, project manager" },
+  { name: "insights", label: "Insights", icon: "insights", key: "g f" },
   { name: "runs", label: "Runs", icon: "runs", key: "g q" },
   { name: "ledger", label: "Ledger", icon: "ledger", key: "g l" },
   { name: "playbook", label: "Playbook", icon: "playbook", key: "g p" },
   { name: "machine", label: "Machine", icon: "machine", key: "g m" },
+  { name: "integrations", label: "Integrations", icon: "plug", key: "g s" },
 ];
 
 let active = "";
@@ -120,13 +123,22 @@ function renderSide() {
         }
       : null,
   };
+  const openProposals = s.pm.messages.reduce(
+    (n, m) => n + (m.proposals ?? []).filter((p) => p.state === "open").length,
+    0,
+  );
+  if (s.pm.status?.phase && s.pm.status.phase !== "idle") {
+    counts.pm = { n: "…", title: "Merit is replying" };
+  } else if (openProposals) {
+    counts.pm = { n: String(openProposals), title: `${openProposals} open proposals` };
+  }
   const nav = NAV.map((item) => {
     const c = counts[item.name];
     const cur = active === item.name ? ' aria-current="page"' : "";
     const badge = c
       ? `<span class="n tnum${c.warn ? " warn" : ""}${c.long ? " long" : ""}"${c.title ? ` title="${esc(c.title)}"` : ""}>${esc(c.n)}</span>`
       : "";
-    return `<a href="#/${item.name}"${cur} title="${esc(item.label)} (${item.key})">${icon(item.icon)}<span class="lbl">${esc(item.label)}</span>${badge}</a>`;
+    return `<a href="#/${item.name}"${cur} title="${esc(item.title ?? item.label)} (${item.key})">${icon(item.icon)}<span class="lbl">${esc(item.label)}</span>${badge}</a>`;
   }).join("");
 
   const v = s.verification;
@@ -202,6 +214,15 @@ function renderBar() {
     const limit = s.wipLimits.review;
     const n = s.cards.filter((c) => c.status === "review").length;
     html = `<div class="bar" role="status">${icon("pause")}<span><b>Review is full (${n} of ${esc(limit)}).</b> <span class="sec">Finished cards will wait in Checking until you clear one.</span></span><a class="link-btn" href="#/review">Open review</a></div>`;
+  } else if (s.pm.status?.workerPaused && s.pm.status.phase !== "idle") {
+    // PM_DESIGN §2.5: nothing is wrong, so the running rule, not amber.
+    const step = s.pm.step;
+    const head = `Worker paused${step ? ` after step ${step}` : ""} while Merit replies.`;
+    const tail =
+      s.pm.status.phase === "resuming_worker"
+        ? "Reloading the Worker now."
+        : `It continues from ${step ? `step ${step + 1}` : "its next step"} when the reply is in.`;
+    html = `<div class="bar run" role="status">${icon("pause")}<span><b>${esc(head)}</b> <span class="sec">${esc(tail)}</span></span>${s.route?.name === "pm" ? "" : '<button class="link-btn" type="button" data-open-pm>Open Merit</button>'}</div>`;
   }
   if (html !== lastBar) {
     slot.innerHTML = html;
@@ -219,6 +240,8 @@ export function initShell() {
     const t = e.target instanceof Element ? e.target : null;
     if (!t) return;
     if (t.closest("[data-theme-toggle]")) toggleTheme();
-    else if (t.closest("[data-retry]")) window.dispatchEvent(new CustomEvent("sekhemet:retry"));
+    else if (t.closest("[data-retry]") && !t.closest(".pm-thread"))
+      window.dispatchEvent(new CustomEvent("sekhemet:retry"));
+    else if (t.closest("[data-open-pm]")) window.dispatchEvent(new CustomEvent("sekhemet:open-pm"));
   });
 }

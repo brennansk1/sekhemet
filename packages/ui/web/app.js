@@ -1,11 +1,16 @@
 // Entry point: hydrate, subscribe to the ledger stream, route, and mount views.
 import * as boardView from "./board.js";
+import * as insightsView from "./insights.js";
+import * as integrationsView from "./integrations.js";
 import * as cardView from "./card.js";
 import { getJSON } from "./dom.js";
 import { initKeys } from "./keys.js";
 import * as ledgerView from "./ledger.js";
 import * as machineView from "./machine.js";
 import * as playbookView from "./playbook.js";
+import { initPm, loadThread, onPmEvent } from "./pm_client.js";
+import { initPmPanel } from "./pm_panel.js";
+import * as pmView from "./pm_view.js";
 import * as reviewView from "./review.js";
 import * as runsView from "./runs.js";
 import { initShell, setActiveNav } from "./shell.js";
@@ -19,6 +24,9 @@ const VIEWS = {
   ledger: ledgerView,
   machine: machineView,
   playbook: playbookView,
+  pm: pmView,
+  insights: insightsView,
+  integrations: integrationsView,
 };
 
 let current = null;
@@ -75,6 +83,8 @@ function applyBoard(board) {
     cards: board.cards ?? [],
     wipLimits: board.wipLimits ?? {},
     backpressureActive: Boolean(board.backpressureActive),
+    epics: board.epics ?? [],
+    cycles: board.cycles ?? [],
     feed: store.state.feed,
     moved,
     now,
@@ -147,6 +157,7 @@ export function connect() {
     // Frames sent while we were away are gone; catch up once.
     if (wasDown) {
       await hydrate().catch(() => {});
+      loadThread();
     }
   });
   source.addEventListener("append", (ev) => {
@@ -166,6 +177,13 @@ export function connect() {
       else store.set({ verification: store.state.verification, feed: store.state.feed });
     } catch {
       // A malformed frame is dropped; the next one carries the full board.
+    }
+  });
+  source.addEventListener("pm", (ev) => {
+    try {
+      onPmEvent(JSON.parse(ev.data));
+    } catch {
+      // A malformed frame is dropped; the thread reloads on reconnect.
     }
   });
   source.addEventListener("machine", (ev) => {
@@ -216,6 +234,8 @@ async function boot() {
     refreshBoard();
   });
   route();
+  initPm();
+  initPmPanel();
   connect();
   refreshDoctor();
   setInterval(refreshDoctor, 30_000);

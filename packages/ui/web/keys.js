@@ -5,6 +5,7 @@ import { isTyping } from "./dom.js";
 import { closeTop, topOverlay } from "./overlay.js";
 import { openPalette } from "./palette.js";
 import { peekAct } from "./peek.js";
+import { togglePmPanel } from "./pm_panel.js";
 import { toggleTheme } from "./shell.js";
 import { undoAccept } from "./triage.js";
 
@@ -15,6 +16,9 @@ const CHORDS = {
   l: "#/ledger",
   m: "#/machine",
   p: "#/playbook",
+  a: "#/pm",
+  f: "#/insights",
+  s: "#/integrations",
 };
 let chordUntil = 0;
 
@@ -36,8 +40,16 @@ export function initKeys() {
       openPalette("", cardAction);
       return;
     }
+    if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "j") {
+      e.preventDefault();
+      togglePmPanel();
+      return;
+    }
     const top = topOverlay();
-    if (top?.onKey?.(e)) return;
+    // A non-modal drawer (peek) must not read keys typed into a field
+    // elsewhere, e.g. the Merit composer: `a` there is a letter, not Accept.
+    const typingOutside = isTyping(e) && top && !top.modal && !top.node?.contains?.(e.target);
+    if (!typingOutside && top?.onKey?.(e)) return;
     if (e.key === "Escape") {
       if (top) {
         e.preventDefault();

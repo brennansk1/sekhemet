@@ -1,0 +1,877 @@
+/* Merit, the project manager (PM_DESIGN §2): dock, thread, proposals, waiting. Tokens only. */
+
+/* ---------- Dock ---------- */
+.pm-dock {
+  width: 400px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-surface);
+  border-left: 1px solid var(--border-subtle);
+}
+.pm-head {
+  height: 52px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px 0 16px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.pm-head .who {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: var(--leading-tight);
+}
+.pm-head .who b {
+  font-weight: 600;
+}
+.pm-head .line {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pm-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.av {
+  width: 24px;
+  height: 24px;
+  flex: none;
+  border-radius: var(--radius-card);
+  background: var(--bg-overlay);
+  color: var(--text-primary);
+  display: grid;
+  place-items: center;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  line-height: 1;
+}
+
+/* ---------- Thread ---------- */
+.pm-thread {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.pm-log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+.pm-log:focus-visible {
+  outline-offset: -2px;
+}
+.pm-thread.full .pm-log {
+  padding: 24px max(24px, calc((100% - 720px) / 2));
+}
+.msg {
+  min-width: 0;
+}
+.msg.user {
+  align-self: flex-end;
+  max-width: 85%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+.msg.user .bubble {
+  background: var(--bg-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  padding: 8px 12px;
+}
+.msg .meta {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.msg.pm > header,
+.msg.pm .pend > header,
+.msg.intro header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.msg.pm > header b,
+.pend header b,
+.msg.intro header b {
+  font-weight: 600;
+}
+.msg.pm > header time,
+.pend header .clock {
+  margin-left: auto;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.msg.intro,
+.msg.pending,
+.msg.error {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+.msg.intro > div,
+.msg.pending > .pend,
+.msg.error > div {
+  flex: 1;
+  min-width: 0;
+}
+.msg.intro header,
+.msg.pending .pend header {
+  height: 24px;
+}
+.msg.intro .md {
+  color: var(--text-secondary);
+}
+.msg.sys {
+  align-self: center;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.msg.error {
+  font-size: var(--text-sm);
+}
+.msg.error p {
+  margin-bottom: 8px;
+}
+
+/* Markdown subset (renderPmMarkdown) */
+.md {
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.md > * + * {
+  margin-top: 8px;
+}
+.md h4 {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  margin: 12px 0 0;
+}
+.md ul,
+.md ol {
+  margin: 0;
+  padding-left: 20px;
+}
+.md li + li {
+  margin-top: 4px;
+}
+.md code {
+  font-size: 0.92em;
+  background: var(--bg-raised);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+.md pre {
+  background: var(--bg-base);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  padding: 8px 12px;
+  overflow-x: auto;
+  font-size: var(--text-sm);
+  line-height: var(--leading-code);
+}
+.md pre code {
+  background: none;
+  padding: 0;
+}
+.md strong {
+  font-weight: 600;
+}
+.msg.user .md code {
+  background: var(--bg-overlay);
+}
+
+/* Card chips (@card) and cites */
+.cchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  vertical-align: bottom;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--bg-base);
+  color: var(--text-primary);
+  text-decoration: none;
+  font-size: var(--text-xs);
+  line-height: 18px;
+  white-space: nowrap;
+  transition: background var(--motion);
+}
+.cchip:hover {
+  background: var(--bg-overlay);
+  border-color: var(--border-strong);
+}
+.cchip .mono {
+  color: var(--text-secondary);
+}
+.cchip .t {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cchip .ic {
+  color: var(--text-secondary);
+}
+.cchip .ic.i-pass {
+  color: var(--state-pass);
+}
+.cchip .ic.i-fail {
+  color: var(--state-fail);
+}
+.cchip .ic.i-park {
+  color: var(--state-parked);
+}
+.cites {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  align-items: center;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+/* ---------- Waiting (§2.5) ---------- */
+.steps-pm {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.steps-pm li {
+  height: 24px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+.steps-pm li.current {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+.steps-pm li .l {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.steps-pm li .t {
+  margin-left: auto;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+.steps-pm .todo {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  border-radius: 50%;
+  border: 1.5px solid var(--border-strong);
+}
+.eta {
+  flex: 1;
+  min-width: 32px;
+  max-width: 120px;
+  height: 2px;
+  margin-left: 4px;
+  border-radius: 1px;
+  background: var(--bg-overlay);
+  overflow: hidden;
+}
+.eta i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--state-running);
+}
+.eta.over i {
+  background: var(--state-parked);
+}
+.pend .note {
+  margin-top: 8px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  line-height: var(--leading-normal);
+}
+.pend {
+  padding: 12px;
+  margin: -12px 0 0 -12px;
+  border-left: 2px solid var(--state-running);
+  background: var(--tint-running);
+  border-radius: 0 var(--radius-card) var(--radius-card) 0;
+}
+.msg.pending .pend header {
+  margin-bottom: 4px;
+}
+
+/* ---------- Composer ---------- */
+.pm-compose {
+  flex: none;
+  padding: 8px 16px 12px;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pm-thread.full .pm-compose {
+  padding: 12px max(24px, calc((100% - 720px) / 2)) 16px;
+}
+.starters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.starters:empty {
+  display: none;
+}
+.starter {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  background: var(--bg-base);
+}
+.starter:hover {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+.ctx {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  font-size: var(--text-xs);
+  min-width: 0;
+}
+.ctx > span:not(.sec) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ctx .icon-btn {
+  height: 20px;
+  padding: 0 4px;
+}
+.ctx.off {
+  color: var(--text-secondary);
+}
+.ctx.off:hover {
+  color: var(--text-primary);
+}
+.pm-compose .box {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 6px 6px 6px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-card);
+  background: var(--bg-base);
+}
+.pm-compose .box:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+.pm-compose textarea {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  resize: none;
+  padding: 5px 0;
+  line-height: 19px;
+  max-height: 168px;
+}
+.pm-compose textarea:focus-visible {
+  outline: none;
+}
+.pm-compose textarea::placeholder {
+  color: var(--text-muted);
+}
+.pm-compose textarea:disabled {
+  cursor: not-allowed;
+}
+.pm-compose .send {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-control);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.pm-compose .send:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.pm-compose .cost {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  line-height: var(--leading-normal);
+}
+.picker {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 4px);
+  z-index: 5;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-card);
+  padding: 4px;
+}
+.pk-o {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: var(--radius-control);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+.pk-o .t {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pk-o .mono {
+  color: var(--text-secondary);
+  width: 64px;
+  flex: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pk-o .sec {
+  font-size: var(--text-xs);
+}
+.pk-o[aria-selected="true"],
+.pk-o:hover {
+  background: var(--bg-raised);
+}
+
+/* Empty and error states */
+.pm-empty {
+  margin: auto 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  padding: 24px 8px;
+}
+.pm-empty b {
+  color: var(--text-primary);
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+.pm-empty code {
+  font-size: var(--text-xs);
+  background: var(--bg-raised);
+  border-radius: var(--radius-control);
+  padding: 1px 4px;
+  color: var(--text-primary);
+}
+.pm-skel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ---------- Proposals (§2.4) ---------- */
+.pgroup {
+  margin-top: 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  overflow: hidden;
+}
+.pm-dock .pgroup {
+  background: var(--bg-base);
+}
+.pgroup > header {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  padding: 6px 8px 6px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: var(--text-sm);
+}
+.pgroup > header b {
+  font-weight: 600;
+}
+.pgroup > header .sec {
+  font-size: var(--text-xs);
+}
+.gacts {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+.plist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.prop {
+  padding: 12px;
+  border-top: 1px solid var(--border-subtle);
+  position: relative;
+}
+.prop:first-child {
+  border-top: 0;
+}
+.prop:focus-visible {
+  outline-offset: -2px;
+}
+.prop .ph {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.prop .pk {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.prop .sum {
+  margin: 4px 0 0;
+  font-size: var(--text-sm);
+}
+.pdiff {
+  margin: 8px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.pdiff > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  font-size: var(--text-sm);
+}
+.pdiff dt {
+  width: 72px;
+  flex: none;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+.pdiff dd {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+.pdiff .b,
+.pdiff .a,
+.pdiff .add,
+.pdiff .rem {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+  line-height: 20px;
+  border-radius: var(--radius-control);
+  max-width: 100%;
+}
+.pdiff .b,
+.pdiff .rem {
+  background: var(--tint-fail);
+  color: var(--text-secondary);
+}
+.pdiff .b > span:last-child,
+.pdiff .rem {
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+.pdiff .a,
+.pdiff .add {
+  background: var(--tint-pass);
+  font-weight: 500;
+}
+.pdiff .arr {
+  color: var(--text-secondary);
+}
+.pdiff.new .a {
+  font-weight: 400;
+}
+.pcards {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.pcards li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: var(--text-sm);
+  padding: 2px 6px;
+  border-radius: var(--radius-control);
+  background: var(--tint-pass);
+}
+.pcards .n {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  width: 12px;
+  flex: none;
+}
+.pcards .t {
+  flex: 1;
+  min-width: 0;
+}
+.pcards .meta {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.pnote {
+  margin-top: 8px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.pacts {
+  margin-top: 8px;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+}
+.pacts .why {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  order: -1;
+  margin-right: auto;
+}
+.prop.stale::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--state-parked);
+}
+.pstale {
+  margin-top: 8px;
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.pstale .ic {
+  margin-top: 1px;
+}
+.prop.applied,
+.prop.discarded {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  min-width: 0;
+}
+.prop.applied b,
+.prop.discarded b {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.prop.applied .sum,
+.prop.discarded .sum {
+  margin: 0;
+  font-size: var(--text-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.prop.discarded .sum {
+  text-decoration: line-through;
+}
+.prop .when {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+/* Priority glyph (§3.1): the shape carries it; colour stays for state. */
+.prio {
+  display: inline-flex;
+  width: 12px;
+  height: 12px;
+  flex: none;
+  color: var(--text-secondary);
+}
+.prio .ic path {
+  stroke-width: 3;
+}
+.prio .ic .off {
+  color: var(--border-strong);
+  stroke: var(--border-strong);
+}
+.prio.p0 .ic path {
+  stroke-width: 2.5;
+}
+.prio.p1 {
+  color: var(--text-primary);
+}
+.prio.p1 .ic path,
+.prio.p1 .ic rect {
+  stroke-width: 2;
+}
+
+/* ---------- Full view (#/pm) ---------- */
+.pm-page {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.pm-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.pm-rail {
+  width: 288px;
+  flex: none;
+  border-left: 1px solid var(--border-subtle);
+  padding: 16px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  font-size: var(--text-sm);
+}
+.pm-rail h3 {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  margin: 0 0 8px;
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+.pm-rail .sec {
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+}
+.pm-rail .small {
+  margin-top: 8px;
+}
+.rail-props {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.rail-props button {
+  width: 100%;
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 4px 6px;
+  border-radius: var(--radius-control);
+  text-align: left;
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+}
+.rail-props button .ic {
+  margin-top: 2px;
+  color: var(--text-secondary);
+}
+.rail-props button:hover {
+  background: var(--bg-overlay);
+}
+.pm-rail .wk {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.pm-rail dl.kv {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--text-xs);
+}
+.pm-rail dl.kv div {
+  display: flex;
+  gap: 8px;
+}
+.pm-rail dl.kv dt {
+  width: 72px;
+  flex: none;
+  color: var(--text-secondary);
+}
+.pm-rail dl.kv dd {
+  margin: 0;
+}
+
+/* Worker paused for Merit: the running rule, not amber (§2.5). */
+.bar.run {
+  border-bottom-color: var(--state-running);
+}
+.bar.run > .ic {
+  color: var(--state-running);
+}
+
+@media (max-width: 1279px) {
+  .pm-dock {
+    width: 360px;
+  }
+  .pm-rail {
+    display: none;
+  }
+}
+@media (max-width: 767px) {
+  .pm-dock {
+    display: none;
+  }
+}

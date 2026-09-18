@@ -57,6 +57,29 @@ export const ICONS = {
   "check-circle": '<circle cx="12" cy="12" r="8.5"/><path d="m8.5 12.5 2.5 2.5 4.5-5"/>',
   "arrow-down": '<path d="M12 5v14M6 13l6 6 6-6"/>',
   refresh: '<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 5v6h-6"/>',
+  // Priority (PM_DESIGN §3.1): bars read as bars through a CSS stroke on
+  // `.prio`; unlit bars carry class `off`, coloured by the stylesheet.
+  "priority-none": '<path d="M5 12h3M10.5 12h3M16 12h3"/>',
+  "priority-low": '<path d="M6 19v-5"/><path class="off" d="M12 19v-9M18 19V6"/>',
+  "priority-medium": '<path d="M6 19v-5M12 19v-9"/><path class="off" d="M18 19V6"/>',
+  "priority-high": '<path d="M6 19v-5M12 19v-9M18 19V6"/>',
+  "priority-urgent": '<rect x="3.5" y="3.5" width="17" height="17" rx="3.5"/><path d="M12 7.5v5.5M12 16.5h.01"/>',
+  chat: '<path d="M4 5.5h16v10.5H10l-6 4z"/><path d="M8 9.5h8M8 12.5h5"/>',
+  insights: '<path d="M4 4v16h16"/><path d="m7.5 15 4-5 3 3 5-6"/>',
+  plug: '<path d="M9 3v4M15 3v4M6 7h12v3a6 6 0 0 1-12 0zM12 16v5"/>',
+  split: '<path d="M4 12h6l4-6h6M10 12l4 6h6"/><path d="m18 4 2 2-2 2M18 16l2 2-2 2"/>',
+  "arrow-right": '<path d="M5 12h14M13 6l6 6-6 6"/>',
+  list: '<path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01"/>',
+  filter: '<path d="M4 5h16l-6 7.5V19l-4-2v-4.5z"/>',
+  cycle: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5a4.5 4.5 0 0 1 4.5 4.5H12z"/>',
+  layers: '<path d="m12 4 8 4-8 4-8-4z"/><path d="m4 12 8 4 8-4M4 16l8 4 8-4"/>',
+  send: '<path d="M4 12 20 4l-5 16-3-7z"/><path d="m12 13 8-9"/>',
+  expand: '<path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/>',
+  tag: '<path d="M4 4h7l9 9-7 7-9-9z"/><path d="M8 8h.01"/>',
+  calendar: '<rect x="4" y="5.5" width="16" height="14" rx="1.5"/><path d="M4 10h16M8 3.5v4M16 3.5v4"/>',
+  user: '<circle cx="12" cy="8.5" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/>',
+  download: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
+  upload: '<path d="M12 15V4M7 9l5-5 5 5M5 20h14"/>',
 } as const;
 
 export type IconName = keyof typeof ICONS;

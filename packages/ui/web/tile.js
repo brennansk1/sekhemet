@@ -1,6 +1,7 @@
 // Card tile (FRONTEND_DESIGN §2.5.1). Returns markup; every model string is escaped.
 import { esc, icon } from "./dom.js";
 import { GATE_STATE_LABELS, KIND_LABELS, formatDuration, formatWait } from "./lib/vocabulary.js";
+import { labelChips, pointsText, prioMark } from "./marks.js";
 
 const PIP_ICON = { pass: "check", fail: "x", skipped: "minus", running: "ring" };
 
@@ -52,8 +53,12 @@ const MARK = {
 };
 
 /** The tile's live wait text, recomputed from enteredColumnAt so it counts up. */
-function statusText(card, now) {
+function statusText(card, now, opts = {}) {
   const d = card.display;
+  // PM_DESIGN §2.5: the Worker waits at a step boundary while Merit replies.
+  if (opts.pmPaused && card.status === "in_progress") {
+    return `Paused for Merit${card.stepsUsed ? ` · step ${card.stepsUsed} of ${card.stepBudget}` : ""}`;
+  }
   if (card.status === "review" && d.enteredColumnAt) {
     return `Waiting ${formatWait(now - Date.parse(d.enteredColumnAt))}`;
   }
@@ -88,7 +93,7 @@ export function tileHtml(card, opts = {}) {
   const gates = d.evidence?.gates ?? [];
   const showPips = (d.mark === "pips" || d.mark === "wait") && gates.length > 0;
   const mark = showPips ? pips(gates) : (MARK[d.mark]?.() ?? "");
-  const text = statusText(card, now);
+  const text = statusText(card, now, opts);
   const old =
     card.status === "review" &&
     d.enteredColumnAt &&
@@ -110,5 +115,9 @@ export function tileHtml(card, opts = {}) {
     r4 = `<div class="r4"><span class="budget${bcls}"><i style="width:${Math.round(ratio * 100)}%"></i></span><span class="tnum">${esc(d.budgetText)}</span></div>`;
   }
 
-  return `<li class="${cls}" role="option" id="tile-${esc(card.id)}" data-id="${esc(card.id)}" aria-selected="${opts.selected ? "true" : "false"}" aria-describedby="${esc(stId)}"><div class="r1">${sel}${kindTags(d.kinds)}<span class="id" title="${esc(card.id)}">${just}${dep}${esc(d.shortId)}</span></div><p class="title">${esc(d.title)}</p><div class="r3">${mark}<span class="st${old ? " old" : ""}" id="${esc(stId)}" title="${esc(text)}">${waitIcon}<span>${esc(text)}</span></span></div>${r4}</li>`;
+  // PM_DESIGN §3.1: priority in a fixed slot, then kind, labels, points, id.
+  const prio = opts.hidePriority ? "" : prioMark(card.priority);
+  const pts = pointsText(card.estimate);
+  const labels = labelChips(card.labels, d.kinds?.length > 1 ? 1 : 2);
+  return `<li class="${cls}" role="option" id="tile-${esc(card.id)}" data-id="${esc(card.id)}" aria-selected="${opts.selected ? "true" : "false"}" aria-describedby="${esc(stId)}"><div class="r1">${sel}${prio}${kindTags(d.kinds)}${labels}<span class="id" title="${esc(card.id)}">${just}${dep}${pts ? `<span class="pts tnum">${esc(pts)}</span>` : ""}${esc(d.shortId)}</span></div><p class="title">${esc(d.title)}</p><div class="r3">${mark}<span class="st${old ? " old" : ""}" id="${esc(stId)}" title="${esc(text)}">${waitIcon}<span>${esc(text)}</span></span></div>${r4}</li>`;
 }

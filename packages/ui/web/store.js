@@ -29,6 +29,24 @@ export const store = {
     selected: new Set(),
     /** Card ids whose column changed in the last 10s: `just now`. */
     moved: new Map(),
+    /** Epics and cycles from /api/board (PM_CONTRACT §3); empty until served. */
+    epics: [],
+    cycles: [],
+    /**
+     * The project manager (PM_DESIGN §2). `available` is null until the first
+     * thread fetch, false when the server has no /api/pm endpoints.
+     */
+    pm: {
+      available: null,
+      messages: [],
+      status: { phase: "idle" },
+      error: null,
+      /** Client-side first sighting of each phase, for timers without `since`. */
+      phaseSeenAt: {},
+      /** A Worker phase was seen for the pending reply. */
+      workerInvolved: false,
+      step: undefined,
+    },
     route: { name: "", params: [] },
     now: Date.now(),
   },
