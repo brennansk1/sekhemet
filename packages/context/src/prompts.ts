@@ -252,7 +252,7 @@ Step: ${card.stepsUsed}/${card.stepBudget}`;
 Gate Rung: ${gateFailure.rung} (Exit code: ${gateFailure.exitCode})
 Suggested Fix Files: ${renderScope(gateFailure.suggestedFixFiles)}
 Error Excerpt:
-${gateFailure.errorExcerpt}
+${gateFailure.errorExcerpt}${gateFailure.suggestedAction ? `\nHow to fix: ${gateFailure.suggestedAction}` : ""}
 
 INSTRUCTION: Address the error above in declared scope files and call finish_card when tests pass.`;
     userParts.push(failureText);

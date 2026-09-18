@@ -39,6 +39,50 @@ export function rankFailures(failures: GateFailure[], limit = 3): GateFailure[] 
   return [...failures].sort((a, b) => weight(b) - weight(a)).slice(0, limit);
 }
 
+/**
+ * Concrete remedies for the diagnostics local models loop on.
+ *
+ * "Resolve TS18048" names the problem, not the idiom. Chronicle's verifier card
+ * burned its whole repair ladder alternating between an index access that may
+ * be undefined and the `!` assertion lint forbids; one sentence with the
+ * narrowing pattern is the difference between a pass and repair_exhausted.
+ */
+const NARROW =
+  "The value may be undefined (noUncheckedIndexedAccess). Narrow it before use: `const item = items[i]; if (item === undefined) continue;` or loop with `for (const item of items)` / `items.entries()`. Do not use the `!` non-null assertion: lint forbids it.";
+
+export function remedyFor(code: string, message: string): string | undefined {
+  switch (code) {
+    case "TS18048":
+    case "TS18047":
+    case "TS2532":
+    case "TS2533":
+    case "lint/style/noNonNullAssertion":
+      return NARROW;
+    case "TS2339":
+    case "TS2345":
+    case "TS2322":
+      return /\| undefined\b|undefined'/.test(message) ? NARROW : undefined;
+    case "TS2304":
+      return 'The name is not in scope. Import it (`import type { Name } from "./types.js";` for a type), or define it. Read the module that declares it for the exact export name.';
+    case "TS2307":
+      return "The import path does not resolve. Use a relative path with a .js extension (`./types.js`) and check the file exists with list_dir.";
+    case "TS2353":
+    case "TS2561":
+      return "That property is not part of the target type. Read the type's declaration (or the library's .d.ts) and use only the fields it declares.";
+    case "TS2305":
+    case "TS2724":
+      return "The module does not export that name. Read the module and use its actual export.";
+    case "lint/style/noUnusedTemplateLiteral":
+      return "Replace the backtick string with a plain quoted string: it has no ${} interpolation.";
+    case "lint/suspicious/noExplicitAny":
+      return "Replace `any` with `unknown` and narrow it, or with the precise type.";
+    case "lint/style/useTemplate":
+      return "Replace string concatenation with a template literal.";
+    default:
+      return undefined;
+  }
+}
+
 /** `src/a.ts(12,5): error TS2345: message` */
 const TSC_LINE = /^(.+?)\((\d+),(\d+)\):\s+error\s+(TS\d+):\s+(.*)$/;
 
@@ -69,7 +113,9 @@ const tscParser: FailureParser = (ctx) => {
       expected: "type-correct program",
       actual: `${code}: ${message}`,
       minimalRepro: ctx.minimalRepro,
-      suggestedAction: `Resolve ${code} at ${file}:${location.line}. Read the surrounding lines before editing.`,
+      suggestedAction:
+        remedyFor(code ?? "", message ?? "") ??
+        `Resolve ${code} at ${file}:${location.line}. Read the surrounding lines before editing.`,
     });
   }
 
@@ -161,7 +207,7 @@ const biomeParser: FailureParser = (ctx) => {
       expected: `no ${rule} violations`,
       actual: message,
       minimalRepro: ctx.minimalRepro,
-      suggestedAction: `Fix ${rule} at ${file}:${lineNo}.`,
+      suggestedAction: remedyFor(rule ?? "", message) ?? `Fix ${rule} at ${file}:${lineNo}.`,
     });
   }
 
