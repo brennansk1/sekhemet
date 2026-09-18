@@ -151,92 +151,6 @@ td.type { color: var(--accent); }
 td.hash { color: var(--text-muted); }
 
 
-/* ---------- Evidence drawer ---------- */
-const RUNG_LABELS = { typecheck: "Typecheck", test: "Unit tests", lint: "Lint", parse: "Parse", bounds: "Bounds", visual: "Visual" };
-
-function diffHtml(diff) {
-  if (!diff) return '<div class="ev-empty">No changes recorded</div>';
-  const lines = diff.split("\n").slice(0, 400);
-  return '<pre class="ev-diff">' + lines.map(function(l){
-    const cls = l.startsWith("+++") || l.startsWith("---") ? "" : l.startsWith("+") ? "add" : l.startsWith("-") ? "del" : l.startsWith("@@") ? "hunk" : "";
-    return '<span class="'+cls+'">'+esc(l || " ")+'</span>';
-  }).join("") + '</pre>';
-}
-
-async function openEvidence(cardId) {
-  const card = state.cards.find(function(c){ return c.id === cardId; });
-  document.getElementById("ev-id").textContent = cardId;
-  document.getElementById("ev-title").textContent = card ? card.title : "";
-  const body = document.getElementById("ev-body");
-  body.innerHTML = '<div class="ev-empty">Loading evidence…</div>';
-  document.getElementById("evidence").classList.add("on");
-
-  let ev;
-  try {
-    const res = await fetch("/api/evidence/" + encodeURIComponent(cardId));
-    if (res.status === 404) {
-      body.innerHTML = '<div class="ev-empty">This card has not run yet. Evidence appears here after its first attempt.</div>';
-      return;
-    }
-    ev = await res.json();
-  } catch (e) {
-    body.innerHTML = '<div class="ev-empty">Could not load evidence.</div>';
-    return;
-  }
-
-  const secs = (ev.durationMs / 1000).toFixed(1) + "s";
-  const metrics = [
-    ["Result", ev.passed ? "Passed" : "Failed"],
-    ["Stop reason", String(ev.stopReason).replace(/_/g, " ")],
-    ["Turns", ev.turnsUsed],
-    ["Duration", secs],
-    ["Tokens in / out", ev.tokens.promptTokens.toLocaleString() + " / " + ev.tokens.completionTokens.toLocaleString()],
-    ["Diff", ev.filesTouched.length + " file(s), +" + ev.linesAdded + " / −" + ev.linesRemoved],
-  ];
-
-  const gates = (ev.rungResults || []).map(function(r){
-    const st = r.skipped ? "skipped" : r.passed ? "pass" : "fail";
-    const mark = st === "pass" ? "✓" : st === "fail" ? "✗" : "–";
-    return '<div class="ev-gate"><span class="mark '+st+'">'+mark+'</span>'+esc(RUNG_LABELS[r.rung] || r.gate)
-      +'<span class="time">'+(r.skipped ? "skipped" : (r.durationMs/1000).toFixed(1)+"s")+'</span></div>';
-  }).join("") || '<div class="ev-empty">No gate ran</div>';
-
-  const failures = (ev.failures || []).map(function(f){
-    const loc = f.location ? f.location.file + (f.location.line ? ":" + f.location.line : "") : "";
-    return '<div class="ev-failure"><div class="msg">'+esc(f.errorExcerpt)+'</div>'
-      +(loc || f.minimalRepro ? '<div class="repro">'+esc(loc)+(f.minimalRepro ? (loc ? " · " : "")+"$ "+esc(f.minimalRepro) : "")+'</div>' : "")+'</div>';
-  }).join("");
-
-  body.innerHTML =
-    '<section class="ev-section"><div class="ev-metrics">' + metrics.map(function(m){
-      return '<div class="ev-metric"><div class="k">'+esc(m[0])+'</div><div class="v">'+esc(m[1])+'</div></div>';
-    }).join("") + '</div></section>'
-    + '<section class="ev-section"><h4>Gates</h4>' + gates + '</section>'
-    + (failures ? '<section class="ev-section"><h4>Failures</h4>' + failures + '</section>' : "")
-    + '<section class="ev-section"><h4>Diff</h4>' + diffHtml(ev.diff) + '</section>'
-    + '<section class="ev-section"><h4>Run settings</h4><div class="ev-failure" style="border-left-color:var(--state-running)"><div class="msg">'
-      + esc(ev.settings.modelId) + " · " + esc(ev.settings.toolArm)
-      + (ev.settings.temperature !== undefined ? " · temp " + esc(ev.settings.temperature) : "")
-      + "\ngates.toml " + esc(String(ev.gatesConfigSha256).slice(0, 12))
-      + (ev.checkpointShas.length ? "\ncheckpoint " + esc(ev.checkpointShas[ev.checkpointShas.length - 1].slice(0, 10)) : "")
-      + '</div></div></section>';
-}
-
-function closeEvidence() { document.getElementById("evidence").classList.remove("on"); }
-document.getElementById("ev-close").addEventListener("click", closeEvidence);
-
-async function loadQueue() {
-  try {
-    const q = await fetch("/api/queue").then(function(r){ return r.json(); });
-    if (!q.entries || q.entries.length === 0) return;
-    const ids = Array.from(new Set(q.entries.map(function(e){ return e.cardId; })));
-    const first = q.entries.filter(function(e){ return e.attempt !== 2 && e.passed; }).length;
-    const chip = document.getElementById("queue-chip");
-    chip.textContent = "Pass@1 " + first + "/" + ids.length + " · " + (q.totalDurationMs / 60000).toFixed(1) + " min";
-    chip.className = "chip " + (first / ids.length >= 0.8 ? "pass" : first > 0 ? "warn" : "fail");
-  } catch (e) { /* no report yet */ }
-}
-
 /* ---------- Command palette ---------- */
 .scrim { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: none; align-items: flex-start; justify-content: center; padding-top: 12vh; }
 .scrim.on { display: flex; }
@@ -488,6 +402,93 @@ function renderChrome() {
 }
 
 function render() { renderBoard(); renderLog(); renderChrome(); }
+
+/* ---------- Evidence drawer ---------- */
+const RUNG_LABELS = { typecheck: "Typecheck", test: "Unit tests", lint: "Lint", parse: "Parse", bounds: "Bounds", visual: "Visual" };
+
+function diffHtml(diff) {
+  if (!diff) return '<div class="ev-empty">No changes recorded</div>';
+  const lines = diff.split("\\n").slice(0, 400);
+  return '<pre class="ev-diff">' + lines.map(function(l){
+    const cls = l.startsWith("+++") || l.startsWith("---") ? "" : l.startsWith("+") ? "add" : l.startsWith("-") ? "del" : l.startsWith("@@") ? "hunk" : "";
+    return '<span class="'+cls+'">'+esc(l || " ")+'</span>';
+  }).join("") + '</pre>';
+}
+
+async function openEvidence(cardId) {
+  const card = state.cards.find(function(c){ return c.id === cardId; });
+  document.getElementById("ev-id").textContent = cardId;
+  document.getElementById("ev-title").textContent = card ? card.title : "";
+  const body = document.getElementById("ev-body");
+  body.innerHTML = '<div class="ev-empty">Loading evidence…</div>';
+  document.getElementById("evidence").classList.add("on");
+
+  let ev;
+  try {
+    const res = await fetch("/api/evidence/" + encodeURIComponent(cardId));
+    if (res.status === 404) {
+      body.innerHTML = '<div class="ev-empty">This card has not run yet. Evidence appears here after its first attempt.</div>';
+      return;
+    }
+    ev = await res.json();
+  } catch (e) {
+    body.innerHTML = '<div class="ev-empty">Could not load evidence.</div>';
+    return;
+  }
+
+  const secs = (ev.durationMs / 1000).toFixed(1) + "s";
+  const metrics = [
+    ["Result", ev.passed ? "Passed" : "Failed"],
+    ["Stop reason", String(ev.stopReason).replace(/_/g, " ")],
+    ["Turns", ev.turnsUsed],
+    ["Duration", secs],
+    ["Tokens in / out", ev.tokens.promptTokens.toLocaleString() + " / " + ev.tokens.completionTokens.toLocaleString()],
+    ["Diff", ev.filesTouched.length + " file(s), +" + ev.linesAdded + " / −" + ev.linesRemoved],
+  ];
+
+  const gates = (ev.rungResults || []).map(function(r){
+    const st = r.skipped ? "skipped" : r.passed ? "pass" : "fail";
+    const mark = st === "pass" ? "✓" : st === "fail" ? "✗" : "–";
+    return '<div class="ev-gate"><span class="mark '+st+'">'+mark+'</span>'+esc(RUNG_LABELS[r.rung] || r.gate)
+      +'<span class="time">'+(r.skipped ? "skipped" : (r.durationMs/1000).toFixed(1)+"s")+'</span></div>';
+  }).join("") || '<div class="ev-empty">No gate ran</div>';
+
+  const failures = (ev.failures || []).map(function(f){
+    const loc = f.location ? f.location.file + (f.location.line ? ":" + f.location.line : "") : "";
+    return '<div class="ev-failure"><div class="msg">'+esc(f.errorExcerpt)+'</div>'
+      +(loc || f.minimalRepro ? '<div class="repro">'+esc(loc)+(f.minimalRepro ? (loc ? " · " : "")+"$ "+esc(f.minimalRepro) : "")+'</div>' : "")+'</div>';
+  }).join("");
+
+  body.innerHTML =
+    '<section class="ev-section"><div class="ev-metrics">' + metrics.map(function(m){
+      return '<div class="ev-metric"><div class="k">'+esc(m[0])+'</div><div class="v">'+esc(m[1])+'</div></div>';
+    }).join("") + '</div></section>'
+    + '<section class="ev-section"><h4>Gates</h4>' + gates + '</section>'
+    + (failures ? '<section class="ev-section"><h4>Failures</h4>' + failures + '</section>' : "")
+    + '<section class="ev-section"><h4>Diff</h4>' + diffHtml(ev.diff) + '</section>'
+    + '<section class="ev-section"><h4>Run settings</h4><div class="ev-failure" style="border-left-color:var(--state-running)"><div class="msg">'
+      + esc(ev.settings.modelId) + " · " + esc(ev.settings.toolArm)
+      + (ev.settings.temperature !== undefined ? " · temp " + esc(ev.settings.temperature) : "")
+      + "\\ngates.toml " + esc(String(ev.gatesConfigSha256).slice(0, 12))
+      + (ev.checkpointShas.length ? "\\ncheckpoint " + esc(ev.checkpointShas[ev.checkpointShas.length - 1].slice(0, 10)) : "")
+      + '</div></div></section>';
+}
+
+function closeEvidence() { document.getElementById("evidence").classList.remove("on"); }
+document.getElementById("ev-close").addEventListener("click", closeEvidence);
+
+async function loadQueue() {
+  try {
+    const q = await fetch("/api/queue").then(function(r){ return r.json(); });
+    if (!q.entries || q.entries.length === 0) return;
+    const ids = Array.from(new Set(q.entries.map(function(e){ return e.cardId; })));
+    const first = q.entries.filter(function(e){ return e.attempt !== 2 && e.passed; }).length;
+    const chip = document.getElementById("queue-chip");
+    chip.textContent = "Pass@1 " + first + "/" + ids.length + " · " + (q.totalDurationMs / 60000).toFixed(1) + " min";
+    chip.className = "chip " + (first / ids.length >= 0.8 ? "pass" : first > 0 ? "warn" : "fail");
+  } catch (e) { /* no report yet */ }
+}
+
 
 /* ---------- Command palette ---------- */
 const COMMANDS = [

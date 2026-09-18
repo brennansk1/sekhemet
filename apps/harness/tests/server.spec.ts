@@ -62,6 +62,23 @@ describe("@sekhemet/harness Dashboard Server", () => {
     expect(html).toContain('[data-theme="sand"]');
   });
 
+  it("serves a script that compiles and a stylesheet free of script", async () => {
+    // Both regressions happened: drawer JS inserted into the <style> block
+    // (silently dropping every later CSS rule), and \n escapes that became raw
+    // newlines inside JS string literals (a SyntaxError that blanked the board).
+    const html = await (await fetch(`http://127.0.0.1:${serverInstance.port}/`)).text();
+    const script = html.split("<script>")[1]?.split("</script>")[0] ?? "";
+    const style = html.split("<style>")[1]?.split("</style>")[0] ?? "";
+
+    expect(script.length).toBeGreaterThan(1000);
+    expect(() => new Function(script)).not.toThrow();
+    expect(style).not.toMatch(/\bfunction\s*\w*\s*\(/);
+    expect(style).not.toContain("document.");
+    // The drawer and palette styles must actually be present in the stylesheet.
+    expect(style).toContain(".evidence {");
+    expect(style).toContain(".scrim {");
+  });
+
   it("escapes model-authored text instead of interpolating it as markup", async () => {
     // Card titles come from a model, so the renderer must escape. A dashboard
     // that innerHTMLs untrusted titles is an injection vector.
