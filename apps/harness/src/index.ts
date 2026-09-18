@@ -32,6 +32,7 @@ import {
 } from "./execute.js";
 import { notifySlack } from "./integrations.js";
 import { reflectWithManager } from "./learning/reflect.js";
+import { reviewCard } from "./learning/review.js";
 import { LearningStore } from "./learning/store.js";
 import { runMcpStdioServer } from "./mcp.js";
 import { DEFAULT_PM_MODEL, answerQueued, createPmAdapter, holdRunnerLease } from "./pm/service.js";
@@ -654,6 +655,37 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     const maxTurns = maxTurnsIdx !== -1 ? Number(argv[maxTurnsIdx + 1]) : undefined;
     // Lessons each attempt learned, handed to the next attempt at the same card.
     const lessonsByCard = new Map<string, string[]>();
+    const passedResults: { card: CardRecord; diff: string }[] = [];
+    const reviewAll = argv.includes("--review");
+    /**
+     * Merit reviews passing cards against the user's learned preferences
+     * (AutoDev's AI Reviewer). Advice only, recorded on the ledger; it runs
+     * while Merit's model is resident, so it never forces an extra swap
+     * unless --review asked for it.
+     */
+    const reviewPassed = async (model: Awaited<ReturnType<typeof router.use>>) => {
+      const preferences = (await ctx.learning.profile())
+        .filter((p) => p.status === "active" && p.category === "code_style")
+        .map((p) => p.statement);
+      const rules = (await ctx.learning.rules())
+        .filter((r) => r.status === "active" && r.role === "worker")
+        .map((r) => r.text);
+      for (const { card, diff } of passedResults.splice(0)) {
+        const findings = await reviewCard(model, { card, diff, preferences, rules }).catch(
+          () => [],
+        );
+        if (findings.length === 0) continue;
+        console.log(`   Merit's review of ${card.id}: ${findings.length} note(s)`);
+        await cardStore
+          .recordEvent({
+            type: "card/review",
+            cardId: card.id,
+            actor: "planner",
+            payload: { id: card.id, findings },
+          })
+          .catch(() => undefined);
+      }
+    };
     const attempt = async (rawCard: CardRecord, n: number, guidance?: string) => {
       const card =
         maxTurns && maxTurns > 0 && rawCard.stepBudget > maxTurns
@@ -668,6 +700,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       console.log(`\n=== ${card.id} (attempt ${n}): ${card.title} ===`);
       const prior = lessonsByCard.get(card.id);
       const result = await executeCard(ctx, card, worker, guidance, prior);
+      if (result.passed) passedResults.push({ card, diff: result.evidence.diff ?? "" });
       if (result.lessons.lines.length > 0) lessonsByCard.set(card.id, result.lessons.lines);
 
       let accepted = false;
@@ -770,6 +803,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         // Merit's reflection runs now, while its model is already resident:
         // learning must never cost an extra swap.
         const learned = await reflectWithManager(manager, ctx.learning, reflections).catch(() => 0);
+        await reviewPassed(manager);
         if (learned > 0) console.log(`\n--- Merit proposed ${learned} rule(s) from this run ---`);
         await pass(retry, 2, plans);
       }
@@ -786,6 +820,11 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         console.log(
           `\n--- ${card.id} never ran: prerequisites ${(await blockedBy(card)).join(", ")} did not merge ---`,
         );
+      }
+      // Reviews still pending (no failures loaded Merit's model) run now only
+      // when asked: on a 24 GB host that costs one swap.
+      if (reviewAll && passedResults.length > 0) {
+        await reviewPassed(await router.use("manager")).catch(() => undefined);
       }
       // Anything asked during the last step is answered before the run ends.
       await answerPm().catch(() => undefined);
