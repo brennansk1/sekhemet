@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="basalt">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Board · Chronicle · Sekhemet (mockup)</title>
+<style>
+/* ---- Tokens: copied from packages/ui/src/tokens.ts + FRONTEND_DESIGN §3.1 additions ---- */
+:root {
+  --bg-base:#14120F; --bg-surface:#1C1A16; --bg-raised:#24211C; --bg-overlay:#2C2822;
+  --border-subtle:#2E2A24; --border-strong:#3D382F;
+  --text-primary:#EDE7DA; --text-secondary:#A79E8C; --text-muted:#6E6759;
+  --accent:#C8952A; --state-pass:#4FA36B; --state-fail:#CC5A4A; --state-running:#4C8ED9;
+  --state-parked:#B08A3E; --state-blocked:#8A7F70;
+  --on-accent:#14120F; --on-state:#14120F; --scrim:rgb(8 7 6 / .6);
+  --font-sans:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  --font-mono:'JetBrains Mono','SF Mono',Menlo,Consolas,monospace;
+  --text-xs:11px; --text-sm:12.5px; --text-base:13px; --text-md:15px; --text-lg:18px; --text-xl:22px;
+  --leading-tight:1.25; --leading-normal:1.45; --leading-code:1.55;
+  --radius-control:4px; --radius-card:6px; --motion:120ms ease-out;
+  --sidebar-w:216px; --topbar-h:44px;
+  color-scheme:dark;
+}
+[data-theme="sand"] {
+  --bg-base:#F6F3EC; --bg-surface:#FFFFFF; --bg-raised:#EDE8DD; --bg-overlay:#E2DDD0;
+  --border-subtle:#DED8CA; --border-strong:#C6BEAC;
+  --text-primary:#1C1A16; --text-secondary:#5E5749; --text-muted:#8F8778;
+  --accent:#8E6512; --state-pass:#2E7D4A; --state-fail:#A63A2B; --state-running:#2F6FB5;
+  --state-parked:#8C6A22; --state-blocked:#756C5E;
+  --on-accent:#FFFFFF; --on-state:#FFFFFF; --scrim:rgb(28 26 22 / .35);
+  color-scheme:light;
+}
+/* ---- Base ---- */
+*,*::before,*::after{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg-base);color:var(--text-primary);font:400 var(--text-base)/var(--leading-normal) var(--font-sans);-webkit-font-smoothing:antialiased;display:flex;overflow:hidden}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.tnum{font-variant-numeric:tabular-nums}
+.mono{font-family:var(--font-mono);font-size:var(--text-xs)}
+.sec{color:var(--text-secondary)}
+.ic{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+.ic.s12{width:12px;height:12px}.ic.s14{width:14px;height:14px}
+kbd{font:500 var(--text-xs) var(--font-mono);color:var(--text-secondary);border:1px solid var(--border-subtle);border-radius:3px;padding:0 4px;line-height:16px;display:inline-block;min-width:16px;text-align:center}
+
+/* ---- Sidebar ---- */
+.side{width:var(--sidebar-w);flex:none;background:var(--bg-surface);border-right:1px solid var(--border-subtle);display:flex;flex-direction:column;padding:12px 8px}
+.brand{display:flex;align-items:center;gap:8px;padding:4px 8px 12px}
+.brand .ic{width:18px;height:18px;color:var(--accent)}
+.brand b{font-size:var(--text-md);font-weight:600;letter-spacing:-.01em}
+.brand kbd{margin-left:auto}
+.project{display:flex;align-items:center;gap:8px;height:28px;padding:0 8px;border-radius:var(--radius-control);color:var(--text-secondary);margin-bottom:12px}
+.project:hover{background:var(--bg-overlay)}
+.project b{color:var(--text-primary);font-weight:500}
+.nav{display:flex;flex-direction:column;gap:2px}
+.nav a{display:flex;align-items:center;gap:8px;height:28px;padding:0 8px;border-radius:var(--radius-control);color:var(--text-secondary);text-decoration:none;position:relative;transition:background var(--motion)}
+.nav a:hover{background:var(--bg-overlay);color:var(--text-primary)}
+.nav a[aria-current]{background:var(--bg-overlay);color:var(--text-primary)}
+.nav a[aria-current]::before{content:"";position:absolute;left:-8px;top:6px;bottom:6px;width:2px;border-radius:1px;background:var(--accent)}
+.nav .n{margin-left:auto;font-size:var(--text-xs)}
+.nav .n.warn{color:var(--state-parked)}
+.foot{margin-top:auto;border-top:1px solid var(--border-subtle);padding:12px 8px 0;display:flex;flex-direction:column;gap:8px;font-size:var(--text-xs);color:var(--text-secondary)}
+.row{display:flex;align-items:center;gap:8px}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--state-pass);flex:none}
+.dot.run{background:var(--state-running);animation:pulse 1.6s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.35}}
+@media (prefers-reduced-motion:reduce){.dot.run{animation:none}}
+.meter{flex:1;height:4px;background:var(--bg-overlay);border-radius:2px;overflow:hidden}
+.meter i{display:block;height:100%;background:var(--text-secondary)}
+.foot .tools{display:flex;gap:4px}
+.icon-btn{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 6px;border-radius:var(--radius-control);color:var(--text-secondary)}
+.icon-btn:hover{background:var(--bg-overlay);color:var(--text-primary)}
+
+/* ---- Main / topbar ---- */
+main{flex:1;min-width:0;display:flex;flex-direction:column}
+.top{height:var(--topbar-h);flex:none;display:flex;align-items:center;gap:12px;padding:0 16px;border-bottom:1px solid var(--border-subtle)}
+.top h1{margin:0;font-size:var(--text-md);font-weight:600}
+.top .crumb{color:var(--text-secondary)}
+.filter{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 8px;border:1px dashed var(--border-strong);border-radius:var(--radius-control);color:var(--text-secondary);font-size:var(--text-xs)}
+.filter:hover{color:var(--text-primary);border-style:solid}
+.top .right{margin-left:auto;display:flex;gap:8px;align-items:center}
+.search{white-space:nowrap;display:flex;align-items:center;gap:8px;height:28px;width:220px;padding:0 8px;border:1px solid var(--border-subtle);border-radius:var(--radius-control);background:var(--bg-surface);color:var(--text-secondary)}
+.search kbd{margin-left:auto}
+.bar{white-space:nowrap;overflow:hidden;flex:none;display:flex;align-items:center;gap:8px;height:32px;padding:0 16px;background:var(--bg-surface);border-bottom:1px solid var(--state-parked);font-size:var(--text-sm)}
+.bar .ic{color:var(--state-parked)}
+.bar>span{overflow:hidden;text-overflow:ellipsis}
+.bar a{flex:none;color:var(--text-primary);margin-left:auto;font-size:var(--text-xs);text-decoration:none;border:1px solid var(--border-subtle);border-radius:var(--radius-control);padding:2px 8px}
+
+/* ---- Board ---- */
+.board{flex:1;min-height:0;display:flex;gap:8px;padding:16px;overflow-x:auto}
+.col{flex:1 1 0;min-width:200px;max-width:300px;display:flex;flex-direction:column;background:var(--bg-surface);border:1px solid var(--border-subtle);border-radius:var(--radius-card);min-height:0}
+.col-h{height:36px;flex:none;display:flex;align-items:center;gap:8px;padding:0 12px}
+.col-h h2{margin:0;font-size:var(--text-sm);font-weight:600}
+.col-h .c{font-size:var(--text-xs);color:var(--text-secondary)}
+.col-h .c.full{color:var(--state-parked);font-weight:600}
+.col-h .more{margin-left:auto;color:var(--text-secondary)}
+.cap{height:2px;margin:0 12px;background:var(--bg-overlay);border-radius:1px;overflow:hidden}
+.cap i{display:block;height:100%;background:var(--text-secondary)}
+.list{flex:1;overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:8px;margin:0;list-style:none}
+.empty{font-size:var(--text-xs);color:var(--text-secondary);padding:4px 4px 0}
+.rail{width:36px;flex:none;display:flex;flex-direction:column;align-items:center;gap:8px;padding:12px 0;background:var(--bg-surface);border:1px solid var(--border-subtle);border-radius:var(--radius-card);color:var(--text-secondary);font-size:var(--text-xs)}
+.rail:hover{background:var(--bg-raised);color:var(--text-primary)}
+.rail span{writing-mode:vertical-rl;font-size:var(--text-sm);font-weight:600;color:var(--text-primary)}
+
+/* ---- Tile ---- */
+.tile{position:relative;background:var(--bg-raised);border:1px solid var(--border-subtle);border-radius:var(--radius-card);padding:8px 12px;display:flex;flex-direction:column;gap:4px;cursor:default;transition:background var(--motion)}
+.tile:hover{background:var(--bg-overlay)}
+.tile[aria-selected="true"]{border-color:var(--border-strong);background:var(--bg-overlay)}
+.tile.focus{outline:2px solid var(--accent);outline-offset:-1px}
+.tile.t-run,.tile.t-fail,.tile.t-parked{border-left-width:0;padding-left:14px}
+.tile.t-run::before,.tile.t-fail::before,.tile.t-parked::before{content:"";position:absolute;left:0;top:-1px;bottom:-1px;width:2px;border-radius:6px 0 0 6px}
+.tile.t-run::before{background:var(--state-running)}
+.tile.t-fail::before{background:var(--state-fail)}
+.tile.t-parked::before{background:var(--state-parked)}
+.r1{display:flex;align-items:center;gap:6px;font-size:var(--text-xs);color:var(--text-secondary)}
+.r1 .id{margin-left:auto;font-family:var(--font-mono)}
+.kind{font-size:var(--text-xs);color:var(--text-secondary);background:var(--bg-base);border-radius:var(--radius-control);padding:0 6px;line-height:18px}
+.dep{display:inline-flex;align-items:center;gap:3px}
+.title{margin:0;font-size:var(--text-base);font-weight:500;line-height:var(--leading-tight);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.tile.blocked .title,.tile.done .title{color:var(--text-secondary)}
+.r3{display:flex;align-items:center;gap:8px;font-size:var(--text-xs);color:var(--text-secondary);min-height:16px}
+.r3 .st{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-flex;align-items:center;gap:4px}
+.r3 .st .ic.run{color:var(--state-running)}.r3 .st .ic.park{color:var(--state-parked)}.r3 .st .ic.blk{color:var(--state-blocked)}
+.pips{display:flex;gap:3px;flex:none}
+.pip{width:12px;height:12px;border-radius:3px;display:grid;place-items:center;border:1px solid var(--border-strong)}
+.pip .ic{width:10px;height:10px;stroke-width:2.25;color:var(--on-state)}
+.pip.pass{background:var(--state-pass);border-color:var(--state-pass)}
+.pip.fail{background:var(--state-fail);border-color:var(--state-fail)}
+.pip.skip .ic{color:var(--text-secondary)}
+.r4{display:flex;align-items:center;gap:8px;font-size:var(--text-xs);color:var(--text-secondary)}
+.budget{flex:1;height:2px;background:var(--bg-base);border-radius:1px;overflow:hidden}
+.budget i{display:block;height:100%;background:var(--text-secondary)}
+.budget.run i{background:var(--state-running)}
+.budget.warn i{background:var(--state-parked)}
+
+/* ---- Peek drawer ---- */
+.peek{position:fixed;top:0;right:0;bottom:0;width:480px;max-width:100vw;background:var(--bg-surface);border-left:1px solid var(--border-strong);display:flex;flex-direction:column;z-index:5}
+.peek[hidden]{display:none}
+.peek header{padding:16px 24px;border-bottom:1px solid var(--border-subtle)}
+.peek .crumb{font-size:var(--text-xs);color:var(--text-secondary);display:flex;gap:6px;align-items:center}
+.peek h3{margin:6px 0 4px;font-size:var(--text-lg);font-weight:600;line-height:var(--leading-tight)}
+.peek .out{font-size:var(--text-sm);color:var(--text-secondary);display:flex;gap:6px;align-items:center}
+.peek .body{flex:1;overflow:auto;padding:16px 24px;display:flex;flex-direction:column;gap:24px}
+.peek h4{margin:0 0 8px;font-size:var(--text-sm);font-weight:600}
+.g-strip{display:flex;border:1px solid var(--border-subtle);border-radius:var(--radius-control);overflow:hidden}
+.g-seg{flex:1;display:flex;align-items:center;gap:6px;height:32px;padding:0 10px;border-right:1px solid var(--border-subtle);font-size:var(--text-sm);position:relative}
+.g-seg:last-child{border-right:0}
+.g-seg .ic{width:14px;height:14px}
+.g-seg.pass .ic{color:var(--state-pass)}.g-seg.fail .ic{color:var(--state-fail)}
+.g-seg.fail::before{content:"";position:absolute;left:0;right:0;top:0;height:2px;background:var(--state-fail)}
+.g-seg .t{margin-left:auto;font-size:var(--text-xs);color:var(--text-secondary)}
+.fail-b{background:var(--bg-base);border-left:2px solid var(--state-fail);border-radius:var(--radius-control);padding:8px 12px;font-family:var(--font-mono);font-size:var(--text-sm);line-height:var(--leading-code)}
+.fail-b .loc{font-size:var(--text-xs);color:var(--text-secondary);margin-bottom:4px}
+.peek footer{display:flex;gap:8px;padding:12px 24px;border-top:1px solid var(--border-subtle);align-items:center}
+.btn{white-space:nowrap;display:inline-flex;align-items:center;gap:8px;height:32px;padding:0 12px;border-radius:var(--radius-control);font-weight:500;border:1px solid var(--border-subtle);background:var(--bg-raised)}
+.btn:hover{background:var(--bg-overlay)}
+.btn.ghost{border-color:transparent;background:none;color:var(--text-secondary)}
+.btn[disabled]{opacity:.4;cursor:not-allowed}
+.btn kbd{border-color:var(--border-strong)}
+@media (max-width:1279px){.side{width:52px;padding:12px 6px}.side .lbl,.brand b,.brand kbd,.project,.foot .lbl,.nav .n{display:none}.nav a{justify-content:center}.col{min-width:220px}}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-glyph" viewBox="0 0 24 24"><path d="M3 20 5.5 9H10v11M21 20 18.5 9H14v11M2 20h20"/><circle cx="12" cy="5.5" r="2.25"/></symbol>
+  <symbol id="i-review" viewBox="0 0 24 24"><path d="M4 13 6.5 6h11L20 13v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M4 13h4.5l1 2h5l1-2H20"/><path d="m9.5 9.5 1.8 1.8 3.4-3.6"/></symbol>
+  <symbol id="i-board" viewBox="0 0 24 24"><path d="M4.5 4.5h4v15h-4zM10 4.5h4v9h-4zM15.5 4.5h4v12h-4z"/></symbol>
+  <symbol id="i-runs" viewBox="0 0 24 24"><path d="M8 5l9 6-9 6z"/><path d="M4 20h16"/></symbol>
+  <symbol id="i-ledger" viewBox="0 0 24 24"><path d="M4 6h11M4 12h11M4 18h7"/><circle cx="18.5" cy="17" r="2.5"/><path d="M18.5 8v6.5"/></symbol>
+  <symbol id="i-playbook" viewBox="0 0 24 24"><path d="M3 5.5c2-1 5-1 9 1 4-2 7-2 9-1V19c-2-1-5-1-9 1-4-2-7-2-9-1z"/><path d="M12 6.5V20"/></symbol>
+  <symbol id="i-machine" viewBox="0 0 24 24"><path d="M7 7h10v10H7zM10 10h4v4h-4zM9 3v4M15 3v4M9 17v4M15 17v4M3 9h4M3 15h4M17 9h4M17 15h4"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+  <symbol id="i-minus" viewBox="0 0 24 24"><path d="M6 12h12"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><path d="M9 6v12M15 6v12"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+  <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M4 20l4-1 11-11-3-3L5 16z"/></symbol>
+  <symbol id="i-memory" viewBox="0 0 24 24"><path d="M3 8h18v8H3zM7 8v8M11 8v8M15 8v8M6 16v3M18 16v3"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></symbol>
+  <symbol id="i-keyboard" viewBox="0 0 24 24"><path d="M3 7h18v10H3zM7 11h.01M11 11h.01M15 11h.01M7 14h10"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><path d="M6 12h.01M12 12h.01M18 12h.01"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4 2.5 20h19z"/><path d="M12 10v4M12 17h.01"/></symbol>
+  <symbol id="i-merge" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="12" r="2"/><path d="M6 8v8M6 8c0 3 3 4 10 4"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></symbol>
+  <symbol id="i-park" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M10 9v6M14 9v6"/></symbol>
+</svg>
+
+<nav class="side" aria-label="Primary">
+  <div class="brand"><svg class="ic"><use href="#i-glyph"/></svg><b>Sekhemet</b><kbd>⌘K</kbd></div>
+  <button class="project"><span class="lbl">Project</span> <b class="lbl">Chronicle</b><svg class="ic s12" style="margin-left:auto"><use href="#i-chev"/></svg></button>
+  <div class="nav">
+    <a href="review.html"><svg class="ic"><use href="#i-review"/></svg><span class="lbl">Review</span><span class="n tnum">1</span></a>
+    <a href="board.html" aria-current="page"><svg class="ic"><use href="#i-board"/></svg><span class="lbl">Board</span></a>
+    <a href="runs.html"><svg class="ic"><use href="#i-runs"/></svg><span class="lbl">Runs</span><span class="n tnum">3 of 6</span></a>
+    <a href="#"><svg class="ic"><use href="#i-ledger"/></svg><span class="lbl">Ledger</span></a>
+    <a href="#"><svg class="ic"><use href="#i-playbook"/></svg><span class="lbl">Playbook</span><span class="n tnum">5</span></a>
+    <a href="#"><svg class="ic"><use href="#i-machine"/></svg><span class="lbl">Machine</span></a>
+  </div>
+  <div class="foot">
+    <div class="row"><span class="dot"></span><span class="lbl">Live · ledger intact · 13</span></div>
+    <div class="row"><svg class="ic s14"><use href="#i-memory"/></svg><span class="lbl tnum">Memory 61%</span><span class="meter lbl"><i style="width:61%"></i></span></div>
+    <div class="row"><span class="dot run"></span><span class="lbl mono" style="color:inherit">nail-35b-a3b · working</span></div>
+    <div class="tools"><button class="icon-btn" data-theme-toggle title="Theme (t)"><svg class="ic s14"><use href="#i-moon"/></svg><span class="lbl">Theme</span></button><button class="icon-btn" title="Keyboard shortcuts (?)"><svg class="ic s14"><use href="#i-keyboard"/></svg><span class="lbl">Keys</span></button></div>
+  </div>
+</nav>
+
+<main>
+  <header class="top">
+    <h1>Board</h1><span class="crumb">Chronicle · 6 cards</span>
+    <button class="filter"><svg class="ic s12"><use href="#i-plus"/></svg>Kind</button>
+    <button class="filter"><svg class="ic s12"><use href="#i-plus"/></svg>Needs you</button>
+    <div class="right">
+      <div class="search"><svg class="ic s14"><use href="#i-search"/></svg>Search or run a command<kbd>⌘K</kbd></div>
+    </div>
+  </header>
+
+  <div class="bar" role="status"><svg class="ic"><use href="#i-pause"/></svg><span><b>Paused for memory on 1 card.</b> <span class="sec">Sekhemet stopped “Expose the ledger over an HTTP micro-API” safely at step 11. It can resume below 85% memory.</span></span><a href="#">Machine</a></div>
+
+  <div class="board" role="region" aria-label="Board">
+    <section class="col" role="group" aria-labelledby="h-back">
+      <div class="col-h"><h2 id="h-back">Backlog</h2><span class="c tnum">2</span><button class="more" aria-label="Column options"><svg class="ic"><use href="#i-more"/></svg></button></div>
+      <ul class="list" role="listbox" aria-labelledby="h-back">
+        <li class="tile blocked" role="option" aria-selected="false" tabindex="-1">
+          <div class="r1"><span class="kind" title="Rules: adds validation, invariants or edge cases">Rules</span><span class="id">verifier</span></div>
+          <p class="title">Implement tamper detection over the hash chain</p>
+          <div class="r3"><span class="st"><svg class="ic s12 blk"><use href="#i-link"/></svg>Waits on Canonical JSON and SHA-256…</span></div>
+        </li>
+        <li class="tile blocked" role="option" aria-selected="false" tabindex="-1">
+          <div class="r1"><span class="kind">Rules</span><span class="kind">Flow</span><span class="id"><span class="dep" title="Waits on 2 cards"><svg class="ic s12"><use href="#i-link"/></svg>2</span> ledger</span></div>
+          <p class="title">Implement append-only ledger with idempotency</p>
+          <div class="r3"><span class="st"><svg class="ic s12 blk"><use href="#i-link"/></svg>Waits on Initialize node:sqlite WAL… +1</span></div>
+        </li>
+      </ul>
+    </section>
+
+    <button class="rail" title="Ready: cards whose dependencies are done">0<span>Ready</span></button>
+    <button class="rail" title="Planning: the Planner is writing plans and tests">0<span>Planning</span></button>
+
+    <section class="col" role="group" aria-labelledby="h-work">
+      <div class="col-h"><h2 id="h-work">Working</h2><span class="c tnum">1 / 5</span><button class="more" aria-label="Column options"><svg class="ic"><use href="#i-more"/></svg></button></div>
+      <div class="cap"><i style="width:20%"></i></div>
+      <ul class="list" role="listbox" aria-labelledby="h-work">
+        <li class="tile t-run" role="option" aria-selected="false" tabindex="-1">
+          <div class="r1"><span class="kind" title="Storage: persists or shapes data">Storage</span><span class="id">db</span></div>
+          <p class="title">Initialize node:sqlite WAL database with strict constraints</p>
+          <div class="r3"><span class="st"><span class="dot run"></span>Step 2 of 32 · editing src/db.ts</span></div>
+          <div class="r4"><span class="budget run"><i style="width:6%"></i></span><span class="tnum">2 of 32 steps</span></div>
+        </li>
+      </ul>
+    </section>
+
+    <section class="col" role="group" aria-labelledby="h-check">
+      <div class="col-h"><h2 id="h-check">Checking</h2><span class="c tnum">1 / 5</span><button class="more" aria-label="Column options"><svg class="ic"><use href="#i-more"/></svg></button></div>
+      <div class="cap"><i style="width:20%"></i></div>
+      <ul class="list" role="listbox" aria-labelledby="h-check">
+        <li class="tile t-fail focus" role="option" aria-selected="true" tabindex="0" aria-describedby="st-hasher">
+          <div class="r1"><span class="kind">Rules</span><span class="id">hasher</span></div>
+          <p class="title">Implement canonical JSON and SHA-256 hash chaining</p>
+          <div class="r3">
+            <span class="pips" role="img" aria-label="Types failed, Tests failed, Size passed">
+              <span class="pip fail" title="Types · failed · 3 errors"><svg class="ic"><use href="#i-x"/></svg></span>
+              <span class="pip fail" title="Tests · failed"><svg class="ic"><use href="#i-x"/></svg></span>
+              <span class="pip pass" title="Size · 2 files, +76 −0"><svg class="ic"><use href="#i-check"/></svg></span>
+            </span>
+            <span class="st" id="st-hasher">Types failed · Looping</span>
+          </div>
+          <div class="r4"><span class="budget"><i style="width:25%"></i></span><span class="tnum">8 of 32 steps</span></div>
+        </li>
+      </ul>
+    </section>
+
+    <section class="col" role="group" aria-labelledby="h-review">
+      <div class="col-h"><h2 id="h-review">Review</h2><span class="c tnum" title="Review limit 3, from 60 review minutes a day at ~20 min per card">1 / 3</span><button class="more" aria-label="Column options"><svg class="ic"><use href="#i-more"/></svg></button></div>
+      <div class="cap"><i style="width:33%"></i></div>
+      <ul class="list" role="listbox" aria-labelledby="h-review">
+        <li class="tile" role="option" aria-selected="false" tabindex="-1">
+          <div class="r1"><span class="kind" title="Contract: defines types and interfaces before behaviour">Contract</span><span class="id">iface</span></div>
+          <p class="title">Define Chronicle contract interfaces</p>
+          <div class="r3">
+            <span class="pips" role="img" aria-label="All 3 gates passed">
+              <span class="pip pass" title="Types · passed · 0.4s"><svg class="ic"><use href="#i-check"/></svg></span>
+              <span class="pip pass" title="Tests · passed · 0.5s"><svg class="ic"><use href="#i-check"/></svg></span>
+              <span class="pip pass" title="Size · 1 file, +18 −0"><svg class="ic"><use href="#i-check"/></svg></span>
+            </span>
+            <span class="st"><svg class="ic s12"><use href="#i-clock"/></svg>Waiting 12m</span>
+          </div>
+        </li>
+      </ul>
+    </section>
+
+    <button class="rail" title="Done: accepted cards">0<span>Done</span></button>
+
+    <section class="col" role="group" aria-labelledby="h-park">
+      <div class="col-h"><h2 id="h-park">Parked</h2><span class="c full tnum">1</span><button class="more" aria-label="Column options"><svg class="ic"><use href="#i-more"/></svg></button></div>
+      <ul class="list" role="listbox" aria-labelledby="h-park">
+        <li class="tile t-parked" role="option" aria-selected="false" tabindex="-1">
+          <div class="r1"><span class="kind">Contract</span><span class="kind">Wiring</span><span class="id">api</span></div>
+          <p class="title">Expose the ledger over an HTTP micro-API</p>
+          <div class="r3"><span class="st"><svg class="ic s12 park"><use href="#i-pause"/></svg>Paused for memory at step 11 · 8m 44s</span></div>
+          <div class="r4"><span class="budget warn"><i style="width:28%"></i></span><span class="tnum">11 of 40 steps</span></div>
+        </li>
+      </ul>
+    </section>
+  </div>
+</main>
+
+<!-- Peek drawer: press Space to open it for the focused tile (hasher), Esc to close. -->
+<aside class="peek" id="peek" hidden aria-label="Peek: Implement canonical JSON and SHA-256 hash chaining">
+  <header>
+    <div class="crumb">Chronicle › <span class="mono">card_chron_hasher</span> · attempt 1</div>
+    <h3>Implement canonical JSON and SHA-256 hash chaining</h3>
+    <div class="out"><span class="kind">Rules</span><svg class="ic s14" style="color:var(--state-fail)"><use href="#i-x"/></svg>Failed Types and Tests · Looping on step 8</div>
+  </header>
+  <div class="body">
+    <section>
+      <h4>Gates</h4>
+      <div class="g-strip" role="list">
+        <button class="g-seg fail" role="listitem" aria-label="Types: failed, 3 errors, 0.7 seconds"><svg class="ic"><use href="#i-x"/></svg>Types <span class="sec tnum">3</span><span class="t tnum">0.7s</span></button>
+        <button class="g-seg fail" role="listitem" aria-label="Tests: failed, 0.9 seconds"><svg class="ic"><use href="#i-x"/></svg>Tests<span class="t tnum">0.9s</span></button>
+        <button class="g-seg pass" role="listitem" aria-label="Size: passed"><svg class="ic"><use href="#i-check"/></svg>Size<span class="t">2 files</span></button>
+      </div>
+    </section>
+    <section>
+      <h4>Failures <span class="sec" style="font-weight:400">· 3 × TS2353 in tests/hasher.spec.ts</span></h4>
+      <div class="fail-b"><div class="loc">tests/hasher.spec.ts:25:7 · Types · TS2353</div>Object literal may only specify known properties, and 'id' does not exist in type '{ previousHash: string; }'.</div>
+    </section>
+    <section>
+      <h4>Done when</h4>
+      <div class="sec" style="font-size:var(--text-sm);line-height:1.6">canonicalJson sorts object keys recursively · GENESIS_HASH is 64 zeros · hashEvent takes one argument, typed <span class="mono">Omit&lt;ChronicleEvent&lt;T&gt;, 'hash'&gt;</span> · hashEvent incorporates previousHash · tests/hasher.spec.ts passes unmodified</div>
+    </section>
+  </div>
+  <footer>
+    <button class="btn" disabled title="Accept needs every gate passing"><svg class="ic"><use href="#i-merge"/></svg>Accept <kbd>A</kbd></button>
+    <button class="btn"><svg class="ic"><use href="#i-back"/></svg>Send back <kbd>R</kbd></button>
+    <button class="btn ghost"><svg class="ic"><use href="#i-park"/></svg>Park <kbd>P</kbd></button>
+    <span class="sec" style="margin-left:auto;font-size:var(--text-xs)"><kbd>↵</kbd> open card</span>
+  </footer>
+</aside>
+
+<script>
+const root = document.documentElement, peek = document.getElementById("peek");
+function toggleTheme(){ root.dataset.theme = root.dataset.theme === "sand" ? "basalt" : "sand"; }
+document.querySelectorAll("[data-theme-toggle]").forEach(b => b.addEventListener("click", toggleTheme));
+document.addEventListener("keydown", e => {
+  if (e.key === "t") toggleTheme();
+  if (e.key === " ") { e.preventDefault(); peek.hidden = !peek.hidden; }
+  if (e.key === "Escape") peek.hidden = true;
+  if (e.key === "Enter") location.href = "card.html";
+});
+</script>
+</body>
+</html>

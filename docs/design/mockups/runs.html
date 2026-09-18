@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="basalt">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Runs · Chronicle · Sekhemet (mockup)</title>
+<style>
+/* ---- Tokens: copied from packages/ui/src/tokens.ts + FRONTEND_DESIGN §3.1 additions ---- */
+:root {
+  --bg-base:#14120F; --bg-surface:#1C1A16; --bg-raised:#24211C; --bg-overlay:#2C2822;
+  --border-subtle:#2E2A24; --border-strong:#3D382F;
+  --text-primary:#EDE7DA; --text-secondary:#A79E8C; --text-muted:#6E6759;
+  --accent:#C8952A; --state-pass:#4FA36B; --state-fail:#CC5A4A; --state-running:#4C8ED9;
+  --state-parked:#B08A3E; --state-blocked:#8A7F70;
+  --on-accent:#14120F; --on-state:#14120F; --scrim:rgb(8 7 6 / .6);
+  --font-sans:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  --font-mono:'JetBrains Mono','SF Mono',Menlo,Consolas,monospace;
+  --text-xs:11px; --text-sm:12.5px; --text-base:13px; --text-md:15px; --text-lg:18px; --text-xl:22px;
+  --leading-tight:1.25; --leading-normal:1.45; --leading-code:1.55;
+  --radius-control:4px; --radius-card:6px; --motion:120ms ease-out;
+  --sidebar-w:216px; --topbar-h:44px;
+  color-scheme:dark;
+}
+[data-theme="sand"] {
+  --bg-base:#F6F3EC; --bg-surface:#FFFFFF; --bg-raised:#EDE8DD; --bg-overlay:#E2DDD0;
+  --border-subtle:#DED8CA; --border-strong:#C6BEAC;
+  --text-primary:#1C1A16; --text-secondary:#5E5749; --text-muted:#8F8778;
+  --accent:#8E6512; --state-pass:#2E7D4A; --state-fail:#A63A2B; --state-running:#2F6FB5;
+  --state-parked:#8C6A22; --state-blocked:#756C5E;
+  --on-accent:#FFFFFF; --on-state:#FFFFFF; --scrim:rgb(28 26 22 / .35);
+  color-scheme:light;
+}
+/* ---- Base ---- */
+*,*::before,*::after{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg-base);color:var(--text-primary);font:400 var(--text-base)/var(--leading-normal) var(--font-sans);-webkit-font-smoothing:antialiased;display:flex;overflow:hidden}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.tnum{font-variant-numeric:tabular-nums}
+.mono{font-family:var(--font-mono);font-size:var(--text-xs)}
+.sec{color:var(--text-secondary)}
+.ic{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+.ic.s12{width:12px;height:12px}.ic.s14{width:14px;height:14px}
+kbd{font:500 var(--text-xs) var(--font-mono);color:var(--text-secondary);border:1px solid var(--border-subtle);border-radius:3px;padding:0 4px;line-height:16px;display:inline-block;min-width:16px;text-align:center}
+
+/* ---- Sidebar ---- */
+.side{width:var(--sidebar-w);flex:none;background:var(--bg-surface);border-right:1px solid var(--border-subtle);display:flex;flex-direction:column;padding:12px 8px}
+.brand{display:flex;align-items:center;gap:8px;padding:4px 8px 12px}
+.brand .ic{width:18px;height:18px;color:var(--accent)}
+.brand b{font-size:var(--text-md);font-weight:600;letter-spacing:-.01em}
+.brand kbd{margin-left:auto}
+.project{display:flex;align-items:center;gap:8px;height:28px;padding:0 8px;border-radius:var(--radius-control);color:var(--text-secondary);margin-bottom:12px}
+.project:hover{background:var(--bg-overlay)}
+.project b{color:var(--text-primary);font-weight:500}
+.nav{display:flex;flex-direction:column;gap:2px}
+.nav a{display:flex;align-items:center;gap:8px;height:28px;padding:0 8px;border-radius:var(--radius-control);color:var(--text-secondary);text-decoration:none;position:relative;transition:background var(--motion)}
+.nav a:hover{background:var(--bg-overlay);color:var(--text-primary)}
+.nav a[aria-current]{background:var(--bg-overlay);color:var(--text-primary)}
+.nav a[aria-current]::before{content:"";position:absolute;left:-8px;top:6px;bottom:6px;width:2px;border-radius:1px;background:var(--accent)}
+.nav .n{margin-left:auto;font-size:var(--text-xs)}
+.nav .n.warn{color:var(--state-parked)}
+.foot{margin-top:auto;border-top:1px solid var(--border-subtle);padding:12px 8px 0;display:flex;flex-direction:column;gap:8px;font-size:var(--text-xs);color:var(--text-secondary)}
+.row{display:flex;align-items:center;gap:8px}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--state-pass);flex:none}
+.dot.run{background:var(--state-running);animation:pulse 1.6s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.35}}
+@media (prefers-reduced-motion:reduce){.dot.run{animation:none}}
+.meter{flex:1;height:4px;background:var(--bg-overlay);border-radius:2px;overflow:hidden}
+.meter i{display:block;height:100%;background:var(--text-secondary)}
+.foot .tools{display:flex;gap:4px}
+.icon-btn{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 6px;border-radius:var(--radius-control);color:var(--text-secondary)}
+.icon-btn:hover{background:var(--bg-overlay);color:var(--text-primary)}
+
+/* ---- Main / topbar ---- */
+main{flex:1;min-width:0;display:flex;flex-direction:column}
+.top{height:var(--topbar-h);flex:none;display:flex;align-items:center;gap:12px;padding:0 16px;border-bottom:1px solid var(--border-subtle)}
+.top h1{margin:0;font-size:var(--text-md);font-weight:600}
+.top .crumb{color:var(--text-secondary)}
+.filter{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 8px;border:1px dashed var(--border-strong);border-radius:var(--radius-control);color:var(--text-secondary);font-size:var(--text-xs)}
+.filter:hover{color:var(--text-primary);border-style:solid}
+.top .right{margin-left:auto;display:flex;gap:8px;align-items:center}
+.search{white-space:nowrap;display:flex;align-items:center;gap:8px;height:28px;width:220px;padding:0 8px;border:1px solid var(--border-subtle);border-radius:var(--radius-control);background:var(--bg-surface);color:var(--text-secondary)}
+.search kbd{margin-left:auto}
+.bar{white-space:nowrap;overflow:hidden;flex:none;display:flex;align-items:center;gap:8px;height:32px;padding:0 16px;background:var(--bg-surface);border-bottom:1px solid var(--state-parked);font-size:var(--text-sm)}
+.bar .ic{color:var(--state-parked)}
+.bar>span{overflow:hidden;text-overflow:ellipsis}
+.bar a{flex:none;color:var(--text-primary);margin-left:auto;font-size:var(--text-xs);text-decoration:none;border:1px solid var(--border-subtle);border-radius:var(--radius-control);padding:2px 8px}
+
+/* ---- Runs ---- */
+.wrap{flex:1;min-height:0;display:flex}
+.runs{width:240px;flex:none;border-right:1px solid var(--border-subtle);padding:8px 0;overflow-y:auto}
+.rn{display:block;width:100%;text-align:left;padding:8px 16px;position:relative}
+.rn:hover{background:var(--bg-surface)}
+.rn[aria-selected="true"]{background:var(--bg-overlay)}
+.rn[aria-selected="true"]::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--text-primary)}
+.rn .a{display:flex;justify-content:space-between;font-weight:500}
+.rn .b{font-size:var(--text-xs);color:var(--text-secondary);display:flex;justify-content:space-between;margin-top:2px}
+.runs .hint{font-size:var(--text-xs);color:var(--text-secondary);padding:12px 16px;line-height:1.5}
+.sc{flex:1;min-width:0;overflow-y:auto;padding:24px;display:flex;flex-direction:column;gap:32px;background:var(--bg-surface)}
+.sc-h h2{margin:0;font-size:var(--text-lg);font-weight:600}
+.sc-h p{margin:4px 0 0;color:var(--text-secondary);font-size:var(--text-sm)}
+.nums{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid var(--border-subtle);border-radius:var(--radius-card);background:var(--bg-base)}
+.num{padding:12px 16px;border-right:1px solid var(--border-subtle)}
+.num:last-child{border-right:0}
+.num .k{font-size:var(--text-xs);color:var(--text-secondary)}
+.num .v{font-size:var(--text-xl);font-weight:600;font-variant-numeric:tabular-nums;line-height:1.3;margin-top:2px}
+.num .v small{font-size:var(--text-sm);font-weight:400;color:var(--text-secondary)}
+.num .d{font-size:var(--text-xs);color:var(--text-secondary)}
+h3.sh{margin:0 0 8px;font-size:var(--text-sm);font-weight:600;display:flex;gap:8px;align-items:baseline}
+h3.sh .sec{font-weight:400}
+.tl{display:flex;height:28px;border-radius:var(--radius-control);overflow:hidden;gap:1px;background:var(--border-subtle)}
+.seg{display:flex;align-items:center;padding:0 8px;font:500 var(--text-xs) var(--font-mono);color:var(--on-state);white-space:nowrap;overflow:hidden;min-width:2px}
+.seg.pass{background:var(--state-pass)}.seg.fail{background:var(--state-fail)}.seg.park{background:var(--state-parked)}.seg.gap{background:var(--bg-overlay);padding:0}
+.axis{display:flex;justify-content:space-between;font-size:var(--text-xs);color:var(--text-secondary);margin-top:4px;font-variant-numeric:tabular-nums}
+.legend{display:flex;gap:16px;font-size:var(--text-xs);color:var(--text-secondary);margin-top:8px}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.sw{width:8px;height:8px;border-radius:2px;display:inline-block}
+table{width:100%;border-collapse:collapse;font-size:var(--text-sm)}
+th{text-align:left;font-weight:500;font-size:var(--text-xs);color:var(--text-secondary);padding:0 12px 8px;border-bottom:1px solid var(--border-subtle);white-space:nowrap}
+td{padding:8px 12px;border-bottom:1px solid var(--border-subtle);vertical-align:middle;white-space:nowrap}
+td.r,th.r{text-align:right;font-variant-numeric:tabular-nums}
+td .t{font-weight:500;display:block;white-space:normal}
+td .id{font-family:var(--font-mono);font-size:var(--text-xs);color:var(--text-secondary)}
+.res{display:inline-flex;align-items:center;gap:6px}
+.res .ic.pass{color:var(--state-pass)}.res .ic.fail{color:var(--state-fail)}.res .ic.park{color:var(--state-parked)}
+tr:hover td{background:var(--bg-raised)}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+.bars{display:flex;flex-direction:column;gap:8px}
+.bar-r{display:grid;grid-template-columns:120px 1fr 24px;gap:12px;align-items:center;font-size:var(--text-sm)}
+.bar-r .trk{height:8px;background:var(--bg-overlay);border-radius:2px;overflow:hidden}
+.bar-r .trk i{display:block;height:100%}
+.bar-r .n{text-align:right;font-variant-numeric:tabular-nums;color:var(--text-secondary)}
+ul.obs{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px;font-size:var(--text-sm)}
+ul.obs li{display:flex;gap:8px;line-height:1.45}
+ul.obs li .ic{margin-top:2px;color:var(--text-secondary)}
+dl.kv{margin:0;display:grid;grid-template-columns:160px 1fr;gap:6px 12px;font-size:var(--text-sm)}
+dl.kv dt{color:var(--text-secondary)}dl.kv dd{margin:0}
+@media (max-width:1279px){.runs{width:200px}.two{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-glyph" viewBox="0 0 24 24"><path d="M3 20 5.5 9H10v11M21 20 18.5 9H14v11M2 20h20"/><circle cx="12" cy="5.5" r="2.25"/></symbol>
+  <symbol id="i-review" viewBox="0 0 24 24"><path d="M4 13 6.5 6h11L20 13v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M4 13h4.5l1 2h5l1-2H20"/><path d="m9.5 9.5 1.8 1.8 3.4-3.6"/></symbol>
+  <symbol id="i-board" viewBox="0 0 24 24"><path d="M4.5 4.5h4v15h-4zM10 4.5h4v9h-4zM15.5 4.5h4v12h-4z"/></symbol>
+  <symbol id="i-runs" viewBox="0 0 24 24"><path d="M8 5l9 6-9 6z"/><path d="M4 20h16"/></symbol>
+  <symbol id="i-ledger" viewBox="0 0 24 24"><path d="M4 6h11M4 12h11M4 18h7"/><circle cx="18.5" cy="17" r="2.5"/><path d="M18.5 8v6.5"/></symbol>
+  <symbol id="i-playbook" viewBox="0 0 24 24"><path d="M3 5.5c2-1 5-1 9 1 4-2 7-2 9-1V19c-2-1-5-1-9 1-4-2-7-2-9-1z"/><path d="M12 6.5V20"/></symbol>
+  <symbol id="i-machine" viewBox="0 0 24 24"><path d="M7 7h10v10H7zM10 10h4v4h-4zM9 3v4M15 3v4M9 17v4M15 17v4M3 9h4M3 15h4M17 9h4M17 15h4"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+  <symbol id="i-minus" viewBox="0 0 24 24"><path d="M6 12h12"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><path d="M9 6v12M15 6v12"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+  <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M4 20l4-1 11-11-3-3L5 16z"/></symbol>
+  <symbol id="i-memory" viewBox="0 0 24 24"><path d="M3 8h18v8H3zM7 8v8M11 8v8M15 8v8M6 16v3M18 16v3"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></symbol>
+  <symbol id="i-keyboard" viewBox="0 0 24 24"><path d="M3 7h18v10H3zM7 11h.01M11 11h.01M15 11h.01M7 14h10"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><path d="M6 12h.01M12 12h.01M18 12h.01"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4 2.5 20h19z"/><path d="M12 10v4M12 17h.01"/></symbol>
+  <symbol id="i-merge" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="12" r="2"/><path d="M6 8v8M6 8c0 3 3 4 10 4"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></symbol>
+  <symbol id="i-park" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M10 9v6M14 9v6"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5.5" y="11" width="13" height="9" rx="1.5"/><path d="M8.5 11V8a3.5 3.5 0 0 1 7 0v3"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="1.5"/><path d="M16 8V5.5A1.5 1.5 0 0 0 14.5 4h-9A1.5 1.5 0 0 0 4 5.5v9A1.5 1.5 0 0 0 5.5 16H8"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/></symbol>
+  <symbol id="i-chevr" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 24 24"><path d="M8 5 4 9l4 4"/><path d="M4 9h11a5 5 0 0 1 0 10H9"/></symbol>
+  <symbol id="i-ring" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 1-9 9"/></symbol>
+</svg>
+
+<nav class="side" aria-label="Primary">
+  <div class="brand"><svg class="ic"><use href="#i-glyph"/></svg><b>Sekhemet</b><kbd>⌘K</kbd></div>
+  <button class="project"><span class="lbl">Project</span> <b class="lbl">Chronicle</b><svg class="ic s12" style="margin-left:auto"><use href="#i-chev"/></svg></button>
+  <div class="nav">
+    <a href="review.html"><svg class="ic"><use href="#i-review"/></svg><span class="lbl">Review</span><span class="n tnum">1</span></a>
+    <a href="board.html"><svg class="ic"><use href="#i-board"/></svg><span class="lbl">Board</span></a>
+    <a href="runs.html" aria-current="page"><svg class="ic"><use href="#i-runs"/></svg><span class="lbl">Runs</span><span class="n tnum">3 of 6</span></a>
+    <a href="#"><svg class="ic"><use href="#i-ledger"/></svg><span class="lbl">Ledger</span></a>
+    <a href="#"><svg class="ic"><use href="#i-playbook"/></svg><span class="lbl">Playbook</span><span class="n tnum">5</span></a>
+    <a href="#"><svg class="ic"><use href="#i-machine"/></svg><span class="lbl">Machine</span></a>
+  </div>
+  <div class="foot">
+    <div class="row"><span class="dot"></span><span class="lbl">Live · ledger intact · 13</span></div>
+    <div class="row"><svg class="ic s14"><use href="#i-memory"/></svg><span class="lbl tnum">Memory 61%</span><span class="meter lbl"><i style="width:61%"></i></span></div>
+    <div class="row"><span class="dot run"></span><span class="lbl mono" style="color:inherit">nail-35b-a3b · working</span></div>
+    <div class="tools"><button class="icon-btn" data-theme-toggle title="Theme (t)"><svg class="ic s14"><use href="#i-moon"/></svg><span class="lbl">Theme</span></button><button class="icon-btn" title="Keyboard shortcuts (?)"><svg class="ic s14"><use href="#i-keyboard"/></svg><span class="lbl">Keys</span></button></div>
+  </div>
+</nav>
+
+<main>
+  <header class="top">
+    <h1>Runs</h1><span class="crumb">Chronicle · unattended queue runs</span>
+    <div class="right"><div class="search"><svg class="ic s14"><use href="#i-search"/></svg>Search or run a command<kbd>⌘K</kbd></div></div>
+  </header>
+  <div class="wrap">
+    <nav class="runs" aria-label="Runs">
+      <button class="rn" aria-selected="true"><div class="a"><span>Sep 18, 14:16</span><span class="tnum">3 of 6</span></div><div class="b"><span class="mono">nail-35b-a3b-ctx</span><span class="tnum">22m 10s</span></div></button>
+      <p class="hint">Earlier runs appear here once run history is kept. Start one with <span class="mono">sekhemet queue</span>.</p>
+    </nav>
+    <section class="sc">
+      <div class="sc-h">
+        <h2>Run of Sep 18, 14:16</h2>
+        <p>6 Ready cards on <span class="mono">nail-35b-a3b-ctx:latest</span> · no Planner retry configured · passing cards merged automatically</p>
+      </div>
+
+      <div class="nums">
+        <div class="num"><div class="k">Passed on the first try</div><div class="v">3 <small>of 6</small></div><div class="d">50% · <span class="mono">pass@1 0.50</span></div></div>
+        <div class="num"><div class="k">Passed after a Planner retry</div><div class="v">0 <small>of 3</small></div><div class="d">No Planner model was set</div></div>
+        <div class="num"><div class="k">Total time</div><div class="v">22m 10s</div><div class="d">Failed cards used 19m 03s (86%)</div></div>
+        <div class="num"><div class="k">Tokens</div><div class="v">121.4k <small>in</small></div><div class="d">31.5k out · 23.7 tok/s overall</div></div>
+      </div>
+
+      <section>
+        <h3 class="sh">Timeline <span class="sec">cards ran one after another; width is time</span></h3>
+        <div class="tl" role="img" aria-label="Timeline: iface passed 2m 31s, hasher passed 20.1s, db passed 14.3s, verifier stalled 4m 41s, ledger could not fix 5m 37s, api paused for memory 8m 44s"><div class="seg pass" style="flex:0 0 11.34%" title="Define Chronicle contract interfaces · 2m 31s · Passed">iface</div><div class="seg pass" style="flex:0 0 1.51%" title="Implement canonical JSON and SHA-256 hash chaining · 20.1s · Passed"></div><div class="seg pass" style="flex:0 0 1.08%" title="Initialize node:sqlite WAL database with strict constraints · 14.3s · Passed"></div><div class="seg fail" style="flex:0 0 21.16%" title="Implement tamper detection over the hash chain · 4m 41s · Stalled">verifier</div><div class="seg fail" style="flex:0 0 25.36%" title="Implement append-only ledger with idempotency · 5m 37s · Couldn’t fix">ledger</div><div class="seg park" style="flex:0 0 39.40%" title="Expose the ledger over an HTTP micro-API · 8m 44s · Paused for memory">api</div><div class="seg gap" style="flex:1" title="Harness overhead · 2.1s"></div></div>
+        <div class="axis"><span>14:16:10</span><span>+5m</span><span>+10m</span><span>+15m</span><span>+20m</span><span>14:38:20</span></div>
+        <div class="legend"><span><i class="sw" style="background:var(--state-pass)"></i>Passed</span><span><i class="sw" style="background:var(--state-fail)"></i>Failed</span><span><i class="sw" style="background:var(--state-parked)"></i>Paused</span></div>
+      </section>
+
+      <section>
+        <h3 class="sh">Cards</h3>
+        <div style="overflow-x:auto">
+        <table>
+          <thead><tr><th>Card</th><th>Attempt</th><th>Result</th><th>Why it stopped</th><th class="r">Steps</th><th class="r">Time</th><th class="r">Tokens in · out</th><th>Main</th></tr></thead>
+          <tbody>
+<tr><td><span class="t">Define Chronicle contract interfaces</span><span class="id">iface</span></td><td>1</td><td><span class="res"><svg class="ic s14 pass"><use href="#i-check"/></svg>Passed</span></td><td>Passed</td><td class="r">2</td><td class="r">2m 31s</td><td class="r">3.4k · 124</td><td><span class="res"><svg class="ic s14"><use href="#i-merge"/></svg>Merged</span></td></tr>
+<tr><td><span class="t">Implement canonical JSON and SHA-256 hash chaining</span><span class="id">hasher</span></td><td>1</td><td><span class="res"><svg class="ic s14 pass"><use href="#i-check"/></svg>Passed</span></td><td>Passed</td><td class="r">2</td><td class="r">20.1s</td><td class="r">5.6k · 367</td><td><span class="res"><svg class="ic s14"><use href="#i-merge"/></svg>Merged</span></td></tr>
+<tr><td><span class="t">Initialize node:sqlite WAL database with strict constraints</span><span class="id">db</span></td><td>1</td><td><span class="res"><svg class="ic s14 pass"><use href="#i-check"/></svg>Passed</span></td><td>Passed</td><td class="r">2</td><td class="r">14.3s</td><td class="r">5.6k · 203</td><td><span class="res"><svg class="ic s14"><use href="#i-merge"/></svg>Merged</span></td></tr>
+<tr><td><span class="t">Implement tamper detection over the hash chain</span><span class="id">verifier</span></td><td>1</td><td><span class="res"><svg class="ic s14 fail"><use href="#i-x"/></svg>Failed</span></td><td>Stalled</td><td class="r">8</td><td class="r">4m 41s</td><td class="r">23.9k · 7.7k</td><td><span class="sec">—</span></td></tr>
+<tr><td><span class="t">Implement append-only ledger with idempotency</span><span class="id">ledger</span></td><td>1</td><td><span class="res"><svg class="ic s14 fail"><use href="#i-x"/></svg>Failed</span></td><td>Couldn’t fix</td><td class="r">12</td><td class="r">5m 37s</td><td class="r">42.5k · 8.5k</td><td><span class="sec">—</span></td></tr>
+<tr><td><span class="t">Expose the ledger over an HTTP micro-API</span><span class="id">api</span></td><td>1</td><td><span class="res"><svg class="ic s14 park"><use href="#i-pause"/></svg>Paused</span></td><td>Paused for memory</td><td class="r">11</td><td class="r">8m 44s</td><td class="r">40.5k · 14.8k</td><td><span class="sec">—</span></td></tr>
+          </tbody>
+        </table>
+        </div>
+      </section>
+
+      <div class="two">
+        <section>
+          <h3 class="sh">Why cards stopped</h3>
+          <div class="bars">
+            <div class="bar-r"><span>Passed</span><span class="trk"><i style="width:50%;background:var(--state-pass)"></i></span><span class="n">3</span></div>
+            <div class="bar-r"><span>Stalled</span><span class="trk"><i style="width:16.7%;background:var(--state-fail)"></i></span><span class="n">1</span></div>
+            <div class="bar-r"><span>Couldn’t fix</span><span class="trk"><i style="width:16.7%;background:var(--state-fail)"></i></span><span class="n">1</span></div>
+            <div class="bar-r"><span>Paused for memory</span><span class="trk"><i style="width:16.7%;background:var(--state-parked)"></i></span><span class="n">1</span></div>
+          </div>
+        </section>
+        <section>
+          <h3 class="sh">What the numbers show</h3>
+          <ul class="obs">
+            <li><svg class="ic s14"><use href="#i-check"/></svg><span>Every passing card took 2 steps. Failing cards took 8 to 12.</span></li>
+            <li><svg class="ic s14"><use href="#i-clock"/></svg><span><b>Define Chronicle contract interfaces</b> took 2m 31s for 2 steps; the other passing cards took 14–20s.</span></li>
+            <li><svg class="ic s14"><use href="#i-pause"/></svg><span><b>Expose the ledger over an HTTP micro-API</b> stopped safely at step 11, and the queue halted. It can resume.</span></li>
+            <li><svg class="ic s14"><use href="#i-playbook"/></svg><span>Failures on <b>verifier</b> and <b>db</b> are the origin of playbook rules <span class="mono">rule_exact_optional</span> and <span class="mono">rule_node_sqlite</span>.</span></li>
+          </ul>
+        </section>
+      </div>
+
+      <section>
+        <h3 class="sh">Run settings</h3>
+        <dl class="kv">
+          <dt>Worker model</dt><dd class="mono">nail-35b-a3b-ctx:latest</dd>
+          <dt>Planner model</dt><dd class="sec">None: failed cards were not retried</dd>
+          <dt>Model swaps</dt><dd class="sec">Not recorded in this run</dd>
+          <dt>Started</dt><dd class="tnum">2026-09-18 14:16:10</dd>
+          <dt>Report</dt><dd class="mono">.sekhemet/queue_report.json</dd>
+        </dl>
+      </section>
+    </section>
+  </div>
+</main>
+
+<script>
+const root = document.documentElement;
+function toggleTheme(){ root.dataset.theme = root.dataset.theme === "sand" ? "basalt" : "sand"; }
+document.querySelectorAll("[data-theme-toggle]").forEach(b => b.addEventListener("click", toggleTheme));
+function typing(e){ return /^(TEXTAREA|INPUT)$/.test(e.target.tagName); }
+document.addEventListener("keydown", e => { if (!typing(e) && e.key === "t") toggleTheme(); });
+</script>
+</body>
+</html>

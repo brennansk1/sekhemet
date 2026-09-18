@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="basalt">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Review · Chronicle · Sekhemet (mockup)</title>
+<style>
+/* ---- Tokens: copied from packages/ui/src/tokens.ts + FRONTEND_DESIGN §3.1 additions ---- */
+:root {
+  --bg-base:#14120F; --bg-surface:#1C1A16; --bg-raised:#24211C; --bg-overlay:#2C2822;
+  --border-subtle:#2E2A24; --border-strong:#3D382F;
+  --text-primary:#EDE7DA; --text-secondary:#A79E8C; --text-muted:#6E6759;
+  --accent:#C8952A; --state-pass:#4FA36B; --state-fail:#CC5A4A; --state-running:#4C8ED9;
+  --state-parked:#B08A3E; --state-blocked:#8A7F70;
+  --on-accent:#14120F; --on-state:#14120F; --scrim:rgb(8 7 6 / .6);
+  --font-sans:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  --font-mono:'JetBrains Mono','SF Mono',Menlo,Consolas,monospace;
+  --text-xs:11px; --text-sm:12.5px; --text-base:13px; --text-md:15px; --text-lg:18px; --text-xl:22px;
+  --leading-tight:1.25; --leading-normal:1.45; --leading-code:1.55;
+  --radius-control:4px; --radius-card:6px; --motion:120ms ease-out;
+  --sidebar-w:216px; --topbar-h:44px;
+  color-scheme:dark;
+}
+[data-theme="sand"] {
+  --bg-base:#F6F3EC; --bg-surface:#FFFFFF; --bg-raised:#EDE8DD; --bg-overlay:#E2DDD0;
+  --border-subtle:#DED8CA; --border-strong:#C6BEAC;
+  --text-primary:#1C1A16; --text-secondary:#5E5749; --text-muted:#8F8778;
+  --accent:#8E6512; --state-pass:#2E7D4A; --state-fail:#A63A2B; --state-running:#2F6FB5;
+  --state-parked:#8C6A22; --state-blocked:#756C5E;
+  --on-accent:#FFFFFF; --on-state:#FFFFFF; --scrim:rgb(28 26 22 / .35);
+  color-scheme:light;
+}
+/* ---- Base ---- */
+*,*::before,*::after{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg-base);color:var(--text-primary);font:400 var(--text-base)/var(--leading-normal) var(--font-sans);-webkit-font-smoothing:antialiased;display:flex;overflow:hidden}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.tnum{font-variant-numeric:tabular-nums}
+.mono{font-family:var(--font-mono);font-size:var(--text-xs)}
+.sec{color:var(--text-secondary)}
+.ic{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+.ic.s12{width:12px;height:12px}.ic.s14{width:14px;height:14px}
+kbd{font:500 var(--text-xs) var(--font-mono);color:var(--text-secondary);border:1px solid var(--border-subtle);border-radius:3px;padding:0 4px;line-height:16px;display:inline-block;min-width:16px;text-align:center}
+
+/* ---- Sidebar ---- */
+.side{width:var(--sidebar-w);flex:none;background:var(--bg-surface);border-right:1px solid var(--border-subtle);display:flex;flex-direction:column;padding:12px 8px}
+.brand{display:flex;align-items:center;gap:8px;padding:4px 8px 12px}
+.brand .ic{width:18px;height:18px;color:var(--accent)}
+.brand b{font-size:var(--text-md);font-weight:600;letter-spacing:-.01em}
+.brand kbd{margin-left:auto}
+.project{display:flex;align-items:center;gap:8px;height:28px;padding:0 8px;border-radius:var(--radius-control);color:var(--text-secondary);margin-bottom:12px}
+.project:hover{background:var(--bg-overlay)}
+.project b{color:var(--text-primary);font-weight:500}
+.nav{display:flex;flex-direction:column;gap:2px}
+.nav a{display:flex;align-items:center;gap:8px;height:28px;padding:0 8px;border-radius:var(--radius-control);color:var(--text-secondary);text-decoration:none;position:relative;transition:background var(--motion)}
+.nav a:hover{background:var(--bg-overlay);color:var(--text-primary)}
+.nav a[aria-current]{background:var(--bg-overlay);color:var(--text-primary)}
+.nav a[aria-current]::before{content:"";position:absolute;left:-8px;top:6px;bottom:6px;width:2px;border-radius:1px;background:var(--accent)}
+.nav .n{margin-left:auto;font-size:var(--text-xs)}
+.nav .n.warn{color:var(--state-parked)}
+.foot{margin-top:auto;border-top:1px solid var(--border-subtle);padding:12px 8px 0;display:flex;flex-direction:column;gap:8px;font-size:var(--text-xs);color:var(--text-secondary)}
+.row{display:flex;align-items:center;gap:8px}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--state-pass);flex:none}
+.dot.run{background:var(--state-running);animation:pulse 1.6s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.35}}
+@media (prefers-reduced-motion:reduce){.dot.run{animation:none}}
+.meter{flex:1;height:4px;background:var(--bg-overlay);border-radius:2px;overflow:hidden}
+.meter i{display:block;height:100%;background:var(--text-secondary)}
+.foot .tools{display:flex;gap:4px}
+.icon-btn{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 6px;border-radius:var(--radius-control);color:var(--text-secondary)}
+.icon-btn:hover{background:var(--bg-overlay);color:var(--text-primary)}
+
+/* ---- Main / topbar ---- */
+main{flex:1;min-width:0;display:flex;flex-direction:column}
+.top{height:var(--topbar-h);flex:none;display:flex;align-items:center;gap:12px;padding:0 16px;border-bottom:1px solid var(--border-subtle)}
+.top h1{margin:0;font-size:var(--text-md);font-weight:600}
+.top .crumb{color:var(--text-secondary)}
+.filter{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 8px;border:1px dashed var(--border-strong);border-radius:var(--radius-control);color:var(--text-secondary);font-size:var(--text-xs)}
+.filter:hover{color:var(--text-primary);border-style:solid}
+.top .right{margin-left:auto;display:flex;gap:8px;align-items:center}
+.search{white-space:nowrap;display:flex;align-items:center;gap:8px;height:28px;width:220px;padding:0 8px;border:1px solid var(--border-subtle);border-radius:var(--radius-control);background:var(--bg-surface);color:var(--text-secondary)}
+.search kbd{margin-left:auto}
+.bar{white-space:nowrap;overflow:hidden;flex:none;display:flex;align-items:center;gap:8px;height:32px;padding:0 16px;background:var(--bg-surface);border-bottom:1px solid var(--state-parked);font-size:var(--text-sm)}
+.bar .ic{color:var(--state-parked)}
+.bar>span{overflow:hidden;text-overflow:ellipsis}
+.bar a{flex:none;color:var(--text-primary);margin-left:auto;font-size:var(--text-xs);text-decoration:none;border:1px solid var(--border-subtle);border-radius:var(--radius-control);padding:2px 8px}
+
+/* ---- Review layout ---- */
+.wrap{flex:1;min-height:0;display:flex}
+.queue{width:296px;flex:none;border-right:1px solid var(--border-subtle);overflow-y:auto;padding:8px 0;background:var(--bg-base)}
+.q-h{display:flex;align-items:center;gap:8px;height:28px;padding:0 16px;font-size:var(--text-sm);font-weight:600}
+.q-h .c{font-size:var(--text-xs);font-weight:400;color:var(--text-secondary)}
+.q-row{display:block;width:100%;text-align:left;padding:8px 16px;position:relative;border-radius:0}
+.q-row:hover{background:var(--bg-surface)}
+.q-row[aria-selected="true"]{background:var(--bg-overlay)}
+.q-row[aria-selected="true"]::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--text-primary)}
+.q-t{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.q-m{display:flex;align-items:center;gap:6px;font-size:var(--text-xs);color:var(--text-secondary);margin-top:2px}
+.q-m .ic.pass{color:var(--state-pass)}.q-m .ic.fail{color:var(--state-fail)}.q-m .ic.park{color:var(--state-parked)}
+.q-m .w{margin-left:auto}.q-m .w.old{color:var(--state-parked)}
+.q-sep{height:1px;background:var(--border-subtle);margin:8px 16px}
+.ev{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--bg-surface)}
+.ev-scroll{flex:1;overflow-y:auto;padding:24px;display:flex;flex-direction:column;gap:24px}
+.crumbs{display:flex;align-items:center;gap:6px;font-size:var(--text-xs);color:var(--text-secondary)}
+.att{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--border-subtle);border-radius:var(--radius-control);padding:0 6px;line-height:18px}
+h2.ttl{margin:6px 0 6px;font-size:var(--text-lg);font-weight:600;line-height:var(--leading-tight)}
+.outcome{display:flex;align-items:center;gap:8px;color:var(--text-secondary);font-size:var(--text-sm)}
+.outcome .ic{color:var(--state-pass)}
+.kind{font-size:var(--text-xs);color:var(--text-secondary);background:var(--bg-raised);border-radius:var(--radius-control);padding:0 6px;line-height:18px}
+h3.sh{margin:0 0 8px;font-size:var(--text-sm);font-weight:600;display:flex;align-items:center;gap:8px}
+h3.sh .sec{font-weight:400}
+.g-strip{display:flex;border:1px solid var(--border-subtle);border-radius:var(--radius-control);overflow:hidden;background:var(--bg-base)}
+.g-seg{flex:1;display:flex;align-items:center;gap:8px;height:32px;padding:0 12px;border-right:1px solid var(--border-subtle);font-size:var(--text-sm);position:relative;white-space:nowrap}
+.g-seg:last-child{border-right:0}
+.g-seg:hover{background:var(--bg-raised)}
+.g-seg .ic{width:14px;height:14px}
+.g-seg.pass .ic{color:var(--state-pass)}
+.g-seg.warn{flex:1.3;color:var(--text-primary)}.g-seg.warn .ic{color:var(--state-parked)}
+.g-seg.warn::before{content:"";position:absolute;left:0;right:0;top:0;height:2px;background:var(--state-parked)}
+.g-seg .t{margin-left:auto;font-size:var(--text-xs);color:var(--text-secondary)}
+.pop{position:absolute;top:36px;left:0;z-index:3;width:380px;background:var(--bg-overlay);border:1px solid var(--border-strong);border-radius:var(--radius-card);padding:12px;white-space:normal;font-size:var(--text-sm);color:var(--text-secondary);display:none}
+.g-seg.warn:hover .pop,.g-seg.warn:focus .pop{display:block}
+.pop b{color:var(--text-primary);display:block;margin-bottom:4px}
+.group{border:1px solid var(--border-subtle);border-radius:var(--radius-card);overflow:hidden;background:var(--bg-base)}
+.g-h{display:flex;align-items:center;gap:8px;height:32px;padding:0 12px;background:var(--bg-raised);font-size:var(--text-sm);border-bottom:1px solid var(--border-subtle)}
+.g-h .path{font-family:var(--font-mono);font-size:var(--text-sm)}
+.role{font-size:var(--text-xs);color:var(--text-secondary);border:1px solid var(--border-subtle);border-radius:var(--radius-control);padding:0 6px;line-height:16px}
+.g-h .num{margin-left:auto;font-size:var(--text-xs);font-family:var(--font-mono)}
+.add-n{color:var(--state-pass)}
+.diff{margin:0;font:400 var(--text-sm)/20px var(--font-mono);overflow-x:auto}
+.ln{display:flex;min-width:max-content}
+.ln .o,.ln .n{width:40px;flex:none;text-align:right;padding-right:8px;color:var(--text-muted);font-size:var(--text-xs);user-select:none}
+.ln .s{width:16px;flex:none;color:var(--text-secondary)}
+.ln.hunk{background:var(--bg-raised);color:var(--text-secondary)}
+.ln.add{background:color-mix(in srgb,var(--state-pass) 10%,transparent)}
+.ln code{font:inherit;white-space:pre;padding-right:16px}
+.note-row{padding:8px 12px;font-size:var(--text-sm);color:var(--text-secondary);display:flex;gap:8px;align-items:center}
+.facts{width:288px;flex:none;border-left:1px solid var(--border-subtle);overflow-y:auto;padding:24px 16px;display:flex;flex-direction:column;gap:24px;background:var(--bg-base)}
+.crit{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;font-size:var(--text-sm)}
+.crit li{display:flex;gap:8px;line-height:var(--leading-normal)}
+.crit li .ic{margin-top:2px;color:var(--text-secondary)}
+.crit li.warn .ic{color:var(--state-parked)}
+.crit small{display:block;color:var(--state-parked);font-size:var(--text-xs)}
+dl.kv{margin:0;display:grid;grid-template-columns:auto 1fr;gap:6px 12px;font-size:var(--text-sm)}
+dl.kv dt{color:var(--text-secondary)}
+dl.kv dd{margin:0;text-align:right;font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.prov{display:flex;align-items:center;gap:6px;font-size:var(--text-xs);color:var(--text-secondary);padding:4px 0}
+.prov .mono{color:var(--text-primary)}
+.prov button{margin-left:auto;color:var(--text-secondary)}
+.prov.warn .mono{color:var(--state-parked)}
+.triage{flex:none;display:flex;align-items:center;gap:8px;height:52px;padding:0 24px;border-top:1px solid var(--border-subtle);background:var(--bg-surface)}
+.btn{white-space:nowrap;display:inline-flex;align-items:center;gap:8px;height:32px;padding:0 12px;border-radius:var(--radius-control);font-weight:500;border:1px solid var(--border-subtle);background:var(--bg-raised);transition:background var(--motion)}
+.btn:hover{background:var(--bg-overlay)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.btn.primary:hover{filter:brightness(1.08)}
+.btn.primary kbd{color:var(--on-accent);border-color:color-mix(in srgb,var(--on-accent) 35%,transparent)}
+.btn.ghost{border-color:transparent;background:none;color:var(--text-secondary)}
+.triage .hint{margin-left:auto;font-size:var(--text-xs);color:var(--text-secondary);display:flex;gap:6px;align-items:center}
+.composer{flex:none;border-top:1px solid var(--border-subtle);background:var(--bg-surface);padding:16px 24px 8px;display:flex;flex-direction:column;gap:8px}
+.composer[hidden]{display:none}
+.composer label{font-size:var(--text-sm);font-weight:600}
+.composer textarea{width:100%;min-height:72px;resize:vertical;background:var(--bg-base);color:var(--text-primary);border:1px solid var(--border-strong);border-radius:var(--radius-control);padding:8px 12px;font:inherit}
+.chips{display:flex;gap:8px;flex-wrap:wrap}
+.chip{font-size:var(--text-xs);color:var(--text-secondary);border:1px solid var(--border-subtle);border-radius:var(--radius-control);padding:2px 8px;background:var(--bg-raised)}
+.chip:hover{color:var(--text-primary);border-color:var(--border-strong)}
+.cbx{display:flex;align-items:center;gap:8px;font-size:var(--text-xs);color:var(--text-secondary)}
+.toast{position:fixed;left:16px;bottom:16px;width:360px;display:flex;align-items:center;gap:8px;padding:12px 16px;background:var(--bg-overlay);border:1px solid var(--border-strong);border-radius:var(--radius-card);font-size:var(--text-sm);z-index:9}
+.toast[hidden]{display:none}
+.toast .ic{color:var(--state-pass)}
+.toast button{margin-left:auto;font-size:var(--text-xs);color:var(--text-secondary)}
+@media (max-width:1279px){.facts{display:none}.queue{width:248px}}
+.bul{width:5px;height:5px;border-radius:50%;background:var(--text-secondary);flex:none;margin-top:7px}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-glyph" viewBox="0 0 24 24"><path d="M3 20 5.5 9H10v11M21 20 18.5 9H14v11M2 20h20"/><circle cx="12" cy="5.5" r="2.25"/></symbol>
+  <symbol id="i-review" viewBox="0 0 24 24"><path d="M4 13 6.5 6h11L20 13v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M4 13h4.5l1 2h5l1-2H20"/><path d="m9.5 9.5 1.8 1.8 3.4-3.6"/></symbol>
+  <symbol id="i-board" viewBox="0 0 24 24"><path d="M4.5 4.5h4v15h-4zM10 4.5h4v9h-4zM15.5 4.5h4v12h-4z"/></symbol>
+  <symbol id="i-runs" viewBox="0 0 24 24"><path d="M8 5l9 6-9 6z"/><path d="M4 20h16"/></symbol>
+  <symbol id="i-ledger" viewBox="0 0 24 24"><path d="M4 6h11M4 12h11M4 18h7"/><circle cx="18.5" cy="17" r="2.5"/><path d="M18.5 8v6.5"/></symbol>
+  <symbol id="i-playbook" viewBox="0 0 24 24"><path d="M3 5.5c2-1 5-1 9 1 4-2 7-2 9-1V19c-2-1-5-1-9 1-4-2-7-2-9-1z"/><path d="M12 6.5V20"/></symbol>
+  <symbol id="i-machine" viewBox="0 0 24 24"><path d="M7 7h10v10H7zM10 10h4v4h-4zM9 3v4M15 3v4M9 17v4M15 17v4M3 9h4M3 15h4M17 9h4M17 15h4"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+  <symbol id="i-minus" viewBox="0 0 24 24"><path d="M6 12h12"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><path d="M9 6v12M15 6v12"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+  <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M4 20l4-1 11-11-3-3L5 16z"/></symbol>
+  <symbol id="i-memory" viewBox="0 0 24 24"><path d="M3 8h18v8H3zM7 8v8M11 8v8M15 8v8M6 16v3M18 16v3"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></symbol>
+  <symbol id="i-keyboard" viewBox="0 0 24 24"><path d="M3 7h18v10H3zM7 11h.01M11 11h.01M15 11h.01M7 14h10"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><path d="M6 12h.01M12 12h.01M18 12h.01"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4 2.5 20h19z"/><path d="M12 10v4M12 17h.01"/></symbol>
+  <symbol id="i-merge" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="12" r="2"/><path d="M6 8v8M6 8c0 3 3 4 10 4"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></symbol>
+  <symbol id="i-park" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M10 9v6M14 9v6"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5.5" y="11" width="13" height="9" rx="1.5"/><path d="M8.5 11V8a3.5 3.5 0 0 1 7 0v3"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="1.5"/><path d="M16 8V5.5A1.5 1.5 0 0 0 14.5 4h-9A1.5 1.5 0 0 0 4 5.5v9A1.5 1.5 0 0 0 5.5 16H8"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/></symbol>
+  <symbol id="i-chevr" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 24 24"><path d="M8 5 4 9l4 4"/><path d="M4 9h11a5 5 0 0 1 0 10H9"/></symbol>
+  <symbol id="i-ring" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 1-9 9"/></symbol>
+</svg>
+
+<nav class="side" aria-label="Primary">
+  <div class="brand"><svg class="ic"><use href="#i-glyph"/></svg><b>Sekhemet</b><kbd>⌘K</kbd></div>
+  <button class="project"><span class="lbl">Project</span> <b class="lbl">Chronicle</b><svg class="ic s12" style="margin-left:auto"><use href="#i-chev"/></svg></button>
+  <div class="nav">
+    <a href="review.html" aria-current="page"><svg class="ic"><use href="#i-review"/></svg><span class="lbl">Review</span><span class="n tnum">1</span></a>
+    <a href="board.html"><svg class="ic"><use href="#i-board"/></svg><span class="lbl">Board</span></a>
+    <a href="runs.html"><svg class="ic"><use href="#i-runs"/></svg><span class="lbl">Runs</span><span class="n tnum">3 of 6</span></a>
+    <a href="#"><svg class="ic"><use href="#i-ledger"/></svg><span class="lbl">Ledger</span></a>
+    <a href="#"><svg class="ic"><use href="#i-playbook"/></svg><span class="lbl">Playbook</span><span class="n tnum">5</span></a>
+    <a href="#"><svg class="ic"><use href="#i-machine"/></svg><span class="lbl">Machine</span></a>
+  </div>
+  <div class="foot">
+    <div class="row"><span class="dot"></span><span class="lbl">Live · ledger intact · 13</span></div>
+    <div class="row"><svg class="ic s14"><use href="#i-memory"/></svg><span class="lbl tnum">Memory 61%</span><span class="meter lbl"><i style="width:61%"></i></span></div>
+    <div class="row"><span class="dot run"></span><span class="lbl mono" style="color:inherit">nail-35b-a3b · working</span></div>
+    <div class="tools"><button class="icon-btn" data-theme-toggle title="Theme (t)"><svg class="ic s14"><use href="#i-moon"/></svg><span class="lbl">Theme</span></button><button class="icon-btn" title="Keyboard shortcuts (?)"><svg class="ic s14"><use href="#i-keyboard"/></svg><span class="lbl">Keys</span></button></div>
+  </div>
+</nav>
+
+<main>
+  <header class="top">
+    <h1>Review</h1><span class="crumb">1 ready · 2 need you</span>
+    <div class="right"><div class="search"><svg class="ic s14"><use href="#i-search"/></svg>Search or run a command<kbd>⌘K</kbd></div></div>
+  </header>
+  <div class="wrap">
+    <div class="queue" role="listbox" aria-label="Review queue">
+      <div class="q-h">Ready for review <span class="c tnum">1</span></div>
+      <button class="q-row" role="option" aria-selected="true">
+        <div class="q-t">Define Chronicle contract interfaces</div>
+        <div class="q-m"><span>Contract</span>·<svg class="ic s12 pass"><use href="#i-check"/></svg>3 of 3 gates<span class="w tnum">12m</span></div>
+      </button>
+      <div class="q-sep"></div>
+      <div class="q-h">Need you <span class="c tnum">2</span></div>
+      <button class="q-row" role="option" aria-selected="false">
+        <div class="q-t">Expose the ledger over an HTTP micro-API</div>
+        <div class="q-m"><svg class="ic s12 park"><use href="#i-pause"/></svg>Paused for memory · step 11<span class="w old tnum">2h 10m</span></div>
+      </button>
+      <button class="q-row" role="option" aria-selected="false">
+        <div class="q-t">Implement canonical JSON and SHA-256 hash chaining</div>
+        <div class="q-m"><svg class="ic s12 fail"><use href="#i-x"/></svg>Looping · Types failed<span class="w tnum">24m</span></div>
+      </button>
+    </div>
+
+    <section class="ev" aria-label="Evidence">
+      <div class="ev-scroll">
+        <div>
+          <div class="crumbs">Chronicle <svg class="ic s12"><use href="#i-chevr"/></svg><span class="mono">card_chron_iface</span><span class="att">attempt 1 of 1</span></div>
+          <h2 class="ttl">Define Chronicle contract interfaces</h2>
+          <div class="outcome"><span class="kind">Contract</span><svg class="ic s14"><use href="#i-check"/></svg>Passed on step 1 · 1.2s · 1 file, +18 −0</div>
+        </div>
+
+        <section aria-label="Gates">
+          <h3 class="sh">Gates <span class="sec">3 of 3 passed</span></h3>
+          <div class="g-strip" role="list">
+            <button class="g-seg pass" role="listitem" aria-label="Types: passed, 0.4 seconds"><svg class="ic"><use href="#i-check"/></svg>Types<span class="t tnum">0.4s</span></button>
+            <button class="g-seg pass" role="listitem" aria-label="Tests: passed, 0.5 seconds"><svg class="ic"><use href="#i-check"/></svg>Tests<span class="t tnum">0.5s</span></button>
+            <button class="g-seg pass" role="listitem" aria-label="Size: passed, 1 file, 18 lines"><svg class="ic"><use href="#i-check"/></svg>Size<span class="t">1 file · 18 lines</span></button>
+            <button class="g-seg warn" role="listitem" aria-label="Gate contract empty"><svg class="ic"><use href="#i-alert"/></svg>Gate contract empty
+              <span class="pop" role="tooltip"><b>These results weren’t checked against a contract.</b>gates.toml hashed to <span class="mono">e3b0c442…</span>, the hash of an empty file. Lint is declared in the project’s gates but did not run in this attempt.</span></button>
+          </div>
+        </section>
+
+        <section aria-label="Changes">
+          <h3 class="sh">Changes <span class="sec">1 file · +18 −0</span></h3>
+          <div class="group">
+            <div class="g-h"><svg class="ic s14"><use href="#i-chev"/></svg><span>Implementation</span><span class="sec">·</span><span class="path">src/types.ts</span><span class="role">May edit</span><span class="num"><span class="add-n">+18</span> −0</span></div>
+            <div class="diff" role="table" aria-label="Diff of src/types.ts">
+              <div class="ln hunk"><span class="o"></span><span class="n"></span><span class="s"></span><code>@@ -0,0 +1,18 @@</code></div>
+<div class="ln add"><span class="o"></span><span class="n">1</span><span class="s">+</span><code>export interface ChronicleEvent&lt;T = unknown&gt; {</code></div>
+<div class="ln add"><span class="o"></span><span class="n">2</span><span class="s">+</span><code>  id: string;</code></div>
+<div class="ln add"><span class="o"></span><span class="n">3</span><span class="s">+</span><code>  sequenceNumber: number;</code></div>
+<div class="ln add"><span class="o"></span><span class="n">4</span><span class="s">+</span><code>  timestamp: number;</code></div>
+<div class="ln add"><span class="o"></span><span class="n">5</span><span class="s">+</span><code>  type: string;</code></div>
+<div class="ln add"><span class="o"></span><span class="n">6</span><span class="s">+</span><code>  payload: T;</code></div>
+<div class="ln add"><span class="o"></span><span class="n">7</span><span class="s">+</span><code>  previousHash: string;</code></div>
+<div class="ln add"><span class="o"></span><span class="n">8</span><span class="s">+</span><code>  hash: string;</code></div>
+<div class="ln add"><span class="o"></span><span class="n">9</span><span class="s">+</span><code>  idempotencyKey?: string;</code></div>
+<div class="ln add"><span class="o"></span><span class="n">10</span><span class="s">+</span><code>}</code></div>
+<div class="ln add"><span class="o"></span><span class="n">11</span><span class="s">+</span><code></code></div>
+<div class="ln add"><span class="o"></span><span class="n">12</span><span class="s">+</span><code>export interface AuditReport {</code></div>
+<div class="ln add"><span class="o"></span><span class="n">13</span><span class="s">+</span><code>  valid: boolean;</code></div>
+<div class="ln add"><span class="o"></span><span class="n">14</span><span class="s">+</span><code>  totalEvents: number;</code></div>
+<div class="ln add"><span class="o"></span><span class="n">15</span><span class="s">+</span><code>  corruptedAtSequence?: number;</code></div>
+<div class="ln add"><span class="o"></span><span class="n">16</span><span class="s">+</span><code>  expectedHash?: string;</code></div>
+<div class="ln add"><span class="o"></span><span class="n">17</span><span class="s">+</span><code>  actualHash?: string;</code></div>
+<div class="ln add"><span class="o"></span><span class="n">18</span><span class="s">+</span><code>}</code></div>
+            </div>
+          </div>
+          <div class="group" style="margin-top:8px">
+            <div class="g-h"><svg class="ic s14"><use href="#i-lock"/></svg><span>Acceptance tests</span><span class="sec">· none for this card</span></div>
+            <div class="note-row">This card is gated by the project’s types and existing tests only. The Worker cannot edit files that match <span class="mono">**/*.spec.ts</span>.</div>
+          </div>
+        </section>
+      </div>
+
+      <form class="composer" id="composer" hidden aria-label="Send back">
+        <label for="note">What should the Worker do differently?</label>
+        <textarea id="note" placeholder="Your note is the first thing the Worker reads on its next attempt."></textarea>
+        <div class="chips"><span class="sec" style="font-size:var(--text-xs)">Quick notes</span>
+          <button type="button" class="chip">Run biome check; Lint did not run</button>
+          <button type="button" class="chip">Keep the type parameter default of unknown</button>
+          <button type="button" class="chip">Document why idempotencyKey is optional</button></div>
+        <div class="row" style="justify-content:space-between">
+          <label class="cbx"><input type="checkbox" checked disabled> Suggest as a playbook rule</label>
+          <span class="row"><button type="button" class="btn ghost" data-cancel>Cancel <kbd>Esc</kbd></button><button type="submit" class="btn">Send back <kbd>⌘↵</kbd></button></span>
+        </div>
+      </form>
+      <div class="triage" role="toolbar" aria-label="Triage">
+        <button class="btn primary" data-accept><svg class="ic"><use href="#i-merge"/></svg>Accept <kbd>A</kbd></button>
+        <button class="btn" data-back><svg class="ic"><use href="#i-back"/></svg>Send back <kbd>R</kbd></button>
+        <button class="btn ghost"><svg class="ic"><use href="#i-park"/></svg>Park <kbd>P</kbd></button>
+        <span class="hint"><kbd>j</kbd><kbd>k</kbd> next · <kbd>?</kbd> keys</span>
+      </div>
+    </section>
+
+    <aside class="facts" aria-label="Facts">
+      <section>
+        <h3 class="sh">Done when</h3>
+        <ul class="crit">
+          <li><span class="bul" aria-hidden="true"></span><span><span class="mono">ChronicleEvent&lt;T = unknown&gt;</span> with id, sequenceNumber, timestamp, type, payload, previousHash, hash, idempotencyKey?</span></li>
+          <li><span class="bul" aria-hidden="true"></span><span>AuditReport has valid, totalEvents, optional corruptedAtSequence, expectedHash, actualHash</span></li>
+          <li class="warn"><svg class="ic s14"><use href="#i-alert"/></svg><span>tsc -b and biome check both pass<small>Lint did not run in this attempt</small></span></li>
+        </ul>
+      </section>
+      <section>
+        <h3 class="sh">Run</h3>
+        <dl class="kv">
+          <dt>Steps</dt><dd>1 of 24</dd>
+          <dt>Time</dt><dd>1.2s</dd>
+          <dt>Tokens</dt><dd>2.1k in · 180 out</dd>
+          <dt>Why it stopped</dt><dd>Passed</dd>
+          <dt>Model</dt><dd class="mono">scripted-preview</dd>
+          <dt>Tool set</dt><dd class="mono">arm_a_flat</dd>
+        </dl>
+      </section>
+      <section>
+        <h3 class="sh">Scope</h3>
+        <div class="prov"><svg class="ic s14"><use href="#i-file"/></svg><span class="mono">src/types.ts</span><span style="margin-left:auto">May edit</span></div>
+      </section>
+      <section>
+        <h3 class="sh">Provenance</h3>
+        <div class="prov">Evidence <span class="mono">ev_da35c7c87f</span><button aria-label="Copy evidence id"><svg class="ic s14"><use href="#i-copy"/></svg></button></div>
+        <div class="prov">Checkpoint <span class="mono">ba1338e</span><button aria-label="Copy checkpoint"><svg class="ic s14"><use href="#i-copy"/></svg></button></div>
+        <div class="prov warn">Gate contract <span class="mono">e3b0c442…</span><svg class="ic s14" style="margin-left:auto;color:var(--state-parked)"><use href="#i-alert"/></svg></div>
+      </section>
+    </aside>
+  </div>
+</main>
+
+<div class="toast" id="toast" role="status" hidden><svg class="ic"><use href="#i-merge"/></svg><span id="toast-t"></span><button id="toast-a"></button></div>
+
+<script>
+const root = document.documentElement;
+function toggleTheme(){ root.dataset.theme = root.dataset.theme === "sand" ? "basalt" : "sand"; }
+document.querySelectorAll("[data-theme-toggle]").forEach(b => b.addEventListener("click", toggleTheme));
+function typing(e){ return /^(TEXTAREA|INPUT)$/.test(e.target.tagName); }
+document.addEventListener("keydown", e => { if (!typing(e) && e.key === "t") toggleTheme(); });
+const composer = document.getElementById("composer"), toast = document.getElementById("toast");
+let timer = null;
+function show(text, action, icon) {
+  document.getElementById("toast-t").textContent = text;
+  document.getElementById("toast-a").innerHTML = action;
+  toast.hidden = false;
+}
+function accept() {
+  show("Accepting “Define Chronicle contract interfaces”…", "Undo <kbd>Z</kbd>");
+  timer = setTimeout(() => { show("Merged to main as ba1338e", "Copy"); setTimeout(() => toast.hidden = true, 4000); }, 3000);
+}
+function undo() { if (timer) { clearTimeout(timer); timer = null; show("Accept cancelled. Nothing was merged.", ""); setTimeout(() => toast.hidden = true, 2500); } }
+function openComposer() { composer.hidden = false; document.getElementById("note").focus(); }
+document.querySelector("[data-accept]").addEventListener("click", accept);
+document.querySelector("[data-back]").addEventListener("click", openComposer);
+document.querySelector("[data-cancel]").addEventListener("click", () => composer.hidden = true);
+document.querySelectorAll(".chip").forEach(c => c.addEventListener("click", () => { const n = document.getElementById("note"); n.value = (n.value ? n.value + "\n" : "") + c.textContent; n.focus(); }));
+composer.addEventListener("submit", e => { e.preventDefault(); composer.hidden = true; show("Sent back to Ready with your note", ""); setTimeout(() => toast.hidden = true, 3000); });
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") composer.hidden = true;
+  if (typing(e)) { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") composer.requestSubmit(); return; }
+  if (e.key === "a") accept();
+  if (e.key === "r") { e.preventDefault(); openComposer(); }
+  if (e.key === "z") undo();
+});
+</script>
+</body>
+</html>
