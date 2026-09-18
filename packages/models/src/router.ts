@@ -17,6 +17,11 @@ export interface RouterOptions {
   log?: (line: string) => void;
   /** Longest wait for memory pressure to return to normal after an unload. */
   headroomWaitMs?: number;
+  /**
+   * Keep both models resident instead of swapping. Only for hosts with the
+   * memory for it (see `canCoReside`); on a 24 GB machine it must stay false.
+   */
+  coResident?: boolean;
   /** Injectable for tests. */
   pressureLevel?: () => number | undefined;
   freeBytes?: () => number;
@@ -69,7 +74,7 @@ export class ModelRouter {
 
   /** Return the adapter for `role`, unloading whichever other role was resident. */
   public async use(role: ModelRole): Promise<UnloadableAdapter> {
-    if (this.active !== undefined && this.active !== role) {
+    if (this.active !== undefined && this.active !== role && !this.options.coResident) {
       await this.swapOut(this.active, role);
       this.swaps++;
     }
@@ -114,4 +119,19 @@ export class ModelRouter {
     for (const adapter of this.adapters.values()) await adapter.unload?.();
     this.active = undefined;
   }
+}
+
+/**
+ * Whether a host can hold the worker and the manager at once: total memory
+ * must cover both models plus a working reserve for the OS, the sandbox and
+ * the gates (TypeScript and Vitest are not small). Today's 24 GB host cannot;
+ * a 48-64 GB host usually can, and then every swap disappears.
+ */
+export function canCoReside(
+  totalBytes: number,
+  workerBytes: number,
+  managerBytes: number,
+  reserveBytes = 10 * 1024 ** 3,
+): boolean {
+  return totalBytes >= workerBytes + managerBytes + reserveBytes;
 }

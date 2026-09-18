@@ -45,6 +45,7 @@ import {
 } from "./dashboard_api.js";
 import { runDoctor } from "./doctor.js";
 import { acceptCard } from "./execute.js";
+import { learnFromSendBack } from "./learning/reflect.js";
 import { createPmApi } from "./pm_api.js";
 import { generateDashboardHtml } from "./ui_html.js";
 
@@ -798,6 +799,8 @@ export function startDashboardServer(
         });
 
         if (verb === "return") {
+          // The note teaches both the Worker (a candidate rule) and Merit (the profile).
+          await learnFromSendBack(pmApi.learning, card, reason).catch(() => undefined);
           // Every return reason is a candidate playbook rule (design §820):
           // the correction a human had to make once should not be needed twice.
           const dir = join(repoPath, ".sekhemet");

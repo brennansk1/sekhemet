@@ -1,8 +1,12 @@
+import { existsSync, readFileSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { join } from "node:path";
 import type { BoardService } from "@sekhemet/board";
 import type { CardStore, CardUpdate, EventLog } from "@sekhemet/kernel";
 import type { LocalInferenceAdapter } from "@sekhemet/models";
 import { handleIntegrationsApi } from "./integrations.js";
+import { learnFromProposalChoices } from "./learning/reflect.js";
+import { LearningStore } from "./learning/store.js";
 import { ProposalError, applyProposal } from "./pm/apply.js";
 import { capabilityReport } from "./pm/capability.js";
 import { flowMetrics } from "./pm/metrics.js";
@@ -46,6 +50,16 @@ const PATCHABLE: Record<string, (v: unknown) => unknown> = {
  */
 export function createPmApi(ctx: PmApiContext) {
   const pmStore = new PmStore(ctx.log);
+  const learning = new LearningStore(ctx.log);
+
+  /** Every applied/discarded proposal so far feeds the user profile. */
+  const learnChoices = async (): Promise<void> => {
+    const choices = (await pmStore.thread())
+      .flatMap((m) => m.proposals ?? [])
+      .filter((p) => p.state === "applied" || p.state === "discarded")
+      .map((p) => ({ kind: p.kind, state: p.state as "applied" | "discarded" }));
+    await learnFromProposalChoices(learning, choices).catch(() => undefined);
+  };
   const pmModel = ctx.pmModel ?? DEFAULT_PM_MODEL;
   let answering: Promise<void> | undefined;
 
@@ -154,6 +168,7 @@ export function createPmApi(ctx: PmApiContext) {
           return true;
         }
         await pmStore.setProposalState(id, "discarded");
+        await learnChoices();
         ctx.json(res, 200, { proposal: { ...found, state: "discarded" } });
         return true;
       }
@@ -168,6 +183,7 @@ export function createPmApi(ctx: PmApiContext) {
             actor: "human",
           }),
         );
+        await learnChoices();
       } catch (err) {
         ctx.json(res, err instanceof ProposalError ? err.status : 409, {
           error: err instanceof Error ? err.message : String(err),
@@ -251,6 +267,71 @@ export function createPmApi(ctx: PmApiContext) {
       return true;
     }
 
+    // --- Learning (PM_CONTRACT §6) ------------------------------------------
+    if (url === "/api/learning" && req.method === "GET") {
+      const tuningPath = join(ctx.repoPath, ".sekhemet", "tuning", "latest.json");
+      let tuning: unknown;
+      try {
+        tuning = existsSync(tuningPath) ? JSON.parse(readFileSync(tuningPath, "utf8")) : undefined;
+      } catch {
+        tuning = undefined;
+      }
+      ctx.json(res, 200, {
+        rules: await learning.rules(),
+        profile: await learning.profile(),
+        ...(tuning ? { tuning } : {}),
+      });
+      return true;
+    }
+    const ruleAction = /^\/api\/learning\/rules\/([A-Za-z0-9_-]+)(?:\/(approve|retire))?$/.exec(
+      url,
+    );
+    if (ruleAction && (req.method === "POST" || req.method === "PATCH")) {
+      if (!mutationGuard(req, res)) return true;
+      const [, id, verb] = ruleAction as unknown as [string, string, string | undefined];
+      const b = await ctx.readJsonBody(req);
+      const reach: { reach?: "global" | "project" } =
+        b.reach === "global" || b.reach === "project" ? { reach: b.reach } : {};
+      const change =
+        req.method === "PATCH"
+          ? typeof b.text === "string" && b.text.trim()
+            ? { text: b.text.trim().slice(0, 600) }
+            : undefined
+          : verb === "approve"
+            ? { status: "active" as const, ...reach }
+            : verb === "retire"
+              ? { status: "retired" as const }
+              : undefined;
+      if (!change) {
+        ctx.json(res, 400, { error: "Nothing to change" });
+        return true;
+      }
+      const rule = await learning.update(id, change);
+      if (!rule) ctx.json(res, 404, { error: `No rule ${id}` });
+      else ctx.json(res, 200, { rule });
+      return true;
+    }
+    const prefAction = /^\/api\/learning\/profile\/([A-Za-z0-9_-]+)(?:\/(dismiss))?$/.exec(url);
+    if (prefAction && (req.method === "POST" || req.method === "PATCH")) {
+      if (!mutationGuard(req, res)) return true;
+      const [, id, verb] = prefAction as unknown as [string, string, string | undefined];
+      const b = await ctx.readJsonBody(req);
+      const change =
+        req.method === "PATCH" && typeof b.statement === "string" && b.statement.trim()
+          ? { statement: b.statement.trim().slice(0, 400) }
+          : verb === "dismiss"
+            ? { status: "dismissed" as const }
+            : undefined;
+      if (!change) {
+        ctx.json(res, 400, { error: "Nothing to change" });
+        return true;
+      }
+      const entry = await learning.updateProfile(id, change);
+      if (!entry) ctx.json(res, 404, { error: `No profile entry ${id}` });
+      else ctx.json(res, 200, { entry });
+      return true;
+    }
+
     // --- Worker capability --------------------------------------------------
     if (url === "/api/capability" && req.method === "GET") {
       const cards = ctx.cardStore ? await ctx.cardStore.listCards() : [];
@@ -299,5 +380,5 @@ export function createPmApi(ctx: PmApiContext) {
     return frames;
   }
 
-  return { handle, streamFrames, pmStore };
+  return { handle, streamFrames, pmStore, learning };
 }

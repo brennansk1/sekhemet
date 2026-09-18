@@ -3,6 +3,7 @@ import { basename, join } from "node:path";
 import type { CardStore } from "@sekhemet/kernel";
 import { HttpInferenceAdapter, type LocalInferenceAdapter } from "@sekhemet/models";
 import type { QueueReport } from "../execute.js";
+import { LearningStore } from "../learning/store.js";
 import { type PmSnapshot, answer } from "./agent.js";
 import { capabilityReport, capabilitySummary } from "./capability.js";
 import type { PmStore } from "./store.js";
@@ -172,6 +173,10 @@ export async function buildSnapshot(
     recentRuns,
     ...(worker ? { worker } : {}),
     pmModel,
+    preferences: (await new LearningStore(pmStore.log).profile())
+      .filter((p) => p.status === "active")
+      .slice(0, 6)
+      .map((p) => p.statement),
     today: new Date().toISOString().slice(0, 10),
   };
 }

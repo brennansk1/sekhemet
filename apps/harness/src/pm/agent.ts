@@ -13,6 +13,8 @@ export interface PmSnapshot {
   worker?: { model: string; record: string };
   /** The PM's own model id. */
   pmModel: string;
+  /** Active statements from the user profile, strongest first. */
+  preferences?: string[];
   today: string;
 }
 
@@ -98,7 +100,11 @@ export function boardDigest(s: PmSnapshot, maxChars = 9000): string {
       : "none";
   const runs = s.recentRuns.length > 0 ? s.recentRuns.slice(-12).join("\n") : "none";
   const capability = s.worker ? `${s.worker.model}: ${s.worker.record}` : "no runs yet";
-  return `Today: ${s.today}\n\nBOARD\n${digest || "(empty)"}\n\nCYCLES\n${cycles}\n\nRECENT WORKER ATTEMPTS\n${runs}\n\nWORKER CAPABILITY\n${capability}`;
+  const prefs =
+    s.preferences && s.preferences.length > 0
+      ? `\n\nWHAT THE HUMAN PREFERS (learned; adapt to it)\n${s.preferences.map((p) => `- ${p}`).join("\n")}`
+      : "";
+  return `Today: ${s.today}${prefs}\n\nBOARD\n${digest || "(empty)"}\n\nCYCLES\n${cycles}\n\nRECENT WORKER ATTEMPTS\n${runs}\n\nWORKER CAPABILITY\n${capability}`;
 }
 
 /** The last few exchanges, so "split it" knows what "it" is. */

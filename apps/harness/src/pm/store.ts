@@ -51,7 +51,7 @@ const THREAD_TYPES = [
  * message breaks the chain like any other event.
  */
 export class PmStore {
-  constructor(private log: EventLog) {}
+  constructor(public readonly log: EventLog) {}
 
   private async events(types: string[] = THREAD_TYPES): Promise<EventRecord[]> {
     return this.log.getEventsByTypes(types);

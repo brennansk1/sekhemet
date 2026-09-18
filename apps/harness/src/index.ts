@@ -13,6 +13,7 @@ import {
   HttpInferenceAdapter,
   ModelRouter,
   NAIL_WORKER_PROFILE,
+  canCoReside,
   createCyberTielWorker,
   createNail35BAdapter,
 } from "@sekhemet/models";
@@ -30,6 +31,8 @@ import {
   writeQueueReport,
 } from "./execute.js";
 import { notifySlack } from "./integrations.js";
+import { reflectWithManager } from "./learning/reflect.js";
+import { LearningStore } from "./learning/store.js";
 import { runMcpStdioServer } from "./mcp.js";
 import { DEFAULT_PM_MODEL, answerQueued, createPmAdapter, holdRunnerLease } from "./pm/service.js";
 import { PmStore } from "./pm/store.js";
@@ -573,7 +576,11 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
             : createPmAdapter(DEFAULT_PM_MODEL),
       },
       // Every swap proves the unload and waits for normal memory pressure.
-      { log: (line) => console.log(`   ${line}`) },
+      // With enough RAM (a 48 GB+ host) both stay resident and swaps vanish.
+      {
+        log: (line) => console.log(`   ${line}`),
+        coResident: canCoReside(totalmem(), 14 * 1024 ** 3, 17 * 1024 ** 3),
+      },
     );
     const pmModel = managerModel ?? DEFAULT_PM_MODEL;
     const pmStore = new PmStore(log);
@@ -617,6 +624,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       restrictedMode: config.restrictedMode,
       cardStore,
       boardService,
+      learning: new LearningStore(log),
       afterTurn: async (_cardId: string, turn: { turnIndex: number }) => {
         await answerPm(turn.turnIndex).catch((err) =>
           console.log(`   PM: could not answer (${err instanceof Error ? err.message : err})`),
@@ -716,6 +724,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         // One swap to the manager for the whole batch of failures.
         const manager = await router.use("manager");
         const plans = new Map<string, string>();
+        const reflections: {
+          card: CardRecord;
+          plan: string;
+          firstStop: string;
+          retryPassed: boolean;
+        }[] = [];
         for (const { card, result } of failed) {
           console.log(`\n--- manager reviewing ${card.id} ---`);
           const plan = await planRepair(manager, {
@@ -725,6 +739,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
             files: collectCardFiles(result.worktreePath, card),
           });
           plans.set(card.id, plan);
+          reflections.push({ card, plan, firstStop: result.stopReason, retryPassed: false });
           console.log(
             plan
               .split("\n")
@@ -736,6 +751,10 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
 
         // One swap back, then retry each failure with its plan.
         const retry = failed.splice(0, failed.length).map(({ card }) => card);
+        // Merit's reflection runs now, while its model is already resident:
+        // learning must never cost an extra swap.
+        const learned = await reflectWithManager(manager, ctx.learning, reflections).catch(() => 0);
+        if (learned > 0) console.log(`\n--- Merit proposed ${learned} rule(s) from this run ---`);
         await pass(retry, 2, plans);
       }
 

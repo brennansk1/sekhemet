@@ -11,6 +11,8 @@ import type { LocalInferenceAdapter } from "@sekhemet/models";
 import { ProcessSandbox } from "@sekhemet/sandbox";
 import { NodeGitSyncAdapter } from "@sekhemet/sync";
 import { readSettings } from "./integrations.js";
+import { learnFromAttempt } from "./learning/reflect.js";
+import type { LearningStore } from "./learning/store.js";
 
 export interface ExecutionContext {
   repoPath: string;
@@ -24,6 +26,8 @@ export interface ExecutionContext {
    * without losing work, because the next step starts from the worktree.
    */
   afterTurn?: (cardId: string, turn: TurnResult) => Promise<void>;
+  /** The learning store: active rules go into the prompt, outcomes come back. */
+  learning?: LearningStore;
 }
 
 /** What a tool call acted on, in a few characters: a path, a command, a note. */
@@ -110,6 +114,11 @@ export async function executeCard(
   const skills = new SkillsRegistry();
   skills.loadFromDirectory(join(ctx.repoPath, ".sekhemet", "skills"));
   const playbook = new PlaybookRegistry(ctx.repoPath);
+  // Learned rules the human approved join the seeded playbook for this card.
+  // Their pattern is the card's own title, so matchRules selects them here.
+  for (const rule of (await ctx.learning?.activeFor("worker", card)) ?? []) {
+    playbook.addRule({ id: rule.id, pattern: card.title, instruction: rule.text });
+  }
 
   const runner = new CardRunner({
     card,
@@ -182,7 +191,16 @@ export async function executeCard(
     },
   });
 
-  return runner.run();
+  const result = await runner.run();
+  if (ctx.learning) {
+    try {
+      const proposed = await learnFromAttempt(ctx.learning, card, result, managerGuidance ? 2 : 1);
+      if (proposed > 0) log(`   learning: ${proposed} candidate rule(s) from this attempt`);
+    } catch {
+      // Learning is a side channel; it must never fail a card.
+    }
+  }
+  return result;
 }
 
 /**
