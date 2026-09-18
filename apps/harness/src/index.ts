@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { BoardServiceImpl } from "@sekhemet/board";
-import { DeterministicGateRunner, summarizeEvidence } from "@sekhemet/gates";
+import { DeterministicGateRunner, loadGatesConfig, summarizeEvidence } from "@sekhemet/gates";
 import { remedyFor } from "@sekhemet/gates";
 import { type CardRecord, CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { planRepair } from "@sekhemet/loop";
@@ -341,7 +341,29 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   }
 
   if (config.command === "board") {
-    await printTerminalBoard(boardService);
+    // The board is the dashboard: start it and open the browser. The ASCII
+    // board remains for terminals without one (--terminal).
+    if (process.argv.includes("--terminal")) {
+      await printTerminalBoard(boardService);
+      return;
+    }
+    const server = await startDashboardServer({
+      db,
+      log,
+      boardService,
+      cardStore,
+      repoPath: config.repoPath,
+      port: config.port,
+    });
+    const url = `http://127.0.0.1:${server.port}/#/board`;
+    console.log(`Sekhemet board: ${url}  (Ctrl+C to stop; --terminal for the text board)`);
+    const opener =
+      process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
+    spawn(opener, [url], { stdio: "ignore", detached: true })
+      .on("error", () => {
+        console.log("Could not open a browser; open the URL above.");
+      })
+      .unref();
     return;
   }
 
@@ -391,20 +413,53 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   }
 
   if (config.command === "gate") {
-    console.log("\nRunning verification gates against workspace...");
-    const sandbox = new ProcessSandbox();
-    const gateRunner = new DeterministicGateRunner(sandbox);
-    const res = await gateRunner.runGates(["typecheck", "test", "lint"], config.repoPath);
-
-    if (res.passed) {
-      console.log("✓ ALL VERIFICATION GATES PASSED (100% Green)\n");
-    } else {
-      console.error(`✗ Gates failed (${res.failures.length} errors):`);
-      for (const f of res.failures) {
-        console.error(`  [${f.rung}] Exit code ${f.exitCode}: ${f.errorExcerpt}`);
-      }
-      process.exit(1);
+    // `sekhemet gate [<card>]`: run every gate declared in gates.toml, in the
+    // card's own worktree when one exists, and report typed failures with
+    // their remedies plus the 3-file / 200-line bounds.
+    const cardId = config.targetArg;
+    const worktree = cardId ? join(config.repoPath, ".sekhemet", "worktrees", cardId) : undefined;
+    const cwd = worktree && existsSync(worktree) ? worktree : config.repoPath;
+    if (cardId && cwd === config.repoPath) {
+      console.log(`No worktree for ${cardId}; running the gates in the repository instead.`);
     }
+    const gatesConfig = loadGatesConfig(config.repoPath);
+    const rungs = [...new Set(gatesConfig.gates.map((g) => g.rung))];
+    const gateRunner = new DeterministicGateRunner(new ProcessSandbox(), {
+      repoRoot: config.repoPath,
+      expectedConfigSha256: gatesConfig.sha256,
+    });
+    console.log(`\nRunning ${rungs.join(", ")} in ${cwd}`);
+    const res = await gateRunner.runGates(rungs, cwd);
+    let boundsOk = true;
+    if (cardId && cwd !== config.repoPath) {
+      const stats = await new NodeGitSyncAdapter(config.repoPath).getDiffStats(cardId);
+      // Harness-staged acceptance tests are not the card's work, exactly as
+      // in the card runner's bounds check.
+      const staged = new Set(
+        ((await cardStore.getCard(cardId))?.acceptanceTests ?? []).map((t) =>
+          t.startsWith("tests/") ? t : `tests/${t}`,
+        ),
+      );
+      const own = (stats.perFile ?? []).filter((f) => !staged.has(f.file));
+      const files = own.length;
+      const lines = own.reduce((n, f) => n + f.added + f.removed, 0);
+      boundsOk = files <= gatesConfig.project.maxFiles && lines <= gatesConfig.project.maxDiffLines;
+      console.log(
+        `Bounds: ${files}/${gatesConfig.project.maxFiles} files, ${lines}/${gatesConfig.project.maxDiffLines} lines ${boundsOk ? "ok" : "EXCEEDED"}`,
+      );
+    }
+    for (const r of res.rungResults ?? []) {
+      console.log(`  ${r.passed ? "✓" : r.skipped ? "-" : "✗"} ${r.gate} (${r.durationMs} ms)`);
+    }
+    if (res.passed && boundsOk) {
+      console.log("All gates pass.\n");
+      return;
+    }
+    for (const f of res.failures) {
+      console.error(`  [${f.gate ?? f.rung}] ${f.errorExcerpt.split("\n")[0]}`);
+      if (f.suggestedAction) console.error(`      fix: ${f.suggestedAction}`);
+    }
+    process.exitCode = 1;
     return;
   }
 
