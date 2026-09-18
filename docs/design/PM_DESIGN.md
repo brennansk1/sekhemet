@@ -332,7 +332,7 @@ M  Merit                                                          1:04
 - **Group** offers None, Epic, Assignee, Priority or Cycle, and `⇧S` cycles through them.
 - **Save view** appears only when the filter differs from the chosen view. It saves `{ name, query, group, layout }`. Views are kept in this browser (`localStorage`) until a `/api/views` endpoint exists. That is stated in the menu footer: *Saved in this browser.*
 
-**The cycle header** is shown when the board has an active cycle and the filter includes it (`cycle:current` or the *Current cycle* view):
+**The cycle header** is shown whenever a cycle is in force (marked active, or a planned cycle whose dates contain today), unless the filter points at another cycle or `cycle:none`:
 
 ```
 Cycle 12  Ship the ledger end to end            Sep 15 – Sep 28 · 4 days left

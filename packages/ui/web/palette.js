@@ -87,7 +87,7 @@ function views() {
       run: () => window.dispatchEvent(new CustomEvent("sekhemet:open-pm")),
     },
     {
-      label: "Go to Merit (full conversation)",
+      label: "Go to Merit, the project manager",
       search: "Merit PM conversation",
       keys: ["g", "a"],
       run: goTo("#/pm"),

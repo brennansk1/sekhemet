@@ -6,7 +6,7 @@ import { ledgerAltered, store } from "./store.js";
 const NAV = [
   { name: "review", label: "Review", icon: "review", key: "g r" },
   { name: "board", label: "Board", icon: "board", key: "g b" },
-  { name: "pm", label: "Merit", icon: "chat", key: "g a", title: "Merit, project manager" },
+  { name: "pm", label: "Merit", sub: "Project manager", icon: "chat", key: "g a", title: "Merit, the project manager" },
   { name: "insights", label: "Insights", icon: "insights", key: "g f" },
   { name: "runs", label: "Runs", icon: "runs", key: "g q" },
   { name: "ledger", label: "Ledger", icon: "ledger", key: "g l" },
@@ -138,7 +138,7 @@ function renderSide() {
     const badge = c
       ? `<span class="n tnum${c.warn ? " warn" : ""}${c.long ? " long" : ""}"${c.title ? ` title="${esc(c.title)}"` : ""}>${esc(c.n)}</span>`
       : "";
-    return `<a href="#/${item.name}"${cur} title="${esc(item.title ?? item.label)} (${item.key})">${icon(item.icon)}<span class="lbl">${esc(item.label)}</span>${badge}</a>`;
+    return `<a href="#/${item.name}"${cur} title="${esc(item.title ?? item.label)} (${item.key})">${icon(item.icon)}<span class="lbl">${esc(item.label)}${item.sub ? `<span class="sub"> · ${esc(item.sub)}</span>` : ""}</span>${badge}</a>`;
   }).join("");
 
   const v = s.verification;
@@ -158,7 +158,9 @@ function renderSide() {
   const memCls = m.memoryStatus === "fail" ? " fail" : m.memoryStatus === "warn" ? " warn" : "";
   const mem =
     m.memoryPercent !== undefined
-      ? `<div class="row" title="Memory ${m.memoryPercent}% used${m.memoryLevel ? `, ${m.memoryLevel}` : ""}">${icon("memory", 14, "ic s14")}<span class="lbl tnum">Memory ${m.memoryPercent}%</span><span class="meter${memCls}"><i style="width:${Math.min(100, m.memoryPercent)}%"></i></span></div>`
+      ? // The run guard acts on the pressure level, not the raw percentage (which
+        // counts reclaimable cache), so the sidebar says the level, as Machine does.
+        `<a class="row" href="#/machine" title="${esc(`Memory pressure ${m.memoryLevel || "normal"}. ${m.memoryPercent}% used, including cache the system can reclaim.`)}"><span class="dot${memCls}" aria-hidden="true"></span><span class="lbl">Memory ${esc(m.memoryLevel || "normal")}</span><span class="lbl sec tnum mem-pct">${m.memoryPercent}% used</span></a>`
       : `<div class="row">${icon("memory", 14, "ic s14")}<span class="lbl">Memory: checking…</span></div>`;
   const working = s.cards.some((c) => c.status === "in_progress");
   const modelName = m.model || (m.inferenceUp === false ? "No model server" : "Model: checking…");

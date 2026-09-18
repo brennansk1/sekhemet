@@ -29,7 +29,7 @@ const SECTIONS = [
     ],
   },
   {
-    name: "Merit",
+    name: "Merit · Project manager",
     rows: [
       ["Open or close the panel", [`${MOD}J`]],
       ["Send", ["↵"]],

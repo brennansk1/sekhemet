@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ICONS } from "../src/icons.js";
 import {
   type CycleLike,
+  activeCycle,
   type PmCardLike,
   agingClass,
   applyAllLabel,
@@ -340,6 +341,18 @@ describe("grouping", () => {
       "Cycle 12",
       "No cycle",
     ]);
+  });
+});
+
+describe("active cycle", () => {
+  it("prefers the cycle marked active, else a non-closed cycle whose dates contain today", () => {
+    expect(activeCycle(cycles)?.id).toBe("cy12");
+    const planned = cycles.map((c) => ({ ...c, state: c.state === "active" ? ("planned" as const) : c.state }));
+    expect(activeCycle(planned, Date.UTC(2026, 8, 20))?.id).toBe("cy12");
+    expect(activeCycle(planned, Date.UTC(2026, 9, 1))?.id).toBe("cy13");
+    expect(activeCycle(planned, Date.UTC(2026, 11, 1))).toBeUndefined();
+    const closed = cycles.map((c) => ({ ...c, state: "closed" as const }));
+    expect(activeCycle(closed, Date.UTC(2026, 8, 20))).toBeUndefined();
   });
 });
 

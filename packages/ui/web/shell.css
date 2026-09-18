@@ -531,3 +531,16 @@
 .peek .g-seg[data-gate="bounds"] .t {
   display: none;
 }
+
+.foot .mem-pct {
+  margin-left: auto;
+}
+.nav .sub {
+  color: var(--text-secondary);
+}
+.nav a .lbl {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}

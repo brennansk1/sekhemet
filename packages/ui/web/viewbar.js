@@ -294,10 +294,16 @@ export function viewBarHtml(layout) {
 /* ---------- Cycle header ---------- */
 
 export function showsCycle() {
+  // Shown whenever a cycle is in force, unless the filter points elsewhere
+  // (another cycle, or cycle:none).
+  const cycle = activeCycle(store.state.cycles);
+  if (!cycle) return false;
   const vals = termValues(vb.filter, "cycle");
   return (
-    Boolean(activeCycle(store.state.cycles)) &&
-    (vals.includes("current") || vals.includes(slug(activeCycle(store.state.cycles).name)))
+    vals.length === 0 ||
+    vals.includes("current") ||
+    vals.includes(slug(cycle.name)) ||
+    vals.includes(cycle.id.toLowerCase())
   );
 }
 

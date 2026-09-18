@@ -547,8 +547,21 @@ export function slug(s: string): string {
     .replace(/^-|-$/g, "");
 }
 
-export function activeCycle(cycles: CycleLike[] | undefined): CycleLike | undefined {
-  return cycles?.find((c) => c.state === "active");
+/**
+ * The cycle in force: the one marked active, else a non-closed cycle whose
+ * dates contain today (a cycle can start by the calendar before anyone
+ * flips its state).
+ */
+export function activeCycle(
+  cycles: CycleLike[] | undefined,
+  now = Date.now(),
+): CycleLike | undefined {
+  const marked = cycles?.find((c) => c.state === "active");
+  if (marked) return marked;
+  const today = new Date(now).toISOString().slice(0, 10);
+  return cycles?.find(
+    (c) => c.state !== "closed" && c.startsOn.slice(0, 10) <= today && c.endsOn.slice(0, 10) >= today,
+  );
 }
 
 const STARTED = new Set(["planning", "in_progress", "verify", "review", "parked"]);
@@ -581,7 +594,7 @@ function termMatches(card: PmCardLike, t: FilterTerm, ctx: MatchContext): boolea
       return vals.some(
         (v) =>
           v === card.cycleId?.toLowerCase() ||
-          (v === "current" && cycle?.state === "active") ||
+          (v === "current" && cycle !== undefined && cycle === activeCycle(ctx.cycles)) ||
           (v === "next" && cycle?.state === "planned") ||
           (cycle && slug(cycle.name) === slug(v)),
       );
