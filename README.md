@@ -9,7 +9,7 @@ the evidence and accepts or returns it. Inference runs on your machine.
 > tests, all green). It is **not yet certified for release**: on the Chronicle
 > release gate the current best run passes 3 of 6 cards on the first attempt,
 > against a bar of 5 of 6. See `DEV_LOG.md` for what has been measured and
-> `FEATURE_INVENTORY.md` for what the design specifies that is not built yet.
+> `docs/reference/FEATURE_INVENTORY.md` for what the design specifies that is not built yet.
 
 ## How a card runs
 
@@ -65,7 +65,7 @@ One model is resident at a time; `ModelRouter` unloads before it loads.
 
 Tool calls use the server's native tool schema, with text parsing (JSON, fenced
 JSON, `name(key="value")` call syntax, SEARCH/REPLACE patches) as a fallback.
-Reasoning is suppressed and stripped before parsing. See `MODEL_CANDIDATES.md`
+Reasoning is suppressed and stripped before parsing. See `docs/research/MODEL_CANDIDATES.md`
 for the model research, with every benchmark number sourced.
 
 ## Quickstart
@@ -116,9 +116,9 @@ runs one from a clean scratch repository.
 - **Chronicle** — a cryptographic event ledger, 6 cards. Bar: at least 5 of 6 pass
   on the first attempt, repairs within 3 rungs, zero test mutation, zero
   out-of-scope writes, under 18 minutes. Specified in
-  `CHRONICLE_GATE_PROJECT_SPEC.md`.
+  `docs/benchmarks/CHRONICLE_SPEC.md`.
 - **Showcase Trifecta** — Onyx, Basalt Canvas, Vanguard; 24 cards. Specified in
-  `SHOWCASE_TRIFECTA_SPEC.md`.
+  `docs/benchmarks/SHOWCASE_TRIFECTA_SPEC.md`.
 
 ## Repository
 

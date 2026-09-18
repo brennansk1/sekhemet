@@ -30,7 +30,7 @@ If you are Claude reading this because Gemini reached quota limits or you were s
      - `@sekhemet/ui`: `VirtualCanvasManager` computing dual-axis layout geometry and viewport culling for 500+ cards at 60 FPS, with Basalt theme tokens.
      - `apps/harness`: CLI host supporting `sekhemet doctor`, `--restricted`, `board`, `log`, `plan`, `run`, `gate`, `replay`, `bake-off`, `serve` / `ui` (Basalt HTTP dashboard), and `mcp` (stdio JSON-RPC server).
 3. **Showcase Gate Projects Designed**:
-   - `SHOWCASE_TRIFECTA_SPEC.md` defines 3 complete showcase projects to execute as the final gate for `Qwen3.8-27B-GSQ-RCO` before public launch:
+   - `docs/benchmarks/SHOWCASE_TRIFECTA_SPEC.md` defines 3 complete showcase projects to execute as the final gate for `Qwen3.8-27B-GSQ-RCO` before public launch:
      1. **Project "Onyx"** (Systems & Cryptography): Local secret vault, AES-256-GCM, in-memory process injection, Shannon entropy leak scanning.
      2. **Project "Basalt Canvas"** (Visual & Frontend Design): High-density dual-axis kanban, interactive pan-and-zoom DAG canvas, gate strips, Basalt theme surface ladder.
      3. **Project "Vanguard"** (Real-Time & Event Engines): Local webhook proxy, Stripe/GitHub HMAC signature verification, SSE stream, deterministic replay.
@@ -231,7 +231,7 @@ healthy, where the previous night the same pressure ended in a reboot.
   became raw newlines) — caught by visual inspection, now covered by a test.
 
 #### G. Model research
-A research pass over the Hugging Face Hub (`MODEL_CANDIDATES.md`, all numbers
+A research pass over the Hugging Face Hub (`docs/research/MODEL_CANDIDATES.md`, all numbers
 sourced and tagged vendor/independent/quantizer). Findings: Nail is Unsloth's
 stock Qwen3.6-35B-A3B quant with an old chat template, not a fine-tune; the
 Ornith-1.5 family (Tiel-Coder, Cyber-Tiel) leads the fast-worker class
@@ -328,7 +328,7 @@ now genuinely measures it.
 - **Next Steps**:
   - Split cards 3–6 into smaller SPIDR slices and re-run the gate.
   - Extend the playbook from the failures recorded in this run.
-  - Continue the anti-shallow test pass; `FEATURE_INVENTORY.md` remains the
+  - Continue the anti-shallow test pass; `docs/reference/FEATURE_INVENTORY.md` remains the
     outstanding-work checklist.
 
 ---
@@ -344,7 +344,7 @@ now genuinely measures it.
 #### A. Audit findings (all verified against source, not inferred)
 A full feature inventory was compiled from Design v2, the DoD, AGENTS.md and both
 project specs: **~310 buildable units, of which ~5% were BUILT, ~15% SHALLOW, ~8%
-DEAD and ~72% MISSING**. Written to `FEATURE_INVENTORY.md` as the running checklist.
+DEAD and ~72% MISSING**. Written to `docs/reference/FEATURE_INVENTORY.md` as the running checklist.
 
 Five structural findings dominated everything else:
 1. **The agent loop was open.** `session.ts` called the model with a constant string
@@ -437,7 +437,7 @@ This is substantial progress on the spine, not completion of the DoD. The design
 specifies ~310 units; a large majority remain. What now exists is a harness whose
 loop actually closes, whose sandbox actually confines, whose gates are configurable
 and hash-pinned, and whose benchmark can report failure — the preconditions for the
-remaining work to mean anything. `FEATURE_INVENTORY.md` tracks what is left.
+remaining work to mean anything. `docs/reference/FEATURE_INVENTORY.md` tracks what is left.
 
 - **Next Steps**:
   - Complete planner and kernel depth (in flight), then the comprehensive
@@ -470,7 +470,7 @@ remaining work to mean anything. `FEATURE_INVENTORY.md` tracks what is left.
   6. **Qwen3.8-27B Adapter Profile (`@sekhemet/models`)**:
      - Added `createQwen38_27BAdapter` in `packages/models/src/http_adapter.ts` with exact sampling parameters (`temperature: 0.2`, `top_p: 0.9`, `top_k: 20`, `min_p: 0.0`, `presence_penalty: 1.5`) matching user hardware specs.
   7. **Showcase Trifecta Specification**:
-     - Authored `SHOWCASE_TRIFECTA_SPEC.md` detailing the 3-project public release gate (Onyx, Basalt Canvas, Vanguard) across 24 atomic SPIDR cards.
+     - Authored `docs/benchmarks/SHOWCASE_TRIFECTA_SPEC.md` detailing the 3-project public release gate (Onyx, Basalt Canvas, Vanguard) across 24 atomic SPIDR cards.
   8. **Full Verification Gate**:
      - 75/75 tests passing green across 22 suites in 1.56s.
      - All code committed to `main` (`dcaa0a0`). Ready for Claude Code takeover.

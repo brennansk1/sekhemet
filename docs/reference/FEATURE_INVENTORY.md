@@ -1,6 +1,6 @@
 # Sekhemet — Complete Feature Inventory & Implementation Status Audit
 
-> **Sources audited:** `Board-Native Local-First AI Coding Harness — Design v2.md` (2,805 lines; byte-identical to v1), `DEFINITION_OF_DONE.md`, `AGENTS.md`, `CHRONICLE_GATE_PROJECT_SPEC.md`, `SHOWCASE_TRIFECTA_SPEC.md`
+> **Sources audited:** `docs/design/HARNESS_DESIGN.md` (2,805 lines; byte-identical to v1), `DEFINITION_OF_DONE.md`, `AGENTS.md`, `docs/benchmarks/CHRONICLE_SPEC.md`, `docs/benchmarks/SHOWCASE_TRIFECTA_SPEC.md`
 > **Code audited:** every file under `packages/*/src` and `apps/harness/src` (≈3,600 LOC total)
 > **Date:** 2026-09-17
 

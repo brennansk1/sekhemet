@@ -1,5 +1,5 @@
 # Chronicle release-gate verification. Every card is verified against all three
-# blocking gates, as CHRONICLE_GATE_PROJECT_SPEC.md requires.
+# blocking gates, as docs/benchmarks/CHRONICLE_SPEC.md requires.
 
 [project]
 protected = ["tests/**", "acceptance/**", ".sekhemet/gates.toml"]
