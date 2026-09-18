@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { factKeysOf, keysCovered } from "./facts.js";
 import { estimateTokens } from "./tokens.js";
 import { type TomlTable, type TomlValue, escapeTomlString, parseToml } from "./toml.js";
 
@@ -12,6 +13,60 @@ export interface PlaybookRule {
   effectiveDate?: string;
   /** Human-facing record of the measured delta, e.g. `"+0.08"`. */
   evalPassRateDelta?: string;
+  /**
+   * Error scope (Integration review A4). A regular expression (case
+   * insensitive) or a diagnostic code. When set, the rule matches only while
+   * a standing failure's text matches it, and never rides in the card-stable
+   * prefix.
+   */
+  errorPattern?: string;
+  /**
+   * What the rule is about, for duplicate detection (see `facts.ts`).
+   * Inferred from the instruction when absent.
+   */
+  factKey?: string;
+}
+
+export interface MatchRulesOptions {
+  cardTitle?: string;
+  scopeFiles?: string[];
+  /**
+   * The failing gate. It no longer pulls a rule in on its own (a typecheck
+   * failure used to add every typecheck rule of every card); rules whose
+   * `triggerGate` matches are ranked first among those the scope matched.
+   */
+  triggerGate?: string;
+  /**
+   * The standing failure's text (excerpts, codes). Error-scoped rules match
+   * only while this matches their `errorPattern`. Absent: none match.
+   */
+  failureText?: string;
+  /**
+   * Fact keys the prompt already carries from elsewhere (a gate remedy, a
+   * higher-priority rule). A rule all of whose keys are covered is left out.
+   */
+  coveredKeys?: Iterable<string>;
+  /** Only rules without `errorPattern` (the card-stable set) or only those with one. */
+  scope?: "card" | "error" | "all";
+}
+
+/** The fact keys a rule is about: its declared key, else those its text names. */
+export function ruleFactKeys(rule: PlaybookRule): string[] {
+  if (rule.factKey) return [rule.factKey];
+  return factKeysOf(rule.instruction);
+}
+
+/** Whether an `errorPattern` matches failure text: a code by word, else a regex. */
+export function errorPatternMatches(errorPattern: string, failureText: string): boolean {
+  if (/^(?:TS\d{4,5}|lint\/[\w/]+)$/.test(errorPattern)) {
+    return new RegExp(`\\b${errorPattern.replace(/\//g, "\\/")}\\b`).test(failureText);
+  }
+  try {
+    return new RegExp(errorPattern, "i").test(failureText);
+  } catch {
+    // Not a valid regex: treat it as a literal.
+    return failureText.toLowerCase().includes(errorPattern.toLowerCase());
+  }
 }
 
 /**
@@ -90,6 +145,10 @@ export function parsePassRateDelta(raw: string | undefined): number | undefined 
 
 export class PlaybookRegistry {
   private rules: Map<string, PlaybookRule> = new Map();
+  /** Rules added for this process only; never written to playbook.toml. */
+  private transient: Map<string, PlaybookRule> = new Map();
+  /** The file's leading comment block, kept across saves. */
+  private header: string | undefined;
   private performance: Map<string, RulePerformance> = new Map();
   private filePath: string;
 
@@ -99,6 +158,7 @@ export class PlaybookRegistry {
   }
 
   public load(): void {
+    // Transient rules live apart from the file's rules: reloading keeps them.
     this.rules.clear();
     this.performance.clear();
     if (!existsSync(this.filePath)) {
@@ -107,7 +167,10 @@ export class PlaybookRegistry {
 
     let document: TomlTable;
     try {
-      document = parseToml(readFileSync(this.filePath, "utf-8"));
+      const text = readFileSync(this.filePath, "utf-8");
+      const lead = /^(?:[ \t]*#[^\n]*\n|[ \t]*\n)+/.exec(text)?.[0];
+      this.header = lead?.includes("#") ? lead.trimEnd() : undefined;
+      document = parseToml(text);
     } catch {
       // A corrupt playbook must never take the harness down: an empty registry
       // costs a card its conventions, a thrown error costs it the run.
@@ -124,6 +187,8 @@ export class PlaybookRegistry {
       const triggerGate = asString(table.triggerGate);
       const effectiveDate = asString(table.effectiveDate);
       const delta = asString(table.evalPassRateDelta);
+      const errorPattern = asString(table.errorPattern);
+      const factKey = asString(table.factKey);
 
       this.rules.set(id, {
         id,
@@ -133,6 +198,8 @@ export class PlaybookRegistry {
         ...(triggerGate ? { triggerGate } : {}),
         ...(effectiveDate ? { effectiveDate } : {}),
         ...(delta ? { evalPassRateDelta: delta } : {}),
+        ...(errorPattern ? { errorPattern } : {}),
+        ...(factKey ? { factKey } : {}),
       });
     }
 
@@ -159,14 +226,19 @@ export class PlaybookRegistry {
       mkdirSync(dir, { recursive: true });
     }
 
-    const lines: string[] = ["# Sekhemet Project Playbook — Versioned Invariant Rules", ""];
-    for (const rule of this.getAllRules()) {
+    const lines: string[] = [
+      this.header ?? "# Sekhemet Project Playbook — Versioned Invariant Rules",
+      "",
+    ];
+    for (const rule of this.getPersistentRules()) {
       lines.push("[[rule]]");
       lines.push(`id = ${escapeTomlString(rule.id)}`);
       if (rule.originCard) lines.push(`originCard = ${escapeTomlString(rule.originCard)}`);
       if (rule.triggerGate) lines.push(`triggerGate = ${escapeTomlString(rule.triggerGate)}`);
       lines.push(`pattern = ${escapeTomlString(rule.pattern)}`);
       lines.push(`instruction = ${escapeTomlString(rule.instruction)}`);
+      if (rule.errorPattern) lines.push(`errorPattern = ${escapeTomlString(rule.errorPattern)}`);
+      if (rule.factKey) lines.push(`factKey = ${escapeTomlString(rule.factKey)}`);
       if (rule.effectiveDate) lines.push(`effectiveDate = ${escapeTomlString(rule.effectiveDate)}`);
       if (rule.evalPassRateDelta) {
         lines.push(`evalPassRateDelta = ${escapeTomlString(rule.evalPassRateDelta)}`);
@@ -189,17 +261,54 @@ export class PlaybookRegistry {
     writeFileSync(this.filePath, lines.join("\n"), "utf-8");
   }
 
-  /** Sorted by id so the Zone 2 bytes never depend on insertion order. */
+  /**
+   * Every rule in force: the file's, with transient rules added (a transient
+   * rule shadows a file rule with the same id). Sorted by id so the prompt
+   * bytes never depend on insertion order.
+   */
   public getAllRules(): PlaybookRule[] {
+    const merged = new Map(this.rules);
+    for (const [id, rule] of this.transient) merged.set(id, rule);
+    return Array.from(merged.values()).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  }
+
+  /** Rules that belong to playbook.toml (what the Playbook screen calls seeded). */
+  public getPersistentRules(): PlaybookRule[] {
     return Array.from(this.rules.values()).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   }
 
+  public isTransient(id: string): boolean {
+    return this.transient.has(id);
+  }
+
+  /**
+   * Add a rule to playbook.toml. For a human's decision to keep a rule in
+   * the project; learned or explored rules for a run use `addTransientRule`.
+   */
   public addRule(rule: PlaybookRule): void {
     this.rules.set(rule.id, rule);
     this.save();
   }
 
+  /**
+   * Add a rule for this process only (Integration review A5). It matches like
+   * any other rule but is never written to playbook.toml, so learned rules no
+   * longer leak into the project's file, and retiring one in the
+   * LearningStore is enough. A persistent rule with the same id is shadowed
+   * for this process, not overwritten on disk.
+   */
+  public addTransientRule(rule: PlaybookRule): void {
+    this.transient.set(rule.id, rule);
+  }
+
+  /** Drop every transient rule (between cards or runs). */
+  public clearTransientRules(): void {
+    this.transient.clear();
+  }
+
+  /** Retire a rule: a transient one from memory only, a file rule from the file. */
   public retireRule(id: string): boolean {
+    if (this.transient.delete(id)) return true;
     const deleted = this.rules.delete(id);
     if (deleted) {
       this.performance.delete(id);
@@ -224,34 +333,63 @@ export class PlaybookRegistry {
     );
   }
 
-  public matchRules(options: {
-    cardTitle?: string;
-    scopeFiles?: string[];
-    triggerGate?: string;
-  }): PlaybookRule[] {
-    const matched: PlaybookRule[] = [];
+  /**
+   * Rules for a card (Integration review A4, item 3).
+   *
+   * - `pattern` must match the card's title or scope files.
+   * - A rule with `errorPattern` also needs `failureText` to match it, so an
+   *   error-scoped rule rides in the prompt only while that error stands.
+   * - `triggerGate` ranks; it no longer adds a rule by itself.
+   * - Rules whose every fact key is in `coveredKeys` are left out, and of
+   *   two matched rules about the same fact only the first (by rank) stays.
+   */
+  public matchRules(options: MatchRulesOptions): PlaybookRule[] {
     const textToMatch =
       `${options.cardTitle ?? ""} ${(options.scopeFiles ?? []).join(" ")}`.toLowerCase();
+    const scope = options.scope ?? "all";
+    const gate = options.triggerGate?.toLowerCase();
 
-    for (const rule of this.getAllRules()) {
-      let isMatch = false;
-
-      if (options.triggerGate && rule.triggerGate) {
-        if (rule.triggerGate.toLowerCase() === options.triggerGate.toLowerCase()) {
-          isMatch = true;
-        }
+    const matched = this.getAllRules().filter((rule) => {
+      if (scope === "card" && rule.errorPattern) return false;
+      if (scope === "error" && !rule.errorPattern) return false;
+      if (!rule.pattern || !textToMatch.includes(rule.pattern.toLowerCase())) return false;
+      if (rule.errorPattern) {
+        return (
+          options.failureText !== undefined &&
+          errorPatternMatches(rule.errorPattern, options.failureText)
+        );
       }
+      return true;
+    });
 
-      if (rule.pattern && textToMatch.includes(rule.pattern.toLowerCase())) {
-        isMatch = true;
-      }
+    // Stable: gate-matching rules first, then id order.
+    const ranked = gate
+      ? [
+          ...matched.filter((r) => r.triggerGate?.toLowerCase() === gate),
+          ...matched.filter((r) => r.triggerGate?.toLowerCase() !== gate),
+        ]
+      : matched;
 
-      if (isMatch) {
-        matched.push(rule);
-      }
+    const covered = new Set(options.coveredKeys ?? []);
+    const out: PlaybookRule[] = [];
+    for (const rule of ranked) {
+      const keys = ruleFactKeys(rule);
+      if (keysCovered(keys, covered)) continue;
+      for (const k of keys) covered.add(k);
+      out.push(rule);
     }
+    return out;
+  }
 
-    return matched;
+  /**
+   * The rule already stating the fact `text` is about, if any. For
+   * deduplicating a proposed learned rule, or a remedy, against the file's
+   * rules by fact key rather than by wording (Integration review A3).
+   */
+  public coveringRule(text: string): PlaybookRule | undefined {
+    const keys = factKeysOf(text);
+    if (keys.length === 0) return undefined;
+    return this.getAllRules().find((rule) => keysCovered(keys, new Set(ruleFactKeys(rule))));
   }
 
   public estimateRuleTokens(rule: PlaybookRule): number {

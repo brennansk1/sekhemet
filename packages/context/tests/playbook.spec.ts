@@ -43,13 +43,17 @@ describe("@sekhemet/context PlaybookRegistry", () => {
     expect(rule?.id).toBe("pb_0192");
     expect(rule?.instruction).toContain("z.infer");
 
-    // Match rule by gate and card title
+    // Match by the card's title. A failing gate alone no longer adds a rule
+    // whose pattern the card does not match (Integration review A4).
     const matched = reloaded.matchRules({
-      cardTitle: "Refactor Zod v4 schema",
+      cardTitle: "Refactor Zod v4 schema inference",
       triggerGate: "typecheck",
     });
     expect(matched).toHaveLength(1);
     expect(matched[0]?.id).toBe("pb_0192");
+    expect(
+      reloaded.matchRules({ cardTitle: "Refactor Zod v4 schema", triggerGate: "typecheck" }),
+    ).toHaveLength(0);
 
     // Audit context debt
     const audit = reloaded.auditContextDebt();
