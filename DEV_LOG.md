@@ -44,6 +44,61 @@ If you are Claude reading this because Gemini reached quota limits or you were s
 
 ## Detailed Session Log
 
+### Entry 16 — 2026-09-18 (Cyber-Tiel runs, worker feedback, dashboard)
+- **Agent**: Claude Opus 5 (`claude-code`), with one Claude subagent building the dashboard
+- **Role**: Lead Driver & Delegator
+
+#### A. Cyber-Tiel as the worker, measured
+Cyber-Tiel-Coder-35B-A3B (UD-IQ3_XXS, MTP speculative decoding, 16k context,
+q8_0 KV) replaced Nail as the worker, and dirk-27b is the manager. Only one model
+is resident at a time; `ModelRouter` swaps them.
+
+| Run | Result | Stopped by |
+|---|---|---|
+| 1 | 3/3, then stopped | An unsatisfiable verifier card: card 1 had merged a wrong `AuditReport` contract. Fixed with a `types.spec` contract oracle, proven to go from fail to pass. |
+| 2 | 4/4, then stopped | An 8,224-token prompt into an 8,192 context crashed the queue. Fixed by budgeting every request to the window with staged reductions, containing model errors as `stopReason "error"`, and giving Cyber-Tiel 16k. |
+| 3 | Pass@1 3/5, 4/5 after escalation, 32.9 min | See section B. The manager's diagnosis turned the failed verifier into a 2-turn pass on attempt 2. |
+
+#### B. What run 3 taught, and the fixes
+1. **Blocked shell commands.** hasher and db each spent 17-20 `run_cmd` calls on
+   exit-127 failures. The model writes whole command lines (`npx vitest run x | head`),
+   and `run_cmd` only took a program plus arguments. Command lines now run
+   through `/bin/sh -c` inside the same Seatbelt sandbox and the same denylist.
+   Tests prove that `ls && rm -rf src` is still refused and that shell writes
+   outside the worktree still fail.
+2. **A `check` tool.** It runs the card's real gates and returns typed
+   failures without submitting the card or using up a repair attempt.
+3. **Concrete remedies** (`remedyFor` in `packages/gates/src/parsers.ts`). The
+   verifier exhausted its ladder bouncing between TS18048 (`events[i]` may be
+   undefined) and the `!` assertion that lint forbids. "Resolve TS18048" names the
+   problem, not the idiom. Common tsc and Biome codes now carry a one-line fix,
+   and the repair prompt finally prints `suggestedAction`.
+4. **Re-check after every edit, and several failures at once.** The ledger card
+   saw only the first of eight type errors, fixed it, then edited blind for 25
+   turns and ran out of budget. While a failure stands, the session now re-runs
+   the gates after every turn that writes a file. A pass finishes the card; a
+   failure refreshes the prompt without climbing the ladder. The prompt lists
+   up to three failures, each with its remedy.
+
+Commits: `6c627a2`, `886565d`, `4e7d9a7`. Run 4 starts on this build.
+
+#### C. Dashboard, Phases 0-2 of FRONTEND_DESIGN (`4dca1e5`)
+A Claude subagent built it, and I reviewed it. The single inline page is replaced
+by static ES modules served from `packages/ui/web`:
+- a sidebar shell (Review, Board, Runs, Ledger, Playbook, Machine)
+- a shared vocabulary module, so the browser never re-derives a label
+- an icon set
+- tokens with a contrast test; Basalt `--state-fail` was raised to 4.5:1
+- the Review view: gates strip, typed failure blocks, a diff with
+  protected-test annotations, triage with undo, and a facts rail
+- a WIP-bounded board with peek, a command palette, and keyboard navigation
+
+I inspected it myself, in Basalt and Sand at 1920, 1440 and 1024, with
+full-resolution headless Chrome captures. I fixed one defect: the triage key
+hint rendered as a clipped "j |" fragment, and now drops out via a container
+query. Phases 3-4 (card tabs with live `card/step` events, Runs, Ledger,
+Machine, Playbook) are in progress.
+
 ### Entry 15 — 2026-09-18 (post-OOM recovery session)
 - **Agent**: Claude Opus 5 (`claude-code`)
 - **Role**: Lead Driver & Delegator
