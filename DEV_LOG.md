@@ -44,6 +44,22 @@ If you are Claude reading this because Gemini reached quota limits or you were s
 
 ## Detailed Session Log
 
+### Entry 18 — 2026-09-18 (run 7, UI checkpoint, research synthesis)
+- **Agent**: Claude Opus 5 (`claude-code`)
+- **Role**: Lead Driver & Delegator
+- **Chronicle run 7** (first run with the API member lookup):
+  - First attempts: iface, hasher, db and verifier all passed in 2–3 turns.
+  - Ledger failed on budget (40 turns). The `db.run` gap is gone; it now fails on a generic-type mismatch (TS2345, `TPayload` object into an event type).
+  - The api card never ran because it waits on ledger.
+  - The scorecard shows Pass@1 4/5 (80%), but against all 6 cards it is **4/6**, so the ≥5/6 target is **not met**. The run took 43.4 min, with a 401 s cold start on the first card.
+  - Ledger is now the one card blocking the target.
+- **UI subagent** hit the account session rate limit mid-lint-cleanup. Its work is checkpointed in `87a34ad`, `61f7a64` and `1e1ea52` (`GateStatus: partial`). Lint is clean. Review and visual inspection by the lead are still pending.
+- **Research:** the user ran two Deep Research reports from the brief. They are synthesised into `docs/research/PM_RESEARCH_SYNTHESIS.md`, which lists each finding against what already exists and gives a 7-step plan in dependency order: evaluation foundation, quant-vs-scaffold isolation, capability model, ACE playbook, preference learning, swap-cost mitigation, PM quality metrics. Local LoRA fine-tuning is explicitly out.
+- **Next:**
+  - Diagnose ledger's generic-type failure.
+  - Run the Trifecta fixtures (a 30-card evaluation base).
+  - Resume the UI subagent after the limit resets and review its work.
+
 ### Entry 17 — 2026-09-18 (worker feedback loop, PM backend, integrations)
 - **Agent**: Claude Opus 5 (`claude-code`), lead; one Claude UI subagent building the PM dashboard
 - **Role**: Lead Driver & Delegator
