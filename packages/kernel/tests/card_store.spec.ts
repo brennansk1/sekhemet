@@ -1,20 +1,23 @@
-import { DatabaseSync } from "node:sqlite";
-import { beforeEach, describe, expect, it } from "vitest";
+import type { DatabaseSync } from "node:sqlite";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CardStore } from "../src/card_store.js";
 import { EventLog } from "../src/log.js";
-import { initSchema } from "../src/schema.js";
+import { type DiskDb, openDiskDb } from "./support/disk_db.js";
 
 describe("@sekhemet/kernel CardStore", () => {
+  let disk: DiskDb;
   let db: DatabaseSync;
   let log: EventLog;
   let store: CardStore;
 
   beforeEach(() => {
-    db = new DatabaseSync(":memory:");
-    initSchema(db);
+    disk = openDiskDb();
+    db = disk.db;
     log = new EventLog(db);
     store = new CardStore(db, log);
   });
+
+  afterEach(() => disk.dispose());
 
   it("creates a card, writes an event to the log, and projects into the cards table", async () => {
     const card = await store.createCard({

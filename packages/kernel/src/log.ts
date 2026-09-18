@@ -301,6 +301,28 @@ export class EventLog {
     return rows.map((r) => this.mapRow(r));
   }
 
+  /**
+   * One card's events of the given types, in order, without the per-card
+   * limit a long card's `card/step` stream would otherwise exhaust.
+   */
+  public async getEventsByCardAndTypes(
+    cardId: string,
+    types: string[],
+    limit = 10_000,
+  ): Promise<EventRecord[]> {
+    if (types.length === 0) return [];
+    const rows = this.db
+      .prepare(`
+        SELECT ${EVENT_COLUMNS}
+        FROM events
+        WHERE card_id = ? AND type IN (${types.map(() => "?").join(", ")})
+        ORDER BY seq ASC
+        LIMIT ?
+      `)
+      .all(cardId, ...types, limit) as unknown as RawEventRow[];
+    return rows.map((r) => this.mapRow(r));
+  }
+
   public async verifyHashChain(): Promise<HashChainVerificationResult> {
     const rows = this.selectAllStmt.all() as unknown as RawEventRow[];
     let prevHash = GENESIS_PREV_HASH;

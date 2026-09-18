@@ -1,5 +1,12 @@
 import type { CardRecord, CardStatus, CardStore } from "@sekhemet/kernel";
-import type { BoardService, BoardState, CardTransition, WipLimitStatus } from "./types.js";
+import {
+  type BoardService,
+  type BoardState,
+  type CardTransition,
+  HELD_REASON_PREFIX,
+  TransitionRefusedError,
+  type WipLimitStatus,
+} from "./types.js";
 
 const DEFAULT_WIP_LIMITS: Record<CardStatus, number> = {
   backlog: 500,
@@ -109,7 +116,14 @@ export class BoardServiceImpl implements BoardService {
 
   public async transitionCard(t: CardTransition): Promise<void> {
     const card = await this.cardStore.getCard(t.cardId);
-    if (!card) throw new Error(`Card not found: ${t.cardId}`);
+    if (!card) {
+      throw new TransitionRefusedError(
+        "card_not_found",
+        t.cardId,
+        t.toStatus,
+        `Card not found: ${t.cardId}`,
+      );
+    }
 
     if (t.toStatus === t.fromStatus) {
       await this.cardStore.updateCardStatus(t.cardId, t.toStatus, t.reason, t.actor);
@@ -120,7 +134,10 @@ export class BoardServiceImpl implements BoardService {
     if (!legal.includes(t.toStatus)) {
       const override = t.reason?.startsWith("override:");
       if (!override) {
-        throw new Error(
+        throw new TransitionRefusedError(
+          "illegal_transition",
+          t.cardId,
+          t.toStatus,
           `Illegal transition '${t.fromStatus}' -> '${t.toStatus}' for card ${t.cardId}. Legal destinations: ${legal.join(", ")}`,
         );
       }
@@ -133,7 +150,10 @@ export class BoardServiceImpl implements BoardService {
     if (t.toStatus === "verify") {
       const reviewCards = await this.cardStore.listCards({ status: "review" });
       if (reviewCards.length >= this.wipLimits.review) {
-        throw new Error(
+        throw new TransitionRefusedError(
+          "back_pressure",
+          t.cardId,
+          t.toStatus,
           `Back-pressure: Review is at capacity (${reviewCards.length}/${this.wipLimits.review}). No card may enter Verify until a review is accepted or returned.`,
         );
       }
@@ -142,12 +162,80 @@ export class BoardServiceImpl implements BoardService {
     const cardsInTarget = await this.cardStore.listCards({ status: t.toStatus });
     const limit = this.wipLimits[t.toStatus];
     if (cardsInTarget.length >= limit) {
-      throw new Error(
+      throw new TransitionRefusedError(
+        "wip_limit",
+        t.cardId,
+        t.toStatus,
         `WIP limit exceeded for column '${t.toStatus}': ${cardsInTarget.length}/${limit} cards active`,
       );
     }
 
     await this.cardStore.updateCardStatus(t.cardId, t.toStatus, t.reason, t.actor);
+  }
+
+  /**
+   * Hold a card where it stands with a recorded reason (defect 1).
+   *
+   * Used when a move the runner wanted was refused by back-pressure: the card
+   * keeps its column and its work, the board shows why it is waiting, and the
+   * queue carries on instead of aborting. `releaseHeld` resumes it later.
+   */
+  public async holdCard(cardId: string, reason: string, actor = "executor"): Promise<void> {
+    const text = reason.trim();
+    if (!text) throw new Error("A held card needs a reason");
+    const card = await this.cardStore.getCard(cardId);
+    if (!card) {
+      throw new TransitionRefusedError(
+        "card_not_found",
+        cardId,
+        "verify",
+        `Card not found: ${cardId}`,
+      );
+    }
+    const blockedReason = text.startsWith(HELD_REASON_PREFIX)
+      ? text
+      : `${HELD_REASON_PREFIX} ${text}`;
+    await this.cardStore.updateCard(cardId, { blockedReason }, actor);
+  }
+
+  /** Cards the runner held, oldest first. */
+  public async listHeld(): Promise<CardRecord[]> {
+    const cards = await this.cardStore.listCards();
+    return cards
+      .filter((c) => c.blockedReason?.startsWith(HELD_REASON_PREFIX))
+      .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
+  }
+
+  /**
+   * Retry the move a held card was waiting for, clearing the hold on success.
+   * Returns false (and keeps the hold) while the move is still refused.
+   */
+  public async releaseHeld(
+    cardId: string,
+    toStatus: CardStatus,
+    actor = "executor",
+  ): Promise<boolean> {
+    const card = await this.cardStore.getCard(cardId);
+    if (!card?.blockedReason?.startsWith(HELD_REASON_PREFIX)) return false;
+    try {
+      await this.transitionCard({
+        cardId,
+        fromStatus: card.status,
+        toStatus,
+        actor,
+        reason: "released from hold",
+      });
+    } catch (err) {
+      if (
+        err instanceof TransitionRefusedError &&
+        (err.code === "back_pressure" || err.code === "wip_limit")
+      ) {
+        return false;
+      }
+      throw err;
+    }
+    await this.cardStore.updateCard(cardId, { blockedReason: null }, actor);
+    return true;
   }
 
   public async checkWipLimits(): Promise<WipLimitStatus[]> {

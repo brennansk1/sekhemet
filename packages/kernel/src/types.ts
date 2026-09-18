@@ -45,7 +45,44 @@ export type CardStopReason =
   | "no_progress"
   | "repair_exhausted"
   | "error"
-  | "quota_suspended";
+  | "memory_pressure"
+  | "quota_suspended"
+  /** The agent declared the work done, but the gates could not run to confirm it. */
+  | "done_pending_gates"
+  /** The agent kept trying to write outside its declared scope. */
+  | "scope_violation"
+  /** The repair ladder ran out after a re-plan: beyond this model on this card. */
+  | "capability_ceiling"
+  /** A person stopped the card. */
+  | "human_abort"
+  /** The card's token budget (`tokenBudget`) was spent. */
+  | "token_budget_exhausted"
+  /** The card's wall-clock budget (`secondsBudget`) was spent. */
+  | "time_budget_exhausted"
+  /** Repair rung 3: the card needs a new plan before another attempt. */
+  | "replan_requested"
+  /** The staged acceptance tests already pass against the untouched code. */
+  | "vacuous_tests";
+
+/** Every stop reason, for validation and exhaustive UI tables. */
+export const CARD_STOP_REASONS: readonly CardStopReason[] = [
+  "gate_passed",
+  "budget_exhausted",
+  "oscillation_detected",
+  "no_progress",
+  "repair_exhausted",
+  "error",
+  "memory_pressure",
+  "quota_suspended",
+  "done_pending_gates",
+  "scope_violation",
+  "capability_ceiling",
+  "human_abort",
+  "token_budget_exhausted",
+  "time_budget_exhausted",
+  "replan_requested",
+  "vacuous_tests",
+];
 
 /** Which model handles each phase of a card (design §320). */
 export interface ModelRoute {
@@ -173,4 +210,95 @@ export interface HashChainVerificationResult {
   totalEvents: number;
   corruptedSeq?: number;
   reason?: string;
+}
+
+/**
+ * The kinds of fact a card's dossier holds (integration review §3 item 6).
+ *
+ * Each role writes what it learned about a card as one of these, on the
+ * hash-chained ledger, and every later attempt reads them back. Before this,
+ * lessons and answers lived in in-memory maps, notes went nowhere and a
+ * send-back note never reached the retry it was written for.
+ */
+export type DossierEntryKind =
+  | "lesson"
+  | "note"
+  | "question"
+  | "answer"
+  | "research"
+  | "review"
+  | "send_back";
+
+/** Ledger event type per dossier kind. */
+export const DOSSIER_EVENT_TYPES: Readonly<Record<DossierEntryKind, string>> = {
+  lesson: "card/lesson",
+  note: "card/note",
+  question: "card/question",
+  answer: "card/answer",
+  research: "card/research",
+  review: "card/review",
+  send_back: "card/send_back",
+};
+
+/** Who writes each kind unless the caller says otherwise. */
+export const DOSSIER_DEFAULT_ACTORS: Readonly<Record<DossierEntryKind, string>> = {
+  lesson: "worker",
+  note: "worker",
+  question: "worker",
+  answer: "manager",
+  research: "researcher",
+  review: "reviewer",
+  send_back: "human",
+};
+
+export interface DossierEntryInput {
+  cardId: string;
+  kind: DossierEntryKind;
+  /** The fact itself, in plain text. Required and non-empty. */
+  text: string;
+  /** Overrides the kind's default actor (for example "human" answering a question). */
+  actor?: string;
+  /** Attempt number the entry belongs to, when known. */
+  attempt?: number;
+  /** For an answer: the `entryId` of the question it answers. */
+  inReplyTo?: string;
+  /** Research sources (URLs or file paths). */
+  sources?: string[];
+  /** Review verdict, for example "likely_send_back". */
+  verdict?: string;
+}
+
+export interface DossierEntry {
+  /** Stable id (the ledger event id), so an answer can name its question. */
+  entryId: string;
+  seq: number;
+  cardId: string;
+  kind: DossierEntryKind;
+  actor: string;
+  text: string;
+  createdAt: string;
+  attempt?: number;
+  inReplyTo?: string;
+  sources?: string[];
+  verdict?: string;
+}
+
+/** A question with the answers addressed to it (by `inReplyTo`). */
+export interface DossierThread {
+  question: DossierEntry;
+  answers: DossierEntry[];
+}
+
+/** Everything the team knows about one card, oldest first. */
+export interface CardDossier {
+  cardId: string;
+  entries: DossierEntry[];
+  lessons: DossierEntry[];
+  notes: DossierEntry[];
+  questions: DossierThread[];
+  /** Answers with no matching question in this card's dossier. */
+  unthreadedAnswers: DossierEntry[];
+  research: DossierEntry[];
+  reviews: DossierEntry[];
+  sendBacks: DossierEntry[];
 }

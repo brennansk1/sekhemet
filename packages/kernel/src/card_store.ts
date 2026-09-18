@@ -2,15 +2,38 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type { EventLog } from "./log.js";
 import { keyBetween } from "./order_key.js";
-import type {
-  CardRecord,
-  CardStatus,
-  CardStopReason,
-  CardTier,
-  CheckpointRecord,
-  ExternalRef,
-  ModelRoute,
+import {
+  CARD_STOP_REASONS,
+  type CardDossier,
+  type CardRecord,
+  type CardStatus,
+  type CardStopReason,
+  type CardTier,
+  type CheckpointRecord,
+  DOSSIER_DEFAULT_ACTORS,
+  DOSSIER_EVENT_TYPES,
+  type DossierEntry,
+  type DossierEntryInput,
+  type DossierEntryKind,
+  type ExternalRef,
+  type ModelRoute,
 } from "./types.js";
+
+/** Longest dossier text kept; longer text is cut with a marker, never silently. */
+export const MAX_DOSSIER_TEXT = 8000;
+
+const KIND_BY_EVENT_TYPE = new Map<string, DossierEntryKind>(
+  (Object.entries(DOSSIER_EVENT_TYPES) as [DossierEntryKind, string][]).map(([k, t]) => [t, k]),
+);
+
+interface DossierPayload {
+  kind: DossierEntryKind;
+  text: string;
+  attempt?: number;
+  inReplyTo?: string;
+  sources?: string[];
+  verdict?: string;
+}
 
 export interface CreateCardInput {
   id?: string;
@@ -419,6 +442,16 @@ export class CardStore {
       throw new Error(`Card not found: ${id}`);
     }
 
+    if (patch.stopReason !== undefined && !CARD_STOP_REASONS.includes(patch.stopReason)) {
+      throw new Error(`Unknown stop reason: ${String(patch.stopReason)}`);
+    }
+    for (const field of ["tokensUsed", "secondsUsed", "stepsUsed"] as const) {
+      const value = patch[field];
+      if (value !== undefined && (!Number.isFinite(value) || value < 0)) {
+        throw new Error(`${field} must be a non-negative number, got ${value}`);
+      }
+    }
+
     const now = new Date().toISOString();
     const payload = { id, patch, updatedAt: now };
 
@@ -480,7 +513,143 @@ export class CardStore {
     });
   }
 
+  /**
+   * Append one fact to a card's dossier (integration review §3 item 6).
+   *
+   * Validated before it reaches the ledger, because the chain is append-only:
+   * an empty or mistyped entry written today is there forever.
+   */
+  public async recordDossierEntry(input: DossierEntryInput): Promise<DossierEntry> {
+    const type = DOSSIER_EVENT_TYPES[input.kind];
+    if (!type) throw new Error(`Unknown dossier kind: ${String(input.kind)}`);
+    const text = typeof input.text === "string" ? input.text.trim() : "";
+    if (!text) throw new Error(`A ${input.kind} entry needs non-empty text`);
+    if (input.attempt !== undefined && (!Number.isInteger(input.attempt) || input.attempt < 1)) {
+      throw new Error(`Dossier attempt must be a positive integer, got ${input.attempt}`);
+    }
+    if (input.inReplyTo !== undefined && input.kind !== "answer") {
+      throw new Error("Only an answer may name the question it replies to");
+    }
+    if (!(await this.getCard(input.cardId))) {
+      throw new Error(`Card not found: ${input.cardId}`);
+    }
+
+    const stored =
+      text.length > MAX_DOSSIER_TEXT
+        ? `${text.slice(0, MAX_DOSSIER_TEXT)}\n… [${text.length - MAX_DOSSIER_TEXT} chars cut]`
+        : text;
+    const payload: DossierPayload = {
+      kind: input.kind,
+      text: stored,
+      ...(input.attempt !== undefined ? { attempt: input.attempt } : {}),
+      ...(input.inReplyTo ? { inReplyTo: input.inReplyTo } : {}),
+      ...(input.sources?.length ? { sources: [...input.sources] } : {}),
+      ...(input.verdict ? { verdict: input.verdict } : {}),
+    };
+    const event = await this.eventLog.append({
+      actor: input.actor ?? DOSSIER_DEFAULT_ACTORS[input.kind],
+      type,
+      cardId: input.cardId,
+      payload,
+    });
+    return this.toDossierEntry(
+      event.id,
+      event.seq,
+      input.cardId,
+      event.actor,
+      event.createdAt,
+      payload,
+    );
+  }
+
+  private toDossierEntry(
+    entryId: string,
+    seq: number,
+    cardId: string,
+    actor: string,
+    createdAt: string,
+    p: DossierPayload,
+  ): DossierEntry {
+    return {
+      entryId,
+      seq,
+      cardId,
+      kind: p.kind,
+      actor,
+      text: p.text,
+      createdAt,
+      ...(p.attempt !== undefined ? { attempt: p.attempt } : {}),
+      ...(p.inReplyTo ? { inReplyTo: p.inReplyTo } : {}),
+      ...(p.sources?.length ? { sources: p.sources } : {}),
+      ...(p.verdict ? { verdict: p.verdict } : {}),
+    };
+  }
+
+  /**
+   * Everything the team has recorded about one card, oldest first
+   * (`dossierFor(cardId)` in the integration review's target architecture).
+   *
+   * Answers are threaded under the question they name, so a reply Merit wrote
+   * for another card can never be attached to this one.
+   */
+  public async getDossier(cardId: string): Promise<CardDossier> {
+    const events = await this.eventLog.getEventsByCardAndTypes(
+      cardId,
+      Object.values(DOSSIER_EVENT_TYPES),
+    );
+    const entries: DossierEntry[] = [];
+    for (const e of events) {
+      const kind = KIND_BY_EVENT_TYPE.get(e.type);
+      const p = e.payload as Partial<DossierPayload> | null;
+      // A malformed row (hand-edited or from an older writer) is skipped, not fatal.
+      if (!kind || !p || typeof p.text !== "string") continue;
+      entries.push(
+        this.toDossierEntry(e.id, e.seq, cardId, e.actor, e.createdAt, {
+          ...p,
+          kind,
+        } as DossierPayload),
+      );
+    }
+
+    const byKind = (k: DossierEntryKind) => entries.filter((e) => e.kind === k);
+    const questions = byKind("question").map((question) => ({
+      question,
+      answers: [] as DossierEntry[],
+    }));
+    const threadOf = new Map(questions.map((t) => [t.question.entryId, t]));
+    const unthreadedAnswers: DossierEntry[] = [];
+    for (const answer of byKind("answer")) {
+      const thread = answer.inReplyTo ? threadOf.get(answer.inReplyTo) : undefined;
+      if (thread) thread.answers.push(answer);
+      else unthreadedAnswers.push(answer);
+    }
+
+    return {
+      cardId,
+      entries,
+      lessons: byKind("lesson"),
+      notes: byKind("note"),
+      questions,
+      unthreadedAnswers,
+      research: byKind("research"),
+      reviews: byKind("review"),
+      sendBacks: byKind("send_back"),
+    };
+  }
+
   public async recordCheckpoint(cp: CheckpointRecord): Promise<void> {
+    // The relay protocol resumes from these rows; a bad one sends a resume to
+    // the wrong commit, so it is refused before it reaches the ledger.
+    if (!Number.isInteger(cp.step) || cp.step < 0) {
+      throw new Error(`Checkpoint step must be a non-negative integer, got ${cp.step}`);
+    }
+    if (!cp.gitRef?.trim()) throw new Error("Checkpoint needs a git ref");
+    if (!["pass", "fail", "partial", "suspended-quota"].includes(cp.gateStatus)) {
+      throw new Error(`Unknown checkpoint gate status: ${String(cp.gateStatus)}`);
+    }
+    // Checked before the append: the projection's foreign key would refuse
+    // the row, but only after the ledger had already recorded it.
+    if (!(await this.getCard(cp.cardId))) throw new Error(`Card not found: ${cp.cardId}`);
     await this.eventLog.append({
       actor: "sync",
       type: "checkpoint/recorded",
