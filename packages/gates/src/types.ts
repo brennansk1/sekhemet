@@ -87,6 +87,12 @@ export interface GateProjectConfig {
   protected: string[];
   maxFiles: number;
   maxDiffLines: number;
+  /**
+   * Formatter run over the card's scope files before verification, as argv;
+   * scope file paths are appended. Formatting is not worth a model's turns, and
+   * running it only on scope files keeps protected tests untouched.
+   */
+  autofix?: string[];
 }
 
 export interface GatesConfig {

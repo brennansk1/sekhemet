@@ -139,6 +139,9 @@ export function loadGatesConfig(repoRoot: string): GatesConfig {
       : [...DEFAULT_PROJECT_CONFIG.protected],
     maxFiles: asNumber(projectTable.max_files, DEFAULT_PROJECT_CONFIG.maxFiles),
     maxDiffLines: asNumber(projectTable.max_diff_lines, DEFAULT_PROJECT_CONFIG.maxDiffLines),
+    ...(asStringArray(projectTable.autofix).length > 0
+      ? { autofix: asStringArray(projectTable.autofix) }
+      : {}),
   };
 
   const rawGates = Array.isArray(parsed.gate) ? (parsed.gate as TomlTable[]) : [];

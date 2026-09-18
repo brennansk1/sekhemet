@@ -486,6 +486,13 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   }
 
   public async runVerification(): Promise<GateResult> {
+    const autofix = this.options.autofixCommand;
+    const scope = this.options.scopeFiles ?? [];
+    if (autofix && autofix.length > 0 && scope.length > 0) {
+      const [command, ...args] = autofix as [string, ...string[]];
+      // Best effort: a formatter failure is reported by the lint gate itself.
+      await this.tools.runCommandRaw(command, [...args, ...scope]).catch(() => undefined);
+    }
     const rungs = this.options.gateRungs ?? ["typecheck", "test"];
     return this.options.gateRunner.runGates(rungs, this.tools.root);
   }

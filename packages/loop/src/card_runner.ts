@@ -152,6 +152,10 @@ export class CardRunner {
     await lifecycle?.transition(card.id, "in_progress");
 
     const session = new CardExecutionSessionImpl({
+      // Verify against every blocking gate the project declares (lint included,
+      // as the spec requires), unless the caller chose specific rungs.
+      gateRungs: [...new Set(this.config.gates.filter((g) => g.blocking).map((g) => g.rung))],
+      ...(this.config.project.autofix ? { autofixCommand: this.config.project.autofix } : {}),
       ...this.options,
       cardId: card.id,
       card,

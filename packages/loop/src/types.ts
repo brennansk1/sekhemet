@@ -47,6 +47,11 @@ export interface SessionOptions {
   temperature?: number | undefined;
   maxTokens?: number | undefined;
 
+  /**
+   * Formatter argv run over scope files before each verification (scope paths
+   * appended). Only scope files: protected tests are never rewritten.
+   */
+  autofixCommand?: string[] | undefined;
   /** Gate rungs run when the agent calls `finish_card`. Defaults to typecheck + test. */
   gateRungs?: GateRung[] | undefined;
   /** Failed verifications tolerated before the card stops for human review. */
