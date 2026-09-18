@@ -117,7 +117,7 @@ export function boardDigest(s: PmSnapshot, maxChars = 9000): string {
 }
 
 /**
- * The conversation as Merit reads it: the rolling summary of everything older,
+ * The conversation as Seshat reads it: the rolling summary of everything older,
  * then the recent exchanges verbatim, so "split it" knows what "it" is.
  */
 export function conversationDigest(
@@ -142,10 +142,13 @@ const num = { type: "number" } as const;
 export const ASK_RESEARCHER_TOOL: ToolDefinition = {
   name: "ask_researcher",
   description:
-    "Delegate a question that needs evidence (a library's API or licence, how a module really works, what the project did before) to the Researcher. Its answer cites sources.",
+    "Delegate a question that needs evidence (a library's API or licence, how a module really works, a security advisory, what research says, what the project did before) to the Researcher. Its answer cites sources and states its confidence. depth 'deep' runs a team of sub-researchers and a verifier: for decisions (choosing a technology, planning a feature), not for single facts.",
   parameters: {
     type: "object",
-    properties: { question: { type: "string" } },
+    properties: {
+      question: { type: "string" },
+      depth: { type: "string", enum: ["quick", "deep"] },
+    },
     required: ["question"],
   },
 };
@@ -443,7 +446,7 @@ export async function answer(
   /** Injectable registry search, for tests; production searches npm and PyPI. */
   libraries?: typeof searchLibraries,
   /** The Researcher, when one is configured (the fourth model). */
-  researcher?: (question: string) => Promise<ResearchAnswer>,
+  researcher?: (question: string, opts?: { deep?: boolean }) => Promise<ResearchAnswer>,
 ): Promise<PmAnswer> {
   const tools = researcher ? [...PM_TOOLS, ASK_RESEARCHER_TOOL] : PM_TOOLS;
   const questions = queued
@@ -454,7 +457,7 @@ export async function answer(
     .join("\n");
   const prompt = `${boardDigest(snapshot)}\n\nCONVERSATION SO FAR\n${conversationDigest(history, 3500, summary) || "(new conversation)"}\n\nNEW MESSAGE${queued.length > 1 ? "S" : ""}\n${questions}\n\nReply to the human now. Use propose_* tools only for changes you recommend.`;
 
-  // Up to two lookup rounds: Merit may search registries, read the results,
+  // Up to two lookup rounds: Seshat may search registries, read the results,
   // then answer. Proposal tool calls from every round are kept.
   let context = prompt;
   const calls: ToolCall[] = [];
@@ -476,13 +479,20 @@ export async function answer(
     for (const c of lookups.slice(0, 3)) {
       if (c.name === "ask_researcher" && researcher) {
         const q = String(c.arguments?.question ?? "").slice(0, 500);
-        const r = await researcher(q).catch((err) => ({
+        const deep = c.arguments?.depth === "deep";
+        const r: Pick<ResearchAnswer, "answer" | "sources" | "grounded"> &
+          Partial<Pick<ResearchAnswer, "confidence" | "badCitations">> = await researcher(q, {
+          deep,
+        }).catch((err) => ({
           answer: `The Researcher failed: ${err instanceof Error ? err.message : String(err)}`,
           sources: [],
           grounded: false,
         }));
+        const verdict = r.grounded
+          ? `grounded, confidence ${(r.confidence ?? 0).toFixed(2)}${r.badCitations?.length ? `; citations [${r.badCitations.join(", ")}] point at nothing it read, ignore those claims` : ""}`
+          : "NOT grounded: treat as unverified, do not plan on it";
         found.push(
-          `ask_researcher("${q}"):\n${r.answer}\nSources: ${r.sources.join("; ") || "none (treat as unverified)"}`,
+          `ask_researcher("${q}"${deep ? ", deep" : ""}) [${verdict}]:\n${r.answer}\nSources: ${r.sources.join("; ") || "none"}`,
         );
         for (const src of r.sources) {
           const url = /https?:\/\/\S+/.exec(src)?.[0];
@@ -527,7 +537,7 @@ export async function answer(
 }
 
 /**
- * Hybrid compaction for Merit's own conversation (after "The Complexity Trap",
+ * Hybrid compaction for Seshat's own conversation (after "The Complexity Trap",
  * NeurIPS 2025 DL4Code): recent messages stay verbatim; older ones are folded
  * into a rolling summary by the model that is already loaded to answer. The
  * 27B manager can summarise faithfully where the small Worker could not, and
@@ -541,7 +551,7 @@ export async function summarizeConversation(
   const text = messages
     .map(
       (m) =>
-        `${m.role === "user" ? "Human" : "Merit"}: ${m.text.replace(/\s+/g, " ").slice(0, 700)}`,
+        `${m.role === "user" ? "Human" : "Seshat"}: ${m.text.replace(/\s+/g, " ").slice(0, 700)}`,
     )
     .join("\n");
   const res = await model.generate({

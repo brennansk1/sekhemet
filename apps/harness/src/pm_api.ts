@@ -66,7 +66,7 @@ export function createPmApi(ctx: PmApiContext) {
     await learnFromProposalChoices(learning, choices).catch(() => undefined);
   };
   const pmModel = ctx.pmModel ?? DEFAULT_PM_MODEL;
-  // On a host that can hold both, the dashboard's Merit can use the Researcher too.
+  // On a host that can hold both, the dashboard's Seshat can use the Researcher too.
   const researcherModel = process.env.SEKHEMET_RESEARCHER;
   let answering: Promise<void> | undefined;
 
@@ -85,7 +85,7 @@ export function createPmApi(ctx: PmApiContext) {
       void pmStore.setStatus({
         phase: "idle",
         detail:
-          "Memory is under pressure, so Merit will answer once it eases or during the next run",
+          "Memory is under pressure, so Seshat will answer once it eases or during the next run",
       });
       return;
     }
@@ -102,8 +102,8 @@ export function createPmApi(ctx: PmApiContext) {
           acquire: async () => adapter,
           ...(researcherModel
             ? {
-                researcher: (q: string) =>
-                  oneShotResearcher(ctx.repoPath, researcherModel, cardStore)(q),
+                researcher: (q: string, o?: { deep?: boolean }) =>
+                  oneShotResearcher(ctx.repoPath, researcherModel, cardStore)(q, o),
               }
             : {}),
         })
@@ -357,7 +357,7 @@ export function createPmApi(ctx: PmApiContext) {
       return true;
     }
 
-    // --- Model roster (worker, Merit, reviewer, researcher) -------------------
+    // --- Model roster (worker, Seshat, reviewer, researcher) -------------------
     if (url === "/api/models" && req.method === "GET") {
       const lease = runnerLease(ctx.repoPath) as
         | {
@@ -400,7 +400,7 @@ export function createPmApi(ctx: PmApiContext) {
       return true;
     }
 
-    // --- Merit's own quality (measured) -------------------------------------
+    // --- Seshat's own quality (measured) -------------------------------------
     if (url === "/api/metrics/pm" && req.method === "GET") {
       const cards = ctx.cardStore ? await ctx.cardStore.listCards() : [];
       const remaining = cards.filter(

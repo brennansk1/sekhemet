@@ -224,8 +224,11 @@ export interface AnswerDeps {
   step?: number;
   /** Who is on the team and what asking each costs right now. */
   team?: string;
-  /** The Researcher, when configured; Merit can delegate evidence questions. */
-  researcher?: (question: string) => Promise<import("../research/researcher.js").ResearchAnswer>;
+  /** The Researcher, when configured; Seshat can delegate evidence questions. */
+  researcher?: (
+    question: string,
+    opts?: { deep?: boolean },
+  ) => Promise<import("../research/researcher.js").ResearchAnswer>;
 }
 
 /**
