@@ -15,6 +15,12 @@ export interface ExecutionContext {
   cardStore: CardStore;
   boardService: BoardServiceImpl;
   log?: (line: string) => void;
+  /**
+   * Awaited after every Worker turn, between steps. The queue uses it to
+   * answer PM messages: it is the one point where the Worker can be unloaded
+   * without losing work, because the next step starts from the worktree.
+   */
+  afterTurn?: (cardId: string, turn: TurnResult) => Promise<void>;
 }
 
 /** What a tool call acted on, in a few characters: a path, a command, a note. */
@@ -162,6 +168,7 @@ export async function executeCard(
         actor: "executor",
         payload: stepEventPayload(cardId, turn),
       });
+      await ctx.afterTurn?.(cardId, turn);
     },
     onProgress: (event) => {
       const prefix = event.turn ? `  [turn ${event.turn}]` : "  ";

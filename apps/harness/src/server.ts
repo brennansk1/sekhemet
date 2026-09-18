@@ -699,7 +699,7 @@ export function startDashboardServer(
 
     // One card with its presentation and its attempt history.
     const cardMatch = new RegExp(`^/api/cards/(${CARD_ID})$`).exec(url);
-    if (cardMatch && req.method !== "POST") {
+    if (cardMatch && req.method === "GET") {
       const state = await boardService.getBoardState();
       const card = state.cards.find((c) => c.id === cardMatch[1]);
       if (!card) {

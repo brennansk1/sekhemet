@@ -98,9 +98,7 @@ describe("project manager", () => {
     expect((await pm.proposal(proposal?.id ?? ""))?.state).toBe("applied");
 
     // The ledger credits the human who approved it, not the PM.
-    const updates = (await log.getEventsByCard(ledger.id)).filter(
-      (e) => e.type === "card/updated",
-    );
+    const updates = (await log.getEventsByCard(ledger.id)).filter((e) => e.type === "card/updated");
     expect(updates.at(-1)?.actor).toBe("human");
   });
 
@@ -191,9 +189,39 @@ describe("project manager", () => {
         startedAt: "2026-09-18T10:00:00Z",
         model: "cyber-tiel",
         entries: [
-          { cardId: "a", attempt: 1, passed: true, accepted: true, stopReason: "gate_passed", turns: 2, durationMs: 1, promptTokens: 1, completionTokens: 1 },
-          { cardId: "b", attempt: 1, passed: true, accepted: true, stopReason: "gate_passed", turns: 4, durationMs: 1, promptTokens: 1, completionTokens: 1 },
-          { cardId: "c", attempt: 1, passed: false, accepted: false, stopReason: "oscillation_detected", turns: 10, durationMs: 1, promptTokens: 1, completionTokens: 1 },
+          {
+            cardId: "a",
+            attempt: 1,
+            passed: true,
+            accepted: true,
+            stopReason: "gate_passed",
+            turns: 2,
+            durationMs: 1,
+            promptTokens: 1,
+            completionTokens: 1,
+          },
+          {
+            cardId: "b",
+            attempt: 1,
+            passed: true,
+            accepted: true,
+            stopReason: "gate_passed",
+            turns: 4,
+            durationMs: 1,
+            promptTokens: 1,
+            completionTokens: 1,
+          },
+          {
+            cardId: "c",
+            attempt: 1,
+            passed: false,
+            accepted: false,
+            stopReason: "oscillation_detected",
+            turns: 10,
+            durationMs: 1,
+            promptTokens: 1,
+            completionTokens: 1,
+          },
         ],
         passAt1: 2 / 3,
         passAfterEscalation: 2 / 3,

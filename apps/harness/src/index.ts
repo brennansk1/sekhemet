@@ -29,7 +29,10 @@ import {
   inferDependencies,
   writeQueueReport,
 } from "./execute.js";
+import { notifySlack } from "./integrations.js";
 import { runMcpStdioServer } from "./mcp.js";
+import { DEFAULT_PM_MODEL, answerQueued, createPmAdapter, holdRunnerLease } from "./pm/service.js";
+import { PmStore } from "./pm/store.js";
 import { DEFAULT_DASHBOARD_PORT, startDashboardServer } from "./server.js";
 
 export interface CliConfig {
@@ -528,25 +531,67 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
           : workerModel
             ? new HttpInferenceAdapter({ ...NAIL_WORKER_PROFILE, modelId: workerModel })
             : createNail35BAdapter(),
-      ...(managerModel
-        ? {
-            manager: () =>
-              new HttpInferenceAdapter({
-                modelId: managerModel,
-                apiFormat: "ollama",
-                contextTokens: 8192,
-                maxTokens: 2048,
-                disableReasoning: true,
-                sampling: { temperature: 0.2, topP: 0.9, topK: 20, minP: 0 },
-              }),
-          }
-        : {}),
+      // The manager doubles as the PM you chat with during the run; without
+      // --manager it is still available for chat, just not for repair plans.
+      manager: () =>
+        managerModel
+          ? new HttpInferenceAdapter({
+              modelId: managerModel,
+              apiFormat: "ollama",
+              contextTokens: 8192,
+              maxTokens: 2048,
+              disableReasoning: true,
+              sampling: { temperature: 0.2, topP: 0.9, topK: 20, minP: 0 },
+            })
+          : createPmAdapter(DEFAULT_PM_MODEL),
     });
+    const pmModel = managerModel ?? DEFAULT_PM_MODEL;
+    const pmStore = new PmStore(log);
+    // Tells the dashboard this process holds the Worker, so PM messages are
+    // answered here, between steps, instead of loading a second large model.
+    const releaseLease = holdRunnerLease(config.repoPath, pmModel);
+
+    /**
+     * Preemption (PM_CONTRACT §4): after any Worker step, if the human has
+     * written to the PM, swap the Worker out, answer, swap it back. The card
+     * resumes from its worktree, so nothing is lost; only the reload costs time.
+     */
+    const answerPm = async (step?: number): Promise<void> => {
+      if ((await pmStore.queued()).length === 0) return;
+      console.log(
+        `   PM: pausing the Worker${step !== undefined ? ` after step ${step}` : ""} to answer`,
+      );
+      const workerWasActive = router.activeRole === "worker";
+      await answerQueued({
+        repoPath: config.repoPath,
+        cardStore,
+        pmStore,
+        pmModel,
+        acquire: () => router.use("manager"),
+        ...(step !== undefined ? { step } : {}),
+      });
+      if (workerWasActive) {
+        await pmStore.setStatus({
+          phase: "resuming_worker",
+          detail: "Reloading the Worker",
+          workerPaused: true,
+          ...(step !== undefined ? { step } : {}),
+        });
+        const worker = (await router.use("worker")) as { ensureRunning?: () => Promise<void> };
+        await worker.ensureRunning?.();
+        await pmStore.setStatus({ phase: "idle" });
+      }
+    };
     const ctx = {
       repoPath: config.repoPath,
       restrictedMode: config.restrictedMode,
       cardStore,
       boardService,
+      afterTurn: async (_cardId: string, turn: { turnIndex: number }) => {
+        await answerPm(turn.turnIndex).catch((err) =>
+          console.log(`   PM: could not answer (${err instanceof Error ? err.message : err})`),
+        );
+      },
     };
     const started = Date.now();
     const entries: QueueEntry[] = [];
@@ -666,8 +711,11 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
           `\n--- ${card.id} never ran: prerequisites ${(await blockedBy(card)).join(", ")} did not merge ---`,
         );
       }
+      // Anything asked during the last step is answered before the run ends.
+      await answerPm().catch(() => undefined);
     } finally {
       await router.releaseAll();
+      releaseLease();
     }
 
     const cardIds = [...new Set(entries.map((e) => e.cardId))];
@@ -691,6 +739,13 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       `\nScorecard: Pass@1 ${firstTry}/${cardIds.length} (${(report.passAt1 * 100).toFixed(0)}%), after escalation ${eventually}/${cardIds.length}, ${router.swapCount} model swap(s), ${(report.totalDurationMs / 60000).toFixed(1)} min`,
     );
     console.log(`Report: ${path}`);
+    // The run report goes to Slack when the user connected it; a no-op otherwise.
+    await notifySlack(
+      config.repoPath,
+      log,
+      "run_report",
+      `Run finished: ${firstTry}/${cardIds.length} cards passed on the first try, ${eventually}/${cardIds.length} after a Planner retry, in ${(report.totalDurationMs / 60000).toFixed(1)} min.`,
+    ).catch(() => undefined);
     if (eventually < cardIds.length) process.exitCode = 1;
     return;
   }
