@@ -445,9 +445,9 @@ export async function answer(
     maxTokens: 1200,
   });
   for (let round = 0; round < 2; round++) {
-    calls.push(...res.toolCalls.filter((c) => c.name !== "find_library"));
     const lookups = res.toolCalls.filter((c) => c.name === "find_library");
     if (lookups.length === 0) break;
+    calls.push(...res.toolCalls.filter((c) => c.name !== "find_library"));
     const found: string[] = [];
     for (const c of lookups.slice(0, 3)) {
       const q = String(c.arguments?.query ?? "").slice(0, 120);
