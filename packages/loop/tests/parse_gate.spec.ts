@@ -35,6 +35,7 @@ describe("@sekhemet/loop parse gate", () => {
 
   it("refuses an edit that would break a parseable file and leaves it untouched", async () => {
     // Exactly the failure seen live: an edit that drops a closing brace.
+    tools.markSeen("f.ts"); // read-before-edit (L17): the agent has read it
     const obs = await tools.execute({
       id: "1",
       name: "edit",
@@ -57,6 +58,7 @@ describe("@sekhemet/loop parse gate", () => {
 
   it("still lets an already-broken file be repaired one step at a time", async () => {
     writeFileSync(join(root, "broken.ts"), "export function g() {\n  return 1;\n");
+    tools.markSeen("broken.ts");
     const obs = await tools.execute({
       id: "1",
       name: "edit",

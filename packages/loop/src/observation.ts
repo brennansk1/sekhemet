@@ -9,6 +9,8 @@ export interface ToolObservation {
   content: string;
   /** True when a permission tier blocked the call rather than it merely failing. */
   denied?: boolean;
+  /** The permission rule that refused the call (scope, protected_file, ...). */
+  deniedRule?: string;
 }
 
 const HEAD_CHARS = 2400;

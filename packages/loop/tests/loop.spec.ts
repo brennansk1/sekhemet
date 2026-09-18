@@ -48,6 +48,8 @@ describe("@sekhemet/loop", () => {
       cardId: "card_turn1",
       stepBudget: 10,
       worktreePath: tempWorktree,
+      // Pinned in the prompt, so the agent has seen it (read-before-edit, L17).
+      scopeFiles: ["index.ts"],
       modelAdapter: mockModel,
       gateRunner,
     });

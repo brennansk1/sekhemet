@@ -151,7 +151,7 @@ export const TOOL_CATALOG: ToolInterfaceSpec[] = [
   },
   {
     name: "grep_search",
-    summary: "Search file contents by regular expression.",
+    summary: "Search file contents by regular expression. Skips gitignored files.",
     parameters: [
       { name: "query", type: "string", required: true, description: "Regular expression" },
       {
@@ -160,6 +160,16 @@ export const TOOL_CATALOG: ToolInterfaceSpec[] = [
         required: false,
         description: "Directory to search, defaults to the worktree",
       },
+      {
+        name: "output_mode",
+        type: "string",
+        required: false,
+        description: "content (default), files_with_matches or count",
+        enumValues: ["content", "files_with_matches", "count"],
+      },
+      { name: "context", type: "number", required: false, description: "Lines around each hit" },
+      { name: "glob", type: "string", required: false, description: "File filter, e.g. *.ts" },
+      { name: "case_insensitive", type: "boolean", required: false, description: "Ignore case" },
     ],
   },
   {
@@ -201,7 +211,8 @@ export const TOOL_CATALOG: ToolInterfaceSpec[] = [
   },
   {
     name: "run_cmd",
-    summary: "Run a shell command line in the sandbox (pipes allowed). No network access.",
+    summary:
+      "Run a build, test or project script in the sandbox. Not for cat, grep or sed: use read_file, grep_search, edit.",
     parameters: [
       {
         name: "command",
@@ -214,6 +225,12 @@ export const TOOL_CATALOG: ToolInterfaceSpec[] = [
         type: "array",
         description: "Arguments as separate array elements",
         required: false,
+      },
+      {
+        name: "description",
+        type: "string",
+        required: false,
+        description: "What this command is for, in a few words",
       },
     ],
     returns: "Exit code with condensed stdout and stderr",

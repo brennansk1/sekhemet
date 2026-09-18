@@ -49,6 +49,8 @@ describe("@sekhemet/loop ToolExecutor", () => {
 
   it("refuses an ambiguous edit and says how many matches it found", async () => {
     writeFileSync(join(root, "src", "dup.ts"), "const x = 1;\nconst x = 1;\n");
+    // The agent has read the file first (read-before-edit, L17).
+    await call("read_file", { path: "src/dup.ts" });
     const obs = await call("edit", { path: "src/dup.ts", search: "const x = 1;", replace: "y" });
 
     expect(obs.ok).toBe(false);
@@ -60,6 +62,8 @@ describe("@sekhemet/loop ToolExecutor", () => {
 
   it("applies an LF search string to a CRLF file and preserves the line endings", async () => {
     writeFileSync(join(root, "src", "crlf.ts"), "alpha\r\nbeta\r\ngamma\r\n");
+    // The agent has read the file first (read-before-edit, L17).
+    await call("read_file", { path: "src/crlf.ts" });
     const obs = await call("edit", { path: "src/crlf.ts", search: "beta", replace: "BETA" });
 
     expect(obs.ok).toBe(true);
@@ -70,6 +74,8 @@ describe("@sekhemet/loop ToolExecutor", () => {
   });
 
   it("rejects an out-of-range line replacement instead of clamping it", async () => {
+    // The agent has read the file first (read-before-edit, L17).
+    await call("read_file", { path: "src/a.ts" });
     const obs = await call("replace_lines", {
       path: "src/a.ts",
       start: 2,
@@ -86,6 +92,8 @@ describe("@sekhemet/loop ToolExecutor", () => {
       join(root, "src", "svc.ts"),
       "export class Svc {\n  greet(): string {\n    return 'old';\n  }\n}\n",
     );
+    // The agent has read the file first (read-before-edit, L17).
+    await call("read_file", { path: "src/svc.ts" });
     const obs = await call("replace_symbol_body", {
       path: "src/svc.ts",
       symbol: "greet",

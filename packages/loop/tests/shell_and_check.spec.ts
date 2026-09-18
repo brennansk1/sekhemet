@@ -24,13 +24,14 @@ describe("@sekhemet/loop shell command lines and the check tool", () => {
     });
 
   it("runs a whole command line with a pipe, as a developer would type it", async () => {
-    const obs = await run("cat src/a.ts | wc -l");
+    // (cat/grep/sed are redirected to the file tools since L8; sort is not.)
+    const obs = await run("sort src/a.ts | wc -l");
     expect(obs.ok).toBe(true);
     expect(obs.content).toMatch(/\b3\b/);
   });
 
   it("still runs program-plus-args calls directly", async () => {
-    const obs = await run("cat", ["src/a.ts"]);
+    const obs = await run("sort", ["src/a.ts"]);
     expect(obs.ok).toBe(true);
     expect(obs.content).toContain("two");
   });
@@ -129,6 +130,8 @@ describe("@sekhemet/loop shell command lines and the check tool", () => {
       worktreePath: root,
       gateRunner: runner,
       modelAdapter: adapter,
+      // Pinned, so the agent has seen it before overwriting (L17).
+      scopeFiles: ["src/a.ts"],
     });
 
     const first = await session.executeTurn();

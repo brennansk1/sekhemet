@@ -8,7 +8,8 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
+import { condenseCommandOutput, defaultEvidenceStore } from "@sekhemet/context";
 import type { ToolCall } from "@sekhemet/models";
 import { type ExecutionResult, PermissionEngine, ProcessSandbox } from "@sekhemet/sandbox";
 import { matchesGlob } from "./glob.js";
@@ -20,6 +21,61 @@ import { applyEol, detectEol, joinLines, reindentBlock, splitLines, toLf } from 
 
 const SKIP_DIRS = new Set(["node_modules", "dist", ".git", ".sekhemet", "coverage", ".next"]);
 const MAX_GREP_MATCHES = 80;
+/** Lines of grep output (matches plus context) handed back at most. */
+const MAX_GREP_OUTPUT_LINES = 240;
+/** Lines of command output kept after condensing (error lines are always kept). */
+const RUN_CMD_MAX_LINES = 60;
+
+/** How `grep_search` reports what it found (L6). */
+export type GrepOutputMode = "content" | "files_with_matches" | "count";
+
+export interface GrepOptions {
+  /** Directory to search, worktree-relative. */
+  path?: string;
+  mode?: GrepOutputMode;
+  /** Lines of context before and after each match (content mode only). */
+  context?: number;
+  /** Only search files matching this glob (basename match when it has no slash). */
+  glob?: string;
+  caseInsensitive?: boolean;
+  wholeWord?: boolean;
+}
+
+/**
+ * Shell programs `run_cmd` refuses as the leading command, with the tool that
+ * does the job without flooding the context (L8). A raw `cat` of a long file
+ * costs its full length; `read_file` returns numbered lines or an outline.
+ */
+const REDIRECTED_COMMANDS: Record<string, { tool: string; how: string }> = {
+  cat: { tool: "read_file", how: 'read_file(path="...") (add start/end for a range)' },
+  head: { tool: "read_file", how: 'read_file(path="...", start=1, end=40)' },
+  tail: { tool: "read_file", how: 'read_file(path="...", start=..., end=...)' },
+  less: { tool: "read_file", how: 'read_file(path="...")' },
+  more: { tool: "read_file", how: 'read_file(path="...")' },
+  grep: { tool: "grep_search", how: 'grep_search(query="...", path="src", context=2)' },
+  egrep: { tool: "grep_search", how: 'grep_search(query="...")' },
+  fgrep: { tool: "grep_search", how: 'grep_search(query="...")' },
+  rg: { tool: "grep_search", how: 'grep_search(query="...", output_mode="files_with_matches")' },
+  sed: {
+    tool: "edit",
+    how: 'edit(path="...", search="exact old text", replace="new text"), or read_file for sed -n',
+  },
+};
+
+/** The leading program of each `&&` / `||` / `;` segment of a command line. */
+function leadingPrograms(line: string): string[] {
+  return line
+    .split(/&&|\|\||;|\n/)
+    .map((seg) => seg.trim())
+    .filter(Boolean)
+    .map((seg) => {
+      // Skip leading `VAR=value` assignments and a `command`/`exec` prefix.
+      const words = seg.split(/\s+/).filter((w) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w));
+      const first = words[0] === "command" || words[0] === "exec" ? words[1] : words[0];
+      return basename((first ?? "").replace(/^[({]+/, ""));
+    })
+    .filter(Boolean);
+}
 const MAX_FIND_RESULTS = 300;
 const MAX_READ_BYTES = 512 * 1024;
 
@@ -41,6 +97,18 @@ export interface ToolExecutorOptions {
   permissionEngine?: PermissionEngine | undefined;
   /** Invoked for `ask`-tier calls. Absent means ask-tier is refused. */
   onApproval?: ApprovalHandler | undefined;
+  /**
+   * Restricted mode (defect 3): refuse `run_cmd`, shell lines and raw commands
+   * whenever the sandbox cannot confine them, exactly as the gate runner does.
+   */
+  requireConfinement?: boolean | undefined;
+  /** The project's protected globs, from `gates.toml [project] protected` (defect 5). */
+  protectedGlobs?: string[] | undefined;
+  /**
+   * Refuse an edit or overwrite of an existing file the agent has not read
+   * (or been shown) this card (L17). Default on.
+   */
+  requireReadBeforeEdit?: boolean | undefined;
 }
 
 /** A file is treated as binary if a NUL appears in its first block. */
@@ -80,11 +148,67 @@ export class ToolExecutor {
   private notes: string[] = [];
   private finishRequested = false;
   private readFiles = new Set<string>();
+  /** Worktree-relative files whose current contents the agent has seen this card. */
+  private seen = new Set<string>();
+  private deniedByRule = new Map<string, number>();
 
   constructor(private options: ToolExecutorOptions) {
     this.root = canonicalizeRoot(options.worktreePath);
-    this.sandbox = options.sandbox ?? new ProcessSandbox();
-    this.permissions = options.permissionEngine ?? new PermissionEngine();
+    this.sandbox =
+      options.sandbox ??
+      new ProcessSandbox(options.requireConfinement ? { requireConfinement: true } : {});
+    this.permissions =
+      options.permissionEngine ??
+      new PermissionEngine(
+        options.protectedGlobs?.length ? { protectedGlobs: options.protectedGlobs } : {},
+      );
+  }
+
+  /**
+   * Record that the agent has the file's contents in front of it without a
+   * read_file call (pinned in the prompt), so read-before-edit admits it.
+   */
+  public markSeen(relPath: string): void {
+    try {
+      this.seen.add(this.rel(resolveInWorktree(this.root, relPath)));
+    } catch {
+      // A path outside the worktree is never seen.
+    }
+  }
+
+  /** True when the agent has read or been shown this file this card. */
+  public hasSeen(relPath: string): boolean {
+    try {
+      return this.seen.has(this.rel(resolveInWorktree(this.root, relPath)));
+    } catch {
+      return false;
+    }
+  }
+
+  /** How many calls each permission rule has refused this card. */
+  public getDenialCounts(): Record<string, number> {
+    return Object.fromEntries(this.deniedByRule);
+  }
+
+  /** Restricted mode with no OS confinement: commands must not run at all. */
+  private confinementRefusal(): string | undefined {
+    const required = this.options.requireConfinement === true || this.sandbox.requiresConfinement;
+    if (!required || this.sandbox.confinement !== "none") return undefined;
+    return "restricted mode: this host has no OS confinement (Seatbelt or bubblewrap), so commands cannot run. Use the file tools and check instead.";
+  }
+
+  /**
+   * Read-before-edit (L17): an edit to an existing file must be based on what
+   * the agent has actually seen of it this card. Creating a file needs no read.
+   */
+  private unreadRefusal(tool: string, path: string, abs: string): ToolObservation | undefined {
+    if (this.options.requireReadBeforeEdit === false) return undefined;
+    if (!existsSync(abs) || this.seen.has(this.rel(abs))) return undefined;
+    return fail(
+      tool,
+      `${tool} refused: ${path} has not been read this card`,
+      `${tool} refused: you have not read ${path} during this card, so the change would be based on a guess about its contents. Read it first with read_file(path="${path}") or read_symbol, then edit. (Creating a new file needs no read.)`,
+    );
   }
 
   public wantsFinish(): boolean {
@@ -159,12 +283,13 @@ export class ToolExecutor {
     }
 
     const matches: { file: string; line: number; content: string }[] = [];
-    this.walk(abs, (file) => {
+    if (!existsSync(abs)) return matches;
+    for (const file of statSync(abs).isFile() ? [abs] : this.searchableFiles(abs)) {
       let text: string;
       try {
         text = this.readText(file);
       } catch {
-        return true;
+        continue;
       }
       const rel = this.rel(file);
       const { lines } = splitLines(text);
@@ -172,11 +297,10 @@ export class ToolExecutor {
         const line = lines[i] as string;
         if (re.test(line)) {
           matches.push({ file: rel, line: i + 1, content: line.trim() });
-          if (matches.length >= MAX_GREP_MATCHES) return false;
+          if (matches.length >= MAX_GREP_MATCHES) return matches;
         }
       }
-      return true;
-    });
+    }
     return matches;
   }
 
@@ -234,6 +358,9 @@ export class ToolExecutor {
     });
 
     if (verdict.allowed) return null;
+    if (verdict.rule) {
+      this.deniedByRule.set(verdict.rule, (this.deniedByRule.get(verdict.rule) ?? 0) + 1);
+    }
 
     if (verdict.tier === "ask") {
       const handler = this.options.onApproval;
@@ -249,7 +376,10 @@ export class ToolExecutor {
       return approved ? null : denied(call.name, `operator declined: ${verdict.reason ?? ""}`);
     }
 
-    return denied(call.name, verdict.reason ?? "denied by policy");
+    return {
+      ...denied(call.name, verdict.reason ?? "denied by policy"),
+      ...(verdict.rule ? { deniedRule: verdict.rule } : {}),
+    };
   }
 
   public async execute(call: ToolCall): Promise<ToolObservation> {
@@ -290,15 +420,29 @@ export class ToolExecutor {
       case "insert_after_symbol":
         return this.insertAfterSymbol(str("path"), str("symbol"), str("content"));
       case "find_references":
-        return this.grep(str("symbol"), str("path") ?? ".", true);
-      case "grep_search":
-        return this.grep(str("query"), str("path") ?? ".", false);
+        return this.grep(str("symbol"), { path: str("path") ?? ".", wholeWord: true });
+      case "grep_search": {
+        const mode = str("output_mode");
+        const ctx = num("context");
+        const glob = str("glob");
+        return this.grep(str("query"), {
+          path: str("path") ?? ".",
+          ...(mode !== undefined ? { mode: mode as GrepOutputMode } : {}),
+          ...(ctx !== undefined ? { context: ctx } : {}),
+          ...(glob ? { glob } : {}),
+          caseInsensitive: a.case_insensitive === true,
+        });
+      }
       case "list_dir":
         return this.listDir(str("path") ?? ".");
       case "find_files":
         return this.findFiles(str("pattern") ?? "*", str("path") ?? ".");
       case "run_cmd":
-        return this.runCmd(str("command"), Array.isArray(a.args) ? (a.args as string[]) : []);
+        return this.runCmd(
+          str("command"),
+          Array.isArray(a.args) ? (a.args as string[]) : [],
+          str("description"),
+        );
       case "note":
         return this.note(str("message"));
       case "docs":
@@ -331,6 +475,7 @@ export class ToolExecutor {
     }
 
     this.readFiles.add(path.replace(/^\.\//, ""));
+    this.seen.add(this.rel(abs));
 
     // Delegated reading (SoL-Pi, arXiv 2609.20519): a whole large file floods
     // a 16k window. Unranged reads of long files return an outline with line
@@ -366,9 +511,13 @@ export class ToolExecutor {
 
     const abs = resolveInWorktree(this.root, path);
     const existed = existsSync(abs);
+    const unread = this.unreadRefusal("write_file", path, abs);
+    if (unread) return unread;
     // Preserve the file's existing line-ending convention on rewrite.
     const eol = existed ? detectEol(this.readText(abs)) : "\n";
     this.writeText(abs, applyEol(toLf(content), eol));
+    // The agent wrote every byte, so it knows the file's contents.
+    this.seen.add(this.rel(abs));
 
     const lineCount = splitLines(content).lines.length;
     return ok(
@@ -385,6 +534,8 @@ export class ToolExecutor {
 
     const abs = resolveInWorktree(this.root, path);
     if (!existsSync(abs)) return fail("edit", `file not found: ${path}`);
+    const unread = this.unreadRefusal("edit", path, abs);
+    if (unread) return unread;
 
     const original = this.readText(abs);
     const eol = detectEol(original);
@@ -427,6 +578,8 @@ export class ToolExecutor {
 
     const abs = resolveInWorktree(this.root, path);
     if (!existsSync(abs)) return fail("replace_lines", `file not found: ${path}`);
+    const unread = this.unreadRefusal("replace_lines", path, abs);
+    if (unread) return unread;
 
     const original = this.readText(abs);
     const eol = detectEol(original);
@@ -473,6 +626,7 @@ export class ToolExecutor {
     }
 
     const body = toLf(source).slice(span.declStart, span.declEnd);
+    this.seen.add(this.rel(abs));
     return ok(
       "read_symbol",
       `read ${symbol} (${span.kind}) from ${path}`,
@@ -487,6 +641,8 @@ export class ToolExecutor {
 
     const abs = resolveInWorktree(this.root, path);
     if (!existsSync(abs)) return fail("replace_symbol_body", `file not found: ${path}`);
+    const unread = this.unreadRefusal("replace_symbol_body", path, abs);
+    if (unread) return unread;
 
     const original = this.readText(abs);
     const eol = detectEol(original);
@@ -521,6 +677,8 @@ export class ToolExecutor {
 
     const abs = resolveInWorktree(this.root, path);
     if (!existsSync(abs)) return fail("insert_after_symbol", `file not found: ${path}`);
+    const unread = this.unreadRefusal("insert_after_symbol", path, abs);
+    if (unread) return unread;
 
     const original = this.readText(abs);
     const eol = detectEol(original);
@@ -603,57 +761,182 @@ export class ToolExecutor {
     );
   }
 
-  private grep(query: string | undefined, path: string, wholeWord: boolean): ToolObservation {
+  /**
+   * Files under `absDir` the search should see: git's own view (tracked plus
+   * untracked, minus everything `.gitignore` excludes) when the worktree is a
+   * git checkout, else a walk that skips build and VCS directories (L6).
+   */
+  private searchableFiles(absDir: string): string[] {
+    const relDir = relative(this.root, absDir) || ".";
+    try {
+      const out = execFileSync(
+        "git",
+        ["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", relDir],
+        {
+          cwd: this.root,
+          encoding: "utf8",
+          timeout: 15_000,
+          maxBuffer: 32 * 1024 * 1024,
+          stdio: ["ignore", "pipe", "ignore"],
+        },
+      );
+      const files = [...new Set(out.split("\0").filter(Boolean))]
+        .filter((f) => !f.split("/").some((seg) => SKIP_DIRS.has(seg)))
+        .map((f) => join(this.root, f))
+        .filter((abs) => {
+          try {
+            return statSync(abs).isFile();
+          } catch {
+            return false; // tracked but deleted in the worktree
+          }
+        });
+      return files.sort();
+    } catch {
+      const files: string[] = [];
+      this.walk(absDir, (file) => {
+        files.push(file);
+        return true;
+      });
+      return files.sort();
+    }
+  }
+
+  private grep(query: string | undefined, opts: GrepOptions = {}): ToolObservation {
+    const wholeWord = opts.wholeWord === true;
     const tool = wholeWord ? "find_references" : "grep_search";
     if (!query) return fail(tool, `missing required argument: ${wholeWord ? "symbol" : "query"}`);
-
+    const mode = opts.mode ?? "content";
+    if (mode !== "content" && mode !== "files_with_matches" && mode !== "count") {
+      return fail(
+        tool,
+        `unknown output_mode "${String(mode)}"`,
+        `Unknown output_mode "${String(mode)}". Use "content" (matching lines), "files_with_matches" (file names) or "count" (matches per file).`,
+      );
+    }
+    const context = Math.max(0, Math.min(10, Math.floor(opts.context ?? 0)));
+    if (opts.context !== undefined && (!Number.isFinite(opts.context) || opts.context < 0)) {
+      return fail(tool, `context must be a non-negative number, got ${opts.context}`);
+    }
+    const path = opts.path ?? ".";
     const abs = resolveInWorktree(this.root, path);
+    if (!existsSync(abs)) return fail(tool, `path not found: ${path}`);
+    const flags = opts.caseInsensitive ? "i" : "";
     let re: RegExp;
     try {
       re = wholeWord
-        ? new RegExp(`\\b${query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`)
-        : new RegExp(query);
+        ? new RegExp(`\\b${query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, flags)
+        : new RegExp(query, flags);
     } catch {
       // Not valid regex — fall back to a literal substring search.
-      re = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+      re = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), flags);
     }
+    const globMatch = (rel: string): boolean => {
+      if (!opts.glob) return true;
+      return opts.glob.includes("/")
+        ? matchesGlob(rel, opts.glob)
+        : matchesGlob(basename(rel), opts.glob);
+    };
 
-    const hits: string[] = [];
-    this.walk(abs, (file) => {
+    const files = statSync(abs).isFile() ? [abs] : this.searchableFiles(abs);
+    const out: string[] = [];
+    const counts: { file: string; n: number }[] = [];
+    let matches = 0;
+    let capped = false;
+    for (const file of files) {
+      const rel = this.rel(file);
+      if (!globMatch(rel)) continue;
       let text: string;
       try {
         text = this.readText(file);
       } catch {
-        return true;
+        continue; // binary or oversized
       }
-      const rel = this.rel(file);
       const { lines } = splitLines(text);
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i] as string;
-        if (re.test(line)) {
-          hits.push(`${rel}:${i + 1}: ${line.trim().slice(0, 200)}`);
-          if (hits.length >= MAX_GREP_MATCHES) return false;
-        }
-      }
-      return true;
-    });
+      const hitLines: number[] = [];
+      for (let i = 0; i < lines.length; i++) if (re.test(lines[i] as string)) hitLines.push(i);
+      if (hitLines.length === 0) continue;
 
-    if (hits.length === 0) {
+      if (mode === "count") {
+        counts.push({ file: rel, n: hitLines.length });
+        matches += hitLines.length;
+        continue;
+      }
+      if (mode === "files_with_matches") {
+        out.push(rel);
+        matches += hitLines.length;
+        if (out.length >= MAX_FIND_RESULTS) {
+          capped = true;
+          break;
+        }
+        continue;
+      }
+      // content: rg-style, "file:line: text" for hits, "file-line- text" for context.
+      let lastPrinted = -2;
+      for (const h of hitLines) {
+        if (matches >= MAX_GREP_MATCHES || out.length >= MAX_GREP_OUTPUT_LINES) {
+          capped = true;
+          break;
+        }
+        const from = Math.max(0, h - context);
+        const to = Math.min(lines.length - 1, h + context);
+        if (context > 0 && lastPrinted >= 0 && from > lastPrinted + 1) out.push("--");
+        for (let i = Math.max(from, lastPrinted + 1); i <= to; i++) {
+          const text = (lines[i] as string).trim().slice(0, 200);
+          const hit = hitLines.includes(i);
+          out.push(hit ? `${rel}:${i + 1}: ${text}` : `${rel}-${i + 1}- ${text}`);
+        }
+        matches++;
+        lastPrinted = to;
+      }
+      if (capped) break;
+    }
+
+    if (mode === "count") {
+      if (counts.length === 0)
+        return ok(tool, `no matches for "${query}"`, `No matches for "${query}" under ${path}.`);
+      const body = counts.map((c) => `${c.file}:${c.n}`).join("\n");
+      return ok(
+        tool,
+        `${matches} match(es) in ${counts.length} file(s)`,
+        `${matches} match(es) for "${query}" in ${counts.length} file(s):\n${body}`,
+      );
+    }
+    if (out.length === 0) {
       return ok(tool, `no matches for "${query}"`, `No matches for "${query}" under ${path}.`);
     }
-    const capped = hits.length >= MAX_GREP_MATCHES ? ` (capped at ${MAX_GREP_MATCHES})` : "";
-    return ok(
-      tool,
-      `${hits.length} match(es) for "${query}"${capped}`,
-      clampObservation(
-        `${hits.length} match(es) for "${query}"${capped}:\n${hits.join("\n")}`,
-        "matches",
-      ),
-    );
+    const note = capped
+      ? ` (capped; narrow with path, glob or output_mode="files_with_matches")`
+      : "";
+    const head =
+      mode === "files_with_matches"
+        ? `${out.length} file(s) match "${query}"${note}`
+        : `${matches} match(es) for "${query}"${note}`;
+    return ok(tool, head, clampObservation(`${head}:\n${out.join("\n")}`, "matches"));
   }
 
-  private async runCmd(command?: string, args: string[] = []): Promise<ToolObservation> {
-    if (!command) return fail("run_cmd", "missing required argument: command");
+  private async runCmd(
+    command?: string,
+    args: string[] = [],
+    description?: string,
+  ): Promise<ToolObservation> {
+    if (!command?.trim()) return fail("run_cmd", "missing required argument: command");
+
+    const refusal = this.confinementRefusal();
+    if (refusal) return denied("run_cmd", refusal);
+
+    // Structured tools first (L8): a raw cat/grep/sed floods the window with
+    // unnumbered text the other tools would have returned numbered and capped.
+    const line = [command, ...args].join(" ");
+    for (const program of leadingPrograms(line)) {
+      const redirect = REDIRECTED_COMMANDS[program];
+      if (redirect) {
+        return fail(
+          "run_cmd",
+          `run_cmd refused: use ${redirect.tool} instead of ${program}`,
+          `run_cmd refused: \`${program}\` has a dedicated tool that returns numbered, capped output. Use ${redirect.how} instead. run_cmd is for builds, tests and project scripts.`,
+        );
+      }
+    }
 
     // Models write commands the way developers type them: a whole line, often
     // with pipes or redirects. Treating that line as a program name failed with
@@ -670,29 +953,53 @@ export class ToolExecutor {
       cwd: this.root,
     });
 
-    const label = [command, ...args].join(" ");
+    const label = line;
+    const heading = description?.trim() ? `# ${description.trim()}\n$ ${label}` : `$ ${label}`;
     const stream = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
-    const detail = clampObservation(stream || "(no output)", "command output");
+    // Condense rather than clamp: error lines are protected from truncation,
+    // repeats are grouped, and the raw text stays recallable by reference.
+    const condensed = condenseCommandOutput(stream, {
+      exitCode: result.exitCode,
+      command: label,
+      maxLines: RUN_CMD_MAX_LINES,
+      evidenceStore: defaultEvidenceStore,
+    });
+    const recallNote =
+      condensed.droppedLines > 0 && condensed.evidenceRef
+        ? `\n[${condensed.droppedLines} line(s) condensed away; full output: recall(ref="${condensed.evidenceRef}")]`
+        : "";
+    const detail = `${condensed.condensed || "(no output)"}${recallNote}`;
 
     if (result.timedOut) {
       return fail(
         "run_cmd",
         `${label} timed out`,
-        `$ ${label}\nTIMED OUT after ${result.durationMs}ms\n${detail}`,
+        `${heading}\nTIMED OUT after ${result.durationMs}ms\n${detail}`,
       );
     }
     if (result.exitCode !== 0) {
       return fail(
         "run_cmd",
         `${label} exited ${result.exitCode}`,
-        `$ ${label}\nexit code ${result.exitCode}\n${detail}`,
+        `${heading}\nexit code ${result.exitCode}\n${detail}`,
       );
     }
-    return ok("run_cmd", `${label} exited 0`, `$ ${label}\nexit code 0\n${detail}`);
+    return ok("run_cmd", `${label} exited 0`, `${heading}\nexit code 0\n${detail}`);
   }
 
   /** Execute a command in the sandbox and return the raw result, bypassing observation framing. */
   public async runCommandRaw(command: string, args: string[] = []): Promise<ExecutionResult> {
+    const refusal = this.confinementRefusal();
+    if (refusal) {
+      return {
+        exitCode: 126,
+        stdout: "",
+        stderr: `Refusing to execute: ${refusal}`,
+        durationMs: 0,
+        oomKilled: false,
+        timedOut: false,
+      };
+    }
     return this.sandbox.execute(command, args, {
       allowedPaths: [this.root],
       allowNetwork: this.options.allowNetwork ?? false,

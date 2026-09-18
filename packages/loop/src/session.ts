@@ -402,6 +402,8 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
 
     for (const name of this.card.acceptanceTests ?? []) add(`tests/${name}`, "acceptance test");
     for (const path of this.options.scopeFiles ?? []) add(path, "scope file");
+    // A file shown in full in the prompt has been read (L17 read-before-edit).
+    for (const f of pinned) if (f.content) this.tools.markSeen(f.path);
     return pinned;
   }
 
@@ -441,6 +443,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
               type: p.type,
               description: p.description,
               ...(p.type === "array" ? { items: { type: "string" } } : {}),
+              ...(p.enumValues?.length ? { enum: p.enumValues } : {}),
             },
           ]),
         ),
@@ -937,6 +940,8 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     endLine: number,
     replacement: string,
   ): Promise<void> {
+    // Harness code, not the agent: read-before-edit governs model tool calls.
+    this.tools.markSeen(relativePath);
     this.unwrap(
       await this.tools.execute({
         id: "direct",
@@ -947,6 +952,8 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   }
 
   public async executeEdit(relativePath: string, search: string, replace: string): Promise<void> {
+    // Harness code, not the agent: read-before-edit governs model tool calls.
+    this.tools.markSeen(relativePath);
     this.unwrap(
       await this.tools.execute({
         id: "direct",
@@ -971,6 +978,8 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     symbolName: string,
     newBody: string,
   ): Promise<void> {
+    // Harness code, not the agent: read-before-edit governs model tool calls.
+    this.tools.markSeen(relativePath);
     this.unwrap(
       await this.tools.execute({
         id: "direct",
@@ -985,6 +994,8 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     symbolName: string,
     contentToInsert: string,
   ): Promise<void> {
+    // Harness code, not the agent: read-before-edit governs model tool calls.
+    this.tools.markSeen(relativePath);
     this.unwrap(
       await this.tools.execute({
         id: "direct",
