@@ -1,5 +1,6 @@
 import type { CardRecord } from "@sekhemet/kernel";
 import type { LocalInferenceAdapter, ToolCall, ToolDefinition } from "@sekhemet/models";
+import { formatHits, searchLibraries } from "./libraries.js";
 import type { Cycle, PmCite, PmMessage, PmProposal } from "./types.js";
 
 /** What the PM can see when it answers. Built by the caller from the live board. */
@@ -54,6 +55,7 @@ How you work:
 - Plan for the Worker you have, using its measured record under WORKER CAPABILITY. Cards should touch at most 3 files and 200 lines. Propose a split when a card is larger than the Worker's 80% size horizon, or its kind has a low measured pass rate, or the Worker failed or looped on it: split or clarify, do not just retry. Treat small samples as ranges, not facts.
 - Priority uses Linear's scale: 1 Urgent, 2 High, 3 Medium, 4 Low, 0 none. Estimates are points: 1, 2, 3, 5, 8.
 - Refer to cards by title with their id in backticks, e.g. "Ledger (\`card_chron_ledger\`)".
+- Before proposing a card that builds something general (parsing, validation, HTTP, dates, retries, CLI args...), call find_library. Recommend only packages marked usable (permissive licence) and put the package in the card's spec, so the Worker uses it instead of reinventing it.
 - Keep replies short: a few sentences, or a short list for standups and plans.`;
 }
 
@@ -130,6 +132,19 @@ const str = { type: "string" } as const;
 const num = { type: "number" } as const;
 
 export const PM_TOOLS: ToolDefinition[] = [
+  {
+    name: "find_library",
+    description:
+      "Search the npm or PyPI registry for an existing, permissively licensed package before proposing a card that would build the thing from scratch. Results include the licence and whether it is safe to use.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "What the package should do, or its name" },
+        ecosystem: { type: "string", enum: ["npm", "pypi"] },
+      },
+      required: ["query"],
+    },
+  },
   {
     name: "propose_update_card",
     description:
@@ -406,6 +421,8 @@ export async function answer(
   history: PmMessage[],
   queued: PmMessage[],
   summary?: { upToSeq: number; text: string },
+  /** Injectable registry search, for tests; production searches npm and PyPI. */
+  libraries?: typeof searchLibraries,
 ): Promise<PmAnswer> {
   const questions = queued
     .map((m) => {
@@ -415,15 +432,41 @@ export async function answer(
     .join("\n");
   const prompt = `${boardDigest(snapshot)}\n\nCONVERSATION SO FAR\n${conversationDigest(history, 3500, summary) || "(new conversation)"}\n\nNEW MESSAGE${queued.length > 1 ? "S" : ""}\n${questions}\n\nReply to the human now. Use propose_* tools only for changes you recommend.`;
 
-  const res = await model.generate({
+  // Up to two lookup rounds: Merit may search registries, read the results,
+  // then answer. Proposal tool calls from every round are kept.
+  let context = prompt;
+  const calls: ToolCall[] = [];
+  let res = await model.generate({
     systemPrompt: pmSystemPrompt(snapshot),
-    prompt,
+    prompt: context,
     tools: PM_TOOLS,
     toolArm: "arm_a_flat",
     temperature: 0.3,
     maxTokens: 1200,
   });
-  const proposals = toProposals(res.toolCalls, snapshot.cards);
+  for (let round = 0; round < 2; round++) {
+    calls.push(...res.toolCalls.filter((c) => c.name !== "find_library"));
+    const lookups = res.toolCalls.filter((c) => c.name === "find_library");
+    if (lookups.length === 0) break;
+    const found: string[] = [];
+    for (const c of lookups.slice(0, 3)) {
+      const q = String(c.arguments?.query ?? "").slice(0, 120);
+      const eco = c.arguments?.ecosystem === "pypi" ? "pypi" : "npm";
+      const hits = await (libraries ?? searchLibraries)(q, eco).catch(() => []);
+      found.push(`find_library("${q}", ${eco}):\n${formatHits(hits)}`);
+    }
+    context = `${context}\n\nLIBRARY SEARCH RESULTS\n${found.join("\n\n")}\n\nNow reply to the human.`;
+    res = await model.generate({
+      systemPrompt: pmSystemPrompt(snapshot),
+      prompt: context,
+      tools: PM_TOOLS,
+      toolArm: "arm_a_flat",
+      temperature: 0.3,
+      maxTokens: 1200,
+    });
+  }
+  calls.push(...res.toolCalls.filter((c) => c.name !== "find_library"));
+  const proposals = toProposals(calls, snapshot.cards);
   let text = stripThinking(res.text);
   if (!text) {
     text =
