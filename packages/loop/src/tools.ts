@@ -9,7 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
-import { condenseCommandOutput, defaultEvidenceStore } from "@sekhemet/context";
+import { condenseToolOutput } from "@sekhemet/context";
 import type { ToolCall } from "@sekhemet/models";
 import { type ExecutionResult, PermissionEngine, ProcessSandbox } from "@sekhemet/sandbox";
 import { matchesGlob } from "./glob.js";
@@ -956,19 +956,14 @@ export class ToolExecutor {
     const label = line;
     const heading = description?.trim() ? `# ${description.trim()}\n$ ${label}` : `$ ${label}`;
     const stream = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
-    // Condense rather than clamp: error lines are protected from truncation,
-    // repeats are grouped, and the raw text stays recallable by reference.
-    const condensed = condenseCommandOutput(stream, {
+    // Condense rather than clamp (C8): error lines are protected from
+    // truncation, repeats are grouped, and whenever anything is condensed away
+    // the raw text stays recallable by the ref in the footer.
+    const detail = condenseToolOutput(stream, {
       exitCode: result.exitCode,
       command: label,
       maxLines: RUN_CMD_MAX_LINES,
-      evidenceStore: defaultEvidenceStore,
-    });
-    const recallNote =
-      condensed.droppedLines > 0 && condensed.evidenceRef
-        ? `\n[${condensed.droppedLines} line(s) condensed away; full output: recall(ref="${condensed.evidenceRef}")]`
-        : "";
-    const detail = `${condensed.condensed || "(no output)"}${recallNote}`;
+    }).text;
 
     if (result.timedOut) {
       return fail(
