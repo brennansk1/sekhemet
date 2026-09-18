@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import type { CheckpointCommitParams, DiffStats, GitSyncAdapter, WorktreeRecord } from "./types.js";
 
@@ -56,7 +56,30 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
 
     const branchName = this.branchNameFor(cardId, title);
     this.runGit(["worktree", "add", "-B", branchName, worktreePath, baseBranch]);
+    this.linkDependencies(worktreePath);
     return worktreePath;
+  }
+
+  /**
+   * Symlink installed dependencies into a fresh worktree.
+   *
+   * A worktree checks out tracked files only, so `node_modules` is absent and
+   * every gate fails on a missing toolchain rather than on the card's actual
+   * work. Linking is what makes per-card worktrees affordable: copying a
+   * dependency tree per card would cost more than the card itself.
+   */
+  private linkDependencies(worktreePath: string): void {
+    for (const name of ["node_modules", ".venv"]) {
+      const source = join(this.repoRoot, name);
+      const target = join(worktreePath, name);
+      if (!existsSync(source) || existsSync(target)) continue;
+      try {
+        symlinkSync(source, target, "dir");
+      } catch {
+        // A pre-existing entry or an unsupported filesystem: the gate will
+        // report the real consequence rather than failing silently here.
+      }
+    }
   }
 
   public async getHeadSha(cwd = this.repoRoot): Promise<string> {

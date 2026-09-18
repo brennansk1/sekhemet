@@ -11,7 +11,8 @@
   "dependencies": {
     "@sekhemet/kernel": "workspace:*",
     "@sekhemet/board": "workspace:*",
-    "@sekhemet/context": "workspace:*"
+    "@sekhemet/context": "workspace:*",
+    "@sekhemet/models": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.13.4"

@@ -13,6 +13,7 @@ import { OscillationDetector } from "./detector.js";
 import { type LadderState, RepairLadder, type RungPolicy } from "./ladder.js";
 import type { ToolObservation } from "./observation.js";
 import { buildRepoMap } from "./repo_map.js";
+import { TOOL_CATALOG } from "./tool_catalog.js";
 import { ToolExecutor } from "./tools.js";
 import type {
   CardExecutionSession,
@@ -157,6 +158,14 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       activeSkills: skills,
       playbookRules,
       recentTurns: maskOlderObservations(this.history, VERBATIM_TURN_WINDOW),
+      // The catalog is what tells the model these tools exist at all.
+      tools: this.options.tools ?? TOOL_CATALOG,
+      // The card's own contract. Without it the model has only a title to work
+      // from and invents the rest — which is exactly what it does.
+      ...(this.card.spec ? { goal: this.card.spec } : {}),
+      ...(this.card.acceptanceCriteria?.length
+        ? { acceptanceCriteria: this.card.acceptanceCriteria }
+        : {}),
       ...(this.lastGateFailure ? { gateFailure: this.lastGateFailure } : {}),
     });
 

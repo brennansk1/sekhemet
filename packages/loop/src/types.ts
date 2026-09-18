@@ -1,4 +1,4 @@
-import type { PlaybookRegistry, SkillsRegistry } from "@sekhemet/context";
+import type { PlaybookRegistry, SkillsRegistry, ToolInterfaceSpec } from "@sekhemet/context";
 import type { GateResult, GateRung, GateRunner } from "@sekhemet/gates";
 import type { CardRecord } from "@sekhemet/kernel";
 import type { LocalInferenceAdapter, TokenUsage, ToolArm, ToolCall } from "@sekhemet/models";
@@ -51,6 +51,8 @@ export interface SessionOptions {
   /** Identical turns tolerated before the oscillation breaker trips. */
   oscillationThreshold?: number | undefined;
 
+  /** Tool interface rendered into the prompt. Defaults to the full catalog. */
+  tools?: ToolInterfaceSpec[] | undefined;
   skillsRegistry?: SkillsRegistry | undefined;
   playbookRegistry?: PlaybookRegistry | undefined;
 

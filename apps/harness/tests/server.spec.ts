@@ -139,9 +139,25 @@ describe("@sekhemet/harness Dashboard Server", () => {
   it("serves /api/doctor diagnostic reports", async () => {
     const res = await fetch(`http://127.0.0.1:${serverInstance.port}/api/doctor`);
     expect(res.status).toBe(200);
-    const data = (await res.json()) as { ok: boolean; checks: string[] };
+    const data = (await res.json()) as {
+      ok: boolean;
+      checks: { name: string; status: string; detail: string }[];
+    };
 
-    expect(data.ok).toBe(true);
+    // Deliberately not asserting ok === true. These probes report real machine
+    // state: with a 14GB model resident, memory pressure legitimately reports
+    // `fail`, and a CI box has no inference server at all. Asserting a healthy
+    // host would make the suite fail for the diagnostic working correctly —
+    // and would quietly re-create the always-passes check this replaced.
     expect(data.checks.length).toBeGreaterThanOrEqual(4);
+    expect(data.checks.map((c) => c.name)).toContain("Sandbox confinement");
+
+    for (const check of data.checks) {
+      expect(["pass", "warn", "fail"]).toContain(check.status);
+      expect(check.detail.length).toBeGreaterThan(0);
+    }
+
+    // `ok` must remain derived from the checks rather than hardcoded.
+    expect(data.ok).toBe(data.checks.every((c) => c.status !== "fail"));
   });
 });

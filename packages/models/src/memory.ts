@@ -39,7 +39,10 @@ export function classifyMemoryPressure(
       throttleMtp: true,
       throttleWorktrees: true,
       pauseExecution: true,
-      recommendedKeepAlive: "0",
+      // Not "0": evicting mid-card forces a full weight reload on the next
+      // turn, which on this hardware costs far more wall clock than the memory
+      // it frees. The card runner unloads explicitly when the card ends.
+      recommendedKeepAlive: "60s",
     };
   }
 
@@ -50,7 +53,9 @@ export function classifyMemoryPressure(
       throttleMtp: true,
       throttleWorktrees: usedRatio >= 0.9,
       pauseExecution: false,
-      recommendedKeepAlive: "60s",
+      // A resident model is the expected steady state while a card runs; the
+      // pressure response is to stop adding worktrees, not to evict the weights.
+      recommendedKeepAlive: "5m",
     };
   }
 

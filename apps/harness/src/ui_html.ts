@@ -73,11 +73,16 @@ header {
 
 /* ---------- Board ---------- */
 main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-.board { flex: 1; display: flex; gap: var(--space-3); padding: var(--space-4); overflow-x: auto; min-height: 0; }
+.board { flex: 1 1 auto; display: flex; gap: var(--space-2); padding: var(--space-4); overflow-x: auto; min-height: 240px; }
 .column {
-  flex: 0 0 272px; display: flex; flex-direction: column; min-height: 0;
+  /* Flex so the full pipeline is visible at laptop widths; a kanban that hides
+     its last two columns hides exactly the work awaiting a human. */
+  flex: 1 1 0; min-width: 186px; max-width: 320px;
+  display: flex; flex-direction: column; min-height: 0;
   background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-card);
 }
+/* The terminal columns carry the human's queue, so they read as distinct. */
+.column[data-col="review"] { border-color: var(--border-strong); }
 .column-header {
   display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);
   padding: var(--space-3); border-bottom: 1px solid var(--border-subtle); flex: 0 0 auto;
@@ -89,8 +94,8 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .wip-fill { height: 100%; background: var(--text-muted); transition: var(--motion); }
 .wip-fill.at-capacity { background: var(--state-parked); }
 /* The scroller owns the scrollbar; the sizer gives it the full virtual height. */
-.card-scroll { flex: 1; overflow-y: auto; padding: var(--space-3); min-height: 0; }
-.card-sizer { position: relative; }
+.card-scroll { flex: 1; overflow-y: auto; padding: var(--space-3); min-height: 0; display: flex; flex-direction: column; }
+.card-sizer { position: relative; flex: 1; }
 
 .card {
   position: absolute; left: 0; right: 0;
@@ -103,18 +108,19 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .card.selected { border-color: var(--accent); }
 .card-top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
 .tier { font-size: var(--text-xs); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--accent); }
-.card-id { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-muted); }
+.card-id { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; }
 .card-title {
   font-size: var(--text-sm); font-weight: 500; line-height: var(--leading-tight); margin: 0;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+  overflow-wrap: anywhere;
 }
-.card-bottom { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
-.budget { flex: 1; display: flex; flex-direction: column; gap: 3px; }
+.card-foot { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); white-space: nowrap; }
+.budget { margin-top: auto; display: flex; flex-direction: column; gap: 4px; }
 .budget-track { height: 3px; background: var(--bg-base); border-radius: 2px; overflow: hidden; }
 .budget-fill { height: 100%; background: var(--state-running); transition: var(--motion); }
 .budget-fill.warn { background: var(--state-parked); }
 .budget-fill.over { background: var(--state-fail); }
-.budget-text { font-size: var(--text-xs); color: var(--text-muted); }
+.budget-text { font-size: var(--text-xs); color: var(--text-muted); flex: 0 0 auto; }
 
 /* Five-box gate strip: colour is never the only signal — each box has a letter. */
 .gates { display: flex; gap: 3px; }
@@ -128,10 +134,13 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .gate-box.run  { background: var(--state-running); border-color: var(--state-running); color: var(--bg-base); }
 .deps { font-size: var(--text-xs); color: var(--text-muted); }
 
-.empty { padding: var(--space-4) var(--space-3); color: var(--text-muted); font-size: var(--text-sm); text-align: center; }
+.empty {
+  height: 100%; min-height: 64px; display: flex; align-items: center; justify-content: center;
+  color: var(--text-muted); font-size: var(--text-sm);
+}
 
 /* ---------- Log drawer ---------- */
-.drawer { flex: 0 0 auto; border-top: 1px solid var(--border-subtle); background: var(--bg-surface); max-height: 34vh; display: flex; flex-direction: column; }
+.drawer { flex: 0 1 auto; border-top: 1px solid var(--border-subtle); background: var(--bg-surface); height: 38vh; min-height: 160px; display: flex; flex-direction: column; }
 .drawer-head { display: flex; align-items: center; justify-content: space-between; padding: var(--space-2) var(--space-4); flex: 0 0 auto; }
 .drawer-title { font-size: var(--text-xs); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-secondary); }
 .log { overflow-y: auto; padding: 0 var(--space-4) var(--space-3); }
@@ -209,7 +218,7 @@ const COLUMNS = [
   ["backlog","Backlog"],["ready","Ready"],["planning","Planning"],
   ["in_progress","In Progress"],["verify","Verify"],["review","Review"],["done","Done"],
 ];
-const ROW_H = 96, GAP = 8, OVERSCAN = 3;
+const ROW_H = 112, GAP = 8, OVERSCAN = 3;
 
 // Every value rendered below originates from card titles and event fields that
 // a model can write, so all interpolation goes through this. Never innerHTML
@@ -240,14 +249,16 @@ function cardHtml(card, top) {
   const pct = Math.min(100, Math.round(used / budget * 100));
   const cls = pct >= 100 ? " over" : pct >= 75 ? " warn" : "";
   const deps = (card.dependsOn || []).length;
-  return '<article class="card'+(selected===card.id?" selected":"")+'" style="top:'+top+'px;height:'+ROW_H+'px" data-id="'+esc(card.id)+'" tabindex="0">'
-    + '<div class="card-top"><span class="tier">'+esc(card.tier)+'</span><span class="card-id">'+esc(card.id)+'</span></div>'
+  // Card ids share a long prefix, so showing the whole thing spends the tile's
+  // width on characters that never differ. The full id stays in the tooltip.
+  const shortId = String(card.id).replace(/^card_/, "").replace(/^[a-z]+_/, "");
+  return '<article class="card'+(selected===card.id?" selected":"")+'" style="top:'+top+'px;height:'+ROW_H+'px" data-id="'+esc(card.id)+'" title="'+esc(card.id)+'" tabindex="0">'
+    + '<div class="card-top"><span class="tier">'+esc(card.tier)+'</span>'+gateStrip(card)+'</div>'
     + '<h3 class="card-title">'+esc(card.title)+'</h3>'
-    + '<div class="card-bottom">'
-      + '<div class="budget"><div class="budget-track"><div class="budget-fill'+cls+'" style="width:'+pct+'%"></div></div>'
-      + '<span class="budget-text">'+used+'/'+budget+' steps'+(deps?' &middot; '+deps+' dep'+(deps>1?'s':''):'')+'</span></div>'
-      + gateStrip(card)
-    + '</div></article>';
+    + '<div class="budget"><div class="budget-track"><div class="budget-fill'+cls+'" style="width:'+pct+'%"></div></div>'
+    + '<div class="card-foot"><span class="card-id">'+esc(shortId)+'</span>'
+    + '<span class="budget-text">'+used+'/'+budget+(deps?' &middot; '+deps+'d':'')+'</span></div></div>'
+    + '</article>';
 }
 
 function renderBoard() {
@@ -336,7 +347,10 @@ function renderChrome() {
     }
     if (inf) {
       const el = document.getElementById("model-chip");
-      el.textContent = inf.status === "pass" ? (inf.detail.split("—")[1] || "inference ready").trim().slice(0, 34) : "inference offline";
+      // Show the model actually being served, not a truncated inventory string.
+      const names = (inf.detail.split("):")[1] || "").split(",").map(function(s){ return s.trim(); });
+      const active = names.find(Boolean) || "inference ready";
+      el.textContent = inf.status === "pass" ? active.replace(/:latest$/, "") : "inference offline";
       el.className = "chip " + (inf.status === "pass" ? "run" : "fail");
     }
   }

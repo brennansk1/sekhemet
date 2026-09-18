@@ -156,7 +156,10 @@ export function initLocalKernel(repoPath: string): {
     mkdirSync(dotSekhemet, { recursive: true });
   }
 
-  const dbPath = join(dotSekhemet, "state.sqlite");
+  // The design and the permission engine's protected-path list both name
+  // .sekhemet/events.db; opening a differently-named file meant the deny rule
+  // guarded a database nothing used.
+  const dbPath = join(dotSekhemet, "events.db");
   const db = new DatabaseSync(dbPath);
   initSchema(db);
   const log = new EventLog(db);
