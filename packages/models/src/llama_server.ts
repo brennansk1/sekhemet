@@ -1,5 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { type HttpAdapterOptions, HttpInferenceAdapter } from "./http_adapter.js";
 
 export interface LlamaServerProfile {
@@ -14,6 +15,13 @@ export interface LlamaServerProfile {
   kvType?: "f16" | "q8_0";
   /** Enable the model's grafted multi-token-prediction head. */
   mtp?: boolean;
+  /**
+   * Directory for KV-cache slot files. When set, the slot is saved before the
+   * server is stopped for a model swap and restored after it restarts, so the
+   * shared prompt prefix is not re-read (research report 2: cache loss on
+   * swaps is the dominant swap cost; llama.cpp --slot-save-path).
+   */
+  slotCacheDir?: string;
   extraArgs?: string[];
   sampling?: HttpAdapterOptions["sampling"];
   maxTokens?: number;
@@ -101,6 +109,7 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
       "-np",
       "1",
       ...(p.mtp ? ["--spec-type", "draft-mtp"] : []),
+      ...(p.slotCacheDir ? ["--slot-save-path", p.slotCacheDir] : []),
       ...(p.extraArgs ?? []),
     ];
   }
@@ -124,6 +133,7 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
         throw new Error(`Model file not found: ${this.profile.modelPath}`);
       }
       await evictOllamaModels(this.profile.ollamaBaseUrl);
+      if (this.profile.slotCacheDir) mkdirSync(this.profile.slotCacheDir, { recursive: true });
 
       this.child = spawn(this.profile.binary ?? "llama-server", this.launchArgs(), {
         stdio: ["ignore", "ignore", "pipe"],
@@ -139,7 +149,10 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
         if (this.child.exitCode !== null) {
           throw new Error(`llama-server exited during startup: ${stderr.slice(-800)}`);
         }
-        if (await this.healthy()) return;
+        if (await this.healthy()) {
+          await this.slotAction("restore");
+          return;
+        }
         await new Promise((r) => setTimeout(r, 1000));
       }
       throw new Error(`llama-server did not become healthy in time: ${stderr.slice(-800)}`);
@@ -186,10 +199,34 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
     child.once("exit", () => process.removeListener("exit", kill));
   }
 
+  private get slotFile(): string {
+    return `${this.profile.modelId.replace(/[^\w.-]/g, "_")}.slot`;
+  }
+
+  /**
+   * Save or restore slot 0's KV cache. Best effort: a missing file on the
+   * first start, or a server without slot support, costs only a cold prefill.
+   */
+  public async slotAction(action: "save" | "restore"): Promise<boolean> {
+    if (!this.profile.slotCacheDir) return false;
+    try {
+      const res = await fetch(`${this.url}/slots/0?action=${action}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename: this.slotFile }),
+        signal: AbortSignal.timeout(60_000),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
   /** Stop the server process, releasing its memory. */
   public override async unload(): Promise<void> {
     const child = this.child;
     if (!child || child.exitCode !== null) return;
+    await this.slotAction("save");
     child.kill("SIGTERM");
     await new Promise<void>((resolve) => {
       const timer = setTimeout(() => {
@@ -223,6 +260,7 @@ export function createCyberTielWorker(
   return new ManagedLlamaServerAdapter({
     modelId: "cyber-tiel-coder-35b-a3b-mtp-iq3xxs",
     modelPath,
+    slotCacheDir: process.env.SEKHEMET_SLOT_CACHE ?? `${tmpdir()}/sekhemet-slots`,
     ...(binary ? { binary } : {}),
     // 16k: this hybrid-attention MoE keeps a small KV cache (the card documents
     // ~5GB at 262k in f16, so ~0.16GB here at q8_0). At 8k the ledger card's
@@ -249,6 +287,7 @@ export function createApodexResearcher(
   return new ManagedLlamaServerAdapter({
     modelId: "apodex-1.1-mini",
     modelPath,
+    slotCacheDir: process.env.SEKHEMET_SLOT_CACHE ?? `${tmpdir()}/sekhemet-slots`,
     ...(binary ? { binary } : {}),
     port: 8101,
     contextTokens: 16384,
