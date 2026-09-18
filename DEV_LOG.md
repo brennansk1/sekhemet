@@ -11,25 +11,38 @@
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
 If you are Claude reading this because Gemini reached quota limits or you were summoned to take the lead:
-1. **Current Milestone**: Milestone 4 (@sekhemet/models — Local Inference Adapters & Tool Arms)
+1. **Current Milestone**: Milestone 5 (@sekhemet/gates — Executable Verification Rungs)
 2. **Current State**:
    - Git repository initialized on branch `main`.
    - All 13 workspace projects linked and typechecked (`tsc -b`).
    - `@sekhemet/kernel` 100% complete (EventLog, SQLite WAL CardStore, projection replay).
    - `@sekhemet/sandbox` 100% complete (ProcessSandbox timeout containment, macOS Seatbelt profile generator).
    - `@sekhemet/sync` 100% complete (NodeGitSyncAdapter worktree isolation, structured checkpoint refs, squashed acceptance merges).
-   - 16 unit/integration tests passing green.
+   - `@sekhemet/models` 100% complete (Tool Arms A/B/C, MockInferenceAdapter, HttpInferenceAdapter for Ollama/llama.cpp/MLX, tool & patch parsers).
+   - 20 unit/integration tests passing green in 1.1s.
 3. **Immediate Next Task**:
-   - Implement `@sekhemet/models`:
-     - Tool Arms (Arm A: flat schema tools, Arm B: nested JSON schema, Arm C: text delimiter sketch/patch).
-     - Local inference client (Ollama HTTP / llama.cpp / MLX OpenAI-compatible endpoints) + `MockInferenceAdapter`.
-     - Token accounting and template formatting.
-     - Vitest tests in `packages/models/tests/models.spec.ts`.
+   - Implement `@sekhemet/gates`:
+     - Deterministic gate rungs: Parse gate, Typecheck gate (`tsc --noEmit`), Test gate (`vitest run`), Lint gate (`biome check`), Bounds gate (AST file diff $<200$ LOC, 1-3 files).
+     - Typed `GateFailure` contract generation with suggested fix files and error excerpts.
+     - Vitest tests in `packages/gates/tests/gates.spec.ts`.
 4. **Active Checkpoint Git Ref**: `refs/heads/main`
 
 ---
 
 ## Detailed Session Log
+
+### Entry 5 — 2026-09-17 22:11:45 MDT
+- **Agent**: Gemini 2.5 Pro (`antigravity-cli`)
+- **Role**: Subagent Implementer & Test Author
+- **Actions Taken**:
+  1. Implemented `@sekhemet/models/src/types.ts`: typed tool definitions, calls, patches, and inference requests/responses.
+  2. Implemented `@sekhemet/models/src/mock_adapter.ts`: `MockInferenceAdapter` for deterministic local testing of downstream loops.
+  3. Implemented `@sekhemet/models/src/parser.ts`: JSON tool call extraction from markdown fences and Arm C text delimiter patch extraction.
+  4. Implemented `@sekhemet/models/src/http_adapter.ts`: local Ollama and OpenAI-compatible HTTP inference adapter.
+  5. Added `packages/models/tests/models.spec.ts`: 4 tests for mock adapter, fenced JSON parsing, array tool calls, and text patches.
+  6. Gates passed: 20/20 tests green across monorepo.
+- **Next Steps**:
+  - Implement `@sekhemet/gates` deterministic verification rungs and typed `GateFailure` contracts.
 
 ### Entry 4 — 2026-09-17 22:10:55 MDT
 - **Agent**: Gemini 2.5 Pro (`antigravity-cli`)
