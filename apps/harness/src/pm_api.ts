@@ -360,6 +360,37 @@ export function createPmApi(ctx: PmApiContext) {
       return true;
     }
 
+    // --- Model roster (worker, Merit, reviewer, researcher) -------------------
+    if (url === "/api/models" && req.method === "GET") {
+      const lease = runnerLease(ctx.repoPath) as
+        | { roster?: { role: string; model?: string }[]; active?: string; coResident?: boolean }
+        | undefined;
+      const configured = new Map<string, string | undefined>(
+        (lease?.roster ?? []).map((r) => [r.role, r.model]),
+      );
+      if (!lease) {
+        configured.set("manager", pmModel);
+        if (process.env.SEKHEMET_RESEARCHER)
+          configured.set("researcher", process.env.SEKHEMET_RESEARCHER);
+      }
+      const roles = ["worker", "manager", "reviewer", "researcher"].map((role) => {
+        const model = configured.get(role);
+        const state = !model
+          ? "unconfigured"
+          : lease?.coResident || lease?.active === role
+            ? "resident"
+            : "swapped";
+        return {
+          role,
+          ...(model ? { model } : {}),
+          state,
+          ...(lease ? {} : { note: "No run in progress" }),
+        };
+      });
+      ctx.json(res, 200, { roles, coResident: lease?.coResident === true });
+      return true;
+    }
+
     // --- Worker capability --------------------------------------------------
     if (url === "/api/capability" && req.method === "GET") {
       const cards = ctx.cardStore ? await ctx.cardStore.listCards() : [];

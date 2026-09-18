@@ -34,11 +34,20 @@ export function createPmAdapter(modelId = DEFAULT_PM_MODEL): HttpInferenceAdapte
 
 // --- Runner lease ------------------------------------------------------------
 
+export interface RosterEntry {
+  role: "worker" | "manager" | "reviewer" | "researcher";
+  model?: string;
+}
+
 interface Lease {
   pid: number;
   startedAt: string;
   heartbeatAt: string;
   pmModel?: string;
+  roster?: RosterEntry[];
+  /** The role whose model is resident right now. */
+  active?: string;
+  coResident?: boolean;
 }
 
 const leasePath = (repoPath: string) => join(repoPath, ".sekhemet", "runner.lock");
@@ -50,7 +59,11 @@ const leasePath = (repoPath: string) => join(repoPath, ".sekhemet", "runner.lock
  * because only it can unload the Worker; the dashboard answering at the same
  * time would load a second large model and exhaust memory.
  */
-export function holdRunnerLease(repoPath: string, pmModel?: string): () => void {
+export function holdRunnerLease(
+  repoPath: string,
+  pmModel?: string,
+  live?: () => { roster: RosterEntry[]; active?: string; coResident: boolean },
+): () => void {
   mkdirSync(join(repoPath, ".sekhemet"), { recursive: true });
   const now = new Date().toISOString();
   const lease: Lease = {
@@ -59,17 +72,17 @@ export function holdRunnerLease(repoPath: string, pmModel?: string): () => void 
     heartbeatAt: now,
     ...(pmModel ? { pmModel } : {}),
   };
-  writeFileSync(leasePath(repoPath), JSON.stringify(lease));
+  writeFileSync(leasePath(repoPath), JSON.stringify({ ...lease, ...(live?.() ?? {}) }));
   const beat = setInterval(() => {
     try {
       writeFileSync(
         leasePath(repoPath),
-        JSON.stringify({ ...lease, heartbeatAt: new Date().toISOString() }),
+        JSON.stringify({ ...lease, ...(live?.() ?? {}), heartbeatAt: new Date().toISOString() }),
       );
     } catch {
       // A missed heartbeat only matters if the process is also gone.
     }
-  }, 10_000);
+  }, 3_000);
   beat.unref();
   const release = () => {
     clearInterval(beat);

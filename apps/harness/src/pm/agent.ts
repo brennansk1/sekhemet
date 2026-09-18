@@ -455,6 +455,7 @@ export async function answer(
   // then answer. Proposal tool calls from every round are kept.
   let context = prompt;
   const calls: ToolCall[] = [];
+  const researchCites: PmCite[] = [];
   let res = await model.generate({
     systemPrompt: pmSystemPrompt(snapshot),
     prompt: context,
@@ -480,6 +481,10 @@ export async function answer(
         found.push(
           `ask_researcher("${q}"):\n${r.answer}\nSources: ${r.sources.join("; ") || "none (treat as unverified)"}`,
         );
+        for (const src of r.sources) {
+          const url = /https?:\/\/\S+/.exec(src)?.[0];
+          researchCites.push({ label: src, ...(url ? { url } : {}) });
+        }
         continue;
       }
       const q = String(c.arguments?.query ?? "").slice(0, 120);
@@ -508,7 +513,14 @@ export async function answer(
         ? `I have ${proposals.length} proposed change${proposals.length > 1 ? "s" : ""} for you to review.`
         : "I could not produce an answer to that. Could you rephrase it or point me at a card?";
   }
-  return { text, proposals, cites: citesFrom(text, snapshot.cards) };
+  const seen = new Set<string>();
+  const sources = researchCites.filter((c) => {
+    const key = c.url ?? c.label ?? "";
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  return { text, proposals, cites: [...citesFrom(text, snapshot.cards), ...sources] };
 }
 
 /**

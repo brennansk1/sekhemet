@@ -213,4 +213,17 @@ describe("PM and board-practice API", () => {
     expect(res.cfd.length).toBeGreaterThanOrEqual(7);
     expect(res.cfd.at(-1)?.ready).toBeGreaterThan(0);
   });
+
+  it("reports the model roster; without a running queue only Merit is known", async () => {
+    const body = (await (await fetch(`${base}/api/models`)).json()) as {
+      roles: { role: string; model?: string; state: string }[];
+      coResident: boolean;
+    };
+    expect(body.roles.map((r) => r.role)).toEqual(["worker", "manager", "reviewer", "researcher"]);
+    expect(body.roles.find((r) => r.role === "manager")).toMatchObject({
+      model: "dirk-27b:latest",
+      state: "swapped",
+    });
+    expect(body.roles.find((r) => r.role === "worker")?.state).toBe("unconfigured");
+  });
 });

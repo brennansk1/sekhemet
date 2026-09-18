@@ -39,6 +39,9 @@ export interface PmCite {
   cardId?: string;
   runId?: string;
   evidenceId?: string;
+  /** A research source: a URL when there is one, and what it is. */
+  url?: string;
+  label?: string;
 }
 
 export interface PmMessage {

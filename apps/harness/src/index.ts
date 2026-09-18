@@ -676,7 +676,20 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     const pmStore = new PmStore(log);
     // Tells the dashboard this process holds the Worker, so PM messages are
     // answered here, between steps, instead of loading a second large model.
-    const releaseLease = holdRunnerLease(config.repoPath, pmModel);
+    // The lease also publishes the model roster and which role is resident,
+    // for the dashboard's Machine view.
+    const releaseLease = holdRunnerLease(config.repoPath, pmModel, () => ({
+      roster: [
+        { role: "worker", model: workerModel ?? NAIL_WORKER_PROFILE.modelId },
+        { role: "manager", model: pmModel },
+        ...(reviewerModel ? [{ role: "reviewer" as const, model: reviewerModel }] : []),
+        ...(researcherModel ? [{ role: "researcher" as const, model: researcherModel }] : []),
+      ],
+      ...(router.activeRole
+        ? { active: router.activeRole === "escalation" ? "manager" : router.activeRole }
+        : {}),
+      coResident: canCoReside(totalmem(), 14 * 1024 ** 3, 17 * 1024 ** 3),
+    }));
 
     /**
      * Preemption (PM_CONTRACT §4): after any Worker step, if the human has
