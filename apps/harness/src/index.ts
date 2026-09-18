@@ -467,6 +467,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       skillsRegistry: skills,
       playbookRegistry: playbook,
       lifecycle: {
+        // Persist the real step count, or the board reports 0/32 for a card
+        // that exhausted its budget — the one number a human scanning the
+        // board most needs.
+        recordSteps: async (id, stepsUsed) => {
+          await cardStore.updateCard(id, { stepsUsed });
+        },
         transition: async (id, to) => {
           const current = await cardStore.getCard(id);
           if (!current || current.status === to) return;
