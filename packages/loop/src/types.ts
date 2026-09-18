@@ -1,7 +1,8 @@
 import type { PlaybookRegistry, SkillsRegistry } from "@sekhemet/context";
 import type { GateResult, GateRung, GateRunner } from "@sekhemet/gates";
 import type { CardRecord } from "@sekhemet/kernel";
-import type { LocalInferenceAdapter, ToolArm, ToolCall } from "@sekhemet/models";
+import type { LocalInferenceAdapter, TokenUsage, ToolArm, ToolCall } from "@sekhemet/models";
+import type { GitSyncAdapter } from "@sekhemet/sync";
 import type { ToolObservation } from "./observation.js";
 import type { ApprovalHandler } from "./tools.js";
 
@@ -19,6 +20,8 @@ export interface TurnResult {
   toolCalls: ToolCall[];
   /** One observation per dispatched tool call, in call order. */
   observations: ToolObservation[];
+  /** Token cost of this turn, as reported by the inference server. */
+  usage?: TokenUsage | undefined;
   gateResult?: GateResult | undefined;
   stopReason?: ExecutionStopReason | undefined;
 }
@@ -53,6 +56,8 @@ export interface SessionOptions {
 
   /** Invoked for `ask`-tier permission checks. Absent means ask-tier is refused. */
   onApproval?: ApprovalHandler | undefined;
+  /** Supplies the repo state hash that makes stall detection trustworthy. */
+  syncAdapter?: GitSyncAdapter | undefined;
   allowNetwork?: boolean | undefined;
   commandTimeoutMs?: number | undefined;
 }

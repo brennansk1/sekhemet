@@ -10,6 +10,7 @@ import type { CardRecord } from "@sekhemet/kernel";
 import type { ToolCall } from "@sekhemet/models";
 import type { ExecutionResult } from "@sekhemet/sandbox";
 import { OscillationDetector } from "./detector.js";
+import { type LadderState, RepairLadder, type RungPolicy } from "./ladder.js";
 import type { ToolObservation } from "./observation.js";
 import { buildRepoMap } from "./repo_map.js";
 import { ToolExecutor } from "./tools.js";
@@ -62,12 +63,15 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   private repoMapCache: string | undefined;
   private lastSystemPrompt = "";
   private emptyTurns = 0;
+  private ladder: RepairLadder;
+  private activeRung: RungPolicy | undefined;
 
   constructor(private options: SessionOptions) {
     this.cardId = options.cardId;
     this.stepBudget = options.stepBudget;
     this.card = options.card ?? synthesizeCard(options);
     this.oscillationDetector = new OscillationDetector(options.oscillationThreshold ?? 3);
+    this.ladder = new RepairLadder();
     this.tools = new ToolExecutor({
       worktreePath: options.worktreePath,
       scopeFiles: options.scopeFiles,
@@ -90,9 +94,24 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     return this.lastGateFailure;
   }
 
+  /** Current position in the repair ladder. */
+  public getLadderState(): LadderState {
+    return this.ladder.snapshot;
+  }
+
   /** The system prompt sent on the last turn; byte-stability across turns is what makes it cacheable. */
   public getSystemPrompt(): string {
     return this.lastSystemPrompt;
+  }
+
+  /** Fingerprint of the worktree, when a git adapter is available. */
+  private async currentRepoStateHash(): Promise<string> {
+    if (!this.options.syncAdapter) return "";
+    try {
+      return await this.options.syncAdapter.getRepoStateHash(this.cardId);
+    } catch {
+      return "";
+    }
   }
 
   private repoMap(): string {
@@ -125,6 +144,12 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
           ...(this.lastGateFailure ? { triggerGate: this.lastGateFailure.rung } : {}),
         })
         .map((r) => r.instruction) ?? [];
+
+    // The active rung's directive rides alongside playbook rules so escalation
+    // changes what the model is told to do, not merely how often it retries.
+    if (this.activeRung && this.activeRung.rung !== "direct_repair") {
+      playbookRules.unshift(this.activeRung.directive);
+    }
 
     const pack = buildFullPromptPack({
       card: { ...this.card, stepsUsed: this.stepsUsed },
@@ -165,14 +190,20 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         result:
           "No tool calls were parsed from your response. Respond with tool calls only — no prose.",
       });
-      const result: TurnResult = { turnIndex, toolCalls: [], observations: [] };
+      const result: TurnResult = {
+        turnIndex,
+        toolCalls: [],
+        observations: [],
+        usage: response.usage,
+      };
       if (this.emptyTurns >= 3) result.stopReason = "no_progress";
       else if (this.stepsUsed >= this.stepBudget) result.stopReason = "budget_exhausted";
       return result;
     }
     this.emptyTurns = 0;
 
-    if (this.oscillationDetector.recordAndCheck(toolCalls)) {
+    const repoStateHash = await this.currentRepoStateHash();
+    if (this.oscillationDetector.recordAndCheck(toolCalls, repoStateHash)) {
       this.history.push({
         turn: turnIndex,
         action: toolCalls.map((c) => c.name).join(", "),
@@ -182,6 +213,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         turnIndex,
         toolCalls,
         observations: [],
+        usage: response.usage,
         stopReason: "oscillation_detected",
       };
     }
@@ -207,20 +239,35 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       if (gateResult.passed) {
         this.isFinished = true;
         this.lastGateFailure = undefined;
+        this.ladder.reset();
+        this.activeRung = undefined;
         stopReason = "gate_passed";
       } else {
         // The repair cycle: surface the typed failure so the next prompt carries
         // it, and let the agent keep working rather than ending the card here.
         this.repairAttempts++;
         this.lastGateFailure = gateResult.failures[0];
+
+        const policy = this.ladder.recordFailure();
+        this.activeRung = policy;
+
         this.history.push({
           turn: turnIndex,
           action: "verification",
-          result: `Gates FAILED (attempt ${this.repairAttempts}): ${
+          result: `Gates FAILED (${this.ladder.describe(this.lastGateFailure)}): ${
             this.lastGateFailure?.errorExcerpt ?? "unknown failure"
           }`,
         });
-        if (this.repairAttempts >= (this.options.maxRepairAttempts ?? 5)) {
+
+        // A rung that resets context drops accumulated history so the next
+        // attempt re-reads the tree instead of trusting a stale belief about it.
+        if (policy.resetContext) {
+          this.history = this.history.slice(-1);
+          this.repoMapCache = undefined;
+          this.oscillationDetector.reset();
+        }
+
+        if (this.ladder.exhausted) {
           stopReason = "repair_exhausted";
         }
       }
@@ -230,7 +277,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       stopReason = "budget_exhausted";
     }
 
-    const result: TurnResult = { turnIndex, toolCalls, observations };
+    const result: TurnResult = { turnIndex, toolCalls, observations, usage: response.usage };
     if (gateResult) result.gateResult = gateResult;
     if (stopReason) result.stopReason = stopReason;
     return result;

@@ -8,7 +8,8 @@
     { "path": "../kernel" },
     { "path": "../loop" },
     { "path": "../gates" },
-    { "path": "../models" }
+    { "path": "../models" },
+    { "path": "../sandbox" }
   ],
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "tests"]

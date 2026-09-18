@@ -47,7 +47,32 @@ const DESTRUCTIVE_COMMAND_PATTERNS = [
 
 const NETWORK_COMMAND_PATTERNS = [/\bcurl\b/, /\bwget\b/, /\bfetch\b/, /\bssh\b/, /\bscp\b/];
 
+export interface PermissionEngineOptions {
+  /**
+   * Glob patterns the implementer role may never modify, from
+   * `gates.toml [project] protected`.
+   *
+   * Defaults preserve the built-in test-immutability behaviour when a project
+   * ships no config.
+   */
+  protectedGlobs?: string[];
+}
+
+const DEFAULT_PROTECTED_GLOBS = ["**/*.spec.ts", "**/*.test.ts", "tests/acceptance/**"];
+
 export class PermissionEngine {
+  private protectedGlobs: string[];
+
+  constructor(options: PermissionEngineOptions = {}) {
+    this.protectedGlobs = options.protectedGlobs ?? DEFAULT_PROTECTED_GLOBS;
+  }
+
+  /** True when `target` matches any project-declared protected pattern. */
+  private isProtected(target: string): boolean {
+    const normalized = target.replace(/^\.\//, "");
+    return this.protectedGlobs.some((pattern) => matchesGlob(normalized, pattern));
+  }
+
   public evaluate(req: PermissionCheckRequest): PermissionCheckResult {
     // 1. Permanent Deny: Path Traversal
     if (req.targetPath && (req.targetPath.includes("../") || req.targetPath.startsWith("/"))) {
@@ -71,20 +96,22 @@ export class PermissionEngine {
       }
     }
 
-    // 3. Permanent Deny: Test Immutability for Implementers
+    // 3. Permanent Deny: Test Immutability for Implementers.
+    // Scoped to the implementer role by design (AGENTS.md 3.1): the test author
+    // and a human may legitimately change assertions, an implementer may not.
     if (req.agentRole === "implementer" && req.targetPath) {
-      if (req.targetPath.includes(".spec.") || req.targetPath.includes(".test.")) {
-        if (
-          req.toolName.startsWith("write") ||
-          req.toolName.startsWith("replace") ||
-          req.toolName === "edit"
-        ) {
-          return {
-            tier: "deny",
-            allowed: false,
-            reason: `Implementer role is forbidden from modifying test assertions (Test Immutability Law): ${req.targetPath}`,
-          };
-        }
+      const isWrite =
+        req.toolName.startsWith("write") ||
+        req.toolName.startsWith("replace") ||
+        req.toolName === "edit" ||
+        req.toolName === "insert_after_symbol";
+
+      if (isWrite && this.isProtected(req.targetPath)) {
+        return {
+          tier: "deny",
+          allowed: false,
+          reason: `Implementer role is forbidden from modifying protected files (Test Immutability Law): ${req.targetPath}`,
+        };
       }
     }
 

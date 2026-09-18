@@ -12,7 +12,8 @@
     "@sekhemet/kernel": "workspace:*",
     "@sekhemet/loop": "workspace:*",
     "@sekhemet/gates": "workspace:*",
-    "@sekhemet/models": "workspace:*"
+    "@sekhemet/models": "workspace:*",
+    "@sekhemet/sandbox": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.13.4"

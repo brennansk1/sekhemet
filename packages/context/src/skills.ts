@@ -20,13 +20,16 @@ export class SkillsRegistry {
     return this.skills.get(name);
   }
 
+  /** Sorted by name: prompt-facing order must never depend on load order. */
   public getAllSkills(): SkillManifest[] {
-    return Array.from(this.skills.values());
+    return Array.from(this.skills.values()).sort((a, b) =>
+      a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
+    );
   }
 
   public getCompactSummary(): string {
     const lines: string[] = [];
-    for (const s of this.skills.values()) {
+    for (const s of this.getAllSkills()) {
       lines.push(`- ${s.name}: ${s.description} [triggers: ${s.triggers.join(", ")}]`);
     }
     return lines.join("\n");
@@ -36,7 +39,7 @@ export class SkillsRegistry {
     const textToMatch = `${cardTitle} ${filesTouched.join(" ")}`.toLowerCase();
     const matched: SkillManifest[] = [];
 
-    for (const skill of this.skills.values()) {
+    for (const skill of this.getAllSkills()) {
       const matchesTrigger = skill.triggers.some((trig) =>
         textToMatch.includes(trig.toLowerCase()),
       );
@@ -51,7 +54,11 @@ export class SkillsRegistry {
   public loadFromDirectory(dirPath: string): void {
     if (!existsSync(dirPath)) return;
 
-    const entries = readdirSync(dirPath, { withFileTypes: true });
+    // readdirSync order is filesystem-dependent; sorting here is what makes the
+    // Zone 2 prefix byte-identical across machines (C15 / design M2).
+    const entries = readdirSync(dirPath, { withFileTypes: true }).sort((a, b) =>
+      a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
+    );
     for (const entry of entries) {
       if (entry.isDirectory()) {
         const skillMdPath = join(dirPath, entry.name, "SKILL.md");

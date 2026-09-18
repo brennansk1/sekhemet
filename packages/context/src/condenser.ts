@@ -47,18 +47,14 @@ const FILE_PATH_REGEX =
 const FAILING_TEST_REGEX = /^\s*(?:[×✗✘]|FAIL\b|not ok\s+\d+|●\s)/;
 
 const PASSING_TEST_REGEX = /^\s*(?:[✓✔√]|PASS\b|ok\s+\d+(?!\s*#\s*(?:skip|todo)))/i;
-const SKIPPED_TEST_REGEX =
-  /^\s*(?:[↓○⊘]|SKIP\b|skipped\b|todo\b|ok\s+\d+\s*#\s*(?:skip|todo)\b)/i;
+const SKIPPED_TEST_REGEX = /^\s*(?:[↓○⊘]|SKIP\b|skipped\b|todo\b|ok\s+\d+\s*#\s*(?:skip|todo)\b)/i;
 const WARNING_REGEX = /\bwarn(?:ing|ings)?\b|\blint\/[a-z]/i;
 const BIOME_RULE_REGEX = /\b(lint\/[a-z]+\/[A-Za-z0-9]+)\b/;
 const TRAILING_RULE_REGEX = /(?:\s{2,}|\()([a-z][\w-]*(?:\/[\w-]+)+|[a-z][\w-]*-[\w-]+)\)?\s*$/;
-const PARSED_EXIT_CODE_REGEX = /(?:exit(?:ed)?(?:\s+with)?\s+(?:code|status)\s+|exit code[:=]?\s*)(\d{1,3})/i;
+const PARSED_EXIT_CODE_REGEX =
+  /(?:exit(?:ed)?(?:\s+with)?\s+(?:code|status)\s+|exit code[:=]?\s*)(\d{1,3})/i;
 
-export type CondenseStrategy =
-  | "smart_filtering"
-  | "grouping"
-  | "deduplication"
-  | "truncation";
+export type CondenseStrategy = "smart_filtering" | "grouping" | "deduplication" | "truncation";
 
 export interface CondenseOptions {
   /** Line ceiling applied by Truncation to *non-protected* lines. */
@@ -494,7 +490,7 @@ export function maskOlderObservations(
       action: t.action,
       result:
         `[Observation #${t.turn}: ${summarize(t.action, t.result)} ` +
-        `preserved in WAL: ${lineCount} lines omitted. ` +
+        `(preserved in WAL: ${lineCount} lines omitted). ` +
         `${formatTokenCount(maskedTokens)} tokens masked. EvidenceRef: ${ref}]`,
     };
   });

@@ -4,11 +4,12 @@ import { freemem, totalmem } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { BoardServiceImpl } from "@sekhemet/board";
+import { PlaybookRegistry, SkillsRegistry } from "@sekhemet/context";
 import { BenchmarkHarness } from "@sekhemet/eval";
-import { DeterministicGateRunner } from "@sekhemet/gates";
+import { DeterministicGateRunner, loadGatesConfig, summarizeEvidence } from "@sekhemet/gates";
 import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
-import { CardExecutionSessionImpl } from "@sekhemet/loop";
-import { HttpInferenceAdapter, MockInferenceAdapter } from "@sekhemet/models";
+import { CardRunner } from "@sekhemet/loop";
+import { HttpInferenceAdapter, MockInferenceAdapter, createNail35BAdapter } from "@sekhemet/models";
 import { SpidrFeaturePlanner } from "@sekhemet/planner";
 import { ProcessSandbox } from "@sekhemet/sandbox";
 import { NodeGitSyncAdapter } from "@sekhemet/sync";
@@ -379,25 +380,70 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       console.error(`Card not found: ${cardId}`);
       process.exit(1);
     }
-    console.log(`\nExecuting card ${cardId}: "${card.title}"...`);
-    const gitAdapter = new NodeGitSyncAdapter(config.repoPath);
-    const worktree = await gitAdapter.createWorktree(cardId);
-    const sandbox = new ProcessSandbox();
-    const gateRunner = new DeterministicGateRunner(sandbox);
-    const model = new HttpInferenceAdapter({ modelId: config.modelId });
 
-    const session = new CardExecutionSessionImpl({
-      cardId,
+    console.log(`\nExecuting card ${cardId}: "${card.title}"`);
+    console.log(`Scope: [${card.scopeFiles.join(", ") || "unrestricted"}]`);
+    console.log(`Budget: ${card.stepBudget} steps\n`);
+
+    const gitAdapter = new NodeGitSyncAdapter(config.repoPath);
+    const gatesConfig = loadGatesConfig(config.repoPath);
+    // Restricted mode refuses to execute where the OS cannot confine the
+    // subprocess, rather than quietly running the agent unsandboxed.
+    const sandbox = new ProcessSandbox({ requireConfinement: config.restrictedMode });
+    const gateRunner = new DeterministicGateRunner(sandbox, {
+      repoRoot: config.repoPath,
+      expectedConfigSha256: gatesConfig.sha256,
+    });
+    const model = createNail35BAdapter();
+    const skills = new SkillsRegistry();
+    skills.loadFromDirectory(join(config.repoPath, ".sekhemet", "skills"));
+    const playbook = new PlaybookRegistry(config.repoPath);
+
+    const runner = new CardRunner({
+      card,
+      repoRoot: config.repoPath,
+      worktreePath: join(config.repoPath, ".sekhemet", "worktrees", cardId),
       stepBudget: card.stepBudget,
-      worktreePath: worktree,
       modelAdapter: model,
       gateRunner,
+      syncAdapter: gitAdapter,
+      scopeFiles: card.scopeFiles,
+      agentRole: "implementer",
+      agentHarness: "sekhemet",
+      skillsRegistry: skills,
+      playbookRegistry: playbook,
+      lifecycle: {
+        transition: async (id, to) => {
+          const current = await cardStore.getCard(id);
+          if (!current || current.status === to) return;
+          await boardService.transitionCard({
+            cardId: id,
+            fromStatus: current.status,
+            toStatus: to,
+            actor: "executor",
+            reason: `card runner advanced card to ${to}`,
+          });
+        },
+      },
+      onProgress: (event) => {
+        const prefix = event.turn ? `  [turn ${event.turn}]` : "  ";
+        console.log(`${prefix} ${event.type}: ${event.message}`);
+      },
     });
 
-    const turn = await session.executeTurn();
+    const result = await runner.run();
+
+    console.log(`\n${summarizeEvidence(result.evidence)}\n`);
     console.log(
-      `Executed turn ${turn.turnIndex}. Stop reason: ${turn.stopReason || "in_progress"}`,
+      result.passed
+        ? `Card ${cardId} PASSED verification and moved to Review for human acceptance.`
+        : `Card ${cardId} stopped: ${result.stopReason}. Left in ${result.finalStatus} for inspection.`,
     );
+
+    // Release the model before exiting: holding a resident MoE checkpoint on a
+    // constrained box is what starts swapping.
+    await model.unload();
+    if (!result.passed) process.exitCode = 1;
     return;
   }
 

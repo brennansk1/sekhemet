@@ -1,29 +1,75 @@
+import { createHash } from "node:crypto";
 import type { ToolCall } from "@sekhemet/models";
 
+/** Canonical JSON so key ordering cannot change a fingerprint. */
+function canonicalize(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return `[${value.map(canonicalize).join(",")}]`;
+  const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) =>
+    a < b ? -1 : a > b ? 1 : 0,
+  );
+  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalize(v)}`).join(",")}}`;
+}
+
+export interface StallSignature {
+  /** Tool names invoked this turn, in order. */
+  tools: string;
+  /** Stable hash of the arguments. */
+  argHash: string;
+  /**
+   * Fingerprint of the repository after the turn.
+   *
+   * Without it, an agent that repeats a command *after* successfully changing
+   * the tree is indistinguishable from one stuck in a no-op loop — so a
+   * legitimate re-run of the test suite reads as a stall.
+   */
+  repoStateHash: string;
+}
+
+/**
+ * Detects genuine non-progress: identical actions that also left the repo unchanged.
+ *
+ * Repetition alone is not a stall. The repo hash is what separates "tried the
+ * same thing and nothing happened" from "made an edit and re-ran the gate".
+ */
 export class OscillationDetector {
-  private history: string[] = [];
+  private history: StallSignature[] = [];
 
-  constructor(private threshold = 3) {}
+  constructor(private threshold = 2) {}
 
-  public recordAndCheck(calls: ToolCall[]): boolean {
-    const fingerprint = this.computeFingerprint(calls);
-    this.history.push(fingerprint);
+  public recordAndCheck(calls: ToolCall[], repoStateHash = ""): boolean {
+    this.history.push(this.computeSignature(calls, repoStateHash));
 
-    if (this.history.length < this.threshold) {
-      return false;
-    }
+    if (this.history.length < this.threshold) return false;
 
-    // 1. Check for N consecutive identical fingerprints
     const recent = this.history.slice(-this.threshold);
-    const allIdentical = recent.every((fp) => fp === recent[0]);
-    if (allIdentical) {
-      return true;
-    }
+    const first = recent[0] as StallSignature;
 
-    // 2. Check for alternating cycle (A -> B -> A -> B) across 4 turns
+    // N consecutive identical signatures with an unchanged repository.
+    const identical = recent.every(
+      (s) =>
+        s.tools === first.tools &&
+        s.argHash === first.argHash &&
+        s.repoStateHash === first.repoStateHash,
+    );
+    if (identical) return true;
+
+    // A -> B -> A -> B cycle that also left the tree untouched.
     if (this.history.length >= 4) {
-      const last4 = this.history.slice(-4);
-      if (last4[0] === last4[2] && last4[1] === last4[3] && last4[0] !== last4[1]) {
+      const window = this.history.slice(-4) as StallSignature[];
+      const a = window[0] as StallSignature;
+      const b = window[1] as StallSignature;
+      const c = window[2] as StallSignature;
+      const d = window[3] as StallSignature;
+      const same = (x: StallSignature, y: StallSignature): boolean =>
+        x.tools === y.tools && x.argHash === y.argHash;
+      if (
+        same(a, c) &&
+        same(b, d) &&
+        !same(a, b) &&
+        a.repoStateHash === d.repoStateHash &&
+        a.repoStateHash !== ""
+      ) {
         return true;
       }
     }
@@ -31,12 +77,15 @@ export class OscillationDetector {
     return false;
   }
 
-  private computeFingerprint(calls: ToolCall[]): string {
-    const simplified = calls.map((c) => ({
-      name: c.name,
-      args: c.arguments,
-    }));
-    return JSON.stringify(simplified);
+  private computeSignature(calls: ToolCall[], repoStateHash: string): StallSignature {
+    return {
+      tools: calls.map((c) => c.name).join(","),
+      argHash: createHash("sha256")
+        .update(canonicalize(calls.map((c) => c.arguments)))
+        .digest("hex")
+        .slice(0, 32),
+      repoStateHash,
+    };
   }
 
   public reset(): void {

@@ -101,6 +101,9 @@ importers:
       '@sekhemet/models':
         specifier: workspace:*
         version: link:../models
+      '@sekhemet/sandbox':
+        specifier: workspace:*
+        version: link:../sandbox
     devDependencies:
       '@types/node':
         specifier: ^22.13.4
