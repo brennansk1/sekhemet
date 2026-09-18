@@ -252,6 +252,36 @@ export function stopReasonLabel(
       };
     case "human_abort":
       return { short: "Stopped by you", sentence: "You stopped this attempt.", tone: "neutral" };
+    case "done_pending_gates":
+      return {
+        short: "Done, gates not run",
+        sentence: "The Worker finished, but the gates could not run to confirm it.",
+        tone: "blocked",
+      };
+    case "token_budget_exhausted":
+      return {
+        short: "Out of tokens",
+        sentence: "Spent the card's token budget without passing.",
+        tone: "fail",
+      };
+    case "time_budget_exhausted":
+      return {
+        short: "Out of time",
+        sentence: "Spent the card's time budget without passing.",
+        tone: "fail",
+      };
+    case "replan_requested":
+      return {
+        short: "Needs a new plan",
+        sentence: "Direct repairs did not work; the card went back to Planning.",
+        tone: "blocked",
+      };
+    case "vacuous_tests":
+      return {
+        short: "Tests already pass",
+        sentence: "Its acceptance tests pass before any work, so they cannot measure it.",
+        tone: "parked",
+      };
     default:
       return reason
         ? { short: humanize(reason), sentence: `Stopped: ${humanize(reason)}.`, tone: "neutral" }
@@ -992,6 +1022,11 @@ export function vocabularyTables(): Record<string, unknown> {
     "scope_violation",
     "capability_ceiling",
     "human_abort",
+    "done_pending_gates",
+    "token_budget_exhausted",
+    "time_budget_exhausted",
+    "replan_requested",
+    "vacuous_tests",
   ];
   return {
     kinds: KIND_LABELS,

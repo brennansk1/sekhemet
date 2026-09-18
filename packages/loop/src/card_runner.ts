@@ -508,6 +508,7 @@ export class CardRunner {
     const fresh = !resumedFrom && !this.options.useExistingWorktree && attempt === 1;
     if (
       fresh &&
+      !this.options.restricted &&
       this.options.verifyFailToPass !== false &&
       (card.acceptanceTests?.length ?? 0) > 0
     ) {
@@ -547,7 +548,15 @@ export class CardRunner {
     const session = new CardExecutionSessionImpl({
       // Verify against every blocking gate the project declares (lint included,
       // as the spec requires), unless the caller chose specific rungs.
-      gateRungs: [...new Set(this.config.gates.filter((g) => g.blocking).map((g) => g.rung))],
+      // Under --restricted only the static layer runs: executing the repo's
+      // tests would execute its code (S12).
+      gateRungs: [
+        ...new Set(
+          this.config.gates
+            .filter((g) => g.blocking && (!this.options.restricted || g.layer === "static"))
+            .map((g) => g.rung),
+        ),
+      ],
       ...(this.config.project.autofix ? { autofixCommand: this.config.project.autofix } : {}),
       ...(this.config.project.styleFix && this.config.project.styleFixRules
         ? {

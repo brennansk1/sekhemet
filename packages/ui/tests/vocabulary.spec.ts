@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import type { CardRecord } from "@sekhemet/kernel";
+import { CARD_STOP_REASONS, type CardRecord } from "@sekhemet/kernel";
 import { describe, expect, it } from "vitest";
 import {
   BOARD_COLUMN_ORDER,
@@ -140,6 +140,27 @@ describe("stopReasonLabel", () => {
       expect(label.sentence).toMatch(/\.$/);
       expect(label.sentence).not.toContain("_");
     }
+  });
+
+  it("labels every stop reason the kernel defines, including wave 1's", () => {
+    const wave1: Record<string, [string, string]> = {
+      done_pending_gates: ["Done, gates not run", "blocked"],
+      token_budget_exhausted: ["Out of tokens", "fail"],
+      time_budget_exhausted: ["Out of time", "fail"],
+      replan_requested: ["Needs a new plan", "blocked"],
+      vacuous_tests: ["Tests already pass", "parked"],
+    };
+    for (const [reason, [short, tone]] of Object.entries(wave1)) {
+      expect(stopReasonLabel(reason).short, reason).toBe(short);
+      expect(stopReasonLabel(reason).tone, reason).toBe(tone);
+    }
+    // No kernel stop reason falls through to the humanised fallback.
+    for (const reason of CARD_STOP_REASONS) {
+      expect(stopReasonLabel(reason).short, reason).not.toBe(humanize(reason));
+      expect(stopReasonLabel(reason).sentence, reason).not.toContain("_");
+    }
+    const tables = vocabularyTables() as { stopReasons: Record<string, unknown> };
+    expect(Object.keys(tables.stopReasons).sort()).toEqual([...CARD_STOP_REASONS].sort());
   });
 
   it("puts numbers in the sentence when it has them", () => {

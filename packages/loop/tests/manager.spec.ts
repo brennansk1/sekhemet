@@ -71,6 +71,16 @@ describe("@sekhemet/loop manager repair planning", () => {
     expect(seen[0]?.systemPrompt).toContain("Never change a test");
   });
 
+  it("sends a repair plan as a planning request with bounded reasoning (M5, M6)", async () => {
+    const { adapter, seen } = recordingManager("plan");
+    await planRepair(adapter, { card, stopReason: "no_progress", failures: [], files: [] });
+    expect(seen[0]?.purpose).toBe("planning");
+    expect(seen[0]?.reasoning).toBe("medium");
+    expect(seen[0]?.reasoningBudgetTokens).toBeGreaterThan(0);
+    // The adapter's planning sampling decides the temperature.
+    expect(seen[0]?.temperature).toBeUndefined();
+  });
+
   it("says so when no gate ran rather than presenting an empty failure list", async () => {
     const { adapter, seen } = recordingManager("plan");
     await planRepair(adapter, { card, stopReason: "no_progress", failures: [], files: [] });

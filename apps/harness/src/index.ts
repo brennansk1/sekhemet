@@ -11,12 +11,15 @@ import { remedyFor } from "@sekhemet/gates";
 import { type CardRecord, CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { planRepair } from "@sekhemet/loop";
 import {
-  HttpInferenceAdapter,
+  MemoryWatchdog,
+  ModelRoster,
   ModelRouter,
   NAIL_WORKER_PROFILE,
-  createApodexResearcher,
-  createCyberTielWorker,
+  PrefixCacheMonitor,
+  ThroughputMeter,
+  type UnloadableAdapter,
   createNail35BAdapter,
+  measureThroughput,
 } from "@sekhemet/models";
 import { SpidrFeaturePlanner } from "@sekhemet/planner";
 import { ProcessSandbox } from "@sekhemet/sandbox";
@@ -25,10 +28,13 @@ import { type DoctorReport, runDoctor } from "./doctor.js";
 import {
   type QueueEntry,
   type QueueReport,
+  QueuedWorkerQuestions,
   acceptCard,
   collectCardFiles,
   executeCard,
   inferDependencies,
+  nextAttemptNumber,
+  recordReview,
   writeQueueReport,
 } from "./execute.js";
 import { notifySlack } from "./integrations.js";
@@ -40,8 +46,7 @@ import { LearningStore } from "./learning/store.js";
 import { runMcpStdioServer } from "./mcp.js";
 import { DEFAULT_PM_MODEL, answerQueued, createPmAdapter, holdRunnerLease } from "./pm/service.js";
 import { PmStore } from "./pm/store.js";
-import { research } from "./research/researcher.js";
-import { webConfigFromEnv } from "./research/web.js";
+import { ResearchService, researchSources } from "./research/service.js";
 import { DEFAULT_DASHBOARD_PORT, startDashboardServer } from "./server.js";
 import { loadAttempts, tune, writeTuningReport } from "./tune.js";
 
@@ -423,11 +428,21 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       console.log(`No worktree for ${cardId}; running the gates in the repository instead.`);
     }
     const gatesConfig = loadGatesConfig(config.repoPath);
-    const rungs = [...new Set(gatesConfig.gates.map((g) => g.rung))];
-    const gateRunner = new DeterministicGateRunner(new ProcessSandbox(), {
-      repoRoot: config.repoPath,
-      expectedConfigSha256: gatesConfig.sha256,
-    });
+    // --restricted runs only the static layer, confined or not at all (S12).
+    const rungs = [
+      ...new Set(
+        gatesConfig.gates
+          .filter((g) => !config.restrictedMode || g.layer === "static")
+          .map((g) => g.rung),
+      ),
+    ];
+    const gateRunner = new DeterministicGateRunner(
+      new ProcessSandbox({ requireConfinement: config.restrictedMode }),
+      {
+        repoRoot: config.repoPath,
+        expectedConfigSha256: gatesConfig.sha256,
+      },
+    );
     console.log(`\nRunning ${rungs.join(", ")} in ${cwd}`);
     const res = await gateRunner.runGates(rungs, cwd);
     let boundsOk = true;
@@ -660,74 +675,79 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       return;
     }
 
+    // Every role resolves through one roster (M5, C3): a managed name
+    // (cyber-tiel, apodex, qwen3.8-27b/dirk) runs under a harness-managed
+    // llama-server and roles on the same weights share one adapter; any other
+    // name is an Ollama model with its role's profile.
+    const roster = new ModelRoster();
+    const pmModelName = managerModel ?? DEFAULT_PM_MODEL;
+    /** Every adapter the router loaded, for the watchdog's actions. */
+    const loaded = new Set<UnloadableAdapter>();
+    // Prefill/decode speed per model and the Worker's prefix-cache hit rate (M3, M18).
+    const meter = new ThroughputMeter();
+    const cache = new PrefixCacheMonitor();
+    const measured = new WeakSet<object>();
+    const track =
+      (factory: () => UnloadableAdapter, measure = false) =>
+      (): UnloadableAdapter => {
+        const adapter = factory();
+        loaded.add(adapter);
+        if (measure && !measured.has(adapter)) {
+          measured.add(adapter);
+          measureThroughput(adapter, meter, cache);
+        }
+        return adapter;
+      };
     const router = new ModelRouter(
       {
-        // "cyber-tiel" runs under a harness-managed llama-server so its MTP head
-        // and chat template are used; any other name is an Ollama model.
-        worker: () =>
-          workerModel === "cyber-tiel"
-            ? createCyberTielWorker()
-            : workerModel
-              ? new HttpInferenceAdapter({ ...NAIL_WORKER_PROFILE, modelId: workerModel })
-              : createNail35BAdapter(),
+        worker: track(roster.factory(workerModel ?? NAIL_WORKER_PROFILE.modelId, "worker"), true),
         // The manager doubles as the PM you chat with during the run; without
         // --manager it is still available for chat, just not for repair plans.
-        manager: () =>
-          managerModel
-            ? new HttpInferenceAdapter({
-                modelId: managerModel,
-                apiFormat: "ollama",
-                contextTokens: 8192,
-                maxTokens: 2048,
-                disableReasoning: true,
-                sampling: { temperature: 0.2, topP: 0.9, topK: 20, minP: 0 },
-              })
-            : createPmAdapter(DEFAULT_PM_MODEL),
+        manager: track(roster.factory(pmModelName, "manager")),
         // The Researcher (--researcher <model>; the user's choice is Apodex-1.1-mini).
         ...(researcherModel
-          ? {
-              researcher: () =>
-                researcherModel === "apodex"
-                  ? createApodexResearcher()
-                  : new HttpInferenceAdapter({
-                      modelId: researcherModel,
-                      apiFormat: "ollama",
-                      contextTokens: 16384,
-                      maxTokens: 1200,
-                      disableReasoning: true,
-                      sampling: { temperature: 0.2, topP: 0.9, topK: 20, minP: 0 },
-                    }),
-            }
+          ? { researcher: track(roster.factory(researcherModel, "researcher")) }
           : {}),
         // A different model family for Merit's review (--reviewer <model>).
-        ...(reviewerModel
-          ? {
-              reviewer: () =>
-                new HttpInferenceAdapter({
-                  modelId: reviewerModel,
-                  apiFormat: "ollama",
-                  contextTokens: 12288,
-                  maxTokens: 900,
-                  disableReasoning: true,
-                  sampling: { temperature: 0.1, topP: 0.9, topK: 20, minP: 0 },
-                }),
-            }
-          : {}),
+        ...(reviewerModel ? { reviewer: track(roster.factory(reviewerModel, "reviewer")) } : {}),
         // The manager's (stronger, dense) model as a coder, for --escalate-retries.
-        escalation: () =>
-          new HttpInferenceAdapter({
-            modelId: managerModel ?? DEFAULT_PM_MODEL,
-            apiFormat: "ollama",
-            // 12k keeps a dense 27B inside a 24 GB host; roomier hosts get 16k.
-            contextTokens: totalmem() >= 48 * 1024 ** 3 ? 16384 : 12288,
-            maxTokens: 3072,
-            disableReasoning: true,
-            sampling: { temperature: 0.2, topP: 0.9, topK: 20, minP: 0 },
-          }),
+        escalation: track(roster.factory(pmModelName, "escalation"), true),
       },
       // Every swap proves the unload and waits for normal memory pressure.
       { log: (line) => console.log(`   ${line}`) },
     );
+    // The memory watchdog (M20): polls every 2 s and acts through the
+    // adapters; the card runner checks it before every turn.
+    const eachLoaded = (fn: (a: UnloadableAdapter & Record<string, unknown>) => unknown) =>
+      Promise.allSettled(
+        [...loaded].map((a) => fn(a as UnloadableAdapter & Record<string, unknown>)),
+      );
+    const watchdog = new MemoryWatchdog({
+      handlers: {
+        suspendMtp: () => {
+          void eachLoaded((a) =>
+            (a as { setMtpSuspended?: (s: boolean) => void }).setMtpSuspended?.(true),
+          );
+        },
+        trimCaches: async () => {
+          await eachLoaded((a) => (a as { trimCache?: () => Promise<number> }).trimCache?.());
+        },
+        unloadModels: async () => {
+          await router.releaseAll();
+        },
+      },
+      releaseHandlers: {
+        suspendMtp: () => {
+          void eachLoaded((a) =>
+            (a as { setMtpSuspended?: (s: boolean) => void }).setMtpSuspended?.(false),
+          );
+        },
+      },
+    });
+    watchdog.onChange((state, previous) =>
+      console.log(`   memory watchdog: ${previous} -> ${state.level} (${state.reason})`),
+    );
+    watchdog.start();
     // Hardware-aware residency: measure every model, derive the budget from
     // this host's RAM, keep the most valuable set resident, swap the rest.
     const plan = await router.calibrate(totalmem());
@@ -738,12 +758,13 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     /** Run a question past the Researcher, then hand the manager back. */
     const askResearcher = researcherModel
       ? async (question: string) => {
-          const web = readSettings(config.repoPath).researchWeb ? webConfigFromEnv() : undefined;
-          const r = await research(await router.use("researcher"), question, {
+          const { web } = await researchSources(config.repoPath);
+          const r = await new ResearchService({
             repoPath: config.repoPath,
-            ...(web ? { web } : {}),
-            maxRounds: researcherModel === "apodex" ? 6 : 3,
-          });
+            web,
+            cardStore,
+            model: () => router.use("researcher"),
+          }).ask(question);
           await router.use("manager");
           return r;
         }
@@ -774,8 +795,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
      * written to the PM, swap the Worker out, answer, swap it back. The card
      * resumes from its worktree, so nothing is lost; only the reload costs time.
      */
-    /** Worker questions waiting for Merit, by card, and Merit's answers to them. */
-    const workerQuestions = new Map<string, string[]>();
+    /** Worker questions waiting for Merit; answers are filed in each card's dossier. */
+    const workerQuestions = new QueuedWorkerQuestions();
     const isWorkerQuestion = (m: { context?: { view?: string } }) =>
       m.context?.view === "worker-question";
 
@@ -786,7 +807,11 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
      * own) and answered in the next manager batch, then handed to the card's
      * next attempt.
      */
-    const askTeam = async (cardId: string, question: string): Promise<string | undefined> => {
+    const askTeam = async (
+      cardId: string,
+      question: string,
+      meta: { questionEntryId?: string } = {},
+    ): Promise<string | undefined> => {
       // Only when Merit's weights are already loaded, and always hand back to
       // the role that was running: switching to "worker" during an escalated
       // retry (which runs on Merit's weights) would load a second large model.
@@ -809,7 +834,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         { cardId, view: "worker-question" },
         "executor",
       );
-      workerQuestions.set(cardId, [...(workerQuestions.get(cardId) ?? []), m.id]);
+      workerQuestions.add(cardId, m.id, meta.questionEntryId);
       return undefined;
     };
 
@@ -832,23 +857,13 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     };
 
     /**
-     * Hand Merit's answers to queued Worker questions to each card's next
-     * attempt. One batch answers every queued question in one reply, so the
-     * latest reply after the batch is the answer.
+     * File Merit's answers to queued Worker questions in each card's dossier,
+     * threaded under the question, so the card's next attempt reads them.
      */
     const collectAnswers = async (): Promise<void> => {
       if (workerQuestions.size === 0) return;
-      const thread = await pmStore.thread();
-      const latest = [...thread].reverse().find((m) => m.role === "pm");
-      for (const [cardId, ids] of workerQuestions) {
-        const asked = thread.filter((m) => ids.includes(m.id));
-        if (!latest || !asked.every((m) => m.state === "done")) continue;
-        lessonsByCard.set(cardId, [
-          ...(lessonsByCard.get(cardId) ?? []),
-          `Merit answered your earlier question: ${latest.text.slice(0, 400)}`,
-        ]);
-        workerQuestions.delete(cardId);
-      }
+      const filed = await workerQuestions.fileAnswers(await pmStore.thread(), cardStore);
+      if (filed > 0) console.log(`   filed ${filed} answer(s) from Merit in the cards' dossiers`);
     };
 
     const answerPm = async (step?: number, batch = false): Promise<void> => {
@@ -902,7 +917,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       learning: new LearningStore(log),
       runRules,
       teamNote: () => teamNote(),
-      askTeam: (cardId: string, question: string) => askTeam(cardId, question),
+      askTeam: (cardId: string, question: string, meta: { questionEntryId?: string }) =>
+        askTeam(cardId, question, meta),
+      watchdog,
       afterTurn: async (_cardId: string, turn: { turnIndex: number }) => {
         await answerPm(turn.turnIndex).catch((err) =>
           console.log(`   PM: could not answer (${err instanceof Error ? err.message : err})`),
@@ -925,8 +942,6 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     }
     const maxTurnsIdx = argv.indexOf("--max-turns");
     const maxTurns = maxTurnsIdx !== -1 ? Number(argv[maxTurnsIdx + 1]) : undefined;
-    // Lessons each attempt learned, handed to the next attempt at the same card.
-    const lessonsByCard = new Map<string, string[]>();
     const passedResults: { card: CardRecord; diff: string }[] = [];
     const reviewAll = argv.includes("--review");
     /**
@@ -948,14 +963,14 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         );
         if (findings.length === 0) continue;
         console.log(`   Merit's review of ${card.id}: ${findings.length} note(s)`);
-        await cardStore
-          .recordEvent({
-            type: "card/review",
-            cardId: card.id,
-            actor: "planner",
-            payload: { id: card.id, findings },
-          })
-          .catch(() => undefined);
+        // Into the card's dossier: the Review surface shows it, and a
+        // returned card's next attempt reads it.
+        await recordReview(
+          cardStore,
+          card.id,
+          findings,
+          reviewerModel ? "reviewer" : "manager",
+        ).catch(() => undefined);
       }
     };
     const attempt = async (rawCard: CardRecord, n: number, guidance?: string) => {
@@ -969,11 +984,13 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       const worker = await router.use(role);
       if (role === "escalation") console.log(`   escalating ${rawCard.id} to ${worker.modelId}`);
       if (role === "worker") workerModelId = worker.modelId;
-      console.log(`\n=== ${card.id} (attempt ${n}): ${card.title} ===`);
-      const prior = lessonsByCard.get(card.id);
-      const result = await executeCard(ctx, card, worker, guidance, prior);
+      // The real attempt number (across queue runs), not the round.
+      const attemptNo = nextAttemptNumber(config.repoPath, card.id);
+      console.log(`\n=== ${card.id} (attempt ${attemptNo}): ${card.title} ===`);
+      // What earlier attempts learned reaches this one through the card's
+      // dossier (lessons, answers, reviews, send-backs), read by the runner.
+      const result = await executeCard(ctx, card, worker, guidance, { attempt: attemptNo });
       if (result.passed) passedResults.push({ card, diff: result.evidence.diff ?? "" });
-      if (result.lessons.lines.length > 0) lessonsByCard.set(card.id, result.lessons.lines);
       for (const st of result.lessons.struggles) {
         const code = /\b(TS\d{4}|lint\/[\w/]+)\b/.exec(st.text)?.[1];
         if (!code || !remedyFor(code, st.text))
@@ -981,9 +998,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       }
 
       let accepted = false;
-      if (result.passed && autoAccept) {
+      if (result.passed && autoAccept && !result.held) {
         const reviewed = await cardStore.getCard(card.id);
-        if (reviewed) {
+        if (reviewed?.status === "review") {
           // --auto-accept is the harness's verdict, not a person's: the ledger
           // must not credit a human with a merge nobody reviewed.
           const sha = await acceptCard(ctx, reviewed, "harness");
@@ -994,7 +1011,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
 
       entries.push({
         cardId: card.id,
-        attempt: n,
+        attempt: attemptNo,
         passed: result.passed,
         accepted,
         stopReason: result.stopReason,
@@ -1002,6 +1019,11 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         durationMs: result.evidence.durationMs,
         promptTokens: result.evidence.tokens.promptTokens,
         completionTokens: result.evidence.tokens.completionTokens,
+        ...(result.held ? { held: `${result.held.wanted}: ${result.held.reason}` } : {}),
+        ...(result.parked ? { parked: result.parked.suggestion } : {}),
+        ...(result.failToPass ? { failToPass: result.failToPass.status } : {}),
+        ...(result.resumedFrom ? { resumedFromStep: result.resumedFrom.step } : {}),
+        ...(result.replan ? { replanRequested: true } : {}),
       });
       console.log(
         `   ${result.passed ? "PASSED" : "FAILED"} (${result.stopReason}) in ${result.evidence.turnsUsed} turns, ${(result.evidence.durationMs / 1000).toFixed(1)}s`,
@@ -1039,7 +1061,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         const index = deferred.findIndex((d) => d.id === card.id);
         if (index !== -1) deferred.splice(index, 1);
         const result = await attempt(card, n, plans?.get(card.id));
-        if (!result.passed) failed.push({ card, result });
+        // A parked card (repair rung 4, vacuous tests) waits for a person; it
+        // is not re-planned automatically.
+        if (!result.passed && !result.parked) failed.push({ card, result });
       }
     };
 
@@ -1079,18 +1103,20 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
 
         // Researcher batch: one load, every unexplained struggle.
         if (askResearcher && unexplained.length > 0) {
-          const researcher = await router.use("researcher");
-          const web = readSettings(config.repoPath).researchWeb ? webConfigFromEnv() : undefined;
+          const { web } = await researchSources(config.repoPath);
+          const service = new ResearchService({
+            repoPath: config.repoPath,
+            web,
+            cardStore,
+            model: () => router.use("researcher"),
+          });
           for (const u of unexplained.splice(0, 4)) {
-            const r = await research(
-              researcher,
-              `A coding model working on this TypeScript project hit this error and needed several attempts to fix it: "${u.text}". What is the correct approach? Give one concrete rule.`,
-              {
-                repoPath: config.repoPath,
-                ...(web ? { web } : {}),
-                maxRounds: researcherModel === "apodex" ? 6 : 3,
-              },
-            ).catch(() => undefined);
+            const r = await service
+              .ask(
+                `A coding model working on this TypeScript project hit this error and needed several attempts to fix it: "${u.text}". What is the correct approach? Give one concrete rule.`,
+                { cardId: u.cardId },
+              )
+              .catch(() => undefined);
             if (!r?.grounded) continue;
             const rule = await ctx.learning.propose({
               role: "worker",
@@ -1111,10 +1137,14 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         const plans = new Map<string, string>();
         for (const { card, result } of toRepair) {
           console.log(`\n--- manager reviewing ${card.id} ---`);
+          // A rung-3 re-plan request carries the Worker's own account of the
+          // standing failures; otherwise the evidence's failures.
           const plan = await planRepair(manager, {
             card,
-            stopReason: result.stopReason,
-            failures: result.evidence.failures,
+            stopReason: result.replan
+              ? `${result.stopReason}: ${result.replan.summary}`
+              : result.stopReason,
+            failures: result.replan?.failures ?? result.evidence.failures,
             files: collectCardFiles(result.worktreePath, card),
           });
           plans.set(card.id, plan);
@@ -1173,7 +1203,10 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       // The human's messages are answered before the run ends; queued Worker
       // questions too when Merit is already resident (no extra swap).
       await answerPm(undefined, router.isResident("manager")).catch(() => undefined);
+      const held = await boardService.listHeld();
+      for (const h of held) console.log(`\n--- ${h.id} is held: ${h.blockedReason} ---`);
     } finally {
+      watchdog.stop();
       await router.releaseAll();
       releaseLease();
     }
@@ -1192,6 +1225,10 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       passAfterEscalation: cardIds.length > 0 ? eventually / cardIds.length : 0,
       modelSwaps: router.swapCount,
       totalDurationMs: Date.now() - started,
+      // Measured speed per model and the Worker's prefix-cache reuse (M3, M18).
+      throughput: meter.all(),
+      cache: cache.summary(),
+      memory: { level: watchdog.state.level, reason: watchdog.state.reason },
     };
     const path = writeQueueReport(config.repoPath, report);
 

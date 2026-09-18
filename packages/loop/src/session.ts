@@ -1,12 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 import {
-  type PlaybookRegistry,
-  type SkillsRegistry,
   type TurnHistoryItem,
-  buildFullPromptPack,
-  compactHistory,
-  maskOlderObservations,
+  type WorkerPromptResult,
+  buildWorkerPrompt,
+  condenseToolOutput,
   retrieveMaskedObservation,
 } from "@sekhemet/context";
 import {
@@ -16,7 +14,7 @@ import {
   checkBounds,
 } from "@sekhemet/gates";
 import type { CardRecord } from "@sekhemet/kernel";
-import { type ToolCall, checkExecutionHeadroom, readSwapUsedBytes } from "@sekhemet/models";
+import { checkExecutionHeadroom, readSwapUsedBytes, reasoningForStep } from "@sekhemet/models";
 import type { ExecutionResult } from "@sekhemet/sandbox";
 import { apiHints } from "./api_surface.js";
 import { OscillationDetector } from "./detector.js";
@@ -29,7 +27,7 @@ import {
 import { type LadderState, RepairLadder, type RungPolicy } from "./ladder.js";
 import type { ToolObservation } from "./observation.js";
 import { buildRepoMap } from "./repo_map.js";
-import { TOOL_CATALOG } from "./tool_catalog.js";
+import { TOOL_CATALOG, restrictedToolCatalog } from "./tool_catalog.js";
 import { ToolExecutor } from "./tools.js";
 import type {
   CardExecutionSession,
@@ -40,11 +38,6 @@ import type {
   TurnResult,
 } from "./types.js";
 import { WorkingMemory } from "./working_memory.js";
-
-/** Turns of tool output kept verbatim before older ones are masked to pointers. */
-const VERBATIM_TURN_WINDOW = 2;
-/** Turns kept individually before older ones are compacted. */
-const COMPACT_AFTER = 8;
 
 /** Tools whose success means a scope file now has content. */
 const WRITE_TOOLS = new Set([
@@ -119,6 +112,8 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   private replanRequest: ReplanRequest | undefined;
   /** Successful writes this card, so the runner can tell when to checkpoint. */
   private writeCount = 0;
+  /** The last prompt the allocator built (for the transcript and evidence). */
+  private lastPrompt: WorkerPromptResult | undefined;
 
   constructor(private options: SessionOptions) {
     if (options.priorLessons?.length) this.memory.seed(options.priorLessons);
@@ -147,6 +142,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       sandbox: options.sandbox,
       protectedGlobs: [...new Set([...declared, ...staged])],
       requireReadBeforeEdit: options.requireReadBeforeEdit,
+      readOnly: options.restricted === true,
     });
     // H17: a resumed card continues its step count from the checkpoint.
     if (options.startStep !== undefined && options.startStep > 0) {
@@ -350,7 +346,12 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       tool: "check",
       ok: false,
       summary: `gates failing: ${[...new Set(result.failures.map((f) => f.gate ?? f.rung))].join(", ")}`,
-      content: `Gates failing (not submitted — keep working):\n${lines.join("\n")}`,
+      // Long gate output goes through the same condenser as run_cmd (C8):
+      // error lines are protected, and the raw text stays recallable.
+      content: condenseToolOutput(
+        `Gates failing (not submitted — keep working):\n${lines.join("\n")}`,
+        { command: "check", exitCode: 1, cardId: this.cardId, turn: this.stepsUsed },
+      ).text,
     };
   }
 
@@ -459,19 +460,6 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       : { tool: "recall", ok: true, summary: `recalled ${text.length} chars`, content: text };
   }
 
-  /**
-   * History as the prompt sees it. Past COMPACT_AFTER turns, or as soon as the
-   * prompt had to be reduced, older turns fold into one compacted entry; at
-   * the tightest level only the compacted index and the last turn remain.
-   */
-  private compactedHistory(level: number): TurnHistoryItem[] {
-    const keep = level >= 4 ? 1 : level >= 1 ? 3 : 6;
-    if (this.history.length <= COMPACT_AFTER && level === 0) return this.history;
-    const { turns, compacted } = compactHistory(this.history, keep, { cardId: this.cardId });
-    this.compactedTurns = Math.max(this.compactedTurns, compacted);
-    return turns;
-  }
-
   /** What this attempt learned, for the next attempt and the playbook reflector. */
   public getLessons(): { lines: string[]; struggles: { text: string; edits: number }[] } {
     return { lines: this.memory.lines(), struggles: this.memory.getStruggles() };
@@ -557,17 +545,15 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     return this.repoMapCache;
   }
 
-  /**
-   * Assemble this turn's prompt from card contract, repo map, history and the
-   * last gate failure.
-   *
-   * Older observations are masked to compact pointers rather than dropped, so
-   * the model retains the shape of what it already tried without paying full
-   * token cost for outputs it has finished acting on.
-   */
   /** Tool schemas sent alongside the prompt; they count against the window too. */
+  /** The tools this card may use: the restricted catalog under `--restricted` (S12). */
+  private catalog() {
+    const base = this.options.tools ?? TOOL_CATALOG;
+    return this.options.restricted ? restrictedToolCatalog(base) : base;
+  }
+
   private toolDefinitions() {
-    const catalog = this.options.tools ?? TOOL_CATALOG;
+    const catalog = this.catalog();
     return catalog.map((t) => ({
       name: t.name,
       description: t.summary,
@@ -593,32 +579,8 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   private promptBudget(): number | undefined {
     if (this.options.promptTokenBudget !== undefined) return this.options.promptTokenBudget;
     const window = this.options.modelAdapter.contextWindow;
-    // A margin for tokenizer disagreement with the character estimate below.
+    // A margin for tokenizer disagreement with the character estimate.
     return window ? window.contextTokens - window.maxTokens - 256 : undefined;
-  }
-
-  /**
-   * Build a prompt that fits the model's window, reducing context in stages.
-   *
-   * A long card's history grows every turn; on a live run the ledger card's
-   * request reached 8,224 tokens against an 8,192 window at turn 32 and the
-   * server rejected it. Reductions go from least to most informative lost:
-   * fewer verbatim turns, then the repo map, then the pinned scope files (the
-   * agent can read_file them), then all but the last turn, then trimmed tests.
-   */
-  private buildPrompt(): { systemPrompt: string; prompt: string; reduction: number } {
-    const budget = this.promptBudget();
-    const toolChars = JSON.stringify(this.toolDefinitions()).length;
-    // Code tokenizes denser than prose; ~3.2 chars per token errs on the safe side.
-    const estimate = (p: { systemPrompt: string; prompt: string }): number =>
-      Math.ceil((p.systemPrompt.length + p.prompt.length + toolChars) / 3.2);
-
-    let last: { systemPrompt: string; prompt: string } | undefined;
-    for (let level = 0; level <= 5; level++) {
-      last = this.buildPromptAt(level);
-      if (budget === undefined || estimate(last) <= budget) return { ...last, reduction: level };
-    }
-    return { ...(last as { systemPrompt: string; prompt: string }), reduction: 6 };
   }
 
   /** The manager's plan and any in-loop re-plan, newest last. */
@@ -629,105 +591,106 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     return parts.length > 0 ? parts.join("\n\nRevised plan (repair rung 3):\n") : undefined;
   }
 
-  /** The team note plus what the team has recorded about this card (its dossier). */
-  private teamBlock(): string | undefined {
-    const lines = (this.options.dossierLines ?? []).filter((l) => l.trim().length > 0);
-    const dossier =
-      lines.length > 0
-        ? `What the team has recorded about this card (newest last):\n${lines.map((l) => `- ${l}`).join("\n")}`
-        : undefined;
-    const parts = [this.options.teamNote, dossier].filter((p): p is string => Boolean(p));
-    return parts.length > 0 ? parts.join("\n\n") : undefined;
-  }
-
-  private buildPromptAt(level: number): { systemPrompt: string; prompt: string } {
+  /**
+   * This turn's prompt, from the one context allocator (`buildWorkerPrompt`,
+   * C4 and C7). It orders the prompt for the prefix cache (system, then the
+   * card-stable static part, then the per-turn tail), describes the tools
+   * once (as native schemas when the adapter sends them, as text otherwise),
+   * applies the 70/80/85/90% pressure tiers and cuts by priority, keeping the
+   * scope files and the standing failure longest.
+   */
+  private buildPrompt(): WorkerPromptResult {
     const skills =
       this.options.skillsRegistry?.resolveActiveSkills(
         this.card.title,
         this.options.scopeFiles ?? [],
       ) ?? [];
-
     // The failure text lets error-scoped rules match only while their error
-    // stands (integration review item 3). Registries that predate the
-    // `failureText` option ignore the extra field.
-    type MatchOptions = Parameters<PlaybookRegistry["matchRules"]>[0] & { failureText?: string };
-    const matchOptions: MatchOptions = {
-      cardTitle: this.card.title,
-      scopeFiles: this.options.scopeFiles ?? [],
-      ...(this.lastGateFailure ? { triggerGate: this.lastGateFailure.rung } : {}),
-      ...(this.lastGateFailures.length > 0
-        ? { failureText: this.lastGateFailures.map((f) => f.errorExcerpt).join("\n") }
-        : {}),
-    };
-    const matched = this.options.playbookRegistry?.matchRules(matchOptions) ?? [];
-    for (const r of matched) this.rulesUsed.add(r.id);
-    const playbookRules = matched.map((r) => r.instruction);
-
-    // The active rung's directive rides alongside playbook rules so escalation
-    // changes what the model is told to do, not merely how often it retries.
-    if (this.activeRung && this.activeRung.rung !== "direct_repair") {
-      playbookRules.unshift(this.activeRung.directive);
-    }
-
-    const pack = buildFullPromptPack({
+    // stands (integration review item 3).
+    const rules =
+      this.options.playbookRegistry?.matchRules({
+        cardTitle: this.card.title,
+        scopeFiles: this.options.scopeFiles ?? [],
+        ...(this.lastGateFailure ? { triggerGate: this.lastGateFailure.rung } : {}),
+        ...(this.lastGateFailures.length > 0
+          ? { failureText: this.lastGateFailures.map((f) => f.errorExcerpt).join("\n") }
+          : {}),
+      }) ?? [];
+    const pinned = this.pinnedFiles();
+    const native = this.options.modelAdapter.nativeTools === true;
+    const budget = this.promptBudget();
+    const guidance = this.guidance();
+    const dossier = (this.options.dossierLines ?? [])
+      .filter((l) => l.trim().length > 0)
+      .map((text) => ({ label: "From the team (this card)", text }));
+    const completedWork = [
+      ...[...this.filesWritten].sort().map((f) => `wrote ${f}`),
+      // Listing what was already read is what stops the agent spending its
+      // budget re-reading files it has in front of it.
+      ...this.tools.getReadFiles().map((f) => `read ${f} (do not re-read)`),
+    ];
+    const pending = this.pendingScopeFiles();
+    const built = buildWorkerPrompt({
       card: { ...this.card, stepsUsed: this.stepsUsed },
-      ...(level >= 2 ? {} : { repoMap: this.repoMap() }),
-      pinnedFiles: this.pinnedFiles()
-        .filter((f) => level < 3 || f.label !== "scope file")
-        .map((f) =>
-          level >= 5 && f.content.length > 4000
-            ? {
-                ...f,
-                content: `${f.content.slice(0, 4000)}\n… (truncated to fit the context window)`,
-              }
-            : f,
-        ),
-      // Per-card, so it rides in the volatile zone: in the system zone it would
-      // both break the cacheable prefix and overrun that zone's budget.
-      ...(this.guidance() ? { managerGuidance: this.guidance() as string } : {}),
-      ...(this.teamBlock() ? { teamNote: this.teamBlock() as string } : {}),
-      activeSkills: skills,
-      playbookRules,
-      recentTurns: maskOlderObservations(
-        this.compactedHistory(level),
-        level >= 1 ? 1 : VERBATIM_TURN_WINDOW,
-      ),
-      // The catalog is what tells the model these tools exist at all.
-      tools: this.options.tools ?? TOOL_CATALOG,
-      // What it has already done, and what remains. An agent with no record of
-      // its own progress repeats its last successful action indefinitely.
-      ...(this.filesWritten.size > 0 ||
-      this.tools.getReadFiles().length > 0 ||
-      this.memory.lines().length > 0
-        ? {
-            completedWork: [
-              ...[...this.filesWritten].sort().map((f) => `wrote ${f}`),
-              // Listing what was already read is what stops the agent spending
-              // its budget re-reading files it has in front of it.
-              ...this.tools.getReadFiles().map((f) => `read ${f} (do not re-read)`),
-              ...this.memory.lines(),
-            ],
-          }
+      tools: this.catalog(),
+      ...(native ? { nativeToolSchemas: this.toolDefinitions() } : {}),
+      ...(budget !== undefined ? { budgetTokens: budget } : {}),
+      repoMap: this.repoMap(),
+      acceptanceTests: pinned
+        .filter((f) => f.label === "acceptance test")
+        .map(({ path, content }) => ({ path, content })),
+      scopeFiles: pinned
+        .filter((f) => f.label === "scope file")
+        .map(({ path, content }) => ({ path, content })),
+      ...(this.options.teamNote ? { teamNote: this.options.teamNote } : {}),
+      ...(guidance ? { repairPlan: guidance } : {}),
+      ...(dossier.length > 0 ? { dossier } : {}),
+      lessons: this.memory.lines(),
+      rules,
+      ...(this.activeRung && this.activeRung.rung !== "direct_repair"
+        ? { rungDirective: this.activeRung.directive }
         : {}),
-      ...(this.pendingScopeFiles().length > 0
-        ? { openTodos: this.pendingScopeFiles() }
-        : { readyToVerify: this.filesWritten.size > 0 }),
-      // The card's own contract. Without it the model has only a title to work
-      // from and invents the rest — which is exactly what it does.
+      skills,
+      turns: this.history,
+      gateFailures: this.lastGateFailures,
+      ...(this.lastGateFailures.length > 0
+        ? { failureCode: this.failureCode(this.lastGateFailures) }
+        : {}),
       ...(this.card.spec ? { goal: this.card.spec } : {}),
       ...(this.card.acceptanceCriteria?.length
         ? { acceptanceCriteria: this.card.acceptanceCriteria }
         : {}),
-      ...(this.lastGateFailure ? { gateFailure: this.lastGateFailure } : {}),
-      ...(this.lastGateFailures.length > 1
-        ? { otherGateFailures: this.lastGateFailures.slice(1) }
-        : {}),
-      ...(this.lastGateFailures.length > 0
-        ? { failureCode: this.failureCode(this.lastGateFailures) }
-        : {}),
+      ...(completedWork.length > 0 ? { completedWork } : {}),
+      ...(pending.length > 0
+        ? { openTodos: pending }
+        : { readyToVerify: this.filesWritten.size > 0 }),
     });
+    for (const id of built.rulesUsed) this.rulesUsed.add(id);
+    if (this.history.length > 8) {
+      this.compactedTurns = Math.max(this.compactedTurns, this.history.length - 6);
+    }
+    this.lastPrompt = built;
+    return built;
+  }
 
-    return pack;
+  /** The last prompt's allocation report (tier, cuts, prefix hashes), for evidence and the log. */
+  public getLastPromptReport():
+    | Pick<
+        WorkerPromptResult,
+        "tier" | "prefixHash" | "staticPrefixHash" | "usedTokens" | "budgetTokens" | "cut"
+      >
+    | undefined {
+    const p = this.lastPrompt;
+    return p
+      ? {
+          tier: p.tier,
+          prefixHash: p.prefixHash,
+          staticPrefixHash: p.staticPrefixHash,
+          usedTokens: p.usedTokens,
+          budgetTokens: p.budgetTokens,
+          cut: p.cut,
+        }
+      : undefined;
   }
 
   public async executeTurn(): Promise<TurnResult> {
@@ -765,12 +728,32 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     this.stepsUsed++;
     const turnIndex = this.stepsUsed;
 
-    const { systemPrompt, prompt } = this.buildPrompt();
+    const built = this.buildPrompt();
+    const { systemPrompt, prompt } = built;
     this.lastSystemPrompt = systemPrompt;
+    if (built.stop) {
+      // Even the required sections exceed the window: another request would
+      // be rejected by the server (C7, the 95% hard stop).
+      this.history.push({
+        turn: turnIndex,
+        action: "context budget",
+        result: `Stopped: the prompt needs ${built.usedTokens} tokens of a ${built.budgetTokens}-token budget even after every cut.`,
+      });
+      return { turnIndex, toolCalls: [], observations: [], stopReason: "budget_exhausted" };
+    }
+
+    // Reasoning per step (M6): off for ordinary steps and direct repair, on
+    // once the direct fix has failed.
+    const rung = this.activeRung?.rung;
+    const thinking = reasoningForStep(
+      rung && rung !== "direct_repair" ? { purpose: "repair", rung } : { purpose: "mechanical" },
+    );
 
     const response = await this.options.modelAdapter.generate({
       systemPrompt,
       prompt,
+      reasoning: thinking.reasoning,
+      reasoningBudgetTokens: thinking.reasoningBudgetTokens,
       // Names travel with the request so the parser can recognise a call in
       // whatever syntax the model chose to emit it.
       // Real JSON Schema, so servers with native tool calling can constrain
@@ -1071,8 +1054,9 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   }
 
   public async runVerification(): Promise<GateResult> {
-    const autofix = this.options.autofixCommand;
-    const scope = this.options.scopeFiles ?? [];
+    // A read-only audit never runs a formatter over the files (S12).
+    const autofix = this.options.restricted ? undefined : this.options.autofixCommand;
+    const scope = this.options.restricted ? [] : (this.options.scopeFiles ?? []);
     if (autofix && autofix.length > 0 && scope.length > 0) {
       const [command, ...args] = autofix as [string, ...string[]];
       // Best effort: a formatter failure is reported by the lint gate itself.

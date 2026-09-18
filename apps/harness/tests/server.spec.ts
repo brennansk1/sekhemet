@@ -326,6 +326,12 @@ describe("@sekhemet/harness Dashboard Server", () => {
     const line = JSON.parse(readFileSync(candidates, "utf8").trim().split("\n").at(-1) ?? "{}");
     expect(line.cardId).toBe("card_triage");
     expect(line.reason).toBe("Handle the empty-chain case explicitly");
+    // The reason is the next attempt's directive: it is in the card's dossier.
+    const dossier = await cardStore.getDossier("card_triage");
+    expect(dossier.sendBacks.map((e) => e.text)).toEqual([
+      "Handle the empty-chain case explicitly",
+    ]);
+    expect(dossier.sendBacks[0]?.actor).toBe("human");
   });
 
   it("parks a card and reports illegal transitions instead of forcing them", async () => {

@@ -3,11 +3,18 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { BoardServiceImpl } from "@sekhemet/board";
-import { PlaybookRegistry, SkillsRegistry } from "@sekhemet/context";
+import { PlaybookRegistry, SkillsRegistry, useFileEvidenceStore } from "@sekhemet/context";
 import { DeterministicGateRunner, loadGatesConfig } from "@sekhemet/gates";
-import type { CardRecord, CardStore } from "@sekhemet/kernel";
+import type { CardRecord, CardStatus, CardStore } from "@sekhemet/kernel";
 import { type CardRunResult, CardRunner, type TurnResult } from "@sekhemet/loop";
-import type { LocalInferenceAdapter } from "@sekhemet/models";
+import {
+  type CacheSummary,
+  type LocalInferenceAdapter,
+  type MemoryWatchdog,
+  type ThroughputStats,
+  checkExecutionHeadroom,
+  readSwapUsedBytes,
+} from "@sekhemet/models";
 import { ProcessSandbox } from "@sekhemet/sandbox";
 import { NodeGitSyncAdapter } from "@sekhemet/sync";
 import { readSettings } from "./integrations.js";
@@ -32,8 +39,49 @@ export interface ExecutionContext {
   runRules?: Set<string>;
   /** One paragraph on who is on the team right now (from the residency plan). */
   teamNote?: () => string;
-  /** Route a Worker question the card's contract cannot answer to the team. */
-  askTeam?: (cardId: string, question: string) => Promise<string | undefined>;
+  /**
+   * Route a Worker question the card's contract cannot answer to the team.
+   * `questionEntryId` is the question's dossier entry, so an answer filed
+   * later (`QueuedWorkerQuestions`) threads under it.
+   */
+  askTeam?: (
+    cardId: string,
+    question: string,
+    meta: { questionEntryId?: string },
+  ) => Promise<string | undefined>;
+  /**
+   * The memory watchdog (M20). While it says to pause, no new turn starts:
+   * the runner waits for pressure to fall, then stops the card resumably
+   * with `memory_pressure` if it does not.
+   */
+  watchdog?: Pick<MemoryWatchdog, "shouldPauseTurns" | "waitUntilBelow">;
+  /** How long a paused card waits for the watchdog before it stops. Default 120 s. */
+  watchdogWaitMs?: number;
+}
+
+/** Options for one run of `executeCard`. */
+export interface ExecuteCardOptions {
+  /**
+   * Which attempt at this card this is. Default: one past the attempt in the
+   * card's latest evidence, so a retry in a later queue run never poses as
+   * attempt 1 (integration review item 9).
+   */
+  attempt?: number;
+  /** Stops the card before its next turn with `human_abort` (L25). */
+  signal?: AbortSignal;
+}
+
+/** The attempt after the one in the card's latest evidence bundle (1 when none). */
+export function nextAttemptNumber(repoPath: string, cardId: string): number {
+  try {
+    const latest = JSON.parse(
+      readFileSync(join(repoPath, ".sekhemet", "evidence", `latest-${cardId}.json`), "utf8"),
+    ) as { attempt?: unknown };
+    const n = typeof latest.attempt === "number" ? Math.floor(latest.attempt) : 0;
+    return n >= 1 ? n + 1 : 1;
+  } catch {
+    return 1;
+  }
 }
 
 /** What a tool call acted on, in a few characters: a path, a command, a note. */
@@ -90,10 +138,13 @@ export async function executeCard(
   card: CardRecord,
   model: LocalInferenceAdapter,
   managerGuidance?: string,
-  /** What earlier attempts at this card learned; a retry never starts blank. */
-  priorLessons?: string[],
+  options: ExecuteCardOptions = {},
 ): Promise<CardRunResult> {
   const log = ctx.log ?? ((line: string) => console.log(line));
+  const attempt = options.attempt ?? nextAttemptNumber(ctx.repoPath, card.id);
+  // Masked and condensed observations persist under the main repository, so
+  // recall(ref) still works after a restart and after the worktree is gone (C6).
+  useFileEvidenceStore(ctx.repoPath);
   // The Planner's repair plan is what attempt 2 runs on; keep it in the ledger
   // so the card's Plan tab can show what the Worker was told.
   if (managerGuidance) {
@@ -102,7 +153,7 @@ export async function executeCard(
         type: "card/repair_plan",
         cardId: card.id,
         actor: "planner",
-        payload: { id: card.id, plan: managerGuidance },
+        payload: { id: card.id, plan: managerGuidance, attempt },
       });
     } catch {
       // A ledger hiccup must not cost the retry.
@@ -120,25 +171,25 @@ export async function executeCard(
   const skills = new SkillsRegistry();
   skills.loadFromDirectory(join(ctx.repoPath, ".sekhemet", "skills"));
   const playbook = new PlaybookRegistry(ctx.repoPath);
-  // Learned rules the human approved join the seeded playbook for this card.
-  // Their pattern is the card's own title, so matchRules selects them here.
-  // In memory only: addRule rewrites the project's playbook.toml, which let
-  // learned rules leak into the seeded file (integration review). Builder A's
-  // addTransientRule is used when present.
-  const transient = playbook as unknown as {
-    addTransientRule?: (r: { id: string; pattern: string; instruction: string }) => void;
-    rules?: Map<string, unknown>;
-  };
+  // Learned rules the human approved join the seeded playbook for this card,
+  // in memory only (never written to playbook.toml). Their pattern is the
+  // card's own title, so matchRules selects them here; an error-scoped rule
+  // keeps its scope, so it rides in the prompt only while its error stands.
   for (const rule of (await ctx.learning?.activeFor("worker", card, ctx.runRules)) ?? []) {
-    const r = { id: rule.id, pattern: card.title, instruction: rule.text };
-    if (typeof transient.addTransientRule === "function") transient.addTransientRule(r);
-    else transient.rules?.set(r.id, r);
+    playbook.addTransientRule({
+      id: rule.id,
+      pattern: card.title,
+      instruction: rule.text,
+      ...(rule.scope?.errorPattern ? { errorPattern: rule.scope.errorPattern } : {}),
+    });
   }
 
+  const worktreePath = join(ctx.repoPath, ".sekhemet", "worktrees", card.id);
+  const baselineSwap = readSwapUsedBytes();
   const runner = new CardRunner({
     card,
     repoRoot: ctx.repoPath,
-    worktreePath: join(ctx.repoPath, ".sekhemet", "worktrees", card.id),
+    worktreePath,
     stepBudget: card.stepBudget,
     modelAdapter: model,
     gateRunner,
@@ -146,16 +197,35 @@ export async function executeCard(
     scopeFiles: card.scopeFiles,
     agentRole: "implementer",
     agentHarness: "sekhemet",
-    // Stop before the host does: a paused card resumes, an OOM takes the machine.
-    memoryGuard: {},
+    attempt,
+    // Checkpoints, actuals, holds, parks and the dossier persist here.
+    store: ctx.cardStore,
+    // The agent's own commands are confined as strictly as the gates (defect 3).
+    requireConfinement: ctx.restrictedMode,
+    // --restricted is a read-only audit: no run_cmd, no writes, static gates (S12).
+    restricted: ctx.restrictedMode,
+    ...(options.signal ? { signal: options.signal } : {}),
+    // Stop before the host does: a paused card resumes, an OOM takes the
+    // machine. The watchdog's pause is checked before every turn.
+    memoryProbe: () => {
+      if (ctx.watchdog?.shouldPauseTurns()) {
+        return {
+          ok: false,
+          reason: "the memory watchdog is holding new turns (critical pressure)",
+        };
+      }
+      return checkExecutionHeadroom(baselineSwap, {});
+    },
     // A retry after a manager review re-attaches to the existing worktree, so
     // the worker resumes from its own last state rather than from scratch.
-    useExistingWorktree: existsSync(join(ctx.repoPath, ".sekhemet", "worktrees", card.id)),
+    useExistingWorktree: existsSync(worktreePath),
     ...(managerGuidance ? { managerGuidance } : {}),
-    ...(priorLessons && priorLessons.length > 0 ? { priorLessons } : {}),
     ...(ctx.teamNote ? { teamNote: ctx.teamNote() } : {}),
     ...(ctx.askTeam
-      ? { askTeam: (q: string) => ctx.askTeam?.(card.id, q) ?? Promise.resolve(undefined) }
+      ? {
+          askTeam: (q: string, meta?: { questionEntryId?: string }) =>
+            ctx.askTeam?.(card.id, q, meta ?? {}) ?? Promise.resolve(undefined),
+        }
       : {}),
     skillsRegistry: skills,
     playbookRegistry: playbook,
@@ -176,14 +246,19 @@ export async function executeCard(
           reason: `card runner advanced card to ${to}`,
         });
       },
+      // A move the board refuses (back-pressure, WIP) holds the card with its
+      // reason; `releaseHeldCards` retries it when Review drains (defect 1).
+      hold: async (id, reason) => {
+        await ctx.boardService.holdCard(id, reason, "executor");
+      },
     },
-    onWorktreeReady: async (worktreePath) => {
+    onWorktreeReady: async (path) => {
       // Stage this card's acceptance tests: the oracle for THIS card is present
       // and failing before work begins, and later cards' suites are not there
       // to fail it.
       const staged = card.acceptanceTests ?? [];
       if (staged.length === 0) return;
-      const testsDir = join(worktreePath, "tests");
+      const testsDir = join(path, "tests");
       if (!existsSync(testsDir)) mkdirSync(testsDir, { recursive: true });
       for (const name of staged) {
         const from = join(ctx.repoPath, "acceptance", name);
@@ -203,6 +278,13 @@ export async function executeCard(
         payload: stepEventPayload(cardId, turn),
       });
       await ctx.afterTurn?.(cardId, turn);
+      // Between steps is where a card can wait out memory pressure without
+      // losing work; if it does not fall, the next turn stops resumably.
+      if (ctx.watchdog?.shouldPauseTurns()) {
+        log("   memory watchdog: pausing new turns until pressure falls");
+        const calm = await ctx.watchdog.waitUntilBelow("critical", ctx.watchdogWaitMs ?? 120_000);
+        log(calm ? "   memory watchdog: resuming" : "   memory watchdog: still critical");
+      }
     },
     onProgress: (event) => {
       const prefix = event.turn ? `  [turn ${event.turn}]` : "  ";
@@ -211,14 +293,23 @@ export async function executeCard(
   });
 
   const result = await runner.run();
+  if (result.failToPass)
+    log(`   fail-to-pass: ${result.failToPass.status} (${result.failToPass.detail})`);
+  if (result.resumedFrom) {
+    log(
+      `   resumed from checkpoint ${result.resumedFrom.gitRef.slice(0, 10)} at step ${result.resumedFrom.step}`,
+    );
+  }
+  if (result.held) log(`   held (wanted ${result.held.wanted}): ${result.held.reason}`);
+  if (result.parked) log(`   parked (${result.parked.stopReason}): ${result.parked.suggestion}`);
+  if (result.replan) log(`   re-plan requested: ${result.replan.summary.slice(0, 200)}`);
   if (ctx.learning) {
     try {
-      const proposed = await learnFromAttempt(
-        ctx.learning,
-        card,
-        result,
-        managerGuidance ? 2 : 1,
-        (id) => ctx.runRules?.add(id),
+      // A candidate that restates a rule the playbook already has (by fact
+      // key, not wording) would only duplicate it in the window: drop it.
+      const guarded = unlessPlaybookCovers(ctx.learning, playbook);
+      const proposed = await learnFromAttempt(guarded, card, result, attempt, (id) =>
+        ctx.runRules?.add(id),
       );
       if (proposed > 0) log(`   learning: ${proposed} candidate rule(s) from this attempt`);
     } catch {
@@ -226,6 +317,134 @@ export async function executeCard(
     }
   }
   return result;
+}
+
+/**
+ * The learning store as `learnFromAttempt` sees it: `propose` first asks the
+ * playbook whether a rule already states the same fact (`coveringRule`, by
+ * fact key), and proposes nothing when one does (integration review A3).
+ */
+export function unlessPlaybookCovers(
+  learning: LearningStore,
+  playbook: Pick<PlaybookRegistry, "coveringRule">,
+): LearningStore {
+  const guarded = Object.create(learning) as LearningStore;
+  guarded.propose = async (rule) =>
+    playbook.coveringRule(rule.text) ? undefined : learning.propose(rule);
+  return guarded;
+}
+
+/** The column a held card was waiting for, from its `held: <column> refused (...)` reason. */
+export function heldTarget(blockedReason: string | undefined | null): CardStatus | undefined {
+  const m = /^held:\s*(in_progress|verify|review|parked|planning|ready|done)\b/.exec(
+    blockedReason ?? "",
+  );
+  return m?.[1] as CardStatus | undefined;
+}
+
+/**
+ * Retry the moves held cards were waiting for (defect 1, B4). Called when
+ * Review drains (an accept, a return, a park): the oldest hold goes first,
+ * and a card that was held on its way to Verify with passing evidence
+ * continues to Review, as it would have without the hold. Returns the ids
+ * released.
+ */
+export async function releaseHeldCards(ctx: ExecutionContext): Promise<string[]> {
+  const released: string[] = [];
+  for (const card of await ctx.boardService.listHeld()) {
+    const wanted = heldTarget(card.blockedReason);
+    if (!wanted) continue;
+    let ok = false;
+    try {
+      ok = await ctx.boardService.releaseHeld(card.id, wanted, "executor");
+    } catch {
+      continue;
+    }
+    if (!ok) continue;
+    released.push(card.id);
+    if (wanted === "verify" && latestEvidencePassed(ctx.repoPath, card.id)) {
+      try {
+        await ctx.boardService.transitionCard({
+          cardId: card.id,
+          fromStatus: "verify",
+          toStatus: "review",
+          actor: "executor",
+          reason: "released from hold: gates passed",
+        });
+      } catch (err) {
+        await ctx.boardService
+          .holdCard(card.id, `review refused (${err instanceof Error ? err.message : String(err)})`)
+          .catch(() => undefined);
+      }
+    }
+  }
+  return released;
+}
+
+function latestEvidencePassed(repoPath: string, cardId: string): boolean {
+  try {
+    const ev = JSON.parse(
+      readFileSync(join(repoPath, ".sekhemet", "evidence", `latest-${cardId}.json`), "utf8"),
+    ) as { passed?: boolean; stopReason?: string };
+    return ev.passed === true || ev.stopReason === "gate_passed";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Worker questions queued for Merit while it was not resident (the hardware
+ * decides: a question never forces a model swap on its own). Once Merit's
+ * batch has answered one, the answer is filed in the card's dossier under
+ * the question's entry, so the card's next attempt reads it as
+ * "Q: ... A (manager): ...". This replaces handing answers over as lessons.
+ */
+export class QueuedWorkerQuestions {
+  private pending: { cardId: string; messageId: string; questionEntryId?: string }[] = [];
+
+  public add(cardId: string, messageId: string, questionEntryId?: string): void {
+    this.pending.push({ cardId, messageId, ...(questionEntryId ? { questionEntryId } : {}) });
+  }
+
+  public get size(): number {
+    return this.pending.length;
+  }
+
+  /**
+   * File every answered question's answer; unanswered ones stay queued.
+   * The answer is the first reply from Merit after the question.
+   */
+  public async fileAnswers(
+    thread: { id: string; seq: number; role: string; state: string; text: string }[],
+    cardStore: Pick<CardStore, "recordDossierEntry">,
+  ): Promise<number> {
+    let filed = 0;
+    const still: typeof this.pending = [];
+    for (const q of this.pending) {
+      const asked = thread.find((m) => m.id === q.messageId);
+      const reply = asked
+        ? thread.find((m) => m.role === "pm" && m.seq > asked.seq && m.state === "done")
+        : undefined;
+      if (!asked || asked.state !== "done" || !reply?.text.trim()) {
+        still.push(q);
+        continue;
+      }
+      try {
+        await cardStore.recordDossierEntry({
+          cardId: q.cardId,
+          kind: "answer",
+          actor: "manager",
+          text: reply.text.slice(0, 2000),
+          ...(q.questionEntryId ? { inReplyTo: q.questionEntryId } : {}),
+        });
+        filed++;
+      } catch {
+        still.push(q);
+      }
+    }
+    this.pending = still;
+    return filed;
+  }
 }
 
 /**
@@ -268,6 +487,8 @@ export async function acceptCard(
       })
       .catch(() => undefined);
     await gitAdapter.removeWorktree(card.id);
+    // Review has room again: cards held on back-pressure move now.
+    await releaseHeldCards(ctx).catch(() => []);
     return url;
   }
 
@@ -303,6 +524,8 @@ export async function acceptCard(
     // The merge already happened; a missing ledger line must not undo it.
   }
   await gitAdapter.removeWorktree(card.id);
+  // Review has room again: cards held on back-pressure move now.
+  await releaseHeldCards(ctx).catch(() => []);
   return sha;
 }
 
@@ -317,6 +540,16 @@ export interface QueueEntry {
   durationMs: number;
   promptTokens: number;
   completionTokens: number;
+  /** The move the board refused, when the card was held (defect 1). */
+  held?: string;
+  /** Why the card was parked for a person (repair rung 4, vacuous tests). */
+  parked?: string;
+  /** The fail-to-pass check at card start (G12). */
+  failToPass?: "fails" | "vacuous" | "unknown";
+  /** The checkpoint step a memory-pressure stop resumed from (H17). */
+  resumedFromStep?: number;
+  /** The card stopped at repair rung 3 for a new plan (L15). */
+  replanRequested?: boolean;
 }
 
 export interface QueueReport {
@@ -329,6 +562,42 @@ export interface QueueReport {
   managerModel?: string;
   modelSwaps: number;
   totalDurationMs: number;
+  /** Prefill and decode speed per model (M3), from `ThroughputMeter.all()`. */
+  throughput?: ThroughputStats[];
+  /** The Worker's prefix-cache reuse (M18), from `PrefixCacheMonitor.summary()`. */
+  cache?: CacheSummary;
+  /** The memory watchdog's level at the end of the run (M20). */
+  memory?: { level: string; reason: string };
+}
+
+/** A review finding (Merit's or the Reviewer's), as `learning/review.ts` returns it. */
+export interface ReviewFinding {
+  severity: string;
+  note: string;
+}
+
+/**
+ * Record a review of a passing card in its dossier (one entry, one line per
+ * finding). The verdict is the strongest severity, so the Review surface and
+ * the card's next attempt see "likely_send_back" first.
+ */
+export async function recordReview(
+  cardStore: Pick<CardStore, "recordDossierEntry">,
+  cardId: string,
+  findings: ReviewFinding[],
+  actor = "reviewer",
+): Promise<void> {
+  if (findings.length === 0) return;
+  const verdict = findings.some((f) => f.severity === "likely_send_back")
+    ? "likely_send_back"
+    : "consider";
+  await cardStore.recordDossierEntry({
+    cardId,
+    kind: "review",
+    actor,
+    verdict,
+    text: findings.map((f) => `- [${f.severity}] ${f.note}`).join("\n"),
+  });
 }
 
 /** Persist a queue scorecard where the dashboard and a human can both find it. */

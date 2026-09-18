@@ -109,7 +109,23 @@ export interface ToolExecutorOptions {
    * (or been shown) this card (L17). Default on.
    */
   requireReadBeforeEdit?: boolean | undefined;
+  /**
+   * Restricted mode (S12, design "Restricted mode"): read-only inspection.
+   * Every tool that writes a file or runs a command is refused, whatever
+   * the catalog the model was shown; `check` still runs the static gates.
+   */
+  readOnly?: boolean | undefined;
 }
+
+/** Tools that change the worktree or execute code: refused in restricted mode. */
+export const MUTATING_TOOLS: ReadonlySet<string> = new Set([
+  "write_file",
+  "edit",
+  "replace_lines",
+  "replace_symbol_body",
+  "insert_after_symbol",
+  "run_cmd",
+]);
 
 /** A file is treated as binary if a NUL appears in its first block. */
 function isBinary(buf: Buffer): boolean {
@@ -340,6 +356,16 @@ export class ToolExecutor {
 
   /** Run the three-tier permission check, escalating `ask` to the approval handler. */
   private async authorize(call: ToolCall): Promise<ToolObservation | null> {
+    if (this.options.readOnly && MUTATING_TOOLS.has(call.name)) {
+      this.deniedByRule.set("restricted", (this.deniedByRule.get("restricted") ?? 0) + 1);
+      return {
+        ...denied(
+          call.name,
+          "restricted mode: this is a read-only audit. Files cannot be written and commands cannot run; inspect with read_file, read_symbol, grep_search and check, and record findings with note().",
+        ),
+        deniedRule: "restricted",
+      };
+    }
     const targetPath = typeof call.arguments.path === "string" ? call.arguments.path : undefined;
     const rawCommand =
       typeof call.arguments.command === "string" ? call.arguments.command : undefined;

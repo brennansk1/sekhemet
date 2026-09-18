@@ -44,7 +44,7 @@ import {
   worktrees,
 } from "./dashboard_api.js";
 import { runDoctor } from "./doctor.js";
-import { acceptCard } from "./execute.js";
+import { acceptCard, releaseHeldCards } from "./execute.js";
 import { learnFromSendBack } from "./learning/reflect.js";
 import { createPmApi } from "./pm_api.js";
 import { generateDashboardHtml } from "./ui_html.js";
@@ -802,6 +802,11 @@ export function startDashboardServer(
         });
 
         if (verb === "return") {
+          // The reason is a directive for the card's next attempt: it goes into
+          // the card's dossier, which the runner puts in the Worker's prompt.
+          await store
+            .recordDossierEntry({ cardId, kind: "send_back", text: reason, actor: "human" })
+            .catch(() => undefined);
           // The note teaches both the Worker (a candidate rule) and Merit (the profile).
           await learnFromSendBack(pmApi.learning, card, reason).catch(() => undefined);
           // Every return reason is a candidate playbook rule (design §820):
@@ -812,6 +817,15 @@ export function startDashboardServer(
             join(dir, "playbook_candidates.jsonl"),
             `${JSON.stringify({ cardId, reason, at: new Date().toISOString() })}\n`,
           );
+        }
+        // A card left Review: cards held on back-pressure can move now.
+        if (card.status === "review") {
+          await releaseHeldCards({
+            repoPath,
+            restrictedMode: false,
+            cardStore: store,
+            boardService: boardService as never,
+          }).catch(() => []);
         }
         json(res, 200, { ok: true, status: to });
       } catch (err) {

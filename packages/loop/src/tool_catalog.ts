@@ -296,3 +296,30 @@ export const TOOL_CATALOG: ToolInterfaceSpec[] = [
     returns: "Gate results; a failure returns you to work with the typed error",
   },
 ];
+
+/**
+ * The restricted-mode catalog (S12): read-only inspection. `run_cmd` is
+ * stripped from the interface entirely, and so is every tool that writes.
+ */
+export const RESTRICTED_TOOL_NAMES: readonly string[] = [
+  "read_file",
+  "read_symbol",
+  "find_references",
+  "grep_search",
+  "find_files",
+  "list_dir",
+  "check",
+  "docs",
+  "git_history",
+  "dependencies",
+  "ask",
+  "recall",
+  "note",
+  "finish_card",
+];
+
+export function restrictedToolCatalog(
+  catalog: ToolInterfaceSpec[] = TOOL_CATALOG,
+): ToolInterfaceSpec[] {
+  return catalog.filter((t) => RESTRICTED_TOOL_NAMES.includes(t.name));
+}

@@ -2,20 +2,10 @@
 // Cached by the evidence id the board reports, so an SSE frame that does not
 // change a card's evidence never refetches it.
 import { getJSON } from "./dom.js";
+import { latestReview } from "./review_parse.js";
 import { store } from "./store.js";
 
 const cache = new Map();
-
-/** The newest `card/review` payload with findings, or null. */
-function latestReview(events) {
-  const ev = (events ?? [])
-    .filter((x) => x.type === "card/review")
-    .sort((a, b) => b.seq - a.seq)[0];
-  const p = ev?.payload;
-  return p && Array.isArray(p.findings) && p.findings.length
-    ? { ...p, at: ev.timestamp ?? ev.createdAt }
-    : null;
-}
 
 function key(id, attempt) {
   const ev = store.card(id)?.display?.evidence?.id ?? "none";

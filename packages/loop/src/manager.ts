@@ -1,6 +1,6 @@
 import type { GateFailure } from "@sekhemet/gates";
 import type { CardRecord } from "@sekhemet/kernel";
-import type { LocalInferenceAdapter } from "@sekhemet/models";
+import { type LocalInferenceAdapter, reasoningForStep } from "@sekhemet/models";
 
 export interface RepairPlanInput {
   card: CardRecord;
@@ -58,12 +58,18 @@ ${files}
 
 Write the repair plan now.`;
 
+  // A repair plan is planning (M5, M6): the adapter's planning sampling, and
+  // bounded thinking, since one good plan saves many Worker turns.
+  const thinking = reasoningForStep({ purpose: "planning" });
   const response = await manager.generate({
     systemPrompt: MANAGER_SYSTEM,
     prompt,
     toolArm: "arm_b_json",
-    temperature: 0.2,
+    // No temperature here: the adapter's planning sampling decides.
     maxTokens: 1800,
+    purpose: "planning",
+    reasoning: thinking.reasoning,
+    reasoningBudgetTokens: thinking.reasoningBudgetTokens,
   });
 
   return response.text.trim();

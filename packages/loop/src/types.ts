@@ -159,6 +159,12 @@ export interface SessionOptions {
 
   /** Restricted mode: the agent's own commands refuse to run unconfined (defect 3). */
   requireConfinement?: boolean | undefined;
+  /**
+   * Restricted mode (`--restricted`, S12): a read-only audit. `run_cmd` and
+   * every writing tool are stripped from the catalog and refused by the
+   * executor; verification runs only the static gates, with no formatter.
+   */
+  restricted?: boolean | undefined;
   /** Sandbox for the agent's tools; defaults to a new ProcessSandbox. */
   sandbox?: ProcessSandbox | undefined;
   /** The project's protected globs (`gates.toml [project] protected`, defect 5). */
