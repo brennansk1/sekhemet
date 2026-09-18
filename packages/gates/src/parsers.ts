@@ -62,6 +62,10 @@ export function remedyFor(code: string, message: string): string | undefined {
     case "TS2345":
     case "TS2322":
       return /\| undefined\b|undefined'/.test(message) ? NARROW : undefined;
+    case "TS2375":
+    case "TS2379":
+    case "TS2412":
+      return "exactOptionalPropertyTypes is on: an optional property may be absent but may not be set to undefined. Omit the property (`{ valid: false, totalEvents: n }`), or add it only when defined: `...(value !== undefined ? { key: value } : {})`.";
     case "TS2304":
       return 'The name is not in scope. Import it (`import type { Name } from "./types.js";` for a type), or define it. Read the module that declares it for the exact export name.';
     case "TS2307":

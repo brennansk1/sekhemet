@@ -206,4 +206,45 @@ describe("@sekhemet/loop shell command lines and the check tool", () => {
     expect(turn.stopReason).toBe("gate_passed");
     expect(turn.gateResult?.passed).toBe(true);
   });
+
+  it("shows the code at the failing line, in the prompt and in a refused re-check", async () => {
+    writeFileSync(
+      join(root, "src", "a.ts"),
+      "export function f() {\n  const x = 1;\n  return { valid: false, at: undefined };\n}\n",
+    );
+    const runner: GateRunner = {
+      runGates: async (): Promise<GateResult> => ({
+        passed: false,
+        durationMs: 1,
+        failures: [
+          {
+            rung: "typecheck",
+            gate: "typecheck",
+            exitCode: 2,
+            errorExcerpt:
+              "src/a.ts:3:10 TS2375: Type is not assignable with exactOptionalPropertyTypes.",
+            suggestedFixFiles: ["src/a.ts"],
+            location: { file: "src/a.ts", line: 3 },
+          },
+        ],
+      }),
+    };
+    const usage = { promptTokens: 1, completionTokens: 1, durationMs: 1 };
+    const check = { text: "", toolCalls: [{ id: "c", name: "check", arguments: {} }], usage };
+    const session = new CardExecutionSessionImpl({
+      cardId: "c",
+      stepBudget: 5,
+      worktreePath: root,
+      gateRunner: runner,
+      modelAdapter: new MockInferenceAdapter("m", [check, check]),
+    });
+
+    await session.executeTurn();
+    const prompt = (session as unknown as { buildPrompt(): { prompt: string } }).buildPrompt()
+      .prompt;
+    expect(prompt).toContain(">   3 |   return { valid: false, at: undefined };");
+
+    const refused = await session.executeTurn();
+    expect(refused.observations[0]?.content).toContain("return { valid: false, at: undefined }");
+  });
 });

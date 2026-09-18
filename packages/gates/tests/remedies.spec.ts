@@ -60,4 +60,10 @@ describe("@sekhemet/gates targeted remedies", () => {
       "Resolve TS9999 at src/a.ts:1. Read the surrounding lines before editing.",
     );
   });
+
+  it("explains exactOptionalPropertyTypes: omit the property, never assign undefined", () => {
+    expect(remedyFor("TS2375", "Type '{ x: undefined }' is not assignable")).toMatch(
+      /Omit the property/,
+    );
+  });
 });

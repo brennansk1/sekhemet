@@ -53,6 +53,8 @@ export interface PromptPackOptions {
   gateFailure?: GateFailure;
   /** Further failures from the same verification, rendered after the first. */
   otherGateFailures?: GateFailure[];
+  /** Source lines at the failure locations, as the files stand now. */
+  failureCode?: string;
   /** Tool interface rendered into Zone 1 so the model knows what it may call. */
   tools?: ToolInterfaceSpec[];
   /** Overrides the card title as the restated goal. */
@@ -172,6 +174,7 @@ export function buildFullPromptPack(options: PromptPackOptions): BuiltPromptPack
     recentTurns = [],
     gateFailure,
     otherGateFailures,
+    failureCode,
     tools = [],
     skillDisclosure = "full",
     maxRecentTurns = DEFAULT_RECENT_TURNS,
@@ -264,7 +267,7 @@ ${gateFailure.errorExcerpt}${gateFailure.suggestedAction ? `\nHow to fix: ${gate
         )
         .join("\n")}`
     : ""
-}
+}${failureCode ? `\n\nThe code at the failing lines (> marks the line):\n${failureCode}` : ""}
 
 INSTRUCTION: Address the error above in declared scope files and call finish_card when tests pass.`;
     userParts.push(failureText);

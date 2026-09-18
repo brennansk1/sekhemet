@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from "node:fs";
+import { isAbsolute, join, relative } from "node:path";
 import {
   type PlaybookRegistry,
   type SkillsRegistry,
@@ -115,6 +117,42 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   }
 
   /**
+   * The source lines at each failure location, as the file stands now.
+   *
+   * "src/verifier.ts:20:7 TS2375" is a coordinate; a small model often cannot
+   * turn it back into the offending code and loops on `check` instead. Showing
+   * the line itself (with two lines either side) is what it needs to act.
+   */
+  private failureCode(failures: GateFailure[]): string {
+    const blocks: string[] = [];
+    const seen = new Set<string>();
+    for (const f of failures) {
+      const file = f.location?.file;
+      const line = f.location?.line;
+      if (!file || !line) continue;
+      const abs = isAbsolute(file) ? file : join(this.options.worktreePath, file);
+      const rel = relative(this.options.worktreePath, abs);
+      const key = `${rel}:${line}`;
+      if (seen.has(key) || rel.startsWith("..") || !existsSync(abs)) continue;
+      seen.add(key);
+      try {
+        const lines = readFileSync(abs, "utf8").split("\n");
+        const from = Math.max(1, line - 2);
+        const to = Math.min(lines.length, line + 2);
+        const body = [];
+        for (let n = from; n <= to; n++) {
+          body.push(`${n === line ? ">" : " "}${String(n).padStart(4)} | ${lines[n - 1] ?? ""}`);
+        }
+        blocks.push(`${rel}:${line}\n${body.join("\n")}`);
+      } catch {
+        // An unreadable file just goes without an excerpt.
+      }
+      if (blocks.length >= 3) break;
+    }
+    return blocks.join("\n\n");
+  }
+
+  /**
    * Run the card's gates as a non-terminal self-check and describe the result.
    *
    * The failures also become the session's standing failure, so the prompt's
@@ -128,8 +166,15 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         tool: "check",
         ok: false,
         summary: "no change since the last check",
-        content:
-          "Nothing has changed since your last check, so the same failures stand (listed under LAST GATE FAILURE). Edit the file at the reported line first; checking again without an edit cannot change the result.",
+        content: `Nothing has changed since your last check, so the same failures stand. Checking again cannot change the result: edit the code first.\n${this.lastCheck.failures
+          .map(
+            (f, i) =>
+              `${i + 1}. ${f.errorExcerpt.split("\n")[0]}${f.suggestedAction ? `\n   fix: ${f.suggestedAction}` : ""}`,
+          )
+          .join("\n")}${(() => {
+          const code = this.failureCode(this.lastCheck.failures);
+          return code ? `\n\nThe code at those lines:\n${code}` : "";
+        })()}`,
       };
     }
     const result = await this.runVerification();
@@ -359,6 +404,9 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       ...(this.lastGateFailure ? { gateFailure: this.lastGateFailure } : {}),
       ...(this.lastGateFailures.length > 1
         ? { otherGateFailures: this.lastGateFailures.slice(1) }
+        : {}),
+      ...(this.lastGateFailures.length > 0
+        ? { failureCode: this.failureCode(this.lastGateFailures) }
         : {}),
     });
 
