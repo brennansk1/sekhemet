@@ -44,6 +44,49 @@ If you are Claude reading this because Gemini reached quota limits or you were s
 
 ## Detailed Session Log
 
+### Entry 17 — 2026-09-18 (worker feedback loop, PM backend, integrations)
+- **Agent**: Claude Opus 5 (`claude-code`), lead; one Claude UI subagent building the PM dashboard
+- **Role**: Lead Driver & Delegator
+
+#### A. Chronicle runs 4 to 7, and what each taught
+| Run | Pass@1 | Stopped by | Fix (commit) |
+|---|---|---|---|
+| 4 | 2/2, then stopped | `check` looped: its failures never reached the prompt | check sets the standing failure; a no-op re-check is refused; a passing check finishes the card (`efc01d1`) |
+| 5 | 3/5, 17.1 min | verifier TS2375 loop; ledger's failing test hidden behind lint nits | code excerpt at each failing line, TS2375 remedy (`8cecd2d`); failures ranked by severity; harness fixes unsafe-but-stylistic lint, one rule per invocation (`e618564`) |
+| 6 | 4/4, then ledger failed | ledger calls `db.run()`, which does not exist on node:sqlite's DatabaseSync | API member lookup: for "Property X does not exist on type T" the harness reads T's .d.ts (src, @types/node, pnpm store) and lists its real members (`c77c359`) |
+| 7 | running | | first run with the member lookup; first chance for the api card |
+
+Other feedback fixes this session: shell command lines in `run_cmd` and a `check` tool (`6c627a2`), remedies for common tsc/Biome codes shown in the repair prompt (`886565d`), and a re-check after every edit with up to three failures in the prompt (`4e7d9a7`). Hasher went from 24 turns to 2–4.
+
+#### B. Dashboard Phases 3–4 (`0560fbc`)
+Built by the UI subagent, then reviewed and fixed by me:
+- Card tabs (Evidence, Plan, Steps, Thread, Files) with live `card/step` events.
+- Runs, Ledger (including the tamper bar), Machine and Playbook views.
+- My fixes: doctor's memory check now follows kernel pressure (a default-parameter bug was caught by its test), and queue auto-accept is recorded as `harness`.
+
+#### C. Project manager and team practices
+The user asked to chat with the project manager like a hired PM, running on the correct model, and for the board to follow the practices teams use at the top companies. The user chose GitHub plus Jira/Linear, with the Worker pausing while the PM replies. `docs/design/PM_CONTRACT.md` is the backend↔UI contract.
+- **Card fields:** priority 0–4 (Linear's scale), estimate, labels, epic, cycle, assignee, due date. `getEventsByTypes` was added.
+- **PM:** runs on dirk-27b. Its conversation, proposals and cycles are ledger events. It changes the board only through proposals the human applies. A proposal goes stale if its card changed after it was written, and invalid tool calls are dropped. The PM sees the Worker's measured track record. (`f99611d`)
+- **Pausing the Worker:** the queue holds a runner lease. After each Worker step it answers queued PM messages by swapping the Worker out and back in. (`74ad6ec`)
+- **API:**
+  - chat and proposals;
+  - cycles;
+  - PATCH on cards;
+  - flow metrics (throughput, cycle time, CFD, aging WIP);
+  - GitHub Issues sync via the `gh` CLI, and a PR-on-accept flag (setting only: Accept still merges locally);
+  - Slack webhook: run reports are posted; standup and "needs you" messages are not built yet;
+  - export (Jira CSV, Linear CSV, GitHub JSON) and import as proposals.
+  Secrets are stored in `~/.config/sekhemet`, never in the repo.
+- **Integration roadmap:** approved by the user and based on survey data (Stack Overflow 2025, JetBrains 2025). It is recorded in the contract §5.
+- **Research brief:** a Claude Research brief for making the PM model-aware and self-improving was delivered to the user.
+- **Status:** 317 tests pass, and the build is clean. Lint has two diagnostics in the UI subagent's in-progress `packages/ui/src/pm.ts`.
+
+#### D. Open
+- The UI subagent is still building PM_DESIGN.md: the chat panel, board v2, Insights and Integrations. Its work is uncommitted.
+- Chronicle has not yet met the ≥5/6 target.
+- The Trifecta fixtures have not been run.
+
 ### Entry 16 — 2026-09-18 (Cyber-Tiel runs, worker feedback, dashboard)
 - **Agent**: Claude Opus 5 (`claude-code`), with one Claude subagent building the dashboard
 - **Role**: Lead Driver & Delegator
