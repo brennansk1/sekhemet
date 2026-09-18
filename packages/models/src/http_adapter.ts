@@ -2,6 +2,7 @@ import { performance } from "node:perf_hooks";
 import { assertKvType } from "./kv_policy.js";
 import { currentMemoryPressure } from "./memory.js";
 import { parseToolCallsFromText, stripReasoning } from "./parser.js";
+import { type ModelRegistry, type TemplatePinResult, fetchChatTemplate } from "./registry.js";
 import {
   type CacheStepKind,
   type CacheStepRecord,
@@ -110,6 +111,15 @@ export interface HttpAdapterOptions {
    * (M18). Defaults to one line on stderr.
    */
   onCacheAlert?: (record: CacheStepRecord & { modelId: string }) => void;
+  /**
+   * The model registry (M11). With one, the adapter pins the server's chat
+   * template by checksum on its first request (a change invalidates the
+   * model's qualification, M12) and takes its tool arm from the registry's
+   * measurement when `preferredToolArm` is not set (M9).
+   */
+  registry?: ModelRegistry;
+  /** Called when the template check changes the registry (pinned or changed). */
+  onTemplatePin?: (modelId: string, result: TemplatePinResult) => void;
 }
 
 /** A non-2xx inference response, with its status for callers that branch on it. */
@@ -404,7 +414,47 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
   }
   /** The measured tool arm (M9), when the registry supplied one. */
   public get preferredToolArm(): ToolArm | undefined {
-    return this.options.preferredToolArm;
+    return this.options.preferredToolArm ?? this.options.registry?.armFor(this.modelId);
+  }
+
+  private templateChecked = false;
+
+  /** The wire format this adapter speaks. */
+  public get api(): "ollama" | "openai" {
+    return this.apiFormat;
+  }
+
+  /** Attach the registry after construction (the roster does this, M11). */
+  public attachRegistry(registry: ModelRegistry): void {
+    this.options.registry = registry;
+    this.templateChecked = false;
+  }
+
+  public get registry(): ModelRegistry | undefined {
+    return this.options.registry;
+  }
+
+  /**
+   * Pin the server's chat template in the registry (M12). Runs once per
+   * adapter (on the first request); a server that does not expose its
+   * template is skipped. Returns the pin result, or undefined.
+   */
+  public async verifyTemplate(): Promise<TemplatePinResult | undefined> {
+    const registry = this.options.registry;
+    if (!registry) return undefined;
+    this.templateChecked = true;
+    const template = await fetchChatTemplate(this.baseUrl, this.apiFormat, this.modelId);
+    if (template === undefined) return undefined;
+    const result = registry.pinTemplate(this.modelId, template);
+    if (result.pinned || result.changed) {
+      if (this.options.onTemplatePin) this.options.onTemplatePin(this.modelId, result);
+      else if (result.changed) {
+        process.stderr.write(
+          `[registry] ${this.modelId}: chat template changed; qualification invalidated\n`,
+        );
+      }
+    }
+    return result;
   }
   /** Whether tool schemas travel natively (see `LocalInferenceAdapter.nativeTools`). */
   public get nativeTools(): boolean {
@@ -734,6 +784,7 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
       const kv = this.options.ollamaKvCacheType ?? process.env.OLLAMA_KV_CACHE_TYPE;
       if (kv) assertKvType(kv); // throws KvPolicyError for 4-bit (M16)
     }
+    if (this.options.registry && !this.templateChecked) await this.verifyTemplate();
     const kind = this.stepKind(req);
     const messages = this.messages(req);
     const level = this.reasoningFor(req);

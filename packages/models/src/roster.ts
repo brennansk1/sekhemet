@@ -6,6 +6,7 @@ import {
   createCyberTielWorker,
   createQwen38Managed,
 } from "./llama_server.js";
+import type { ModelRegistry } from "./registry.js";
 import type { ModelRole, UnloadableAdapter } from "./router.js";
 
 /**
@@ -68,6 +69,12 @@ export interface ModelRosterOptions {
   totalBytes?: number;
   /** Injectable for tests: builds the managed adapters. */
   managed?: Partial<Record<ManagedModelName, () => UnloadableAdapter>>;
+  /**
+   * The model registry (M11). Every adapter the roster builds gets it: the
+   * chat template is pinned on first use (M12), the tool arm comes from the
+   * measurement (M9) and managed servers take the measured MTP decision (M19).
+   */
+  registry?: ModelRegistry;
 }
 
 /**
@@ -86,7 +93,9 @@ export class ModelRoster {
 
   public resolve(name: string, role: ModelRole): UnloadableAdapter {
     if (!isManagedModelName(name)) {
-      return new HttpInferenceAdapter(ollamaProfileForRole(role, name, this.options.totalBytes));
+      return this.withRegistry(
+        new HttpInferenceAdapter(ollamaProfileForRole(role, name, this.options.totalBytes)),
+      );
     }
     const key = name === "dirk" ? "qwen3.8-27b" : name;
     const existing = this.shared.get(key);
@@ -103,8 +112,14 @@ export class ModelRoster {
             return createQwen38Managed(this.options.qwen38 ?? {});
         }
       });
-    const adapter = build();
+    const adapter = this.withRegistry(build());
     this.shared.set(key, adapter);
+    return adapter;
+  }
+
+  private withRegistry<A extends UnloadableAdapter>(adapter: A): A {
+    const registry = this.options.registry;
+    if (registry && adapter instanceof HttpInferenceAdapter) adapter.attachRegistry(registry);
     return adapter;
   }
 

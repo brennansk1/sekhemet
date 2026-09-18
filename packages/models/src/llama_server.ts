@@ -1,8 +1,10 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import { tmpdir, totalmem } from "node:os";
+import { hostFingerprintHash } from "./calibration.js";
 import { type HttpAdapterOptions, HttpInferenceAdapter } from "./http_adapter.js";
 import { assertKvPolicy } from "./kv_policy.js";
+import type { ModelRegistry } from "./registry.js";
 import type { AdapterHealth, ToolArm } from "./types.js";
 
 /**
@@ -57,6 +59,11 @@ export interface LlamaServerProfile {
   constrainedToolCalls?: boolean;
   /** Measured tool arm (M9). */
   preferredToolArm?: ToolArm;
+  /**
+   * The model registry (M11, M12). Also decides MTP when it holds a
+   * speculative-decoding measurement for this model on this host (M19).
+   */
+  registry?: ModelRegistry;
   /** Enable the model's grafted multi-token-prediction head. */
   mtp?: boolean;
   /**
@@ -162,6 +169,7 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
         ? { constrainedToolCalls: profile.constrainedToolCalls }
         : {}),
       ...(profile.preferredToolArm ? { preferredToolArm: profile.preferredToolArm } : {}),
+      ...(profile.registry ? { registry: profile.registry } : {}),
     });
     this.url = `http://127.0.0.1:${port}`;
   }
@@ -182,6 +190,18 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
 
   public get isMtpSuspended(): boolean {
     return this.mtpSuspended;
+  }
+
+  /**
+   * Whether this launch uses the MTP head (M19): the registry's measured
+   * decision for this host when there is one, else the profile's `mtp`;
+   * never while the watchdog has it suspended (M20).
+   */
+  public mtpEnabled(): boolean {
+    if (this.mtpSuspended) return false;
+    const measured = this.registry?.get(this.profile.modelId)?.speculative;
+    if (measured && measured.fingerprint === hostFingerprintHash()) return measured.enabled;
+    return this.profile.mtp === true;
   }
 
   /** The cache flags this launch uses, after the host default. */
@@ -253,7 +273,7 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
       ...(p.metrics ? ["--metrics"] : []),
       ...(p.webui === false ? ["--no-webui"] : []),
       ...(p.reasoning ? ["--reasoning", p.reasoning] : []),
-      ...(p.mtp && !this.mtpSuspended ? ["--spec-type", "draft-mtp"] : []),
+      ...(this.mtpEnabled() ? ["--spec-type", "draft-mtp"] : []),
       ...(p.slotCacheDir ? ["--slot-save-path", p.slotCacheDir] : []),
       ...(p.extraArgs ?? []),
     ];
