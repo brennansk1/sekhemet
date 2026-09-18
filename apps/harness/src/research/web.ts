@@ -1,5 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { PoliteFetcher, ResearchCache, USER_AGENT } from "./polite.js";
+import { rankHits } from "./sources.js";
 
 /**
  * The Researcher's reach beyond the repository: papers, the web, GitHub.
@@ -22,11 +24,28 @@ export interface WebConfig {
   semanticScholarKey?: string;
   /** Injectable for tests: runs `gh` with these args and returns stdout. */
   gh?: (args: string[]) => Promise<string>;
+  /** Pacing, robots.txt and cache for every outbound request (see polite.ts). */
+  polite?: PoliteFetcher;
+  /** A real contact for OpenAlex's polite pool (SEKHEMET_CONTACT); never invented. */
+  contact?: string;
 }
 
 export function webConfigFromEnv(): WebConfig {
   const env = process.env;
+  const searx = env.SEKHEMET_SEARXNG_URL;
+  let searxHost: string | undefined;
+  try {
+    searxHost = searx ? new URL(searx).host : undefined;
+  } catch {
+    searxHost = undefined;
+  }
   return {
+    // The user's own SearXNG may live on the LAN; it is the one private host allowed.
+    polite: new PoliteFetcher({
+      cache: new ResearchCache(),
+      ...(searxHost ? { allowHosts: [searxHost] } : {}),
+    }),
+    ...(env.SEKHEMET_CONTACT ? { contact: env.SEKHEMET_CONTACT } : {}),
     ...(env.SEKHEMET_SEARXNG_URL ? { searxngUrl: env.SEKHEMET_SEARXNG_URL } : {}),
     ...(env.BRAVE_SEARCH_API_KEY ? { braveKey: env.BRAVE_SEARCH_API_KEY } : {}),
     ...(env.TAVILY_API_KEY ? { tavilyKey: env.TAVILY_API_KEY } : {}),
@@ -34,8 +53,11 @@ export function webConfigFromEnv(): WebConfig {
   };
 }
 
-const UA = { "User-Agent": "Sekhemet-Researcher/1.0 (local-first coding harness)" };
-const get = (cfg: WebConfig) => cfg.fetch ?? ((u: string, i?: RequestInit) => fetch(u, i));
+const UA = { "User-Agent": USER_AGENT };
+const get = (cfg: WebConfig) =>
+  cfg.polite
+    ? (u: string, i?: RequestInit) => (cfg.polite as PoliteFetcher).fetch(u, i)
+    : (cfg.fetch ?? ((u: string, i?: RequestInit) => fetch(u, i)));
 const timeout = () => AbortSignal.timeout(12_000);
 
 export interface Hit {
@@ -146,6 +168,18 @@ export async function searchPapers(query: string, cfg: WebConfig = {}): Promise<
       // Optional source.
     }
   }
+  if (hits.length < 8) {
+    try {
+      for (const h of await searchOpenAlex(query, cfg, 5)) {
+        const id = /arXiv (\S+)/.exec(h.meta ?? "")?.[1];
+        if (id && seen.has(id)) continue;
+        if (id) seen.add(id);
+        hits.push(h);
+      }
+    } catch {
+      // Optional source.
+    }
+  }
   return hits.slice(0, 10);
 }
 
@@ -188,7 +222,12 @@ export async function fetchPage(
   ) {
     return "Refusing to fetch a private or loopback address.";
   }
-  const res = await get(cfg)(u.toString(), { headers: UA, signal: timeout(), redirect: "follow" });
+  const init: RequestInit = { headers: UA, signal: timeout(), redirect: "follow" };
+  // Page reads honour robots.txt; API calls (search, registries) are not crawling.
+  const res = cfg.polite
+    ? await cfg.polite.fetch(u.toString(), init, true)
+    : await get(cfg)(u.toString(), init);
+  if (res.status === 451) return "The site's robots.txt disallows fetching this page.";
   if (!res.ok) return `The page answered ${res.status}.`;
   const type = res.headers.get("content-type") ?? "";
   const body = await res.text();
@@ -198,20 +237,141 @@ export async function fetchPage(
     : text;
 }
 
-/** A paper's full text from arXiv's HTML rendering, optionally one section. */
+/** Headings of a text produced by htmlToText ("# Title", "## 3 Method"). */
+export function outlineOf(text: string): string[] {
+  return text
+    .split("\n")
+    .filter((l) => /^#{1,4} \S/.test(l))
+    .map((l) => l.trim().slice(0, 100))
+    .slice(0, 60);
+}
+
+/**
+ * A paper's full text from arXiv's HTML rendering, optionally from one
+ * section. Without a section it returns the outline first, so the model can
+ * ask for the part it needs (delegated reading, as SoL-Pi does for files).
+ * Papers without an HTML rendering fall back to the abstract page.
+ */
 export async function readPaper(
   arxivId: string,
   section: string | undefined,
   cfg: WebConfig = {},
 ): Promise<string> {
   if (!/^\d{4}\.\d{4,5}$/.test(arxivId)) return "Give an arXiv id like 2605.03042.";
-  const text = await fetchPage(`https://arxiv.org/html/${arxivId}`, cfg, 200_000);
-  if (!section) return text.slice(0, 14_000);
+  let text = await fetchPage(`https://arxiv.org/html/${arxivId}`, cfg, 400_000);
+  if (/^The page answered 404|^The site's robots/.test(text) || text.length < 1500) {
+    text = await fetchPage(`https://arxiv.org/abs/${arxivId}`, cfg, 20_000);
+    return `(No HTML full text; abstract page.)\n${text.slice(0, 6000)}`;
+  }
+  if (!section) {
+    const outline = outlineOf(text);
+    return `${outline.length ? `SECTIONS\n${outline.join("\n")}\n\n` : ""}${text.slice(0, 10_000)}`;
+  }
   const lower = text.toLowerCase();
-  const at = lower.indexOf(section.toLowerCase());
+  const heading = lower.search(
+    new RegExp(`\\n#{1,4} [^\\n]*${section.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),
+  );
+  const at = heading !== -1 ? heading + 1 : lower.indexOf(section.toLowerCase());
   return at === -1
-    ? `No section "${section}". Start of paper:\n${text.slice(0, 6000)}`
+    ? `No section "${section}". Sections: ${outlineOf(text).join(" | ")}`
     : text.slice(at, at + 12_000);
+}
+
+interface OpenAlexWork {
+  id: string;
+  doi?: string | null;
+  title?: string | null;
+  publication_year?: number;
+  cited_by_count?: number;
+  abstract_inverted_index?: Record<string, number[]> | null;
+  ids?: { arxiv?: string; doi?: string };
+  referenced_works?: string[];
+}
+
+/** OpenAlex stores abstracts as word -> positions; put the words back in order. */
+export function invertedAbstract(index: Record<string, number[]> | null | undefined): string {
+  if (!index) return "";
+  const words: string[] = [];
+  for (const [w, positions] of Object.entries(index)) for (const p of positions) words[p] = w;
+  return words.filter(Boolean).join(" ");
+}
+
+const OA_FIELDS = "id,doi,title,publication_year,cited_by_count,abstract_inverted_index,ids";
+
+function oaUrl(path: string, cfg: WebConfig): string {
+  const sep = path.includes("?") ? "&" : "?";
+  return `https://api.openalex.org/${path}${cfg.contact ? `${sep}mailto=${encodeURIComponent(cfg.contact)}` : ""}`;
+}
+
+function arxivOf(w: OpenAlexWork): string | undefined {
+  const doi = (w.doi ?? w.ids?.doi ?? "").toLowerCase();
+  return /10\.48550\/arxiv\.(\d{4}\.\d{4,5})/.exec(doi)?.[1];
+}
+
+function oaHit(w: OpenAlexWork): Hit {
+  const ax = arxivOf(w);
+  return {
+    title: w.title ?? w.id,
+    url: ax ? `https://arxiv.org/abs/${ax}` : (w.doi ?? w.id),
+    snippet: invertedAbstract(w.abstract_inverted_index).slice(0, 600),
+    meta: `${w.publication_year ?? "?"}, ${w.cited_by_count ?? 0} citations${ax ? `, arXiv ${ax}` : ""}`,
+  };
+}
+
+/** Scholarly works from OpenAlex (250M works, free, documented 10/s). */
+export async function searchOpenAlex(
+  query: string,
+  cfg: WebConfig = {},
+  limit = 6,
+): Promise<Hit[]> {
+  const res = await get(cfg)(
+    oaUrl(`works?search=${encodeURIComponent(query)}&per-page=${limit}&select=${OA_FIELDS}`, cfg),
+    { headers: UA, signal: timeout() },
+  );
+  if (!res.ok) return [];
+  const body = (await res.json()) as { results?: OpenAlexWork[] };
+  return (body.results ?? []).map(oaHit);
+}
+
+/**
+ * Snowballing: the papers a paper cites ("references") or the papers that
+ * cite it ("cited_by", most cited first). The standard way to find the work
+ * a result builds on and the work that superseded it.
+ */
+export async function paperCitations(
+  id: string,
+  direction: "references" | "cited_by",
+  cfg: WebConfig = {},
+): Promise<Hit[] | string> {
+  const key = /^\d{4}\.\d{4,5}$/.test(id)
+    ? `doi:10.48550/arXiv.${id}`
+    : /^10\./.test(id)
+      ? `doi:${id}`
+      : /^W\d+$/.test(id)
+        ? id
+        : undefined;
+  if (!key) return "Give an arXiv id, a DOI or an OpenAlex id (W123...).";
+  const f = get(cfg);
+  const res = await f(oaUrl(`works/${key}?select=id,referenced_works`, cfg), {
+    headers: UA,
+    signal: timeout(),
+  });
+  if (!res.ok) return `OpenAlex does not know ${id} (${res.status}).`;
+  const work = (await res.json()) as OpenAlexWork;
+  const wid = work.id.split("/").pop() ?? "";
+  const path =
+    direction === "cited_by"
+      ? `works?filter=cites:${wid}&sort=cited_by_count:desc&per-page=8&select=${OA_FIELDS}`
+      : `works?filter=openalex:${(work.referenced_works ?? [])
+          .slice(0, 40)
+          .map((w) => w.split("/").pop())
+          .join("|")}&sort=cited_by_count:desc&per-page=8&select=${OA_FIELDS}`;
+  if (direction === "references" && (work.referenced_works ?? []).length === 0) {
+    return "OpenAlex lists no references for it.";
+  }
+  const list = await f(oaUrl(path, cfg), { headers: UA, signal: timeout() });
+  if (!list.ok) return `OpenAlex answered ${list.status}.`;
+  return ((await list.json()) as { results?: OpenAlexWork[] }).results?.map(oaHit) ?? [];
 }
 
 /** General web search through the provider the user configured. */
@@ -228,12 +388,14 @@ export async function webSearch(query: string, cfg: WebConfig = {}): Promise<Hit
     const body = (await res.json()) as {
       results?: { title: string; url: string; content?: string; engine?: string }[];
     };
-    return (body.results ?? []).slice(0, 8).map((r) => ({
-      title: r.title,
-      url: r.url,
-      snippet: r.content ?? "",
-      ...(r.engine ? { meta: r.engine } : {}),
-    }));
+    return rankHits(body.results ?? [])
+      .slice(0, 8)
+      .map((r) => ({
+        title: r.title,
+        url: r.url,
+        snippet: r.content ?? "",
+        ...(r.engine ? { meta: r.engine } : {}),
+      }));
   }
   if (cfg.braveKey) {
     const res = await f(
@@ -246,7 +408,7 @@ export async function webSearch(query: string, cfg: WebConfig = {}): Promise<Hit
     const body = (await res.json()) as {
       web?: { results?: { title: string; url: string; description?: string }[] };
     };
-    return (body.web?.results ?? []).map((r) => ({
+    return rankHits(body.web?.results ?? []).map((r) => ({
       title: r.title,
       url: r.url,
       snippet: htmlToText(r.description ?? ""),
@@ -262,7 +424,7 @@ export async function webSearch(query: string, cfg: WebConfig = {}): Promise<Hit
     const body = (await res.json()) as {
       results?: { title: string; url: string; content?: string }[];
     };
-    return (body.results ?? []).map((r) => ({
+    return rankHits(body.results ?? []).map((r) => ({
       title: r.title,
       url: r.url,
       snippet: r.content ?? "",
