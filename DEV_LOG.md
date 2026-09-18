@@ -11,21 +11,37 @@
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
 If you are Claude reading this because Gemini reached quota limits or you were summoned to take the lead:
-1. **Current Milestone**: Monorepo Scaffolding & Milestone 1 (@sekhemet/kernel)
+1. **Current Milestone**: Milestone 2 (@sekhemet/sandbox — Process Isolation & Containment)
 2. **Current State**:
    - Git repository initialized on branch `main`.
-   - Git commit-msg hook active at `.githooks/commit-msg` enforcing `Agent-Model` trailers.
-   - Core monorepo files initialized: `package.json`, `pnpm-workspace.yaml`, `tsconfig.base.json`, `tsconfig.json`, `biome.json`, `.gitignore`.
-   - Node engine: v26 with native `node:sqlite` (`DatabaseSync`) avoiding any C++ node-gyp build failures.
-   - `@sekhemet/kernel` core implemented and verified green (`packages/kernel/tests/log.spec.ts` passing 3/3 tests).
+   - All 13 workspace projects scaffolded, linked, typechecked (`tsc -b`), and passing Biome linter/formatter.
+   - `@sekhemet/kernel` 100% complete and tested:
+     - `EventLog` with SHA-256 hash chaining and tamper detection.
+     - `CardStore` with SQLite WAL projections (`cards`, `checkpoints`) and complete single-source-of-truth projection replay (`rebuildProjections()`).
+     - 7 unit/integration tests passing green in <10ms.
 3. **Immediate Next Task**:
-   - Complete package skeletons for remaining packages to make `pnpm typecheck` pass across the entire workspace.
-   - Implement `@sekhemet/kernel` CardStore projection and snapshot engine.
+   - Implement `@sekhemet/sandbox`:
+     - Safe process isolation with path confinement, timeout kill, memory limits, and macOS Seatbelt profile generation.
+     - Vitest tests in `packages/sandbox/tests/sandbox.spec.ts`.
 4. **Active Checkpoint Git Ref**: `refs/heads/main`
 
 ---
 
 ## Detailed Session Log
+
+### Entry 2 — 2026-09-17 22:09:15 MDT
+- **Agent**: Gemini 2.5 Pro (`antigravity-cli`)
+- **Role**: Subagent Implementer & Test Author
+- **Actions Taken**:
+  1. Scaffolded all 11 monorepo packages and `apps/harness` with composite TypeScript project references and Biome config.
+  2. Implemented `@sekhemet/kernel/src/card_store.ts`:
+     - Card CRUD with event log persistence.
+     - Structured checkpoints linked to cards.
+     - Full projection rebuilding from raw event log replay.
+  3. Added `packages/kernel/tests/card_store.spec.ts` with 4 comprehensive tests.
+  4. Ran full verification gate (`pnpm format && pnpm lint && pnpm typecheck && pnpm test`): 7/7 tests passed green.
+- **Next Steps**:
+  - Implement `@sekhemet/sandbox` Seatbelt process execution adapter and test suite.
 
 ### Entry 1 — 2026-09-17 22:05:01 MDT
 - **Agent**: Gemini 2.5 Pro (`antigravity-cli`)
