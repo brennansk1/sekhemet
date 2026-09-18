@@ -94,7 +94,7 @@ const CARDS = [
     scopeFiles: ["src/server.ts"],
     acceptanceTests: ["e2e_api.spec.ts"],
     stepBudget: 40,
-    spec: "Implement src/server.ts exporting startServer({ dbPath, port }) that returns Promise<{ port, close }>. Use node:http. Routes: POST /events (201 + created event), GET /events/:id (200 or 404), GET /audit (AuditReport), GET /health ({ status: \"ok\" }). Build on Ledger from src/ledger.ts.",
+    spec: 'Implement src/server.ts exporting startServer({ dbPath, port }) that returns Promise<{ port, close }>. Use node:http. Routes: POST /events (201 + created event), GET /events/:id (200 or 404), GET /audit (AuditReport), GET /health ({ status: "ok" }). Build on Ledger from src/ledger.ts.',
     acceptanceCriteria: [
       "startServer({ dbPath, port: 0 }) resolves with the bound port and a close() function",
       "POST /events returns 201 with the created event; invalid JSON returns 400 with an error message",
