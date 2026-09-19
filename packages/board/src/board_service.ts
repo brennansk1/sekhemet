@@ -375,8 +375,9 @@ export class BoardServiceImpl implements BoardService {
    * half-done change.
    */
   public async overlappingRunning(card: CardRecord): Promise<ScopeOverlap[]> {
+    // A held card is waiting for a column, not editing: it does not block.
     const running = (await this.cardStore.listCards({ status: "in_progress" })).filter(
-      (c) => c.id !== card.id,
+      (c) => c.id !== card.id && !c.blockedReason?.startsWith(HELD_REASON_PREFIX),
     );
     const out: ScopeOverlap[] = [];
     for (const other of running) {

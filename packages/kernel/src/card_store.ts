@@ -985,6 +985,37 @@ export class CardStore {
     return this.getProject(id) as ProjectRecord;
   }
 
+  /** The review time a person has per day (B12 "set hours"; ReviewWIP, B3). */
+  public async setProjectReviewMinutes(
+    id: string,
+    reviewMinutesPerDay: number,
+    actor = "human",
+  ): Promise<ProjectRecord> {
+    if (!this.getProject(id))
+      throw new CardStructureError("unknown_card", `Project not found: ${id}`);
+    if (!Number.isFinite(reviewMinutesPerDay) || reviewMinutesPerDay <= 0) {
+      throw new Error("Review minutes per day must be a positive number");
+    }
+    const payload = {
+      id,
+      reviewMinutesPerDay: Math.round(reviewMinutesPerDay),
+      updatedAt: new Date().toISOString(),
+    };
+    await this.eventLog.append({ actor, type: "project/review_hours", payload });
+    this.projectReviewMinutes(payload);
+    return this.getProject(id) as ProjectRecord;
+  }
+
+  private projectReviewMinutes(p: {
+    id: string;
+    reviewMinutesPerDay: number;
+    updatedAt: string;
+  }): void {
+    this.db
+      .prepare("UPDATE projects SET review_minutes_per_day = ?, updated_at = ? WHERE id = ?")
+      .run(p.reviewMinutesPerDay, p.updatedAt, p.id);
+  }
+
   private projectProjectCreated(p: ProjectRecord): void {
     this.db
       .prepare(
@@ -1216,6 +1247,11 @@ export class CardStore {
         return true;
       case "project/created":
         this.projectProjectCreated(event.payload as ProjectRecord);
+        return true;
+      case "project/review_hours":
+        this.projectReviewMinutes(
+          event.payload as { id: string; reviewMinutesPerDay: number; updatedAt: string },
+        );
         return true;
       case "project/updated":
         this.projectProjectUpdated(

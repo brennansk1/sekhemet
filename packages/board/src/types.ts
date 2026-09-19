@@ -32,7 +32,8 @@ export interface BoardState {
 
 export interface BoardService {
   transitionCard(t: CardTransition): Promise<void>;
-  getBoardState(): Promise<BoardState>;
+  /** The board, optionally one project's (B8). */
+  getBoardState(filter?: { projectId?: string }): Promise<BoardState>;
   checkWipLimits(): Promise<WipLimitStatus[]>;
 }
 

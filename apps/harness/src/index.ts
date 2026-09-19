@@ -221,7 +221,23 @@ export function initLocalKernel(repoPath: string): {
   initSchema(db);
   const log = new EventLog(db);
   const cardStore = new CardStore(db, log);
-  const boardService = new BoardServiceImpl(cardStore);
+  // Production boards check every column's entry condition (B1); Review
+  // reads the card's latest evidence bundle.
+  const evidenceDir = join(dotSekhemet, "evidence");
+  const boardService = new BoardServiceImpl(cardStore, {
+    entryConditions: true,
+    evidenceFor: (cardId) => {
+      try {
+        const ev = JSON.parse(readFileSync(join(evidenceDir, `latest-${cardId}.json`), "utf8")) as {
+          passed?: boolean;
+          rungResults?: unknown[];
+        };
+        return { passed: ev.passed === true, gatesRun: ev.rungResults?.length ?? 0 };
+      } catch {
+        return undefined;
+      }
+    },
+  });
 
   return { db, log, cardStore, boardService };
 }
@@ -373,7 +389,11 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
 
   const { db, log, cardStore, boardService } = initLocalKernel(config.repoPath);
   // The repository is a project (K14); cards created without one join it.
-  await ensureRepoProject(cardStore, config.repoPath).catch(() => undefined);
+  const project = await ensureRepoProject(cardStore, config.repoPath).catch(() => undefined);
+  // ReviewWIP from this person's measured review minutes (B3).
+  if (project) {
+    await boardService.calibrateReviewWip(project.reviewMinutesPerDay).catch(() => undefined);
+  }
 
   if (config.command === "mcp") {
     runMcpStdioServer({ db, log, cardStore, boardService, repoPath: config.repoPath });
@@ -770,6 +790,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     const workerIdx = argv.indexOf("--worker");
     const workerModel = workerIdx !== -1 ? argv[workerIdx + 1] : undefined;
 
+    if (project && project.status !== "active") {
+      console.log(
+        `Project ${project.name} is ${project.status}; resume it on the dashboard (or pause another: at most ${cardStore.activeProjectCap} run at once).`,
+      );
+      return;
+    }
     const ready = (await cardStore.listCards({ status: "ready" })) as CardRecord[];
     if (ready.length === 0) {
       console.log("No Ready cards.");
@@ -1109,9 +1135,10 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       console.log(`\n=== ${card.id} (attempt ${attemptNo}): ${card.title} ===`);
       // What earlier attempts learned reaches this one through the card's
       // dossier (lessons, answers, reviews, send-backs), read by the runner.
-      const result = await executeCard(ctx, card, worker, guidance, {
+      const result = await executeCard(ctx, rawCard, worker, guidance, {
         attempt: attemptNo,
         signal: queueStop.signal,
+        ...(maxTurns && maxTurns > 0 ? { maxSteps: maxTurns } : {}),
       });
       if (result.passed) passedResults.push({ card, diff: result.evidence.diff ?? "" });
       for (const st of result.lessons.struggles) {
@@ -1182,7 +1209,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       for (const queued of cards) {
         if (halted) break;
         const card = (await cardStore.getCard(queued.id)) ?? queued;
-        const waiting = await blockedBy(card);
+        // B6: a card whose files another running card is editing waits.
+        const overlap = await boardService.overlappingRunning(card);
+        const waiting = [
+          ...(await blockedBy(card)),
+          ...overlap.map((o) => `${o.cardId} (editing ${o.files.join(", ")})`),
+        ];
         if (waiting.length > 0) {
           console.log(`\n--- ${card.id} waits on ${waiting.join(", ")}: deferred ---`);
           if (!deferred.some((d) => d.id === card.id)) deferred.push(card);

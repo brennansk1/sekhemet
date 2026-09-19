@@ -2,11 +2,17 @@ import { execFile, execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
-import type { BoardServiceImpl } from "@sekhemet/board";
+import { type BoardServiceImpl, legalPath } from "@sekhemet/board";
 import { PlaybookRegistry, SkillsRegistry, useFileEvidenceStore } from "@sekhemet/context";
-import { DeterministicGateRunner, loadGatesConfig } from "@sekhemet/gates";
+import { DeterministicGateRunner, compileEvidence, loadGatesConfig } from "@sekhemet/gates";
 import { type CardRecord, type CardStatus, type CardStore, pruneRetention } from "@sekhemet/kernel";
-import { type CardRunResult, CardRunner, type TurnResult } from "@sekhemet/loop";
+import {
+  type CardRunResult,
+  CardRunner,
+  type TurnResult,
+  calibratedStepBudget,
+  cardClassOf,
+} from "@sekhemet/loop";
 import {
   type CacheSummary,
   type LocalInferenceAdapter,
@@ -15,6 +21,7 @@ import {
   checkExecutionHeadroom,
   readSwapUsedBytes,
 } from "@sekhemet/models";
+import { type SpidrSliceKind, scoreDifficulty, stepBudgetForDifficulty } from "@sekhemet/planner";
 import { ProcessSandbox } from "@sekhemet/sandbox";
 import { NodeGitSyncAdapter } from "@sekhemet/sync";
 import { readSettings } from "./integrations.js";
@@ -106,6 +113,8 @@ export interface ExecuteCardOptions {
   attempt?: number;
   /** Stops the card before its next turn with `human_abort` (L25). */
   signal?: AbortSignal;
+  /** A cap on the card's step budget (`queue --max-turns`), applied after planning. */
+  maxSteps?: number;
 }
 
 /**
@@ -206,6 +215,12 @@ export async function executeCard(
   options: ExecuteCardOptions = {},
 ): Promise<CardRunResult> {
   const log = ctx.log ?? ((line: string) => console.log(line));
+  // Pulled through Planning (B2): difficulty scored (K25), budget set from
+  // this repo's measured history (L21), then the runner moves it on.
+  card = await pullThroughPlanning(ctx, card, model.modelId, log).catch(() => card);
+  if (options.maxSteps && options.maxSteps > 0 && card.stepBudget > options.maxSteps) {
+    card = { ...card, stepBudget: options.maxSteps };
+  }
   // The attempts table (K16) and the evidence files both count attempts.
   const attempt =
     options.attempt ??
@@ -607,6 +622,219 @@ async function pendingStartPoint(cardStore: CardStore, cardId: string) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Planning (B2, K25, L21), rollup (B7), explain (B12)
+// ---------------------------------------------------------------------------
+
+const SLICE_KINDS = new Set(["spike", "interface", "data", "path", "rule"]);
+
+/**
+ * Pull a Ready card through Planning (B2, design: "Ready -> Planning:
+ * planner claims; Planning -> InProgress: plan + criteria approved"). The
+ * Planning entry condition is a scored difficulty, so an unscored card is
+ * scored here from its shape and this repo's measured failure rate (K25);
+ * its step budget is then moved toward what passing attempts of its class
+ * used (L21, at most 15% per calibration), or set from the difficulty when
+ * the card still carries the schema default and nothing is measured yet.
+ */
+export async function pullThroughPlanning(
+  ctx: ExecutionContext,
+  card: CardRecord,
+  modelId: string,
+  log: (line: string) => void = () => {},
+): Promise<CardRecord> {
+  if (card.status !== "ready") return card;
+  const cardClass = cardClassOf(card);
+  const measured = ctx.cardStore.runs.competence(cardClass, modelId);
+  const patch: { difficulty?: number; stepBudget?: number } = {};
+  if (card.difficulty === undefined) {
+    const slice = cardClass.toLowerCase();
+    const scored = scoreDifficulty({
+      slice: (SLICE_KINDS.has(slice) ? slice : "path") as SpidrSliceKind,
+      fileCount: Math.max(1, card.scopeFiles.length),
+      ...(measured.attempts >= 3 ? { historicalFailureRate: 1 - measured.passRate } : {}),
+    }).value;
+    patch.difficulty = Math.max(1, Math.min(10, Math.round(scored)));
+  }
+  const decision = calibratedStepBudget(card.stepBudget, measured);
+  if (decision.changed) patch.stepBudget = decision.budget;
+  else if (measured.attempts === 0 && card.stepBudget === 50) {
+    patch.stepBudget = stepBudgetForDifficulty(patch.difficulty ?? card.difficulty ?? 4);
+  }
+  const updated =
+    Object.keys(patch).length > 0
+      ? await ctx.cardStore.updateCard(card.id, patch, "planner")
+      : card;
+  if (patch.stepBudget !== undefined) {
+    await ctx.cardStore
+      .recordEvent({
+        type: "card/budget_set",
+        cardId: card.id,
+        actor: "planner",
+        payload: {
+          id: card.id,
+          from: card.stepBudget,
+          to: patch.stepBudget,
+          reason: decision.changed ? decision.reason : "set from difficulty (nothing measured yet)",
+        },
+      })
+      .catch(() => undefined);
+    log(`   budget ${card.stepBudget} -> ${patch.stepBudget} steps`);
+  }
+  await ctx.boardService.transitionCard({
+    cardId: card.id,
+    fromStatus: "ready",
+    toStatus: "planning",
+    actor: "planner",
+    reason: "planner claims the card",
+  });
+  return { ...updated, status: "planning" };
+}
+
+/**
+ * Parent rollup with an integration gate (B7, design: "A parent card is
+ * done only when every child is done and the parent's own integration gate
+ * passes on the merged result"). Runs every declared gate on the main
+ * repository once the last child is accepted; passing moves the parent to
+ * Done by the legal route, failing sends it to Planning with the failures.
+ */
+export async function rollupParent(
+  ctx: ExecutionContext,
+  parentId: string,
+): Promise<{ status: "not_ready" | "passed" | "failed"; children: number; failures?: string[] }> {
+  const parent = await ctx.cardStore.getCard(parentId);
+  const children = await ctx.cardStore.listCards({ parentId });
+  if (!parent || children.length === 0) return { status: "not_ready", children: children.length };
+  if (parent.status === "done" || children.some((c) => c.status !== "done")) {
+    return { status: "not_ready", children: children.length };
+  }
+  const gatesConfig = loadGatesConfig(ctx.repoPath);
+  const gateRunner = new DeterministicGateRunner(
+    new ProcessSandbox({ requireConfinement: ctx.restrictedMode }),
+    { repoRoot: ctx.repoPath, expectedConfigSha256: gatesConfig.sha256 },
+  );
+  const rungs = [...new Set(gatesConfig.gates.filter((g) => g.blocking).map((g) => g.rung))];
+  const result = await gateRunner.runGates(rungs, ctx.repoPath);
+  const failures = result.failures.map(
+    (f) => `[${f.gate ?? f.rung}] ${f.errorExcerpt.split("\n")[0]}`,
+  );
+  // The parent's evidence is the integration run (what Review reads).
+  const attempt = nextAttemptNumber(ctx.repoPath, parentId);
+  const evidence = compileEvidence({
+    cardId: parentId,
+    attempt,
+    diff: "",
+    filesTouched: [],
+    linesAdded: 0,
+    linesRemoved: 0,
+    gateResult: result,
+    turnsUsed: 0,
+    stopReason: result.passed ? "gate_passed" : "repair_exhausted",
+    checkpointShas: [],
+    tokens: { promptTokens: 0, completionTokens: 0 },
+    durationMs: result.durationMs,
+    settings: { modelId: "integration-gate", toolArm: "none" },
+    gatesConfigSha256: gatesConfig.sha256,
+  });
+  const dir = join(ctx.repoPath, ".sekhemet", "evidence");
+  mkdirSync(dir, { recursive: true });
+  const body = `${JSON.stringify(evidence, null, 2)}\n`;
+  writeFileSync(join(dir, `${evidence.id}.json`), body);
+  writeFileSync(join(dir, `latest-${parentId}.json`), body);
+  await ctx.cardStore.recordEvent({
+    type: "card/rollup",
+    cardId: parentId,
+    actor: "gate",
+    payload: {
+      id: parentId,
+      children: children.map((c) => c.id),
+      passed: result.passed,
+      failures,
+      evidenceId: evidence.id,
+    },
+  });
+  const move = async (to: CardStatus, reason: string) => {
+    const current = (await ctx.cardStore.getCard(parentId)) as CardRecord;
+    for (const step of legalPath(current.status, to) ?? []) {
+      const now = (await ctx.cardStore.getCard(parentId)) as CardRecord;
+      await ctx.boardService.transitionCard({
+        cardId: parentId,
+        fromStatus: now.status,
+        toStatus: step,
+        actor: "harness",
+        reason,
+      });
+    }
+  };
+  if (result.passed) {
+    await move("done", `rollup: all ${children.length} children done; integration gate passed`);
+    return { status: "passed", children: children.length };
+  }
+  await move("planning", "rollup: integration gate failed on the merged result").catch(
+    () => undefined,
+  );
+  await ctx.cardStore
+    .updateCard(
+      parentId,
+      { blockedReason: `integration gate failed: ${failures.slice(0, 3).join("; ")}` },
+      "gate",
+    )
+    .catch(() => undefined);
+  return { status: "failed", children: children.length, failures };
+}
+
+/**
+ * Why a card is where it is, in plain sentences (B12 "explain"): its
+ * column, what holds it, why it stopped, what failed, what it waits on,
+ * and the smallest next action.
+ */
+export async function explainCard(ctx: ExecutionContext, cardId: string): Promise<string[]> {
+  const card = await ctx.cardStore.getCard(cardId);
+  if (!card) throw new Error(`Card not found: ${cardId}`);
+  const lines = [`${card.id} is in ${card.status}.`];
+  const waiting = ctx.cardStore.waitingOn(card.id);
+  if (waiting.length > 0) lines.push(`It waits on ${waiting.join(", ")}, not done yet.`);
+  if (card.blockedReason) lines.push(`Held or blocked: ${card.blockedReason}.`);
+  if (card.stopReason) lines.push(`Its last attempt stopped with ${card.stopReason}.`);
+  const attempts = ctx.cardStore.runs.listAttempts(card.id);
+  if (attempts.length > 0) {
+    const last = attempts.at(-1);
+    lines.push(
+      `${attempts.length} attempt(s); the last used ${last?.tokensUsed ?? 0} tokens in ${Math.round(last?.secondsUsed ?? 0)} s.`,
+    );
+  }
+  try {
+    const ev = JSON.parse(
+      readFileSync(join(ctx.repoPath, ".sekhemet", "evidence", `latest-${card.id}.json`), "utf8"),
+    ) as { passed?: boolean; failures?: { gate?: string; rung?: string; errorExcerpt?: string }[] };
+    const first = ev.failures?.[0];
+    if (!ev.passed && first) {
+      lines.push(
+        `First failing gate: ${first.gate ?? first.rung}: ${String(first.errorExcerpt ?? "").split("\n")[0]}.`,
+      );
+    }
+  } catch {
+    // No evidence yet.
+  }
+  const parked = (await ctx.cardStore.cardEvents(card.id, ["card/parked"])).at(-1);
+  if (parked)
+    lines.push(`Park diagnosis: ${(parked.payload as { suggestion?: string }).suggestion ?? ""}`);
+  const next =
+    waiting.length > 0
+      ? `Finish ${waiting[0]} first.`
+      : card.status === "review"
+        ? "Accept it or return it with a reason."
+        : card.status === "parked"
+          ? "Unblock it (answer, split or re-plan), then move it to Ready."
+          : card.blockedReason?.startsWith("held:")
+            ? "It moves on its own when Review has room."
+            : card.status === "ready"
+              ? "Run the queue."
+              : undefined;
+  if (next) lines.push(`Next: ${next}`);
+  return lines;
+}
+
 /** The column a held card was waiting for, from its `held: <column> refused (...)` reason. */
 export function heldTarget(blockedReason: string | undefined | null): CardStatus | undefined {
   const m = /^held:\s*(in_progress|verify|review|parked|planning|ready|done)\b/.exec(
@@ -799,6 +1027,8 @@ export async function acceptCard(
   await gitAdapter.removeWorktree(card.id);
   // Review has room again: cards held on back-pressure move now.
   await releaseHeldCards(ctx).catch(() => []);
+  // The last child accepted: roll the parent up through its integration gate (B7).
+  if (card.parentId) await rollupParent(ctx, card.parentId).catch(() => undefined);
   return sha;
 }
 

@@ -44,7 +44,14 @@ import {
   worktrees,
 } from "./dashboard_api.js";
 import { runDoctor } from "./doctor.js";
-import { acceptCard, releaseHeldCards } from "./execute.js";
+import {
+  acceptCard,
+  explainCard,
+  forkCard,
+  releaseHeldCards,
+  requestAbort,
+  rewindCard,
+} from "./execute.js";
 import { learnFromSendBack } from "./learning/reflect.js";
 import { createPmApi } from "./pm_api.js";
 import { generateDashboardHtml } from "./ui_html.js";
@@ -388,8 +395,8 @@ export function startDashboardServer(
   };
 
   /** Board state with every card's `display` filled in. */
-  const boardWithEvidence = async () => {
-    const state = await boardService.getBoardState();
+  const boardWithEvidence = async (projectId?: string) => {
+    const state = await boardService.getBoardState(projectId ? { projectId } : {});
     const entries = statusEntries();
     const facts = latestByCard(options.db, FACT_TYPES);
     const now = Date.now();
@@ -548,7 +555,16 @@ export function startDashboardServer(
     }
 
     if (url === "/api/board") {
-      json(res, 200, await boardWithEvidence());
+      // B8: ?project=<id> scopes the board to one project.
+      json(res, 200, await boardWithEvidence(query.get("project") ?? undefined));
+      return;
+    }
+
+    if (url === "/api/projects" && req.method !== "POST") {
+      json(res, 200, {
+        projects: options.cardStore?.listProjects() ?? [],
+        activeCap: options.cardStore?.activeProjectCap,
+      });
       return;
     }
 
@@ -843,6 +859,150 @@ export function startDashboardServer(
     if (url === "/api/doctor") {
       if (query.get("fresh") === "1") doctorCache = undefined;
       json(res, 200, await cachedDoctor());
+      return;
+    }
+
+    // --- Human commands (B12), runner control (L25, H18, H19), order (B11) -----
+    const explainMatch = new RegExp(`^/api/cards/(${CARD_ID})/explain$`).exec(url);
+    if (explainMatch && options.cardStore) {
+      try {
+        json(res, 200, {
+          lines: await explainCard(
+            {
+              repoPath,
+              restrictedMode: false,
+              cardStore: options.cardStore,
+              boardService: boardService as never,
+            },
+            explainMatch[1] as string,
+          ),
+        });
+      } catch (err) {
+        json(res, 404, { error: err instanceof Error ? err.message : String(err) });
+      }
+      return;
+    }
+
+    const command = new RegExp(
+      `^/api/cards/(${CARD_ID})/(abort|rewind|fork|override|reroute|reorder)$`,
+    ).exec(url);
+    const projectMatch = /^\/api\/projects\/(proj_[A-Za-z0-9_-]+)$/.exec(url);
+    if ((command || projectMatch) && req.method === "POST") {
+      if (!isTrustedMutation(req)) {
+        json(res, 403, { error: "Commands must come from the dashboard itself" });
+        return;
+      }
+      const store = options.cardStore;
+      if (!store) {
+        json(res, 501, { error: "This server was started read-only" });
+        return;
+      }
+      const ctx = {
+        repoPath,
+        restrictedMode: false,
+        cardStore: store,
+        boardService: boardService as never,
+      };
+      try {
+        const body = await readJsonBody(req);
+        if (projectMatch) {
+          // Pause or resume a project (B13 cap), set its review hours (B3).
+          const id = projectMatch[1] as string;
+          if (typeof body.reviewMinutesPerDay === "number") {
+            await store.setProjectReviewMinutes(id, body.reviewMinutesPerDay, "human");
+            const limit = await (
+              boardService as unknown as { calibrateReviewWip(m: number): Promise<number> }
+            ).calibrateReviewWip(body.reviewMinutesPerDay);
+            json(res, 200, { project: store.getProject(id), reviewWip: limit });
+            return;
+          }
+          const status = body.status;
+          if (status !== "active" && status !== "paused" && status !== "archived") {
+            json(res, 400, { error: "status must be active, paused or archived" });
+            return;
+          }
+          json(res, 200, { project: await store.setProjectStatus(id, status, "human") });
+          return;
+        }
+        const [, cardId, verb] = command as unknown as [string, string, string];
+        const card = await store.getCard(cardId);
+        if (!card) {
+          json(res, 404, { error: `No card ${cardId}` });
+          return;
+        }
+        if (verb === "abort") {
+          const reason = typeof body.reason === "string" ? body.reason : "";
+          await requestAbort(store, cardId, reason || "stopped from the dashboard");
+          json(res, 200, { ok: true, requested: "abort" });
+          return;
+        }
+        if (verb === "rewind" || verb === "fork") {
+          const step = Number(body.step);
+          if (!Number.isInteger(step) || step < 0) {
+            json(res, 400, { error: "A step number is required" });
+            return;
+          }
+          const r =
+            verb === "fork"
+              ? await forkCard(
+                  ctx,
+                  cardId,
+                  step,
+                  typeof body.attemptId === "string" ? body.attemptId : undefined,
+                )
+              : await rewindCard(ctx, cardId, step);
+          json(res, 200, { ok: true, ...r });
+          return;
+        }
+        if (verb === "override") {
+          // Past an entry condition or an illegal edge, as a recorded human decision (B1).
+          const to = body.toStatus;
+          const reason = typeof body.reason === "string" ? body.reason.trim() : "";
+          if (typeof to !== "string" || !reason) {
+            json(res, 400, { error: "An override needs toStatus and a reason" });
+            return;
+          }
+          await boardService.transitionCard({
+            cardId,
+            fromStatus: card.status,
+            toStatus: to as never,
+            actor: "human",
+            reason: `override: ${reason}`,
+          });
+          json(res, 200, { ok: true, status: to });
+          return;
+        }
+        if (verb === "reroute") {
+          // Which model runs the card next (B12 "reroute").
+          const executor = typeof body.executor === "string" ? body.executor : undefined;
+          const planner = typeof body.planner === "string" ? body.planner : undefined;
+          if (!executor && !planner) {
+            json(res, 400, { error: "Name an executor or a planner" });
+            return;
+          }
+          const updated = await store.updateCard(
+            cardId,
+            {
+              modelRoute: {
+                ...(card.modelRoute ?? {}),
+                ...(executor ? { executor } : {}),
+                ...(planner ? { planner } : {}),
+              },
+            },
+            "human",
+          );
+          json(res, 200, { ok: true, modelRoute: updated.modelRoute });
+          return;
+        }
+        // reorder (B11): place the card between two neighbours.
+        const updated = await store.reorderCard(cardId, {
+          ...(typeof body.afterCardId === "string" ? { afterCardId: body.afterCardId } : {}),
+          ...(typeof body.beforeCardId === "string" ? { beforeCardId: body.beforeCardId } : {}),
+        });
+        json(res, 200, { ok: true, orderKey: updated.orderKey });
+      } catch (err) {
+        json(res, 409, { error: err instanceof Error ? err.message : String(err) });
+      }
       return;
     }
 
