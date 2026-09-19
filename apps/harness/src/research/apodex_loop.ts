@@ -451,6 +451,7 @@ export async function apodexLoop(
   let lastSig = "";
   let repeats = 0;
   let nudged = false;
+  let repaired = false;
 
   const compacted = (): ChatTurn[] => {
     let total = turns.reduce((n, t) => n + t.content.length, 0);
@@ -490,6 +491,25 @@ export async function apodexLoop(
       const content = String(end.arguments?.content ?? "").trim();
       if (content) {
         const conf = Number(end.arguments?.confidence);
+        // The References contract, enforced before the answer is accepted: a
+        // cited URL no tool returned is how a plausible answer goes wrong.
+        // One chance to repair, the way the trained harness rejects a bad
+        // finalize (the rejection is the tool result).
+        const check = opts.role === "solo" ? verifyReferences(content, opts.ledger) : undefined;
+        if (check && check.badCitations.length > 0 && !repaired && !last) {
+          repaired = true;
+          const callId = end.id || `fin_${turn}`;
+          turns.push({ role: "assistant", content: res.text, toolCalls: [{ ...end, id: callId }] });
+          turns.push({
+            role: "tool",
+            toolCallId: callId,
+            content: `finalize_answer rejected: citation(s) [${check.badCitations.join(", ")}] do not match any URL a tool returned in this session (or have no References line). Every cited URL must be copied character-for-character from a web_search or web_fetch result. Verify those claims with web_fetch, or remove them, then call finalize_answer again. If sources disagree about a fact (for example whether a package is maintained), check the package registry or the project's own repository before deciding.`,
+          });
+          deps.onEvent?.(
+            `turn ${turn}: finalize rejected, citations [${check.badCitations.join(", ")}] unverified`,
+          );
+          continue;
+        }
         return {
           text: content,
           ended: opts.role === "solo" ? "finalize" : "submit",

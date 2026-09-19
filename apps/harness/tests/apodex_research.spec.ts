@@ -471,3 +471,67 @@ describe("server slots", () => {
     expect(requests.some((r) => r.extraction)).toBe(true);
   });
 });
+
+describe("citation repair", () => {
+  it("rejects a finalize that cites an unreturned URL once, then accepts the repaired answer", async () => {
+    const page = `<html><body><p>${"real docs ".repeat(60)}</p></body></html>`;
+    const web = {
+      fetch: async (url: string) =>
+        url.endsWith("/robots.txt")
+          ? new Response("")
+          : new Response(page, { headers: { "content-type": "text/html" } }),
+    };
+    const seen: string[] = [];
+    let i = 0;
+    const steps = [
+      {
+        toolCalls: [
+          {
+            id: "a",
+            name: "web_fetch",
+            arguments: { url: "https://docs.example.dev/a", info_to_extract: "x" },
+          },
+        ],
+      },
+      {
+        toolCalls: [
+          {
+            id: "b",
+            name: "finalize_answer",
+            arguments: {
+              content:
+                "X [1] and Y [2].\n\nReferences:\n[1] https://docs.example.dev/a\n[2] https://invented.example/z",
+            },
+          },
+        ],
+      },
+      {
+        toolCalls: [
+          {
+            id: "c",
+            name: "finalize_answer",
+            arguments: { content: "X [1].\n\nReferences:\n[1] https://docs.example.dev/a" },
+          },
+        ],
+      },
+    ];
+    const model = {
+      modelId: "apodex-1.1-mini",
+      supportedArms: ["arm_a_flat" as const],
+      nativeTools: true,
+      async generate(req: { prompt: string; messages?: { role: string; content: string }[] }) {
+        const usage = { promptTokens: 1, completionTokens: 1, durationMs: 1 };
+        if (req.prompt.startsWith("You are given a piece of content"))
+          return { text: "info", toolCalls: [], usage };
+        const last = req.messages?.at(-1);
+        if (last) seen.push(last.content);
+        return { text: "", usage, ...steps[i++] };
+      },
+    };
+    const r = await research(model as never, "q", { repoPath: process.cwd(), web });
+    expect(seen.some((c) => /finalize_answer rejected: citation\(s\) \[2\]/.test(c))).toBe(true);
+    expect(r.answer).toBe("X [1].\n\nReferences:\n[1] https://docs.example.dev/a");
+    expect(r.badCitations).toEqual([]);
+    expect(r.grounded).toBe(true);
+  });
+});
