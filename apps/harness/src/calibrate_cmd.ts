@@ -1,13 +1,27 @@
 import {
+  type EngineCandidate,
+  HttpInferenceAdapter,
   type MachineProfile,
+  ManagedLlamaServerAdapter,
   ModelRegistry,
   type ModelRole,
   ModelRoster,
   type UnloadableAdapter,
   calibrateHardware,
   loadMachineProfile,
+  modelTelemetry,
   needsRecalibration,
+  saveMachineProfile,
+  selectEngine,
 } from "@sekhemet/models";
+
+/** The inference engine behind an adapter (M24). */
+function engineOf(adapter: unknown): string {
+  if (adapter instanceof ManagedLlamaServerAdapter) return "llama.cpp";
+  if (adapter instanceof HttpInferenceAdapter)
+    return adapter.api === "ollama" ? "ollama" : "openai-compatible";
+  return "unknown";
+}
 
 /**
  * `sekhemet calibrate` (H3): measure this machine and every model it will
@@ -93,5 +107,24 @@ export async function runCalibrate(
       .join("; ");
     say(`  ${label} (${cal.throughputClass}): ${rows}`);
   }
+  // M24: the engine by measurement: predicted seconds per tool-result turn,
+  // with cross-turn cache retention (from live telemetry) weighted in.
+  const cacheByModel = modelTelemetry.snapshot().cache;
+  const engines = new Map<string, EngineCandidate>();
+  for (const c of candidates) {
+    const cal = profile.models[c.label];
+    if (!cal) continue;
+    const engine = engineOf(c.adapter);
+    const retention = cacheByModel[c.adapter.modelId]?.toolResultHitRate;
+    const prev = engines.get(engine);
+    const speed = cal.speed;
+    if (!prev || (speed.decodeTokensPerSecond ?? 0) > (prev.speed.decodeTokensPerSecond ?? 0)) {
+      engines.set(engine, { engine, speed, cacheRetention: retention });
+    }
+  }
+  const decision = selectEngine([...engines.values()]);
+  profile.engine = decision;
+  if (opts.path !== false) saveMachineProfile(profile, opts.path || undefined);
+  say(`Engine: ${decision.engine} (${decision.reason}).`);
   return profile;
 }

@@ -10,6 +10,7 @@ import {
   distillSkill,
   formatM0Report,
   mineToolProposals,
+  playbookDiagnostics,
   qualifyCandidates,
   runM0Protocol,
   siftSlice,
@@ -23,6 +24,8 @@ import {
   ModelRegistry,
   assertModelRunnable,
   loadMachineProfile,
+  planWorkWindow,
+  scheduleNow,
 } from "@sekhemet/models";
 import {
   DecisionStore,
@@ -205,7 +208,7 @@ export async function queuePrelude(
   if (top) say(`Working goal ${top.goalId} first: ${top.why}.`);
 
   const ordering = orderReadyCards(ready, loadPrioritizationConfig(k.repoPath), now);
-  let ordered = ordering.cards;
+  let ordered = batchBySwaps(ordering.cards, now);
   if (ordering.model !== "unconfigured") say(`Ready ordered by ${ordering.model.toUpperCase()}.`);
   if (top) {
     const goal = (await new GoalStore(ledger).get(top.goalId)) as { strategy: string };
@@ -454,6 +457,23 @@ export async function runWave2Command(
  */
 async function improveCommand(k: Kernel, args: string[], io: CommandIO): Promise<number> {
   const { print } = io;
+  const gateRule = flag(args, "--gate-rule");
+  if (gateRule) {
+    // E5: `sekhemet improve --gate-rule <id> [--fixtures chronicle,onyx] [--worker m]`
+    const { dirname } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const harnessRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+    const worker = flag(args, "--worker");
+    const v = await gateRuleOnFixtures(k, gateRule, {
+      fixtures: (flag(args, "--fixtures") ?? "chronicle").split(",").filter(Boolean),
+      runFixture: (fixture, rule) =>
+        runFixtureGate(harnessRoot, fixture, rule, worker ? ["--worker", worker] : []),
+    });
+    for (const p of v.perSuite)
+      print(`${p.suite}: ${p.baseline} -> ${p.candidate} (${p.delta >= 0 ? "+" : ""}${p.delta})`);
+    print(`${v.accepted ? "ACCEPTED" : "REJECTED"}: ${v.reason}`);
+    return v.accepted ? 0 : 1;
+  }
   const cards = await k.cardStore.listCards();
   const steps = await k.log.getEventsByTypes(["card/step"]);
   const dot = join(k.repoPath, ".sekhemet");
@@ -647,4 +667,239 @@ export async function recordBakeOff(
   const matrix = join(repoPath, "MODEL_MATRIX.md");
   await writeBakeOffMatrix(matrix, readBakeOffRecords(path));
   return { matrix, recorded, inadmissible };
+}
+
+// ------------------------------------------------------------ Seshat (P13)
+
+/**
+ * The planner's half of a standup (P13): decisions waiting on the human
+ * with their wait times, and the next window's cards with each estimate's
+ * range and basis. Appended to Seshat's ledger standup.
+ */
+export async function plannerStandupSection(cardStore: CardStore, log: EventLog): Promise<string> {
+  const { standupReport } = await import("@sekhemet/planner");
+  const r = await standupReport({ store: cardStore, log });
+  const lines: string[] = [];
+  if (r.decisionsWaiting.length) {
+    lines.push(
+      `Decisions waiting on you: ${r.decisionsWaiting.map((d) => `${d.question} (${d.id}${d.cardId ? `, ${d.cardId}` : ""}, ${d.waitingHours} h)`).join("; ")}.`,
+    );
+  }
+  if (r.nextWindow.length) {
+    lines.push(`Next window: ${r.nextWindow.map((n) => `${n.title} (${n.estimate})`).join("; ")}.`);
+  }
+  return lines.join("\n");
+}
+
+// ---------------------------------------------------- Replan on rung 3 (P12)
+
+/**
+ * A card stopped at repair rung 3 asking for a re-plan: when it belongs to
+ * a planned epic, run the Replan session. The epic gets a new plan version
+ * with a diff against the previous one; new stories become cards and
+ * removed ones that have not started are parked with the reason.
+ */
+export async function replanOnRung3(
+  k: Kernel,
+  card: CardRecord,
+  reason: string,
+): Promise<string | undefined> {
+  if (!card.parentId) return undefined;
+  const { latestPlan, replanSession, formatPlanDiff } = await import("@sekhemet/planner");
+  const ledger = ledgerOf(k);
+  if (!(await latestPlan(ledger, card.parentId))) return undefined;
+  const epic = await k.cardStore.getCard(card.parentId);
+  if (!epic) return undefined;
+  const r = await replanSession(ledger, await repoPlanner(k), {
+    epicId: epic.id,
+    spec: epic.spec ?? epic.title,
+    reason: `${card.id} failed at rung 3: ${reason}`,
+    trigger: "rung3_failure",
+    apply: true,
+  });
+  return `Replanned ${epic.id} to v${r.version}:\n${formatPlanDiff(r.diff)}`;
+}
+
+// ------------------------------------------------ doctor diagnostics (E19, C12)
+
+/**
+ * The doctor's playbook check (E19, C12): net gain per rule, context bloat
+ * against the system-prompt budget, skills that never trigger on recent
+ * cards, and pruning recommendations. Warns when anything should be
+ * retired or measured, or when rules and skills overflow the budget.
+ */
+export function playbookDoctorCheck(repoPath: string): {
+  name: string;
+  status: "pass" | "warn" | "fail";
+  detail: string;
+} {
+  const d = playbookDiagnostics({ repoPath });
+  const actionable = d.recommendations.filter(
+    (r) => r.action === "retire" || r.action === "measure",
+  );
+  return {
+    name: "Playbook and skills",
+    status: d.bloat.over || actionable.length > 0 ? "warn" : "pass",
+    detail: d.lines.join(" | "),
+  };
+}
+
+// ------------------------------------------- frozen regression gate (E5)
+
+export const REGRESSION_EVENT = "learning/regression_gate";
+
+export interface RuleGateVerdict {
+  ruleId: string;
+  accepted: boolean;
+  reason: string;
+  perSuite: { suite: string; baseline: number; candidate: number; delta: number }[];
+}
+
+/**
+ * Run a candidate rule against the frozen fixtures (E5): each fixture is
+ * run by `runFixture` without the rule and with it (the queue in the
+ * fixture run adopts `SEKHEMET_CANDIDATE_RULE` for that run only), and the
+ * rule may be approved only when no fixture loses a passing card. The
+ * verdict is recorded on the ledger; approval checks it.
+ */
+export async function gateRuleOnFixtures(
+  k: Kernel,
+  ruleId: string,
+  options: {
+    fixtures: string[];
+    runFixture: (
+      fixture: string,
+      candidateRule?: string,
+    ) => Promise<{ passed: number; total: number }>;
+  },
+): Promise<RuleGateVerdict> {
+  const { LearningStore } = await import("./learning/store.js");
+  const { runFrozenRegressionGate } = await import("@sekhemet/eval");
+  const rule = (await new LearningStore(k.log).rules()).find((r) => r.id === ruleId);
+  if (!rule) throw new Error(`No rule ${ruleId}`);
+  const verdict = await runFrozenRegressionGate({
+    suites: options.fixtures,
+    runSuite: async (suite, variant) => ({
+      suite,
+      ...(await options.runFixture(suite, variant === "candidate" ? rule.text : undefined)),
+    }),
+  });
+  const out: RuleGateVerdict = { ruleId, ...verdict };
+  await k.log.append({ actor: "harness", type: REGRESSION_EVENT, payload: out });
+  return out;
+}
+
+/** The latest recorded regression verdict for a rule, if it was gated (E5). */
+export async function ruleGateVerdict(
+  log: EventLog,
+  ruleId: string,
+): Promise<RuleGateVerdict | undefined> {
+  const events = await log.getEventsByTypes([REGRESSION_EVENT]);
+  return events
+    .map((e) => e.payload as RuleGateVerdict)
+    .filter((v) => v.ruleId === ruleId)
+    .at(-1);
+}
+
+/**
+ * Run one fixture through scripts/run_gate.sh (the same path as bake-off)
+ * and read its queue report.
+ */
+export async function runFixtureGate(
+  harnessRoot: string,
+  fixture: string,
+  candidateRule: string | undefined,
+  queueArgs: string[] = [],
+): Promise<{ passed: number; total: number }> {
+  const { spawn } = await import("node:child_process");
+  const { readdirSync, mkdtempSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const runRoot = mkdtempSync(join(tmpdir(), `sekhemet-e5-${fixture}-`));
+  await new Promise<number>((resolve) => {
+    const child = spawn(
+      "bash",
+      [join(harnessRoot, "scripts", "run_gate.sh"), fixture, ...queueArgs],
+      {
+        stdio: "inherit",
+        env: {
+          ...process.env,
+          GATE_RUN_DIR: runRoot,
+          ...(candidateRule ? { SEKHEMET_CANDIDATE_RULE: candidateRule } : {}),
+        },
+      },
+    );
+    child.on("exit", (c) => resolve(c ?? 1));
+  });
+  const runDir = readdirSync(runRoot).map((d) => join(runRoot, d))[0];
+  const report = runDir ? join(runDir, ".sekhemet", "queue_report.json") : "";
+  if (!report || !existsSync(report)) return { passed: 0, total: 0 };
+  const r = JSON.parse(readFileSync(report, "utf8")) as {
+    entries: { cardId: string; passed: boolean; attempt: number }[];
+  };
+  const cards = new Set(r.entries.map((e) => e.cardId));
+  const passed = new Set(r.entries.filter((e) => e.passed).map((e) => e.cardId));
+  return { passed: passed.size, total: cards.size };
+}
+
+// ---------------------------------------------- batched swaps (M25)
+
+/**
+ * Group the run order so each model loads once (M25): cards the planner
+ * routed to the same executor run back to back, project by project, with
+ * the resident worker first; priority order is kept inside each batch.
+ */
+export function batchBySwaps(cards: CardRecord[], now: Date = new Date()): CardRecord[] {
+  const byId = new Map(cards.map((c) => [c.id, c]));
+  const plan = planWorkWindow(
+    cards.map((c, i) => ({
+      cardId: c.id,
+      project: c.projectId ?? c.parentId ?? "board",
+      role: c.modelRoute?.executor === "escalation" ? ("escalation" as const) : ("worker" as const),
+      modelId: c.modelRoute?.executor === "escalation" ? "escalation" : "worker",
+      minutes: Math.max(1, Math.round((c.secondsBudget ?? 600) / 60)),
+      priority: cards.length - i,
+    })),
+    { start: now, end: new Date(now.getTime() + 365 * 86_400_000) },
+    { residentModelId: "worker" },
+  );
+  return plan.batches.flatMap((b) => b.items.map((it) => byId.get(it.cardId) as CardRecord));
+}
+
+/** The scheduler's reserved-hours windows as the planner's declared hours (M25). */
+export function declaredHoursFromWindows(
+  windows: { start: number; end: number; days: Set<number> }[],
+): { userBlocks: { days: number[]; start: string; end: string }[] } {
+  const hhmm = (m: number) =>
+    `${String(Math.floor(m / 60) % 24).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+  return {
+    userBlocks: windows.map((w) => ({
+      days: [...w.days].sort(),
+      start: hhmm(w.start),
+      end: hhmm(w.end),
+    })),
+  };
+}
+
+/** One line for the overnight log: the next work window and its batched swaps (M25). */
+export function overnightPlanLine(
+  windows: { start: number; end: number; days: Set<number> }[],
+  cards: CardRecord[],
+  now: Date = new Date(),
+): string {
+  const r = scheduleNow(
+    now,
+    declaredHoursFromWindows(windows),
+    cards.map((c) => ({
+      cardId: c.id,
+      project: c.projectId ?? c.parentId ?? "board",
+      role: c.modelRoute?.executor === "escalation" ? ("escalation" as const) : ("worker" as const),
+      modelId: c.modelRoute?.executor === "escalation" ? "escalation" : "worker",
+      minutes: Math.max(1, Math.round((c.secondsBudget ?? 600) / 60)),
+    })),
+    { residentModelId: "worker" },
+  );
+  if (r.state === "user_time")
+    return `Declared hours: the machine is yours until ${r.resumesAt?.toISOString() ?? "later"}.`;
+  const s = r.schedule;
+  return `Plan: ${s.batches.map((b) => `${b.modelId}/${b.project} x${b.items.length}`).join(", ")}; ${s.swaps} model load(s)${s.deferred.length ? `, ${s.deferred.length} card(s) deferred past the window` : ""}.`;
 }

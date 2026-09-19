@@ -4,6 +4,7 @@ import { freemem, platform, totalmem } from "node:os";
 import { join } from "node:path";
 import { classifyMemoryPressure, readKernelPressureLevel } from "@sekhemet/models";
 import { ProcessSandbox } from "@sekhemet/sandbox";
+import { playbookDoctorCheck } from "./wave2.js";
 
 export type CheckStatus = "pass" | "warn" | "fail";
 
@@ -193,6 +194,8 @@ export async function runDoctor(repoPath: string = process.cwd()): Promise<Docto
     probeBinary("git", ["--version"], "Git"),
     probeBinary("pnpm", ["--version"], "pnpm"),
     probeSkills(repoPath),
+    // E19, C12: rule net gain, context bloat, pruning recommendations.
+    playbookDoctorCheck(repoPath),
   ];
 
   return { ok: checks.every((c) => c.status !== "fail"), checks };

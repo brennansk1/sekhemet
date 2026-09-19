@@ -85,6 +85,7 @@ import {
   planCommand,
   queuePrelude,
   recordBakeOff,
+  replanOnRung3,
   roleForCard,
   runWave2Command,
 } from "./wave2.js";
@@ -1367,6 +1368,19 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     };
     /** Rules learned during this run from verified signals: in force for this run. */
     const runRules = new Set<string>();
+    // E5: a frozen-fixture regression run carries one candidate rule for this run only.
+    if (process.env.SEKHEMET_CANDIDATE_RULE) {
+      const candidate = await new LearningStore(log)
+        .propose({
+          role: "worker",
+          text: process.env.SEKHEMET_CANDIDATE_RULE,
+          scope: {},
+          source: "seed",
+          evidence: [],
+        })
+        .catch(() => undefined);
+      if (candidate) runRules.add(candidate.id);
+    }
     const ctx = {
       repoPath: config.repoPath,
       restrictedMode: config.restrictedMode,
@@ -1505,6 +1519,15 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       console.log(
         `   ${result.passed ? "PASSED" : "FAILED"} (${result.stopReason}) in ${result.evidence.turnsUsed} turns, ${(result.evidence.durationMs / 1000).toFixed(1)}s`,
       );
+      // Rung 3 asked for a re-plan: the Replan session diffs the epic's plan (P12).
+      if (result.replan) {
+        const note = await replanOnRung3(
+          { repoPath: config.repoPath, cardStore, log },
+          rawCard,
+          result.replan.summary,
+        ).catch(() => undefined);
+        if (note) console.log(`   ${note.split("\n").join("\n   ")}`);
+      }
       // The learning guard watches the outcome of the last learning change (E17).
       const guardNote = observeOutcome(config.repoPath, card.id, result.passed);
       if (guardNote) console.log(`   ${guardNote}`);

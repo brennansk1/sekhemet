@@ -6,6 +6,7 @@ import type { QueueReport } from "./execute.js";
 import { type GovernanceLimits, mayRun, recordUsage } from "./governance.js";
 import { sendPush } from "./notify.js";
 import { type Window, mayUseMachine, parseHours } from "./scheduler.js";
+import { overnightPlanLine } from "./wave2.js";
 
 /**
  * `sekhemet overnight`: run the queue unattended, in rounds, for as long as
@@ -118,6 +119,14 @@ export async function runOvernight(opts: OvernightOptions): Promise<OvernightSum
     }
     summary.rounds++;
     say(`Round ${summary.rounds}: ${ready} Ready card(s); ${slot.why}.`);
+    // M25: the window's batched plan, one model load per batch.
+    say(
+      overnightPlanLine(
+        windows,
+        await opts.cardStore.listCards({ status: "ready" as never }),
+        now(),
+      ),
+    );
     const started = Date.now();
     const before = readReport(opts.repoPath)?.startedAt;
     await runQueue(opts.queueArgs);

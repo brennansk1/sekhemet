@@ -16,6 +16,7 @@ import { DEFAULT_PM_MODEL, answerQueued, createPmAdapter, runnerLease } from "./
 import { PmStore } from "./pm/store.js";
 import { PM_EVENTS, type PmMessage, type PmStatus } from "./pm/types.js";
 import { oneShotResearcher } from "./research/service.js";
+import { ruleGateVerdict } from "./wave2.js";
 
 export interface PmApiContext {
   repoPath: string;
@@ -331,9 +332,16 @@ export function createPmApi(ctx: PmApiContext) {
         ctx.json(res, 400, { error: "Nothing to change" });
         return true;
       }
+      // E5: a rule the frozen-fixture regression gate rejected cannot be approved.
+      const gate = verb === "approve" ? await ruleGateVerdict(ctx.log, id) : undefined;
+      if (gate && !gate.accepted) {
+        ctx.json(res, 409, { error: `The frozen regression gate rejected ${id}: ${gate.reason}` });
+        return true;
+      }
       const rule = await learning.update(id, change);
       if (!rule) ctx.json(res, 404, { error: `No rule ${id}` });
-      else ctx.json(res, 200, { rule });
+      else
+        ctx.json(res, 200, { rule, ...(verb === "approve" ? { gated: gate !== undefined } : {}) });
       return true;
     }
     const prefAction = /^\/api\/learning\/profile\/([A-Za-z0-9_-]+)(?:\/(dismiss))?$/.exec(url);

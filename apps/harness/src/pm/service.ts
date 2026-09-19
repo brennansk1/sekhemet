@@ -4,6 +4,7 @@ import type { CardStore } from "@sekhemet/kernel";
 import { HttpInferenceAdapter, type LocalInferenceAdapter } from "@sekhemet/models";
 import type { QueueReport } from "../execute.js";
 import { LearningStore } from "../learning/store.js";
+import { plannerStandupSection } from "../wave2.js";
 import {
   type PmSnapshot,
   answer,
@@ -239,6 +240,15 @@ export interface AnswerDeps {
  * than a thrown exception: the human is waiting on the thread, and a silent
  * failure there looks exactly like a PM that is still thinking.
  */
+/** Seshat's standup plus the planner's decisions waiting and next window (P13). */
+async function withPlannerStandup(text: string, deps: AnswerDeps): Promise<string> {
+  const extra = await plannerStandupSection(deps.cardStore, deps.pmStore.log).catch(() => "");
+  if (!extra) return text;
+  const marker = "\n\n_Answered from the ledger";
+  const at = text.indexOf(marker);
+  return at === -1 ? `${text}\n${extra}` : `${text.slice(0, at)}\n${extra}${text.slice(at)}`;
+}
+
 export async function answerQueued(deps: AnswerDeps): Promise<boolean> {
   const all = await deps.pmStore.queued();
   if (all.length === 0) return false;
@@ -260,7 +270,7 @@ export async function answerQueued(deps: AnswerDeps): Promise<boolean> {
       );
       await deps.pmStore.appendReply({
         replyTo: [m.id],
-        text: ledgerStandup(snapshot),
+        text: await withPlannerStandup(ledgerStandup(snapshot), deps),
         model: "ledger",
       });
       continue;
@@ -290,7 +300,7 @@ export async function answerQueued(deps: AnswerDeps): Promise<boolean> {
     const snapshot = await buildSnapshot(deps.repoPath, deps.cardStore, deps.pmStore, deps.pmModel);
     await deps.pmStore.appendReply({
       replyTo: queued.map((m) => m.id),
-      text: ledgerStandup(snapshot),
+      text: await withPlannerStandup(ledgerStandup(snapshot), deps),
       model: "ledger",
     });
     return true;

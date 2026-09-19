@@ -11,7 +11,9 @@ import { DecisionStore } from "@sekhemet/planner";
 import { NodeGitSyncAdapter } from "@sekhemet/sync";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { explainCard } from "../src/execute.js";
+import { LearningStore } from "../src/learning/store.js";
 import { startDashboardServer } from "../src/server.js";
+import { gateRuleOnFixtures } from "../src/wave2.js";
 
 let repo: string;
 let db: DatabaseSync;
@@ -155,5 +157,34 @@ describe("dashboard routes for the planner and sync (P9, P11, P13, P17, P20, Y8,
       "p1",
     );
     expect(lines.join("\n")).toMatch(/Smallest unblocking action: Add the needed file/);
+  });
+
+  it("refuses to approve a rule the frozen regression gate rejected (E5)", async () => {
+    const learning = new LearningStore(log);
+    const bad = await learning.propose({
+      role: "worker",
+      text: "Never run the tests.",
+      scope: {},
+      source: "seed",
+      evidence: [],
+    });
+    const good = await learning.propose({
+      role: "worker",
+      text: "Cast rows through unknown before narrowing.",
+      scope: {},
+      source: "seed",
+      evidence: [],
+    });
+    await gateRuleOnFixtures({ repoPath: repo, cardStore, log }, bad?.id as string, {
+      fixtures: ["chronicle"],
+      runFixture: async (_f, rule) => ({ passed: rule ? 2 : 5, total: 6 }),
+    });
+    const headers = { "x-sekhemet-action": "1", "content-type": "application/json" };
+    const refused = await call("POST", `/api/learning/rules/${bad?.id}/approve`, "{}", headers);
+    expect(refused.status).toBe(409);
+    expect(String(refused.json.error)).toMatch(/regression gate rejected/);
+    const ok = await call("POST", `/api/learning/rules/${good?.id}/approve`, "{}", headers);
+    expect(ok.status).toBe(200);
+    expect(ok.json.gated).toBe(false);
   });
 });
