@@ -15,6 +15,7 @@ import type { BoardService } from "@sekhemet/board";
 import { type EvidenceBundle, type GatesConfig, loadGatesConfig } from "@sekhemet/gates";
 import type { CardRecord, CardStore, EventLog } from "@sekhemet/kernel";
 import type { LocalInferenceAdapter } from "@sekhemet/models";
+import { DecisionStore } from "@sekhemet/planner";
 import {
   BASALT,
   EMPTY_SHA256,
@@ -55,7 +56,9 @@ import {
 import { learnFromSendBack } from "./learning/reflect.js";
 import { startNotifier } from "./notify.js";
 import { createPmApi } from "./pm_api.js";
+import { handleRestExtras } from "./rest_extra.js";
 import { generateDashboardHtml } from "./ui_html.js";
+import { handleWave2Route } from "./wave2_server.js";
 import { type StreamClient, acceptWebSocket } from "./ws.js";
 
 /** The loopback port the design fixes for the dashboard. */
@@ -481,6 +484,22 @@ export function startDashboardServer(
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const [url = "/", search = ""] = (req.url || "/").split("?");
     const query = new URLSearchParams(search);
+
+    // H12: workspace, project board and cards, split, run, gate, evidence, calibrate.
+    if (
+      url.startsWith("/api/") &&
+      (await handleRestExtras(req, res, url, {
+        repoPath,
+        cardStore: options.cardStore,
+        boardService,
+        log,
+        json,
+        readJsonBody,
+        trusted: isTrustedMutation,
+      }))
+    ) {
+      return;
+    }
 
     if (url === "/" || url === "/index.html") {
       res.writeHead(200, {
@@ -1066,6 +1085,16 @@ export function startDashboardServer(
             : typeof body.answer === "string"
               ? (decision?.options.indexOf(body.answer) ?? -1)
               : -1;
+        // A planner decision resumes its card when answered (P11).
+        if (decision?.kind === "planner") {
+          const d = await new DecisionStore({ store: options.cardStore, log }).answer(
+            decisionMatch[1] as string,
+            option,
+            "human",
+          );
+          json(res, 200, { decision: d.record });
+          return;
+        }
         json(res, 200, {
           decision: await options.cardStore.runs.answerDecision(
             decisionMatch[1] as string,
@@ -1076,6 +1105,21 @@ export function startDashboardServer(
       } catch (err) {
         json(res, 409, { error: err instanceof Error ? err.message : String(err) });
       }
+      return;
+    }
+
+    // Planner decisions, goals, standup, signals, the structural diff and the
+    // GitHub webhook (wave2_server.ts).
+    if (
+      await handleWave2Route(req, res, url, {
+        repoPath,
+        ...(options.cardStore ? { cardStore: options.cardStore } : {}),
+        log,
+        json,
+        isTrustedMutation,
+        readJsonBody,
+      })
+    ) {
       return;
     }
 

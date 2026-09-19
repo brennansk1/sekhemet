@@ -916,6 +916,16 @@ export async function explainCard(ctx: ExecutionContext, cardId: string): Promis
   const parked = (await ctx.cardStore.cardEvents(card.id, ["card/parked"])).at(-1);
   if (parked)
     lines.push(`Park diagnosis: ${(parked.payload as { suggestion?: string }).suggestion ?? ""}`);
+  if (card.status === "parked" || card.stopReason) {
+    // P14: the diagnosis, what was tried, and the smallest unblocking action.
+    const { diagnoseEscalation } = await import("@sekhemet/planner");
+    const d = diagnoseEscalation(
+      card,
+      await ctx.cardStore.cardEvents(card.id, ["gate/result", "card/step", "attempt/started"]),
+    );
+    lines.push(`Escalation (${d.category}): ${d.diagnosis} Tried: ${d.tried.join("; ")}.`);
+    lines.push(`Smallest unblocking action: ${d.smallestHumanAction}`);
+  }
   const next =
     waiting.length > 0
       ? `Finish ${waiting[0]} first.`
