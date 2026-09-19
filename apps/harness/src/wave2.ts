@@ -207,6 +207,18 @@ export async function queuePrelude(
   const top = ranking[0];
   if (top) say(`Working goal ${top.goalId} first: ${top.why}.`);
 
+  // Y16: advance open Sekhemet PRs (ready once checks pass, auto-merge by policy).
+  const { githubAppFromEnv } = await import("./wave2_server.js");
+  const app = githubAppFromEnv();
+  if (app) {
+    const { advancePullRequests } = await import("./wave2_github.js");
+    for (const p of await advancePullRequests(app, k.repoPath, k.log, {
+      autoMerge: process.env.SEKHEMET_GITHUB_AUTOMERGE === "1",
+    }).catch(() => [])) {
+      say(`PR #${p.number}: ${p.state}`);
+    }
+  }
+
   const ordering = orderReadyCards(ready, loadPrioritizationConfig(k.repoPath), now);
   let ordered = batchBySwaps(ordering.cards, now);
   if (ordering.model !== "unconfigured") say(`Ready ordered by ${ordering.model.toUpperCase()}.`);
@@ -902,4 +914,37 @@ export function overnightPlanLine(
     return `Declared hours: the machine is yours until ${r.resumesAt?.toISOString() ?? "later"}.`;
   const s = r.schedule;
   return `Plan: ${s.batches.map((b) => `${b.modelId}/${b.project} x${b.items.length}`).join(", ")}; ${s.swaps} model load(s)${s.deferred.length ? `, ${s.deferred.length} card(s) deferred past the window` : ""}.`;
+}
+
+// ---------------------------------------------- per-package gates (Y19)
+
+/**
+ * The gates of every workspace package a card's diff touches (Y19): a card
+ * touching two packages runs both gate sets. Returns the failures, empty
+ * when the repository is not a monorepo or every package gate passes.
+ */
+export async function runPackageGates(
+  root: string,
+  cwd: string,
+  changedFiles: string[],
+  print: (line: string) => void = (l) => console.log(l),
+): Promise<{ package: string; rung: string; passed: boolean; output: string }[]> {
+  const { gatesForChange } = await import("@sekhemet/sync");
+  const { execFileSync } = await import("node:child_process");
+  const { relative } = await import("node:path");
+  const results: { package: string; rung: string; passed: boolean; output: string }[] = [];
+  for (const g of gatesForChange(cwd, changedFiles)) {
+    const dir = g.cwd;
+    let passed = true;
+    let output = "";
+    try {
+      output = execFileSync(g.command, g.args, { cwd: dir, encoding: "utf8", timeout: 600_000, stdio: "pipe" });
+    } catch (e) {
+      passed = false;
+      output = String((e as { stdout?: string }).stdout ?? e);
+    }
+    print(`  ${passed ? "pass" : "FAIL"} ${g.package}:${g.rung} (${relative(root, dir) || "."})`);
+    results.push({ package: g.package, rung: g.rung, passed, output: output.slice(-2000) });
+  }
+  return results;
 }

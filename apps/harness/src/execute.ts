@@ -48,6 +48,8 @@ import { learnFromAttempt } from "./learning/reflect.js";
 import type { LearningStore } from "./learning/store.js";
 import { buildReproRecord } from "./repro.js";
 import { Tracer, traced } from "./tracing.js";
+import { PR_EVENT, openPullRequestViaApp } from "./wave2_github.js";
+import { githubAppFromEnv } from "./wave2_server.js";
 
 /** The repo's trace store, or none when it cannot be opened (tracing never blocks a card). */
 function openTracer(repoPath: string): Tracer | undefined {
@@ -1437,6 +1439,32 @@ async function openPullRequest(
     cwd: ctx.repoPath,
     timeout: 120_000,
   });
+  // The GitHub App path (Y12, Y14-Y16): a draft PR, check runs per gate,
+  // SARIF, then the queue advances it; the gh CLI below is the fallback.
+  const app = githubAppFromEnv();
+  const appRepo = /^([\w.-]+)\/([\w.-]+)$/.exec(process.env.SEKHEMET_GITHUB_REPO ?? "");
+  if (app && appRepo) {
+    const headSha = (
+      await run("git", ["rev-parse", branch], { cwd: ctx.repoPath, timeout: 10_000 })
+    ).stdout.trim();
+    const pr = await openPullRequestViaApp(
+      app,
+      ctx.repoPath,
+      { owner: appRepo[1] as string, repo: appRepo[2] as string },
+      card,
+      branch,
+      headSha,
+    );
+    await ctx.cardStore
+      .recordEvent({
+        type: PR_EVENT,
+        cardId: card.id,
+        actor: "harness",
+        payload: { ...pr, repo: { owner: appRepo[1], repo: appRepo[2] } },
+      })
+      .catch(() => undefined);
+    return pr.url;
+  }
   const title = card.title.replace(/\s*\(SPIDR:[^)]*\)\s*$/, "");
   let gates = "";
   try {

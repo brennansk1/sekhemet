@@ -87,6 +87,7 @@ import {
   recordBakeOff,
   replanOnRung3,
   roleForCard,
+  runPackageGates,
   runWave2Command,
 } from "./wave2.js";
 
@@ -716,6 +717,14 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         rungResults: [...(res.rungResults ?? []), ...extra.outcomes],
       };
       for (const a of extra.advisories) console.log(`  advisory: ${a}`);
+    }
+    // Y19: in a monorepo, each package the card touches runs its own gates.
+    if (cardId && cwd !== config.repoPath) {
+      const changed = (
+        await new NodeGitSyncAdapter(config.repoPath).getDiffStats(cardId)
+      ).filesTouched;
+      const pkg = await runPackageGates(config.repoPath, cwd, changed);
+      if (pkg.some((p) => !p.passed)) res = { ...res, passed: false };
     }
     let boundsOk = true;
     if (cardId && cwd !== config.repoPath) {
