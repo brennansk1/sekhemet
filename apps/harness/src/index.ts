@@ -59,6 +59,7 @@ import { PmStore } from "./pm/store.js";
 import { CRAWL4AI_CREDIT, runResearchCommand } from "./research/cli.js";
 import { ResearchService, researchSources } from "./research/service.js";
 import { DEFAULT_DASHBOARD_PORT, startDashboardServer } from "./server.js";
+import { tracesCommand } from "./tracing.js";
 import { loadAttempts, tune, writeTuningReport } from "./tune.js";
 
 export interface CliConfig {
@@ -78,6 +79,7 @@ export interface CliConfig {
     | "overnight"
     | "calibrate"
     | "daemon"
+    | "traces"
     | "abort"
     | "rewind"
     | "fork"
@@ -322,6 +324,12 @@ export async function printEventLog(log: EventLog): Promise<void> {
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
   const config = parseCliArgs(argv);
+
+  if (config.command === "traces") {
+    // `sekhemet traces [--since-hours N] [--out f.json] [--otlp http://host:4318]` (H22).
+    process.exitCode = await tracesCommand(config.repoPath, argv.slice(argv.indexOf("traces") + 1));
+    return;
+  }
 
   if (config.command === "daemon") {
     // `sekhemet daemon start|stop|status [--port N]` (H1): the dashboard in the background.

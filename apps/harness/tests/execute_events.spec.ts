@@ -16,6 +16,7 @@ import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import type { TurnResult } from "@sekhemet/loop";
 import { MockInferenceAdapter } from "@sekhemet/models";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { Tracer } from "../src/tracing.js";
 import {
   type QueueReport,
   acceptCard,
@@ -115,6 +116,14 @@ describe("@sekhemet/harness execution ledger events", () => {
       readFileSync(join(repo, ".sekhemet", "evidence", "latest-card_exec.json"), "utf8"),
     ) as { reproducibility?: { attempt: number } };
     expect(latest.reproducibility?.attempt).toBe(repro.attempt);
+
+    // H22: the run left spans: the card, its turns and its model calls.
+    const tracer = Tracer.forRepo(repo);
+    const names = tracer.spans().map((sp) => sp.name);
+    tracer.close();
+    expect(names).toContain("card.run");
+    expect(names.filter((n) => n === "gen_ai.chat").length).toBeGreaterThan(0);
+    expect(names.filter((n) => n === "card.turn").length).toBe(result.turns.length);
 
     const plan = events.find((e) => e.type === "card/repair_plan");
     expect(plan?.actor).toBe("planner");

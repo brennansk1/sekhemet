@@ -28,6 +28,16 @@ import { readSettings } from "./integrations.js";
 import { learnFromAttempt } from "./learning/reflect.js";
 import type { LearningStore } from "./learning/store.js";
 import { buildReproRecord } from "./repro.js";
+import { Tracer, traced } from "./tracing.js";
+
+/** The repo's trace store, or none when it cannot be opened (tracing never blocks a card). */
+function openTracer(repoPath: string): Tracer | undefined {
+  try {
+    return Tracer.forRepo(repoPath);
+  } catch {
+    return undefined;
+  }
+}
 
 export interface ExecutionContext {
   repoPath: string;
@@ -283,12 +293,20 @@ export async function executeCard(
   });
   const startedAtSeq =
     (await ctx.cardStore.cardEvents(card.id, [CONTROL_EVENTS.abortRequested])).at(-1)?.seq ?? 0;
+  // H22: spans for the card, each turn and each model call (.sekhemet/traces.db).
+  const tracer = openTracer(ctx.repoPath);
+  const cardSpan = tracer?.start("card.run", {
+    "sekhemet.card.id": card.id,
+    "sekhemet.attempt": attempt,
+  });
+  let turnStartedMs = Date.now();
+  const tracedModel = tracer && cardSpan ? traced(model, tracer, () => cardSpan.context) : model;
   const runner = new CardRunner({
     card,
     repoRoot: ctx.repoPath,
     worktreePath,
     stepBudget: card.stepBudget,
-    modelAdapter: model,
+    modelAdapter: tracedModel,
     gateRunner,
     syncAdapter: gitAdapter,
     scopeFiles: card.scopeFiles,
@@ -375,6 +393,16 @@ export async function executeCard(
     // One ledger event per turn, so the board and the Steps tab follow a
     // running card live instead of waiting for the transcript at the end.
     onTurn: async (cardId, turn) => {
+      if (tracer && cardSpan) {
+        const t = tracer.start("card.turn", {}, cardSpan.context);
+        t.record.startNs = BigInt(turnStartedMs) * 1_000_000n;
+        t.set({
+          "sekhemet.card.id": cardId,
+          "sekhemet.turn.tools": turn.toolCalls?.map((c) => c.name).join(",") ?? "",
+          ...(turn.stopReason ? { "sekhemet.stop_reason": turn.stopReason } : {}),
+        }).end("ok");
+        turnStartedMs = Date.now();
+      }
       await ctx.cardStore.recordEvent({
         type: "card/step",
         cardId,
@@ -404,7 +432,19 @@ export async function executeCard(
     },
   });
 
-  const result = await runner.run();
+  const result = await runner.run().catch((err) => {
+    cardSpan?.set({ "error.message": String(err).slice(0, 300) }).end("error");
+    tracer?.close();
+    throw err;
+  });
+  cardSpan
+    ?.set({
+      "sekhemet.passed": result.passed,
+      "sekhemet.turns": result.turns.length,
+      ...(result.stopReason ? { "sekhemet.stop_reason": String(result.stopReason) } : {}),
+    })
+    .end(result.passed ? "ok" : "error");
+  tracer?.close();
   await recordReproducibility(ctx, card.id, attempt, model, gatesConfig.sha256).catch((err) =>
     log(`   reproducibility record not written: ${err instanceof Error ? err.message : err}`),
   );
