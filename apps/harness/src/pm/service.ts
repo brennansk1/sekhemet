@@ -13,6 +13,7 @@ import {
 } from "./agent.js";
 import { capabilityReport, capabilitySummary } from "./capability.js";
 import { flowMetrics, monteCarloForecast } from "./metrics.js";
+import { parseSlash, runSlash } from "./slash.js";
 import type { PmStore } from "./store.js";
 
 /** The PM's model unless the user names another: the 27B dense manager. */
@@ -239,8 +240,48 @@ export interface AnswerDeps {
  * failure there looks exactly like a PM that is still thinking.
  */
 export async function answerQueued(deps: AnswerDeps): Promise<boolean> {
-  const queued = await deps.pmStore.queued();
-  if (queued.length === 0) return false;
+  const all = await deps.pmStore.queued();
+  if (all.length === 0) return false;
+  // H16: slash commands are answered by code, from the ledger, before any
+  // model loads; /plan is rewritten into the request it stands for.
+  const queued: typeof all = [];
+  for (const m of all) {
+    const cmd = parseSlash(m.text);
+    if (!cmd) {
+      queued.push(m);
+      continue;
+    }
+    if (cmd.name === "status" || cmd.name === "standup") {
+      const snapshot = await buildSnapshot(
+        deps.repoPath,
+        deps.cardStore,
+        deps.pmStore,
+        deps.pmModel,
+      );
+      await deps.pmStore.appendReply({
+        replyTo: [m.id],
+        text: ledgerStandup(snapshot),
+        model: "ledger",
+      });
+      continue;
+    }
+    const outcome = await runSlash(cmd, {
+      cardStore: deps.cardStore,
+      pmStore: deps.pmStore,
+      repoPath: deps.repoPath,
+      researcher: deps.researcher,
+    }).catch((err) => ({
+      reply: `The command failed: ${err instanceof Error ? err.message : String(err)}`,
+    }));
+    if ("reply" in outcome) {
+      await deps.pmStore.appendReply({ replyTo: [m.id], text: outcome.reply, model: "command" });
+    } else if ("forward" in outcome) {
+      queued.push({ ...m, text: outcome.forward });
+    } else {
+      queued.push(m);
+    }
+  }
+  if (queued.length === 0) return true;
   const stepInfo = deps.step !== undefined ? { step: deps.step, workerPaused: true } : {};
 
   // Status questions need facts, not judgement: answer from the ledger and
