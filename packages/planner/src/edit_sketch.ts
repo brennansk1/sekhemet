@@ -52,7 +52,11 @@ export async function sketchWithModel(
   const scope = story.card.scopeFiles;
   const template: EditSketch = fallback ?? {
     cardId: story.card.id,
-    targetSymbols: scope.map((filePath) => ({ filePath, symbol: story.keywords[0] ?? "feature", change: "add" })),
+    targetSymbols: scope.map((filePath) => ({
+      filePath,
+      symbol: story.keywords[0] ?? "feature",
+      change: "add",
+    })),
     preconditions: ["The acceptance tests for this card exist and fail for the stated reason."],
     invariants: ["No gate is relaxed to make this card pass."],
     diffSketch: story.rationale,
@@ -64,7 +68,9 @@ export async function sketchWithModel(
     `Scope files (the ONLY files you may name): ${scope.join(", ") || "none"}`,
     `Acceptance tests: ${story.acceptanceTests.map((t) => t.assertion).join("; ")}`,
     options.repoRoot ? `Current outlines:\n${outlineText(options.repoRoot, scope)}` : "",
-    options.blastRadius?.length ? `Files that depend on the scope: ${options.blastRadius.join(", ")}` : "",
+    options.blastRadius?.length
+      ? `Files that depend on the scope: ${options.blastRadius.join(", ")}`
+      : "",
     'Reply with JSON only: {"targetSymbols":[{"filePath":"...","symbol":"...","change":"add|modify|remove"}],"preconditions":["..."],"invariants":["..."],"diffSketch":"two or three sentences"}',
   ]
     .filter(Boolean)
@@ -87,24 +93,36 @@ export async function sketchWithModel(
     return { sketch: template, source: "template", rejected: `model error: ${String(err)}` };
   }
   const raw = extractJsonObject(text) as Partial<EditSketch> | undefined;
-  const reject = (why: string): SketchResult => ({ sketch: template, source: "template", rejected: why });
+  const reject = (why: string): SketchResult => ({
+    sketch: template,
+    source: "template",
+    rejected: why,
+  });
   if (!raw || !Array.isArray(raw.targetSymbols) || raw.targetSymbols.length === 0) {
     return reject("no targetSymbols in the reply");
   }
   const symbols = knownSymbols(options.repoRoot, scope);
   const targets: EditSketch["targetSymbols"] = [];
   for (const t of raw.targetSymbols) {
-    if (!t || typeof t.filePath !== "string" || typeof t.symbol !== "string") return reject("malformed target");
+    if (!t || typeof t.filePath !== "string" || typeof t.symbol !== "string")
+      return reject("malformed target");
     const file = t.filePath.replace(/^\.\//, "");
     if (!scope.includes(file)) return reject(`names ${file}, which is outside the card's scope`);
     const change = t.change === "modify" || t.change === "remove" ? t.change : "add";
-    if (change !== "add" && options.repoRoot && existsSync(join(options.repoRoot, file)) && !symbols.has(t.symbol)) {
+    if (
+      change !== "add" &&
+      options.repoRoot &&
+      existsSync(join(options.repoRoot, file)) &&
+      !symbols.has(t.symbol)
+    ) {
       return reject(`${change}s ${t.symbol}, which ${file} does not export`);
     }
     targets.push({ filePath: file, symbol: t.symbol, change });
   }
   const strings = (v: unknown, dflt: string[]) =>
-    Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.trim().length > 0) : dflt;
+    Array.isArray(v)
+      ? v.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+      : dflt;
   return {
     source: "model",
     sketch: {
@@ -112,7 +130,10 @@ export async function sketchWithModel(
       targetSymbols: targets,
       preconditions: strings(raw.preconditions, template.preconditions),
       invariants: strings(raw.invariants, template.invariants),
-      diffSketch: typeof raw.diffSketch === "string" && raw.diffSketch.trim() ? raw.diffSketch.trim() : template.diffSketch,
+      diffSketch:
+        typeof raw.diffSketch === "string" && raw.diffSketch.trim()
+          ? raw.diffSketch.trim()
+          : template.diffSketch,
       blastRadius: [...new Set([...scope, ...(options.blastRadius ?? [])])].sort(),
     },
   };

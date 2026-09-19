@@ -46,7 +46,9 @@ describe("P18: /goal intake needs approval before anything runs", () => {
   it("saves a draft with budget and criteria; approval creates strategy v1", async () => {
     const l = ledger();
     const planner = new SpidrFeaturePlanner();
-    const intake = await intakeGoal(l, planner, STATEMENT, { now: new Date("2026-09-19T00:00:00Z") });
+    const intake = await intakeGoal(l, planner, STATEMENT, {
+      now: new Date("2026-09-19T00:00:00Z"),
+    });
     expect(intake.goal.state).toBe("draft");
     expect(intake.goal.budget.tokens).toBeGreaterThan(0);
     expect(intake.restatement).toContain("[gate]");
@@ -73,8 +75,21 @@ const goal = (over: Partial<Goal> = {}): Goal => ({
   projectIds: [],
   statement: "s",
   criteria: [
-    { id: "c1", text: "tests pass", kind: "gate", check: { gateRef: "unit" }, status: "met", everMet: true },
-    { id: "c2", text: "coverage", kind: "metric", check: { metricQuery: "coverage >= 80" }, status: "unmet" },
+    {
+      id: "c1",
+      text: "tests pass",
+      kind: "gate",
+      check: { gateRef: "unit" },
+      status: "met",
+      everMet: true,
+    },
+    {
+      id: "c2",
+      text: "coverage",
+      kind: "metric",
+      check: { metricQuery: "coverage >= 80" },
+      status: "unmet",
+    },
   ],
   budget: { tokens: 100_000, hours: 2 },
   strategy: "epic_g1@v1",
@@ -137,23 +152,56 @@ describe("P22: honest stopping", () => {
     const allMet = goal({
       criteria: [{ id: "c1", text: "t", kind: "gate", check: { gateRef: "unit" }, status: "met" }],
     });
-    expect(goalVerdict({ goal: allMet, criteria: allMet.criteria, triggers: [], spentTokens: 0, forecastTokens: 0 }).state).toBe("met");
+    expect(
+      goalVerdict({
+        goal: allMet,
+        criteria: allMet.criteria,
+        triggers: [],
+        spentTokens: 0,
+        forecastTokens: 0,
+      }).state,
+    ).toBe("met");
     const g = goal({ strategiesTried: 3 });
-    const v = goalVerdict({ goal: g, criteria: g.criteria, triggers: [], spentTokens: 50_000, forecastTokens: 0 });
+    const v = goalVerdict({
+      goal: g,
+      criteria: g.criteria,
+      triggers: [],
+      spentTokens: 50_000,
+      forecastTokens: 0,
+    });
     expect(v.state).toBe("blocked");
     expect(v.diagnosis).toContain("Met: tests pass.");
     expect(v.diagnosis).toContain("Not met: coverage (unmet)");
     expect(v.diagnosis).toContain("Smallest unblocking action");
     const partial = goal({ strategiesTried: 1 });
-    expect(goalVerdict({ goal: partial, criteria: partial.criteria, triggers: [], spentTokens: 0, forecastTokens: 0 }).state).toBe("active");
+    expect(
+      goalVerdict({
+        goal: partial,
+        criteria: partial.criteria,
+        triggers: [],
+        spentTokens: 0,
+        forecastTokens: 0,
+      }).state,
+    ).toBe("active");
   });
 });
 
 describe("P21: multiple goals ranked by WSJF", () => {
   it("ranks by cost of delay over remaining size; onlyActive wins", () => {
-    const a = goal({ id: "a", strategy: "epic_a@v1", value: { userBusinessValue: 8, timeCriticality: 2, riskReduction: 0 } });
-    const b = goal({ id: "b", strategy: "epic_b@v1", value: { userBusinessValue: 3, timeCriticality: 0, riskReduction: 0 } });
-    const cards = [card({ id: "1", parentId: "epic_a", difficulty: 4 }), card({ id: "2", parentId: "epic_b", difficulty: 4 })];
+    const a = goal({
+      id: "a",
+      strategy: "epic_a@v1",
+      value: { userBusinessValue: 8, timeCriticality: 2, riskReduction: 0 },
+    });
+    const b = goal({
+      id: "b",
+      strategy: "epic_b@v1",
+      value: { userBusinessValue: 3, timeCriticality: 0, riskReduction: 0 },
+    });
+    const cards = [
+      card({ id: "1", parentId: "epic_a", difficulty: 4 }),
+      card({ id: "2", parentId: "epic_b", difficulty: 4 }),
+    ];
     expect(rankGoals([a, b], cards).map((r) => r.goalId)).toEqual(["a", "b"]);
     const r = rankGoals([a, { ...b, onlyActive: true }], cards);
     expect(r[0]?.goalId).toBe("b");
@@ -167,13 +215,17 @@ describe("P16: process profiles", () => {
     expect(scrum).toMatchObject({ name: "scrum", cycleDays: 7, commitment: "sprint_goal" });
     const now = new Date("2026-09-19T00:00:00Z");
     expect(
-      ceremoniesDue(scrum, { now, cycleStart: new Date("2026-09-10T00:00:00Z"), closedSinceRetro: 0, intakePending: false }).map((c) => c.kind),
+      ceremoniesDue(scrum, {
+        now,
+        cycleStart: new Date("2026-09-10T00:00:00Z"),
+        closedSinceRetro: 0,
+        intakePending: false,
+      }).map((c) => c.kind),
     ).toEqual(["planning", "retrospective"]);
     const shape = processProfileFromConfig({ process: { profile: "shape-up" } });
-    expect(ceremoniesDue(shape, { now, closedSinceRetro: 0, intakePending: false }).map((c) => c.kind)).toEqual([
-      "planning",
-      "betting",
-    ]);
+    expect(
+      ceremoniesDue(shape, { now, closedSinceRetro: 0, intakePending: false }).map((c) => c.kind),
+    ).toEqual(["planning", "betting"]);
     const kanban = processProfileFromConfig(undefined);
     expect(
       ceremoniesDue(kanban, { now, closedSinceRetro: 10, intakePending: true }).map((c) => c.kind),
@@ -194,7 +246,13 @@ describe("P20: seven live signals with thresholds and responses", () => {
       card({ id: "r1", status: "review" }),
       card({ id: "hot", status: "in_progress", scopeFiles: ["src/ledger.ts"] }),
     ];
-    const fail = (i: number) => ev("gate/result", "hot", { status: "fail", excerpt: "src/ledger.ts:1 error" }, `2026-09-19T0${i}:00:00Z`);
+    const fail = (i: number) =>
+      ev(
+        "gate/result",
+        "hot",
+        { status: "fail", excerpt: "src/ledger.ts:1 error" },
+        `2026-09-19T0${i}:00:00Z`,
+      );
     const readings = computeSignals({
       now,
       cards,
@@ -224,7 +282,9 @@ describe("P20: seven live signals with thresholds and responses", () => {
       "review_backlog:backpressure_verify",
       "risk_register:dispatch_verification_spike",
     ]);
-    expect(readings.find((r) => r.id === "failure_concentration")?.response?.targets).toEqual(["hot"]);
+    expect(readings.find((r) => r.id === "failure_concentration")?.response?.targets).toEqual([
+      "hot",
+    ]);
     expect(readings[0]?.detail).toMatch(/2 of 6 cards verified/);
   });
 });

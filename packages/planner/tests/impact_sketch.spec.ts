@@ -25,9 +25,18 @@ function repo(): string {
     mkdirSync(dirname(join(root, rel)), { recursive: true });
     writeFileSync(join(root, rel), text);
   };
-  w("src/money.ts", "export function money(n: number): number { return n; }\nexport type Cents = number;\n");
-  w("src/ledger.ts", 'import { money } from "./money.js";\nexport class Ledger { add(n: number) { return money(n); } }\n');
-  w("src/report.ts", 'import { Ledger } from "./ledger.js";\nexport const report = (l: Ledger) => String(l);\n');
+  w(
+    "src/money.ts",
+    "export function money(n: number): number { return n; }\nexport type Cents = number;\n",
+  );
+  w(
+    "src/ledger.ts",
+    'import { money } from "./money.js";\nexport class Ledger { add(n: number) { return money(n); } }\n',
+  );
+  w(
+    "src/report.ts",
+    'import { Ledger } from "./ledger.js";\nexport const report = (l: Ledger) => String(l);\n',
+  );
   w("src/other.ts", "export const other = 1;\n");
   w("tests/money.spec.ts", 'import { money } from "../src/money.js";\nmoney(1);\n');
   return root;
@@ -72,7 +81,13 @@ const story = (scope: string[]): PlannedStory =>
     slice: "path",
     rationale: "Money must round.",
     keywords: ["money", "round"],
-    acceptanceTests: [{ filePath: "tests/money.spec.ts", assertion: "money(1.005) is 1.01", initiallyFailing: true }],
+    acceptanceTests: [
+      {
+        filePath: "tests/money.spec.ts",
+        assertion: "money(1.005) is 1.01",
+        initiallyFailing: true,
+      },
+    ],
     advances: [{ kind: "gate", ref: "unit" }],
     difficulty: { value: 5, factors: [] },
     routing: "edit_sketch",
@@ -100,7 +115,9 @@ describe("P7: model-written edit sketch, grounded in scope and outlines", () => 
       blastRadius: ["src/ledger.ts"],
     });
     expect(r.source).toBe("model");
-    expect(r.sketch.targetSymbols).toEqual([{ filePath: "src/money.ts", symbol: "money", change: "modify" }]);
+    expect(r.sketch.targetSymbols).toEqual([
+      { filePath: "src/money.ts", symbol: "money", change: "modify" },
+    ]);
     expect(r.sketch.blastRadius).toEqual(["src/ledger.ts", "src/money.ts"]);
     expect(model.callHistory[0]?.purpose).toBe("planning");
     expect(model.callHistory[0]?.reasoning).toBe("medium");
@@ -110,14 +127,20 @@ describe("P7: model-written edit sketch, grounded in scope and outlines", () => 
   it("falls back to the template on an out-of-scope file or an invented symbol", async () => {
     const root = repo();
     const out = await sketchWithModel(
-      new MockInferenceAdapter("p", [reply('{"targetSymbols":[{"filePath":"src/other.ts","symbol":"x","change":"add"}]}')]),
+      new MockInferenceAdapter("p", [
+        reply('{"targetSymbols":[{"filePath":"src/other.ts","symbol":"x","change":"add"}]}'),
+      ]),
       story(["src/money.ts"]),
       { repoRoot: root },
     );
     expect(out).toMatchObject({ source: "template" });
     expect(out.rejected).toMatch(/outside the card's scope/);
     const invented = await sketchWithModel(
-      new MockInferenceAdapter("p", [reply('{"targetSymbols":[{"filePath":"src/money.ts","symbol":"dollars","change":"modify"}]}')]),
+      new MockInferenceAdapter("p", [
+        reply(
+          '{"targetSymbols":[{"filePath":"src/money.ts","symbol":"dollars","change":"modify"}]}',
+        ),
+      ]),
       story(["src/money.ts"]),
       { repoRoot: root },
     );
@@ -129,16 +152,46 @@ describe("P7: model-written edit sketch, grounded in scope and outlines", () => 
     initSchema(db);
     const log = new EventLog(db);
     const store = new CardStore(db, log);
-    const spec = "Implement user authentication with JWT session cookies, password hashing, and rate limiting.";
+    const spec =
+      "Implement user authentication with JWT session cookies, password hashing, and rate limiting.";
     await store.createCard({ id: "epic_x", tier: "epic", title: spec, status: "in_progress" });
-    const plan = await new SpidrFeaturePlanner().decomposeSpec({ parentId: "epic_x", parentTier: "epic", spec });
+    const plan = await new SpidrFeaturePlanner().decomposeSpec({
+      parentId: "epic_x",
+      parentTier: "epic",
+      spec,
+    });
     for (const s of plan.stories) s.routing = "edit_sketch";
     const sketcher = new MockInferenceAdapter("planner", [reply("no json here")]);
-    const res = await persistPlan({ log, store }, plan, { epicId: "epic_x", sketcher, repoRoot: repo() });
+    const res = await persistPlan({ log, store }, plan, {
+      epicId: "epic_x",
+      sketcher,
+      repoRoot: repo(),
+    });
     expect(res.sketches.length).toBe(res.created.length);
     expect(res.sketches.every((s) => s.source === "template" && s.rejected)).toBe(true);
     expect(sketcher.callHistory.length).toBe(res.created.length);
     const dossier = JSON.stringify(await store.getDossier(res.created[0]?.id as string));
     expect(dossier).toContain("Edit sketch from the planner");
+  });
+});
+
+import { codebaseMapFromRepo } from "../src/index.js";
+
+describe("P1: a real codebase map for the planner", () => {
+  it("lists files, exported symbols, token sizes and the source/test roots", async () => {
+    const root = repo();
+    const map = codebaseMapFromRepo(root);
+    expect(map.files).toContain("src/ledger.ts");
+    expect(map.symbols?.["src/money.ts"]).toEqual(["money", "Cents"]);
+    expect(map.fileTokens?.["src/other.ts"]).toBeGreaterThan(0);
+    expect(map.sourceDir).toBe("src");
+    expect(map.testDir).toBe("tests");
+    const plan = await new SpidrFeaturePlanner({ codebaseMap: map }).decomposeSpec({
+      parentId: "e",
+      parentTier: "epic",
+      spec: "Round money amounts in the ledger report to cents.",
+    });
+    const claimed = plan.stories.flatMap((s) => s.card.scopeFiles);
+    expect(claimed.some((f) => map.files.includes(f))).toBe(true);
   });
 });

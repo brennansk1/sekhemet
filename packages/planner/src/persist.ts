@@ -1,10 +1,10 @@
 import type { CardRecord, CardStatus, CreateCardInput } from "@sekhemet/kernel";
 import type { LocalInferenceAdapter } from "@sekhemet/models";
 import { ASSUMPTION_EVENTS } from "./calibration_store.js";
-import { sketchWithModel } from "./edit_sketch.js";
-import { analyzeImpact } from "./impact.js";
 import { DecisionStore, waitingReason } from "./decisions.js";
+import { sketchWithModel } from "./edit_sketch.js";
 import { type CardEstimate, EstimationModel } from "./estimation.js";
+import { analyzeImpact } from "./impact.js";
 import { validateInvest } from "./invest.js";
 import { type PlannerLedger, appendPlannerEvent } from "./ledger.js";
 import type {
@@ -211,13 +211,22 @@ export async function persistPlan(
         ...(options.repoRoot ? { repoRoot: options.repoRoot } : {}),
         ...(impact ? { blastRadius: impact.blastRadius } : {}),
       });
-      result.sketches.push({ id, source: r.source, ...(r.rejected ? { rejected: r.rejected } : {}) });
+      result.sketches.push({
+        id,
+        source: r.source,
+        ...(r.rejected ? { rejected: r.rejected } : {}),
+      });
       notes.push(formatEditSketch(r.sketch));
     } else if (story.editSketch) {
       notes.push(
         formatEditSketch(
           impact
-            ? { ...story.editSketch, blastRadius: [...new Set([...story.editSketch.blastRadius, ...impact.blastRadius])].sort() }
+            ? {
+                ...story.editSketch,
+                blastRadius: [
+                  ...new Set([...story.editSketch.blastRadius, ...impact.blastRadius]),
+                ].sort(),
+              }
             : story.editSketch,
         ),
       );

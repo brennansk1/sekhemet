@@ -3,8 +3,8 @@ import { EstimationModel } from "./estimation.js";
 import { type PlannerLedger, appendPlannerEvent, plannerEvents } from "./ledger.js";
 import { type PersistPlanResult, persistPlan } from "./persist.js";
 import type { SpidrFeaturePlanner } from "./planner.js";
-import { replanSession } from "./sessions.js";
 import { scoreWsjf } from "./prioritization.js";
+import { replanSession } from "./sessions.js";
 import { splitSentences } from "./text.js";
 import type { SpidrPlan } from "./types.js";
 
@@ -61,7 +61,8 @@ export const GOAL_EVENTS = {
 
 const GATE_WORDS =
   /\b(tests? pass|test suite|typecheck|type-check|lint|build|gate|compiles?|ci (is )?green)\b/i;
-const METRIC = /\b(coverage|latency|p9[59]|p50|throughput|size|errors?|findings?|time|score)\b[^.]*?(\d+(?:\.\d+)?)\s*(%|ms|s|kb|mb|x)?/i;
+const METRIC =
+  /\b(coverage|latency|p9[59]|p50|throughput|size|errors?|findings?|time|score)\b[^.]*?(\d+(?:\.\d+)?)\s*(%|ms|s|kb|mb|x)?/i;
 
 function gateRefOf(text: string): string {
   if (/lint/i.test(text)) return "lint";
@@ -89,7 +90,8 @@ export function proposeCriteria(statement: string): GoalCriterion[] {
   return clauses.map((text, i): GoalCriterion => {
     const id = `crit_${i + 1}`;
     const metric = metricQueryOf(text);
-    if (metric) return { id, text, kind: "metric", check: { metricQuery: metric }, status: "unmet" };
+    if (metric)
+      return { id, text, kind: "metric", check: { metricQuery: metric }, status: "unmet" };
     if (GATE_WORDS.test(text)) {
       return { id, text, kind: "gate", check: { gateRef: gateRefOf(text) }, status: "unmet" };
     }
@@ -125,7 +127,11 @@ export class GoalStore {
     await appendPlannerEvent(this.ledger, GOAL_EVENTS.created, { goal });
   }
 
-  public async patch(id: string, patch: Partial<Goal>, type: string = GOAL_EVENTS.updated): Promise<Goal> {
+  public async patch(
+    id: string,
+    patch: Partial<Goal>,
+    type: string = GOAL_EVENTS.updated,
+  ): Promise<Goal> {
     await appendPlannerEvent(this.ledger, type, { id, patch });
     return (await this.get(id)) as Goal;
   }
@@ -155,7 +161,11 @@ export async function intakeGoal(
   const now = options.now ?? new Date();
   const id = `goal_${now.getTime().toString(36)}`;
   const criteria = proposeCriteria(statement);
-  const plan = await planner.decomposeSpec({ parentId: `epic_${id}`, parentTier: "epic", spec: statement });
+  const plan = await planner.decomposeSpec({
+    parentId: `epic_${id}`,
+    parentTier: "epic",
+    spec: statement,
+  });
   const estimator = EstimationModel.fromCards(await ledger.store.listCards());
   const estimates = plan.stories.map((s) => estimator.estimateStory(s));
   const tokens = estimates.reduce((a, e) => a + e.tokensRange[1], 0);
@@ -209,13 +219,24 @@ export async function approveGoal(
   if (!goal) throw new Error(`No goal ${goalId}`);
   if (goal.state !== "draft") throw new Error(`Goal ${goalId} is ${goal.state}, not a draft`);
   if (goal.criteria.every((c) => c.status === "unverifiable")) {
-    throw new Error("Refusing to start a goal no gate or metric can verify; add a checkable criterion.");
+    throw new Error(
+      "Refusing to start a goal no gate or metric can verify; add a checkable criterion.",
+    );
   }
   const epicId = `epic_${goal.id}`;
   if (!(await ledger.store.getCard(epicId))) {
-    await ledger.store.createCard({ id: epicId, tier: "epic", title: goal.statement, status: "in_progress" });
+    await ledger.store.createCard({
+      id: epicId,
+      tier: "epic",
+      title: goal.statement,
+      status: "in_progress",
+    });
   }
-  const plan = await planner.decomposeSpec({ parentId: epicId, parentTier: "epic", spec: goal.statement });
+  const plan = await planner.decomposeSpec({
+    parentId: epicId,
+    parentTier: "epic",
+    spec: goal.statement,
+  });
   const persisted = await persistPlan(ledger, plan, { epicId });
   const updated = await store.patch(
     goalId,
@@ -303,13 +324,19 @@ export function evaluateGoal(
   const triggers: GoalEvaluation["triggers"] = [];
   for (const c of cards) {
     if (c.stopReason === "repair_exhausted" || c.stopReason === "capability_ceiling") {
-      triggers.push({ trigger: "rung3_failure", detail: `${c.id} failed at rung 3 (${c.stopReason})` });
+      triggers.push({
+        trigger: "rung3_failure",
+        detail: `${c.id} failed at rung 3 (${c.stopReason})`,
+      });
     }
   }
   for (const c of criteria) {
     const before = goal.criteria.find((x) => x.id === c.id);
     if ((before?.status === "met" || before?.everMet) && c.status === "unmet") {
-      triggers.push({ trigger: "criterion_regressed", detail: `"${c.text}" regressed after being met` });
+      triggers.push({
+        trigger: "criterion_regressed",
+        detail: `"${c.text}" regressed after being met`,
+      });
     }
   }
   const spentTokens = cards.reduce((a, c) => a + (c.tokensUsed ?? 0), 0);
@@ -336,13 +363,19 @@ export function evaluateGoal(
     });
   }
   if (input.environmentChanged) {
-    triggers.push({ trigger: "environment_changed", detail: "a dependency or the environment changed" });
+    triggers.push({
+      trigger: "environment_changed",
+      detail: "a dependency or the environment changed",
+    });
   }
   const unmetRefs = new Set(criteria.filter((c) => c.status !== "met").map((c) => c.id));
   for (const c of cards) {
     const refs = (c.labels ?? []).filter((l) => l.startsWith("criterion:")).map((l) => l.slice(10));
     if (refs.length > 0 && !refs.some((r) => unmetRefs.has(r)) && c.status !== "done") {
-      triggers.push({ trigger: "card_advances_nothing", detail: `${c.id} advances no unmet criterion` });
+      triggers.push({
+        trigger: "card_advances_nothing",
+        detail: `${c.id} advances no unmet criterion`,
+      });
     }
   }
   return { goal, criteria, triggers, spentTokens, forecastTokens };
@@ -367,7 +400,8 @@ export function goalVerdict(
   const { criteria, goal } = evaluation;
   const unverifiable = criteria.filter((c) => c.status === "unverifiable");
   const unmet = criteria.filter((c) => c.status === "unmet");
-  if (criteria.length > 0 && unmet.length === 0 && unverifiable.length === 0) return { state: "met" };
+  if (criteria.length > 0 && unmet.length === 0 && unverifiable.length === 0)
+    return { state: "met" };
   const exhausted =
     options.budgetExhausted === true ||
     goal.strategiesTried >= (options.maxStrategies ?? 3) ||
@@ -399,7 +433,12 @@ export async function runGoalLoop(
   ledger: PlannerLedger,
   planner: SpidrFeaturePlanner,
   goalId: string,
-  input: { metrics?: Record<string, number>; humanMarks?: Record<string, boolean>; environmentChanged?: boolean; maxStrategies?: number } = {},
+  input: {
+    metrics?: Record<string, number>;
+    humanMarks?: Record<string, boolean>;
+    environmentChanged?: boolean;
+    maxStrategies?: number;
+  } = {},
 ): Promise<{ evaluation: GoalEvaluation; verdict: GoalVerdict; replanned: boolean }> {
   const store = new GoalStore(ledger);
   const goal = await store.get(goalId);
@@ -407,12 +446,19 @@ export async function runGoalLoop(
   const cards = await ledger.store.listCards();
   const events = await ledger.log.getEventsByTypes(["gate/result"]);
   const evaluation = evaluateGoal(goal, { cards, events, ...input });
-  const verdict = goalVerdict(evaluation, input.maxStrategies ? { maxStrategies: input.maxStrategies } : {});
+  const verdict = goalVerdict(
+    evaluation,
+    input.maxStrategies ? { maxStrategies: input.maxStrategies } : {},
+  );
   let replanned = false;
   if (verdict.state === "met" || verdict.state === "blocked") {
     await store.patch(
       goalId,
-      { criteria: evaluation.criteria, state: verdict.state, ...(verdict.diagnosis ? { diagnosis: verdict.diagnosis } : {}) },
+      {
+        criteria: evaluation.criteria,
+        state: verdict.state,
+        ...(verdict.diagnosis ? { diagnosis: verdict.diagnosis } : {}),
+      },
       GOAL_EVENTS.stopped,
     );
   } else {
@@ -456,9 +502,13 @@ export function rankGoals(goals: readonly Goal[], cards: readonly CardRecord[]):
   const only = active.find((g) => g.onlyActive);
   const rows = active.map((g): GoalRanking => {
     const epicId = g.strategy.split("@")[0];
-    const open = cards.filter((c) => c.parentId === epicId && c.status !== "done" && c.status !== "rejected");
+    const open = cards.filter(
+      (c) => c.parentId === epicId && c.status !== "done" && c.status !== "rejected",
+    );
     const steps = open.reduce((a, c) => a + Math.max(1, c.stepBudget - c.stepsUsed), 0) || 1;
-    const difficulty = open.length ? open.reduce((a, c) => a + (c.difficulty ?? 5), 0) / open.length : 1;
+    const difficulty = open.length
+      ? open.reduce((a, c) => a + (c.difficulty ?? 5), 0) / open.length
+      : 1;
     const v = g.value ?? { userBusinessValue: 1, timeCriticality: 0, riskReduction: 0 };
     const score = scoreWsjf({ ...v, estimatedSteps: steps, difficulty });
     return {

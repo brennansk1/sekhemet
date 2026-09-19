@@ -54,9 +54,14 @@ function resolveSpec(from: string, spec: string, known: Set<string>): string | u
   if (!spec.startsWith(".")) return undefined;
   const base = join(dirname(from), spec).replace(/\\/g, "/");
   const stem = base.replace(/\.(js|mjs|cjs|jsx)$/, "");
-  return [base, `${stem}.ts`, `${stem}.tsx`, `${stem}.js`, `${stem}/index.ts`, `${stem}/index.js`].find(
-    (c) => known.has(c),
-  );
+  return [
+    base,
+    `${stem}.ts`,
+    `${stem}.tsx`,
+    `${stem}.js`,
+    `${stem}/index.ts`,
+    `${stem}/index.js`,
+  ].find((c) => known.has(c));
 }
 
 const isTest = (f: string) => /(\.|_)(spec|test)\.[jt]sx?$/.test(f) || /(^|\/)tests?\//.test(f);
@@ -69,7 +74,9 @@ export async function analyzeImpact(
   const abs = resolve(root);
   const files = sources(abs);
   const known = new Set(files);
-  const scope = scopeFiles.map((f) => f.replace(/^\.\//, "")).filter((f) => known.has(f) || existsSync(join(abs, f)));
+  const scope = scopeFiles
+    .map((f) => f.replace(/^\.\//, ""))
+    .filter((f) => known.has(f) || existsSync(join(abs, f)));
   const outlines = new Map(
     files.map((f) => [f, outlineFile(f, readFileSync(join(abs, f), "utf8"))] as const),
   );
@@ -111,7 +118,9 @@ export async function analyzeImpact(
       try {
         const text = readFileSync(join(abs, f), "utf8").split("\n");
         for (const sym of o.exports) {
-          const line = text.findIndex((l) => new RegExp(`\\b${sym}\\b`).test(l) && /\bexport\b/.test(l));
+          const line = text.findIndex(
+            (l) => new RegExp(`\\b${sym}\\b`).test(l) && /\bexport\b/.test(l),
+          );
           if (line < 0) continue;
           const col = (text[line] as string).search(new RegExp(`\\b${sym}\\b`));
           for (const loc of await client.references(f, line + 1, col + 1)) {
@@ -128,7 +137,8 @@ export async function analyzeImpact(
     }
     for (const [other, oo] of outlines) {
       if (other === f) continue;
-      for (const sym of o.exports) if (oo.identifiers.has(sym)) refs.set(other, (refs.get(other) ?? new Set()).add(sym));
+      for (const sym of o.exports)
+        if (oo.identifiers.has(sym)) refs.set(other, (refs.get(other) ?? new Set()).add(sym));
     }
   }
   const referencers = [...refs.entries()]
@@ -170,4 +180,43 @@ export async function inferDependenciesByImpact(
     }
   }
   return out;
+}
+
+/**
+ * The planner's codebase map from the repository (P1): every source file,
+ * its exported symbols (TypeScript compiler parse) and its token size, plus
+ * the source and test roots. `sekhemet plan` passes this so slices claim
+ * real files and symbols instead of invented ones.
+ */
+export function codebaseMapFromRepo(root: string): import("./types.js").CodebaseMap {
+  const abs = resolve(root);
+  const files = sources(abs);
+  const symbols: Record<string, string[]> = {};
+  const fileTokens: Record<string, number> = {};
+  for (const f of files) {
+    const text = readFileSync(join(abs, f), "utf8");
+    fileTokens[f] = Math.ceil(text.length / 4);
+    const exp = outlineFile(f, text).exports;
+    if (exp.length) symbols[f] = exp;
+  }
+  const top = (pred: (f: string) => boolean) => {
+    const counts = new Map<string, number>();
+    for (const f of files.filter(pred)) {
+      const d = f
+        .split("/")
+        .slice(0, f.startsWith("packages/") ? 3 : 1)
+        .join("/");
+      counts.set(d, (counts.get(d) ?? 0) + 1);
+    }
+    return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0];
+  };
+  const sourceDir = top((f) => !isTest(f));
+  const testDir = top(isTest);
+  return {
+    files,
+    symbols,
+    fileTokens,
+    ...(sourceDir ? { sourceDir } : {}),
+    ...(testDir ? { testDir } : {}),
+  };
 }

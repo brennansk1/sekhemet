@@ -101,23 +101,25 @@ export function ceremoniesDue(
 ): CeremonyDue[] {
   const due: CeremonyDue[] = [];
   if (profile.planning === "continuous") {
-    if (state.intakePending) due.push({ kind: "planning", reason: "new work arrived (continuous flow)" });
+    if (state.intakePending)
+      due.push({ kind: "planning", reason: "new work arrived (continuous flow)" });
   } else if (profile.cycleDays !== undefined) {
     const start = state.cycleStart?.getTime();
     const len = (profile.cycleDays + (profile.cooldownDays ?? 0)) * 86_400_000;
     if (start === undefined || state.now.getTime() - start >= len) {
       due.push({ kind: "planning", reason: `a new ${profile.cycleDays}-day cycle starts` });
-      if (profile.bettingTable) due.push({ kind: "betting", reason: "pitches are bet on at the cycle boundary" });
+      if (profile.bettingTable)
+        due.push({ kind: "betting", reason: "pitches are bet on at the cycle boundary" });
       if (profile.retroAtCycleEnd && start !== undefined) {
         due.push({ kind: "retrospective", reason: "the cycle ended" });
       }
     }
   }
-  if (
-    profile.retroEveryCards !== undefined &&
-    state.closedSinceRetro >= profile.retroEveryCards
-  ) {
-    due.push({ kind: "retrospective", reason: `${state.closedSinceRetro} cards closed since the last retro` });
+  if (profile.retroEveryCards !== undefined && state.closedSinceRetro >= profile.retroEveryCards) {
+    due.push({
+      kind: "retrospective",
+      reason: `${state.closedSinceRetro} cards closed since the last retro`,
+    });
   }
   return due;
 }

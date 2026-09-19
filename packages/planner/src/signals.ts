@@ -140,7 +140,12 @@ export function computeSignals(input: SignalInput): SignalReading[] {
   const blocked = work.filter(
     (c) => c.status === "parked" && hours(now.getTime() - Date.parse(c.updatedAt)) > bound,
   );
-  const oldest = Math.max(0, ...work.filter((c) => c.status === "parked").map((c) => hours(now.getTime() - Date.parse(c.updatedAt))));
+  const oldest = Math.max(
+    0,
+    ...work
+      .filter((c) => c.status === "parked")
+      .map((c) => hours(now.getTime() - Date.parse(c.updatedAt))),
+  );
   out.push({
     id: "blocked_time",
     value: oldest,
