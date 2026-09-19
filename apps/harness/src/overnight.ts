@@ -37,6 +37,8 @@ export interface OvernightOptions {
   now?: () => Date;
   maxRounds?: number;
   say?: (line: string) => void;
+  /** Skip the end-of-night mutation step (E16). */
+  skipMutation?: boolean;
 }
 
 export interface OvernightSummary {
@@ -159,6 +161,16 @@ export async function runOvernight(opts: OvernightOptions): Promise<OvernightSum
     }
   }
   if (!summary.stoppedBecause) summary.stoppedBecause = "round limit";
+  // E16: loop 10 on what the night accepted: mutants of accepted diffs
+  // become advisory test proposals, while the machine is still free.
+  if (summary.passed > 0 && !opts.skipMutation) {
+    const { mutateAcceptedCards } = await import("./mutation_step.js");
+    const runs = await mutateAcceptedCards(opts.repoPath, opts.cardStore, opts.log).catch(() => []);
+    for (const r of runs)
+      say(
+        `Mutation ${r.cardId}: ${r.killed}/${r.total} killed${r.proposalCardId ? `, proposals on ${r.proposalCardId}` : ""}.`,
+      );
+  }
   say(
     `Overnight done: ${summary.rounds} round(s), ${summary.passed}/${summary.cardsRun} card(s) passed; stopped: ${summary.stoppedBecause}.`,
   );

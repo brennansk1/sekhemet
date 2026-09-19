@@ -582,6 +582,20 @@ export async function runWave2Command(
  */
 async function improveCommand(k: Kernel, args: string[], io: CommandIO): Promise<number> {
   const { print } = io;
+  if (args.includes("--mutants")) {
+    // E16: `sekhemet improve --mutants [--limit 3] [--max-mutants 8]`, loop 10.
+    const { mutateAcceptedCards } = await import("./mutation_step.js");
+    const runs = await mutateAcceptedCards(k.repoPath, k.cardStore, k.log, {
+      limit: Number(flag(args, "--limit") ?? 3),
+      maxMutants: Number(flag(args, "--max-mutants") ?? 8),
+    });
+    for (const r of runs)
+      print(
+        `mutation ${r.cardId} ${r.sha.slice(0, 10)}: ${r.killed}/${r.total} killed (score ${r.score})${r.proposalCardId ? `; test proposals on ${r.proposalCardId}` : ""}`,
+      );
+    if (runs.length === 0) print("No accepted cards left to mutate.");
+    return 0;
+  }
   const gateRule = flag(args, "--gate-rule");
   if (gateRule) {
     // E5: `sekhemet improve --gate-rule <id> [--fixtures chronicle,onyx] [--worker m]`
