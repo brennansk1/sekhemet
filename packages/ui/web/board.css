@@ -499,3 +499,8 @@
   width: 8px;
   background: var(--bg-base);
 }
+
+/* B11: the tile being dragged to a new place in its column. */
+.tile.dragging {
+  opacity: 0.5;
+}

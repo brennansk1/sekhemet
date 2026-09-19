@@ -14,6 +14,7 @@ import {
 import * as listView from "./list.js";
 import { openMenu } from "./overlay.js";
 import { openPeek, peekOpenFor } from "./peek.js";
+import { bindReorder } from "./reorder.js";
 import { setTopbar } from "./shell.js";
 import { store } from "./store.js";
 import { tileHtml } from "./tile.js";
@@ -625,6 +626,8 @@ export function mount(view, route) {
   ui.layoutKey = "";
   ui.html.clear();
   container.addEventListener("click", onClick);
+  // B11: drag (or Alt+Up/Down) to reorder cards within a column.
+  bindReorder(container);
   container.addEventListener("dblclick", (e) => {
     const tile = e.target instanceof Element ? e.target.closest(".tile") : null;
     if (tile) openPeek(tile.dataset.id, { returnFocus: tile });
