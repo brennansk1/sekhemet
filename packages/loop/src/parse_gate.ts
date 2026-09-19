@@ -1,3 +1,5 @@
+import { spawnSync } from "node:child_process";
+import { parseToml } from "@sekhemet/kernel";
 import ts from "typescript";
 
 export interface SyntaxProblem {
@@ -19,6 +21,8 @@ const PARSEABLE = /\.(?:[cm]?[jt]sx?)$/;
  * about. Only syntax is checked here — types are the typecheck gate's job.
  */
 export function checkSyntax(path: string, content: string): SyntaxProblem[] {
+  const other = checkOtherLanguage(path, content);
+  if (other) return other;
   if (!PARSEABLE.test(path)) return [];
 
   const result = ts.transpileModule(content, {
@@ -46,4 +50,78 @@ export function checkSyntax(path: string, content: string): SyntaxProblem[] {
         message: ts.flattenDiagnosticMessageText(d.messageText, " "),
       };
     });
+}
+
+/** 1-based line and column of a character offset. */
+function lineCol(content: string, offset: number): { line: number; column: number } {
+  const before = content.slice(0, Math.max(0, offset));
+  const line = before.split("\n").length;
+  return { line, column: offset - before.lastIndexOf("\n") };
+}
+
+/**
+ * Run an interpreter's own parser over `content` on stdin: the language's
+ * real grammar, not a regex. Undefined when the tool is not installed (the
+ * gate then says nothing rather than inventing a verdict).
+ */
+function parseWith(
+  command: string,
+  args: string[],
+  content: string,
+  pattern: RegExp,
+): SyntaxProblem[] | undefined {
+  const r = spawnSync(command, args, { input: content, encoding: "utf8", timeout: 10_000 });
+  if (r.error) return undefined;
+  if (r.status === 0) return [];
+  const text = `${r.stderr ?? ""}${r.stdout ?? ""}`.trim();
+  const m = pattern.exec(text);
+  return [
+    {
+      line: m?.groups?.line ? Number(m.groups.line) : 1,
+      column: m?.groups?.col ? Number(m.groups.col) : 1,
+      message: (text.split("\n").filter(Boolean).at(-1) ?? "syntax error").slice(0, 200),
+    },
+  ];
+}
+
+/**
+ * G6 beyond TypeScript: JSON and TOML through their parsers in-process,
+ * Python through its own `ast` module, shell through `bash -n`. Every check
+ * runs on the candidate content in memory, before anything is written.
+ */
+function checkOtherLanguage(path: string, content: string): SyntaxProblem[] | undefined {
+  const lower = path.toLowerCase();
+  if (lower.endsWith(".json")) {
+    try {
+      JSON.parse(content);
+      return [];
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const pos = /position (\d+)/.exec(message);
+      const at = pos ? lineCol(content, Number(pos[1])) : { line: 1, column: 1 };
+      return [{ ...at, message }];
+    }
+  }
+  if (lower.endsWith(".toml")) {
+    try {
+      parseToml(content);
+      return [];
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const line = /line (\d+)/i.exec(message);
+      return [{ line: line ? Number(line[1]) : 1, column: 1, message }];
+    }
+  }
+  if (lower.endsWith(".py")) {
+    return parseWith(
+      "python3",
+      ["-c", "import ast,sys; ast.parse(sys.stdin.read())"],
+      content,
+      /line (?<line>\d+)/,
+    );
+  }
+  if (lower.endsWith(".sh") || lower.endsWith(".bash")) {
+    return parseWith("bash", ["-n"], content, /line (?<line>\d+)/);
+  }
+  return undefined;
 }

@@ -891,6 +891,9 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
               ? await this.askObservation(call.arguments.question)
               : await this.tools.execute(call);
       observations.push(observation);
+      if (call.name === "note" && observation.ok && typeof call.arguments.message === "string") {
+        await this.options.onNote?.(call.arguments.message).catch(() => undefined);
+      }
 
       if (observation.ok && WRITE_TOOLS.has(call.name)) {
         const path = call.arguments.path;

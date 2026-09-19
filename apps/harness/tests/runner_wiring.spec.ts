@@ -382,6 +382,24 @@ describe("apps/harness executeCard wiring (wave 2, part 1)", () => {
     expect(cardStore.runs.listDecisions()[0]?.status).toBe("timed_out");
   });
 
+  it("files a Worker note in the card's thread as it is written (L11)", async () => {
+    const card = await newCard("card_note");
+    let notesAfterTurn1 = -1;
+    ctx.afterTurn = async (_id, turn) => {
+      if (turn.turnIndex === 1)
+        notesAfterTurn1 = (await cardStore.getDossier(card.id)).notes.length;
+    };
+    await executeCard(
+      ctx,
+      card,
+      scripted([[{ name: "note", arguments: { message: "Assumed: a is a number" } }], WRITE_A])
+        .adapter,
+    );
+    expect(notesAfterTurn1).toBe(1);
+    const dossier = await cardStore.getDossier(card.id);
+    expect(dossier.notes.map((n) => n.text)).toEqual(["Assumed: a is a number"]);
+  });
+
   it("records a review in the dossier, which the Review surface reads as findings", async () => {
     const card = await newCard("card_rev");
     await recordReview(cardStore, card.id, [

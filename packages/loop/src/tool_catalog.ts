@@ -138,14 +138,35 @@ export const TOOL_CATALOG: ToolInterfaceSpec[] = [
   },
   {
     name: "find_references",
-    summary: "Find whole-word references to a symbol.",
+    summary:
+      "Find references to a symbol. TypeScript/JavaScript symbols resolve through imports and re-exports; other files fall back to whole-word matches.",
     parameters: [
       { name: "symbol", type: "string", required: true, description: "Symbol name to find" },
+      {
+        name: "file",
+        type: "string",
+        required: false,
+        description: "File that declares it, when the name is declared in several",
+      },
       {
         name: "path",
         type: "string",
         description: "Directory to search, defaults to the worktree",
         required: false,
+      },
+    ],
+  },
+  {
+    name: "go_to_definition",
+    summary:
+      "Where a symbol is declared, with its type as the compiler sees it (TypeScript/JavaScript).",
+    parameters: [
+      { name: "symbol", type: "string", required: true, description: "Symbol name" },
+      {
+        name: "file",
+        type: "string",
+        required: false,
+        description: "Limit to declarations in this file",
       },
     ],
   },
@@ -174,7 +195,7 @@ export const TOOL_CATALOG: ToolInterfaceSpec[] = [
   },
   {
     name: "find_files",
-    summary: "List files matching a glob.",
+    summary: "List files matching a glob, newest first; .gitignore is respected.",
     parameters: [
       {
         name: "pattern",
@@ -237,9 +258,16 @@ export const TOOL_CATALOG: ToolInterfaceSpec[] = [
   },
   {
     name: "docs",
-    summary: "Search the project's own documentation.",
+    summary:
+      "Search documentation: the project's docs, and a dependency's README and type declarations at the installed version.",
     parameters: [
       { name: "query", type: "string", required: true, description: "Text to look for" },
+      {
+        name: "library",
+        type: "string",
+        required: false,
+        description: "A dependency to search at its installed version, for example zod",
+      },
     ],
   },
   {
@@ -305,6 +333,7 @@ export const RESTRICTED_TOOL_NAMES: readonly string[] = [
   "read_file",
   "read_symbol",
   "find_references",
+  "go_to_definition",
   "grep_search",
   "find_files",
   "list_dir",

@@ -768,6 +768,21 @@ export class CardRunner {
           }
         : {}),
       ...(dossierLines.length > 0 ? { dossierLines } : {}),
+      // L11: a note reaches the card's thread (its dossier, on the ledger)
+      // the moment the Worker writes it, not at the end of the attempt.
+      ...(store
+        ? {
+            onNote: async (text: string) => {
+              if (text.startsWith("Asked: ")) return; // recorded as a question already
+              await store.recordDossierEntry({ cardId: card.id, kind: "note", text, attempt });
+              this.emit({
+                type: "status",
+                cardId: card.id,
+                message: `note: ${text.slice(0, 160)}`,
+              });
+            },
+          }
+        : {}),
       // K11: every prompt is stored by hash before it is sent.
       onPrompt: (record: PromptRecord) => this.logPrompt(record),
       ...this.options,
@@ -1210,12 +1225,7 @@ export class CardRunner {
     // What this attempt learned goes into the card's dossier for the next one.
     if (store && session) {
       const writes: Promise<unknown>[] = [];
-      for (const note of session.getNotes()) {
-        if (note.startsWith("Asked: ")) continue; // recorded as a question already
-        writes.push(
-          store.recordDossierEntry({ cardId: card.id, kind: "note", text: note, attempt }),
-        );
-      }
+      // Notes went to the dossier as they were written (L11, `onNote`).
       if (!passed) {
         for (const line of session.getLessons().lines.slice(0, 6)) {
           if (line.startsWith("from an earlier attempt:")) continue;

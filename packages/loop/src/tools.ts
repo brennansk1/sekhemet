@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   type Dirent,
   existsSync,
@@ -14,10 +15,11 @@ import type { ToolCall } from "@sekhemet/models";
 import { type ExecutionResult, PermissionEngine, ProcessSandbox } from "@sekhemet/sandbox";
 import { matchesGlob } from "./glob.js";
 import { type ToolObservation, clampObservation, denied, fail, ok } from "./observation.js";
-import { checkSyntax } from "./parse_gate.js";
 import { PathEscapeError, canonicalizeRoot, resolveInWorktree } from "./paths.js";
 import { findSymbol, listSymbolNames } from "./symbols.js";
 import { applyEol, detectEol, joinLines, reindentBlock, splitLines, toLf } from "./text.js";
+import { type SymbolLocation, TsSymbolService } from "./ts_service.js";
+import { atomicWrite, validateWrite } from "./write_contract.js";
 
 const SKIP_DIRS = new Set(["node_modules", "dist", ".git", ".sekhemet", "coverage", ".next"]);
 const MAX_GREP_MATCHES = 80;
@@ -334,24 +336,27 @@ export class ToolExecutor {
   }
 
   private writeText(abs: string, content: string): void {
-    // Refuse a write that would leave source unparseable. The thrown message is
-    // turned into the observation, so the model sees the exact line and error.
-    // The rule is "never break a parseable file", not "every write must parse":
-    // a file that is already broken has to be repairable one edit at a time.
-    const alreadyBroken = existsSync(abs) && checkSyntax(abs, readFileSync(abs, "utf8")).length > 0;
-    const problems = alreadyBroken ? [] : checkSyntax(abs, content);
-    if (problems.length > 0) {
-      const detail = problems
-        .map((p) => `${this.rel(abs)}:${p.line}:${p.column} ${p.message}`)
-        .join("; ");
+    // The write contract (L16, G7): parse, secret scan, then an atomic write.
+    // The thrown message becomes the observation, so the model sees exactly
+    // what was refused and where.
+    const verdict = validateWrite(abs, content, this.rel(abs));
+    if (!verdict.ok) {
+      const parse = verdict.problems.filter((p) => p.rule === "parse").map((p) => p.message);
+      const secrets = verdict.problems.filter((p) => p.rule === "secret").map((p) => p.message);
       throw new Error(
-        `write refused: the result would not parse (${detail}). The file on disk is unchanged. For a short file, rewrite it whole with write_file.`,
+        [
+          parse.length
+            ? `write refused: the result would not parse (${parse.join("; ")}). The file on disk is unchanged. For a short file, rewrite it whole with write_file.`
+            : "",
+          secrets.length
+            ? `write refused: it would add a credential (${secrets.join("; ")}). Read secrets from the environment or a config file outside the repository; never write them into source.`
+            : "",
+        ]
+          .filter(Boolean)
+          .join(" "),
       );
     }
-
-    const parent = dirname(abs);
-    if (!existsSync(parent)) mkdirSync(parent, { recursive: true });
-    writeFileSync(abs, content, "utf8");
+    atomicWrite(abs, content);
   }
 
   /** Run the three-tier permission check, escalating `ask` to the approval handler. */
@@ -446,7 +451,9 @@ export class ToolExecutor {
       case "insert_after_symbol":
         return this.insertAfterSymbol(str("path"), str("symbol"), str("content"));
       case "find_references":
-        return this.grep(str("symbol"), { path: str("path") ?? ".", wholeWord: true });
+        return this.findReferences(str("symbol"), str("path") ?? ".", str("file"));
+      case "go_to_definition":
+        return this.goToDefinition(str("symbol"), str("file"));
       case "grep_search": {
         const mode = str("output_mode");
         const ctx = num("context");
@@ -472,7 +479,7 @@ export class ToolExecutor {
       case "note":
         return this.note(str("message"));
       case "docs":
-        return this.docs(str("query") ?? "");
+        return this.docs(str("query") ?? "", str("library"));
       case "git_history":
         return this.gitHistory(str("query") ?? "", str("sha"));
       case "dependencies":
@@ -744,14 +751,29 @@ export class ToolExecutor {
     }
   }
 
+  /**
+   * L7: git's view of the tree (gitignore-aware), newest first. Recently
+   * modified files are the ones a card is most likely about, which is why
+   * Claude Code's Glob sorts by mtime rather than by name.
+   */
   private findFiles(pattern: string, path: string): ToolObservation {
     const abs = resolveInWorktree(this.root, path);
-    const results: string[] = [];
-    this.walk(abs, (file) => {
-      const rel = this.rel(file);
-      if (matchesGlob(rel, pattern)) results.push(rel);
-      return results.length < MAX_FIND_RESULTS;
-    });
+    if (!existsSync(abs)) return fail("find_files", `directory not found: ${path}`);
+    const matched = this.searchableFiles(abs)
+      .map((file) => ({ rel: this.rel(file), file }))
+      .filter(({ rel }) => matchesGlob(rel, pattern))
+      .map(({ rel, file }) => {
+        let mtime = 0;
+        try {
+          mtime = statSync(file).mtimeMs;
+        } catch {
+          // Vanished between listing and stat: sorts last.
+        }
+        return { rel, mtime };
+      })
+      .sort((a, b) => b.mtime - a.mtime || (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0));
+    const results = matched.slice(0, MAX_FIND_RESULTS).map((m) => m.rel);
+    const more = matched.length - results.length;
 
     if (results.length === 0) {
       return ok(
@@ -764,9 +786,77 @@ export class ToolExecutor {
       "find_files",
       `${results.length} file(s) match "${pattern}"`,
       clampObservation(
-        `${results.length} match(es) for "${pattern}":\n${results.join("\n")}`,
+        `${results.length} match(es) for "${pattern}", newest first:\n${results.join("\n")}${more > 0 ? `\n(${more} more not shown; narrow the pattern)` : ""}`,
         "matches",
       ),
+    );
+  }
+
+  private tsService: TsSymbolService | undefined;
+
+  /** The TypeScript language service over this worktree, built on first use (L9). */
+  private symbolService(): TsSymbolService {
+    this.tsService ??= new TsSymbolService(this.root, () => this.searchableFiles(this.root));
+    return this.tsService;
+  }
+
+  /**
+   * L9: semantic references through the TypeScript language service for
+   * TS/JS symbols (through imports, re-exports and aliases); a whole-word
+   * grep for anything else, said as such.
+   */
+  private findReferences(
+    symbol: string | undefined,
+    path: string,
+    file: string | undefined,
+  ): ToolObservation {
+    if (!symbol) return fail("find_references", "symbol is required");
+    let refs: SymbolLocation[] | undefined;
+    try {
+      refs = this.symbolService().references(symbol, file);
+    } catch {
+      refs = undefined;
+    }
+    if (!refs) {
+      const text = this.grep(symbol, { path, wholeWord: true });
+      return {
+        ...text,
+        content: `(no TypeScript declaration of ${symbol}: whole-word text matches)\n${text.content}`,
+      };
+    }
+    const within =
+      path === "." ? refs : refs.filter((r) => r.path.startsWith(path.replace(/^\.\//, "")));
+    return ok(
+      "find_references",
+      `${within.length} semantic reference(s) to ${symbol}`,
+      clampObservation(
+        `${within.length} reference(s) to ${symbol} (resolved by the TypeScript language service; D = declaration):\n${within
+          .map((r) => `${r.isDefinition ? "D " : "  "}${r.path}:${r.line}:${r.column}  ${r.text}`)
+          .join("\n")}`,
+        "references",
+      ),
+    );
+  }
+
+  private goToDefinition(symbol: string | undefined, file: string | undefined): ToolObservation {
+    if (!symbol) return fail("go_to_definition", "symbol is required");
+    let defs: (SymbolLocation & { type: string })[] = [];
+    try {
+      defs = this.symbolService().definition(symbol, file);
+    } catch {
+      defs = [];
+    }
+    if (defs.length === 0) {
+      return fail(
+        "go_to_definition",
+        `no declaration of ${symbol}`,
+        `No TypeScript/JavaScript declaration named ${symbol}${file ? ` in ${file}` : ""}. Try grep_search.`,
+      );
+    }
+    return ok(
+      "go_to_definition",
+      `${defs.length} declaration(s) of ${symbol}`,
+      defs.map((d) => `${d.path}:${d.line}:${d.column}\n  ${d.type || d.text}`).join("\n"),
     );
   }
 
@@ -1117,38 +1207,73 @@ export class ToolExecutor {
     }
   }
 
-  private docs(query: string): ToolObservation {
-    const candidates = ["README.md", "AGENTS.md", "CLAUDE.md", "DEFINITION_OF_DONE.md"];
+  /**
+   * L10, tiered documentation lookup:
+   *   1. the project's own docs (root guides, then docs/**.md);
+   *   2. a dependency's docs AT ITS INSTALLED VERSION: its README and its
+   *      type declarations (`.d.ts`) from node_modules, or a local mirror
+   *      under `.sekhemet/docs/<name>@<version>/`;
+   * cached on disk per (library, version, query) under `.sekhemet/docs-cache`.
+   * A dependency named in the query is searched without being asked for.
+   */
+  private docs(query: string, library?: string): ToolObservation {
+    if (!query.trim()) return fail("docs", "query is required");
     const found: string[] = [];
-
-    for (const name of candidates) {
-      const abs = join(this.root, name);
-      if (!existsSync(abs)) continue;
-      const text = this.readText(abs);
+    const matchLines = (label: string, text: string, max = 10, q = query): string | undefined => {
+      const needle = q.toLowerCase();
       const { lines } = splitLines(text);
-      const needle = query.toLowerCase();
-      // Return matching lines rather than the whole document, but keep the
-      // document's own title: without it the model sees quotes with no source.
       const title = lines
         .find((l) => l.trimStart().startsWith("#"))
         ?.replace(/^#+\s*/, "")
         .trim();
-      const matched = lines
+      const words = needle.split(/\s+/).filter((w) => w.length > 2);
+      const hits = lines
         .map((l, i) => ({ l, i }))
-        .filter(({ l }) => l.toLowerCase().includes(needle))
-        .slice(0, 10)
-        .map(({ l, i }) => `${name}:${i + 1}: ${l.trim()}`);
-      if (matched.length > 0) {
-        const header = title ? `--- ${name} — ${title} ---` : `--- ${name} ---`;
-        found.push(`${header}\n${matched.join("\n")}`);
+        .filter(({ l }) => {
+          const low = l.toLowerCase();
+          return low.includes(needle) || (words.length > 1 && words.every((w) => low.includes(w)));
+        })
+        .slice(0, max)
+        .map(({ l, i }) => `${label}:${i + 1}: ${l.trim()}`);
+      if (hits.length === 0) return undefined;
+      return `${title ? `--- ${label} — ${title} ---` : `--- ${label} ---`}\n${hits.join("\n")}`;
+    };
+
+    // Tier 1: the project's own documentation.
+    if (!library) {
+      const guides = ["README.md", "AGENTS.md", "CLAUDE.md", "DEFINITION_OF_DONE.md"];
+      const docFiles = this.searchableFiles(this.root)
+        .map((f) => this.rel(f))
+        .filter((f) => f.startsWith("docs/") && f.endsWith(".md"))
+        .slice(0, 200);
+      for (const name of [...guides, ...docFiles]) {
+        const abs = join(this.root, name);
+        if (!existsSync(abs)) continue;
+        const block = matchLines(name, this.readText(abs));
+        if (block) found.push(block);
+        if (found.length >= 6) break;
       }
+    }
+
+    // Tier 2: dependencies at their installed version.
+    const libs = library
+      ? [library]
+      : this.dependencyNames().filter((d) => query.toLowerCase().includes(d.toLowerCase()));
+    for (const lib of libs.slice(0, 3)) {
+      // The library's own name is how it was picked, not what to look for in it.
+      const within = library
+        ? query
+        : query.replace(new RegExp(lib.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "ig"), "").trim() ||
+          query;
+      const block = this.libraryDocs(lib, within, matchLines);
+      if (block) found.push(block);
     }
 
     if (found.length === 0) {
       return ok(
         "docs",
         `no documentation matches "${query}"`,
-        `No documentation found matching "${query}".`,
+        `No documentation found matching "${query}"${library ? ` in ${library}` : ""}.${library ? "" : " Name a dependency with library=... to search its installed docs and types."}`,
       );
     }
     return ok(
@@ -1156,5 +1281,81 @@ export class ToolExecutor {
       `documentation matches for "${query}"`,
       clampObservation(found.join("\n\n"), "documentation"),
     );
+  }
+
+  private dependencyNames(): string[] {
+    try {
+      const pkg = JSON.parse(readFileSync(join(this.root, "package.json"), "utf8")) as Record<
+        string,
+        Record<string, string> | undefined
+      >;
+      return Object.keys({ ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) });
+    } catch {
+      return [];
+    }
+  }
+
+  private libraryDocs(
+    lib: string,
+    query: string,
+    matchLines: (label: string, text: string, max?: number, q?: string) => string | undefined,
+  ): string | undefined {
+    if (!/^(@[\w.-]+\/)?[\w.-]+$/.test(lib)) return undefined;
+    const dir = join(this.root, "node_modules", lib);
+    let version = "not installed";
+    try {
+      version = (JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as { version: string })
+        .version;
+    } catch {
+      // Not installed: a mirror may still exist.
+    }
+    const cacheDir = join(this.root, ".sekhemet", "docs-cache");
+    const key = createHash("sha256")
+      .update(`${lib}@${version}:${query}`)
+      .digest("hex")
+      .slice(0, 24);
+    const cached = join(cacheDir, `${key}.txt`);
+    if (existsSync(cached)) return readFileSync(cached, "utf8") || undefined;
+
+    const blocks: string[] = [];
+    const sources: string[] = [];
+    const mirror = join(this.root, ".sekhemet", "docs", `${lib}@${version}`);
+    if (existsSync(mirror)) {
+      this.walk(mirror, (f) => {
+        if (f.endsWith(".md")) sources.push(f);
+        return sources.length < 200;
+      });
+    }
+    for (const name of ["README.md", "readme.md", "README"]) {
+      if (existsSync(join(dir, name))) {
+        sources.push(join(dir, name));
+        break;
+      }
+    }
+    if (existsSync(dir)) {
+      this.walk(dir, (f) => {
+        if (f.endsWith(".d.ts") && !f.includes(`${join(dir, "node_modules")}`)) sources.push(f);
+        return sources.length < 400;
+      });
+    }
+    for (const src of sources) {
+      const label = `${lib}@${version}/${relative(existsSync(mirror) && src.startsWith(mirror) ? mirror : dir, src)}`;
+      try {
+        const block = matchLines(label, readFileSync(src, "utf8"), 6, query);
+        if (block) blocks.push(block);
+      } catch {
+        // Unreadable file: skip.
+      }
+      if (blocks.length >= 5) break;
+    }
+    const out =
+      blocks.length > 0 ? `=== ${lib} ${version} (installed) ===\n${blocks.join("\n")}` : "";
+    try {
+      mkdirSync(cacheDir, { recursive: true });
+      writeFileSync(cached, out);
+    } catch {
+      // A cache that cannot be written only costs the next lookup.
+    }
+    return out || undefined;
   }
 }

@@ -179,6 +179,8 @@ export interface SessionOptions {
    * request is not sent: a prompt that cannot be logged never reaches a model.
    */
   onPrompt?: ((record: PromptRecord) => string) | undefined;
+  /** Called with every note the Worker writes, as it writes it (L11). */
+  onNote?: ((text: string) => Promise<void>) | undefined;
   /** Restricted mode: the agent's own commands refuse to run unconfined (defect 3). */
   requireConfinement?: boolean | undefined;
   /**
