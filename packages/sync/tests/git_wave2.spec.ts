@@ -45,7 +45,9 @@ describe("Y2/Y3: attributed, idempotent checkpoints", () => {
     const wt = await adapter.createWorktree("c1", "main", "Add b");
     write(wt, "packages/core/src/b.ts", "export const b = 2;\n");
     const first = await cp("c1", 1);
-    expect(git("log", "-1", "--format=%B", first)).toContain(`Co-authored-by: ${modelCoAuthor("nail")}`);
+    expect(git("log", "-1", "--format=%B", first)).toContain(
+      `Co-authored-by: ${modelCoAuthor("nail")}`,
+    );
     const again = await cp("c1", 2);
     expect(again).toBe(first);
     expect(git("rev-parse", "refs/sekhemet/steps/c1/step_2")).toBe(first);
@@ -61,7 +63,13 @@ describe("Y4: squash into an intent-grouped Conventional Commit", () => {
     await cp("c2", 1, "nail");
     write(wt, "packages/core/tests/a.spec.ts", "// test\n");
     await cp("c2", 2, "dirk");
-    await adapter.squashAndMerge("c2", "main", "feat(c2): Fix rounding bug", { "Agent-Harness": "sekhemet" }, "Fix rounding bug");
+    await adapter.squashAndMerge(
+      "c2",
+      "main",
+      "feat(c2): Fix rounding bug",
+      { "Agent-Harness": "sekhemet" },
+      "Fix rounding bug",
+    );
     const msg = git("log", "main", "-1", "--format=%B");
     expect(msg.split("\n")[0]).toBe("fix(core): fix rounding bug");
     expect(msg).toContain("Source: packages/core/src/a.ts");

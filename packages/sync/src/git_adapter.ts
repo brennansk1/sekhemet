@@ -20,7 +20,11 @@ import type {
 
 /** Default co-author for a model's work (Y2). */
 export function modelCoAuthor(agentModel: string): string {
-  const slug = agentModel.toLowerCase().replace(/[^a-z0-9.-]+/g, "-").replace(/^-+|-+$/g, "") || "model";
+  const slug =
+    agentModel
+      .toLowerCase()
+      .replace(/[^a-z0-9.-]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "model";
   return `${agentModel} <${slug}@models.sekhemet.local>`;
 }
 
@@ -84,12 +88,22 @@ export function conventionalSquashMessage(
   const g = groupByIntent(files);
   let type = "feat";
   if (files.length > 0 && g.source.length === 0) {
-    type = g.tests.length > 0 && g.docs.length === 0 ? "test" : g.docs.length > 0 && g.tests.length === 0 && g.config.length === 0 ? "docs" : "chore";
+    type =
+      g.tests.length > 0 && g.docs.length === 0
+        ? "test"
+        : g.docs.length > 0 && g.tests.length === 0 && g.config.length === 0
+          ? "docs"
+          : "chore";
   } else if (/\b(fix|bug|repair|regression|broken|crash)/i.test(subject)) type = "fix";
   else if (/\b(refactor|rename|extract|move|clean ?up)\b/i.test(subject)) type = "refactor";
   const scope = scopeOf(files);
   const header = `${type}${scope ? `(${scope})` : ""}: ${subject.charAt(0).toLowerCase()}${subject.slice(1)}`;
-  const labels: Record<IntentGroup, string> = { source: "Source", tests: "Tests", config: "Config", docs: "Docs" };
+  const labels: Record<IntentGroup, string> = {
+    source: "Source",
+    tests: "Tests",
+    config: "Config",
+    docs: "Docs",
+  };
   const body = (Object.keys(labels) as IntentGroup[])
     .filter((k) => g[k].length > 0)
     .map((k) => `${labels[k]}: ${g[k].join(", ")}`)
@@ -159,7 +173,12 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
   public resolveBaseBranch(parentCardId: string | null | undefined, fallback = "main"): string {
     if (!parentCardId) return fallback;
     const prefix = `refs/heads/sekhemet/${this.projectName}/${parentCardId}`;
-    const refs = this.runGit(["for-each-ref", "--format=%(refname:short)", `${prefix}`, `${prefix}-*`])
+    const refs = this.runGit([
+      "for-each-ref",
+      "--format=%(refname:short)",
+      `${prefix}`,
+      `${prefix}-*`,
+    ])
       .split("\n")
       .map((r) => r.trim())
       .filter(Boolean);
@@ -168,11 +187,11 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
 
   public async createWorktree(
     cardId: string,
-    baseBranch = "main",
+    requestedBase = "main",
     title?: string,
     parentCardId?: string | null,
   ): Promise<string> {
-    baseBranch = this.resolveBaseBranch(parentCardId, baseBranch);
+    const baseBranch = this.resolveBaseBranch(parentCardId, requestedBase);
     const worktreePath = this.getWorktreePath(cardId);
     const parentDir = join(this.repoRoot, ".sekhemet", "worktrees");
     if (!existsSync(parentDir)) mkdirSync(parentDir, { recursive: true });
@@ -411,7 +430,9 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
     // Attribution from the branch's own checkpoints (Y2): every model that
     // contributed is a co-author of the squashed commit.
     const coAuthors = new Set<string>();
-    for (const line of this.runGit(["log", "--format=%B", `${targetBranch}..${branch}`]).split("\n")) {
+    for (const line of this.runGit(["log", "--format=%B", `${targetBranch}..${branch}`]).split(
+      "\n",
+    )) {
       const m = /^Co-authored-by:\s*(.+)$/.exec(line.trim());
       if (m?.[1]) coAuthors.add(m[1].trim());
     }
@@ -436,15 +457,15 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
    * work is checkpointed first. A conflict aborts the rebase cleanly and is
    * returned as a typed failure naming the files and the conflict hunks.
    */
-  public async rebaseOntoIntegration(
-    cardId: string,
-    targetBranch = "main",
-  ): Promise<RebaseResult> {
+  public async rebaseOntoIntegration(cardId: string, targetBranch = "main"): Promise<RebaseResult> {
     const cwd = this.getWorktreePath(cardId);
     if (!existsSync(cwd)) throw new Error(`Worktree for card ${cardId} not found at ${cwd}`);
     this.runGit(["add", "-A"], cwd);
     if (this.runGit(["diff", "--cached", "--name-only"], cwd) !== "") {
-      this.runGit(["commit", "-m", `checkpoint: before rebase onto ${targetBranch}\n\nCard: ${cardId}`], cwd);
+      this.runGit(
+        ["commit", "-m", `checkpoint: before rebase onto ${targetBranch}\n\nCard: ${cardId}`],
+        cwd,
+      );
     }
     const before = this.runGit(["rev-parse", "HEAD"], cwd);
     const onto = this.runGit(["rev-parse", targetBranch], cwd);
@@ -506,18 +527,28 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
       .split("\n")
       .filter(Boolean);
     const results: { cardBranch: string; ok: boolean; files?: string[] }[] = [];
-    for (const line of this.runGit(["config", "--get-regexp", "^branch\\..*\\.sekhemetbase$"], this.repoRoot, true).split("\n")) {
+    for (const line of this.runGit(
+      ["config", "--get-regexp", "^branch\\..*\\.sekhemetbase$"],
+      this.repoRoot,
+      true,
+    ).split("\n")) {
       const m = /^branch\.(.+)\.sekhemetbase\s+(.+)$/i.exec(line.trim());
       if (!m?.[1] || !m[2] || !parentBranches.includes(m[2])) continue;
       const child = m[1];
       const oldBase = this.runGit(["config", `branch.${child}.sekhemetBaseSha`]);
-      const worktree = (await this.listWorktrees()).find((w) => w.branch === `refs/heads/${child}`)?.path;
+      const worktree = (await this.listWorktrees()).find(
+        (w) => w.branch === `refs/heads/${child}`,
+      )?.path;
       const cwd = worktree ?? this.repoRoot;
       try {
         if (worktree) this.runGit(["rebase", "--onto", target, oldBase], cwd);
         else this.runGit(["rebase", "--onto", target, oldBase, child], cwd);
         this.runGit(["config", `branch.${child}.sekhemetBase`, target]);
-        this.runGit(["config", `branch.${child}.sekhemetBaseSha`, this.runGit(["rev-parse", target])]);
+        this.runGit([
+          "config",
+          `branch.${child}.sekhemetBaseSha`,
+          this.runGit(["rev-parse", target]),
+        ]);
         results.push({ cardBranch: child, ok: true });
       } catch {
         const files = this.runGit(["diff", "--name-only", "--diff-filter=U"], cwd, true)
