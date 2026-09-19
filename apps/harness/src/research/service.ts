@@ -175,6 +175,8 @@ export class ResearchService {
       tools?: Pick<ResearchDeps, "fetchJson" | "libraries">;
       onEvent?: (line: string) => void;
       mcp?: import("../mcp_client.js").McpHub | undefined;
+      /** The ledger: every question, its sources and verdict, recorded (X5). */
+      log?: import("@sekhemet/kernel").EventLog | undefined;
     },
   ) {}
 
@@ -183,6 +185,7 @@ export class ResearchService {
   }
 
   async ask(question: string, opts: AskOptions = {}): Promise<AskResult> {
+    const askedAt = Date.now();
     const known = opts.fresh ? undefined : this.memory.recall(question);
     let result: AskResult;
     if (known) {
@@ -222,6 +225,23 @@ export class ResearchService {
         });
       }
     }
+    await this.deps.log
+      ?.append({
+        actor: "researcher",
+        type: "research/asked",
+        ...(opts.cardId ? { cardId: opts.cardId } : {}),
+        payload: {
+          question: question.slice(0, 1000),
+          deep: opts.deep === true,
+          fromMemory: result.fromMemory,
+          grounded: result.grounded,
+          confidence: result.confidence,
+          sources: result.sources.slice(0, 20),
+          badCitations: result.badCitations,
+          ms: Date.now() - askedAt,
+        },
+      })
+      .catch(() => undefined);
     if (opts.cardId && this.deps.cardStore && result.grounded) {
       await this.deps.cardStore
         .recordDossierEntry({
@@ -244,6 +264,7 @@ export function oneShotResearcher(
   repoPath: string,
   modelName: string,
   cardStore?: CardStore,
+  log?: import("@sekhemet/kernel").EventLog,
 ): (question: string, opts?: AskOptions) => Promise<AskResult> {
   return async (question, opts = {}) => {
     const { web } = await researchSources(repoPath);
@@ -252,6 +273,7 @@ export function oneShotResearcher(
       repoPath,
       web,
       ...(cardStore ? { cardStore } : {}),
+      ...(log ? { log } : {}),
       model: async () => {
         adapter ??= researcherAdapter(modelName);
         return adapter;

@@ -36,6 +36,7 @@ export async function runResearchCommand(
   argv: string[],
   repoPath: string,
   cardStore?: CardStore,
+  log?: import("@sekhemet/kernel").EventLog,
 ): Promise<number> {
   const question =
     argv.find(
@@ -76,6 +77,7 @@ export async function runResearchCommand(
     repoPath,
     web,
     ...(cardStore ? { cardStore } : {}),
+    ...(log ? { log } : {}),
     ...(rounds ? { maxRounds: rounds } : {}),
     onEvent: (line) => process.stderr.write(`${line}\n`),
     ...(mcp ? { mcp } : {}),

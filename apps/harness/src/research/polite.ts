@@ -229,6 +229,24 @@ export class ResearchCache {
     return join(this.dir, `${createHash("sha256").update(key).digest("hex").slice(0, 32)}.json`);
   }
 
+  /**
+   * How long an entry stays fresh, by what it is (X9): search results go
+   * stale in a day, documentation in a week, and a paper's text does not
+   * change once published.
+   */
+  static ttlFor(key: string): number {
+    const day = 24 * 3600 * 1000;
+    if (
+      /search|\/api\/papers\/search|export\.arxiv\.org\/api\/query|api\.openalex\.org\/works\?search/.test(
+        key,
+      )
+    )
+      return day;
+    if (/arxiv\.org\/(abs|html|pdf)\//.test(key)) return 30 * day;
+    if (/registry\.npmjs\.org|pypi\.org\/pypi/.test(key)) return day;
+    return 7 * day;
+  }
+
   get(key: string): { status: number; type: string; body: string } | undefined {
     try {
       const e = JSON.parse(readFileSync(this.path(key), "utf8")) as {
@@ -237,7 +255,8 @@ export class ResearchCache {
         type: string;
         body: string;
       };
-      return Date.now() - e.at < this.ttlMs ? e : undefined;
+      const ttl = Math.min(this.ttlMs, ResearchCache.ttlFor(key));
+      return Date.now() - e.at < ttl ? e : undefined;
     } catch {
       return undefined;
     }

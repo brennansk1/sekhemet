@@ -106,7 +106,7 @@ export function createPmApi(ctx: PmApiContext) {
           ...(researcherModel
             ? {
                 researcher: (q: string, o?: { deep?: boolean }) =>
-                  oneShotResearcher(ctx.repoPath, researcherModel, cardStore)(q, o),
+                  oneShotResearcher(ctx.repoPath, researcherModel, cardStore, ctx.log)(q, o),
               }
             : {}),
         })

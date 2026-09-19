@@ -193,8 +193,10 @@ describe("Apodex solo research (its ReAct mode)", () => {
       ]),
     );
     // The search result reached the model in the trained format.
+    // Web results arrive in the trained format, inside the untrusted wrapper (X8).
+    const unwrap = (t?: string) => t?.replace(/^<untrusted source="[^"]+">\n/, "").replace(/\n<\/untrusted>$/, "");
     const searchTurn = model.requests[1]?.messages?.find((m) => m.role === "tool");
-    expect(searchTurn?.content).toMatch(
+    expect(unwrap(searchTurn?.content)).toMatch(
       /^\[1\] Title: SQLite \| Node\.js Documentation\n {4}Snippet: DatabaseSync class\n {4}URL: https:\/\/nodejs\.org\/api\/sqlite\.html/,
     );
     // web_fetch ran the reference extraction prompt and returned [N] URL / Info.
@@ -204,7 +206,7 @@ describe("Apodex solo research (its ReAct mode)", () => {
     expect(extraction?.prompt).toMatch(/INFORMATION TO EXTRACT:\nHow to run a transaction/);
     expect(extraction?.reasoning).toBe("off");
     const fetchTurn = model.requests[3]?.messages?.filter((m) => m.role === "tool").at(-1);
-    expect(fetchTurn?.content).toBe(
+    expect(unwrap(fetchTurn?.content)).toBe(
       "[1] URL: https://nodejs.org/api/sqlite.html\n    Info: EXTRACTED: DatabaseSync has exec(); use BEGIN/COMMIT/ROLLBACK.",
     );
     expect(r.grounded).toBe(true);

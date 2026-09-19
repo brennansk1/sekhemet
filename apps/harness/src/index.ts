@@ -422,15 +422,18 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     // `sekhemet research "<question>" [--deep]`: the Researcher, with sources.
     const dbPath = join(config.repoPath, ".sekhemet", "events.db");
     let store: CardStore | undefined;
+    let researchLog: EventLog | undefined;
     if (existsSync(dbPath)) {
       const db = new DatabaseSync(dbPath);
       initSchema(db);
-      store = new CardStore(db, new EventLog(db));
+      researchLog = new EventLog(db);
+      store = new CardStore(db, researchLog);
     }
     const researchCode = await runResearchCommand(
       argv.slice(argv.indexOf("research") + 1),
       config.repoPath,
       store,
+      researchLog,
     );
     // Exit explicitly: the Crawl4AI sidecar, sockets and timers must not keep
     // the CLI alive once the answer is out.
@@ -720,9 +723,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     }
     // Y19: in a monorepo, each package the card touches runs its own gates.
     if (cardId && cwd !== config.repoPath) {
-      const changed = (
-        await new NodeGitSyncAdapter(config.repoPath).getDiffStats(cardId)
-      ).filesTouched;
+      const changed = (await new NodeGitSyncAdapter(config.repoPath).getDiffStats(cardId))
+        .filesTouched;
       const pkg = await runPackageGates(config.repoPath, cwd, changed);
       if (pkg.some((p) => !p.passed)) res = { ...res, passed: false };
     }
@@ -1229,6 +1231,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
             repoPath: config.repoPath,
             web,
             cardStore,
+            log,
             model: () => router.use("researcher"),
           }).ask(question, opts);
           await router.use("manager");
@@ -1632,6 +1635,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
             repoPath: config.repoPath,
             web,
             cardStore,
+            log,
             model: () => router.use("researcher"),
           });
           for (const u of unexplained.splice(0, 4)) {

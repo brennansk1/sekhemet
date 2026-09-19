@@ -180,7 +180,28 @@ export async function readDocs(
   }
   const root = docRoot(entry) ?? entry;
   const maxFetch = opts.maxFetch ?? 8;
-  let candidates = await sitemapUrls(entry, fetchText);
+  // llms.txt (llmstxt.org): a site's own map for language models. When the
+  // docs publish one, its linked pages rank first; llms-full.txt is the whole
+  // documentation as one text, read directly.
+  const llms = await llmsTxt(entry, fetchText);
+  if (llms?.full) {
+    const q = terms(question);
+    return {
+      root,
+      available: 1,
+      pages: [
+        {
+          url: llms.fullUrl ?? root,
+          title: "llms-full.txt",
+          text: excerptAround(llms.full, q, opts.charsPerPage ?? 6000),
+          score: q.length,
+          codeBlocks: (llms.full.match(/```/g) ?? []).length / 2,
+        },
+      ],
+    };
+  }
+  let candidates = [...(llms?.links ?? []), ...(await sitemapUrls(entry, fetchText))];
+  candidates = [...new Set(candidates)];
   const available = candidates.length;
   const fetched = new Map<string, string>();
   if (candidates.length === 0) {
@@ -300,4 +321,27 @@ export function focusChunks(text: string, focus: string, maxChars: number): stri
     last = i;
   }
   return out.join("\n\n");
+}
+
+/**
+ * A site's llms.txt (llmstxt.org), when it publishes one: the markdown links
+ * it lists, and llms-full.txt when that exists (the whole docs as one text).
+ */
+export async function llmsTxt(
+  entry: string,
+  fetchText: TextFetch,
+): Promise<{ links: string[]; full?: string; fullUrl?: string } | undefined> {
+  let origin: string;
+  try {
+    origin = new URL(entry).origin;
+  } catch {
+    return undefined;
+  }
+  const fullUrl = `${origin}/llms-full.txt`;
+  const full = await fetchText(fullUrl).catch(() => undefined);
+  if (full && full.length > 2000 && !/^\s*</.test(full)) return { links: [], full, fullUrl };
+  const index = await fetchText(`${origin}/llms.txt`).catch(() => undefined);
+  if (!index || /^\s*</.test(index)) return undefined;
+  const links = [...index.matchAll(/\]\((https?:\/\/[^)\s]+)\)/g)].map((m) => m[1] as string);
+  return links.length ? { links } : undefined;
 }

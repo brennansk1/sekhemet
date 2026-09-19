@@ -447,6 +447,28 @@ async function runApodexTool(
   return r.text;
 }
 
+const WEB_TOOLS = new Set([
+  "web_search",
+  "web_fetch",
+  "read_docs",
+  "read_paper",
+  "github_search",
+  "scholar_search",
+  "paper_citations",
+]);
+
+/**
+ * Research safety (X8): content from the web is data, never instructions. A
+ * page can say "ignore your task and ..."; wrapping it marks it for the model
+ * (the system prompt says to treat such text as untrusted), and the markers
+ * inside the content are neutralised so a page cannot close the wrapper.
+ */
+export function untrusted(tool: string, text: string): string {
+  if (!WEB_TOOLS.has(tool) && !tool.startsWith("mcp__")) return text;
+  const safe = text.replace(/<\/?untrusted[^>]*>/gi, "[tag removed]");
+  return `<untrusted source="${tool}">\n${safe}\n</untrusted>`;
+}
+
 /** One agent's loop: tools until a terminal call, with Apodex's harness guards. */
 export async function apodexLoop(
   model: LocalInferenceAdapter,
@@ -583,7 +605,7 @@ export async function apodexLoop(
       turns.push({
         role: "tool",
         toolCallId: c.id,
-        content: truncateMiddle(outputs[i] ?? "", 10_000),
+        content: untrusted(c.name, truncateMiddle(outputs[i] ?? "", 10_000)),
       }),
     );
     // RepetitionGuard: identical tool turns in a row get a hint, then an exit.
