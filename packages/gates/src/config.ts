@@ -12,7 +12,18 @@ import type {
 
 export const GATES_CONFIG_RELATIVE_PATH = join(".sekhemet", "gates.toml");
 
-const VALID_RUNGS = new Set<GateRung>(["parse", "typecheck", "test", "lint", "bounds", "visual"]);
+const VALID_RUNGS = new Set<GateRung>([
+  "parse",
+  "typecheck",
+  "test",
+  "lint",
+  "bounds",
+  "visual",
+  "security",
+  "hygiene",
+  "robustness",
+]);
+const BUILTIN_IDS = new Set(["secrets", "dependencies", "osv", "semgrep", "hygiene", "mutation"]);
 const VALID_LAYERS = new Set<GateLayer>([
   "static",
   "functional",
@@ -149,6 +160,22 @@ export function loadGatesConfig(repoRoot: string): GatesConfig {
           styleFixRules: asStringArray(projectTable.style_fix_rules),
         }
       : {}),
+    ...(Array.isArray(projectTable.builtin)
+      ? {
+          builtin: asStringArray(projectTable.builtin).filter((b) =>
+            BUILTIN_IDS.has(b),
+          ) as NonNullable<GateProjectConfig["builtin"]>,
+        }
+      : {}),
+    ...(asStringArray(projectTable.debug_patterns).length > 0
+      ? { debugPatterns: asStringArray(projectTable.debug_patterns) }
+      : {}),
+    ...(typeof projectTable.changelog === "boolean" ? { changelog: projectTable.changelog } : {}),
+    ...(projectTable.mutation === true ? { mutation: true } : {}),
+    ...(typeof projectTable.mutation_max === "number"
+      ? { mutationMax: projectTable.mutation_max }
+      : {}),
+    ...(projectTable.mutation_blocking === true ? { mutationBlocking: true } : {}),
   };
 
   const rawGates = Array.isArray(parsed.gate) ? (parsed.gate as TomlTable[]) : [];

@@ -745,6 +745,8 @@ export class CardRunner {
         maxFiles: this.config.project.maxFiles,
         maxLines: this.config.project.maxDiffLines,
       },
+      // The built-in security, hygiene and robustness layers (G3).
+      builtinGates: this.config.project,
       ...(store
         ? {
             recordQuestion: async (q: string) =>
@@ -1099,6 +1101,32 @@ export class CardRunner {
     }
   }
 
+  /**
+   * Gates that passed in the card's Review snapshot (its latest passing
+   * evidence) and fail now (G23), as a sentence; undefined when none.
+   */
+  private regressionAgainstReview(now: GateResult): string | undefined {
+    const runs = this.options.store?.runs;
+    if (!runs) return undefined;
+    const snapshot = runs
+      .listEvidence(this.options.card.id)
+      .filter((e) => e.passed && e.id !== undefined)
+      .at(-1);
+    if (!snapshot) return undefined;
+    const passedThen = new Set(
+      runs
+        .listGateResults(snapshot.attemptId)
+        .filter((g) => g.passed)
+        .map((g) => g.gate),
+    );
+    const failing = [
+      ...new Set((now.rungResults ?? []).filter((r) => !r.passed && !r.skipped).map((r) => r.gate)),
+    ].filter((g) => passedThen.has(g));
+    return failing.length > 0
+      ? `${failing.join(", ")} passed at Review (${snapshot.id}) and fail${failing.length === 1 ? "s" : ""} now`
+      : undefined;
+  }
+
   /** G12 refused the card: record why, park it, and return without a turn. */
   private async finishVacuous(
     worktreePath: string,
@@ -1215,6 +1243,10 @@ export class CardRunner {
       durationMs,
       settings,
       gatesConfigSha256: this.config.sha256,
+      ...(session && session.getAdvisories().length > 0
+        ? { advisories: session.getAdvisories() }
+        : {}),
+      ...(this.transcriptPath ? { trajectoryRef: this.transcriptPath } : {}),
     });
     const written = this.writeEvidence(evidence);
 
@@ -1246,6 +1278,7 @@ export class CardRunner {
     let held: { reason: string; wanted: CardStatus } | undefined;
     let parked = params.parkWith;
     let replan: ReplanRequest | undefined;
+    let regression: string | undefined;
 
     if (params.heldBeforeStart) {
       held = { reason: params.heldBeforeStart, wanted: "in_progress" };
@@ -1277,6 +1310,14 @@ export class CardRunner {
             const toReview = await this.move("review");
             if (toReview.ok) finalStatus = "review";
             else held = { reason: toReview.reason, wanted: "review" };
+          } else {
+            // G23: a revision that breaks a gate its Review snapshot passed
+            // goes back to Planning with the regression named.
+            regression = this.regressionAgainstReview(gateResult);
+            if (regression) {
+              const moved = await this.move("planning");
+              if (moved.ok) finalStatus = "planning";
+            }
           }
         }
       }
@@ -1304,7 +1345,9 @@ export class CardRunner {
           ? `parked: ${parked.suggestion}`
           : replan
             ? `re-plan requested: ${replan.summary.slice(0, 300)}`
-            : null;
+            : regression
+              ? `regression: ${regression}`
+              : null;
       try {
         await store.updateCard(
           card.id,

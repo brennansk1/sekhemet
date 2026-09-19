@@ -335,7 +335,7 @@ export class RunLedger {
   public listGateResults(attemptId: string): GateResultRecord[] {
     return (
       this.db
-        .prepare("SELECT * FROM gate_results WHERE attempt_id = ? ORDER BY created_at, id")
+        .prepare("SELECT * FROM gate_results WHERE attempt_id = ? ORDER BY created_at, rowid")
         .all(attemptId) as unknown as Record<string, unknown>[]
     ).map((r) => ({
       id: String(r.id),
@@ -400,7 +400,7 @@ export class RunLedger {
   public listEvidence(cardId: string): EvidenceBundleRecord[] {
     return (
       this.db
-        .prepare("SELECT * FROM evidence_bundles WHERE card_id = ? ORDER BY created_at, id")
+        .prepare("SELECT * FROM evidence_bundles WHERE card_id = ? ORDER BY created_at, rowid")
         .all(cardId) as unknown as Record<string, unknown>[]
     ).map((r) => this.mapEvidence(r));
   }
@@ -522,9 +522,9 @@ export class RunLedger {
   public listDecisions(status?: DecisionStatus): DecisionRequestRecord[] {
     const rows = status
       ? this.db
-          .prepare("SELECT * FROM decision_requests WHERE status = ? ORDER BY created_at, id")
+          .prepare("SELECT * FROM decision_requests WHERE status = ? ORDER BY created_at, rowid")
           .all(status)
-      : this.db.prepare("SELECT * FROM decision_requests ORDER BY created_at, id").all();
+      : this.db.prepare("SELECT * FROM decision_requests ORDER BY created_at, rowid").all();
     return (rows as unknown as Record<string, unknown>[]).map((r) => this.mapDecision(r));
   }
 
@@ -629,7 +629,7 @@ export class RunLedger {
     }
     const rows = this.db
       .prepare(
-        `SELECT * FROM competence_entries ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY recorded_at, id`,
+        `SELECT * FROM competence_entries ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY recorded_at, rowid`,
       )
       .all(...params) as unknown as Record<string, unknown>[];
     return rows.map((r) => ({

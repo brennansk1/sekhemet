@@ -12,6 +12,7 @@ import {
   type GateFailure,
   type GateResult,
   checkBounds,
+  runBuiltinGates,
 } from "@sekhemet/gates";
 import type { CardRecord } from "@sekhemet/kernel";
 import { checkExecutionHeadroom, readSwapUsedBytes, reasoningForStep } from "@sekhemet/models";
@@ -116,6 +117,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   private lastPrompt: WorkerPromptResult | undefined;
   /** Where the last request's prompt was logged (K11). */
   private lastContextPackId: string | undefined;
+  private advisories: string[] = [];
 
   constructor(private options: SessionOptions) {
     if (options.priorLessons?.length) this.memory.seed(options.priorLessons);
@@ -1147,8 +1149,38 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         }
       }
     }
+    // The built-in layers (G3): security, hygiene, and robustness once the
+    // declared gates pass (mutation testing is only meaningful then).
+    const builtin = this.options.builtinGates;
+    if (builtin) {
+      const base = this.options.baseBranch ?? "main";
+      const project = this.options.restricted ? { ...builtin, mutation: false } : builtin;
+      const extra = await runBuiltinGates({
+        root: this.tools.root,
+        base,
+        diff: worktreeDiff(this.tools.root, base),
+        project: result.passed ? project : { ...project, mutation: false },
+        ...(this.options.registry ? { registry: this.options.registry } : {}),
+        runTests: async () =>
+          (await this.options.gateRunner.runGates(["test"], this.tools.root)).passed,
+      }).catch(() => undefined);
+      if (extra) {
+        this.advisories = extra.advisories;
+        result = {
+          ...result,
+          passed: result.passed && extra.failures.length === 0,
+          failures: [...extra.failures, ...result.failures],
+          rungResults: [...(result.rungResults ?? []), ...extra.outcomes],
+        };
+      }
+    }
     this.memory.observe(result);
     return result;
+  }
+
+  /** Advisory findings of the last verification (mutation survivors, unverified dependencies). */
+  public getAdvisories(): string[] {
+    return [...this.advisories];
   }
 
   public async abort(reason: string): Promise<void> {

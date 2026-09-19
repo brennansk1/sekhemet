@@ -4,7 +4,12 @@ import { basename, join } from "node:path";
 import { promisify } from "node:util";
 import { type BoardServiceImpl, legalPath } from "@sekhemet/board";
 import { PlaybookRegistry, SkillsRegistry, useFileEvidenceStore } from "@sekhemet/context";
-import { DeterministicGateRunner, compileEvidence, loadGatesConfig } from "@sekhemet/gates";
+import {
+  DeterministicGateRunner,
+  compileEvidence,
+  loadGatesConfig,
+  npmRegistry,
+} from "@sekhemet/gates";
 import { type CardRecord, type CardStatus, type CardStore, pruneRetention } from "@sekhemet/kernel";
 import {
   type CardRunResult,
@@ -322,6 +327,9 @@ export async function executeCard(
     requireConfinement: ctx.restrictedMode,
     // --restricted is a read-only audit: no run_cmd, no writes, static gates (S12).
     restricted: ctx.restrictedMode,
+    // New dependencies are checked against the npm registry (existence, age),
+    // answers cached under .sekhemet; offline it degrades to an advisory (S10).
+    registry: npmRegistry(ctx.repoPath),
     // Ask-tier commands wait for a person on the decision queue (S8, K20).
     onApproval: decisionApprover(ctx.cardStore, card.id, ctx.approvalTimeoutMs ?? 60_000),
     signal: abort.signal,

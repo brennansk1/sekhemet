@@ -136,7 +136,11 @@ describe("apps/harness planning, rollup, explain and runner control (B2, B7, B12
 
     // And a full run moves on from Planning through the entry conditions to Review.
     const run = await newCard("card_run");
-    const result = await executeCard(ctx, run, scripted(() => [write(1), { name: "finish_card", arguments: {} }]).adapter);
+    const result = await executeCard(
+      ctx,
+      run,
+      scripted(() => [write(1), { name: "finish_card", arguments: {} }]).adapter,
+    );
     expect(result.passed).toBe(true);
     expect((await cardStore.getCard("card_run"))?.status).toBe("review");
     const statuses = (await cardStore.cardEvents("card_run", ["card/status_changed"])).map(
@@ -146,9 +150,18 @@ describe("apps/harness planning, rollup, explain and runner control (B2, B7, B12
   });
 
   it("rolls a parent up through its integration gate when the last child is accepted (B7)", async () => {
-    await cardStore.createCard({ id: "epic_p", tier: "epic", title: "Parent", status: "in_progress" });
+    await cardStore.createCard({
+      id: "epic_p",
+      tier: "epic",
+      title: "Parent",
+      status: "in_progress",
+    });
     const child = await newCard("card_child", { parentId: "epic_p" });
-    await executeCard(ctx, child, scripted(() => [write(2), { name: "finish_card", arguments: {} }]).adapter);
+    await executeCard(
+      ctx,
+      child,
+      scripted(() => [write(2), { name: "finish_card", arguments: {} }]).adapter,
+    );
     expect((await rollupParent(ctx, "epic_p")).status).toBe("not_ready");
     const reviewed = await cardStore.getCard("card_child");
     await acceptCard(ctx, reviewed as NonNullable<typeof reviewed>);
@@ -189,9 +202,9 @@ describe("apps/harness planning, rollup, explain and runner control (B2, B7, B12
     const r = await rewindCard(ctx, card.id, 1);
     expect(r.step).toBe(1);
     expect(readFileSync(join(wt, "src", "a.ts"), "utf8")).toBe("export const a = 1;\n");
-    expect(execFileSync("git", ["show", `${r.preservedRef}:src/a.ts`], { cwd: wt, encoding: "utf8" })).toBe(
-      "export const a = 3;\n",
-    );
+    expect(
+      execFileSync("git", ["show", `${r.preservedRef}:src/a.ts`], { cwd: wt, encoding: "utf8" }),
+    ).toBe("export const a = 3;\n");
     expect((await cardStore.getCard(card.id))?.status).toBe("ready");
 
     const { adapter, seen } = scripted(() => [{ name: "finish_card", arguments: {} }]);
@@ -219,6 +232,48 @@ describe("apps/harness planning, rollup, explain and runner control (B2, B7, B12
     expect(first.worktreePath).toBe(second.worktreePath);
   });
 
+  it("sends a revision that breaks a gate its Review snapshot passed back to Planning (G23)", async () => {
+    // The unit gate fails when src/a.ts contains BROKEN.
+    writeFileSync(
+      join(repo, ".sekhemet", "gates.toml"),
+      `[project]\nmax_files = 3\nmax_diff_lines = 200\n\n[[gate]]\nid = "unit"\nrung = "test"\nlayer = "functional"\ncommand = "node"\nargs = ["-e", "process.exit(require('fs').readFileSync('src/a.ts','utf8').includes('BROKEN') ? 1 : 0)"]\ntimeout_s = 30\nparser = "generic"\n`,
+    );
+    execFileSync("git", ["commit", "-qam", "gate"], { cwd: repo });
+    const card = await newCard("card_reg", { stepBudget: 2 });
+    const first = await executeCard(
+      ctx,
+      card,
+      scripted(() => [write(1), { name: "finish_card", arguments: {} }]).adapter,
+    );
+    expect(first.passed).toBe(true);
+    // A person sends it back; the revision breaks the gate.
+    await boardService.transitionCard({
+      cardId: card.id,
+      fromStatus: "review",
+      toStatus: "ready",
+      actor: "human",
+      reason: "returned: rename a",
+    });
+    const again = await executeCard(
+      ctx,
+      (await cardStore.getCard(card.id)) as never,
+      scripted(() => [
+        {
+          name: "write_file",
+          arguments: { path: "src/a.ts", content: "export const a = 'BROKEN';\n" },
+        },
+        { name: "finish_card", arguments: {} },
+      ]).adapter,
+    );
+    expect(again.passed).toBe(false);
+    expect(again.finalStatus).toBe("planning");
+    const stored = await cardStore.getCard(card.id);
+    expect(stored?.status).toBe("planning");
+    expect(stored?.blockedReason).toMatch(
+      /^regression: unit passed at Review \(ev_[0-9a-f]+\) and fails now/,
+    );
+  });
+
   it("serves the human commands over the dashboard (B8, B11, B12, H19, L25)", async () => {
     const server = await startDashboardServer({
       db,
@@ -242,28 +297,40 @@ describe("apps/harness planning, rollup, explain and runner control (B2, B7, B12
       await newCard("card_3", { scopeFiles: [] });
 
       // B11: drag card_2 above card_1.
-      expect((await post("/api/cards/card_2/reorder", { beforeCardId: "card_1" })).status).toBe(200);
-      expect((await cardStore.listCards()).map((c) => c.id).slice(0, 2)).toEqual(["card_2", "card_1"]);
+      expect((await post("/api/cards/card_2/reorder", { beforeCardId: "card_1" })).status).toBe(
+        200,
+      );
+      expect((await cardStore.listCards()).map((c) => c.id).slice(0, 2)).toEqual([
+        "card_2",
+        "card_1",
+      ]);
 
       // B12: reroute, override, abort, pause project, review hours.
       await post("/api/cards/card_1/reroute", { executor: "escalation" });
       expect((await cardStore.getCard("card_1"))?.modelRoute?.executor).toBe("escalation");
-      const refused = await post("/api/cards/card_3/override", { toStatus: "in_progress", reason: "" });
+      const refused = await post("/api/cards/card_3/override", {
+        toStatus: "in_progress",
+        reason: "",
+      });
       expect(refused.status).toBe(400);
       const forced = await post("/api/cards/card_3/override", {
         toStatus: "in_progress",
         reason: "spike without scope",
       });
       expect(forced.status).toBe(200);
-      expect((await cardStore.cardEvents("card_3", ["card/override"]))).toHaveLength(1);
+      expect(await cardStore.cardEvents("card_3", ["card/override"])).toHaveLength(1);
       expect((await post("/api/cards/card_1/abort", { reason: "stop" })).status).toBe(200);
       expect(await cardStore.cardEvents("card_1", ["card/abort_requested"])).toHaveLength(1);
       const paused = await (await post(`/api/projects/${project.id}`, { status: "paused" })).json();
       expect(paused.project.status).toBe("paused");
-      const hours = await (await post(`/api/projects/${project.id}`, { reviewMinutesPerDay: 90 })).json();
+      const hours = await (
+        await post(`/api/projects/${project.id}`, { reviewMinutesPerDay: 90 })
+      ).json();
       expect(hours.project.reviewMinutesPerDay).toBe(90);
 
-      const explain = await (await fetch(`http://127.0.0.1:${server.port}/api/cards/card_1/explain`)).json();
+      const explain = await (
+        await fetch(`http://127.0.0.1:${server.port}/api/cards/card_1/explain`)
+      ).json();
       expect(explain.lines[0]).toBe("card_1 is in ready.");
       const board = await (
         await fetch(`http://127.0.0.1:${server.port}/api/board?project=${project.id}`)

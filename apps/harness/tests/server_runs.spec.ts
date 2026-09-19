@@ -75,7 +75,11 @@ describe("@sekhemet/harness dashboard: run records, decisions, integrity", () =>
   });
 
   it("serves a card's attempts with steps and gate results (K16-K18)", async () => {
-    const a = await cardStore.runs.startAttempt({ cardId: "card_s", attemptNumber: 1, modelId: "m" });
+    const a = await cardStore.runs.startAttempt({
+      cardId: "card_s",
+      attemptNumber: 1,
+      modelId: "m",
+    });
     await cardStore.runs.recordStep({
       attemptId: a.id,
       cardId: "card_s",

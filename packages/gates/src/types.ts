@@ -1,4 +1,14 @@
-export type GateRung = "parse" | "typecheck" | "test" | "lint" | "bounds" | "visual";
+export type GateRung =
+  | "parse"
+  | "typecheck"
+  | "test"
+  | "lint"
+  | "bounds"
+  | "visual"
+  /** The harness's built-in layers (G3): secrets, dependencies, scanners. */
+  | "security"
+  | "hygiene"
+  | "robustness";
 
 /** The six verification layers a gate can belong to. */
 export type GateLayer = "static" | "functional" | "robustness" | "security" | "visual" | "hygiene";
@@ -102,6 +112,16 @@ export interface GateProjectConfig {
    */
   styleFix?: string[];
   styleFixRules?: string[];
+  /** Built-in gates to run (G3); default secrets, dependencies, osv, semgrep, hygiene. */
+  builtin?: ("secrets" | "dependencies" | "osv" | "semgrep" | "hygiene" | "mutation")[];
+  /** Extra debug-output markers the hygiene gate refuses (G22), e.g. "console.log(". */
+  debugPatterns?: string[];
+  /** Require a CHANGELOG.md entry for source changes; default: when CHANGELOG.md exists. */
+  changelog?: boolean;
+  /** Diff-scoped mutation testing after the gates pass (G13); advisory unless blocking. */
+  mutation?: boolean;
+  mutationMax?: number;
+  mutationBlocking?: boolean;
 }
 
 export interface GatesConfig {

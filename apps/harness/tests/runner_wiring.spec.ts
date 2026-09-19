@@ -286,7 +286,12 @@ describe("apps/harness executeCard wiring (wave 2, part 1)", () => {
     expect(result.turns[0]?.observations[0]?.denied).toBe(true);
     // Only the static gate ran (the failing functional one would execute repo code).
     expect(result.passed).toBe(true);
-    expect(result.evidence.rungResults?.map((r) => r.gate)).toEqual(["types"]);
+    const ran = result.evidence.rungResults ?? [];
+    expect(
+      ran.filter((r) => r.layer === "static" || r.layer === "functional").map((r) => r.gate),
+    ).toEqual(["types"]);
+    // The built-in layers are static analysis too, and run; mutation (which runs tests) does not.
+    expect(ran.some((r) => r.gate === "mutation")).toBe(false);
     expect(result.evidence.filesTouched).toEqual([]);
   });
 

@@ -200,6 +200,14 @@ export interface SessionOptions {
    * the `gates.toml` values; `false` or absent disables the bounds gate.
    */
   bounds?: { maxFiles: number; maxLines: number } | false | undefined;
+  /**
+   * The project settings the built-in gates read (G3: secrets, dependencies,
+   * osv, semgrep, hygiene, mutation). The runner passes `gates.toml
+   * [project]`; absent or false runs none.
+   */
+  builtinGates?: import("@sekhemet/gates").GateProjectConfig | false | undefined;
+  /** Registry lookup for the dependency gate (G15/S10); default the local cache. */
+  registry?: import("@sekhemet/gates").RegistryLookup | undefined;
   /** Out-of-scope write denials tolerated before the card stops (`scope_violation`). */
   maxScopeDenials?: number | undefined;
   /** Resume at this step count (H17): the step counter continues from it. */

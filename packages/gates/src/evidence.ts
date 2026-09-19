@@ -52,6 +52,10 @@ export interface EvidenceBundle {
   settings: RunSettings;
   /** Hash of the gates.toml the run was verified against. */
   gatesConfigSha256: string;
+  /** Findings that do not fail the card: mutation survivors, unverified dependencies (G13, G15). */
+  advisories?: string[];
+  /** The transcript of this attempt (G11's trajectory reference). */
+  trajectoryRef?: string;
 }
 
 export interface CompileEvidenceParams {
@@ -69,6 +73,8 @@ export interface CompileEvidenceParams {
   durationMs: number;
   settings: RunSettings;
   gatesConfigSha256: string;
+  advisories?: string[];
+  trajectoryRef?: string;
 }
 
 /** Deterministic evidence id, so the same run always yields the same reference. */
@@ -96,6 +102,8 @@ export function compileEvidence(params: CompileEvidenceParams): EvidenceBundle {
     durationMs: params.durationMs,
     settings: params.settings,
     gatesConfigSha256: params.gatesConfigSha256,
+    ...(params.advisories?.length ? { advisories: params.advisories } : {}),
+    ...(params.trajectoryRef ? { trajectoryRef: params.trajectoryRef } : {}),
   };
 }
 
