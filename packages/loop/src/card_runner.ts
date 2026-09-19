@@ -23,6 +23,7 @@ import {
   canonicalPayloadHash,
   serializeContextPack,
 } from "@sekhemet/kernel";
+import { EgressProxy, tagUntrusted } from "@sekhemet/sandbox";
 import type { GitSyncAdapter } from "@sekhemet/sync";
 import { CardExecutionSessionImpl } from "./session.js";
 import type {
@@ -266,7 +267,8 @@ export function dossierPromptLines(dossier: CardDossier): string[] {
   for (const e of dossier.research)
     lines.push({
       seq: e.seq,
-      text: `Research: ${clip(e.text)}${e.sources?.length ? ` [${e.sources.slice(0, 2).join(", ")}]` : ""}`,
+      // Research carries web text: tagged as untrusted (S9).
+      text: `Research: ${tagUntrusted(clip(e.text), e.sources?.[0] ?? "research")}`,
     });
   for (const e of dossier.notes)
     lines.push({ seq: e.seq, text: `Note from attempt ${e.attempt ?? "?"}: ${clip(e.text)}` });
@@ -305,6 +307,8 @@ export class CardRunner {
   private stepIds = new Map<number, string>();
   private packIds: string[] = [];
   private transcriptPath: string | undefined;
+  private egress: EgressProxy | undefined;
+  private egressPort: number | undefined;
 
   constructor(private options: CardRunOptions) {
     // Pin the gate configuration at card start. Every later verification
@@ -708,6 +712,22 @@ export class CardRunner {
       });
     }
 
+    // S5: with a network allowlist, the card's commands reach the network
+    // only through an egress proxy that forwards allowlisted domains and logs
+    // every request to the ledger.
+    const allow = this.config.project.networkAllow ?? [];
+    if (allow.length > 0 && !this.options.allowNetwork && !this.options.restricted) {
+      this.egress = new EgressProxy({
+        allow,
+        onRequest: (r) => {
+          void store
+            ?.recordEvent({ type: "card/egress", cardId: card.id, actor: "system", payload: r })
+            .catch(() => undefined);
+        },
+      });
+      this.egressPort = await this.egress.start().catch(() => undefined);
+    }
+
     // Everything the team recorded about this card reaches this attempt.
     let dossierLines: string[] = [];
     if (store) {
@@ -747,6 +767,7 @@ export class CardRunner {
       },
       // The built-in security, hygiene and robustness layers (G3).
       builtinGates: this.config.project,
+      ...(this.egressPort ? { allowedDomains: allow, egressProxyPort: this.egressPort } : {}),
       ...(store
         ? {
             recordQuestion: async (q: string) =>
@@ -1183,6 +1204,7 @@ export class CardRunner {
     const { turns, stopReason, session, attempt } = params;
 
     this.writeTranscript(card.id, turns);
+    await this.egress?.close().catch(() => undefined);
     await lifecycle?.recordSteps?.(card.id, params.stepsUsed);
 
     // Bounds are checked against the real diff, which is why the git adapter

@@ -122,6 +122,8 @@ export interface GateProjectConfig {
   mutation?: boolean;
   mutationMax?: number;
   mutationBlocking?: boolean;
+  /** Domains the Worker's commands may reach through the egress proxy (S5, S8). */
+  networkAllow?: string[];
 }
 
 export interface GatesConfig {

@@ -9,6 +9,10 @@ export interface PermissionCheckRequest {
   declaredScopeFiles?: string[] | undefined;
   agentRole?: string | undefined;
   allowNetwork?: boolean | undefined;
+  /** The program, when the command was given as program + args rather than a shell line. */
+  program?: string | undefined;
+  /** Programs the project itself provides (node_modules/.bin), trusted like the toolchain. */
+  localBinaries?: ReadonlySet<string> | undefined;
 }
 
 /** Which rule produced a non-allow verdict, so callers can react per rule. */
@@ -18,7 +22,8 @@ export type PermissionRule =
   | "protected_file"
   | "scope"
   | "destructive"
-  | "network";
+  | "network"
+  | "external_binary";
 
 export interface PermissionCheckResult {
   tier: PermissionTier;
@@ -58,6 +63,168 @@ const DESTRUCTIVE_COMMAND_PATTERNS = [
 
 const NETWORK_COMMAND_PATTERNS = [/\bcurl\b/, /\bwget\b/, /\bfetch\b/, /\bssh\b/, /\bscp\b/];
 
+/**
+ * Programs a card may run without asking (S8's external-binary tier): the
+ * toolchains the gates use, POSIX text and file utilities, and the shell.
+ * Anything else (a downloaded binary, a system tool with side effects) is
+ * the ask tier, as is any binary the project does not itself provide.
+ */
+export const KNOWN_TOOLCHAIN = new Set([
+  "node",
+  "npm",
+  "npx",
+  "pnpm",
+  "yarn",
+  "corepack",
+  "tsc",
+  "tsx",
+  "vitest",
+  "jest",
+  "biome",
+  "eslint",
+  "prettier",
+  "git",
+  "python",
+  "python3",
+  "pip",
+  "pip3",
+  "pytest",
+  "ruff",
+  "mypy",
+  "uv",
+  "cargo",
+  "rustc",
+  "go",
+  "make",
+  "sh",
+  "bash",
+  "zsh",
+  "env",
+  "echo",
+  "printf",
+  "true",
+  "false",
+  "test",
+  "[",
+  "ls",
+  "pwd",
+  "wc",
+  "sort",
+  "uniq",
+  "cut",
+  "tr",
+  "tee",
+  "xargs",
+  "find",
+  "diff",
+  "cmp",
+  "mkdir",
+  "touch",
+  "cp",
+  "mv",
+  "rm",
+  "ln",
+  "chmod",
+  "stat",
+  "file",
+  "du",
+  "date",
+  "which",
+  "basename",
+  "dirname",
+  "realpath",
+  "sleep",
+  "cat",
+  "head",
+  "tail",
+  "grep",
+  "rg",
+  "sed",
+  "awk",
+  "jq",
+  "tar",
+  "gzip",
+  "gunzip",
+  "zip",
+  "unzip",
+  "sqlite3",
+  "time",
+  "timeout",
+  "command",
+  // Network clients: gated by the network rule and the domain allowlist instead.
+  "curl",
+  "wget",
+  // Shell builtins.
+  "exit",
+  "cd",
+  "export",
+  "set",
+  "unset",
+  "read",
+  "return",
+  "shift",
+  "source",
+  ".",
+  "eval",
+  "local",
+  "trap",
+  "wait",
+  "exec",
+  "type",
+  "hash",
+  "ulimit",
+  "umask",
+  ":",
+]);
+
+/** The leading program of each `&&`, `||`, `;`, `|` segment (after VAR=value assignments). */
+/** Keywords that precede a command in the same segment (`then make`, `do echo`). */
+const PREFIX_KEYWORDS = new Set([
+  "do",
+  "then",
+  "else",
+  "elif",
+  "if",
+  "while",
+  "until",
+  "!",
+  "{",
+  "time",
+]);
+/** Segments that name no program (`for x in ...`, `case`, `done`, `fi`). */
+const NON_COMMAND = new Set(["for", "case", "select", "in", "done", "fi", "esac", "}", "function"]);
+
+export function commandPrograms(line: string): string[] {
+  // Quoted text is data, not a program.
+  const unquoted = line.replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, "''");
+  const out: string[] = [];
+  for (const seg of unquoted.split(/&&|\|\||;|\||\n/)) {
+    let words = seg
+      .trim()
+      .split(/\s+/)
+      .filter((w) => w && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w));
+    while (words[0] && PREFIX_KEYWORDS.has(words[0])) words = words.slice(1);
+    if (words[0] === "command" || words[0] === "exec") words = words.slice(1);
+    const first = (words[0] ?? "").replace(/^[({]+/, "");
+    if (first && !NON_COMMAND.has(first)) out.push(first);
+  }
+  return out;
+}
+
+/** Hosts named by URLs in a command line. */
+export function commandHosts(line: string): string[] {
+  return [...line.matchAll(/\bhttps?:\/\/([A-Za-z0-9.-]+)/g)].map((m) =>
+    (m[1] as string).toLowerCase(),
+  );
+}
+
+function hostAllowed(host: string, allowed: readonly string[]): boolean {
+  return allowed.some((d) => {
+    const domain = d.toLowerCase().replace(/^\*\./, "");
+    return host === domain || host.endsWith(`.${domain}`);
+  });
+}
+
 export interface PermissionEngineOptions {
   /**
    * Glob patterns the implementer role may never modify, from
@@ -67,14 +234,25 @@ export interface PermissionEngineOptions {
    * ships no config.
    */
   protectedGlobs?: string[];
+  /**
+   * Domains a network command may reach without asking (S8's domain
+   * allowlist; the egress proxy enforces the same list, S5).
+   */
+  allowedDomains?: string[];
+  /** Ask before running a program outside the toolchain (S8). Default on. */
+  askExternalBinaries?: boolean;
 }
 
 const DEFAULT_PROTECTED_GLOBS = ["**/*.spec.ts", "**/*.test.ts", "tests/acceptance/**"];
 
 export class PermissionEngine {
   private protectedGlobs: string[];
+  private allowedDomains: string[];
+  private askExternalBinaries: boolean;
 
   constructor(options: PermissionEngineOptions = {}) {
+    this.allowedDomains = options.allowedDomains ?? [];
+    this.askExternalBinaries = options.askExternalBinaries !== false;
     // An empty list is treated as "not configured", never as "nothing is
     // protected": dropping test immutability must be an explicit decision.
     this.protectedGlobs =
@@ -182,8 +360,13 @@ export class PermissionEngine {
         }
       }
 
-      // Check network commands if network is disabled
-      if (!req.allowNetwork) {
+      // Check network commands if network is disabled. A command whose every
+      // URL is on the domain allowlist is allowed (S8); the egress proxy
+      // still decides what actually leaves the machine (S5).
+      const hosts = commandHosts(req.command);
+      const allowlisted =
+        hosts.length > 0 && hosts.every((h) => hostAllowed(h, this.allowedDomains));
+      if (!req.allowNetwork && !allowlisted) {
         for (const pattern of NETWORK_COMMAND_PATTERNS) {
           if (pattern.test(req.command)) {
             return {
@@ -197,7 +380,25 @@ export class PermissionEngine {
       }
     }
 
-    // 6. Default Allow
+    // 6. Ask Tier: a program outside the toolchain and the project's own bin (S8).
+    if (req.command && this.askExternalBinaries) {
+      const unknown = (req.program ? [req.program] : commandPrograms(req.command)).filter((p) => {
+        const name = p.split("/").pop() ?? p;
+        if (p.startsWith("./node_modules/.bin/") || p.startsWith("node_modules/.bin/"))
+          return false;
+        return !KNOWN_TOOLCHAIN.has(name) && !req.localBinaries?.has(name);
+      });
+      if (unknown.length > 0) {
+        return {
+          tier: "ask",
+          allowed: false,
+          reason: `Running ${unknown.join(", ")}, which is not part of the project's toolchain, requires developer approval`,
+          rule: "external_binary",
+        };
+      }
+    }
+
+    // 7. Default Allow
     return {
       tier: "allow",
       allowed: true,

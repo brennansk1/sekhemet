@@ -157,7 +157,9 @@ describe("@sekhemet/sandbox containment", () => {
     expect(result.stdout).not.toContain("ran");
     expect(strict.requiresConfinement).toBe(true);
     expect(strict.confinement).toBe("none");
-    expect(new ProcessSandbox().requiresConfinement).toBe(false);
+    // S4 (wave 2): a default sandbox fails closed; opting out is explicit.
+    expect(new ProcessSandbox().requiresConfinement).toBe(true);
+    expect(new ProcessSandbox({ disableConfinement: true }).requiresConfinement).toBe(false);
   });
 
   it("truncates output beyond the buffer cap rather than growing without bound", async () => {

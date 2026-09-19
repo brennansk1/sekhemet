@@ -181,6 +181,9 @@ export interface SessionOptions {
   onPrompt?: ((record: PromptRecord) => string) | undefined;
   /** Called with every note the Worker writes, as it writes it (L11). */
   onNote?: ((text: string) => Promise<void>) | undefined;
+  /** Domains network commands may reach, through the egress proxy (S5, S8). */
+  allowedDomains?: string[] | undefined;
+  egressProxyPort?: number | undefined;
   /** Restricted mode: the agent's own commands refuse to run unconfined (defect 3). */
   requireConfinement?: boolean | undefined;
   /**

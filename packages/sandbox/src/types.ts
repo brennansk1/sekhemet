@@ -12,6 +12,17 @@ export interface SandboxOptions {
   cwd: string;
   maxBufferBytes?: number;
   env?: Record<string, string>;
+  /**
+   * Resident-memory cap for the command and its descendants (S7). Exceeding
+   * it kills the whole tree and reports `oomKilled` with the peak. Default
+   * SEKHEMET_MAX_COMMAND_MEMORY_MB, else 4096 MB.
+   */
+  maxMemoryBytes?: number;
+  /**
+   * The egress proxy's loopback port (S5). With `allowNetwork` off, the
+   * only network the command gets is this port, and HTTP(S)_PROXY point at it.
+   */
+  egressProxyPort?: number;
 }
 
 export interface ExecutionResult {
@@ -21,6 +32,8 @@ export interface ExecutionResult {
   durationMs: number;
   oomKilled: boolean;
   timedOut: boolean;
+  /** Highest resident memory of the command tree that was sampled, in bytes. */
+  memoryPeakBytes?: number;
 }
 
 export interface ExecutionSandbox {

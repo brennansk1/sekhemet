@@ -12,7 +12,12 @@ import {
 import { basename, dirname, join, relative } from "node:path";
 import { condenseToolOutput } from "@sekhemet/context";
 import type { ToolCall } from "@sekhemet/models";
-import { type ExecutionResult, PermissionEngine, ProcessSandbox } from "@sekhemet/sandbox";
+import {
+  type ExecutionResult,
+  PermissionEngine,
+  ProcessSandbox,
+  commandHosts,
+} from "@sekhemet/sandbox";
 import { matchesGlob } from "./glob.js";
 import { type ToolObservation, clampObservation, denied, fail, ok } from "./observation.js";
 import { PathEscapeError, canonicalizeRoot, resolveInWorktree } from "./paths.js";
@@ -117,6 +122,10 @@ export interface ToolExecutorOptions {
    * the catalog the model was shown; `check` still runs the static gates.
    */
   readOnly?: boolean | undefined;
+  /** Domains network commands may reach (S8), through the egress proxy (S5). */
+  allowedDomains?: string[] | undefined;
+  /** The card's egress proxy port (S5); commands get it as their only network. */
+  egressProxyPort?: number | undefined;
 }
 
 /** Tools that change the worktree or execute code: refused in restricted mode. */
@@ -177,9 +186,10 @@ export class ToolExecutor {
       new ProcessSandbox(options.requireConfinement ? { requireConfinement: true } : {});
     this.permissions =
       options.permissionEngine ??
-      new PermissionEngine(
-        options.protectedGlobs?.length ? { protectedGlobs: options.protectedGlobs } : {},
-      );
+      new PermissionEngine({
+        ...(options.protectedGlobs?.length ? { protectedGlobs: options.protectedGlobs } : {}),
+        ...(options.allowedDomains?.length ? { allowedDomains: options.allowedDomains } : {}),
+      });
   }
 
   /**
@@ -383,11 +393,26 @@ export class ToolExecutor {
       toolName: call.name,
       targetPath,
       command,
+      // Program + args is one program; a bare string is a shell line (S8).
+      ...(rawCommand && args.length > 0 ? { program: rawCommand } : {}),
+      localBinaries: this.localBinaries(),
       declaredScopeFiles: this.options.scopeFiles,
       agentRole: this.options.agentRole ?? "implementer",
       allowNetwork: this.options.allowNetwork ?? false,
     });
 
+    if (
+      this.untrustedContext &&
+      (verdict.tier === "ask" || (command && commandHosts(command).length > 0))
+    ) {
+      return {
+        ...denied(
+          call.name,
+          `strict policy: this step's context includes untrusted content, so ${verdict.tier === "ask" ? (verdict.reason ?? "this command") : "network access"} is refused without asking`,
+        ),
+        deniedRule: "untrusted_context",
+      };
+    }
     if (verdict.allowed) return null;
     if (verdict.rule) {
       this.deniedByRule.set(verdict.rule, (this.deniedByRule.get(verdict.rule) ?? 0) + 1);
@@ -792,6 +817,27 @@ export class ToolExecutor {
     );
   }
 
+  private localBins: Set<string> | undefined;
+  private untrustedContext = false;
+
+  /**
+   * The step's context includes untrusted content (S9): ask-tier calls are
+   * refused without asking anyone, and network commands are refused even
+   * when their domain is allowlisted.
+   */
+  public setUntrustedContext(on: boolean): void {
+    this.untrustedContext = on;
+  }
+
+  /** Programs the project provides in node_modules/.bin (trusted, S8). */
+  private localBinaries(): Set<string> {
+    if (!this.localBins) {
+      const bin = join(this.root, "node_modules", ".bin");
+      this.localBins = new Set(existsSync(bin) ? readdirSync(bin) : []);
+    }
+    return this.localBins;
+  }
+
   private tsService: TsSymbolService | undefined;
 
   /** The TypeScript language service over this worktree, built on first use (L9). */
@@ -1067,6 +1113,7 @@ export class ToolExecutor {
       allowNetwork: this.options.allowNetwork ?? false,
       timeoutMs: this.options.commandTimeoutMs ?? 120_000,
       cwd: this.root,
+      ...(this.options.egressProxyPort ? { egressProxyPort: this.options.egressProxyPort } : {}),
     });
 
     const label = line;
@@ -1116,6 +1163,7 @@ export class ToolExecutor {
       allowNetwork: this.options.allowNetwork ?? false,
       timeoutMs: this.options.commandTimeoutMs ?? 120_000,
       cwd: this.root,
+      ...(this.options.egressProxyPort ? { egressProxyPort: this.options.egressProxyPort } : {}),
     });
   }
 

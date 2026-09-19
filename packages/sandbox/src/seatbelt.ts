@@ -81,7 +81,11 @@ export function generateSeatbeltProfile(options: SandboxOptions): string {
 
   // `(deny default)` already blocks egress; the explicit rule is kept so the
   // profile states its network posture rather than implying it.
-  const networkRule = options.allowNetwork ? "  (allow network*)" : "  (deny network*)";
+  const networkRule = options.allowNetwork
+    ? "  (allow network*)"
+    : options.egressProxyPort
+      ? `  (deny network*)\n  ;; S5: the allowlisting egress proxy is the only way out.\n  (allow network-outbound (remote tcp "localhost:${Math.floor(options.egressProxyPort)}"))`
+      : "  (deny network*)";
 
   return `;; Sekhemet Seatbelt Containment Profile
 (version 1)

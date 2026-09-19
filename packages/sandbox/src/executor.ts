@@ -1,13 +1,52 @@
-import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { execFile, spawn } from "node:child_process";
+import { closeSync, existsSync, mkdtempSync, openSync, rmSync, writeFileSync } from "node:fs";
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { BWRAP_CANDIDATES, bubblewrapArgv } from "./bubblewrap.js";
 import { generateSeatbeltProfile } from "./seatbelt.js";
+import { hostSeccompArch, seccompProgram } from "./seccomp.js";
 import type { ExecutionResult, ExecutionSandbox, SandboxOptions } from "./types.js";
 
 const DEFAULT_MAX_BUFFER = 10 * 1024 * 1024; // 10MB
+const MEMORY_POLL_MS = 250;
+
+function defaultMemoryCap(): number {
+  const mb = Number(process.env.SEKHEMET_MAX_COMMAND_MEMORY_MB);
+  return (Number.isFinite(mb) && mb > 0 ? mb : 4096) * 1024 * 1024;
+}
+
+/** Resident bytes of `pid` and every descendant, from one `ps` snapshot (S7). */
+export function sampleTreeMemory(pid: number): Promise<{ bytes: number; pids: number[] }> {
+  return new Promise((resolve) => {
+    execFile("ps", ["-A", "-o", "pid=,ppid=,rss="], { timeout: 2000 }, (err, stdout) => {
+      if (err) return resolve({ bytes: 0, pids: [pid] });
+      const rows = stdout
+        .split("\n")
+        .map((l) => l.trim().split(/\s+/).map(Number))
+        .filter((r) => r.length === 3 && r.every((n) => Number.isFinite(n))) as [
+        number,
+        number,
+        number,
+      ][];
+      const children = new Map<number, number[]>();
+      const rss = new Map<number, number>();
+      for (const [p, pp, kb] of rows) {
+        rss.set(p, kb * 1024);
+        children.set(pp, [...(children.get(pp) ?? []), p]);
+      }
+      const tree: number[] = [];
+      const stack = [pid];
+      while (stack.length > 0) {
+        const p = stack.pop() as number;
+        if (tree.includes(p)) continue;
+        tree.push(p);
+        stack.push(...(children.get(p) ?? []));
+      }
+      resolve({ bytes: tree.reduce((n, p) => n + (rss.get(p) ?? 0), 0), pids: tree });
+    });
+  });
+}
 const SIGKILL_GRACE_MS = 500;
 const SANDBOX_EXEC = "/usr/bin/sandbox-exec";
 
@@ -39,12 +78,13 @@ const ENV_ALLOWLIST = [
 
 export interface ProcessSandboxOptions {
   /**
-   * Refuse to execute when no OS confinement is available, instead of running
-   * the command unconfined. Off by default so the harness still runs on Linux,
-   * but the CLI turns it on for untrusted execution.
+   * Refuse to execute when no OS confinement is available (S4). ON by
+   * default: a host without Seatbelt or bubblewrap refuses rather than
+   * running agent commands unconfined. `false`, or the environment variable
+   * SEKHEMET_ALLOW_UNCONFINED=1, is the explicit opt-out.
    */
   requireConfinement?: boolean;
-  /** Force confinement off. Intended for trusted internal commands only. */
+  /** Force confinement off. Intended for trusted internal commands only (an explicit opt-out). */
   disableConfinement?: boolean;
 }
 
@@ -82,9 +122,15 @@ export class ProcessSandbox implements ExecutionSandbox {
           : "none";
   }
 
-  /** True when this sandbox refuses to run a command it cannot confine. */
+  /**
+   * True when this sandbox refuses to run a command it cannot confine: fail
+   * closed by default (S4). `disableConfinement` without `requireConfinement`,
+   * `requireConfinement: false` or SEKHEMET_ALLOW_UNCONFINED=1 opt out.
+   */
   public get requiresConfinement(): boolean {
-    return this.config.requireConfinement === true;
+    if (this.config.requireConfinement !== undefined) return this.config.requireConfinement;
+    if (this.config.disableConfinement) return false;
+    return process.env.SEKHEMET_ALLOW_UNCONFINED !== "1";
   }
 
   /** The confinement mechanism in effect. Surfaced by `sekhemet doctor`. */
@@ -99,7 +145,9 @@ export class ProcessSandbox implements ExecutionSandbox {
     options: SandboxOptions,
   ): { file: string; argv: string[] } {
     if (this.mode === "bubblewrap" && this.bwrap) {
-      return { file: this.bwrap, argv: bubblewrapArgv(options, command, args) };
+      // The seccomp program travels on fd 3 (see `execute`).
+      const seccomp = hostSeccompArch() !== undefined ? 3 : undefined;
+      return { file: this.bwrap, argv: bubblewrapArgv(options, command, args, seccomp) };
     }
     if (this.mode !== "seatbelt") return { file: command, argv: args };
     const profile = generateSeatbeltProfile(options);
@@ -113,12 +161,12 @@ export class ProcessSandbox implements ExecutionSandbox {
   ): Promise<ExecutionResult> {
     const startTime = performance.now();
 
-    if (this.mode === "none" && this.config.requireConfinement) {
+    if (this.mode === "none" && this.requiresConfinement) {
       return {
         exitCode: 126,
         stdout: "",
         stderr:
-          "Refusing to execute: OS-level confinement is unavailable on this platform and requireConfinement is set.",
+          "Refusing to execute: no OS-level confinement (Seatbelt or bubblewrap) is available on this host, and the sandbox fails closed. Install bubblewrap, or set SEKHEMET_ALLOW_UNCONFINED=1 to run unconfined deliberately.",
         durationMs: 0,
         oomKilled: false,
         timedOut: false,
@@ -144,12 +192,38 @@ export class ProcessSandbox implements ExecutionSandbox {
       let oomKilled = false;
       let finished = false;
       let killTimer: NodeJS.Timeout | undefined;
+      let memoryPeak = 0;
+      let memoryKilled = false;
+      const memoryCap = options.maxMemoryBytes ?? defaultMemoryCap();
 
+      // S3: under bubblewrap, the seccomp filter is handed over on fd 3.
+      const arch = hostSeccompArch();
+      let seccompFd: number | undefined;
+      if (this.mode === "bubblewrap" && arch) {
+        const path = join(scratchDir, ".seccomp.bpf");
+        writeFileSync(path, seccompProgram(arch));
+        seccompFd = openSync(path, "r");
+      }
       const child = spawn(file, argv, {
         cwd: options.cwd,
-        env: buildEnv({ TMPDIR: scratchDir, ...options.env }),
-        stdio: ["ignore", "pipe", "pipe"],
+        env: buildEnv({
+          TMPDIR: scratchDir,
+          ...(options.egressProxyPort && !options.allowNetwork
+            ? {
+                HTTP_PROXY: `http://127.0.0.1:${options.egressProxyPort}`,
+                HTTPS_PROXY: `http://127.0.0.1:${options.egressProxyPort}`,
+                http_proxy: `http://127.0.0.1:${options.egressProxyPort}`,
+                https_proxy: `http://127.0.0.1:${options.egressProxyPort}`,
+              }
+            : {}),
+          ...options.env,
+        }),
+        stdio:
+          seccompFd !== undefined
+            ? ["ignore", "pipe", "pipe", seccompFd]
+            : ["ignore", "pipe", "pipe"],
       });
+      if (seccompFd !== undefined) closeSync(seccompFd);
 
       const timer = setTimeout(() => {
         timedOut = true;
@@ -171,12 +245,32 @@ export class ProcessSandbox implements ExecutionSandbox {
         }
       }, options.timeoutMs);
 
-      child.stdout.on("data", (chunk: Buffer) => {
+      // S7: a real memory cap. The tree's resident size is sampled; past the
+      // cap every process in it is killed and the result says so, rather
+      // than inferring an OOM from an unexplained SIGKILL.
+      const memoryTimer = setInterval(() => {
+        if (finished || child.pid === undefined) return;
+        void sampleTreeMemory(child.pid).then(({ bytes, pids }) => {
+          memoryPeak = Math.max(memoryPeak, bytes);
+          if (finished || bytes <= memoryCap || memoryKilled) return;
+          memoryKilled = true;
+          for (const p of pids.reverse()) {
+            try {
+              process.kill(p, "SIGKILL");
+            } catch {
+              // Already gone.
+            }
+          }
+        });
+      }, MEMORY_POLL_MS);
+      memoryTimer.unref?.();
+
+      child.stdout?.on("data", (chunk: Buffer) => {
         if (stdout.length < maxBuffer) stdout += chunk.toString("utf8");
         else stdoutTruncated = true;
       });
 
-      child.stderr.on("data", (chunk: Buffer) => {
+      child.stderr?.on("data", (chunk: Buffer) => {
         if (stderr.length < maxBuffer) stderr += chunk.toString("utf8");
         else stderrTruncated = true;
       });
@@ -185,6 +279,7 @@ export class ProcessSandbox implements ExecutionSandbox {
         if (finished) return;
         finished = true;
         clearTimeout(timer);
+        clearInterval(memoryTimer);
         if (killTimer) clearTimeout(killTimer);
         if (ownsScratch) {
           try {
@@ -208,7 +303,11 @@ export class ProcessSandbox implements ExecutionSandbox {
       });
 
       child.on("close", (code, signal) => {
-        if (signal === "SIGKILL" && !timedOut) oomKilled = true;
+        // Our own cap, or an unexplained SIGKILL (the Linux OOM killer).
+        if (memoryKilled || (signal === "SIGKILL" && !timedOut)) oomKilled = true;
+        if (memoryKilled) {
+          stderr += `\n[killed: the command used ${Math.round(memoryPeak / 1048576)} MB, over its ${Math.round(memoryCap / 1048576)} MB memory cap]`;
+        }
 
         // Under sandbox-exec a missing binary surfaces as the wrapper's own
         // status, so callers would see an arbitrary code instead of the
@@ -228,6 +327,7 @@ export class ProcessSandbox implements ExecutionSandbox {
           durationMs: Math.round(performance.now() - startTime),
           oomKilled,
           timedOut,
+          ...(memoryPeak > 0 ? { memoryPeakBytes: memoryPeak } : {}),
         });
       });
     });

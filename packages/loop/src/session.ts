@@ -16,6 +16,7 @@ import {
 } from "@sekhemet/gates";
 import type { CardRecord } from "@sekhemet/kernel";
 import { checkExecutionHeadroom, readSwapUsedBytes, reasoningForStep } from "@sekhemet/models";
+import { UNTRUSTED_CONTRACT, containsUntrusted, tagUntrusted } from "@sekhemet/sandbox";
 import type { ExecutionResult } from "@sekhemet/sandbox";
 import { apiHints } from "./api_surface.js";
 import { OscillationDetector } from "./detector.js";
@@ -147,6 +148,8 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       protectedGlobs: [...new Set([...declared, ...staged])],
       requireReadBeforeEdit: options.requireReadBeforeEdit,
       readOnly: options.restricted === true,
+      allowedDomains: options.allowedDomains,
+      egressProxyPort: options.egressProxyPort,
     });
     // H17: a resumed card continues its step count from the checkpoint.
     if (options.startStep !== undefined && options.startStep > 0) {
@@ -625,9 +628,15 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     const native = this.options.modelAdapter.nativeTools === true;
     const budget = this.promptBudget();
     const guidance = this.guidance();
-    const dossier = (this.options.dossierLines ?? [])
-      .filter((l) => l.trim().length > 0)
-      .map((text) => ({ label: "From the team (this card)", text }));
+    const lines = (this.options.dossierLines ?? []).filter((l) => l.trim().length > 0);
+    const untrusted = lines.some(containsUntrusted) || this.card.externalRef !== undefined;
+    // S9: with untrusted content in context, the contract says so, and the
+    // tools run under the strict policy (no ask-tier approvals, no network).
+    this.tools.setUntrustedContext(untrusted);
+    const dossier = [
+      ...(untrusted ? [{ label: "Untrusted content", text: UNTRUSTED_CONTRACT }] : []),
+      ...lines.map((text) => ({ label: "From the team (this card)", text })),
+    ];
     const completedWork = [
       ...[...this.filesWritten].sort().map((f) => `wrote ${f}`),
       // Listing what was already read is what stops the agent spending its
@@ -661,7 +670,17 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       ...(this.lastGateFailures.length > 0
         ? { failureCode: this.failureCode(this.lastGateFailures) }
         : {}),
-      ...(this.card.spec ? { goal: this.card.spec } : {}),
+      // A spec synced from an external tracker is untrusted (S9).
+      ...(this.card.spec
+        ? {
+            goal: this.card.externalRef
+              ? tagUntrusted(
+                  this.card.spec,
+                  `${this.card.externalRef.system}:${this.card.externalRef.id}`,
+                )
+              : this.card.spec,
+          }
+        : {}),
       ...(this.card.acceptanceCriteria?.length
         ? { acceptanceCriteria: this.card.acceptanceCriteria }
         : {}),

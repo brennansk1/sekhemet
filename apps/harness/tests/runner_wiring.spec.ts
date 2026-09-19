@@ -405,6 +405,45 @@ describe("apps/harness executeCard wiring (wave 2, part 1)", () => {
     expect(dossier.notes.map((n) => n.text)).toEqual(["Assumed: a is a number"]);
   });
 
+  it.runIf(process.platform === "darwin")(
+    "routes a card's network through the allowlisting proxy and logs each request (S5, S8)",
+    async () => {
+      const { createServer } = await import("node:http");
+      const upstream = createServer((_req, res) => res.end("pong-from-upstream"));
+      const port: number = await new Promise((r) =>
+        upstream.listen(0, "127.0.0.1", () => r((upstream.address() as { port: number }).port)),
+      );
+      try {
+        writeFileSync(
+          join(repo, ".sekhemet", "gates.toml"),
+          `[project]\nmax_files = 3\nmax_diff_lines = 200\nnetwork_allow = ["127.0.0.1"]\n\n[[gate]]\nid = "unit"\nrung = "test"\nlayer = "functional"\ncommand = "node"\nargs = ["-e", "process.exit(0)"]\ntimeout_s = 30\nparser = "generic"\n`,
+        );
+        execFileSync("git", ["commit", "-qam", "allowlist"], { cwd: repo });
+        const card = await newCard("card_net");
+        const { adapter } = scripted([
+          [
+            {
+              name: "run_cmd",
+              arguments: {
+                command: `curl -s --max-time 5 http://127.0.0.1:${port}/ping`,
+                description: "ping",
+              },
+            },
+          ],
+          WRITE_A,
+        ]);
+        const result = await executeCard(ctx, card, adapter);
+        expect(result.turns[0]?.observations[0]?.content).toContain("pong-from-upstream");
+        const egress = await cardStore.cardEvents(card.id, ["card/egress"]);
+        expect(
+          egress.map((e) => (e.payload as { host: string; allowed: boolean }).allowed),
+        ).toEqual([true]);
+      } finally {
+        await new Promise((r) => upstream.close(() => r(undefined)));
+      }
+    },
+  );
+
   it("records a review in the dossier, which the Review surface reads as findings", async () => {
     const card = await newCard("card_rev");
     await recordReview(cardStore, card.id, [

@@ -4,3 +4,6 @@ export * from "./executor.js";
 export * from "./permissions.js";
 export * from "./glob.js";
 export * from "./bubblewrap.js";
+export * from "./untrusted.js";
+export * from "./egress.js";
+export * from "./seccomp.js";

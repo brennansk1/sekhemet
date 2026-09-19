@@ -18,7 +18,13 @@ export const BWRAP_CANDIDATES = ["/usr/bin/bwrap", "/usr/local/bin/bwrap"];
  * and the writable binds last, so a scratch directory under /tmp is still
  * writable.
  */
-export function bubblewrapArgv(options: SandboxOptions, command: string, args: string[]): string[] {
+export function bubblewrapArgv(
+  options: SandboxOptions,
+  command: string,
+  args: string[],
+  /** File descriptor carrying the seccomp program (S3), when one is attached. */
+  seccompFd?: number,
+): string[] {
   const roots = [...options.allowedPaths, ...(options.scratchDir ? [options.scratchDir] : [])];
   const writeRoots = [...new Set([...roots, ...linkedDependencyTargets(roots)].map(realPath))];
   return [
@@ -38,6 +44,7 @@ export function bubblewrapArgv(options: SandboxOptions, command: string, args: s
     "--unshare-ipc",
     "--unshare-uts",
     ...(options.allowNetwork ? [] : ["--unshare-net"]),
+    ...(seccompFd !== undefined ? ["--seccomp", String(seccompFd)] : []),
     "--chdir",
     options.cwd,
     "--",
