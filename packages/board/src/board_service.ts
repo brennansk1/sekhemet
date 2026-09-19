@@ -98,7 +98,9 @@ export class BoardServiceImpl implements BoardService {
     const options: BoardServiceOptions =
       "customLimits" in optionsOrLimits ||
       "reviewMinutesPerDay" in optionsOrLimits ||
-      "onOverride" in optionsOrLimits
+      "onOverride" in optionsOrLimits ||
+      "entryConditions" in optionsOrLimits ||
+      "evidenceFor" in optionsOrLimits
         ? (optionsOrLimits as BoardServiceOptions)
         : { customLimits: optionsOrLimits as Partial<Record<CardStatus, number>> };
 

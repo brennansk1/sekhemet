@@ -294,6 +294,9 @@ export async function executeCard(
     agentRole: "implementer",
     agentHarness: "sekhemet",
     attempt,
+    // A checkpoint after every step that wrote something: rewind and fork
+    // (H18, H19) can then return to any step, not only every fifth.
+    checkpointEvery: 1,
     // Checkpoints, actuals, holds, parks and the dossier persist here.
     store: ctx.cardStore,
     // The agent's own commands are confined as strictly as the gates (defect 3).
