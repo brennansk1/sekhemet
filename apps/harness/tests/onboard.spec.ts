@@ -42,12 +42,28 @@ function repo(): string {
     }),
   );
   write(root, "pnpm-lock.yaml", "");
-  write(root, "src/user-store.ts", "export class UserStore { get(): never { throw new NotFoundError('x'); } }\nexport class NotFoundError extends Error {}\n");
-  write(root, "src/order-service.ts", 'import { UserStore } from "./user-store.js";\nexport const orders = new UserStore();\n');
+  write(
+    root,
+    "src/user-store.ts",
+    "export class UserStore { get(): never { throw new NotFoundError('x'); } }\nexport class NotFoundError extends Error {}\n",
+  );
+  write(
+    root,
+    "src/order-service.ts",
+    'import { UserStore } from "./user-store.js";\nexport const orders = new UserStore();\n',
+  );
   write(root, "src/price-rules.ts", "export const price = 1;\n");
   write(root, "src/tax-table.ts", "export const tax = 2;\n");
-  write(root, "tests/user-store.spec.ts", 'import { describe, it } from "vitest";\ndescribe("x", () => it("y", () => {}));\n');
-  write(root, ".github/workflows/ci.yml", "jobs:\n  t:\n    steps:\n      - run: pnpm test\n      - run: cargo clippy\n");
+  write(
+    root,
+    "tests/user-store.spec.ts",
+    'import { describe, it } from "vitest";\ndescribe("x", () => it("y", () => {}));\n',
+  );
+  write(
+    root,
+    ".github/workflows/ci.yml",
+    "jobs:\n  t:\n    steps:\n      - run: pnpm test\n      - run: cargo clippy\n",
+  );
   write(root, "AGENTS.md", "# Agents\n\n## Code Standards\n- Keep functions under forty lines.\n");
   const git = (...a: string[]) => execFileSync("git", a, { cwd: root, encoding: "utf8" });
   git("init", "-q", "-b", "main");
@@ -84,7 +100,13 @@ describe("X1: sekhemet onboard runs the seven steps", () => {
       { language: "typescript", command: process.execPath, ok: true, detail: "initialized" },
     ]);
     expect(report.commands.map((c) => `${c.kind}:${c.command}`)).toEqual(
-      expect.arrayContaining(["test:pnpm run test", "lint:pnpm run lint", "typecheck:pnpm run typecheck", "build:pnpm run build", "lint:cargo clippy"]),
+      expect.arrayContaining([
+        "test:pnpm run test",
+        "lint:pnpm run lint",
+        "typecheck:pnpm run typecheck",
+        "build:pnpm run build",
+        "lint:cargo clippy",
+      ]),
     );
     expect(readFileSync(join(root, report.gatesProposal.path), "utf8")).toContain("[[gate]]");
     expect(existsSync(join(root, ".sekhemet/gates.toml"))).toBe(false);
@@ -97,7 +119,15 @@ describe("X1: sekhemet onboard runs the seven steps", () => {
     expect(draft).toContain("Keep functions under forty lines.");
     expect(draft).toContain("- test: `pnpm run test`");
     expect(report.qualification[0]).toMatchObject({ modelId: "tiny", qualified: false });
-    expect(lines.filter((l) => /^\d\. /.test(l)).map((l) => l[0])).toEqual(["1", "2", "3", "4", "5", "6", "7"]);
+    expect(lines.filter((l) => /^\d\. /.test(l)).map((l) => l[0])).toEqual([
+      "1",
+      "2",
+      "3",
+      "4",
+      "5",
+      "6",
+      "7",
+    ]);
     expect(readFileSync(join(root, "AGENTS.md"), "utf8")).not.toContain("sekhemet onboard");
   });
 
@@ -119,11 +149,14 @@ describe("X2: convention drift against the onboarding snapshot", () => {
   it("detects a naming change in recent commits and posts it as Seshat's note", async () => {
     const root = repo();
     await runOnboard(root, { say: () => undefined, lspServers: {} });
-    for (const n of ["userAccount", "orderLine", "priceBook"]) write(root, `src/${n}.ts`, "export const x = 1;\n");
+    for (const n of ["userAccount", "orderLine", "priceBook"])
+      write(root, `src/${n}.ts`, "export const x = 1;\n");
     execFileSync("git", ["add", "-A"], { cwd: root });
     execFileSync("git", ["commit", "-q", "-m", "camel"], { cwd: root });
     const { drift } = detectConventionDrift(root);
-    expect(drift.map((d) => `${d.aspect}:${d.was}->${d.now}`)).toContain("file naming:kebab-case->camelCase");
+    expect(drift.map((d) => `${d.aspect}:${d.was}->${d.now}`)).toContain(
+      "file naming:kebab-case->camelCase",
+    );
     const store = ledger();
     await postConventionDrift(root, store.log);
     const thread = await new PmStore(store.log).thread();

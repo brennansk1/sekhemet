@@ -970,7 +970,12 @@ export async function runPackageGates(
     let passed = true;
     let output = "";
     try {
-      output = execFileSync(g.command, g.args, { cwd: dir, encoding: "utf8", timeout: 600_000, stdio: "pipe" });
+      output = execFileSync(g.command, g.args, {
+        cwd: dir,
+        encoding: "utf8",
+        timeout: 600_000,
+        stdio: "pipe",
+      });
     } catch (e) {
       passed = false;
       output = String((e as { stdout?: string }).stdout ?? e);

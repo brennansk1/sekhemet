@@ -67,7 +67,16 @@ export interface OnboardReport {
   applied: string[];
 }
 
-const SKIP = new Set(["node_modules", "dist", ".git", ".sekhemet", "coverage", "build", "target", ".venv"]);
+const SKIP = new Set([
+  "node_modules",
+  "dist",
+  ".git",
+  ".sekhemet",
+  "coverage",
+  "build",
+  "target",
+  ".venv",
+]);
 
 function walk(root: string, max = 3000): string[] {
   const out: string[] = [];
@@ -99,7 +108,8 @@ function walk(root: string, max = 3000): string[] {
 export function detectCommands(root: string): DetectedCommand[] {
   const out: DetectedCommand[] = [];
   const add = (kind: DetectedCommand["kind"], command: string, source: string) => {
-    if (!out.some((c) => c.kind === kind && c.command === command)) out.push({ kind, command, source });
+    if (!out.some((c) => c.kind === kind && c.command === command))
+      out.push({ kind, command, source });
   };
   const classify = (name: string): DetectedCommand["kind"] | undefined =>
     /^(test|test:.*|spec)$/.test(name)
@@ -115,8 +125,13 @@ export function detectCommands(root: string): DetectedCommand[] {
               : undefined;
   const pkg = join(root, "package.json");
   if (existsSync(pkg)) {
-    const scripts = (JSON.parse(readFileSync(pkg, "utf8")) as { scripts?: Record<string, string> }).scripts ?? {};
-    const pm = existsSync(join(root, "pnpm-lock.yaml")) ? "pnpm" : existsSync(join(root, "yarn.lock")) ? "yarn" : "npm";
+    const scripts =
+      (JSON.parse(readFileSync(pkg, "utf8")) as { scripts?: Record<string, string> }).scripts ?? {};
+    const pm = existsSync(join(root, "pnpm-lock.yaml"))
+      ? "pnpm"
+      : existsSync(join(root, "yarn.lock"))
+        ? "yarn"
+        : "npm";
     for (const name of Object.keys(scripts).sort()) {
       const kind = classify(name);
       if (kind) add(kind, `${pm} run ${name}`, "package.json");
@@ -127,7 +142,8 @@ export function detectCommands(root: string): DetectedCommand[] {
     const t = readFileSync(py, "utf8");
     add("test", "pytest -q", "pyproject.toml");
     if (/ruff/.test(t)) add("lint", "ruff check .", "pyproject.toml");
-    if (/ruff/.test(t) || /black/.test(t)) add("format", /ruff/.test(t) ? "ruff format ." : "black .", "pyproject.toml");
+    if (/ruff/.test(t) || /black/.test(t))
+      add("format", /ruff/.test(t) ? "ruff format ." : "black .", "pyproject.toml");
     if (/mypy/.test(t)) add("typecheck", "mypy .", "pyproject.toml");
   }
   if (existsSync(join(root, "Cargo.toml"))) {
@@ -150,7 +166,9 @@ export function detectCommands(root: string): DetectedCommand[] {
   }
   const wf = join(root, ".github", "workflows");
   if (existsSync(wf)) {
-    for (const f of readdirSync(wf).filter((n) => /\.ya?ml$/.test(n)).sort()) {
+    for (const f of readdirSync(wf)
+      .filter((n) => /\.ya?ml$/.test(n))
+      .sort()) {
       for (const m of readFileSync(join(wf, f), "utf8").matchAll(/^\s*(?:-\s*)?run:\s*(.+)$/gm)) {
         const cmd = (m[1] as string).trim().replace(/^["']|["']$/g, "");
         const kind: DetectedCommand["kind"] | undefined = /\btest\b/.test(cmd)
@@ -195,10 +213,12 @@ export function measureConventions(root: string, files: string[]): Conventions {
     if (s !== "lowercase") fileNaming[s] = (fileNaming[s] ?? 0) + 1;
   }
   const dominantNaming =
-    Object.entries(fileNaming).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] ?? "lowercase";
+    Object.entries(fileNaming).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] ??
+    "lowercase";
   const tests = source.filter((f) => TEST.test(f));
   const inTestsDir = tests.filter((f) => /(^|\/)tests?\//.test(f)).length;
-  const testLayout = tests.length === 0 ? "none" : inTestsDir * 2 >= tests.length ? "tests-dir" : "colocated";
+  const testLayout =
+    tests.length === 0 ? "none" : inTestsDir * 2 >= tests.length ? "tests-dir" : "colocated";
   const style = new Set<string>();
   const errors = new Map<string, number>();
   for (const f of source.slice(0, 400)) {
@@ -215,13 +235,21 @@ export function measureConventions(root: string, files: string[]): Conventions {
       if (/^def test_/m.test(text)) style.add("pytest functions");
       if (/#\[test\]/.test(text)) style.add("#[test] functions");
     }
-    for (const m of text.matchAll(/throw new (\w+Error)\(/g)) errors.set(m[1] as string, (errors.get(m[1] as string) ?? 0) + 1);
-    if (/Result<.*,\s*\w+Error>/.test(text)) errors.set("Result<_, Error>", (errors.get("Result<_, Error>") ?? 0) + 1);
-    if (/raise \w+Error\(/.test(text)) errors.set("raise ...Error", (errors.get("raise ...Error") ?? 0) + 1);
+    for (const m of text.matchAll(/throw new (\w+Error)\(/g))
+      errors.set(m[1] as string, (errors.get(m[1] as string) ?? 0) + 1);
+    if (/Result<.*,\s*\w+Error>/.test(text))
+      errors.set("Result<_, Error>", (errors.get("Result<_, Error>") ?? 0) + 1);
+    if (/raise \w+Error\(/.test(text))
+      errors.set("raise ...Error", (errors.get("raise ...Error") ?? 0) + 1);
   }
   const roots = new Map<string, number>();
   for (const f of source.filter((x) => !TEST.test(x))) {
-    const top = f.includes("/") ? f.split("/").slice(0, f.startsWith("packages/") || f.startsWith("apps/") ? 3 : 1).join("/") : ".";
+    const top = f.includes("/")
+      ? f
+          .split("/")
+          .slice(0, f.startsWith("packages/") || f.startsWith("apps/") ? 3 : 1)
+          .join("/")
+      : ".";
     roots.set(top, (roots.get(top) ?? 0) + 1);
   }
   return {
@@ -229,8 +257,14 @@ export function measureConventions(root: string, files: string[]): Conventions {
     dominantNaming,
     testLayout,
     testStyle: [...style].sort(),
-    errorPatterns: [...errors.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([e]) => e),
-    sourceRoots: [...roots.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([r]) => r),
+    errorPatterns: [...errors.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4)
+      .map(([e]) => e),
+    sourceRoots: [...roots.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([r]) => r),
     documented: loadProjectConventions(root, 250),
   };
 }
@@ -240,19 +274,39 @@ function conventionRules(c: Conventions): { text: string; evidence: string }[] {
   const total = Object.values(c.fileNaming).reduce((a, b) => a + b, 0);
   const n = c.fileNaming[c.dominantNaming] ?? 0;
   if (total >= 4 && n / total >= 0.7) {
-    out.push({ text: `Name new source files in ${c.dominantNaming}, like the rest of the repository.`, evidence: `${n} of ${total} multi-word file names are ${c.dominantNaming}` });
+    out.push({
+      text: `Name new source files in ${c.dominantNaming}, like the rest of the repository.`,
+      evidence: `${n} of ${total} multi-word file names are ${c.dominantNaming}`,
+    });
   }
-  if (c.testLayout === "tests-dir") out.push({ text: "Put tests under the tests/ directory, not next to the source.", evidence: "most test files live in tests/" });
-  if (c.testLayout === "colocated") out.push({ text: "Put a test next to the file it tests (x.spec.ts beside x.ts).", evidence: "most test files are colocated" });
-  if (c.testStyle.length) out.push({ text: `Write tests in this project's style: ${c.testStyle.join(", ")}.`, evidence: "seen in the existing tests" });
-  if (c.errorPatterns.length) out.push({ text: `Report errors the way the codebase does: ${c.errorPatterns.join(", ")}.`, evidence: "most frequent error constructions" });
+  if (c.testLayout === "tests-dir")
+    out.push({
+      text: "Put tests under the tests/ directory, not next to the source.",
+      evidence: "most test files live in tests/",
+    });
+  if (c.testLayout === "colocated")
+    out.push({
+      text: "Put a test next to the file it tests (x.spec.ts beside x.ts).",
+      evidence: "most test files are colocated",
+    });
+  if (c.testStyle.length)
+    out.push({
+      text: `Write tests in this project's style: ${c.testStyle.join(", ")}.`,
+      evidence: "seen in the existing tests",
+    });
+  if (c.errorPatterns.length)
+    out.push({
+      text: `Report errors the way the codebase does: ${c.errorPatterns.join(", ")}.`,
+      evidence: "most frequent error constructions",
+    });
   return out;
 }
 
 // ---------------------------------------------------------------- step 6
 
 export function agentsDraft(root: string, commands: DetectedCommand[], c: Conventions): string {
-  const byKind = (k: DetectedCommand["kind"]) => commands.filter((x) => x.kind === k).map((x) => `\`${x.command}\``);
+  const byKind = (k: DetectedCommand["kind"]) =>
+    commands.filter((x) => x.kind === k).map((x) => `\`${x.command}\``);
   const lines = [
     `# AGENTS.md: ${basename(root)}`,
     "",
@@ -288,7 +342,8 @@ export function repoQualificationCases(files: string[]): QualificationCase[] {
     category: "arguments" as const,
     prompt: `Open ${f} so we can see how it is written.`,
     score: (calls) =>
-      calls[0]?.name === "read_file" && String(calls[0].arguments.path ?? "").replace(/^\.\//, "") === f
+      calls[0]?.name === "read_file" &&
+      String(calls[0].arguments.path ?? "").replace(/^\.\//, "") === f
         ? undefined
         : `expected read_file ${f}`,
   }));
@@ -317,7 +372,9 @@ export async function runOnboard(root: string, opts: OnboardOptions = {}): Promi
   const map = buildRankedRepoMap(root, { budgetTokens: 4000 });
   writeFileSync(join(dir, "repo_map.txt"), map.text);
   writeFileSync(join(dir, "repo_map.key"), `${map.cacheKey}\n`);
-  say(`1. Repo map: ${map.files.length} of ${map.considered} files, ${map.usedTokens} tokens (key ${map.cacheKey}).`);
+  say(
+    `1. Repo map: ${map.files.length} of ${map.considered} files, ${map.usedTokens} tokens (key ${map.cacheKey}).`,
+  );
 
   // 2. Language servers.
   const langs = new Set<string>();
@@ -343,7 +400,9 @@ export async function runOnboard(root: string, opts: OnboardOptions = {}): Promi
     }
     await client.shutdown().catch(() => undefined);
     languageServers.push({ language, command: server.command, ok, detail });
-    say(`2. ${language} language server (${server.command}): ${ok ? "ok" : `unavailable (${detail})`}.`);
+    say(
+      `2. ${language} language server (${server.command}): ${ok ? "ok" : `unavailable (${detail})`}.`,
+    );
   }
 
   // 3. Commands.
@@ -356,7 +415,9 @@ export async function runOnboard(root: string, opts: OnboardOptions = {}): Promi
   const toml = template ? renderGatesToml(template) : derived.toml;
   const gatesPath = join(dir, "gates.proposed.toml");
   writeFileSync(gatesPath, toml);
-  const gates = template ? template.map((g) => `${g.id}: ${g.command} ${g.args.join(" ")}`) : derived.gates;
+  const gates = template
+    ? template.map((g) => `${g.id}: ${g.command} ${g.args.join(" ")}`)
+    : derived.gates;
   say(`4. Proposed gates (${relative(root, gatesPath)}): ${gates.join("; ") || "none"}.`);
 
   // 5. Conventions and a draft playbook.
@@ -374,16 +435,29 @@ export async function runOnboard(root: string, opts: OnboardOptions = {}): Promi
   let rulesProposed = 0;
   if (opts.store) {
     const learning = new LearningStore(opts.store.log);
-    const explored = await applyExploration(learning, root, false, await opts.store.cardStore.listCards());
+    const explored = await applyExploration(
+      learning,
+      root,
+      false,
+      await opts.store.cardStore.listCards(),
+    );
     rulesProposed += explored.proposed;
     for (const r of conventionRules(conventions)) {
-      const rule = await learning.propose({ role: "worker", text: r.text, scope: {}, source: "seed", evidence: [{ note: `onboarding: ${r.evidence}` }] });
+      const rule = await learning.propose({
+        role: "worker",
+        text: r.text,
+        scope: {},
+        source: "seed",
+        evidence: [{ note: `onboarding: ${r.evidence}` }],
+      });
       if (rule) rulesProposed++;
     }
   } else {
     rulesProposed = exploreProject(root).length + conventionRules(conventions).length;
   }
-  say(`5. Conventions: ${conventions.dominantNaming} files, tests ${conventions.testLayout}; ${rulesProposed} draft rule(s) for the playbook (candidates until approved).`);
+  say(
+    `5. Conventions: ${conventions.dominantNaming} files, tests ${conventions.testLayout}; ${rulesProposed} draft rule(s) for the playbook (candidates until approved).`,
+  );
 
   // 6. AGENTS.md / CLAUDE.md drafts.
   const agents = agentsDraft(root, commands, conventions);
@@ -395,7 +469,8 @@ export async function runOnboard(root: string, opts: OnboardOptions = {}): Promi
         ? existing
           ? `${existing.trimEnd()}\n\n<!-- sekhemet onboard -->\n${agents.split("\n").slice(4).join("\n")}`
           : agents
-        : existing || `# CLAUDE.md\n\nFollow [AGENTS.md](AGENTS.md): it lists this repository's commands and conventions.\n`;
+        : existing ||
+          `# CLAUDE.md\n\nFollow [AGENTS.md](AGENTS.md): it lists this repository's commands and conventions.\n`;
     const draft = join(dir, `${name}.draft`);
     writeFileSync(draft, body);
     drafts.push(relative(root, draft));
@@ -407,13 +482,24 @@ export async function runOnboard(root: string, opts: OnboardOptions = {}): Promi
   if (opts.models?.length) {
     const cases = [...QUALIFICATION_CASES, ...repoQualificationCases(files)];
     for (const m of opts.models) {
-      const { best } = await qualifyModel(m, { ...(opts.registry ? { registry: opts.registry } : {}), cases });
-      qualification.push({ modelId: m.modelId, passRate: best.passRate, qualified: best.qualified });
-      say(`7. ${m.modelId}: ${(best.passRate * 100).toFixed(0)}% ${best.qualified ? "qualified" : "not qualified"} on ${cases.length} cases.`);
+      const { best } = await qualifyModel(m, {
+        ...(opts.registry ? { registry: opts.registry } : {}),
+        cases,
+      });
+      qualification.push({
+        modelId: m.modelId,
+        passRate: best.passRate,
+        qualified: best.qualified,
+      });
+      say(
+        `7. ${m.modelId}: ${(best.passRate * 100).toFixed(0)}% ${best.qualified ? "qualified" : "not qualified"} on ${cases.length} cases.`,
+      );
       await opts.release?.(m);
     }
   } else {
-    say("7. Qualification skipped: pass --models to qualify this machine's models on this repository.");
+    say(
+      "7. Qualification skipped: pass --models to qualify this machine's models on this repository.",
+    );
   }
 
   const applied: string[] = [];
@@ -427,7 +513,9 @@ export async function runOnboard(root: string, opts: OnboardOptions = {}): Promi
     }
     say(`Applied: ${applied.join(", ")}.`);
   } else {
-    say("Review .sekhemet/onboard/ and rerun with --apply to install the gates and the AGENTS.md / CLAUDE.md drafts.");
+    say(
+      "Review .sekhemet/onboard/ and rerun with --apply to install the gates and the AGENTS.md / CLAUDE.md drafts.",
+    );
   }
 
   const report: OnboardReport = {
@@ -458,7 +546,10 @@ export interface DriftItem {
  * them against the onboarding snapshot and the playbook (X2). A drift is
  * posted as a note from Seshat (planner) and recorded on the ledger.
  */
-export function detectConventionDrift(root: string, sinceDays = 7): { drift: DriftItem[]; files: number } {
+export function detectConventionDrift(
+  root: string,
+  sinceDays = 7,
+): { drift: DriftItem[]; files: number } {
   const snapPath = join(root, ".sekhemet", "onboard", "conventions.json");
   if (!existsSync(snapPath)) return { drift: [], files: 0 };
   const was = JSON.parse(readFileSync(snapPath, "utf8")) as Conventions;
@@ -467,10 +558,14 @@ export function detectConventionDrift(root: string, sinceDays = 7): { drift: Dri
     const headPath = join(root, ".sekhemet", "onboard", "head.txt");
     const base = existsSync(headPath) ? readFileSync(headPath, "utf8").trim() : "";
     const range = base ? [`${base}..HEAD`] : [];
-    changed = execFileSync("git", ["log", `--since=${sinceDays}.days`, "--name-only", "--format=", ...range], {
-      cwd: root,
-      encoding: "utf8",
-    })
+    changed = execFileSync(
+      "git",
+      ["log", `--since=${sinceDays}.days`, "--name-only", "--format=", ...range],
+      {
+        cwd: root,
+        encoding: "utf8",
+      },
+    )
       .split("\n")
       .map((l) => l.trim())
       .filter((f) => f && existsSync(join(root, f)));
@@ -489,13 +584,24 @@ export function detectConventionDrift(root: string, sinceDays = 7): { drift: Dri
     drift.push({ aspect: "test layout", was: was.testLayout, now: now.testLayout });
   }
   const newStyles = now.testStyle.filter((s) => !was.testStyle.includes(s));
-  if (newStyles.length) drift.push({ aspect: "test style", was: was.testStyle.join(", ") || "none", now: newStyles.join(", ") });
+  if (newStyles.length)
+    drift.push({
+      aspect: "test style",
+      was: was.testStyle.join(", ") || "none",
+      now: newStyles.join(", "),
+    });
   const documentedNow = extractConventions(
-    ["AGENTS.md", "CLAUDE.md"].map((n) => (existsSync(join(root, n)) ? readFileSync(join(root, n), "utf8") : "")).join("\n"),
+    ["AGENTS.md", "CLAUDE.md"]
+      .map((n) => (existsSync(join(root, n)) ? readFileSync(join(root, n), "utf8") : ""))
+      .join("\n"),
     250,
   );
   if (was.documented && documentedNow && documentedNow !== was.documented) {
-    drift.push({ aspect: "documented conventions", was: "the onboarding snapshot", now: "AGENTS.md/CLAUDE.md changed" });
+    drift.push({
+      aspect: "documented conventions",
+      was: "the onboarding snapshot",
+      now: "AGENTS.md/CLAUDE.md changed",
+    });
   }
   return { drift, files: files.length };
 }
@@ -514,6 +620,10 @@ export async function postConventionDrift(
   ].join("\n");
   const { PmStore } = await import("./pm/store.js");
   await new PmStore(log).appendReply({ replyTo: [], text, model: "ledger" });
-  await log.append({ actor: "planner", type: "convention/drift", payload: { drift, files, sinceDays } });
+  await log.append({
+    actor: "planner",
+    type: "convention/drift",
+    payload: { drift, files, sinceDays },
+  });
   return drift;
 }
