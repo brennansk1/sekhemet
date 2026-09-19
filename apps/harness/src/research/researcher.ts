@@ -67,6 +67,8 @@ export interface ResearchDeps {
   today?: string;
   /** Progress: one line per turn and tool call (the CLI prints it). */
   onEvent?: (line: string) => void;
+  /** Tools from the user's MCP servers (H11), namespaced mcp__<server>__<tool>. */
+  mcp?: import("../mcp_client.js").McpHub | undefined;
 }
 
 const str = { type: "string" } as const;
@@ -216,6 +218,12 @@ const src = (kind: Source["kind"], ref: string, text: string, title?: string): S
 
 export async function runResearchTool(call: ToolCall, deps: ResearchDeps): Promise<ToolResult> {
   const a = call.arguments ?? {};
+  if (deps.mcp?.handles(call.name)) {
+    const text = await deps.mcp.call(call.name, a);
+    return text.startsWith("[ERROR]")
+      ? { text }
+      : { text, source: src("web", `${call.name}(${JSON.stringify(a).slice(0, 120)})`, text) };
+  }
   const s = (k: string, max = 200) => String(a[k] ?? "").slice(0, max);
   try {
     if (call.name === "find_library") {
@@ -458,7 +466,7 @@ export async function research(
       ? apodexSystemPrompt(deps.today ?? new Date().toISOString().slice(0, 10))
       : GENERIC_SYSTEM
   }\n\n${RESEARCH_METHOD}`;
-  const tools = researchTools(Boolean(deps.web));
+  const tools = [...researchTools(Boolean(deps.web)), ...(deps.mcp?.toolDefinitions() ?? [])];
   const maxRounds = deps.maxRounds ?? (apodex ? 12 : 3);
   // Characters of evidence the window holds, leaving room for the answer and thinking.
   const budget = Math.max(12_000, ((model.contextWindow?.contextTokens ?? 16_384) - 5000) * 3);

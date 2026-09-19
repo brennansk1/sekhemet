@@ -455,7 +455,12 @@ export async function apodexLoop(
   opts: ApodexLoopOptions,
 ): Promise<LoopRun> {
   const terminal = opts.role === "solo" ? FINALIZE_ANSWER : SUBMIT_REPORT;
-  const tools = [...(deps.web ? APODEX_WEB_TOOLS : []), ...APODEX_LOCAL_TOOLS, terminal];
+  const tools = [
+    ...(deps.web ? APODEX_WEB_TOOLS : []),
+    ...APODEX_LOCAL_TOOLS,
+    ...(deps.mcp?.toolDefinitions() ?? []),
+    terminal,
+  ];
   const turns: ChatTurn[] = [{ role: "user", content: task }];
   let lastSig = "";
   let repeats = 0;

@@ -1,5 +1,6 @@
 import type { CardStore } from "@sekhemet/kernel";
 import type { LocalInferenceAdapter } from "@sekhemet/models";
+import { McpHub, loadMcpConfig } from "../mcp_client.js";
 import { crawl4aiInstalled } from "./crawl4ai.js";
 import { ResearchService, researchSources, researcherAdapter } from "./service.js";
 
@@ -54,6 +55,16 @@ export async function runResearchCommand(
   );
   if (!question) return 0;
 
+  // H11: tools from the user's MCP servers, when any are configured.
+  const mcpConfig = loadMcpConfig(repoPath);
+  const mcp =
+    Object.keys(mcpConfig).length > 0 ? await McpHub.connect(repoPath, mcpConfig) : undefined;
+  if (mcp) {
+    const n = mcp.toolDefinitions().length;
+    console.log(
+      `MCP: ${n} tool(s) from ${Object.keys(mcpConfig).length} server(s)${mcp.errors.length ? `; failed: ${mcp.errors.join("; ")}` : ""}`,
+    );
+  }
   const modelName = flag(argv, "--model") ?? process.env.SEKHEMET_RESEARCHER ?? "apodex";
   let adapter: LocalInferenceAdapter | undefined;
   const rounds = Number(flag(argv, "--rounds")) || undefined;
@@ -63,6 +74,7 @@ export async function runResearchCommand(
     ...(cardStore ? { cardStore } : {}),
     ...(rounds ? { maxRounds: rounds } : {}),
     onEvent: (line) => process.stderr.write(`${line}\n`),
+    ...(mcp ? { mcp } : {}),
     model: async () => {
       adapter ??= researcherAdapter(modelName);
       return adapter;
@@ -99,5 +111,6 @@ export async function runResearchCommand(
   } finally {
     const unload = (adapter as { unload?: () => Promise<void> } | undefined)?.unload;
     if (unload && !argv.includes("--keep")) await unload.call(adapter).catch(() => undefined);
+    mcp?.close();
   }
 }
