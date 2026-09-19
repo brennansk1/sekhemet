@@ -1,5 +1,8 @@
 import type { CardRecord, CardStatus, CreateCardInput } from "@sekhemet/kernel";
+import type { LocalInferenceAdapter } from "@sekhemet/models";
 import { ASSUMPTION_EVENTS } from "./calibration_store.js";
+import { sketchWithModel } from "./edit_sketch.js";
+import { analyzeImpact } from "./impact.js";
 import { DecisionStore, waitingReason } from "./decisions.js";
 import { type CardEstimate, EstimationModel } from "./estimation.js";
 import { validateInvest } from "./invest.js";
@@ -34,6 +37,14 @@ import type {
  */
 export interface PersistPlanOptions {
   epicId: string;
+  /**
+   * The planning model (P7). With it, cards routed `edit_sketch`
+   * (difficulty 4-7) get a model-written, scope-checked sketch; without it,
+   * the template sketch.
+   */
+  sketcher?: LocalInferenceAdapter;
+  /** Repository root: grounds sketches in real outlines and adds impact (P24). */
+  repoRoot?: string;
   estimator?: EstimationModel;
   tierBudget?: TierBudget;
   actor?: string;
@@ -53,6 +64,7 @@ export interface PersistPlanResult {
   rejected: { id: string; title: string; reason: string }[];
   parked: { id: string; reason: string }[];
   serialized: { id: string; after: string; files: string[] }[];
+  sketches: { id: string; source: "model" | "template"; rejected?: string }[];
   decisionId?: string;
   invest: InvestValidationReport;
   version: number;
@@ -126,6 +138,7 @@ export async function persistPlan(
     rejected: [],
     parked: [],
     serialized: [],
+    sketches: [],
     invest,
     version: 1,
     ...(decisionId ? { decisionId } : {}),
@@ -190,7 +203,30 @@ export async function persistPlan(
     });
 
     const notes: string[] = [];
-    if (story.editSketch) notes.push(formatEditSketch(story.editSketch));
+    const impact = options.repoRoot
+      ? await analyzeImpact(options.repoRoot, story.card.scopeFiles).catch(() => undefined)
+      : undefined;
+    if (story.routing === "edit_sketch" && options.sketcher) {
+      const r = await sketchWithModel(options.sketcher, story, {
+        ...(options.repoRoot ? { repoRoot: options.repoRoot } : {}),
+        ...(impact ? { blastRadius: impact.blastRadius } : {}),
+      });
+      result.sketches.push({ id, source: r.source, ...(r.rejected ? { rejected: r.rejected } : {}) });
+      notes.push(formatEditSketch(r.sketch));
+    } else if (story.editSketch) {
+      notes.push(
+        formatEditSketch(
+          impact
+            ? { ...story.editSketch, blastRadius: [...new Set([...story.editSketch.blastRadius, ...impact.blastRadius])].sort() }
+            : story.editSketch,
+        ),
+      );
+    }
+    if (impact && impact.blastRadius.length > 0) {
+      notes.push(
+        `Impact: a change here can break ${impact.blastRadius.join(", ")}${impact.tests.length ? `; run ${impact.tests.join(", ")}` : ""}.`,
+      );
+    }
     if (story.acceptanceTests.length > 0) {
       notes.push(
         `Acceptance tests to write first (they must fail before the change): ${story.acceptanceTests
