@@ -251,6 +251,8 @@ export function modelRegistry(): ModelRegistry {
 // ------------------------------------------------------------------ commands
 
 export type Wave2Command =
+  | "onboard"
+  | "drift"
   | "goal"
   | "decide"
   | "m0"
@@ -260,6 +262,8 @@ export type Wave2Command =
   | "release"
   | "ci";
 export const WAVE2_COMMANDS: readonly Wave2Command[] = [
+  "onboard",
+  "drift",
   "goal",
   "decide",
   "m0",
@@ -295,6 +299,34 @@ export async function runWave2Command(
   };
   const ledger = ledgerOf(k);
   switch (command) {
+    case "onboard": {
+      // `sekhemet onboard [--apply] [--models a,b]` (X1): the seven steps.
+      const { runOnboard } = await import("./onboard.js");
+      const names = (flag(args, "--models") ?? "").split(",").filter(Boolean);
+      await runOnboard(k.repoPath, {
+        apply: args.includes("--apply"),
+        store: { log: k.log, cardStore: k.cardStore },
+        say: print,
+        ...(names.length && io.model
+          ? {
+              models: names.map((n) => (io.model as (n: string) => LocalInferenceAdapter)(n)),
+              registry: modelRegistry(),
+              release: async (a: LocalInferenceAdapter) => {
+                await (a as { unload?: () => Promise<void> }).unload?.();
+              },
+            }
+          : {}),
+      });
+      return 0;
+    }
+    case "drift": {
+      // `sekhemet drift [--days 7]` (X2): conventions of recent commits vs onboarding.
+      const { postConventionDrift } = await import("./onboard.js");
+      const drift = await postConventionDrift(k.repoPath, k.log, Number(flag(args, "--days") ?? 7));
+      if (drift.length === 0) return done("No convention drift.", 0);
+      for (const d of drift) print(`drift: ${d.aspect}: was ${d.was}, now ${d.now}`);
+      return 0;
+    }
     case "goal": {
       // `sekhemet goal "<statement>"` | `goal approve <id>` | `goal status`
       const [sub, ...rest] = args;

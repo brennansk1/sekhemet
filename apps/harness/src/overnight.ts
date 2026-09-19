@@ -5,6 +5,7 @@ import type { CardStore, EventLog } from "@sekhemet/kernel";
 import type { QueueReport } from "./execute.js";
 import { type GovernanceLimits, mayRun, recordUsage } from "./governance.js";
 import { sendPush } from "./notify.js";
+import { postConventionDrift } from "./onboard.js";
 import { type Window, mayUseMachine, parseHours } from "./scheduler.js";
 import { overnightPlanLine } from "./wave2.js";
 
@@ -88,6 +89,8 @@ export async function runOvernight(opts: OvernightOptions): Promise<OvernightSum
   const state = { consecutiveFailures: 0 };
   const summary: OvernightSummary = { rounds: 0, cardsRun: 0, passed: 0, stoppedBecause: "" };
   let idleWaits = 0;
+  // X2: the nightly convention drift check, posted to Seshat's thread.
+  await postConventionDrift(opts.repoPath, opts.log).catch(() => []);
 
   while (summary.rounds < (opts.maxRounds ?? 100)) {
     if (stopAt && now() >= stopAt) {
