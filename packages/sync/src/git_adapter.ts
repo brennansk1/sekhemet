@@ -9,7 +9,93 @@ import {
   symlinkSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
-import type { CheckpointCommitParams, DiffStats, GitSyncAdapter, WorktreeRecord } from "./types.js";
+import type {
+  CheckpointCommitParams,
+  DiffStats,
+  GitSyncAdapter,
+  RebaseResult,
+  StructuralDiff,
+  WorktreeRecord,
+} from "./types.js";
+
+/** Default co-author for a model's work (Y2). */
+export function modelCoAuthor(agentModel: string): string {
+  const slug = agentModel.toLowerCase().replace(/[^a-z0-9.-]+/g, "-").replace(/^-+|-+$/g, "") || "model";
+  return `${agentModel} <${slug}@models.sekhemet.local>`;
+}
+
+function hasBinary(name: string): boolean {
+  try {
+    execFileSync(name, ["--version"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export type IntentGroup = "tests" | "source" | "config" | "docs";
+
+const TEST_RE = /(?:^|\/)(?:tests?|__tests__|spec)\/|\.(?:spec|test)\.[\w]+$/;
+const DOC_RE = /\.(?:md|mdx|txt|rst)$|(?:^|\/)docs\//;
+const CONFIG_RE =
+  /(?:^|\/)(?:package\.json|pnpm-lock\.yaml|tsconfig[^/]*\.json|biome\.json|\.[\w-]+rc(?:\.\w+)?|[\w-]+\.(?:toml|ya?ml|ini|cfg))$/;
+
+/** Group changed files by intent: tests, source, config, docs (Y4, Y8). */
+export function groupByIntent(files: readonly string[]): Record<IntentGroup, string[]> {
+  const out: Record<IntentGroup, string[]> = { source: [], tests: [], config: [], docs: [] };
+  for (const f of [...files].sort()) {
+    if (TEST_RE.test(f)) out.tests.push(f);
+    else if (DOC_RE.test(f)) out.docs.push(f);
+    else if (CONFIG_RE.test(f)) out.config.push(f);
+    else out.source.push(f);
+  }
+  return out;
+}
+
+/** The scope of a change: the package or app it lives in, when there is one. */
+export function scopeOf(files: readonly string[]): string | undefined {
+  const scopes = new Set(
+    files.map((f) => {
+      const parts = f.split("/");
+      if ((parts[0] === "packages" || parts[0] === "apps") && parts[1]) return parts[1];
+      return parts.length > 1 ? (parts[0] as string) : "";
+    }),
+  );
+  scopes.delete("");
+  return scopes.size === 1 ? [...scopes][0] : undefined;
+}
+
+/**
+ * The squashed commit's Conventional Commits message (Y4). A message in
+ * the harness's placeholder form (`type(<card-id>): title`) is rewritten:
+ * the type comes from what changed and what the title says, the scope from
+ * the package, and the body groups the files by intent. Any other message
+ * is the caller's and is kept.
+ */
+export function conventionalSquashMessage(
+  cardId: string,
+  commitMsg: string,
+  files: readonly string[],
+  title?: string,
+): string {
+  const m = /^(\w+)\(([^)]*)\)!?:\s*(.*)$/.exec(commitMsg.split("\n")[0] ?? "");
+  if (!m || m[2] !== cardId) return commitMsg;
+  const subject = (title ?? m[3] ?? "").trim();
+  const g = groupByIntent(files);
+  let type = "feat";
+  if (files.length > 0 && g.source.length === 0) {
+    type = g.tests.length > 0 && g.docs.length === 0 ? "test" : g.docs.length > 0 && g.tests.length === 0 && g.config.length === 0 ? "docs" : "chore";
+  } else if (/\b(fix|bug|repair|regression|broken|crash)/i.test(subject)) type = "fix";
+  else if (/\b(refactor|rename|extract|move|clean ?up)\b/i.test(subject)) type = "refactor";
+  const scope = scopeOf(files);
+  const header = `${type}${scope ? `(${scope})` : ""}: ${subject.charAt(0).toLowerCase()}${subject.slice(1)}`;
+  const labels: Record<IntentGroup, string> = { source: "Source", tests: "Tests", config: "Config", docs: "Docs" };
+  const body = (Object.keys(labels) as IntentGroup[])
+    .filter((k) => g[k].length > 0)
+    .map((k) => `${labels[k]}: ${g[k].join(", ")}`)
+    .join("\n");
+  return body ? `${header}\n\n${body}` : header;
+}
 
 /** Convert a card title into a branch-safe slug. */
 function slugify(input: string): string {
@@ -44,13 +130,18 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
    * names originate from model output, and passing them through a shell string
    * makes backticks or $(...) in generated text arbitrary code execution.
    */
-  private runGit(args: string[], cwd = this.repoRoot): string {
-    return execFileSync("git", args, {
-      cwd,
-      encoding: "utf8",
-      stdio: ["pipe", "pipe", "pipe"],
-      maxBuffer: 32 * 1024 * 1024,
-    }).trim();
+  private runGit(args: string[], cwd = this.repoRoot, tolerant = false): string {
+    try {
+      return execFileSync("git", args, {
+        cwd,
+        encoding: "utf8",
+        stdio: ["pipe", "pipe", "pipe"],
+        maxBuffer: 32 * 1024 * 1024,
+      }).trim();
+    } catch (err) {
+      if (tolerant) return "";
+      throw err;
+    }
   }
 
   /** Branch name for a card: `sekhemet/<project>/<card-id>-<slug>`. */
@@ -60,11 +151,28 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
     return `sekhemet/${this.projectName}/${suffix}`;
   }
 
+  /**
+   * The branch a card's worktree starts from (Y1, Y7): the parent card's
+   * branch when it exists (a stacked card builds on its parent's unmerged
+   * work), else `fallback`.
+   */
+  public resolveBaseBranch(parentCardId: string | null | undefined, fallback = "main"): string {
+    if (!parentCardId) return fallback;
+    const prefix = `refs/heads/sekhemet/${this.projectName}/${parentCardId}`;
+    const refs = this.runGit(["for-each-ref", "--format=%(refname:short)", `${prefix}`, `${prefix}-*`])
+      .split("\n")
+      .map((r) => r.trim())
+      .filter(Boolean);
+    return refs[0] ?? fallback;
+  }
+
   public async createWorktree(
     cardId: string,
     baseBranch = "main",
     title?: string,
+    parentCardId?: string | null,
   ): Promise<string> {
+    baseBranch = this.resolveBaseBranch(parentCardId, baseBranch);
     const worktreePath = this.getWorktreePath(cardId);
     const parentDir = join(this.repoRoot, ".sekhemet", "worktrees");
     if (!existsSync(parentDir)) mkdirSync(parentDir, { recursive: true });
@@ -102,6 +210,13 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
 
     this.ensureHarnessExcludes();
     this.runGit(["worktree", "add", "-B", branchName, worktreePath, baseBranch]);
+    // Remember what the branch was cut from, so it can be restacked (Y7).
+    this.runGit(["config", `branch.${branchName}.sekhemetBase`, baseBranch]);
+    this.runGit([
+      "config",
+      `branch.${branchName}.sekhemetBaseSha`,
+      this.runGit(["rev-parse", baseBranch]),
+    ]);
     this.linkDependencies(worktreePath);
     return worktreePath;
   }
@@ -237,6 +352,17 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
     }
 
     this.runGit(["add", "-A"], worktreePath);
+    // Y3: a checkpoint with no change since the last checkpoint is free. It
+    // re-points the refs at the existing commit instead of stacking empty
+    // commits, so checkpointing on every passing check costs nothing.
+    const nothingStaged = this.runGit(["diff", "--cached", "--name-only"], worktreePath) === "";
+    const lastMessage = this.runGit(["log", "-1", "--format=%B"], worktreePath);
+    if (nothingStaged && lastMessage.includes(`Card: ${params.cardId}`)) {
+      const head = this.runGit(["rev-parse", "HEAD"], worktreePath);
+      this.runGit(["update-ref", `refs/sekhemet/steps/${params.cardId}/step_${params.step}`, head]);
+      this.runGit(["update-ref", `refs/sekhemet/checkpoints/${params.cardId}`, head]);
+      return head;
+    }
 
     const stepLabel = params.totalSteps ? `${params.step}/${params.totalSteps}` : `${params.step}`;
     const header = params.message ?? `checkpoint: step ${params.step} ${params.gateStatus}`;
@@ -250,7 +376,9 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
       `GateStatus: ${params.gateStatus}`,
     ];
 
-    for (const author of params.coAuthors ?? []) {
+    // Y2: every harness commit is attributed. Without explicit co-authors the
+    // model that did the work is the co-author.
+    for (const author of params.coAuthors ?? [modelCoAuthor(params.agentModel)]) {
       trailers.push(`Co-authored-by: ${author}`);
     }
 
@@ -276,16 +404,167 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
     trailers: Record<string, string> = {},
     title?: string,
   ): Promise<string> {
-    this.runGit(["checkout", targetBranch]);
-    this.runGit(["merge", "--squash", this.branchNameFor(cardId, title)]);
+    const branch = this.branchNameFor(cardId, title);
+    const files = this.runGit(["diff", "--name-only", `${targetBranch}...${branch}`])
+      .split("\n")
+      .filter(Boolean);
+    // Attribution from the branch's own checkpoints (Y2): every model that
+    // contributed is a co-author of the squashed commit.
+    const coAuthors = new Set<string>();
+    for (const line of this.runGit(["log", "--format=%B", `${targetBranch}..${branch}`]).split("\n")) {
+      const m = /^Co-authored-by:\s*(.+)$/.exec(line.trim());
+      if (m?.[1]) coAuthors.add(m[1].trim());
+    }
 
+    this.runGit(["checkout", targetBranch]);
+    this.runGit(["merge", "--squash", branch]);
+
+    const message = conventionalSquashMessage(cardId, commitMsg, files, title);
     const trailerLines = [`Card: ${cardId}`];
     for (const [key, value] of Object.entries(trailers)) {
       trailerLines.push(`${key}: ${value}`);
+      if (key.toLowerCase() === "co-authored-by") coAuthors.delete(value);
     }
+    for (const a of [...coAuthors].sort()) trailerLines.push(`Co-authored-by: ${a}`);
 
-    this.runGit(["commit", "-m", `${commitMsg}\n\n${trailerLines.join("\n")}`]);
+    this.runGit(["commit", "-m", `${message}\n\n${trailerLines.join("\n")}`]);
     return this.runGit(["rev-parse", "HEAD"]);
+  }
+
+  /**
+   * Rebase a card onto the integration branch before Verify (Y6). Uncommitted
+   * work is checkpointed first. A conflict aborts the rebase cleanly and is
+   * returned as a typed failure naming the files and the conflict hunks.
+   */
+  public async rebaseOntoIntegration(
+    cardId: string,
+    targetBranch = "main",
+  ): Promise<RebaseResult> {
+    const cwd = this.getWorktreePath(cardId);
+    if (!existsSync(cwd)) throw new Error(`Worktree for card ${cardId} not found at ${cwd}`);
+    this.runGit(["add", "-A"], cwd);
+    if (this.runGit(["diff", "--cached", "--name-only"], cwd) !== "") {
+      this.runGit(["commit", "-m", `checkpoint: before rebase onto ${targetBranch}\n\nCard: ${cardId}`], cwd);
+    }
+    const before = this.runGit(["rev-parse", "HEAD"], cwd);
+    const onto = this.runGit(["rev-parse", targetBranch], cwd);
+    if (this.runGit(["merge-base", "HEAD", targetBranch], cwd) === onto) {
+      return { ok: true, rebased: false, before, after: before };
+    }
+    try {
+      this.runGit(["rebase", targetBranch], cwd);
+    } catch {
+      const files = this.runGit(["diff", "--name-only", "--diff-filter=U"], cwd)
+        .split("\n")
+        .filter(Boolean);
+      const hunks: string[] = [];
+      for (const f of files.slice(0, 5)) {
+        try {
+          const text = readFileSync(join(cwd, f), "utf8");
+          const m = /<<<<<<<[\s\S]*?>>>>>>>[^\n]*/.exec(text);
+          if (m) hunks.push(`${f}:\n${m[0].slice(0, 600)}`);
+        } catch {
+          // Deleted on one side: the name is enough.
+        }
+      }
+      try {
+        this.runGit(["rebase", "--abort"], cwd);
+      } catch {
+        // Already aborted.
+      }
+      return {
+        ok: false,
+        before,
+        failure: {
+          kind: "rebase_conflict",
+          onto: targetBranch,
+          files,
+          excerpt: hunks.join("\n\n"),
+          message: `Rebasing ${cardId} onto ${targetBranch} conflicts in ${files.join(", ") || "unknown files"}.`,
+        },
+      };
+    }
+    return { ok: true, rebased: true, before, after: this.runGit(["rev-parse", "HEAD"], cwd) };
+  }
+
+  /**
+   * Restack the cards built on a parent after the parent was accepted (Y7):
+   * each child branch is rebased from the parent's old tip onto `target`,
+   * so its diff stays its own. Children with conflicts are reported, not
+   * forced.
+   */
+  public async restackChildren(
+    parentCardId: string,
+    target = "main",
+  ): Promise<{ cardBranch: string; ok: boolean; files?: string[] }[]> {
+    const parentBranches = this.runGit([
+      "for-each-ref",
+      "--format=%(refname:short)",
+      `refs/heads/sekhemet/${this.projectName}/${parentCardId}`,
+      `refs/heads/sekhemet/${this.projectName}/${parentCardId}-*`,
+    ])
+      .split("\n")
+      .filter(Boolean);
+    const results: { cardBranch: string; ok: boolean; files?: string[] }[] = [];
+    for (const line of this.runGit(["config", "--get-regexp", "^branch\\..*\\.sekhemetbase$"], this.repoRoot, true).split("\n")) {
+      const m = /^branch\.(.+)\.sekhemetbase\s+(.+)$/i.exec(line.trim());
+      if (!m?.[1] || !m[2] || !parentBranches.includes(m[2])) continue;
+      const child = m[1];
+      const oldBase = this.runGit(["config", `branch.${child}.sekhemetBaseSha`]);
+      const worktree = (await this.listWorktrees()).find((w) => w.branch === `refs/heads/${child}`)?.path;
+      const cwd = worktree ?? this.repoRoot;
+      try {
+        if (worktree) this.runGit(["rebase", "--onto", target, oldBase], cwd);
+        else this.runGit(["rebase", "--onto", target, oldBase, child], cwd);
+        this.runGit(["config", `branch.${child}.sekhemetBase`, target]);
+        this.runGit(["config", `branch.${child}.sekhemetBaseSha`, this.runGit(["rev-parse", target])]);
+        results.push({ cardBranch: child, ok: true });
+      } catch {
+        const files = this.runGit(["diff", "--name-only", "--diff-filter=U"], cwd, true)
+          .split("\n")
+          .filter(Boolean);
+        this.runGit(["rebase", "--abort"], cwd, true);
+        results.push({ cardBranch: child, ok: false, files });
+      }
+      if (!worktree) this.runGit(["checkout", target], this.repoRoot, true);
+    }
+    return results;
+  }
+
+  /**
+   * The review diff (Y8): difftastic's syntax-aware diff when `difft` is on
+   * PATH, else git's line diff, with the changed files grouped by intent.
+   */
+  public async structuralDiff(cardId: string, baseBranch = "main"): Promise<StructuralDiff> {
+    const worktreePath = this.getWorktreePath(cardId);
+    const cwd = existsSync(worktreePath) ? worktreePath : this.repoRoot;
+    this.runGit(["add", "-A"], cwd);
+    const files = this.runGit(["diff", "--staged", "--name-only", baseBranch], cwd, true)
+      .split("\n")
+      .filter(Boolean);
+    const groups = groupByIntent(files);
+    let engine: StructuralDiff["engine"] = "git";
+    let text: string;
+    if (hasBinary("difft")) {
+      try {
+        text = execFileSync(
+          "git",
+          ["-c", "diff.external=difft", "diff", "--staged", "--ext-diff", baseBranch],
+          {
+            cwd,
+            encoding: "utf8",
+            env: { ...process.env, DFT_COLOR: "never", DFT_DISPLAY: "inline" },
+            maxBuffer: 32 * 1024 * 1024,
+          },
+        );
+        engine = "difftastic";
+      } catch {
+        text = this.runGit(["diff", "--staged", baseBranch], cwd, true);
+      }
+    } else {
+      text = this.runGit(["diff", "--staged", "--ignore-all-space", baseBranch], cwd, true);
+    }
+    return { engine, groups, text };
   }
 
   public async removeWorktree(cardId: string): Promise<void> {

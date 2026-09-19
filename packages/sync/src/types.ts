@@ -19,7 +19,12 @@ export interface WorktreeRecord {
 }
 
 export interface GitSyncAdapter {
-  createWorktree(cardId: string, baseBranch?: string, title?: string): Promise<string>;
+  createWorktree(
+    cardId: string,
+    baseBranch?: string,
+    title?: string,
+    parentCardId?: string | null,
+  ): Promise<string>;
   commitCheckpoint(params: CheckpointCommitParams): Promise<string>;
   squashAndMerge(
     cardId: string,
@@ -50,4 +55,26 @@ export interface DiffStats {
   linesRemoved: number;
   /** Per-file deltas, so callers can exclude harness-staged files from bounds. */
   perFile?: { file: string; added: number; removed: number }[];
+}
+
+/** A rebase onto the integration branch (Y6). */
+export type RebaseResult =
+  | { ok: true; rebased: boolean; before: string; after: string }
+  | {
+      ok: false;
+      before: string;
+      failure: {
+        kind: "rebase_conflict";
+        onto: string;
+        files: string[];
+        excerpt: string;
+        message: string;
+      };
+    };
+
+/** The review diff (Y8). */
+export interface StructuralDiff {
+  engine: "difftastic" | "git";
+  groups: Record<"tests" | "source" | "config" | "docs", string[]>;
+  text: string;
 }
