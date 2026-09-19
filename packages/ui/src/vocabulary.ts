@@ -120,6 +120,8 @@ const ACTOR_LABELS: Record<string, string> = {
   worker: "Worker",
   planner: "Planner",
   manager: "Planner",
+  researcher: "Researcher",
+  reviewer: "Reviewer",
   human: "You",
   harness: "Sekhemet",
   system: "Sekhemet",
@@ -833,6 +835,68 @@ export function eventSentence(
         verb: "wrote a repair plan for",
         ...(typeof p.plan === "string" ? { quote: p.plan } : {}),
         tone: "neutral",
+      };
+    case "pm/message": {
+      const text = typeof p.text === "string" ? p.text : "";
+      return {
+        ...base,
+        actor: "You",
+        verb: text.startsWith("/") ? "ran" : "asked Seshat",
+        ...(text ? { quote: text.slice(0, 160) } : {}),
+        tone: "neutral",
+      };
+    }
+    case "pm/reply": {
+      const text = typeof p.text === "string" ? p.text : "";
+      const fromLedger = p.model === "ledger" || p.model === "command";
+      return {
+        ...base,
+        actor: "Seshat",
+        verb: fromLedger ? "answered from the ledger" : "replied",
+        ...(text ? { quote: (text.split("\n").find((l) => l.trim()) ?? text).slice(0, 160) } : {}),
+        tone: p.error ? "fail" : "neutral",
+      };
+    }
+    case "pm/notify":
+      return {
+        ...base,
+        actor: "Sekhemet",
+        verb: p.ok === false ? "could not send" : "sent",
+        rest: `a ${String(p.kind ?? "").replace(/_/g, " ")} notice via ${String(p.channel ?? "")}`,
+        tone: p.ok === false ? "fail" : "neutral",
+      };
+    case "research/asked":
+      return {
+        ...base,
+        actor: "Researcher",
+        verb: p.fromMemory ? "answered from memory" : p.deep ? "researched in depth" : "researched",
+        ...(typeof p.question === "string" ? { quote: p.question.slice(0, 160) } : {}),
+        rest: `· ${p.grounded ? `grounded, confidence ${Number(p.confidence ?? 0).toFixed(2)}` : "not grounded"} · ${(p.sources as unknown[] | undefined)?.length ?? 0} source(s)`,
+        tone: p.grounded ? "pass" : "fail",
+      };
+    case "card/repro":
+      return {
+        ...base,
+        actor: "Sekhemet",
+        verb: "recorded how it ran",
+        rest: `(${String((p.model as { id?: string } | undefined)?.id ?? "model")}${(p.model as { quant?: string } | undefined)?.quant ? ` ${(p.model as { quant?: string }).quant}` : ""})`,
+        tone: "neutral",
+      };
+    case "compute/usage":
+      return {
+        ...base,
+        actor: "Sekhemet",
+        verb: "used",
+        rest: `${Number(p.kwh ?? 0).toFixed(3)} kWh over ${Math.round(Number(p.durationMs ?? 0) / 60000)} min`,
+        tone: "neutral",
+      };
+    case "compute/breaker_tripped":
+      return {
+        ...base,
+        actor: "Sekhemet",
+        verb: `stopped unattended work (${String(p.breaker ?? "breaker")})`,
+        ...(typeof p.reason === "string" ? { quote: p.reason } : {}),
+        tone: "fail",
       };
     case "checkpoint/recorded":
       return {

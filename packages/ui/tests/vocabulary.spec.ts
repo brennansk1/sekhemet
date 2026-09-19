@@ -6,6 +6,7 @@ import {
   BOARD_COLUMN_ORDER,
   EMPTY_SHA256,
   KIND_LABELS,
+  actorLabel,
   callPhrase,
   checkFixHint,
   columnLabel,
@@ -533,5 +534,63 @@ describe("Phase 3 and 4 language", () => {
     );
     expect(checkFixHint("Local inference socket", "fail")).toMatch(/Start Ollama/);
     expect(checkFixHint("Skills registry", "pass")).toBeUndefined();
+  });
+});
+
+describe("ledger sentences for Seshat, research, reproducibility and compute", () => {
+  const ev = (type: string, actor: string, payload: Record<string, unknown>) => ({
+    type,
+    actor,
+    payload,
+  });
+  it("reads Seshat's chat as what was said, not ids", () => {
+    const asked = eventSentence(
+      ev("pm/message", "human", { text: "What is blocking the ledger?" }),
+    );
+    expect(asked).toMatchObject({
+      actor: "You",
+      verb: "asked Seshat",
+      quote: "What is blocking the ledger?",
+    });
+    expect(eventSentence(ev("pm/message", "human", { text: "/status" })).verb).toBe("ran");
+    const reply = eventSentence(
+      ev("pm/reply", "planner", {
+        text: "\nThe hasher is next.\nThen the verifier.",
+        model: "ledger",
+      }),
+    );
+    expect(reply).toMatchObject({
+      actor: "Seshat",
+      verb: "answered from the ledger",
+      quote: "The hasher is next.",
+    });
+  });
+  it("says what the Researcher, the reproducibility record and the breakers did", () => {
+    expect(
+      eventSentence(
+        ev("research/asked", "researcher", {
+          question: "WAL?",
+          grounded: true,
+          confidence: 0.6,
+          sources: ["a", "b"],
+        }),
+      ),
+    ).toMatchObject({
+      actor: "Researcher",
+      verb: "researched",
+      rest: "· grounded, confidence 0.60 · 2 source(s)",
+      tone: "pass",
+    });
+    expect(
+      eventSentence(
+        ev("card/repro", "harness", { model: { id: "apodex-1.1-mini", quant: "IQ3_M" } }),
+      ).rest,
+    ).toBe("(apodex-1.1-mini IQ3_M)");
+    expect(
+      eventSentence(
+        ev("compute/breaker_tripped", "harness", { breaker: "energy", reason: "budget spent" }),
+      ),
+    ).toMatchObject({ tone: "fail", quote: "budget spent" });
+    expect(actorLabel("researcher")).toBe("Researcher");
   });
 });

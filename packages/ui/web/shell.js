@@ -171,7 +171,7 @@ function renderSide() {
       : `<div class="row">${icon("memory", 14, "ic s14")}<span class="lbl">Memory: checking…</span></div>`;
   const working = s.cards.some((c) => c.status === "in_progress");
   // The Worker from Sekhemet's roster; the served-model probe is the fallback.
-  const worker = (s.machine?.roster ?? []).find((r) => r.role === "worker");
+  const worker = (s.roster ?? s.machine?.roster ?? []).find((r) => r.role === "worker");
   const modelName = worker?.model
     ? `Worker ${worker.model}`
     : m.model || (m.inferenceUp === false ? "No model server" : "Model: checking…");

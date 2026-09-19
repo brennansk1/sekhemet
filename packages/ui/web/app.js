@@ -107,6 +107,16 @@ async function refreshDoctor() {
   }
 }
 
+/** The model roster (who is the Worker, what is loaded), for the sidebar. */
+async function refreshRoster() {
+  try {
+    const res = await getJSON("/api/models");
+    if (res.ok) store.set({ roster: res.data.roles ?? [] });
+  } catch {
+    // The sidebar falls back to the served-model probe.
+  }
+}
+
 async function hydrate() {
   const [board, events, meta, gates, queue, playbook] = await Promise.all([
     getJSON("/api/board"),
@@ -235,6 +245,8 @@ async function boot() {
     refreshBoard();
   });
   route();
+  refreshRoster();
+  setInterval(refreshRoster, 30_000);
   initPm();
   initPmPanel();
   initBulk();
