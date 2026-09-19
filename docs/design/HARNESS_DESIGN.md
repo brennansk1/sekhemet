@@ -1385,39 +1385,182 @@ A release card aggregates accepted cards since the last git tag, invokes `git-cl
 
 The harness answers "how does this library work" from local sources first and the web second. Web access is an opt-in capability, off in air-gapped mode, and everything fetched is treated as untrusted data.
 
+Research runs in two modes, because two different jobs are hiding under one word:
+
+| | **Research Desk** | **Deep Research** |
+| --- | --- | --- |
+| Serves | The executor and the planner, mid-build | A research card, scheduled work |
+| Trigger | A tool call, or a question posted to the inbox | A card labelled `research` |
+| Latency target | Milliseconds to three minutes | Minutes to overnight |
+| Model | Shares the executor's server; most answers use no model at all | A staged pipeline, one model resident at a time |
+| Output | A short cited answer, or a docs excerpt | A long structured report with verified claims |
+
+The Desk exists so that an agent that is building something can find out how a library actually behaves without stalling. Deep Research exists so that a question worth an hour gets an hour, and comes back with something a person would sign.
+
+### The hardware envelope
+
+The reference machine is a 24 GB unified-memory Apple M4. With the harness, Node, and an executor model in play the practical ceiling for model weights is about 16 GB. **Every decision in this section follows from that.** Quality cannot come from loading a larger model; it comes from more passes, better retrieval, and executable verification, all of which are cheap locally because tokens cost nothing here.
+
+Three model roles, which **never co-reside** except the embedder:
+
+*   **Gatherer.** Runs the tool loop. A tool-use fine-tune is worth more here than raw parameter count, because this stage is search, read, extract, repeat.
+*   **Synthesist.** Reads the assembled corpus and writes, critiques, and revises the report. A dense mid-size model, loaded only after the gatherer is unloaded.
+*   **Embedder.** A 0.6B embedding model (Qwen3-Embedding, Apache-2.0) and optionally a 0.6B reranker. Small enough to stay resident permanently.
+
+The Desk does not load a model of its own. It runs on a second slot of the server the executor is already using: same weights, a different system prompt, no additional memory. **[DESIGN]** When the executor is not running, the Desk may hold the gatherer instead; the swap is governed by the model-swap policy, not by the research code.
+
 ### Knowledge tiers, in lookup order
 
-1. **The repository itself.** Type definitions, READMEs, and docs inside installed dependencies, at the exact installed version. This is the most accurate source for API questions and is always available.
-2. **Local documentation mirrors.** Docsets and offline documentation bundles the user has installed, plus `llms.txt` files cached per dependency version.
-3. **The research cache.** Pages previously fetched for this project, stored as extracted markdown with URL, fetch date, and content hash.
-4. **Live web.** Self-hosted metasearch, then fetch and extraction. Only when tiers 1 to 3 miss and the project allows network.
+1.  **The repository itself.** Type definitions, READMEs, and docs inside installed dependencies, at the exact installed version, plus the dependency's own source. This is the most accurate source for API questions, is always available, and needs no model.
+2.  **Local documentation mirrors.** Docsets and offline documentation bundles the user has installed, plus `llms.txt` and `llms-full.txt` cached per dependency version. Roughly a tenth of major sites publish these and most developer-facing documentation platforms now generate them automatically, so this tier is worth trying before search.
+3.  **The research cache and corpus index.** Pages previously fetched for this project, stored as extracted markdown with URL, fetch date, and content hash, and indexed for hybrid retrieval.
+4.  **Live web.** Self-hosted metasearch, then fetch and extraction. Only when tiers 1 to 3 miss and the project allows network.
+
+### The Research Desk
+
+The Desk answers three grades of question, and picks the grade itself from the question's shape.
+
+*   **Lookup** — seconds, no model. The answer is in the installed dependency, the registry, the repository, or the docs index. A symbol's signature, a package's licence, what changed between two versions, which file defines a thing.
+*   **Question** — one to three minutes, a short tool loop on the shared slot. "Does this library support X, and how do people do it."
+*   **Deep** — the question is promoted to a research card and the asker is told so. The Desk does not block a build for an hour.
+
+Two mechanisms keep the Desk out of the critical path:
+
+*   **The research inbox.** An agent posts a question and keeps working. The answer arrives as an event and is injected at the next step boundary. Nothing blocks.
+*   **Speculative research.** When the planner writes a card it also writes the card's open questions. The Desk answers them while earlier cards are still executing, so the research is already in the dossier when the card starts. This is the real fix for latency: ask earlier rather than answer faster.
+
+At project open, the Desk walks the dependency manifest and prefetches each package's `llms.txt` or documentation sitemap into the corpus index, pinned to the installed version. After that, documentation questions are local semantic lookups.
+
+### Repository and code intelligence
+
+Reading the code is usually a better answer than reading about it, and it is free. The Desk exposes repository reading as first-class, deterministic tools built on `git` and the `gh` CLI rather than on scraping:
+
+*   the installed dependency's own source, in the package directory, at the version actually resolved;
+*   a repository's tree, and any file at any ref or tag;
+*   code search within a repository and across GitHub;
+*   releases and `CHANGELOG` entries **diffed between the version installed and the version proposed**, which is the question upgrade work actually asks;
+*   issues and pull requests by query, including closed ones, which is where behaviour that is not in the docs is usually explained;
+*   `blame` and history for a specific line range;
+*   a shallow clone into the cache when a question needs more than a few files, after which reads are local.
+
+Results are cached by commit SHA, which makes them immutable and permanently cacheable.
+
+**[DESIGN]** Two hosted MCP services are supported as optional sources, off by default because they send queries off the machine and do not exist in air-gapped mode: a version-pinned documentation service (Context7) for tier 2, and a repository question-answering service (DeepWiki) for public repositories. They are wired through the existing MCP client as ordinary tools, with their answers marked untrusted and tier-weighted below primary sources. Neither may be the only source for a verified claim.
+
+### Deep Research
+
+```mermaid
+graph TD
+  Card[Research card] --> Brief[Brief: restate the question,<br/>success criteria, out of scope]
+  Brief --> Plan[Plan: sub-questions,<br/>budget, sources to try]
+  Plan --> Review{Plan reviewed<br/>on the board}
+  Review -->|edited or accepted| Gather
+  Gather[Gather: supervisor delegates<br/>sub-questions to sub-agents] --> Corpus[(Corpus index)]
+  Corpus --> Gaps{Coverage closed?}
+  Gaps -->|no, budget remains| Gather
+  Gaps -->|yes| Verify[Verify: execute claims,<br/>check citations, triangulate]
+  Verify --> Synth[Synthesise: retrieve across<br/>the corpus, write the report]
+  Synth --> Critique[Critique: falsify each claim,<br/>revise or downgrade]
+  Critique --> Report[Report + evidence bundle<br/>to Review]
+```
+
+**Brief.** The card's question is restated as a research brief: what is being asked, what would count as an answer, what is out of scope. Ambiguity is resolved here or raised as a question to the user, not silently guessed at during gathering.
+
+**Plan.** The brief is decomposed into independent sub-questions with a budget each. The plan is posted to the board and the card parks in Review. A person can edit the sub-questions before an hour of machine time is spent on the wrong ones. **[DESIGN]** A card may carry `research.autoplan = true` to skip the review gate for routine questions; overnight runs set it by default.
+
+**Gather.** A supervisor delegates each sub-question to a sub-agent with its **own isolated context window**, so one sub-question's reading cannot crowd out another's. Sub-agents return findings with citations, never raw pages. This is the supervisor-and-sub-agent shape that the open deep-research implementations converged on, adopted as an architecture rather than as a dependency. Everything fetched lands in the corpus index, which is what later stages read.
+
+**Coverage and stopping.** The loop is driven by coverage of the brief's sub-questions, not by a turn count. A sub-question is closed when it has independent sources of sufficient tier; open sub-questions are re-dispatched with different queries. Crawling within a documentation site uses the crawler's adaptive strategy, which stops when the information gathered answers the query rather than at a fixed depth.
+
+**Verify, synthesise, critique.** Described below; these are the stages that make the output worth more than a search summary.
+
+**Effort.** `quick`, `standard`, and `exhaustive` set the budget: number of sub-questions, pages per sub-question, verification depth, and whether the critique pass runs more than once. Exhaustive is an overnight setting. Because there is no per-token cost, exhaustive means exhaustive.
 
 ### Search
 
-A self-hosted SearXNG instance provides metasearch with no API keys and no query logging to third parties. It runs as a separate service, which keeps its copyleft license out of the harness codebase. Queries are short, 1 to 6 terms, and the harness records each query and result set in the event log. Results are ranked with a preference for primary sources: official docs, source repositories, standards bodies, and papers over aggregators.
+A self-hosted SearXNG instance provides metasearch with no API keys and no query logging to third parties. It runs as a separate service, which keeps its copyleft license out of the harness codebase. Queries are short, 1 to 6 terms, and **every query and its result set is recorded in the event log**, not merely the question that prompted them: a research run must be auditable query by query. Results are ranked with a preference for primary sources: official docs, source repositories, standards bodies, and papers over aggregators. Recency is a first-class parameter, because "what is the current way to do this" and "what has always been true" want different windows.
 
 ### Fetch and extraction
 
-Pages are fetched through the sandbox network proxy with a domain allowlist and denylist per project. Extraction converts HTML to clean markdown using trafilatura (Apache-2.0); PDFs and documents go through Docling (MIT). JavaScript-rendered pages fall back to headless Playwright. Extracted content is chunked by heading, deduplicated by hash, and written to the research cache.
+Pages are fetched through the sandbox network proxy with a domain allowlist and denylist per project. The fetch engine is a warm headless-browser sidecar (Crawl4AI, Apache-2.0, used as a separate service with attribution), which handles JavaScript-rendered pages, applies a content filter keyed to the question, and provides link scoring and adaptive crawling. Static pages take a fast path that needs no browser: HTML to clean markdown with trafilatura (Apache-2.0).
 
-### Retrieval into context
+**[DESIGN]** PDFs are extracted with pypdfium2 (Apache-2.0 or BSD-3-Clause) by default, which reads the document's own structure with no neural models in milliseconds per page, and escalates to Docling (MIT) only when a document is scanned, or has multi-column or table-heavy layout that the fast path mangles. The original design named Docling alone; on a machine with no spare memory for layout and table models, a model-free default that handles the common case is the right trade, with the heavier path available per-document. PyMuPDF4LLM is faster still and more markdown-aware, but it is AGPL-3.0 or a commercial licence from Artifex, so it is **not** the default and is not distributed; a user who accepts those terms may enable it in the extraction sidecar.
 
-Research never enters the executor's context raw. A **research card** produces a research note: a short, cited summary with the specific code excerpts the task needs, sized to a fixed budget. The note is what the executor sees. This keeps prefill cost bounded and keeps untrusted web text out of the byte-stable prefix.
+Extracted content is chunked by heading, **deduplicated by content hash** rather than by URL, and written to the research cache with its URL, fetch date, and hash.
 
-Documentation retrieval is the one place embeddings are appropriate: docs are prose, not code. A small local embedding model (Qwen3-Embedding, Apache-2.0) plus lexical search over the docs index, with a reranker, serves the research card. The code context pipeline stays deterministic.
+### Retrieval and the corpus index
+
+Documentation retrieval is the one place embeddings are appropriate: docs are prose, not code. The code context pipeline stays deterministic.
+
+**[DESIGN]** The index is `sqlite-vec` (MIT/Apache-2.0 dual), a dependency-free C extension, in **its own SQLite file opened with `better-sqlite3`** — not in the kernel's event database. Two reasons: the kernel's database must stay openable by Node's built-in `node:sqlite`, which does not load extensions reliably, and the index is a cache that must be safe to delete and rebuild. Embeddings come from Qwen3-Embedding-0.6B (Apache-2.0), with Qwen3-Reranker-0.6B over the top candidates when the question warrants it.
+
+Retrieval is hybrid: lexical BM25 and dense vectors, merged, then reranked. Two indexes exist:
+
+*   a **persistent project index** over the repository's dependency documentation, rebuilt when the manifest changes, which is what makes Desk lookups fast;
+*   a **per-question corpus index** for a deep run, over everything that run fetched, which is what lets synthesis cite a passage from the eleventh source even though it was read an hour earlier and is long out of context.
+
+Research never enters the executor's context raw. A research card produces a research note: a short, cited summary with the specific code excerpts the task needs, sized to a fixed budget. The note is what the executor sees. This keeps prefill cost bounded and keeps untrusted web text out of the byte-stable prefix.
+
+### Verification
+
+This is what a harness can do that a hosted research product cannot: it owns a sandbox, so a claim about software can be **run** instead of merely cited.
+
+Claims are extracted from the draft and typed:
+
+*   **Executable** — an API exists, has this signature, behaves this way, this snippet works on this version. The claim is turned into a script, the package is installed at the stated version in the sandbox with no network, and the script is run. The result is recorded as a rung in the card's evidence bundle exactly like a gate: `claim/executed: pass`. A claim that fails to execute is struck from the report or demoted to "documented but not reproduced", with the failure attached.
+*   **Citational** — the source says what the report says it says. Verified against text actually read, by URL or by normalised title; unverifiable citations trigger a repair turn before the report may be finished.
+*   **Contested** — sources disagree. **The disagreement is reported, not resolved silently.** Both positions are recorded with their source tiers and dates, and the report states which is better supported and why. Flattening disagreement into confident prose is the characteristic failure of summarised search, and refusing to do it is a quality feature, not a limitation.
+*   **Temporal** — true as of a date. Carries the date of its newest supporting source.
+
+Every claim in the final report carries a confidence and the kind of verification it survived. **[DESIGN]** A deep research report is not eligible for Review until every executable claim has been executed, or explicitly marked unreproducible with a reason.
+
+### Critique
+
+After synthesis, the synthesist re-reads its own report adversarially against the corpus: for each claim, attempt a falsification, flag over-reach, find the sub-question that was answered thinly, and revise. A mid-size local model gains more from draft-critique-revise than from any other single technique available on this hardware, and on contested claims the pass may be run more than once and the results compared, because repetition is free.
+
+### Reproducibility
+
+A research run is replayable. The corpus, every query, every fetch with its content hash, the plan, and the model and prompt versions are recorded, so a run can be re-executed against the cached corpus and produce the same report, or re-run live six months later to see what changed. Hosted deep-research products return an unauditable artifact; ours returns one that can be re-derived.
 
 ### Safety
 
 *   Fetched content is wrapped in a tagged untrusted region; instructions inside it are inert by contract, and any tool call from a step containing it runs under stricter permissions.
 *   Robots directives are respected and per-domain rate limits are enforced.
 *   Package names found on the web are never installed without passing the supply-chain gate.
+*   Claim execution runs in the sandbox with no network and no repository write access, and its scripts are treated as untrusted input to the sandbox, not as trusted harness code.
+*   Answers from external MCP research services are untrusted like any fetched page.
 *   No credentials are ever sent; authenticated fetches are unsupported in v1.
 
 ### Tools exposed
 
-`search(query)`, `fetch(url)`, `docs(symbol or package, version)`. The executor sees only `docs`; `search` and `fetch` belong to the research card, which the planner schedules when a card's spec references an unfamiliar API.
+The Researcher has the full set: `search`, `fetch`, `docs`, `scholar`, `paper`, `repo`, `deps`, and whatever the project's MCP servers add.
 
-**[DESIGN]** Cache expiry policy: API documentation from official domains is cached with a 90-day TTL; blog posts and forums are cached with a 14-day TTL.
+The executor has a narrower, read-only set and **never sees `search` or `fetch`**: `docs(symbol or package, version)`, `deps_source(package, path)`, `repo(ref, path or query)`, and `ask(question)`, which posts to the research inbox and returns immediately. The planner additionally sees `plan_research(card)`.
+
+### Research skills
+
+A research playbook is an ordinary skill under the Agent Skills specification: a manifest plus instructions for a recurring shape of question — evaluating a library upgrade, triaging a CVE, comparing two implementations, checking whether a technique in a paper is worth adopting. The skill supplies the sub-questions, the source preferences, and the shape of the report, so a well-understood research task does not depend on the planner re-deriving it. Skills ship with the harness and are user-extensible.
+
+### Evaluation
+
+**[DESIGN]** Deep Research is measured on DeepResearch Bench's RACE (comprehensiveness, depth, instruction-following, readability) and FACT (citation abundance and accuracy) methodology, run locally against the public task set, plus two metrics the benchmark does not have and this harness can produce: **executable-claim pass rate** and **disagreement recall**. The target is parity with the leading hosted deep-research products on RACE, above them on FACT, and uniquely non-zero on executable claims. The Desk is measured separately on answer latency at each grade and on how often an answer that reached an executor was later contradicted by the code.
+
+### Caching policy
+
+**[DESIGN]** Cache expiry is by the mutability of the thing cached, not by its file type:
+
+| Content | TTL |
+| --- | --- |
+| A repository file or tree at a pinned commit SHA | Indefinite |
+| Official API documentation at a pinned package version | Indefinite, evicted by size |
+| Official API documentation, unversioned URL | 90 days |
+| `llms.txt` / documentation sitemaps | 30 days |
+| Papers and preprints | 30 days |
+| Blog posts, forums, issue threads | 14 days |
+| Package registry metadata | 1 day |
+| Search result sets | 1 day |
+
+A cached entry is always served to the Desk immediately and revalidated in the background when stale, so a stale-but-present answer never costs a build a round trip.
 
 ## Extensibility
 
@@ -1696,7 +1839,10 @@ Every tool the executor, planner, or gates can call, with the decision to adopt 
 | `replace_symbol_body`, `insert_after_symbol`, `read_symbol`, `find_references` | Build over LSP; reference Serena & multilspy | TypeScript reimplementation; synchronous calls; server pool |
 | Structural rewrite fallback | Wrap ast-grep | For languages without a running language server |
 | `run` | Build | Sandbox, timeout, allowlist, description field; RTK output condensing |
-| `docs` | Build | Tiered lookup over Library |
+| `docs` | Build | Tiered lookup over Library; served from the docs index |
+| `deps_source` | Build | The installed dependency's own source, at the resolved version |
+| `repo` | Wrap `git` and `gh` | Tree, file at ref, code search, release and `CHANGELOG` diff between versions, issues and pull requests, blame; cached by commit SHA |
+| `ask` | Build | Posts a question to the research inbox and returns immediately; the answer arrives as an event at a later step boundary |
 | `note` | Build | Thread and inbox communication |
 | Script execution (code-mode) | Build | Sandboxed runner exposing tools above as JS/TS functions |
 
@@ -1708,7 +1854,8 @@ Every tool the executor, planner, or gates can call, with the decision to adopt 
 | Dependency & impact analysis | Build over LSP references | For scope declaration and DAG inference |
 | Task decomposition | Build; reference Taskmaster patterns, not code | Avoid Commons Clause restrictions |
 | Difficulty scoring | Build | Features from scope, symbols, tests, history |
-| Search and fetch | Wrap SearXNG & trafilatura | Research cards only |
+| Search and fetch | Wrap SearXNG, trafilatura & Crawl4AI | Research cards and the Research Desk only; never the executor |
+| `plan_research` | Build | Emits a card's open questions so the Desk can answer them before the card starts |
 | Board operations | Build | Create, split, link, budget cards |
 
 ### Gate tools
@@ -1756,8 +1903,12 @@ Each row is a candidate to run as a service, call as a tool, or reimplement from
 | llama-swap | Model hot-swapping behind single endpoint | MIT | Subprocess |
 | MLX & mlx-lm | Apple Silicon inference path | MIT | Subprocess over HTTP |
 | SearXNG | Self-hosted metasearch | AGPL-3.0 | Separate service; never embedded |
-| trafilatura | HTML to clean text and markdown | Apache-2.0 | Tool |
-| Docling | PDF and office documents to markdown | MIT | Tool |
+| trafilatura | HTML to clean text and markdown, static fast path | Apache-2.0 | Tool |
+| Crawl4AI | JS-rendered fetch, question-keyed content filter, link scoring, adaptive crawl | Apache-2.0 (attribution required) | Separate service |
+| pypdfium2 | PDF text extraction, default path, no models | Apache-2.0 / BSD-3-Clause | Tool |
+| Docling | Scanned, multi-column and table-heavy documents to markdown | MIT | Tool, escalation path |
+| PyMuPDF4LLM | Fastest markdown-aware PDF extraction | AGPL-3.0 or commercial (Artifex) | Not distributed; user-enabled in the extraction service only |
+| sqlite-vec | Vector index for the corpus and docs indexes | MIT / Apache-2.0 | Extension, loaded into its own cache database |
 | Playwright | Headless browser for visual gates & JS fetch | Apache-2.0 | Library |
 | DevDocs | Offline documentation mirror | MPL-2.0 | Separate service |
 | Kiwix | Offline reference bundles | GPL-3.0 | Separate service, optional |
@@ -1767,7 +1918,12 @@ Each row is a candidate to run as a service, call as a tool, or reimplement from
 | multilspy & Serena | LSP client patterns | MIT | Reference; reimplement in TS |
 | Aider repo map | PageRank symbol ranking | Apache-2.0 | Reference; reimplement in TS |
 | SWE-Pruner / SWE-Pruner Pro | Line-level context pruning (arXiv:2601.16746, 2607.18213) | MIT (`Ayanami1314/swe-pruner`) | Tool on gate host |
-| Qwen3-Embedding | Docs retrieval and reranking | Apache-2.0 | Model |
+| Qwen3-Embedding 0.6B | Docs and corpus retrieval; resident | Apache-2.0 | Model |
+| Qwen3-Reranker 0.6B | Reranking top candidates | Apache-2.0 | Model, optional |
+| Open Deep Research | Research brief, supervisor and isolated sub-agent architecture | MIT | Reference; reimplement in TS |
+| DeepResearch Bench | RACE and FACT evaluation of research reports | Public task set | Evaluation harness |
+| Context7 | Version-pinned library documentation | Hosted service | Optional MCP source, off by default |
+| DeepWiki | Repository question answering for public repos | Hosted service | Optional MCP source, off by default |
 | XGrammar | Grammar-constrained decoding library | Apache-2.0 | Library |
 | llguidance | Fast constrained decoding engine | MIT | Library |
 | difftastic | Structural diffs in review view | MIT | Tool |
