@@ -251,6 +251,7 @@ export function modelRegistry(): ModelRegistry {
 // ------------------------------------------------------------------ commands
 
 export type Wave2Command =
+  | "airgap"
   | "onboard"
   | "drift"
   | "goal"
@@ -262,6 +263,7 @@ export type Wave2Command =
   | "release"
   | "ci";
 export const WAVE2_COMMANDS: readonly Wave2Command[] = [
+  "airgap",
   "onboard",
   "drift",
   "goal",
@@ -299,6 +301,11 @@ export async function runWave2Command(
   };
   const ledger = ledgerOf(k);
   switch (command) {
+    case "airgap": {
+      // X10-X14: mirror, model manifest, doc bundles, signed updates, self-test.
+      const { airgapCommand } = await import("./airgap.js");
+      return airgapCommand(k.repoPath, args, { log: k.log, registry: modelRegistry(), print });
+    }
     case "onboard": {
       // `sekhemet onboard [--apply] [--models a,b]` (X1): the seven steps.
       const { runOnboard } = await import("./onboard.js");

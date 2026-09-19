@@ -46,6 +46,7 @@ import { NodeGitSyncAdapter } from "@sekhemet/sync";
 import { readSettings } from "./integrations.js";
 import { learnFromAttempt } from "./learning/reflect.js";
 import type { LearningStore } from "./learning/store.js";
+import { isAirgapped, mirrorRegistry } from "./airgap.js";
 import { buildReproRecord } from "./repro.js";
 import { Tracer, traced } from "./tracing.js";
 import { PR_EVENT, openPullRequestViaApp } from "./wave2_github.js";
@@ -353,7 +354,8 @@ export async function executeCard(
     restricted: ctx.restrictedMode,
     // New dependencies are checked against the npm registry (existence, age),
     // answers cached under .sekhemet; offline it degrades to an advisory (S10).
-    registry: npmRegistry(ctx.repoPath),
+    // Air-gapped: only mirrored packages exist (X10).
+        registry: isAirgapped(ctx.repoPath) ? mirrorRegistry(ctx.repoPath) : npmRegistry(ctx.repoPath),
     // Ask-tier commands wait for a person on the decision queue (S8, K20).
     onApproval: decisionApprover(ctx.cardStore, card.id, ctx.approvalTimeoutMs ?? 60_000),
     signal: abort.signal,

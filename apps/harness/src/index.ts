@@ -34,6 +34,7 @@ import { SpidrFeaturePlanner } from "@sekhemet/planner";
 import { ProcessSandbox } from "@sekhemet/sandbox";
 import { NodeGitSyncAdapter } from "@sekhemet/sync";
 import { runAcpStdio } from "./acp.js";
+import { isAirgapped, mirrorRegistry } from "./airgap.js";
 import { parseModelList, runCalibrate } from "./calibrate_cmd.js";
 import { resolveConfig } from "./config.js";
 import { daemonStart, daemonStatus, daemonStop } from "./daemon.js";
@@ -496,6 +497,16 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   }
 
   if (config.command === "doctor") {
+    if (argv.includes("--airgap")) {
+      // X14: the air-gap self-test, written to the audit log.
+      const { airgapCommand } = await import("./airgap.js");
+      const { log } = initLocalKernel(config.repoPath);
+      process.exitCode = await airgapCommand(config.repoPath, ["selftest", ...argv.slice(argv.indexOf("--airgap") + 1)], {
+        log,
+        print: (l) => console.log(l),
+      });
+      return;
+    }
     const report = await runDoctor(config.repoPath);
     console.log("\n=== Sekhemet Doctor Diagnostics ===");
     for (const c of report.checks) {
@@ -711,7 +722,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         base: "main",
         diff,
         project: { ...gatesConfig.project, mutation: false },
-        registry: npmRegistry(config.repoPath),
+        // Air-gapped: only mirrored packages exist (X10).
+        registry: isAirgapped(config.repoPath) ? mirrorRegistry(config.repoPath) : npmRegistry(config.repoPath),
       });
       res = {
         ...res,
