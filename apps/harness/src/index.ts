@@ -26,6 +26,7 @@ import { ProcessSandbox } from "@sekhemet/sandbox";
 import { NodeGitSyncAdapter } from "@sekhemet/sync";
 import { parseModelList, runCalibrate } from "./calibrate_cmd.js";
 import { resolveConfig } from "./config.js";
+import { daemonStart, daemonStatus, daemonStop } from "./daemon.js";
 import { type DoctorReport, runDoctor } from "./doctor.js";
 import {
   type QueueEntry,
@@ -76,6 +77,7 @@ export interface CliConfig {
     | "research"
     | "overnight"
     | "calibrate"
+    | "daemon"
     | "abort"
     | "rewind"
     | "fork"
@@ -320,6 +322,21 @@ export async function printEventLog(log: EventLog): Promise<void> {
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
   const config = parseCliArgs(argv);
+
+  if (config.command === "daemon") {
+    // `sekhemet daemon start|stop|status [--port N]` (H1): the dashboard in the background.
+    const action = argv[argv.indexOf("daemon") + 1] ?? "status";
+    if (action === "start") {
+      const r = await daemonStart(config.repoPath, config.port);
+      console.log(r.message);
+      if (!r.started && !r.message.startsWith("Already")) process.exitCode = 1;
+    } else if (action === "stop") {
+      console.log(await daemonStop(config.repoPath));
+    } else {
+      console.log(await daemonStatus(config.repoPath));
+    }
+    return;
+  }
 
   if (config.command === "calibrate") {
     // `sekhemet calibrate [--models cyber-tiel=worker,apodex=researcher] [--buckets 2048,8192] [--force]` (H3).

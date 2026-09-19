@@ -56,6 +56,7 @@ import { learnFromSendBack } from "./learning/reflect.js";
 import { startNotifier } from "./notify.js";
 import { createPmApi } from "./pm_api.js";
 import { generateDashboardHtml } from "./ui_html.js";
+import { type StreamClient, acceptWebSocket } from "./ws.js";
 
 /** The loopback port the design fixes for the dashboard. */
 export const DEFAULT_DASHBOARD_PORT = 4040;
@@ -213,7 +214,8 @@ export function startDashboardServer(
   const tokenCss = generateTokenCss();
   const tokenJson = generateTokenJson();
 
-  const streams = new Set<ServerResponse>();
+  // SSE responses and WebSocket clients (ws.ts) share one broadcaster.
+  const streams = new Set<StreamClient>();
   let lastSeq = 0;
   let timer: NodeJS.Timeout | undefined;
 
@@ -1139,6 +1141,18 @@ export function startDashboardServer(
       });
     });
 
+    // H1: the same live stream over WebSocket, at /api/ws (loopback origins only).
+    server.on("upgrade", (req, socket) => {
+      if ((req.url ?? "").split("?")[0] !== "/api/ws") {
+        socket.end("HTTP/1.1 404 Not Found\r\n\r\n");
+        return;
+      }
+      const client = acceptWebSocket(req, socket, (c) => streams.delete(c));
+      if (client) {
+        streams.add(client);
+        void pump();
+      }
+    });
     server.on("error", reject);
   });
 }
