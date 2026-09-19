@@ -1,9 +1,23 @@
 import { execFile, execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
 import { type BoardServiceImpl, legalPath } from "@sekhemet/board";
-import { PlaybookRegistry, SkillsRegistry, useFileEvidenceStore } from "@sekhemet/context";
+import {
+  ExemplarStore,
+  LspPool,
+  PlaybookRegistry,
+  SkillsRegistry,
+  useFileEvidenceStore,
+} from "@sekhemet/context";
+import { LearningGuard, harvestExemplars } from "@sekhemet/eval";
 import {
   DeterministicGateRunner,
   compileEvidence,
@@ -86,6 +100,12 @@ export interface ExecutionContext {
    * 0 refuses at once but still records the request.
    */
   approvalTimeoutMs?: number;
+  /** `false` skips the per-turn swap-growth headroom check (the watchdog still applies). */
+  headroomCheck?: boolean;
+  /** One language-server pool per run, for the symbol tools on non-TS files (C2). */
+  lspPool?: LspPool;
+  /** Decoded tokens as they stream, for the dashboard's live step view (M2). */
+  onToken?: (cardId: string, delta: string) => void;
 }
 
 /**
@@ -212,6 +232,8 @@ export function stepEventPayload(cardId: string, turn: TurnResult) {
     ...(turn.stopReason ? { stopReason: turn.stopReason } : {}),
     // The stored prompt this step's request carried (K11, K26).
     ...(turn.contextPackId ? { contextPackId: turn.contextPackId } : {}),
+    // Per-zone tokens, prefix hashes and pressure of that prompt (C14, C20).
+    ...(turn.contextReport ? { context: turn.contextReport } : {}),
   };
 }
 
@@ -344,7 +366,9 @@ export async function executeCard(
           reason: "the memory watchdog is holding new turns (critical pressure)",
         };
       }
-      return checkExecutionHeadroom(baselineSwap, {});
+      // Tests (and hosts whose swap moves for other reasons) can turn the
+      // swap-growth check off; the watchdog above still applies.
+      return ctx.headroomCheck === false ? { ok: true } : checkExecutionHeadroom(baselineSwap, {});
     },
     // A retry after a manager review re-attaches to the existing worktree, so
     // the worker resumes from its own last state rather than from scratch.
@@ -358,6 +382,16 @@ export async function executeCard(
         }
       : {}),
     skillsRegistry: skills,
+    // C13: passing runs of this card's class, as worked examples.
+    exemplarStore: new ExemplarStore(join(ctx.repoPath, ".sekhemet", "exemplars")),
+    // C2: one language-server pool for the whole run (servers are pooled
+    // across cards and shut down when idle).
+    lspPool: ctx.lspPool ?? runLspPool(),
+    // M2: decoded tokens go to the card's live file, which the dashboard
+    // streams while the step is still generating.
+    onToken: ctx.onToken
+      ? (d: string) => ctx.onToken?.(card.id, d)
+      : liveTokenWriter(ctx.repoPath, card.id),
     playbookRegistry: playbook,
     lifecycle: {
       // Persist the real step count, or the board reports 0/32 for a card that
@@ -456,6 +490,7 @@ export async function executeCard(
   await recordReproducibility(ctx, card.id, attempt, model, gatesConfig.sha256).catch((err) =>
     log(`   reproducibility record not written: ${err instanceof Error ? err.message : err}`),
   );
+  learnFromOutcome(ctx, card, result, log);
   if (result.failToPass)
     log(`   fail-to-pass: ${result.failToPass.status} (${result.failToPass.detail})`);
   if (result.resumedFrom) {
@@ -522,6 +557,108 @@ async function recordReproducibility(
     actor: "harness",
     payload: record as unknown as Record<string, unknown>,
   });
+}
+
+let sharedLspPool: LspPool | undefined;
+/** The process's language-server pool (one per run, C2). */
+export function runLspPool(): LspPool {
+  sharedLspPool ??= new LspPool();
+  return sharedLspPool;
+}
+
+/** Where a running card's decoded tokens are written for the dashboard (M2). */
+export function liveTokenPath(repoPath: string, cardId: string): string {
+  return join(repoPath, ".sekhemet", "live", `${cardId}.txt`);
+}
+
+/**
+ * A buffered writer of streamed tokens to the card's live file: flushed
+ * every 250 ms, and the file restarts at each new generation (a gap of
+ * over two seconds), so it always shows the step being decoded.
+ */
+export function liveTokenWriter(repoPath: string, cardId: string): (delta: string) => void {
+  const path = liveTokenPath(repoPath, cardId);
+  let buffer = "";
+  let last = 0;
+  let timer: NodeJS.Timeout | undefined;
+  const flush = () => {
+    timer = undefined;
+    if (!buffer) return;
+    try {
+      mkdirSync(join(repoPath, ".sekhemet", "live"), { recursive: true });
+      appendFileSync(path, buffer);
+    } catch {
+      // The live view is best effort.
+    }
+    buffer = "";
+  };
+  return (delta: string) => {
+    const now = Date.now();
+    if (now - last > 2000) {
+      try {
+        mkdirSync(join(repoPath, ".sekhemet", "live"), { recursive: true });
+        writeFileSync(path, "");
+      } catch {
+        // Best effort.
+      }
+    }
+    last = now;
+    buffer += delta;
+    timer ??= setTimeout(flush, 250);
+  };
+}
+
+/**
+ * What a finished card teaches the harness itself: a passing run becomes an
+ * exemplar for its class (E11, C13), and every outcome feeds the learning
+ * guard, which rolls back a learned change (a rule, a budget) whose window
+ * shows the pass rate falling (E17).
+ */
+export function learnFromOutcome(
+  ctx: ExecutionContext,
+  card: CardRecord,
+  result: CardRunResult,
+  log: (line: string) => void = () => {},
+): void {
+  const dot = join(ctx.repoPath, ".sekhemet");
+  try {
+    harvestExemplars(new ExemplarStore(join(dot, "exemplars")), [
+      {
+        id: card.id,
+        tier: card.tier,
+        title: card.title,
+        scopeFiles: card.scopeFiles,
+        passed: result.passed,
+        tokens: result.tokensUsed,
+        turns: result.turns.map((t) => ({
+          turn: t.turnIndex,
+          action: t.toolCalls.map((c) => c.name).join(", ") || "(no tool calls)",
+          result: t.observations.map((o) => o.summary).join(" | "),
+        })),
+      },
+    ]);
+  } catch {
+    // An exemplar is a convenience; never a reason to fail a card.
+  }
+  try {
+    const guard = new LearningGuard(join(dot, "learning_guard.json"));
+    const decision = guard.observe(card.id, result.passed);
+    if (decision.rollback) {
+      const change = decision.rollback;
+      log(`   learning guard: rolling back ${change.kind} ${change.id} (${change.reason ?? ""})`);
+      if (change.kind === "rule") void ctx.learning?.update(change.id, { status: "retired" });
+      void ctx.cardStore
+        .recordEvent({
+          type: "learning/rolled_back",
+          cardId: card.id,
+          actor: "system",
+          payload: { change: change.id, kind: change.kind, reason: change.reason ?? "" },
+        })
+        .catch(() => undefined);
+    }
+  } catch {
+    // The guard's own file is the only state; a failure costs one observation.
+  }
 }
 
 /**

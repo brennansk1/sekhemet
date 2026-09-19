@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { TurnHistoryItem } from "@sekhemet/context";
+import { PrefixStabilityGuard } from "@sekhemet/context";
 import type { GateResult } from "@sekhemet/gates";
 import {
   type EvidenceBundle,
@@ -23,6 +24,7 @@ import {
   canonicalPayloadHash,
   serializeContextPack,
 } from "@sekhemet/kernel";
+import { candidateSettings, harnessCommit } from "@sekhemet/models";
 import { EgressProxy, tagUntrusted } from "@sekhemet/sandbox";
 import type { GitSyncAdapter } from "@sekhemet/sync";
 import { CardExecutionSessionImpl } from "./session.js";
@@ -308,6 +310,35 @@ export class CardRunner {
   private packIds: string[] = [];
   private transcriptPath: string | undefined;
   private egress: EgressProxy | undefined;
+  private rebaseFailure: string | undefined;
+  /** One per runner: the system prompt must not drift within the card (C4). */
+  private prefixGuard = new PrefixStabilityGuard();
+
+  /** Y6 through the git adapter, when it supports it. */
+  private async rebaseOntoIntegration(): Promise<
+    | { ok: true; rebased: boolean }
+    | { ok: false; failure: { message: string; files: string[] } }
+    | undefined
+  > {
+    const adapter = this.options.syncAdapter as GitSyncAdapter & {
+      rebaseOntoIntegration?: (
+        cardId: string,
+        target?: string,
+      ) => Promise<
+        | { ok: true; rebased: boolean }
+        | { ok: false; failure: { message: string; files: string[] } }
+      >;
+    };
+    if (typeof adapter.rebaseOntoIntegration !== "function") return undefined;
+    try {
+      return await adapter.rebaseOntoIntegration(
+        this.options.card.id,
+        this.options.baseBranch ?? "main",
+      );
+    } catch {
+      return undefined;
+    }
+  }
   private egressPort: number | undefined;
 
   constructor(private options: CardRunOptions) {
@@ -665,7 +696,13 @@ export class CardRunner {
     const resumeFrom = await this.resumePoint();
     const worktreePath = this.options.useExistingWorktree
       ? this.options.worktreePath
-      : await syncAdapter.createWorktree(card.id, this.options.baseBranch ?? "main", card.title);
+      : // Y1: a subtask's worktree branches from its parent's branch.
+        await syncAdapter.createWorktree(
+          card.id,
+          this.options.baseBranch ?? "main",
+          card.title,
+          card.parentId ?? null,
+        );
 
     let resumedFrom: { step: number; gitRef: string } | undefined;
     if (resumeFrom && this.restore(worktreePath, resumeFrom.gitRef)) {
@@ -806,6 +843,7 @@ export class CardRunner {
             },
           }
         : {}),
+      prefixGuard: this.prefixGuard,
       // K11: every prompt is stored by hash before it is sent.
       onPrompt: (record: PromptRecord) => this.logPrompt(record),
       ...this.options,
@@ -912,6 +950,9 @@ export class CardRunner {
         break;
       }
       turn.durationMs = Math.max(0, this.now() - turnStarted);
+      // C14/C20: the step's context-pack record and metrics ride on the turn.
+      const report = session.getLastContextReport();
+      if (report) turn.contextReport = report;
       const packId = session.getLastContextPackId();
       if (packId) {
         turn.contextPackId = packId;
@@ -1032,6 +1073,30 @@ export class CardRunner {
     ) {
       // The work is written and unverified: say so rather than "out of time".
       stopReason = "done_pending_gates";
+    }
+
+    // Y6: a passing card is rebased onto the integration branch before it
+    // enters Verify; a conflict stops it, and the gates run again on the
+    // rebased tree.
+    if (stopReason === "gate_passed" && !this.options.useExistingWorktree) {
+      const rebase = await this.rebaseOntoIntegration();
+      if (rebase && !rebase.ok) {
+        stopReason = "rebase_conflict";
+        this.rebaseFailure = rebase.failure.message;
+      } else if (rebase?.ok && rebase.rebased) {
+        this.emit({
+          type: "status",
+          cardId: card.id,
+          message: "rebased onto the integration branch; re-verifying",
+        });
+        try {
+          const again = await session.runVerification();
+          lastGateResult = again;
+          if (!again.passed) stopReason = "integration_failed";
+        } catch {
+          stopReason = "done_pending_gates";
+        }
+      }
     }
 
     return this.finish({
@@ -1244,11 +1309,15 @@ export class CardRunner {
     }
     const durationMs = Math.max(0, this.now() - params.started);
 
+    // E3: every setting the result depends on (quant, engine, sampling,
+    // KV type, MTP, arm) and the commit it ran at.
     const settings: RunSettings = {
+      ...candidateSettings(this.options.modelAdapter),
       modelId: this.options.modelAdapter.modelId,
-      toolArm: this.options.toolArm ?? "arm_a_flat",
+      toolArm: this.options.toolArm ?? this.options.modelAdapter.preferredToolArm ?? "arm_a_flat",
+      harnessCommit: harnessCommit(this.options.repoRoot),
       ...(this.options.temperature !== undefined ? { temperature: this.options.temperature } : {}),
-    };
+    } as RunSettings;
 
     const evidence = compileEvidence({
       cardId: card.id,
@@ -1316,6 +1385,10 @@ export class CardRunner {
         const moved = await this.move("parked");
         if (moved.ok) finalStatus = "parked";
         else held = { reason: moved.reason, wanted: "parked" };
+      } else if (stopReason === "rebase_conflict") {
+        const moved = await this.move("planning");
+        if (moved.ok) finalStatus = "planning";
+        else held = { reason: moved.reason, wanted: "planning" };
       } else if (stopReason === "replan_requested" && session) {
         replan = session.getReplanRequest();
         // A card that needs a new plan goes back to Planning, not to Verify.
@@ -1369,7 +1442,9 @@ export class CardRunner {
             ? `re-plan requested: ${replan.summary.slice(0, 300)}`
             : regression
               ? `regression: ${regression}`
-              : null;
+              : this.rebaseFailure
+                ? `rebase conflict: ${this.rebaseFailure}`
+                : null;
       try {
         await store.updateCard(
           card.id,

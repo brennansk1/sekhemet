@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -120,5 +120,36 @@ describe("@sekhemet/harness dashboard: run records, decisions, integrity", () =>
     expect(text).toContain("S renamed");
     // Well inside the 60 s timer: it was the subscription, not the poll.
     expect(Date.now() - started).toBeLessThan(3000);
+  });
+
+  it("streams a running card's decoded tokens from its live file (M2)", async () => {
+    const fast = await startDashboardServer({
+      db,
+      log,
+      boardService: new BoardServiceImpl(cardStore),
+      cardStore,
+      repoPath: repo,
+      port: 0,
+      streamIntervalMs: 50,
+    });
+    try {
+      const res = await fetch(`http://127.0.0.1:${fast.port}/api/stream`);
+      const reader = res.body?.getReader();
+      mkdirSync(join(repo, ".sekhemet", "live"), { recursive: true });
+      writeFileSync(join(repo, ".sekhemet", "live", "card_s.txt"), "export const tok");
+      let text = "";
+      const deadline = Date.now() + 3000;
+      while (reader && !text.includes("event: tokens") && Date.now() < deadline) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        text += new TextDecoder().decode(value);
+      }
+      await reader?.cancel();
+      expect(text).toContain("event: tokens");
+      expect(text).toContain('"cardId":"card_s"');
+      expect(text).toContain("export const tok");
+    } finally {
+      await fast.close();
+    }
   });
 });

@@ -1,4 +1,4 @@
-import type { ToolInterfaceSpec } from "@sekhemet/context";
+import { TOOL_SEARCH_SPEC, type ToolInterfaceSpec } from "@sekhemet/context";
 
 /**
  * The tool catalog, declared for the prompt.
@@ -171,6 +171,21 @@ export const TOOL_CATALOG: ToolInterfaceSpec[] = [
     ],
   },
   {
+    name: "subtask",
+    summary:
+      "Answer a side question (where is X defined? what does this error mean?) in a separate context with read-only tools; only a short answer comes back.",
+    parameters: [
+      { name: "question", type: "string", required: true, description: "One specific question" },
+      {
+        name: "context",
+        type: "string",
+        required: false,
+        description: "What the helper needs to know: an excerpt, the error",
+      },
+    ],
+  },
+  TOOL_SEARCH_SPEC,
+  {
     name: "grep_search",
     summary: "Search file contents by regular expression. Skips gitignored files.",
     parameters: [
@@ -334,6 +349,8 @@ export const RESTRICTED_TOOL_NAMES: readonly string[] = [
   "read_symbol",
   "find_references",
   "go_to_definition",
+  "subtask",
+  "tool_search",
   "grep_search",
   "find_files",
   "list_dir",

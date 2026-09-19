@@ -62,7 +62,11 @@ export type CardStopReason =
   /** Repair rung 3: the card needs a new plan before another attempt. */
   | "replan_requested"
   /** The staged acceptance tests already pass against the untouched code. */
-  | "vacuous_tests";
+  | "vacuous_tests"
+  /** Rebasing onto the integration branch before Verify conflicted (Y6). */
+  | "rebase_conflict"
+  /** The gates passed, then failed on the card rebased onto the integration branch (Y6). */
+  | "integration_failed";
 
 /** Every stop reason, for validation and exhaustive UI tables. */
 export const CARD_STOP_REASONS: readonly CardStopReason[] = [
@@ -82,6 +86,8 @@ export const CARD_STOP_REASONS: readonly CardStopReason[] = [
   "time_budget_exhausted",
   "replan_requested",
   "vacuous_tests",
+  "rebase_conflict",
+  "integration_failed",
 ];
 
 /** Which model handles each phase of a card (design §320). */

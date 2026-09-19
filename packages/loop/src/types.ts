@@ -68,6 +68,13 @@ export interface TurnResult {
   stepId?: string | undefined;
   /** Wall time of the turn, ms. */
   durationMs?: number | undefined;
+  /** The context-pack record and step metrics of this turn's prompt (C14, C20). */
+  contextReport?:
+    | {
+        pack: import("@sekhemet/context").ContextPackRecord;
+        metrics: import("@sekhemet/context").ContextStepMetrics;
+      }
+    | undefined;
 }
 
 /** What one model request carried, handed to `onPrompt` before it is sent (K11). */
@@ -179,6 +186,18 @@ export interface SessionOptions {
    * request is not sent: a prompt that cannot be logged never reaches a model.
    */
   onPrompt?: ((record: PromptRecord) => string) | undefined;
+  /** One per runner: asserts the system prompt stays byte-stable within a card (C4). */
+  prefixGuard?: import("@sekhemet/context").PrefixStabilityGuard | undefined;
+  /** Passing runs of the card's class, shown as worked examples (C13). */
+  exemplarStore?: import("@sekhemet/context").ExemplarStore | undefined;
+  /** Load tools on demand through tool_search instead of sending every contract (C19). */
+  progressiveTools?: boolean | undefined;
+  /** The model a `subtask` child context runs on (C16); default the Worker's own. */
+  subtaskAdapter?: LocalInferenceAdapter | undefined;
+  /** Decoded tokens as they stream, for the dashboard's live step view (M2). */
+  onToken?: ((delta: string) => void) | undefined;
+  /** Language servers for the symbol tools on non-TypeScript files (C2). */
+  lspPool?: import("@sekhemet/context").LspPool | undefined;
   /** Called with every note the Worker writes, as it writes it (L11). */
   onNote?: ((text: string) => Promise<void>) | undefined;
   /** Domains network commands may reach, through the egress proxy (S5, S8). */

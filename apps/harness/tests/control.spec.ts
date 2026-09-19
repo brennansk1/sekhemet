@@ -84,7 +84,15 @@ describe("apps/harness planning, rollup, explain and runner control (B2, B7, B12
         }
       },
     });
-    ctx = { repoPath: repo, restrictedMode: false, cardStore, boardService, log: () => {} };
+    ctx = {
+      repoPath: repo,
+      restrictedMode: false,
+      cardStore,
+      boardService,
+      log: () => {},
+      // The host's swap moves with whatever else runs; the watchdog tests cover memory.
+      headroomCheck: false,
+    };
   });
   afterEach(() => {
     db.close();

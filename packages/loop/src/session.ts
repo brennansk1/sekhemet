@@ -1,11 +1,17 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 import {
+  TOOL_SEARCH_NAME,
+  ToolLoader,
   type TurnHistoryItem,
   type WorkerPromptResult,
+  buildRankedRepoMap,
   buildWorkerPrompt,
   condenseToolOutput,
+  cardClassOf as contextCardClass,
+  loadProjectConventions,
   retrieveMaskedObservation,
+  runSubtask,
 } from "@sekhemet/context";
 import {
   DEFAULT_PROJECT_CONFIG,
@@ -119,6 +125,11 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   /** Where the last request's prompt was logged (K11). */
   private lastContextPackId: string | undefined;
   private advisories: string[] = [];
+  private conventions: string | undefined;
+  private lastPackRecord: WorkerPromptResult["pack"] | undefined;
+  private lastMetrics: WorkerPromptResult["metrics"] | undefined;
+  /** Progressive tool loading (C19), when the card runs with `progressiveTools`. */
+  private toolLoader: ToolLoader | undefined;
 
   constructor(private options: SessionOptions) {
     if (options.priorLessons?.length) this.memory.seed(options.priorLessons);
@@ -150,7 +161,17 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       readOnly: options.restricted === true,
       allowedDomains: options.allowedDomains,
       egressProxyPort: options.egressProxyPort,
+      lspPool: options.lspPool,
     });
+    if (options.progressiveTools) {
+      this.toolLoader = new ToolLoader(this.catalog(), [
+        "read_file",
+        "edit",
+        "write_file",
+        "check",
+        "finish_card",
+      ]);
+    }
     // H17: a resumed card continues its step count from the checkpoint.
     if (options.startStep !== undefined && options.startStep > 0) {
       this.stepsUsed = Math.floor(options.startStep);
@@ -451,6 +472,82 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     };
   }
 
+  /** C19: load tools by name or task; their contracts reach the next prompt. */
+  private toolSearchObservation(query: unknown): ToolObservation {
+    const q = typeof query === "string" ? query.trim() : "";
+    if (!q)
+      return {
+        tool: TOOL_SEARCH_NAME,
+        ok: false,
+        summary: "empty query",
+        content: "Name a tool or a task.",
+      };
+    const loader =
+      this.toolLoader ??
+      new ToolLoader(
+        this.catalog(),
+        this.catalog().map((t) => t.name),
+      );
+    const r = loader.handle(q);
+    return {
+      tool: TOOL_SEARCH_NAME,
+      ok: r.loaded.length > 0,
+      summary: r.loaded.length > 0 ? `loaded ${r.loaded.join(", ")}` : "no tool matched",
+      content: r.text,
+    };
+  }
+
+  /**
+   * C16: a side question answered in a child context with read-only tools;
+   * only its short summary enters this card's context.
+   */
+  private async subtaskObservation(question: unknown, context: unknown): Promise<ToolObservation> {
+    const q = typeof question === "string" ? question.trim() : "";
+    if (!q)
+      return {
+        tool: "subtask",
+        ok: false,
+        summary: "empty question",
+        content: "Ask one specific question.",
+      };
+    const readOnly = new Set([
+      "read_file",
+      "grep_search",
+      "find_files",
+      "list_dir",
+      "read_symbol",
+      "find_references",
+      "go_to_definition",
+      "docs",
+    ]);
+    try {
+      const r = await runSubtask({
+        adapter: this.options.subtaskAdapter ?? this.options.modelAdapter,
+        question: q,
+        ...(typeof context === "string" && context.trim() ? { context } : {}),
+        tools: this.toolDefinitions().filter((t) => readOnly.has(t.name)),
+        executeTool: async (call) =>
+          readOnly.has(call.name)
+            ? (await this.tools.execute(call)).content
+            : `${call.name} is not available to a subtask (read-only tools only).`,
+        maxSteps: 4,
+      });
+      return {
+        tool: "subtask",
+        ok: r.stopReason === "answered",
+        summary: `subtask ${r.stopReason} in ${r.steps} step(s)`,
+        content: r.summary || "The subtask found no answer.",
+      };
+    } catch (err) {
+      return {
+        tool: "subtask",
+        ok: false,
+        summary: "subtask failed",
+        content: `The subtask could not run: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
+
   /**
    * Bring a compacted observation back in full. Compaction is only safe if it
    * is reversible: Claude Code can re-read what it summarised, and so can the
@@ -548,7 +645,21 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
 
   private repoMap(): string {
     if (this.repoMapCache === undefined) {
-      this.repoMapCache = buildRepoMap(this.tools.root, this.options.scopeFiles ?? []);
+      // C1: the ranked map (definitions and references, PageRank seeded
+      // toward the card's scope, fitted to a token budget); the flat map
+      // when the ranked one finds nothing.
+      let ranked = "";
+      try {
+        ranked = buildRankedRepoMap(this.tools.root, {
+          scopeFiles: this.options.scopeFiles ?? [],
+          budgetTokens: 1200,
+        }).text;
+      } catch {
+        ranked = "";
+      }
+      this.repoMapCache = ranked.trim()
+        ? ranked
+        : buildRepoMap(this.tools.root, this.options.scopeFiles ?? []);
     }
     return this.repoMapCache;
   }
@@ -558,6 +669,12 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   private catalog() {
     const base = this.options.tools ?? TOOL_CATALOG;
     return this.options.restricted ? restrictedToolCatalog(base) : base;
+  }
+
+  /** What the request carries: every tool, or the loaded ones under C19. */
+  private visibleToolDefinitions() {
+    const all = this.toolDefinitions();
+    return this.toolLoader ? this.toolLoader.visibleSchemas(all) : all;
   }
 
   private toolDefinitions() {
@@ -608,11 +725,23 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
    * scope files and the standing failure longest.
    */
   private buildPrompt(): WorkerPromptResult {
+    // C9: every skill as a manifest line, the matched ones in full.
     const skills =
-      this.options.skillsRegistry?.resolveActiveSkills(
+      this.options.skillsRegistry?.skillsForPrompt(
         this.card.title,
         this.options.scopeFiles ?? [],
       ) ?? [];
+    // C22: the project's own conventions (AGENTS.md, CLAUDE.md), once per card.
+    this.conventions ??= (() => {
+      try {
+        return loadProjectConventions(this.tools.root);
+      } catch {
+        return "";
+      }
+    })();
+    // C13: the best passing runs of this card's class, as worked examples.
+    const exemplars =
+      this.options.exemplarStore?.topFor(contextCardClass(this.card), 2, this.card.id) ?? [];
     // The failure text lets error-scoped rules match only while their error
     // stands (integration review item 3).
     const rules =
@@ -647,7 +776,15 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     const built = buildWorkerPrompt({
       card: { ...this.card, stepsUsed: this.stepsUsed },
       tools: this.catalog(),
-      ...(native ? { nativeToolSchemas: this.toolDefinitions() } : {}),
+      ...(this.options.prefixGuard ? { prefixGuard: this.options.prefixGuard } : {}),
+      ...(this.conventions ? { conventions: this.conventions } : {}),
+      ...(exemplars.length > 0 ? { exemplars } : {}),
+      // C19: with progressive loading, only tool_search and the tools it
+      // has loaded carry their full contract; the rest are an index.
+      ...(this.toolLoader
+        ? { toolIndex: this.catalog(), loadedTools: this.toolLoader.visibleSpecs() }
+        : {}),
+      ...(native ? { nativeToolSchemas: this.visibleToolDefinitions() } : {}),
       ...(budget !== undefined ? { budgetTokens: budget } : {}),
       repoMap: this.repoMap(),
       acceptanceTests: pinned
@@ -690,11 +827,22 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         : { readyToVerify: this.filesWritten.size > 0 }),
     });
     for (const id of built.rulesUsed) this.rulesUsed.add(id);
+    this.lastPackRecord = built.pack;
+    this.lastMetrics = built.metrics;
     if (this.history.length > 8) {
       this.compactedTurns = Math.max(this.compactedTurns, this.history.length - 6);
     }
     this.lastPrompt = built;
     return built;
+  }
+
+  /** The last prompt's context-pack record and step metrics (C14, C20). */
+  public getLastContextReport():
+    | { pack: WorkerPromptResult["pack"]; metrics: WorkerPromptResult["metrics"] }
+    | undefined {
+    return this.lastPackRecord && this.lastMetrics
+      ? { pack: this.lastPackRecord, metrics: this.lastMetrics }
+      : undefined;
   }
 
   /** Where the last model request's prompt was logged (K11), when `onPrompt` is set. */
@@ -779,7 +927,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       rung && rung !== "direct_repair" ? { purpose: "repair", rung } : { purpose: "mechanical" },
     );
 
-    const tools = this.toolDefinitions();
+    const tools = this.visibleToolDefinitions();
     // K11: the prompt is logged before it is sent, or it is not sent.
     this.lastContextPackId = this.options.onPrompt?.({
       step: turnIndex,
@@ -799,7 +947,10 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       // Real JSON Schema, so servers with native tool calling can constrain
       // the call format instead of leaving the model to improvise one.
       tools,
-      toolArm: this.options.toolArm ?? "arm_a_flat",
+      // M9: the arm measured for this model, unless the card sets one.
+      toolArm: this.options.toolArm ?? this.options.modelAdapter.preferredToolArm ?? "arm_a_flat",
+      // M2: tokens stream to the dashboard's step view as they are decoded.
+      ...(this.options.onToken ? { onToken: this.options.onToken } : {}),
       ...(this.options.temperature !== undefined ? { temperature: this.options.temperature } : {}),
       ...(this.options.maxTokens !== undefined ? { maxTokens: this.options.maxTokens } : {}),
     });
@@ -910,7 +1061,11 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
             ? this.recallObservation(call.arguments.ref)
             : call.name === "ask"
               ? await this.askObservation(call.arguments.question)
-              : await this.tools.execute(call);
+              : call.name === TOOL_SEARCH_NAME
+                ? this.toolSearchObservation(call.arguments.query)
+                : call.name === "subtask"
+                  ? await this.subtaskObservation(call.arguments.question, call.arguments.context)
+                  : await this.tools.execute(call);
       observations.push(observation);
       if (call.name === "note" && observation.ok && typeof call.arguments.message === "string") {
         await this.options.onNote?.(call.arguments.message).catch(() => undefined);

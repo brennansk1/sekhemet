@@ -1128,6 +1128,36 @@ export function startDashboardServer(
     json(res, 404, { error: "Not Found", path: url });
   });
 
+  // M2: a running card's decoded tokens, from its live file, while the step
+  // is still generating (the runner writes .sekhemet/live/<card>.txt).
+  const liveSeen = new Map<string, number>();
+  const pushLiveTokens = (): void => {
+    if (streams.size === 0) return;
+    const dir = join(repoPath, ".sekhemet", "live");
+    if (!existsSync(dir)) return;
+    for (const name of readdirSync(dir)) {
+      if (!name.endsWith(".txt")) continue;
+      const path = join(dir, name);
+      let mtime = 0;
+      try {
+        mtime = statSync(path).mtimeMs;
+      } catch {
+        continue;
+      }
+      if (liveSeen.get(name) === mtime) continue;
+      liveSeen.set(name, mtime);
+      const text = readFileSync(path, "utf8").slice(-2000);
+      const frame = `event: tokens\ndata: ${JSON.stringify({ cardId: name.slice(0, -4), text })}\n\n`;
+      for (const res of streams) {
+        try {
+          res.write(frame);
+        } catch {
+          streams.delete(res);
+        }
+      }
+    }
+  };
+
   // K6: appends made in this process (triage, PM, decisions) reach the
   // stream at once through the log's subscription; the timer below stays as
   // the fallback for writers in other processes (the queue), which share
@@ -1147,6 +1177,7 @@ export function startDashboardServer(
       let ticks = 0;
       timer = setInterval(() => {
         void pump();
+        pushLiveTokens();
         // Memory is pushed on its own cadence: cheap to read, and the sidebar
         // and Machine view should move without a ledger event to carry them.
         ticks++;

@@ -276,6 +276,18 @@ export function stopReasonLabel(
         sentence: "Direct repairs did not work; the card went back to Planning.",
         tone: "blocked",
       };
+    case "rebase_conflict":
+      return {
+        short: "Conflicts with main",
+        sentence: "Its changes conflict with work merged since it started; it needs a re-plan.",
+        tone: "blocked",
+      };
+    case "integration_failed":
+      return {
+        short: "Breaks on main",
+        sentence: "Its gates passed alone but fail on top of the latest main.",
+        tone: "fail",
+      };
     case "vacuous_tests":
       return {
         short: "Tests already pass",
@@ -1027,6 +1039,8 @@ export function vocabularyTables(): Record<string, unknown> {
     "time_budget_exhausted",
     "replan_requested",
     "vacuous_tests",
+    "rebase_conflict",
+    "integration_failed",
   ];
   return {
     kinds: KIND_LABELS,

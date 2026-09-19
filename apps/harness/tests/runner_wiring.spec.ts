@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -14,6 +14,7 @@ import {
   QueuedWorkerQuestions,
   executeCard,
   heldTarget,
+  liveTokenPath,
   nextAttemptNumber,
   recordReview,
   releaseHeldCards,
@@ -81,7 +82,15 @@ describe("apps/harness executeCard wiring (wave 2, part 1)", () => {
     log = new EventLog(db);
     cardStore = new CardStore(db, log);
     boardService = new BoardServiceImpl(cardStore);
-    ctx = { repoPath: repo, restrictedMode: false, cardStore, boardService, log: () => {} };
+    ctx = {
+      repoPath: repo,
+      restrictedMode: false,
+      cardStore,
+      boardService,
+      log: () => {},
+      // The host's swap moves with whatever else runs; the watchdog tests cover memory.
+      headroomCheck: false,
+    };
   });
 
   afterEach(() => {
@@ -443,6 +452,40 @@ describe("apps/harness executeCard wiring (wave 2, part 1)", () => {
       }
     },
   );
+
+  it("harvests a passing run as an exemplar, feeds the learning guard and streams tokens live (E11, E17, M2)", async () => {
+    const card = await newCard("card_learn");
+    let n = 0;
+    const adapter: LocalInferenceAdapter = {
+      modelId: "streamer",
+      supportedArms: ["arm_a_flat"],
+      generate: async (req) => {
+        n++;
+        req.onToken?.("export ");
+        req.onToken?.("const a");
+        return {
+          text: "",
+          toolCalls: (n === 1 ? WRITE_A : [{ name: "finish_card", arguments: {} }]).map((c, i) => ({
+            id: `s${n}-${i}`,
+            ...c,
+          })),
+          usage: { promptTokens: 3, completionTokens: 2, durationMs: 1 },
+        };
+      },
+    };
+    const result = await executeCard(ctx, card, adapter);
+    expect(result.passed).toBe(true);
+    const exemplars = readdirSync(join(repo, ".sekhemet", "exemplars"));
+    expect(exemplars).toHaveLength(1);
+    const stored = JSON.parse(
+      readFileSync(join(repo, ".sekhemet", "exemplars", exemplars[0] as string), "utf8"),
+    );
+    expect(stored[0].cardId).toBe("card_learn");
+    const guard = JSON.parse(readFileSync(join(repo, ".sekhemet", "learning_guard.json"), "utf8"));
+    expect(guard.history.map((h: { cardId: string }) => h.cardId)).toContain("card_learn");
+    await new Promise((r) => setTimeout(r, 300));
+    expect(readFileSync(liveTokenPath(repo, "card_learn"), "utf8")).toContain("export const a");
+  });
 
   it("records a review in the dossier, which the Review surface reads as findings", async () => {
     const card = await newCard("card_rev");

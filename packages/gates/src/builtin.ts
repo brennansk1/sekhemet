@@ -653,6 +653,8 @@ function hygieneGate(ctx: BuiltinGateContext): GateFailure[] {
   }
   for (const entry of log.split("").filter((e) => e.trim())) {
     const [sha, body = ""] = entry.trim().split(" ");
+    // The sync adapter's own pre-rebase checkpoint (Y6) and merge restacks are the harness's.
+    if (/^checkpoint: before rebase onto /.test(body.trim()) && body.includes("Card:")) continue;
     const missing = ["Agent-Model:", "Agent-Harness:"].filter((t) => !body.includes(t));
     if (missing.length > 0) {
       out.push(

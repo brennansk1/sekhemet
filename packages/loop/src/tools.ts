@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
-import { condenseToolOutput } from "@sekhemet/context";
+import { type LspPool, condenseToolOutput, languageOf as lspLanguageOf } from "@sekhemet/context";
 import type { ToolCall } from "@sekhemet/models";
 import {
   type ExecutionResult,
@@ -23,7 +23,7 @@ import { type ToolObservation, clampObservation, denied, fail, ok } from "./obse
 import { PathEscapeError, canonicalizeRoot, resolveInWorktree } from "./paths.js";
 import { findSymbol, listSymbolNames } from "./symbols.js";
 import { applyEol, detectEol, joinLines, reindentBlock, splitLines, toLf } from "./text.js";
-import { type SymbolLocation, TsSymbolService } from "./ts_service.js";
+import { type SymbolLocation, TsSymbolService, isTypeScriptLike } from "./ts_service.js";
 import { atomicWrite, validateWrite } from "./write_contract.js";
 
 const SKIP_DIRS = new Set(["node_modules", "dist", ".git", ".sekhemet", "coverage", ".next"]);
@@ -126,6 +126,8 @@ export interface ToolExecutorOptions {
   allowedDomains?: string[] | undefined;
   /** The card's egress proxy port (S5); commands get it as their only network. */
   egressProxyPort?: number | undefined;
+  /** Language servers for symbol tools on Python, Rust and other non-TS files (C2). */
+  lspPool?: LspPool | undefined;
 }
 
 /** Tools that change the worktree or execute code: refused in restricted mode. */
@@ -475,8 +477,10 @@ export class ToolExecutor {
         return this.replaceSymbolBody(str("path"), str("symbol"), str("body"));
       case "insert_after_symbol":
         return this.insertAfterSymbol(str("path"), str("symbol"), str("content"));
-      case "find_references":
-        return this.findReferences(str("symbol"), str("path") ?? ".", str("file"));
+      case "find_references": {
+        const viaLsp = await this.lspReferences(str("symbol"), str("file"));
+        return viaLsp ?? this.findReferences(str("symbol"), str("path") ?? ".", str("file"));
+      }
       case "go_to_definition":
         return this.goToDefinition(str("symbol"), str("file"));
       case "grep_search": {
@@ -882,6 +886,46 @@ export class ToolExecutor {
         "references",
       ),
     );
+  }
+
+  /**
+   * C2: references through the project's language server for a file in a
+   * language the TypeScript service does not cover (Python, Rust). The
+   * symbol's first whole-word occurrence in `file` is the position asked
+   * about. Undefined when no server applies, so the caller falls back.
+   */
+  private async lspReferences(
+    symbol: string | undefined,
+    file: string | undefined,
+  ): Promise<ToolObservation | undefined> {
+    const pool = this.options.lspPool;
+    if (!pool || !symbol || !file || isTypeScriptLike(file)) return undefined;
+    const lang = lspLanguageOf(file);
+    if (!lang || lang === "typescript") return undefined;
+    const abs = resolveInWorktree(this.root, file);
+    if (!existsSync(abs)) return undefined;
+    const lines = readFileSync(abs, "utf8").split("\n");
+    const re = new RegExp(`\\b${symbol.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
+    const lineIdx = lines.findIndex((l) => re.test(l));
+    if (lineIdx < 0) return undefined;
+    const col = (lines[lineIdx] ?? "").search(re) + 1;
+    try {
+      const client = pool.clientFor(this.root, abs);
+      if (!client) return undefined;
+      const refs = await client.references(abs, lineIdx + 1, col, true);
+      return ok(
+        "find_references",
+        `${refs.length} reference(s) to ${symbol} (language server)`,
+        clampObservation(
+          `${refs.length} reference(s) to ${symbol} (resolved by the ${lang} language server):\n${refs
+            .map((r) => `  ${this.rel(r.path)}:${r.line}:${r.column}`)
+            .join("\n")}`,
+          "references",
+        ),
+      );
+    } catch {
+      return undefined; // No server installed or it failed: text fallback.
+    }
   }
 
   private goToDefinition(symbol: string | undefined, file: string | undefined): ToolObservation {
