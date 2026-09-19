@@ -67,6 +67,7 @@ import { sendPush, startNotifier } from "./notify.js";
 import { runOvernight } from "./overnight.js";
 import { DEFAULT_PM_MODEL, answerQueued, createPmAdapter, holdRunnerLease } from "./pm/service.js";
 import { PmStore } from "./pm/store.js";
+import { diffTrajectories, formatDiff, formatTrajectory, trajectories } from "./replay.js";
 import { CRAWL4AI_CREDIT, runResearchCommand } from "./research/cli.js";
 import { ResearchService, researchSources } from "./research/service.js";
 import { oneShotResearcher } from "./research/service.js";
@@ -815,17 +816,64 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   }
 
   if (config.command === "replay") {
+    // `sekhemet replay <card> [--attempt N] [--diff A,B] [--as <model>]` (H8):
+    // the trajectories from the ledger, a step-aligned diff of two attempts,
+    // or a fresh attempt on another model (forked from the start) and its diff.
     const cardId = config.targetArg;
     if (!cardId) {
-      console.error("Usage: sekhemet replay <card-id>");
+      console.error("Usage: sekhemet replay <card-id> [--attempt N] [--diff A,B] [--as <model>]");
       process.exit(1);
     }
-    const checkpoints = await cardStore.getCheckpoints(cardId);
-    console.log(`\nReplaying trajectory for ${cardId} (${checkpoints.length} checkpoints):`);
-    for (const cp of checkpoints) {
-      console.log(
-        `  Step ${cp.step}: ref=${cp.gitRef} | gate=${cp.gateStatus} | model=${cp.agentModel} | role=${cp.agentRole}`,
-      );
+    const flagOf = (name: string) => {
+      const i = argv.indexOf(name);
+      return i === -1 ? undefined : argv[i + 1];
+    };
+    const as = flagOf("--as");
+    if (as) {
+      const card = await cardStore.getCard(cardId);
+      if (!card) {
+        console.error(`Card not found: ${cardId}`);
+        process.exit(1);
+      }
+      const replayCtx = {
+        repoPath: config.repoPath,
+        restrictedMode: config.restrictedMode,
+        cardStore,
+        boardService,
+      };
+      await forkCard(replayCtx, cardId, 0);
+      const adapter = new ModelRoster().resolve(as, "worker");
+      console.log(`Replaying ${cardId} from the start on ${as}...`);
+      try {
+        await executeCard(replayCtx, (await cardStore.getCard(cardId)) ?? card, adapter);
+      } finally {
+        await (adapter as { unload?: () => Promise<void> }).unload?.().catch(() => undefined);
+      }
+    }
+    const all = await trajectories(cardStore, cardId);
+    if (all.length === 0) {
+      console.log(`No attempts recorded for ${cardId}.`);
+      return;
+    }
+    const pick = (n: string | undefined) =>
+      all.find((t) => String(t.attemptNumber) === n) ?? all.at(-1);
+    const diff =
+      flagOf("--diff") ??
+      (as && all.length >= 2
+        ? `${all.at(-2)?.attemptNumber},${all.at(-1)?.attemptNumber}`
+        : undefined);
+    if (diff) {
+      const [x, y] = diff.split(",");
+      const a = pick(x);
+      const b = pick(y);
+      if (a && b) console.log(`\n${formatDiff(a, b, diffTrajectories(a, b))}\n`);
+      return;
+    }
+    const only = flagOf("--attempt");
+    for (const t of only
+      ? [pick(only)].filter((x): x is NonNullable<typeof x> => Boolean(x))
+      : all) {
+      console.log(`\n${formatTrajectory(t)}`);
     }
     console.log("");
     return;
