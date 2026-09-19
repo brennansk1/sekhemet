@@ -49,6 +49,7 @@ import { consolidateWithManager, reflectWithManager } from "./learning/reflect.j
 import { reviewCard } from "./learning/review.js";
 import { LearningStore } from "./learning/store.js";
 import { runMcpStdioServer } from "./mcp.js";
+import { sendPush, startNotifier } from "./notify.js";
 import { DEFAULT_PM_MODEL, answerQueued, createPmAdapter, holdRunnerLease } from "./pm/service.js";
 import { PmStore } from "./pm/store.js";
 import { CRAWL4AI_CREDIT, runResearchCommand } from "./research/cli.js";
@@ -906,6 +907,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     /** Struggles the playbook had no remedy for: the Researcher's queue. */
     const unexplained: { cardId: string; text: string }[] = [];
     const pmStore = new PmStore(log);
+    // H20: push review, park, budget and question events while the queue runs.
+    const notifier = await startNotifier(log, config.repoPath);
     // Tells the dashboard this process holds the Worker, so PM messages are
     // answered here, between steps, instead of loading a second large model.
     // The lease also publishes the model roster and which role is resident,
@@ -1406,6 +1409,19 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       "run_report",
       `Run finished: ${firstTry}/${cardIds.length} cards passed on the first try, ${eventually}/${cardIds.length} after a Planner retry, in ${(report.totalDurationMs / 60000).toFixed(1)} min.`,
     ).catch(() => undefined);
+    await sendPush(
+      config.repoPath,
+      {
+        event: "run_report",
+        title: eventually < cardIds.length ? "Run finished with failures" : "Run finished",
+        message: `${firstTry}/${cardIds.length} first try, ${eventually}/${cardIds.length} after retry, ${(report.totalDurationMs / 60000).toFixed(1)} min.`,
+        priority: eventually < cardIds.length ? 4 : 3,
+      },
+      { log },
+    ).catch(() => undefined);
+    // Push whatever the run's last events deserve, then stop tailing.
+    await notifier.tick().catch(() => 0);
+    notifier.stop();
     if (eventually < cardIds.length) process.exitCode = 1;
     return;
   }

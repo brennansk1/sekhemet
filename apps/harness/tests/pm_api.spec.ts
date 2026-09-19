@@ -191,6 +191,7 @@ describe("PM and board-practice API", () => {
       "linear",
       "slack",
       "research-web",
+      "push",
     ]);
     expect(
       (await post("/api/integrations/slack", { webhookUrl: "https://evil.example/x" }, "PUT"))

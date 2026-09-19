@@ -53,6 +53,7 @@ import {
   rewindCard,
 } from "./execute.js";
 import { learnFromSendBack } from "./learning/reflect.js";
+import { startNotifier } from "./notify.js";
 import { createPmApi } from "./pm_api.js";
 import { generateDashboardHtml } from "./ui_html.js";
 
@@ -1118,10 +1119,17 @@ export function startDashboardServer(
       timer.unref?.();
 
       const address = server.address();
+      const boundPort = typeof address === "object" && address ? address.port : port;
+      // H20: push review, park, budget and question events to the user's
+      // ntfy or Gotify, when set up. A no-op until then.
+      const notifier = startNotifier(options.log, repoPath, {
+        dashboard: `http://127.0.0.1:${boundPort}`,
+      });
       resolve({
-        port: typeof address === "object" && address ? address.port : port,
+        port: boundPort,
         close: () =>
           new Promise<void>((done) => {
+            void notifier.then((n) => n.stop());
             if (timer) clearInterval(timer);
             unsubscribe();
             for (const stream of streams) stream.end();

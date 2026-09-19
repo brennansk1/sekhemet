@@ -26,6 +26,8 @@ export interface IntegrationSettings {
   githubPrOnAccept?: boolean;
   /** The Researcher may search papers, the web and GitHub. */
   researchWeb?: boolean;
+  /** Self-hosted push (ntfy or Gotify); see notify.ts. */
+  push?: import("./notify.js").PushSettings;
   lastSync?: Record<string, string>;
 }
 
@@ -86,6 +88,7 @@ const CATALOGUE: Omit<IntegrationEntry, "connected">[] = [
   { id: "linear", name: "Linear import and export", tier: "now", via: "csv" },
   { id: "slack", name: "Slack for the PM", tier: "now", via: "webhook" },
   { id: "research-web", name: "Researcher web access", tier: "now", via: "api" },
+  { id: "push", name: "Push notifications (ntfy or Gotify)", tier: "now", via: "webhook" },
   { id: "jira-sync", name: "Jira live sync", tier: "next", via: "api" },
   { id: "linear-sync", name: "Linear live sync", tier: "next", via: "api" },
   { id: "github-actions", name: "GitHub Actions gate mirror", tier: "next", via: "gh-cli" },
@@ -163,6 +166,16 @@ export async function listIntegrations(repoPath: string): Promise<IntegrationEnt
           connected: settings.researchWeb === true,
           enabled: settings.researchWeb === true,
           detail: `${settings.researchWeb ? "On" : "Off"}: papers (arXiv, Hugging Face), page fetches and GitHub${provider ? `, web search via ${provider}` : "; set SEKHEMET_SEARXNG_URL, BRAVE_SEARCH_API_KEY or TAVILY_API_KEY for web search"}`,
+        };
+      }
+      case "push": {
+        const p = settings.push;
+        return {
+          ...base,
+          connected: Boolean(p),
+          detail: p
+            ? `${p.kind === "ntfy" ? `ntfy topic ${p.topic}` : "Gotify"} at ${new URL(p.url).host}; ${(p.events ?? ["review", "parked", "budget", "question", "run_report"]).join(", ")}`
+            : "Not connected: a self-hosted ntfy or Gotify server pushes review, park, budget and question alerts to your phone",
         };
       }
       case "slack":
@@ -669,6 +682,55 @@ export async function handleIntegrationsApi(
       res,
       200,
       (await listIntegrations(ctx.repoPath)).find((i) => i.id === "slack"),
+    );
+    return true;
+  }
+
+  if (url === "/api/integrations/push" && (req.method === "PUT" || req.method === "DELETE")) {
+    if (!ctx.mutationGuard(req, res)) return true;
+    const { validatePush, writePush, ALL_EVENTS } = await import("./notify.js");
+    if (req.method === "DELETE") {
+      writePush(ctx.repoPath, undefined);
+    } else {
+      const b = await ctx.readJsonBody(req);
+      const events = Array.isArray(b.events)
+        ? (b.events as unknown[]).filter((e): e is (typeof ALL_EVENTS)[number] =>
+            (ALL_EVENTS as string[]).includes(String(e)),
+          )
+        : undefined;
+      const push = {
+        kind: b.kind as "ntfy" | "gotify",
+        url: String(b.url ?? "").trim(),
+        ...(typeof b.topic === "string" && b.topic ? { topic: b.topic.trim() } : {}),
+        ...(typeof b.token === "string" && b.token ? { token: b.token.trim() } : {}),
+        ...(events ? { events } : {}),
+      };
+      const bad = validatePush(push);
+      if (bad) {
+        ctx.json(res, 400, { error: bad });
+        return true;
+      }
+      writePush(ctx.repoPath, push);
+    }
+    ctx.json(
+      res,
+      200,
+      (await listIntegrations(ctx.repoPath)).find((i) => i.id === "push"),
+    );
+    return true;
+  }
+
+  if (url === "/api/integrations/push/test" && req.method === "POST") {
+    if (!ctx.mutationGuard(req, res)) return true;
+    const { sendPush } = await import("./notify.js");
+    ctx.json(
+      res,
+      200,
+      await sendPush(
+        ctx.repoPath,
+        { event: "test", title: "Sekhemet", message: `Push works for ${basename(ctx.repoPath)}.` },
+        { log: ctx.log },
+      ),
     );
     return true;
   }
