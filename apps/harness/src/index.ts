@@ -24,6 +24,7 @@ import {
 import { SpidrFeaturePlanner } from "@sekhemet/planner";
 import { ProcessSandbox } from "@sekhemet/sandbox";
 import { NodeGitSyncAdapter } from "@sekhemet/sync";
+import { parseModelList, runCalibrate } from "./calibrate_cmd.js";
 import { resolveConfig } from "./config.js";
 import { type DoctorReport, runDoctor } from "./doctor.js";
 import {
@@ -74,6 +75,7 @@ export interface CliConfig {
     | "tune"
     | "research"
     | "overnight"
+    | "calibrate"
     | "abort"
     | "rewind"
     | "fork"
@@ -318,6 +320,25 @@ export async function printEventLog(log: EventLog): Promise<void> {
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
   const config = parseCliArgs(argv);
+
+  if (config.command === "calibrate") {
+    // `sekhemet calibrate [--models cyber-tiel=worker,apodex=researcher] [--buckets 2048,8192] [--force]` (H3).
+    const rest = argv.slice(argv.indexOf("calibrate") + 1);
+    const flag = (name: string) => {
+      const i = rest.indexOf(name);
+      return i === -1 ? undefined : rest[i + 1];
+    };
+    const buckets = flag("--buckets")
+      ?.split(",")
+      .map(Number)
+      .filter((n) => n > 0);
+    await runCalibrate({
+      models: parseModelList(flag("--models")),
+      ...(buckets?.length ? { buckets } : {}),
+      force: rest.includes("--force"),
+    });
+    return;
+  }
 
   if (config.command === "research") {
     // `sekhemet research "<question>" [--deep]`: the Researcher, with sources.
