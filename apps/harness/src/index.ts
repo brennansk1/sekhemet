@@ -55,6 +55,7 @@ import {
   rewindCard,
   writeQueueReport,
 } from "./execute.js";
+import { runInit } from "./init.js";
 import { notifySlack } from "./integrations.js";
 import { readSettings } from "./integrations.js";
 import { applyExploration, exploreProject } from "./learning/explore.js";
@@ -81,6 +82,7 @@ import {
   observeOutcome,
   planCommand,
   queuePrelude,
+  recordBakeOff,
   roleForCard,
   runWave2Command,
 } from "./wave2.js";
@@ -105,6 +107,7 @@ export interface CliConfig {
     | "daemon"
     | "traces"
     | "acp"
+    | "init"
     | "abort"
     | "rewind"
     | "fork"
@@ -401,6 +404,13 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     return;
   }
 
+  if (config.command === "init") {
+    // `sekhemet init [--force]`: the first-run wizard (H25).
+    const r = runInit(config.repoPath, { force: argv.includes("--force") });
+    if (!r.ready) process.exitCode = 1;
+    return;
+  }
+
   if (config.command === "research") {
     // `sekhemet research "<question>" [--deep]`: the Researcher, with sources.
     const dbPath = join(config.repoPath, ".sekhemet", "events.db");
@@ -460,6 +470,18 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       `Replay can only stop a recorded attempt earlier, so the recommendation never overstates. Apply it with: sekhemet queue --max-turns ${report.best.policy.stepBudget}`,
     );
     console.log(`Report: ${writeTuningReport(config.repoPath, report)}`);
+    if (argv.includes("--apply")) {
+      // E8: applied within +-15% of the current policy, watched by the
+      // learning guard and rolled back if the next 10 cards do worse.
+      const applied = applyTunedPolicy(
+        config.repoPath,
+        report.best.policy,
+        `tune: ${report.best.firstTry}/${report.best.cards} first try at ${report.best.policy.stepBudget} steps`,
+      );
+      console.log(
+        `Applied ${applied.id}: ${applied.stepBudget} steps, ${applied.maxFailedChecks} failed checks${applied.clamped ? " (clamped to +-15%)" : ""}. The queue uses it when --max-turns is not given.`,
+      );
+    }
     return;
   }
 
@@ -865,6 +887,28 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     mkdirSync(dirname(out), { recursive: true });
     writeFileSync(out, `${JSON.stringify({ fixture, manager, rows }, null, 2)}\n`);
     console.log(`\nReport: ${out}`);
+    // Full-settings records and MODEL_MATRIX.md (M23, E4).
+    const bakeRoster = new ModelRoster({ registry: modelRegistry() });
+    const recorded = await recordBakeOff(
+      config.repoPath,
+      fixture,
+      rows
+        .filter((r) => r.report)
+        .map((r) => {
+          const rep = r.report as QueueReport;
+          return {
+            adapter: bakeRoster.resolve(r.worker, "worker"),
+            passed: rep.entries.filter((e) => e.passed && e.attempt === 1).length,
+            total: new Set(rep.entries.map((e) => e.cardId)).size,
+            minutes: rep.totalDurationMs / 60000,
+            tokens: rep.entries.reduce((n, e) => n + e.promptTokens + e.completionTokens, 0),
+            stepBudget: appliedStepBudget(config.repoPath) ?? 50,
+          };
+        }),
+      harnessRoot,
+    );
+    console.log(`Matrix: ${recorded.matrix} (${recorded.recorded} record(s))`);
+    for (const m of recorded.inadmissible) console.log(`   inadmissible: ${m}`);
     return;
   }
 
@@ -1000,9 +1044,27 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       );
       return;
     }
-    const ready = (await cardStore.listCards({ status: "ready" })) as CardRecord[];
-    if (ready.length === 0) {
+    const readyRaw = (await cardStore.listCards({ status: "ready" })) as CardRecord[];
+    if (readyRaw.length === 0) {
       console.log("No Ready cards.");
+      return;
+    }
+    // Planning before the pass (wave2.ts): decision deadlines, the seven
+    // signals, ceremonies, goals, the throughput floor, and WSJF/RICE order.
+    let ready: CardRecord[];
+    try {
+      ({ ordered: ready } = await queuePrelude(
+        { repoPath: config.repoPath, cardStore, log },
+        readyRaw,
+        {
+          workerModelId: workerModel ?? NAIL_WORKER_PROFILE.modelId,
+          reviewWip: (await boardService.getBoardState()).wipLimits.review,
+        },
+      ));
+    } catch (err) {
+      // M15: below the overnight throughput floor the harness refuses to run.
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exitCode = 1;
       return;
     }
     // Retention (K27): packs and transcripts of cards closed 30+ days ago.
@@ -1017,7 +1079,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     // (cyber-tiel, apodex, qwen3.8-27b/dirk) runs under a harness-managed
     // llama-server and roles on the same weights share one adapter; any other
     // name is an Ollama model with its role's profile.
-    const roster = new ModelRoster();
+    // The registry pins chat templates and supplies measured tool arms (M11).
+    const roster = new ModelRoster({ registry: modelRegistry() });
     const pmModelName = managerModel ?? DEFAULT_PM_MODEL;
     /** Every adapter the router loaded, for the watchdog's actions. */
     const loaded = new Set<UnloadableAdapter>();
@@ -1290,7 +1353,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       console.log(`Explored the project: ${r.activated} constraint rule(s) active.`);
     }
     const maxTurnsIdx = argv.indexOf("--max-turns");
-    const maxTurns = maxTurnsIdx !== -1 ? Number(argv[maxTurnsIdx + 1]) : undefined;
+    // Without --max-turns, the budget `tune --apply` set (E8), if any.
+    const maxTurns =
+      maxTurnsIdx !== -1 ? Number(argv[maxTurnsIdx + 1]) : appliedStepBudget(config.repoPath);
     const passedResults: { card: CardRecord; diff: string }[] = [];
     const reviewAll = argv.includes("--review");
     /**
@@ -1329,7 +1394,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
           : rawCard;
       // A retry of a card the worker could not do runs on the stronger model
       // when asked: capability-based routing, not the same model again.
-      const role = n >= 2 && escalateRetries ? "escalation" : "worker";
+      // The planner's route (P6) sends hard cards to the escalation model up front.
+      const role = roleForCard(rawCard, n, escalateRetries);
       const worker = await router.use(role);
       if (role === "escalation") console.log(`   escalating ${rawCard.id} to ${worker.modelId}`);
       if (role === "worker") workerModelId = worker.modelId;
@@ -1384,6 +1450,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       console.log(
         `   ${result.passed ? "PASSED" : "FAILED"} (${result.stopReason}) in ${result.evidence.turnsUsed} turns, ${(result.evidence.durationMs / 1000).toFixed(1)}s`,
       );
+      // The learning guard watches the outcome of the last learning change (E17).
+      const guardNote = observeOutcome(config.repoPath, card.id, result.passed);
+      if (guardNote) console.log(`   ${guardNote}`);
       if (result.stopReason === "memory_pressure") {
         console.log("   queue halted: memory pressure");
         halted = true;
