@@ -5,6 +5,8 @@ import type { BoardService } from "@sekhemet/board";
 import type { CardStore, CardUpdate, EventLog } from "@sekhemet/kernel";
 import type { LocalInferenceAdapter } from "@sekhemet/models";
 import { HttpInferenceAdapter, readKernelPressureLevel } from "@sekhemet/models";
+import { effectiveConfig } from "./config_apply.js";
+import { recommendRoster } from "./init.js";
 import { handleIntegrationsApi } from "./integrations.js";
 import { readSettings } from "./integrations.js";
 import { learnFromProposalChoices } from "./learning/reflect.js";
@@ -367,37 +369,7 @@ export function createPmApi(ctx: PmApiContext) {
 
     // --- Model roster (worker, Seshat, reviewer, researcher) -------------------
     if (url === "/api/models" && req.method === "GET") {
-      const lease = runnerLease(ctx.repoPath) as
-        | {
-            roster?: { role: string; model?: string }[];
-            active?: string;
-            resident?: string[];
-            coResident?: boolean;
-          }
-        | undefined;
-      const configured = new Map<string, string | undefined>(
-        (lease?.roster ?? []).map((r) => [r.role, r.model]),
-      );
-      if (!lease) {
-        configured.set("manager", pmModel);
-        if (process.env.SEKHEMET_RESEARCHER)
-          configured.set("researcher", process.env.SEKHEMET_RESEARCHER);
-      }
-      const roles = ["worker", "manager", "reviewer", "researcher"].map((role) => {
-        const model = configured.get(role);
-        const state = !model
-          ? "unconfigured"
-          : lease?.coResident || lease?.resident?.includes(role) || lease?.active === role
-            ? "resident"
-            : "swapped";
-        return {
-          role,
-          ...(model ? { model } : {}),
-          state,
-          ...(lease ? {} : { note: "No run in progress" }),
-        };
-      });
-      ctx.json(res, 200, { roles, coResident: lease?.coResident === true });
+      ctx.json(res, 200, modelRoster(ctx.repoPath, pmModel));
       return true;
     }
 
@@ -476,4 +448,53 @@ export function createPmApi(ctx: PmApiContext) {
   }
 
   return { handle, streamFrames, pmStore, learning };
+}
+
+/**
+ * The four-model roster and what is loaded: the running queue's lease when
+ * there is one, otherwise the roster the next run will use (config.toml, then
+ * the recommendation for this machine). Shared by /api/models and the
+ * sidebar's model line (via /api/machine).
+ */
+export function modelRoster(
+  repoPath: string,
+  pmModel: string = DEFAULT_PM_MODEL,
+): {
+  roles: { role: string; model?: string; state: string; note?: string }[];
+  coResident: boolean;
+} {
+  const lease = runnerLease(repoPath) as
+    | {
+        roster?: { role: string; model?: string }[];
+        active?: string;
+        resident?: string[];
+        coResident?: boolean;
+      }
+    | undefined;
+  const configured = new Map<string, string | undefined>(
+    (lease?.roster ?? []).map((r) => [r.role, r.model]),
+  );
+  if (!lease) {
+    const cfg = effectiveConfig(repoPath).config;
+    const rec = recommendRoster();
+    configured.set("worker", cfg.models.executor !== "auto" ? cfg.models.executor : rec.worker);
+    configured.set("manager", pmModel);
+    configured.set("reviewer", rec.reviewer);
+    configured.set("researcher", process.env.SEKHEMET_RESEARCHER ?? rec.researcher);
+  }
+  const roles = ["worker", "manager", "reviewer", "researcher"].map((role) => {
+    const model = configured.get(role);
+    const state = !model
+      ? "unconfigured"
+      : lease?.coResident || lease?.resident?.includes(role) || lease?.active === role
+        ? "resident"
+        : "swapped";
+    return {
+      role,
+      ...(model ? { model } : {}),
+      state,
+      ...(lease ? {} : { note: "No run in progress" }),
+    };
+  });
+  return { roles, coResident: lease?.coResident === true };
 }

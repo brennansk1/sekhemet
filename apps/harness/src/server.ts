@@ -56,6 +56,7 @@ import {
 import { learnFromSendBack } from "./learning/reflect.js";
 import { startNotifier } from "./notify.js";
 import { createPmApi } from "./pm_api.js";
+import { modelRoster } from "./pm_api.js";
 import { handleRestExtras } from "./rest_extra.js";
 import { generateDashboardHtml } from "./ui_html.js";
 import { handleWave2Route } from "./wave2_server.js";
@@ -706,6 +707,8 @@ export function startDashboardServer(
         ok: doctor.ok,
         checkedAt: new Date(doctorCache?.at ?? Date.now()).toISOString(),
         worktrees: worktrees(repoPath),
+        // The Sekhemet roster (not whatever the local Ollama happens to serve).
+        roster: modelRoster(repoPath).roles,
       });
       return;
     }

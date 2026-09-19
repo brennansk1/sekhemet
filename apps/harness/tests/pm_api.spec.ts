@@ -216,7 +216,7 @@ describe("PM and board-practice API", () => {
     expect(res.cfd.at(-1)?.ready).toBeGreaterThan(0);
   });
 
-  it("reports the model roster; without a running queue only Seshat is known", async () => {
+  it("reports the model roster; without a running queue, the roster the next run will use, none loaded", async () => {
     const body = (await (await fetch(`${base}/api/models`)).json()) as {
       roles: { role: string; model?: string; state: string }[];
       coResident: boolean;
@@ -226,7 +226,16 @@ describe("PM and board-practice API", () => {
       model: "dirk-27b:latest",
       state: "swapped",
     });
-    expect(body.roles.find((r) => r.role === "worker")?.state).toBe("unconfigured");
+    // Contract change (H15/H25): idle, the roster is config.toml's, else this
+    // machine's recommendation; nothing is loaded, so every role is swapped out.
+    expect(body.roles.find((r) => r.role === "worker")).toMatchObject({
+      model: "cyber-tiel",
+      state: "swapped",
+      note: "No run in progress",
+    });
+    expect(body.roles.find((r) => r.role === "researcher")?.model).toBe(
+      process.env.SEKHEMET_RESEARCHER ?? "apodex",
+    );
   });
 
   it("does not load Seshat's model from the dashboard while memory is under pressure", async () => {

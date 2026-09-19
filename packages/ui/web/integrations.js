@@ -63,6 +63,15 @@ const CATALOG = [
       "Standup text, the titles of cards that need you, and run summaries, to the channel behind the webhook.",
   },
   {
+    id: "push",
+    tier: "now",
+    name: "Push notifications (ntfy or Gotify)",
+    mono: "PU",
+    does: "Your phone hears when a card waits for review, a card is parked or hits its budget, the Worker asks a question, or a run finishes. Tapping opens the card here.",
+    leaves:
+      "The alert title and one line naming the card, to the ntfy or Gotify server you choose (your own, or ntfy.sh).",
+  },
+  {
     id: "jira-sync",
     tier: "next",
     name: "Jira live sync",
@@ -222,7 +231,13 @@ function controls(e) {
     }
     case "research-web": {
       const on = Boolean(e.enabled ?? e.connected);
-      return `<div class="iacts"><button class="switch" type="button" role="switch" aria-checked="${on}" aria-label="Researcher web access" data-toggle-web ${busy("web") ? "disabled" : ""}><span></span></button><span class="sec">${on ? "The Researcher may use the web." : "The Researcher stays on this machine."}</span></div>${e.detail ? `<p class="istatus">${esc(e.detail)}</p>` : ""}<p class="inote">${icon("search", 12, "ic s12")}<span>Web search needs a provider you configure: a self-hosted SearXNG (<code>SEKHEMET_SEARXNG_URL</code>), or a Brave or Tavily key in the environment (<code>BRAVE_SEARCH_API_KEY</code>, <code>TAVILY_API_KEY</code>). Papers, page reads and GitHub work without one.</span></p>`;
+      return `<div class="iacts"><button class="switch" type="button" role="switch" aria-checked="${on}" aria-label="Researcher web access" data-toggle-web ${busy("web") ? "disabled" : ""}><span></span></button><span class="sec">${on ? "The Researcher may use the web." : "The Researcher stays on this machine."}</span></div>${e.detail ? `<p class="istatus">${esc(e.detail)}</p>` : ""}`;
+    }
+    case "push": {
+      if (e.connected) {
+        return `<div class="iacts"><button class="btn sm" type="button" data-push-test ${busy("test") ? "disabled" : ""}>${busy("test") ? "Sending…" : "Send test alert"}</button><button class="btn sm ghost" type="button" data-push-off>Disconnect</button></div>${e.detail ? `<p class="istatus">${esc(e.detail)}</p>` : ""}`;
+      }
+      return `<form class="iacts push-form" data-push-form><select name="kind" aria-label="Server"><option value="ntfy">ntfy</option><option value="gotify">Gotify</option></select><input name="url" type="url" required placeholder="https://ntfy.sh or http://192.168.1.5:8080" aria-label="Server URL" autocomplete="off" spellcheck="false"><input name="topic" type="text" placeholder="Topic (ntfy)" aria-label="ntfy topic" autocomplete="off" spellcheck="false"><input name="token" type="password" placeholder="Token (optional for ntfy, required for Gotify)" aria-label="Access token" autocomplete="off"><button class="btn sm primary" type="submit" ${busy("connect") ? "disabled" : ""}>${busy("connect") ? "Connecting…" : "Connect"}</button></form><p class="inote">${icon("lock", 12, "ic s12")}<span>The server URL and token stay in <code>~/.config/sekhemet/repos/…</code> with mode 0600, never in the repository or the ledger.</span></p>`;
     }
     case "jira":
     case "linear": {
@@ -401,6 +416,29 @@ async function onClick(e) {
     });
     return;
   }
+  if (t.closest("[data-push-test]") && !blocked()) {
+    await withBusy("push:test", async () => {
+      const r = await postJSON("/api/integrations/push/test");
+      if (r.ok && r.data?.ok !== false) toast({ tone: "pass", text: "Test alert sent" });
+      else
+        toast({
+          tone: "fail",
+          text: "The server didn't accept the test alert.",
+          detail: r.data?.error ?? err(r),
+        });
+    });
+    return;
+  }
+  if (t.closest("[data-push-off]") && !blocked()) {
+    const r = await send("DELETE", "/api/integrations/push");
+    if (r.ok)
+      toast({
+        text: "Push notifications are off. The server details were removed from this machine.",
+      });
+    else toast({ tone: "fail", text: "Couldn't disconnect push notifications.", detail: err(r) });
+    await load();
+    return;
+  }
   if (t.closest("[data-slack-test]") && !blocked()) {
     await withBusy("slack:test", async () => {
       const r = await postJSON("/api/integrations/slack/test");
@@ -440,6 +478,25 @@ async function onClick(e) {
 
 async function onSubmit(e) {
   const form = e.target;
+  if (form.matches("[data-push-form]")) {
+    e.preventDefault();
+    if (blocked()) return;
+    const f = form.elements;
+    const body = {
+      kind: f.kind.value,
+      url: f.url.value.trim(),
+      ...(f.topic.value.trim() ? { topic: f.topic.value.trim() } : {}),
+      ...(f.token.value ? { token: f.token.value } : {}),
+    };
+    await withBusy("push:connect", async () => {
+      const r = await send("PUT", "/api/integrations/push", body);
+      if (r.ok)
+        toast({ tone: "pass", text: "Push notifications are on. Send a test alert to check." });
+      else toast({ tone: "fail", text: "Couldn't connect push notifications.", detail: err(r) });
+      await load();
+    });
+    return;
+  }
   if (form.matches("[data-slack-form]")) {
     e.preventDefault();
     if (blocked()) return;

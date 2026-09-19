@@ -1035,6 +1035,30 @@
   flex: none;
   margin-top: 1px;
 }
+.push-form {
+  flex-wrap: wrap;
+}
+.push-form input,
+.push-form select {
+  flex: 1 1 160px;
+  min-width: 0;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+}
+.push-form select {
+  flex: 0 0 88px;
+}
+.push-form input[name="url"] {
+  flex: 1 1 240px;
+}
+.push-form input::placeholder {
+  color: var(--text-muted);
+}
 .slack-form input {
   flex: 1 1 200px;
   min-width: 0;

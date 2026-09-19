@@ -9,6 +9,8 @@ import type { CardRecord, CardStore, EventLog } from "@sekhemet/kernel";
 import type { ProposalDraft } from "./pm/agent.js";
 import type { PmStore } from "./pm/store.js";
 import { PM_EVENTS } from "./pm/types.js";
+import { syncViaAdapter, trackerFromEnv } from "./wave2_github.js";
+import { githubAppFromEnv } from "./wave2_server.js";
 
 const run = promisify(execFile);
 
@@ -165,7 +167,7 @@ export async function listIntegrations(repoPath: string): Promise<IntegrationEnt
           ...base,
           connected: settings.researchWeb === true,
           enabled: settings.researchWeb === true,
-          detail: `${settings.researchWeb ? "On" : "Off"}: papers (arXiv, Hugging Face), page fetches and GitHub${provider ? `, web search via ${provider}` : "; set SEKHEMET_SEARXNG_URL, BRAVE_SEARCH_API_KEY or TAVILY_API_KEY for web search"}`,
+          detail: `${settings.researchWeb ? "On" : "Off"}: papers (arXiv, OpenAlex, Hugging Face), documentation, page reads and GitHub. Web search: ${provider ?? "a private SearXNG starts on this machine when Docker is available; or set BRAVE_SEARCH_API_KEY or TAVILY_API_KEY"}.`,
         };
       }
       case "push": {
@@ -495,8 +497,20 @@ export async function syncGithub(
   repoPath: string,
   cardStore: CardStore,
   direction: "pull" | "push" | "both",
+  eventLog?: EventLog,
 ): Promise<{ created: number; updated: number; skipped: number; errors: string[] }> {
   const out = { created: 0, updated: 0, skipped: 0, errors: [] as string[] };
+  // The GitHub App or Forgejo adapter when configured (Y10-Y12, Y20): last-
+  // writer-wins with history, and mid-card scope edits pause the card.
+  const adapter = trackerFromEnv(githubAppFromEnv());
+  if (adapter && eventLog) {
+    const since = readSettings(repoPath).lastSync?.[adapter.system] ?? "1970-01-01T00:00:00Z";
+    const r = await syncViaAdapter(adapter, cardStore, eventLog, since);
+    writeSettings(repoPath, {
+      lastSync: { ...(readSettings(repoPath).lastSync ?? {}), [adapter.system]: new Date().toISOString() },
+    });
+    return { created: r.created + r.pushed, updated: r.updated + r.paused, skipped: 0, errors: r.errors };
+  }
   const gh = await githubRepo(repoPath);
   if (!gh.repo) {
     out.errors.push(gh.error ?? "No GitHub repository");
@@ -755,7 +769,7 @@ export async function handleIntegrationsApi(
     if (!cardStore) return true;
     const b = await ctx.readJsonBody(req);
     const direction = b.direction === "pull" || b.direction === "push" ? b.direction : "both";
-    ctx.json(res, 200, await syncGithub(ctx.repoPath, cardStore, direction));
+    ctx.json(res, 200, await syncGithub(ctx.repoPath, cardStore, direction, ctx.log));
     return true;
   }
 

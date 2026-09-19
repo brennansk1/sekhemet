@@ -170,8 +170,12 @@ function renderSide() {
         `<a class="row" href="#/machine" title="${esc(`Memory pressure ${m.memoryLevel || "normal"}. ${m.memoryPercent}% used, including cache the system can reclaim.`)}"><span class="dot${memCls}" aria-hidden="true"></span><span class="lbl">Memory ${esc(m.memoryLevel || "normal")}</span><span class="lbl sec tnum mem-pct">${m.memoryPercent}% used</span></a>`
       : `<div class="row">${icon("memory", 14, "ic s14")}<span class="lbl">Memory: checking…</span></div>`;
   const working = s.cards.some((c) => c.status === "in_progress");
-  const modelName = m.model || (m.inferenceUp === false ? "No model server" : "Model: checking…");
-  const model = `<div class="row" title="${esc(modelName)}"><span class="dot ${working ? "run" : "idle"}"></span><span class="lbl${m.model ? " mono" : ""}">${esc(modelName)}${m.model ? ` · ${working ? "working" : "idle"}` : ""}</span></div>`;
+  // The Worker from Sekhemet's roster; the served-model probe is the fallback.
+  const worker = (s.machine?.roster ?? []).find((r) => r.role === "worker");
+  const modelName = worker?.model
+    ? `Worker ${worker.model}`
+    : m.model || (m.inferenceUp === false ? "No model server" : "Model: checking…");
+  const model = `<div class="row" title="${esc(modelName)}"><span class="dot ${working ? "run" : "idle"}"></span><span class="lbl${m.model || worker?.model ? " mono" : ""}">${esc(modelName)}${m.model || worker?.model ? ` · ${working ? "working" : "idle"}` : ""}</span></div>`;
   const sand = document.documentElement.dataset.theme === "sand";
   const tools = `<div class="tools"><button class="icon-btn" type="button" data-theme-toggle title="Theme (t)">${icon(sand ? "moon" : "sun", 14, "ic s14")}<span class="lbl">Theme</span></button><button class="icon-btn" type="button" data-cheats title="Keyboard shortcuts (?)">${icon("keyboard", 14, "ic s14")}<span class="lbl">Keys</span></button></div>`;
 
