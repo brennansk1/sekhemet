@@ -257,6 +257,7 @@ export type Wave2Command =
   | "recurring"
   | "register"
   | "trailers"
+  | "fixture"
   | "goal"
   | "decide"
   | "m0"
@@ -272,6 +273,7 @@ export const WAVE2_COMMANDS: readonly Wave2Command[] = [
   "recurring",
   "register",
   "trailers",
+  "fixture",
   "goal",
   "decide",
   "m0",
@@ -396,6 +398,15 @@ export async function runWave2Command(
       return bad.length
         ? done(`${bad.length} commit(s) without the attribution trailers.`, 1)
         : done("Every commit carries the attribution trailers.", 0);
+    }
+    case "fixture": {
+      // `sekhemet fixture <typescript|python|rust> <dir> [--bug]` (X21): a miniature repository.
+      const { FIXTURE_LANGUAGES, generateFixture } = await import("@sekhemet/eval");
+      const [lang, dir] = args;
+      if (!lang || !dir || !(FIXTURE_LANGUAGES as readonly string[]).includes(lang))
+        return done(`Usage: sekhemet fixture <${FIXTURE_LANGUAGES.join("|")}> <dir> [--bug]`, 1);
+      const files = generateFixture(lang as "typescript", dir, { bug: args.includes("--bug") });
+      return done(`Wrote a ${lang} fixture (${files.length} files) to ${dir}.`, 0);
     }
     case "goal": {
       // `sekhemet goal "<statement>"` | `goal approve <id>` | `goal status`

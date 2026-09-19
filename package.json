@@ -5,7 +5,10 @@
   "packageManager": "pnpm@10.30.3",
   "scripts": {
     "build": "tsc -b",
+    "dev": "node scripts/dev.mjs",
     "test": "vitest run",
+    "test:unit": "vitest run --project unit",
+    "test:integration": "vitest run --project integration",
     "test:watch": "vitest",
     "typecheck": "tsc -b",
     "lint": "biome check .",

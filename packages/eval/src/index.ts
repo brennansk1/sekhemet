@@ -14,3 +14,4 @@ export * from "./archive.js";
 export * from "./loops.js";
 export * from "./mutation.js";
 export * from "./diagnostics.js";
+export * from "./fixture_repo.js";
