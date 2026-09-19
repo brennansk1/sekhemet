@@ -71,6 +71,7 @@ import { DEFAULT_PM_MODEL, answerQueued, createPmAdapter, holdRunnerLease } from
 import { PmStore } from "./pm/store.js";
 import { diffTrajectories, formatDiff, formatTrajectory, trajectories } from "./replay.js";
 import { CRAWL4AI_CREDIT, runResearchCommand } from "./research/cli.js";
+import { isResearchCard, runResearchCard } from "./research/cards.js";
 import { ResearchService, researchSources } from "./research/service.js";
 import { oneShotResearcher } from "./research/service.js";
 import { DEFAULT_DASHBOARD_PORT, startDashboardServer } from "./server.js";
@@ -501,10 +502,14 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       // X14: the air-gap self-test, written to the audit log.
       const { airgapCommand } = await import("./airgap.js");
       const { log } = initLocalKernel(config.repoPath);
-      process.exitCode = await airgapCommand(config.repoPath, ["selftest", ...argv.slice(argv.indexOf("--airgap") + 1)], {
-        log,
-        print: (l) => console.log(l),
-      });
+      process.exitCode = await airgapCommand(
+        config.repoPath,
+        ["selftest", ...argv.slice(argv.indexOf("--airgap") + 1)],
+        {
+          log,
+          print: (l) => console.log(l),
+        },
+      );
       return;
     }
     const report = await runDoctor(config.repoPath);
@@ -723,7 +728,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         diff,
         project: { ...gatesConfig.project, mutation: false },
         // Air-gapped: only mirrored packages exist (X10).
-        registry: isAirgapped(config.repoPath) ? mirrorRegistry(config.repoPath) : npmRegistry(config.repoPath),
+        registry: isAirgapped(config.repoPath)
+          ? mirrorRegistry(config.repoPath)
+          : npmRegistry(config.repoPath),
       });
       res = {
         ...res,
@@ -1599,6 +1606,38 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         }
         const index = deferred.findIndex((d) => d.id === card.id);
         if (index !== -1) deferred.splice(index, 1);
+        // X7: a research card goes to the Researcher, not the Worker.
+        if (isResearchCard(card)) {
+          if (!researcherModel) {
+            console.log(
+              `\n--- ${card.id} is a research card; start the queue with --researcher to run it ---`,
+            );
+            continue;
+          }
+          console.log(`\n=== ${card.id} (research): ${card.title} ===`);
+          const { web } = await researchSources(config.repoPath);
+          const service = new ResearchService({
+            repoPath: config.repoPath,
+            web,
+            cardStore,
+            log,
+            model: () => router.use("researcher"),
+          });
+          const r = await runResearchCard(
+            card,
+            (q, cardId) => service.ask(q, { deep: true, cardId }),
+            cardStore,
+            config.repoPath,
+          ).catch((err) => {
+            console.log(`   research failed: ${err instanceof Error ? err.message : String(err)}`);
+            return undefined;
+          });
+          if (r)
+            console.log(
+              `   ${r.passed ? "cited note ready for review" : "parked: not settled"}: ${r.notePath}`,
+            );
+          continue;
+        }
         const result = await attempt(card, n, plans?.get(card.id));
         // A parked card (repair rung 4, vacuous tests) waits for a person; it
         // is not re-planned automatically.
