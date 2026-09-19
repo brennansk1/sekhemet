@@ -63,6 +63,19 @@ Status: **Built**, **Not built (by design)**, or **Needs hardware** (waits on th
 | The Complexity Trap (2508.21433) | Masking plus structured compaction for the Worker; hybrid summary for Seshat | 5fd3019, 2165493 |
 | Apodex 1.1 (2608.23283) | The Researcher model: IQ3_M for this host, Q8_0 on the 128 GB host | 764deec, 5e74e60 |
 
+## 3a. Requests of 2026-09-18/19: the research service and the harness units
+
+| Request | Status | Commits | Proof (tests) |
+|---|---|---|---|
+| Research service seeded from Helga's, expanded to papers and the web, driven by Apodex | Built. Ported from Helga: pacing (documented limits), robots, cache, source weights, docs reader, coverage loop. Added: OpenAlex, citation snowballing, paper sections, Crawl4AI pages, private SearXNG, research memory | 52dd5c4, 91f79ab, 3c96a7d | apps/harness/tests/research_service.spec.ts |
+| On the level of Claude's and Gemini's web tools | Built: domain and recency filters, focused page reads (BM25 chunks), search-and-read, a References contract | 91f79ab, aa44d29, a8ed030 | research_service.spec.ts, apodex_research.spec.ts |
+| Tailored to Apodex in every way | Built from its vendor harness FrontierAgent (Apache-2.0): trained tool names, argument shapes and result formats, the extraction prompt, research, sub-agent and coordinator prompts, the Agent Team for deep research, repair of unverified citations, separate server slots for conversation and extraction | 91f79ab, 3c96a7d, aa44d29 | apodex_research.spec.ts |
+| Crawl4AI built in | Built: a warm sidecar behind robots and pacing. Its attribution is in NOTICE and the CLI help | 91f79ab | research_service.spec.ts |
+| Test it with a manager's tasks | Done, live on Apodex IQ3_M: a library choice, a technology comparison, published research, a security advisory, and a deep feature plan. After tonight's fixes: grounded, 0 unverified citations, confidence 0.6 and 1.0 on the first two, 5–6 min each | a8ed030, b51a958 | live batch /private/tmp/claude-501/mgr3.jsonl (not a repository file) |
+| Rename the project manager to Seshat | Built | d9ae90a | apps/harness/tests/slash.spec.ts, packages/ui/tests |
+| Harness units H1, H3, H8, H10–H16, H20–H26 | Built: daemon plus WebSocket; calibrate; replay and trajectory diff; MCP server and client; REST completeness; SDK; ACP; config.toml applied; slash commands; ntfy/Gotify push; overnight scheduler; OTel spans; compute governance; reproducibility record; init and installer. H26 is the M20 watchdog wired into the queue | e9e6804, 5661807, 90a6ec1, 73c3fd7, 3462f49, abcc16e, d8f4f6f, e591074, 87660a7, 2c7dc14, 2dbf355, e6fe612, cfa8e5c, ebcf082, 9d3ce0e | daemon_ws, calibrate_cmd, replay, mcp, mcp_client, rest_extra, sdk, acp, config_apply, slash, notify, overnight, tracing, repro, init (apps/harness/tests/*.spec.ts) |
+| Research safety and knowledge tiers (X4, X5, X8, X9) | Built: llms.txt first, research on the ledger, untrusted wrapper for web content, cache lifetimes by kind | 95faa92 | research_service.spec.ts |
+
 ## 4. Known deviations
 
 - **Commit trailers.** Feature commits carry Card, Agent-Model, Agent-Harness, Agent-Role and Co-authored-by, as CLAUDE.md specifies. `GateStatus` and `Step` appear on checkpoint commits only, as CLAUDE.md scopes them. DEFINITION_OF_DONE §6 lists `GateStatus` for every commit. The two documents disagree; this cycle followed CLAUDE.md.
