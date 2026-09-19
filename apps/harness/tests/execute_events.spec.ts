@@ -99,6 +99,23 @@ describe("@sekhemet/harness execution ledger events", () => {
     expect(first.calls[0]).toMatchObject({ name: "write_file", target: "src/a.ts" });
     expect(first.usage?.promptTokens).toBe(100);
 
+    // H24: the attempt's reproducibility record, on the ledger and beside the evidence.
+    const repro = events.find((e) => e.type === "card/repro")?.payload as {
+      attempt: number;
+      model: { id: string };
+      promptSha: string;
+      toolSchemaSha: string;
+      gatesSha: string;
+    };
+    expect(repro.model.id).toBe(model.modelId);
+    expect(repro.promptSha).toMatch(/^[0-9a-f]{64}$/);
+    expect(repro.toolSchemaSha).toMatch(/^[0-9a-f]{64}$/);
+    expect(repro.gatesSha).toMatch(/^[0-9a-f]{64}$/);
+    const latest = JSON.parse(
+      readFileSync(join(repo, ".sekhemet", "evidence", "latest-card_exec.json"), "utf8"),
+    ) as { reproducibility?: { attempt: number } };
+    expect(latest.reproducibility?.attempt).toBe(repro.attempt);
+
     const plan = events.find((e) => e.type === "card/repair_plan");
     expect(plan?.actor).toBe("planner");
     expect((plan?.payload as { plan: string }).plan).toContain("Export a constant");

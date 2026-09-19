@@ -27,6 +27,7 @@ import { NodeGitSyncAdapter } from "@sekhemet/sync";
 import { readSettings } from "./integrations.js";
 import { learnFromAttempt } from "./learning/reflect.js";
 import type { LearningStore } from "./learning/store.js";
+import { buildReproRecord } from "./repro.js";
 
 export interface ExecutionContext {
   repoPath: string;
@@ -404,6 +405,9 @@ export async function executeCard(
   });
 
   const result = await runner.run();
+  await recordReproducibility(ctx, card.id, attempt, model, gatesConfig.sha256).catch((err) =>
+    log(`   reproducibility record not written: ${err instanceof Error ? err.message : err}`),
+  );
   if (result.failToPass)
     log(`   fail-to-pass: ${result.failToPass.status} (${result.failToPass.detail})`);
   if (result.resumedFrom) {
@@ -428,6 +432,48 @@ export async function executeCard(
     }
   }
   return result;
+}
+
+/**
+ * H24: what decided this attempt (model file and quant, runtime, prompt, tool
+ * schema, playbook, active rules, gates, harness commit, host), on the ledger
+ * as `card/repro`, beside the evidence as `repro-<card>-<attempt>.json`, and
+ * inside the latest evidence bundle as `reproducibility`.
+ */
+async function recordReproducibility(
+  ctx: ExecutionContext,
+  cardId: string,
+  attempt: number,
+  model: LocalInferenceAdapter,
+  gatesSha: string,
+): Promise<void> {
+  const record = buildReproRecord({
+    cardId,
+    attempt,
+    model,
+    repoPath: ctx.repoPath,
+    gatesSha,
+    activeRules: [...(ctx.runRules ?? [])],
+  });
+  const dir = join(ctx.repoPath, ".sekhemet", "evidence");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, `repro-${cardId}-${attempt}.json`),
+    `${JSON.stringify(record, null, 2)}\n`,
+  );
+  const latest = join(dir, `latest-${cardId}.json`);
+  if (existsSync(latest)) {
+    const bundle = JSON.parse(readFileSync(latest, "utf8")) as Record<string, unknown>;
+    if (bundle.attempt === attempt || bundle.attempt === undefined) {
+      writeFileSync(latest, `${JSON.stringify({ ...bundle, reproducibility: record }, null, 2)}\n`);
+    }
+  }
+  await ctx.cardStore.recordEvent({
+    type: "card/repro",
+    cardId,
+    actor: "harness",
+    payload: record as unknown as Record<string, unknown>,
+  });
 }
 
 /**
