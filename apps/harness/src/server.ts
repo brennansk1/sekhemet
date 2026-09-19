@@ -74,6 +74,8 @@ export interface DashboardServerOptions {
   repoPath?: string;
   /** How often the stream checks the log for new events. */
   streamIntervalMs?: number;
+  /** How often due recurring templates are cloned (X16); default a minute. */
+  recurringEveryMs?: number;
   /** Enables the triage actions (accept, return, park). Read-only without it. */
   cardStore?: CardStore;
   /** Memory reader for /api/machine; injectable so tests can cross thresholds. */
@@ -1213,7 +1215,13 @@ export function startDashboardServer(
       // X16: due recurring templates clone into Ready cards, once a minute.
       const stopRecurring = options.cardStore
         ? startRecurringTicker(repoPath, options.cardStore, options.log, {
-            hours: resolveConfig({ repoPath }).config.machine.hours,
+            hours: (() => {
+              try {
+                return resolveConfig({ repoPath }).config.machine.hours;
+              } catch {
+                return "none";
+              }
+            })(),
             ...(options.recurringEveryMs ? { everyMs: options.recurringEveryMs } : {}),
           })
         : () => undefined;

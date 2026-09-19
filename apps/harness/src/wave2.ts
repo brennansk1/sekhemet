@@ -254,6 +254,7 @@ export type Wave2Command =
   | "airgap"
   | "onboard"
   | "drift"
+  | "recurring"
   | "goal"
   | "decide"
   | "m0"
@@ -266,6 +267,7 @@ export const WAVE2_COMMANDS: readonly Wave2Command[] = [
   "airgap",
   "onboard",
   "drift",
+  "recurring",
   "goal",
   "decide",
   "m0",
@@ -333,6 +335,17 @@ export async function runWave2Command(
       if (drift.length === 0) return done("No convention drift.", 0);
       for (const d of drift) print(`drift: ${d.aspect}: was ${d.was}, now ${d.now}`);
       return 0;
+    }
+    case "recurring": {
+      // `sekhemet recurring add|list|tick|trigger` (X16): scheduled and recurring cards.
+      const { recurringCommand } = await import("./recurring.js");
+      const { resolveConfig } = await import("./config.js");
+      return recurringCommand(k.repoPath, args, {
+        store: k.cardStore,
+        log: k.log,
+        hours: resolveConfig({ repoPath: k.repoPath }).config.machine.hours,
+        print,
+      });
     }
     case "goal": {
       // `sekhemet goal "<statement>"` | `goal approve <id>` | `goal status`

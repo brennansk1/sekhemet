@@ -6,6 +6,7 @@ import type { QueueReport } from "./execute.js";
 import { type GovernanceLimits, mayRun, recordUsage } from "./governance.js";
 import { sendPush } from "./notify.js";
 import { postConventionDrift } from "./onboard.js";
+import { tickRecurring } from "./recurring.js";
 import { type Window, mayUseMachine, parseHours } from "./scheduler.js";
 import { overnightPlanLine } from "./wave2.js";
 
@@ -97,6 +98,13 @@ export async function runOvernight(opts: OvernightOptions): Promise<OvernightSum
       summary.stoppedBecause = `reached ${opts.until}`;
       break;
     }
+    // X16: recurring templates that are due clone into Ready cards first.
+    const recurring = await tickRecurring(opts.repoPath, opts.cardStore, opts.log, {
+      now: now(),
+      hours: opts.hours,
+    }).catch(() => undefined);
+    for (const f of recurring?.fired ?? [])
+      say(`Recurring: ${f.template} -> ${f.cloneId} (${f.reason}).`);
     const ready = (await opts.cardStore.listCards({ status: "ready" as never })).length;
     if (ready === 0) {
       summary.stoppedBecause = "no Ready cards left";

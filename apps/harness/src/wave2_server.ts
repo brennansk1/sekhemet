@@ -174,6 +174,34 @@ export async function handleWave2Route(
   if (!cardStore) return false;
   const ledger = { store: cardStore, log: ctx.log };
 
+  // X16: recurring templates, and webhook triggers from the dashboard or from
+  // a caller holding SEKHEMET_TRIGGER_TOKEN (CI, a docs build, a cron job).
+  if (url === "/api/recurring" && req.method === "GET") {
+    const { nextRun, scheduleOf } = await import("./recurring.js");
+    const templates = [];
+    for (const c of await cardStore.listCards()) {
+      const s = scheduleOf(c);
+      if (!s) continue;
+      const next = s.cron ? nextRun(s.cron, new Date())?.toISOString() : undefined;
+      templates.push({ id: c.id, title: c.title, ...s, ...(next ? { next } : {}) });
+    }
+    json(res, 200, { templates });
+    return true;
+  }
+  const trigger = /^\/api\/recurring\/trigger\/([\w.-]+)$/.exec(url);
+  if (trigger && req.method === "POST") {
+    const token = process.env.SEKHEMET_TRIGGER_TOKEN;
+    const bearer = req.headers.authorization === `Bearer ${token}`;
+    if (!ctx.isTrustedMutation(req) && !(token && bearer)) {
+      json(res, 403, { error: "Triggers need the dashboard or SEKHEMET_TRIGGER_TOKEN" });
+      return true;
+    }
+    const { fireTrigger } = await import("./recurring.js");
+    await fireTrigger(ctx.log, trigger[1] as string, { by: bearer ? "token" : "dashboard" });
+    json(res, 202, { fired: trigger[1] });
+    return true;
+  }
+
   if (url === "/api/planner/decisions" && req.method === "GET") {
     json(res, 200, { decisions: await new DecisionStore(ledger).all() });
     return true;
@@ -251,4 +279,36 @@ export async function handleWave2Route(
     return true;
   }
   return false;
+}
+
+/**
+ * The dashboard server's recurring ticker (X16): once a minute, due
+ * templates clone into Ready cards. Returns a stop function.
+ */
+export function startRecurringTicker(
+  repoPath: string,
+  cardStore: CardStore,
+  log: EventLog,
+  opts: { everyMs?: number; hours?: string; say?: (line: string) => void } = {},
+): () => void {
+  let busy = false;
+  const tick = async () => {
+    if (busy) return;
+    busy = true;
+    try {
+      const { tickRecurring } = await import("./recurring.js");
+      const r = await tickRecurring(repoPath, cardStore, log, {
+        ...(opts.hours ? { hours: opts.hours } : {}),
+      });
+      for (const f of r.fired) opts.say?.(`recurring: ${f.template} -> ${f.cloneId} (${f.reason})`);
+    } catch {
+      // A bad template must not stop the server; the next tick tries again.
+    } finally {
+      busy = false;
+    }
+  };
+  const timer = setInterval(() => void tick(), opts.everyMs ?? 60_000);
+  timer.unref?.();
+  void tick();
+  return () => clearInterval(timer);
 }
