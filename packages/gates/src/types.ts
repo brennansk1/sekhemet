@@ -124,6 +124,8 @@ export interface GateProjectConfig {
   mutationBlocking?: boolean;
   /** Domains the Worker's commands may reach through the egress proxy (S5, S8). */
   networkAllow?: string[];
+  /** The visual layer (G17-G20), from the `[visual]` table. */
+  visual?: import("./visual.js").VisualConfig;
 }
 
 export interface GatesConfig {

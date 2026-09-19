@@ -232,6 +232,8 @@ export interface SessionOptions {
    * [project]`; absent or false runs none.
    */
   builtinGates?: import("@sekhemet/gates").GateProjectConfig | false | undefined;
+  /** The project's .sekhemet directory (visual baselines). */
+  stateDir?: string | undefined;
   /** Registry lookup for the dependency gate (G15/S10); default the local cache. */
   registry?: import("@sekhemet/gates").RegistryLookup | undefined;
   /** Out-of-scope write denials tolerated before the card stops (`scope_violation`). */

@@ -32,8 +32,13 @@ describe("@sekhemet/board entry conditions, review time, overlap, projects (B1, 
     rmSync(dir, { recursive: true, force: true });
   });
 
-  const move = (cardId: string, fromStatus: never, toStatus: never, actor = "executor", reason?: string) =>
-    board.transitionCard({ cardId, fromStatus, toStatus, actor, ...(reason ? { reason } : {}) });
+  const move = (
+    cardId: string,
+    fromStatus: never,
+    toStatus: never,
+    actor = "executor",
+    reason?: string,
+  ) => board.transitionCard({ cardId, fromStatus, toStatus, actor, ...(reason ? { reason } : {}) });
 
   it("refuses Ready without criteria, and any start while a prerequisite is open", async () => {
     await store.createCard({ id: "a", tier: "story", title: "A", status: "backlog" });
@@ -43,7 +48,13 @@ describe("@sekhemet/board entry conditions, review time, overlap, projects (B1, 
     await store.updateCard("a", { acceptanceCriteria: ["returns 1"] });
     await move("a", "backlog" as never, "ready" as never);
 
-    await store.createCard({ id: "b", tier: "story", title: "B", scopeFiles: ["src/b.ts"], dependsOn: ["a"] });
+    await store.createCard({
+      id: "b",
+      tier: "story",
+      title: "B",
+      scopeFiles: ["src/b.ts"],
+      dependsOn: ["a"],
+    });
     await expect(move("b", "ready" as never, "in_progress" as never)).rejects.toThrow(/waits on a/);
   });
 
@@ -66,7 +77,13 @@ describe("@sekhemet/board entry conditions, review time, overlap, projects (B1, 
 
   it("lets a person override an entry condition, recorded on the ledger", async () => {
     await store.createCard({ id: "d", tier: "story", title: "D" });
-    await move("d", "ready" as never, "in_progress" as never, "human", "override: spike, no scope yet");
+    await move(
+      "d",
+      "ready" as never,
+      "in_progress" as never,
+      "human",
+      "override: spike, no scope yet",
+    );
     expect((await store.getCard("d"))?.status).toBe("in_progress");
     const [o] = await store.cardEvents("d", ["card/override"]);
     expect(o?.actor).toBe("human");
@@ -98,11 +115,36 @@ describe("@sekhemet/board entry conditions, review time, overlap, projects (B1, 
   });
 
   it("finds running cards editing the same files, ignoring held ones (B6)", async () => {
-    await store.createCard({ id: "run1", tier: "story", title: "1", scopeFiles: ["src/**/*.ts"], status: "in_progress" });
-    await store.createCard({ id: "held", tier: "story", title: "h", scopeFiles: ["src/b.ts"], status: "in_progress", blockedReason: "held: verify refused" });
-    const next = await store.createCard({ id: "n", tier: "story", title: "n", scopeFiles: ["src/a/b.ts", "docs/x.md"] });
-    expect(await board.overlappingRunning(next)).toEqual([{ cardId: "run1", files: ["src/a/b.ts"] }]);
-    const free = await store.createCard({ id: "f", tier: "story", title: "f", scopeFiles: ["docs/y.md"] });
+    await store.createCard({
+      id: "run1",
+      tier: "story",
+      title: "1",
+      scopeFiles: ["src/**/*.ts"],
+      status: "in_progress",
+    });
+    await store.createCard({
+      id: "held",
+      tier: "story",
+      title: "h",
+      scopeFiles: ["src/b.ts"],
+      status: "in_progress",
+      blockedReason: "held: verify refused",
+    });
+    const next = await store.createCard({
+      id: "n",
+      tier: "story",
+      title: "n",
+      scopeFiles: ["src/a/b.ts", "docs/x.md"],
+    });
+    expect(await board.overlappingRunning(next)).toEqual([
+      { cardId: "run1", files: ["src/a/b.ts"] },
+    ]);
+    const free = await store.createCard({
+      id: "f",
+      tier: "story",
+      title: "f",
+      scopeFiles: ["docs/y.md"],
+    });
     expect(await board.overlappingRunning(free)).toEqual([]);
   });
 

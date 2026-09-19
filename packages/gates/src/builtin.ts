@@ -4,6 +4,7 @@ import { join } from "node:path";
 import ts from "typescript";
 import { scanDiffForSecrets } from "./secrets.js";
 import type { GateFailure, GateLayer, GateProjectConfig, GateRung, RungOutcome } from "./types.js";
+import { runVisualGates } from "./visual.js";
 
 /**
  * The harness's own gates for the layers a project's `gates.toml` rarely
@@ -50,6 +51,10 @@ export interface BuiltinGateContext {
   registry?: RegistryLookup;
   /** Runs the test rung against the worktree as it stands (mutation testing). */
   runTests?: () => Promise<boolean>;
+  /** The project's .sekhemet directory (visual baselines). Default `<root>/.sekhemet`. */
+  stateDir?: string;
+  /** Run the visual layer (G17-G20); the session turns it on once the declared gates pass. */
+  visual?: boolean;
   /** Is this program on PATH? Injectable for tests. */
   which?: (program: string) => boolean;
   now?: () => number;
@@ -841,6 +846,16 @@ export async function runBuiltinGates(ctx: BuiltinGateContext): Promise<BuiltinG
       }
       outcomes.push(outcome("mutation", "robustness", "robustness", !blocking, t));
     }
+  }
+  if (ctx.project.visual && ctx.visual) {
+    const r = await runVisualGates({
+      root: ctx.root,
+      config: ctx.project.visual,
+      stateDir: ctx.stateDir ?? join(ctx.root, ".sekhemet"),
+    });
+    failures.push(...r.failures);
+    outcomes.push(...r.outcomes);
+    advisories.push(...r.advisories);
   }
   return { failures, outcomes, advisories };
 }

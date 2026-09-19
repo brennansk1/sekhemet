@@ -252,7 +252,7 @@ export function stepEventPayload(cardId: string, turn: TurnResult) {
  */
 export async function executeCard(
   ctx: ExecutionContext,
-  card: CardRecord,
+  inputCard: CardRecord,
   model: LocalInferenceAdapter,
   managerGuidance?: string,
   options: ExecuteCardOptions = {},
@@ -260,7 +260,7 @@ export async function executeCard(
   const log = ctx.log ?? ((line: string) => console.log(line));
   // Pulled through Planning (B2): difficulty scored (K25), budget set from
   // this repo's measured history (L21), then the runner moves it on.
-  card = await pullThroughPlanning(ctx, card, model.modelId, log).catch(() => card);
+  let card = await pullThroughPlanning(ctx, inputCard, model.modelId, log).catch(() => inputCard);
   if (options.maxSteps && options.maxSteps > 0 && card.stepBudget > options.maxSteps) {
     card = { ...card, stepBudget: options.maxSteps };
   }

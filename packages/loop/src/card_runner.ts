@@ -810,6 +810,7 @@ export class CardRunner {
       },
       // The built-in security, hygiene and robustness layers (G3).
       builtinGates: this.config.project,
+      stateDir: join(this.options.repoRoot, ".sekhemet"),
       ...(this.egressPort ? { allowedDomains: allow, egressProxyPort: this.egressPort } : {}),
       ...(store
         ? {

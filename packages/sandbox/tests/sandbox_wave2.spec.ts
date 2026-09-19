@@ -16,7 +16,7 @@ describe("sandbox wave 2 (S4, S7, S8, S9)", () => {
     dir = mkdtempSync(join(tmpdir(), "sbx-w2-"));
   });
   afterEach(() => {
-    delete process.env.SEKHEMET_ALLOW_UNCONFINED;
+    Reflect.deleteProperty(process.env, "SEKHEMET_ALLOW_UNCONFINED");
     rmSync(dir, { recursive: true, force: true });
   });
 

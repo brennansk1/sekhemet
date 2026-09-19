@@ -1122,7 +1122,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
           ok: false,
           denied: true,
           deniedRule: "hook",
-          summary: `blocked by a project hook`,
+          summary: "blocked by a project hook",
           content: `A project hook refused ${call.name}: ${preTool.reason ?? "blocked"}`,
         } as ToolObservation);
         continue;
@@ -1459,6 +1459,10 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         base,
         diff: worktreeDiff(this.tools.root, base),
         project: result.passed ? project : { ...project, mutation: false },
+        // The visual layer only once the declared gates pass: a page that
+        // does not build has nothing to look at.
+        visual: result.passed,
+        ...(this.options.stateDir ? { stateDir: this.options.stateDir } : {}),
         ...(this.options.registry ? { registry: this.options.registry } : {}),
         runTests: async () =>
           (await this.options.gateRunner.runGates(["test"], this.tools.root)).passed,

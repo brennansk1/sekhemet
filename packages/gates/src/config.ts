@@ -10,6 +10,7 @@ import type {
   GateRung,
   GatesConfig,
 } from "./types.js";
+import { parseVisualConfig } from "./visual.js";
 
 export const GATES_CONFIG_RELATIVE_PATH = join(".sekhemet", "gates.toml");
 
@@ -184,6 +185,9 @@ export function loadGatesConfig(repoRoot: string): GatesConfig {
       ? { networkAllow: asStringArray(projectTable.network_allow) }
       : {}),
   };
+
+  const visual = parseVisualConfig(parsed.visual);
+  if (visual) project.visual = visual;
 
   const rawGates = Array.isArray(parsed.gate) ? (parsed.gate as TomlTable[]) : [];
   const gates = rawGates.map(toGateDefinition);
