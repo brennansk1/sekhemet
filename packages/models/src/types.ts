@@ -34,9 +34,22 @@ export type RequestPurpose = "code" | "planning";
  * One turn of a native multi-turn conversation. An assistant turn may carry
  * the tool calls it made; a `tool` turn answers one of them by `toolCallId`.
  */
+/**
+ * An image for a vision-capable model (X3), base64 without the data-URL
+ * prefix. Text models never receive one: they get the vision model's
+ * structured description instead.
+ */
+export interface ImageInput {
+  mime: string;
+  data: string;
+  name?: string;
+}
+
 export interface ChatTurn {
   role: "system" | "user" | "assistant" | "tool";
   content: string;
+  /** Images on a user turn (vision models only). */
+  images?: ImageInput[];
   toolCalls?: ToolCall[];
   toolCallId?: string;
 }
@@ -45,6 +58,8 @@ export interface InferenceRequest {
   systemPrompt?: string;
   /** The user message. Ignored when `messages` is set. */
   prompt: string;
+  /** Images for the `prompt` user message (vision models only, X3). */
+  images?: ImageInput[];
   /**
    * A native multi-turn conversation, sent as-is (after `systemPrompt`, when
    * given) instead of the single `prompt` user message.

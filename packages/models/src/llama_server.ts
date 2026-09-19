@@ -42,6 +42,8 @@ export interface LlamaServerProfile {
   modelId: string;
   /** Absolute path to the GGUF. */
   modelPath: string;
+  /** The multimodal projector (`--mmproj`) for a vision model (X3). */
+  mmprojPath?: string;
   binary?: string;
   port?: number;
   contextTokens?: number;
@@ -262,6 +264,7 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
     return [
       "-m",
       p.modelPath,
+      ...(p.mmprojPath ? ["--mmproj", p.mmprojPath] : []),
       "--host",
       "127.0.0.1",
       "--port",

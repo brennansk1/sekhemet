@@ -258,6 +258,7 @@ export type Wave2Command =
   | "register"
   | "trailers"
   | "fixture"
+  | "attach"
   | "goal"
   | "decide"
   | "m0"
@@ -274,6 +275,7 @@ export const WAVE2_COMMANDS: readonly Wave2Command[] = [
   "register",
   "trailers",
   "fixture",
+  "attach",
   "goal",
   "decide",
   "m0",
@@ -407,6 +409,21 @@ export async function runWave2Command(
         return done(`Usage: sekhemet fixture <${FIXTURE_LANGUAGES.join("|")}> <dir> [--bug]`, 1);
       const files = generateFixture(lang as "typescript", dir, { bug: args.includes("--bug") });
       return done(`Wrote a ${lang} fixture (${files.length} files) to ${dir}.`, 0);
+    }
+    case "attach": {
+      // `sekhemet attach <card> <image...>` (X3): screenshots and mockups for a card.
+      const { attachImage } = await import("./attachments.js");
+      const { readFileSync } = await import("node:fs");
+      const [cardId, ...files] = args;
+      if (!cardId || files.length === 0) return done("Usage: sekhemet attach <card> <image...>", 1);
+      for (const f of files) {
+        const a = await attachImage(k.repoPath, k.cardStore, cardId, {
+          name: f,
+          bytes: readFileSync(f),
+        });
+        print(`Attached ${a.name} (${a.mime}, ${a.bytes} bytes) to ${cardId}.`);
+      }
+      return done("The vision model describes them before the card runs.", 0);
     }
     case "goal": {
       // `sekhemet goal "<statement>"` | `goal approve <id>` | `goal status`

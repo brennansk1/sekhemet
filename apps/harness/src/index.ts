@@ -37,6 +37,7 @@ import { ProcessSandbox } from "@sekhemet/sandbox";
 import { NodeGitSyncAdapter } from "@sekhemet/sync";
 import { runAcpStdio } from "./acp.js";
 import { isAirgapped, mirrorRegistry } from "./airgap.js";
+import { resolveVisionModel, visionPrePass } from "./attachments.js";
 import { parseModelList, runCalibrate } from "./calibrate_cmd.js";
 import { resolveConfig } from "./config.js";
 import { effectiveConfig, queueDefaults, reviewLimit } from "./config_apply.js";
@@ -1489,6 +1490,25 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       ...(reviewPosterFromEnv() ? { github: reviewPosterFromEnv() } : {}),
       say: (line) => console.log(line),
     });
+    // X3: images on Ready cards are described by the vision model in one
+    // batch (a scheduled swap: the resident models are released first).
+    await visionPrePass(config.repoPath, cardStore, ready, {
+      ...(() => {
+        const name = resolveVisionModel(
+          effectiveConfig(config.repoPath, argv).config.models.vision,
+          modelRegistry(),
+        );
+        return name ? { modelName: name } : {};
+      })(),
+      load: async (name) => {
+        await router.releaseAll();
+        return roster.resolve(name, "reviewer");
+      },
+      release: async (m) => {
+        await (m as UnloadableAdapter).unload?.();
+      },
+      say: (line) => console.log(`   ${line}`),
+    }).catch((err) => console.log(`   vision: ${err instanceof Error ? err.message : err}`));
     const started = Date.now();
     // Ctrl+C stops the running card before its next turn and ends the queue
     // (L25); the card resumes from its checkpoint next time (H17).

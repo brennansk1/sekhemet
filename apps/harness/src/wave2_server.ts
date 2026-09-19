@@ -250,6 +250,57 @@ export async function handleWave2Route(
     });
     return true;
   }
+  // X3: images on a card (screenshots, mockups, diagrams).
+  const attach = new RegExp(`^/api/cards/(${CARD})/attachments(?:/([0-9a-f]{12}))?$`).exec(url);
+  if (attach) {
+    const { attachImage, listAttachments, readAttachment } = await import("./attachments.js");
+    const cardId = attach[1] as string;
+    if (req.method === "GET" && attach[2]) {
+      const hit = readAttachment(ctx.repoPath, cardId, attach[2]);
+      if (!hit) json(res, 404, { error: "no such attachment" });
+      else {
+        res.writeHead(200, {
+          "content-type": hit.attachment.mime,
+          "cache-control": "private, max-age=86400",
+          "x-content-type-options": "nosniff",
+        });
+        res.end(hit.bytes);
+      }
+      return true;
+    }
+    if (req.method === "GET") {
+      json(res, 200, { attachments: listAttachments(ctx.repoPath, cardId) });
+      return true;
+    }
+    if (req.method === "POST" && !attach[2]) {
+      if (!ctx.isTrustedMutation(req)) {
+        json(res, 403, { error: "Attachments must come from the dashboard itself" });
+        return true;
+      }
+      try {
+        const chunks: Buffer[] = [];
+        let size = 0;
+        for await (const c of req) {
+          size += (c as Buffer).length;
+          if (size > 15 * 1024 * 1024) throw new Error("image too large (10 MB at most)");
+          chunks.push(c as Buffer);
+        }
+        const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+          name?: string;
+          data?: string;
+        };
+        const data = String(body.data ?? "").replace(/^data:[^;]+;base64,/, "");
+        const a = await attachImage(ctx.repoPath, cardStore, cardId, {
+          name: String(body.name ?? "image"),
+          bytes: Buffer.from(data, "base64"),
+        });
+        json(res, 201, { attachment: a });
+      } catch (err) {
+        json(res, 400, { error: err instanceof Error ? err.message : String(err) });
+      }
+      return true;
+    }
+  }
   const diff = new RegExp(`^/api/cards/(${CARD})/diff$`).exec(url);
   if (diff && req.method === "GET") {
     try {

@@ -12,6 +12,7 @@ import {
 import type {
   AdapterHealth,
   ChatTurn,
+  ImageInput,
   InferenceRequest,
   InferenceResponse,
   LocalInferenceAdapter,
@@ -196,9 +197,33 @@ function parseConstrainedReply(
 interface ChatMessage {
   role: "system" | "user" | "assistant" | "tool";
   content: string;
+  /** Images (X3); turned into the wire format just before sending. */
+  images?: ImageInput[];
   tool_calls?: unknown[];
   tool_call_id?: string;
   tool_name?: string;
+}
+
+/**
+ * Images on the wire (X3). OpenAI-compatible servers (llama-server with a
+ * projector) take content parts with data URLs; Ollama takes base64 strings
+ * in `images` beside the text.
+ */
+export function imagesToWire(messages: ChatMessage[], format: "openai" | "ollama"): unknown[] {
+  return messages.map(({ images, ...m }) => {
+    if (!images?.length) return m;
+    if (format === "ollama") return { ...m, images: images.map((i) => i.data) };
+    return {
+      ...m,
+      content: [
+        { type: "text", text: m.content },
+        ...images.map((i) => ({
+          type: "image_url",
+          image_url: { url: `data:${i.mime};base64,${i.data}` },
+        })),
+      ],
+    };
+  });
 }
 
 /**
@@ -211,6 +236,7 @@ export function chatTurnsToWire(turns: ChatTurn[], format: "openai" | "ollama"):
   const names = new Map<string, string>();
   return turns.map((turn) => {
     const message: ChatMessage = { role: turn.role, content: turn.content };
+    if (turn.images?.length) message.images = turn.images;
     if (turn.role === "assistant" && turn.toolCalls?.length) {
       for (const call of turn.toolCalls) names.set(call.id, call.name);
       message.tool_calls = turn.toolCalls.map((call) =>
@@ -577,7 +603,11 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
       messages.push(...chatTurnsToWire(req.messages, this.apiFormat));
       return messages;
     }
-    messages.push({ role: "user", content: req.prompt });
+    messages.push({
+      role: "user",
+      content: req.prompt,
+      ...(req.images?.length ? { images: req.images } : {}),
+    });
     return messages;
   }
 
@@ -842,7 +872,7 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
     const stream = req.onToken !== undefined;
     const payload: Record<string, unknown> = {
       model: this.modelId,
-      messages,
+      messages: imagesToWire(messages, "ollama"),
       stream,
       keep_alive: this.resolveKeepAlive(),
       options: {
@@ -926,7 +956,7 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
     const stream = req.onToken !== undefined;
     const payload: Record<string, unknown> = {
       model: this.modelId,
-      messages,
+      messages: imagesToWire(messages, "openai"),
       temperature: req.temperature ?? sampling.temperature ?? 0.2,
       max_tokens: maxTokens,
       stream,

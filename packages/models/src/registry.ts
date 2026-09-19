@@ -108,6 +108,13 @@ export class ModelRegistry {
     return this.entries.get(id);
   }
 
+  /** Models registered for the vision role (X3), best qualified first. */
+  public visionModels(): ModelEntry[] {
+    return this.list()
+      .filter((e) => e.roles?.includes("vision"))
+      .sort((a, b) => (b.qualification?.passRate ?? 0) - (a.qualification?.passRate ?? 0));
+  }
+
   public list(): ModelEntry[] {
     return [...this.entries.values()].sort((a, b) => a.id.localeCompare(b.id));
   }
