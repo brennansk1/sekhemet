@@ -10,10 +10,12 @@ import {
   DeterministicGateRunner,
   detectGateTemplate,
   gateTemplate,
+  generateGateHostCerts,
   loadGatesConfig,
   npmRegistry,
   renderGatesToml,
   runBuiltinGates,
+  startGateHost,
   summarizeEvidence,
 } from "@sekhemet/gates";
 import { remedyFor } from "@sekhemet/gates";
@@ -37,6 +39,7 @@ import { runAcpStdio } from "./acp.js";
 import { isAirgapped, mirrorRegistry } from "./airgap.js";
 import { parseModelList, runCalibrate } from "./calibrate_cmd.js";
 import { resolveConfig } from "./config.js";
+import { effectiveConfig, queueDefaults, reviewLimit } from "./config_apply.js";
 import { daemonStart, daemonStatus, daemonStop } from "./daemon.js";
 import { type DoctorReport, runDoctor } from "./doctor.js";
 import {
@@ -58,27 +61,26 @@ import {
 } from "./execute.js";
 import { reviewPosterFromEnv, runExternalReviews } from "./external_review.js";
 import { runInit } from "./init.js";
-import { licenseGate } from "./license_gate.js";
 import { notifySlack } from "./integrations.js";
 import { readSettings } from "./integrations.js";
 import { applyExploration, exploreProject } from "./learning/explore.js";
 import { consolidateWithManager, reflectWithManager } from "./learning/reflect.js";
 import { reviewCard } from "./learning/review.js";
 import { LearningStore } from "./learning/store.js";
+import { licenseGate } from "./license_gate.js";
 import { runMcpStdioServer } from "./mcp.js";
 import { sendPush, startNotifier } from "./notify.js";
 import { runOvernight } from "./overnight.js";
-import { effectiveConfig, queueDefaults, reviewLimit } from "./config_apply.js";
 import { DEFAULT_PM_MODEL, answerQueued, createPmAdapter, holdRunnerLease } from "./pm/service.js";
 import { PmStore } from "./pm/store.js";
 import { diffTrajectories, formatDiff, formatTrajectory, trajectories } from "./replay.js";
-import { CRAWL4AI_CREDIT, runResearchCommand } from "./research/cli.js";
 import { isResearchCard, runResearchCard } from "./research/cards.js";
+import { CRAWL4AI_CREDIT, runResearchCommand } from "./research/cli.js";
 import { ResearchService, researchSources } from "./research/service.js";
 import { oneShotResearcher } from "./research/service.js";
 import { DEFAULT_DASHBOARD_PORT, startDashboardServer } from "./server.js";
-import { trailerGate } from "./trailer_gate.js";
 import { tracesCommand } from "./tracing.js";
+import { trailerGate } from "./trailer_gate.js";
 import { loadAttempts, tune, writeTuningReport } from "./tune.js";
 import {
   WAVE2_COMMANDS,
@@ -106,6 +108,7 @@ export interface CliConfig {
     | "plan"
     | "gate"
     | "gates"
+    | "gate-host"
     | "replay"
     | "bake-off"
     | "accept"
@@ -198,6 +201,7 @@ export function parseCliArgs(argv: string[] = process.argv.slice(2)): CliConfig 
     "plan",
     "gate",
     "gates",
+    "gate-host",
     "replay",
     "bake-off",
     "mcp",
@@ -789,6 +793,41 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       if (f.suggestedAction) console.error(`      fix: ${f.suggestedAction}`);
     }
     process.exitCode = 1;
+    return;
+  }
+
+  if (config.command === "gate-host") {
+    // `sekhemet gate-host init`: a CA, server and client certificates under
+    // .sekhemet/gate-host. `sekhemet gate-host [--port N]`: serve
+    // verifications over mutual TLS (G24); point gates.toml [gate_host] at it.
+    const certDir = join(config.repoPath, ".sekhemet", "gate-host");
+    const { server } = generateGateHostCerts(certDir);
+    if (config.targetArg === "init") {
+      console.log(`Gate host certificates in ${certDir} (ca.pem, server.*, client.*).`);
+      console.log(
+        `Add to gates.toml:\n[gate_host]\nurl = "https://127.0.0.1:${config.port === DEFAULT_DASHBOARD_PORT ? 7443 : config.port}"`,
+      );
+      return;
+    }
+    const host = await startGateHost({
+      tls: server,
+      port: config.port === DEFAULT_DASHBOARD_PORT ? 7443 : config.port,
+      run: async (req) => {
+        const root = req.repoRoot ?? req.cwd;
+        const runner = new DeterministicGateRunner(new ProcessSandbox(), {
+          repoRoot: root,
+          ...(req.expectedConfigSha256 ? { expectedConfigSha256: req.expectedConfigSha256 } : {}),
+        });
+        return runner.runGates(req.rungs, req.cwd);
+      },
+      onRun: (req, peer, result) =>
+        console.log(
+          `${new Date().toISOString()} ${peer}: ${req.rungs.join(",")} in ${req.cwd} -> ${result.passed ? "pass" : "fail"}`,
+        ),
+    });
+    console.log(
+      `Sekhemet gate host on https://127.0.0.1:${host.port} (mutual TLS; Ctrl+C to stop)`,
+    );
     return;
   }
 

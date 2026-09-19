@@ -128,6 +128,8 @@ export interface GateProjectConfig {
   passAtK?: number;
   /** Cross-validate two passing samples against each other's tests (G26). */
   crossValidate?: boolean;
+  /** A separate, mutually authenticated gate host (G24), from `[gate_host]`. */
+  gateHost?: import("./gate_host.js").GateHostConfig;
   /** The visual layer (G17-G20), from the `[visual]` table. */
   visual?: import("./visual.js").VisualConfig;
 }

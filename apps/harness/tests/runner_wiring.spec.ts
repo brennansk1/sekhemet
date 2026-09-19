@@ -5,8 +5,10 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { BoardServiceImpl } from "@sekhemet/board";
 import { PlaybookRegistry } from "@sekhemet/context";
+import { DeterministicGateRunner, generateGateHostCerts, startGateHost } from "@sekhemet/gates";
 import { BlobStore, CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import type { InferenceRequest, LocalInferenceAdapter, ToolCall } from "@sekhemet/models";
+import { ProcessSandbox } from "@sekhemet/sandbox";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 // The browser module, imported as the page runs it.
 import { latestReview } from "../../../packages/ui/web/review_parse.js";
@@ -549,6 +551,35 @@ describe("apps/harness executeCard wiring (wave 2, part 1)", () => {
     );
     expect(result.passed).toBe(true);
   });
+
+  it("verifies on the gate host named in gates.toml, over mutual TLS (G24)", async () => {
+    const certs = generateGateHostCerts(join(repo, ".sekhemet", "gate-host"));
+    const runs: string[] = [];
+    const host = await startGateHost({
+      tls: certs.server,
+      run: async (req) => {
+        runs.push(req.rungs.join(","));
+        return new DeterministicGateRunner(new ProcessSandbox(), {
+          repoRoot: req.repoRoot ?? req.cwd,
+          ...(req.expectedConfigSha256 ? { expectedConfigSha256: req.expectedConfigSha256 } : {}),
+        }).runGates(req.rungs, req.cwd);
+      },
+    });
+    try {
+      writeFileSync(
+        join(repo, ".sekhemet", "gates.toml"),
+        `[project]\nmax_files = 3\nmax_diff_lines = 200\n\n[gate_host]\nurl = "https://127.0.0.1:${host.port}"\n\n[[gate]]\nid = "unit"\nrung = "test"\nlayer = "functional"\ncommand = "node"\nargs = ["-e", "process.exit(0)"]\ntimeout_s = 30\nparser = "generic"\n`,
+      );
+      execFileSync("git", ["commit", "-qam", "gate host"], { cwd: repo });
+      const card = await newCard("card_host");
+      const result = await executeCard(ctx, card, scripted([WRITE_A]).adapter);
+      expect(result.passed).toBe(true);
+      expect(runs.length).toBeGreaterThan(0);
+      expect(runs.every((r) => r === "test")).toBe(true);
+    } finally {
+      await host.close();
+    }
+  }, 60_000);
 
   it("records a review in the dossier, which the Review surface reads as findings", async () => {
     const card = await newCard("card_rev");

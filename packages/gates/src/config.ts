@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { type TomlTable, parseToml } from "@sekhemet/kernel";
+import { parseGateHostConfig } from "./gate_host.js";
 import { gateTemplate } from "./templates.js";
 import type {
   GateDefinition,
@@ -190,6 +191,8 @@ export function loadGatesConfig(repoRoot: string): GatesConfig {
       : {}),
   };
 
+  const gateHost = parseGateHostConfig(parsed.gate_host, repoRoot);
+  if (gateHost) project.gateHost = gateHost;
   const visual = parseVisualConfig(parsed.visual);
   if (visual) project.visual = visual;
 

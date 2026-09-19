@@ -20,9 +20,11 @@ import {
 import { LearningGuard, harvestExemplars } from "@sekhemet/eval";
 import {
   DeterministicGateRunner,
+  RemoteGateRunner,
   compileEvidence,
   loadGatesConfig,
   npmRegistry,
+  readTls,
 } from "@sekhemet/gates";
 import {
   type CardRecord,
@@ -55,10 +57,10 @@ import { readSettings } from "./integrations.js";
 import { learnFromAttempt } from "./learning/reflect.js";
 import type { LearningStore } from "./learning/store.js";
 import { withLicenseGate } from "./license_gate.js";
-import { withTrailerGate } from "./trailer_gate.js";
 import { buildReproRecord } from "./repro.js";
 import { workerWebDocs } from "./research/service.js";
 import { Tracer, traced } from "./tracing.js";
+import { withTrailerGate } from "./trailer_gate.js";
 import { hookEngineFor } from "./user_hooks.js";
 import { PR_EVENT, openPullRequestViaApp } from "./wave2_github.js";
 import { githubAppFromEnv } from "./wave2_server.js";
@@ -306,10 +308,21 @@ export async function executeCard(
   // the commit-trailer contract on the card's branch.
   const gateRunner = withTrailerGate(
     withLicenseGate(
-      new DeterministicGateRunner(sandbox, {
-        repoRoot: ctx.repoPath,
-        expectedConfigSha256: gatesConfig.sha256,
-      }),
+      // G24: a separate, mutually authenticated gate host when gates.toml
+      // names one; this machine's sandbox otherwise.
+      gatesConfig.project.gateHost
+        ? new RemoteGateRunner(
+            gatesConfig.project.gateHost.url,
+            readTls(gatesConfig.project.gateHost),
+            {
+              expectedConfigSha256: gatesConfig.sha256,
+              repoRoot: ctx.repoPath,
+            },
+          )
+        : new DeterministicGateRunner(sandbox, {
+            repoRoot: ctx.repoPath,
+            expectedConfigSha256: gatesConfig.sha256,
+          }),
       ctx.repoPath,
     ),
   );

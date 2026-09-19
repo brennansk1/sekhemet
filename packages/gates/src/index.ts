@@ -8,3 +8,4 @@ export * from "./secrets.js";
 export * from "./builtin.js";
 export * from "./templates.js";
 export * from "./visual.js";
+export * from "./gate_host.js";
