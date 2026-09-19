@@ -24,6 +24,7 @@ import {
 import { SpidrFeaturePlanner } from "@sekhemet/planner";
 import { ProcessSandbox } from "@sekhemet/sandbox";
 import { NodeGitSyncAdapter } from "@sekhemet/sync";
+import { resolveConfig } from "./config.js";
 import { type DoctorReport, runDoctor } from "./doctor.js";
 import {
   type QueueEntry,
@@ -50,6 +51,7 @@ import { reviewCard } from "./learning/review.js";
 import { LearningStore } from "./learning/store.js";
 import { runMcpStdioServer } from "./mcp.js";
 import { sendPush, startNotifier } from "./notify.js";
+import { runOvernight } from "./overnight.js";
 import { DEFAULT_PM_MODEL, answerQueued, createPmAdapter, holdRunnerLease } from "./pm/service.js";
 import { PmStore } from "./pm/store.js";
 import { CRAWL4AI_CREDIT, runResearchCommand } from "./research/cli.js";
@@ -71,6 +73,7 @@ export interface CliConfig {
     | "accept"
     | "tune"
     | "research"
+    | "overnight"
     | "abort"
     | "rewind"
     | "fork"
@@ -398,6 +401,34 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
 
   if (config.command === "mcp") {
     runMcpStdioServer({ db, log, cardStore, boardService, repoPath: config.repoPath });
+    return;
+  }
+
+  if (config.command === "overnight") {
+    // `sekhemet overnight [--until 07:00] [--idle-min 20] [--max-failures 3] [queue flags...]`:
+    // queue rounds while the machine is free and every breaker holds (H21, H23).
+    const { config: cfg } = resolveConfig({ repoPath: config.repoPath });
+    const own = new Set(["--until", "--idle-min", "--max-failures", "--repo"]);
+    const rest = argv.slice(argv.indexOf("overnight") + 1);
+    const queueArgs = rest.filter((a, i) => !own.has(a) && !own.has(rest[i - 1] ?? ""));
+    const flag = (name: string) => {
+      const i = rest.indexOf(name);
+      return i === -1 ? undefined : rest[i + 1];
+    };
+    const summary = await runOvernight({
+      repoPath: config.repoPath,
+      log,
+      cardStore,
+      hours: cfg.machine.hours,
+      limits: {
+        kwhPerDay: cfg.machine.powerBudgetKwhDay,
+        maxConsecutiveFailures: Number(flag("--max-failures")) || 3,
+      },
+      ...(flag("--until") ? { until: flag("--until") as string } : {}),
+      ...(flag("--idle-min") ? { idleMinutes: Number(flag("--idle-min")) } : {}),
+      queueArgs,
+    });
+    if (summary.passed < summary.cardsRun) process.exitCode = 1;
     return;
   }
 
@@ -1455,6 +1486,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   console.log("  sekhemet ui / serve         Launch local web visual dashboard");
   console.log("  sekhemet mcp                Run stdio MCP server for Cursor / Claude / IDEs");
   console.log('  sekhemet research "<q>" [--deep]  Ask the Researcher; answers with sources');
+  console.log(
+    "  sekhemet overnight [--until 07:00] [queue flags]  Queue rounds while the machine is free",
+  );
   console.log(`\n${CRAWL4AI_CREDIT}`);
   console.log("=================================================");
 }
