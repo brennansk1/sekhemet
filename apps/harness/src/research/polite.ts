@@ -274,6 +274,8 @@ export interface PoliteOptions {
   robots?: boolean;
   /** Hosts that are allowed although private (the user's own SearXNG). */
   allowHosts?: string[];
+  /** config.toml [network] mode = "allowlist": only these hosts (and subdomains). */
+  allowOnly?: string[];
 }
 
 export interface PoliteStats {
@@ -303,6 +305,16 @@ export class PoliteFetcher {
     });
   }
 
+  private blockedByAllowlist(hostname: string): boolean {
+    const list = this.opts.allowOnly;
+    if (!list) return false;
+    const h = hostname.replace(/^www\./, "").toLowerCase();
+    return !list.some((d) => {
+      const e = d.replace(/^www\./, "").toLowerCase();
+      return h === e || h.endsWith(`.${e}`);
+    });
+  }
+
   /**
    * The same courtesies for a read done by another client (the Crawl4AI
    * browser): the private-address guard, robots.txt and the host's pacing.
@@ -319,6 +331,9 @@ export class PoliteFetcher {
     const allowed = (this.opts.allowHosts ?? []).includes(u.host);
     if (!allowed && isPrivateHost(u.hostname))
       return "Refusing to fetch a private or loopback address.";
+    if (!allowed && this.blockedByAllowlist(u.hostname)) {
+      return `${u.hostname} is not on the network allowlist (config.toml [network] allow).`;
+    }
     let delayS = 0;
     if (this.opts.robots !== false && !allowed) {
       const r = await this.robots.check(url);
@@ -349,6 +364,11 @@ export class PoliteFetcher {
     const allowed = (this.opts.allowHosts ?? []).includes(u.host);
     if (!allowed && isPrivateHost(u.hostname)) {
       throw new Error("Refusing to fetch a private or loopback address.");
+    }
+    if (!allowed && this.blockedByAllowlist(u.hostname)) {
+      throw new Error(
+        `${u.hostname} is not on the network allowlist (config.toml [network] allow).`,
+      );
     }
     const isGet = (init.method ?? "GET").toUpperCase() === "GET";
     const key = isGet ? url : "";

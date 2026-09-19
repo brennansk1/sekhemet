@@ -41,7 +41,7 @@ export function sharedCrawler(): Crawl4AiSidecar {
   return crawlerSingleton;
 }
 
-export function webConfigFromEnv(): WebConfig {
+export function webConfigFromEnv(opts: { allowOnly?: string[] } = {}): WebConfig {
   const env = process.env;
   const searx = env.SEKHEMET_SEARXNG_URL;
   let searxHost: string | undefined;
@@ -53,6 +53,7 @@ export function webConfigFromEnv(): WebConfig {
   return {
     // The user's own SearXNG may live on the LAN; it is the one private host allowed.
     polite: new PoliteFetcher({
+      ...(opts.allowOnly ? { allowOnly: opts.allowOnly } : {}),
       cache: new ResearchCache(),
       ...(searxHost ? { allowHosts: [searxHost] } : {}),
     }),

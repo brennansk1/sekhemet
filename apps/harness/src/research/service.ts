@@ -7,6 +7,7 @@ import {
   type LocalInferenceAdapter,
   createApodexResearcher,
 } from "@sekhemet/models";
+import { effectiveConfig, explicitNetworkMode } from "../config_apply.js";
 import { readSettings } from "../integrations.js";
 import { similarity } from "../learning/store.js";
 import { crawl4aiInstalled } from "./crawl4ai.js";
@@ -101,6 +102,15 @@ export async function researchSources(
   repoPath: string,
   opts: { forceWeb?: boolean; ensure?: typeof ensureSearxng } = {},
 ): Promise<{ web: WebConfig | undefined; status: SourceStatus }> {
+  // H15: config.toml [network] mode, when the user set it, outranks the
+  // Integrations switch: "offline" means no web, "allowlist" limits reads.
+  const mode = explicitNetworkMode(repoPath);
+  if (mode === "offline" && opts.forceWeb !== true) {
+    return {
+      web: undefined,
+      status: { web: false, search: "off (config.toml network.mode = offline)", pages: "off" },
+    };
+  }
   const on = opts.forceWeb ?? readSettings(repoPath).researchWeb === true;
   if (!on) {
     return {
@@ -108,6 +118,8 @@ export async function researchSources(
       status: { web: false, search: "off (project setting)", pages: "off" },
     };
   }
+  const allowOnly =
+    mode === "allowlist" ? effectiveConfig(repoPath).config.network.allow : undefined;
   if (
     !process.env.SEKHEMET_SEARXNG_URL &&
     !process.env.BRAVE_SEARCH_API_KEY &&
@@ -116,7 +128,7 @@ export async function researchSources(
     const url = await (opts.ensure ?? ensureSearxng)().catch(() => undefined);
     if (url) process.env.SEKHEMET_SEARXNG_URL = url;
   }
-  const web = webConfigFromEnv();
+  const web = webConfigFromEnv(allowOnly ? { allowOnly } : {});
   const env = process.env;
   return {
     web,

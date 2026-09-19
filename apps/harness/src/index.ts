@@ -65,6 +65,7 @@ import { LearningStore } from "./learning/store.js";
 import { runMcpStdioServer } from "./mcp.js";
 import { sendPush, startNotifier } from "./notify.js";
 import { runOvernight } from "./overnight.js";
+import { effectiveConfig, queueDefaults, reviewLimit } from "./config_apply.js";
 import { DEFAULT_PM_MODEL, answerQueued, createPmAdapter, holdRunnerLease } from "./pm/service.js";
 import { PmStore } from "./pm/store.js";
 import { diffTrajectories, formatDiff, formatTrajectory, trajectories } from "./replay.js";
@@ -274,7 +275,10 @@ export function initLocalKernel(repoPath: string): {
   // Production boards check every column's entry condition (B1); Review
   // reads the card's latest evidence bundle.
   const evidenceDir = join(dotSekhemet, "evidence");
+  // H15: [review] wip from config.toml sets the Review limit.
+  const review = reviewLimit(effectiveConfig(repoPath).config);
   const boardService = new BoardServiceImpl(cardStore, {
+    ...(review ? { customLimits: { review } } : {}),
     entryConditions: true,
     evidenceFor: (cardId) => {
       try {
@@ -1076,15 +1080,18 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       );
     }
     const autoAccept = argv.includes("--auto-accept");
+    // H15: config.toml supplies the models and step cap the flags leave open.
+    const configured = queueDefaults(effectiveConfig(config.repoPath, argv).config, argv);
+    if (configured.maxTurns) argv.push("--max-turns", String(configured.maxTurns));
     const managerIdx = argv.indexOf("--manager");
-    const managerModel = managerIdx !== -1 ? argv[managerIdx + 1] : undefined;
+    const managerModel = managerIdx !== -1 ? argv[managerIdx + 1] : configured.manager;
     const researcherIdx = argv.indexOf("--researcher");
     const researcherModel =
       researcherIdx !== -1 ? argv[researcherIdx + 1] : process.env.SEKHEMET_RESEARCHER;
     const reviewerIdx = argv.indexOf("--reviewer");
     const reviewerModel = reviewerIdx !== -1 ? argv[reviewerIdx + 1] : undefined;
     const workerIdx = argv.indexOf("--worker");
-    const workerModel = workerIdx !== -1 ? argv[workerIdx + 1] : undefined;
+    const workerModel = workerIdx !== -1 ? argv[workerIdx + 1] : configured.worker;
 
     if (project && project.status !== "active") {
       console.log(
