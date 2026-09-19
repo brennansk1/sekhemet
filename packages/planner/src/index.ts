@@ -16,3 +16,6 @@ export * from "./calibration_store.js";
 export * from "./persist.js";
 export * from "./ordering.js";
 export * from "./sessions.js";
+export * from "./profiles.js";
+export * from "./signals.js";
+export * from "./goals.js";

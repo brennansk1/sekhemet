@@ -69,14 +69,18 @@ export function processProfileFromConfig(table: TomlTable | undefined): ProcessP
       : "kanban"
   ) as ProcessProfileName;
   const base = PROCESS_PROFILES[name];
-  const num = (k: string) => (typeof t[k] === "number" ? (t[k] as number) : undefined);
-  return {
-    ...base,
-    ...(num("cycle_days") !== undefined ? { cycleDays: num("cycle_days") } : {}),
-    ...(num("cooldown_days") !== undefined ? { cooldownDays: num("cooldown_days") } : {}),
-    ...(num("retro_every_cards") !== undefined ? { retroEveryCards: num("retro_every_cards") } : {}),
-    ...(num("wip_limit") !== undefined ? { wipLimit: num("wip_limit") as number } : {}),
-  };
+  const out: ProcessProfile = { ...base };
+  const num = (k: string): number | undefined =>
+    typeof t[k] === "number" ? (t[k] as number) : undefined;
+  const cycle = num("cycle_days");
+  if (cycle !== undefined) out.cycleDays = cycle;
+  const cooldown = num("cooldown_days");
+  if (cooldown !== undefined) out.cooldownDays = cooldown;
+  const retro = num("retro_every_cards");
+  if (retro !== undefined) out.retroEveryCards = retro;
+  const wip = num("wip_limit");
+  if (wip !== undefined) out.wipLimit = wip;
+  return out;
 }
 
 export type CeremonyKind = "planning" | "retrospective" | "betting" | "review";

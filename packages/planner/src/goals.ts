@@ -3,8 +3,9 @@ import { EstimationModel } from "./estimation.js";
 import { type PlannerLedger, appendPlannerEvent, plannerEvents } from "./ledger.js";
 import { type PersistPlanResult, persistPlan } from "./persist.js";
 import type { SpidrFeaturePlanner } from "./planner.js";
+import { replanSession } from "./sessions.js";
 import { scoreWsjf } from "./prioritization.js";
-import { splitClauses } from "./text.js";
+import { splitSentences } from "./text.js";
 import type { SpidrPlan } from "./types.js";
 
 /**
@@ -79,7 +80,10 @@ function metricQueryOf(text: string): string | undefined {
 
 /** Propose criteria from a goal statement: one per clause, with a check kind. */
 export function proposeCriteria(statement: string): GoalCriterion[] {
-  const clauses = splitClauses(statement)
+  // One criterion per list item: split sentences on commas, semicolons and
+  // a list-final "and"; clauses inside an item stay together.
+  const clauses = splitSentences(statement)
+    .flatMap((sentence) => sentence.replace(/[.!]+$/, "").split(/\s*;\s*|,\s*(?:and\s+)?/))
     .map((c) => c.trim())
     .filter((c) => c.length > 3);
   return clauses.map((text, i): GoalCriterion => {
@@ -415,7 +419,6 @@ export async function runGoalLoop(
     await store.patch(goalId, { criteria: evaluation.criteria });
     if (evaluation.triggers.length > 0 && goal.state === "active") {
       const epicId = goal.strategy.split("@")[0] as string;
-      const { replanSession } = await import("./sessions.js");
       const r = await replanSession(ledger, planner, {
         epicId,
         spec: goal.statement,
