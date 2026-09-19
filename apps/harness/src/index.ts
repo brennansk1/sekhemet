@@ -33,6 +33,7 @@ import {
 import { SpidrFeaturePlanner } from "@sekhemet/planner";
 import { ProcessSandbox } from "@sekhemet/sandbox";
 import { NodeGitSyncAdapter } from "@sekhemet/sync";
+import { runAcpStdio } from "./acp.js";
 import { parseModelList, runCalibrate } from "./calibrate_cmd.js";
 import { resolveConfig } from "./config.js";
 import { daemonStart, daemonStatus, daemonStop } from "./daemon.js";
@@ -67,6 +68,7 @@ import { DEFAULT_PM_MODEL, answerQueued, createPmAdapter, holdRunnerLease } from
 import { PmStore } from "./pm/store.js";
 import { CRAWL4AI_CREDIT, runResearchCommand } from "./research/cli.js";
 import { ResearchService, researchSources } from "./research/service.js";
+import { oneShotResearcher } from "./research/service.js";
 import { DEFAULT_DASHBOARD_PORT, startDashboardServer } from "./server.js";
 import { tracesCommand } from "./tracing.js";
 import { loadAttempts, tune, writeTuningReport } from "./tune.js";
@@ -90,6 +92,7 @@ export interface CliConfig {
     | "calibrate"
     | "daemon"
     | "traces"
+    | "acp"
     | "abort"
     | "rewind"
     | "fork"
@@ -486,6 +489,25 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       queueArgs,
     });
     if (summary.passed < summary.cardsRun) process.exitCode = 1;
+    return;
+  }
+
+  if (config.command === "acp") {
+    // `sekhemet acp`: the Agent Client Protocol on stdio, for editors (H14).
+    const acpResearcher = process.env.SEKHEMET_RESEARCHER;
+    await runAcpStdio({
+      repoPath: config.repoPath,
+      cardStore,
+      pmStore: new PmStore(log),
+      pmModel: DEFAULT_PM_MODEL,
+      acquire: async () => createPmAdapter(DEFAULT_PM_MODEL),
+      ...(acpResearcher
+        ? {
+            researcher: (q: string, o?: { deep?: boolean }) =>
+              oneShotResearcher(config.repoPath, acpResearcher, cardStore)(q, o),
+          }
+        : {}),
+    });
     return;
   }
 
