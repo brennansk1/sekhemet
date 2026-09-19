@@ -115,54 +115,6 @@ export const APODEX_WEB_TOOLS: ToolDefinition[] = [
       required: ["query"],
     },
   },
-];
-
-export const APODEX_LOCAL_TOOLS: ToolDefinition[] = [
-  {
-    name: "find_library",
-    description: "Search npm or PyPI; results carry licence and whether it is safe to use.",
-    parameters: {
-      type: "object",
-      properties: { query: str, ecosystem: { type: "string", enum: ["npm", "pypi"] } },
-      required: ["query"],
-    },
-  },
-  {
-    name: "package_readme",
-    description: "Read an npm package's README (first part) to learn its API and usage.",
-    parameters: { type: "object", properties: { name: str }, required: ["name"] },
-  },
-  {
-    name: "module_api",
-    description:
-      "The real classes and members of a module from the project's installed type declarations, e.g. node:sqlite.",
-    parameters: { type: "object", properties: { module: str }, required: ["module"] },
-  },
-  {
-    name: "git_history",
-    description: "Search this repository's commit messages for a term.",
-    parameters: { type: "object", properties: { query: str }, required: ["query"] },
-  },
-  {
-    name: "deps_source",
-    description:
-      "Read the real source of a package installed in this project, at the version actually resolved. Better than any web page for an API question. Omit `path` for an outline of the package's entry points and type declarations.",
-    parameters: {
-      type: "object",
-      properties: { name: str, path: str },
-      required: ["name"],
-    },
-  },
-  {
-    name: "deps_grep",
-    description:
-      "Search inside an installed package's own source for a pattern, to find how something is implemented or whether it exists.",
-    parameters: {
-      type: "object",
-      properties: { name: str, pattern: str },
-      required: ["name", "pattern"],
-    },
-  },
   {
     name: "repo_tree",
     description:
@@ -211,6 +163,54 @@ export const APODEX_LOCAL_TOOLS: ToolDefinition[] = [
       type: "object",
       properties: { repo: str, from: str, to: str },
       required: ["repo", "from", "to"],
+    },
+  },
+];
+
+export const APODEX_LOCAL_TOOLS: ToolDefinition[] = [
+  {
+    name: "find_library",
+    description: "Search npm or PyPI; results carry licence and whether it is safe to use.",
+    parameters: {
+      type: "object",
+      properties: { query: str, ecosystem: { type: "string", enum: ["npm", "pypi"] } },
+      required: ["query"],
+    },
+  },
+  {
+    name: "package_readme",
+    description: "Read an npm package's README (first part) to learn its API and usage.",
+    parameters: { type: "object", properties: { name: str }, required: ["name"] },
+  },
+  {
+    name: "module_api",
+    description:
+      "The real classes and members of a module from the project's installed type declarations, e.g. node:sqlite.",
+    parameters: { type: "object", properties: { module: str }, required: ["module"] },
+  },
+  {
+    name: "git_history",
+    description: "Search this repository's commit messages for a term.",
+    parameters: { type: "object", properties: { query: str }, required: ["query"] },
+  },
+  {
+    name: "deps_source",
+    description:
+      "Read the real source of a package installed in this project, at the version actually resolved. Better than any web page for an API question. Omit `path` for an outline of the package's entry points and type declarations.",
+    parameters: {
+      type: "object",
+      properties: { name: str, path: str },
+      required: ["name"],
+    },
+  },
+  {
+    name: "deps_grep",
+    description:
+      "Search inside an installed package's own source for a pattern, to find how something is implemented or whether it exists.",
+    parameters: {
+      type: "object",
+      properties: { name: str, pattern: str },
+      required: ["name", "pattern"],
     },
   },
 ];

@@ -267,7 +267,11 @@ export async function runResearchTool(call: ToolCall, deps: ResearchDeps): Promi
         : { text };
     }
 
-    // Repository intelligence: git and gh, cached by commit SHA.
+    const web = deps.web;
+    if (!web) return { text: `Tool ${call.name} needs web access, which is off for this project.` };
+    // Repository intelligence: git and gh, cached by commit SHA. These
+    // reach GitHub, so they sit behind the same network gate as the rest
+    // of the web tools: `[network] mode = "offline"` turns them off too.
     if (
       call.name === "repo_tree" ||
       call.name === "repo_file" ||
@@ -307,8 +311,6 @@ export async function runResearchTool(call: ToolCall, deps: ResearchDeps): Promi
       return { text, source: src("documentation", `${slugArg} releases ${from}..${to}`, text) };
     }
 
-    const web = deps.web;
-    if (!web) return { text: `Tool ${call.name} needs web access, which is off for this project.` };
     if (call.name === "scholar_search" || call.name === "search_papers") {
       const q = s("query");
       const text = formatWebHits(await searchPapers(q, web));
