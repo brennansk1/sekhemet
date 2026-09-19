@@ -1122,6 +1122,19 @@ export async function acceptCard(
     // The merge already happened; a missing ledger line must not undo it.
   }
   await gitAdapter.removeWorktree(card.id);
+  // Stacked cards built on this one rebase onto main now it has landed (Y7);
+  // a child that conflicts is reported, never forced.
+  const restacked = await gitAdapter.restackChildren(card.id, "main").catch(() => []);
+  for (const r of restacked) {
+    await ctx.cardStore
+      .recordEvent({
+        type: "card/restacked",
+        cardId: card.id,
+        actor,
+        payload: { branch: r.cardBranch, ok: r.ok, ...(r.files ? { conflicts: r.files } : {}) },
+      })
+      .catch(() => undefined);
+  }
   // Review has room again: cards held on back-pressure move now.
   await releaseHeldCards(ctx).catch(() => []);
   // The last child accepted: roll the parent up through its integration gate (B7).
