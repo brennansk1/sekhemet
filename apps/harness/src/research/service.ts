@@ -287,3 +287,32 @@ export function oneShotResearcher(
     }
   };
 }
+
+/**
+ * Official documentation for the Worker's `docs` tool, from the web, without
+ * any model: the docs reader (llms.txt first, then the sitemap), the polite
+ * fetcher (robots, pacing, 7-day cache) and focused excerpts. Undefined when
+ * the project has research web access off or config.toml says offline.
+ */
+export async function workerWebDocs(
+  repoPath: string,
+): Promise<((library: string, query: string) => Promise<string>) | undefined> {
+  const { web } = await researchSources(repoPath, { ensure: async () => undefined });
+  if (!web) return undefined;
+  const { readDocs } = await import("./docs.js");
+  const polite = web.polite;
+  const fetchText = async (u: string) => {
+    const res = polite ? await polite.fetch(u, {}, true) : await fetch(u);
+    return res.ok ? res.text() : undefined;
+  };
+  return async (library, query) => {
+    const r = await readDocs(library, query, fetchText, {
+      maxFetch: 6,
+      maxPages: 2,
+      charsPerPage: 2500,
+    });
+    if (typeof r === "string") return r;
+    if (r.pages.length === 0) return `No readable documentation pages under ${r.root}.`;
+    return r.pages.map((p) => `## ${p.title}\n${p.url}\n${p.text}`).join("\n\n");
+  };
+}

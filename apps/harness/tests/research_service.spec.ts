@@ -659,3 +659,17 @@ describe("research knowledge and safety (X4, X5, X8, X9)", () => {
     });
   });
 });
+
+describe("web docs for the Worker", () => {
+  it("is off when the project has research web access off, and a function when on", async () => {
+    const { workerWebDocs } = await import("../src/research/service.js");
+    const { writeSettings } = await import("../src/integrations.js");
+    process.env.SEKHEMET_CONFIG_DIR = mkdtempSync(join(tmpdir(), "wd-cfg-"));
+    const repo = mkdtempSync(join(tmpdir(), "wd-"));
+    expect(await workerWebDocs(repo)).toBeUndefined();
+    writeSettings(repo, { researchWeb: true });
+    const docs = await workerWebDocs(repo);
+    expect(typeof docs).toBe("function");
+    expect(await docs?.("nosuchlib", "x")).toMatch(/No known documentation home/);
+  });
+});
