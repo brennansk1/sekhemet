@@ -143,6 +143,76 @@ export const APODEX_LOCAL_TOOLS: ToolDefinition[] = [
     description: "Search this repository's commit messages for a term.",
     parameters: { type: "object", properties: { query: str }, required: ["query"] },
   },
+  {
+    name: "deps_source",
+    description:
+      "Read the real source of a package installed in this project, at the version actually resolved. Better than any web page for an API question. Omit `path` for an outline of the package's entry points and type declarations.",
+    parameters: {
+      type: "object",
+      properties: { name: str, path: str },
+      required: ["name"],
+    },
+  },
+  {
+    name: "deps_grep",
+    description:
+      "Search inside an installed package's own source for a pattern, to find how something is implemented or whether it exists.",
+    parameters: {
+      type: "object",
+      properties: { name: str, pattern: str },
+      required: ["name", "pattern"],
+    },
+  },
+  {
+    name: "repo_tree",
+    description:
+      "List the files of a GitHub repository at a ref, optionally under a path prefix. Use it to find where something lives before reading it.",
+    parameters: {
+      type: "object",
+      properties: { repo: str, ref: str, path: str },
+      required: ["repo"],
+    },
+  },
+  {
+    name: "repo_file",
+    description:
+      "Read one file from a GitHub repository at a ref. The source is the primary source: prefer it over a blog post describing it.",
+    parameters: {
+      type: "object",
+      properties: { repo: str, path: str, ref: str },
+      required: ["repo", "path"],
+    },
+  },
+  {
+    name: "code_search",
+    description:
+      "Search code on GitHub, inside one repository when `repo` is given. Finds real call sites and usage patterns.",
+    parameters: {
+      type: "object",
+      properties: { query: str, repo: str },
+      required: ["query"],
+    },
+  },
+  {
+    name: "issue_search",
+    description:
+      "Search issues and pull requests, including closed ones, where behaviour that is not in the documentation is usually explained.",
+    parameters: {
+      type: "object",
+      properties: { query: str, repo: str },
+      required: ["query"],
+    },
+  },
+  {
+    name: "releases_between",
+    description:
+      "Every release note between two versions of a repository — the question an upgrade actually asks. Give `from` (installed) and `to` (proposed).",
+    parameters: {
+      type: "object",
+      properties: { repo: str, from: str, to: str },
+      required: ["repo", "from", "to"],
+    },
+  },
 ];
 
 export const FINALIZE_ANSWER: ToolDefinition = {

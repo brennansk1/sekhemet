@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -230,24 +230,46 @@ export class ResearchCache {
   }
 
   /**
-   * How long an entry stays fresh, by what it is (X9): search results go
-   * stale in a day, documentation in a week, and a paper's text does not
-   * change once published.
+   * How long an entry stays fresh (X9). Expiry is by the *mutability* of the
+   * thing cached, not by its file type: a repository file at a pinned commit
+   * cannot change, official API documentation changes slowly, a forum thread
+   * changes weekly, and a search result set is stale tomorrow.
+   *
+   * A caller that knows an entry is immutable says so by prefixing the key
+   * with `pinned:` (repo reads at a SHA, docs at a package version).
    */
   static ttlFor(key: string): number {
     const day = 24 * 3600 * 1000;
+    if (key.startsWith("pinned:") || /\b[0-9a-f]{40}\b/.test(key)) return Number.POSITIVE_INFINITY;
     if (
       /search|\/api\/papers\/search|export\.arxiv\.org\/api\/query|api\.openalex\.org\/works\?search/.test(
         key,
       )
     )
       return day;
-    if (/arxiv\.org\/(abs|html|pdf)\//.test(key)) return 30 * day;
     if (/registry\.npmjs\.org|pypi\.org\/pypi/.test(key)) return day;
-    return 7 * day;
+    if (/arxiv\.org\/(abs|html|pdf)\/|doi\.org\//.test(key)) return 30 * day;
+    if (/\/llms(-full)?\.txt$|sitemap[^/]*\.xml/.test(key)) return 30 * day;
+    if (/\/(issues|pull|discussions|questions)\/|blog|forum|medium\.com|dev\.to/.test(key))
+      return 14 * day;
+    if (/^https?:\/\/(docs|developer|devdocs|api|readthedocs)\.|\/(docs|api|reference)\//.test(key))
+      return 90 * day;
+    return 14 * day;
   }
 
   get(key: string): { status: number; type: string; body: string } | undefined {
+    const e = this.entry(key);
+    return e?.fresh ? e : undefined;
+  }
+
+  /**
+   * The entry whether or not it is fresh, so the Desk can answer from a stale
+   * page immediately and revalidate behind the answer: a stale-but-present
+   * page never costs a build a round trip.
+   */
+  entry(
+    key: string,
+  ): { status: number; type: string; body: string; at: number; fresh: boolean } | undefined {
     try {
       const e = JSON.parse(readFileSync(this.path(key), "utf8")) as {
         at: number;
@@ -256,7 +278,7 @@ export class ResearchCache {
         body: string;
       };
       const ttl = Math.min(this.ttlMs, ResearchCache.ttlFor(key));
-      return Date.now() - e.at < ttl ? e : undefined;
+      return { ...e, fresh: Date.now() - e.at < ttl };
     } catch {
       return undefined;
     }
@@ -265,9 +287,28 @@ export class ResearchCache {
   set(key: string, status: number, type: string, body: string): void {
     try {
       mkdirSync(this.dir, { recursive: true });
-      writeFileSync(this.path(key), JSON.stringify({ at: Date.now(), status, type, body }));
+      const hash = createHash("sha256").update(body).digest("hex");
+      writeFileSync(this.path(key), JSON.stringify({ at: Date.now(), status, type, body, hash }));
+      // Content-hash index: the same bytes under a second URL (a mirror, a
+      // redirect target, a versioned alias) resolve to the first URL that
+      // carried them, so the corpus holds one copy and one citation.
+      const canon = join(this.dir, `h-${hash.slice(0, 32)}.json`);
+      if (!existsSync(canon)) writeFileSync(canon, JSON.stringify({ key }));
     } catch {
       // A cache that cannot write is only slower.
+    }
+  }
+
+  /** The URL this body was first seen under, if it is a duplicate of one. */
+  canonicalOf(body: string): string | undefined {
+    try {
+      const hash = createHash("sha256").update(body).digest("hex").slice(0, 32);
+      const { key } = JSON.parse(readFileSync(join(this.dir, `h-${hash}.json`), "utf8")) as {
+        key: string;
+      };
+      return key;
+    } catch {
+      return undefined;
     }
   }
 }

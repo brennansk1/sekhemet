@@ -619,7 +619,12 @@ describe("research knowledge and safety (X4, X5, X8, X9)", () => {
     expect(ResearchCache.ttlFor("http://127.0.0.1:8890/search?q=x&format=json")).toBe(day);
     expect(ResearchCache.ttlFor("https://arxiv.org/html/2605.03042")).toBe(30 * day);
     expect(ResearchCache.ttlFor("https://registry.npmjs.org/zod")).toBe(day);
-    expect(ResearchCache.ttlFor("crawl:https://nodejs.org/api/sqlite.html")).toBe(7 * day);
+    // Expiry is by mutability, not by file type: official API documentation
+    // changes slowly and keeps for 90 days, where an unclassified page keeps
+    // for 14. A read pinned to a commit cannot change at all.
+    expect(ResearchCache.ttlFor("crawl:https://nodejs.org/api/sqlite.html")).toBe(90 * day);
+    expect(ResearchCache.ttlFor("crawl:https://example.com/some/page")).toBe(14 * day);
+    expect(ResearchCache.ttlFor("pinned:gh:file:abc:src/x.ts")).toBe(Number.POSITIVE_INFINITY);
   });
 
   it("wraps web content as untrusted and neutralises a page's own wrapper tags (X8)", async () => {

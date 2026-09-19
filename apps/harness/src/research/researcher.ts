@@ -3,9 +3,17 @@ import { moduleApiSummary } from "@sekhemet/loop";
 import type { ChatTurn, LocalInferenceAdapter, ToolCall, ToolDefinition } from "@sekhemet/models";
 import { formatHits, searchLibraries } from "../pm/libraries.js";
 import { researchAgentPrompt, stripThinking } from "./apodex.js";
-import { EvidenceLedger, apodexLoop, apodexTeam, verifyReferences } from "./apodex_loop.js";
+import {
+  APODEX_LOCAL_TOOLS,
+  EvidenceLedger,
+  apodexLoop,
+  apodexTeam,
+  verifyReferences,
+} from "./apodex_loop.js";
+import { depsFile, depsGrep, depsOutline, installed } from "./deps.js";
 import { readDocs } from "./docs.js";
 import { type LoopFinding, type LoopResult, runResearchLoop } from "./loop.js";
+import { codeSearch, issueSearch, parseSlug, releasesBetween, repoFile, repoTree } from "./repo.js";
 import { type Source, groundingConfidence, kindOfUrl } from "./sources.js";
 import {
   type WebConfig,
@@ -156,33 +164,13 @@ const WEB_TOOLS: ToolDefinition[] = [
   },
 ];
 
-const LOCAL_TOOLS: ToolDefinition[] = [
-  {
-    name: "find_library",
-    description: "Search npm or PyPI; results carry licence and whether it is safe to use.",
-    parameters: {
-      type: "object",
-      properties: { query: str, ecosystem: { type: "string", enum: ["npm", "pypi"] } },
-      required: ["query"],
-    },
-  },
-  {
-    name: "package_readme",
-    description: "Read an npm package's README (first part) to learn its API and usage.",
-    parameters: { type: "object", properties: { name: str }, required: ["name"] },
-  },
-  {
-    name: "module_api",
-    description:
-      "The real classes and members of a module from the project's installed type declarations, e.g. node:sqlite.",
-    parameters: { type: "object", properties: { module: str }, required: ["module"] },
-  },
-  {
-    name: "git_history",
-    description: "Search this repository's commit messages for a term.",
-    parameters: { type: "object", properties: { query: str }, required: ["query"] },
-  },
-];
+/**
+ * The model-free tools: the repository, its installed dependencies, the
+ * registries, and GitHub through `gh`. One list, shared with the Apodex loop
+ * — two lists of the same tools drift, and a tool the dispatcher knows but
+ * no model was told about is a tool that is never called.
+ */
+const LOCAL_TOOLS: ToolDefinition[] = APODEX_LOCAL_TOOLS;
 
 /** The only clean exit, as in Apodex's own harness (FrontierAgent). */
 export const FINALIZE_TOOL: ToolDefinition = {
@@ -259,6 +247,66 @@ export async function runResearchTool(call: ToolCall, deps: ResearchDeps): Promi
         ? { text: out, source: src("source", `git history for "${q}"`, out) }
         : { text: "(no commits mention it)" };
     }
+    // Tier 1: the installed dependency's own source. No model, no network,
+    // and at the version that will actually run.
+    if (call.name === "deps_source") {
+      const name = s("name");
+      const path = s("path", 300);
+      const text = path ? depsFile(deps.repoPath, name, path) : depsOutline(deps.repoPath, name);
+      const v = installed(deps.repoPath, name);
+      return v
+        ? { text, source: src("source", `${name}@${v.version}${path ? ` ${path}` : ""}`, text) }
+        : { text };
+    }
+    if (call.name === "deps_grep") {
+      const name = s("name");
+      const text = depsGrep(deps.repoPath, name, s("pattern"));
+      const v = installed(deps.repoPath, name);
+      return v
+        ? { text, source: src("source", `${name}@${v.version} source search`, text) }
+        : { text };
+    }
+
+    // Repository intelligence: git and gh, cached by commit SHA.
+    if (
+      call.name === "repo_tree" ||
+      call.name === "repo_file" ||
+      call.name === "releases_between" ||
+      call.name === "code_search" ||
+      call.name === "issue_search"
+    ) {
+      const slugArg = s("repo", 140);
+      const slug = slugArg ? parseSlug(slugArg) : undefined;
+      if (slugArg && !slug) return { text: `"${slugArg}" is not an owner/repo.` };
+      if (call.name === "code_search") {
+        const q = s("query");
+        const text = codeSearch(q, slug);
+        return {
+          text,
+          source: src("source", `code search "${q}"${slug ? ` in ${slugArg}` : ""}`, text),
+        };
+      }
+      if (call.name === "issue_search") {
+        const q = s("query");
+        const text = issueSearch(q, slug);
+        return { text, source: src("forum", `issues "${q}"${slug ? ` in ${slugArg}` : ""}`, text) };
+      }
+      if (!slug) return { text: "This tool needs a repository as owner/repo." };
+      if (call.name === "repo_tree") {
+        const text = repoTree(slug, s("ref", 120) || "HEAD", s("path", 200));
+        return { text, source: src("repository", `${slugArg} tree`, text) };
+      }
+      if (call.name === "repo_file") {
+        const path = s("path", 300);
+        const text = repoFile(slug, path, s("ref", 120) || "HEAD");
+        return { text, source: src("source", `${slugArg}/${path}`, text) };
+      }
+      const from = s("from", 60);
+      const to = s("to", 60);
+      const text = releasesBetween(slug, from, to);
+      return { text, source: src("documentation", `${slugArg} releases ${from}..${to}`, text) };
+    }
+
     const web = deps.web;
     if (!web) return { text: `Tool ${call.name} needs web access, which is off for this project.` };
     if (call.name === "scholar_search" || call.name === "search_papers") {
