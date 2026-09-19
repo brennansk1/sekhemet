@@ -77,6 +77,7 @@ import { isResearchCard, runResearchCard } from "./research/cards.js";
 import { ResearchService, researchSources } from "./research/service.js";
 import { oneShotResearcher } from "./research/service.js";
 import { DEFAULT_DASHBOARD_PORT, startDashboardServer } from "./server.js";
+import { trailerGate } from "./trailer_gate.js";
 import { tracesCommand } from "./tracing.js";
 import { loadAttempts, tune, writeTuningReport } from "./tune.js";
 import {
@@ -746,6 +747,10 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       if (lic.failures.length > 0)
         res = { ...res, passed: false, failures: [...res.failures, ...lic.failures] };
       for (const a of lic.advisories) console.log(`  advisory: ${a}`);
+      // X26: every commit on the card's branch carries the attribution trailers.
+      const trailers = trailerGate(cwd, "main");
+      if (trailers.length > 0)
+        res = { ...res, passed: false, failures: [...res.failures, ...trailers] };
     }
     // Y19: in a monorepo, each package the card touches runs its own gates.
     if (cardId && cwd !== config.repoPath) {

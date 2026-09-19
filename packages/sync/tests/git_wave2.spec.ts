@@ -7,6 +7,7 @@ import {
   NodeGitSyncAdapter,
   conventionalSquashMessage,
   groupByIntent,
+  missingTrailers,
   modelCoAuthor,
 } from "../src/git_adapter.js";
 
@@ -150,5 +151,46 @@ describe("Y8: structural diff grouped by intent", () => {
     expect(d.groups.source).toEqual(["packages/core/src/a.ts"]);
     expect(d.groups.tests).toEqual(["packages/core/tests/a.test.ts"]);
     expect(d.text).toContain("a.ts");
+  });
+});
+
+describe("X26: the trailer contract", () => {
+  it("names what a message is missing, checkpoints needing Step and GateStatus", () => {
+    const full =
+      "feat: x\n\nCard: c\nAgent-Model: m\nAgent-Harness: h\nAgent-Role: implementer\nCo-authored-by: A <a@x>";
+    expect(missingTrailers(full)).toEqual([]);
+    expect(missingTrailers("fix: y\n\nAgent-Model: m")).toEqual([
+      "Card",
+      "Agent-Harness",
+      "Agent-Role",
+      "Co-authored-by",
+    ]);
+    expect(missingTrailers(full, { checkpoint: true })).toEqual(["Step", "GateStatus"]);
+    // A trailer quoted in the body is not a trailer.
+    expect(missingTrailers(`fix: z\n\nsee "Card: c" above\n\nAgent-Model: m`)).toContain("Card");
+  });
+
+  it("a squash inherits the checkpoints' trailers and always carries a co-author", async () => {
+    const wt = await adapter.createWorktree("c7", "main", "Add q");
+    write(wt, "packages/core/src/q.ts", "export const q = 1;\n");
+    await cp("c7", 1, "nail");
+    await adapter.squashAndMerge("c7", "main", "feat(c7): Add q", {}, "Add q");
+    const msg = git("log", "main", "-1", "--format=%B");
+    expect(missingTrailers(msg)).toEqual([]);
+    expect(msg).toContain("Agent-Model: nail");
+    expect(msg).toContain("Agent-Role: implementer");
+  });
+
+  it("refuses to squash a branch whose trailers cannot be completed", async () => {
+    const wt = await adapter.createWorktree("c8", "main", "Hand");
+    write(wt, "packages/core/src/h.ts", "export const h = 1;\n");
+    execFileSync("git", ["add", "-A"], { cwd: wt });
+    execFileSync("git", ["commit", "-q", "-m", "by hand"], { cwd: wt });
+    await expect(
+      adapter.squashAndMerge("c8", "main", "feat(c8): Hand", {}, "Hand"),
+    ).rejects.toThrow(
+      /missing trailer\(s\): Agent-Model, Agent-Harness, Agent-Role, Co-authored-by/,
+    );
+    expect(git("status", "--porcelain")).toBe("");
   });
 });

@@ -18,6 +18,38 @@ import type {
   WorktreeRecord,
 } from "./types.js";
 
+/**
+ * The commit-trailer contract (X26, AGENTS.md): every commit the harness
+ * makes carries these; a checkpoint also carries Step and GateStatus.
+ */
+export const REQUIRED_TRAILERS = [
+  "Card",
+  "Agent-Model",
+  "Agent-Harness",
+  "Agent-Role",
+  "Co-authored-by",
+] as const;
+export const CHECKPOINT_TRAILERS = ["Step", "GateStatus"] as const;
+
+/** Trailers of a message: `Key: value` lines of its last paragraph (as git reads them). */
+export function parseTrailers(message: string): { key: string; value: string }[] {
+  const paragraphs = message.trim().split(/\n\s*\n/);
+  const last = paragraphs.length > 1 ? (paragraphs.at(-1) ?? "") : "";
+  const out: { key: string; value: string }[] = [];
+  for (const line of last.split("\n")) {
+    const m = /^([A-Za-z][\w-]*):\s*(.+)$/.exec(line.trim());
+    if (m) out.push({ key: m[1] as string, value: (m[2] as string).trim() });
+  }
+  return out;
+}
+
+/** The required trailers a message lacks, in contract order. */
+export function missingTrailers(message: string, opts: { checkpoint?: boolean } = {}): string[] {
+  const have = new Set(parseTrailers(message).map((t) => t.key.toLowerCase()));
+  const need = [...REQUIRED_TRAILERS, ...(opts.checkpoint ? CHECKPOINT_TRAILERS : [])];
+  return need.filter((k) => !have.has(k.toLowerCase()));
+}
+
 /** Default co-author for a model's work (Y2). */
 export function modelCoAuthor(agentModel: string): string {
   const slug =
@@ -428,27 +460,49 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
       .split("\n")
       .filter(Boolean);
     // Attribution from the branch's own checkpoints (Y2): every model that
-    // contributed is a co-author of the squashed commit.
+    // contributed is a co-author of the squashed commit, and the latest
+    // checkpoint's model, harness and role fill what the caller left out (X26).
     const coAuthors = new Set<string>();
-    for (const line of this.runGit(["log", "--format=%B", `${targetBranch}..${branch}`]).split(
-      "\n",
-    )) {
-      const m = /^Co-authored-by:\s*(.+)$/.exec(line.trim());
-      if (m?.[1]) coAuthors.add(m[1].trim());
+    const inherited = new Map<string, string>();
+    const bodies = this.runGit(["log", "--format=%B%x00", `${targetBranch}..${branch}`])
+      .split("\0")
+      .filter((b) => b.trim());
+    for (const body of bodies) {
+      for (const t of parseTrailers(body)) {
+        const key = t.key.toLowerCase();
+        if (key === "co-authored-by") coAuthors.add(t.value);
+        else if (
+          ["agent-model", "agent-harness", "agent-role"].includes(key) &&
+          !inherited.has(key)
+        )
+          inherited.set(key, t.value);
+      }
     }
-
-    this.runGit(["checkout", targetBranch]);
-    this.runGit(["merge", "--squash", branch]);
-
-    const message = conventionalSquashMessage(cardId, commitMsg, files, title);
+    const provided = new Map(Object.entries(trailers).map(([k, v]) => [k.toLowerCase(), v]));
     const trailerLines = [`Card: ${cardId}`];
     for (const [key, value] of Object.entries(trailers)) {
       trailerLines.push(`${key}: ${value}`);
       if (key.toLowerCase() === "co-authored-by") coAuthors.delete(value);
     }
+    for (const key of ["Agent-Model", "Agent-Harness", "Agent-Role"]) {
+      const value = inherited.get(key.toLowerCase());
+      if (!provided.has(key.toLowerCase()) && value) trailerLines.push(`${key}: ${value}`);
+    }
+    const model = provided.get("agent-model") ?? inherited.get("agent-model");
+    if (coAuthors.size === 0 && !provided.has("co-authored-by") && model)
+      coAuthors.add(modelCoAuthor(model));
     for (const a of [...coAuthors].sort()) trailerLines.push(`Co-authored-by: ${a}`);
 
-    this.runGit(["commit", "-m", `${message}\n\n${trailerLines.join("\n")}`]);
+    const message = conventionalSquashMessage(cardId, commitMsg, files, title);
+    const full = `${message}\n\n${trailerLines.join("\n")}`;
+    // Refused before anything moves: main never receives an unattributed commit.
+    const missing = missingTrailers(full);
+    if (missing.length > 0)
+      throw new Error(`squash of ${cardId} refused: missing trailer(s): ${missing.join(", ")}`);
+
+    this.runGit(["checkout", targetBranch]);
+    this.runGit(["merge", "--squash", branch]);
+    this.runGit(["commit", "-m", full]);
     return this.runGit(["rev-parse", "HEAD"]);
   }
 
@@ -462,8 +516,25 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
     if (!existsSync(cwd)) throw new Error(`Worktree for card ${cardId} not found at ${cwd}`);
     this.runGit(["add", "-A"], cwd);
     if (this.runGit(["diff", "--cached", "--name-only"], cwd) !== "") {
+      // Attributed like any checkpoint (X26): model, role and co-authors
+      // carry over from the branch's last commit.
+      const last = parseTrailers(this.runGit(["log", "-1", "--format=%B"], cwd));
+      const get = (k: string) => last.find((t) => t.key.toLowerCase() === k)?.value;
+      const model = get("agent-model") ?? "unknown";
+      const coAuthors = last.filter((t) => t.key.toLowerCase() === "co-authored-by");
+      const lines = [
+        `Card: ${cardId}`,
+        "Step: rebase",
+        `Agent-Model: ${model}`,
+        `Agent-Harness: ${get("agent-harness") ?? "sekhemet"}`,
+        `Agent-Role: ${get("agent-role") ?? "implementer"}`,
+        "GateStatus: partial",
+        ...(coAuthors.length
+          ? coAuthors.map((t) => `Co-authored-by: ${t.value}`)
+          : [`Co-authored-by: ${modelCoAuthor(model)}`]),
+      ];
       this.runGit(
-        ["commit", "-m", `checkpoint: before rebase onto ${targetBranch}\n\nCard: ${cardId}`],
+        ["commit", "-m", `checkpoint: before rebase onto ${targetBranch}\n\n${lines.join("\n")}`],
         cwd,
       );
     }

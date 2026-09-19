@@ -256,6 +256,7 @@ export type Wave2Command =
   | "drift"
   | "recurring"
   | "register"
+  | "trailers"
   | "goal"
   | "decide"
   | "m0"
@@ -270,6 +271,7 @@ export const WAVE2_COMMANDS: readonly Wave2Command[] = [
   "drift",
   "recurring",
   "register",
+  "trailers",
   "goal",
   "decide",
   "m0",
@@ -384,6 +386,16 @@ export async function runWave2Command(
         "Usage: sekhemet register check | licenses | advance <id> <state> [--threshold ...] [--evidence ...]",
         1,
       );
+    }
+    case "trailers": {
+      // `sekhemet trailers [<range>]` (X26): the attribution contract, for CI and people.
+      const { checkTrailers } = await import("./trailer_gate.js");
+      const bad = checkTrailers(k.repoPath, args[0] ?? "main..HEAD");
+      for (const v of bad)
+        print(`${v.sha.slice(0, 10)} ${v.subject}: missing ${v.missing.join(", ")}`);
+      return bad.length
+        ? done(`${bad.length} commit(s) without the attribution trailers.`, 1)
+        : done("Every commit carries the attribution trailers.", 0);
     }
     case "goal": {
       // `sekhemet goal "<statement>"` | `goal approve <id>` | `goal status`
