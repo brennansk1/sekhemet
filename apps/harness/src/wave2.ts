@@ -255,6 +255,7 @@ export type Wave2Command =
   | "onboard"
   | "drift"
   | "recurring"
+  | "register"
   | "goal"
   | "decide"
   | "m0"
@@ -268,6 +269,7 @@ export const WAVE2_COMMANDS: readonly Wave2Command[] = [
   "onboard",
   "drift",
   "recurring",
+  "register",
   "goal",
   "decide",
   "m0",
@@ -346,6 +348,42 @@ export async function runWave2Command(
         hours: resolveConfig({ repoPath: k.repoPath }).config.machine.hours,
         print,
       });
+    }
+    case "register": {
+      // `sekhemet register check | licenses | advance <id> <state> [--threshold t] [--evidence e]`
+      // (X17, X18, X20): the provenance, research and licence registers.
+      const { advanceResearchEntry, checkRegisters } = await import("./registers.js");
+      const { repoLicenseAudit } = await import("./license_gate.js");
+      const [sub, id, state] = args;
+      if (sub === "check") {
+        const problems = checkRegisters(k.repoPath);
+        for (const p of problems) print(`problem: ${p}`);
+        return done(
+          problems.length ? `${problems.length} problem(s).` : "Registers are valid.",
+          problems.length ? 1 : 0,
+        );
+      }
+      if (sub === "licenses") {
+        const audit = repoLicenseAudit(k.repoPath);
+        for (const a of audit)
+          print(
+            `${a.ok ? "ok  " : "FAIL"} ${a.dep} (${a.license ?? "unknown"}) ${a.why} [${a.manifest}]`,
+          );
+        return audit.every((a) => a.ok) ? 0 : 1;
+      }
+      if (sub === "advance" && id && state) {
+        const threshold = flag(args, "--threshold");
+        const evidence = flag(args, "--evidence");
+        const e = advanceResearchEntry(k.repoPath, id, state, {
+          ...(threshold ? { threshold } : {}),
+          ...(evidence ? { evidence } : {}),
+        });
+        return done(`${e.id} ${e.technique}: ${e.state}.`, 0);
+      }
+      return done(
+        "Usage: sekhemet register check | licenses | advance <id> <state> [--threshold ...] [--evidence ...]",
+        1,
+      );
     }
     case "goal": {
       // `sekhemet goal "<statement>"` | `goal approve <id>` | `goal status`

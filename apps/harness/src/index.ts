@@ -58,6 +58,7 @@ import {
 } from "./execute.js";
 import { reviewPosterFromEnv, runExternalReviews } from "./external_review.js";
 import { runInit } from "./init.js";
+import { licenseGate } from "./license_gate.js";
 import { notifySlack } from "./integrations.js";
 import { readSettings } from "./integrations.js";
 import { applyExploration, exploreProject } from "./learning/explore.js";
@@ -740,6 +741,11 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         rungResults: [...(res.rungResults ?? []), ...extra.outcomes],
       };
       for (const a of extra.advisories) console.log(`  advisory: ${a}`);
+      // X20: dependencies the card adds, against the licence register.
+      const lic = licenseGate(cwd, "main");
+      if (lic.failures.length > 0)
+        res = { ...res, passed: false, failures: [...res.failures, ...lic.failures] };
+      for (const a of lic.advisories) console.log(`  advisory: ${a}`);
     }
     // Y19: in a monorepo, each package the card touches runs its own gates.
     if (cardId && cwd !== config.repoPath) {

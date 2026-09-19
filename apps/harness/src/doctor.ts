@@ -4,6 +4,7 @@ import { freemem, platform, totalmem } from "node:os";
 import { join } from "node:path";
 import { classifyMemoryPressure, readKernelPressureLevel } from "@sekhemet/models";
 import { ProcessSandbox } from "@sekhemet/sandbox";
+import { checkRegisters } from "./registers.js";
 import { playbookDoctorCheck } from "./wave2.js";
 
 export type CheckStatus = "pass" | "warn" | "fail";
@@ -196,7 +197,18 @@ export async function runDoctor(repoPath: string = process.cwd()): Promise<Docto
     probeSkills(repoPath),
     // E19, C12: rule net gain, context bloat, pruning recommendations.
     playbookDoctorCheck(repoPath),
+    registersCheck(repoPath),
   ];
 
   return { ok: checks.every((c) => c.status !== "fail"), checks };
+}
+
+/** X17, X18: the provenance and research registers, when the repository keeps them. */
+function registersCheck(repoPath: string): DiagnosticCheck {
+  if (!existsSync(join(repoPath, "docs", "reference", "PROVENANCE.md")))
+    return { name: "Registers", status: "pass", detail: "no registers kept in this repository" };
+  const problems = checkRegisters(repoPath);
+  return problems.length === 0
+    ? { name: "Registers", status: "pass", detail: "provenance and research registers are valid" }
+    : { name: "Registers", status: "warn", detail: problems.slice(0, 3).join("; ") };
 }

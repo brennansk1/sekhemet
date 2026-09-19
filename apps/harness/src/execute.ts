@@ -46,6 +46,7 @@ import { NodeGitSyncAdapter } from "@sekhemet/sync";
 import { isAirgapped, mirrorRegistry } from "./airgap.js";
 import { readSettings } from "./integrations.js";
 import { learnFromAttempt } from "./learning/reflect.js";
+import { withLicenseGate } from "./license_gate.js";
 import type { LearningStore } from "./learning/store.js";
 import { buildReproRecord } from "./repro.js";
 import { workerWebDocs } from "./research/service.js";
@@ -293,10 +294,14 @@ export async function executeCard(
   // Restricted mode refuses to execute where the OS cannot confine the
   // subprocess, rather than quietly running the agent unsandboxed.
   const sandbox = new ProcessSandbox({ requireConfinement: ctx.restrictedMode });
-  const gateRunner = new DeterministicGateRunner(sandbox, {
-    repoRoot: ctx.repoPath,
-    expectedConfigSha256: gatesConfig.sha256,
-  });
+  // X20: every verification also runs the licence register gate.
+  const gateRunner = withLicenseGate(
+    new DeterministicGateRunner(sandbox, {
+      repoRoot: ctx.repoPath,
+      expectedConfigSha256: gatesConfig.sha256,
+    }),
+    ctx.repoPath,
+  );
   const skills = new SkillsRegistry();
   skills.loadFromDirectory(join(ctx.repoPath, ".sekhemet", "skills"));
   const playbook = new PlaybookRegistry(ctx.repoPath);
