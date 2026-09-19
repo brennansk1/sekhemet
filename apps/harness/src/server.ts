@@ -59,7 +59,8 @@ import { createPmApi } from "./pm_api.js";
 import { modelRoster } from "./pm_api.js";
 import { handleRestExtras } from "./rest_extra.js";
 import { generateDashboardHtml } from "./ui_html.js";
-import { handleWave2Route } from "./wave2_server.js";
+import { hookEngineFor } from "./user_hooks.js";
+import { handleWave2Route, startRecurringTicker } from "./wave2_server.js";
 import { type StreamClient, acceptWebSocket } from "./ws.js";
 
 /** The loopback port the design fixes for the dashboard. */
@@ -848,6 +849,10 @@ export function startDashboardServer(
           await store
             .recordDossierEntry({ cardId, kind: "send_back", text: reason, actor: "human" })
             .catch(() => undefined);
+          // K12: review/return reaches the project's hooks (a notifier, a ticket).
+          await hookEngineFor(repoPath)
+            .engine.emit("review/return", { cardId, data: { reason } })
+            .catch(() => undefined);
           // The note teaches both the Worker (a candidate rule) and Seshat (the profile).
           await learnFromSendBack(pmApi.learning, card, reason).catch(() => undefined);
           // Every return reason is a candidate playbook rule (design §820):
@@ -1205,11 +1210,19 @@ export function startDashboardServer(
       const notifier = startNotifier(options.log, repoPath, {
         dashboard: `http://127.0.0.1:${boundPort}`,
       });
+      // X16: due recurring templates clone into Ready cards, once a minute.
+      const stopRecurring = options.cardStore
+        ? startRecurringTicker(repoPath, options.cardStore, options.log, {
+            hours: resolveConfig({ repoPath }).config.machine.hours,
+            ...(options.recurringEveryMs ? { everyMs: options.recurringEveryMs } : {}),
+          })
+        : () => undefined;
       resolve({
         port: boundPort,
         close: () =>
           new Promise<void>((done) => {
             void notifier.then((n) => n.stop());
+            stopRecurring();
             if (timer) clearInterval(timer);
             unsubscribe();
             for (const stream of streams) stream.end();

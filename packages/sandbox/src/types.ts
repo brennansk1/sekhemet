@@ -23,6 +23,11 @@ export interface SandboxOptions {
    * only network the command gets is this port, and HTTP(S)_PROXY point at it.
    */
   egressProxyPort?: number;
+  /**
+   * Loopback ports the command may listen on and connect to (L23: a card's
+   * background dev server and the commands that talk to it).
+   */
+  localPorts?: number[];
 }
 
 export interface ExecutionResult {

@@ -487,6 +487,42 @@ describe("apps/harness executeCard wiring (wave 2, part 1)", () => {
     expect(readFileSync(liveTokenPath(repo, "card_learn"), "utf8")).toContain("export const a");
   });
 
+  it("emits the lifecycle hooks at their points: a pre-tool hook refuses, a post-tool hook injects (K12)", async () => {
+    const logFile = join(repo, "hook.log");
+    const line = (event: string, extra = "") =>
+      `[[hook]]\nevent = "${event}"\n${extra}command = "echo ${event} >> ${logFile}"\n`;
+    writeFileSync(
+      join(repo, ".sekhemet", "hooks.toml"),
+      [
+        line("card/start"),
+        line("pre-step"),
+        line("pre-gate"),
+        line("post-gate"),
+        line("turn-stopping"),
+        line("card/end"),
+        `[[hook]]\nevent = "pre-tool"\ntool = "run_cmd"\ncommand = "echo 'no commands in this repo' >&2; exit 2"\n`,
+        `[[hook]]\nevent = "post-tool"\ntool = "write_file"\ncommand = "echo '{\\"message\\": \\"remember the changelog\\"}'"\n`,
+      ].join("\n"),
+    );
+    const card = await newCard("card_hooks");
+    const { adapter, seen } = scripted([
+      [{ name: "run_cmd", arguments: { command: "ls", description: "list" } }],
+      [{ name: "write_file", arguments: { path: "src/a.ts", content: "export const a = 1;\n" } }],
+      [{ name: "finish_card", arguments: {} }],
+    ]);
+    const result = await executeCard(ctx, card, adapter);
+    expect(result.turns[0]?.observations[0]).toMatchObject({ denied: true, deniedRule: "hook" });
+    expect(result.turns[0]?.observations[0]?.content).toContain("no commands in this repo");
+    expect(seen[2]?.prompt).toContain("remember the changelog");
+    expect(result.passed).toBe(true);
+    const events = readFileSync(logFile, "utf8").trim().split("\n");
+    expect(events[0]).toBe("card/start");
+    expect(events).toEqual(
+      expect.arrayContaining(["pre-step", "pre-gate", "post-gate", "turn-stopping"]),
+    );
+    expect(events.at(-1)).toBe("card/end");
+  });
+
   it("records a review in the dossier, which the Review surface reads as findings", async () => {
     const card = await newCard("card_rev");
     await recordReview(cardStore, card.id, [

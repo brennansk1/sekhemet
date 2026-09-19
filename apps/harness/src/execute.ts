@@ -43,12 +43,14 @@ import {
 import { type SpidrSliceKind, scoreDifficulty, stepBudgetForDifficulty } from "@sekhemet/planner";
 import { ProcessSandbox } from "@sekhemet/sandbox";
 import { NodeGitSyncAdapter } from "@sekhemet/sync";
+import { isAirgapped, mirrorRegistry } from "./airgap.js";
 import { readSettings } from "./integrations.js";
 import { learnFromAttempt } from "./learning/reflect.js";
 import type { LearningStore } from "./learning/store.js";
-import { isAirgapped, mirrorRegistry } from "./airgap.js";
 import { buildReproRecord } from "./repro.js";
+import { workerWebDocs } from "./research/service.js";
 import { Tracer, traced } from "./tracing.js";
+import { hookEngineFor } from "./user_hooks.js";
 import { PR_EVENT, openPullRequestViaApp } from "./wave2_github.js";
 import { githubAppFromEnv } from "./wave2_server.js";
 
@@ -312,6 +314,7 @@ export async function executeCard(
   }
 
   const worktreePath = join(ctx.repoPath, ".sekhemet", "worktrees", card.id);
+  const webDocs = await workerWebDocs(ctx.repoPath).catch(() => undefined);
   const baselineSwap = readSwapUsedBytes();
   // A rewind or fork the human asked for (H18, H19) sets where this run starts.
   const start = await pendingStartPoint(ctx.cardStore, card.id).catch(() => undefined);
@@ -355,7 +358,7 @@ export async function executeCard(
     // New dependencies are checked against the npm registry (existence, age),
     // answers cached under .sekhemet; offline it degrades to an advisory (S10).
     // Air-gapped: only mirrored packages exist (X10).
-        registry: isAirgapped(ctx.repoPath) ? mirrorRegistry(ctx.repoPath) : npmRegistry(ctx.repoPath),
+    registry: isAirgapped(ctx.repoPath) ? mirrorRegistry(ctx.repoPath) : npmRegistry(ctx.repoPath),
     // Ask-tier commands wait for a person on the decision queue (S8, K20).
     onApproval: decisionApprover(ctx.cardStore, card.id, ctx.approvalTimeoutMs ?? 60_000),
     signal: abort.signal,
@@ -386,6 +389,10 @@ export async function executeCard(
         }
       : {}),
     skillsRegistry: skills,
+    // K12: the project's lifecycle hooks (.sekhemet/hooks.toml).
+    hooks: hookEngineFor(ctx.repoPath).engine,
+    // L10 tier 3: the library's official web docs, when web access is on.
+    ...(webDocs ? { webDocs } : {}),
     // C13: passing runs of this card's class, as worked examples.
     exemplarStore: new ExemplarStore(join(ctx.repoPath, ".sekhemet", "exemplars")),
     // C2: one language-server pool for the whole run (servers are pooled

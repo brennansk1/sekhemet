@@ -186,6 +186,57 @@ export const TOOL_CATALOG: ToolInterfaceSpec[] = [
   },
   TOOL_SEARCH_SPEC,
   {
+    name: "run_script",
+    summary:
+      "Run a short JavaScript function over the repository with read-only helpers (read, grep, find, list) and return what it returns: many lookups in one step. No writes, no network, no require.",
+    parameters: [
+      {
+        name: "code",
+        type: "string",
+        required: true,
+        description:
+          "Body of a function; helpers: read(path), grep(regex, dir?), find(glob, dir?), list(dir?). Return a string or JSON.",
+      },
+    ],
+  },
+  {
+    name: "start_process",
+    summary:
+      "Start a long-running command in the background (a dev server, a watcher). It gets a free port in $PORT and keeps running across steps.",
+    parameters: [
+      { name: "name", type: "string", required: true, description: "A short handle, e.g. web" },
+      { name: "command", type: "string", required: true, description: "The command line" },
+    ],
+  },
+  {
+    name: "read_process",
+    summary: "Read a background process's latest output and whether it is still running.",
+    parameters: [
+      { name: "name", type: "string", required: true, description: "Its handle" },
+      { name: "lines", type: "number", required: false, description: "Last N lines, default 40" },
+    ],
+  },
+  {
+    name: "write_process",
+    summary:
+      "Type input into a background process (an interactive prompt, a REPL); a newline is added.",
+    parameters: [
+      { name: "name", type: "string", required: true, description: "Its handle" },
+      { name: "input", type: "string", required: true, description: "The line to send" },
+    ],
+  },
+  {
+    name: "stop_process",
+    summary: "Stop a background process.",
+    parameters: [{ name: "name", type: "string", required: true, description: "Its handle" }],
+  },
+  {
+    name: "browse",
+    summary:
+      "Load a page and return its rendered text: the card's own app on localhost (use its $PORT), or, on research cards, any URL.",
+    parameters: [{ name: "url", type: "string", required: true, description: "The URL" }],
+  },
+  {
     name: "grep_search",
     summary: "Search file contents by regular expression. Skips gitignored files.",
     parameters: [
@@ -351,6 +402,7 @@ export const RESTRICTED_TOOL_NAMES: readonly string[] = [
   "go_to_definition",
   "subtask",
   "tool_search",
+  "run_script",
   "grep_search",
   "find_files",
   "list_dir",
@@ -368,4 +420,86 @@ export function restrictedToolCatalog(
   catalog: ToolInterfaceSpec[] = TOOL_CATALOG,
 ): ToolInterfaceSpec[] {
   return catalog.filter((t) => RESTRICTED_TOOL_NAMES.includes(t.name));
+}
+
+/**
+ * Card classes with fixed tool lists (L18, design: "The board is the
+ * subagent system; Explore, Plan, and Implement are card classes with fixed
+ * tool lists"; "a reviewer gets read, grep, and glob; an implementer adds
+ * edit and bash; a researcher gets read and fetch").
+ */
+export type CardClass = "explore" | "plan" | "implement" | "review" | "research";
+
+const READ_TOOLS = [
+  "read_file",
+  "read_symbol",
+  "find_references",
+  "go_to_definition",
+  "grep_search",
+  "find_files",
+  "list_dir",
+  "docs",
+  "git_history",
+  "dependencies",
+  "recall",
+  "note",
+  "ask",
+  "subtask",
+  "tool_search",
+  "finish_card",
+];
+
+export const CLASS_TOOLS: Record<Exclude<CardClass, "implement">, readonly string[]> = {
+  explore: [...READ_TOOLS, "run_script"],
+  plan: [...READ_TOOLS, "run_script"],
+  review: [
+    "read_file",
+    "grep_search",
+    "find_files",
+    "list_dir",
+    "note",
+    "recall",
+    "check",
+    "finish_card",
+  ],
+  research: [
+    "read_file",
+    "grep_search",
+    "find_files",
+    "docs",
+    "note",
+    "recall",
+    "browse",
+    "finish_card",
+  ],
+};
+
+/** A card's class, from its labels first, then its title's SPIDR kind, then its tier. */
+export function cardClassFor(card: {
+  title: string;
+  tier: string;
+  labels?: string[] | undefined;
+}): CardClass {
+  const labels = (card.labels ?? []).map((l) => l.toLowerCase());
+  for (const c of ["research", "explore", "plan", "review"] as const) {
+    if (labels.includes(c) || labels.includes(`class:${c}`)) return c;
+  }
+  if (
+    /\(SPIDR:\s*Spike\)/i.test(card.title) ||
+    /^\s*(spike|explore|investigate)\b/i.test(card.title)
+  ) {
+    return "explore";
+  }
+  if (/^\s*research\b/i.test(card.title)) return "research";
+  return "implement";
+}
+
+/** The tools a card of this class is given. */
+export function toolsForClass(
+  cls: CardClass,
+  catalog: ToolInterfaceSpec[] = TOOL_CATALOG,
+): ToolInterfaceSpec[] {
+  if (cls === "implement") return catalog;
+  const allowed = CLASS_TOOLS[cls];
+  return catalog.filter((t) => allowed.includes(t.name));
 }

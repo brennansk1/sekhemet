@@ -219,6 +219,9 @@ export function commandHosts(line: string): string[] {
 }
 
 function hostAllowed(host: string, allowed: readonly string[]): boolean {
+  // Loopback is the card's own background processes (L23): the sandbox
+  // admits only their ports.
+  if (host === "localhost" || host === "127.0.0.1") return true;
   return allowed.some((d) => {
     const domain = d.toLowerCase().replace(/^\*\./, "");
     return host === domain || host.endsWith(`.${domain}`);

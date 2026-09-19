@@ -154,6 +154,26 @@ export class ProcessSandbox implements ExecutionSandbox {
     return { file: SANDBOX_EXEC, argv: ["-p", profile, command, ...args] };
   }
 
+  /**
+   * Start a confined long-running process (L23) with a writable stdin (L24).
+   * The caller owns its lifetime; `null` when confinement is required and
+   * unavailable.
+   */
+  public spawnBackground(
+    command: string,
+    args: string[],
+    options: SandboxOptions,
+  ): import("node:child_process").ChildProcessWithoutNullStreams | null {
+    if (this.mode === "none" && this.requiresConfinement) return null;
+    const scratchDir = options.scratchDir ?? mkdtempSync(join(tmpdir(), "sekhemet-bg-"));
+    const { file, argv } = this.wrap(command, args, { ...options, scratchDir });
+    return spawn(file, argv, {
+      cwd: options.cwd,
+      env: buildEnv({ TMPDIR: scratchDir, ...options.env }),
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+  }
+
   public async execute(
     command: string,
     args: string[],

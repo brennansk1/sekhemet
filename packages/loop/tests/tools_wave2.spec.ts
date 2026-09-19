@@ -94,6 +94,37 @@ describe("loop tools, wave 2 (L7, L9, L10, L16, G6, G7)", () => {
     expect(implicit.content).toContain("tinylib 2.3.1");
   });
 
+  it("falls back to the library's official web docs when the installed copy has nothing (L10 tier 3)", async () => {
+    const asked: string[] = [];
+    const web = new ToolExecutor({
+      worktreePath: root,
+      webDocs: async (lib, q) => {
+        asked.push(`${lib}:${q}`);
+        return `# ${lib}\n${"Use z.string().email() to validate. ".repeat(300)}`;
+      },
+    });
+    const obs = await web.execute({
+      id: "w",
+      name: "docs",
+      arguments: { query: "email", library: "zod" },
+    });
+    expect(asked).toEqual(["zod:email"]);
+    expect(obs.content).toContain("zod: from the official docs (web)");
+    expect(obs.content).toContain('<untrusted_content source="docs:zod">');
+    expect(obs.content).toContain("(truncated)");
+    // Found locally: the web is not asked.
+    writeFileSync(join(root, "package.json"), JSON.stringify({ dependencies: { tinylib: "1" } }));
+    mkdirSync(join(root, "node_modules", "tinylib"), { recursive: true });
+    writeFileSync(join(root, "node_modules", "tinylib", "package.json"), '{"version":"1.0.0"}');
+    writeFileSync(join(root, "node_modules", "tinylib", "README.md"), "email helper here\n");
+    await web.execute({
+      id: "w2",
+      name: "docs",
+      arguments: { query: "email", library: "tinylib" },
+    });
+    expect(asked).toEqual(["zod:email"]);
+  });
+
   it("refuses a write that adds a credential, and writes atomically (L16, G7, G14)", async () => {
     const obs = await run("write_file", {
       path: "src/config.ts",

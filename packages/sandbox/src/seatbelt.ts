@@ -87,6 +87,14 @@ export function generateSeatbeltProfile(options: SandboxOptions): string {
       ? `  (deny network*)\n  ;; S5: the allowlisting egress proxy is the only way out.\n  (allow network-outbound (remote tcp "localhost:${Math.floor(options.egressProxyPort)}"))`
       : "  (deny network*)";
 
+  const portRules = (options.localPorts ?? [])
+    .map((p) => Math.floor(p))
+    .map(
+      (p) =>
+        `  (allow network-bind network-inbound (local ip "localhost:${p}"))\n  (allow network-outbound (remote ip "localhost:${p}"))`,
+    )
+    .join("\n");
+
   return `;; Sekhemet Seatbelt Containment Profile
 (version 1)
 (deny default)
@@ -113,5 +121,5 @@ ${deviceRules}
 
 ;; Network egress.
 ${networkRule}
-`;
+${portRules ? `\n;; L23: the card's own loopback ports.\n${portRules}\n` : ""}`;
 }

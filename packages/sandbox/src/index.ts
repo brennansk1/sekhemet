@@ -7,3 +7,4 @@ export * from "./bubblewrap.js";
 export * from "./untrusted.js";
 export * from "./egress.js";
 export * from "./seccomp.js";
+export * from "./browser.js";

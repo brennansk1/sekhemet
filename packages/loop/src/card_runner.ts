@@ -715,6 +715,10 @@ export class CardRunner {
     }
 
     await this.options.onWorktreeReady?.(worktreePath);
+    // K12: card/start (observe; a hook's message reaches the first prompt).
+    const startHook = await this.options.hooks
+      ?.emit("card/start", { cardId: card.id, data: { worktreePath, attempt } })
+      .catch(() => undefined);
     this.emit({ type: "status", cardId: card.id, message: `worktree ready at ${worktreePath}` });
 
     // G12: a fresh card's acceptance tests must fail before work begins.
@@ -774,6 +778,8 @@ export class CardRunner {
         // A dossier read failure costs context, not the card.
       }
     }
+
+    for (const m of startHook?.messages ?? []) dossierLines.push(`Project hook: ${m.content}`);
 
     const session = new CardExecutionSessionImpl({
       // Verify against every blocking gate the project declares (lint included,
@@ -1269,6 +1275,10 @@ export class CardRunner {
     const { turns, stopReason, session, attempt } = params;
 
     this.writeTranscript(card.id, turns);
+    session?.dispose();
+    await this.options.hooks
+      ?.emit("card/end", { cardId: card.id, data: { stopReason, attempt: params.attempt } })
+      .catch(() => undefined);
     await this.egress?.close().catch(() => undefined);
     await lifecycle?.recordSteps?.(card.id, params.stepsUsed);
 

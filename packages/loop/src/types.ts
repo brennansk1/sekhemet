@@ -196,6 +196,10 @@ export interface SessionOptions {
   subtaskAdapter?: LocalInferenceAdapter | undefined;
   /** Decoded tokens as they stream, for the dashboard's live step view (M2). */
   onToken?: ((delta: string) => void) | undefined;
+  /** Project lifecycle hooks (K12): the ten events are emitted at their points. */
+  hooks?: import("@sekhemet/kernel").LifecycleHookEngine | undefined;
+  /** Official web docs for the `docs` tool when the installed copy has nothing (L10). */
+  webDocs?: ((library: string, query: string) => Promise<string>) | undefined;
   /** Language servers for the symbol tools on non-TypeScript files (C2). */
   lspPool?: import("@sekhemet/context").LspPool | undefined;
   /** Called with every note the Worker writes, as it writes it (L11). */

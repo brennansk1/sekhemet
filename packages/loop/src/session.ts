@@ -35,7 +35,12 @@ import {
 import { type LadderState, RepairLadder, type RungPolicy } from "./ladder.js";
 import type { ToolObservation } from "./observation.js";
 import { buildRepoMap } from "./repo_map.js";
-import { TOOL_CATALOG, restrictedToolCatalog } from "./tool_catalog.js";
+import {
+  TOOL_CATALOG,
+  cardClassFor,
+  restrictedToolCatalog,
+  toolsForClass,
+} from "./tool_catalog.js";
 import { ToolExecutor } from "./tools.js";
 import type {
   CardExecutionSession,
@@ -162,6 +167,8 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       allowedDomains: options.allowedDomains,
       egressProxyPort: options.egressProxyPort,
       lspPool: options.lspPool,
+      cardClass: cardClassFor(this.card),
+      webDocs: options.webDocs,
     });
     if (options.progressiveTools) {
       this.toolLoader = new ToolLoader(this.catalog(), [
@@ -667,7 +674,9 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   /** Tool schemas sent alongside the prompt; they count against the window too. */
   /** The tools this card may use: the restricted catalog under `--restricted` (S12). */
   private catalog() {
-    const base = this.options.tools ?? TOOL_CATALOG;
+    // L18: the card's class fixes its tool list (explore, plan, review,
+    // research, implement), unless the caller chose tools itself.
+    const base = this.options.tools ?? toolsForClass(cardClassFor(this.card), TOOL_CATALOG);
     return this.options.restricted ? restrictedToolCatalog(base) : base;
   }
 
@@ -871,6 +880,31 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   }
 
   public async executeTurn(): Promise<TurnResult> {
+    const turn = await this.executeTurnInner();
+    // K12: the loop has decided to stop; hooks observe it (notifiers, formatters).
+    if (turn.stopReason && this.options.hooks) {
+      await this.options.hooks
+        .emit("turn-stopping", {
+          cardId: this.cardId,
+          step: turn.turnIndex,
+          data: { stopReason: turn.stopReason },
+        })
+        .catch(() => undefined);
+    }
+    return turn;
+  }
+
+  /** Messages user hooks injected, shown to the model on its next turn (K12). */
+  private hookNotes(turn: number, messages: { content: string }[]): void {
+    if (messages.length === 0) return;
+    this.history.push({
+      turn,
+      action: "project hook",
+      result: messages.map((m) => m.content).join("\n"),
+    });
+  }
+
+  private async executeTurnInner(): Promise<TurnResult> {
     this.lastContextPackId = undefined;
     if (this.abortReason !== undefined) {
       return {
@@ -926,6 +960,23 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     const thinking = reasoningForStep(
       rung && rung !== "direct_repair" ? { purpose: "repair", rung } : { purpose: "mechanical" },
     );
+
+    // K12: pre-step hooks may veto the step (fail closed) or add a message.
+    if (this.options.hooks) {
+      const pre = await this.options.hooks.emit("pre-step", {
+        cardId: this.cardId,
+        step: turnIndex,
+      });
+      this.hookNotes(turnIndex, pre.messages);
+      if (pre.blocked) {
+        this.history.push({
+          turn: turnIndex,
+          action: "project hook",
+          result: `Stopped by a pre-step hook: ${pre.reason ?? "blocked"}`,
+        });
+        return { turnIndex, toolCalls: [], observations: [], stopReason: "human_abort" };
+      }
+    }
 
     const tools = this.visibleToolDefinitions();
     // K11: the prompt is logged before it is sent, or it is not sent.
@@ -1054,6 +1105,28 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     for (const call of toolCalls) {
       // `check` runs the real gates without ending the card: the agent was
       // spending most of its turns trying to self-verify with shell commands.
+      // K12: a pre-tool hook can refuse the call (a permission or secret
+      // guard); the model sees why, and the tool does not run.
+      const preTool = this.options.hooks
+        ? await this.options.hooks.emit("pre-tool", {
+            cardId: this.cardId,
+            step: turnIndex,
+            toolName: call.name,
+            toolArgs: call.arguments as Record<string, unknown>,
+          })
+        : undefined;
+      if (preTool?.blocked) {
+        this.hookNotes(turnIndex, preTool.messages);
+        observations.push({
+          tool: call.name,
+          ok: false,
+          denied: true,
+          deniedRule: "hook",
+          summary: `blocked by a project hook`,
+          content: `A project hook refused ${call.name}: ${preTool.reason ?? "blocked"}`,
+        } as ToolObservation);
+        continue;
+      }
       const observation =
         call.name === "check"
           ? await this.checkObservation()
@@ -1067,6 +1140,16 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
                   ? await this.subtaskObservation(call.arguments.question, call.arguments.context)
                   : await this.tools.execute(call);
       observations.push(observation);
+      if (this.options.hooks) {
+        const post = await this.options.hooks.emit("post-tool", {
+          cardId: this.cardId,
+          step: turnIndex,
+          toolName: call.name,
+          toolArgs: call.arguments as Record<string, unknown>,
+          toolResult: { ok: observation.ok, summary: observation.summary },
+        });
+        this.hookNotes(turnIndex, [...(preTool?.messages ?? []), ...post.messages]);
+      }
       if (call.name === "note" && observation.ok && typeof call.arguments.message === "string") {
         await this.options.onNote?.(call.arguments.message).catch(() => undefined);
       }
@@ -1252,6 +1335,48 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   }
 
   public async runVerification(): Promise<GateResult> {
+    const rungs = this.options.gateRungs ?? ["typecheck", "test"];
+    // K12: a pre-gate hook can stop verification (fail closed); post-gate observes.
+    if (this.options.hooks) {
+      const pre = await this.options.hooks.emit("pre-gate", {
+        cardId: this.cardId,
+        step: this.stepsUsed,
+        gateRungs: rungs,
+      });
+      this.hookNotes(this.stepsUsed, pre.messages);
+      if (pre.blocked) {
+        return {
+          passed: false,
+          durationMs: 0,
+          failures: [
+            {
+              rung: "test",
+              gate: "hook",
+              exitCode: 1,
+              errorExcerpt: `A pre-gate hook stopped verification: ${pre.reason ?? "blocked"}`,
+              suggestedFixFiles: [],
+            },
+          ],
+          rungResults: [],
+        };
+      }
+    }
+    const result = await this.runVerificationInner();
+    if (this.options.hooks) {
+      const post = await this.options.hooks
+        .emit("post-gate", {
+          cardId: this.cardId,
+          step: this.stepsUsed,
+          gateRungs: rungs,
+          gateResult: { passed: result.passed, failures: result.failures.length },
+        })
+        .catch(() => undefined);
+      if (post) this.hookNotes(this.stepsUsed, post.messages);
+    }
+    return result;
+  }
+
+  private async runVerificationInner(): Promise<GateResult> {
     // A read-only audit never runs a formatter over the files (S12).
     const autofix = this.options.restricted ? undefined : this.options.autofixCommand;
     const scope = this.options.restricted ? [] : (this.options.scopeFiles ?? []);
@@ -1355,6 +1480,11 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   /** Advisory findings of the last verification (mutation survivors, unverified dependencies). */
   public getAdvisories(): string[] {
     return [...this.advisories];
+  }
+
+  /** Release what the card holds: its background processes (L23). */
+  public dispose(): void {
+    this.tools.dispose();
   }
 
   public async abort(reason: string): Promise<void> {

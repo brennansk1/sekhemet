@@ -4,11 +4,16 @@ import {
   type Dirent,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
+import { createServer } from "node:net";
+import { tmpdir } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
 import { type LspPool, condenseToolOutput, languageOf as lspLanguageOf } from "@sekhemet/context";
 import type { ToolCall } from "@sekhemet/models";
@@ -17,7 +22,23 @@ import {
   PermissionEngine,
   ProcessSandbox,
   commandHosts,
+  dumpDom,
+  htmlToText,
+  tagUntrusted,
 } from "@sekhemet/sandbox";
+
+/** A free loopback port for a background process (L23). */
+function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = createServer();
+    srv.once("error", reject);
+    srv.listen(0, "127.0.0.1", () => {
+      const addr = srv.address();
+      const port = typeof addr === "object" && addr ? addr.port : 0;
+      srv.close(() => resolve(port));
+    });
+  });
+}
 import { matchesGlob } from "./glob.js";
 import { type ToolObservation, clampObservation, denied, fail, ok } from "./observation.js";
 import { PathEscapeError, canonicalizeRoot, resolveInWorktree } from "./paths.js";
@@ -128,6 +149,13 @@ export interface ToolExecutorOptions {
   egressProxyPort?: number | undefined;
   /** Language servers for symbol tools on Python, Rust and other non-TS files (C2). */
   lspPool?: LspPool | undefined;
+  /**
+   * The library's official web docs for `docs(query, library)` when the
+   * installed copy has nothing (supplied by the harness's research service).
+   */
+  webDocs?: ((library: string, query: string) => Promise<string>) | undefined;
+  /** The card's class (L18/L19): `browse` reaches outside localhost only on research cards. */
+  cardClass?: string | undefined;
 }
 
 /** Tools that change the worktree or execute code: refused in restricted mode. */
@@ -138,6 +166,8 @@ export const MUTATING_TOOLS: ReadonlySet<string> = new Set([
   "replace_symbol_body",
   "insert_after_symbol",
   "run_cmd",
+  "start_process",
+  "write_process",
 ]);
 
 /** A file is treated as binary if a NUL appears in its first block. */
@@ -483,6 +513,18 @@ export class ToolExecutor {
       }
       case "go_to_definition":
         return this.goToDefinition(str("symbol"), str("file"));
+      case "run_script":
+        return this.runScript(str("code"));
+      case "start_process":
+        return this.startProcess(str("name"), str("command"));
+      case "read_process":
+        return this.readProcess(str("name"), num("lines"));
+      case "write_process":
+        return this.writeProcess(str("name"), str("input"));
+      case "stop_process":
+        return this.stopProcess(str("name"));
+      case "browse":
+        return this.browse(str("url"));
       case "grep_search": {
         const mode = str("output_mode");
         const ctx = num("context");
@@ -844,6 +886,226 @@ export class ToolExecutor {
 
   private tsService: TsSymbolService | undefined;
 
+  // --- L12 code mode ---------------------------------------------------------
+
+  /**
+   * L12: a script over read-only helpers, run in its own Node process under
+   * the OS sandbox and Node's permission model: it may read the worktree and
+   * nothing else (no writes, no child processes, no workers), with a
+   * 10-second timeout. Its return value (a string or JSON) is the observation.
+   */
+  private async runScript(code: string | undefined): Promise<ToolObservation> {
+    if (!code?.trim()) return fail("run_script", "code is required");
+    // Real paths: Node's permission model compares resolved paths (/var -> /private/var).
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "sekhemet-script-")));
+    const file = join(dir, "script.cjs");
+    writeFileSync(
+      file,
+      `"use strict";
+const fs = require("node:fs");
+const path = require("node:path");
+const ROOT = ${JSON.stringify(this.root)};
+const SKIP = new Set(["node_modules", ".git", "dist", ".sekhemet", "coverage"]);
+const inRoot = (p) => { const a = path.resolve(ROOT, String(p)); if (a !== ROOT && !a.startsWith(ROOT + path.sep)) throw new Error("outside the worktree: " + p); return a; };
+const walk = (dir, out = []) => { for (const e of fs.readdirSync(dir, { withFileTypes: true })) { if (SKIP.has(e.name)) continue; const a = path.join(dir, e.name); if (e.isDirectory()) walk(a, out); else out.push(path.relative(ROOT, a)); if (out.length > 5000) break; } return out; };
+const globRe = (g) => new RegExp("^" + String(g).replace(/[.+^$(){}|[\\]\\\\]/g, "\\\\$&").replace(/\\*\\*\\/?/g, "\\u0000").replace(/\\*/g, "[^/]*").replace(/\\?/g, "[^/]").replace(/\\u0000/g, ".*") + "$");
+const read = (p) => fs.readFileSync(inRoot(p), "utf8");
+const list = (d = ".") => fs.readdirSync(inRoot(d)).filter((n) => !SKIP.has(n)).sort();
+const find = (g, d = ".") => { const re = globRe(g); return walk(inRoot(d)).filter((f) => re.test(f)).sort().slice(0, 500); };
+const grep = (pattern, d = ".") => { const re = new RegExp(pattern); const out = []; const base = inRoot(d); const files = fs.statSync(base).isFile() ? [path.relative(ROOT, base)] : walk(base); for (const f of files) { let lines; try { lines = fs.readFileSync(path.join(ROOT, f), "utf8").split("\\n"); } catch { continue; } lines.forEach((t, i) => { if (re.test(t)) out.push({ file: f, line: i + 1, text: t.trim() }); }); if (out.length >= 500) break; } return out; };
+const __result = (function () {
+${code}
+})();
+Promise.resolve(__result).then((v) => { process.stdout.write(typeof v === "string" ? v : JSON.stringify(v, null, 2) ?? "undefined"); }, (e) => { process.stderr.write(String(e && e.message || e)); process.exitCode = 1; });
+`,
+    );
+    try {
+      const result = await this.sandbox.execute(
+        process.execPath,
+        [
+          "--permission",
+          `--allow-fs-read=${realpathSync(this.root)}`,
+          `--allow-fs-read=${dir}`,
+          file,
+        ],
+        { allowedPaths: [], allowNetwork: false, timeoutMs: 10_000, cwd: dir },
+      );
+      if (result.timedOut)
+        return fail("run_script", "script timed out", "run_script timed out after 10 s.");
+      if (result.exitCode !== 0) {
+        return fail(
+          "run_script",
+          "script failed",
+          `run_script failed: ${(result.stderr || result.stdout).trim().split("\n").slice(0, 8).join("\n")}`,
+        );
+      }
+      return ok(
+        "run_script",
+        `script returned ${result.stdout.length} chars`,
+        clampObservation(result.stdout, "script output"),
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  // --- L23 background processes, L24 interactive input -----------------------
+
+  private processes = new Map<
+    string,
+    {
+      child: import("node:child_process").ChildProcessWithoutNullStreams;
+      port: number;
+      output: string[];
+      exit?: number | null;
+    }
+  >();
+
+  /** Ports held by this card's background processes. */
+  public processPorts(): number[] {
+    return [...this.processes.values()].map((p) => p.port);
+  }
+
+  private async startProcess(
+    name: string | undefined,
+    command: string | undefined,
+  ): Promise<ToolObservation> {
+    if (!name || !command) return fail("start_process", "name and command are required");
+    if (this.processes.has(name) && this.processes.get(name)?.exit === undefined) {
+      return fail(
+        "start_process",
+        `${name} is already running`,
+        `A process named ${name} is running; stop_process it first or pick another name.`,
+      );
+    }
+    const port = await freePort();
+    const child = this.sandbox.spawnBackground("/bin/sh", ["-c", command], {
+      allowedPaths: [this.root],
+      allowNetwork: this.options.allowNetwork ?? false,
+      timeoutMs: 0,
+      cwd: this.root,
+      env: { PORT: String(port) },
+      localPorts: [port],
+      ...(this.options.egressProxyPort ? { egressProxyPort: this.options.egressProxyPort } : {}),
+    });
+    if (!child)
+      return fail(
+        "start_process",
+        "no OS confinement",
+        "Background processes need OS confinement on this host.",
+      );
+    const entry: { child: typeof child; port: number; output: string[]; exit?: number | null } = {
+      child,
+      port,
+      output: [],
+    };
+    const push = (chunk: Buffer) => {
+      entry.output.push(...chunk.toString("utf8").split("\n"));
+      if (entry.output.length > 2000) entry.output.splice(0, entry.output.length - 2000);
+    };
+    child.stdout.on("data", push);
+    child.stderr.on("data", push);
+    child.on("exit", (code) => {
+      entry.exit = code;
+    });
+    this.processes.set(name, entry);
+    await new Promise((r) => setTimeout(r, 300));
+    return ok(
+      "start_process",
+      `started ${name} on port ${port}`,
+      `Started ${name} (pid ${child.pid}) with PORT=${port}. Read its output with read_process(name="${name}"); reach it at http://localhost:${port}/.${entry.exit !== undefined ? ` It already exited with ${entry.exit}.` : ""}`,
+    );
+  }
+
+  private readProcess(name: string | undefined, lines: number | undefined): ToolObservation {
+    const p = name ? this.processes.get(name) : undefined;
+    if (!p)
+      return fail(
+        "read_process",
+        `no process ${name}`,
+        `No background process named ${name}. Running: ${[...this.processes.keys()].join(", ") || "none"}.`,
+      );
+    const tail = p.output.slice(-(lines ?? 40)).join("\n");
+    const state = p.exit === undefined ? `running on port ${p.port}` : `exited with ${p.exit}`;
+    return ok(
+      "read_process",
+      `${name}: ${state}`,
+      `${name} is ${state}.\n${tail || "(no output yet)"}`,
+    );
+  }
+
+  private writeProcess(name: string | undefined, input: string | undefined): ToolObservation {
+    const p = name ? this.processes.get(name) : undefined;
+    if (!p || p.exit !== undefined) return fail("write_process", `${name} is not running`);
+    p.child.stdin.write(`${input ?? ""}\n`);
+    return ok(
+      "write_process",
+      `sent ${String(input ?? "").length} chars to ${name}`,
+      `Sent to ${name}. Read the response with read_process.`,
+    );
+  }
+
+  private stopProcess(name: string | undefined): ToolObservation {
+    const p = name ? this.processes.get(name) : undefined;
+    if (!p) return fail("stop_process", `no process ${name}`);
+    if (p.exit === undefined) p.child.kill("SIGTERM");
+    this.processes.delete(name as string);
+    return ok("stop_process", `stopped ${name}`, `Stopped ${name}.`);
+  }
+
+  /** Stop every background process (card end). */
+  public dispose(): void {
+    for (const p of this.processes.values()) {
+      if (p.exit === undefined) {
+        try {
+          p.child.kill("SIGKILL");
+        } catch {
+          // Gone.
+        }
+      }
+    }
+    this.processes.clear();
+  }
+
+  // --- L20 browse --------------------------------------------------------------
+
+  private async browse(url: string | undefined): Promise<ToolObservation> {
+    let target: URL;
+    try {
+      target = new URL(url ?? "");
+    } catch {
+      return fail("browse", "not a URL");
+    }
+    const local = ["localhost", "127.0.0.1", "[::1]"].includes(target.hostname);
+    if (!local && this.options.cardClass !== "research") {
+      return denied(
+        "browse",
+        "browse reaches only this card's own app on localhost; web pages are for research cards (L19)",
+      );
+    }
+    const dom = await dumpDom(target.toString());
+    let html = dom;
+    if (html === undefined) {
+      try {
+        const res = await fetch(target, { signal: AbortSignal.timeout(15_000) });
+        html = await res.text();
+      } catch (err) {
+        return fail(
+          "browse",
+          "could not load",
+          `Could not load ${target}: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+    }
+    const text = htmlToText(html);
+    const body = local ? text : tagUntrusted(text, target.hostname);
+    return ok(
+      "browse",
+      `loaded ${target.host}${target.pathname} (${text.length} chars)`,
+      clampObservation(body, "page"),
+    );
+  }
+
   /** The TypeScript language service over this worktree, built on first use (L9). */
   private symbolService(): TsSymbolService {
     this.tsService ??= new TsSymbolService(this.root, () => this.searchableFiles(this.root));
@@ -1158,6 +1420,8 @@ export class ToolExecutor {
       timeoutMs: this.options.commandTimeoutMs ?? 120_000,
       cwd: this.root,
       ...(this.options.egressProxyPort ? { egressProxyPort: this.options.egressProxyPort } : {}),
+      // Commands may talk to this card's own background processes (L23).
+      localPorts: this.processPorts(),
     });
 
     const label = line;
@@ -1208,6 +1472,8 @@ export class ToolExecutor {
       timeoutMs: this.options.commandTimeoutMs ?? 120_000,
       cwd: this.root,
       ...(this.options.egressProxyPort ? { egressProxyPort: this.options.egressProxyPort } : {}),
+      // Commands may talk to this card's own background processes (L23).
+      localPorts: this.processPorts(),
     });
   }
 
@@ -1308,7 +1574,7 @@ export class ToolExecutor {
    * cached on disk per (library, version, query) under `.sekhemet/docs-cache`.
    * A dependency named in the query is searched without being asked for.
    */
-  private docs(query: string, library?: string): ToolObservation {
+  private async docs(query: string, library?: string): Promise<ToolObservation> {
     if (!query.trim()) return fail("docs", "query is required");
     const found: string[] = [];
     const matchLines = (label: string, text: string, max = 10, q = query): string | undefined => {
@@ -1359,6 +1625,23 @@ export class ToolExecutor {
           query;
       const block = this.libraryDocs(lib, within, matchLines);
       if (block) found.push(block);
+    }
+
+    // Tier 3: the library's official documentation on the web, only when
+    // the installed copy had nothing on this (a harness-supplied fetcher:
+    // llms.txt, the sitemap, a polite cached fetch; no model involved).
+    if (library && this.options.webDocs && !found.some((b) => b.includes(`=== ${library} `))) {
+      try {
+        const web = (await this.options.webDocs(library, query)).trim();
+        if (web) {
+          const clipped = web.length > 6000 ? `${web.slice(0, 6000)}\n… (truncated)` : web;
+          found.push(
+            `=== ${library}: from the official docs (web) ===\n${tagUntrusted(clipped, `docs:${library}`)}`,
+          );
+        }
+      } catch {
+        // Offline or unknown library: the local tiers are the answer.
+      }
     }
 
     if (found.length === 0) {
