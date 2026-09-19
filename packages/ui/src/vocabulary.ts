@@ -759,7 +759,9 @@ export function eventSentence(
   titleOf: (cardId: string) => string | undefined = () => undefined,
 ): EventSentence {
   const p = (event.payload ?? {}) as Record<string, unknown>;
-  const id = event.cardId ?? (typeof p.id === "string" ? p.id : undefined);
+  // Chat, research and compute events carry their own ids, not a card's.
+  const ownId = /^(pm|research|compute)\//.test(event.type);
+  const id = event.cardId ?? (!ownId && typeof p.id === "string" ? p.id : undefined);
   const title = id ? (titleOf(id) ?? shortId(id)) : undefined;
   const actor = actorLabel(event.actor);
   const base = { actor, ...(title ? { title } : {}) };
