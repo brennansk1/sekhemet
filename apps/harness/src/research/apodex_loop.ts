@@ -426,11 +426,20 @@ async function runApodexTool(
   // The harness's own tools, with the Researcher's implementations.
   const r = await runResearchTool(call, deps);
   if (r.source) {
+    // Register what was read under the URL a model would cite for it, so a
+    // citation of the package page or the paper validates against the read.
+    const name = String(a.name ?? "");
     const url =
       call.name === "read_paper"
         ? `https://arxiv.org/abs/${String(a.arxiv_id ?? "")}`
-        : r.source.ref;
+        : call.name === "package_readme" && name
+          ? `https://www.npmjs.com/package/${name}`
+          : r.source.ref;
     ledger.noteRead({ ...r.source, ref: url });
+    if (call.name === "package_readme" && name) {
+      ledger.noteRead({ ...r.source, ref: `https://registry.npmjs.org/${name}` });
+      ledger.noteRead({ ...r.source, ref: `https://npmjs.com/package/${name}` });
+    }
   }
   if (call.name === "scholar_search" || call.name === "github_search") {
     for (const m of r.text.matchAll(/^\s+(https?:\/\/\S+)/gm)) ledger.seen.set(m[1] as string, "");
@@ -466,7 +475,16 @@ export async function apodexLoop(
 
   for (let turn = 1; turn <= opts.maxTurns; turn++) {
     const last = turn === opts.maxTurns;
+    // The turn before the last asks for the answer, so a rejected finalize
+    // (unverified citations) still has one turn to be repaired.
+    const penultimate = turn === opts.maxTurns - 1 && opts.maxTurns > 3;
     const messages = compacted();
+    if (penultimate && !repaired) {
+      messages.push({
+        role: "user",
+        content: `Two turns left. Call ${terminal.name} now with your complete ${opts.role === "solo" ? "answer (citations and References included)" : "report"}.`,
+      });
+    }
     if (last) {
       messages.push({
         role: "user",

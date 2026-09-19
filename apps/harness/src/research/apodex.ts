@@ -163,6 +163,7 @@ const OUTPUT_RULES = `### Tool calls (strict)
 ### Research output
 - Cite sources with [N] notation. Every factual claim needs at least one citation.
 - Present SPECIFIC, CONCRETE findings — not vague summaries: versions, API names, commands, exact values.
+- Code examples: build them only from code you read in the documentation or source, cite that source [N] next to the example, and make them complete (for example, a parser must be given its input stream). Do not write API calls you did not see.
 - If the evidence does not settle the question, begin with "Not settled:" and say what is missing.`;
 
 const CONTEXT_DISCIPLINE = `- **Read selectively**: ask \`web_fetch\` for the specific information you need rather than whole pages.
