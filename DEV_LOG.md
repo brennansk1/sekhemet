@@ -44,6 +44,44 @@ If you are Claude reading this because Gemini reached quota limits or you were s
 
 ## Detailed Session Log
 
+### Entry 22 — 2026-09-19 (overnight run: harness units, research hardening, dashboard pass)
+
+**Agent:** Claude Opus 5 (`claude-opus-5`), lead driver, in Claude Code. The user asked for an overnight run. There are two builder agents (C and D), and no others: Builder C's five sub-builders from the day before were stopped then.
+
+**Lead: harness units, each with tests on a production path**
+- H1 daemon and WebSocket stream (`abcc16e`)
+- H3 calibrate (`3462f49`)
+- H8 replay and trajectory diff (`cfa8e5c`)
+- H11 MCP client (`87660a7`)
+- H12 REST completeness (`ebcf082`)
+- H13 `@sekhemet/sdk` (`2c7dc14`)
+- H14 ACP for editors (`2dbf355`)
+- H15 config.toml applied (`9d3ce0e`)
+- H16 slash commands (`e591074`)
+- H20 ntfy/Gotify push (`5661807`)
+- H21 overnight scheduler and H23 compute governance (`73c3fd7`)
+- H22 OpenTelemetry spans (`d8f4f6f`)
+- H24 reproducibility record (`90a6ec1`)
+- H25 init wizard and installer (`e6fe612`)
+
+**Research service, hardened by live tests on Apodex**
+- `aa44d29` and `a8ed030`: citation repair, a reserved repair turn, npm URLs registered, code examples grounded.
+- `b51a958`: batch mode with one model load and a clean exit. `--keep` could not work: the llama-server is bound to its parent process.
+- `95faa92`: X4 llms.txt, X5 research on the ledger, X8 untrusted wrapper, X9 cache lifetimes.
+- `5a3d0e7`: model-free official docs for the Worker.
+- Live results on the manager batch, after the fixes: the CSV-library and better-sqlite3-vs-node:sqlite questions came back grounded with 0 unverified citations (3 before), confidence 0.6 and 1.0, in 5–6 min each.
+
+**Dashboard: visual pass by the lead** over Review, Board, Seshat, Insights, Machine, Integrations, Ledger, Playbook and Runs on a seeded Chronicle project (`21190d0`, `14bedf7`, `3df6d6f`). Fixed:
+- a blank Push card;
+- duplicated, stale Researcher guidance;
+- a sidebar naming Ollama's model instead of the Worker;
+- ledger rows showing ids instead of what Seshat and the user said.
+
+**Builders**
+- **Builder C** wired its planner, eval, sync, models and context APIs into production (`ee86088`, `56e080e`, `9cbbfe0`, `1fa0c3c`) and is now on the X and U units (`6b930da`: onboard and convention drift).
+- **Builder D** is on the loop-side wiring and the L, G, K, S and B units.
+- Some commits swept up another agent's hunks in shared files (index.ts, server.ts). Each case compiled and passed its tests, and the agents were told. The lead now stages only its own hunks in shared files.
+
 ### Entry 21 — 2026-09-18 (research service for Apodex, MCP, Seshat, wave 2)
 
 **Agent:** Claude Opus 5 (`claude-opus-5`), lead driver, in Claude Code. Builders A and B (wave 1) finished. Builders C and D (wave 2) are running; they are the only two agents. Builder C briefly spawned five sub-builders; the lead stopped them within two minutes, with nothing committed, and restated the two-agent limit.
