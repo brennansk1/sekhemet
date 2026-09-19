@@ -161,6 +161,20 @@ export interface CardRunOptions extends Omit<SessionOptions, "cardId"> {
   resume?: boolean | undefined;
   /** Stops the card with `human_abort` before its next turn (L25). */
   signal?: AbortSignal | undefined;
+  /**
+   * pass@k with gate selection (G25): draw up to this many independent
+   * samples from the same starting tree, taking the first that passes.
+   * Default 1.
+   */
+  samples?: number | undefined;
+  /** Temperatures for samples 2..k, cycled (design: 0.4-0.7). */
+  sampleTemperatures?: number[] | undefined;
+  /**
+   * Cross-validate attempts (G26): keep sampling to a second passing
+   * implementation and run each against the other's tests; disagreement
+   * sends the card back to the planner.
+   */
+  crossValidate?: boolean | undefined;
   /** This run is a fork of an earlier attempt at a step (H18). */
   forkedFrom?: { attemptId: string; step: number } | undefined;
   /**
@@ -237,6 +251,21 @@ const SUSPENDING_STOPS = new Set<ExecutionStopReason>([
   "error",
 ]);
 
+/** Stops after which no further pass@k sample is drawn (G25). */
+const HARD_STOPS = new Set<ExecutionStopReason>([
+  "human_abort",
+  "memory_pressure",
+  "quota_suspended",
+  "time_budget_exhausted",
+  "token_budget_exhausted",
+  "error",
+  "done_pending_gates",
+]);
+
+/** Test files, for cross-validation (G26). */
+const TEST_FILE =
+  /(^|\/)(tests?|__tests__)\/|\.(spec|test)\.[cm]?[jt]sx?$|_test\.(py|go)$|^test_.*\.py$/;
+
 /** Stops that park the card for a human with a diagnosis (L15 rung 4). */
 const PARKING_STOPS = new Set<ExecutionStopReason>(["repair_exhausted", "capability_ceiling"]);
 
@@ -311,6 +340,71 @@ export class CardRunner {
   private transcriptPath: string | undefined;
   private egress: EgressProxy | undefined;
   private rebaseFailure: string | undefined;
+  private crossValidation: string | undefined;
+  private samplesTried = 1;
+
+  private headOf(worktreePath: string): string | undefined {
+    try {
+      return execFileSync("git", ["rev-parse", "HEAD"], {
+        cwd: worktreePath,
+        encoding: "utf8",
+      }).trim();
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * G26: each passing implementation against the other's tests. Returns a
+   * sentence naming the disagreement, or undefined when both hold.
+   */
+  private async crossValidate(
+    worktreePath: string,
+    a: string | undefined,
+    b: string | undefined,
+  ): Promise<string | undefined> {
+    if (!a || !b) return undefined;
+    const base = this.options.baseBranch ?? "main";
+    const git = (...args: string[]) =>
+      execFileSync("git", args, {
+        cwd: worktreePath,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+    const testsOf = (sha: string) =>
+      git("diff", "--name-only", `${base}...${sha}`)
+        .split("\n")
+        .filter((f) => f && TEST_FILE.test(f));
+    const run = async (impl: string, testsFrom: string): Promise<string | undefined> => {
+      const tests = testsOf(testsFrom);
+      if (tests.length === 0) return undefined;
+      this.restore(worktreePath, impl);
+      for (const f of tests) {
+        try {
+          const content = git("show", `${testsFrom}:${f}`);
+          mkdirSync(join(worktreePath, f, ".."), { recursive: true });
+          writeFileSync(join(worktreePath, f), content);
+        } catch {
+          // Deleted on that side.
+        }
+      }
+      const result = await this.options.gateRunner
+        .runGates(["test"], worktreePath)
+        .catch(() => undefined);
+      try {
+        git("checkout", "--", ".");
+        git("clean", "-fdq");
+      } catch {
+        // Restored below regardless.
+      }
+      return result && !result.passed
+        ? `the implementation of ${impl.slice(0, 8)} fails the tests of ${testsFrom.slice(0, 8)} (${result.failures[0]?.errorExcerpt.split("\n")[0] ?? "failing"})`
+        : undefined;
+    };
+    const verdict = (await run(a, b)) ?? (await run(b, a));
+    this.restore(worktreePath, a);
+    return verdict;
+  }
   /** One per runner: the system prompt must not drift within the card (C4). */
   private prefixGuard = new PrefixStabilityGuard();
 
@@ -635,6 +729,13 @@ export class CardRunner {
         stdio: "ignore",
         timeout: 30_000,
       });
+      // Files a later step created and never committed go too, except the
+      // staged acceptance tests, which the harness put there.
+      execFileSync("git", ["clean", "-fdq", "-e", "tests/"], {
+        cwd: worktreePath,
+        stdio: "ignore",
+        timeout: 30_000,
+      });
       return true;
     } catch {
       return false;
@@ -781,306 +882,373 @@ export class CardRunner {
 
     for (const m of startHook?.messages ?? []) dossierLines.push(`Project hook: ${m.content}`);
 
-    const session = new CardExecutionSessionImpl({
-      // Verify against every blocking gate the project declares (lint included,
-      // as the spec requires), unless the caller chose specific rungs.
-      // Under --restricted only the static layer runs: executing the repo's
-      // tests would execute its code (S12).
-      gateRungs: [
-        ...new Set(
-          this.config.gates
-            .filter((g) => g.blocking && (!this.options.restricted || g.layer === "static"))
-            .map((g) => g.rung),
-        ),
-      ],
-      ...(this.config.project.autofix ? { autofixCommand: this.config.project.autofix } : {}),
-      ...(this.config.project.styleFix && this.config.project.styleFixRules
-        ? {
-            styleFixCommands: this.config.project.styleFixRules.map((rule) => [
-              ...(this.config.project.styleFix as string[]),
-              `--only=${rule}`,
-            ]),
-          }
-        : {}),
-      // The project's declared protection and size limits (defect 5, G10).
-      protectedGlobs: this.config.project.protected,
-      bounds: {
-        maxFiles: this.config.project.maxFiles,
-        maxLines: this.config.project.maxDiffLines,
-      },
-      // The built-in security, hygiene and robustness layers (G3).
-      builtinGates: this.config.project,
-      stateDir: join(this.options.repoRoot, ".sekhemet"),
-      ...(this.egressPort ? { allowedDomains: allow, egressProxyPort: this.egressPort } : {}),
-      ...(store
-        ? {
-            recordQuestion: async (q: string) =>
-              (
+    // G25: pass@k with gate selection. Each sample starts from the same
+    // tree and context; the first to pass the gates is taken. With
+    // cross-validation (G26) sampling continues to a second pass, and each
+    // passing implementation is run against the other's tests.
+    // From the caller, else gates.toml [project] pass_at_k / cross_validate.
+    const samples = Math.max(
+      1,
+      Math.floor(this.options.samples ?? this.config.project.passAtK ?? 1),
+    );
+    const temperatures = this.options.sampleTemperatures ?? [0.4, 0.55, 0.7];
+    const baseRef = this.headOf(worktreePath);
+    type Sample = {
+      session: CardExecutionSessionImpl;
+      turns: TurnResult[];
+      stopReason: ExecutionStopReason;
+      lastGateResult: GateResult | undefined;
+      sha?: string;
+    };
+    const tried: Sample[] = [];
+    const runSample = async (
+      sampleIndex: number,
+      sampleTemperature: number | undefined,
+    ): Promise<Sample> => {
+      const session = new CardExecutionSessionImpl({
+        // Verify against every blocking gate the project declares (lint included,
+        // as the spec requires), unless the caller chose specific rungs.
+        // Under --restricted only the static layer runs: executing the repo's
+        // tests would execute its code (S12).
+        gateRungs: [
+          ...new Set(
+            this.config.gates
+              .filter((g) => g.blocking && (!this.options.restricted || g.layer === "static"))
+              .map((g) => g.rung),
+          ),
+        ],
+        ...(this.config.project.autofix ? { autofixCommand: this.config.project.autofix } : {}),
+        ...(this.config.project.styleFix && this.config.project.styleFixRules
+          ? {
+              styleFixCommands: this.config.project.styleFixRules.map((rule) => [
+                ...(this.config.project.styleFix as string[]),
+                `--only=${rule}`,
+              ]),
+            }
+          : {}),
+        // The project's declared protection and size limits (defect 5, G10).
+        protectedGlobs: this.config.project.protected,
+        bounds: {
+          maxFiles: this.config.project.maxFiles,
+          maxLines: this.config.project.maxDiffLines,
+        },
+        // The built-in security, hygiene and robustness layers (G3).
+        builtinGates: this.config.project,
+        stateDir: join(this.options.repoRoot, ".sekhemet"),
+        ...(this.egressPort ? { allowedDomains: allow, egressProxyPort: this.egressPort } : {}),
+        ...(store
+          ? {
+              recordQuestion: async (q: string) =>
+                (
+                  await store.recordDossierEntry({
+                    cardId: card.id,
+                    kind: "question",
+                    text: q,
+                    attempt,
+                  })
+                ).entryId,
+              recordAnswer: async (a: string, questionEntryId: string | undefined) => {
                 await store.recordDossierEntry({
                   cardId: card.id,
-                  kind: "question",
-                  text: q,
+                  kind: "answer",
+                  text: a,
                   attempt,
-                })
-              ).entryId,
-            recordAnswer: async (a: string, questionEntryId: string | undefined) => {
-              await store.recordDossierEntry({
-                cardId: card.id,
-                kind: "answer",
-                text: a,
-                attempt,
-                ...(questionEntryId ? { inReplyTo: questionEntryId } : {}),
-              });
-            },
-          }
-        : {}),
-      ...(dossierLines.length > 0 ? { dossierLines } : {}),
-      // L11: a note reaches the card's thread (its dossier, on the ledger)
-      // the moment the Worker writes it, not at the end of the attempt.
-      ...(store
-        ? {
-            onNote: async (text: string) => {
-              if (text.startsWith("Asked: ")) return; // recorded as a question already
-              await store.recordDossierEntry({ cardId: card.id, kind: "note", text, attempt });
-              this.emit({
-                type: "status",
-                cardId: card.id,
-                message: `note: ${text.slice(0, 160)}`,
-              });
-            },
-          }
-        : {}),
-      prefixGuard: this.prefixGuard,
-      // K11: every prompt is stored by hash before it is sent.
-      onPrompt: (record: PromptRecord) => this.logPrompt(record),
-      ...this.options,
-      ...(resumedFrom
-        ? {
-            startStep: resumedFrom.step,
-            priorHistory: this.replayHistory(resumeFrom?.attemptId, resumedFrom.step),
-            priorLessons: [
-              ...(this.options.priorLessons ?? []),
-              this.options.forkedFrom
-                ? `forked from attempt ${this.options.forkedFrom.attemptId} at step ${resumedFrom.step}`
-                : this.options.startFrom
-                  ? `rewound to the checkpoint at step ${resumedFrom.step}`
-                  : `resumed after ${card.stopReason ?? "an interrupted run"} at step ${resumedFrom.step}`,
-            ],
-          }
-        : {}),
-      cardId: card.id,
-      card,
-      worktreePath,
-      syncAdapter,
-    });
-    this.session = session;
-    if (this.pendingAbort !== undefined) await session.abort(this.pendingAbort);
-
-    // The attempt as a row (K16): steps, gate results and evidence hang off it.
-    if (store?.runs) {
-      try {
-        this.attemptId = (
-          await store.runs.startAttempt({
-            cardId: card.id,
-            attemptNumber: attempt,
-            modelId: this.options.modelAdapter.modelId,
-            ...(resumedFrom ? { resumedFromStep: resumedFrom.step } : {}),
-            ...(this.options.forkedFrom ? { forkedFrom: this.options.forkedFrom } : {}),
-          })
-        ).id;
-      } catch (err) {
-        this.emit({
-          type: "status",
-          cardId: card.id,
-          message: `attempt not recorded: ${refusalReason(err)}`,
-        });
-      }
-    }
-
-    const turns: TurnResult[] = [];
-    let tokens = 0;
-    let stopReason: ExecutionStopReason = "budget_exhausted";
-    let lastGateResult: GateResult | undefined;
-    const tokenBudget = this.options.tokenBudget ?? card.tokenBudget;
-    const secondsBudget = this.options.secondsBudget ?? card.secondsBudget;
-    const every = this.options.checkpointEvery ?? 5;
-    let lastCheckpointStep = session.getStepsUsed();
-    let lastCheckpointWrites = 0;
-
-    const budgetStop = (): ExecutionStopReason | undefined => {
-      if (tokenBudget !== undefined && tokenBudget > 0 && tokens >= tokenBudget) {
-        return "token_budget_exhausted";
-      }
-      if (
-        secondsBudget !== undefined &&
-        secondsBudget > 0 &&
-        this.now() - started >= secondsBudget * 1000
-      ) {
-        return "time_budget_exhausted";
-      }
-      return undefined;
-    };
-
-    while (session.getStepsUsed() < card.stepBudget) {
-      if (this.options.signal?.aborted && this.pendingAbort === undefined) {
-        await this.abort(String(this.options.signal.reason ?? "aborted"));
-      }
-      const overBudget = budgetStop();
-      if (overBudget) {
-        stopReason = overBudget;
-        this.emit({
-          type: "status",
-          cardId: card.id,
-          message:
-            overBudget === "token_budget_exhausted"
-              ? `token budget spent: ${tokens}/${tokenBudget}`
-              : `time budget spent: ${Math.round((this.now() - started) / 1000)}s/${secondsBudget}s`,
-        });
-        break;
-      }
-
-      let turn: TurnResult;
-      const turnStarted = this.now();
-      try {
-        turn = await session.executeTurn();
-      } catch (err) {
-        // An inference or transport failure ends this card with a recorded
-        // reason; it must not take the queue down with it. A single rejected
-        // request on a live run previously killed the whole Chronicle gate.
-        const message = err instanceof Error ? err.message : String(err);
-        this.emit({
-          type: "status",
-          cardId: card.id,
-          message: `stopped on error: ${message.slice(0, 300)}`,
-        });
-        stopReason = "error";
-        break;
-      }
-      turn.durationMs = Math.max(0, this.now() - turnStarted);
-      // C14/C20: the step's context-pack record and metrics ride on the turn.
-      const report = session.getLastContextReport();
-      if (report) turn.contextReport = report;
-      const packId = session.getLastContextPackId();
-      if (packId) {
-        turn.contextPackId = packId;
-        this.packIds.push(packId);
-      }
-      await this.recordStep(turn);
-      turns.push(turn);
-      tokens += (turn.usage?.promptTokens ?? 0) + (turn.usage?.completionTokens ?? 0);
-      try {
-        await this.options.onTurn?.(card.id, turn);
-      } catch {
-        // Recording a step must never fail a card.
-      }
-
-      this.emit({
-        type: "turn",
+                  ...(questionEntryId ? { inReplyTo: questionEntryId } : {}),
+                });
+              },
+            }
+          : {}),
+        ...(dossierLines.length > 0 ? { dossierLines } : {}),
+        // L11: a note reaches the card's thread (its dossier, on the ledger)
+        // the moment the Worker writes it, not at the end of the attempt.
+        ...(store
+          ? {
+              onNote: async (text: string) => {
+                if (text.startsWith("Asked: ")) return; // recorded as a question already
+                await store.recordDossierEntry({ cardId: card.id, kind: "note", text, attempt });
+                this.emit({
+                  type: "status",
+                  cardId: card.id,
+                  message: `note: ${text.slice(0, 160)}`,
+                });
+              },
+            }
+          : {}),
+        prefixGuard: this.prefixGuard,
+        // K11: every prompt is stored by hash before it is sent.
+        onPrompt: (record: PromptRecord) => this.logPrompt(record),
+        ...this.options,
+        // G25: each further sample draws at its own temperature.
+        ...(sampleTemperature !== undefined ? { temperature: sampleTemperature } : {}),
+        ...(resumedFrom && sampleIndex === 1
+          ? {
+              startStep: resumedFrom.step,
+              priorHistory: this.replayHistory(resumeFrom?.attemptId, resumedFrom.step),
+              priorLessons: [
+                ...(this.options.priorLessons ?? []),
+                this.options.forkedFrom
+                  ? `forked from attempt ${this.options.forkedFrom.attemptId} at step ${resumedFrom.step}`
+                  : this.options.startFrom
+                    ? `rewound to the checkpoint at step ${resumedFrom.step}`
+                    : `resumed after ${card.stopReason ?? "an interrupted run"} at step ${resumedFrom.step}`,
+              ],
+            }
+          : {}),
         cardId: card.id,
-        turn: turn.turnIndex,
-        message: turn.toolCalls.map((c) => c.name).join(", ") || "(no tool calls)",
+        card,
+        worktreePath,
+        syncAdapter,
       });
+      this.session = session;
+      if (this.pendingAbort !== undefined) await session.abort(this.pendingAbort);
 
-      if (turn.gateResult) {
-        lastGateResult = turn.gateResult;
+      // The attempt as a row (K16): steps, gate results and evidence hang off it.
+      if (store?.runs && sampleIndex === 1) {
+        try {
+          this.attemptId = (
+            await store.runs.startAttempt({
+              cardId: card.id,
+              attemptNumber: attempt,
+              modelId: this.options.modelAdapter.modelId,
+              ...(resumedFrom ? { resumedFromStep: resumedFrom.step } : {}),
+              ...(this.options.forkedFrom ? { forkedFrom: this.options.forkedFrom } : {}),
+            })
+          ).id;
+        } catch (err) {
+          this.emit({
+            type: "status",
+            cardId: card.id,
+            message: `attempt not recorded: ${refusalReason(err)}`,
+          });
+        }
+      }
+
+      const turns: TurnResult[] = [];
+      let tokens = 0;
+      let stopReason: ExecutionStopReason = "budget_exhausted";
+      let lastGateResult: GateResult | undefined;
+      const tokenBudget = this.options.tokenBudget ?? card.tokenBudget;
+      const secondsBudget = this.options.secondsBudget ?? card.secondsBudget;
+      const every = this.options.checkpointEvery ?? 5;
+      let lastCheckpointStep = session.getStepsUsed();
+      let lastCheckpointWrites = 0;
+
+      const budgetStop = (): ExecutionStopReason | undefined => {
+        if (tokenBudget !== undefined && tokenBudget > 0 && tokens >= tokenBudget) {
+          return "token_budget_exhausted";
+        }
+        if (
+          secondsBudget !== undefined &&
+          secondsBudget > 0 &&
+          this.now() - started >= secondsBudget * 1000
+        ) {
+          return "time_budget_exhausted";
+        }
+        return undefined;
+      };
+
+      while (session.getStepsUsed() < card.stepBudget) {
+        if (this.options.signal?.aborted && this.pendingAbort === undefined) {
+          await this.abort(String(this.options.signal.reason ?? "aborted"));
+        }
+        const overBudget = budgetStop();
+        if (overBudget) {
+          stopReason = overBudget;
+          this.emit({
+            type: "status",
+            cardId: card.id,
+            message:
+              overBudget === "token_budget_exhausted"
+                ? `token budget spent: ${tokens}/${tokenBudget}`
+                : `time budget spent: ${Math.round((this.now() - started) / 1000)}s/${secondsBudget}s`,
+          });
+          break;
+        }
+
+        let turn: TurnResult;
+        const turnStarted = this.now();
+        try {
+          turn = await session.executeTurn();
+        } catch (err) {
+          // An inference or transport failure ends this card with a recorded
+          // reason; it must not take the queue down with it. A single rejected
+          // request on a live run previously killed the whole Chronicle gate.
+          const message = err instanceof Error ? err.message : String(err);
+          this.emit({
+            type: "status",
+            cardId: card.id,
+            message: `stopped on error: ${message.slice(0, 300)}`,
+          });
+          stopReason = "error";
+          break;
+        }
+        turn.durationMs = Math.max(0, this.now() - turnStarted);
+        // C14/C20: the step's context-pack record and metrics ride on the turn.
+        const report = session.getLastContextReport();
+        if (report) turn.contextReport = report;
+        const packId = session.getLastContextPackId();
+        if (packId) {
+          turn.contextPackId = packId;
+          this.packIds.push(packId);
+        }
+        await this.recordStep(turn);
+        turns.push(turn);
+        tokens += (turn.usage?.promptTokens ?? 0) + (turn.usage?.completionTokens ?? 0);
+        try {
+          await this.options.onTurn?.(card.id, turn);
+        } catch {
+          // Recording a step must never fail a card.
+        }
+
         this.emit({
-          type: "gate",
+          type: "turn",
           cardId: card.id,
           turn: turn.turnIndex,
-          message: turn.gateResult.passed
-            ? "gates PASSED"
-            : `gates FAILED: ${turn.gateResult.failures[0]?.errorExcerpt ?? "unknown"}`,
+          message: turn.toolCalls.map((c) => c.name).join(", ") || "(no tool calls)",
         });
 
-        // Checkpoint every gate-passing step, so a relay can resume from a
-        // known-good state rather than replaying from the card's start.
-        if (turn.gateResult.passed) {
-          await this.checkpoint(turn.turnIndex, "pass", checkpointShas, true);
+        if (turn.gateResult) {
+          lastGateResult = turn.gateResult;
+          this.emit({
+            type: "gate",
+            cardId: card.id,
+            turn: turn.turnIndex,
+            message: turn.gateResult.passed
+              ? "gates PASSED"
+              : `gates FAILED: ${turn.gateResult.failures[0]?.errorExcerpt ?? "unknown"}`,
+          });
+
+          // Checkpoint every gate-passing step, so a relay can resume from a
+          // known-good state rather than replaying from the card's start.
+          if (turn.gateResult.passed) {
+            await this.checkpoint(turn.turnIndex, "pass", checkpointShas, true);
+            lastCheckpointStep = session.getStepsUsed();
+            lastCheckpointWrites = session.getWriteCount();
+          }
+        }
+
+        if (turn.stopReason) {
+          stopReason = turn.stopReason;
+          break;
+        }
+
+        // Mid-card checkpoints (Y3): every N steps with new writes, so a halted
+        // or relayed card picks up partial work from git instead of restarting.
+        if (
+          every > 0 &&
+          session.getStepsUsed() - lastCheckpointStep >= every &&
+          session.getWriteCount() > lastCheckpointWrites
+        ) {
+          const status: GateStatus = lastGateResult && !lastGateResult.passed ? "fail" : "partial";
+          await this.checkpoint(session.getStepsUsed(), status, checkpointShas);
           lastCheckpointStep = session.getStepsUsed();
           lastCheckpointWrites = session.getWriteCount();
         }
       }
 
-      if (turn.stopReason) {
-        stopReason = turn.stopReason;
-        break;
-      }
-
-      // Mid-card checkpoints (Y3): every N steps with new writes, so a halted
-      // or relayed card picks up partial work from git instead of restarting.
-      if (
-        every > 0 &&
-        session.getStepsUsed() - lastCheckpointStep >= every &&
-        session.getWriteCount() > lastCheckpointWrites
-      ) {
-        const status: GateStatus = lastGateResult && !lastGateResult.passed ? "fail" : "partial";
-        await this.checkpoint(session.getStepsUsed(), status, checkpointShas);
-        lastCheckpointStep = session.getStepsUsed();
+      // A stop that suspends the card keeps its partial work in a checkpoint:
+      // that is what a memory-pressure resume (H17) restarts from.
+      if (SUSPENDING_STOPS.has(stopReason) && session.getWriteCount() > lastCheckpointWrites) {
+        await this.checkpoint(session.getStepsUsed(), "partial", checkpointShas);
         lastCheckpointWrites = session.getWriteCount();
       }
-    }
 
-    // A stop that suspends the card keeps its partial work in a checkpoint:
-    // that is what a memory-pressure resume (H17) restarts from.
-    if (SUSPENDING_STOPS.has(stopReason) && session.getWriteCount() > lastCheckpointWrites) {
-      await this.checkpoint(session.getStepsUsed(), "partial", checkpointShas);
-      lastCheckpointWrites = session.getWriteCount();
-    }
-
-    // An agent can do the work and still never declare itself finished — it
-    // explores until the budget runs out. Discarding completed work because the
-    // agent failed to announce it is the worst available outcome, so any
-    // terminal stop with written scope and no gate run gets one verification.
-    // Not after a person stopped the card, and not past the time budget: those
-    // stops are the point.
-    // Nor under memory pressure: a typecheck and a test run are exactly the
-    // allocations the halt was protecting the host from.
-    const mayVerify =
-      stopReason !== "human_abort" &&
-      stopReason !== "memory_pressure" &&
-      stopReason !== "quota_suspended" &&
-      stopReason !== "time_budget_exhausted" &&
-      stopReason !== "replan_requested" &&
-      stopReason !== "scope_violation";
-    if (!lastGateResult && session.isScopeComplete() && mayVerify) {
-      this.emit({
-        type: "status",
-        cardId: card.id,
-        message: `stopped as ${stopReason} with scope complete — verifying anyway`,
-      });
-
-      try {
-        lastGateResult = await session.runVerification();
-        this.emit({
-          type: "gate",
-          cardId: card.id,
-          message: lastGateResult.passed
-            ? "gates PASSED on forced verification"
-            : `gates FAILED on forced verification: ${
-                lastGateResult.failures[0]?.errorExcerpt ?? "unknown"
-              }`,
-        });
-
-        if (lastGateResult.passed) {
-          stopReason = "gate_passed";
-          await this.checkpoint(session.getStepsUsed(), "pass", checkpointShas, true);
-        }
-      } catch (err) {
-        stopReason = "done_pending_gates";
+      // An agent can do the work and still never declare itself finished — it
+      // explores until the budget runs out. Discarding completed work because the
+      // agent failed to announce it is the worst available outcome, so any
+      // terminal stop with written scope and no gate run gets one verification.
+      // Not after a person stopped the card, and not past the time budget: those
+      // stops are the point.
+      // Nor under memory pressure: a typecheck and a test run are exactly the
+      // allocations the halt was protecting the host from.
+      const mayVerify =
+        stopReason !== "human_abort" &&
+        stopReason !== "memory_pressure" &&
+        stopReason !== "quota_suspended" &&
+        stopReason !== "time_budget_exhausted" &&
+        stopReason !== "replan_requested" &&
+        stopReason !== "scope_violation";
+      if (!lastGateResult && session.isScopeComplete() && mayVerify) {
         this.emit({
           type: "status",
           cardId: card.id,
-          message: `scope complete but the gates could not run: ${refusalReason(err)}`,
+          message: `stopped as ${stopReason} with scope complete — verifying anyway`,
+        });
+
+        try {
+          lastGateResult = await session.runVerification();
+          this.emit({
+            type: "gate",
+            cardId: card.id,
+            message: lastGateResult.passed
+              ? "gates PASSED on forced verification"
+              : `gates FAILED on forced verification: ${
+                  lastGateResult.failures[0]?.errorExcerpt ?? "unknown"
+                }`,
+          });
+
+          if (lastGateResult.passed) {
+            stopReason = "gate_passed";
+            await this.checkpoint(session.getStepsUsed(), "pass", checkpointShas, true);
+          }
+        } catch (err) {
+          stopReason = "done_pending_gates";
+          this.emit({
+            type: "status",
+            cardId: card.id,
+            message: `scope complete but the gates could not run: ${refusalReason(err)}`,
+          });
+        }
+      } else if (
+        !lastGateResult &&
+        session.isScopeComplete() &&
+        stopReason === "time_budget_exhausted"
+      ) {
+        // The work is written and unverified: say so rather than "out of time".
+        stopReason = "done_pending_gates";
+      }
+      return { session, turns, stopReason, lastGateResult };
+    };
+
+    const passing: Sample[] = [];
+    const want = (this.options.crossValidate ?? this.config.project.crossValidate) ? 2 : 1;
+    for (let k = 1; k <= samples; k++) {
+      if (k > 1) {
+        if (!baseRef || !this.restore(worktreePath, baseRef)) break;
+        this.emit({
+          type: "status",
+          cardId: card.id,
+          message: `pass@k: sample ${k} of ${samples}`,
         });
       }
-    } else if (
-      !lastGateResult &&
-      session.isScopeComplete() &&
-      stopReason === "time_budget_exhausted"
-    ) {
-      // The work is written and unverified: say so rather than "out of time".
-      stopReason = "done_pending_gates";
+      const sample = await runSample(
+        k,
+        k > 1 ? temperatures[(k - 2) % temperatures.length] : undefined,
+      );
+      tried.push(sample);
+      if (sample.stopReason === "gate_passed" && sample.lastGateResult?.passed) {
+        const sha = this.headOf(worktreePath);
+        if (sha) sample.sha = sha;
+        passing.push(sample);
+        if (passing.length >= want) break;
+      } else if (HARD_STOPS.has(sample.stopReason)) {
+        break;
+      }
     }
+    const picked = (passing[0] ?? tried[tried.length - 1]) as Sample;
+    const session = picked.session;
+    const turns = tried.flatMap((t) => t.turns);
+    let stopReason = picked.stopReason;
+    let lastGateResult = picked.lastGateResult;
+    if (tried.length > 1 && picked.sha) this.restore(worktreePath, picked.sha);
+    if (passing.length >= 2) {
+      const disagreement = await this.crossValidate(worktreePath, passing[0]?.sha, passing[1]?.sha);
+      if (disagreement) {
+        this.crossValidation = disagreement;
+        stopReason = "replan_requested";
+      }
+    }
+    this.samplesTried = tried.length;
 
     // Y6: a passing card is rebased onto the integration branch before it
     // enters Verify; a conflict stops it, and the gates run again on the
@@ -1401,7 +1569,18 @@ export class CardRunner {
         if (moved.ok) finalStatus = "planning";
         else held = { reason: moved.reason, wanted: "planning" };
       } else if (stopReason === "replan_requested" && session) {
-        replan = session.getReplanRequest();
+        replan =
+          session.getReplanRequest() ??
+          (this.crossValidation
+            ? {
+                cardId: card.id,
+                attempts: this.samplesTried,
+                failures: [],
+                filesWritten: session.getFilesWritten(),
+                lessons: [],
+                summary: `Two passing attempts disagree: ${this.crossValidation}. The specification is ambiguous; re-plan the card.`,
+              }
+            : undefined);
         // A card that needs a new plan goes back to Planning, not to Verify.
         const moved = await this.move("planning");
         if (moved.ok) finalStatus = "planning";

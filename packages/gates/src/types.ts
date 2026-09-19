@@ -124,6 +124,10 @@ export interface GateProjectConfig {
   mutationBlocking?: boolean;
   /** Domains the Worker's commands may reach through the egress proxy (S5, S8). */
   networkAllow?: string[];
+  /** pass@k with gate selection (G25): samples per card; default 1. */
+  passAtK?: number;
+  /** Cross-validate two passing samples against each other's tests (G26). */
+  crossValidate?: boolean;
   /** The visual layer (G17-G20), from the `[visual]` table. */
   visual?: import("./visual.js").VisualConfig;
 }

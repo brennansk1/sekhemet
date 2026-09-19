@@ -181,6 +181,10 @@ export function loadGatesConfig(repoRoot: string): GatesConfig {
       ? { mutationMax: projectTable.mutation_max }
       : {}),
     ...(projectTable.mutation_blocking === true ? { mutationBlocking: true } : {}),
+    ...(typeof projectTable.pass_at_k === "number" && projectTable.pass_at_k >= 1
+      ? { passAtK: Math.min(4, Math.floor(projectTable.pass_at_k)) }
+      : {}),
+    ...(projectTable.cross_validate === true ? { crossValidate: true } : {}),
     ...(asStringArray(projectTable.network_allow).length > 0
       ? { networkAllow: asStringArray(projectTable.network_allow) }
       : {}),
