@@ -123,8 +123,11 @@ export async function applyWebhookIntent(
               ? `Review PR #${intent.pr}`
               : `Verify ${intent.author} PR #${intent.pr}`,
           status: "ready",
-          spec: `Run the full gates against PR #${intent.pr} at ${intent.headSha} and report.`,
+          spec: `Run the full gates against PR #${intent.pr} at ${intent.headSha || "its head"} and report.`,
           labels: [intent.kind === "external_review" ? "external-review" : "dependency-update"],
+          ...(intent.kind === "external_review"
+            ? { externalRef: { system: "github" as const, id: `pr/${intent.pr}`, url: intent.url } }
+            : {}),
         },
         "github",
       );

@@ -29,7 +29,7 @@ import {
  */
 export const PR_EVENT = "github/pr_opened";
 
-function ownerRepo(spec: string | undefined): { owner: string; repo: string } | undefined {
+export function ownerRepo(spec: string | undefined): { owner: string; repo: string } | undefined {
   const m = /^([\w.-]+)\/([\w.-]+)$/.exec(spec ?? "");
   return m ? { owner: m[1] as string, repo: m[2] as string } : undefined;
 }
@@ -54,12 +54,19 @@ function readEvidence(repoPath: string, cardId: string): Evidence | undefined {
 /** The evidence summary a draft PR carries (design "Pull request lifecycle"). */
 export function prBody(card: CardRecord, ev: Evidence | undefined): string {
   const gates = (ev?.rungResults ?? [])
-    .map((r) => `- ${r.passed ? "pass" : "FAIL"} ${r.gate}${r.durationMs ? ` (${r.durationMs} ms)` : ""}`)
+    .map(
+      (r) =>
+        `- ${r.passed ? "pass" : "FAIL"} ${r.gate}${r.durationMs ? ` (${r.durationMs} ms)` : ""}`,
+    )
     .join("\n");
-  const files = [...new Set((ev?.diff ?? "").match(/^\+\+\+ b\/(.+)$/gm) ?? [])].map((l) => l.slice(6));
+  const files = [...new Set((ev?.diff ?? "").match(/^\+\+\+ b\/(.+)$/gm) ?? [])].map((l) =>
+    l.slice(6),
+  );
   return [
     card.spec ?? "",
-    card.acceptanceCriteria?.length ? `### Done when\n${card.acceptanceCriteria.map((c) => `- ${c}`).join("\n")}` : "",
+    card.acceptanceCriteria?.length
+      ? `### Done when\n${card.acceptanceCriteria.map((c) => `- ${c}`).join("\n")}`
+      : "",
     `### Gates\n${gates || "_No evidence file was found for this card._"}`,
     files.length ? `### Files\n${files.map((f) => `- ${f}`).join("\n")}` : "",
     `_Implemented by the Sekhemet Worker. Card \`${card.id}\`._`,
@@ -99,7 +106,10 @@ export async function openPullRequestViaApp(
       summary: `${r.gate} ${r.passed ? "passed" : "failed"} in Sekhemet.`,
       failures: (ev?.failures ?? [])
         .filter((f) => (f.gate ?? f.rung) === r.gate)
-        .map((f) => ({ rung: String(f.gate ?? f.rung), errorExcerpt: String(f.errorExcerpt ?? "") })),
+        .map((f) => ({
+          rung: String(f.gate ?? f.rung),
+          errorExcerpt: String(f.errorExcerpt ?? ""),
+        })),
     });
   }
   const sarif = join(repoPath, ".sekhemet", "evidence", `${card.id}.sarif`);
@@ -137,7 +147,11 @@ export async function advancePullRequests(
   const opened = await log.getEventsByTypes([PR_EVENT, "github/pr_advanced"]);
   const done = new Set(
     opened
-      .filter((e) => e.type === "github/pr_advanced" && ["ready", "auto_merge"].includes((e.payload as { state: string }).state))
+      .filter(
+        (e) =>
+          e.type === "github/pr_advanced" &&
+          ["ready", "auto_merge"].includes((e.payload as { state: string }).state),
+      )
       .map((e) => (e.payload as { number: number }).number),
   );
   const out: { number: number; state: string }[] = [];
@@ -145,7 +159,9 @@ export async function advancePullRequests(
     const p = e.payload as PullRequestRef & { repo: { owner: string; repo: string } };
     if (done.has(p.number)) continue;
     const ev = readEvidence(repoPath, e.cardId ?? "");
-    const files = [...new Set((ev?.diff ?? "").match(/^\+\+\+ b\/(.+)$/gm) ?? [])].map((l) => l.slice(6));
+    const files = [...new Set((ev?.diff ?? "").match(/^\+\+\+ b\/(.+)$/gm) ?? [])].map((l) =>
+      l.slice(6),
+    );
     const state = await new PullRequestLifecycle(client, p.repo).advance(p, {
       autoMerge: options.autoMerge,
       ...(codeowners ? { codeowners } : {}),
@@ -153,7 +169,12 @@ export async function advancePullRequests(
     });
     out.push({ number: p.number, state });
     if (state === "ready" || state === "auto_merge") {
-      await log.append({ actor: "harness", type: "github/pr_advanced", cardId: e.cardId ?? "board", payload: { number: p.number, state } });
+      await log.append({
+        actor: "harness",
+        type: "github/pr_advanced",
+        cardId: e.cardId ?? "board",
+        payload: { number: p.number, state },
+      });
     }
   }
   return out;
@@ -203,7 +224,9 @@ export async function syncViaAdapter(
   const cards = await cardStore.listCards();
   for (const item of items) {
     const key = `${item.ref.system}:${item.ref.id}`;
-    const card = cards.find((c) => c.externalRef?.system === item.ref.system && c.externalRef.id === item.ref.id);
+    const card = cards.find(
+      (c) => c.externalRef?.system === item.ref.system && c.externalRef.id === item.ref.id,
+    );
     if (!card) {
       if (item.state === "closed") continue;
       await cardStore.createCard(
@@ -227,11 +250,24 @@ export async function syncViaAdapter(
           cardId: card.id,
           question: rec.question,
           options: [
-            { label: "Continue with the old version", consequence: "the running work stands", effortDelta: "0", riskNote: "May not match the issue now." },
-            { label: "Restart with the new version", consequence: "the card re-plans from the issue", effortDelta: "a new attempt", riskNote: "Discards the running attempt." },
+            {
+              label: "Continue with the old version",
+              consequence: "the running work stands",
+              effortDelta: "0",
+              riskNote: "May not match the issue now.",
+            },
+            {
+              label: "Restart with the new version",
+              consequence: "the card re-plans from the issue",
+              effortDelta: "a new attempt",
+              riskNote: "Discards the running attempt.",
+            },
           ],
           previewSketches: [],
-          recommendation: { optionIndex: 1, rationale: "The issue is the source of truth for scope." },
+          recommendation: {
+            optionIndex: 1,
+            rationale: "The issue is the source of truth for scope.",
+          },
           policy: "default_deny",
           defaultIfNoAnswer: { deadline: new Date(Date.now() + 12 * 3_600_000).toISOString() },
           category: "scope_boundary",
@@ -250,7 +286,10 @@ export async function syncViaAdapter(
           },
           item,
         );
-        if (merged.history.some((h) => h.winner === "tracker") && !["in_progress", "verify"].includes(card.status)) {
+        if (
+          merged.history.some((h) => h.winner === "tracker") &&
+          !["in_progress", "verify"].includes(card.status)
+        ) {
           await cardStore.updateCard(
             card.id,
             {
@@ -263,7 +302,12 @@ export async function syncViaAdapter(
           out.updated++;
         }
         if (merged.history.length) {
-          await cardStore.recordEvent({ type: "sync/conflict", cardId: card.id, actor, payload: merged.history });
+          await cardStore.recordEvent({
+            type: "sync/conflict",
+            cardId: card.id,
+            actor,
+            payload: merged.history,
+          });
         }
       }
     }
@@ -273,7 +317,13 @@ export async function syncViaAdapter(
     if (card.tier === "epic") continue;
     try {
       if (!card.externalRef && card.status !== "done" && card.status !== "rejected") {
-        const ref = await adapter.push({ id: card.id, title: card.title, ...(card.spec ? { spec: card.spec } : {}), status: card.status, updatedAt: card.updatedAt });
+        const ref = await adapter.push({
+          id: card.id,
+          title: card.title,
+          ...(card.spec ? { spec: card.spec } : {}),
+          status: card.status,
+          updatedAt: card.updatedAt,
+        });
         await cardStore.updateCard(card.id, { externalRef: ref }, actor);
         out.pushed++;
       } else if (card.externalRef?.system === adapter.system && card.status === "done") {

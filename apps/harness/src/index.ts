@@ -56,6 +56,7 @@ import {
   rewindCard,
   writeQueueReport,
 } from "./execute.js";
+import { reviewPosterFromEnv, runExternalReviews } from "./external_review.js";
 import { runInit } from "./init.js";
 import { notifySlack } from "./integrations.js";
 import { readSettings } from "./integrations.js";
@@ -1429,6 +1430,15 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         );
       },
     };
+    // X15: review cards for PRs the harness did not open run the reviewer
+    // procedure on a checkout (never an edit) and do not reach the Worker.
+    ready = await runExternalReviews(config.repoPath, ready, {
+      store: cardStore,
+      learning: ctx.learning,
+      reviewer: () => router.use(reviewerModel ? "reviewer" : "manager"),
+      ...(reviewPosterFromEnv() ? { github: reviewPosterFromEnv() } : {}),
+      say: (line) => console.log(line),
+    });
     const started = Date.now();
     // Ctrl+C stops the running card before its next turn and ends the queue
     // (L25); the card resumes from its checkpoint next time (H17).

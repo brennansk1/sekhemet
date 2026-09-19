@@ -57,6 +57,7 @@ export function intentFor(event: string, payload: Record<string, unknown>): Webh
       body?: string | null;
       html_url: string;
       sub_issues?: { number: number }[];
+      pull_request?: unknown;
     };
     comment?: { id: number; body: string };
     pull_request?: {
@@ -80,6 +81,11 @@ export function intentFor(event: string, payload: Record<string, unknown>): Webh
   }
   if (event === "issue_comment" && p.action === "created" && p.issue && p.comment) {
     const m = /(?:^|\s)\/(plan|split|estimate|review)\b(.*)$/m.exec(p.comment.body);
+    // X15: `/review` on a pull request the harness did not open asks for an
+    // external review card (the head is resolved at checkout).
+    if (m && m[1] === "review" && p.issue.pull_request) {
+      return { kind: "external_review", pr: p.issue.number, headSha: "", url: p.issue.html_url };
+    }
     if (m) {
       return {
         kind: "card_command",
@@ -90,6 +96,17 @@ export function intentFor(event: string, payload: Record<string, unknown>): Webh
       };
     }
     return { kind: "ignored", reason: "comment without a command" };
+  }
+  if (event === "pull_request_review_comment" && p.action === "created" && p.pull_request) {
+    if (p.comment && /(?:^|\s)\/review\b/.test(p.comment.body)) {
+      return {
+        kind: "external_review",
+        pr: p.pull_request.number,
+        headSha: p.pull_request.head.sha,
+        url: p.pull_request.html_url,
+      };
+    }
+    return { kind: "ignored", reason: "review comment without /review" };
   }
   if (event === "pull_request" && p.pull_request) {
     if (p.action === "labeled" && p.label?.name === "sekhemet:review") {
