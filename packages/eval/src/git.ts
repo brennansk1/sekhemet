@@ -96,3 +96,9 @@ export function changedFiles(repoPath: string, revision: string): string[] {
 export function commitMessage(repoPath: string, revision: string): string {
   return git(["log", "-1", "--format=%B", revision], repoPath).trim();
 }
+
+/** Check out `files` from `commit` into the working tree at `cwd` (the test patch). */
+export function applyTestPatch(cwd: string, patch: { commit: string; files: string[] }): void {
+  if (patch.files.length === 0) return;
+  git(["checkout", patch.commit, "--", ...patch.files], cwd);
+}

@@ -92,6 +92,9 @@ importers:
 
   packages/eval:
     dependencies:
+      '@sekhemet/context':
+        specifier: workspace:*
+        version: link:../context
       '@sekhemet/gates':
         specifier: workspace:*
         version: link:../gates
@@ -107,6 +110,9 @@ importers:
       '@sekhemet/sandbox':
         specifier: workspace:*
         version: link:../sandbox
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
     devDependencies:
       '@types/node':
         specifier: ^22.13.4

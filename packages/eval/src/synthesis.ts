@@ -1,4 +1,10 @@
-import { changedFiles, commitMessage, parentCommitSha, resolveCommitSha } from "./git.js";
+import {
+  applyTestPatch,
+  changedFiles,
+  commitMessage,
+  parentCommitSha,
+  resolveCommitSha,
+} from "./git.js";
 import type { CommandSpec, SyntheticTask, VerificationSnapshot, WorkspaceMode } from "./types.js";
 import { TestVerifier, preconditionViolations } from "./verifier.js";
 import { EphemeralWorkspace } from "./workspace.js";
@@ -41,6 +47,11 @@ export interface FailToPassCheckRequest {
   workspaceMode?: WorkspaceMode | undefined;
   linkPaths?: string[] | undefined;
   keepWorkspaces?: boolean | undefined;
+  /**
+   * Test files to take from the fix commit into the parent checkout (the
+   * test patch), for fix commits that add or change their own tests.
+   */
+  testFiles?: string[] | undefined;
 }
 
 export interface FailToPassValidation {
@@ -163,6 +174,9 @@ export class TaskSynthesizer {
       ...(request.testCommand !== undefined ? { testCommand: request.testCommand } : {}),
       ...(request.setupCommands !== undefined ? { setupCommands: request.setupCommands } : {}),
       ...(request.stepBudget !== undefined ? { stepBudget: request.stepBudget } : {}),
+      ...(request.testFiles?.length
+        ? { testPatch: { commit: validation.fixCommit, files: [...request.testFiles] } }
+        : {}),
     };
 
     return { task, validation };
@@ -185,6 +199,9 @@ export class TaskSynthesizer {
     });
 
     try {
+      if (request.testFiles?.length && label === "parent") {
+        applyTestPatch(workspace.path, { commit: request.fixCommit, files: request.testFiles });
+      }
       if (request.setupCommands && request.setupCommands.length > 0) {
         await this.verifier.runSetup(workspace.path, request.setupCommands);
       }

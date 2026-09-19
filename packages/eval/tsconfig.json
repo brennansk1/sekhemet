@@ -9,6 +9,7 @@
     { "path": "../loop" },
     { "path": "../gates" },
     { "path": "../models" },
+    { "path": "../context" },
     { "path": "../sandbox" }
   ],
   "include": ["src/**/*"],

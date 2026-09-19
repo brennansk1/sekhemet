@@ -39,6 +39,13 @@ export interface SyntheticTask {
   stepBudget?: number | undefined;
   /** The commit that fixed the issue — C₀. Recorded by task synthesis. */
   fixCommit?: string | undefined;
+  /**
+   * Test files taken from `commit` and applied on top of `repoCommit` in
+   * every workspace (the SWE-bench test patch): a fix commit that adds its
+   * test would otherwise have no oracle at C-1. The Worker sees them as the
+   * card's acceptance tests.
+   */
+  testPatch?: { commit: string; files: string[] } | undefined;
 }
 
 /**

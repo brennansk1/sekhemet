@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import type { BakeOffRecord } from "@sekhemet/models";
 import type { EvalBenchmarkResult, TaskBenchmarkResult } from "./types.js";
 
 const MATRIX_COLUMNS = [
@@ -190,4 +191,84 @@ export async function writeModelMatrix(
 ): Promise<void> {
   await mkdir(dirname(filePath), { recursive: true });
   await writeFile(filePath, renderModelMatrix(results, options), "utf8");
+}
+
+/**
+ * `MODEL_MATRIX.md` from recorded bake-off records (E4, X19): one row per
+ * candidate and fixture with every setting that produced the number, the
+ * best Pass@1 per fixture marked. Incomplete records are listed separately,
+ * never mixed into the ranking.
+ */
+export function renderBakeOffMatrix(
+  records: readonly (BakeOffRecord & { incomplete?: string[] })[],
+  options: { title?: string } = {},
+): string {
+  const out = [
+    `# ${options.title ?? "MODEL_MATRIX"}`,
+    "Measured on this machine and this repository by `sekhemet bake-off`. Every row carries the settings that produced it; a number without settings is not admissible.",
+  ];
+  const admissible = records.filter((r) => !r.incomplete?.length);
+  const fixtures = [...new Set(admissible.map((r) => r.fixture))].sort();
+  if (fixtures.length === 0) out.push("_No admissible bake-off records._");
+  for (const fixture of fixtures) {
+    const rows = admissible
+      .filter((r) => r.fixture === fixture)
+      .sort((a, b) => b.passAt1 - a.passAt1 || a.minutes - b.minutes);
+    const best = rows[0];
+    out.push(`## ${fixture}`);
+    out.push(
+      table(
+        [
+          "Model",
+          "Quant",
+          "Engine",
+          "Arm",
+          "Ctx",
+          "KV",
+          "MTP",
+          "Steps",
+          "Pass@1",
+          "Passed",
+          "Minutes",
+          "Tokens",
+          "Harness",
+          "Date",
+        ],
+        rows.map((r) => [
+          `${r === best ? "**" : ""}${r.candidate.modelId}${r === best ? "**" : ""}`,
+          r.candidate.quant,
+          r.candidate.engine,
+          r.candidate.toolArm,
+          String(r.candidate.contextTokens ?? ""),
+          r.candidate.kvType ?? "",
+          r.candidate.mtp === undefined ? "" : r.candidate.mtp ? "on" : "off",
+          String(r.stepBudget),
+          percent(r.passAt1),
+          `${r.passed}/${r.total}`,
+          String(r.minutes),
+          String(r.tokens),
+          r.harnessCommit.slice(0, 7),
+          r.date.slice(0, 10),
+        ]),
+      ),
+    );
+  }
+  const bad = records.filter((r) => r.incomplete?.length);
+  if (bad.length) {
+    out.push("## Inadmissible records (missing settings)");
+    out.push(
+      bad
+        .map((r) => `- ${r.candidate.modelId} on ${r.fixture}: missing ${r.incomplete?.join(", ")}`)
+        .join("\n"),
+    );
+  }
+  return `${out.join("\n\n")}\n`;
+}
+
+export async function writeBakeOffMatrix(
+  filePath: string,
+  records: readonly BakeOffRecord[],
+): Promise<void> {
+  await mkdir(dirname(filePath), { recursive: true });
+  await writeFile(filePath, renderBakeOffMatrix(records), "utf8");
 }

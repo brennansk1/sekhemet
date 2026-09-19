@@ -3,6 +3,7 @@ import { DeterministicGateRunner, type GateRung } from "@sekhemet/gates";
 import { CardExecutionSessionImpl } from "@sekhemet/loop";
 import type { LocalInferenceAdapter, ToolArm } from "@sekhemet/models";
 import { ProcessSandbox } from "@sekhemet/sandbox";
+import { applyTestPatch } from "./git.js";
 import { InstrumentedAdapter } from "./instrumentation.js";
 import {
   DEFAULT_STEP_BUDGET,
@@ -249,6 +250,7 @@ export class BenchmarkHarness implements EvalHarness {
     result.workspacePath = workspace.path;
 
     try {
+      if (task.testPatch) applyTestPatch(workspace.path, task.testPatch);
       if (task.setupCommands && task.setupCommands.length > 0) {
         const setup = await context.verifier.runSetup(workspace.path, task.setupCommands);
         if (!setup.ok) {
