@@ -523,6 +523,33 @@ describe("apps/harness executeCard wiring (wave 2, part 1)", () => {
     expect(events.at(-1)).toBe("card/end");
   });
 
+  it("mounts the project's plugins on the card's container; a plugin hook refuses a tool, and all of it unmounts (K9, K10)", async () => {
+    mkdirSync(join(repo, ".sekhemet", "plugins", "guard"), { recursive: true });
+    writeFileSync(
+      join(repo, ".sekhemet", "plugins", "guard", "index.mjs"),
+      `export default {
+        name: "guard",
+        requires: ["ctx.cards", "ctx.board", "ctx.hooks"],
+        apply(ctx) {
+          ctx.hook("pre-tool", (c) => c.toolName === "run_cmd" ? { block: true, reason: "the guard plugin forbids commands" } : undefined);
+        },
+      };\n`,
+    );
+    const lines: string[] = [];
+    const card = await newCard("card_plugin");
+    const result = await executeCard(
+      { ...ctx, log: (l) => lines.push(l) },
+      card,
+      scripted([[{ name: "run_cmd", arguments: { command: "ls", description: "x" } }], WRITE_A])
+        .adapter,
+    );
+    expect(lines.join("\n")).toContain("plugins: guard");
+    expect(result.turns[0]?.observations[0]?.content).toContain(
+      "the guard plugin forbids commands",
+    );
+    expect(result.passed).toBe(true);
+  });
+
   it("records a review in the dossier, which the Review surface reads as findings", async () => {
     const card = await newCard("card_rev");
     await recordReview(cardStore, card.id, [

@@ -24,7 +24,14 @@ import {
   loadGatesConfig,
   npmRegistry,
 } from "@sekhemet/gates";
-import { type CardRecord, type CardStatus, type CardStore, pruneRetention } from "@sekhemet/kernel";
+import {
+  type CardRecord,
+  type CardStatus,
+  type CardStore,
+  PluginManager,
+  ServiceContainer,
+  pruneRetention,
+} from "@sekhemet/kernel";
 import {
   type CardRunResult,
   CardRunner,
@@ -46,8 +53,9 @@ import { NodeGitSyncAdapter } from "@sekhemet/sync";
 import { isAirgapped, mirrorRegistry } from "./airgap.js";
 import { readSettings } from "./integrations.js";
 import { learnFromAttempt } from "./learning/reflect.js";
-import { withLicenseGate } from "./license_gate.js";
 import type { LearningStore } from "./learning/store.js";
+import { withLicenseGate } from "./license_gate.js";
+import { withTrailerGate } from "./trailer_gate.js";
 import { buildReproRecord } from "./repro.js";
 import { workerWebDocs } from "./research/service.js";
 import { Tracer, traced } from "./tracing.js";
@@ -294,13 +302,16 @@ export async function executeCard(
   // Restricted mode refuses to execute where the OS cannot confine the
   // subprocess, rather than quietly running the agent unsandboxed.
   const sandbox = new ProcessSandbox({ requireConfinement: ctx.restrictedMode });
-  // X20: every verification also runs the licence register gate.
-  const gateRunner = withLicenseGate(
-    new DeterministicGateRunner(sandbox, {
-      repoRoot: ctx.repoPath,
-      expectedConfigSha256: gatesConfig.sha256,
-    }),
-    ctx.repoPath,
+  // X20, X26: every verification also runs the licence register gate and
+  // the commit-trailer contract on the card's branch.
+  const gateRunner = withTrailerGate(
+    withLicenseGate(
+      new DeterministicGateRunner(sandbox, {
+        repoRoot: ctx.repoPath,
+        expectedConfigSha256: gatesConfig.sha256,
+      }),
+      ctx.repoPath,
+    ),
   );
   const skills = new SkillsRegistry();
   skills.loadFromDirectory(join(ctx.repoPath, ".sekhemet", "skills"));
@@ -320,6 +331,21 @@ export async function executeCard(
 
   const worktreePath = join(ctx.repoPath, ".sekhemet", "worktrees", card.id);
   const webDocs = await workerWebDocs(ctx.repoPath).catch(() => undefined);
+  // K9/K10: this card's services in one container, and the project's
+  // plugins (.sekhemet/plugins) mounted on it; they may add services and
+  // lifecycle hooks, and everything they register is undone after the card.
+  const hookEngine = hookEngineFor(ctx.repoPath).engine;
+  const container = new ServiceContainer();
+  container.register("ctx.cards", ctx.cardStore);
+  container.register("ctx.board", ctx.boardService);
+  container.register("ctx.hooks", hookEngine);
+  container.register("ctx.gates", gateRunner);
+  container.register("ctx.llm", model);
+  container.register("ctx.sandbox", sandbox);
+  const plugins = new PluginManager(container, hookEngine);
+  const loaded = await plugins.loadFromDirectory(join(ctx.repoPath, ".sekhemet", "plugins"));
+  if (loaded.mounted.length > 0) log(`   plugins: ${loaded.mounted.map((p) => p.name).join(", ")}`);
+  for (const e of loaded.errors) log(`   plugin not mounted: ${e}`);
   const baselineSwap = readSwapUsedBytes();
   // A rewind or fork the human asked for (H18, H19) sets where this run starts.
   const start = await pendingStartPoint(ctx.cardStore, card.id).catch(() => undefined);
@@ -395,7 +421,7 @@ export async function executeCard(
       : {}),
     skillsRegistry: skills,
     // K12: the project's lifecycle hooks (.sekhemet/hooks.toml).
-    hooks: hookEngineFor(ctx.repoPath).engine,
+    hooks: hookEngine,
     // L10 tier 3: the library's official web docs, when web access is on.
     ...(webDocs ? { webDocs } : {}),
     // C13: passing runs of this card's class, as worked examples.
@@ -490,11 +516,14 @@ export async function executeCard(
     },
   });
 
-  const result = await runner.run().catch((err) => {
-    cardSpan?.set({ "error.message": String(err).slice(0, 300) }).end("error");
-    tracer?.close();
-    throw err;
-  });
+  const result = await runner
+    .run()
+    .finally(() => plugins.unmountAll())
+    .catch((err) => {
+      cardSpan?.set({ "error.message": String(err).slice(0, 300) }).end("error");
+      tracer?.close();
+      throw err;
+    });
   cardSpan
     ?.set({
       "sekhemet.passed": result.passed,

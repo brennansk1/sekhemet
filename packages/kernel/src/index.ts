@@ -10,3 +10,4 @@ export * from "./toml.js";
 export * from "./blobs.js";
 export * from "./retention.js";
 export * from "./scope.js";
+export * from "./container.js";
