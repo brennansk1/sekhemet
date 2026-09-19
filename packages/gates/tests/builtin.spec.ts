@@ -41,7 +41,11 @@ describe("built-in gate layers (G3, G13, G14, G15, G16, G22, S10, S11)", () => {
   it("fails a diff that adds a credential (G14)", async () => {
     writeFileSync(join(root, "a.ts"), `export const a = 1;\nexport const k = "${FAKE_KEY}";\n`);
     const r = await runBuiltinGates({ root, base: "main", diff: diff(), project, which: none });
-    expect(r.failures[0]).toMatchObject({ gate: "secrets", layer: "security", location: { file: "a.ts", line: 2 } });
+    expect(r.failures[0]).toMatchObject({
+      gate: "secrets",
+      layer: "security",
+      location: { file: "a.ts", line: 2 },
+    });
     expect(r.failures[0]?.errorExcerpt).not.toContain(FAKE_KEY);
     expect(r.outcomes.find((o) => o.gate === "osv")?.skipped).toBe(true);
   });
@@ -52,7 +56,15 @@ describe("built-in gate layers (G3, G13, G14, G15, G16, G22, S10, S11)", () => {
     expect(typosquatOf("react-dom", ["react-dom", "react"])).toBeUndefined();
     writeFileSync(
       join(root, "package.json"),
-      JSON.stringify({ dependencies: { lodash: "^4", expresss: "1", "left-padder": "1", "brand-new-pkg": "1", zod: "3" } }),
+      JSON.stringify({
+        dependencies: {
+          lodash: "^4",
+          expresss: "1",
+          "left-padder": "1",
+          "brand-new-pkg": "1",
+          zod: "3",
+        },
+      }),
     );
     const registry = async (name: string) =>
       name === "left-padder"
@@ -72,7 +84,9 @@ describe("built-in gate layers (G3, G13, G14, G15, G16, G22, S10, S11)", () => {
     const excerpts = r.failures.filter((f) => f.gate === "dependencies").map((f) => f.errorExcerpt);
     expect(excerpts.some((e) => e.includes('"expresss", one edit away from "express"'))).toBe(true);
     expect(excerpts.some((e) => e.includes('"left-padder", which does not exist'))).toBe(true);
-    expect(excerpts.some((e) => e.includes('"brand-new-pkg", first published 9 day(s) ago'))).toBe(true);
+    expect(excerpts.some((e) => e.includes('"brand-new-pkg", first published 9 day(s) ago'))).toBe(
+      true,
+    );
     expect(excerpts.some((e) => e.includes("zod"))).toBe(false);
   });
 
@@ -98,7 +112,12 @@ describe("built-in gate layers (G3, G13, G14, G15, G16, G22, S10, S11)", () => {
 
   it("runs semgrep and osv-scanner only when installed, and reports them skipped otherwise (G16, S11)", async () => {
     const r = await runBuiltinGates({ root, base: "main", diff: diff(), project, which: none });
-    expect(r.outcomes.filter((o) => o.skipped).map((o) => o.gate).sort()).toEqual(["osv", "semgrep"]);
+    expect(
+      r.outcomes
+        .filter((o) => o.skipped)
+        .map((o) => o.gate)
+        .sort(),
+    ).toEqual(["osv", "semgrep"]);
   });
 
   it("mutates changed lines only and reports surviving mutants as advisories (G13)", async () => {
@@ -107,7 +126,10 @@ describe("built-in gate layers (G3, G13, G14, G15, G16, G22, S10, S11)", () => {
         (m) => m.replacement,
       ),
     ).toEqual(["<="]);
-    writeFileSync(join(root, "a.ts"), "export const a = 1;\nexport const big = (n: number) => n > 10;\n");
+    writeFileSync(
+      join(root, "a.ts"),
+      "export const a = 1;\nexport const big = (n: number) => n > 10;\n",
+    );
     let runs = 0;
     const r = await runBuiltinGates({
       root,
@@ -144,6 +166,11 @@ describe("built-in gate layers (G3, G13, G14, G15, G16, G22, S10, S11)", () => {
     );
     const c = loadGatesConfig(root).project;
     expect(c.builtin).toEqual(["secrets", "hygiene"]);
-    expect(c).toMatchObject({ mutation: true, mutationMax: 4, changelog: false, debugPatterns: ["console.log("] });
+    expect(c).toMatchObject({
+      mutation: true,
+      mutationMax: 4,
+      changelog: false,
+      debugPatterns: ["console.log("],
+    });
   });
 });

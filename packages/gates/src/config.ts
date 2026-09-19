@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { type TomlTable, parseToml } from "@sekhemet/kernel";
+import { gateTemplate } from "./templates.js";
 import type {
   GateDefinition,
   GateLayer,
@@ -132,9 +133,12 @@ export function loadGatesConfig(repoRoot: string): GatesConfig {
   const sourcePath = join(repoRoot, GATES_CONFIG_RELATIVE_PATH);
 
   if (!existsSync(sourcePath)) {
+    // No gates.toml: the template for the project's language (G27), else
+    // the pnpm defaults.
+    const template = gateTemplate(repoRoot);
     return {
       project: { ...DEFAULT_PROJECT_CONFIG },
-      gates: DEFAULT_GATES.map((g) => ({ ...g })),
+      gates: template ?? DEFAULT_GATES.map((g) => ({ ...g })),
       sha256: hashGatesConfig(""),
       sourcePath,
     };

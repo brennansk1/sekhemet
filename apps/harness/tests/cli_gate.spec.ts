@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -33,6 +33,18 @@ describe("sekhemet gate", () => {
   it("fails with a non-zero exit code when a declared gate fails", async () => {
     const dir = repo("console.error('error: boom'); process.exit(3)");
     await main(["gate", "--repo", dir]);
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("writes the detected gate template with `gates init` (G27)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cli-gates-init-"));
+    dirs.push(dir);
+    writeFileSync(join(dir, "go.mod"), "module example.com/x\n");
+    await main(["gates", "init", "--repo", dir]);
+    expect(process.exitCode ?? 0).toBe(0);
+    const toml = readFileSync(join(dir, ".sekhemet", "gates.toml"), "utf8");
+    expect(toml).toContain('command = "go"');
+    await main(["gates", "init", "--repo", dir]);
     expect(process.exitCode).toBe(1);
   });
 });

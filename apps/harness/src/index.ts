@@ -1,12 +1,21 @@
 #!/usr/bin/env node
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { freemem, tmpdir, totalmem } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { BoardServiceImpl } from "@sekhemet/board";
-import { DeterministicGateRunner, loadGatesConfig, summarizeEvidence } from "@sekhemet/gates";
+import {
+  DeterministicGateRunner,
+  detectGateTemplate,
+  gateTemplate,
+  loadGatesConfig,
+  npmRegistry,
+  renderGatesToml,
+  runBuiltinGates,
+  summarizeEvidence,
+} from "@sekhemet/gates";
 import { remedyFor } from "@sekhemet/gates";
 import { type CardRecord, CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { planRepair } from "@sekhemet/loop";
@@ -71,6 +80,7 @@ export interface CliConfig {
     | "run"
     | "plan"
     | "gate"
+    | "gates"
     | "replay"
     | "bake-off"
     | "accept"
@@ -152,6 +162,7 @@ export function parseCliArgs(argv: string[] = process.argv.slice(2)): CliConfig 
     "run",
     "plan",
     "gate",
+    "gates",
     "replay",
     "bake-off",
     "mcp",
@@ -589,7 +600,36 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       },
     );
     console.log(`\nRunning ${rungs.join(", ")} in ${cwd}`);
-    const res = await gateRunner.runGates(rungs, cwd);
+    let res = await gateRunner.runGates(rungs, cwd);
+    // The built-in security, hygiene and robustness layers, on the card's diff (G3).
+    if (cardId && cwd !== config.repoPath) {
+      const diff = (() => {
+        try {
+          execFileSync("git", ["add", "-A"], { cwd, stdio: "ignore" });
+          return execFileSync("git", ["diff", "--cached", "--unified=0", "main"], {
+            cwd,
+            encoding: "utf8",
+            maxBuffer: 16 * 1024 * 1024,
+          });
+        } catch {
+          return "";
+        }
+      })();
+      const extra = await runBuiltinGates({
+        root: cwd,
+        base: "main",
+        diff,
+        project: { ...gatesConfig.project, mutation: false },
+        registry: npmRegistry(config.repoPath),
+      });
+      res = {
+        ...res,
+        passed: res.passed && extra.failures.length === 0,
+        failures: [...extra.failures, ...res.failures],
+        rungResults: [...(res.rungResults ?? []), ...extra.outcomes],
+      };
+      for (const a of extra.advisories) console.log(`  advisory: ${a}`);
+    }
     let boundsOk = true;
     if (cardId && cwd !== config.repoPath) {
       const stats = await new NodeGitSyncAdapter(config.repoPath).getDiffStats(cardId);
@@ -620,6 +660,33 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       if (f.suggestedAction) console.error(`      fix: ${f.suggestedAction}`);
     }
     process.exitCode = 1;
+    return;
+  }
+
+  if (config.command === "gates") {
+    // `sekhemet gates init [--force]`: write the gate template detected from
+    // the project's manifests to .sekhemet/gates.toml (G27).
+    if (config.targetArg !== "init") {
+      console.error("Usage: sekhemet gates init [--force]");
+      process.exitCode = 1;
+      return;
+    }
+    const target = join(config.repoPath, ".sekhemet", "gates.toml");
+    if (existsSync(target) && !argv.includes("--force")) {
+      console.error(`${target} exists; pass --force to replace it.`);
+      process.exitCode = 1;
+      return;
+    }
+    const kind = detectGateTemplate(config.repoPath);
+    const gates = gateTemplate(config.repoPath, kind);
+    if (!gates) {
+      console.error("No manifest recognised (package.json, pyproject.toml, Cargo.toml, go.mod).");
+      process.exitCode = 1;
+      return;
+    }
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, renderGatesToml(gates));
+    console.log(`Wrote ${target} (${kind}: ${gates.map((g) => g.id).join(", ")}).`);
     return;
   }
 
@@ -1521,6 +1588,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     "  sekhemet queue [--auto-accept] [--worker m] [--manager m]  Run Ready cards; escalate failures to a manager",
   );
   console.log("  sekhemet gate [card-id]     Run deterministic verification gates");
+  console.log("  sekhemet gates init         Write the gate template for this project's language");
   console.log("  sekhemet replay <card-id>   Replay checkpoint trajectory for a card");
   console.log("  sekhemet abort <card-id>    Stop a running card before its next turn");
   console.log("  sekhemet rewind <card> <n>  Put a card back to its checkpoint at step n");
