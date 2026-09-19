@@ -72,6 +72,18 @@ import { oneShotResearcher } from "./research/service.js";
 import { DEFAULT_DASHBOARD_PORT, startDashboardServer } from "./server.js";
 import { tracesCommand } from "./tracing.js";
 import { loadAttempts, tune, writeTuningReport } from "./tune.js";
+import {
+  WAVE2_COMMANDS,
+  type Wave2Command,
+  appliedStepBudget,
+  applyTunedPolicy,
+  modelRegistry,
+  observeOutcome,
+  planCommand,
+  queuePrelude,
+  roleForCard,
+  runWave2Command,
+} from "./wave2.js";
 
 export interface CliConfig {
   command:
@@ -100,6 +112,14 @@ export interface CliConfig {
     | "explore"
     | "queue"
     | "mcp"
+    | "goal"
+    | "decide"
+    | "m0"
+    | "qualify"
+    | "improve"
+    | "skills"
+    | "release"
+    | "ci"
     | "help";
   targetArg?: string | undefined;
   restrictedMode: boolean;
@@ -174,6 +194,8 @@ export function parseCliArgs(argv: string[] = process.argv.slice(2)): CliConfig 
     "rewind",
     "fork",
     "resume",
+    // Wave 2 (planner, eval, sync): see wave2.ts.
+    ...WAVE2_COMMANDS,
   ] as const;
 
   for (let i = 0; i < argv.length; i++) {
@@ -388,12 +410,14 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       initSchema(db);
       store = new CardStore(db, new EventLog(db));
     }
-    process.exitCode = await runResearchCommand(
+    const researchCode = await runResearchCommand(
       argv.slice(argv.indexOf("research") + 1),
       config.repoPath,
       store,
     );
-    return;
+    // Exit explicitly: the Crawl4AI sidecar, sockets and timers must not keep
+    // the CLI alive once the answer is out.
+    process.exit(researchCode);
   }
 
   if (config.command === "explore") {
@@ -457,6 +481,21 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   // ReviewWIP from this person's measured review minutes (B3).
   if (project) {
     await boardService.calibrateReviewWip(project.reviewMinutesPerDay).catch(() => undefined);
+  }
+
+  if ((WAVE2_COMMANDS as readonly string[]).includes(config.command)) {
+    // goal, decide, m0, qualify, improve, skills, release, ci (wave2.ts).
+    const cmd = config.command as Wave2Command;
+    const roster = new ModelRoster({ registry: modelRegistry() });
+    process.exitCode = await runWave2Command(
+      cmd,
+      argv
+        .slice(argv.indexOf(cmd) + 1)
+        .filter((a, i, all) => a !== "--repo" && all[i - 1] !== "--repo"),
+      { repoPath: config.repoPath, cardStore, log },
+      { print: (l) => console.log(l), model: (name) => roster.resolve(name, "worker") },
+    );
+    return;
   }
 
   if (config.command === "mcp") {
@@ -573,25 +612,23 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   }
 
   if (config.command === "plan") {
+    // `sekhemet plan "<spec>" [--sketcher <model>]`: SPIDR against the real
+    // codebase map, persisted with the whole contract, INVEST enforced and
+    // the batched decision parked (wave2.ts planCommand).
     const spec = config.targetArg || "New feature specification";
     console.log(`\nPlanning feature: "${spec}"`);
-    const planner = new SpidrFeaturePlanner();
-    const epicId = `epic_${Date.now().toString(16)}`;
-
-    await cardStore.createCard({
-      id: epicId,
-      tier: "epic",
-      title: spec,
-      status: "in_progress",
-    });
-
-    const decomp = await planner.decomposeFeature(epicId, spec);
-    console.log(`Decomposed into ${decomp.stories.length} SPIDR stories:`);
-    for (const s of decomp.stories) {
-      await cardStore.createCard(s);
-      console.log(`  ✓ [${s.tier.toUpperCase()}] ${s.id}: ${s.title}`);
-    }
-    console.log("All cards saved to kanban board. View with 'sekhemet board'.\n");
+    const sketcherName = argv[argv.indexOf("--sketcher") + 1];
+    const sketcher =
+      argv.includes("--sketcher") && sketcherName
+        ? new ModelRoster({ registry: modelRegistry() }).resolve(sketcherName, "manager")
+        : undefined;
+    await planCommand(
+      { repoPath: config.repoPath, cardStore, log },
+      spec,
+      sketcher ? { sketcher } : {},
+    );
+    await (sketcher as { unload?: () => Promise<void> } | undefined)?.unload?.();
+    console.log("View the cards with 'sekhemet board'.\n");
     return;
   }
 

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import type { CardStore } from "@sekhemet/kernel";
 import type { LocalInferenceAdapter } from "@sekhemet/models";
 import { McpHub, loadMcpConfig } from "../mcp_client.js";
@@ -20,7 +21,7 @@ Options
   --fresh           Research again even if memory has an answer
   --rounds <n>      Model turns per question
   --json            Print the full result as JSON
-  --keep            Leave the Researcher model loaded afterwards
+  --batch <file>    Answer one question per line (prefix "deep:" for deep) with one model load
   --status          Show which sources are available, then exit
 
 Web pages are read with Crawl4AI when installed.
@@ -36,9 +37,12 @@ export async function runResearchCommand(
   repoPath: string,
   cardStore?: CardStore,
 ): Promise<number> {
-  const question = argv.find(
-    (a, i) => !a.startsWith("--") && !["--model", "--card", "--rounds"].includes(argv[i - 1] ?? ""),
-  );
+  const question =
+    argv.find(
+      (a, i) =>
+        !a.startsWith("--") &&
+        !["--model", "--card", "--rounds", "--batch"].includes(argv[i - 1] ?? ""),
+    ) ?? (argv.includes("--batch") ? "(batch)" : undefined);
   const forceWeb = argv.includes("--web") ? true : argv.includes("--offline") ? false : undefined;
   if (argv.includes("--help") || (!question && !argv.includes("--status"))) {
     console.log(RESEARCH_USAGE);
@@ -81,36 +85,55 @@ export async function runResearchCommand(
     },
   });
   const cardId = flag(argv, "--card");
-  const started = Date.now();
+  // --batch <file>: one question per line (a line starting "deep:" runs deep),
+  // answered in one process with one model load; results as JSON lines.
+  const batchFile = flag(argv, "--batch");
+  const questions = batchFile
+    ? readFileSync(batchFile, "utf8")
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => l && !l.startsWith("#"))
+    : [question];
+  let worst = 0;
   try {
-    const r = await service.ask(question, {
-      deep: argv.includes("--deep"),
-      fresh: argv.includes("--fresh"),
-      ...(cardId ? { cardId } : {}),
-    });
-    const secs = ((Date.now() - started) / 1000).toFixed(0);
-    if (argv.includes("--json")) {
-      console.log(JSON.stringify({ ...r, seconds: Number(secs) }, null, 2));
-    } else {
-      console.log(`\n${r.answer}\n`);
-      if (r.sources.length) {
-        console.log("Sources");
-        r.sources.forEach((s, i) => console.log(`  [${i + 1}] ${s}`));
+    for (const raw of questions) {
+      const deep = argv.includes("--deep") || /^deep:\s*/i.test(raw);
+      const q = raw.replace(/^deep:\s*/i, "");
+      const started = Date.now();
+      const r = await service.ask(q, {
+        deep,
+        fresh: argv.includes("--fresh"),
+        ...(cardId ? { cardId } : {}),
+      });
+      const secs = ((Date.now() - started) / 1000).toFixed(0);
+      if (batchFile) {
+        console.log(JSON.stringify({ question: q, deep, ...r, seconds: Number(secs) }));
+      } else if (argv.includes("--json")) {
+        console.log(JSON.stringify({ ...r, seconds: Number(secs) }, null, 2));
+      } else {
+        console.log(`\n${r.answer}\n`);
+        if (r.sources.length) {
+          console.log("Sources");
+          r.sources.forEach((s, i) => console.log(`  [${i + 1}] ${s}`));
+        }
+        console.log(
+          `\n${r.grounded ? "Grounded" : "NOT grounded"}; confidence ${r.confidence.toFixed(2)}${
+            r.badCitations.length ? `; citations to nothing: ${r.badCitations.join(", ")}` : ""
+          }${
+            r.coverage
+              ? `; covered ${r.coverage.covered.length}/${r.coverage.items} (${r.coverage.stoppedBecause})`
+              : ""
+          }${r.fromMemory ? "; from memory" : ""}; ${secs}s`,
+        );
       }
-      console.log(
-        `\n${r.grounded ? "Grounded" : "NOT grounded"}; confidence ${r.confidence.toFixed(2)}${
-          r.badCitations.length ? `; citations to nothing: ${r.badCitations.join(", ")}` : ""
-        }${
-          r.coverage
-            ? `; covered ${r.coverage.covered.length}/${r.coverage.items} (${r.coverage.stoppedBecause})`
-            : ""
-        }${r.fromMemory ? "; from memory" : ""}; ${secs}s`,
-      );
+      if (!r.grounded) worst = 2;
     }
-    return r.grounded ? 0 : 2;
+    return worst;
   } finally {
+    // The managed server is bound to this process (it never outlives it), so
+    // unload it now; nothing may keep the CLI alive afterwards.
     const unload = (adapter as { unload?: () => Promise<void> } | undefined)?.unload;
-    if (unload && !argv.includes("--keep")) await unload.call(adapter).catch(() => undefined);
+    if (unload) await unload.call(adapter).catch(() => undefined);
     mcp?.close();
   }
 }
