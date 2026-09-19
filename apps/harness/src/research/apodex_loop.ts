@@ -285,6 +285,12 @@ export interface VerifiedAnswer {
  * text must have a References line. Confidence counts only what was read;
  * a URL only seen in search results counts as a web source.
  */
+const normTitle = (t: string) =>
+  t
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+
 export function verifyReferences(answer: string, ledger: EvidenceLedger): VerifiedAnswer {
   const refs: VerifiedAnswer["references"] = [];
   const at = answer.search(/\n#*\s*\**References:?\**\s*\n/i);
@@ -296,9 +302,19 @@ export function verifyReferences(answer: string, ledger: EvidenceLedger): Verifi
       const raw = (m[2] ?? "").replace(/^<|>$/g, "");
       const url = /(https?:\/\/[^\s>)\]]+)/.exec(raw)?.[1];
       const ref = url ?? raw;
+      // By URL, or by a paper's title as the search result gave it.
+      const nraw = normTitle(raw);
+      const byTitle = [...ledger.read.values()].find(
+        (s) => s.title && normTitle(s.title).length >= 20 && nraw.includes(normTitle(s.title)),
+      );
       const read =
-        ledger.read.has(ref) || [...ledger.read.values()].some((s) => raw.includes(s.ref));
-      const known = read || ledger.seen.has(ref);
+        ledger.read.has(ref) ||
+        [...ledger.read.values()].some((s) => raw.includes(s.ref)) ||
+        Boolean(byTitle);
+      const seenTitle = [...ledger.seen.values()].some(
+        (t) => normTitle(t).length >= 20 && nraw.includes(normTitle(t)),
+      );
+      const known = read || ledger.seen.has(ref) || seenTitle;
       refs.push({ n: Number(m[1]), ref, read, known });
     }
   }
@@ -312,7 +328,14 @@ export function verifyReferences(answer: string, ledger: EvidenceLedger): Verifi
     .filter((r) => r.known)
     .map((r) => {
       const s =
-        ledger.read.get(r.ref) ?? [...ledger.read.values()].find((x) => r.ref.includes(x.ref));
+        ledger.read.get(r.ref) ??
+        [...ledger.read.values()].find((x) => r.ref.includes(x.ref)) ??
+        [...ledger.read.values()].find(
+          (x) =>
+            x.title &&
+            normTitle(x.title).length >= 20 &&
+            normTitle(r.ref).includes(normTitle(x.title)),
+        );
       return s ?? { kind: "web", ref: r.ref };
     });
   return {
@@ -441,8 +464,24 @@ async function runApodexTool(
       ledger.noteRead({ ...r.source, ref: `https://npmjs.com/package/${name}` });
     }
   }
-  if (call.name === "scholar_search" || call.name === "github_search") {
-    for (const m of r.text.matchAll(/^\s+(https?:\/\/\S+)/gm)) ledger.seen.set(m[1] as string, "");
+  if (
+    call.name === "scholar_search" ||
+    call.name === "github_search" ||
+    call.name === "paper_citations"
+  ) {
+    // Each hit is "N. Title (meta)\n   URL\n   abstract". A paper's abstract
+    // reached the model, so a scholar hit counts as a read paper source, and
+    // its title is registered so a reference by title validates too.
+    for (const m of r.text.matchAll(
+      /^\d+\. (.+?)(?: \(([^)]*)\))?\n\s+(https?:\/\/\S+)\n\s*(.*)$/gm,
+    )) {
+      const title = (m[1] ?? "").trim();
+      const url = m[3] as string;
+      ledger.seen.set(url, title);
+      if (call.name !== "github_search" && (m[4] ?? "").length > 40) {
+        ledger.noteRead({ kind: "paper", ref: url, title, excerpt: (m[4] ?? "").slice(0, 600) });
+      }
+    }
   }
   return r.text;
 }

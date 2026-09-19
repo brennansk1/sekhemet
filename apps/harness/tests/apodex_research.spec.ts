@@ -194,7 +194,8 @@ describe("Apodex solo research (its ReAct mode)", () => {
     );
     // The search result reached the model in the trained format.
     // Web results arrive in the trained format, inside the untrusted wrapper (X8).
-    const unwrap = (t?: string) => t?.replace(/^<untrusted source="[^"]+">\n/, "").replace(/\n<\/untrusted>$/, "");
+    const unwrap = (t?: string) =>
+      t?.replace(/^<untrusted source="[^"]+">\n/, "").replace(/\n<\/untrusted>$/, "");
     const searchTurn = model.requests[1]?.messages?.find((m) => m.role === "tool");
     expect(unwrap(searchTurn?.content)).toMatch(
       /^\[1\] Title: SQLite \| Node\.js Documentation\n {4}Snippet: DatabaseSync class\n {4}URL: https:\/\/nodejs\.org\/api\/sqlite\.html/,
@@ -535,5 +536,58 @@ describe("citation repair", () => {
     expect(r.answer).toBe("X [1].\n\nReferences:\n[1] https://docs.example.dev/a");
     expect(r.badCitations).toEqual([]);
     expect(r.grounded).toBe(true);
+  });
+});
+
+describe("papers as sources", () => {
+  it("counts a scholar_search hit as a read paper and accepts a reference by its title", async () => {
+    const web = {
+      fetch: async (url: string) => {
+        if (url.includes("huggingface.co/api/papers/search")) {
+          return Response.json([
+            {
+              paper: { id: "2105.01234", upvotes: 3 },
+              title:
+                "Assessing the Risk of Software Development in Agile Methodologies Using Simulation",
+              summary:
+                "We build a Monte Carlo simulation over empirical throughput to forecast release dates with confidence intervals, and compare it with velocity-based planning.",
+              publishedAt: "2021-05-01",
+            },
+          ]);
+        }
+        return new Response("", { status: 404 });
+      },
+    };
+    const model = apodex([
+      () => ({
+        toolCalls: [
+          {
+            id: "a",
+            name: "scholar_search",
+            arguments: { query: "monte carlo throughput forecasting" },
+          },
+        ],
+      }),
+      () => ({
+        toolCalls: [
+          {
+            id: "b",
+            name: "finalize_answer",
+            arguments: {
+              content:
+                "Forecast with Monte Carlo over throughput [1].\n\nReferences:\n[1] Lunesu et al. (2021), Assessing the risk of software development in agile methodologies using simulation.",
+            },
+          },
+        ],
+      }),
+    ]);
+    const r = await research(model, "How should a small team forecast delivery?", {
+      repoPath: process.cwd(),
+      web,
+    });
+    expect(r.badCitations).toEqual([]);
+    expect(r.grounded).toBe(true);
+    expect(r.evidence[0]).toMatchObject({ kind: "paper", ref: "https://arxiv.org/abs/2105.01234" });
+    expect(r.confidence).toBe(0.25);
   });
 });
