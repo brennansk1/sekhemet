@@ -141,7 +141,8 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     this.cardId = options.cardId;
     this.stepBudget = options.stepBudget;
     this.card = options.card ?? synthesizeCard(options);
-    this.oscillationDetector = new OscillationDetector(options.oscillationThreshold ?? 3);
+    // L13: the stall threshold is the design's, not the caller's.
+    this.oscillationDetector = new OscillationDetector();
     this.ladder = new RepairLadder();
     this.replanned = options.replanned ?? options.managerGuidance !== undefined;
     // The staged acceptance tests are this card's oracle: always protected,

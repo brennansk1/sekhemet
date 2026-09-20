@@ -81,11 +81,68 @@ describe("@sekhemet/loop", () => {
     expect(d2.recordAndCheck(callA)).toBe(true); // 3rd repeat triggers detector!
   });
 
+  it("L13: two identical turns on an unchanged tree are a stall", async () => {
+    const detector = new OscillationDetector();
+    const callA = [{ id: "1", name: "read_file", arguments: { path: "a.ts" } }];
+
+    expect(detector.recordAndCheck(callA, "tree1")).toBe(false);
+    expect(detector.recordAndCheck(callA, "tree1")).toBe(true);
+
+    // The same two calls with the tree changed between them are progress.
+    const moved = new OscillationDetector();
+    expect(moved.recordAndCheck(callA, "tree1")).toBe(false);
+    expect(moved.recordAndCheck(callA, "tree2")).toBe(false);
+  });
+
+  it("L13: A-B-A is an oscillation without waiting for the fourth turn", () => {
+    const detector = new OscillationDetector();
+    const callA = [{ id: "1", name: "read_file", arguments: { path: "a.ts" } }];
+    const callB = [{ id: "2", name: "read_file", arguments: { path: "b.ts" } }];
+
+    expect(detector.recordAndCheck(callA, "tree1")).toBe(false);
+    expect(detector.recordAndCheck(callB, "tree1")).toBe(false);
+    expect(detector.recordAndCheck(callA, "tree1")).toBe(true);
+
+    // A-B-C is three different actions, not a cycle.
+    const walking = new OscillationDetector();
+    const callC = [{ id: "3", name: "read_file", arguments: { path: "c.ts" } }];
+    expect(walking.recordAndCheck(callA, "tree1")).toBe(false);
+    expect(walking.recordAndCheck(callB, "tree1")).toBe(false);
+    expect(walking.recordAndCheck(callC, "tree1")).toBe(false);
+  });
+
+  it("L13: the session stalls on the second identical turn, not the third", async () => {
+    const mockModel = new MockInferenceAdapter("mock-llama", [
+      {
+        text: "stuck",
+        toolCalls: [{ id: "stuck_1", name: "read_file", arguments: { path: "index.ts" } }],
+        usage: { promptTokens: 50, completionTokens: 10, durationMs: 5 },
+      },
+    ]);
+    const session = new CardExecutionSessionImpl({
+      cardId: "card_stall_at_two",
+      stepBudget: 10,
+      worktreePath: tempWorktree,
+      modelAdapter: mockModel,
+      gateRunner,
+    });
+
+    expect((await session.executeTurn()).stopReason).toBeUndefined();
+    expect((await session.executeTurn()).stopReason).toBe("oscillation_detected");
+  });
+
   it("halts execution with budget_exhausted when stepBudget is exceeded", async () => {
+    // Two different reads: a budget stop, not a stall (L13 trips on the second
+    // *identical* turn, which would otherwise end this card first).
     const mockModel = new MockInferenceAdapter("mock-llama", [
       {
         text: "doing step",
         toolCalls: [{ id: "1", name: "read_file", arguments: { path: "index.ts" } }],
+        usage: { promptTokens: 50, completionTokens: 10, durationMs: 5 },
+      },
+      {
+        text: "doing another step",
+        toolCalls: [{ id: "2", name: "list_files", arguments: { path: "." } }],
         usage: { promptTokens: 50, completionTokens: 10, durationMs: 5 },
       },
     ]);

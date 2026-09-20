@@ -148,9 +148,6 @@ export interface SessionOptions {
   gateRungs?: GateRung[] | undefined;
   /** Failed verifications tolerated before the card stops for human review. */
   maxRepairAttempts?: number | undefined;
-  /** Identical turns tolerated before the oscillation breaker trips. */
-  oscillationThreshold?: number | undefined;
-
   /**
    * A repair plan from the manager model, produced after an earlier attempt at
    * this card failed. Rendered ahead of everything else the worker is told.

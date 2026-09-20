@@ -27,6 +27,17 @@ export interface StallSignature {
 }
 
 /**
+ * Design §740: "Two identical signatures with unchanged repo state is a
+ * stall." Not a tunable — `[loop] stall_window` was removed from the config
+ * schema for the same reason the repair ladder's shape was: a breaker the
+ * user can widen is a breaker that never trips.
+ */
+export const STALL_THRESHOLD = 2;
+
+/** Design §741: "An A-B-A pattern is an oscillation." Three turns, not four. */
+export const OSCILLATION_WINDOW = 3;
+
+/**
  * Detects genuine non-progress: identical actions that also left the repo unchanged.
  *
  * Repetition alone is not a stall. The repo hash is what separates "tried the
@@ -35,7 +46,7 @@ export interface StallSignature {
 export class OscillationDetector {
   private history: StallSignature[] = [];
 
-  constructor(private threshold = 2) {}
+  constructor(private threshold = STALL_THRESHOLD) {}
 
   public recordAndCheck(calls: ToolCall[], repoStateHash = ""): boolean {
     this.history.push(this.computeSignature(calls, repoStateHash));
@@ -54,22 +65,17 @@ export class OscillationDetector {
     );
     if (identical) return true;
 
-    // A -> B -> A -> B cycle that also left the tree untouched.
-    if (this.history.length >= 4) {
-      const window = this.history.slice(-4) as StallSignature[];
+    // A -> B -> A: the agent has come back to an action it already took with
+    // nothing to show for the detour. Waiting for the fourth turn to confirm
+    // a B-A-B-A cycle spends a step the card does not get back.
+    if (this.history.length >= OSCILLATION_WINDOW) {
+      const window = this.history.slice(-OSCILLATION_WINDOW) as StallSignature[];
       const a = window[0] as StallSignature;
       const b = window[1] as StallSignature;
       const c = window[2] as StallSignature;
-      const d = window[3] as StallSignature;
       const same = (x: StallSignature, y: StallSignature): boolean =>
         x.tools === y.tools && x.argHash === y.argHash;
-      if (
-        same(a, c) &&
-        same(b, d) &&
-        !same(a, b) &&
-        a.repoStateHash === d.repoStateHash &&
-        a.repoStateHash !== ""
-      ) {
+      if (same(a, c) && !same(a, b) && a.repoStateHash === c.repoStateHash) {
         return true;
       }
     }
