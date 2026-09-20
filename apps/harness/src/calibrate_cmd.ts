@@ -2,18 +2,23 @@ import {
   type EngineCandidate,
   type MachineProfile,
   ManagedLlamaServerAdapter,
+  type MeasuredSpeed,
   ModelRegistry,
   type ModelRole,
   ModelRoster,
   SPECULATIVE_HEADROOM_BYTES,
   type SpeculativeVerdict,
+  type SweepCandidate,
   type UnloadableAdapter,
   calibrateHardware,
+  calibrateModel,
   calibrateSpeculative,
+  checkExecutionHeadroom,
   engineOf,
   loadMachineProfile,
   modelTelemetry,
   needsRecalibration,
+  readSwapUsedBytes,
   saveMachineProfile,
   selectEngine,
 } from "@sekhemet/models";
@@ -41,6 +46,40 @@ function speculativeProbes(adapter: UnloadableAdapter): SpeculativeProbes | unde
 }
 
 /**
+ * One point of the prefill-batch and offload sweep (M13): the same server
+ * relaunched with `-b` and `-ngl`, measured, then stopped. Swap growth
+ * during the point is the cliff — the host pretending the setting fits — and
+ * a server that will not start at all is the same answer, louder.
+ */
+async function sweepProbe(
+  adapter: ManagedLlamaServerAdapter,
+  candidate: SweepCandidate,
+  buckets: number[] | undefined,
+): Promise<{ speed: MeasuredSpeed; hitCliff?: boolean }> {
+  const { registry: _measured, ...profile } = adapter.launchProfile;
+  const probe = new ManagedLlamaServerAdapter({
+    ...profile,
+    gpuLayers: candidate.gpuLayers,
+    extraArgs: [...(profile.extraArgs ?? []), "-b", String(candidate.batchTokens)],
+  });
+  const baselineSwap = readSwapUsedBytes();
+  try {
+    const measurement = await calibrateModel(probe, {
+      ...(buckets?.length ? { buckets } : {}),
+    });
+    const headroom = checkExecutionHeadroom(baselineSwap);
+    return { speed: measurement.speed, ...(headroom.ok ? {} : { hitCliff: true }) };
+  } catch {
+    return {
+      speed: { prefillTokensPerSecond: undefined, decodeTokensPerSecond: undefined },
+      hitCliff: true,
+    };
+  } finally {
+    await probe.unload();
+  }
+}
+
+/**
  * `sekhemet calibrate` (H3): measure this machine and every model it will
  * run, so residency, throughput floors and the Researcher's budgets rest on
  * numbers from this host rather than someone else's.
@@ -65,6 +104,11 @@ export interface CalibrateCommandOptions {
   path?: string | false;
   /** null: record nothing (tests); omitted: the user's model registry. */
   registry?: ModelRegistry | null;
+  /**
+   * The prefill batch and offload sweep (M13). Omitted, it runs against the
+   * first managed server of the run; `false` skips it, for a quick re-measure.
+   */
+  sweep?: Parameters<typeof calibrateHardware>[0]["sweep"] | false;
   /** Injectable for tests: the with/without pair for the MTP measurement (M19). */
   speculative?: (adapter: UnloadableAdapter) => SpeculativeProbes | undefined;
   say?: (line: string) => void;
@@ -109,17 +153,37 @@ export async function runCalibrate(
   say(
     `Calibrating ${candidates.map((c) => c.label).join(", ")}: one at a time, unloading in between.`,
   );
+  // M13: the prefill batch and offload sweep, on the first managed server of
+  // the run. It is per machine, not per model, and each point costs a server
+  // restart, so it is measured once and applied to every managed launch.
+  const sweepable = candidates.find((c) => c.adapter instanceof ManagedLlamaServerAdapter);
+  const sweep =
+    opts.sweep === false || !sweepable
+      ? undefined
+      : (opts.sweep ?? {
+          probe: (candidate: SweepCandidate) =>
+            sweepProbe(sweepable.adapter as ManagedLlamaServerAdapter, candidate, opts.buckets),
+        });
   const profile = await calibrateHardware({
     candidates,
     ...(registry ? { registry } : {}),
     ...(opts.buckets ? { buckets: opts.buckets } : {}),
     ...(opts.decodeTokens ? { decodeTokens: opts.decodeTokens } : {}),
     ...(opts.usableBytes !== undefined ? { usableBytes: opts.usableBytes } : {}),
+    ...(sweep ? { sweep } : {}),
     ...(opts.path !== undefined ? { path: opts.path } : {}),
   });
+  const gb = (n: number) => Math.round(n / 1024 ** 3);
   say(
-    `Machine: ${Math.round(profile.fingerprint.totalBytes / 1024 ** 3)} GB, tier ${profile.tier}, ${Math.round(profile.usableBytes / 1024 ** 3)} GB usable for models.`,
+    `Machine: ${gb(profile.fingerprint.totalBytes)} GB, tier ${profile.tier}, ${gb(profile.usableBytes)} GB usable for models (${profile.usableMemorySource ?? "given"}), ${profile.memoryBandwidthGbPerSecond ?? "?"} GB/s.`,
   );
+  if (profile.settings) {
+    const s = profile.settings;
+    say(
+      `  working context ${s.workingContextTokens} tokens, ${s.parallelCards} card(s) at once, roles ${s.coLoadRoles ? "co-loaded" : "swapped"} — ${s.reason}.`,
+    );
+  }
+  if (profile.launch) say(`  ${profile.launch.reason}.`);
   for (const [label, cal] of Object.entries(profile.models)) {
     const rows = Object.entries(cal.buckets)
       .map(

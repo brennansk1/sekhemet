@@ -1,4 +1,10 @@
 import { freemem } from "node:os";
+import {
+  type TierSettings,
+  hostFingerprintHash,
+  loadMachineProfile,
+  tierSettingsFor,
+} from "./calibration.js";
 import { readKernelPressureLevel } from "./memory.js";
 import type { AdapterHealth, LocalInferenceAdapter } from "./types.js";
 
@@ -47,6 +53,12 @@ export interface RouterOptions {
    * with `ModelUnavailableError` instead of a request timeout minutes later.
    */
   healthCheck?: boolean;
+  /**
+   * The calibrated tier (M14). Its co-loading rule decides whether two roles
+   * may be resident at once; omitted, `calibrate()` reads this host's saved
+   * machine profile, and `null` leaves the decision to the budget alone.
+   */
+  tier?: TierSettings | null;
   /** Injectable for tests. */
   pressureLevel?: () => number | undefined;
   freeBytes?: () => number;
@@ -291,12 +303,29 @@ export class ModelRouter {
       footprints[role] = bytes;
       measured.push({ role, modelId: a.modelId, bytes });
     }
-    const budgetBytes = Math.max(0, totalBytes - reserveBytes);
+    let budgetBytes = Math.max(0, totalBytes - reserveBytes);
+    const tier = this.tierSettings();
+    if (tier && !tier.coLoadRoles && measured.length > 0) {
+      // The tier says roles swap rather than share the machine (below 32 GB
+      // they always do). A budget that happens to fit two small models would
+      // otherwise keep both, which is the co-residency the tier ruled out.
+      budgetBytes = Math.min(budgetBytes, Math.max(...measured.map((m) => m.bytes)));
+      this.options.coResident = false;
+      this.options.log?.(`residency: ${tier.reason}`);
+    }
     if (!unknown) {
       this.options.footprints = footprints;
       this.options.budgetBytes = budgetBytes;
     }
     return { ...planResidency(measured, unknown ? 0 : budgetBytes), budgetBytes };
+  }
+
+  /** The tier this run applies: the option, else this host's saved profile. */
+  private tierSettings(): TierSettings | undefined {
+    if (this.options.tier !== undefined) return this.options.tier ?? undefined;
+    const profile = loadMachineProfile();
+    if (!profile || profile.fingerprintHash !== hostFingerprintHash()) return undefined;
+    return profile.settings ?? tierSettingsFor(profile.usableBytes);
   }
 
   /** Unload everything. Call on every exit path. */

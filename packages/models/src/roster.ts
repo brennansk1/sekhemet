@@ -1,5 +1,11 @@
 import { totalmem } from "node:os";
-import { type MachineProfile, hostFingerprintHash, loadMachineProfile } from "./calibration.js";
+import {
+  type MachineProfile,
+  type TierSettings,
+  hostFingerprintHash,
+  loadMachineProfile,
+  tierSettingsFor,
+} from "./calibration.js";
 import { HttpInferenceAdapter, NAIL_WORKER_PROFILE } from "./http_adapter.js";
 import {
   type ChronicleProfileOptions,
@@ -111,20 +117,58 @@ export class ModelRoster {
   constructor(private options: ModelRosterOptions = {}) {}
 
   /**
-   * The engine this host measured as fastest (M24), when the measurement was
-   * taken on this hardware. A profile from another machine decides nothing.
+   * This host's calibrated profile. A profile measured on other hardware
+   * decides nothing here, which is what the fingerprint is for.
    */
+  private calibrated(): MachineProfile | undefined {
+    if (this.options.machineProfile === null) return undefined;
+    const profile = this.options.machineProfile ?? loadMachineProfile();
+    return profile && profile.fingerprintHash === hostFingerprintHash() ? profile : undefined;
+  }
+
+  /** The engine this host measured as fastest (M24). */
   public measuredEngine(): string | undefined {
     if (this.engine !== null) return this.engine;
-    const profile =
-      this.options.machineProfile === null
-        ? undefined
-        : (this.options.machineProfile ?? loadMachineProfile());
-    this.engine =
-      profile?.engine && profile.fingerprintHash === hostFingerprintHash()
-        ? profile.engine.engine
-        : undefined;
+    this.engine = this.calibrated()?.engine?.engine;
     return this.engine;
+  }
+
+  /** What the calibrated tier decides for this machine (M14). */
+  public tierSettings(): TierSettings | undefined {
+    const profile = this.calibrated();
+    if (!profile) return undefined;
+    return profile.settings ?? tierSettingsFor(profile.usableBytes);
+  }
+
+  /**
+   * Launch a managed server the way this machine measured (M13, M14): the
+   * tier's working context as a ceiling — a model whose own profile is
+   * tighter keeps its own number, because quality degrades with length long
+   * before the window runs out — and the swept prefill batch and offload,
+   * which were chosen one step back from this host's memory cliff.
+   */
+  private tuned<A extends UnloadableAdapter>(adapter: A): A {
+    const profile = this.calibrated();
+    if (!profile || !(adapter instanceof ManagedLlamaServerAdapter)) return adapter;
+    const p = adapter.launchProfile;
+    const working = this.tierSettings()?.workingContextTokens;
+    const total = p.contextTokens ?? 8192;
+    // `parallelSlots` gives each slot the full window; `parallel` shares one.
+    const slots = p.parallelSlots !== undefined ? 1 : (p.parallel ?? 1);
+    const capped =
+      working !== undefined && Math.floor(total / slots) > working ? working * slots : undefined;
+    const launch = profile.launch;
+    if (capped === undefined && launch === undefined) return adapter;
+    return new ManagedLlamaServerAdapter({
+      ...p,
+      ...(capped !== undefined ? { contextTokens: capped } : {}),
+      ...(launch
+        ? {
+            gpuLayers: launch.gpuLayers,
+            extraArgs: [...(p.extraArgs ?? []), "-b", String(launch.batchTokens)],
+          }
+        : {}),
+    }) as unknown as A;
   }
 
   public resolve(name: string, role: ModelRole): UnloadableAdapter {
@@ -134,16 +178,20 @@ export class ModelRoster {
       // OpenAI-compatible path won, the same weights are served over it
       // rather than through Ollama's own API.
       const openAiCompatible = this.measuredEngine() === "openai-compatible";
+      const working = this.tierSettings()?.workingContextTokens;
       const adapter = this.withRegistry(
-        new HttpInferenceAdapter(
-          openAiCompatible
+        new HttpInferenceAdapter({
+          ...profile,
+          ...(working !== undefined
+            ? { contextTokens: Math.min(profile.contextTokens ?? working, working) }
+            : {}),
+          ...(openAiCompatible
             ? {
-                ...profile,
-                apiFormat: "openai",
+                apiFormat: "openai" as const,
                 baseUrl: `${(profile.baseUrl ?? "http://127.0.0.1:11434").replace(/\/+$/, "")}/v1`,
               }
-            : profile,
-        ),
+            : {}),
+        }),
       );
       this.options.registry?.upsert(adapter.modelId, { engine: engineOf(adapter) });
       return adapter;
@@ -163,7 +211,7 @@ export class ModelRoster {
             return createQwen38Managed(this.options.qwen38 ?? {});
         }
       });
-    const adapter = this.withRegistry(build());
+    const adapter = this.withRegistry(this.tuned(build()));
     this.options.registry?.upsert(adapter.modelId, { engine: engineOf(adapter) });
     this.shared.set(key, adapter);
     return adapter;

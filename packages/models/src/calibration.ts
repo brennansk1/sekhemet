@@ -1,7 +1,9 @@
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { arch, cpus, homedir, platform, totalmem } from "node:os";
 import { dirname, join } from "node:path";
+import { performance } from "node:perf_hooks";
 import type { ModelRegistry } from "./registry.js";
 import type { LocalInferenceAdapter, TokenUsage } from "./types.js";
 
@@ -102,6 +104,67 @@ export const TIER_PROFILES: Record<MachineTier, TierProfile> = {
   },
 };
 
+/**
+ * Below this, roles are swapped rather than held together, whatever the tier
+ * table's co-loading column says. Two ~14 GB checkpoints plus the OS, the
+ * sandbox and the gates is how the reference machine ran out of memory.
+ */
+export const CO_RESIDENT_MIN_BYTES = 32 * GB;
+
+/** What the tier actually decides for a run (M14). */
+export interface TierSettings {
+  tier: MachineTier;
+  /** Tokens a card's prompt may fill; a ceiling, never a target. */
+  workingContextTokens: number;
+  /** Cards that may run at once on this machine. */
+  parallelCards: number;
+  /** May two roles' weights be resident at the same time? */
+  coLoadRoles: boolean;
+  reason: string;
+}
+
+/**
+ * The tier's numbers for this machine (M14).
+ *
+ * A tier is a range, and where a machine sits inside its range decides which
+ * end it gets: the bottom of a band is a machine that only just qualifies.
+ * Memory bandwidth gates the second card rather than the context, because
+ * two cards decode against one memory bus and a slow bus makes both slower
+ * than one would have been.
+ */
+export function tierSettingsFor(
+  usableBytes: number,
+  options: { memoryBandwidthGbPerSecond?: number } = {},
+): TierSettings {
+  const tier = tierForBudget(usableBytes);
+  const gb = usableBytes / GB;
+  const [lo, hi] = tier.budgetGb;
+  // XL is open-ended: treat half again over its floor as its top.
+  const top = Number.isFinite(hi) ? hi : lo * 1.5;
+  const roomy = gb >= lo + (top - lo) / 2;
+  const bandwidth = options.memoryBandwidthGbPerSecond;
+  const fastBus = bandwidth === undefined || bandwidth >= MIN_PARALLEL_BANDWIDTH_GBPS;
+  const coLoadRoles = tier.coLoaded.startsWith("yes") && usableBytes >= CO_RESIDENT_MIN_BYTES;
+  const [ctxLo, ctxHi] = tier.workingContext;
+  const [cardsLo, cardsHi] = tier.parallelCards;
+  return {
+    tier: tier.tier,
+    workingContextTokens: roomy ? ctxHi : ctxLo,
+    parallelCards: roomy && fastBus ? cardsHi : cardsLo,
+    coLoadRoles,
+    reason: `${gb.toFixed(1)} GB usable puts this machine ${roomy ? "high" : "low"} in tier ${tier.tier}${
+      fastBus ? "" : `, on a ${bandwidth?.toFixed(0)} GB/s bus`
+    }; roles ${coLoadRoles ? "co-load" : "swap"}`,
+  };
+}
+
+/**
+ * Below this a second card is not worth starting: both cards decode against
+ * one memory bus, and local decode is bandwidth-bound long before it is
+ * compute-bound.
+ */
+export const MIN_PARALLEL_BANDWIDTH_GBPS = 100;
+
 export class UnsupportedHardwareError extends Error {
   constructor(message: string) {
     super(message);
@@ -196,6 +259,186 @@ export function assertThroughputFloor(
   }
 }
 
+// ------------------------------------------------------- host measurement (M13)
+
+export interface UsableMemory {
+  usableBytes: number;
+  /** How the number was arrived at, so a surprising tier can be explained. */
+  source: string;
+}
+
+/**
+ * Memory the models may really use, measured rather than assumed.
+ *
+ * "Total minus 4 GB" is wrong in both directions. On Apple Silicon what the
+ * GPU may wire down is a fraction of physical memory — the driver's default,
+ * which `iogpu.wired_limit_mb` overrides — and that fraction is why a 24 GB
+ * M4 carries about 16 GB of weights and not 20. On Linux what is available
+ * is what the kernel says is available, not what is installed.
+ */
+export function measureUsableMemory(
+  options: {
+    platform?: string;
+    totalBytes?: number;
+    sysctl?: (name: string) => string | undefined;
+    readMeminfo?: () => string | undefined;
+  } = {},
+): UsableMemory {
+  const os = options.platform ?? platform();
+  const total = options.totalBytes ?? totalmem();
+  if (os === "darwin") {
+    const limit = Number(options.sysctl?.(SYSCTL_WIRED_LIMIT) ?? readSysctl(SYSCTL_WIRED_LIMIT));
+    if (Number.isFinite(limit) && limit > 0) {
+      return { usableBytes: limit * 1024 * 1024, source: `${SYSCTL_WIRED_LIMIT} (set)` };
+    }
+    // The driver's own default: two thirds up to 36 GB, three quarters above.
+    // Measured against Metal's recommendedMaxWorkingSetSize on this machine.
+    const share = total > 36 * GB ? 0.75 : 2 / 3;
+    return {
+      usableBytes: Math.floor(total * share),
+      source: `Metal default wired limit (${Math.round(share * 100)}% of ${(total / GB).toFixed(0)} GB)`,
+    };
+  }
+  if (os === "linux") {
+    const info = options.readMeminfo?.() ?? readFileSafe("/proc/meminfo");
+    const available = /MemAvailable:\s+(\d+)/.exec(info ?? "")?.[1];
+    if (available !== undefined) {
+      return { usableBytes: Number(available) * 1024, source: "/proc/meminfo MemAvailable" };
+    }
+  }
+  return { usableBytes: Math.max(0, total - 4 * GB), source: "total minus a 4 GB OS reserve" };
+}
+
+const SYSCTL_WIRED_LIMIT = "iogpu.wired_limit_mb";
+
+function readSysctl(name: string): string | undefined {
+  try {
+    return execFileSync("sysctl", ["-n", name], { encoding: "utf8", timeout: 5000 }).trim();
+  } catch {
+    return undefined;
+  }
+}
+
+function readFileSafe(path: string): string | undefined {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Sustained read bandwidth, GB/s, from a buffer far larger than the last
+ * level of cache. Local decode is bandwidth-bound — a 30B MoE reads its
+ * active experts once per token — so this, not core count, is what says
+ * whether a second card is worth starting.
+ */
+export function measureMemoryBandwidth(options: { bytes?: number; passes?: number } = {}): number {
+  const bytes = options.bytes ?? 64 * 1024 * 1024;
+  const passes = options.passes ?? 8;
+  const buffer = new Float64Array(Math.floor(bytes / 8));
+  for (let i = 0; i < buffer.length; i++) buffer[i] = i;
+  // One untimed pass so the measurement is of memory, not of page faults.
+  let sink = 0;
+  for (let i = 0; i < buffer.length; i++) sink += buffer[i] as number;
+  const start = performance.now();
+  for (let p = 0; p < passes; p++) {
+    for (let i = 0; i < buffer.length; i++) sink += buffer[i] as number;
+  }
+  const seconds = (performance.now() - start) / 1000;
+  // `sink` is read so the loop cannot be optimised away.
+  if (!Number.isFinite(sink) || seconds <= 0) return 0;
+  return Math.round(((buffer.byteLength * passes) / seconds / 1e9) * 10) / 10;
+}
+
+// ------------------------------------------ prefill batch / offload sweep (M13)
+
+export interface SweepCandidate {
+  /** `-b`, the prefill batch size. */
+  batchTokens: number;
+  /** `-ngl`, layers kept on the accelerator; fewer means experts offloaded. */
+  gpuLayers: number;
+}
+
+export interface SweepPoint extends SweepCandidate {
+  speed: MeasuredSpeed;
+  /** The probe could not run this setting, or the host started paging. */
+  hitCliff?: boolean;
+}
+
+export interface SweepChoice extends SweepCandidate {
+  reason: string;
+  points: SweepPoint[];
+}
+
+/** Prefill batch sizes, ascending in memory demand. */
+export const DEFAULT_BATCH_SIZES = [512, 1024, 2048, 4096] as const;
+
+/**
+ * A prefill slower than this share of the best measured is the cliff showing
+ * itself as speed rather than as a failure: the setting no longer fits and
+ * the host is paging to pretend it does.
+ */
+export const CLIFF_THROUGHPUT_RATIO = 0.8;
+
+/**
+ * The setting one step back from the memory cliff (design: "Sweep prefill
+ * batch size and expert-offload settings, keeping the setting one step back
+ * from the memory cliff"). Candidates are read in ascending order of demand:
+ * the choice is the last one before the first that fell off, so a machine
+ * that is fine today is still fine when a card's prompt is longer.
+ */
+export function oneStepBackFromCliff(points: readonly SweepPoint[]): SweepChoice {
+  const safe: SweepPoint[] = [];
+  let best = 0;
+  for (const p of points) {
+    const prefill = p.speed.prefillTokensPerSecond;
+    if (p.hitCliff || prefill === undefined) break;
+    // A drop after the peak is the cliff showing itself as speed: the setting
+    // no longer fits and the host is paging to pretend it does.
+    if (best > 0 && prefill < best * CLIFF_THROUGHPUT_RATIO) break;
+    best = Math.max(best, prefill);
+    safe.push(p);
+  }
+  const chosen = safe.at(-1) ?? points[0];
+  if (!chosen) {
+    return { batchTokens: DEFAULT_BATCH_SIZES[0], gpuLayers: 99, points: [], reason: "not swept" };
+  }
+  const cliff = points[safe.length];
+  return {
+    batchTokens: chosen.batchTokens,
+    gpuLayers: chosen.gpuLayers,
+    points: [...points],
+    reason: cliff
+      ? `-b ${chosen.batchTokens} -ngl ${chosen.gpuLayers}: one step back from -b ${cliff.batchTokens} -ngl ${cliff.gpuLayers}, which fell off`
+      : `-b ${chosen.batchTokens} -ngl ${chosen.gpuLayers}: the largest setting measured, no cliff reached`,
+  };
+}
+
+/**
+ * Measure each candidate in ascending order of demand and stop at the first
+ * one that falls off: nothing past the cliff is worth measuring, and on a
+ * tight host measuring it is what causes the damage.
+ */
+export async function sweepLaunchSettings(options: {
+  candidates?: readonly SweepCandidate[];
+  probe: (candidate: SweepCandidate) => Promise<{ speed: MeasuredSpeed; hitCliff?: boolean }>;
+}): Promise<SweepChoice> {
+  const candidates =
+    options.candidates ??
+    DEFAULT_BATCH_SIZES.map((batchTokens) => ({ batchTokens, gpuLayers: 99 }));
+  const points: SweepPoint[] = [];
+  for (const candidate of candidates) {
+    const result = await options.probe(candidate).catch(() => ({
+      speed: { prefillTokensPerSecond: undefined, decodeTokensPerSecond: undefined },
+      hitCliff: true,
+    }));
+    points.push({ ...candidate, ...result });
+    if (result.hitCliff) break;
+  }
+  return oneStepBackFromCliff(points);
+}
+
 // -------------------------------------------------------------- calibration (M13)
 
 export interface BucketMeasurement {
@@ -220,7 +463,15 @@ export interface MachineProfile {
   fingerprint: HardwareFingerprint;
   fingerprintHash: string;
   usableBytes: number;
+  /** How `usableBytes` was measured. */
+  usableMemorySource?: string;
+  /** Sustained read bandwidth, GB/s: what decides a second card. */
+  memoryBandwidthGbPerSecond?: number;
   tier: MachineTier;
+  /** What the tier decides for this machine, and what the run applies. */
+  settings?: TierSettings;
+  /** Prefill batch size and offload, one step back from the cliff. */
+  launch?: SweepChoice;
   models: Record<string, ModelCalibration>;
   speculative?: Record<string, SpeculativeVerdict>;
   engine?: EngineDecision;
@@ -311,10 +562,14 @@ export function defaultMachineProfilePath(): string {
 export interface CalibrateHardwareOptions {
   /** Candidate models, each measured in turn (the caller swaps them). */
   candidates: { label: string; adapter: LocalInferenceAdapter; release?: () => Promise<void> }[];
-  /** Usable memory; default total RAM minus a 4 GB OS reserve. */
+  /** Usable memory; default measured from the host (`measureUsableMemory`). */
   usableBytes?: number;
   buckets?: readonly number[];
   decodeTokens?: number;
+  /** Prefill batch and offload sweep; omitted, the sweep does not run. */
+  sweep?: Parameters<typeof sweepLaunchSettings>[0];
+  /** Injectable for tests: bandwidth is measured on the host by default. */
+  memoryBandwidthGbPerSecond?: number;
   registry?: ModelRegistry;
   /** Where to save the machine profile; `false` does not save. */
   path?: string | false;
@@ -331,8 +586,10 @@ export async function calibrateHardware(
   options: CalibrateHardwareOptions,
 ): Promise<MachineProfile> {
   const fingerprint = hardwareFingerprint();
-  const usableBytes = options.usableBytes ?? Math.max(0, fingerprint.totalBytes - 4 * GB);
-  const tier = tierForBudget(usableBytes).tier;
+  const measured = measureUsableMemory({ totalBytes: fingerprint.totalBytes });
+  const usableBytes = options.usableBytes ?? measured.usableBytes;
+  const bandwidth = options.memoryBandwidthGbPerSecond ?? measureMemoryBandwidth();
+  const settings = tierSettingsFor(usableBytes, { memoryBandwidthGbPerSecond: bandwidth });
   const models: Record<string, ModelCalibration> = {};
   for (const c of options.candidates) {
     const cal = await calibrateModel(c.adapter, {
@@ -355,13 +612,18 @@ export async function calibrateHardware(
     }
     await c.release?.();
   }
+  const launch = options.sweep ? await sweepLaunchSettings(options.sweep) : undefined;
   const profile: MachineProfile = {
     version: 1,
     date: (options.now?.() ?? new Date()).toISOString(),
     fingerprint,
     fingerprintHash: fingerprintHash(fingerprint),
     usableBytes,
-    tier,
+    ...(options.usableBytes === undefined ? { usableMemorySource: measured.source } : {}),
+    memoryBandwidthGbPerSecond: bandwidth,
+    tier: settings.tier,
+    settings,
+    ...(launch ? { launch } : {}),
     models,
   };
   if (options.path !== false) saveMachineProfile(profile, options.path);
