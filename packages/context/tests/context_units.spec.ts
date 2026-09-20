@@ -280,12 +280,14 @@ describe("C12: context-debt recommendations", () => {
 describe("C13: exemplar store", () => {
   it("keeps the best trajectories per class, persisted, and serves the top two", () => {
     const store = new ExemplarStore(join(tmp(), "exemplars"));
+    // One definition, in the kernel: `<kind>:<ext>`. Tier is excluded on
+    // purpose — it is implied by size, and including it would keep every
+    // class below its minimum trial count forever.
     const cls = cardClassOf({
-      tier: "task",
       title: "Fix ledger rounding bug",
       scopeFiles: ["src/a.ts", "src/b.ts"],
     });
-    expect(cls).toBe("task:ts:fix");
+    expect(cls).toBe("implement:ts");
     const ex = (cardId: string, steps: number) => ({
       cardId,
       cardClass: cls,

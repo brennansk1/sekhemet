@@ -32,6 +32,7 @@ import {
   type CardStore,
   PluginManager,
   ServiceContainer,
+  cardClassOf,
   pruneRetention,
 } from "@sekhemet/kernel";
 import {
@@ -39,7 +40,6 @@ import {
   CardRunner,
   type TurnResult,
   calibratedStepBudget,
-  cardClassOf,
 } from "@sekhemet/loop";
 import {
   type CacheSummary,

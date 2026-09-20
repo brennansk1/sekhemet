@@ -438,7 +438,7 @@ describe("E11: exemplar harvesting", () => {
       },
     ]);
     expect(got.map((e) => e.cardId)).toEqual(["c1"]);
-    expect(store.topFor("task:ts:fix").map((e) => e.cardId)).toEqual(["c1"]);
+    expect(store.topFor("implement:ts").map((e) => e.cardId)).toEqual(["c1"]);
   });
 });
 

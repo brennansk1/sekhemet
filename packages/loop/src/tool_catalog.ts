@@ -1,4 +1,5 @@
 import { TOOL_SEARCH_SPEC, type ToolInterfaceSpec } from "@sekhemet/context";
+import { type CardKind, cardKind } from "@sekhemet/kernel";
 
 /**
  * The tool catalog, declared for the prompt.
@@ -428,7 +429,7 @@ export function restrictedToolCatalog(
  * tool lists"; "a reviewer gets read, grep, and glob; an implementer adds
  * edit and bash; a researcher gets read and fetch").
  */
-export type CardClass = "explore" | "plan" | "implement" | "review" | "research";
+export type CardClass = CardKind;
 
 const READ_TOOLS = [
   "read_file",
@@ -449,9 +450,8 @@ const READ_TOOLS = [
   "finish_card",
 ];
 
-export const CLASS_TOOLS: Record<Exclude<CardClass, "implement">, readonly string[]> = {
-  explore: [...READ_TOOLS, "run_script"],
-  plan: [...READ_TOOLS, "run_script"],
+export const CLASS_TOOLS: Partial<Record<CardKind, readonly string[]>> = {
+  spike: [...READ_TOOLS, "run_script"],
   review: [
     "read_file",
     "grep_search",
@@ -474,24 +474,17 @@ export const CLASS_TOOLS: Record<Exclude<CardClass, "implement">, readonly strin
   ],
 };
 
-/** A card's class, from its labels first, then its title's SPIDR kind, then its tier. */
+/**
+ * A card's kind, which is what selects its tool set. One definition, in the
+ * kernel: a second classifier here is how the build ended up with three
+ * incompatible partitions of the same cards.
+ */
 export function cardClassFor(card: {
   title: string;
-  tier: string;
+  tier?: string;
   labels?: string[] | undefined;
 }): CardClass {
-  const labels = (card.labels ?? []).map((l) => l.toLowerCase());
-  for (const c of ["research", "explore", "plan", "review"] as const) {
-    if (labels.includes(c) || labels.includes(`class:${c}`)) return c;
-  }
-  if (
-    /\(SPIDR:\s*Spike\)/i.test(card.title) ||
-    /^\s*(spike|explore|investigate)\b/i.test(card.title)
-  ) {
-    return "explore";
-  }
-  if (/^\s*research\b/i.test(card.title)) return "research";
-  return "implement";
+  return cardKind(card);
 }
 
 /** The tools a card of this class is given. */
@@ -499,7 +492,9 @@ export function toolsForClass(
   cls: CardClass,
   catalog: ToolInterfaceSpec[] = TOOL_CATALOG,
 ): ToolInterfaceSpec[] {
-  if (cls === "implement") return catalog;
+  // A kind with no entry gets the full catalog: `implement` by design, and
+  // any kind added later, which fails open to the safe default rather than
+  // silently losing its tools.
   const allowed = CLASS_TOOLS[cls];
-  return catalog.filter((t) => allowed.includes(t.name));
+  return allowed ? catalog.filter((t) => allowed.includes(t.name)) : catalog;
 }

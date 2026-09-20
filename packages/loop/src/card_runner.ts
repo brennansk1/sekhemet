@@ -22,6 +22,7 @@ import {
   type CheckpointRecord,
   type GateStatus,
   canonicalPayloadHash,
+  cardClassOf,
   serializeContextPack,
 } from "@sekhemet/kernel";
 import { candidateSettings, harnessCommit } from "@sekhemet/models";
@@ -66,11 +67,6 @@ export type CardRunStore = Pick<
   | "getDossier"
 > &
   Partial<Pick<CardStore, "runs">>;
-
-/** The card's class for the competence model: its SPIDR kind, else its tier (K21). */
-export function cardClassOf(card: Pick<CardRecord, "title" | "tier">): string {
-  return /\(SPIDR:\s*([A-Za-z]+)/.exec(card.title)?.[1] ?? card.tier;
-}
 
 /** Difficulty 1..10 as the design's XS..XL scale (K25). */
 export function difficultyLabel(difficulty: number | undefined): string {

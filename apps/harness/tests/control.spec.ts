@@ -125,7 +125,7 @@ describe("apps/harness planning, rollup, explain and runner control (B2, B7, B12
     for (let i = 0; i < 3; i++) {
       await cardStore.runs.recordCompetence({
         repoId: "r",
-        cardClass: "Path",
+        cardClass: "implement:ts",
         filesTouchedCount: 1,
         difficulty: "S",
         modelId: "m",

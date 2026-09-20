@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { BoardServiceImpl } from "@sekhemet/board";
 import { PlaybookRegistry } from "@sekhemet/context";
 import { DeterministicGateRunner, generateGateHostCerts, startGateHost } from "@sekhemet/gates";
+import { cardClassOf } from "@sekhemet/kernel";
 import { BlobStore, CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import type { InferenceRequest, LocalInferenceAdapter, ToolCall } from "@sekhemet/models";
 import { ProcessSandbox } from "@sekhemet/sandbox";
@@ -349,7 +350,7 @@ describe("apps/harness executeCard wiring (wave 2, part 1)", () => {
     const [evidence] = cardStore.runs.listEvidence(card.id);
     expect(evidence?.id).toBe(result.evidence.id);
     expect(evidence?.trajectoryRef).toMatch(/transcripts/);
-    expect(cardStore.runs.competence("story").attempts).toBe(1);
+    expect(cardStore.runs.competence(cardClassOf(card)).attempts).toBe(1);
     // K8: all of it replays byte-identically from the ledger.
     expect((await cardStore.verifyProjections()).identical).toBe(true);
   });

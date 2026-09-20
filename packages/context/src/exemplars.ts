@@ -25,33 +25,11 @@ export interface Exemplar {
   date: string;
 }
 
-export interface CardClassInput {
-  tier: string;
-  title: string;
-  scopeFiles: string[];
-}
-
-const KIND_WORDS: [RegExp, string][] = [
-  [/\b(test|spec|coverage)\b/i, "test"],
-  [/\b(fix|bug|repair|regression)\b/i, "fix"],
-  [/\b(refactor|rename|extract|move)\b/i, "refactor"],
-  [/\b(doc|readme|comment)\b/i, "docs"],
-  [/\b(ui|view|component|page|css|style)\b/i, "ui"],
-];
-
 /**
- * A card's class: tier, dominant file kind and intent keyword, e.g.
- * `task:ts:fix`. Coarse on purpose, so classes fill up quickly.
+ * The card class comes from the kernel (`cardClassOf`), which is the only
+ * definition. This module keeps the re-export so its callers do not change.
  */
-export function cardClassOf(card: CardClassInput): string {
-  const exts = card.scopeFiles.map((f) => (/\.([a-z0-9]+)$/i.exec(f)?.[1] ?? "none").toLowerCase());
-  const counts = new Map<string, number>();
-  for (const e of exts) counts.set(e, (counts.get(e) ?? 0) + 1);
-  const ext =
-    [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] ?? "none";
-  const kind = KIND_WORDS.find(([re]) => re.test(card.title))?.[1] ?? "feature";
-  return `${card.tier}:${ext}:${kind}`;
-}
+export { type CardClassInput, cardClassOf } from "@sekhemet/kernel";
 
 /** A compact trajectory from the session's turn history. */
 export function trajectoryFromTurns(turns: readonly TurnHistoryItem[], maxLines = 12): string[] {

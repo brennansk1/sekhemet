@@ -52,15 +52,17 @@ describe("loop tools, wave 2b (L12, L18, L19, L20, L23, L24)", () => {
   }, 60_000);
 
   it("gives each card class its fixed tool list (L18, L19)", () => {
+    // Tool sets are selected by the card's kind, from the kernel's single
+    // definition. A SPIDR spike is `spike`, not a second word for it.
     expect(cardClassFor({ title: "Explore the parser (SPIDR: Spike)", tier: "story" })).toBe(
-      "explore",
+      "spike",
     );
     expect(cardClassFor({ title: "x", tier: "task", labels: ["research"] })).toBe("research");
     expect(cardClassFor({ title: "Add a flag", tier: "task" })).toBe("implement");
-    const explore = toolsForClass("explore").map((t) => t.name);
-    expect(explore).toContain("read_file");
-    expect(explore).not.toContain("write_file");
-    expect(explore).not.toContain("run_cmd");
+    const spike = toolsForClass("spike").map((t) => t.name);
+    expect(spike).toContain("read_file");
+    expect(spike).not.toContain("write_file");
+    expect(spike).not.toContain("run_cmd");
     const research = toolsForClass("research").map((t) => t.name);
     expect(research).toContain("browse");
     expect(research).not.toContain("edit");
