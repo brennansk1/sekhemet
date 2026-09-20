@@ -16,3 +16,4 @@ export * from "./mutation.js";
 export * from "./diagnostics.js";
 export * from "./fixture_repo.js";
 export * from "./suite.js";
+export * from "./phase0.js";
