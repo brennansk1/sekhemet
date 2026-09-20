@@ -3,6 +3,7 @@ export * from "./parser.js";
 export * from "./mock_adapter.js";
 export * from "./http_adapter.js";
 export * from "./memory.js";
+export * from "./models_dir.js";
 export * from "./router.js";
 export * from "./llama_server.js";
 export * from "./roster.js";

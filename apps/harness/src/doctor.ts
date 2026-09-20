@@ -2,7 +2,13 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { freemem, platform, totalmem } from "node:os";
 import { join } from "node:path";
-import { classifyMemoryPressure, readKernelPressureLevel } from "@sekhemet/models";
+import {
+  type WeightsReport,
+  classifyMemoryPressure,
+  managedModelWeights,
+  probeModelWeights,
+  readKernelPressureLevel,
+} from "@sekhemet/models";
 import { ProcessSandbox } from "@sekhemet/sandbox";
 import { checkRegisters } from "./registers.js";
 import { playbookDoctorCheck } from "./wave2.js";
@@ -175,6 +181,38 @@ export function memoryCheck(
 }
 
 /**
+ * Are the weights the resolved profiles name actually on this disk?
+ *
+ * Design "Getting the weights": a diagnostic that reports all-clear and is
+ * followed by a file-not-found on the first card is worse than no diagnostic.
+ * No models directory at all is a warning, because an Ollama-only install is
+ * a legitimate setup; a directory with some of the weights missing is not.
+ */
+export function weightsCheck(
+  report: WeightsReport = probeModelWeights(managedModelWeights()),
+): DiagnosticCheck {
+  if (!report.modelsDirExists) {
+    return check(
+      "Model weights",
+      "warn",
+      `no models directory at ${report.modelsDir} — point --models-dir (or SEKHEMET_MODELS_DIR) at your weights, or run a model over Ollama`,
+    );
+  }
+  if (report.missing.length === 0) {
+    return check(
+      "Model weights",
+      "pass",
+      `${report.present} model file(s) present in ${report.modelsDir}`,
+    );
+  }
+  const detail = report.probes
+    .filter((p) => !p.ok)
+    .map((p) => `${p.modelId} ${p.detail} (${p.path})`)
+    .join("; ");
+  return check("Model weights", report.present === 0 ? "fail" : "warn", detail);
+}
+
+/**
  * Run the real diagnostic suite.
  *
  * Every check probes something. A diagnostic that cannot fail is worse than no
@@ -188,6 +226,7 @@ export async function runDoctor(repoPath: string = process.cwd()): Promise<Docto
 
   const checks: DiagnosticCheck[] = [
     memoryCheck(pressure, free, total, gb),
+    weightsCheck(),
     await probeInference(["http://127.0.0.1:11434", "http://127.0.0.1:8099"]),
     probeWorktrees(repoPath),
     await probeConfinement(repoPath),

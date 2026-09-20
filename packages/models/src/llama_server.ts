@@ -4,8 +4,21 @@ import { tmpdir, totalmem } from "node:os";
 import { hostFingerprintHash } from "./calibration.js";
 import { type HttpAdapterOptions, HttpInferenceAdapter } from "./http_adapter.js";
 import { assertKvPolicy } from "./kv_policy.js";
+import { type ModelsDirOptions, resolveModelPath } from "./models_dir.js";
 import type { ModelRegistry } from "./registry.js";
 import type { AdapterHealth, ToolArm } from "./types.js";
+
+/**
+ * The GGUF each managed profile expects, as a name inside the user's models
+ * directory. Shipped source names files, never locations (design "Getting the
+ * weights"); `--models-dir` decides where they are, and a user with the
+ * weights elsewhere passes `modelPath` directly.
+ */
+export const MANAGED_MODEL_FILES = {
+  worker: "Cyber-Tiel-Coder-35B-A3B-GGUF-MTP/Cyber-Tiel-Coder-35B-A3B-MTP-UD-IQ3_XXS.gguf",
+  researcher: "Apodex-1.1-mini-GGUF/Apodex-1.1-mini-IQ3_M.gguf",
+  planner: "Dirk-Qwen3.8-27B-GGUF/Dirk-Qwen3.8-27B-GSQ-RCO-IQ3_S.gguf",
+} as const;
 
 /**
  * Prompt-cache settings sized to the host (M17).
@@ -501,10 +514,10 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
  */
 export function createCyberTielWorker(
   // Portable across hosts: the Mac keeps models on an external drive, the
-  // Ubuntu AI node on its NVMe. SEKHEMET_WORKER_GGUF and SEKHEMET_LLAMA_SERVER
-  // point at the model file and the llama-server build (Metal, Vulkan, ROCm).
-  modelPath = process.env.SEKHEMET_WORKER_GGUF ??
-    "/Volumes/My Passport/AI-Models/llm/Cyber-Tiel-Coder-35B-A3B-GGUF-MTP/Cyber-Tiel-Coder-35B-A3B-MTP-UD-IQ3_XXS.gguf",
+  // Ubuntu AI node on its NVMe. Both point `--models-dir` at their own copy;
+  // the file name below is all the harness ships. SEKHEMET_LLAMA_SERVER names
+  // the llama-server build (Metal, Vulkan, ROCm).
+  modelPath = resolveModelPath(MANAGED_MODEL_FILES.worker),
   binary = process.env.SEKHEMET_LLAMA_SERVER,
 ): ManagedLlamaServerAdapter {
   return new ManagedLlamaServerAdapter({
@@ -548,15 +561,14 @@ export function apodexContextTokens(
 /**
  * Apodex-1.1-mini as the Researcher (the user's choice; arXiv 2608.23283,
  * Apache-2.0, a Qwen3.5-35B-A3B research fine-tune). IQ3_M (imatrix, 16 GB)
- * is the largest quant that runs alone on a 24 GB host; on a 128 GB host use
- * Q8_0 via SEKHEMET_RESEARCHER_GGUF. Its own port, so it never collides with
+ * is the largest quant that runs alone on a 24 GB host; a 128 GB host passes
+ * its own Q8_0 file as `modelPath`. Its own port, so it never collides with
  * the worker's server when both are resident. Sampling is the vendor's
  * (model card §3.3: temperature 1.0, top_p 0.95); tools go natively, and
  * several may be called per message. Pair with `APODEX_SYSTEM_PROMPT`.
  */
 export function createApodexResearcher(
-  modelPath = process.env.SEKHEMET_RESEARCHER_GGUF ??
-    "/Volumes/My Passport/AI-Models/llm/Apodex-1.1-mini-GGUF/Apodex-1.1-mini-IQ3_M.gguf",
+  modelPath = resolveModelPath(MANAGED_MODEL_FILES.researcher),
   binary = process.env.SEKHEMET_LLAMA_SERVER,
   totalBytes: number = totalmem(),
 ): ManagedLlamaServerAdapter {
@@ -596,10 +608,28 @@ export const QWEN38_PLANNING_SAMPLING = {
   presencePenalty: 1.5,
 } as const;
 
-/** The GGUF CHRONICLE §2 names, overridable per host. */
-export const DEFAULT_QWEN38_GGUF =
-  process.env.SEKHEMET_QWEN38_GGUF ??
-  "/Volumes/My Passport/AI-Models/llm/Dirk-Qwen3.8-27B-GGUF/Dirk-Qwen3.8-27B-GSQ-RCO-IQ3_S.gguf";
+/** The GGUF CHRONICLE §2 names, inside this host's models directory. */
+export function defaultQwen38Gguf(options: ModelsDirOptions = {}): string {
+  return resolveModelPath(MANAGED_MODEL_FILES.planner, options);
+}
+
+/**
+ * The weights the managed profiles resolve to on this host, for the weights
+ * check. Building an adapter starts no server, so this is safe in `doctor`.
+ */
+export function managedModelWeights(
+  options: ModelsDirOptions = {},
+): { modelId: string; path: string }[] {
+  const adapters = [
+    createCyberTielWorker(resolveModelPath(MANAGED_MODEL_FILES.worker, options)),
+    createApodexResearcher(resolveModelPath(MANAGED_MODEL_FILES.researcher, options)),
+    createQwen38Managed({ modelPath: resolveModelPath(MANAGED_MODEL_FILES.planner, options) }),
+  ];
+  return adapters.map((a) => ({
+    modelId: a.launchProfile.modelId,
+    path: a.launchProfile.modelPath,
+  }));
+}
 
 export interface ChronicleProfileOptions {
   modelPath?: string;
@@ -629,7 +659,7 @@ export function chronicleLlamaServerProfile(
   const binary = options.binary ?? process.env.SEKHEMET_LLAMA_SERVER;
   return {
     modelId: options.modelId ?? "qwen3.8-27b",
-    modelPath: options.modelPath ?? DEFAULT_QWEN38_GGUF,
+    modelPath: options.modelPath ?? defaultQwen38Gguf(),
     ...(binary ? { binary } : {}),
     port: 8099,
     threads: 2,
