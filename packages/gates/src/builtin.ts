@@ -1,6 +1,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { type TomlTable, parseToml } from "@sekhemet/kernel";
 import ts from "typescript";
 import { scanDiffForSecrets } from "./secrets.js";
 import type { GateFailure, GateLayer, GateProjectConfig, GateRung, RungOutcome } from "./types.js";
@@ -28,14 +29,27 @@ export const DEFAULT_BUILTIN_GATES: readonly BuiltinGateId[] = [
   "hygiene",
 ];
 
+/** The package registries the gate knows how to ask (G15/S10). */
+export type Ecosystem = "npm" | "pypi" | "crates" | "go";
+
 /** A registry answer for one package (G15/S10). */
 export interface RegistryInfo {
   exists: boolean;
   /** ISO time the package was first published. */
   created?: string;
+  /**
+   * Downloads over the registry's recent window (a week where the registry
+   * reports one, all time for crates.io). Part of the download profile the
+   * design asks for: a real package that nobody downloads is worth a look,
+   * not a refusal.
+   */
+  downloads?: number;
 }
 
-export type RegistryLookup = (name: string) => Promise<RegistryInfo | undefined>;
+export type RegistryLookup = (
+  name: string,
+  ecosystem?: Ecosystem,
+) => Promise<RegistryInfo | undefined>;
 
 export interface BuiltinGateContext {
   /** The card's worktree. */
@@ -351,59 +365,327 @@ function pyDeps(text: string | undefined): string[] {
     .filter(Boolean);
 }
 
+/** A requirement string ("requests>=2.31") reduced to its distribution name. */
+function pyName(requirement: string): string {
+  return (requirement.split(/[<>=!~\[; ]/)[0] as string).trim();
+}
+
+function toml(text: string | undefined): TomlTable {
+  if (!text) return {};
+  try {
+    return parseToml(text);
+  } catch {
+    // A manifest the card is midway through editing is not the gate's business.
+    return {};
+  }
+}
+
+function table(source: unknown, key: string): TomlTable {
+  const value = (source as TomlTable | undefined)?.[key];
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as TomlTable) : {};
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
+}
+
+/** PEP 621 `[project]` dependencies plus the Poetry and PDM tables. */
+function pyprojectDeps(text: string | undefined): string[] {
+  const root = toml(text);
+  const project = table(root, "project");
+  const names = stringList(project.dependencies).map(pyName);
+  for (const group of Object.values(table(project, "optional-dependencies"))) {
+    names.push(...stringList(group).map(pyName));
+  }
+  const tool = table(root, "tool");
+  for (const t of ["poetry", "pdm"]) {
+    const deps = table(table(tool, t), "dependencies");
+    names.push(...Object.keys(deps).filter((n) => n !== "python"));
+  }
+  return names.filter(Boolean);
+}
+
+function cargoDeps(text: string | undefined): string[] {
+  const root = toml(text);
+  const names: string[] = [];
+  for (const section of ["dependencies", "dev-dependencies", "build-dependencies"]) {
+    names.push(...Object.keys(table(root, section)));
+  }
+  // A workspace root declares its shared versions under [workspace.dependencies].
+  names.push(...Object.keys(table(table(root, "workspace"), "dependencies")));
+  return names;
+}
+
+/** `require` lines, single or in a block; the version and any comment are dropped. */
+function goDeps(text: string | undefined): string[] {
+  if (!text) return [];
+  const names: string[] = [];
+  let inBlock = false;
+  for (const raw of text.split("\n")) {
+    const line = raw.replace(/\/\/.*/, "").trim();
+    if (!line) continue;
+    if (inBlock) {
+      if (line === ")") inBlock = false;
+      else names.push(line.split(/\s+/)[0] as string);
+      continue;
+    }
+    if (line === "require (") inBlock = true;
+    else if (line.startsWith("require ")) names.push(line.split(/\s+/)[1] as string);
+  }
+  return names.filter(Boolean);
+}
+
+/**
+ * One cache key per ecosystem, because the same name is a different package
+ * in each: `requests` is a top-20 PyPI distribution and an abandoned npm one.
+ * npm keeps the bare name so caches written before the other registries
+ * existed still answer.
+ */
+function cacheKey(name: string, ecosystem: Ecosystem): string {
+  return ecosystem === "npm" ? name : `${ecosystem}:${name}`;
+}
+
 /** Registry answers cached in `.sekhemet/registry-cache.json`, offline. */
 export function cachedRegistry(root: string): RegistryLookup {
-  return async (name) => {
+  return async (name, ecosystem = "npm") => {
     try {
       const cache = JSON.parse(
         readFileSync(join(root, ".sekhemet", "registry-cache.json"), "utf8"),
       ) as Record<string, RegistryInfo>;
-      return cache[name];
+      return cache[cacheKey(name, ecosystem)];
     } catch {
       return undefined;
     }
   };
 }
 
-/** The npm registry through `npm view`, caching every answer (network allowed only). */
-export function npmRegistry(root: string, cacheRoot = root): RegistryLookup {
+function writeCache(cacheRoot: string, key: string, info: RegistryInfo): void {
+  const path = join(cacheRoot, ".sekhemet", "registry-cache.json");
+  let cache: Record<string, RegistryInfo> = {};
+  try {
+    cache = JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    cache = {};
+  }
+  cache[key] = info;
+  try {
+    writeFileSync(path, `${JSON.stringify(cache, null, 2)}\n`);
+  } catch {
+    // A cache write failure costs a lookup next time, nothing else.
+  }
+}
+
+/**
+ * Where each ecosystem's metadata is read from. The defaults are the public
+ * registries; an air-gapped or mirrored install points these at its own
+ * (verdaccio, devpi, a crates mirror), which is the only way a package that
+ * is not mirrored can be refused. npm has no entry: `npm view` already
+ * resolves through the user's `.npmrc`, mirror included.
+ */
+export interface RegistryEndpoints {
+  /** PyPI JSON API base, e.g. a devpi index. */
+  pypi?: string;
+  /** crates.io API base. */
+  crates?: string;
+  /** Go module proxy. */
+  go?: string;
+}
+
+export const DEFAULT_REGISTRY_ENDPOINTS: Required<RegistryEndpoints> = {
+  pypi: "https://pypi.org/pypi",
+  crates: "https://crates.io/api/v1/crates",
+  go: "https://proxy.golang.org",
+};
+
+export interface EcosystemRegistryOptions {
+  cacheRoot?: string;
+  endpoints?: RegistryEndpoints;
+  /** Injectable for tests; nothing here ever runs offline. */
+  fetchImpl?: typeof fetch;
+  timeoutMs?: number;
+}
+
+async function getJson(
+  url: string,
+  options: EcosystemRegistryOptions,
+): Promise<{ status: number; body: unknown }> {
+  const f = options.fetchImpl ?? fetch;
+  const res = await f(url, {
+    headers: { accept: "application/json", "user-agent": "sekhemet-supply-chain-gate" },
+    signal: AbortSignal.timeout(options.timeoutMs ?? 15_000),
+  });
+  if (!res.ok) return { status: res.status, body: undefined };
+  return { status: res.status, body: await res.json() };
+}
+
+/** npm through `npm view`, plus the download point the registry publishes. */
+async function lookupNpm(
+  root: string,
+  name: string,
+  options: EcosystemRegistryOptions,
+): Promise<RegistryInfo | undefined> {
+  const r = spawnSync("npm", ["view", name, "time.created", "--json"], {
+    cwd: root,
+    encoding: "utf8",
+    timeout: 30_000,
+  });
+  if (r.status !== 0) {
+    return /E404|404 Not Found/.test(`${r.stderr}${r.stdout}`) ? { exists: false } : undefined;
+  }
+  const created = JSON.parse(r.stdout || '""') as string;
+  const downloads = await getJson(
+    `https://api.npmjs.org/downloads/point/last-week/${encodeURIComponent(name)}`,
+    options,
+  )
+    .then((res) => (res.body as { downloads?: number } | undefined)?.downloads)
+    .catch(() => undefined);
+  return {
+    exists: true,
+    ...(created ? { created } : {}),
+    ...(typeof downloads === "number" ? { downloads } : {}),
+  };
+}
+
+/** PyPI (or a mirror): first upload time, and the recent download count where one is served. */
+async function lookupPypi(
+  name: string,
+  options: EcosystemRegistryOptions,
+): Promise<RegistryInfo | undefined> {
+  const base = options.endpoints?.pypi ?? DEFAULT_REGISTRY_ENDPOINTS.pypi;
+  const res = await getJson(`${base}/${encodeURIComponent(name)}/json`, options);
+  if (res.status === 404) return { exists: false };
+  const body = res.body as
+    | { releases?: Record<string, { upload_time_iso_8601?: string }[]>; info?: unknown }
+    | undefined;
+  if (!body) return undefined;
+  // The first upload of any release is the distribution's age; the JSON API
+  // orders releases by version, not by date, so take the earliest seen.
+  let created: string | undefined;
+  for (const files of Object.values(body.releases ?? {})) {
+    for (const file of files) {
+      const t = file.upload_time_iso_8601;
+      if (t && (created === undefined || t < created)) created = t;
+    }
+  }
+  const downloads = (body.info as { downloads?: { last_week?: number } } | undefined)?.downloads
+    ?.last_week;
+  return {
+    exists: true,
+    ...(created ? { created } : {}),
+    // PyPI reports -1 where it keeps no count; that is "unknown", not zero.
+    ...(typeof downloads === "number" && downloads >= 0 ? { downloads } : {}),
+  };
+}
+
+/** crates.io (or a mirror): `created_at` and the crate's download total. */
+async function lookupCrates(
+  name: string,
+  options: EcosystemRegistryOptions,
+): Promise<RegistryInfo | undefined> {
+  const base = options.endpoints?.crates ?? DEFAULT_REGISTRY_ENDPOINTS.crates;
+  const res = await getJson(`${base}/${encodeURIComponent(name)}`, options);
+  if (res.status === 404) return { exists: false };
+  const crate = (res.body as { crate?: { created_at?: string; downloads?: number } } | undefined)
+    ?.crate;
+  if (!crate) return undefined;
+  return {
+    exists: true,
+    ...(crate.created_at ? { created: crate.created_at } : {}),
+    ...(typeof crate.downloads === "number" ? { downloads: crate.downloads } : {}),
+  };
+}
+
+/**
+ * The Go module proxy: `@v/list` answers 404 for a module that does not
+ * exist. The proxy publishes no counts and no first-publish time, so a Go
+ * module is checked for existence only.
+ */
+async function lookupGo(
+  name: string,
+  options: EcosystemRegistryOptions,
+): Promise<RegistryInfo | undefined> {
+  const base = options.endpoints?.go ?? DEFAULT_REGISTRY_ENDPOINTS.go;
+  const f = options.fetchImpl ?? fetch;
+  // Module paths are case-encoded on the proxy (!upper for each capital).
+  const path = name.replace(/[A-Z]/g, (c) => `!${c.toLowerCase()}`);
+  const res = await f(`${base}/${path}/@v/list`, {
+    signal: AbortSignal.timeout(options.timeoutMs ?? 15_000),
+  });
+  if (res.status === 404 || res.status === 410) return { exists: false };
+  return res.ok ? { exists: true } : undefined;
+}
+
+/**
+ * The registry lookup the supply-chain gate uses online (S10, G15): npm,
+ * PyPI, crates.io and the Go module proxy, every answer cached so the same
+ * question is not asked twice and so an air-gapped run can still answer it.
+ * A registry that cannot be reached returns undefined, which the gate reports
+ * as unverified rather than treating as absence.
+ */
+export function ecosystemRegistry(
+  root: string,
+  cacheRootOrOptions: string | EcosystemRegistryOptions = root,
+): RegistryLookup {
+  const options: EcosystemRegistryOptions =
+    typeof cacheRootOrOptions === "string" ? { cacheRoot: cacheRootOrOptions } : cacheRootOrOptions;
+  const cacheRoot = options.cacheRoot ?? root;
   const cached = cachedRegistry(cacheRoot);
-  return async (name) => {
-    const hit = await cached(name);
+  return async (name, ecosystem = "npm") => {
+    const hit = await cached(name, ecosystem);
     if (hit) return hit;
-    const r = spawnSync("npm", ["view", name, "time.created", "--json"], {
-      cwd: root,
-      encoding: "utf8",
-      timeout: 30_000,
-    });
-    let info: RegistryInfo | undefined;
-    if (r.status === 0) {
-      const created = JSON.parse(r.stdout || '""') as string;
-      info = { exists: true, ...(created ? { created } : {}) };
-    } else if (/E404|404 Not Found/.test(`${r.stderr}${r.stdout}`)) {
-      info = { exists: false };
-    }
-    if (info) {
-      const path = join(cacheRoot, ".sekhemet", "registry-cache.json");
-      let cache: Record<string, RegistryInfo> = {};
-      try {
-        cache = JSON.parse(readFileSync(path, "utf8"));
-      } catch {
-        cache = {};
-      }
-      cache[name] = info;
-      try {
-        writeFileSync(path, `${JSON.stringify(cache, null, 2)}\n`);
-      } catch {
-        // A cache write failure costs a lookup next time, nothing else.
-      }
-    }
+    const info = await (ecosystem === "npm"
+      ? lookupNpm(root, name, options)
+      : ecosystem === "pypi"
+        ? lookupPypi(name, options)
+        : ecosystem === "crates"
+          ? lookupCrates(name, options)
+          : lookupGo(name, options)
+    ).catch(() => undefined);
+    if (info) writeCache(cacheRoot, cacheKey(name, ecosystem), info);
     return info;
   };
 }
 
+/**
+ * The name the harness wires today. It is no longer npm-only: the lookup
+ * answers for whichever ecosystem the manifest belongs to.
+ */
+export const npmRegistry = ecosystemRegistry;
+
 /** Packages younger than this are not added without a person (days). */
 export const MIN_PACKAGE_AGE_DAYS = 30;
+
+/**
+ * Download floor, one signal among the others. A package under it is
+ * reported with its number and never blocked: a legitimate new library, an
+ * internal package and a niche crate all sit below any floor worth setting,
+ * so a block here would refuse correct work. crates.io reports lifetime
+ * downloads rather than a week's, hence the separate floor.
+ */
+export const MIN_WEEKLY_DOWNLOADS: Record<Ecosystem, number> = {
+  npm: 100,
+  pypi: 100,
+  crates: 1000,
+  go: 0,
+};
+
+/**
+ * The manifests a card can add a dependency to, and the registry each one
+ * answers to. A Python addition checked against npm is not a check: the name
+ * exists in the wrong registry, or does not exist in either, and both
+ * answers are wrong.
+ */
+export const DEPENDENCY_MANIFESTS: readonly {
+  file: string;
+  ecosystem: Ecosystem;
+  parse: (text: string | undefined) => string[];
+}[] = [
+  { file: "package.json", ecosystem: "npm", parse: npmDeps },
+  { file: "requirements.txt", ecosystem: "pypi", parse: pyDeps },
+  { file: "pyproject.toml", ecosystem: "pypi", parse: pyprojectDeps },
+  { file: "Cargo.toml", ecosystem: "crates", parse: cargoDeps },
+  { file: "go.mod", ecosystem: "go", parse: goDeps },
+];
 
 async function dependencyGate(
   ctx: BuiltinGateContext,
@@ -412,12 +694,8 @@ async function dependencyGate(
   const advisories: string[] = [];
   const registry = ctx.registry ?? cachedRegistry(ctx.root);
   const now = ctx.now?.() ?? Date.now();
-  const manifests: { file: string; parse: (t: string | undefined) => string[] }[] = [
-    { file: "package.json", parse: npmDeps },
-    { file: "requirements.txt", parse: pyDeps },
-  ];
   const changed = new Set(diffFiles(ctx.diff));
-  for (const m of manifests) {
+  for (const m of DEPENDENCY_MANIFESTS) {
     if (!changed.has(m.file)) continue;
     const before = new Set(m.parse(gitShow(ctx.root, ctx.base, m.file)));
     const after = m.parse(
@@ -425,7 +703,10 @@ async function dependencyGate(
     );
     const added = after.filter((d) => !before.has(d));
     for (const dep of added) {
-      const squat = typosquatOf(dep, [...before, ...POPULAR_PACKAGES]);
+      // A Go module path shares no namespace with the popular-package list,
+      // so it is only compared against the project's own dependencies.
+      const known = m.ecosystem === "go" ? [...before] : [...before, ...POPULAR_PACKAGES];
+      const squat = typosquatOf(dep, known);
       if (squat) {
         failures.push(
           failure(
@@ -443,10 +724,10 @@ async function dependencyGate(
         );
         continue;
       }
-      const info = await registry(dep).catch(() => undefined);
+      const info = await registry(dep, m.ecosystem).catch(() => undefined);
       if (!info) {
         advisories.push(
-          `dependency ${dep}: not in the registry cache; existence and age unverified offline`,
+          `dependency ${dep} (${m.ecosystem}): not in the registry cache; existence and age unverified offline`,
         );
         continue;
       }
@@ -482,7 +763,14 @@ async function dependencyGate(
               },
             ),
           );
+          continue;
         }
+      }
+      const floor = MIN_WEEKLY_DOWNLOADS[m.ecosystem];
+      if (info.downloads !== undefined && floor > 0 && info.downloads < floor) {
+        advisories.push(
+          `dependency ${dep} (${m.ecosystem}): ${info.downloads} recent download(s), under the ${floor} floor — check it is the package you meant`,
+        );
       }
     }
   }

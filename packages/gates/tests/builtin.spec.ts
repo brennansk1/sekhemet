@@ -90,6 +90,43 @@ describe("built-in gate layers (G3, G13, G14, G15, G16, G22, S10, S11)", () => {
     expect(excerpts.some((e) => e.includes("zod"))).toBe(false);
   });
 
+  it("asks each manifest's own registry, and warns rather than blocks on a low download count (S10, G15)", async () => {
+    writeFileSync(
+      join(root, "pyproject.toml"),
+      '[project]\nname = "p"\ndependencies = ["requests>=2.31", "reqeusts"]\n',
+    );
+    writeFileSync(join(root, "Cargo.toml"), '[dependencies]\nserde = "1"\nlonely-crate = "0.1"\n');
+    writeFileSync(join(root, "go.mod"), "module x\n\nrequire (\n\tgithub.com/a/ghost v1.2.3\n)\n");
+    const asked: string[] = [];
+    const registry = async (name: string, ecosystem = "npm") => {
+      asked.push(`${ecosystem}:${name}`);
+      if (name === "github.com/a/ghost") return { exists: false };
+      if (name === "lonely-crate")
+        return { exists: true, created: "2019-01-01T00:00:00Z", downloads: 12 };
+      return { exists: true, created: "2019-01-01T00:00:00Z", downloads: 90_000 };
+    };
+    const r = await runBuiltinGates({
+      root,
+      base: "main",
+      diff: diff(),
+      project: { ...project, maxFiles: 10 },
+      which: none,
+      registry,
+      now: () => Date.parse("2026-09-19T00:00:00Z"),
+    });
+    // Each manifest is looked up against the registry that owns its names.
+    expect(asked).toContain("pypi:requests");
+    expect(asked).toContain("crates:serde");
+    expect(asked).toContain("go:github.com/a/ghost");
+    expect(asked).not.toContain("npm:requests");
+    const excerpts = r.failures.filter((f) => f.gate === "dependencies").map((f) => f.errorExcerpt);
+    expect(excerpts.some((e) => e.includes('pyproject.toml adds "reqeusts"'))).toBe(true);
+    expect(excerpts.some((e) => e.includes('go.mod adds "github.com/a/ghost"'))).toBe(true);
+    // The download floor is a warning carrying the number, never a block.
+    expect(excerpts.some((e) => e.includes("lonely-crate"))).toBe(false);
+    expect(r.advisories.some((a) => /lonely-crate.*12 recent download/.test(a))).toBe(true);
+  });
+
   it("finds debug output, a missing changelog entry and hand-made commits (G22)", async () => {
     // The project keeps a changelog (on main); the card's first commit is attributed.
     git("checkout", "-q", "main");
