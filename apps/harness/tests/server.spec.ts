@@ -212,7 +212,7 @@ describe("@sekhemet/harness Dashboard Server", () => {
 
   it("publishes the vocabulary and a favicon", async () => {
     const vocab = await (await fetch(`http://127.0.0.1:${serverInstance.port}/vocab.json`)).json();
-    expect(vocab.columns.in_progress.label).toBe("Working");
+    expect(vocab.columns.in_progress.label).toBe("In Progress");
     expect(vocab.stopReasons.oscillation_detected.short).toBe("Looping");
     const icon = await fetch(`http://127.0.0.1:${serverInstance.port}/favicon.svg`);
     expect(icon.headers.get("content-type")).toContain("image/svg+xml");
@@ -435,7 +435,7 @@ describe("@sekhemet/harness Dashboard Server", () => {
     expect(hasher?.display.title).toBe("Implement canonical JSON and SHA-256 hash chaining");
     expect(hasher?.display.kinds).toEqual(["rules"]);
     expect(hasher?.display.statusLine).toBe("Types failed · 3 errors");
-    expect(hasher?.display.stateLabel).toBe("Checking");
+    expect(hasher?.display.stateLabel).toBe("Verify");
     expect(hasher?.display.needsYou).toBe(true);
     expect(typeof hasher?.display.enteredColumnAt).toBe("string");
     // Gates in execution order from the evidence; no synthetic Parse.
