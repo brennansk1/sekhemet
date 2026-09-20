@@ -40,10 +40,12 @@ import {
   intakeGoal,
   loadCalibrationLog,
   loadPrioritizationConfig,
+  loggedAssumptions,
   orderReadyCards,
   persistPlan,
   processProfileFromConfig,
   rankGoals,
+  recordAssumptionOutcome,
   runGoalLoop,
   triggeredResponses,
 } from "@sekhemet/planner";
@@ -261,6 +263,7 @@ export type Wave2Command =
   | "attach"
   | "goal"
   | "decide"
+  | "assume"
   | "m0"
   | "qualify"
   | "improve"
@@ -278,6 +281,7 @@ export const WAVE2_COMMANDS: readonly Wave2Command[] = [
   "attach",
   "goal",
   "decide",
+  "assume",
   "m0",
   "qualify",
   "improve",
@@ -484,6 +488,50 @@ export async function runWave2Command(
       const d = await store.answer(id, n - 1, "human");
       print(
         `Answered ${d.id}: ${d.request.options[n - 1]?.label}. The card resumes on the next queue pass.`,
+      );
+      return 0;
+    }
+    case "assume": {
+      // `sekhemet assume` lists what the planner decided on the human's behalf;
+      // `sekhemet assume keep|override <id> [--answer "..."]` records the verdict (P15).
+      //
+      // Until something records these, the trust calibration is a table of
+      // zeroes and the assume-to-ask shift can never fire, so the planner keeps
+      // assuming in a category the human has silently corrected every time.
+      const [sub, id] = args;
+      if (!sub || sub === "list") {
+        const logged = await loggedAssumptions(ledger, flag(args, "--card"));
+        if (logged.length === 0) return done("No assumptions logged.", 0);
+        const decided = new Set(
+          (await k.log.getEventsByTypes(["assumption/outcome"])).map(
+            (e) => (e.payload as { assumptionId: string }).assumptionId,
+          ),
+        );
+        for (const a of logged) {
+          print(
+            `${a.id} (${a.cardId}) [${a.category}]${decided.has(a.id) ? " decided" : ""} ${a.statement}`,
+          );
+          print(`   basis: ${a.basis}`);
+        }
+        return 0;
+      }
+      if ((sub !== "keep" && sub !== "override") || !id) {
+        return done("Usage: sekhemet assume [list] | keep <id> | override <id> [--answer ...]", 1);
+      }
+      const assumption = (await loggedAssumptions(ledger)).find((a) => a.id === id);
+      if (!assumption) return done(`No logged assumption ${id}.`, 1);
+      const answer = flag(args, "--answer");
+      const calibration = await recordAssumptionOutcome(ledger, {
+        assumptionId: assumption.id,
+        cardId: assumption.cardId,
+        category: assumption.category,
+        overridden: sub === "override",
+        recordedAt: new Date().toISOString(),
+        ...(answer ? { humanAnswer: answer } : {}),
+      });
+      const rate = calibration.calibrationFor(assumption.category);
+      print(
+        `Recorded ${assumption.id} as ${sub === "override" ? "overridden" : "kept"}. ${assumption.category}: ${rate.overridden}/${rate.observed} overridden, the planner will ${rate.disposition}.`,
       );
       return 0;
     }

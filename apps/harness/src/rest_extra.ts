@@ -5,6 +5,12 @@ import { basename, join } from "node:path";
 import type { BoardService } from "@sekhemet/board";
 import { DeterministicGateRunner, loadGatesConfig } from "@sekhemet/gates";
 import type { CardStore, CardTier, EventLog } from "@sekhemet/kernel";
+import {
+  type AssumptionOverrideRecord,
+  loadCalibrationLog,
+  loggedAssumptions,
+  recordAssumptionOutcome,
+} from "@sekhemet/planner";
 import { ProcessSandbox } from "@sekhemet/sandbox";
 import { applyProposal } from "./pm/apply.js";
 import { runnerLease } from "./pm/service.js";
@@ -21,6 +27,8 @@ import { PmStore } from "./pm/store.js";
  *   POST /api/cards/:id/run             start the card in a background process
  *   POST /api/cards/:id/gate            run gates in the card's worktree
  *   GET  /api/cards/:id/evidence        the latest evidence bundle
+ *   GET  /api/assumptions               assumptions the planner logged, and the calibration
+ *   POST /api/assumptions/:id           record one as kept or overridden (P15)
  *   POST /api/machine/calibrate         re-measure the machine in the background
  *
  * Runs and calibration start a separate `sekhemet` process: the dashboard
@@ -219,6 +227,47 @@ export async function handleRestExtras(
       })),
     });
     return true;
+  }
+
+  // P15: the planner's assume-or-ask threshold shifts on measured override
+  // rates, and a rate needs outcomes. Nothing else in the harness writes one,
+  // so without these two routes the calibration is permanently empty and the
+  // 15% shift can never fire.
+  if (url.startsWith("/api/assumptions") && store) {
+    const ledger = { store, log: ctx.log };
+    if (url === "/api/assumptions" && req.method === "GET") {
+      const calibration = (await loadCalibrationLog(ledger)).snapshot();
+      json(res, 200, { assumptions: await loggedAssumptions(ledger), calibration });
+      return true;
+    }
+    const one = /^\/api\/assumptions\/(asm_[A-Za-z0-9_-]+)$/.exec(url);
+    if (one && write) {
+      if (!guard()) return true;
+      const b = await ctx.readJsonBody(req);
+      const outcome = b.outcome;
+      if (outcome !== "kept" && outcome !== "overridden") {
+        json(res, 400, { error: "outcome must be 'kept' or 'overridden'" });
+        return true;
+      }
+      const assumption = (await loggedAssumptions(ledger)).find((a) => a.id === one[1]);
+      if (!assumption) {
+        json(res, 404, { error: `No logged assumption ${one[1]}` });
+        return true;
+      }
+      const record: AssumptionOverrideRecord = {
+        assumptionId: assumption.id,
+        cardId: assumption.cardId,
+        category: assumption.category,
+        overridden: outcome === "overridden",
+        recordedAt: new Date().toISOString(),
+        ...(typeof b.answer === "string" && b.answer.trim()
+          ? { humanAnswer: b.answer.trim() }
+          : {}),
+      };
+      const calibration = await recordAssumptionOutcome(ledger, record);
+      json(res, 200, { recorded: record, calibration: calibration.snapshot() });
+      return true;
+    }
   }
 
   if (url === "/api/machine/calibrate" && req.method === "POST") {
