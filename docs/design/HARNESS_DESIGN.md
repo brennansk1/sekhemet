@@ -902,6 +902,87 @@ The terminal is the default surface: `sekhemet` with no arguments opens it, and 
 
 **[RESEARCH]** Calibrating ask-versus-assume behaviour against a formal decision benchmark (e.g. ClarEval / Ask-or-Assume?, arXiv:2602.14820) optimises the ambiguity threshold ($\theta_{\text{ambig}}$) against human override history. The failure modes are symmetric and both are measurable: questions the user answers with "you should have known that" (the playbook already said so), and send-backs whose reason was knowable before the card ran.
 
+## The design stage
+
+Before a project has cards it has a shape, and deciding that shape is the work a good project manager is actually for. A harness that skips it builds the first plausible thing and discovers what was wanted on the third rewrite. A harness that overdoes it holds a workshop before a one-file script.
+
+The design stage exists to produce, in the smallest number of exchanges that will do, the six things every later decision depends on: **the problem, the outcome, the non-goals, the constraints, the riskiest assumption, and the first slice.** It ends with a project brief in the repository and an ordered set of cards on the board. It is a conversation with the Planner, not a form.
+
+### How it runs
+
+**It proposes; it does not interrogate.** Every step opens with a draft — the Planner's best answer, stated plainly — and asks the person to correct it. "I think this is for developers who already run local models, doing X, and today they do Y instead. Right?" is one exchange. The open-question version of that is four, and it puts the work on the wrong side of the conversation.
+
+**One question at a time.** A list of questions is a form, and a form gets skimmed. The Planner asks the one whose answer most changes what gets built, uses the answer, and asks the next.
+
+**A question that does not change a card is not asked.** This is the discipline that keeps the stage short. If both answers produce the same backlog, the Planner picks the likelier and records it as an assumption.
+
+**It is skippable at every point, and skipping is a first-class path.** "Just build it" is a complete answer. The Planner fills every remaining blank with its best default, records each as an assumption rather than a decision, and proceeds. Nothing is blocked on ceremony; the cost of skipping is that more of the brief is assumption, and the brief says which parts.
+
+**It is timeboxed by its own appetite.** The design stage has a budget like any other work. When it runs out, what is settled is settled and the rest becomes assumptions.
+
+### What it produces
+
+A **project brief**, written to `.sekhemet/brief.md`, versioned with the repository and amendable later:
+
+| Section | What it is, and why it earns its place |
+| --- | --- |
+| **Problem** | Who this is for, what they are trying to do, and what they do today instead. Without "today instead" there is no baseline to beat. |
+| **Outcome** | What is different when this works, stated so that it could be checked. Not a feature list — features are the output, this is the reason. |
+| **Non-goals** | What this deliberately does not do. The highest-leverage paragraph in the document: it is what lets the Planner refuse scope later without re-asking. |
+| **Constraints** | Stack, deploy target, appetite, anything already fixed. Constraints discovered late invalidate work; asked early they cost one exchange. |
+| **Prior art** | How this is usually done, what exists already, what the known pitfalls are — cited, from the Researcher. |
+| **Riskiest assumption** | The thing most likely to make this not work. It becomes the first card. |
+| **The first slice** | The thinnest path through the whole system that produces something real. |
+| **Definition of done** | The gates. Agreed here rather than discovered at the first Verify. |
+
+### Prior art is researched, not recalled
+
+The Planner does not answer "how is this normally built" from its own weights. That question goes to the Researcher, and the answer comes back with sources: the established approaches, the libraries that already do this and their licences, the failure modes other people have written about, and where the approaches disagree. On a local model this matters more than it would with a frontier one — the weights are smaller and older, and the design stage is exactly where a confidently wrong prior becomes six weeks of wrong cards.
+
+This is the one place in the harness where research runs *before* there is any code to verify against, and it is the highest-value research the system does: a citation here changes the shape of everything after it.
+
+### From the brief to the board
+
+The backlog is derived, not invented. The Planner lays out the **activities** a user of the thing would perform, in the order they would perform them — the backbone — and then cuts the **thinnest slice through all of them** that produces something real end to end. That slice becomes the first cards; everything else stays as backbone, visible and unbuilt.
+
+Two consequences, both deliberate. The first slice is **narrow and complete** rather than **one part finished properly**, because a complete thin path can be judged and a half-built deep one cannot. And the backbone makes the *shape* of the unbuilt work visible on the board without pretending it is planned, which is what stops a backlog from becoming a wish list.
+
+The riskiest assumption is scheduled first regardless of where it falls in the backbone. Finding out that the thing cannot work is worth more early than late, and it is the one card whose failure is a success.
+
+### Assumptions are tracked, not forgotten
+
+Every blank the person did not fill is recorded as an assumption with the default that was taken. They are the project's open questions, they are visible on the board, and when a later card contradicts one the outcome is recorded against it. Over a few projects this measures which of the Planner's defaults are actually right — the same machinery that records whether a card's assumptions held, applied to the ones made before any card existed.
+
+### When to skip it entirely
+
+A one-file script does not need a brief, and the Planner should not produce one. The design stage is proportional: a card's worth of work gets a sentence, a week's work gets the six sections, and anything larger gets the six sections and a conversation about whether it should be two projects. **[DESIGN]** The threshold is the appetite the person states, or the Planner's difficulty estimate when they state none.
+
+## Starting a project that does not exist yet
+
+The harness's value comes from executable gates, and gates are derived from a project's own scripts. An empty directory has none, so for the first few cards the verification machinery has nothing to stand on — which would make this harness worse at a new project than a conversational one, not better.
+
+The gap is narrower than it first appears and it is a bootstrap, not a limitation. **A new TypeScript project has typecheck, lint and build from its first file**: the entire static layer works immediately. What is missing is only the functional layer, and only until one test exists.
+
+Three steps close it, and none of them needs a new concept.
+
+### Card zero: the ecosystem's own generator
+
+The first card is not written by a model. The harness runs the generator the language's own community already uses — `cargo new`, `uv init`, `pnpm create vite`, `npm init` — and derives the gates from whatever it produced.
+
+Nothing is invented, so nothing needs verifying. **[DESIGN]** Maintaining a library of project templates is deliberately rejected: our opinion about project layout would be worse than the ecosystem's, would rot within a year, and would be one more thing to keep current for no gain. The generator is recorded in the brief with its version, so the scaffold is reproducible.
+
+### Card one: a failing test
+
+The first card the Worker runs produces a test, not an implementation, and its acceptance criterion is that **the test exists, runs, and fails for the stated reason** — which the gate runner verifies by executing it.
+
+This needs no new machinery: the design already stages acceptance tests and requires them to fail before implementation begins. Greenfield simply makes that the first card outright. The insight is that a project is not a prerequisite for a failing test; **a failing test is the smallest possible project**, and from card two onward every card has a real functional gate.
+
+### The ambiguous hour belongs to the conversation
+
+What remains is the part no bootstrap fixes: early greenfield is architectural and ambiguous, which is where cards are the wrong unit and a small local model is weakest. That work belongs in the design stage above, where an exchange costs seconds rather than an hour of inference.
+
+The harness should say so rather than attempt it. For genuinely novel architecture, "talk it through with me, then I will cut the cards" is a better answer than a confident autonomous attempt, and it is the honest one.
+
 ## Human collaboration protocol
 
 The planner operates like an experienced engineering manager: it asks before assuming when an ambiguity alters scope or architectural invariants, decides autonomously when conventions exist, and formats human interactions for rapid "5-second approvals."
