@@ -113,6 +113,29 @@ const EVENTS_TABLE_BODY = `
 `;
 
 /**
+ * Which rung of the repair ladder and which tool vocabulary produced an
+ * attempt (K16, design §2677-2679).
+ *
+ * Both carry a DEFAULT because they are also added to databases that already
+ * have attempt rows: `ALTER TABLE ... ADD COLUMN` refuses a NOT NULL column
+ * without one. Rung 1 and arm A are the ladder's and the roster's starting
+ * points, so an un-annotated legacy row reads as the plain first try it was.
+ */
+const ATTEMPT_LADDER_COLUMNS = `rung INTEGER NOT NULL DEFAULT 1 CHECK(rung BETWEEN 1 AND 4),
+  tool_arm TEXT NOT NULL DEFAULT 'A' CHECK(tool_arm IN ('A','B','C'))`;
+
+/**
+ * The review surface the design puts in the bundle's row (K19, design
+ * §2720-2731), so Review can be listed and filtered without opening every
+ * bundle file on disk.
+ */
+const EVIDENCE_REVIEW_COLUMNS = `structural_diff TEXT,
+  gate_results_summary JSON NOT NULL DEFAULT '{}',
+  passed_checks JSON NOT NULL DEFAULT '[]',
+  failed_checks JSON NOT NULL DEFAULT '[]',
+  abandoned_hypotheses JSON NOT NULL DEFAULT '[]'`;
+
+/**
  * Projections derived from the ledger (K8): every table below is rebuilt
  * from events by `ProjectionEngine.rebuild`, and `verify` checks the rebuild
  * is byte-identical to what is stored.
@@ -141,6 +164,7 @@ CREATE TABLE IF NOT EXISTS attempts (
   id TEXT PRIMARY KEY,
   card_id TEXT NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
   attempt_number INTEGER NOT NULL,
+  ${ATTEMPT_LADDER_COLUMNS},
   model_id TEXT NOT NULL,
   status TEXT NOT NULL CHECK(status IN ('running','passed','failed','halted')),
   stop_reason TEXT,
@@ -197,6 +221,7 @@ CREATE TABLE IF NOT EXISTS evidence_bundles (
   lines_added INTEGER NOT NULL DEFAULT 0,
   lines_removed INTEGER NOT NULL DEFAULT 0,
   trajectory_ref TEXT,
+  ${EVIDENCE_REVIEW_COLUMNS},
   created_at TEXT NOT NULL
 );
 
@@ -289,6 +314,19 @@ const ADDED_CARD_COLUMNS: ReadonlyArray<[column: string, ddl: string]> = [
   ["assignee", "assignee TEXT"],
   ["due_date", "due_date TEXT"],
   ["project_id", "project_id TEXT"],
+];
+
+const ADDED_ATTEMPT_COLUMNS: ReadonlyArray<[column: string, ddl: string]> = [
+  ["rung", "rung INTEGER NOT NULL DEFAULT 1 CHECK(rung BETWEEN 1 AND 4)"],
+  ["tool_arm", "tool_arm TEXT NOT NULL DEFAULT 'A' CHECK(tool_arm IN ('A','B','C'))"],
+];
+
+const ADDED_EVIDENCE_COLUMNS: ReadonlyArray<[column: string, ddl: string]> = [
+  ["structural_diff", "structural_diff TEXT"],
+  ["gate_results_summary", "gate_results_summary JSON NOT NULL DEFAULT '{}'"],
+  ["passed_checks", "passed_checks JSON NOT NULL DEFAULT '[]'"],
+  ["failed_checks", "failed_checks JSON NOT NULL DEFAULT '[]'"],
+  ["abandoned_hypotheses", "abandoned_hypotheses JSON NOT NULL DEFAULT '[]'"],
 ];
 
 /** Columns copied when the `cards` table is rebuilt to widen its CHECK. */
@@ -468,6 +506,8 @@ export function migrateSchema(db: DatabaseSync): SchemaMigrationReport {
   const addedColumns = [
     ...addMissingColumns(db, "events", ADDED_EVENT_COLUMNS),
     ...addMissingColumns(db, "cards", ADDED_CARD_COLUMNS),
+    ...addMissingColumns(db, "attempts", ADDED_ATTEMPT_COLUMNS),
+    ...addMissingColumns(db, "evidence_bundles", ADDED_EVIDENCE_COLUMNS),
   ];
   // Indexes over freshly added columns can only be created once they exist.
   db.exec(KERNEL_INDEX_SQL);

@@ -273,6 +273,103 @@ describe("@sekhemet/kernel run records, structure and projections (K4-K21, B5, B
     expect((await store.verifyProjections()).identical).toBe(true);
   });
 
+  it("records the rung and tool arm an attempt ran at (K16)", async () => {
+    const first = await store.runs.startAttempt({
+      cardId: "card_a",
+      attemptNumber: 1,
+      modelId: "m",
+    });
+    const repair = await store.runs.startAttempt({
+      cardId: "card_a",
+      attemptNumber: 2,
+      modelId: "m",
+      rung: 3,
+      toolArm: "C",
+    });
+
+    // An attempt that does not say is the ladder's first rung on the baseline arm.
+    expect(store.runs.getAttempt(first.id)).toMatchObject({ rung: 1, toolArm: "A" });
+    expect(store.runs.getAttempt(repair.id)).toMatchObject({ rung: 3, toolArm: "C" });
+    // The ledger is the source of truth: a rebuild must not lose either.
+    await store.rebuildProjections();
+    expect(store.runs.getAttempt(repair.id)).toMatchObject({ rung: 3, toolArm: "C" });
+
+    await expect(
+      store.runs.startAttempt({ cardId: "card_a", attemptNumber: 3, modelId: "m", rung: 7 as 4 }),
+    ).rejects.toThrow(/Rung must be 1\.\.4/);
+    await expect(
+      store.runs.startAttempt({
+        cardId: "card_a",
+        attemptNumber: 3,
+        modelId: "m",
+        toolArm: "D" as "C",
+      }),
+    ).rejects.toThrow(/Tool arm must be A, B or C/);
+  });
+
+  it("keeps the review surface and a trajectory hash on the evidence row (G11, K19)", async () => {
+    const attempt = await store.runs.startAttempt({
+      cardId: "card_a",
+      attemptNumber: 1,
+      modelId: "m",
+    });
+    await store.runs.recordStep({
+      attemptId: attempt.id,
+      cardId: "card_a",
+      stepIndex: 1,
+      calls: [],
+      repoStateHash: "tree-1",
+      promptTokens: 1,
+      completionTokens: 1,
+      durationMs: 1,
+    });
+    // The reference must name the trajectory that produced the bundle, so it
+    // is the slice as it stood before the bundle's own event joined it.
+    const trajectory = store.runs.trajectoryHash(attempt.id);
+    const evidence = await store.runs.recordEvidence({
+      id: "ev_2",
+      cardId: "card_a",
+      attemptId: attempt.id,
+      passed: true,
+      stopReason: "gate_passed",
+      path: ".sekhemet/evidence/ev_2.json",
+      sha256: "a".repeat(64),
+      filesTouched: ["src/a.ts"],
+      linesAdded: 4,
+      linesRemoved: 1,
+      structuralDiff: "src/a.ts: function add() changed",
+      gateResultsSummary: { typecheck: "pass", unit: "pass" },
+      summary: {
+        passedChecks: ["typecheck", "unit"],
+        failedChecks: [],
+        abandonedHypotheses: ["caching the parse result — the cache key was not stable"],
+      },
+    });
+
+    const stored = store.runs.getEvidence("ev_2");
+    expect(stored).toMatchObject({
+      structuralDiff: "src/a.ts: function add() changed",
+      gateResultsSummary: { typecheck: "pass", unit: "pass" },
+      summary: {
+        passedChecks: ["typecheck", "unit"],
+        failedChecks: [],
+        abandonedHypotheses: ["caching the parse result — the cache key was not stable"],
+      },
+    });
+    // The trajectory reference is a hash of this attempt's event slice, not a path.
+    expect(evidence.trajectoryRef).toMatch(/^[0-9a-f]{64}$/);
+    expect(stored?.trajectoryRef).toBe(trajectory);
+
+    // A second attempt on the same card has a different slice, so a different hash.
+    const other = await store.runs.startAttempt({
+      cardId: "card_a",
+      attemptNumber: 2,
+      modelId: "m",
+    });
+    expect(store.runs.trajectoryHash(other.id)).not.toBe(store.runs.trajectoryHash(attempt.id));
+    expect((await store.verifyProjections()).identical).toBe(true);
+  });
+
   it("adds the actor CHECK to a legacy events table without touching the chain (K5 migration)", async () => {
     const legacyDir = mkdtempSync(join(tmpdir(), "kernel-legacy-"));
     const legacy = new DatabaseSync(join(legacyDir, "events.db"));

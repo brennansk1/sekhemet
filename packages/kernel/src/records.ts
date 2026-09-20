@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type { EventLog } from "./log.js";
 import type {
@@ -12,14 +12,17 @@ import type {
   DecisionStatus,
   EventRecord,
   EvidenceBundleRecord,
+  EvidenceChecks,
   FinishAttemptInput,
   GateResultRecord,
   RecordCompetenceInput,
   RecordGateResultInput,
   RecordStepInput,
+  RepairRung,
   StartAttemptInput,
   StepRecord,
   StepToolCall,
+  ToolArm,
 } from "./types.js";
 
 /** Ledger event types for run records; each is replayed into its table (K8). */
@@ -35,6 +38,9 @@ export const RUN_EVENTS = {
   decisionTimedOut: "decision/timed_out",
   competenceRecorded: "competence/recorded",
 } as const;
+
+const RUNGS = new Set<RepairRung>([1, 2, 3, 4]);
+const TOOL_ARMS = new Set<ToolArm>(["A", "B", "C"]);
 
 const GATE_LAYERS = new Set([
   "static",
@@ -82,11 +88,17 @@ export class RunLedger {
     if (!Number.isInteger(input.attemptNumber) || input.attemptNumber < 1) {
       throw new Error(`Attempt number must be a positive integer, got ${input.attemptNumber}`);
     }
+    const rung = input.rung ?? 1;
+    if (!RUNGS.has(rung)) throw new Error(`Rung must be 1..4, got ${rung}`);
+    const toolArm = input.toolArm ?? "A";
+    if (!TOOL_ARMS.has(toolArm)) throw new Error(`Tool arm must be A, B or C, got ${toolArm}`);
     const payload: AttemptRecord = {
       id: `att_${randomUUID().slice(0, 12)}`,
       cardId: input.cardId,
       attemptNumber: input.attemptNumber,
+      rung,
       modelId: input.modelId,
+      toolArm,
       status: "running",
       tokensUsed: 0,
       secondsUsed: 0,
@@ -148,7 +160,9 @@ export class RunLedger {
       id: String(r.id),
       cardId: String(r.card_id),
       attemptNumber: Number(r.attempt_number),
+      rung: Number(r.rung ?? 1) as RepairRung,
       modelId: String(r.model_id),
+      toolArm: (r.tool_arm ?? "A") as ToolArm,
       status: r.status as AttemptStatus,
       ...(r.stop_reason ? { stopReason: r.stop_reason as CardStopReason } : {}),
       tokensUsed: Number(r.tokens_used),
@@ -173,16 +187,18 @@ export class RunLedger {
   private projectAttemptStarted(p: AttemptRecord): void {
     this.db
       .prepare(
-        `INSERT OR REPLACE INTO attempts (id, card_id, attempt_number, model_id, status, stop_reason,
-          tokens_used, seconds_used, evidence_id, forked_from_attempt, forked_from_step,
-          resumed_from_step, started_at, completed_at)
-         VALUES (?, ?, ?, ?, 'running', NULL, 0, 0, NULL, ?, ?, ?, ?, NULL)`,
+        `INSERT OR REPLACE INTO attempts (id, card_id, attempt_number, rung, model_id, tool_arm,
+          status, stop_reason, tokens_used, seconds_used, evidence_id, forked_from_attempt,
+          forked_from_step, resumed_from_step, started_at, completed_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'running', NULL, 0, 0, NULL, ?, ?, ?, ?, NULL)`,
       )
       .run(
         p.id,
         p.cardId,
         p.attemptNumber,
+        p.rung,
         p.modelId,
+        p.toolArm,
         p.forkedFrom?.attemptId ?? null,
         p.forkedFrom?.step ?? null,
         p.resumedFromStep ?? null,
@@ -375,10 +391,35 @@ export class RunLedger {
 
   // --- Evidence bundles (K19) -------------------------------------------------
 
+  /**
+   * SHA-256 over an attempt's slice of the event log (design §1157).
+   *
+   * The slice is identified by its events' chain hashes rather than their
+   * payloads. The chain already covers each event's actor, type, association
+   * columns and payload digest, so hashing the hashes is tamper-evident for
+   * free, and it stays computable after a large payload is relocated to
+   * `.sekhemet/artifacts/` (design §2044).
+   */
+  public trajectoryHash(attemptId: string): string {
+    const rows = this.db
+      .prepare("SELECT hash FROM events WHERE attempt_id = ? ORDER BY seq")
+      .all(attemptId) as unknown as { hash: string }[];
+    return createHash("sha256")
+      .update(rows.map((r) => r.hash).join(""))
+      .digest("hex");
+  }
+
   public async recordEvidence(
     input: Omit<EvidenceBundleRecord, "createdAt">,
   ): Promise<EvidenceBundleRecord> {
-    const payload: EvidenceBundleRecord = { ...input, createdAt: new Date().toISOString() };
+    // Computed before this event is appended, so the reference covers the
+    // trajectory the bundle summarises and not the bundle's own record.
+    const trajectoryRef = input.trajectoryRef ?? this.trajectoryHash(input.attemptId);
+    const payload: EvidenceBundleRecord = {
+      ...input,
+      trajectoryRef,
+      createdAt: new Date().toISOString(),
+    };
     await this.log.append({
       actor: "gate",
       type: RUN_EVENTS.evidenceRecorded,
@@ -417,17 +458,30 @@ export class RunLedger {
       filesTouched: json<string[]>(r.files_touched, []),
       linesAdded: Number(r.lines_added),
       linesRemoved: Number(r.lines_removed),
+      ...(r.structural_diff ? { structuralDiff: String(r.structural_diff) } : {}),
+      gateResultsSummary: json<Record<string, "pass" | "fail">>(r.gate_results_summary, {}),
+      summary: {
+        passedChecks: json<string[]>(r.passed_checks, []),
+        failedChecks: json<string[]>(r.failed_checks, []),
+        abandonedHypotheses: json<string[]>(r.abandoned_hypotheses, []),
+      },
       ...(r.trajectory_ref ? { trajectoryRef: String(r.trajectory_ref) } : {}),
       createdAt: String(r.created_at),
     };
   }
 
   private projectEvidence(p: EvidenceBundleRecord): void {
+    const checks: EvidenceChecks = p.summary ?? {
+      passedChecks: [],
+      failedChecks: [],
+      abandonedHypotheses: [],
+    };
     this.db
       .prepare(
         `INSERT OR REPLACE INTO evidence_bundles (id, card_id, attempt_id, passed, stop_reason, path,
-          sha256, files_touched, lines_added, lines_removed, trajectory_ref, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          sha256, files_touched, lines_added, lines_removed, trajectory_ref, structural_diff,
+          gate_results_summary, passed_checks, failed_checks, abandoned_hypotheses, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         p.id,
@@ -441,6 +495,11 @@ export class RunLedger {
         p.linesAdded,
         p.linesRemoved,
         p.trajectoryRef ?? null,
+        p.structuralDiff ?? null,
+        JSON.stringify(p.gateResultsSummary ?? {}),
+        JSON.stringify(checks.passedChecks),
+        JSON.stringify(checks.failedChecks),
+        JSON.stringify(checks.abandonedHypotheses),
         p.createdAt,
       );
   }

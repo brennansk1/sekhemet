@@ -345,11 +345,26 @@ export type EventActor = (typeof EVENT_ACTORS)[number];
 
 export type AttemptStatus = "running" | "passed" | "failed" | "halted";
 
+/** The repair ladder's rung an attempt ran at (design §1522-1529). */
+export type RepairRung = 1 | 2 | 3 | 4;
+
+/**
+ * The tool vocabulary an attempt was given (design §1283).
+ *
+ * Recorded per attempt because the competence model measures the arm rather
+ * than assuming it: an arm that helps a frontier model can cost a small one
+ * the card, and only rows tagged with the arm that produced them can say so.
+ */
+export type ToolArm = "A" | "B" | "C";
+
 export interface AttemptRecord {
   id: string;
   cardId: string;
   attemptNumber: number;
+  /** Which repair rung produced this attempt; 1 is the first, unrepaired try. */
+  rung: RepairRung;
   modelId: string;
+  toolArm: ToolArm;
   status: AttemptStatus;
   stopReason?: CardStopReason;
   tokensUsed: number;
@@ -367,6 +382,10 @@ export interface StartAttemptInput {
   cardId: string;
   attemptNumber: number;
   modelId: string;
+  /** Defaults to 1: a caller that does not run a ladder is always on its first rung. */
+  rung?: RepairRung;
+  /** Defaults to "A", the roster's baseline vocabulary. */
+  toolArm?: ToolArm;
   forkedFrom?: { attemptId: string; step: number };
   resumedFromStep?: number;
 }
@@ -427,6 +446,20 @@ export interface GateResultRecord {
 
 export interface RecordGateResultInput extends Omit<GateResultRecord, "id" | "createdAt"> {}
 
+/**
+ * What the attempt established, what it did not, and what it gave up on
+ * (design §1152-1156).
+ *
+ * The abandoned hypotheses are the half a diff cannot show: a reviewer who
+ * cannot see what the Worker tried and discarded re-proposes it, and the
+ * next attempt spends its budget re-discovering the same dead end.
+ */
+export interface EvidenceChecks {
+  passedChecks: string[];
+  failedChecks: string[];
+  abandonedHypotheses: string[];
+}
+
 export interface EvidenceBundleRecord {
   id: string;
   cardId: string;
@@ -440,7 +473,18 @@ export interface EvidenceBundleRecord {
   filesTouched: string[];
   linesAdded: number;
   linesRemoved: number;
-  /** The transcript's path (the trajectory reference). */
+  /** Difftastic's view of the same change (Y8), when difftastic was available. */
+  structuralDiff?: string;
+  /** Each gate's verdict, keyed by gate id, so Review can be filtered by gate. */
+  gateResultsSummary?: Record<string, "pass" | "fail">;
+  summary?: EvidenceChecks;
+  /**
+   * SHA-256 over this attempt's slice of the event log (design §1157).
+   *
+   * A hash, not a path: a path says where a file was when the bundle was
+   * written, which is no longer true once retention moves it, and it cannot
+   * be checked against the ledger the bundle claims to summarise.
+   */
   trajectoryRef?: string;
   createdAt: string;
 }
