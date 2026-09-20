@@ -34,15 +34,16 @@ function claimSummary(claims: Claim[] | undefined): string[] {
   // Absent, not empty, for an answer recalled from research memory written
   // before claims were typed: an old entry has no claim list and must still
   // render rather than throwing on the note.
+  const all = claims ?? [];
   const byKind = new Map<string, number>();
-  for (const c of claims ?? []) byKind.set(c.kind, (byKind.get(c.kind) ?? 0) + 1);
+  for (const c of all) byKind.set(c.kind, (byKind.get(c.kind) ?? 0) + 1);
   if (!byKind.size) return [];
   const counts = [...byKind.entries()].sort().map(([k, n]) => `${n} ${k}`);
-  const executable = claims.filter((c) => c.kind === "executable");
+  const executable = all.filter((c) => c.kind === "executable");
   return [
     "## Claims",
     "",
-    `${claims.length} claim(s): ${counts.join(", ")}.`,
+    `${all.length} claim(s): ${counts.join(", ")}.`,
     ...(executable.length
       ? [
           "",
