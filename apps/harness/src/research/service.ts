@@ -11,7 +11,13 @@ import { effectiveConfig, explicitNetworkMode } from "../config_apply.js";
 import { readSettings } from "../integrations.js";
 import { similarity } from "../learning/store.js";
 import { crawl4aiInstalled } from "./crawl4ai.js";
-import { type ResearchAnswer, type ResearchDeps, investigate, research } from "./researcher.js";
+import {
+  type ResearchAnswer,
+  type ResearchDeps,
+  investigate,
+  research,
+  withClaims,
+} from "./researcher.js";
 import { ensureSearxng } from "./searxng.js";
 import { type WebConfig, webConfigFromEnv } from "./web.js";
 
@@ -190,12 +196,14 @@ export class ResearchService {
     let result: AskResult;
     if (known) {
       result = {
-        answer: `${known.answer}\n\n(From research memory, ${known.at.slice(0, 10)}.)`,
-        sources: known.sources,
-        evidence: known.sources.map((ref) => ({ kind: "memory", ref })),
-        grounded: true,
-        confidence: known.confidence,
-        badCitations: [],
+        ...withClaims({
+          answer: `${known.answer}\n\n(From research memory, ${known.at.slice(0, 10)}.)`,
+          sources: known.sources,
+          evidence: known.sources.map((ref) => ({ kind: "memory", ref })),
+          grounded: true,
+          confidence: known.confidence,
+          badCitations: [],
+        }),
         fromMemory: true,
       };
     } else {

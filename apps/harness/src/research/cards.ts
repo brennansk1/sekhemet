@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { CardRecord, CardStore } from "@sekhemet/kernel";
+import { type Claim, reviewEligible } from "./claims.js";
 import type { ResearchAnswer } from "./researcher.js";
 
 /**
@@ -28,6 +29,31 @@ export function researchQuestion(card: CardRecord): string {
     .join("\n\n");
 }
 
+/** Claims the report makes, grouped by the checking each one needs. */
+function claimSummary(claims: Claim[] | undefined): string[] {
+  // Absent, not empty, for an answer recalled from research memory written
+  // before claims were typed: an old entry has no claim list and must still
+  // render rather than throwing on the note.
+  const byKind = new Map<string, number>();
+  for (const c of claims ?? []) byKind.set(c.kind, (byKind.get(c.kind) ?? 0) + 1);
+  if (!byKind.size) return [];
+  const counts = [...byKind.entries()].sort().map(([k, n]) => `${n} ${k}`);
+  const executable = claims.filter((c) => c.kind === "executable");
+  return [
+    "## Claims",
+    "",
+    `${claims.length} claim(s): ${counts.join(", ")}.`,
+    ...(executable.length
+      ? [
+          "",
+          "Executable, pending the claim gate:",
+          ...executable.map((c) => `- [${c.id}] ${c.text}`),
+        ]
+      : []),
+    "",
+  ];
+}
+
 export function researchNote(card: CardRecord, r: ResearchAnswer, at = new Date()): string {
   const verdict = r.grounded
     ? `Grounded, confidence ${r.confidence.toFixed(2)}${r.badCitations.length ? `; citations [${r.badCitations.join(", ")}] point at nothing read` : ""}.`
@@ -39,6 +65,7 @@ export function researchNote(card: CardRecord, r: ResearchAnswer, at = new Date(
     "",
     r.answer.trim(),
     "",
+    ...claimSummary(r.claims),
     ...(r.sources.length
       ? ["## Sources read", "", ...r.sources.map((s, i) => `${i + 1}. ${s}`), ""]
       : []),
@@ -65,7 +92,12 @@ export async function runResearchCard(
   mkdirSync(dir, { recursive: true });
   const notePath = join(dir, `${card.id}.md`);
   writeFileSync(notePath, researchNote(card, answer));
-  const passed = answer.grounded && answer.badCitations.length === 0;
+  // A report reaches Review when it is grounded, its citations point at
+  // something that was read, and every executable claim has a verdict. The
+  // last is the claim gate: execution is a gate like any other, so a note
+  // whose claims have never been run is not finished work.
+  const eligible = reviewEligible(answer.claims ?? [], new Map());
+  const passed = answer.grounded && answer.badCitations.length === 0 && eligible.eligible;
   const evDir = join(repoPath, ".sekhemet", "evidence");
   mkdirSync(evDir, { recursive: true });
   const evidence = {
@@ -81,6 +113,7 @@ export async function runResearchCard(
     rungResults: [
       { gate: "grounded", rung: "research", passed: answer.grounded },
       { gate: "citations", rung: "research", passed: answer.badCitations.length === 0 },
+      { gate: "claims", rung: "research", passed: eligible.eligible, detail: eligible.reason },
     ],
     failures: [],
     durationMs: Date.now() - started,
@@ -102,7 +135,13 @@ export async function runResearchCard(
     await cardStore.updateCardStatus(
       card.id,
       "parked",
-      `parked: research not settled (${answer.grounded ? `unverified citations ${answer.badCitations.join(", ")}` : "not grounded"})`,
+      `parked: research not settled (${
+        !answer.grounded
+          ? "not grounded"
+          : answer.badCitations.length
+            ? `unverified citations ${answer.badCitations.join(", ")}`
+            : eligible.reason
+      })`,
       "researcher",
     );
   }

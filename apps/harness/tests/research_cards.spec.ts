@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { describe, expect, it } from "vitest";
 import { isResearchCard, researchQuestion, runResearchCard } from "../src/research/cards.js";
+import { withClaims } from "../src/research/researcher.js";
 
 async function setup() {
   const db = new DatabaseSync(":memory:");
@@ -22,15 +23,18 @@ async function setup() {
   return { cards, card, repo: mkdtempSync(join(tmpdir(), "rcard-")) };
 }
 
-const answer = (over: Record<string, unknown> = {}) => ({
-  answer: "Use csv-parse [1].\n\nReferences:\n[1] https://csv.js.org/parse/",
-  sources: ["https://csv.js.org/parse/"],
-  evidence: [],
-  grounded: true,
-  confidence: 0.6,
-  badCitations: [],
-  ...over,
-});
+// Built the way production builds one, so the note and the claim gate see
+// the same shape the Researcher actually returns.
+const answer = (over: Record<string, unknown> = {}) =>
+  withClaims({
+    answer: "Use csv-parse [1].\n\nReferences:\n[1] https://csv.js.org/parse/",
+    sources: ["https://csv.js.org/parse/"],
+    evidence: [],
+    grounded: true,
+    confidence: 0.6,
+    badCitations: [],
+    ...over,
+  } as Parameters<typeof withClaims>[0]);
 
 describe("research cards (X7)", () => {
   it("recognises research cards and asks the whole question", async () => {

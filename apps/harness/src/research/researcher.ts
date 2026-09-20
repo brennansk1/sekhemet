@@ -10,6 +10,7 @@ import {
   apodexTeam,
   verifyReferences,
 } from "./apodex_loop.js";
+import { type Claim, type RiskVector, extractClaims } from "./claims.js";
 import { depsFile, depsGrep, depsOutline, installed } from "./deps.js";
 import { readDocs } from "./docs.js";
 import { type LoopFinding, type LoopResult, runResearchLoop } from "./loop.js";
@@ -60,6 +61,14 @@ export interface ResearchAnswer {
   badCitations: number[];
   /** Deep mode only: the coverage record of the research loop. */
   coverage?: Omit<LoopResult, "findings">;
+  /** The answer's claims, typed by the checking each one needs. */
+  claims: Claim[];
+  /**
+   * The answer's grounded risk, every component measured outside the
+   * generated text. A revision is accepted only when no component worsens
+   * and one improves, which is what keeps the model from grading itself.
+   */
+  risk: RiskVector;
 }
 
 export interface ResearchDeps {
@@ -529,14 +538,14 @@ export async function research(
   const finish = (text: string): ResearchAnswer => {
     const answer = strip(text) || "No answer.";
     const unsettled = /^not settled/i.test(answer) || answer === "No answer.";
-    return {
+    return withClaims({
       answer,
       sources: evidence.map((e) => e.ref),
       evidence,
       grounded: evidence.length > 0 && !unsettled,
       confidence: unsettled ? 0 : groundingConfidence(evidence),
       badCitations: checkCitations(answer, evidence.length),
-    };
+    });
   };
 
   /** Run one turn's calls in parallel and number their sources. */
@@ -762,7 +771,7 @@ export async function investigate(
   }
   const { findings: _f, ...coverage } = loop;
   if (parts.length === 0) {
-    return {
+    return withClaims({
       answer: `Not settled: no sub-question found evidence (${loop.stoppedBecause}).`,
       sources: [],
       evidence: [],
@@ -770,7 +779,7 @@ export async function investigate(
       confidence: 0,
       badCitations: [],
       coverage,
-    };
+    });
   }
   const merged = await model.generate({
     systemPrompt: system,
@@ -780,7 +789,7 @@ export async function investigate(
     purpose: "planning",
   });
   const answer = strip(merged.text) || parts.join("\n\n");
-  return {
+  return withClaims({
     answer,
     sources: evidence.map((e) => e.ref),
     evidence,
@@ -790,7 +799,7 @@ export async function investigate(
       Math.round(groundingConfidence(evidence) * (coverage.coveragePct / 100) * 100) / 100,
     badCitations: checkCitations(answer, evidence.length),
     coverage,
-  };
+  });
 }
 
 /** What the team is and how the answer is used; the user turn, so the system prompt stays static. */
@@ -803,6 +812,28 @@ const todayOf = (deps: ResearchDeps) => deps.today ?? new Date().toISOString().s
 const budgetFor = (model: LocalInferenceAdapter) =>
   Math.max(16_000, ((model.contextWindow?.contextTokens ?? 16_384) - 7000) * 3);
 
+/**
+ * Fill in a answer's claims and its grounded risk. Every site that builds a
+ * ResearchAnswer goes through here, so the risk vector cannot drift from the
+ * answer it describes.
+ */
+export function withClaims(a: Omit<ResearchAnswer, "claims" | "risk">): ResearchAnswer {
+  const unsettled = /^not settled/i.test(a.answer) || a.answer === "No answer.";
+  return {
+    ...a,
+    claims: extractClaims(a.answer),
+    risk: {
+      badCitations: a.badCitations.length,
+      // Open sub-questions when the deep loop tracked them; a solo answer has
+      // one question, open until it is grounded.
+      uncovered: a.coverage?.outstanding.length ?? (a.grounded ? 0 : 1),
+      // Execution is a gate on the card, so an answer alone reports none.
+      failedClaims: 0,
+      confidence: a.confidence,
+    },
+  };
+}
+
 function toAnswer(
   text: string,
   ledger: EvidenceLedger,
@@ -812,16 +843,17 @@ function toAnswer(
   const v = verifyReferences(answer, ledger);
   const unsettled = /^not settled/i.test(answer) || answer === "No answer.";
   const readRefs = v.references.filter((r) => r.read).length;
-  return {
+  const confidence = unsettled ? 0 : v.confidence;
+  return withClaims({
     answer,
     sources: v.evidence.map((e) => e.ref),
     evidence: v.evidence,
     // Grounded: it cites something a tool actually returned and was read.
     grounded: !unsettled && readRefs > 0,
-    confidence: unsettled ? 0 : v.confidence,
+    confidence,
     badCitations: v.badCitations,
     ...extra,
-  };
+  });
 }
 
 /** One question, Apodex solo (its ReAct mode), on its trained tools. */
