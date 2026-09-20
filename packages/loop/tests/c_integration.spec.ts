@@ -175,7 +175,10 @@ describe("the runner's sync and evidence callers (Y1, Y6, E3)", () => {
     git("config", "user.name", "T");
     mkdirSync(join(repo, "src"));
     writeFileSync(join(repo, "src", "a.ts"), "export const a = 0;\n");
-    writeFileSync(join(repo, ".gitignore"), ".sekhemet/\n");
+    // The event log lives at the repo root here, and its WAL sidecars appear
+    // and vanish as SQLite checkpoints: untracked, they drift into the card's
+    // diff and trip the file-count bound instead of the gate under test.
+    writeFileSync(join(repo, ".gitignore"), ".sekhemet/\nevents.db*\n");
     git("add", "-A");
     git("commit", "-q", "-m", "seed");
     db = new DatabaseSync(join(repo, "events.db"));

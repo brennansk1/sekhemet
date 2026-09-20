@@ -442,6 +442,11 @@ export async function executeCard(
     // C2: one language-server pool for the whole run (servers are pooled
     // across cards and shut down when idle).
     lspPool: ctx.lspPool ?? runLspPool(),
+    // C19: the Worker's prompt carries the core tools' contracts and a
+    // one-line index of the rest, which `tool_search` loads on demand. Every
+    // turn used to carry all thirty schemas, and a card that never leaves
+    // read/edit/check paid prefill for the other twenty-five on every step.
+    progressiveTools: true,
     // M2: decoded tokens go to the card's live file, which the dashboard
     // streams while the step is still generating.
     onToken: ctx.onToken

@@ -125,6 +125,34 @@ describe("apps/harness executeCard wiring (wave 2, part 1)", () => {
     expect(nextAttemptNumber(repo, card.id)).toBe(2);
   });
 
+  it("C19: discloses the tool catalog progressively instead of every schema every turn", async () => {
+    const card = await newCard("card_c19");
+    const { adapter, seen } = scripted([
+      [{ name: "tool_search", arguments: { query: "go_to_definition" } }],
+      WRITE_A,
+    ]);
+    await executeCard(ctx, card, adapter);
+
+    const first = seen[0];
+    const names = (first?.tools ?? []).map((t) => t.name);
+    // The core tools the Worker uses on nearly every card, plus the search.
+    expect(names).toContain("tool_search");
+    expect(names).toContain("edit");
+    expect(names).not.toContain("go_to_definition");
+    expect(names.length).toBeLessThan(10);
+    // Everything else is one line in the index, not a parameter list.
+    expect(first?.systemPrompt).toContain("TOOL INDEX");
+    expect(first?.systemPrompt).toContain("- go_to_definition:");
+    expect(first?.systemPrompt).not.toContain("go_to_definition(");
+
+    // After the search, the tool it found is callable and its contract travels.
+    const second = seen[1];
+    expect((second?.tools ?? []).map((t) => t.name)).toContain("go_to_definition");
+    expect(second?.prompt).toContain("TOOLS LOADED WITH tool_search");
+    // The prefix is what the server caches: it must not have moved (C4).
+    expect(second?.systemPrompt).toBe(first?.systemPrompt);
+  });
+
   it("holds a card on back-pressure and releases it when Review drains", async () => {
     for (const id of ["card_r1", "card_r2", "card_r3"]) {
       await cardStore.createCard({ id, tier: "story", title: id, status: "review" });

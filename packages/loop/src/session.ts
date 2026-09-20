@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 import {
   TOOL_SEARCH_NAME,
+  type ToolInterfaceSpec,
   ToolLoader,
   type TurnHistoryItem,
   type WorkerPromptResult,
@@ -51,6 +52,14 @@ import type {
   TurnResult,
 } from "./types.js";
 import { WorkingMemory } from "./working_memory.js";
+
+/**
+ * C19: the tools the Worker reaches for on nearly every card. Their contracts
+ * stay in the prompt from the first turn; everything else is a name in the
+ * index until `tool_search` loads it. Paying for the long tail of schemas on
+ * every turn of every card is what progressive disclosure exists to stop.
+ */
+const PROGRESSIVE_CORE_TOOLS = ["read_file", "edit", "write_file", "check", "finish_card"];
 
 /** Tools whose success means a scope file now has content. */
 const WRITE_TOOLS = new Set([
@@ -135,6 +144,8 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   private lastMetrics: WorkerPromptResult["metrics"] | undefined;
   /** Progressive tool loading (C19), when the card runs with `progressiveTools`. */
   private toolLoader: ToolLoader | undefined;
+  /** The tools whose contracts are in the pinned system prompt under C19. */
+  private coreToolSpecs: ToolInterfaceSpec[] | undefined;
 
   constructor(private options: SessionOptions) {
     if (options.priorLessons?.length) this.memory.seed(options.priorLessons);
@@ -172,13 +183,8 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       webDocs: options.webDocs,
     });
     if (options.progressiveTools) {
-      this.toolLoader = new ToolLoader(this.catalog(), [
-        "read_file",
-        "edit",
-        "write_file",
-        "check",
-        "finish_card",
-      ]);
+      this.toolLoader = new ToolLoader(this.catalog(), PROGRESSIVE_CORE_TOOLS);
+      this.coreToolSpecs = this.toolLoader.visibleSpecs();
     }
     // H17: a resumed card continues its step count from the checkpoint.
     if (options.startStep !== undefined && options.startStep > 0) {
@@ -681,6 +687,18 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     return this.options.restricted ? restrictedToolCatalog(base) : base;
   }
 
+  /**
+   * C19: tools `tool_search` loaded during the card, which the core set in the
+   * pinned system prompt does not already carry. They go to the volatile tail
+   * precisely because they arrive mid-card: putting them in the prefix would
+   * invalidate the server's cache on the turn after every search.
+   */
+  private loadedSinceStart(): ToolInterfaceSpec[] {
+    if (!this.toolLoader) return [];
+    const core = new Set((this.coreToolSpecs ?? []).map((t) => t.name));
+    return this.toolLoader.visibleSpecs().filter((t) => !core.has(t.name));
+  }
+
   /** What the request carries: every tool, or the loaded ones under C19. */
   private visibleToolDefinitions() {
     const all = this.toolDefinitions();
@@ -785,14 +803,15 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     const pending = this.pendingScopeFiles();
     const built = buildWorkerPrompt({
       card: { ...this.card, stepsUsed: this.stepsUsed },
-      tools: this.catalog(),
+      // C19: with progressive loading the system prompt carries the core
+      // tools' contracts and a one-line index of the rest; what tool_search
+      // has loaded since rides in the volatile tail, so the prefix survives.
+      tools: this.coreToolSpecs ?? this.catalog(),
       ...(this.options.prefixGuard ? { prefixGuard: this.options.prefixGuard } : {}),
       ...(this.conventions ? { conventions: this.conventions } : {}),
       ...(exemplars.length > 0 ? { exemplars } : {}),
-      // C19: with progressive loading, only tool_search and the tools it
-      // has loaded carry their full contract; the rest are an index.
       ...(this.toolLoader
-        ? { toolIndex: this.catalog(), loadedTools: this.toolLoader.visibleSpecs() }
+        ? { toolIndex: this.catalog(), loadedTools: this.loadedSinceStart() }
         : {}),
       ...(native ? { nativeToolSchemas: this.visibleToolDefinitions() } : {}),
       ...(budget !== undefined ? { budgetTokens: budget } : {}),
