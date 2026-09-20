@@ -413,6 +413,14 @@ export interface SpeculativeVerdict {
 }
 
 /**
+ * Memory the draft head needs beyond the model's own footprint before it is
+ * worth measuring. The head is the first thing the memory watchdog drops
+ * (M20); on a 24 GB host carrying a 16 GB checkpoint there is barely this
+ * much left, and measuring it would mean loading it.
+ */
+export const SPECULATIVE_HEADROOM_BYTES = 1.5 * GB;
+
+/**
  * Decide MTP / draft-model speculative decoding by measurement (M19). It is
  * enabled only when it makes decode at least `minSpeedup` faster (default
  * 5%) and memory headroom allows the extra head. CHRONICLE §2 measured MTP
@@ -425,14 +433,17 @@ export function decideSpeculative(
 ): SpeculativeVerdict {
   const base = plain.decodeTokensPerSecond;
   const spec = speculative.decodeTokensPerSecond;
-  if (base === undefined || spec === undefined || base <= 0) {
-    return { enabled: false, speedup: 1, reason: "not measured; speculative decoding stays off" };
-  }
-  const speedup = Math.round((spec / base) * 1000) / 1000;
-  const min = options.minSpeedup ?? 1.05;
+  const measured = base !== undefined && spec !== undefined && base > 0;
+  const speedup = measured ? Math.round(((spec as number) / (base as number)) * 1000) / 1000 : 1;
+  // Headroom first: a head that does not fit is off whether or not it is fast,
+  // and the caller may not have been able to measure it at all.
   if (options.memoryHeadroomOk === false) {
     return { enabled: false, speedup, reason: "no memory headroom for the draft head" };
   }
+  if (!measured) {
+    return { enabled: false, speedup: 1, reason: "not measured; speculative decoding stays off" };
+  }
+  const min = options.minSpeedup ?? 1.05;
   if (speedup < min) {
     return {
       enabled: false,
@@ -462,6 +473,22 @@ export async function calibrateSpeculative(options: {
   memoryHeadroomOk?: boolean;
 }): Promise<SpeculativeVerdict> {
   const buckets = options.buckets ?? [2048];
+  // Nothing is loaded on a host with no room for the head: the measurement
+  // would need the very memory it is being refused, and on a 24 GB machine
+  // that is a swap storm, not a number.
+  if (options.memoryHeadroomOk === false) {
+    const unmeasured: MeasuredSpeed = {
+      prefillTokensPerSecond: undefined,
+      decodeTokensPerSecond: undefined,
+    };
+    const verdict = decideSpeculative(unmeasured, unmeasured, { memoryHeadroomOk: false });
+    options.registry?.recordSpeculative(options.modelId, {
+      ...verdict,
+      fingerprint: hostFingerprintHash(),
+      date: new Date().toISOString(),
+    });
+    return verdict;
+  }
   const plain = await calibrateModel(options.plain, { buckets });
   await options.release?.(options.plain);
   const spec = await calibrateModel(options.speculative, { buckets });

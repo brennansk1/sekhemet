@@ -1,13 +1,16 @@
 import {
   type EngineCandidate,
-  HttpInferenceAdapter,
   type MachineProfile,
   ManagedLlamaServerAdapter,
   ModelRegistry,
   type ModelRole,
   ModelRoster,
+  SPECULATIVE_HEADROOM_BYTES,
+  type SpeculativeVerdict,
   type UnloadableAdapter,
   calibrateHardware,
+  calibrateSpeculative,
+  engineOf,
   loadMachineProfile,
   modelTelemetry,
   needsRecalibration,
@@ -15,12 +18,26 @@ import {
   selectEngine,
 } from "@sekhemet/models";
 
-/** The inference engine behind an adapter (M24). */
-function engineOf(adapter: unknown): string {
-  if (adapter instanceof ManagedLlamaServerAdapter) return "llama.cpp";
-  if (adapter instanceof HttpInferenceAdapter)
-    return adapter.api === "ollama" ? "ollama" : "openai-compatible";
-  return "unknown";
+/** The two adapters a speculative-decoding measurement compares (M19). */
+export interface SpeculativeProbes {
+  plain: UnloadableAdapter;
+  speculative: UnloadableAdapter;
+}
+
+/**
+ * The same model with and without its grafted head, one server each so that
+ * only the flag differs. The registry is left off both: these probes are
+ * measuring the decision, so they must not be steered by an earlier one.
+ * A model with no head to graft is not measured.
+ */
+function speculativeProbes(adapter: UnloadableAdapter): SpeculativeProbes | undefined {
+  if (!(adapter instanceof ManagedLlamaServerAdapter)) return undefined;
+  const { registry: _measured, ...profile } = adapter.launchProfile;
+  if (profile.mtp !== true) return undefined;
+  return {
+    plain: new ManagedLlamaServerAdapter({ ...profile, mtp: false }),
+    speculative: new ManagedLlamaServerAdapter({ ...profile, mtp: true }),
+  };
 }
 
 /**
@@ -39,6 +56,8 @@ export interface CalibrateCommandOptions {
   models: { name: string; role: ModelRole }[];
   buckets?: number[];
   decodeTokens?: number;
+  /** Memory the models may use; default is measured from the host. */
+  usableBytes?: number;
   /** Measure even when the saved profile matches this hardware. */
   force?: boolean;
   /** Injectable for tests. */
@@ -46,6 +65,8 @@ export interface CalibrateCommandOptions {
   path?: string | false;
   /** null: record nothing (tests); omitted: the user's model registry. */
   registry?: ModelRegistry | null;
+  /** Injectable for tests: the with/without pair for the MTP measurement (M19). */
+  speculative?: (adapter: UnloadableAdapter) => SpeculativeProbes | undefined;
   say?: (line: string) => void;
 }
 
@@ -93,6 +114,7 @@ export async function runCalibrate(
     ...(registry ? { registry } : {}),
     ...(opts.buckets ? { buckets: opts.buckets } : {}),
     ...(opts.decodeTokens ? { decodeTokens: opts.decodeTokens } : {}),
+    ...(opts.usableBytes !== undefined ? { usableBytes: opts.usableBytes } : {}),
     ...(opts.path !== undefined ? { path: opts.path } : {}),
   });
   say(
@@ -107,6 +129,35 @@ export async function runCalibrate(
       .join("; ");
     say(`  ${label} (${cal.throughputClass}): ${rows}`);
   }
+  // M19: the MTP head is a measurement, not a profile flag. Each model that
+  // has one is measured with and without it, one server at a time; the
+  // verdict goes to the registry, which is where the launch reads it.
+  const probeFor = opts.speculative ?? speculativeProbes;
+  const speculative: Record<string, SpeculativeVerdict> = {};
+  for (const c of candidates) {
+    const probes = probeFor(c.adapter);
+    if (!probes) continue;
+    const footprint = await c.adapter.footprintBytes?.().catch(() => undefined);
+    const verdict = await calibrateSpeculative({
+      modelId: c.adapter.modelId,
+      plain: probes.plain,
+      speculative: probes.speculative,
+      ...(registry ? { registry } : {}),
+      ...(opts.buckets?.[0] ? { buckets: [opts.buckets[0]] } : {}),
+      release: async (a) => {
+        await (a as UnloadableAdapter).unload?.();
+      },
+      // Unknown size is not evidence against the head; a size that leaves no
+      // room is, and then nothing is loaded to find out.
+      ...(footprint !== undefined
+        ? { memoryHeadroomOk: profile.usableBytes - footprint >= SPECULATIVE_HEADROOM_BYTES }
+        : {}),
+    });
+    speculative[c.label] = verdict;
+    say(`  ${c.label} speculative decoding: ${verdict.enabled ? "on" : "off"} (${verdict.reason})`);
+  }
+  if (Object.keys(speculative).length > 0) profile.speculative = speculative;
+
   // M24: the engine by measurement: predicted seconds per tool-result turn,
   // with cross-turn cache retention (from live telemetry) weighted in.
   const cacheByModel = modelTelemetry.snapshot().cache;

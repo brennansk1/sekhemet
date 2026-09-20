@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   HttpInferenceAdapter,
+  type MachineProfile,
   ManagedLlamaServerAdapter,
   MockInferenceAdapter,
   ModelRegistry,
@@ -17,6 +18,7 @@ import {
   calibrateModel,
   calibrateSpeculative,
   decideSpeculative,
+  hardwareFingerprint,
   hostFingerprintHash,
   loadMachineProfile,
   needsRecalibration,
@@ -336,5 +338,31 @@ describe("M24: engine selection by measurement", () => {
     );
     expect(d.engine).toBe("llama.cpp");
     expect(new MockInferenceAdapter("x")).toBeDefined();
+  });
+
+  it("serves an unmanaged model over the engine this host measured", () => {
+    const measured = (engine: string, fingerprint = hostFingerprintHash()): MachineProfile => ({
+      version: 1,
+      date: "2026-09-19T00:00:00Z",
+      fingerprint: hardwareFingerprint(),
+      fingerprintHash: fingerprint,
+      usableBytes: 20 * GB,
+      tier: "S",
+      models: {},
+      engine: { engine, scores: {}, reason: "measured" },
+    });
+    const api = (profile: MachineProfile | null) =>
+      (
+        new ModelRoster({ machineProfile: profile }).resolve(
+          "some-tag:latest",
+          "worker",
+        ) as HttpInferenceAdapter
+      ).api;
+
+    expect(api(measured("openai-compatible"))).toBe("openai");
+    expect(api(measured("ollama"))).toBe("ollama");
+    // A profile measured on other hardware decides nothing here.
+    expect(api(measured("openai-compatible", "not-this-machine"))).toBe("ollama");
+    expect(api(null)).toBe("ollama");
   });
 });

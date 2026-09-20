@@ -1,13 +1,23 @@
 import { totalmem } from "node:os";
+import { type MachineProfile, hostFingerprintHash, loadMachineProfile } from "./calibration.js";
 import { HttpInferenceAdapter, NAIL_WORKER_PROFILE } from "./http_adapter.js";
 import {
   type ChronicleProfileOptions,
+  ManagedLlamaServerAdapter,
   createApodexResearcher,
   createCyberTielWorker,
   createQwen38Managed,
 } from "./llama_server.js";
 import type { ModelRegistry } from "./registry.js";
 import type { ModelRole, UnloadableAdapter } from "./router.js";
+
+/** The inference engine behind an adapter (M24). */
+export function engineOf(adapter: unknown): string {
+  if (adapter instanceof ManagedLlamaServerAdapter) return "llama.cpp";
+  if (adapter instanceof HttpInferenceAdapter)
+    return adapter.api === "ollama" ? "ollama" : "openai-compatible";
+  return "unknown";
+}
 
 /**
  * Names that select a harness-managed llama-server model rather than an
@@ -75,6 +85,13 @@ export interface ModelRosterOptions {
    * measurement (M9) and managed servers take the measured MTP decision (M19).
    */
   registry?: ModelRegistry;
+  /**
+   * The calibrated machine profile. Its engine decision (M24) chooses the API
+   * an unmanaged model is served over, so the measurement reaches the launch
+   * instead of stopping at the report. Omitted loads this host's saved
+   * profile; `null` is an uncalibrated machine (tests, first run).
+   */
+  machineProfile?: MachineProfile | null;
 }
 
 /**
@@ -88,14 +105,48 @@ export interface ModelRosterOptions {
  */
 export class ModelRoster {
   private shared = new Map<string, UnloadableAdapter>();
+  /** null until the machine profile has been consulted, then the verdict. */
+  private engine: string | undefined | null = null;
 
   constructor(private options: ModelRosterOptions = {}) {}
 
+  /**
+   * The engine this host measured as fastest (M24), when the measurement was
+   * taken on this hardware. A profile from another machine decides nothing.
+   */
+  public measuredEngine(): string | undefined {
+    if (this.engine !== null) return this.engine;
+    const profile =
+      this.options.machineProfile === null
+        ? undefined
+        : (this.options.machineProfile ?? loadMachineProfile());
+    this.engine =
+      profile?.engine && profile.fingerprintHash === hostFingerprintHash()
+        ? profile.engine.engine
+        : undefined;
+    return this.engine;
+  }
+
   public resolve(name: string, role: ModelRole): UnloadableAdapter {
     if (!isManagedModelName(name)) {
-      return this.withRegistry(
-        new HttpInferenceAdapter(ollamaProfileForRole(role, name, this.options.totalBytes)),
+      const profile = ollamaProfileForRole(role, name, this.options.totalBytes);
+      // The engine decision is the whole point of measuring one: where the
+      // OpenAI-compatible path won, the same weights are served over it
+      // rather than through Ollama's own API.
+      const openAiCompatible = this.measuredEngine() === "openai-compatible";
+      const adapter = this.withRegistry(
+        new HttpInferenceAdapter(
+          openAiCompatible
+            ? {
+                ...profile,
+                apiFormat: "openai",
+                baseUrl: `${(profile.baseUrl ?? "http://127.0.0.1:11434").replace(/\/+$/, "")}/v1`,
+              }
+            : profile,
+        ),
       );
+      this.options.registry?.upsert(adapter.modelId, { engine: engineOf(adapter) });
+      return adapter;
     }
     const key = name === "dirk" ? "qwen3.8-27b" : name;
     const existing = this.shared.get(key);
@@ -113,6 +164,7 @@ export class ModelRoster {
         }
       });
     const adapter = this.withRegistry(build());
+    this.options.registry?.upsert(adapter.modelId, { engine: engineOf(adapter) });
     this.shared.set(key, adapter);
     return adapter;
   }

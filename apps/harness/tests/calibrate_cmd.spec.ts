@@ -1,7 +1,7 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { InferenceRequest, UnloadableAdapter } from "@sekhemet/models";
+import { type InferenceRequest, ModelRegistry, type UnloadableAdapter } from "@sekhemet/models";
 import { describe, expect, it } from "vitest";
 import { parseModelList, runCalibrate } from "../src/calibrate_cmd.js";
 
@@ -65,5 +65,94 @@ describe("sekhemet calibrate (H3)", () => {
     });
     expect(again?.date).toBe(profile?.date);
     expect(lines.at(-1)).toMatch(/use --force/);
+  });
+
+  it("measures the speculative head with and against itself and records the verdict (M19)", async () => {
+    const events: string[] = [];
+    const probe = (id: string, decode: number): UnloadableAdapter => ({
+      modelId: id,
+      supportedArms: ["arm_a_flat"],
+      async generate(_req: InferenceRequest) {
+        events.push(`gen ${id}`);
+        return {
+          text: "ok",
+          toolCalls: [],
+          usage: {
+            promptTokens: 2048,
+            completionTokens: 64,
+            durationMs: 1000,
+            prefillTokensPerSecond: 400,
+            decodeTokensPerSecond: decode,
+          },
+        };
+      },
+      async unload() {
+        events.push(`unload ${id}`);
+      },
+    });
+    const dir = mkdtempSync(join(tmpdir(), "cal-spec-"));
+    const registry = new ModelRegistry(join(dir, "models.json"));
+    const lines: string[] = [];
+    const profile = await runCalibrate({
+      models: parseModelList("a=worker"),
+      buckets: [2048],
+      decodeTokens: 16,
+      force: true,
+      resolve: () => probe("a", 30),
+      // The 21%-slower case CHRONICLE measured on the M4.
+      speculative: () => ({ plain: probe("a-plain", 30), speculative: probe("a-mtp", 23.7) }),
+      path: join(dir, "machine.json"),
+      registry,
+      say: (l) => lines.push(l),
+    });
+    expect(profile?.speculative?.a).toMatchObject({ enabled: false, speedup: 0.79 });
+    // The launch reads the registry, so that is where the decision has to land.
+    expect(registry.get("a")?.speculative?.enabled).toBe(false);
+    // One server at a time: the head is measured after the plain run is gone.
+    expect(events.filter((e) => e.includes("a-"))).toEqual([
+      "gen a-plain",
+      "unload a-plain",
+      "gen a-mtp",
+      "unload a-mtp",
+    ]);
+    expect(lines.some((l) => /speculative decoding: off/.test(l))).toBe(true);
+  });
+
+  it("does not load a head the host has no room for (24 GB reference machine)", async () => {
+    const loaded: string[] = [];
+    const probe = (id: string): UnloadableAdapter => ({
+      modelId: id,
+      supportedArms: ["arm_a_flat"],
+      async generate() {
+        loaded.push(id);
+        return {
+          text: "ok",
+          toolCalls: [],
+          usage: { promptTokens: 2048, completionTokens: 64, durationMs: 1000 },
+        };
+      },
+    });
+    const dir = mkdtempSync(join(tmpdir(), "cal-head-"));
+    const registry = new ModelRegistry(join(dir, "models.json"));
+    const worker: UnloadableAdapter = {
+      ...probe("a"),
+      // The 24 GB reference machine's practical ceiling: 16 GB of weights.
+      footprintBytes: async () => 16 * 1024 ** 3,
+    };
+    const profile = await runCalibrate({
+      models: parseModelList("a=worker"),
+      buckets: [2048],
+      force: true,
+      // What a 24 GB M4 really offers the GPU, not what it advertises.
+      usableBytes: 17 * 1024 ** 3,
+      resolve: () => worker,
+      speculative: () => ({ plain: probe("a-plain"), speculative: probe("a-mtp") }),
+      path: join(dir, "machine.json"),
+      registry,
+      say: () => undefined,
+    });
+    expect(loaded).not.toContain("a-mtp");
+    expect(profile?.speculative?.a).toMatchObject({ enabled: false });
+    expect(registry.get("a")?.speculative?.reason).toMatch(/headroom/);
   });
 });
