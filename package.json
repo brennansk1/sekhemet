@@ -5,17 +5,18 @@
   "packageManager": "pnpm@10.30.3",
   "scripts": {
     "build": "tsc -b",
-    "dev": "node scripts/dev.mjs",
-    "test": "vitest run",
-    "test:unit": "vitest run --project unit",
-    "test:integration": "vitest run --project integration",
-    "test:watch": "vitest",
-    "typecheck": "tsc -b",
-    "lint": "biome check .",
-    "format": "biome check --write .",
-    "sekhemet": "node apps/harness/dist/index.js",
+    "clean": "pnpm -r exec rm -rf dist *.tsbuildinfo",
     "dashboard": "node apps/harness/dist/index.js serve",
-    "clean": "pnpm -r exec rm -rf dist *.tsbuildinfo"
+    "dev": "node scripts/dev.mjs",
+    "format": "biome check --write .",
+    "gate": "pnpm exec tsc -b && pnpm exec biome check . && pnpm exec vitest run",
+    "lint": "biome check .",
+    "sekhemet": "node apps/harness/dist/index.js",
+    "test": "vitest run",
+    "test:integration": "vitest run --project integration",
+    "test:unit": "vitest run --project unit",
+    "test:watch": "vitest",
+    "typecheck": "tsc -b"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
