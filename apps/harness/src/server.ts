@@ -1015,13 +1015,27 @@ export function startDashboardServer(
             json(res, 400, { error: "An override needs toStatus and a reason" });
             return;
           }
-          await boardService.transitionCard({
-            cardId,
-            fromStatus: card.status,
-            toStatus: to as never,
-            actor: "human",
-            reason: `override: ${reason}`,
-          });
+          try {
+            await boardService.transitionCard({
+              cardId,
+              fromStatus: card.status,
+              toStatus: to as never,
+              actor: "human",
+              reason: `override: ${reason}`,
+            });
+          } catch (err) {
+            // B12: a security-layer failure is the one refusal an override
+            // does not carry. Answered with its own code so the dashboard can
+            // say why rather than showing a generic conflict.
+            if ((err as { code?: string }).code === "security_gate") {
+              json(res, 403, {
+                error: err instanceof Error ? err.message : String(err),
+                refused: "security_gate",
+              });
+              return;
+            }
+            throw err;
+          }
           json(res, 200, { ok: true, status: to });
           return;
         }

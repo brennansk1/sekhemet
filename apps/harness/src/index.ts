@@ -5,7 +5,7 @@ import { freemem, tmpdir, totalmem } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
-import { BoardServiceImpl } from "@sekhemet/board";
+import { BoardServiceImpl, evidenceSummaryOf } from "@sekhemet/board";
 import {
   DeterministicGateRunner,
   detectGateTemplate,
@@ -294,11 +294,9 @@ export function initLocalKernel(repoPath: string): {
     entryConditions: true,
     evidenceFor: (cardId) => {
       try {
-        const ev = JSON.parse(readFileSync(join(evidenceDir, `latest-${cardId}.json`), "utf8")) as {
-          passed?: boolean;
-          rungResults?: unknown[];
-        };
-        return { passed: ev.passed === true, gatesRun: ev.rungResults?.length ?? 0 };
+        return evidenceSummaryOf(
+          JSON.parse(readFileSync(join(evidenceDir, `latest-${cardId}.json`), "utf8")),
+        );
       } catch {
         return undefined;
       }

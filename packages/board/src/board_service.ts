@@ -45,6 +45,29 @@ const LEGAL_TRANSITIONS: Record<CardStatus, CardStatus[]> = {
   rejected: ["backlog", "ready"],
 };
 
+/**
+ * The board's view of an evidence bundle (B1, B12), in one place so the
+ * dashboard, the CLI and the tests all read a bundle the same way.
+ *
+ * Typed structurally rather than against `@sekhemet/gates`: the board sits
+ * below the gates package in the graph and needs three fields out of the
+ * bundle. A skipped gate is not a failing one — it never ran.
+ */
+export function evidenceSummaryOf(bundle: {
+  passed?: boolean;
+  rungResults?: { gate?: string; layer?: string; passed?: boolean; skipped?: boolean }[];
+}): EvidenceSummary {
+  const rungs = bundle.rungResults ?? [];
+  const failingSecurityGates = rungs
+    .filter((r) => r.layer === "security" && r.passed === false && r.skipped !== true)
+    .map((r) => r.gate ?? "security");
+  return {
+    passed: bundle.passed === true,
+    gatesRun: rungs.length,
+    ...(failingSecurityGates.length > 0 ? { failingSecurityGates } : {}),
+  };
+}
+
 /** The shortest legal route between two columns (for rollup), or undefined. */
 export function legalPath(from: CardStatus, to: CardStatus): CardStatus[] | undefined {
   if (from === to) return [];
@@ -85,6 +108,14 @@ export interface BoardServiceOptions {
 
 /** Who may record acceptance (the Done entry condition): a person, or the harness's --auto-accept. */
 const ACCEPTING_ACTORS = new Set(["human", "harness"]);
+
+/**
+ * Columns a card only reaches by having passed its gates (B12).
+ *
+ * Moving into either is the act an override exists to force, so these are the
+ * two doors the security refusal below has to stand at.
+ */
+const GATED_COLUMNS = new Set<CardStatus>(["review", "done"]);
 
 export class BoardServiceImpl implements BoardService {
   private wipLimits: Record<CardStatus, number>;
@@ -240,6 +271,23 @@ export class BoardServiceImpl implements BoardService {
 
     const legal = LEGAL_TRANSITIONS[t.fromStatus] ?? [];
     const override = t.reason?.startsWith("override:") === true;
+
+    // B12: an override is a person taking responsibility for a judgement the
+    // board would otherwise refuse — but never for a secret in the diff or a
+    // vulnerable dependency. Those are not judgement calls, and a harness that
+    // lets one through on a typed reason has no security layer at all. Checked
+    // before the override branches below, so nothing can swallow it.
+    if (GATED_COLUMNS.has(t.toStatus)) {
+      const failing = (await this.options.evidenceFor?.(card.id))?.failingSecurityGates ?? [];
+      if (failing.length > 0) {
+        throw new TransitionRefusedError(
+          "security_gate",
+          t.cardId,
+          t.toStatus,
+          `${t.cardId} cannot move to '${t.toStatus}': its latest evidence fails the security gate(s) ${failing.join(", ")}. A security-layer failure is never overridden; fix it, or reject the card.`,
+        );
+      }
+    }
     if (!legal.includes(t.toStatus)) {
       if (!override) {
         throw new TransitionRefusedError(

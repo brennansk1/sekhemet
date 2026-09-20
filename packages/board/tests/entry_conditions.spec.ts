@@ -90,6 +90,34 @@ describe("@sekhemet/board entry conditions, review time, overlap, projects (B1, 
     expect(String((o?.payload as { overrode: string }).overrode)).toContain("entry condition");
   });
 
+  it("refuses even an override past a failing security gate, into Review and into Done (B12)", async () => {
+    await store.createCard({ id: "s", tier: "story", title: "S", scopeFiles: ["src/s.ts"] });
+    evidence.s = { passed: false, gatesRun: 3, failingSecurityGates: ["secrets"] };
+
+    const forced = "override: shipping this now, I checked it by hand";
+    await expect(
+      move("s", "verify" as never, "review" as never, "human", forced),
+    ).rejects.toMatchObject({ code: "security_gate" });
+    await expect(move("s", "review" as never, "done" as never, "human", forced)).rejects.toThrow(
+      /secrets/,
+    );
+    // Refused means refused: the card is where it was, not part-moved.
+    expect((await store.getCard("s"))?.status).toBe("ready");
+
+    // Nothing else is tightened: a failing gate in another layer still yields
+    // to a person who takes responsibility, and is recorded as their decision.
+    evidence.s = { passed: false, gatesRun: 3 };
+    await move("s", "verify" as never, "review" as never, "human", forced);
+    expect((await store.getCard("s"))?.status).toBe("review");
+    const [recorded] = await store.cardEvents("s", ["card/override"]);
+    expect(recorded?.actor).toBe("human");
+
+    // And the refusal outlives the failure: once the gate passes, the move goes through.
+    evidence.s = { passed: true, gatesRun: 3 };
+    await move("s", "review" as never, "done" as never, "human");
+    expect((await store.getCard("s"))?.status).toBe("done");
+  });
+
   it("measures review minutes from status changes and derives ReviewWIP (B3)", async () => {
     await store.createCard({ id: "r", tier: "story", title: "R", scopeFiles: ["x"] });
     // Two reviews of 30 and 90 minutes, recorded as the ledger would.

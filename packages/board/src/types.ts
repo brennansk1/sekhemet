@@ -44,7 +44,9 @@ export type TransitionRefusalCode =
   | "illegal_transition"
   | "card_not_found"
   /** A column's entry condition does not hold (B1). */
-  | "entry_condition";
+  | "entry_condition"
+  /** The card's latest evidence fails a security-layer gate (B12). */
+  | "security_gate";
 
 /**
  * A refused column move, typed so a caller can tell back-pressure (hold the
@@ -75,6 +77,14 @@ export interface EvidenceSummary {
   passed: boolean;
   /** Gates that ran, so an empty bundle does not pass as complete. */
   gatesRun: number;
+  /**
+   * Gate ids in the `security` layer that this evidence records as failing.
+   *
+   * Kept apart from the rest of the failures because the board treats them
+   * differently: every other gate may be overridden by a person who takes
+   * responsibility, and these may not (B12).
+   */
+  failingSecurityGates?: string[];
 }
 
 /** Two cards that would edit the same file, so they must not run at once (B6). */
