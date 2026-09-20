@@ -57,6 +57,32 @@ export interface DiffStats {
   perFile?: { file: string; added: number; removed: number }[];
 }
 
+/**
+ * One conflicting file, as the typed failure the Worker already knows how to
+ * repair (Y6).
+ *
+ * Structurally identical to `GateFailure` in `@sekhemet/gates`, and declared
+ * here rather than imported because sync sits below gates in the package
+ * graph. The point of the shape is that a rebase conflict reaches the next
+ * attempt through the same channel as a typecheck error: a conflict reported
+ * as a one-line `blockedReason` is a fact about the card that the model
+ * repairing it never sees.
+ *
+ * The rung is `parse`: a file with conflict markers in it does not parse, and
+ * that is the gate a repair should expect to satisfy first.
+ */
+export interface RebaseConflictFailure {
+  rung: "parse";
+  layer: "static";
+  gate: "rebase";
+  exitCode: number;
+  errorExcerpt: string;
+  suggestedFixFiles: string[];
+  location: { file: string };
+  minimalRepro: string;
+  suggestedAction: string;
+}
+
 /** A rebase onto the integration branch (Y6). */
 export type RebaseResult =
   | { ok: true; rebased: boolean; before: string; after: string }
@@ -69,6 +95,17 @@ export type RebaseResult =
         files: string[];
         excerpt: string;
         message: string;
+        /** One per conflicting file, for the next attempt's failure block. */
+        failures: RebaseConflictFailure[];
+        /**
+         * Conflicting files the card never declared it would touch.
+         *
+         * A conflict inside a card's own scope is work it can do; a conflict
+         * outside it is someone else's change the card has no mandate to
+         * resolve, so the card is parked for a person rather than sent back
+         * to a Worker that would have to violate its scope to succeed.
+         */
+        outOfScope: string[];
       };
     };
 

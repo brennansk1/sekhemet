@@ -129,15 +129,53 @@ describe("Y6: rebase before Verify, conflicts typed", () => {
     write(repo, "packages/core/src/a.ts", "export const a = 'main';\n");
     git("add", "-A");
     git("commit", "-q", "-m", "conflicting");
-    const bad = await adapter.rebaseOntoIntegration("r1");
+    const bad = await adapter.rebaseOntoIntegration("r1", "main", ["packages/core/src/**"]);
     expect(bad.ok).toBe(false);
     if (!bad.ok) {
       expect(bad.failure.kind).toBe("rebase_conflict");
       expect(bad.failure.files).toEqual(["packages/core/src/a.ts"]);
       expect(bad.failure.excerpt).toContain("<<<<<<<");
+      // The hunk reaches the next attempt as a failure it already knows how
+      // to read, not as prose: one per conflicting file, with the markers.
+      expect(bad.failure.failures).toHaveLength(1);
+      const [f] = bad.failure.failures;
+      expect(f).toMatchObject({
+        rung: "parse",
+        layer: "static",
+        gate: "rebase",
+        suggestedFixFiles: ["packages/core/src/a.ts"],
+        location: { file: "packages/core/src/a.ts" },
+        minimalRepro: "git rebase main",
+      });
+      expect(f?.errorExcerpt).toContain("<<<<<<<");
+      // Inside the card's declared scope: its own work to redo.
+      expect(bad.failure.outOfScope).toEqual([]);
     }
     expect(execFileSync("git", ["status", "--porcelain"], { cwd: wt, encoding: "utf8" })).toBe("");
     expect(readFileSync(join(wt, "packages/core/src/a.ts"), "utf8")).toContain("card");
+  });
+
+  it("names a conflict outside the card's declared scope as out of scope", async () => {
+    const wt = await adapter.createWorktree("r2", "main", "R2");
+    write(wt, "packages/core/src/b.ts", "export const b = 'card';\n");
+    write(repo, "packages/core/src/b.ts", "export const b = 'main';\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "main touched b");
+
+    // The card declared only `docs/**`: the conflict is someone else's change,
+    // and resolving it would mean writing outside the scope it was given.
+    const bad = await adapter.rebaseOntoIntegration("r2", "main", ["docs/**"]);
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) {
+      expect(bad.failure.outOfScope).toEqual(["packages/core/src/b.ts"]);
+      expect(bad.failure.message).toContain("outside this card's declared scope");
+    }
+
+    // A card that declares no scope at all claims nothing is out of scope:
+    // the board refuses to start such a card, so there is nothing to compare.
+    const undeclared = await adapter.rebaseOntoIntegration("r2");
+    expect(undeclared.ok).toBe(false);
+    if (!undeclared.ok) expect(undeclared.failure.outOfScope).toEqual([]);
   });
 });
 

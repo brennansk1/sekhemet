@@ -9,10 +9,12 @@ import {
   symlinkSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
+import { matchesScope } from "@sekhemet/kernel";
 import type {
   CheckpointCommitParams,
   DiffStats,
   GitSyncAdapter,
+  RebaseConflictFailure,
   RebaseResult,
   StructuralDiff,
   WorktreeRecord,
@@ -509,9 +511,18 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
   /**
    * Rebase a card onto the integration branch before Verify (Y6). Uncommitted
    * work is checkpointed first. A conflict aborts the rebase cleanly and is
-   * returned as a typed failure naming the files and the conflict hunks.
+   * returned as typed `GateFailure`-shaped hunks, one per conflicting file,
+   * so the next attempt repairs a conflict the way it repairs any other gate
+   * failure instead of being told only that something went wrong.
+   *
+   * `scopeFiles` is the card's declared scope: conflicts outside it are
+   * reported separately, because they are not the card's to resolve.
    */
-  public async rebaseOntoIntegration(cardId: string, targetBranch = "main"): Promise<RebaseResult> {
+  public async rebaseOntoIntegration(
+    cardId: string,
+    targetBranch = "main",
+    scopeFiles: string[] = [],
+  ): Promise<RebaseResult> {
     const cwd = this.getWorktreePath(cardId);
     if (!existsSync(cwd)) throw new Error(`Worktree for card ${cardId} not found at ${cwd}`);
     this.runGit(["add", "-A"], cwd);
@@ -550,20 +561,41 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
         .split("\n")
         .filter(Boolean);
       const hunks: string[] = [];
-      for (const f of files.slice(0, 5)) {
+      const failures: RebaseConflictFailure[] = [];
+      // Read before the abort: aborting restores the pre-rebase tree and the
+      // markers go with it, so this is the only moment the hunks exist.
+      for (const f of files) {
+        let hunk = "";
         try {
           const text = readFileSync(join(cwd, f), "utf8");
           const m = /<<<<<<<[\s\S]*?>>>>>>>[^\n]*/.exec(text);
-          if (m) hunks.push(`${f}:\n${m[0].slice(0, 600)}`);
+          if (m) hunk = m[0].slice(0, 600);
         } catch {
-          // Deleted on one side: the name is enough.
+          // Deleted on one side: the name is all there is to report.
         }
+        if (hunk && hunks.length < 5) hunks.push(`${f}:\n${hunk}`);
+        failures.push({
+          rung: "parse",
+          layer: "static",
+          gate: "rebase",
+          exitCode: 1,
+          errorExcerpt:
+            hunk || `${f} was changed on ${targetBranch} and deleted or moved on this card.`,
+          suggestedFixFiles: [f],
+          location: { file: f },
+          minimalRepro: `git rebase ${targetBranch}`,
+          suggestedAction: `Reapply this card's change to ${f} on top of ${targetBranch}: keep what ${targetBranch} added and re-express the card's edit against it.`,
+        });
       }
       try {
         this.runGit(["rebase", "--abort"], cwd);
       } catch {
         // Already aborted.
       }
+      const outOfScope =
+        scopeFiles.length === 0
+          ? []
+          : files.filter((f) => !scopeFiles.some((pattern) => matchesScope(f, pattern)));
       return {
         ok: false,
         before,
@@ -572,7 +604,11 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
           onto: targetBranch,
           files,
           excerpt: hunks.join("\n\n"),
-          message: `Rebasing ${cardId} onto ${targetBranch} conflicts in ${files.join(", ") || "unknown files"}.`,
+          failures,
+          outOfScope,
+          message: outOfScope.length
+            ? `Rebasing ${cardId} onto ${targetBranch} conflicts in ${outOfScope.join(", ")}, outside this card's declared scope.`
+            : `Rebasing ${cardId} onto ${targetBranch} conflicts in ${files.join(", ") || "unknown files"}.`,
         },
       };
     }
