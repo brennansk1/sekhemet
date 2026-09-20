@@ -110,7 +110,10 @@ describe("@sekhemet/harness dashboard: run records, decisions, integrity", () =>
     await new Promise((r) => setTimeout(r, 50));
     const started = Date.now();
     await cardStore.updateCard("card_s", { title: "S renamed" });
-    while (reader && !text.includes("event: append") && Date.now() - started < 3000) {
+    // Wait for the rename itself, not merely for an append: the stream
+    // replays the log from genesis, so the first `event: append` is history
+    // and arrives before the update being tested.
+    while (reader && !text.includes("S renamed") && Date.now() - started < 3000) {
       const { value, done } = await reader.read();
       if (done) break;
       text += new TextDecoder().decode(value);

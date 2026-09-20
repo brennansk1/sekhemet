@@ -470,7 +470,9 @@ export function startDashboardServer(
       lastSeq = events[events.length - 1]?.seq ?? lastSeq;
       const [board, verification] = await Promise.all([boardWithEvidence(), log.verifyHashChain()]);
 
-      const frame = `event: append\ndata: ${JSON.stringify({ events, board, verification })}\n\n`;
+      // `id:` is the last ledger seq in the frame: a reconnecting browser sends
+      // it back as Last-Event-ID and the stream replays what it missed (U9).
+      const frame = `id: ${lastSeq}\nevent: append\ndata: ${JSON.stringify({ events, board, verification })}\n\n`;
       const pmFrames = (await pmApi.streamFrames(events)).join("");
       for (const res of streams) {
         // A slow or dead client must not stall the others.
@@ -569,9 +571,28 @@ export function startDashboardServer(
       res.write(
         `event: machine\ndata: ${JSON.stringify({ memory: machineMemory(memoryProbe()) })}\n\n`,
       );
-      streams.add(res);
-
       const latest = await log.getLastEvent();
+      // U9: replay from a checkpoint (the Last-Event-ID the browser sends on
+      // reconnect, or ?since=<seq>; ?since=0 is genesis), capped per frame.
+      const fromHeader = req.headers["last-event-id"];
+      const since = Number(
+        (Array.isArray(fromHeader) ? fromHeader[0] : fromHeader) ?? query.get("since") ?? "",
+      );
+      const upTo = latest?.seq ?? 0;
+      if (Number.isInteger(since) && since >= 0 && since < upTo) {
+        const missed = await log.getEvents(since + 1, Math.min(5000, upTo - since));
+        if (missed.length > 0) {
+          const [board, verification] = await Promise.all([
+            boardWithEvidence(),
+            log.verifyHashChain(),
+          ]);
+          const through = missed[missed.length - 1]?.seq ?? since;
+          res.write(
+            `id: ${through}\nevent: append\ndata: ${JSON.stringify({ events: missed, board, verification, replay: { from: since + 1, through, complete: through >= upTo } })}\n\n`,
+          );
+        }
+      }
+      streams.add(res);
       lastSeq = Math.max(lastSeq, latest?.seq ?? 0);
 
       req.on("close", () => {

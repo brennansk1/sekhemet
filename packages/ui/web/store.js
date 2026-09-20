@@ -23,6 +23,16 @@ export const store = {
     learning: { status: 0, data: null },
     /** Latest memory sample from the stream's `machine` event. */
     machine: null,
+    /**
+     * IBoardUIState slices (U21): the active project, pending decisions and
+     * telemetry series, each owned by one module and read by the rest.
+     */
+    project: { id: null, list: [], activeCap: undefined },
+    decisions: { available: false, items: [], at: 0 },
+    /** Memory samples kept client-side (last 120), and per-step model telemetry. */
+    telemetry: { memory: [], steps: [] },
+    /** The last ledger seq the stream delivered: the replay checkpoint (U9). */
+    lastSeq: 0,
     /** Ledger events carried by the most recent stream frame. */
     feed: [],
     /** The card the keyboard is on, shared by board, peek and palette. */

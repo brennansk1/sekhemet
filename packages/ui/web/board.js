@@ -18,6 +18,7 @@ import { bindReorder } from "./reorder.js";
 import { setTopbar } from "./shell.js";
 import { store } from "./store.js";
 import { tileHtml } from "./tile.js";
+import { columnsInWindow, windowRange } from "./virtual.js";
 import { toast } from "./toast.js";
 import {
   bindViewBar,
@@ -37,8 +38,12 @@ const LIMIT_SHOWN = 20;
 /** Above this many cards a column windows its tiles instead of rendering all. */
 const VIRTUAL_THRESHOLD = 60;
 const ROW = 88;
+/** Comfortable density adds the spec line and the token and time bars (§2.5.1). */
+const rowHeight = () => (document.documentElement.dataset.density === "comfortable" ? 112 : ROW);
 const GAP = 8;
 const OVERSCAN = 3;
+/** Columns with more cards than this drop their tiles when scrolled out of view (U6). */
+const CULL_MIN = 12;
 const JUST_NOW_MS = 10_000;
 
 const ui = {
@@ -57,6 +62,7 @@ const ui = {
   unsub: null,
   justNowTimer: 0,
   tipEl: null,
+  hFrame: 0,
 };
 
 /* ---------- Data shaping ---------- */
@@ -172,6 +178,12 @@ function ensureLayout(columns) {
     () => {
       if (ui.autoScroll) ui.autoScroll = false;
       else ui.userScrolled = true;
+      // U6: a culled column scrolled into view gets its tiles back.
+      if (!ui.hFrame && $(".list[data-culled]", board))
+        ui.hFrame = requestAnimationFrame(() => {
+          ui.hFrame = 0;
+          render();
+        });
     },
     { passive: true },
   );
@@ -218,7 +230,7 @@ function patchList(list, cards, { virtual, from = 0 } = {}) {
       node = fresh;
       ui.html.set(card.id, html);
     }
-    if (virtual) node.style.top = `${GAP + (from + i) * (ROW + GAP)}px`;
+    if (virtual) node.style.top = `${GAP + (from + i) * (rowHeight() + GAP)}px`;
     const expected = prev ? prev.nextSibling : list.firstChild;
     if (node !== expected) list.insertBefore(node, expected);
     prev = node;
@@ -231,14 +243,46 @@ function paintVirtual(list) {
   const status = list.dataset.list;
   const cards = ui.columns?.get(status) ?? [];
   if (cards.length <= VIRTUAL_THRESHOLD) return;
-  const stride = ROW + GAP;
-  const first = Math.max(0, Math.floor(list.scrollTop / stride) - OVERSCAN);
-  const last = Math.min(
+  if (list.dataset.culled) return;
+  const stride = rowHeight() + GAP;
+  const [first, last] = windowRange(
+    list.scrollTop,
+    list.clientHeight,
+    stride,
     cards.length,
-    Math.ceil((list.scrollTop + list.clientHeight) / stride) + OVERSCAN,
+    OVERSCAN,
   );
   patchList(list, cards.slice(first, last), { virtual: true, from: first });
   syncFocusAttrs();
+}
+
+/** The columns inside the board's horizontal window (U6). */
+function horizontalWindow() {
+  const board = $(".board", ui.root);
+  if (!board) return new Set(BOARD_COLUMN_ORDER);
+  const spans = $$(".col[data-col]", board).map((c) => ({
+    id: c.dataset.col,
+    left: c.offsetLeft,
+    width: c.offsetWidth,
+  }));
+  return columnsInWindow(spans, board.scrollLeft, board.clientWidth || window.innerWidth);
+}
+
+/** An off-screen column keeps its scroll height and header, not its tiles. */
+function cullList(list, cards) {
+  if (list.dataset.culled === String(cards.length)) return;
+  list.dataset.culled = String(cards.length);
+  list.classList.add("virtual");
+  for (const n of $$(":scope > .tile, :scope > .empty", list)) n.remove();
+  let sizer = $(":scope > .sizer", list);
+  if (!sizer) {
+    sizer = document.createElement("div");
+    sizer.className = "sizer";
+    sizer.setAttribute("aria-hidden", "true");
+    list.append(sizer);
+  }
+  sizer.style.height = `${cards.length * (rowHeight() + GAP) + GAP}px`;
+  for (const c of cards) ui.html.delete(c.id);
 }
 
 function restoreScroll(list) {
@@ -278,7 +322,7 @@ function fillList(list, status, cards) {
   }
   empty?.remove();
   if (virtual) {
-    sizer.style.height = `${cards.length * (ROW + GAP) + GAP}px`;
+    sizer.style.height = `${cards.length * (rowHeight() + GAP) + GAP}px`;
     restoreScroll(list);
     paintVirtual(list);
   } else {
@@ -337,6 +381,7 @@ function render() {
     columnMode(status, all.get(status).length),
   ]);
   ensureLayout(layout);
+  const inView = horizontalWindow();
 
   for (const [status, mode] of layout) {
     if (mode === "rail") {
@@ -352,7 +397,13 @@ function render() {
       head.innerHTML = hh;
       head.dataset.html = hh;
     }
-    fillList($(`[data-list="${status}"]`, ui.root), status, cols.get(status));
+    const list = $(`[data-list="${status}"]`, ui.root);
+    const cards = cols.get(status);
+    if (!inView.has(status) && cards.length > CULL_MIN) cullList(list, cards);
+    else {
+      delete list.dataset.culled;
+      fillList(list, status, cards);
+    }
   }
 
   syncFocusAttrs();
@@ -413,12 +464,21 @@ function focusTile(id, { scroll = true } = {}) {
   store.state.focusedId = id;
   let node = document.getElementById(`tile-${id}`);
   if (!node) {
+    // Culled out sideways: give the column its tiles first (U6).
+    const culled = store.card(id) && $(`[data-list="${store.card(id).status}"][data-culled]`, ui.root);
+    if (culled) {
+      delete culled.dataset.culled;
+      fillList(culled, culled.dataset.list, ui.columns.get(culled.dataset.list) ?? []);
+      node = document.getElementById(`tile-${id}`);
+    }
+  }
+  if (!node) {
     // Windowed out: scroll its column so it materialises, then focus.
     const card = store.card(id);
     const list = card && $(`[data-list="${card.status}"]`, ui.root);
     const idx = list ? (ui.columns.get(card.status) ?? []).findIndex((c) => c.id === id) : -1;
     if (list && idx >= 0) {
-      list.scrollTop = Math.max(0, idx * (ROW + GAP) - list.clientHeight / 2);
+      list.scrollTop = Math.max(0, idx * (rowHeight() + GAP) - list.clientHeight / 2);
       paintVirtual(list);
       node = document.getElementById(`tile-${id}`);
     }

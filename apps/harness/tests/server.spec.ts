@@ -89,62 +89,68 @@ describe("@sekhemet/harness Dashboard Server", () => {
     expect(html).toContain('[data-theme="sand"]');
   });
 
-  it("serves scripts that compile and stylesheets free of script", async () => {
-    // Both regressions happened: drawer JS inserted into the <style> block
-    // (silently dropping every later CSS rule), and \n escapes that became raw
-    // newlines inside JS string literals (a SyntaxError that blanked the board).
-    // The page is now static ES modules, so every one of them is compiled with
-    // `node --check` exactly as served, and every stylesheet is checked.
-    const base = `http://127.0.0.1:${serverInstance.port}`;
-    const html = await (await fetch(`${base}/`)).text();
-    // The shell carries no inline script: only the module entry and the theme boot.
-    expect(html).not.toMatch(/<script>(?!<\/script>)/);
-    expect(html).toContain('<script type="module" src="/app/app.js"></script>');
+  // Spawns `node --check` once per served module; the set is now 60+ files,
+  // so this is minutes of process startup on a loaded machine, not seconds.
+  it(
+    "serves scripts that compile and stylesheets free of script",
+    { timeout: 120_000 },
+    async () => {
+      // Both regressions happened: drawer JS inserted into the <style> block
+      // (silently dropping every later CSS rule), and \n escapes that became raw
+      // newlines inside JS string literals (a SyntaxError that blanked the board).
+      // The page is now static ES modules, so every one of them is compiled with
+      // `node --check` exactly as served, and every stylesheet is checked.
+      const base = `http://127.0.0.1:${serverInstance.port}`;
+      const html = await (await fetch(`${base}/`)).text();
+      // The shell carries no inline script: only the module entry and the theme boot.
+      expect(html).not.toMatch(/<script>(?!<\/script>)/);
+      expect(html).toContain('<script type="module" src="/app/app.js"></script>');
 
-    const scripts = [
-      ...readdirSync(UI_WEB_DIR).filter((f) => f.endsWith(".js")),
-      ...UI_LIB_MODULES.map((m) => `lib/${m}`),
-    ];
-    expect(scripts).toContain("app.js");
-    expect(scripts.length).toBeGreaterThan(15);
-    const dir = mkdtempSync(join(tmpdir(), "sekhemet-js-"));
-    try {
-      for (const name of scripts) {
+      const scripts = [
+        ...readdirSync(UI_WEB_DIR).filter((f) => f.endsWith(".js")),
+        ...UI_LIB_MODULES.map((m) => `lib/${m}`),
+      ];
+      expect(scripts).toContain("app.js");
+      expect(scripts.length).toBeGreaterThan(15);
+      const dir = mkdtempSync(join(tmpdir(), "sekhemet-js-"));
+      try {
+        for (const name of scripts) {
+          const res = await fetch(`${base}/app/${name}`);
+          expect(res.status, name).toBe(200);
+          expect(res.headers.get("content-type"), name).toContain("text/javascript");
+          const source = await res.text();
+          expect(source.length, name).toBeGreaterThan(100);
+          const file = join(dir, `${name.replace(/\//g, "_")}.mjs`);
+          writeFileSync(file, source);
+          expect(
+            () => execFileSync(process.execPath, ["--check", file], { stdio: "pipe" }),
+            name,
+          ).not.toThrow();
+        }
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+
+      const styles = readdirSync(UI_WEB_DIR).filter((f) => f.endsWith(".css"));
+      let allCss = "";
+      for (const name of styles) {
         const res = await fetch(`${base}/app/${name}`);
         expect(res.status, name).toBe(200);
-        expect(res.headers.get("content-type"), name).toContain("text/javascript");
-        const source = await res.text();
-        expect(source.length, name).toBeGreaterThan(100);
-        const file = join(dir, `${name.replace(/\//g, "_")}.mjs`);
-        writeFileSync(file, source);
-        expect(
-          () => execFileSync(process.execPath, ["--check", file], { stdio: "pipe" }),
-          name,
-        ).not.toThrow();
+        expect(res.headers.get("content-type"), name).toContain("text/css");
+        const css = await res.text();
+        expect(css, name).not.toMatch(/\bfunction\s*\w*\s*\(/);
+        expect(css, name).not.toContain("document.");
+        expect(css, name).not.toContain("<script");
+        // No hard-coded colour: every value comes from a token.
+        expect(css, name).not.toMatch(/#[0-9a-fA-F]{3,8}\b|rgba?\(/);
+        expect(html, name).toContain(`href="/app/${name}"`);
+        allCss += css;
       }
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-
-    const styles = readdirSync(UI_WEB_DIR).filter((f) => f.endsWith(".css"));
-    let allCss = "";
-    for (const name of styles) {
-      const res = await fetch(`${base}/app/${name}`);
-      expect(res.status, name).toBe(200);
-      expect(res.headers.get("content-type"), name).toContain("text/css");
-      const css = await res.text();
-      expect(css, name).not.toMatch(/\bfunction\s*\w*\s*\(/);
-      expect(css, name).not.toContain("document.");
-      expect(css, name).not.toContain("<script");
-      // No hard-coded colour: every value comes from a token.
-      expect(css, name).not.toMatch(/#[0-9a-fA-F]{3,8}\b|rgba?\(/);
-      expect(html, name).toContain(`href="/app/${name}"`);
-      allCss += css;
-    }
-    // The drawer and palette styles must actually be present.
-    expect(allCss).toContain(".peek {");
-    expect(allCss).toContain(".scrim {");
-  });
+      // The drawer and palette styles must actually be present.
+      expect(allCss).toContain(".peek {");
+      expect(allCss).toContain(".scrim {");
+    },
+  );
 
   it("escapes model-authored text instead of interpolating it as markup", async () => {
     // Card titles come from a model, so the renderer must escape. A dashboard

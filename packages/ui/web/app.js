@@ -3,12 +3,16 @@ import * as boardView from "./board.js";
 import { initBulk } from "./bulk.js";
 import * as cardView from "./card.js";
 import { getJSON } from "./dom.js";
+import * as graphView from "./graph.js";
+import * as inboxView from "./inbox.js";
+import { refreshDecisions } from "./inbox.js";
 import * as insightsView from "./insights.js";
 import * as integrationsView from "./integrations.js";
 import { initKeys } from "./keys.js";
 import * as ledgerView from "./ledger.js";
 import * as machineView from "./machine.js";
 import * as playbookView from "./playbook.js";
+import * as registryView from "./registry.js";
 import { initPm, loadThread, onPmEvent } from "./pm_client.js";
 import { initPmPanel } from "./pm_panel.js";
 import * as pmView from "./pm_view.js";
@@ -16,6 +20,7 @@ import * as reviewView from "./review.js";
 import * as runsView from "./runs.js";
 import { initShell, setActiveNav } from "./shell.js";
 import { store } from "./store.js";
+import * as workspaceView from "./workspace.js";
 
 const VIEWS = {
   review: reviewView,
@@ -28,6 +33,10 @@ const VIEWS = {
   pm: pmView,
   insights: insightsView,
   integrations: integrationsView,
+  inbox: inboxView,
+  graph: graphView,
+  workspace: workspaceView,
+  registry: registryView,
 };
 
 let current = null;
@@ -92,8 +101,14 @@ function applyBoard(board) {
   });
 }
 
+/** The board, scoped to the Workspace's chosen project when there is one (U7, U21). */
+function boardPath() {
+  const id = store.state.project?.id;
+  return id ? `/api/board?project=${encodeURIComponent(id)}` : "/api/board";
+}
+
 export async function refreshBoard() {
-  const res = await getJSON("/api/board");
+  const res = await getJSON(boardPath());
   if (res.ok) applyBoard(res.data);
   return res.ok;
 }
@@ -119,7 +134,7 @@ async function refreshRoster() {
 
 async function hydrate() {
   const [board, events, meta, gates, queue, playbook] = await Promise.all([
-    getJSON("/api/board"),
+    getJSON(boardPath()),
     getJSON("/api/events?limit=1"),
     getJSON("/api/meta"),
     getJSON("/api/gates"),
@@ -133,6 +148,13 @@ async function hydrate() {
   if (events.ok) store.state.verification = events.data.verification;
   if (board.ok) applyBoard(board.data);
   store.set({ loaded: true });
+  refreshDecisions().catch(() => {});
+}
+
+/** The highest ledger seq seen: the checkpoint a reconnect replays from (U9). */
+function noteSeq(events) {
+  const last = events?.length ? events[events.length - 1].seq : 0;
+  if (last > store.state.lastSeq) store.state.lastSeq = last;
 }
 
 /* ---------- Live stream ---------- */
@@ -160,13 +182,16 @@ function scheduleOfflineCheck() {
 
 export function connect() {
   source?.close();
-  source = new EventSource("/api/stream");
+  // U9: a fresh connection asks the server to replay everything after the
+  // last seq this page saw; the browser's own reconnects send Last-Event-ID.
+  const since = store.state.lastSeq;
+  source = new EventSource(since > 0 ? `/api/stream?since=${since}` : "/api/stream");
   source.addEventListener("open", async () => {
     const wasDown = store.state.connection !== "live" && store.state.loaded;
     clearTimeout(offlineTimer);
     store.set({ connection: "live", reconnectingSince: 0, offlineSince: 0 });
-    // Frames sent while we were away are gone; catch up once.
-    if (wasDown) {
+    // Without a checkpoint there is nothing to replay from: catch up once.
+    if (wasDown && store.state.lastSeq === 0) {
       await hydrate().catch(() => {});
       loadThread();
     }
@@ -177,6 +202,10 @@ export function connect() {
       if (payload.verification) store.state.verification = payload.verification;
       // Views that follow the ledger (Steps, Thread, Ledger) read the new events.
       store.state.feed = payload.events ?? [];
+      noteSeq(payload.events);
+      // A replay after a gap: the Seshat thread may have moved too.
+      if (payload.replay) loadThread();
+      if ((payload.events ?? []).some((e) => /^decision\//.test(e.type))) refreshDecisions();
       if (
         (payload.events ?? []).some(
           (e) => e.type === "card/status_changed" && /^returned/.test(e.payload?.reason ?? ""),
@@ -184,7 +213,9 @@ export function connect() {
       ) {
         getJSON("/api/playbook").then((r) => r.ok && store.set({ playbook: r.data }));
       }
-      if (payload.board) applyBoard(payload.board);
+      // A project-scoped board refetches its own slice instead of the frame's.
+      if (payload.board && store.state.project?.id) refreshBoard();
+      else if (payload.board) applyBoard(payload.board);
       else store.set({ verification: store.state.verification, feed: store.state.feed });
     } catch {
       // A malformed frame is dropped; the next one carries the full board.
@@ -199,7 +230,15 @@ export function connect() {
   });
   source.addEventListener("machine", (ev) => {
     try {
-      store.set({ machine: JSON.parse(ev.data).memory });
+      const memory = JSON.parse(ev.data).memory;
+      // The Machine view's memory sparkline: the last 120 samples (10 minutes).
+      const t = store.state.telemetry;
+      const sample =
+        memory?.usedRatio !== undefined ? [{ at: Date.now(), pct: memory.usedRatio * 100 }] : [];
+      store.set({
+        machine: memory,
+        telemetry: { ...t, memory: [...t.memory, ...sample].slice(-120) },
+      });
     } catch {
       // Dropped; the next sample arrives in five seconds.
     }
@@ -253,6 +292,8 @@ async function boot() {
   connect();
   refreshDoctor();
   setInterval(refreshDoctor, 30_000);
+  // Decision deadlines and new asks: the sidebar count stays current.
+  setInterval(() => refreshDecisions().catch(() => {}), 60_000);
   // Wait times count up; frozen while offline (§2.4 shell states).
   setInterval(() => {
     if (store.state.connection !== "offline") store.set({ now: Date.now() });

@@ -92,7 +92,9 @@ export class Tracer {
             .prepare("SELECT * FROM spans WHERE trace_id = ? ORDER BY CAST(start_ns AS INTEGER)")
             .all(filter.traceId)
         : this.db
-            .prepare("SELECT * FROM spans WHERE CAST(start_ns AS INTEGER) >= ? ORDER BY CAST(start_ns AS INTEGER)")
+            .prepare(
+              "SELECT * FROM spans WHERE CAST(start_ns AS INTEGER) >= ? ORDER BY CAST(start_ns AS INTEGER)",
+            )
             .all(String(BigInt(filter.sinceMs ?? 0) * 1_000_000n))
     ) as Record<string, string | null>[];
     return rows.map((r) => ({

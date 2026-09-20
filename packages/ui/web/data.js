@@ -32,14 +32,21 @@ export function loadDetail(id, attempt) {
     getJSON(`/api/events?card=${encodeURIComponent(id)}&type=card/review&limit=1&order=desc`).catch(
       () => ({ ok: false, status: 0, data: null }),
     ),
+    // X3: images attached to the card (screenshots, mockups).
+    getJSON(`/api/cards/${encodeURIComponent(id)}/attachments`).catch(() => ({
+      ok: false,
+      status: 0,
+      data: null,
+    })),
   ])
-    .then(([c, e, rv]) => {
+    .then(([c, e, rv, at]) => {
       const out = {
         card: c.ok ? c.data.card : store.card(id),
         attempts: c.ok ? c.data.attempts : [],
         acceptance: c.ok ? (c.data.acceptance ?? []) : [],
         evidence: e.ok ? e.data : null,
         review: rv.ok ? latestReview(rv.data?.events) : null,
+        attachments: at.ok ? (at.data?.attachments ?? []) : [],
       };
       if (!e.ok && e.status !== 404) out.error = { status: e.status, message: e.data?.error ?? "" };
       if (!c.ok && c.status !== 404) out.error = { status: c.status, message: c.data?.error ?? "" };

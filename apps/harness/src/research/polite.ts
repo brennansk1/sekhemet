@@ -292,7 +292,12 @@ export class ResearchCache {
       // Content-hash index: the same bytes under a second URL (a mirror, a
       // redirect target, a versioned alias) resolve to the first URL that
       // carried them, so the corpus holds one copy and one citation.
-      const canon = join(this.dir, `h-${hash.slice(0, 32)}.json`);
+      // The index lives in its own subdirectory: the cache directory is
+      // scanned as one file per entry (doc bundles export it that way), so a
+      // sibling index file would be exported and counted as a page.
+      const byHash = join(this.dir, ".by-hash");
+      mkdirSync(byHash, { recursive: true });
+      const canon = join(byHash, `${hash.slice(0, 32)}.json`);
       if (!existsSync(canon)) writeFileSync(canon, JSON.stringify({ key }));
     } catch {
       // A cache that cannot write is only slower.
@@ -303,7 +308,9 @@ export class ResearchCache {
   canonicalOf(body: string): string | undefined {
     try {
       const hash = createHash("sha256").update(body).digest("hex").slice(0, 32);
-      const { key } = JSON.parse(readFileSync(join(this.dir, `h-${hash}.json`), "utf8")) as {
+      const { key } = JSON.parse(
+        readFileSync(join(this.dir, ".by-hash", `${hash}.json`), "utf8"),
+      ) as {
         key: string;
       };
       return key;

@@ -108,12 +108,54 @@ function views() {
     { label: "Go to Ledger", keys: ["g", "l"], run: goTo("#/ledger") },
     { label: "Go to Playbook", keys: ["g", "p"], run: goTo("#/playbook") },
     { label: "Go to Machine", keys: ["g", "m"], run: goTo("#/machine") },
+    {
+      label: "Go to Inbox",
+      search: "Inbox decisions questions permission",
+      keys: ["g", "i"],
+      run: goTo("#/inbox"),
+    },
+    {
+      label: "Go to Dependencies",
+      search: "Dependencies graph DAG waits on",
+      keys: ["g", "d"],
+      run: goTo("#/graph"),
+    },
+    {
+      label: "Go to Workspace",
+      search: "Workspace projects master board",
+      keys: ["g", "w"],
+      run: goTo("#/workspace"),
+    },
+    {
+      label: "Go to Registry",
+      search: "Registry models bake-off qualification",
+      keys: ["g", "e"],
+      run: goTo("#/registry"),
+    },
   ];
+}
+
+/** Compact (88px tiles) or comfortable (112px: spec line, token and time bars, difficulty). */
+export function toggleDensity() {
+  const root = document.documentElement;
+  const next = root.dataset.density === "comfortable" ? "compact" : "comfortable";
+  root.dataset.density = next;
+  try {
+    localStorage.setItem("sekhemet-density", next);
+  } catch {
+    // Private mode: this page only.
+  }
+  window.dispatchEvent(new CustomEvent("sekhemet:refresh-view"));
 }
 
 function prefs() {
   return [
     { label: "Switch theme", keys: ["t"], run: toggleTheme },
+    {
+      label: "Switch density (compact or comfortable)",
+      search: "density comfortable compact tile bars tokens difficulty",
+      run: toggleDensity,
+    },
     { label: "Keyboard shortcuts", keys: ["?"], run: () => setTimeout(openCheatsheet, 0) },
   ];
 }

@@ -1,6 +1,7 @@
 // The evidence composition shared by Review and the card view: header, gates,
 // failures, changes, facts. Keeps its own scroll, diff mode and file toggles.
 import { changesHtml } from "./diff.js";
+import { paintShotDiffs, shotsHtml } from "./shots.js";
 import { $, $$, copyText, esc, icon } from "./dom.js";
 import { factsInlineHtml, factsRailHtml } from "./facts.js";
 import { failuresHeadline, failuresHtml } from "./failures.js";
@@ -119,6 +120,12 @@ export class EvidencePane {
       parts.push(
         `<section aria-label="Failures" data-failures><h3 class="sh">Failures <span class="sec">${esc(failuresHeadline(ev.failures))}</span></h3>${failuresHtml(ev.failures, { card: detail.card ?? card, gatesConfig: config })}</section>`,
       );
+    }
+    // U8, X3: screenshot differences from the visual gates, and attached images.
+    const shots = shotsHtml(ev, detail.attachments ?? [], card.id);
+    if (shots) {
+      parts.push(shots);
+      setTimeout(() => paintShotDiffs(document), 0);
     }
     parts.push(
       changesHtml(ev, {

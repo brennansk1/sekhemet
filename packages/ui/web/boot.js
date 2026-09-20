@@ -7,6 +7,9 @@
     const light = window.matchMedia?.("(prefers-color-scheme: light)").matches;
     const theme = saved === "sand" || saved === "basalt" ? saved : light ? "sand" : "basalt";
     document.documentElement.dataset.theme = theme;
+    const density = localStorage.getItem("sekhemet-density");
+    if (density === "comfortable" || density === "compact")
+      document.documentElement.dataset.density = density;
   } catch {
     // Private mode: stay on the default.
   }

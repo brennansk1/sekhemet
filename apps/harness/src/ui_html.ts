@@ -10,6 +10,7 @@ const STYLES = [
   "diff.css",
   "views.css",
   "pm.css",
+  "wave2.css",
 ];
 
 /**

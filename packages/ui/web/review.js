@@ -1,5 +1,6 @@
 // Review (FRONTEND_DESIGN §2.4.1): the queue on the left, the evidence in the
 // middle, the facts on the right, and the triage bar under the evidence.
+import { nextDiffMode } from "./diff.js";
 import { loadDetail } from "./data.js";
 import { $, announce, esc, icon } from "./dom.js";
 import { EvidencePane } from "./evidence.js";
@@ -305,7 +306,7 @@ export function onKey(e) {
     return true;
   }
   if (k === "u") {
-    ui.pane.mode = ui.pane.mode === "split" ? "unified" : "split";
+    ui.pane.mode = nextDiffMode(ui.pane.mode);
     renderEvidence({ keepScroll: true });
     return true;
   }

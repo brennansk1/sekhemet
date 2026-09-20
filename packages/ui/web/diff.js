@@ -9,6 +9,7 @@ import {
 } from "./diff_parse.js";
 import { esc, icon, kbd } from "./dom.js";
 import { gateLabel, plural } from "./lib/vocabulary.js";
+import { structuralSummary } from "./structure.js";
 
 const MAX_LINES = 400;
 const ROLE = {
@@ -152,6 +153,13 @@ export function changesHtml(
   { card, gatesConfig, acceptance = [], mode = "unified", open = new Map(), full = new Set() } = {},
 ) {
   const files = parseUnifiedDiff(evidence.diff);
+  // U16: the structural reading (intent groups, declarations changed).
+  if (mode === "structural") {
+    const added = files.reduce((n, f) => n + f.added, 0);
+    const removed = files.reduce((n, f) => n + f.removed, 0);
+    const head = files.length ? `${plural(files.length, "file")} · +${added} −${removed}` : "No changes recorded";
+    return `<section aria-label="Changes" data-changes><h3 class="sh">Changes <span class="sec">${esc(head)}</span>${files.length ? modeHint(mode) : ""}</h3><div class="changes structural">${structuralHtml(files)}</div></section>`;
+  }
   const ctx = {
     scopeFiles: card?.scopeFiles ?? [],
     acceptanceTests: card?.acceptanceTests ?? [],
@@ -220,6 +228,56 @@ export function changesHtml(
   const head = files.length
     ? `${plural(files.length, "file")} · +${added} −${removed}`
     : "No changes recorded";
-  const modeHint = `<span class="diff-mode">${kbd("u")} ${mode === "split" ? "Split" : "Unified"}</span>`;
-  return `<section aria-label="Changes" data-changes><h3 class="sh">Changes <span class="sec">${esc(head)}</span>${files.length ? modeHint : ""}</h3><div class="changes">${groups.join("")}</div></section>`;
+  return `<section aria-label="Changes" data-changes><h3 class="sh">Changes <span class="sec">${esc(head)}</span>${files.length ? modeHint(mode) : ""}</h3><div class="changes">${groups.join("")}</div></section>`;
+}
+
+/* ---------- Structural mode (U16) ---------- */
+
+/** `u` cycles unified, split and structural. */
+export const DIFF_MODES = ["unified", "split", "structural"];
+export function nextDiffMode(mode) {
+  return DIFF_MODES[(DIFF_MODES.indexOf(mode) + 1) % DIFF_MODES.length];
+}
+
+function modeHint(mode) {
+  const label = { unified: "Unified", split: "Split", structural: "Structural" }[mode] ?? "Unified";
+  return `<span class="diff-mode" title="u switches unified, split and structural">${kbd("u")} ${label}</span>`;
+}
+
+const INTENTS = [
+  ["source", "Source"],
+  ["tests", "Tests"],
+  ["config", "Configuration"],
+  ["docs", "Documentation"],
+];
+const CHANGE = {
+  added: { label: "added", cls: "pass", sign: "+" },
+  removed: { label: "removed", cls: "fail", sign: "−" },
+  changed: { label: "changed", cls: "running", sign: "~" },
+};
+
+function structuralHtml(files) {
+  const rows = structuralSummary(files);
+  if (rows.length === 0) return '<div class="note-row">No changes recorded.</div>';
+  return INTENTS.map(([key, label]) => {
+    const list = rows.filter((r) => r.intent === key);
+    if (list.length === 0) return "";
+    const items = list
+      .map((r) => {
+        const syms = r.symbols.length
+          ? `<ul class="st-syms">${r.symbols
+              .map(
+                (s) =>
+                  `<li class="st-sym ${CHANGE[s.change].cls}"><span class="st-sign" aria-hidden="true">${CHANGE[s.change].sign}</span><span class="mono">${esc(s.name)}</span><span class="sec">${CHANGE[s.change].label}</span></li>`,
+              )
+              .join("")}</ul>`
+          : '<p class="sec st-none">No declarations changed: edits inside the file body.</p>';
+        const ws = r.whitespaceOnly
+          ? `<span class="sec"> · ${r.whitespaceOnly} whitespace-only hunk${r.whitespaceOnly === 1 ? "" : "s"} hidden</span>`
+          : "";
+        return `<li class="st-file"><div class="st-h">${icon("file", 14, "ic s14")}<span class="mono">${esc(r.path)}</span>${r.status !== "modified" ? `<span class="sec">${esc(r.status)}</span>` : ""}<span class="sec tnum">+${r.added} −${r.removed}</span>${ws}</div>${syms}</li>`;
+      })
+      .join("");
+    return `<div class="st-group"><h4 class="sub">${label} <span class="sec">${list.length} file${list.length === 1 ? "" : "s"}</span></h4><ul class="st-files">${items}</ul></div>`;
+  }).join("");
 }

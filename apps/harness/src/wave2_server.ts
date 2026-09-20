@@ -174,6 +174,54 @@ export async function handleWave2Route(
   if (!cardStore) return false;
   const ledger = { store: cardStore, log: ctx.log };
 
+  // U8: visual gate images (baselines, captures, candidates) for Review.
+  const visual = /^\/api\/visual\/(baselines|actual|candidates)\/([\w.@-]+\.png)$/.exec(url);
+  if (visual && req.method === "GET") {
+    const { existsSync, readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const path = join(ctx.repoPath, ".sekhemet", "visual", visual[1] as string, visual[2] as string);
+    if (!existsSync(path)) json(res, 404, { error: "no such image" });
+    else {
+      res.writeHead(200, { "content-type": "image/png", "cache-control": "no-cache" });
+      res.end(readFileSync(path));
+    }
+    return true;
+  }
+  // U18: per-step model telemetry for the Machine view's sparklines.
+  if (url === "/api/telemetry" && req.method === "GET") {
+    const steps = (await ctx.log.getEventsByTypes(["card/step"])).slice(-240);
+    const points = steps.flatMap((e) => {
+      const u = (e.payload as { usage?: Record<string, number> }).usage;
+      if (!u) return [];
+      return [
+        {
+          seq: e.seq,
+          at: e.createdAt,
+          cardId: e.cardId,
+          ...(u.decodeTokensPerSecond !== undefined ? { decode: u.decodeTokensPerSecond } : {}),
+          ...(u.prefillTokensPerSecond !== undefined ? { prefill: u.prefillTokensPerSecond } : {}),
+          ...(u.cacheHitRate !== undefined ? { cacheHit: u.cacheHitRate } : {}),
+          ...(u.promptTokens !== undefined ? { promptTokens: u.promptTokens } : {}),
+        },
+      ];
+    });
+    json(res, 200, { steps: points });
+    return true;
+  }
+  // U7: the model registry and the bake-off records, for the Registry view.
+  if (url === "/api/registry" && req.method === "GET") {
+    const { ModelRegistry, readBakeOffRecords } = await import("@sekhemet/models");
+    const { join } = await import("node:path");
+    let bakeoff: unknown[] = [];
+    try {
+      bakeoff = readBakeOffRecords(join(ctx.repoPath, ".sekhemet", "bakeoff", "records.jsonl"));
+    } catch {
+      bakeoff = [];
+    }
+    json(res, 200, { models: new ModelRegistry().list(), bakeoff });
+    return true;
+  }
+
   // X16: recurring templates, and webhook triggers from the dashboard or from
   // a caller holding SEKHEMET_TRIGGER_TOKEN (CI, a docs build, a cron job).
   if (url === "/api/recurring" && req.method === "GET") {

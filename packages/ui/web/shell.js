@@ -5,6 +5,8 @@ import { ledgerAltered, store } from "./store.js";
 
 const NAV = [
   { name: "review", label: "Review", icon: "review", key: "g r" },
+  // Hidden until the decisions endpoint answers (§2.4.8): never a dead link.
+  { name: "inbox", label: "Inbox", icon: "inbox", key: "g i", when: (s) => s.decisions.available },
   { name: "board", label: "Board", icon: "board", key: "g b" },
   {
     name: "pm",
@@ -18,7 +20,10 @@ const NAV = [
   { name: "runs", label: "Runs", icon: "runs", key: "g q" },
   { name: "ledger", label: "Ledger", icon: "ledger", key: "g l" },
   { name: "playbook", label: "Playbook", icon: "playbook", key: "g p" },
+  { name: "graph", label: "Dependencies", icon: "link", key: "g d" },
   { name: "machine", label: "Machine", icon: "machine", key: "g m" },
+  { name: "workspace", label: "Workspace", icon: "layers", key: "g w" },
+  { name: "registry", label: "Registry", icon: "memory", key: "g e" },
   { name: "integrations", label: "Integrations", icon: "plug", key: "g s" },
 ];
 
@@ -139,7 +144,14 @@ function renderSide() {
   } else if (openProposals) {
     counts.pm = { n: String(openProposals), title: `${openProposals} open proposals` };
   }
-  const nav = NAV.map((item) => {
+  const waiting = s.decisions.items?.length ?? 0;
+  if (waiting)
+    counts.inbox = {
+      n: String(waiting),
+      warn: true,
+      title: `${waiting} decision${waiting === 1 ? "" : "s"} waiting on you`,
+    };
+  const nav = NAV.filter((item) => !item.when || item.when(s)).map((item) => {
     const c = counts[item.name];
     const cur = active === item.name ? ' aria-current="page"' : "";
     const badge = c

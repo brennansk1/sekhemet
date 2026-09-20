@@ -1,6 +1,7 @@
 // Card view (FRONTEND_DESIGN §2.4.3): header with triage, then five tabs.
 // Evidence reuses the Review composition; Plan, Steps, Thread and Files are
 // their own modules. Route: #/card/:id/:tab, tabs on keys 1–5.
+import { nextDiffMode } from "./diff.js";
 import { loadDetail } from "./data.js";
 import { $, esc, getJSON, icon } from "./dom.js";
 import { EvidencePane } from "./evidence.js";
@@ -232,7 +233,7 @@ function onKey(e) {
   if (ui.tabCtl?.onKey?.(e)) return true;
   if (ui.tab !== "evidence") return false;
   if (k === "u") {
-    ui.pane.mode = ui.pane.mode === "split" ? "unified" : "split";
+    ui.pane.mode = nextDiffMode(ui.pane.mode);
     renderPanel();
     return true;
   }

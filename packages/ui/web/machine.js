@@ -4,6 +4,7 @@ import { $, esc, getJSON, icon } from "./dom.js";
 import { ROSTER_STATE_LABELS, rosterRows } from "./lib/pm.js";
 import { checkFixHint, shortId } from "./lib/vocabulary.js";
 import { setTopbar } from "./shell.js";
+import { drawSparkline, sparkSummary } from "./sparkline.js";
 import { store } from "./store.js";
 
 const ui = {
@@ -141,8 +142,11 @@ function render() {
   const err = ui.error
     ? `<div class="ev-error" role="alert">${icon("alert")}<span><b>Couldn't read the machine.</b> <span class="sec">The server returned ${esc(ui.error)}.</span></span><button class="btn sm" type="button" data-rerun>Retry</button></div>`
     : "";
-  const html = `${err}<div class="two">${memoryHtml(mem)}${modelHtml(d)}</div>${rosterHtml()}${checksHtml(d)}${sandboxHtml(d)}`;
-  if (html === ui.last) return;
+  const html = `${err}<div class="two">${memoryHtml(mem)}${modelHtml(d)}</div>${telemetryHtml()}${rosterHtml()}${checksHtml(d)}${sandboxHtml(d)}`;
+  if (html === ui.last) {
+    paintTelemetry();
+    return;
+  }
   ui.last = html;
   const body = $(".mc", ui.root);
   const top = body.scrollTop;
@@ -150,6 +154,72 @@ function render() {
   body.innerHTML = html;
   body.scrollTop = top;
   if (focusRerun) $("[data-rerun]", body)?.focus();
+  paintTelemetry();
+}
+
+/* ---------- Telemetry sparklines (U18) ---------- */
+
+const SERIES = [
+  {
+    key: "memory",
+    label: "Memory used",
+    tone: "running",
+    min: 0,
+    max: 100,
+    band: 85,
+    fmt: (v) => `${Math.round(v)}%`,
+    basis: "sampled every 5 s while this page is open",
+  },
+  {
+    key: "decode",
+    label: "Decode speed",
+    tone: "pass",
+    min: 0,
+    fmt: (v) => `${v.toFixed(1)} tok/s`,
+    basis: "per Worker step",
+  },
+  {
+    key: "cacheHit",
+    label: "Prefix-cache hit rate",
+    tone: "parked",
+    min: 0,
+    max: 100,
+    fmt: (v) => `${Math.round(v)}%`,
+    basis: "per Worker step; the target on tool-result steps is 98%",
+  },
+];
+
+function seriesValues(key) {
+  const t = store.state.telemetry;
+  if (key === "memory") return t.memory.map((m) => m.pct);
+  return t.steps.map((p) => (key === "cacheHit" ? (p.cacheHit ?? NaN) * 100 : (p[key] ?? NaN)));
+}
+
+function telemetryHtml() {
+  const rows = SERIES.map((s) => {
+    const sum = sparkSummary(seriesValues(s.key), s.fmt);
+    return `<div class="sp-row"><div class="sp-l"><b>${esc(s.label)}</b><span class="sec">${esc(s.basis)}</span></div><canvas class="sp" data-series="${s.key}" role="img" aria-label="${esc(`${s.label}: ${sum.last}, ${sum.range}`)}"></canvas><div class="sp-v"><span class="tnum">${esc(sum.last)}</span><span class="sec tnum">${esc(sum.range)}</span></div></div>`;
+  }).join("");
+  return `<section class="mc-card sp-card"><h3 class="sh">Telemetry <span class="sec">memory, speed and cache over time</span></h3>${rows}</section>`;
+}
+
+function paintTelemetry() {
+  if (!ui.root) return;
+  for (const c of ui.root.querySelectorAll("canvas[data-series]")) {
+    const s = SERIES.find((x) => x.key === c.dataset.series);
+    if (!s) continue;
+    drawSparkline(c, seriesValues(s.key), {
+      tone: s.tone,
+      ...(s.min !== undefined ? { min: s.min } : {}),
+      ...(s.max !== undefined ? { max: s.max } : {}),
+      ...(s.band !== undefined ? { band: s.band } : {}),
+    });
+  }
+}
+
+async function loadTelemetry() {
+  const r = await getJSON("/api/telemetry").catch(() => ({ ok: false }));
+  if (r.ok) store.set({ telemetry: { ...store.state.telemetry, steps: r.data.steps ?? [] } });
 }
 
 async function loadRoster() {
@@ -187,10 +257,12 @@ export function mount(view) {
     if (e.target instanceof Element && e.target.closest("[data-rerun]")) load(true);
   });
   const unsub = store.on((_s, patch) => {
-    if ("machine" in patch || "cards" in patch) render();
+    if ("machine" in patch || "cards" in patch || "telemetry" in patch) render();
+    if ("feed" in patch && (patch.feed ?? []).some((e) => e.type === "card/step")) loadTelemetry();
   });
   render();
   load();
+  loadTelemetry();
   return {
     setParams() {},
     onKey(e) {

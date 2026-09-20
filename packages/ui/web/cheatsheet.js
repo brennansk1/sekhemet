@@ -26,6 +26,30 @@ const SECTIONS = [
       ["Seshat", ["g", "a"]],
       ["Insights", ["g", "f"]],
       ["Integrations", ["g", "s"]],
+      ["Inbox (decisions)", ["g", "i"]],
+      ["Dependencies", ["g", "d"]],
+      ["Workspace (all projects)", ["g", "w"]],
+      ["Registry (models)", ["g", "e"]],
+    ],
+  },
+  {
+    name: "Inbox",
+    views: ["inbox"],
+    rows: [
+      ["Pick an option", ["1", "…", "9"]],
+      ["Answer", ["↵"]],
+      ["Next or previous request", ["j", "k"]],
+    ],
+  },
+  {
+    name: "Dependencies",
+    views: ["graph"],
+    rows: [
+      ["Pan", ["drag"]],
+      ["Zoom", ["+", "−"]],
+      ["Fit the graph", ["f"]],
+      ["Actual size", ["0"]],
+      ["Open the focused card", ["↵"]],
     ],
   },
   {

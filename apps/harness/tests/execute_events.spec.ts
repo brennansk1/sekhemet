@@ -16,7 +16,6 @@ import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import type { TurnResult } from "@sekhemet/loop";
 import { MockInferenceAdapter } from "@sekhemet/models";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { Tracer } from "../src/tracing.js";
 import {
   type QueueReport,
   acceptCard,
@@ -24,6 +23,7 @@ import {
   stepEventPayload,
   writeQueueReport,
 } from "../src/execute.js";
+import { Tracer } from "../src/tracing.js";
 
 // Additive ledger facts from the runner and the accept path (FRONTEND_DESIGN
 // 3.2, and the backend gaps: accept sha, Planner repair plan, run history).

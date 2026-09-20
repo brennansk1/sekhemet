@@ -35,10 +35,9 @@ describe("WebSocket framing (H1)", () => {
   });
 
   it("turns SSE frames into messages and allows only loopback origins", () => {
-    expect(sseToMessages('event: append\ndata: {"a":1}\n\nevent: machine\ndata: {"m":2}\n\n')).toEqual([
-      '{"event":"append","data":{"a":1}}',
-      '{"event":"machine","data":{"m":2}}',
-    ]);
+    expect(
+      sseToMessages('event: append\ndata: {"a":1}\n\nevent: machine\ndata: {"m":2}\n\n'),
+    ).toEqual(['{"event":"append","data":{"a":1}}', '{"event":"machine","data":{"m":2}}']);
     expect(originAllowed(undefined)).toBe(true);
     expect(originAllowed("http://127.0.0.1:4040")).toBe(true);
     expect(originAllowed("http://localhost:3000")).toBe(true);
@@ -67,19 +66,21 @@ describe("live stream over WebSocket", () => {
   afterAll(async () => server.close());
 
   const handshake = (origin?: string) =>
-    new Promise<{ status: string; socket: ReturnType<typeof connect>; data: Buffer[] }>((resolve) => {
-      const socket = connect(server.port, "127.0.0.1");
-      const data: Buffer[] = [];
-      let status = "";
-      socket.on("data", (d: Buffer) => {
-        if (!status) status = d.toString().split("\r\n")[0] ?? "";
-        data.push(d);
-        resolve({ status, socket, data });
-      });
-      socket.write(
-        `GET /api/ws HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n${origin ? `Origin: ${origin}\r\n` : ""}\r\n`,
-      );
-    });
+    new Promise<{ status: string; socket: ReturnType<typeof connect>; data: Buffer[] }>(
+      (resolve) => {
+        const socket = connect(server.port, "127.0.0.1");
+        const data: Buffer[] = [];
+        let status = "";
+        socket.on("data", (d: Buffer) => {
+          if (!status) status = d.toString().split("\r\n")[0] ?? "";
+          data.push(d);
+          resolve({ status, socket, data });
+        });
+        socket.write(
+          `GET /api/ws HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n${origin ? `Origin: ${origin}\r\n` : ""}\r\n`,
+        );
+      },
+    );
 
   it("refuses a foreign origin", async () => {
     const { status, socket } = await handshake("https://evil.example");
@@ -97,7 +98,9 @@ describe("live stream over WebSocket", () => {
       await new Promise((r) => setTimeout(r, 50));
       const all = Buffer.concat(data);
       const at = all.indexOf("\r\n\r\n") + 4;
-      text = decodeFrames(all.subarray(at)).frames.map((f) => f.payload.toString()).join("\n");
+      text = decodeFrames(all.subarray(at))
+        .frames.map((f) => f.payload.toString())
+        .join("\n");
     }
     const msg = JSON.parse(text.split("\n").find((l) => l.includes("card_ws")) ?? "{}");
     expect(msg.event).toBe("append");
@@ -107,7 +110,12 @@ describe("live stream over WebSocket", () => {
 
   it("answers 404 for other upgrade paths", async () => {
     const res = await new Promise<number>((resolve) => {
-      const req = request({ port: server.port, host: "127.0.0.1", path: "/nope", headers: { Connection: "Upgrade", Upgrade: "websocket" } });
+      const req = request({
+        port: server.port,
+        host: "127.0.0.1",
+        path: "/nope",
+        headers: { Connection: "Upgrade", Upgrade: "websocket" },
+      });
       req.on("upgrade", () => resolve(101));
       req.on("response", (r) => resolve(r.statusCode ?? 0));
       req.on("error", () => resolve(-1));
@@ -136,7 +144,9 @@ describe("sekhemet daemon (H1)", () => {
     expect(launched[0]).toEqual(["serve", "--repo", repo, "--port", "4999"]);
     expect(readDaemon(repo)?.port).toBe(4999);
     expect((await daemonStart(repo, 4999, deps)).message).toMatch(/Already running/);
-    expect(await daemonStatus(repo, deps)).toMatch(/Running .* answering\. Live stream: ws:\/\/127\.0\.0\.1:4999\/api\/ws/);
+    expect(await daemonStatus(repo, deps)).toMatch(
+      /Running .* answering\. Live stream: ws:\/\/127\.0\.0\.1:4999\/api\/ws/,
+    );
     // Stopping a process that stays alive (our own pid) still clears the record.
     expect(await daemonStop(repo, deps)).toMatch(/Stopped/);
     expect(readDaemon(repo)).toBeUndefined();

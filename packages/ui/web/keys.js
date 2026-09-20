@@ -20,6 +20,10 @@ const CHORDS = {
   a: "#/pm",
   f: "#/insights",
   s: "#/integrations",
+  i: "#/inbox",
+  d: "#/graph",
+  w: "#/workspace",
+  e: "#/registry",
 };
 let chordUntil = 0;
 
