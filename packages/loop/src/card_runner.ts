@@ -1359,7 +1359,11 @@ export class CardRunner {
           filesTouchedCount: p.evidence.filesTouched.length,
           difficulty: difficultyLabel(card.difficulty),
           modelId: this.options.modelAdapter.modelId,
-          toolArm: this.options.toolArm ?? "arm_a_flat",
+          // M9: the arm the card actually ran on, which is the registry's
+          // measured one unless the caller chose. Recording a hardcoded
+          // `arm_a_flat` made every competence row say the same thing.
+          toolArm:
+            this.options.toolArm ?? this.options.modelAdapter.preferredToolArm ?? "arm_a_flat",
           stepBudget: card.stepBudget,
           stepsUsed: p.stepsUsed,
           stopReason: p.stopReason,
