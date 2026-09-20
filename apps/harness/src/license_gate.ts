@@ -2,7 +2,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import type { GateFailure, GateResult, GateRunner, GateRung, RungOutcome } from "@sekhemet/gates";
+import type { GateFailure, GateResult, GateRung, GateRunner, RungOutcome } from "@sekhemet/gates";
 import { licenseVerdict } from "./pm/libraries.js";
 import { readProvenance } from "./registers.js";
 

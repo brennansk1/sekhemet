@@ -192,7 +192,9 @@ const SERIES = [
 function seriesValues(key) {
   const t = store.state.telemetry;
   if (key === "memory") return t.memory.map((m) => m.pct);
-  return t.steps.map((p) => (key === "cacheHit" ? (p.cacheHit ?? NaN) * 100 : (p[key] ?? NaN)));
+  return t.steps.map((p) =>
+    key === "cacheHit" ? (p.cacheHit ?? Number.NaN) * 100 : (p[key] ?? Number.NaN),
+  );
 }
 
 function telemetryHtml() {

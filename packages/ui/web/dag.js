@@ -46,7 +46,8 @@ export function layoutDag(cards) {
   const layers = [];
   for (const c of cards) {
     const l = layer.get(c.id) ?? 0;
-    (layers[l] ??= []).push(c);
+    layers[l] ??= [];
+    layers[l].push(c);
   }
   const rank = (s) => {
     const i = STATUS_ORDER.indexOf(s);
@@ -55,7 +56,8 @@ export function layoutDag(cards) {
   const nodes = [];
   const pos = new Map();
   let height = 0;
-  layers.forEach((list = [], l) => {
+  layers.forEach((layerCards, l) => {
+    const list = layerCards ?? [];
     // Within a layer: keep dependants near the average row of what they wait on.
     const weight = (c) => {
       const rows = deps(c)

@@ -63,9 +63,9 @@ export function lookup(repoPath: string, question: string): string | undefined {
   }
   if (/\blicen[cs]e\b/i.test(question)) {
     try {
-      const { license } = JSON.parse(
-        readFileSync(join(meta.dir, "package.json"), "utf8"),
-      ) as { license?: string };
+      const { license } = JSON.parse(readFileSync(join(meta.dir, "package.json"), "utf8")) as {
+        license?: string;
+      };
       return license
         ? `${pkg}@${meta.version} declares licence ${license}.`
         : `${pkg}@${meta.version} declares no licence field.`;

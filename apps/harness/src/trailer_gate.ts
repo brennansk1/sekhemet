@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import type { GateFailure, GateResult, GateRunner, GateRung, RungOutcome } from "@sekhemet/gates";
+import type { GateFailure, GateResult, GateRung, GateRunner, RungOutcome } from "@sekhemet/gates";
 import { missingTrailers } from "@sekhemet/sync";
 
 /**

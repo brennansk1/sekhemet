@@ -78,7 +78,8 @@ export function fixtureFiles(
       return {
         "Cargo.toml": `[package]\nname = "mini_rs"\nversion = "0.1.0"\nedition = "2021"\n\n[dependencies]\n`,
         "src/lib.rs": `pub fn add(a: i64, b: i64) -> i64 {\n    a ${op} b\n}\n`,
-        "tests/add.rs": `use mini_rs::add;\n\n#[test]\nfn adds() {\n    assert_eq!(add(2, 3), 5);\n}\n`,
+        "tests/add.rs":
+          "use mini_rs::add;\n\n#[test]\nfn adds() {\n    assert_eq!(add(2, 3), 5);\n}\n",
         ".gitignore": "target/\n",
         ".sekhemet/gates.toml": `${TOML_HEAD}${gate("unit", "test", "cargo", ["test", "--quiet", "--offline"], 300)}`,
       };

@@ -179,7 +179,13 @@ export async function handleWave2Route(
   if (visual && req.method === "GET") {
     const { existsSync, readFileSync } = await import("node:fs");
     const { join } = await import("node:path");
-    const path = join(ctx.repoPath, ".sekhemet", "visual", visual[1] as string, visual[2] as string);
+    const path = join(
+      ctx.repoPath,
+      ".sekhemet",
+      "visual",
+      visual[1] as string,
+      visual[2] as string,
+    );
     if (!existsSync(path)) json(res, 404, { error: "no such image" });
     else {
       res.writeHead(200, { "content-type": "image/png", "cache-control": "no-cache" });

@@ -26,10 +26,14 @@ async function load() {
   ui.loading = true;
   const p = await getJSON("/api/projects").catch(() => ({ ok: false }));
   const list = p.ok ? (p.data.projects ?? []) : [];
-  store.set({ project: { ...store.state.project, list, activeCap: p.ok ? p.data.activeCap : undefined } });
+  store.set({
+    project: { ...store.state.project, list, activeCap: p.ok ? p.data.activeCap : undefined },
+  });
   await Promise.all(
     list.map(async (proj) => {
-      const b = await getJSON(`/api/board?project=${encodeURIComponent(proj.id)}`).catch(() => ({ ok: false }));
+      const b = await getJSON(`/api/board?project=${encodeURIComponent(proj.id)}`).catch(() => ({
+        ok: false,
+      }));
       if (b.ok) ui.boards.set(proj.id, b.data.cards ?? []);
     }),
   );
@@ -39,8 +43,15 @@ async function load() {
 
 function bar(sum) {
   if (!sum.total) return '<span class="sec">No cards</span>';
-  return `<span class="ws-bar" role="img" aria-label="${esc(BOARD_COLUMN_ORDER.filter((s) => sum.counts[s]).map((s) => `${sum.counts[s]} ${columnLabel(s)}`).join(", "))}">${BOARD_COLUMN_ORDER.filter((s) => sum.counts[s])
-    .map((s) => `<i class="ws-seg s-${s}" style="flex:${sum.counts[s]}" title="${esc(`${sum.counts[s]} ${columnLabel(s)}`)}"></i>`)
+  return `<span class="ws-bar" role="img" aria-label="${esc(
+    BOARD_COLUMN_ORDER.filter((s) => sum.counts[s])
+      .map((s) => `${sum.counts[s]} ${columnLabel(s)}`)
+      .join(", "),
+  )}">${BOARD_COLUMN_ORDER.filter((s) => sum.counts[s])
+    .map(
+      (s) =>
+        `<i class="ws-seg s-${s}" style="flex:${sum.counts[s]}" title="${esc(`${sum.counts[s]} ${columnLabel(s)}`)}"></i>`,
+    )
     .join("")}</span>`;
 }
 
@@ -62,7 +73,9 @@ function render() {
         const sum = projectSummary(ui.boards.get(p.id) ?? []);
         return `<tr data-project="${esc(p.id)}" tabindex="0"><td><b>${esc(p.name ?? p.id)}</b><span class="mono sec"> ${esc(p.id)}</span></td><td>${bar(sum)}<span class="sec tnum"> ${sum.total} cards</span></td><td class="num tnum${sum.review ? " warn" : ""}">${sum.review}</td><td class="num tnum">${sum.working}</td><td class="num tnum">${sum.parked}</td><td class="num tnum">${sum.done}</td><td>${esc(p.status ?? "")}</td></tr>`;
       })
-      .join("")}</tbody></table></div><p class="sec ws-hint">${store.state.project.id ? `The board shows <b>${esc(list.find((p) => p.id === store.state.project.id)?.name ?? store.state.project.id)}</b> only. <button class="btn ghost sm" type="button" data-all>Show every project</button>` : "Open a project to scope the board to it. Review counts are cards waiting on you."}</p>`;
+      .join(
+        "",
+      )}</tbody></table></div><p class="sec ws-hint">${store.state.project.id ? `The board shows <b>${esc(list.find((p) => p.id === store.state.project.id)?.name ?? store.state.project.id)}</b> only. <button class="btn ghost sm" type="button" data-all>Show every project</button>` : "Open a project to scope the board to it. Review counts are cards waiting on you."}</p>`;
   if (html === ui.last) return;
   ui.last = html;
   $(".sc", ui.root).innerHTML = html;

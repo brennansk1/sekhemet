@@ -1,7 +1,6 @@
 // The evidence composition shared by Review and the card view: header, gates,
 // failures, changes, facts. Keeps its own scroll, diff mode and file toggles.
 import { changesHtml } from "./diff.js";
-import { paintShotDiffs, shotsHtml } from "./shots.js";
 import { $, $$, copyText, esc, icon } from "./dom.js";
 import { factsInlineHtml, factsRailHtml } from "./facts.js";
 import { failuresHeadline, failuresHtml } from "./failures.js";
@@ -14,6 +13,7 @@ import {
   outcomeSentence,
   stopReasonLabel,
 } from "./lib/vocabulary.js";
+import { paintShotDiffs, shotsHtml } from "./shots.js";
 import { store } from "./store.js";
 import { kindTags } from "./tile.js";
 import { toast } from "./toast.js";

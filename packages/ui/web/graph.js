@@ -50,7 +50,9 @@ function svgHtml(cards) {
     .map((n) => {
       const c = byId.get(n.id);
       const tone = TONE[c.status] ?? "idle";
-      const waits = (c.dependsOn ?? []).filter((d) => byId.get(d) && byId.get(d).status !== "done").length;
+      const waits = (c.dependsOn ?? []).filter(
+        (d) => byId.get(d) && byId.get(d).status !== "done",
+      ).length;
       return `<g class="dg-n ${tone}" transform="translate(${n.x},${n.y})" data-id="${esc(c.id)}" tabindex="-1" role="link" aria-label="${esc(`${titleOf(c)}, ${columnLabel(c.status)}${waits ? `, waits on ${waits}` : ""}`)}"><rect width="${NODE_W}" height="${NODE_H}" rx="6"/><circle class="dot" cx="14" cy="18" r="4"/><text class="t" x="26" y="22">${esc(clip(titleOf(c), 28))}</text><text class="s" x="14" y="42">${esc(columnLabel(c.status))}${waits ? ` · waits on ${waits}` : ""}</text></g>`;
     })
     .join("");
@@ -62,7 +64,8 @@ function svgHtml(cards) {
 
 function apply() {
   const g = $(".dg-world", ui.root);
-  if (g && ui.view) g.setAttribute("transform", `translate(${ui.view.x},${ui.view.y}) scale(${ui.view.k})`);
+  if (g && ui.view)
+    g.setAttribute("transform", `translate(${ui.view.x},${ui.view.y}) scale(${ui.view.k})`);
   const z = $(".dg-zoom", ui.root);
   if (z && ui.view) z.textContent = `${Math.round(ui.view.k * 100)}%`;
 }
@@ -116,7 +119,8 @@ function onWheel(e) {
 
 function focusNode(id) {
   const n = ui.root.querySelector(`.dg-n[data-id="${CSS.escape(id)}"]`);
-  for (const x of ui.root.querySelectorAll(".dg-n")) x.setAttribute("tabindex", x === n ? "0" : "-1");
+  for (const x of ui.root.querySelectorAll(".dg-n"))
+    x.setAttribute("tabindex", x === n ? "0" : "-1");
   n?.focus();
   store.state.focusedId = id;
 }
@@ -140,10 +144,28 @@ export function onKey(e) {
   } else if (/^[hjkl]$|^Arrow/.test(e.key) && ui.layout?.nodes.length) {
     const nodes = ui.layout.nodes;
     const cur = nodes.find((n) => n.id === store.state.focusedId) ?? nodes[0];
-    const dir = { h: [-1, 0], l: [1, 0], j: [0, 1], k: [0, -1], ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowDown: [0, 1], ArrowUp: [0, -1] }[e.key];
+    const dir = {
+      h: [-1, 0],
+      l: [1, 0],
+      j: [0, 1],
+      k: [0, -1],
+      ArrowLeft: [-1, 0],
+      ArrowRight: [1, 0],
+      ArrowDown: [0, 1],
+      ArrowUp: [0, -1],
+    }[e.key];
     const next = nodes
-      .filter((n) => (dir[0] ? Math.sign(n.x - cur.x) === dir[0] : n.x === cur.x && Math.sign(n.y - cur.y) === dir[1]))
-      .sort((a, b) => Math.abs(a.x - cur.x) + Math.abs(a.y - cur.y) - (Math.abs(b.x - cur.x) + Math.abs(b.y - cur.y)))[0];
+      .filter((n) =>
+        dir[0]
+          ? Math.sign(n.x - cur.x) === dir[0]
+          : n.x === cur.x && Math.sign(n.y - cur.y) === dir[1],
+      )
+      .sort(
+        (a, b) =>
+          Math.abs(a.x - cur.x) +
+          Math.abs(a.y - cur.y) -
+          (Math.abs(b.x - cur.x) + Math.abs(b.y - cur.y)),
+      )[0];
     focusNode((next ?? cur).id);
   } else return false;
   return true;
@@ -162,7 +184,14 @@ export function mount(view) {
   host.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
     const node = e.target instanceof Element ? e.target.closest(".dg-n") : null;
-    ui.drag = { x: e.clientX, y: e.clientY, vx: ui.view.x, vy: ui.view.y, moved: false, node: node?.dataset.id };
+    ui.drag = {
+      x: e.clientX,
+      y: e.clientY,
+      vx: ui.view.x,
+      vy: ui.view.y,
+      moved: false,
+      node: node?.dataset.id,
+    };
     host.setPointerCapture(e.pointerId);
   });
   host.addEventListener("pointermove", (e) => {

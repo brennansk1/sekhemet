@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { afterEach, describe, expect, it } from "vitest";
+import { runOvernight } from "../src/overnight.js";
 import {
   cronMatches,
   fireTrigger,
@@ -15,7 +16,6 @@ import {
   scheduleOf,
   tickRecurring,
 } from "../src/recurring.js";
-import { runOvernight } from "../src/overnight.js";
 import { handleWave2Route, startRecurringTicker } from "../src/wave2_server.js";
 
 const dirs: string[] = [];

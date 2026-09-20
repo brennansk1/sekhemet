@@ -33,7 +33,9 @@ export function cliOverrides(argv: string[]): TomlTable {
     if (a !== "--set") return;
     const m = /^([a-z_]+)\.([a-z_]+)=(.*)$/.exec(argv[i + 1] ?? "");
     if (!m) return;
-    const section = (out[m[1] as string] ??= {}) as TomlTable;
+    const key = m[1] as string;
+    out[key] ??= {};
+    const section = out[key] as TomlTable;
     section[m[2] as string] = coerce(m[3] as string);
   });
   return out;

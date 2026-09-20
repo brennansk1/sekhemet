@@ -2,13 +2,13 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
+import { fileURLToPath } from "node:url";
 import type { DeterministicGateRunner } from "@sekhemet/gates";
 import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { afterEach, describe, expect, it } from "vitest";
-import { licenseGate, repoLicenseAudit, withLicenseGate } from "../src/license_gate.js";
 import { runDoctor } from "../src/doctor.js";
+import { licenseGate, repoLicenseAudit, withLicenseGate } from "../src/license_gate.js";
 import {
   advanceResearchEntry,
   checkRegisters,

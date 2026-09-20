@@ -157,7 +157,9 @@ export function changesHtml(
   if (mode === "structural") {
     const added = files.reduce((n, f) => n + f.added, 0);
     const removed = files.reduce((n, f) => n + f.removed, 0);
-    const head = files.length ? `${plural(files.length, "file")} · +${added} −${removed}` : "No changes recorded";
+    const head = files.length
+      ? `${plural(files.length, "file")} · +${added} −${removed}`
+      : "No changes recorded";
     return `<section aria-label="Changes" data-changes><h3 class="sh">Changes <span class="sec">${esc(head)}</span>${files.length ? modeHint(mode) : ""}</h3><div class="changes structural">${structuralHtml(files)}</div></section>`;
   }
   const ctx = {

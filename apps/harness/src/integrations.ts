@@ -507,9 +507,17 @@ export async function syncGithub(
     const since = readSettings(repoPath).lastSync?.[adapter.system] ?? "1970-01-01T00:00:00Z";
     const r = await syncViaAdapter(adapter, cardStore, eventLog, since);
     writeSettings(repoPath, {
-      lastSync: { ...(readSettings(repoPath).lastSync ?? {}), [adapter.system]: new Date().toISOString() },
+      lastSync: {
+        ...(readSettings(repoPath).lastSync ?? {}),
+        [adapter.system]: new Date().toISOString(),
+      },
     });
-    return { created: r.created + r.pushed, updated: r.updated + r.paused, skipped: 0, errors: r.errors };
+    return {
+      created: r.created + r.pushed,
+      updated: r.updated + r.paused,
+      skipped: 0,
+      errors: r.errors,
+    };
   }
   const gh = await githubRepo(repoPath);
   if (!gh.repo) {

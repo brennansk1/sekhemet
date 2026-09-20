@@ -77,13 +77,24 @@ export function usageBars(card) {
   const rows = [];
   const bar = (used, budget, text) => {
     const ratio = budget > 0 ? Math.min(1, used / budget) : 0;
-    const cls = used >= budget ? " over" : ratio >= 0.75 ? " warn" : card.status === "in_progress" ? " run" : "";
+    const cls =
+      used >= budget
+        ? " over"
+        : ratio >= 0.75
+          ? " warn"
+          : card.status === "in_progress"
+            ? " run"
+            : "";
     rows.push(
       `<div class="r5 comfy"><span class="budget${cls}"><i style="width:${Math.round(ratio * 100)}%"></i></span><span class="tnum">${esc(text)}</span></div>`,
     );
   };
   if (card.tokenBudget && card.tokensUsed)
-    bar(card.tokensUsed, card.tokenBudget, `${kilo(card.tokensUsed)} of ${kilo(card.tokenBudget)} tokens`);
+    bar(
+      card.tokensUsed,
+      card.tokenBudget,
+      `${kilo(card.tokensUsed)} of ${kilo(card.tokenBudget)} tokens`,
+    );
   if (card.secondsBudget && card.secondsUsed)
     bar(
       card.secondsUsed,

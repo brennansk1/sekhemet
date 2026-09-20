@@ -28,8 +28,7 @@ export function diffPixels(a, b, width, height, { tolerance = 16, mark = [229, 7
   const out = new Uint8ClampedArray(width * height * 4);
   let changed = 0;
   for (let i = 0; i < width * height * 4; i += 4) {
-    const d =
-      Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2]);
+    const d = Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2]);
     if (d > tolerance * 3) {
       changed++;
       out[i] = mark[0];
@@ -73,7 +72,9 @@ export function shotsHtml(evidence, attachments = [], cardId = "") {
     .join("");
   const head = [
     pairs.length ? `${pairs.length} screenshot difference${pairs.length === 1 ? "" : "s"}` : "",
-    attachments.length ? `${attachments.length} attached image${attachments.length === 1 ? "" : "s"}` : "",
+    attachments.length
+      ? `${attachments.length} attached image${attachments.length === 1 ? "" : "s"}`
+      : "",
   ]
     .filter(Boolean)
     .join(" · ");

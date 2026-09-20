@@ -151,14 +151,16 @@ function renderSide() {
       warn: true,
       title: `${waiting} decision${waiting === 1 ? "" : "s"} waiting on you`,
     };
-  const nav = NAV.filter((item) => !item.when || item.when(s)).map((item) => {
-    const c = counts[item.name];
-    const cur = active === item.name ? ' aria-current="page"' : "";
-    const badge = c
-      ? `<span class="n tnum${c.warn ? " warn" : ""}${c.long ? " long" : ""}"${c.title ? ` title="${esc(c.title)}"` : ""}>${esc(c.n)}</span>`
-      : "";
-    return `<a href="#/${item.name}"${cur} title="${esc(item.title ?? item.label)} (${item.key})">${icon(item.icon)}<span class="lbl">${esc(item.label)}${item.sub ? `<span class="sub"> · ${esc(item.sub)}</span>` : ""}</span>${badge}</a>`;
-  }).join("");
+  const nav = NAV.filter((item) => !item.when || item.when(s))
+    .map((item) => {
+      const c = counts[item.name];
+      const cur = active === item.name ? ' aria-current="page"' : "";
+      const badge = c
+        ? `<span class="n tnum${c.warn ? " warn" : ""}${c.long ? " long" : ""}"${c.title ? ` title="${esc(c.title)}"` : ""}>${esc(c.n)}</span>`
+        : "";
+      return `<a href="#/${item.name}"${cur} title="${esc(item.title ?? item.label)} (${item.key})">${icon(item.icon)}<span class="lbl">${esc(item.label)}${item.sub ? `<span class="sub"> · ${esc(item.sub)}</span>` : ""}</span>${badge}</a>`;
+    })
+    .join("");
 
   const v = s.verification;
   let live;

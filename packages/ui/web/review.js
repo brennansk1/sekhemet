@@ -1,7 +1,7 @@
+import { loadDetail } from "./data.js";
 // Review (FRONTEND_DESIGN §2.4.1): the queue on the left, the evidence in the
 // middle, the facts on the right, and the triage bar under the evidence.
 import { nextDiffMode } from "./diff.js";
-import { loadDetail } from "./data.js";
 import { $, announce, esc, icon } from "./dom.js";
 import { EvidencePane } from "./evidence.js";
 import { KIND_LABELS, formatWait } from "./lib/vocabulary.js";

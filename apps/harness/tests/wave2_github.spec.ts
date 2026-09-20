@@ -18,7 +18,9 @@ const dirs: string[] = [];
 afterEach(async () => {
   while (closers.length) await closers.pop()?.();
   while (dirs.length) rmSync(dirs.pop() as string, { recursive: true, force: true });
-  for (const k of Object.keys(process.env).filter((x) => x.startsWith("SEKHEMET_FORGEJO") || x.startsWith("SEKHEMET_GITHUB"))) {
+  for (const k of Object.keys(process.env).filter(
+    (x) => x.startsWith("SEKHEMET_FORGEJO") || x.startsWith("SEKHEMET_GITHUB"),
+  )) {
     Reflect.deleteProperty(process.env, k);
   }
 });
@@ -32,7 +34,9 @@ const write = (root: string, rel: string, text: string) => {
   writeFileSync(join(root, rel), text);
 };
 
-async function fake(reply: (method: string, url: string, body: unknown) => { status?: number; json?: unknown }) {
+async function fake(
+  reply: (method: string, url: string, body: unknown) => { status?: number; json?: unknown },
+) {
   const seen: { method: string; url: string; body: unknown }[] = [];
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     let raw = "";
@@ -100,27 +104,56 @@ describe("Y14/Y15/Y16: the PR through the App", () => {
     let checks = [{ status: "completed", conclusion: "success" }];
     const srv = await fake((method, url) => {
       if (method === "POST" && url === "/repos/o/r/pulls") {
-        return { status: 201, json: { number: 7, node_id: "PR7", html_url: "https://gh/pr/7", head: { sha: "h" } } };
+        return {
+          status: 201,
+          json: { number: 7, node_id: "PR7", html_url: "https://gh/pr/7", head: { sha: "h" } },
+        };
       }
       if (url.endsWith("/check-runs") && method === "POST") return { status: 201, json: { id: 1 } };
-      if (url.startsWith("/repos/o/r/commits/h/check-runs")) return { json: { check_runs: checks } };
+      if (url.startsWith("/repos/o/r/commits/h/check-runs"))
+        return { json: { check_runs: checks } };
       if (url === "/graphql") return { json: { data: {} } };
       return { status: 200, json: {} };
     });
-    const client = new GitHubClient(staticToken("t"), { apiUrl: srv.url, graphqlUrl: `${srv.url}/graphql` });
+    const client = new GitHubClient(staticToken("t"), {
+      apiUrl: srv.url,
+      graphqlUrl: `${srv.url}/graphql`,
+    });
     const { log, cardStore } = kernel();
-    await cardStore.createCard({ id: "c1", tier: "task", title: "Fix a", status: "review", spec: "S" });
+    await cardStore.createCard({
+      id: "c1",
+      tier: "task",
+      title: "Fix a",
+      status: "review",
+      spec: "S",
+    });
     const card = await cardStore.getCard("c1");
-    const pr = await openPullRequestViaApp(client, repo, { owner: "o", repo: "r" }, card as never, "b", "h", log);
+    const pr = await openPullRequestViaApp(
+      client,
+      repo,
+      { owner: "o", repo: "r" },
+      card as never,
+      "b",
+      "h",
+      log,
+    );
     expect(pr.url).toBe("https://gh/pr/7");
-    const draft = srv.seen.find((s) => s.url === "/repos/o/r/pulls")?.body as { draft: boolean; body: string };
+    const draft = srv.seen.find((s) => s.url === "/repos/o/r/pulls")?.body as {
+      draft: boolean;
+      body: string;
+    };
     expect(draft.draft).toBe(true);
     expect(draft.body).toContain("FAIL typecheck");
-    expect(srv.seen.filter((s) => s.method === "POST" && s.url.endsWith("/check-runs"))).toHaveLength(2);
+    expect(
+      srv.seen.filter((s) => s.method === "POST" && s.url.endsWith("/check-runs")),
+    ).toHaveLength(2);
     expect(srv.seen.some((s) => s.url.endsWith("/code-scanning/sarifs"))).toBe(true);
     const advanced = await advancePullRequests(client, repo, log, { autoMerge: true });
     expect(advanced).toEqual([{ number: 7, state: "auto_merge" }]);
-    expect(srv.seen.find((s) => s.url.endsWith("/requested_reviewers"))?.body).toEqual({ reviewers: ["alice"], team_reviewers: [] });
+    expect(srv.seen.find((s) => s.url.endsWith("/requested_reviewers"))?.body).toEqual({
+      reviewers: ["alice"],
+      team_reviewers: [],
+    });
     // Already advanced: nothing to do next pass.
     checks = [];
     expect(await advancePullRequests(client, repo, log, { autoMerge: true })).toEqual([]);
@@ -134,10 +167,22 @@ describe("Y10/Y11/Y20: syncGithub goes through the tracker adapter when configur
     const srv = await fake((method, url) => {
       if (method === "GET" && url.startsWith("/api/v1/repos/o/r/issues")) {
         return {
-          json: [{ number: 4, html_url: "f/4", title: "Fix A", body, labels: [], assignee: null, state: "open", updated_at: updated }],
+          json: [
+            {
+              number: 4,
+              html_url: "f/4",
+              title: "Fix A",
+              body,
+              labels: [],
+              assignee: null,
+              state: "open",
+              updated_at: updated,
+            },
+          ],
         };
       }
-      if (method === "POST" && url === "/api/v1/repos/o/r/issues") return { status: 201, json: { number: 9, html_url: "f/9" } };
+      if (method === "POST" && url === "/api/v1/repos/o/r/issues")
+        return { status: 201, json: { number: 9, html_url: "f/9" } };
       return { json: {} };
     });
     process.env.SEKHEMET_FORGEJO_URL = srv.url;
@@ -167,11 +212,21 @@ describe("Y19: per-package gates for a monorepo change", () => {
     const root = tmp();
     write(root, "pnpm-workspace.yaml", "packages:\n  - 'packages/*'\n");
     write(root, "packages/a/package.json", JSON.stringify({ name: "@x/a" }));
-    write(root, "packages/a/.sekhemet/gates.toml", '[[gates]]\nrung = "unit"\ncommand = "node"\nargs = ["-e", "process.exit(0)"]\n');
+    write(
+      root,
+      "packages/a/.sekhemet/gates.toml",
+      '[[gates]]\nrung = "unit"\ncommand = "node"\nargs = ["-e", "process.exit(0)"]\n',
+    );
     write(root, "packages/b/package.json", JSON.stringify({ name: "@x/b" }));
-    write(root, "packages/b/.sekhemet/gates.toml", '[[gates]]\nrung = "unit"\ncommand = "node"\nargs = ["-e", "process.exit(1)"]\n');
+    write(
+      root,
+      "packages/b/.sekhemet/gates.toml",
+      '[[gates]]\nrung = "unit"\ncommand = "node"\nargs = ["-e", "process.exit(1)"]\n',
+    );
     const lines: string[] = [];
-    const r = await runPackageGates(root, root, ["packages/a/x.ts", "packages/b/y.ts"], (l) => lines.push(l));
+    const r = await runPackageGates(root, root, ["packages/a/x.ts", "packages/b/y.ts"], (l) =>
+      lines.push(l),
+    );
     expect(r.map((x) => `${x.package}:${x.passed}`)).toEqual(["@x/a:true", "@x/b:false"]);
     expect(lines.join("\n")).toContain("FAIL @x/b:unit");
   });

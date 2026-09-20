@@ -124,13 +124,16 @@ export function adjudicate(topic: string, positions: Position[]): Disagreement |
     key,
     stance: ps[0]?.stance ?? key,
     authority: Math.max(...ps.map((p) => weightOf(p.source))),
-    newest: ps.map((p) => p.at ?? "").sort().at(-1) ?? "",
+    newest:
+      ps
+        .map((p) => p.at ?? "")
+        .sort()
+        .at(-1) ?? "",
     count: new Set(ps.map((p) => p.source.ref)).size,
     ps,
   }));
   scored.sort(
-    (a, b) =>
-      b.authority - a.authority || b.newest.localeCompare(a.newest) || b.count - a.count,
+    (a, b) => b.authority - a.authority || b.newest.localeCompare(a.newest) || b.count - a.count,
   );
   const [win, runner] = scored;
   if (!win || !runner) return undefined;

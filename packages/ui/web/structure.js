@@ -3,7 +3,8 @@
 // each file the declarations the change adds, removes or edits. Whitespace-only
 // hunks are named, not shown. Pure: tested as-is.
 
-const TEST = /(^|\/)(tests?|__tests__|spec)\/|\.(spec|test)\.[cm]?[jt]sx?$|_test\.(go|py)$|(^|\/)test_[^/]+\.py$/;
+const TEST =
+  /(^|\/)(tests?|__tests__|spec)\/|\.(spec|test)\.[cm]?[jt]sx?$|_test\.(go|py)$|(^|\/)test_[^/]+\.py$/;
 const CONFIG =
   /(^|\/)(package\.json|pnpm-lock\.yaml|tsconfig[^/]*\.json|biome\.json|Cargo\.(toml|lock)|pyproject\.toml|requirements[^/]*\.txt|go\.(mod|sum)|\.github\/.+|[^/]+\.(toml|ya?ml|ini|cfg))$/;
 const DOCS = /\.(md|mdx|rst|txt)$|(^|\/)docs\//;
@@ -82,8 +83,7 @@ export function structuralSummary(files) {
       }
     }
     const symbols = [];
-    for (const n of added)
-      symbols.push({ name: n, change: removed.has(n) ? "changed" : "added" });
+    for (const n of added) symbols.push({ name: n, change: removed.has(n) ? "changed" : "added" });
     for (const n of removed) if (!added.has(n)) symbols.push({ name: n, change: "removed" });
     for (const n of touched)
       if (!added.has(n) && !removed.has(n)) symbols.push({ name: n, change: "changed" });
@@ -98,4 +98,3 @@ export function structuralSummary(files) {
     };
   });
 }
-

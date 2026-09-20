@@ -14,7 +14,8 @@ const source = (kind: string, ref: string): Source => ({ kind, ref });
 
 describe("claim typing", () => {
   it("keeps code blocks out of the claim list", () => {
-    const text = "The parser is strict [1].\n\n```ts\nconst a = 1; // this is not a claim at all\n```\n\nIt throws on bad input [2].";
+    const text =
+      "The parser is strict [1].\n\n```ts\nconst a = 1; // this is not a claim at all\n```\n\nIt throws on bad input [2].";
     expect(sentences(text).some((s) => s.includes("const a = 1"))).toBe(false);
   });
 

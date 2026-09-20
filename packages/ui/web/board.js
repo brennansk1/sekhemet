@@ -18,7 +18,6 @@ import { bindReorder } from "./reorder.js";
 import { setTopbar } from "./shell.js";
 import { store } from "./store.js";
 import { tileHtml } from "./tile.js";
-import { columnsInWindow, windowRange } from "./virtual.js";
 import { toast } from "./toast.js";
 import {
   bindViewBar,
@@ -30,6 +29,7 @@ import {
   paintViewBar,
   vb,
 } from "./viewbar.js";
+import { columnsInWindow, windowRange } from "./virtual.js";
 
 /** Columns that collapse into a 36px rail when empty. Working and Review never do. */
 const RAILABLE = new Set(["backlog", "ready", "planning", "verify", "done", "parked"]);
@@ -465,7 +465,8 @@ function focusTile(id, { scroll = true } = {}) {
   let node = document.getElementById(`tile-${id}`);
   if (!node) {
     // Culled out sideways: give the column its tiles first (U6).
-    const culled = store.card(id) && $(`[data-list="${store.card(id).status}"][data-culled]`, ui.root);
+    const culled =
+      store.card(id) && $(`[data-list="${store.card(id).status}"][data-culled]`, ui.root);
     if (culled) {
       delete culled.dataset.culled;
       fillList(culled, culled.dataset.list, ui.columns.get(culled.dataset.list) ?? []);

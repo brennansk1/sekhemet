@@ -135,7 +135,8 @@ export function mount(view) {
   root.addEventListener("change", (e) => {
     const input = e.target instanceof HTMLInputElement ? e.target : null;
     const art = input?.closest("[data-decision]");
-    if (input?.dataset.opt !== undefined && art) pick(art.dataset.decision, Number(input.dataset.opt));
+    if (input?.dataset.opt !== undefined && art)
+      pick(art.dataset.decision, Number(input.dataset.opt));
   });
   root.addEventListener("click", (e) => {
     const t = e.target instanceof Element ? e.target : null;

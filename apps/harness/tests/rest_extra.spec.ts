@@ -55,6 +55,9 @@ describe("REST API completeness (H12)", () => {
     base = `http://127.0.0.1:${server.port}`;
   });
   afterAll(async () => {
+    // An env var must be removed, not set to the string "undefined", which is
+    // what an assignment would do here.
+    // biome-ignore lint/performance/noDelete: removing an env var is the point
     delete process.env.SEKHEMET_CLI;
     await server.close();
   });

@@ -487,8 +487,12 @@ export function ownersFor(codeowners: string, files: readonly string[]): string[
     const body = p
       .replace(/^\//, "")
       .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+      // NUL stands in for `**` while single `*` is expanded, so the two
+      // cannot be confused. It cannot occur in a path, which is the point.
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: a sentinel no path can contain
       .replace(/\*\*/g, " ")
       .replace(/\*/g, "[^/]*")
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: the same sentinel, consumed
       .replace(/ /g, ".*");
     const tail = p.endsWith("/") ? ".*" : "(/.*)?";
     return new RegExp(`${anchored ? "^" : "(^|/)"}${body}${tail}$`);

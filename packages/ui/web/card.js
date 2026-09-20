@@ -1,8 +1,8 @@
+import { loadDetail } from "./data.js";
 // Card view (FRONTEND_DESIGN §2.4.3): header with triage, then five tabs.
 // Evidence reuses the Review composition; Plan, Steps, Thread and Files are
 // their own modules. Route: #/card/:id/:tab, tabs on keys 1–5.
 import { nextDiffMode } from "./diff.js";
-import { loadDetail } from "./data.js";
 import { $, esc, getJSON, icon } from "./dom.js";
 import { EvidencePane } from "./evidence.js";
 import { filesCount, renderFiles } from "./files.js";

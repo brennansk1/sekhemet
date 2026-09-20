@@ -53,5 +53,6 @@ Every document in `docs/` is listed here, and nowhere else is the source of trut
 | [FEATURE_INVENTORY.md](reference/FEATURE_INVENTORY.md) | Every feature in the design and its implementation status. |
 | [FEATURE_INVENTORY_REAUDIT.md](reference/FEATURE_INVENTORY_REAUDIT.md) | The inventory re-audited against the current code: status per unit with its caller, and the remaining gaps ranked. |
 | [FEATURE_INVENTORY_REAUDIT_2.md](reference/FEATURE_INVENTORY_REAUDIT_2.md) | Independent re-audit, pass 1: every unit except X and U scored against the gate (to depth, production caller, real test), with the gaps ranked. |
+| [MVP_PATH.md](reference/MVP_PATH.md) | The one sequence that has to work, and what is deliberately sequenced behind it. The gap lists are ordered by unit; this is ordered by what ships. |
 | [COMPLETION_PLAN.md](reference/COMPLETION_PLAN.md) | The gate: every inventory unit BUILT, in waves of two builders, verified by an independent re-audit. |
 | [PROVENANCE.md](reference/PROVENANCE.md) | Every adopted technique's public source and the licence register the `licenses` gate enforces. |
