@@ -42,6 +42,19 @@ A feature that cannot be traced back to one of those six paragraphs is a candida
 | Language | TypeScript throughout v1 |
 | Rejected on evidence | Simulated Scrum-role agents, parallel agents writing the same files, self-refine and reflection loops as a quality mechanism, multi-agent debate, unbounded best-of-N, embedding RAG as the primary code-context mechanism, large context windows as a strategy, persona prompting, continuous-embedding context compression |
 
+### Accepted substitutions
+
+Four places where the build chose something weaker or simpler than an earlier draft specified. Each is accepted as of 2026-09-20, and the design's claims are amended to match what is actually built rather than left advertising the original. Re-proposing one needs new evidence, not a new argument.
+
+| Substitution | Instead of | Why it is accepted |
+| --- | --- | --- |
+| **bubblewrap on Linux** | Landlock + seccomp | Bubblewrap works today on every kernel we target and is widely deployed; Landlock needs a recent kernel and adds a second confinement path to maintain. The cost is a weaker guarantee than "Landlock path restrictions" implies, so the isolation claim is softened to match and the actual level is recorded in each card's evidence bundle. Landlock becomes hardening, not a precondition. |
+| **Plain git worktrees** | Copy-on-write clones | No correctness difference; the gain was setup speed and disk, and the cost was a filesystem-specific path (APFS, btrfs) that behaves differently everywhere else. Portability beats a faster `git worktree add`. |
+| **A keyword heuristic for context pruning** | SWE-Pruner, a learned line-level pruner (arXiv:2601.16746) | The heuristic is deterministic, free, and needs no resident model on a machine with no spare memory. The learned pruner is real and published, but its value here is unmeasured, and published work on relevance scoring at long context (arXiv:2609.03430) found a learned scorer failing to beat random selection at equal budget. It is deferred behind its null baseline: if the pruner does not beat structure-preserving random line dropping on the frozen suite, it is never adopted and its component-register row is removed. |
+| **A source installer** | Packaged offline installers | Air-gap setup is optional-tier surface. A source install costs the air-gapped user more friction and costs everyone else nothing; packaging per platform is real, recurring work for a case that is rare. |
+
+**[DESIGN]** Multi-language support is likewise settled rather than open. v1 is TypeScript-first: the ranked repo map and the parse gate are TypeScript, and Python, Rust and Go degrade to a flat file map and an unchecked parse, stated on the card and in the evidence bundle. Their functional gate templates stay, because running `pytest` or `cargo test` is real verification and is most of a gate's value. Symbol-level support through tree-sitter is a v2 item. The rule this follows is that the harness may do less for a language, but it may never claim to have checked something it did not.
+
 ### Non-goals for v1
 
 Teams, multi-user boards, RBAC, SSO, the compliance pack, Jira, Linear and Azure DevOps connectors, multi-machine inference pooling, and any cloud model path.
