@@ -1,0 +1,10 @@
+{
+  "version": "1.0.0",
+  "note": "The frozen suite. Adding a task is deliberate and bumps the version; changing one changes the hash and makes the run incomparable to every run before it. See docs/reference/MVP_PATH.md.",
+  "fixtures": [
+    { "name": "chronicle", "tasks": 6 },
+    { "name": "onyx", "tasks": 8 },
+    { "name": "vanguard", "tasks": 8 },
+    { "name": "basalt-canvas", "tasks": 8 }
+  ]
+}
