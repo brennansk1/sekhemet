@@ -191,7 +191,9 @@ describe("apps/harness planning, rollup, explain and runner control (B2, B7, B12
     const card = await newCard("card_stop");
     const { adapter, seen } = scripted((n) => {
       if (n === 2) void requestAbort(cardStore, card.id, "wrong approach");
-      return [{ name: "read_file", arguments: { path: "src/a.ts" } }];
+      // A different slice each turn: two identical reads are a stall (L13),
+      // and the stall would end the card before the abort arrived.
+      return [{ name: "read_file", arguments: { path: "src/a.ts", start: 1, end: 1 + n } }];
     });
     const result = await executeCard(ctx, card, adapter);
     expect(result.stopReason).toBe("human_abort");

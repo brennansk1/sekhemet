@@ -262,8 +262,27 @@ const HARD_STOPS = new Set<ExecutionStopReason>([
 const TEST_FILE =
   /(^|\/)(tests?|__tests__)\/|\.(spec|test)\.[cm]?[jt]sx?$|_test\.(py|go)$|^test_.*\.py$/;
 
-/** Stops that park the card for a human with a diagnosis (L15 rung 4). */
-const PARKING_STOPS = new Set<ExecutionStopReason>(["repair_exhausted", "capability_ceiling"]);
+/**
+ * Stops that park the card for a human with a diagnosis (L15 rung 4, L22).
+ *
+ * A breaker that stops a card at its cap and then lets it continue into Verify
+ * is not a breaker: the card sits in a gate queue nobody asked it to enter,
+ * and the person who set the budget is never told it was spent.
+ */
+const PARKING_STOPS = new Set<ExecutionStopReason>([
+  "repair_exhausted",
+  "capability_ceiling",
+  "token_budget_exhausted",
+  "time_budget_exhausted",
+  "budget_exhausted",
+]);
+
+/** The parking stops whose diagnosis is the budget, not the repair ladder. */
+const BUDGET_STOPS = new Set<ExecutionStopReason>([
+  "token_budget_exhausted",
+  "time_budget_exhausted",
+  "budget_exhausted",
+]);
 
 /** Longest dossier line shown to the Worker. */
 const DOSSIER_LINE_CHARS = 400;
@@ -1384,6 +1403,30 @@ export class CardRunner {
       : undefined;
   }
 
+  /**
+   * What a budget stop should say to the person who set the budget (L22).
+   *
+   * "A diagnosis without a remedy is an unfinished stop reason": name the cap,
+   * what it bought, and the one decision left — raise it, or split the card.
+   */
+  private budgetDiagnosis(
+    stopReason: ExecutionStopReason,
+    spent: { tokens: number; seconds: number; steps: number },
+  ): string {
+    const { card } = this.options;
+    const scope = card.scopeFiles.length > 0 ? card.scopeFiles.join(", ") : "its declared scope";
+    const remedy = `Raise the budget on card ${card.id}, or split it: ${spent.steps} steps over ${scope} were not enough.`;
+    if (stopReason === "token_budget_exhausted") {
+      const cap = this.options.tokenBudget ?? card.tokenBudget;
+      return `Spent its token budget (${spent.tokens} of ${cap}) after ${spent.steps} steps without reaching the gates. ${remedy}`;
+    }
+    if (stopReason === "time_budget_exhausted") {
+      const cap = this.options.secondsBudget ?? card.secondsBudget;
+      return `Ran out of wall-clock time (${spent.seconds}s of ${cap}s) after ${spent.steps} steps without reaching the gates. ${remedy}`;
+    }
+    return `Used every step of its budget (${spent.steps} of ${card.stepBudget}) without declaring the work done. ${remedy}`;
+  }
+
   /** G12 refused the card: record why, park it, and return without a turn. */
   private async finishVacuous(
     worktreePath: string,
@@ -1555,8 +1598,22 @@ export class CardRunner {
       if (!moved.ok) held = { reason: moved.reason, wanted: "parked" };
     } else {
       finalStatus = "in_progress";
-      if (PARKING_STOPS.has(stopReason) && session) {
-        parked = session.getParkDiagnosis(stopReason as "repair_exhausted" | "capability_ceiling");
+      // A budget stop parks the card (L22) only when it never reached the
+      // gates. One that did has a verdict to re-plan against, and a typed
+      // failure is worth more to the human than "out of budget".
+      const budgetStop = BUDGET_STOPS.has(stopReason);
+      const parks = PARKING_STOPS.has(stopReason) && !(budgetStop && params.lastGateResult);
+      if (parks && session) {
+        parked = session.getParkDiagnosis(
+          stopReason as ParkDiagnosis["stopReason"],
+          budgetStop
+            ? this.budgetDiagnosis(stopReason, {
+                tokens: tokensUsed,
+                seconds: secondsUsed,
+                steps: params.stepsUsed,
+              })
+            : undefined,
+        );
         const moved = await this.move("parked");
         if (moved.ok) finalStatus = "parked";
         else held = { reason: moved.reason, wanted: "parked" };
@@ -1591,14 +1648,16 @@ export class CardRunner {
             const toReview = await this.move("review");
             if (toReview.ok) finalStatus = "review";
             else held = { reason: toReview.reason, wanted: "review" };
-          } else {
-            // G23: a revision that breaks a gate its Review snapshot passed
-            // goes back to Planning with the regression named.
+          } else if (params.lastGateResult) {
+            // B2: the state machine's `Verify --> Planning: gate fail, replan`.
+            // A card whose gates ran and failed needs a new plan, and Verify is
+            // where that is decided; leaving it there makes Verify a place
+            // cards accumulate rather than a transition they pass through.
+            // G23 names the regression when one of them passed at Review.
             regression = this.regressionAgainstReview(gateResult);
-            if (regression) {
-              const moved = await this.move("planning");
-              if (moved.ok) finalStatus = "planning";
-            }
+            const moved = await this.move("planning");
+            if (moved.ok) finalStatus = "planning";
+            else held = { reason: moved.reason, wanted: "planning" };
           }
         }
       }

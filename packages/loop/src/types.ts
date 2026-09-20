@@ -39,7 +39,13 @@ export interface ReplanRequest {
  */
 export interface ParkDiagnosis {
   cardId: string;
-  stopReason: "repair_exhausted" | "capability_ceiling" | "vacuous_tests";
+  stopReason:
+    | "repair_exhausted"
+    | "capability_ceiling"
+    | "vacuous_tests"
+    | "token_budget_exhausted"
+    | "time_budget_exhausted"
+    | "budget_exhausted";
   attempts: number;
   /** True when a re-plan had already been tried on this card. */
   replanned: boolean;

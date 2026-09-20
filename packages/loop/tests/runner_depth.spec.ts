@@ -312,6 +312,39 @@ describe("token and wall-clock budgets (L22)", () => {
     expect(seen).toHaveLength(1);
   });
 
+  it("L22: parks the card with a diagnosis when its token budget runs out", async () => {
+    const card = await newCard({ tokenBudget: 25 });
+    const { adapter } = scripted((t) => [
+      { id: `r${t}`, name: "read_file", arguments: { path: "src/a.ts", start: 1, end: 1 + t } },
+    ]);
+    const { lc, moves } = lifecycle();
+    const result = await runner(card, { modelAdapter: adapter, lifecycle: lc }).run();
+
+    expect(result.stopReason).toBe("token_budget_exhausted");
+    expect(result.finalStatus).toBe("parked");
+    expect(moves).toEqual(["in_progress", "parked"]);
+    // The stop reason carries its diagnosis: the cap, what it bought, and the
+    // one decision left to the person who set it.
+    expect(result.parked?.suggestion).toContain("token budget (30 of 25)");
+    expect(result.parked?.suggestion).toContain(`Raise the budget on card ${card.id}, or split it`);
+    const stored = await store.getCard(card.id);
+    expect(stored?.status).toBe("parked");
+    expect(stored?.blockedReason).toMatch(/^parked: Spent its token budget/);
+    const parkedEvent = (await log.getEventsByCard(card.id)).find((e) => e.type === "card/parked");
+    expect(parkedEvent?.payload).toEqual(result.parked);
+  });
+
+  it("L22: parks a card that spends every step without declaring the work done", async () => {
+    const card = await newCard({ stepBudget: 2 });
+    const { adapter } = scripted((t) => [
+      { id: `r${t}`, name: "read_file", arguments: { path: "src/a.ts", start: 1, end: 1 + t } },
+    ]);
+    const result = await runner(card, { modelAdapter: adapter, stepBudget: 2 }).run();
+
+    expect(result.finalStatus).toBe("parked");
+    expect(result.parked?.suggestion).toContain("every step of its budget (2 of 2)");
+  });
+
   it("reports written-but-unverified work as done_pending_gates at the time limit", async () => {
     const card = await newCard({ secondsBudget: 15 });
     let clock = 0;
@@ -630,5 +663,42 @@ describe("the card dossier reaches the Worker (integration review item 6)", () =
     const thread = dossier.questions.find((t) => t.question.text === "zzqx unrelated puzzle?");
     expect(thread?.answers.map((a) => a.text)).toEqual(["Seshat says: fine"]);
     expect(asked[0]?.meta).toEqual({ questionEntryId: thread?.question.entryId });
+  });
+});
+
+describe("gate failure routes the card to Planning (B2)", () => {
+  it("sends a card whose gates ran and failed from Verify on to Planning", async () => {
+    const card = await newCard();
+    // Verify once (it fails), then repeat a read until the stall breaker ends
+    // the card: it reaches the end of the run with a failing gate verdict.
+    const { adapter } = scripted((t) =>
+      t === 1 ? [write(t), finish] : [{ id: `r${t}`, name: "read_file", arguments: {} }],
+    );
+    const { lc, moves } = lifecycle();
+    const result = await runner(card, {
+      modelAdapter: adapter,
+      gateRunner: gates([false]).runner,
+      lifecycle: lc,
+    }).run();
+
+    expect(result.passed).toBe(false);
+    expect(result.stopReason).toBe("oscillation_detected");
+    // Through Verify, which is where back-pressure applies, and on to Planning.
+    expect(moves).toEqual(["in_progress", "verify", "planning"]);
+    expect(result.finalStatus).toBe("planning");
+    expect((await store.getCard(card.id))?.status).toBe("planning");
+  });
+
+  it("a budget stop that did reach the gates re-plans rather than parking", async () => {
+    const card = await newCard({ stepBudget: 1 });
+    const { adapter } = scripted((t) => [write(t), finish]);
+    const result = await runner(card, {
+      modelAdapter: adapter,
+      gateRunner: gates([false]).runner,
+      stepBudget: 1,
+    }).run();
+
+    expect(result.finalStatus).toBe("planning");
+    expect(result.parked).toBeUndefined();
   });
 });

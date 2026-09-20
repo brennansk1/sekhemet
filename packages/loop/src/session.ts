@@ -212,8 +212,18 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     return this.replanned;
   }
 
-  /** Why this card should be parked, for the human who picks it up (L15 rung 4). */
-  public getParkDiagnosis(stopReason: ParkDiagnosis["stopReason"]): ParkDiagnosis {
+  /**
+   * Why this card should be parked, for the human who picks it up (L15 rung 4,
+   * L22 budget exhaustion).
+   *
+   * `suggestion` is where a stop reason names its next action. A caller that
+   * knows more than the session does — the runner, which holds the budgets and
+   * what they cost — supplies its own diagnosis instead.
+   */
+  public getParkDiagnosis(
+    stopReason: ParkDiagnosis["stopReason"],
+    diagnosis?: string,
+  ): ParkDiagnosis {
     const failures = this.lastGateFailures.slice(0, 3).map((f) => ({
       gate: f.gate ?? f.rung,
       excerpt: f.errorExcerpt.split("\n")[0]?.slice(0, 300) ?? "",
@@ -223,11 +233,12 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     }));
     const first = failures[0];
     const suggestion =
-      stopReason === "capability_ceiling"
+      diagnosis ??
+      (stopReason === "capability_ceiling"
         ? `A re-planned attempt also exhausted the repair ladder${first ? ` on ${first.gate}` : ""}. Split the card, give it to a stronger model, or fix ${first?.location ?? "the failing location"} by hand.`
         : first
           ? `Four repair rungs could not clear ${first.gate}${first.location ? ` at ${first.location}` : ""}. Re-plan the card or answer what the failure needs.`
-          : "The repair ladder ran out without a typed failure; re-run the gates by hand.";
+          : "The repair ladder ran out without a typed failure; re-run the gates by hand.");
     return {
       cardId: this.cardId,
       stopReason,
