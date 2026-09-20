@@ -144,7 +144,25 @@ Every command, flag, config key, view and piece of vocabulary carries exactly on
 *   **Progressive** — it exists, and the user meets it only when something makes it relevant. The trigger must be named. A navigation item for a view with nothing in it is hidden, not empty.
 *   **Developer** — it belongs to whoever is building the harness, not to whoever is using it. Benchmarking, qualification, bake-offs, fixture generation, provenance registers and telemetry export are all this. They live under a `dev` namespace and appear in no user-facing help.
 
-**[DESIGN]** The front door lists nine commands: the bare invocation, a specification in quotes, `run`, `review`, `accept`, `board`, `research`, `doctor`, and `dev`. Everything else keeps its implementation and moves behind `dev`. This is a real cost — the harness's own scripts and release tooling call those commands directly and must all be updated — and it is paid once.
+### The command surface
+
+Nine commands at the front door. Every other command keeps its implementation and moves behind `dev`, where it is listed only by `sekhemet dev --help`.
+
+| Command | What it does |
+| --- | --- |
+| `sekhemet` | The product. First run sets everything up and opens the board; later runs open the board. |
+| `sekhemet "<spec>"` | Plan and run work. One verb, not `plan` then `queue`. |
+| `sekhemet run [card]` | Run a specific card, or resume a stopped one. Absorbs `queue`, `run` and `resume`. |
+| `sekhemet review` | Open the next card waiting on a person. |
+| `sekhemet accept <card>` | Accept and squash. `send-back <card> "<reason>"` and `park`/`unpark` are its siblings. |
+| `sekhemet board` | The board, in the terminal. |
+| `sekhemet research "<q>"` | Ask a question. |
+| `sekhemet doctor` | Check the install, including that the model weights exist. |
+| `sekhemet dev <x>` | Everything for developing the harness itself. |
+
+Three rules govern what may be added. **A new user-facing command must displace one**, or it belongs under `dev` or in the command palette. **Anything with a `--profile`-style flag that rewrites other flags is not a command, it is a default that has not been chosen** — a flag whose effect depends on a file the user has not read is unpredictable by definition. And **every destructive action reachable from the interface is reachable from the command line, with its undo**: accepting unreviewed work from the CLI with no way back, while the board has one, is an asymmetry that will eventually cost someone a merge.
+
+**[DESIGN]** This is a real cost. The harness's own scripts and release tooling call the moved commands directly and must all be updated; the author's muscle memory is the surface most disrupted by the change. It is paid once, and the alternative is a product whose front door lists forty-three doors.
 
 ### Two rules that follow
 
@@ -714,7 +732,10 @@ Every turn ends with exactly one unambiguous stop reason:
 *   `scope_violation` — Attempted write outside declared scope.
 *   `capability_ceiling` — Model failed to parse task or emit valid tool actions.
 *   `human_abort` — Human requested cancellation.
-Stop reasons are the core training signal for the competence model and are never collapsed.
+
+Stop reasons are the core training signal for the competence model and are never collapsed. They are also the main thing a person reads when a card stops, so two rules bind them. **Six is the vocabulary**; a new condition is a *detail* on one of these six, carried in the card's message, not a seventh member the user must learn. An implementation that has grown to eighteen has been adding vocabulary where it should have been adding detail.
+
+**Every stop reason names the next action.** A card that stops says what a person or the harness should do about it: `no_progress` on a card whose tests already pass without the change says the acceptance tests are vacuous and names them; `scope_violation` names the file and offers to widen the scope; `capability_ceiling` names the escalation available. A diagnosis without a remedy is an unfinished stop reason.
 
 ### Retry ladder
 
@@ -2205,16 +2226,36 @@ Every card records the model, quant, template checksum, prompt-set version, play
 
 The interface is a local web app served on loopback, so it works over SSH and on a headless box. A native wrapper is optional and deferred.
 
-### Views
+Three views are the product. The rest exist, and appear when they have something to say.
 
-| View | Contents |
-| --- | --- |
-| Master board | Multi-project dashboard showing project rollup statuses, hardware load, and cards blocked on developer input |
-| Project board | Kanban columns (Backlog $\to$ Review), WIP counters, dependency DAG lines, budget utilization progress bars |
-| Card view | Focused card inspection with 5 tabs: Evidence (default), Plan, Live Steps, Thread, Files |
-| Review view | The primary product surface: gate results strip, intent-grouped structural diffs, test summaries, screenshot diffs |
-| Machine panel | Real-time hardware telemetry: VRAM utilization, active tier, loaded models, throughput sparklines, cache hit rate |
-| Registry view | Registered models, qualification scores, and git task-synthesis bake-off matrices |
+### Views, and when the user meets them
+
+| View | Verdict | Appears |
+| --- | --- | --- |
+| **Review** | Day one | Always. The primary surface: gate strip, intent-grouped structural diffs, test summaries, screenshot diffs. |
+| **Board** | Day one | Always. Kanban columns, WIP counters, budget bars. |
+| **Card** | Day one | Always. Five tabs: Evidence (default), Plan, Steps, Thread, Files. |
+| Inbox | Progressive | When a decision request is open. |
+| Machine | Progressive | When a run is active, or from the status line. |
+| Runs | Progressive | After the first completed run. |
+| Playbook | Progressive | When the first rule is proposed. |
+| Graph | Progressive | When a card declares `dependsOn`. |
+| Registry | Progressive | After the first bake-off. |
+| Insights | Progressive | After enough cards for a trend to mean anything — the same threshold the competence model uses. |
+| Integrations | Progressive | When one is configured, or from settings. |
+| Workspace | Progressive | On the second project. |
+
+A navigation item for a view with nothing in it is **hidden, not empty**. An empty view teaches the user that the product is bigger than their problem; a hidden one teaches them nothing and costs nothing. The rule already holds for the Inbox and is extended to the rest.
+
+### Keyboard
+
+Three tiers, and only the first is worth documenting on a cheat sheet:
+
+*   **Navigation and triage**, which a user learns in a day: `j`/`k` and `h`/`l` to move, `Enter` to open, `Space` to peek, `a` accept, `r` return, `p` park, `?` for help, `Esc` to close.
+*   **The command palette**, `Cmd+K`, which is how everything else is reached. Anything in the palette needs no shortcut, and a palette entry is the default for a new action.
+*   **`g` chords for views.** One chord per *visible* view, and the letter must be the first letter of the view's name. A chord whose mnemonic has to be explained is worse than no chord: the user reaches for the palette instead and is right to.
+
+Two rules follow. **A destructive or surprising action never has a bare single-key binding** — theme switching, in particular, is not a keystroke a user can hit by accident while navigating. And **the cheat sheet is the specification**: if an action is not on it, it does not have a shortcut.
 
 ### Review is the primary product surface
 
@@ -2234,29 +2275,6 @@ For large projects with hundreds of cards across multiple columns, the UI implem
 ### Live streaming
 
 Card steps stream to the card view over a local WebSocket (`ws://127.0.0.1:4040/stream`). The stream is a real-time view of the append-only event log; reloading the page re-streams the log from genesis or a checkpoint, ensuring byte-identical state reproduction.
-
-### Keyboard navigation & shortcut system
-
-The interface is completely operable without a mouse, inspired by Linear and Raycast keyboard paradigms:
-
-| Category | Key Binding | Action |
-| --- | --- | --- |
-| **Global** | `Cmd+K` / `Ctrl+K` | Open Command Palette (search cards, run commands, switch projects) |
-| | `?` | Toggle Keyboard Shortcut Cheat Sheet |
-| | `Esc` | Close modal / Drawer / Cancel active action |
-| **Navigation** | `j` / `k` | Navigate down / up within active column |
-| | `h` / `l` | Navigate left / right between Kanban columns |
-| | `g` + `b` | Go to Project Board |
-| | `g` + `r` | Go to Review View |
-| | `g` + `i` | Go to Decision Inbox |
-| | `g` + `m` | Go to Machine Panel |
-| **Card Actions** | `Space` | Peek Card (opens side-drawer Evidence without leaving board) |
-| | `Enter` | Open Full Card View |
-| | `c` | Create New Card (opens modal) |
-| | `x` | Toggle Card Selection (batch actions) |
-| **Review Triage** | `a` | Accept Card (passes to Done, triggers git squash) |
-| | `r` | Return Card with feedback (prompts for reason) |
-| | `p` | Park Card (suspends execution) |
 
 ### Human-in-the-loop
 
