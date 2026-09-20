@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
+import { CardStore, EventLog, LifecycleHookEngine, initSchema } from "@sekhemet/kernel";
 import { MockInferenceAdapter } from "@sekhemet/models";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -211,5 +211,42 @@ describe("learning: playbook and user profile", () => {
     const merged = (await store.rules()).find((r) => r.id === related?.id);
     expect(merged?.text).toBe("Use node:sqlite exec for DDL and prepare(...).run for inserts.");
     expect(merged?.evidence.at(-1)?.note).toMatch(/^merges/);
+  });
+
+  it("shows a proposed rule to the project's hooks, and honours a refusal (K12)", async () => {
+    const engine = new LifecycleHookEngine();
+    const seen: unknown[] = [];
+    engine.register("playbook/propose", (ctx) => {
+      seen.push(ctx.data?.rule);
+      // A repository refusing a rule that contradicts its own conventions.
+      const rule = ctx.data?.rule as { text: string };
+      if (rule.text.includes("any")) return { block: true, reason: "no `any` in this repo" };
+    });
+    const hooked = new LearningStore(log, engine);
+
+    const refused = await hooked.propose({
+      role: "worker",
+      text: "Widen the parameter to any when the type fights you.",
+      scope: {},
+      source: "struggle",
+      evidence: [{ cardId: "card_x", note: "third time" }],
+    });
+    expect(refused).toBeUndefined();
+    // Refused means not written: a later run must not find it in the playbook.
+    expect(await hooked.rules()).toEqual([]);
+
+    const allowed = await hooked.propose({
+      role: "worker",
+      text: "Prefer a discriminated union over a boolean pair.",
+      scope: {},
+      source: "struggle",
+      evidence: [],
+    });
+    expect(allowed).toBeDefined();
+    expect((await hooked.rules()).map((r) => r.id)).toEqual([allowed?.id]);
+
+    // The hook saw the candidate as it would be stored, both times.
+    expect(seen).toHaveLength(2);
+    expect(seen[1]).toMatchObject({ id: allowed?.id, status: "candidate", reach: "project" });
   });
 });

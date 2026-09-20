@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import type { EventLog } from "@sekhemet/kernel";
+import type { EventLog, LifecycleHookEngine } from "@sekhemet/kernel";
 
 /**
  * What Sekhemet has learned: playbook rules for the Worker and Seshat, and a
@@ -106,7 +106,15 @@ function writeGlobal(rules: LearnedRule[]): void {
 }
 
 export class LearningStore {
-  constructor(private log: EventLog) {}
+  /**
+   * `hooks` is optional so a store built for a read — a report, a test — does
+   * not have to load the project's hooks.toml to list rules. Production passes
+   * the project's engine, which is what makes `playbook/propose` reachable.
+   */
+  constructor(
+    private log: EventLog,
+    private hooks?: LifecycleHookEngine,
+  ) {}
 
   // --- Rules -------------------------------------------------------------------
 
@@ -172,6 +180,19 @@ export class LearningStore {
       value: 0,
       createdAt: new Date().toISOString(),
     };
+
+    // K12: the project sees a rule before it is written, and may refuse it.
+    // A playbook rule is injected into every later prompt, so it is the one
+    // piece of learned state a repository has a standing interest in vetting
+    // — a house rule that contradicts its conventions is worse than none.
+    // The candidate is complete here (id, reach, related), so a hook judges
+    // what would actually be stored rather than a request to store something.
+    const verdict = await this.hooks?.emit("playbook/propose", {
+      cardId: rule.evidence.find((e) => e.cardId)?.cardId ?? "",
+      data: { rule: full },
+    });
+    if (verdict?.blocked) return undefined;
+
     await this.writeRule(full, "planner");
     return full;
   }

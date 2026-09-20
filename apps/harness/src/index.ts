@@ -83,6 +83,7 @@ import { DEFAULT_DASHBOARD_PORT, startDashboardServer } from "./server.js";
 import { tracesCommand } from "./tracing.js";
 import { trailerGate } from "./trailer_gate.js";
 import { loadAttempts, tune, writeTuningReport } from "./tune.js";
+import { hookEngineFor } from "./user_hooks.js";
 import {
   WAVE2_COMMANDS,
   type Wave2Command,
@@ -1467,7 +1468,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       restrictedMode: config.restrictedMode,
       cardStore,
       boardService,
-      learning: new LearningStore(log),
+      // K12: rules proposed during the run pass the project's `playbook/propose`
+      // hooks, which may refuse one before it is written.
+      learning: new LearningStore(log, hookEngineFor(config.repoPath).engine),
       runRules,
       teamNote: () => teamNote(),
       askTeam: (cardId: string, question: string, meta: { questionEntryId?: string }) =>
