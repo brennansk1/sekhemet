@@ -8,6 +8,24 @@ Sekhemet is a local-first AI coding harness whose interface is nested kanban boa
 
 Sections carrying an open item are tagged inline: **[BENCH]** needs measurement on the founder's hardware, **[RESEARCH]** needs further investigation, **[DESIGN]** needs a decision before implementation.
 
+### What this is, in one page
+
+Everything below is one machine, and it is worth stating plainly before the specification begins, because every later section is either a way to make one of these sentences true on a 24 GB laptop or it does not belong in this document.
+
+**Sekhemet turns a specification into a diff that has survived checks nobody involved could edit, and records enough about the attempt that the next one is cheaper.**
+
+*A card is the unit of everything.* One card owns one worktree, one branch, one declared file scope, one deterministically assembled context, one budget, one attempt, one evidence bundle, and one row of measured outcome. There is no session and nothing accumulates, so the same card against the same repository produces a byte-identical prompt — which is what makes both the prefix cache and honest measurement possible.
+
+*The event log is the only durable channel.* Anything a model saw is in it, enforced at runtime rather than promised. The board, replay, fork, the audit trail and the competence model are all projections of that one stream.
+
+*Work advances by column, and every column boundary is an entry condition that an executable gate decides* — never the model that did the work. A failure becomes one typed shape; the top few reach the model and the rest stay in evidence behind a reference, because a small model drowns in logs.
+
+*The human is the rate limiter, deliberately.* Measured review minutes set the Review WIP limit, the WIP limit back-pressures Verify, and Verify back-pressures the Worker. The machine cannot produce more diffs than a person can read.
+
+*What the system learns, it learns only from a recorded signal* — a gate result, a stop reason, a send-back — and it spends what it learns in exactly one place: the stable zone of the next prompt, at a card boundary, so the cache survives.
+
+A feature that cannot be traced back to one of those six paragraphs is a candidate for deletion, not for a new section. This test has already been applied once: it is why the self-improvement loops collapsed from ten to one, why research acquired no privileges of its own, and why the documentation embedding index was removed.
+
 ### Locked decisions
 
 | Decision | Value |
@@ -15,7 +33,7 @@ Sections carrying an open item are tagged inline: **[BENCH]** needs measurement 
 | Inference | 100% local in v1; no cloud models |
 | Target user | Solo developer already running local models |
 | Hardware range | 16 GB to 128 GB, self-calibrating |
-| Cascade | Local planner + local executor; swapped on small machines, co-loaded on large |
+| Model roles | Four — Worker, Manager, Reviewer, Researcher — as entries in the model registry, never as agents or personas; swapped on small machines, co-loaded on large |
 | Context | Fresh per card; no long-running session |
 | Done | Executable gates only; the agent never certifies its own work |
 | Network | Offline by default; git remotes and GitHub sync are opt-in adapters |
@@ -43,8 +61,8 @@ Plain, exact, and calm. Sekhemet reports what passed, what failed, and what it n
 | Executable definition of done | Gates |
 | Proof a card is done | Evidence |
 | Learned repo knowledge | Playbook |
-| Executor and planner | Worker and Planner |
-| Local knowledge system | Library |
+| The four model roles | Worker, Manager, Reviewer, Researcher |
+| The question queue | Inbox |
 
 ### How the goal criteria map to this document
 
@@ -54,8 +72,8 @@ Plain, exact, and calm. Sekhemet reports what passed, what failed, and what it n
 | Skills and tools cataloged | Skills catalog; Tool catalog; Component register |
 | Recursive self-improvement | Recursive self-improvement; Prompt architecture; Model registry |
 | Context-rot defense | Context-rot defense; Context assembly pipeline and prefix-cache layout |
-| Competitive feature set | Every section from Executor loop through Air-gap kit |
-| Small-model leverage | Small-model leverage; Executor loop; Repair contracts |
+| Competitive feature set | Every section from Worker loop through Air-gap kit |
+| Small-model leverage | Small-model leverage; Worker loop; Repair contracts |
 | Buildable end to end | Build specification; Implementation stack; Build phases |
 | Brand and design tokens | Name and brand; Frontend design system |
 | Top-model strategies | Top-model tool semantics |
@@ -72,18 +90,67 @@ The product is a local AI engineering manager. Work lives on nested boards, the 
 
 1. **100% local.** No cloud inference, zero telemetry, offline-capable install.
 2. **Hardware-adaptive.** Self-calibrating profiles from 16 to 128 GB, automatic model selection, scheduled swaps, overnight mode.
-3. **Small-model reliability engine.** Tolerant tool interface, symbol-level edits, parse gate, assembled context, fresh per card, local planner/executor cascade.
+3. **Small-model reliability engine.** Tolerant tool interface, symbol-level edits, parse gate, assembled context, fresh per card, local planner/Worker cascade.
 4. **AI project manager.** Nested boards, decomposition to the machine's competence envelope, dependency scheduling, token and time accounting, WIP limits tied to review capacity.
 5. **Executable definition of done.** Per-column gates with status rollup and an evidence bundle per card.
 6. **Fits the existing workflow.** Git-native, GitHub and Forgejo sync, AGENTS.md and CLAUDE.md, MCP and ACP, existing CI as a gate source.
 
 ### Structural advantages
 
-These follow from the architecture and are hard for chat-based, cloud-based competitors to copy: verification replaces self-report; no session means no session decay; compute accounting that token vendors are disincentivized to build; reproducibility from pinned models and deterministic context; and a learned competence model of each executor on each repo that compounds with use.
+These follow from the architecture and are hard for chat-based, cloud-based competitors to copy: verification replaces self-report; no session means no session decay; compute accounting that token vendors are disincentivized to build; reproducibility from pinned models and deterministic context; and a learned competence model of each Worker on each repo that compounds with use.
 
 ### Claims not to make
 
 Never claim parity with frontier models on ambiguous work, guaranteed correct code, unmeasured benchmark numbers, or any compliance certification that does not exist.
+
+## The surface the user touches
+
+The target user is a solo developer who already runs local models. They want to point the harness at a repository and review what it produces. They are technical, but this is a tool they use, not a system they administer, and the simplicity bar they will measure it against is Claude Code: one command, a conversation, a permission prompt when something risky happens, and a project file most people never open.
+
+This harness does things Claude Code does not — it holds a board, runs gates, produces evidence, and picks its own weights — so some additional surface is inherent. The discipline is telling the two apart.
+
+### Six concepts, and no more on day one
+
+| Concept | Why it cannot be hidden |
+| --- | --- |
+| **Card** | The unit of work and of review. The user must know what they are accepting. |
+| **Accept / send back** | The human decision is the product. |
+| **Gates** | The user must know what "passed" means, or acceptance is theatre. They should not *write* gates on day one — they are derived from the project's own scripts — but they must see the ones that ran. |
+| **Evidence** | The diff and the gate results are what review reads. |
+| **The model pair** | Local-first cannot pick weights out of nothing. One line naming two models, with a download, is the honest minimum. |
+| **The repository** | Which repository. Implicit in the working directory. |
+
+Everything else is a decision the harness exported to the user, and every one of those is a defect until it is either given a default or shown only when it is needed.
+
+### The first run
+
+Running `sekhemet` inside a repository, with no arguments, is the product. On first run it resolves the machine profile, derives gates from the project's scripts, verifies the model files exist, and prints one paragraph: the two models it will use, the gates it derived, and how to ask for work. One confirmation. Then it opens the board.
+
+```
+$ sekhemet
+M4, 24 GB. Worker <model>, Manager <model> — 14 GB to fetch, or point me at your own with --models-dir.
+Gates from package.json: typecheck, lint, test.
+Ready. Ask for work with: sekhemet "add rate limiting to the API"
+```
+
+No file is written by the user before the first card. `config.toml`, `gates.toml`, `hooks.toml`, `mcp.json`, skills, tiers, rosters and stop reasons all still exist; none is encountered.
+
+### The rule for every other surface
+
+Every command, flag, config key, view and piece of vocabulary carries exactly one of four verdicts, and the design must state which:
+
+*   **Day one** — one of the six above.
+*   **Default** — the mechanism stays, the decision goes. A good default is not a feature cut. If the harness can compute a better answer than the user can supply, it must not ask.
+*   **Progressive** — it exists, and the user meets it only when something makes it relevant. The trigger must be named. A navigation item for a view with nothing in it is hidden, not empty.
+*   **Developer** — it belongs to whoever is building the harness, not to whoever is using it. Benchmarking, qualification, bake-offs, fixture generation, provenance registers and telemetry export are all this. They live under a `dev` namespace and appear in no user-facing help.
+
+**[DESIGN]** The front door lists nine commands: the bare invocation, a specification in quotes, `run`, `review`, `accept`, `board`, `research`, `doctor`, and `dev`. Everything else keeps its implementation and moves behind `dev`. This is a real cost — the harness's own scripts and release tooling call those commands directly and must all be updated — and it is paid once.
+
+### Two rules that follow
+
+**A default that is wrong must fail loudly.** Deriving gates from a monorepo's root `package.json` will sometimes pick the wrong test script. That must stop the run and name the file to edit. A silently wrong default is worse than a question.
+
+**A config key that is parsed must be read.** A key the user can set that changes nothing is worse than an undocumented one, because it teaches them the config does not work. Any key in the schema with no reader is deleted from the schema, not documented.
 
 ## Capability parity audit
 
@@ -150,7 +217,7 @@ v1 matches or exceeds the top five coding harnesses—Claude Code (Anthropic), O
 *   **Cursor Agent:** Native MCP Client support for connecting to external tool and documentation servers.
 *   **Aider:** Minimal / experimental MCP integration.
 *   **Sekhemet:** Ships dual MCP Client and Server:
-    *   *Client:* Projects declare external MCP servers in `config.toml`; discovered tools are budgeted and exposed to the planner and executor.
+    *   *Client:* Projects declare external MCP servers in `config.toml`; discovered tools are budgeted and exposed to the planner and Worker.
     *   *Server:* Sekhemet exposes its own workspace, boards, cards, gates, evidence bundles, and model registry as MCP tools, allowing IDEs, external CLI agents, or CI scripts to manage cards programmatically.
 
 #### 6. Session Semantics and Trajectory Management
@@ -224,7 +291,7 @@ v1 matches or exceeds the top five coding harnesses—Claude Code (Anthropic), O
 | **Dynamic tool loading** | Tools beyond the core set are deferred: only their names and one-line descriptions are in the prompt; a `tool_search` call loads a full schema into the volatile zone for the current step. MCP servers with many tools are usable without prefill cost. | 2 |
 | **External review cards** | A review card can target a pull request the harness did not create. It runs the reviewer procedure and gates on a checkout, posts findings as an evidence bundle, and never edits. With a tracker adapter, findings post as review comments. | 3 |
 | **Scheduled and recurring cards** | A card may carry a schedule (cron syntax) or a trigger (a webhook, a file change, a dependency release). Recurring cards clone from a template and inherit its gates. Wake-ups respect declared hours unless marked urgent. | 3 |
-| **Agent-driven browser** | An executor tool `browse` exposes a sandboxed browser session (navigate, read accessibility tree, click, type, screenshot) for testing what a card built. Reads are free; writes require the card's scope to include a URL allowlist. Screenshots land in evidence. | 3 |
+| **Agent-driven browser** | An Worker tool `browse` exposes a sandboxed browser session (navigate, read accessibility tree, click, type, screenshot) for testing what a card built. Reads are free; writes require the card's scope to include a URL allowlist. Screenshots land in evidence. | 3 |
 | **IDE extension and TUI** | A VS Code extension over the ACP surface: open a card, stream steps, accept or return. A terminal UI over the same API for headless boxes, with the board, card, and inbox views. | 3 |
 | **Implementation previews** | For architectural choices, the planner generates 2–3 concrete approach previews (trade-offs, files touched, diff sketch) in Decision Requests, enabling 5-second human alignment before execution. | 2 |
 | **Skill & playbook diagnostics (`sekhemet doctor`)** | Automated offline evaluation of skills and playbook rules against frozen regression tasks, measuring net gain over baseline and pruning rules that cause context bloat or pass rate regressions. | 2 |
@@ -251,7 +318,7 @@ The architecture follows DeepSeek Harness and its Cordis kernel: one append-only
 | `ctx.models` | Model registry, loading, swapping, routing |
 | `ctx.llm` | Inference adapter (llama.cpp, MLX, others) |
 | `ctx.tools` | Tool registry and guarded execution |
-| `ctx.loop` | Executor turn/step driver |
+| `ctx.loop` | Worker turn/step driver |
 | `ctx.planner` | Decomposition, estimation, replanning |
 | `ctx.gates` | Gate runners and evidence bundles |
 | `ctx.sandbox` | Isolation, permissions, worktrees |
@@ -319,7 +386,7 @@ interface Card {
   };
   route: {
     planner: string;  // modelId
-    executor: string; // modelId
+    worker: string; // modelId
   };
   dependsOn: string[]; // card IDs in DAG, cycle-checked on write
   filesTouched: string[]; // declared scope; writes outside fail the card
@@ -348,13 +415,33 @@ SQLite in WAL mode, single writer. The event log is append-only with a SHA-256 h
 
 Columns are states, and each transition has an entry gate. A card cannot be dragged past a gate it has not passed; the UI offers an explicit override that is recorded in the log as a human decision.
 
+### One name per state
+
+There are nine states, and each has exactly one name. The stored value, the column heading, the error message and this document all use it. A user who reads `verify` in a stop reason must be able to find the column called Verify.
+
+| Stored value | Column | Meaning |
+| --- | --- | --- |
+| `backlog` | Backlog | Written down, not yet scheduled |
+| `ready` | Ready | Dependencies met and the context fits |
+| `planning` | Planning | The Manager is decomposing it, or a decision request is open on it |
+| `in_progress` | In Progress | The Worker is running |
+| `verify` | Verify | Gates are running |
+| `review` | Review | Gates passed; waiting for a person |
+| `done` | Done | Accepted and merged |
+| `parked` | Parked | Stalled, over budget, or set aside |
+| `rejected` | Rejected | Closed without merging |
+
+Earlier drafts and the interface used *Working*, *Checking* and *Closed* for three of these. Those names are retired. Renaming a state in the interface but not in the data is how a product ends up with three vocabularies for one machine, and it costs the user the ability to search for what an error told them.
+
+Two transitions are easy to leave unimplemented and must not be: `parked → ready` and `rejected → ready` both need a verb the user can reach from the command line, not only from the board. A state a card can enter with no exit is a leak.
+
 ```mermaid
 stateDiagram-v2
   [*] --> Backlog
   Backlog --> Ready: deps met, context fits
   Ready --> Planning: planner claims
   Planning --> InProgress: plan + criteria approved
-  InProgress --> Verify: executor stops
+  InProgress --> Verify: Worker stops
   Verify --> Review: all gates pass
   Verify --> Planning: gate fail, replan
   Review --> Done: human accepts
@@ -370,7 +457,7 @@ stateDiagram-v2
 | Ready | Dependencies done; context pack assembles within budget; acceptance criteria present |
 | Planning | Planner model available; difficulty scored |
 | In Progress | Plan exists; acceptance tests written and failing; scope declared |
-| Verify | Executor stopped with a recorded stop reason |
+| Verify | Worker stopped with a recorded stop reason |
 | Review | Every required gate passed; evidence bundle complete |
 | Done | Human acceptance recorded |
 | Parked | Stall, budget exhaustion, or capability ceiling reached |
@@ -389,7 +476,7 @@ The Review column carries a hard WIP limit derived from review capacity:
 $$	ext{ReviewWIP} = \left\lfloor rac{	ext{reviewMinutesPerDay}}{	ext{medianReviewMinutesPerCard}} 
 ight
 floor$$
-When Review is full, no card may enter Verify, which back-pressures the executor. This is the mechanism that stops the machine producing more diffs than the human can read.
+When Review is full, no card may enter Verify, which back-pressures the Worker. This is the mechanism that stops the machine producing more diffs than the human can read.
 
 ## Context assembly pipeline and prefix-cache layout
 
@@ -505,7 +592,7 @@ flowchart TD
     direction TB
     S1[Deterministic AST Repo Map + LSP Localization] --> S2[Planner Edit-Sketch Cascade: 30B Model]
     S2 --> S3[RTK Condensing & SWE-Pruner Pro: 100% Signal]
-    S3 --> S4[Executor Symbol Edits: 3B Model + LSP]
+    S3 --> S4[Worker Symbol Edits: 3B Model + LSP]
     S4 --> S5[External Verification & Pass@k Selection: Gates]
     S5 --> S6[Typed Repair Ladder: Minimal GateFailure]
   end
@@ -519,12 +606,12 @@ The ten architectural strategies below systematically eliminate each small-model
 Frontier models use raw reasoning to navigate large codebases via exploratory grep and glob calls. Small models wander, consume context, and hallucinate non-existent files. Sekhemet decouples localization from generation:
 *   *Stage 1:* Tree-sitter tag queries and Personalized PageRank rank candidate symbols deterministically.
 *   *Stage 2:* Headless LSP client expands definitions, references, and type signatures for the declared scope (`filesTouched`).
-*   *Outcome:* The small executor receives an exact, pre-localized AST context pack, completely bypassing the exploratory search phase where small models typically fail.
+*   *Outcome:* The small Worker receives an exact, pre-localized AST context pack, completely bypassing the exploratory search phase where small models typically fail.
 
-### 2. Edit-sketch cascades (Planner/Executor division of labor)
+### 2. Edit-sketch cascades (Planner/Worker division of labor)
 A 3B-active model struggles when tasked with both architectural design and syntactical implementation simultaneously. Sekhemet splits these roles:
 *   *The Planner (~30B-class dense or MoE, e.g. Qwen2.5-Coder-32B or DeepSeek-Coder-V2-Lite):* Ingests the spec, acceptance criteria, and repo map to generate an **edit sketch**—defining target AST symbols, preconditions, invariant contracts, and a diff sketch without boilerplate.
-*   *The Executor (3B-active MoE):* Applies the sketch mechanically using symbol replacement tools (`replace_symbol_body`). Applying a verified sketch is a low-perplexity task well within a 3B model's competence envelope.
+*   *The Worker (3B-active MoE):* Applies the sketch mechanically using symbol replacement tools (`replace_symbol_body`). Applying a verified sketch is a low-perplexity task well within a 3B model's competence envelope.
 
 ### 3. Tool-interface design & avoiding the "Format Tax"
 Recent research (Wang et al., arXiv:2408.02442; CRANE, OpenReview 2024) proves that enforcing rigid JSON grammar constraints across an entire generation sequence degrades small-model reasoning by 15–30% by cutting off natural token transitions learned in pretraining ("format tax" and "structure snowballing").
@@ -540,7 +627,7 @@ Frontier models can tolerate 100,000 tokens of noisy compiler dumps. Small model
 
 ### 5. Symbol-scoped AST edits vs. fragile text diffs
 Aider’s 2025–2026 benchmarks confirm that format reliability is a separate capability from coding intelligence. Small models frequently fail on unified diffs (`udiff`) due to line offset arithmetic errors, and fail on search-and-replace due to whitespace or duplicate match bugs.
-*   Sekhemet equips the executor with AST symbol tools (`replace_symbol_body`, `insert_after_symbol`).
+*   Sekhemet equips the Worker with AST symbol tools (`replace_symbol_body`, `insert_after_symbol`).
 *   Symbol replacements cannot match twice, eliminate offset arithmetic, and are immune to whitespace discrepancies.
 *   Every edit passes an in-memory Tree-sitter parse gate before touching disk; syntax errors abort immediately without burning steps.
 
@@ -582,9 +669,9 @@ Frontier models occasionally succeed on large, cross-cutting refactors touching 
 ### The resulting performance envelope
 By replacing monolithic cloud reasoning with deterministic localization, edit-sketch cascades, high-density context pruning, AST symbol editing, and gate-verified Pass@k sampling, Sekhemet allows a **3B-active MoE or ~30B-class local model to match or exceed frontier model (Fable / Opus) accuracy on scoped, verifiable repository tasks**, while running 100% offline on consumer hardware.
 
-## Executor loop: tool interface, control, stop reasons, retry ladder
+## Worker loop: tool interface, control, stop reasons, retry ladder
 
-The executor is a single writer working one card at a time. Its job is to make small, verifiable edits inside a declared scope.
+The Worker is a single writer working one card at a time. Its job is to make small, verifiable edits inside a declared scope.
 
 ### Tool interface: a measured choice, not an assumption
 
@@ -598,10 +685,10 @@ Deliberately small and flat, with no nested objects or unions:
 *   `replace_symbol_body`, `insert_after_symbol` — Scoped AST edits
 *   `edit` — Exact string replacement with uniqueness validation (fallback)
 *   `run` — Sandboxed command execution with RTK output condensing
-*   `docs` — Version-pinned documentation lookup from the Library
+*   `docs` — Version-pinned documentation lookup across the knowledge tiers
 *   `note` — Write to the card thread or post a decision request
 
-Multi-step work inside one card may be expressed as a single script (code-mode) when the model registry marks the executor as script-capable. **[BENCH]**
+Multi-step work inside one card may be expressed as a single script (code-mode) when the model registry marks the Worker as script-capable. **[BENCH]**
 
 ### Write path
 
@@ -621,7 +708,7 @@ Both conditions terminate the turn immediately to preserve token and step budget
 ### Stop reasons
 
 Every turn ends with exactly one unambiguous stop reason:
-*   `done_pending_gates` — Executor completed declared work; ready for gates.
+*   `done_pending_gates` — Worker completed declared work; ready for gates.
 *   `budget_exhausted` — Step, token, or time ceiling reached.
 *   `no_progress` — Stall or oscillation detected.
 *   `scope_violation` — Attempted write outside declared scope.
@@ -636,7 +723,7 @@ Stop reasons are the core training signal for the competence model and are never
 3. **Rung 3:** Return to planner for re-decomposition (max 1 attempt).
 4. **Rung 4:** Park card for human review with diagnostic evidence.
 
-The executor never re-reads its own prior reasoning across rung transitions; each rung rebuilds from a clean assembled context pack.
+The Worker never re-reads its own prior reasoning across rung transitions; each rung rebuilds from a clean assembled context pack.
 
 ### Reasoning mode
 
@@ -706,11 +793,11 @@ Before a card moves from Planning to In Progress, the planner evaluates it again
 | INVEST Criterion | Automated Pre-Flight Check | Failure Action |
 | --- | --- | --- |
 | **Independent (I)** | Scope declaration (`filesTouched`) has zero overlap with concurrent active cards; DAG has zero cycles. | If overlapping files detected, serialize as sequential dependency; never run in parallel. |
-| **Negotiable (N)** | Card specifies acceptance criteria and invariants, but leaves exact AST implementation open to executor. | Reject if card dictates line-by-line syntax; convert to goal criteria. |
+| **Negotiable (N)** | Card specifies acceptance criteria and invariants, but leaves exact AST implementation open to Worker. | Reject if card dictates line-by-line syntax; convert to goal criteria. |
 | **Valuable (V)** | Card directly links to a project acceptance gate or top-level Goal criterion. | Reject orphan cards that do not advance any measurable criterion. |
 | **Estimable (E)** | Difficulty score (1..10) maps to empirical model throughput envelope on this repository. | If difficulty > 7, force re-split into smaller subtasks. |
 | **Small (S)** | Assembled context pack consumes $\le 25\%$ of tier working context; step budget $\le 40$. | Trigger SPIDR splitting if context exceeds tier allocation. |
-| **Testable (T)** | Acceptance tests can be authored and confirmed failing prior to executor handoff. | Gate card from In Progress until an executable test is committed. |
+| **Testable (T)** | Acceptance tests can be authored and confirmed failing prior to Worker handoff. | Gate card from In Progress until an executable test is committed. |
 
 ### Prioritization
 
@@ -730,7 +817,7 @@ computed from the project's own accepted-card history, floored at 1 and rounded 
 
 ### Routing and escalation
 
-Cards below difficulty threshold 4 go straight to the executor with a plan. At difficulty 4–7, the planner writes an edit sketch first. Above difficulty 7, the card is split. On a Rung 3 retry failure, or when estimated context exceeds the tier budget at maximum decomposition, the card is marked `capability_ceiling` and escalated to the human with a structured diagnostic breakdown.
+Cards below difficulty threshold 4 go straight to the Worker with a plan. At difficulty 4–7, the planner writes an edit sketch first. Above difficulty 7, the card is split. On a Rung 3 retry failure, or when estimated context exceeds the tier budget at maximum decomposition, the card is marked `capability_ceiling` and escalated to the human with a structured diagnostic breakdown.
 
 ### Process profiles
 
@@ -788,7 +875,7 @@ interface DecisionRequest {
 #### Implementation approach previews
 When a card presents significant architectural ambiguity (e.g., choice between two data structures or design patterns), the planner includes a concrete `previewSketch` for each option in the Decision Request:
 *   *Contents:* Target files touched, candidate AST symbol changes, and estimated blast radius.
-*   *Developer Experience:* The developer reviews the preview directly from the board or CLI modal and selects their preferred approach in under 5 seconds before the executor touches a single file.
+*   *Developer Experience:* The developer reviews the preview directly from the board or CLI modal and selects their preferred approach in under 5 seconds before the Worker touches a single file.
 
 #### Safe fallback vs. default-deny rules
 *   **Non-Destructive Architectural Choices (`safe_default`):** For low-risk decisions (e.g., choice between two logging patterns or naming conventions), the request specifies `defaultIfNoAnswer`. If no human response is received by the deadline, the default option is applied, recorded as `decision/default_applied`, and execution proceeds without halting the project.
@@ -926,7 +1013,7 @@ A goal is `met` only when every criterion is met and verified. When the planner 
 
 ## Definition of Done: gate layers including visual verification
 
-The agent never certifies its own work. A card is done when gates pass and an evidence bundle exists. Gates are declared per project in a versioned `gates.toml` that the executor cannot modify; tampering is detected by hash and fails the card.
+The agent never certifies its own work. A card is done when gates pass and an evidence bundle exists. Gates are declared per project in a versioned `gates.toml` that the Worker cannot modify; tampering is detected by hash and fails the card.
 
 ### Layers
 
@@ -942,7 +1029,7 @@ The agent never certifies its own work. A card is done when gates pass and an ev
 
 ### Acceptance tests come first
 
-The planner writes acceptance tests before implementation begins, and they must fail at the start. The executor cannot edit files matching the gate test patterns. This removes the most common way an agent declares success: rewriting the test.
+The planner writes acceptance tests before implementation begins, and they must fail at the start. The Worker cannot edit files matching the gate test patterns. This removes the most common way an agent declares success: rewriting the test.
 
 ### Visual verification
 
@@ -962,7 +1049,7 @@ Diff-scoped only. Whole-repo mutation runs are not feasible on the gate host. Re
 
 ### Evidence bundle
 
-Every card entering Review carries: the diff, all gate results with typed failures, test output, screenshots and diffs, the dependency and secret scan reports, the stop reason, and a short summary of what the executor tried and abandoned. This is the review surface; reviewing should not require reading the trajectory.
+Every card entering Review carries: the diff, all gate results with typed failures, test output, screenshots and diffs, the dependency and secret scan reports, the stop reason, and a short summary of what the Worker tried and abandoned. This is the review surface; reviewing should not require reading the trajectory.
 
 ```typescript
 interface EvidenceBundle {
@@ -991,13 +1078,25 @@ interface EvidenceBundle {
 
 On first run the harness measures the machine and derives a profile. It never asks the user to pick a model or a context size.
 
+### Getting the weights
+
+A local-first harness that recommends models by name and cannot obtain them does not run. This is the first thing a new user meets and the easiest thing for the author to never notice, because the author's models are already on disk.
+
+Three requirements, all of them checkable:
+
+*   **Named defaults are fetchable.** The tier profile names a Worker and a Manager that the harness can download and verify by hash, from a source recorded in the component register. A default model with no acquisition path is not a default.
+*   **`doctor` verifies the weights exist.** A diagnostic that reports all-clear and is followed by a file-not-found on the first card is worse than no diagnostic. The model files named by the resolved profile are checked for existence, readability and hash before anything else is reported green.
+*   **One override, not several.** A user with their own weights, or an air-gapped install, points at them with a single `--models-dir` and its config equivalent. Per-model environment variables are not a configuration surface; they are a way for a machine to work only for the person who set them up.
+
+**[DESIGN]** No model path in the shipped source may reference a filesystem location outside the user's own configuration — no absolute paths, no external volumes, no author-specific directories. This is stated as a design rule because it is a class of defect that testing on the author's machine can never catch.
+
 ### Calibration procedure
 
 Measure usable memory budget (unified memory or VRAM plus system RAM where expert offload applies), memory bandwidth, and, for each candidate model, prefill and decode throughput at several context lengths. Sweep prefill batch size and expert-offload settings, keeping the setting one step back from the memory cliff. Store results as the machine profile with a hardware fingerprint; re-run on hardware change or on demand.
 
 ### Tiers
 
-| Tier | Budget | Planner | Executor | Co-loaded | Working context | Parallel cards |
+| Tier | Budget | Manager | Worker | Co-loaded | Working context | Parallel cards |
 | --- | --- | --- | --- | --- | --- | --- |
 | S | 16 GB | Same model, planning mode | Small MoE (~3B active) | n/a | 12–16k | 1 |
 | M | 24–32 GB | Dense, swapped on schedule | ~30B-A3B MoE | No | 16–24k | 1 |
@@ -1042,6 +1141,16 @@ The user declares hours the machine is theirs. Outside those hours the harness w
 
 Models are qualified, not chosen by reputation. The registry is the harness's memory of what works on this machine and this repo.
 
+### The four roles
+
+The harness consults a model in exactly four roles. **The Worker** executes cards. **The Manager** plans, decomposes, and answers questions about the board. **The Reviewer** reads a passing diff against its specification, in a different model family from the Worker so that it catches what the Worker's family systematically misses. **The Researcher** answers questions with cited sources.
+
+These are values in `ModelEntry.roles`, qualified per machine like any other property of a model. They are not agents, personas, or a team, and the harness does not simulate a conversation between them: a role is a routing decision about which weights answer a particular request. Where the interface gives a role a human name, that name is a label on a surface, never a second architecture.
+
+One model may hold several roles, and on small machines usually does. The roles never co-reside below 32 GB; the binding constraint is not how many roles exist but how often the swap cost can be paid, which the tier profile decides. A role whose model is absent degrades to a named fallback rather than failing: no Reviewer means the diff reaches the human unreviewed and the card says so; no Researcher means research questions are answered from the repository alone.
+
+**[DESIGN]** A fifth role is added only when an existing one cannot be qualified for the work, never because a new capability has a natural name.
+
 ### Registry record
 
 ```typescript
@@ -1074,7 +1183,7 @@ interface ModelEntry {
     passRate: number;
     date: string;
   };
-  roles: Array<"planner" | "executor" | "verifier" | "vision" | "pruner">;
+  roles: Array<"worker" | "manager" | "reviewer" | "researcher" | "vision">;
 }
 ```
 
@@ -1082,7 +1191,7 @@ interface ModelEntry {
 
 A local suite using the harness's own tool schemas, scored by deterministic matching rather than a model judge. It measures schema validity, correct tool selection, correct arguments, multi-turn recovery after an injected error, and refusal behavior when a request is out of scope.
 
-A model qualifies as an executor at a set pass rate on this internal suite. That bar is internal and is not comparable to public function-calling leaderboards, where open models score far lower; the suite uses simplified schemas by design. Multi-turn scores run below single-turn, and the bar accounts for that.
+A model qualifies as an Worker at a set pass rate on this internal suite. That bar is internal and is not comparable to public function-calling leaderboards, where open models score far lower; the suite uses simplified schemas by design. Multi-turn scores run below single-turn, and the bar accounts for that.
 
 ### Per-repo bake-off
 
@@ -1094,6 +1203,8 @@ Every result is recorded with its full settings: model, quant, tool arm, step bu
 
 Every card outcome writes a row: card class, files touched, difficulty, model, arm, step budget, stop reason, gate failures. After enough rows the planner sets budgets and routes from this repo's measured pass rates instead of priors. This is the compounding advantage of the design.
 
+The row records the routing **prediction**, the **decision** actually taken, and the **outcome** as three separate fields rather than one. Recording only the outcome answers "did this card pass"; recording all three also answers "was the escalation necessary", which is the question that makes routing improvable rather than merely observable. An escalation that was taken and turned out unnecessary, and a budget that was predicted sufficient and was not, are both signals the single-field version discards.
+
 **[RESEARCH]** Task-synthesis quality from git history is implemented via the Meta-Task (2026) and SWE-Bench++ pipeline: closed PRs provide code/test deltas, the Fail-to-Pass invariant ($C_{-1}$ fails, $C_0$ passes) verifies test oracles, and problem statements are synthesized with scrubbed file paths.
 
 **[BENCH]** The relationship between card size and pass rate is unknown and must be measured; it sets decomposition granularity.
@@ -1101,6 +1212,18 @@ Every card outcome writes a row: card class, files touched, difficulty, model, a
 ## Prompt architecture and the evolving playbook
 
 Prompts are versioned artifacts with measured effects, not prose someone tuned by feel. Every prompt change is A/B tested against the card eval before it ships.
+
+### What the harness remembers
+
+The harness remembers three kinds of thing and nothing else. Naming the categories matters as much as naming their members: a design that lists stores without stating what makes something a store accumulates a new one every time a feature needs to write a file.
+
+**Guidance** is what a model is told: playbook rules, skills, exemplars, and the card's own dossier. All of it is scoped, dated, attributed to the signal that produced it, retired when it stops earning its place, and delivered in one place — the stable zone of the prompt, at a card boundary, so the prefix cache survives.
+
+**Measurements** are what the machine observed about itself: card outcomes, model qualifications, throughput, and the budgets and routes derived from them. All of it is keyed by class and settings, and a number without its settings is not admissible.
+
+**Fetched bytes** are everything read from outside: documentation, pages, repository reads, and the raw tool observations behind their pointers. All of it is content-addressed, expires by the mutability of what it holds, and is safe to delete at any time — deleting it costs speed and never correctness.
+
+A store that is not one of these three is a design error. Two consequences follow, and both are binding: each kind has exactly one location and one writer, so a rule cannot be retired in one place and survive in another; and anything that looks like a fourth kind is either guidance under a new name or a cache that has not admitted it is a cache.
 
 ### Structure
 
@@ -1138,50 +1261,94 @@ An offline optimizer runs in idle hours: it proposes prompt and playbook variant
 
 Prompt sets, playbooks, and tool schemas are versioned together. Any change invalidates cached qualification results for affected models and triggers a re-run, because the harness and the prompt are jointly the thing being measured.
 
+## Measuring the harness
+
+Every claim this document makes about quality is unfalsifiable until the harness is measured against a fixed task set with the models it actually runs. The self-improvement loop needs that measurement as its admission test, the model registry needs it to qualify a candidate, and the reader needs it to tell a feature that helps from a feature that merely exists. It is therefore a precondition, not a phase-three deliverable.
+
+### The frozen suite
+
+A fixed set of 20 to 40 tasks, versioned in the repository, each with a specification, a repository state, and gates that decide pass or fail without a human. It is frozen in the sense that changing it is a deliberate, recorded act: a task may be added, but no task is edited to make a result look better, and the suite's hash is recorded with every result.
+
+One number comes out of a run — tasks passed — alongside the cost that bought it: wall-clock, tokens, and cards that needed a repair rung. **A change to the harness that does not move that number, or moves it down, is not an improvement regardless of how well it is argued.**
+
+### What it gates
+
+*   **The self-improvement loop.** No proposal from any inlet is admitted without beating the frozen baseline.
+*   **The model registry.** A model is qualified by running the suite, which is what "models are qualified, not chosen by reputation" means operationally.
+*   **Any component whose value is asserted rather than measured.** The learned context pruner is the current example; see below.
+
+### Null baselines
+
+A learned component is compared against the cheapest thing that could work, at equal budget, before it ships.
+
+**[BENCH]** The context pipeline's relevance pruner is measured against **structure-preserving random line dropping at the same token budget**. This is not a rhetorical bar: published work on KV-cache eviction (arXiv:2609.03430) found that a random scorer, given the prompt intact, matched the strongest learned baseline in 31 of 60 comparisons — the point being that learned relevance signals over long sequences can fail to beat chance at equal budget. If the pruner does not clear the random baseline on the frozen suite, it is deleted along with its component-register row.
+
+### Calibrating against published systems
+
+**[DESIGN]** The public per-instance results of published systems — the SWE-bench leaderboard's submission records, roughly $10^5$ instance-by-system outcomes — separate an item's *difficulty* from a system's *ability* when fitted as an item-response model. Difficulty is a property of the task and transfers; ability is not ours and does not. That gives the difficulty scorer a real prior and puts this harness's own ability on the same scale as published systems once it answers a handful of the same items.
+
+Two limits on this, both binding. The data is overwhelmingly Python and heavily concentrated in a few repositories, so it calibrates a scale rather than ranking TypeScript work. And success is dominated by the agent scaffold, not the task — the same instances resolve at 16.7% under one published harness and 47.9% under another — so nothing about routing or model choice may be fitted from it; that is what the local ledger and the minimum trial count are for. The pass/fail outcomes are facts and may be imported as a derived matrix; the underlying patches carry their own licences, some of them copyleft, and are not.
+
 ## Recursive self-improvement
 
-Sekhemet improves itself along ten explicit loops, all fed by the same source: gate results on real cards. Each loop has a measured signal, a bounded change, and an atomic rollback. Nothing self-modifies without passing the same gates that govern user code.
+The harness improves itself by one mechanism, not ten. An objective signal becomes a bounded proposal; every proposal, whatever produced it, is scored against the frozen regression suite before it takes effect, is pinned by hash or git commit when it does, and is rolled back automatically if the pass rate drops over the following ten cards. What varies between inlets is what they propose. How a proposal earns its place does not vary at all.
 
-### The flywheel
+An earlier version of this section described ten loops, each with a column citing the paper it came from. That was a reading list formatted as an architecture: four of the ten restated mechanisms specified elsewhere in this document, and the rest shared a pipeline nobody had written down. One mechanism with six inlets is the same capability with the duplication removed.
+
+### The loop
 
 ```mermaid
 flowchart LR
-  Cards[Cards run] --> Gates[Gate results<br/>stop reasons]
-  Gates --> Data[Failure corpus]
-  Data --> Playbook[Playbook deltas]
-  Data --> Budgets[Budgets and routing]
-  Data --> Prompts[Prompt optimizer]
-  Data --> Skills[Skill distillation]
-  Data --> Evals[Task synthesis]
-  Data --> Archive[Variant archives]
-  Playbook --> Cards
-  Budgets --> Cards
-  Prompts --> Cards
-  Skills --> Cards
-  Archive --> Cards
+  Cards[Cards run] --> Signal[Recorded signal:<br/>gate result, stop reason,<br/>send-back, surviving mutant]
+  Signal --> Proposal[Bounded proposal]
+  Proposal --> Suite{Frozen regression<br/>suite}
+  Suite -->|no gain| Discard[Discarded, recorded]
+  Suite -->|gain| Pin[Pinned by hash<br/>or git commit]
+  Pin --> Cards
+  Pin --> Watch[Next 10 cards]
+  Watch -->|pass rate drops| Revert[Rolled back,<br/>flagged for review]
 ```
 
-### The ten self-improvement loops
+### The six inlets
 
-| # | Loop | Measured Signal | Bounded Change | Rollback Mechanism | Literature / Origin |
-| --- | --- | --- | --- | --- | --- |
-| 1 | **Playbook deltas** | Repeated gate failures & review return reasons | Append or retire max 1 playbook rule per retro | Atomic revert of playbook git commit | Project post-mortems |
-| 2 | **Budgets & routing** | Pass rate by class, size, model, arm, step count | Adjust class budgets by $\le 15\%$ per calibration cycle | Revert router matrix to prior checkpoint | Competence model |
-| 3 | **Prompt evolution** | Regression suite score on held-out card eval | Propose prompt text variations; require $\ge +5\%$ gain | Revert prompt template to prior pinned hash | Discrete prompt search |
-| 4 | **Skill distillation** | Successful recurring multi-step trajectories | Package trajectory into `SKILL.md` + scripts + evals | Deactivate skill manifest | Skill Creator |
-| 5 | **Exemplar store** | Accepted cards correlated with subsequent pass rates | Index top-2 accepted trajectories per card class | Evict exemplar from vector/lexical index | In-domain few-shot |
-| 6 | **Task synthesis** | Fix commits & closed issues from git history | Synthesize fail-to-pass regression test tasks | Discard task if revert does not fail | SWE-bench generation |
-| 7 | **Variant archives** | Full regression suite score across harness versions | Maintain archive of harness configs; sample parents by performance | Restore previous production variant pointer | Darwin Gödel Machine (arXiv:2505.22954) |
-| 8 | **Proposal pre-filtering** | Fast rubric & small-slice test score | Filter proposed harness edits before full eval suite | Discard low-scoring proposals | SIFT (Judge-ranked search) |
-| 9 | **On-the-fly tool synthesis** | Repeated bash command chains in executor logs | Synthesize helper script under `scripts/`; test on card | Delete script if card gates fail | Live-SWE-agent (arXiv:2511.13646) |
-| 10 | **Demonstration evolution & gate hardening** | Sparse pass/fail signals & surviving mutation mutants | Ground harness evolution in expert demos; turn mutants into tests | Demote generated tests to advisory-only | DemoEvolve (arXiv:2605.24539) & Mutation analysis |
+| Inlet | Recorded signal | What it proposes | Bound |
+| --- | --- | --- | --- |
+| **Playbook rules** | Repeated gate failures; review send-back reasons | Append or retire a rule | One rule per retrospective |
+| **Budgets and routes** | Pass rate by card class, size, model, arm, step count | Adjust a class budget or a route | $\le 15\%$ per calibration cycle |
+| **Skills** | Recurring multi-step trajectories that passed | Package one as a skill with its own checks | One skill per proposal |
+| **Exemplars** | Accepted cards correlated with later pass rates | Index the top two trajectories per card class | Two per class |
+| **Synthesized tasks** | Fix commits and closed issues in this repository's history | A fail-to-pass regression task | Discarded if the revert does not fail |
+| **Generated tests** | Mutants surviving the mutation gate | A test that kills the mutant | Advisory until a human promotes it |
 
-### Rigorous guardrails across all loops
+A seventh inlet must justify itself by the size of the signal it reads, not by the paper it comes from.
 
-Every loop must strictly adhere to three non-negotiable invariant rules:
-1.  **Measured Signal:** Every modification must be triggered by an objective, recorded signal (gate failure frequency, test pass rate on regression suites, or mutation survivor counts). Subjective self-assessment is rejected.
-2.  **Bounded Change:** Modifications are strictly constrained in scope (e.g., maximum one playbook entry per retro, maximum $\pm 15\%$ budget adjustment, isolated script additions). Whole-system rewrites are blocked.
-3.  **Atomic Rollback:** Every change is versioned under git or hash-pinned config. If pass rates drop over a moving 10-card window, the change is automatically rolled back and flagged for human review.
+### Guardrails
+
+1.  **Measured signal.** Every modification is triggered by an objective, recorded signal. Subjective self-assessment is rejected, and this is the same rule that forbids a model from judging its own output — stated once here and applied everywhere, including to prose in the research pipeline.
+2.  **Bounded change.** Each inlet's bound is in the table above. Whole-system rewrites are blocked.
+3.  **Atomic rollback.** Every change is versioned under git or hash-pinned. If the pass rate drops over a moving ten-card window the change is reverted automatically and flagged.
+4.  **Admission is grounded, never textual.** A proposal is admitted only when a quantity measured *outside* the generated text improves. A gate that reads only what the model wrote cannot reliably improve on it (arXiv:2609.02750 proves this for durable agent memory and measures harmful-proposal acceptance at 100% free-form, 34.5% self-gated, 6.2% grounded). For skills and generated tests the grounded signal is execution: a skill's own checks are run as gates before it is admitted, in the gate host's sandbox, and the verdict is a `GateResult` like any other.
+
+### Volume thresholds
+
+Each inlet needs a minimum of evidence before it may act, and below that threshold it reports insufficient data rather than acting on noise. This matters more here than in published work on the same mechanisms: a solo developer on a handful of repositories produces hundreds of cards, not the $10^5$ trajectories those systems assume, and an inlet fitted on five samples is worse than an inlet that is switched off.
+
+| Inlet | Minimum before it may act |
+| --- | --- |
+| Playbook rules | 3 occurrences of the same signal |
+| Budgets and routes | `MIN_ARM_TRIALS` per arm, with a Wilson interval that excludes the incumbent |
+| Skills | 3 instances of the trajectory, and its checks pass |
+| Exemplars | 5 accepted cards in the class |
+| Synthesized tasks | None; each is validated individually by revert-and-fail |
+| Generated tests | None; advisory until promoted |
+
+**[DESIGN]** Two of these can be started from public data rather than from a cold start, and two cannot. Task difficulty may be initialised from the SWE-bench Verified human annotations (1,699 instances, three annotators each), which is the only public difficulty label set that exists; the prior is Python-heavy and dominated by a single repository, so it calibrates the 1–10 scale and must not rank TypeScript cards on its own. The proposal pre-filter may be calibrated from public (surrogate score, ground truth) pairs by fitting a monotone correction, in the manner of arXiv:2608.12564's online debiasing, gated on the same minimum trial count. **Exemplars and playbook rules may not be imported at any price:** a public trajectory carries another harness's tool vocabulary, and exemplars are delivered in the prompt's stable zone, so importing one teaches a small model an authoritative example of tools this harness does not implement. Those two inlets are local-only by construction, and so is routing, which has no public analogue for the tool-arm dimension at all.
+
+### What is excluded
+
+Weight updates are not part of the loop in v1. Fine-tuning or reinforcement learning on the repo's own history is deferred until in-context methods have plateaued. The loop driver, gates runner, sandbox boundaries, and permission tables are permanently excluded from self-modification.
+
+**[BENCH]** Inlet gains are unmeasured on this workload; each inlet is enabled only after beating a frozen baseline on the regression suite.
 
 ### Skill & playbook diagnostics (`sekhemet doctor`)
 
@@ -1202,7 +1369,20 @@ The model does not judge its own output. Correction is driven by external signal
 
 ### Policy
 
-Self-critique and reflection loops are not used as a quality mechanism; at the model scales this harness runs, they measure worse than simply sampling again and checking externally. Where extra compute is available, it goes to bounded repeated sampling with gate-based selection, not to asking the model to review itself.
+Self-critique and reflection loops are not used as a quality mechanism; at the model scales this harness runs, they measure worse than simply sampling again and checking externally. Where extra compute is available, it goes to bounded repeated sampling with gate-based selection, not to asking the model to review itself. This holds wherever a model's own output is the thing being judged — code, plans, and research prose alike — and it has a formal basis: a gate that observes only the generated text cannot improve uniformly over environments the text cannot distinguish, whereas a gate grounded in the environment can (arXiv:2609.02750).
+
+### What happens when it keeps failing
+
+Most of the perceived quality of a harness is not in its successes but in what it does on the third wrong answer, so the failure path is specified as carefully as the happy one. The ladder is fixed, and each rung changes something material rather than retrying the same thing with a different seed:
+
+1.  **Same context, typed failure.** The `GateFailure` shapes below are appended and the Worker tries again. This rung fixes the common case: a real mistake with a legible diagnostic.
+2.  **Fresh context.** The attempt is abandoned and the context pack is rebuilt from the card, discarding the conversation that produced the failure. A model that has been wrong twice has usually polluted its own context with the wrong approach, and no further prompting removes it.
+3.  **Narrowed scope or escalated model.** Either the card is cut down to the part that is failing, or the routing escalates one tier. Which of the two is chosen comes from the competence model, not from a fixed order.
+4.  **Park with a question.** The card stops and posts a decision request naming what was tried, what failed each time, and the specific ambiguity or missing capability suspected. It does not park silently.
+
+Two rules bound the ladder. **A rung that does not change the inputs is not a rung**, which is why "try again" appears only once. And **repeated failure is evidence about the card, not only about the model**: three failures on one card with different contexts is the strongest available signal that the specification is wrong, and it routes to the Manager for decomposition rather than to a fourth attempt.
+
+Every stop reason names the next action. A stop reason a person cannot act on — `vacuous_tests`, `rebase_conflict`, `integration_failed` — is a diagnosis without a remedy, and the card carries the remedy alongside it.
 
 ### Repair contract
 
@@ -1238,6 +1418,8 @@ The harness runs model-generated commands on the developer's machine. It fails c
 ### Command isolation
 
 On macOS, commands run under the system sandbox facility (`sandbox-exec`) with a generated Seatbelt profile allowing writes only to the card's worktree and the temporary directory. On Linux, commands run under user namespaces with Landlock path restrictions and seccomp-bpf syscall filters. If sandbox capabilities are missing or fail to initialize, execution aborts immediately.
+
+**[DESIGN]** Two honest caveats about that sentence. `sandbox-exec` has been formally deprecated by Apple for years: it works, it is what every comparable tool uses, and it is not a foundation. The harness therefore treats the sandbox as an interface with one macOS implementation, keeps the confinement assertions in tests that would fail loudly if the facility changed behaviour, and records the migration to whatever replaces it as a known liability rather than a surprise. On Linux, where Landlock is unavailable the implementation falls back to bubblewrap, which is a weaker guarantee than the paragraph above claims; the fallback is recorded in the evidence bundle so that a card's isolation level is visible rather than assumed.
 
 Network access from inside the sandbox is denied by default. Where a card requires dependency installation, an allowlisting proxy outside the sandbox mediates, and every request is logged with its SHA-256 payload hash.
 
@@ -1374,7 +1556,7 @@ flowchart LR
 
 1.  **Draft PR Creation:** On card acceptance on the board, Sekhemet opens a draft PR (`draft: true`) with the EvidenceBundle summary (gates passed, diff stats, test coverage, abandoned attempts) as the description.
 2.  **Ready for Review:** Once all check runs post `success`, the PR is marked ready for review (`draft: false`), and reviewers are assigned following repository `CODEOWNERS`.
-3.  **Review Comment Handling:** Inbound review comments create repair subtasks scoped to the specified line ranges. The executor runs repairs, verifies gates, pushes commits, replies to the comment thread, and marks the review thread resolved via GraphQL (`resolveReviewThread`).
+3.  **Review Comment Handling:** Inbound review comments create repair subtasks scoped to the specified line ranges. The Worker runs repairs, verifies gates, pushes commits, replies to the comment thread, and marks the review thread resolved via GraphQL (`resolveReviewThread`).
 4.  **Merging:** Follows repository policy: auto-merges via GraphQL (`enablePullRequestAutoMerge`) if configured and checks pass; queues to Merge Queue if active; otherwise leaves merge to human discretion.
 
 ### Releases
@@ -1389,25 +1571,32 @@ Research runs in two modes, because two different jobs are hiding under one word
 
 | | **Research Desk** | **Deep Research** |
 | --- | --- | --- |
-| Serves | The executor and the planner, mid-build | A research card, scheduled work |
+| Serves | The Worker and the planner, mid-build | A research card, scheduled work |
 | Trigger | A tool call, or a question posted to the inbox | A card labelled `research` |
 | Latency target | Milliseconds to three minutes | Minutes to overnight |
-| Model | Shares the executor's server; most answers use no model at all | A staged pipeline, one model resident at a time |
+| Model | Shares the Worker's server; most answers use no model at all | A staged pipeline, one model resident at a time |
 | Output | A short cited answer, or a docs excerpt | A long structured report with verified claims |
 
 The Desk exists so that an agent that is building something can find out how a library actually behaves without stalling. Deep Research exists so that a question worth an hour gets an hour, and comes back with something a person would sign.
 
+### Research has no privileges of its own
+
+Research is a role and a card type, not a second harness. It acquires nothing the rest of the system does not already have, and this is the constraint that keeps it from drifting into one:
+
+*   **Fetching** goes through the same egress proxy a card's `run` tool uses, under the project's allowlist, with every request logged and its payload hashed. There is no second network path.
+*   **Claim execution** is a gate. The script is a gate command, the sandbox is the gate host's sandbox, and the verdict is a `GateResult` in the card's evidence bundle, indistinguishable from a typecheck.
+*   **Model selection** is the model router, and the Researcher is a role in the registry, loaded and evicted by the same swap policy as the Worker.
+*   **Remembering** uses the three stores named in *What the harness remembers* — fetched pages are fetched bytes, research notes are guidance, run outcomes are measurements.
+
+If research ever needs a second sandbox, a second scheduler, a second cache, or a second permission model, that is evidence it does not belong in this harness — not a reason to build one.
+
 ### The hardware envelope
 
-The reference machine is a 24 GB unified-memory Apple M4. With the harness, Node, and an executor model in play the practical ceiling for model weights is about 16 GB. **Every decision in this section follows from that.** Quality cannot come from loading a larger model; it comes from more passes, better retrieval, and executable verification, all of which are cheap locally because tokens cost nothing here.
+The reference machine is a 24 GB unified-memory Apple M4. With the harness, Node, and a Worker model in play the practical ceiling for model weights is about 16 GB, and the roles do not co-reside. **Every decision in this section follows from that.** Quality does not come from loading a larger model; it comes from more passes, better retrieval, and executable verification, all of which are cheap locally because tokens cost nothing here.
 
-Three model roles, which **never co-reside** except the embedder:
+The Researcher works in two modes, which are the same registry entry used differently rather than two models: **gathering**, a tool loop of search, read, extract, repeat, where a tool-use fine-tune outperforms raw parameter count; and **synthesis**, reading the assembled corpus and writing the report, which rewards a denser model. On a machine that can hold only one, one entry qualified for both roles is the answer, and the bake-off decides which. Naming candidate models here would contradict the registry's own rule that models are qualified, not chosen by reputation.
 
-*   **Gatherer.** Runs the tool loop. A tool-use fine-tune is worth more here than raw parameter count, because this stage is search, read, extract, repeat.
-*   **Synthesist.** Reads the assembled corpus and writes, critiques, and revises the report. A dense mid-size model, loaded only after the gatherer is unloaded.
-*   **Embedder.** A 0.6B embedding model (Qwen3-Embedding, Apache-2.0) and optionally a 0.6B reranker. Small enough to stay resident permanently.
-
-The Desk does not load a model of its own. It runs on a second slot of the server the executor is already using: same weights, a different system prompt, no additional memory. **[DESIGN]** When the executor is not running, the Desk may hold the gatherer instead; the swap is governed by the model-swap policy, not by the research code.
+The Desk does not load a model of its own. It runs on a second slot of the server the Worker is already using: same weights, a different system prompt, no additional memory. That is the floor, not a fallback — a Desk that needed its own weights would be competing with the Worker for the only resource that matters.
 
 ### Knowledge tiers, in lookup order
 
@@ -1426,7 +1615,7 @@ The Desk answers three grades of question, and picks the grade itself from the q
 
 Two mechanisms keep the Desk out of the critical path:
 
-*   **The research inbox.** An agent posts a question and keeps working. The answer arrives as an event and is injected at the next step boundary. Nothing blocks.
+*   **A question is a question.** `ask` posts a decision request with `blocking = false` and a Researcher as the answerer instead of a human; the Worker keeps going and the answer is injected at the next step boundary. `note` with options posts the same record with a human answerer and `blocking = true`, which parks the card. Both land in the same inbox, carry the same deadline and safe-default policy, and are answered by the same route. There is one queue of open questions on this board; the only things that vary are who answers and whether the asker waits.
 *   **Speculative research.** When the planner writes a card it also writes the card's open questions. The Desk answers them while earlier cards are still executing, so the research is already in the dossier when the card starts. This is the real fix for latency: ask earlier rather than answer faster.
 
 At project open, the Desk walks the dependency manifest and prefetches each package's `llms.txt` or documentation sitemap into the corpus index, pinned to the installed version. After that, documentation questions are local semantic lookups.
@@ -1460,21 +1649,22 @@ graph TD
   Gaps -->|no, budget remains| Gather
   Gaps -->|yes| Verify[Verify: execute claims,<br/>check citations, triangulate]
   Verify --> Synth[Synthesise: retrieve across<br/>the corpus, write the report]
-  Synth --> Critique[Critique: falsify each claim,<br/>revise or downgrade]
-  Critique --> Report[Report + evidence bundle<br/>to Review]
+  Synth --> Revise{Revision lowers<br/>measured risk?}
+  Revise -->|yes| Synth
+  Revise -->|no| Report[Report + evidence bundle<br/>to Review]
 ```
 
 **Brief.** The card's question is restated as a research brief: what is being asked, what would count as an answer, what is out of scope. Ambiguity is resolved here or raised as a question to the user, not silently guessed at during gathering.
 
-**Plan.** The brief is decomposed into independent sub-questions with a budget each. The plan is posted to the board and the card parks in Review. A person can edit the sub-questions before an hour of machine time is spent on the wrong ones. **[DESIGN]** A card may carry `research.autoplan = true` to skip the review gate for routine questions; overnight runs set it by default.
+**Plan.** The brief is decomposed into independent sub-questions with a budget each, and the plan is posted as a decision request: approve, edit the sub-questions, or narrow the brief. It carries a deadline and a safe default like every other decision request, so an overnight run is not blocked by an absent human and a routine question needs no special flag. The card stays in Planning. Review is for finished work, and its WIP limit is review capacity for diffs — spending it on an unreviewed plan would back-pressure the Worker for no diff.
 
 **Gather.** A supervisor delegates each sub-question to a sub-agent with its **own isolated context window**, so one sub-question's reading cannot crowd out another's. Sub-agents return findings with citations, never raw pages. This is the supervisor-and-sub-agent shape that the open deep-research implementations converged on, adopted as an architecture rather than as a dependency. Everything fetched lands in the corpus index, which is what later stages read.
 
 **Coverage and stopping.** The loop is driven by coverage of the brief's sub-questions, not by a turn count. A sub-question is closed when it has independent sources of sufficient tier; open sub-questions are re-dispatched with different queries. Crawling within a documentation site uses the crawler's adaptive strategy, which stops when the information gathered answers the query rather than at a fixed depth.
 
-**Verify, synthesise, critique.** Described below; these are the stages that make the output worth more than a search summary.
+**Verify, synthesise, revise.** Described below; these are the stages that make the output worth more than a search summary.
 
-**Effort.** `quick`, `standard`, and `exhaustive` set the budget: number of sub-questions, pages per sub-question, verification depth, and whether the critique pass runs more than once. Exhaustive is an overnight setting. Because there is no per-token cost, exhaustive means exhaustive.
+**Effort.** `quick`, `standard`, and `exhaustive` set the budget: number of sub-questions, pages per sub-question, and verification depth. Revision needs no effort setting — it stops when no candidate lowers measured risk, whatever the budget. Exhaustive is an overnight setting, and because there is no per-token cost, exhaustive means exhaustive.
 
 ### Search
 
@@ -1488,35 +1678,45 @@ Pages are fetched through the sandbox network proxy with a domain allowlist and 
 
 Extracted content is chunked by heading, **deduplicated by content hash** rather than by URL, and written to the research cache with its URL, fetch date, and hash.
 
-### Retrieval and the corpus index
+### Retrieval and the corpus
 
-Documentation retrieval is the one place embeddings are appropriate: docs are prose, not code. The code context pipeline stays deterministic.
+Documentation retrieval is lexical: BM25 over heading-sized chunks, merged with the source-authority preference that ranks official documentation, source repositories, standards bodies and papers above aggregators.
 
-**[DESIGN]** The index is `sqlite-vec` (MIT/Apache-2.0 dual), a dependency-free C extension, in **its own SQLite file opened with `better-sqlite3`** — not in the kernel's event database. Two reasons: the kernel's database must stay openable by Node's built-in `node:sqlite`, which does not load extensions reliably, and the index is a cache that must be safe to delete and rebuild. Embeddings come from Qwen3-Embedding-0.6B (Apache-2.0), with Qwen3-Reranker-0.6B over the top candidates when the question warrants it.
+The obvious alternative is a dense index, and it is rejected on this machine's terms rather than on principle. A resident embedder and reranker cost memory the Worker needs more; the corpus a deep run assembles is hundreds of chunks, not millions, which is the size where BM25 is strongest; and the questions this system asks — about a named symbol, a named package, a named version — usually contain the exact identifier that lexical matching is best at. **[BENCH]** If a measurement on the founder's hardware shows a dense index paying for its residency on real research questions, it goes in its own cache database and nothing else in this section changes.
 
-Retrieval is hybrid: lexical BM25 and dense vectors, merged, then reranked. Two indexes exist:
+The code context pipeline stays deterministic, and for a different reason: code has structure that ranking can use, and prose does not. That distinction is the whole boundary, and it is why one side may become lexical-plus-dense and the other may not.
 
-*   a **persistent project index** over the repository's dependency documentation, rebuilt when the manifest changes, which is what makes Desk lookups fast;
-*   a **per-question corpus index** for a deep run, over everything that run fetched, which is what lets synthesis cite a passage from the eleventh source even though it was read an hour earlier and is long out of context.
+Two corpora exist:
 
-Research never enters the executor's context raw. A research card produces a research note: a short, cited summary with the specific code excerpts the task needs, sized to a fixed budget. The note is what the executor sees. This keeps prefill cost bounded and keeps untrusted web text out of the byte-stable prefix.
+*   a **persistent project corpus** over the repository's dependency documentation, refreshed when the manifest changes, which is what makes Desk lookups fast;
+*   a **per-question corpus** for a deep run, over everything that run fetched, which is what lets synthesis quote the eleventh source an hour after it was read and long after it left the context window.
+
+Research never enters the Worker's context raw. A research card produces a research note: a short, cited summary with the specific code excerpts the task needs, sized to a fixed budget. The note is what the Worker sees. This keeps prefill cost bounded and keeps untrusted web text out of the byte-stable prefix.
 
 ### Verification
 
 This is what a harness can do that a hosted research product cannot: it owns a sandbox, so a claim about software can be **run** instead of merely cited.
 
-Claims are extracted from the draft and typed:
+Claims are extracted from the draft and typed by the checking each needs:
 
-*   **Executable** — an API exists, has this signature, behaves this way, this snippet works on this version. The claim is turned into a script, the package is installed at the stated version in the sandbox with no network, and the script is run. The result is recorded as a rung in the card's evidence bundle exactly like a gate: `claim/executed: pass`. A claim that fails to execute is struck from the report or demoted to "documented but not reproduced", with the failure attached.
-*   **Citational** — the source says what the report says it says. Verified against text actually read, by URL or by normalised title; unverifiable citations trigger a repair turn before the report may be finished.
-*   **Contested** — sources disagree. **The disagreement is reported, not resolved silently.** Both positions are recorded with their source tiers and dates, and the report states which is better supported and why. Flattening disagreement into confident prose is the characteristic failure of summarised search, and refusing to do it is a quality feature, not a limitation.
-*   **Temporal** — true as of a date. Carries the date of its newest supporting source.
+*   **Executable** — an API exists, has this signature, behaves this way, this snippet works on this version. The claim becomes a script, the package is installed at the stated version, and the script runs as a gate: gate command, gate host sandbox, no network, `GateResult` in the card's evidence bundle. A claim that fails is struck from the report or demoted to "documented but not reproduced", with the failure attached.
+*   **Citational** — the source says what the report says it says, verified against text actually read, by URL or by normalised title.
+*   **Contested** — sources disagree. **The disagreement is reported, not resolved silently.** Both positions are recorded with their source tiers and dates, and the report names the better-supported one and why. Flattening disagreement into confident prose is the characteristic failure of summarised search, and refusing to do it is a quality feature.
+*   **Temporal** — true as of a date, carrying the date of its newest supporting source.
 
-Every claim in the final report carries a confidence and the kind of verification it survived. **[DESIGN]** A deep research report is not eligible for Review until every executable claim has been executed, or explicitly marked unreproducible with a reason.
+Every claim in the final report carries a confidence and the kind of verification it survived.
 
-### Critique
+**The claim gate.** "Every executable claim has a verdict" is a functional-layer gate declared in `gates.toml` like any other, hash-pinned like any other, and it fails the card when a claim is neither reproduced nor explicitly marked unreproducible with a reason. It is not a rule the research pipeline enforces upon itself: a gate that lives in prose is a gate the model can reason its way around.
 
-After synthesis, the synthesist re-reads its own report adversarially against the corpus: for each claim, attempt a falsification, flag over-reach, find the sub-question that was answered thinly, and revise. A mid-size local model gains more from draft-critique-revise than from any other single technique available on this hardware, and on contested claims the pass may be run more than once and the results compared, because repetition is free.
+### Revision
+
+The Researcher proposes revisions. It never decides whether one is an improvement.
+
+Each draft carries a grounded risk vector, every component of which is measured outside the generated text: citations that point at nothing actually read, sub-questions of the brief still open, executable claims that did not reproduce, and grounding confidence from the source ledger. A revision is accepted only when no component worsens and at least one improves; otherwise the previous draft stands.
+
+This is the harness's standing rule — the model does not judge its own output — applied to prose instead of code, and it is the same admission rule the self-improvement loop uses for every other durable change. It also supplies the stopping condition a critique loop otherwise lacks: stop when no candidate revision lowers risk.
+
+There is no separate citation-repair turn. An unverified citation is one component of the vector, repaired like any other, and a report reaches Review when every executable claim has a verdict and no revision can lower its risk further.
 
 ### Reproducibility
 
@@ -1524,10 +1724,12 @@ A research run is replayable. The corpus, every query, every fetch with its cont
 
 ### Safety
 
-*   Fetched content is wrapped in a tagged untrusted region; instructions inside it are inert by contract, and any tool call from a step containing it runs under stricter permissions.
+Research runs under the harness's existing protections rather than its own, as *Research has no privileges of its own* requires. What follows is what those protections mean here, not a second set of rules.
+
+*   Fetched content is wrapped in a tagged untrusted region; instructions inside it are inert by contract, and any tool call from a step containing it runs under stricter permissions. This is the same tagging applied to issue text and pull-request comments.
 *   Robots directives are respected and per-domain rate limits are enforced.
 *   Package names found on the web are never installed without passing the supply-chain gate.
-*   Claim execution runs in the sandbox with no network and no repository write access, and its scripts are treated as untrusted input to the sandbox, not as trusted harness code.
+*   Claim execution is a gate, so it inherits the gate host's sandbox: no network, no repository write access. Its scripts are untrusted input to that sandbox, never trusted harness code.
 *   Answers from external MCP research services are untrusted like any fetched page.
 *   No credentials are ever sent; authenticated fetches are unsupported in v1.
 
@@ -1535,7 +1737,7 @@ A research run is replayable. The corpus, every query, every fetch with its cont
 
 The Researcher has the full set: `search`, `fetch`, `docs`, `scholar`, `paper`, `repo`, `deps`, and whatever the project's MCP servers add.
 
-The executor has a narrower, read-only set and **never sees `search` or `fetch`**: `docs(symbol or package, version)`, `deps_source(package, path)`, `repo(ref, path or query)`, and `ask(question)`, which posts to the research inbox and returns immediately. The planner additionally sees `plan_research(card)`.
+The Worker has a narrower, read-only set and **never sees `search` or `fetch`**: `docs(symbol or package, version)`, `deps_source(package, path)`, `repo(ref, path or query)`, and `ask(question)`, which posts a non-blocking decision request and returns immediately. The Manager additionally sees `plan_research(card)`.
 
 ### Research skills
 
@@ -1543,7 +1745,7 @@ A research playbook is an ordinary skill under the Agent Skills specification: a
 
 ### Evaluation
 
-**[DESIGN]** Deep Research is measured on DeepResearch Bench's RACE (comprehensiveness, depth, instruction-following, readability) and FACT (citation abundance and accuracy) methodology, run locally against the public task set, plus two metrics the benchmark does not have and this harness can produce: **executable-claim pass rate** and **disagreement recall**. The target is parity with the leading hosted deep-research products on RACE, above them on FACT, and uniquely non-zero on executable claims. The Desk is measured separately on answer latency at each grade and on how often an answer that reached an executor was later contradicted by the code.
+**[DESIGN]** Deep Research is measured on DeepResearch Bench's RACE (comprehensiveness, depth, instruction-following, readability) and FACT (citation abundance and accuracy) methodology, run locally against the public task set, plus two metrics the benchmark does not have and this harness can produce: **executable-claim pass rate** and **disagreement recall**. The target is parity with the leading hosted deep-research products on RACE, above them on FACT, and uniquely non-zero on executable claims. The Desk is measured separately on answer latency at each grade and on how often an answer that reached an Worker was later contradicted by the code.
 
 ### Caching policy
 
@@ -1588,7 +1790,7 @@ Markdown templates expanding into a card template or planner instruction, invoke
 
 ### MCP
 
-*   **Client:** Projects declare external MCP servers; discovered tools appear to the planner and, where the model registry permits, the executor. Tool descriptions are strictly budgeted.
+*   **Client:** Projects declare external MCP servers; discovered tools appear to the planner and, where the model registry permits, the Worker. Tool descriptions are strictly budgeted.
 *   **Server:** Sekhemet exposes its own boards, cards, gates, evidence bundles, and model registry as MCP tools, allowing IDEs, external CLI agents, or CI scripts to drive the harness programmatically.
 
 ### Editor protocol
@@ -1630,7 +1832,7 @@ Replay re-runs a card against a pinned configuration and diffs the trajectory an
 
 ### Checkpoints
 
-The executor commits to the card branch after every gate-passing step and after every masked observation boundary. Checkpoints are what resume and fork restore to, and they keep the worktree consistent with the log.
+The Worker commits to the card branch after every gate-passing step and after every masked observation boundary. Checkpoints are what resume and fork restore to, and they keep the worktree consistent with the log.
 
 ### Background processes
 
@@ -1651,6 +1853,16 @@ Outside the user's declared hours the scheduler works the backlog in project bat
 ## Git workflow
 
 Git is the harness's file system of record. Every card is a branch, every checkpoint is a commit, and the board never holds state that git cannot reconstruct.
+
+### Two cards at once
+
+Parallel execution is where a board either pays off or produces garbage, and it is decided by what happens at merge rather than by how many Workers run.
+
+Cards run in separate worktrees on separate branches. Two rules keep that honest. **Scope is declared and enforced**, so two cards whose `filesTouched` sets intersect are not scheduled concurrently — the planner's dependency inference already computes this, and a scope violation is a stop reason, not a merge-time surprise. **The second card rebases before Verify, not after Review**, so a conflict is discovered while the Worker still has budget and context to resolve it, and produces the `rebase_conflict` stop reason with the card returned to Planning rather than a half-merged branch.
+
+A conflict the Worker cannot resolve is a human decision, posted as a decision request against both cards, and the board shows them as a pair. The harness never resolves a semantic conflict by preferring one side.
+
+**[DESIGN]** Concurrency is capped by review capacity, not by cores. The Review WIP limit already back-pressures Verify; running more Workers than that limit can absorb produces diffs nobody reads, which is the failure this design exists to prevent.
 
 ### Branching
 
@@ -1685,7 +1897,7 @@ Raw checkpoints are preserved on `refs/sekhemet/checkpoints/<card-id>` for audit
 
 ### Merging and conflicts
 
-Before Verify, the card branch is rebased onto the current integration branch. A clean rebase proceeds; a conflict routes the card back to In Progress with the conflict hunks as typed failures. The executor resolves only inside its declared scope; conflicts outside scope park the card for the human. Merge order across sibling cards follows the DAG and then WSJF.
+Before Verify, the card branch is rebased onto the current integration branch. A clean rebase proceeds; a conflict routes the card back to In Progress with the conflict hunks as typed failures. The Worker resolves only inside its declared scope; conflicts outside scope park the card for the human. Merge order across sibling cards follows the DAG and then WSJF.
 
 ### Pull requests
 
@@ -1734,13 +1946,15 @@ The user reviews the proposed gates and playbook before anything is enforced.
 
 Language support requires: a tree-sitter grammar (MIT), a working headless language server, and a gate template. Missing any of the three degrades to parse-gate-only with a visible UI warning.
 
+**[DESIGN]** As specified, the repo map and the parse gate are TypeScript-first: the ranked map is built with the TypeScript compiler, and languages without it fall back to a flat file map with no symbol graph and no PageRank, while the parse gate checks what it has a checker for and passes everything else through unchecked. Shipping a gate template for a language whose edits cannot be parse-checked overstates what the harness verifies, so the degradation is stated on the card and in the evidence bundle, and multi-language symbol support through tree-sitter is a declared later phase rather than an implied present capability.
+
 ### Multimodal input
 
 Cards accept images: bug screenshots, design mockups, whiteboard diagrams. Images are saved to the EvidenceBundle and analyzed by the local vision model, which extracts a structured textual description and a checklist of atomic visual criteria. Text models receive the structured description, never raw images. On tiers without a co-loaded vision model, image processing is executed during a scheduled batch swap.
 
 ### Convention drift
 
-Conventions extracted during onboarding are re-evaluated nightly against recent commits and diffed against the playbook. A drift report is posted as a planner note, ensuring stale conventions do not mislead the executor.
+Conventions extracted during onboarding are re-evaluated nightly against recent commits and diffed against the playbook. A drift report is posted as a planner note, ensuring stale conventions do not mislead the Worker.
 
 **[RESEARCH]** Automatic convention extraction quality combines deterministic linter/CI parsing (`crag`) with Tree-sitter AST pattern discovery (`codebase-md`); initial generated `AGENTS.md` and playbook drafts require human sign-off on onboarding.
 
@@ -1801,12 +2015,12 @@ Sekhemet uses the open Agent Skills format (a folder with a `SKILL.md` manifest 
 | Security testing procedures | Selective pull | Review-only skills; never auto-remediate |
 | Repository onboarding | Build | No existing skill handles gate detection and convention extraction |
 | Research card procedure | Build | Tiered lookup, citation format, budget |
-| Gate authoring | Build | How to write acceptance tests the executor cannot game |
+| Gate authoring | Build | How to write acceptance tests the Worker cannot game |
 | Card splitting (SPIDR) | Build | Encodes the decomposition rules |
 | Retrospective to playbook | Build | Failure pattern to playbook entry |
 | Model bake-off | Build | Runs eval and writes the matrix |
 | Visual acceptance | Build | From mock/screenshot to checklist of atomic checks |
-| Repair from typed failure | Build | Per gate type, concrete repair procedure for executor |
+| Repair from typed failure | Build | Per gate type, concrete repair procedure for Worker |
 
 ### Skill format in Sekhemet
 
@@ -1826,9 +2040,9 @@ Skills execute code. Pulled skills are pinned by commit hash, audited upon impor
 
 ## Tool catalog
 
-Every tool the executor, planner, or gates can call, with the decision to adopt an existing implementation or build. "Wrap" means an existing binary or library behind a Sekhemet interface; "build" means Sekhemet code.
+Every tool the Worker, planner, or gates can call, with the decision to adopt an existing implementation or build. "Wrap" means an existing binary or library behind a Sekhemet interface; "build" means Sekhemet code.
 
-### Executor tools
+### Worker tools
 
 | Tool | Decision | Basis |
 | --- | --- | --- |
@@ -1839,10 +2053,10 @@ Every tool the executor, planner, or gates can call, with the decision to adopt 
 | `replace_symbol_body`, `insert_after_symbol`, `read_symbol`, `find_references` | Build over LSP; reference Serena & multilspy | TypeScript reimplementation; synchronous calls; server pool |
 | Structural rewrite fallback | Wrap ast-grep | For languages without a running language server |
 | `run` | Build | Sandbox, timeout, allowlist, description field; RTK output condensing |
-| `docs` | Build | Tiered lookup over Library; served from the docs index |
+| `docs` | Build | Tiered lookup across the knowledge tiers; served from the project corpus |
 | `deps_source` | Build | The installed dependency's own source, at the resolved version |
 | `repo` | Wrap `git` and `gh` | Tree, file at ref, code search, release and `CHANGELOG` diff between versions, issues and pull requests, blame; cached by commit SHA |
-| `ask` | Build | Posts a question to the research inbox and returns immediately; the answer arrives as an event at a later step boundary |
+| `ask` | Build | Posts a non-blocking decision request answered by the Researcher; returns immediately, and the answer arrives as an event at a later step boundary |
 | `note` | Build | Thread and inbox communication |
 | Script execution (code-mode) | Build | Sandboxed runner exposing tools above as JS/TS functions |
 
@@ -1854,7 +2068,7 @@ Every tool the executor, planner, or gates can call, with the decision to adopt 
 | Dependency & impact analysis | Build over LSP references | For scope declaration and DAG inference |
 | Task decomposition | Build; reference Taskmaster patterns, not code | Avoid Commons Clause restrictions |
 | Difficulty scoring | Build | Features from scope, symbols, tests, history |
-| Search and fetch | Wrap SearXNG, trafilatura & Crawl4AI | Research cards and the Research Desk only; never the executor |
+| Search and fetch | Wrap SearXNG, trafilatura & Crawl4AI | Research cards and the Research Desk only; never the Worker |
 | `plan_research` | Build | Emits a card's open questions so the Desk can answer them before the card starts |
 | Board operations | Build | Create, split, link, budget cards |
 
@@ -1884,7 +2098,6 @@ Every tool the executor, planner, or gates can call, with the decision to adopt 
 | Inference | Wrap llama.cpp server; MLX path as Apple Silicon adapter |
 | Model swapping | Wrap llama-swap, or build minimal equivalent |
 | Constrained decoding | Wrap XGrammar or llguidance behind tool-arm interface |
-| Embeddings & reranking | Wrap Qwen3-Embedding |
 | Sandbox | Build over platform facilities (Seatbelt, Landlock, seccomp) |
 | Worktrees | Build over git and copy-on-write cloning |
 | Notifications | Wrap self-hosted ntfy or Gotify |
@@ -1908,7 +2121,6 @@ Each row is a candidate to run as a service, call as a tool, or reimplement from
 | pypdfium2 | PDF text extraction, default path, no models | Apache-2.0 / BSD-3-Clause | Tool |
 | Docling | Scanned, multi-column and table-heavy documents to markdown | MIT | Tool, escalation path |
 | PyMuPDF4LLM | Fastest markdown-aware PDF extraction | AGPL-3.0 or commercial (Artifex) | Not distributed; user-enabled in the extraction service only |
-| sqlite-vec | Vector index for the corpus and docs indexes | MIT / Apache-2.0 | Extension, loaded into its own cache database |
 | Playwright | Headless browser for visual gates & JS fetch | Apache-2.0 | Library |
 | DevDocs | Offline documentation mirror | MPL-2.0 | Separate service |
 | Kiwix | Offline reference bundles | GPL-3.0 | Separate service, optional |
@@ -1918,8 +2130,6 @@ Each row is a candidate to run as a service, call as a tool, or reimplement from
 | multilspy & Serena | LSP client patterns | MIT | Reference; reimplement in TS |
 | Aider repo map | PageRank symbol ranking | Apache-2.0 | Reference; reimplement in TS |
 | SWE-Pruner / SWE-Pruner Pro | Line-level context pruning (arXiv:2601.16746, 2607.18213) | MIT (`Ayanami1314/swe-pruner`) | Tool on gate host |
-| Qwen3-Embedding 0.6B | Docs and corpus retrieval; resident | Apache-2.0 | Model |
-| Qwen3-Reranker 0.6B | Reranking top candidates | Apache-2.0 | Model, optional |
 | Open Deep Research | Research brief, supervisor and isolated sub-agent architecture | MIT | Reference; reimplement in TS |
 | DeepResearch Bench | RACE and FACT evaluation of research reports | Public task set | Evaluation harness |
 | Context7 | Version-pinned library documentation | Hosted service | Optional MCP source, off by default |
@@ -2145,50 +2355,40 @@ This section holds the contracts an implementing agent needs: configuration sche
 
 ### Configuration schema (`config.toml`)
 
-Settings resolve in order: built-in defaults $	o$ user (`~/.sekhemet/config.toml`) $	o$ project (`<repo>/.sekhemet/config.toml`) $	o$ card overrides $	o$ CLI flags.
+Settings resolve in order: built-in defaults $\to$ user (`~/.sekhemet/config.toml`) $\to$ project (`<repo>/.sekhemet/config.toml`) $\to$ card overrides $\to$ CLI flags. There is no environment-variable layer: variables that silently outrank a file the user edited are a second configuration system, and the only ones honoured are the two that must exist before a config file can be read (`SEKHEMET_CONFIG_DIR`, `SEKHEMET_MODELS_DIR`).
+
+Every key below is read by something. A key that is parsed and never consulted is deleted from the schema rather than documented, because a setting that changes nothing teaches the user that configuration does not work. The schema is deliberately short: anything the harness can determine better than the user is determined, not asked.
 
 ```toml
-[machine]
-tier = "auto"                         # "auto" | "S" | "M" | "L" | "XL"
-hours = "08:00-18:00 Mon-Fri"        # hours reserved for human interactive use
-power_budget_kwh_day = 0              # 0 = unlimited
-
 [models]
-executor = "auto"                     # model ID or "auto"
-planner = "auto"                      # model ID or "auto"
-vision = "auto"                       # model ID or "auto"
-pruner = "auto"                       # model ID or "auto" (SWE-Pruner)
-
-[context]
-working_budget = "auto"               # tokens; clamped by tier profile
-map_tokens = 1024                     # max tokens for repo map slice
-mask_after_observations = 2          # keep only N most recent tool outputs raw
+worker = "auto"                       # model ID or "auto" (qualified from the registry)
+manager = "auto"
+reviewer = "auto"                     # "off" disables review; the card says so
+researcher = "auto"
 
 [loop]
-default_step_budget = 40              # default max steps per turn
-stall_window = 3                      # steps evaluated for duplicate/oscillation checks
-max_rungs = 4                         # retry ladder rungs before human parking
+default_step_budget = 40              # max steps per turn when no flag overrides
 
 [review]
-wip = "auto"                          # derived from reviewMinutesPerDay
-review_minutes_per_day = 60           # human developer review capacity
+review_minutes_per_day = 60           # human review capacity; derives the Review WIP limit
 
 [network]
 mode = "offline"                      # "offline" | "allowlist" | "open"
-allow = ["github.com", "crates.io"]   # domains permitted through proxy
+fetch_allow = ["nodejs.org"]          # domains the Researcher may read pages from
 
-[sync]
-github = false                        # enable GitHub App sync adapter
-forgejo = ""                          # URL to self-hosted Forgejo instance
-
-[telemetry]
-store = "local"                       # traces stored in SQLite WAL
+[overnight]
+hours = "18:00-08:00"                 # when unattended runs may use the machine
+power_budget_kwh_day = 0              # 0 = unlimited
 ```
+
+Two keys are named `allow` in different files and mean different things; they are therefore named differently. `[network] fetch_allow` here governs which domains the **Researcher may read pages from**. `[project] network_allow` in `gates.toml` governs which hosts the **sandbox permits a card's commands to reach**. They are enforced by different mechanisms at different layers, and each file's comment names the other.
+
+Removed from earlier drafts because nothing read them: `machine.tier` (derived from installed memory and never overridden usefully), the entire `[context]` section (budgets come from the tier profile), `loop.stall_window` and `loop.max_rungs` (the repair ladder's shape is not a tunable), `telemetry.store` (one legal value), `models.pruner` (the pruner is selected with the Worker, or deleted entirely if it fails its null baseline), `review.wip` (always derived), and `[sync]` (owned by the Integrations surface, which is where the user configures it).
 
 ### Event schema
 
 ```typescript
-type Actor = "human" | "planner" | "executor" | "gate" | "system";
+type Actor = "human" | "manager" | "worker" | "reviewer" | "researcher" | "gate" | "system";
 
 interface Event<T = Record<string, unknown>> {
   seq: number;               // strictly monotonic 1-based integer
@@ -2260,7 +2460,7 @@ PRAGMA busy_timeout = 5000;
 CREATE TABLE IF NOT EXISTS events (
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
   ts TEXT NOT NULL,                          -- ISO 8601 UTC timestamp
-  actor TEXT NOT NULL CHECK (actor IN ('human', 'planner', 'executor', 'gate', 'system')),
+  actor TEXT NOT NULL CHECK (actor IN ('human', 'planner', 'Worker', 'gate', 'system')),
   type TEXT NOT NULL,                       -- e.g. 'card/created', 'step/start', 'tool/result'
   card_id TEXT,
   attempt_id TEXT,
@@ -2410,7 +2610,7 @@ CREATE TABLE IF NOT EXISTS competence_entries (
 
 ### Gate file format (`gates.toml`)
 
-Stored at `.sekhemet/gates.toml` in the target repository:
+Stored at `.sekhemet/gates.toml` in the target repository. The file is derived on first run from the project's own scripts and is only edited when a derived gate is wrong; the keys below are the loader's actual schema, and everything not shown has a default the user should not have to state.
 
 ```toml
 [project]
@@ -2418,44 +2618,44 @@ languages = ["typescript"]
 protected = ["tests/acceptance/**", ".sekhemet/gates.toml"]
 
 [[gate]]
-name = "typecheck"
-layer = "static"
-command = "tsc --noEmit"
-required = true
-timeout_s = 120
+id = "typecheck"
+command = "pnpm"
+args = ["exec", "tsc", "--noEmit"]
 parser = "tsc"
 
 [[gate]]
-name = "unit"
-layer = "functional"
-command = "vitest run"
-required = true
-timeout_s = 600
+id = "unit"
+command = "pnpm"
+args = ["exec", "vitest", "run"]
 parser = "vitest"
 
 [[gate]]
-name = "mutation"
-layer = "robustness"
-command = "stryker run --incremental"
-required = false
-schedule = "nightly"
-threshold = { score = 60 }
+id = "mutation"
+command = "pnpm"
+args = ["exec", "stryker", "run", "--incremental"]
+parser = "stryker"
+blocking = false
+timeout_s = 1800
 
 [[gate]]
-name = "secret-scan"
-layer = "security"
-command = "gitleaks detect --no-git -v"
-required = true
-timeout_s = 60
+id = "secret-scan"
+command = "gitleaks"
+args = ["detect", "--no-git", "-v"]
 parser = "gitleaks"
 
 [[gate]]
-name = "visual"
-layer = "visual"
-command = "playwright test tests/visual"
-required = true
+id = "visual"
+command = "pnpm"
+args = ["exec", "playwright", "test", "tests/visual"]
+parser = "playwright"
 baseline_approval = "human"
 ```
+
+Three things about this schema are worth stating because an earlier version of this document got them wrong, and a specification that cannot be copied is worse than none:
+
+*   The key is **`id`**, not `name`, and **`blocking`** (default `true`), not `required`. A gate marked optional under the wrong key blocks anyway.
+*   **`command` and `args` are separate.** `command = "tsc --noEmit"` executes a binary whose name contains a space.
+*   **`rung`, `layer` and `timeout_s` are inferred** from `id` and `parser` unless stated. A user writing a gate should type a command and a parser, not five taxonomy fields.
 
 The file's SHA-256 hash is verified on every card start; unauthorized modifications abort execution immediately.
 
@@ -2486,10 +2686,10 @@ Served on loopback (`http://127.0.0.1:4040`):
 
 ### Milestone acceptance criteria
 
-*   **M0 Spike:** Candidate executor model achieves $\ge 90\%$ valid-and-correct tool execution across 30 seeded repository tasks (3 runs each, step budgets 50 and 150) under the winning tool arm with full settings logged.
+*   **M0 Spike:** Candidate Worker model achieves $\ge 90\%$ valid-and-correct tool execution across 30 seeded repository tasks (3 runs each, step budgets 50 and 150) under the winning tool arm with full settings logged.
 *   **M1 Kernel:** Event log with SHA-256 hash chaining implemented in SQLite WAL; full state projection rebuilds byte-identically from log; plugin mount/unmount is fully reversible.
 *   **M2 Context:** Deterministic context assembly pipeline operational; byte-identical prompts produced for identical card and git states; prefix-cache hit rate exceeds $85\%$ on tool-result steps.
-*   **M3 Executor:** A card transitions from Ready to Verify unattended; stall and oscillation detector aborts looping execution within 3 steps; stop reason correctly logged.
+*   **M3 Worker:** A card transitions from Ready to Verify unattended; stall and oscillation detector aborts looping execution within 3 steps; stop reason correctly logged.
 *   **M4 Gates:** Static, functional, and security gates run sandboxed on the gate host; typed `GateFailure` structures returned to the model; tampering with test files fails the card.
 *   **M5 Board:** Master and project Kanban boards active; Review view presents EvidenceBundle; one real card executed and accepted end-to-end on founder's repository.
 *   **M6 PM:** Nested boards with rollup operational; SPIDR decomposition to fit tier budget; Review WIP limits back-pressure Verify; retry ladder functional; playbook v1 active.
@@ -2515,7 +2715,7 @@ sekhemet/
 │   ├── board/           # Kanban state machine, DAG dependency engine, WIP controller
 │   ├── context/         # Tree-sitter repo map, LSP client pool, RTK condenser, packing
 │   ├── models/          # Hardware calibration, model registry, inference adapters
-│   ├── loop/            # Executor turn/step driver, tool arms (A/B/C), write gate
+│   ├── loop/            # Worker turn/step driver, tool arms (A/B/C), write gate
 │   ├── planner/         # SPIDR decomposition, WSJF scheduler, decision requests, goals
 │   ├── gates/           # Gate runner, typed failure parsers, evidence bundle compiler
 │   ├── sandbox/         # macOS Seatbelt profiles, Linux Landlock/seccomp, worktrees
@@ -2611,7 +2811,7 @@ export interface IMockInferenceAdapter extends IInferenceAdapter {
 }
 
 export interface IModelRegistry {
-  getQualifiedModel(role: "planner" | "executor" | "vision" | "pruner", tier: string): Promise<ModelEntry>;
+  getQualifiedModel(role: ModelRole, tier: string): Promise<ModelEntry>;
   recordQualificationResult(modelId: string, result: QualificationResult): Promise<void>;
 }
 ```
@@ -2718,7 +2918,7 @@ CLI binary entrypoint and local loopback HTTP/WebSocket daemon.
 
 AI coding agents (Gemini and Claude) require instant, deterministic feedback loops. They cannot wait for slow LLM inference or GPU availability during test-driven development (TDD).
 
-1. **`MockInferenceAdapter`:** A drop-in implementation of `IInferenceAdapter` that replays pre-scripted token streams or pattern-matched tool calls. This allows 100% offline verification of the executor loop, stall detector, 4-rung retry ladder, and token condensing.
+1. **`MockInferenceAdapter`:** A drop-in implementation of `IInferenceAdapter` that replays pre-scripted token streams or pattern-matched tool calls. This allows 100% offline verification of the Worker loop, stall detector, 4-rung retry ladder, and token condensing.
 2. **Synthetic Git Fixture Generator (`fixtures/`)**: Contains pre-baked miniature repositories across TypeScript, Python, and Rust. A helper `createTestWorktree()` clones these into temporary directories in `<10ms`, initializes git, runs gates, and cleans up automatically.
 3. **In-Memory SQLite WAL (`:memory:`)**: All unit and integration tests run against ephemeral SQLite instances. Full schema setup and teardown takes $<5	ext{ms}$ per test file.
 4. **Sub-3-Second Test Suite**: With mocks and in-memory databases, the entire monorepo unit test suite (`vitest run`) completes in under 3 seconds on developer laptops.
@@ -2814,21 +3014,29 @@ Nothing is built before the reliability spike answers whether a local model can 
 
 ### Phase 0: the spike
 
-One weekend, no product code. Stand up the inference server with a candidate executor and a pinned template. Define five flat-schema tools. Write thirty tasks against a real repository, each with a known-correct tool sequence. Run each three times across the three tool arms, at step budgets of 50 and 150. Record schema validity, tool selection, argument correctness, recovery after an injected error, and tokens and seconds per turn.
+One weekend, no product code. Stand up the inference server with a candidate Worker and a pinned template. Define five flat-schema tools. Write thirty tasks against a real repository, each with a known-correct tool sequence. Run each three times across the three tool arms, at step budgets of 50 and 150. Record schema validity, tool selection, argument correctness, recovery after an injected error, and tokens and seconds per turn.
 
 *   *Go:* $\ge 90\%$ valid-and-correct on the winning arm.
 *   *Rework:* Between 70% and 90%: smaller tool set or different model.
-*   *Pivot:* Below 70%: the executor cannot run unattended and the product narrows to planning and review assistance.
+*   *Pivot:* Below 70%: the Worker cannot run unattended and the product narrows to planning and review assistance.
+
+### Phase 0b: the frozen suite
+
+Before Phase 1 ships anything, the frozen suite of *Measuring the harness* exists and produces a number. It is a weekend of work, it is the only way any later claim in this document can be checked, and building it after the features it is meant to judge is how a project ends up with three hundred units and no idea which of them help. Phase 1 is not complete until its result is recorded against the suite's hash.
 
 ### Phase 1: MVP
 
-Calibration and machine profile. Model registry with the qualification suite. Executor loop with the winning tool arm, symbol tools, parse gate, and stall detection. Context pipeline through repo map and LSP with budget fitting and a byte-stable prefix. A single-level board with gates on the Verify transition. Token and time accounting. Event log with hash chain. Local UI with card and review views.
+Calibration and machine profile. Model registry with the qualification suite. Worker loop with the winning tool arm, symbol tools, parse gate, and stall detection. Context pipeline through repo map and LSP with budget fitting and a byte-stable prefix. A single-level board with gates on the Verify transition. Token and time accounting. Event log with hash chain. Local UI with card and review views.
 
 The MVP is done when a card can go from Ready to Review unattended, with an evidence bundle, on the founder's own repository.
 
 ### Phase 2: the PM layer
 
 Nested boards with rollup. Planner decomposition, difficulty scoring, acceptance-test-first. Dependency DAG and scheduling. Review-capacity WIP limits. Retry ladder and replanning. Observation masking, output condensing via RTK, and subtask branching. Playbook v1. Hooks, skills, and commands. Resume, fork, rewind, and checkpoints. Dynamic tool loading. Stacked branches and structural diffs in review. Knowledge tiers 1 and 2 with the `docs` tool. Goals with criteria, the goal loop, and live monitoring with burn-up, blocked time, and review backlog signals.
+
+### Depth before reach
+
+Phases 2 and 3 are ordered by depth on the core loop, not by breadth of surface. The core is the Worker loop, gates, context assembly, review, and measurement: these are held to the full bar and are what the harness is judged on. Everything else — the SDK, the editor protocol, governance, notifications, the air-gap kit, the integration catalogue — is supporting surface that may remain thin, and the design says so plainly rather than implying every section carries equal weight. A thin supporting surface is a decision; a thin core is a defect.
 
 ### Phase 3: depth and reach
 
@@ -2905,7 +3113,13 @@ These are settled. Re-proposing one requires new evidence, not a new argument.
 | Large context stuffing | Quality degrades with length; distractors mislead |
 | Continuous-embedding context compression | Works on single-shot tasks, fails on multi-step agentic coding |
 | Another wrapper around proprietary CLIs | The commercial graveyard of this category |
-| Fine-tuning our own models | Premature; revisit only when the failure corpus is large and in-context methods have plateaued |
+| Fine-tuning our own models | Premature; revisit only when the failure history is large and in-context methods have plateaued |
+| A dense embedding index for documentation | Rejected on this machine's terms, not on principle: a resident embedder and reranker cost memory the Worker needs more, and the corpus is the size where BM25 is strongest. Revisit only with a measurement on real research questions |
+| Importing public agent trajectories as exemplars | They carry another harness's tool vocabulary, and exemplars sit in the prompt's stable zone; a small model would be shown an authoritative example of tools this harness does not implement |
+| Fitting routing or model choice from public benchmark results | Success there is dominated by the agent scaffold rather than the task — the same instances resolve at 16.7% and 47.9% under two published harnesses — and no public data carries the tool-arm dimension at all |
+| KV-cache eviction for throughput | Its gains are large-batch datacentre gains; this harness runs at batch one, where weight bandwidth binds and the KV cache does not. Its documented failure mode — the fact stated once and never restated — is precisely this workload |
+| A tabular foundation model for the competence model | A second resident model and a parallel predictor beside a mechanism that already exists. If routing ever needs more than a mean, a logistic regression over eight columns has readable coefficients and no weights |
+| A seventh durable store | Three kinds exist — guidance, measurements, fetched bytes. A proposed fourth is one of the three under a new name |
 
 ### Non-goals
 
