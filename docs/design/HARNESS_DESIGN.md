@@ -904,21 +904,29 @@ The terminal is the default surface: `sekhemet` with no arguments opens it, and 
 
 ## The design stage
 
-Before a project has cards it has a shape, and deciding that shape is the work a good project manager is actually for. A harness that skips it builds the first plausible thing and discovers what was wanted on the third rewrite. A harness that overdoes it holds a workshop before a one-file script.
+Before a project has cards it has a shape, and deciding that shape is the work a good project manager is actually for. A harness that skips it builds the first plausible thing and finds out what was wanted on the third rewrite. A harness that overdoes it holds a workshop before a one-file script, which is the more annoying failure and the more common one.
 
-The design stage exists to produce, in the smallest number of exchanges that will do, the six things every later decision depends on: **the problem, the outcome, the non-goals, the constraints, the riskiest assumption, and the first slice.** It ends with a project brief in the repository and an ordered set of cards on the board. It is a conversation with the Planner, not a form.
+There are six things every later decision depends on — **the problem, the outcome, the non-goals, the constraints, the riskiest assumption, and the first slice.** They are what the Planner needs to *know*. They are emphatically not a sequence it walks the person through out loud. Most of the time it can infer five of them and should say so rather than ask.
 
-### How it runs
+**This is a conversation, and most of them are one turn long.** It should feel like telling a good colleague what you want, not like filling in an intake form. Nothing in this section is a script, no step is announced, and the words "requirements", "phase" and "let me gather" do not appear in the product.
 
-**It proposes; it does not interrogate.** Every step opens with a draft — the Planner's best answer, stated plainly — and asks the person to correct it. "I think this is for developers who already run local models, doing X, and today they do Y instead. Right?" is one exchange. The open-question version of that is four, and it puts the work on the wrong side of the conversation.
+### Propose and proceed, rather than ask and wait
 
-**One question at a time.** A list of questions is a form, and a form gets skimmed. The Planner asks the one whose answer most changes what gets built, uses the answer, and asks the next.
+The default move is not a question. It is a short statement of what the Planner is about to do, and then doing it.
 
-**A question that does not change a card is not asked.** This is the discipline that keeps the stage short. If both answers produce the same backlog, the Planner picks the likelier and records it as an assumption.
+> **"A calculator — TypeScript, vitest, the four operations, a CLI. Starting now."**
 
-**It is skippable at every point, and skipping is a first-class path.** "Just build it" is a complete answer. The Planner fills every remaining blank with its best default, records each as an assumption rather than a decision, and proceeds. Nothing is blocked on ceremony; the cost of skipping is that more of the brief is assumption, and the brief says which parts.
+That is the whole design stage for a calculator, and it is collaborative in the way that matters: the person can redirect it in the next breath, and usually will not want to. A question here would be worse than useless — it would be a small insult, implying the request was unclear when it was perfectly clear.
 
-**It is timeboxed by its own appetite.** The design stage has a budget like any other work. When it runs out, what is settled is settled and the rest becomes assumptions.
+**Ask only when the answer is both uncertain and expensive to get wrong.** Most decisions are cheap to reverse: pick the likelier option, say which was picked, and move. A decision that is hard to undo later — the data model, the deploy target, the public interface, anything a second person will build on — is worth one exchange now, because it is worth ten later. The test is not "am I certain", it is "what does being wrong cost".
+
+**One question at a time, and only the one that most changes the backlog.** A list of questions is a form, and a form gets skimmed. Ask it, use the answer, and decide whether a second is still worth asking. Usually it is not.
+
+**A question whose answers produce the same cards is not asked.** If both branches lead to the same backlog, the Planner has learned nothing worth an exchange. Pick one and record it.
+
+**"Just build it" is always a complete answer**, and so is silence. Every remaining blank takes its default, recorded as an assumption rather than a decision, and work starts. Collaboration is offered, never required, and never re-offered after it is declined.
+
+**Nothing is blocked on the conversation.** Where the Planner would otherwise wait, it proceeds on its best answer and leaves the question open on the board. An hour of the person's inattention should not cost an hour of the machine's idleness.
 
 ### What it produces
 
@@ -953,9 +961,20 @@ The riskiest assumption is scheduled first regardless of where it falls in the b
 
 Every blank the person did not fill is recorded as an assumption with the default that was taken. They are the project's open questions, they are visible on the board, and when a later card contradicts one the outcome is recorded against it. Over a few projects this measures which of the Planner's defaults are actually right — the same machinery that records whether a card's assumptions held, applied to the ones made before any card existed.
 
-### When to skip it entirely
+### Most work needs almost none of this
 
-A one-file script does not need a brief, and the Planner should not produce one. The design stage is proportional: a card's worth of work gets a sentence, a week's work gets the six sections, and anything larger gets the six sections and a conversation about whether it should be two projects. **[DESIGN]** The threshold is the appetite the person states, or the Planner's difficulty estimate when they state none.
+Proportionality is the default behaviour, not an escape hatch, and the small case is the common one:
+
+| The request | What the design stage is |
+| --- | --- |
+| "Add a `--json` flag" | Nothing. It is a card. |
+| "Build me a calculator" | One sentence saying what is about to be built. No brief. |
+| "A CLI that syncs my notes to S3" | One or two questions, both about things hard to change later. A short brief. |
+| "A multi-tenant billing service" | The full six, a real conversation, and a discussion about whether it is two projects. |
+
+**[DESIGN]** The Planner chooses by its own difficulty estimate and the appetite the person states, and it errs toward less. A brief is written only when there is something in it worth reading later; for everything below that line the decisions are recorded as assumptions on the cards, where they are just as visible and cost nobody a document.
+
+The failure mode to design against is not an under-planned calculator. It is a person who wanted a calculator and got interviewed about their success metrics.
 
 ## Starting a project that does not exist yet
 
