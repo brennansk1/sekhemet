@@ -75,7 +75,15 @@ export class OscillationDetector {
       const c = window[2] as StallSignature;
       const same = (x: StallSignature, y: StallSignature): boolean =>
         x.tools === y.tools && x.argHash === y.argHash;
-      if (same(a, c) && !same(a, b) && a.repoStateHash === c.repoStateHash) {
+      // An empty hash means the tree was never fingerprinted, not that it
+      // stood still: returning to an action after an edit is progress, and
+      // without the hash there is no way to tell the two apart.
+      if (
+        same(a, c) &&
+        !same(a, b) &&
+        a.repoStateHash === c.repoStateHash &&
+        a.repoStateHash !== ""
+      ) {
         return true;
       }
     }

@@ -175,20 +175,28 @@ describe("@sekhemet/loop shell command lines and the check tool", () => {
     };
     const usage = { promptTokens: 1, completionTokens: 1, durationMs: 1 };
     const check = { text: "", toolCalls: [{ id: "c", name: "check", arguments: {} }], usage };
+    const read = {
+      text: "",
+      toolCalls: [{ id: "r", name: "read_file", arguments: { path: "src/a.ts" } }],
+      usage,
+    };
     const session = new CardExecutionSessionImpl({
       cardId: "c",
       stepBudget: 5,
       worktreePath: root,
       gateRunner: runner,
-      modelAdapter: new MockInferenceAdapter("m", [check, check]),
+      // A read between the checks: back-to-back identical turns are a stall
+      // (L13), and the stall breaker would end the turn before the tool ran.
+      modelAdapter: new MockInferenceAdapter("m", [check, read, check]),
     });
 
     await session.executeTurn();
     // The check's failure is now the standing failure the prompt shows.
     expect(session.getLastGateFailure()?.errorExcerpt).toContain("TS2339");
-    const second = await session.executeTurn();
+    await session.executeTurn();
+    const third = await session.executeTurn();
     expect(calls).toBe(1);
-    expect(second.observations[0]?.content).toContain("Nothing has changed");
+    expect(third.observations[0]?.content).toContain("Nothing has changed");
   });
 
   it("a passing check finishes the card without a separate finish_card", async () => {
@@ -234,12 +242,17 @@ describe("@sekhemet/loop shell command lines and the check tool", () => {
     };
     const usage = { promptTokens: 1, completionTokens: 1, durationMs: 1 };
     const check = { text: "", toolCalls: [{ id: "c", name: "check", arguments: {} }], usage };
+    const read = {
+      text: "",
+      toolCalls: [{ id: "r", name: "read_file", arguments: { path: "src/a.ts" } }],
+      usage,
+    };
     const session = new CardExecutionSessionImpl({
       cardId: "c",
       stepBudget: 5,
       worktreePath: root,
       gateRunner: runner,
-      modelAdapter: new MockInferenceAdapter("m", [check, check]),
+      modelAdapter: new MockInferenceAdapter("m", [check, read, check]),
     });
 
     await session.executeTurn();
@@ -247,6 +260,7 @@ describe("@sekhemet/loop shell command lines and the check tool", () => {
       .prompt;
     expect(prompt).toContain(">   3 |   return { valid: false, at: undefined };");
 
+    await session.executeTurn();
     const refused = await session.executeTurn();
     expect(refused.observations[0]?.content).toContain("return { valid: false, at: undefined }");
   });

@@ -61,6 +61,115 @@ export function assertToolInterfaceBudget(text: string): ZoneBudgetReport {
   return assertZoneBudget("tool_interface", text, PROMPT_ZONE_BUDGETS.tool_interface);
 }
 
+/** The design's four prompt zones, by what they hold. */
+export type PromptZoneNumber = 1 | 2 | 3 | 4;
+
+/**
+ * Design §580: the per-zone caps are fractions of the tier's working budget
+ * $W$, not absolute counts, so they scale with the window a tier actually
+ * gets. Zone 4 is the remainder and has a floor rather than a ceiling: the
+ * tail is where the goal, the failure and the last turns live, and starving
+ * it is how a prompt ends up full of material the model never reaches.
+ */
+export const PROMPT_ZONE_FRACTIONS: Record<PromptZoneNumber, number> = {
+  1: 0.12,
+  2: 0.1,
+  3: 0.5,
+  4: 0.2,
+};
+
+const ZONE_NAMES: Record<PromptZoneNumber, string> = {
+  1: "system and tool catalog",
+  2: "playbook, skills and exemplars",
+  3: "code context",
+  4: "volatile tail",
+};
+
+export interface ZoneFractionReport {
+  zone: PromptZoneNumber;
+  name: string;
+  tokens: number;
+  /** The cap (zones 1-3) or the floor (zone 4), in tokens. */
+  budget: number;
+  withinBudget: boolean;
+}
+
+export class PromptZoneFractionError extends Error {
+  public readonly zone: PromptZoneNumber;
+  public readonly tokens: number;
+  public readonly budget: number;
+
+  constructor(report: ZoneFractionReport, workingBudget: number) {
+    super(
+      `Prompt zone ${report.zone} (${report.name}) is ${report.tokens} tokens, over its ${report.budget}-token cap (${PROMPT_ZONE_FRACTIONS[report.zone]} of a ${workingBudget}-token working budget)`,
+    );
+    this.name = "PromptZoneFractionError";
+    this.zone = report.zone;
+    this.tokens = report.tokens;
+    this.budget = report.budget;
+  }
+}
+
+/**
+ * Measure the four zones against their fractions of the working budget.
+ *
+ * Zones 1 to 3 have ceilings. Zone 4 is "the remainder, never below 0.20W":
+ * the floor is on the room left for the tail, not on how much of it a given
+ * step happens to use — an early step with no history and no failure is short
+ * because there is nothing to say yet, which is not a breach.
+ */
+export function measureZoneFractions(
+  tokens: Record<PromptZoneNumber, number>,
+  workingBudget: number,
+): ZoneFractionReport[] {
+  const remainder = workingBudget - tokens[1] - tokens[2] - tokens[3];
+  return ([1, 2, 3, 4] as PromptZoneNumber[]).map((zone) => {
+    const budget = Math.floor(workingBudget * (PROMPT_ZONE_FRACTIONS[zone] as number));
+    return {
+      zone,
+      name: ZONE_NAMES[zone] as string,
+      tokens: tokens[zone],
+      budget,
+      withinBudget: zone === 4 ? remainder >= budget : tokens[zone] <= budget,
+    };
+  });
+}
+
+/**
+ * The working budget below which the fractional caps cannot bind.
+ *
+ * The lowest tier runs a 12,288-token window (`calibration.ts`), which leaves
+ * a working budget smaller still once the output reserve is taken; at that
+ * size 0.12W is under 1,200 tokens, less than the immutable system prompt plus
+ * any usable tool catalog, so every build would breach a cap it has no way to
+ * meet. A window that small failing to hold a prompt is already reported as
+ * `budget_exhausted`. Test fixtures that exercise the cutting logic with toy
+ * budgets sit far below this; production sits above it from the second tier up.
+ */
+export const MIN_ASSERTED_WORKING_BUDGET = 12_288;
+
+/**
+ * Assert the prefix zones, which the allocator never cuts.
+ *
+ * Zones 1 and 2 are required or pinned sections: nothing downstream can shrink
+ * them, so an overflow is silent overflow — the one outcome §580 rules out.
+ * Zones 3 and 4 are reported instead of thrown, because the allocator already
+ * shrinks the repo map and drops the lowest-ranked sections to fit, and a card
+ * whose code context still will not fit fails the Ready entry condition
+ * upstream rather than dying mid-turn.
+ */
+export function assertPrefixZoneFractions(
+  reports: ZoneFractionReport[],
+  workingBudget: number,
+): void {
+  if (workingBudget < MIN_ASSERTED_WORKING_BUDGET) return;
+  for (const report of reports) {
+    if ((report.zone === 1 || report.zone === 2) && !report.withinBudget) {
+      throw new PromptZoneFractionError(report, workingBudget);
+    }
+  }
+}
+
 export class PromptPlaceholderError extends Error {
   public readonly offender: string;
   public readonly where: string;

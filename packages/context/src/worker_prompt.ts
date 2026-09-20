@@ -29,7 +29,13 @@ import type { SkillManifest } from "./skills.js";
 import { type ToolInterfaceSpec, renderToolInterface } from "./tool_interface.js";
 import { renderToolSearchIndex } from "./tool_search.js";
 import { computeContextVersion } from "./versioning.js";
-import { computePrefixHash } from "./zones.js";
+import {
+  type PromptZoneNumber,
+  type ZoneFractionReport,
+  assertPrefixZoneFractions,
+  computePrefixHash,
+  measureZoneFractions,
+} from "./zones.js";
 
 /**
  * The Worker's prompt, built by the one allocator (Integration review items
@@ -186,6 +192,12 @@ export interface WorkerPromptResult {
   cut: SectionKind[];
   /** The context pack record (C14). */
   pack: ContextPackRecord;
+  /**
+   * The four zones against their fractions of the working budget (C5).
+   * Empty when the caller set no budget. Zones 1 and 2 have already been
+   * asserted; zones 3 and 4 are reported for the step metrics and the log.
+   */
+  zoneBudgets: ZoneFractionReport[];
   /** Joint prompt/playbook/tool version hash (C21). */
   versionHash: string;
   metrics: ContextStepMetrics;
@@ -708,6 +720,67 @@ const CUT_LABELS: Partial<Record<SectionKind, string>> = {
   scope_file: "part of a scope file (read_file with a line range)",
 };
 
+/**
+ * Which of the design's four zones each section kind belongs to (§580).
+ *
+ * Tools loaded mid-card by `tool_search` are catalog, not tail: counting them
+ * in zone 1 is what keeps progressive disclosure (C19) from quietly spending
+ * more than the catalog it replaced. A kind not named here is zone 4, the
+ * remainder.
+ */
+const SECTION_ZONES: Partial<Record<SectionKind, PromptZoneNumber>> = {
+  laws: 1,
+  tools: 1,
+  tool_index: 1,
+  loaded_tools: 1,
+  conventions: 2,
+  rules: 2,
+  late_rules: 2,
+  error_rules: 2,
+  skills: 2,
+  exemplars: 2,
+  repo_map: 3,
+  tests: 3,
+  other_file: 3,
+  scope_file: 3,
+};
+
+/**
+ * Split the assembled sections into the four zones and measure them (C5).
+ *
+ * A pinned system prompt (C4) is one opaque section holding what were zones 1
+ * and 2 at pin time, so it is charged to zone 1 against their combined cap:
+ * the split cannot be recovered, and the card's first build already asserted
+ * it while the parts were still separate.
+ */
+function zoneFractions(
+  sections: ContextSection[],
+  toolSchemaTokens: number,
+  workingBudget: number,
+): { reports: ZoneFractionReport[]; pinned: boolean } {
+  const tokens: Record<PromptZoneNumber, number> = { 1: toolSchemaTokens, 2: 0, 3: 0, 4: 0 };
+  let pinned = false;
+  for (const section of sections) {
+    if (section.kind === "pinned_system") pinned = true;
+    tokens[SECTION_ZONES[section.kind] ?? 4] += estimatePromptTokens(section.text) + 1;
+  }
+  const reports = measureZoneFractions(tokens, workingBudget);
+  if (!pinned) return { reports, pinned };
+  // Zones 1 and 2 arrive fused; judge them together, against the sum of caps.
+  const zone1 = reports[0] as ZoneFractionReport;
+  const zone2 = reports[1] as ZoneFractionReport;
+  const budget = zone1.budget + zone2.budget;
+  const within = zone1.tokens + zone2.tokens <= budget;
+  return {
+    reports: [
+      { ...zone1, budget, withinBudget: within },
+      { ...zone2, budget, withinBudget: within },
+      ...reports.slice(2),
+    ] as ZoneFractionReport[],
+    pinned,
+  };
+}
+
 /** Recent input-hash -> output-hash pairs, for the runtime determinism check (C15). */
 const seenBuilds = new Map<string, string>();
 
@@ -852,6 +925,10 @@ export function buildWorkerPrompt(input: WorkerPromptInput): WorkerPromptResult 
     volatile: estimatePromptTokens(volatilePart),
     toolSchemas: overhead,
   };
+  // C5: the design's four zones, against their fractions of the tier's
+  // working budget. Without a budget there is no W and nothing to measure.
+  const zoneBudgets = budget === undefined ? [] : zoneFractions(sections, overhead, budget).reports;
+  assertPrefixZoneFractions(zoneBudgets, budget ?? 0);
   const step = input.card.stepsUsed;
   const pack: ContextPackRecord = {
     id: `ctx_${createHash("sha256").update(`${input.card.id}:${step}:${outHash}`).digest("hex").slice(0, 16)}`,
@@ -903,6 +980,7 @@ export function buildWorkerPrompt(input: WorkerPromptInput): WorkerPromptResult 
     rulesUsed: allRulesUsed,
     cut: cutKinds,
     pack,
+    zoneBudgets,
     versionHash: version.version,
     metrics,
     deterministic,
