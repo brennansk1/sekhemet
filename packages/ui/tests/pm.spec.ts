@@ -406,7 +406,7 @@ describe("flow metrics", () => {
   it("averages a trailing window and stacks the CFD bottom-up", () => {
     expect(movingAverage([2, 4, 6, 8], 2)).toEqual([2, 3, 5, 7]);
     const { bands, max } = stackCfd([
-      { backlog: 3, ready: 2, working: 1, checking: 0, review: 1, done: 4 },
+      { backlog: 3, ready: 2, in_progress: 1, verify: 0, review: 1, done: 4 },
       { backlog: 2, done: 6 },
     ]);
     expect(bands.backlog[0]).toEqual([0, 3]);

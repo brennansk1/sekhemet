@@ -28,8 +28,8 @@ const AGING_COLS = ["ready", "planning", "in_progress", "verify", "review", "par
 const CFD_LABEL = {
   backlog: "Backlog",
   ready: "Ready",
-  working: "Working",
-  checking: "Checking",
+  in_progress: "In Progress",
+  verify: "Verify",
   review: "Review",
   done: "Done",
 };

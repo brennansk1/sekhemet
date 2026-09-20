@@ -7,23 +7,23 @@ export interface FlowMetrics {
     date: string;
     backlog: number;
     ready: number;
-    working: number;
-    checking: number;
+    in_progress: number;
+    verify: number;
     review: number;
     done: number;
   }[];
   wipAge: { cardId: string; hours: number }[];
 }
 
-type Bucket = "backlog" | "ready" | "working" | "checking" | "review" | "done";
+type Bucket = "backlog" | "ready" | "in_progress" | "verify" | "review" | "done";
 
 /** Board columns as flow states. Parked and rejected leave the flow. */
 const BUCKET: Record<string, Bucket | undefined> = {
   backlog: "backlog",
   ready: "ready",
   planning: "ready",
-  in_progress: "working",
-  verify: "checking",
+  in_progress: "in_progress",
+  verify: "verify",
   review: "review",
   done: "done",
 };
@@ -58,8 +58,8 @@ export async function flowMetrics(
     const counts: Record<Bucket, number> = {
       backlog: 0,
       ready: 0,
-      working: 0,
-      checking: 0,
+      in_progress: 0,
+      verify: 0,
       review: 0,
       done: 0,
     };
@@ -75,7 +75,7 @@ export async function flowMetrics(
     const bucket = status ? BUCKET[status] : undefined;
     const at = e.createdAt;
 
-    if (bucket === "working" && !startedAt.has(id)) startedAt.set(id, at);
+    if (bucket === "in_progress" && !startedAt.has(id)) startedAt.set(id, at);
     if (bucket !== state.get(id)) enteredAt.set(id, at);
     if (bucket === "done" && state.get(id) !== "done") {
       if (at >= since) throughput.set(day(at), (throughput.get(day(at)) ?? 0) + 1);
@@ -100,7 +100,7 @@ export async function flowMetrics(
   const nowIso = now.toISOString();
   const wipAge: FlowMetrics["wipAge"] = [];
   for (const [id, b] of state) {
-    if (b === "working" || b === "checking" || b === "review") {
+    if (b === "in_progress" || b === "verify" || b === "review") {
       wipAge.push({ cardId: id, hours: round(hoursBetween(enteredAt.get(id) ?? nowIso, nowIso)) });
     }
   }
@@ -118,7 +118,7 @@ function snapshotBefore(
   byDay: Map<string, Record<Bucket, number>>,
   first: string,
 ): Record<Bucket, number> {
-  const empty = { backlog: 0, ready: 0, working: 0, checking: 0, review: 0, done: 0 };
+  const empty = { backlog: 0, ready: 0, in_progress: 0, verify: 0, review: 0, done: 0 };
   let last = empty;
   for (const [d, counts] of [...byDay].sort(([a], [b]) => a.localeCompare(b))) {
     if (d < first) last = counts;

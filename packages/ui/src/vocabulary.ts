@@ -82,16 +82,24 @@ export const BOARD_COLUMN_ORDER: CardStatus[] = [
   "rejected",
 ];
 
+/**
+ * One name per state. The column heading, the stored value, the error
+ * message and the design all use it: a user who reads `verify` in a stop
+ * reason must be able to find the column called Verify. Earlier drafts used
+ * Working, Checking and Closed here, which is how the product ended up with
+ * three vocabularies for one machine and cost the user the ability to search
+ * for what an error told them.
+ */
 const COLUMN_LABELS: Record<CardStatus, string> = {
   backlog: "Backlog",
   ready: "Ready",
   planning: "Planning",
-  in_progress: "Working",
-  verify: "Checking",
+  in_progress: "In Progress",
+  verify: "Verify",
   review: "Review",
   done: "Done",
   parked: "Parked",
-  rejected: "Closed",
+  rejected: "Rejected",
 };
 
 /** What an empty column is for, shown at its top instead of "No cards". */
@@ -104,7 +112,7 @@ export const COLUMN_EMPTY: Record<CardStatus, string> = {
   review: "Nothing waiting for you.",
   done: "Accepted cards appear here.",
   parked: "Nothing parked.",
-  rejected: "Nothing closed.",
+  rejected: "Nothing rejected.",
 };
 
 export function columnLabel(status: string): string {
@@ -115,9 +123,11 @@ export function columnLabel(status: string): string {
 // Actors
 // ---------------------------------------------------------------------------
 
+// `executor` and `manager` are the pre-rename spellings, kept only so that
+// events already in a ledger still render. Nothing writes them.
 const ACTOR_LABELS: Record<string, string> = {
-  executor: "Worker",
   worker: "Worker",
+  executor: "Worker",
   planner: "Planner",
   manager: "Planner",
   researcher: "Researcher",
@@ -679,7 +689,7 @@ export function statusLine(
       return { text: note ?? "Parked", tone: "parked", mark: "parked" };
     }
     case "rejected":
-      return { text: "Closed", tone: "neutral", mark: "none" };
+      return { text: "Rejected", tone: "neutral", mark: "none" };
     default:
       return { text: columnLabel(card.status), tone: "neutral", mark: "none" };
   }

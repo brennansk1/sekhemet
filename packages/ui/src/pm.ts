@@ -868,7 +868,7 @@ export function agingClass(hours: number, stats: CycleTimeStats): "ok" | "watch"
   return "ok";
 }
 
-export const CFD_KEYS = ["backlog", "ready", "working", "checking", "review", "done"] as const;
+export const CFD_KEYS = ["backlog", "ready", "in_progress", "verify", "review", "done"] as const;
 export type CfdKey = (typeof CFD_KEYS)[number];
 
 /**

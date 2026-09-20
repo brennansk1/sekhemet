@@ -184,9 +184,9 @@ describe("labels and numbers", () => {
   it("renames columns and gates", () => {
     expect(BOARD_COLUMN_ORDER).toContain("planning");
     expect(BOARD_COLUMN_ORDER).toContain("parked");
-    expect(columnLabel("in_progress")).toBe("Working");
-    expect(columnLabel("verify")).toBe("Checking");
-    expect(columnLabel("rejected")).toBe("Closed");
+    expect(columnLabel("in_progress")).toBe("In Progress");
+    expect(columnLabel("verify")).toBe("Verify");
+    expect(columnLabel("rejected")).toBe("Rejected");
     expect(gateLabel("typecheck")).toBe("Types");
     expect(gateLabel("unit")).toBe("Tests");
     expect(gateLabel("test")).toBe("Tests");
@@ -297,7 +297,7 @@ describe("statusLine and describeCard", () => {
     expect(line({ status: "verify" }).text).toBe("Running gates…");
     expect(line({ status: "review" }).text).toBe("Waiting 12m");
     expect(line({ status: "done" }).text).toBe("Accepted · 12m ago");
-    expect(line({ status: "rejected" }).text).toBe("Closed");
+    expect(line({ status: "rejected" }).text).toBe("Rejected");
     expect(line({ status: "parked" }, { statusReason: "parked: Needs a decision" })).toMatchObject({
       text: "Needs a decision",
       tone: "parked",
@@ -375,7 +375,7 @@ describe("Phase 3 and 4 language", () => {
       actor: "Worker",
       verb: "moved",
       title: "Implement canonical JSON",
-      rest: "from Working to Checking",
+      rest: "from In Progress to Verify",
     });
     const back = eventSentence(
       {

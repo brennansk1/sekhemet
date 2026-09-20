@@ -844,11 +844,11 @@
   fill: var(--border-strong);
   background: var(--border-strong);
 }
-.band-working {
+.band-in_progress {
   fill: var(--state-running);
   background: var(--state-running);
 }
-.band-checking {
+.band-verify {
   fill: var(--state-blocked);
   background: var(--state-blocked);
 }
