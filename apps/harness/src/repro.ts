@@ -4,7 +4,6 @@ import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } fro
 import { arch, platform, totalmem } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { PROMPT_ZONE_1_SYSTEM } from "@sekhemet/context";
 import { TOOL_CATALOG } from "@sekhemet/loop";
 import type { LocalInferenceAdapter } from "@sekhemet/models";
 
@@ -34,7 +33,14 @@ export interface ReproRecord {
     digest?: string;
     runtime?: string;
   };
-  promptSha: string;
+  /**
+   * The assembled stable prefix of this attempt's first request, not the
+   * system-prompt constant. Null when no turn ran, which is honest; hashing
+   * a compile-time constant is not, because it matches across every card in
+   * every repository and so can never detect the drift this record exists
+   * to catch.
+   */
+  promptSha: string | null;
   toolSchemaSha: string;
   playbookSha: string | null;
   activeRules: string[];
@@ -141,6 +147,8 @@ function modelFileOf(model: LocalInferenceAdapter): string | undefined {
 }
 
 export function buildReproRecord(input: {
+  /** `prefixHash` of the attempt's first assembled prompt. */
+  promptSha?: string | undefined;
   cardId: string;
   attempt: number;
   model: LocalInferenceAdapter;
@@ -168,7 +176,7 @@ export function buildReproRecord(input: {
       ...(digest ? { digest } : {}),
       ...(runtime ? { runtime } : {}),
     },
-    promptSha: sha(PROMPT_ZONE_1_SYSTEM),
+    promptSha: input.promptSha ?? null,
     toolSchemaSha: sha(JSON.stringify(TOOL_CATALOG)),
     playbookSha: existsSync(playbookPath) ? sha(readFileSync(playbookPath)) : null,
     activeRules: [...(input.activeRules ?? [])].sort(),

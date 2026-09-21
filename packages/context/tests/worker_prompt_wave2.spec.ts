@@ -294,3 +294,32 @@ describe("C3: query-aware line pruning", () => {
     expect(r.prompt).toMatch(/elided; read_file that range/);
   });
 });
+
+describe("the prefix hash covers what was assembled (step 8)", () => {
+  it("is stable across two builds of the same card", () => {
+    // The reproducibility record used to hash the system-prompt constant,
+    // which matched across every card in every repository and so could never
+    // detect the drift it existed to catch. The hash must cover the prompt
+    // that was actually built.
+    const a = buildWorkerPrompt(base());
+    const b = buildWorkerPrompt(base());
+    expect(a.metrics.prefixHash).toMatch(/^[0-9a-f]{8,}$/);
+    expect(b.metrics.prefixHash).toBe(a.metrics.prefixHash);
+  });
+
+  it("is shared across cards, which is what makes the cache worth having", () => {
+    // Deliberate: the stable prefix carries nothing card-specific, so two
+    // cards in one repository reuse the same cached prefill.
+    expect(buildWorkerPrompt(base({ card: card(2) })).metrics.prefixHash).toBe(
+      buildWorkerPrompt(base()).metrics.prefixHash,
+    );
+  });
+
+  it("changes when the playbook the model is given changes", () => {
+    // The drift a reproducibility record exists to catch: two attempts of
+    // one card that were not given the same guidance.
+    const withBoth = buildWorkerPrompt(base({ rules: [ruleA, ruleB] }));
+    const withOne = buildWorkerPrompt(base({ rules: [ruleA] }));
+    expect(withOne.metrics.prefixHash).not.toBe(withBoth.metrics.prefixHash);
+  });
+});

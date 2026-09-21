@@ -550,7 +550,14 @@ export async function executeCard(
     })
     .end(result.passed ? "ok" : "error");
   tracer?.close();
-  await recordReproducibility(ctx, card.id, attempt, model, gatesConfig.sha256).catch((err) =>
+  await recordReproducibility(
+    ctx,
+    card.id,
+    attempt,
+    model,
+    gatesConfig.sha256,
+    result.turns[0]?.contextReport?.metrics.prefixHash,
+  ).catch((err) =>
     log(`   reproducibility record not written: ${err instanceof Error ? err.message : err}`),
   );
   learnFromOutcome(ctx, card, result, log);
@@ -592,6 +599,7 @@ async function recordReproducibility(
   attempt: number,
   model: LocalInferenceAdapter,
   gatesSha: string,
+  promptSha: string | undefined,
 ): Promise<void> {
   const record = buildReproRecord({
     cardId,
@@ -600,6 +608,7 @@ async function recordReproducibility(
     repoPath: ctx.repoPath,
     gatesSha,
     activeRules: [...(ctx.runRules ?? [])],
+    ...(promptSha ? { promptSha } : {}),
   });
   const dir = join(ctx.repoPath, ".sekhemet", "evidence");
   mkdirSync(dir, { recursive: true });

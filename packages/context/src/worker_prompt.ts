@@ -170,6 +170,13 @@ export interface ContextStepMetrics {
   rulesInPrompt: number;
   /** The system prompt matched the card's pin (C4); undefined without a guard. */
   prefixStable: boolean | undefined;
+  /**
+   * Hash of the assembled stable prefix for this step. Recorded so that two
+   * runs of one card can be compared for drift: a reproducibility record
+   * that hashes a compile-time constant matches everywhere and proves
+   * nothing.
+   */
+  prefixHash: string;
 }
 
 export interface WorkerPromptResult {
@@ -963,6 +970,7 @@ export function buildWorkerPrompt(input: WorkerPromptInput): WorkerPromptResult 
     sectionsCut: allocation.events.filter((e) => e.action === "dropped").length,
     rulesInPrompt: allRulesUsed.length,
     prefixStable,
+    prefixHash,
   };
 
   return {
