@@ -20,22 +20,22 @@ Two exceptions, both narrow: a defect that breaks the path, and a change that de
 | 4 | **Phase 0: the tool-arm measurement** | Every quality claim in the design rested on a number that did not exist | **Done — GO at 100%, see [PHASE0.md](PHASE0.md)** |
 | 5 | **The frozen suite produces one number** | Makes every later claim checkable, and is the admission test the self-improvement loop already assumes | Built; has not yet produced a number |
 | 6 | **One card, Ready → Review, unattended** | The MVP sentence | **Done — 2026-09-21, `card_chron_hasher`, 4 turns, 10/10 gates, evidence `ev_fb8a3ec4d1`** |
-| 7 | **Review shows the evidence, and a person accepts** | The human decision is the product; a card that cannot be accepted is not done | Partly built |
-| 8 | **The same card runs twice identically** | Byte-identical prompts are what make the cache and the measurement real, and a replay that drifts means neither is | Untested |
+| 7 | **Review shows the evidence, and a person accepts** | The human decision is the product | **Done — board shows it in Review, `accept` squash-merged it to main as `69a8be6` and moved it to Done** |
+| 8 | **The same card runs twice identically** | Byte-identical prompts are what make the cache and the measurement real | Partly: `replay` reconstructs all three attempts faithfully from the log. Byte-identical prompts across two runs of one card is still unverified |
 
 Steps 4 and 6 are answered. A local 35B-A3B emits valid, correct tool calls, and a card has gone from Ready to Review unattended with a complete evidence bundle. The thesis holds and the machine works end to end.
 
 ### What the first end-to-end run taught us
 
-It took three attempts, and the failures were worth more than the pass.
+It took three attempts, and the failures were worth more than the pass. The replay of all three is in the event log.
 
-**Attempt 1** — the model wrote a plausible implementation and hallucinated one import (`ChronicleEvent` from a file that exports nothing). Typecheck failed, the model read files four times without fixing it, and the stall detector stopped it at turn 8. Every mechanism behaved correctly: the worktree, the staged acceptance test verified failing first, gate feedback, the checkpoint, the evidence bundle, and a recorded stop reason.
+**Attempt 1** — the model wrote a plausible implementation and one import of a type (`ChronicleEvent`) that no file exports. Typecheck failed. It then read `src/types.ts` four times and was stopped by the stall detector at turn 8. Every mechanism behaved correctly on the way: the worktree, the acceptance test staged and verified failing first, typed gate feedback, a checkpoint, the evidence bundle and a recorded stop reason.
 
-**Attempt 2** — rung 2, a fresh context. It stopped at turn 4, again on oscillation, having rewritten byte-identical content. The detector was right: the repository state hash genuinely did not change.
+**Attempts 2 and 3** — both tried `write_file src/types.ts`, and **both were denied**: the card's declared scope is `src/hasher.ts`, and scope confinement refused the write. Attempt 2 then re-read the file and stalled. Attempt 3 instead ran `edit src/hasher.ts`, removed the bad import, and passed all ten gates in four turns.
 
-**Attempt 3** — after resetting the one file in the card's scope to its pre-attempt state, the same model on the same card passed in four turns with all ten gates green.
+**The finding: the model's repair instinct was right and its only legal move was different.** Adding the missing type to `types.ts` is what a person would do; the card forbade it, correctly, because scope is what makes a card reviewable. What the harness never told the model was *that* the file was out of scope and that the fix had to live inside `src/hasher.ts`. The design already requires every gate failure to arrive as a typed failure carrying a suggested action; a scope denial is a failure the model must act on and does not get that treatment. Attempt 2 spent its whole budget rediscovering a refusal it was never given a way around.
 
-**The finding: a fresh context does not help while the model's previous wrong answer is still in the worktree for it to read back.** Rung 2 rebuilds the prompt and leaves the artifact, so the model reads its own mistake, reproduces it, and stalls — which reads as a capability ceiling and is actually a stale file. The ladder's second rung should reset the card's declared scope to its state at the start of the attempt, keeping everything outside that scope. This is one card's evidence, not a measurement, but it turned an apparent model failure into a pass and is worth fixing before the frozen suite runs.
+**What is not established.** Attempt 3 followed a reset of the scoped file, and it is tempting to credit the reset. That cannot be claimed: these are single trials at non-zero temperature, and attempts 2 and 3 differ only in the model's final turn. The honest statement is that one attempt found the in-scope fix and two did not. Whether resetting a scoped file between attempts helps is a question for the frozen suite, not a conclusion from one card.
 
 ## Deliberately not on the path
 
