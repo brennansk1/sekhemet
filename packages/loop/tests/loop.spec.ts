@@ -71,27 +71,31 @@ describe("@sekhemet/loop", () => {
     const callB = [{ id: "2", name: "write_file", arguments: { path: "a.ts", content: "2" } }];
 
     // Non-oscillating
-    expect(detector.recordAndCheck(callA)).toBe(false);
-    expect(detector.recordAndCheck(callB)).toBe(false);
+    expect(detector.recordAndCheck(callA)).toBe("none");
+    expect(detector.recordAndCheck(callB)).toBe("none");
 
     // Repeated 3 identical times
     const d2 = new OscillationDetector(3);
-    expect(d2.recordAndCheck(callA)).toBe(false);
-    expect(d2.recordAndCheck(callA)).toBe(false);
-    expect(d2.recordAndCheck(callA)).toBe(true); // 3rd repeat triggers detector!
+    expect(d2.recordAndCheck(callA)).toBe("none");
+    expect(d2.recordAndCheck(callA)).toBe("none");
+    expect(d2.recordAndCheck(callA)).toBe("warn"); // 3rd repeat is detected
   });
 
   it("L13: two identical turns on an unchanged tree are a stall", async () => {
     const detector = new OscillationDetector();
     const callA = [{ id: "1", name: "read_file", arguments: { path: "a.ts" } }];
 
-    expect(detector.recordAndCheck(callA, "tree1")).toBe(false);
-    expect(detector.recordAndCheck(callA, "tree1")).toBe(true);
+    expect(detector.recordAndCheck(callA, "tree1")).toBe("none");
+    // Detected on the second identical turn — and the Worker is told before
+    // it is stopped, because a stall it has not been warned about is one it
+    // never had the chance to correct.
+    expect(detector.recordAndCheck(callA, "tree1")).toBe("warn");
+    expect(detector.recordAndCheck(callA, "tree1")).toBe("stop");
 
     // The same two calls with the tree changed between them are progress.
     const moved = new OscillationDetector();
-    expect(moved.recordAndCheck(callA, "tree1")).toBe(false);
-    expect(moved.recordAndCheck(callA, "tree2")).toBe(false);
+    expect(moved.recordAndCheck(callA, "tree1")).toBe("none");
+    expect(moved.recordAndCheck(callA, "tree2")).toBe("none");
   });
 
   it("L13: A-B-A is an oscillation without waiting for the fourth turn", () => {
@@ -99,19 +103,19 @@ describe("@sekhemet/loop", () => {
     const callA = [{ id: "1", name: "read_file", arguments: { path: "a.ts" } }];
     const callB = [{ id: "2", name: "read_file", arguments: { path: "b.ts" } }];
 
-    expect(detector.recordAndCheck(callA, "tree1")).toBe(false);
-    expect(detector.recordAndCheck(callB, "tree1")).toBe(false);
-    expect(detector.recordAndCheck(callA, "tree1")).toBe(true);
+    expect(detector.recordAndCheck(callA, "tree1")).toBe("none");
+    expect(detector.recordAndCheck(callB, "tree1")).toBe("none");
+    expect(detector.recordAndCheck(callA, "tree1")).toBe("warn");
 
     // A-B-C is three different actions, not a cycle.
     const walking = new OscillationDetector();
     const callC = [{ id: "3", name: "read_file", arguments: { path: "c.ts" } }];
-    expect(walking.recordAndCheck(callA, "tree1")).toBe(false);
-    expect(walking.recordAndCheck(callB, "tree1")).toBe(false);
-    expect(walking.recordAndCheck(callC, "tree1")).toBe(false);
+    expect(walking.recordAndCheck(callA, "tree1")).toBe("none");
+    expect(walking.recordAndCheck(callB, "tree1")).toBe("none");
+    expect(walking.recordAndCheck(callC, "tree1")).toBe("none");
   });
 
-  it("L13: the session stalls on the second identical turn, not the third", async () => {
+  it("L13: the session warns on the second identical turn and stops on the third", async () => {
     const mockModel = new MockInferenceAdapter("mock-llama", [
       {
         text: "stuck",
@@ -128,6 +132,20 @@ describe("@sekhemet/loop", () => {
     });
 
     expect((await session.executeTurn()).stopReason).toBeUndefined();
+
+    // The repeat is detected here, and the Worker is told rather than killed:
+    // the first frozen-suite run lost most of its cards at step two of a
+    // thirty-two step budget, several having read one file twice and written
+    // nothing. A failure the Worker must act on arrives with the action
+    // attached, as gate failures and scope denials do.
+    const warned = await session.executeTurn();
+    expect(warned.stopReason).toBeUndefined();
+    const warning = warned.observations.find((o) => o.tool === "stall");
+    expect(warning?.content).toMatch(/made no progress/);
+    expect(warning?.content).toMatch(/finish_card/);
+    expect(warning?.content).toMatch(/end the card/);
+
+    // Repeating it after being told is a genuine stall, and still ends the card.
     expect((await session.executeTurn()).stopReason).toBe("oscillation_detected");
   });
 

@@ -38,6 +38,22 @@ export const STALL_THRESHOLD = 2;
 export const OSCILLATION_WINDOW = 3;
 
 /**
+ * What the detector concluded about this turn.
+ *
+ * A stall is a failure the Worker must act on, and the design requires such a
+ * failure to arrive typed and carrying a suggested action. Ending the card on
+ * the first repetition gives it neither: the first frozen-suite run lost most
+ * of its cards at step two of a thirty-two step budget, several having read
+ * one file twice and written nothing. So the first stall is a warning the
+ * model is told about, and only a stall that repeats after being told ends
+ * the card.
+ */
+export type StallVerdict =
+  | "none"
+  | "warn" // tell the Worker it is repeating; let it act on that
+  | "stop"; // it repeated after being told
+
+/**
  * Detects genuine non-progress: identical actions that also left the repo unchanged.
  *
  * Repetition alone is not a stall. The repo hash is what separates "tried the
@@ -45,13 +61,28 @@ export const OSCILLATION_WINDOW = 3;
  */
 export class OscillationDetector {
   private history: StallSignature[] = [];
+  private warned = false;
 
   constructor(private threshold = STALL_THRESHOLD) {}
 
-  public recordAndCheck(calls: ToolCall[], repoStateHash = ""): boolean {
+  /** The last thing the Worker repeated, for the warning's text. */
+  public get repeatedTools(): string {
+    return this.history.at(-1)?.tools ?? "";
+  }
+
+  public recordAndCheck(calls: ToolCall[], repoStateHash = ""): StallVerdict {
     this.history.push(this.computeSignature(calls, repoStateHash));
 
-    if (this.history.length < this.threshold) return false;
+    const verdict = (): StallVerdict => {
+      // Warn once, then stop. A Worker that repeats after being told it is
+      // repeating has genuinely run out of ideas; one that has not been told
+      // has not yet been given the chance the ladder assumes it had.
+      if (this.warned) return "stop";
+      this.warned = true;
+      return "warn";
+    };
+
+    if (this.history.length < this.threshold) return "none";
 
     const recent = this.history.slice(-this.threshold);
     const first = recent[0] as StallSignature;
@@ -63,7 +94,7 @@ export class OscillationDetector {
         s.argHash === first.argHash &&
         s.repoStateHash === first.repoStateHash,
     );
-    if (identical) return true;
+    if (identical) return verdict();
 
     // A -> B -> A: the agent has come back to an action it already took with
     // nothing to show for the detour. Waiting for the fourth turn to confirm
@@ -84,11 +115,11 @@ export class OscillationDetector {
         a.repoStateHash === c.repoStateHash &&
         a.repoStateHash !== ""
       ) {
-        return true;
+        return verdict();
       }
     }
 
-    return false;
+    return "none";
   }
 
   private computeSignature(calls: ToolCall[], repoStateHash: string): StallSignature {

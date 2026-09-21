@@ -122,6 +122,8 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   private filesWritten = new Set<string>();
   /** A stall has already been converted into one verification run. */
   private forcedVerification = false;
+  /** Set when a stall is first detected; delivered with the next observations. */
+  private pendingStallWarning: string | undefined;
   /** Swap in use when the card started, to detect growth caused by this run. */
   private baselineSwap = readSwapUsedBytes();
   private activeRung: RungPolicy | undefined;
@@ -1067,7 +1069,27 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     this.emptyTurns = 0;
 
     const repoStateHash = await this.currentRepoStateHash();
-    if (this.oscillationDetector.recordAndCheck(toolCalls, repoStateHash)) {
+    const stall = this.oscillationDetector.recordAndCheck(toolCalls, repoStateHash);
+
+    // The first stall is feedback, not a verdict. A Worker that has repeated
+    // itself once has not been told so, and the design requires a failure it
+    // must act on to arrive with the action attached — the same rule that
+    // governs gate failures and scope denials.
+    if (stall === "warn") {
+      const repeated = this.oscillationDetector.repeatedTools || "that call";
+      this.pendingStallWarning = [
+        `You just repeated ${repeated} and the repository is unchanged, so that turn made no progress.`,
+        "Do something different: act on what you have already read, or call finish_card if the work is done.",
+        "Repeating it again will end the card.",
+      ].join(" ");
+      this.history.push({
+        turn: turnIndex,
+        action: "stall warning",
+        result: `repeated ${repeated} with no change to the tree`,
+      });
+    }
+
+    if (stall === "stop") {
       // A stalled agent that has already written every declared scope file has
       // done the work and merely cannot tell that it is finished. Discarding
       // that is the worst available outcome: verify it instead. If the gates
@@ -1133,6 +1155,17 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
 
     this.tools.resetFinish();
     const observations: ToolObservation[] = [];
+    // The stall warning leads the turn's observations so the Worker reads it
+    // before the results of the calls it just repeated.
+    if (this.pendingStallWarning) {
+      observations.push({
+        tool: "stall",
+        ok: false,
+        summary: "no progress on the last turn",
+        content: this.pendingStallWarning,
+      });
+      this.pendingStallWarning = undefined;
+    }
     for (const call of toolCalls) {
       // `check` runs the real gates without ending the card: the agent was
       // spending most of its turns trying to self-verify with shell commands.
