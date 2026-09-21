@@ -17,13 +17,13 @@ Two exceptions, both narrow: a defect that breaks the path, and a change that de
 | 1 | **Weights resolve from configuration** | Nothing runs at all without this | Done |
 | 2 | **`doctor` verifies the weights exist** | An all-green diagnostic followed by file-not-found is worse than no diagnostic | Done |
 | 3 | **The gate command, and hooks that run it** | Our own definition of done; without it, breakage is found by whoever runs tests by hand | Done |
-| 4 | **Phase 0: the tool-arm measurement** | Every quality claim in the design rests on a number that does not exist. It either validates the thesis or narrows the product, and both answers are worth having before more is built | **Next** |
-| 5 | **The frozen suite produces one number** | Makes every later claim checkable, and is the admission test the self-improvement loop already assumes | **Next** |
+| 4 | **Phase 0: the tool-arm measurement** | Every quality claim in the design rested on a number that did not exist | **Done — GO at 100%, see [PHASE0.md](PHASE0.md)** |
+| 5 | **The frozen suite produces one number** | Makes every later claim checkable, and is the admission test the self-improvement loop already assumes | Built; has not yet produced a number |
 | 6 | **One card, Ready → Review, unattended** | The MVP sentence. Needs: context assembly, the Worker loop, the gate runner, the evidence bundle, the state machine | Partly built, never run end to end |
 | 7 | **Review shows the evidence, and a person accepts** | The human decision is the product; a card that cannot be accepted is not done | Partly built |
 | 8 | **The same card runs twice identically** | Byte-identical prompts are what make the cache and the measurement real, and a replay that drifts means neither is | Untested |
 
-Steps 4 and 5 cost about a weekend together and unblock every judgement after them. They are next for that reason, not because they are the most interesting work left.
+Step 4 is answered: a local 35B-A3B emits valid, correct tool calls, so the thesis holds and the harness may be built as specified. Step 5's machinery exists and has not been run against a model. Step 6 is next, and it is the first time the system will be asked to do its actual job.
 
 ## Deliberately not on the path
 
