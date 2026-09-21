@@ -44,6 +44,13 @@ describe("@sekhemet/sandbox PermissionEngine", () => {
     expect(res.allowed).toBe(false);
     expect(res.tier).toBe("deny");
     expect(res.reason).toContain("outside declared scope");
+    // The denial must carry the action, not only the constraint: a Worker
+    // told what it may not do, and not what it may, retries the refused
+    // write until its budget is gone.
+    expect(res.reason).toContain("src/auth.ts, src/types.ts");
+    expect(res.reason).toMatch(/Solve it within those files/);
+    expect(res.reason).toMatch(/do not retry/);
+    expect(res.reason).toMatch(/\bnote\b/);
   });
 
   it("escalates destructive shell commands to Ask tier", () => {

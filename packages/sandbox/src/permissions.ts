@@ -340,10 +340,22 @@ export class PermissionEngine {
           );
         });
         if (!isScopeMatch) {
+          // A denial the model must act on carries the action, as every gate
+          // failure does. Naming only the constraint is what makes a Worker
+          // retry the same refused write until its budget is gone: the first
+          // end-to-end run spent a whole attempt rediscovering this refusal
+          // with no route around it.
+          const scope = req.declaredScopeFiles.join(", ");
           return {
             tier: "deny",
             allowed: false,
-            reason: `File modification outside declared scope [${req.declaredScopeFiles.join(", ")}] denied: ${req.targetPath}`,
+            reason: [
+              `File modification outside declared scope denied: ${req.targetPath}.`,
+              `This card may only modify [${scope}].`,
+              "Solve it within those files —",
+              `if the change genuinely belongs in ${req.targetPath}, do not retry:`,
+              "use note to say the card's scope is wrong, and finish.",
+            ].join(" "),
             rule: "scope",
           };
         }
