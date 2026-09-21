@@ -19,11 +19,23 @@ Two exceptions, both narrow: a defect that breaks the path, and a change that de
 | 3 | **The gate command, and hooks that run it** | Our own definition of done; without it, breakage is found by whoever runs tests by hand | Done |
 | 4 | **Phase 0: the tool-arm measurement** | Every quality claim in the design rested on a number that did not exist | **Done — GO at 100%, see [PHASE0.md](PHASE0.md)** |
 | 5 | **The frozen suite produces one number** | Makes every later claim checkable, and is the admission test the self-improvement loop already assumes | Built; has not yet produced a number |
-| 6 | **One card, Ready → Review, unattended** | The MVP sentence. Needs: context assembly, the Worker loop, the gate runner, the evidence bundle, the state machine | Partly built, never run end to end |
+| 6 | **One card, Ready → Review, unattended** | The MVP sentence | **Done — 2026-09-21, `card_chron_hasher`, 4 turns, 10/10 gates, evidence `ev_fb8a3ec4d1`** |
 | 7 | **Review shows the evidence, and a person accepts** | The human decision is the product; a card that cannot be accepted is not done | Partly built |
 | 8 | **The same card runs twice identically** | Byte-identical prompts are what make the cache and the measurement real, and a replay that drifts means neither is | Untested |
 
-Step 4 is answered: a local 35B-A3B emits valid, correct tool calls, so the thesis holds and the harness may be built as specified. Step 5's machinery exists and has not been run against a model. Step 6 is next, and it is the first time the system will be asked to do its actual job.
+Steps 4 and 6 are answered. A local 35B-A3B emits valid, correct tool calls, and a card has gone from Ready to Review unattended with a complete evidence bundle. The thesis holds and the machine works end to end.
+
+### What the first end-to-end run taught us
+
+It took three attempts, and the failures were worth more than the pass.
+
+**Attempt 1** — the model wrote a plausible implementation and hallucinated one import (`ChronicleEvent` from a file that exports nothing). Typecheck failed, the model read files four times without fixing it, and the stall detector stopped it at turn 8. Every mechanism behaved correctly: the worktree, the staged acceptance test verified failing first, gate feedback, the checkpoint, the evidence bundle, and a recorded stop reason.
+
+**Attempt 2** — rung 2, a fresh context. It stopped at turn 4, again on oscillation, having rewritten byte-identical content. The detector was right: the repository state hash genuinely did not change.
+
+**Attempt 3** — after resetting the one file in the card's scope to its pre-attempt state, the same model on the same card passed in four turns with all ten gates green.
+
+**The finding: a fresh context does not help while the model's previous wrong answer is still in the worktree for it to read back.** Rung 2 rebuilds the prompt and leaves the artifact, so the model reads its own mistake, reproduces it, and stalls — which reads as a capability ceiling and is actually a stale file. The ladder's second rung should reset the card's declared scope to its state at the start of the attempt, keeping everything outside that scope. This is one card's evidence, not a measurement, but it turned an apparent model failure into a pass and is worth fixing before the frozen suite runs.
 
 ## Deliberately not on the path
 
