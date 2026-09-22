@@ -102,11 +102,6 @@ export async function repoPlanner(
   });
 }
 
-/**
- * `sekhemet plan "<spec>"` (P1, P2, P4-P9, P15, P24, P25, P7, defect 6):
- * decompose against the real codebase map, then persist every story with
- * its whole contract, INVEST enforced, the batched decision parked.
- */
 /** No tracked source yet: a project that does not exist. */
 /** The separate things a spec asks for, as the design stage split them. */
 function needsOf(buildSpec: string): string[] {
@@ -204,6 +199,11 @@ function tryGateIds(repoPath: string): string[] {
   }
 }
 
+/**
+ * `sekhemet plan "<spec>"` (P1, P2, P4-P9, P15, P24, P25, P7, defect 6):
+ * decompose against the real codebase map, then persist every story with
+ * its whole contract, INVEST enforced, the batched decision parked.
+ */
 export async function planCommand(
   k: Kernel,
   spec: string,
@@ -241,11 +241,15 @@ export async function planCommand(
     title: design.buildSpec,
     status: "in_progress",
   });
-  const planner = await repoPlanner(k);
+  // With a planning model, slices and their behaviours come from it; the
+  // heuristics remain the fallback when it is absent or answers badly.
+  const planner = await repoPlanner(k, options.sketcher);
   const plan = await planner.decomposeSpec({
     parentId: epicId,
     parentTier: "epic",
     spec: design.buildSpec,
+    // The riskiest assumption is proven right after the contract.
+    ...(design.riskiest ? { riskiest: design.riskiest } : {}),
   });
   const now = new Date().toISOString();
   plan.ambiguity.assumptions.push(

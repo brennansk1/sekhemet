@@ -290,6 +290,14 @@ describe("statusLine and describeCard", () => {
       line({ status: "backlog" }, { waitsOn: [{ id: "a", title: "Tamper detection" }] }),
     ).toEqual({ text: "Waits on Tamper detection", tone: "blocked", mark: "blocked" });
     expect(line({ status: "planning" }).text).toBe("Planner is writing the plan");
+    // Suite run 5: a card that failed and went back to Planning showed
+    // "Planner is writing the plan" — work in progress, when nothing was
+    // working on it. A failed attempt is shown as one.
+    expect(line({ status: "planning" }, { evidence: hasherEvidence })).toEqual({
+      text: "Types failed · 3 errors · needs a new plan",
+      tone: "fail",
+      mark: "fail",
+    });
     expect(line({ status: "in_progress", stepsUsed: 5 })).toMatchObject({
       text: "Step 5 of 32",
       tone: "running",

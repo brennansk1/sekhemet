@@ -50,6 +50,37 @@ describe("built-in gate layers (G3, G13, G14, G15, G16, G22, S10, S11)", () => {
     expect(r.outcomes.find((o) => o.gate === "osv")?.skipped).toBe(true);
   });
 
+  it("does not judge the acceptance tests the harness staged, only what the card wrote (G14)", async () => {
+    // Suite run 5, card_onyx_5_scanner: the card builds a secret scanner, so
+    // its staged acceptance test holds AWS's documented example key. The gate
+    // scanned the whole branch diff, found it in a file the Worker may not
+    // edit, and no change could ever pass. A key the card writes still fails.
+    const { mkdirSync } = await import("node:fs");
+    mkdirSync(join(root, "tests"));
+    writeFileSync(join(root, "tests", "scanner.spec.ts"), `const AWS_KEY = "${FAKE_KEY}";\n`);
+    const staged = await runBuiltinGates({
+      root,
+      base: "main",
+      diff: diff(),
+      project,
+      which: none,
+      harnessOwned: ["tests/scanner.spec.ts"],
+    });
+    expect(staged.failures.filter((f) => f.gate === "secrets")).toEqual([]);
+    writeFileSync(join(root, "a.ts"), `export const k = "${FAKE_KEY}";\n`);
+    const written = await runBuiltinGates({
+      root,
+      base: "main",
+      diff: diff(),
+      project,
+      which: none,
+      harnessOwned: ["tests/scanner.spec.ts"],
+    });
+    expect(
+      written.failures.filter((f) => f.gate === "secrets").map((f) => f.location?.file),
+    ).toEqual(["a.ts"]);
+  });
+
   it("refuses a typosquat, a nonexistent package and a days-old one (G15, S10)", async () => {
     expect(levenshtein("lodahs", "lodash")).toBe(2);
     expect(typosquatOf("lodahs", ["lodash"])).toBe("lodash");

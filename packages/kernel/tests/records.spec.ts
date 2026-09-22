@@ -200,6 +200,21 @@ describe("@sekhemet/kernel run records, structure and projections (K4-K21, B5, B
     expect(store.waitingOn("card_c")).toEqual(["card_b"]);
   });
 
+  it("registers one project per folder, however the path to it is spelled", async () => {
+    // The dashboard listed "chronicle" twice: the suite registered
+    // /tmp/.../chronicle and the dashboard /private/tmp/.../chronicle, the
+    // same folder through macOS's /tmp symlink.
+    const { mkdirSync, symlinkSync } = await import("node:fs");
+    const real = join(dir, "real-project");
+    mkdirSync(real);
+    const link = join(dir, "linked-project");
+    symlinkSync(real, link);
+    const a = await store.ensureProject({ rootPath: real, name: "p" });
+    const b = await store.ensureProject({ rootPath: link, name: "p" });
+    expect(b.id).toBe(a.id);
+    expect(store.listProjects().filter((p) => p.name === "p")).toHaveLength(1);
+  });
+
   it("scopes cards to projects and caps active projects (K14, B13)", async () => {
     store.activeProjectCap = 2;
     const p1 = await store.ensureProject({ rootPath: "/r/one", name: "one" });

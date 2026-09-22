@@ -259,6 +259,24 @@ describe("C19: tool_search", () => {
     expect(r.text).toContain('read_file(path: "src/crypto.ts")');
     expect(r.text).not.toMatch(/No tool matches/);
   });
+
+  it("answers a query for code symbols by loading read_symbol and naming the calls", () => {
+    // Suite run 4, card_chron_ledger: two turns of tool_search for
+    // "ChronicleEvent AuditReport openDatabase hashEvent GENESIS_HASH", each
+    // told "No tool matches". The file fix did not cover symbols.
+    const readSymbol: ToolInterfaceSpec = {
+      name: "read_symbol",
+      summary: "Read one symbol's definition.",
+      parameters: [{ name: "name", type: "string", required: true, description: "symbol" }],
+    };
+    const loader = new ToolLoader([...tools, grep, readSymbol], ["read_file", "edit"]);
+    const r = loader.handle("ChronicleEvent openDatabase GENESIS_HASH");
+    expect(r.loaded).toEqual(["read_symbol"]);
+    expect(r.text).toMatch(/finds tools, not code/);
+    expect(r.text).toContain('read_symbol(name: "ChronicleEvent")');
+    expect(r.text).toContain('read_symbol(name: "GENESIS_HASH")');
+    expect(loader.isLoaded("read_symbol")).toBe(true);
+  });
 });
 
 describe("C3: query-aware line pruning", () => {

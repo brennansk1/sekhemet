@@ -32,6 +32,12 @@ if (!worker) {
   process.exit(2);
 }
 const only = arg("fixtures")?.split(",");
+/**
+ * A harness-managed model (served by its own llama-server, e.g. cyber-tiel
+ * with its MTP head) is named as is; anything else is an Ollama tag.
+ */
+const MANAGED = ["cyber-tiel", "apodex", "dirk", "qwen3.8-27b"];
+const workerArg = worker.includes("/") || MANAGED.includes(worker) ? worker : `ollama/${worker}`;
 const out = arg("out", join(ROOT, ".sekhemet", "suite-runs", `run-${Date.now()}.json`));
 const workDir = arg("work", "/tmp/claude-501/suite");
 /** Long enough for the slowest legitimate card seen so far, and no longer. */
@@ -104,7 +110,7 @@ function cardIdsFor(fixture, expected) {
   if (cached) return cached;
   const db = new DatabaseSync(join(repoFor(fixture), ".sekhemet", "events.db"), { readOnly: true });
   const rows = db
-    .prepare("select id, scope_files, acceptance_tests from cards order by order_key, id")
+    .prepare("select id, scope_files, acceptance_tests, spec from cards order by order_key, id")
     .all();
   db.close();
   const ids = rows.map((r) => String(r.id));
@@ -112,6 +118,7 @@ function cardIdsFor(fixture, expected) {
     cardInfo.set(String(r.id), {
       scope: JSON.parse(String(r.scope_files ?? "[]")),
       tests: JSON.parse(String(r.acceptance_tests ?? "[]")),
+      spec: String(r.spec ?? ""),
     });
   }
   if (ids.length !== expected) {
@@ -146,6 +153,12 @@ function unmetDependencies(repo, cardId) {
     )) {
       if (m[1] && !own.has(m[1])) needed.add(m[1]);
     }
+  }
+  // A dependency the spec names but the test reaches only indirectly: run 4's
+  // card_chron_api says "Build on Ledger from src/ledger.ts" and its test
+  // imports only src/server.js, so it ran against an empty ledger.ts.
+  for (const m of info.spec.matchAll(/\b(src\/[\w/.-]+?)\.[cm]?[jt]sx?\b/g)) {
+    if (m[1] && !own.has(m[1])) needed.add(m[1]);
   }
   return [...needed].filter((mod) => {
     const file = [".ts", ".tsx", "/index.ts"].map((e) => join(repo, `${mod}${e}`)).find(existsSync);
@@ -212,7 +225,7 @@ const result = await runFrozenSuite({ ...suite, tasks }, async (task) => {
         "--repo",
         repo,
         "--worker",
-        `ollama/${worker}`,
+        workerArg,
       ],
       { stdio: "ignore", timeout: CARD_TIMEOUT_MS },
     );

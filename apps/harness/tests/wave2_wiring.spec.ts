@@ -116,6 +116,45 @@ describe("planning looks for what already exists (reuse before rebuild)", () => 
     expect(notes.some((n) => /Before writing this yourself.*nodemailer/.test(n))).toBe(true);
   });
 
+  it("plans with the named model: its behaviours become the cards' criteria", async () => {
+    const k = kernel();
+    const planner = new MockInferenceAdapter("planner", [
+      {
+        text: JSON.stringify({
+          slices: [
+            {
+              kind: "interface",
+              title: "Billing types",
+              keywords: ["billing"],
+              rationale: "types first",
+              behaviour: "An Invoice has an id, a customer id, an amount in cents and a due date.",
+            },
+            {
+              kind: "path",
+              title: "Charge monthly",
+              keywords: ["charge", "monthly"],
+              rationale: "happy path",
+              behaviour:
+                "Given a customer on a 500-cent monthly plan, running billing on the 1st creates one 500-cent charge.",
+            },
+          ],
+        }),
+        toolCalls: [],
+        usage: { promptTokens: 1, completionTokens: 1, durationMs: 1 },
+      },
+    ]);
+    await planCommand(k, "a billing service that charges customers monthly", {
+      ...quiet,
+      sketcher: planner,
+    });
+    const criteria = (await k.cardStore.listCards()).flatMap((c) => c.acceptanceCriteria ?? []);
+    expect(criteria.join("\n")).toContain("creates one 500-cent charge");
+    // Money is at stake: the riskiest assumption is planned even though the
+    // model did not propose it.
+    const titles = (await k.cardStore.listCards()).map((c) => c.title);
+    expect(titles.some((t) => /^Riskiest assumption/.test(t))).toBe(true);
+  });
+
   it("searches nothing when no sources are given", async () => {
     const k = kernel();
     const out: string[] = [];

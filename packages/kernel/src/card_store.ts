@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { realpathSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
 import type { EventLog } from "./log.js";
 import { keyBetween } from "./order_key.js";
@@ -938,16 +939,24 @@ export class CardStore {
     gitBranch?: string;
     reviewMinutesPerDay?: number;
   }): Promise<ProjectRecord> {
+    // One project per folder: /tmp and /private/tmp are the same place on
+    // macOS, and the dashboard once listed a project twice because of it.
+    let rootPath = input.rootPath;
+    try {
+      rootPath = realpathSync(input.rootPath);
+    } catch {
+      // A path that does not exist (tests, a moved repo) is kept as given.
+    }
     const existing = this.db
-      .prepare("SELECT * FROM projects WHERE root_path = ?")
-      .get(input.rootPath) as Record<string, unknown> | undefined;
+      .prepare("SELECT * FROM projects WHERE root_path IN (?, ?)")
+      .get(rootPath, input.rootPath) as Record<string, unknown> | undefined;
     if (existing) return this.mapProjectRow(existing);
     const now = new Date().toISOString();
     const active = this.listProjects().filter((p) => p.status === "active").length;
     const payload = {
       id: `proj_${randomUUID().slice(0, 8)}`,
       name: input.name,
-      rootPath: input.rootPath,
+      rootPath,
       gitBranch: input.gitBranch ?? "main",
       status: (active < this.activeProjectCap ? "active" : "paused") as ProjectStatus,
       reviewMinutesPerDay: input.reviewMinutesPerDay ?? 60,

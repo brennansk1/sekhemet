@@ -77,6 +77,12 @@ function openTracer(repoPath: string): Tracer | undefined {
   }
 }
 
+/** SEKHEMET_THINKING=off|surgical|all; anything else is the default, off. */
+export function thinkingPolicy(): "off" | "surgical" | "all" {
+  const v = process.env.SEKHEMET_THINKING;
+  return v === "surgical" || v === "all" ? v : "off";
+}
+
 export interface ExecutionContext {
   repoPath: string;
   restrictedMode: boolean;
@@ -468,6 +474,11 @@ export async function executeCard(
     // turn used to carry all thirty schemas, and a card that never leaves
     // read/edit/check paid prefill for the other twenty-five on every step.
     progressiveTools: true,
+    // Where the Worker thinks: off (default), surgical or all. An experiment
+    // setting until the frozen suite picks one; recorded in every bundle.
+    thinking: thinkingPolicy(),
+    // The Worker's working method: baseline (default) or strict.
+    workerMethod: process.env.SEKHEMET_WORKER_METHOD === "strict" ? "strict" : "baseline",
     // M2: decoded tokens go to the card's live file, which the dashboard
     // streams while the step is still generating.
     onToken: ctx.onToken

@@ -440,6 +440,8 @@ export interface DecomposeSpecParams {
   /** Gate ids the acceptance tests run under. */
   gateIds?: string[];
   maxSplitDepth?: number;
+  /** The design stage's riskiest assumption: planned as a rule, proven right after the contract. */
+  riskiest?: string;
 }
 
 export interface SpidrPlan {

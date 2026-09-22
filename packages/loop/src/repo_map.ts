@@ -58,8 +58,15 @@ export function buildRepoMap(root: string, scopeFiles: string[] = []): string {
 
   const outlines: string[] = [];
   for (const abs of ordered.slice(0, MAX_FILES)) {
+    const rel = relative(root, abs);
     try {
-      outlines.push(extractSymbolOutline(relative(root, abs), readFileSync(abs, "utf8")));
+      const src = readFileSync(abs, "utf8");
+      const outline = extractSymbolOutline(rel, src);
+      // A file with nothing to build on is noise in a 16k window — suite run
+      // 5's map was half other cards' future tests, each "(no exports)". The
+      // card's own scope files always stay: they are what it may change.
+      if (!scopeSet.has(rel) && /\(no export(?:s|ed symbols)\)\s*$/.test(outline)) continue;
+      outlines.push([outline, ...dataContract(src)].join("\n"));
     } catch {
       // Unreadable or non-UTF8 file: omit rather than poison the map.
     }
@@ -67,3 +74,41 @@ export function buildRepoMap(root: string, scopeFiles: string[] = []): string {
 
   return outlines.join("\n\n");
 }
+
+/** Bodies longer than this are shown by name only. */
+const MAX_BODY_LINES = 15;
+
+/**
+ * The data contract a module defines, which a signature does not show: the
+ * fields of its exported interfaces and object types, and the tables it
+ * creates. Suite run 5's vault card guessed a column, `created_at`, that the
+ * schema in db.ts calls `created`; the map had shown only `openVaultDb`.
+ */
+function dataContract(src: string): string[] {
+  const out: string[] = [];
+  for (const m of src.matchAll(/export\s+(?:interface|type)\s+\w+[^{=;]*(?:=\s*)?\{/g)) {
+    const start = m.index ?? 0;
+    let depth = 0;
+    let end = -1;
+    for (let i = start + m[0].length - 1; i < src.length; i++) {
+      if (src[i] === "{") depth++;
+      else if (src[i] === "}" && --depth === 0) {
+        end = i + 1;
+        break;
+      }
+    }
+    if (end < 0) continue;
+    const body = src.slice(start, end);
+    if (body.split("\n").length <= MAX_BODY_LINES) out.push(indent(body));
+  }
+  for (const m of src.matchAll(/CREATE\s+TABLE[^(]*\([^;`'"]*?\)/gi)) {
+    out.push(indent(m[0].replace(/\s+/g, " ")));
+  }
+  return out;
+}
+
+const indent = (text: string): string =>
+  text
+    .split("\n")
+    .map((l) => `  ${l}`)
+    .join("\n");

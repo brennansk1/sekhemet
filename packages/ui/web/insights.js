@@ -124,7 +124,9 @@ function agingChart(wip, stats) {
   const old = wip.filter((w) => agingClass(w.hours, stats) === "old");
   const caption = old.length
     ? `${old.length} of ${wip.length} cards in progress are older than 85% of finished cards: ${old.map((w) => `${w.shortId} (${formatHours(w.hours)})`).join(", ")}.`
-    : `All ${wip.length} cards in progress are younger than the 85th percentile of finished cards.`;
+    : wip.length === 0
+      ? "Nothing is in progress right now."
+      : `All ${wip.length} cards in progress are younger than the 85th percentile of finished cards.`;
   const table = tableHtml(
     ["Card", "Column", "Age"],
     wip.map((w) => [w.shortId, columnLabel(w.status), formatHours(w.hours)]),

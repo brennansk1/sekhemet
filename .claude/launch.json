@@ -15,6 +15,19 @@
       "port": 4180
     },
     {
+      "name": "sekhemet-chronicle",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "apps/harness/dist/index.js",
+        "serve",
+        "--repo",
+        "/private/tmp/claude-501/suite/chronicle",
+        "--port",
+        "4192"
+      ],
+      "port": 4192
+    },
+    {
       "name": "sekhemet-builder-c",
       "runtimeExecutable": "node",
       "runtimeArgs": [

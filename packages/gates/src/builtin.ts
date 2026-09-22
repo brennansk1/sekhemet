@@ -69,6 +69,13 @@ export interface BuiltinGateContext {
   stateDir?: string;
   /** Run the visual layer (G17-G20); the session turns it on once the declared gates pass. */
   visual?: boolean;
+  /**
+   * Files the harness staged into the worktree and the card may not edit —
+   * its acceptance tests. The secrets gate judges what the card wrote: suite
+   * run 5's secret-scanner card could never pass, because its staged test holds
+   * AWS's documented example key.
+   */
+  harnessOwned?: readonly string[];
   /** Is this program on PATH? Injectable for tests. */
   which?: (program: string) => boolean;
   now?: () => number;
@@ -165,24 +172,29 @@ function failure(
 // --- G14 secrets -------------------------------------------------------------
 
 function secretsGate(ctx: BuiltinGateContext, which: (p: string) => boolean): GateFailure[] {
-  const found = scanDiffForSecrets(ctx.diff).map((f) =>
-    failure(
-      "secrets",
-      "security",
-      "security",
-      `${f.file}:${f.line} adds a ${f.description} (${f.redacted})`,
-      {
-        location: { file: f.file, line: f.line },
-        expected: "no credentials in source",
-        actual: f.rule,
-        suggestedAction:
-          "Remove the credential; read it from the environment or a config file outside the repository, and rotate it if it was real.",
-      },
-    ),
-  );
+  const owned = new Set(ctx.harnessOwned ?? []);
+  const found = scanDiffForSecrets(ctx.diff)
+    .filter((f) => !owned.has(f.file))
+    .map((f) =>
+      failure(
+        "secrets",
+        "security",
+        "security",
+        `${f.file}:${f.line} adds a ${f.description} (${f.redacted})`,
+        {
+          location: { file: f.file, line: f.line },
+          expected: "no credentials in source",
+          actual: f.rule,
+          suggestedAction:
+            "Remove the credential; read it from the environment or a config file outside the repository, and rotate it if it was real.",
+        },
+      ),
+    );
   // gitleaks, when installed, over the changed files (its rule set is larger).
   if (which("gitleaks")) {
-    for (const file of diffFiles(ctx.diff).slice(0, 50)) {
+    for (const file of diffFiles(ctx.diff)
+      .filter((f) => !owned.has(f))
+      .slice(0, 50)) {
       const abs = join(ctx.root, file);
       if (!existsSync(abs)) continue;
       const r = spawnSync(

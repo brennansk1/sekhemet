@@ -195,6 +195,21 @@ export interface SessionOptions {
   exemplarStore?: import("@sekhemet/context").ExemplarStore | undefined;
   /** Load tools on demand through tool_search instead of sending every contract (C19). */
   progressiveTools?: boolean | undefined;
+  /**
+   * Where the Worker thinks. "off" (the default) is the original policy:
+   * thinking only on escalated repair rungs. "surgical" adds it where
+   * judgement matters — the first turn of an attempt and the turn after a
+   * failed check or gate. "all" thinks on every turn. Chosen by the frozen
+   * suite, not by argument.
+   */
+  thinking?: "off" | "surgical" | "all" | undefined;
+  /**
+   * The Worker's working method (design: "The Worker's working method").
+   * "strict" refuses re-running a command when nothing has changed since it
+   * last ran, and refuses finish_card while the last check failed and nothing
+   * changed. Default "baseline" until the frozen suite admits it.
+   */
+  workerMethod?: "baseline" | "strict" | undefined;
   /** The model a `subtask` child context runs on (C16); default the Worker's own. */
   subtaskAdapter?: LocalInferenceAdapter | undefined;
   /** Decoded tokens as they stream, for the dashboard's live step view (M2). */

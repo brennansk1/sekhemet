@@ -153,6 +153,14 @@ interface SliceProposal {
   keywords: string[];
   rationale: string;
   hazardCount: number;
+  /**
+   * One sentence a test can check. Without it every card's criterion was
+   * "<title> is observable through the exported surface of <file>", which an
+   * empty export satisfies.
+   */
+  behaviour?: string;
+  /** A hard invariant or the riskiest assumption: proven right after the contract. */
+  early?: boolean;
 }
 
 interface Capability {
@@ -185,9 +193,16 @@ export function deriveCapabilities(spec: string): Capability[] {
   return capabilities;
 }
 
+/**
+ * A hard invariant — "must never charge twice", "exactly once", idempotent —
+ * is a rule, and unlike a validation rule it is proven early: it decides the
+ * shape of the code that must keep it.
+ */
+const INVARIANT = /\b(?:never|twice|idempoten\w*|exactly once|at most once|must not)\b/i;
+
 function classifyCapability(capability: Capability): SpidrSliceKind {
   const tokens = tokenize(capability.text);
-  if (matchPhrases(tokens, RULE_SIGNALS).length > 0) {
+  if (INVARIANT.test(capability.text) || matchPhrases(tokens, RULE_SIGNALS).length > 0) {
     return "rule";
   }
   if (matchPhrases(tokens, DATA_SIGNALS).length > 0) {
@@ -240,6 +255,7 @@ function rationaleFor(kind: SpidrSliceKind, capability: string): string {
 export function proposeSlices(
   spec: string,
   spikes: readonly SpikeProposal[] = [],
+  options: { riskiest?: string } = {},
 ): SliceProposal[] {
   const capabilities = deriveCapabilities(spec);
   const specTokens = tokenize(spec);
@@ -263,6 +279,8 @@ export function proposeSlices(
       keywords: capability.keywords,
       rationale: rationaleFor(kind, capability.text),
       hazardCount: 0,
+      behaviour: behaviourFor(kind, capability.text),
+      ...(kind === "rule" && INVARIANT.test(capability.text) ? { early: true } : {}),
     });
   }
 
@@ -274,6 +292,7 @@ export function proposeSlices(
       keywords: contentWords(headline),
       rationale: rationaleFor("interface", headline),
       hazardCount: 0,
+      behaviour: behaviourFor("interface", headline),
     });
   }
   if (!proposals.some((p) => p.kind === "path")) {
@@ -283,6 +302,7 @@ export function proposeSlices(
       keywords: contentWords(headline),
       rationale: rationaleFor("path", headline),
       hazardCount: 0,
+      behaviour: behaviourFor("path", headline),
     });
   }
 
@@ -301,7 +321,62 @@ export function proposeSlices(
     });
   }
 
-  return proposals.sort((a, b) => SLICE_ORDER.indexOf(a.kind) - SLICE_ORDER.indexOf(b.kind));
+  return orderSlices(withRiskiest(proposals, options.riskiest));
+}
+
+/**
+ * The heuristic's behaviour sentence: the spec's own words for what must
+ * happen, which is weaker than a model's Given/When/Then and far stronger
+ * than a sentence about the card's own title.
+ */
+function behaviourFor(kind: SpidrSliceKind, capability: string): string {
+  const said = sentenceCase(capability.trim().replace(/\.$/, ""));
+  switch (kind) {
+    case "interface":
+      return `The types ${capability} works with are exported, and a test can construct a value of each.`;
+    case "rule":
+      return `${said}: a test performs the forbidden case and observes that it does not happen.`;
+    default:
+      return `${said}: a test calls the exported API and observes it happen, as the spec states it.`;
+  }
+}
+
+/** Spikes, then the contract, then what must never break, then the rest. */
+function orderSlices(proposals: SliceProposal[]): SliceProposal[] {
+  const rank = (p: SliceProposal) => (p.early ? 1.5 : SLICE_ORDER.indexOf(p.kind));
+  return proposals.sort((a, b) => rank(a) - rank(b));
+}
+
+/**
+ * The riskiest assumption becomes a card proven right after the contract,
+ * even when the spec never states it (design: "it becomes the first card").
+ */
+function withRiskiest(proposals: SliceProposal[], riskiest: string | undefined): SliceProposal[] {
+  if (!riskiest) return proposals;
+  // "A charge is correct and happens once: a retried request must never…"
+  const claim = (riskiest.split(":").slice(1).join(":").trim() || riskiest).replace(/\.$/, "");
+  const keywords = contentWords(claim);
+  const existing = proposals.find(
+    (p) => p.kind === "rule" && keywords.filter((k) => p.keywords.includes(k)).length >= 2,
+  );
+  if (existing) {
+    existing.early = true;
+    existing.title = `Riskiest assumption — ${existing.title}`;
+    return proposals;
+  }
+  return [
+    ...proposals,
+    {
+      kind: "rule",
+      title: `Riskiest assumption — ${sentenceCase(claim)}`,
+      keywords,
+      rationale:
+        "The thing most likely to make this not work is proven before anything is built on it.",
+      hazardCount: 0,
+      behaviour: behaviourFor("rule", claim),
+      early: true,
+    },
+  ];
 }
 
 function acceptanceFor(
@@ -313,7 +388,9 @@ function acceptanceFor(
   const tests: AcceptanceTestSpec[] = [
     {
       filePath: testPath,
-      assertion: `${sentenceCase(proposal.title)} is observable through the exported surface of ${target}.`,
+      assertion:
+        proposal.behaviour ??
+        `${sentenceCase(proposal.title)} is observable through the exported surface of ${target}.`,
       initiallyFailing: true,
     },
   ];
@@ -609,7 +686,13 @@ export async function decomposeSpidr(
     params.adapter === undefined
       ? undefined
       : await proposeSlicesWithModel(params.adapter, params.spec, params.codebaseMap);
-  const proposals = modelProposals ?? proposeSlices(params.spec, params.spikes);
+  const proposals = modelProposals
+    ? orderSlices(withRiskiest(modelProposals, params.riskiest))
+    : proposeSlices(
+        params.spec,
+        params.spikes,
+        params.riskiest ? { riskiest: params.riskiest } : {},
+      );
   const source = modelProposals === undefined ? "heuristic" : "model_assisted";
 
   const taken = new Set<string>();
@@ -747,7 +830,8 @@ const SLICE_PROMPT = [
   "Kinds: spike (technical uncertainty), interface (types and contracts), data (persistence),",
   "path (happy path, then one slice per named failure mode), rule (validation, authz, limits).",
   "Every slice must be independently shippable and touch at most three files.",
-  'Reply with JSON only: {"slices":[{"kind":"interface","title":"...","keywords":["..."],"rationale":"..."}]}',
+  "For each slice give a behaviour: one sentence a test can check, with concrete values — Given ..., when ..., then ....",
+  'Reply with JSON only: {"slices":[{"kind":"interface","title":"...","keywords":["..."],"rationale":"...","behaviour":"..."}]}',
 ].join(" ");
 
 /**
@@ -814,11 +898,14 @@ export async function proposeSlicesWithModel(
           ? record.rationale.trim()
           : rationaleFor(kind as SpidrSliceKind, title),
       hazardCount: 0,
+      ...(typeof record.behaviour === "string" && record.behaviour.trim()
+        ? { behaviour: record.behaviour.trim() }
+        : {}),
     });
   }
 
   if (proposals.length === 0) {
     return undefined;
   }
-  return proposals.sort((a, b) => SLICE_ORDER.indexOf(a.kind) - SLICE_ORDER.indexOf(b.kind));
+  return orderSlices(proposals);
 }

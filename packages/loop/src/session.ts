@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 import {
   TOOL_SEARCH_NAME,
@@ -22,7 +22,12 @@ import {
   runBuiltinGates,
 } from "@sekhemet/gates";
 import type { CardRecord } from "@sekhemet/kernel";
-import { checkExecutionHeadroom, readSwapUsedBytes, reasoningForStep } from "@sekhemet/models";
+import {
+  type ReasoningDecision,
+  checkExecutionHeadroom,
+  readSwapUsedBytes,
+  reasoningForStep,
+} from "@sekhemet/models";
 import { UNTRUSTED_CONTRACT, containsUntrusted, tagUntrusted } from "@sekhemet/sandbox";
 import type { ExecutionResult } from "@sekhemet/sandbox";
 import { apiHints } from "./api_surface.js";
@@ -94,6 +99,20 @@ function synthesizeCard(options: SessionOptions): CardRecord {
  * edits. An agent that cannot observe its effects cannot converge, no matter how
  * capable the underlying model is.
  */
+/**
+ * One command, however its output is trimmed: `npx vitest run x 2>&1 | tail -30`
+ * and `... | tail -60` are the same run.
+ */
+export function normaliseCommand(command: string): string {
+  return command
+    .replace(/^\s*cd\s+\S+\s*&&\s*/, "")
+    .replace(/\s*2>&1/g, "")
+    .replace(/\s*\|\s*(?:tail|head)(?:\s+-n)?\s+-?\d+\s*$/g, "")
+    .replace(/\s+--no-colou?rs?\b/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export class CardExecutionSessionImpl implements CardExecutionSession {
   public readonly cardId: string;
   private stepBudget: number;
@@ -124,6 +143,15 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   private forcedVerification = false;
   /** Set when a stall is first detected; delivered with the next observations. */
   private pendingStallWarning: string | undefined;
+  /** Turns this session has sent, for the thinking policy. */
+  private turnsTaken = 0;
+  /** Whether the previous turn failed a check or the gates. */
+  private lastTurnFailed = false;
+  /** Strict method: each command's last run, keyed by its normalised text. */
+  private commandRuns = new Map<string, { turn: number; effects: number; content: string }>();
+  private lastCommandKey = "";
+  /** Writes plus distinct commands run: anything that may have changed the tree. */
+  private effects = 0;
   /** Swap in use when the card started, to detect growth caused by this run. */
   private baselineSwap = readSwapUsedBytes();
   private activeRung: RungPolicy | undefined;
@@ -499,6 +527,86 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     };
   }
 
+  /**
+   * The thinking policy on top of the per-step default. Replays showed the
+   * Worker writing before reading the test and guessing APIs, with thinking
+   * off on every ordinary turn; the suite decides which of these wins.
+   */
+  private thinkingFor(base: ReasoningDecision): ReasoningDecision {
+    const policy = this.options.thinking ?? "off";
+    if (policy === "all") return { reasoning: "high", reasoningBudgetTokens: 2048 };
+    const planning = this.turnsTaken === 0 || this.lastTurnFailed;
+    if (policy === "surgical" && planning && base.reasoning === "off") {
+      return reasoningForStep({ purpose: "planning" });
+    }
+    return base;
+  }
+
+  /**
+   * The strict working method's refusals. Suite run 5's vault card spent its
+   * last twelve turns re-running one test command, varying only `| tail -N`,
+   * with no edit between; repetition is the small-model signature failure
+   * (SWE-smith, arXiv:2504.21798). And a completion claimed over a failing
+   * check is wrong by construction. Both are refused with what the model
+   * needs to act on, never silently.
+   */
+  private strictRefusal(call: {
+    name: string;
+    arguments: Record<string, unknown>;
+  }): ToolObservation | undefined {
+    if (this.options.workerMethod !== "strict") return undefined;
+    if (
+      call.name === "finish_card" &&
+      this.lastCheck &&
+      !this.lastCheck.passed &&
+      !this.writtenSinceCheck
+    ) {
+      return {
+        tool: "finish_card",
+        ok: false,
+        summary: "finish refused: the last check failed",
+        content: `Not finished: your last check failed and nothing has changed since. A card is done only when a check passes on the current files. The failures:\n${this.lastCheck.failures
+          .slice(0, 3)
+          .map(
+            (f, i) =>
+              `${i + 1}. ${f.errorExcerpt.split("\n")[0]}${f.suggestedAction ? `\n   fix: ${f.suggestedAction}` : ""}`,
+          )
+          .join("\n")}`,
+      };
+    }
+    if (call.name === "run_cmd" && typeof call.arguments.command === "string") {
+      const prev = this.commandRuns.get(normaliseCommand(call.arguments.command));
+      if (prev && prev.effects === this.effects) {
+        return {
+          tool: "run_cmd",
+          ok: false,
+          summary: "not run again: nothing changed since it last ran",
+          content: `Not run again: nothing has changed since turn ${prev.turn}, when this command last ran, so it would give the same result. Its output then:\n${prev.content}\n\nAct on that output: edit the code it points at, or call finish_card if the work is done.`,
+        };
+      }
+    }
+    return undefined;
+  }
+
+  /** Remember a command's output, and count it as a possible change for other commands. */
+  private recordCommand(
+    call: { arguments: Record<string, unknown> },
+    turnIndex: number,
+    observation: ToolObservation,
+  ): void {
+    if (typeof call.arguments.command !== "string") return;
+    const key = normaliseCommand(call.arguments.command);
+    // A different command may itself have changed files (sed, a generator),
+    // so it resets what counts as "nothing changed".
+    if (this.lastCommandKey !== key) this.effects++;
+    this.lastCommandKey = key;
+    this.commandRuns.set(key, {
+      turn: turnIndex,
+      effects: this.effects,
+      content: observation.content,
+    });
+  }
+
   /** C19: load tools by name or task; their contracts reach the next prompt. */
   private toolSearchObservation(query: unknown): ToolObservation {
     const q = typeof query === "string" ? query.trim() : "";
@@ -516,11 +624,71 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         this.catalog().map((t) => t.name),
       );
     const r = loader.handle(q);
+    if (r.loaded.length === 0) {
+      const files = this.filesAskedFor(q);
+      if (files) return files;
+    }
     return {
       tool: TOOL_SEARCH_NAME,
       ok: r.loaded.length > 0,
       summary: r.loaded.length > 0 ? `loaded ${r.loaded.join(", ")}` : "no tool matched",
       content: r.text,
+    };
+  }
+
+  /**
+   * A tool_search that names files is a request to read them, so the reply is
+   * the files. Suite run 4 found naming the read_file calls was not enough:
+   * with read_file offered natively and the calls spelled out, the Worker
+   * searched for tool_search itself and was stopped. The design's rule — the
+   * reply carries what the model would have fetched — applies, and reading is
+   * free. Only files inside the worktree, at most three, each capped.
+   */
+  private filesAskedFor(query: string): ToolObservation | undefined {
+    const terms = query
+      .split(/[,\s]+/)
+      .map((t) =>
+        t
+          .trim()
+          .replace(/^["'`]|["'`]$/g, "")
+          .replace(/^\.\//, ""),
+      )
+      .filter((t) => /\/|\.[cm]?[jt]sx?$|\.json$/.test(t))
+      .slice(0, 3);
+    if (!terms.length) return undefined;
+    const root = this.options.worktreePath;
+    const sections: string[] = [];
+    let found = 0;
+    for (const term of terms) {
+      const ts = term.replace(/\.[cm]?js(x?)$/, ".ts$1");
+      const candidates = [...new Set([ts, term, `src/${ts}`, `src/${term}`])];
+      const hit = candidates.find((c) => {
+        const abs = join(root, c);
+        const rel = relative(root, abs);
+        return (
+          !rel.startsWith("..") && !isAbsolute(rel) && existsSync(abs) && statSync(abs).isFile()
+        );
+      });
+      if (!hit) {
+        sections.push(`${term}: no such file in this repository.`);
+        continue;
+      }
+      found++;
+      const text = readFileSync(join(root, hit), "utf8");
+      const capped =
+        text.length > 6000
+          ? `${text.slice(0, 6000)}\n… (truncated; read_file reads the rest)`
+          : text;
+      sections.push(`=== ${hit} ===\n${capped || "(empty file)"}`);
+    }
+    return {
+      tool: TOOL_SEARCH_NAME,
+      ok: found > 0,
+      summary: found > 0 ? `read ${found} file(s) for a file query` : "no such files",
+      content: [
+        "tool_search finds tools, not files — here are the files you asked for. Use read_file for others.",
+        ...sections,
+      ].join("\n\n"),
     };
   }
 
@@ -990,9 +1158,12 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     // Reasoning per step (M6): off for ordinary steps and direct repair, on
     // once the direct fix has failed.
     const rung = this.activeRung?.rung;
-    const thinking = reasoningForStep(
-      rung && rung !== "direct_repair" ? { purpose: "repair", rung } : { purpose: "mechanical" },
+    const thinking = this.thinkingFor(
+      reasoningForStep(
+        rung && rung !== "direct_repair" ? { purpose: "repair", rung } : { purpose: "mechanical" },
+      ),
     );
+    this.turnsTaken++;
 
     // K12: pre-step hooks may veto the step (fail closed) or add a message.
     if (this.options.hooks) {
@@ -1191,6 +1362,11 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         } as ToolObservation);
         continue;
       }
+      const refused = this.strictRefusal(call);
+      if (refused) {
+        observations.push(refused);
+        continue;
+      }
       const observation =
         call.name === "check"
           ? await this.checkObservation()
@@ -1204,6 +1380,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
                   ? await this.subtaskObservation(call.arguments.question, call.arguments.context)
                   : await this.tools.execute(call);
       observations.push(observation);
+      if (call.name === "run_cmd") this.recordCommand(call, turnIndex, observation);
       if (this.options.hooks) {
         const post = await this.options.hooks.emit("post-tool", {
           cardId: this.cardId,
@@ -1223,6 +1400,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         if (typeof path === "string") this.filesWritten.add(path.replace(/^\.\//, ""));
         this.writtenSinceCheck = true;
         this.writeCount++;
+        this.effects++;
         if (typeof path === "string") this.memory.noteWrite(path);
       }
     }
@@ -1381,6 +1559,11 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       usage: response.usage,
       rawText: response.text,
     };
+    // The next turn thinks, under "surgical", when this one failed a check
+    // or the gates: that is where a diagnosis is worth its tokens.
+    this.lastTurnFailed =
+      (gateResult !== undefined && !gateResult.passed) ||
+      observations.some((o) => (o.tool === "check" || o.tool === "finish_card") && !o.ok);
     if (gateResult) result.gateResult = gateResult;
     if (stopReason) result.stopReason = stopReason;
     return result;
@@ -1522,6 +1705,8 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         root: this.tools.root,
         base,
         diff: worktreeDiff(this.tools.root, base),
+        // The acceptance tests the harness staged are not the card's writing.
+        harnessOwned: (this.options.card?.acceptanceTests ?? []).map((t) => `tests/${t}`),
         project: result.passed ? project : { ...project, mutation: false },
         // The visual layer only once the declared gates pass: a page that
         // does not build has nothing to look at.

@@ -71,6 +71,8 @@ const VALUED = new Set([
   "--fixture",
   "--workers",
   "--out",
+  "--planner",
+  "--sketcher",
 ]);
 
 export type FrontDoorRoute =

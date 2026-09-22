@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, relative, resolve } from "node:path";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
 import type { FailureLocation, GateDefinition, GateFailure } from "./types.js";
 
 export interface ParseContext {
@@ -195,6 +195,114 @@ function missingExportRemedy(
   return `${rel} does not export ${missing}. It exports exactly: ${names.join(", ")}. Import one of those, or define ${missing} yourself. There is no need to read ${rel} again.`;
 }
 
+/**
+ * An unknown member, answered with the type's real members.
+ *
+ * Suite runs 4 and 5 lost cards on two different models the same way: the
+ * model guessed a library API (`db.lastInsertRowId`, `{ create: true }`), the
+ * error said the member does not exist, and the model went looking for the
+ * declaration — Cyber-Tiel asked tool_search for it eight times — until it was
+ * stopped. The failure carries what it was looking for.
+ */
+function unknownMemberRemedy(
+  code: string,
+  message: string,
+  cwd: string | undefined,
+): string | undefined {
+  if (!cwd || !["TS2339", "TS2353", "TS2551"].includes(code)) return undefined;
+  const m = /'([^']+)' does not exist (?:on|in) type '([A-Za-z_$][\w$]*)(?:<[^']*>)?'/.exec(
+    message,
+  );
+  const member = m?.[1];
+  const type = m?.[2];
+  if (!member || !type) return undefined;
+  const members = typeMembers(type, cwd);
+  if (!members?.length) return undefined;
+  return `${type} has no member ${member}. Its members are exactly: ${members.join(", ")}. Use one of those, or change the approach; there is no need to look the type up.`;
+}
+
+/** Files that may declare a type: the project's source and Node's own types. */
+function declarationFiles(cwd: string): string[] {
+  const out: string[] = [];
+  const walk = (dir: string, depth: number, suffix: RegExp) => {
+    let entries: string[];
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      return;
+    }
+    for (const name of entries) {
+      if (name === "node_modules" || name.startsWith(".")) continue;
+      const full = join(dir, name);
+      let st: ReturnType<typeof statSync>;
+      try {
+        st = statSync(full);
+      } catch {
+        continue;
+      }
+      if (st.isDirectory()) {
+        if (depth > 0) walk(full, depth - 1, suffix);
+      } else if (suffix.test(name)) out.push(full);
+    }
+  };
+  walk(join(cwd, "src"), 4, /\.[cm]?tsx?$/);
+  // pnpm does not hoist @types/node: it lives under .pnpm/@types+node@<v>/.
+  const hoisted = join(cwd, "node_modules", "@types", "node");
+  let nodeTypes = existsSync(hoisted) ? hoisted : undefined;
+  if (!nodeTypes) {
+    try {
+      const store = join(cwd, "node_modules", ".pnpm");
+      const newest = readdirSync(store)
+        .filter((d) => d.startsWith("@types+node@"))
+        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+        .pop();
+      if (newest) nodeTypes = join(store, newest, "node_modules", "@types", "node");
+    } catch {
+      // No pnpm store: only the project's own types are searched.
+    }
+  }
+  if (nodeTypes) walk(nodeTypes, 1, /\.d\.ts$/);
+  return out;
+}
+
+/** Top-level member names of every interface, class or object type named `type`. */
+function typeMembers(type: string, cwd: string): string[] | undefined {
+  const decl = new RegExp(
+    `\\b(?:interface|class)\\s+${type.replace(/\$/g, "\\$")}\\b[^{]*\\{|\\btype\\s+${type.replace(/\$/g, "\\$")}\\s*=\\s*\\{`,
+    "g",
+  );
+  const names = new Set<string>();
+  for (const file of declarationFiles(cwd)) {
+    let src: string;
+    try {
+      src = readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
+    for (const hit of src.matchAll(decl)) {
+      let depth = 0;
+      let line = "";
+      for (let i = (hit.index ?? 0) + hit[0].length - 1; i < src.length; i++) {
+        const ch = src[i];
+        if (ch === "{") depth++;
+        else if (ch === "}") {
+          depth--;
+          if (depth === 0) break;
+        }
+        if (ch === "\n") {
+          const name =
+            /^\s*(?:(?:readonly|static|public|protected|abstract)\s+)*([A-Za-z_$][\w$]*)\??\s*[(:<]/.exec(
+              line,
+            )?.[1];
+          if (name && name !== "constructor") names.add(name);
+          line = "";
+        } else if (depth === 1) line += ch;
+      }
+    }
+  }
+  return names.size ? [...names].sort().slice(0, 40) : undefined;
+}
+
 /** `src/a.ts(12,5): error TS2345: message` */
 const TSC_LINE = /^(.+?)\((\d+),(\d+)\):\s+error\s+(TS\d+):\s+(.*)$/;
 
@@ -227,6 +335,7 @@ const tscParser: FailureParser = (ctx) => {
       minimalRepro: ctx.minimalRepro,
       suggestedAction:
         missingExportRemedy(code ?? "", message ?? "", file, ctx.cwd) ??
+        unknownMemberRemedy(code ?? "", message ?? "", ctx.cwd) ??
         remedyFor(code ?? "", message ?? "") ??
         `Resolve ${code} at ${file}:${location.line}. Read the surrounding lines before editing.`,
     });

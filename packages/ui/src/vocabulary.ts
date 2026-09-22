@@ -641,6 +641,10 @@ export function statusLine(
       if (ev && !ev.passed) return { text: `${failText} · will retry`, tone: "fail", mark: "fail" };
       return { text: `Ready · ${budget}`, tone: "neutral", mark: "none" };
     case "planning":
+      // A card whose attempt failed comes back to Planning; nothing is
+      // working on it until it is re-planned, so say what failed.
+      if (ev && !ev.passed)
+        return { text: `${failText} · needs a new plan`, tone: "fail", mark: "fail" };
       return { text: "Planner is writing the plan", tone: "neutral", mark: "planning" };
     case "in_progress": {
       const step = ctx.lastStep;

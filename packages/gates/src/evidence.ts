@@ -11,6 +11,10 @@ export interface RunSettings {
   contextTokens?: number;
   toolArm: string;
   harnessCommit?: string;
+  /** Where the Worker thought (off | surgical | all): a result is only comparable within one policy. */
+  thinking?: string;
+  /** The Worker's working method (baseline | strict). */
+  workerMethod?: string;
 }
 
 export interface TokenTotals {

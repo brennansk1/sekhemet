@@ -134,6 +134,165 @@ describe("loop callers of Builder C's APIs (C1, C2, C4, C9, C13, C14, C16, C19, 
     expect(first.observations[0]?.summary).toContain("go_to_definition");
   });
 
+  it("answers a tool_search for files with the files themselves", async () => {
+    // Suite run 4, card_onyx_4_vault: told the exact read_file calls to make,
+    // with read_file offered natively, the Worker searched for tool_search
+    // itself and was stopped. The design's rule: where the harness would send
+    // the model to fetch something, the reply carries it. Reading is free.
+    const { adapter } = adapterOf(() => [
+      { name: "tool_search", arguments: { query: "a.js b.js missing.js ../../etc/passwd" } },
+    ]);
+    const session = new CardExecutionSessionImpl({
+      cardId: card.id,
+      card,
+      stepBudget: 6,
+      worktreePath: root,
+      modelAdapter: adapter,
+      gateRunner: passing,
+      scopeFiles: ["src/a.ts"],
+      progressiveTools: true,
+    });
+    const turn = await session.executeTurn();
+    const obs = turn.observations[0];
+    expect(obs?.ok).toBe(true);
+    expect(obs?.content).toContain("=== src/a.ts ===");
+    expect(obs?.content).toContain("export function alpha()");
+    expect(obs?.content).toContain("=== src/b.ts ===");
+    expect(obs?.content).toMatch(/missing\.js: no such file/);
+    // Never outside the worktree.
+    expect(obs?.content).not.toMatch(/root:/);
+  });
+
+  describe("thinking, surgically (the A/B the suite decides)", () => {
+    // Replays showed the Worker never planning: thinking was off on every
+    // ordinary turn, so it wrote before reading the test and guessed APIs.
+    // "surgical" turns it on where judgement matters — the first turn of an
+    // attempt, and the turn after a failed check — and nowhere else.
+    const failing: GateRunner = {
+      runGates: async () => ({
+        passed: false,
+        failures: [
+          {
+            rung: "test",
+            gate: "unit",
+            layer: "functional",
+            exitCode: 1,
+            errorExcerpt: "x",
+            suggestedFixFiles: [],
+          },
+        ],
+        durationMs: 1,
+        rungResults: [],
+      }),
+    };
+    const levels = async (thinking: "off" | "surgical" | "all" | undefined) => {
+      const { adapter, seen } = adapterOf((n) =>
+        n === 2
+          ? [{ name: "check", arguments: {} }]
+          : [{ name: "read_file", arguments: { path: `src/${n % 2 ? "a" : "b"}.ts` } }],
+      );
+      const session = new CardExecutionSessionImpl({
+        cardId: card.id,
+        card,
+        stepBudget: 8,
+        worktreePath: root,
+        modelAdapter: adapter,
+        gateRunner: failing,
+        scopeFiles: ["src/a.ts"],
+        ...(thinking ? { thinking } : {}),
+      });
+      for (let i = 0; i < 4; i++) await session.executeTurn();
+      return seen.map((r) => r.reasoning ?? "off");
+    };
+
+    it("off is today's behaviour: no thinking on ordinary turns", async () => {
+      expect(await levels(undefined)).toEqual(["off", "off", "off", "off"]);
+      expect(await levels("off")).toEqual(["off", "off", "off", "off"]);
+    });
+
+    it("surgical thinks on the first turn and right after a failed check", async () => {
+      expect(await levels("surgical")).toEqual(["medium", "off", "medium", "off"]);
+    });
+
+    it("all thinks on every turn", async () => {
+      expect(await levels("all")).toEqual(["high", "high", "high", "high"]);
+    });
+  });
+
+  describe("the strict working method (SEKHEMET_WORKER_METHOD=strict)", () => {
+    const failing: GateRunner = {
+      runGates: async () => ({
+        passed: false,
+        failures: [
+          {
+            rung: "test",
+            gate: "unit",
+            layer: "functional",
+            exitCode: 1,
+            errorExcerpt: "expected 2 got 1",
+            suggestedFixFiles: [],
+          },
+        ],
+        durationMs: 1,
+        rungResults: [],
+      }),
+    };
+    const session = (script: Script, method?: "strict") =>
+      new CardExecutionSessionImpl({
+        cardId: card.id,
+        card,
+        stepBudget: 8,
+        worktreePath: root,
+        modelAdapter: adapterOf(script).adapter,
+        gateRunner: failing,
+        scopeFiles: ["src/a.ts"],
+        ...(method ? { workerMethod: method } : {}),
+      });
+
+    it("does not re-run a command when nothing has changed since it last ran", async () => {
+      // Suite run 5, card_onyx_4_vault: twelve turns of `npx vitest run … | tail -N`,
+      // varying only the tail, with no edit between them.
+      const s = session(
+        (n) => [
+          {
+            name: "run_cmd",
+            arguments: { command: `node -e "console.log(1)" 2>&1 | tail -${20 + n * 10}` },
+          },
+        ],
+        "strict",
+      );
+      const first = await s.executeTurn();
+      const second = await s.executeTurn();
+      expect(first.observations[0]?.summary).not.toMatch(/not run again/);
+      expect(second.observations[0]?.ok).toBe(false);
+      expect(second.observations[0]?.summary).toMatch(/not run again/);
+      expect(second.observations[0]?.content).toMatch(/nothing has changed since turn 1/i);
+    });
+
+    it("refuses finish_card while the last check failed and nothing changed", async () => {
+      const s = session(
+        (n) =>
+          n === 1 ? [{ name: "check", arguments: {} }] : [{ name: "finish_card", arguments: {} }],
+        "strict",
+      );
+      await s.executeTurn();
+      const t = await s.executeTurn();
+      expect(t.observations[0]?.tool).toBe("finish_card");
+      expect(t.observations[0]?.ok).toBe(false);
+      expect(t.observations[0]?.content).toMatch(/expected 2 got 1/);
+      expect(t.stopReason).toBeUndefined();
+    });
+
+    it("changes nothing without the switch", async () => {
+      const s = session((n) => [
+        { name: "run_cmd", arguments: { command: `node -e "console.log(1)" | tail -${n}` } },
+      ]);
+      await s.executeTurn();
+      const second = await s.executeTurn();
+      expect(second.observations[0]?.summary).not.toMatch(/not run again/);
+    });
+  });
+
   it("answers a side question in a child context and returns only the answer (C16)", async () => {
     const child: LocalInferenceAdapter = {
       modelId: "child",

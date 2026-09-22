@@ -22,6 +22,37 @@ The fixtures were not touched: the suite hash covers the manifest and the fixtur
 
 ---
 
+## Runs 4 and 5 — Nail and Cyber-Tiel on one build, both stopped part-way
+
+Same harness build, same fixtures, same suite hash `192b6e95fa3c`; only the Worker differs. Both runs were stopped deliberately — run 4 to switch models, run 5 to pause work — so neither is a score. What they establish is below; what they do not is said after.
+
+**A correction first.** `sekhemet run` ignored `--worker` until this pair of runs: every earlier run, whatever it was asked for, used `nail-35b-a3b-ctx` with reasoning **disabled** (`disableReasoning: true`), an 8k context budget and a 2,048-token output cap. The Nail results stand as *Nail with thinking off*. Fixed so run 5 could use Cyber-Tiel; the default is unchanged.
+
+| Card | Run 4 · Nail | Run 5 · Cyber-Tiel (MTP) | Cause of each failure |
+| --- | --- | --- | --- |
+| `chron_iface` | pass 46s | pass 25s | — |
+| `chron_hasher` | pass 36s | pass 44s | — |
+| `chron_db` | pass 26s | fail 194s | **Harness** (5): an unknown `DatabaseSyncOptions` key; the error named no real members and the model asked `tool_search` for the type eight times. Fixed: the failure now lists the type's members |
+| `chron_verifier` | pass 64s | pass 74s | — |
+| `chron_ledger` | fail 331s | blocked | **Model** (4): guessed `lastInsertRowId`, could not fix three type errors; plus a `tool_search` dead end on symbol names — **harness**, fixed. (5): blocked on `chron_db` |
+| `chron_api` | fail 130s | blocked | **Blocked** in both: it builds on `ledger.ts`, empty on `main`. Run 4's runner missed the dependency because the spec named it and the test did not — fixed |
+| `onyx_1_types` | pass 26s | pass 28s | — |
+| `onyx_2_crypto` | pass 44s | pass 140s | — |
+| `onyx_3_db` | pass 53s | pass 40s | — |
+| `onyx_4_vault` | fail 64s | fail 716s | (4) **Model**, twice now: shown the exact `read_file` calls with `read_file` offered, it searched for `tool_search` itself — the harness now returns the files. (5) **Model + harness**: got past it, then used a column the schema names differently (the repo map did not show the schema — fixed) and re-ran one test command twelve times without editing (refused under the strict method, built) |
+| `onyx_5_scanner` | not reached | timed out 20m | **Harness**: the secrets gate flagged AWS's documented example key in the *staged acceptance test*, a file the card may not edit. The card could never pass. Fixed |
+| `onyx_6_injector` | not reached | pass 77s | — |
+| `onyx_7_cli` | not reached | fail 207s | **Model**: three `string \| undefined` errors with a correct one-step remedy attached; it re-ran `check` instead of editing. The case the surgical-thinking A/B exists for |
+| `onyx_8_e2e` | not reached | stopped | Unmeasured |
+
+**What this establishes.** On the ten cards both reached, Nail passed 7 and Cyber-Tiel 6 — but Cyber-Tiel's one extra loss was `chron_db`, a harness defect (now fixed) that then blocked two dependent cards, while Nail lost `chron_ledger` to its own guessed API. They failed different cards for different reasons, and one trial cannot separate them. Cyber-Tiel fails *later and more usefully*: on the vault card it read the modules, wrote the code, ran the tests and reached real bugs where Nail never left a tool-search loop. Every failure has a named cause; the harness causes are fixed in source and none is in this build.
+
+**What it does not.** Both models ran with thinking off on ordinary turns. That is the next experiment, and the most likely to move the number.
+
+MTP was active throughout — draft acceptance 53–93%, typically ~78% — but generation ran at 26–32 tokens/s, level with Nail without MTP, and prompt reading at about half Nail's rate (llama-server vs Ollama; not purely a model difference).
+
+---
+
 ## Run 3 — stopped after 2 cards: the harness's own new gate
 
 Stopped deliberately after two cards, both lost to one harness defect introduced the same day.

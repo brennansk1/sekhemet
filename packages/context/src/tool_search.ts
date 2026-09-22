@@ -94,6 +94,31 @@ function filesReply(files: readonly string[]): string {
 }
 
 /**
+ * Terms that name code rather than tools: `ChronicleEvent`, `openDatabase`,
+ * `GENESIS_HASH`. Tool names are snake_case, so camel and constant case
+ * cannot be one.
+ */
+function symbolLikeTerms(query: string): string[] {
+  return (
+    query
+      .split(/[,\s]+/)
+      .map((s) => s.trim())
+      // camelCase, PascalCase with two capitals, or CONSTANT_CASE.
+      .filter((s) =>
+        /^(?:[a-z]+[A-Z]\w*|[A-Z][a-z0-9]*[A-Z]\w*|[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)$/.test(s),
+      )
+  );
+}
+
+/** Suite run 4 lost two turns of card_chron_ledger to "No tool matches" for symbols. */
+function symbolsReply(symbols: readonly string[]): string {
+  return [
+    "tool_search finds tools, not code. read_symbol is now loaded; to see these definitions, call:",
+    ...symbols.map((s) => `read_symbol(name: "${s}")`),
+  ].join("\n");
+}
+
+/**
  * Tracks which tools are loaded for a card. `handle` is the `tool_search`
  * tool's implementation; `visibleSpecs` / `visibleSchemas` are what the next
  * request carries.
@@ -118,6 +143,12 @@ export class ToolLoader {
     if (found.length === 0) {
       const files = fileLikeTerms(query);
       if (files.length > 0) return { loaded: [], text: filesReply(files) };
+      const symbols = symbolLikeTerms(query);
+      const reader = this.all.find((t) => t.name === "read_symbol");
+      if (symbols.length > 0 && reader) {
+        this.loaded.add(reader.name);
+        return { loaded: [reader.name], text: symbolsReply(symbols) };
+      }
       return { loaded: [], text: `No tool matches "${query}". The index lists every tool.` };
     }
     const text = found

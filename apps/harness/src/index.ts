@@ -22,6 +22,8 @@ import { remedyFor } from "@sekhemet/gates";
 import { type CardRecord, CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { planRepair } from "@sekhemet/loop";
 import {
+  HttpInferenceAdapter,
+  MANAGED_MODEL_NAMES,
   MemoryWatchdog,
   ModelRoster,
   ModelRouter,
@@ -679,11 +681,19 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     // the batched decision parked (wave2.ts planCommand).
     const spec = config.targetArg || "New feature specification";
     console.log(`\nPlanning feature: "${spec}"`);
-    const sketcherName = argv[argv.indexOf("--sketcher") + 1];
-    const sketcher =
-      argv.includes("--sketcher") && sketcherName
-        ? new ModelRoster({ registry: modelRegistry() }).resolve(sketcherName, "manager")
-        : undefined;
+    // The planning model: --planner (or the older --sketcher), else an
+    // explicit [models] planner. It is loaded before the Worker and unloaded
+    // after planning, so the two never share memory.
+    const flagged = (name: string) =>
+      argv.includes(name) ? argv[argv.indexOf(name) + 1] : undefined;
+    const configured = effectiveConfig(config.repoPath).config.models.planner;
+    const plannerName =
+      flagged("--planner") ??
+      flagged("--sketcher") ??
+      (configured !== "auto" ? configured : undefined);
+    const sketcher = plannerName
+      ? new ModelRoster({ registry: modelRegistry() }).resolve(plannerName, "manager")
+      : undefined;
     // The reuse survey reads public registries, GitHub and paper indexes with
     // short keyword queries; --offline plans without looking.
     const offline = argv.includes("--offline") || process.env.SEKHEMET_OFFLINE === "1";
@@ -1104,7 +1114,19 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     console.log(`Scope: [${card.scopeFiles.join(", ") || "unrestricted"}]`);
     console.log(`Budget: ${card.stepBudget} steps\n`);
 
-    const model = createNail35BAdapter();
+    // --worker was parsed by the suite runner and the queue but ignored here:
+    // every `run` used the Nail adapter, whatever it was asked for. A managed
+    // name (cyber-tiel, served by its own llama-server with its MTP head)
+    // resolves through the roster; an Ollama tag keeps the Nail profile's
+    // settings; no flag is the default Worker, as before.
+    const workerIdx = argv.indexOf("--worker");
+    const workerName = workerIdx !== -1 ? argv[workerIdx + 1]?.replace(/^ollama\//, "") : undefined;
+    const model = !workerName
+      ? createNail35BAdapter()
+      : (MANAGED_MODEL_NAMES as readonly string[]).includes(workerName)
+        ? new ModelRoster({ registry: modelRegistry() }).resolve(workerName, "worker")
+        : new HttpInferenceAdapter({ ...NAIL_WORKER_PROFILE, modelId: workerName });
+    console.log(`Worker: ${model.modelId}`);
     const ctx = {
       repoPath: config.repoPath,
       restrictedMode: config.restrictedMode,
@@ -1127,7 +1149,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       // Release the weights on every exit path, including a crash mid-card:
       // a resident 13GB checkpoint left behind by a failed run is how the host
       // ran out of memory overnight.
-      await model.unload();
+      await model.unload?.();
     }
 
     console.log(`\n${summarizeEvidence(result.evidence)}\n`);

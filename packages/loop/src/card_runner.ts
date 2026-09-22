@@ -1548,6 +1548,8 @@ export class CardRunner {
       toolArm: this.options.toolArm ?? this.options.modelAdapter.preferredToolArm ?? "arm_a_flat",
       harnessCommit: harnessCommit(this.options.repoRoot),
       ...(this.options.temperature !== undefined ? { temperature: this.options.temperature } : {}),
+      thinking: this.options.thinking ?? "off",
+      workerMethod: this.options.workerMethod ?? "baseline",
     } as RunSettings;
 
     const evidence = compileEvidence({

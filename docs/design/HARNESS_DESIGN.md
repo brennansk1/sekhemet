@@ -99,11 +99,28 @@ Plain, exact, and calm. Sekhemet reports what passed, what failed, and what it n
 
 The product is a local AI engineering manager. Work lives on nested boards, the machine executes cards while the developer reviews, and nothing advances without passing gates.
 
-**Positioning.** A local-first AI engineering manager: a board you talk to, not a transcript you scroll, that plans and ships work on your own hardware, and only lets code advance when it compiles, typechecks, and passes your tests.
+**Positioning — a harness for professional teams.** *Set by the owner, 2026-09-22.*
+
+Other coding agents assume you already practise software engineering. They give you a chat window and a diff; whether the result has a plan, tests, reviewable increments and a definition of done depends on the person driving it — which is why so much of what they produce is hard to bring into a professional team's workflow. **Sekhemet runs the process itself.** A senior PM turns a request into a brief and a planned backlog on a board any team already knows how to read; a senior engineer builds each card against executable gates; nothing is done until the gates pass and a person accepts it. It runs on your machine or your company's server, fits the project-management practice your team already uses, and every role's model is yours to choose — with a frozen benchmark that tells you whether your choice helped.
+
+Three audiences, one product: **developers** who want a familiar, professional board; **beginners**, for whom the board teaches the practice — what a WIP limit is for, why a story is sliced thin, what done means; and **non-developers**, who talk to the PM to start a project and to ask how it is going.
+
+Where each claim stands, so the positioning never outruns the product:
+
+| Claim | State |
+| --- | --- |
+| Runs on your machine or your server | **Built** — local by default; gates can run on a separate, mutually authenticated gate host |
+| Takes a project through the whole process | **Built end to end**, with gaps: the Worker has no working method yet (see *Reasoning mode*), and the story map and burn-up are not rendered |
+| Fits existing project-management practice | **Partial** — board export to Jira and Linear CSV and GitHub JSON, Slack notifications; no live two-way sync. The board does not yet use the card anatomy and column names those teams know |
+| Teaches the practice to beginners | **Not built** — Insights already frames each chart as a question; a switchable Learn layer is planned |
+| Non-developers talk to the PM | **Partial** — status and proposals by conversation; starting a new project by conversation is not built |
+| Choose each role's model | **Built** — Worker, Planner, Researcher and Reviewer each resolve their own model; managed `llama-server` models (Cyber-Tiel with MTP) or any Ollama tag |
+| A benchmark to test your choice | **Built** — the frozen suite and `bake-off`; SWE-rebench is not integrated |
+| Cloud models | **After v1** — v1 stays 100% local, as locked above; later, a cloud model becomes something you plug into a role, never a requirement |
 
 ### The six pillars
 
-1. **100% local.** No cloud inference, zero telemetry, offline-capable install.
+1. **100% local in v1.** No cloud inference, zero telemetry, offline-capable install. After v1, cloud models become an option you plug into a role — never a dependency.
 2. **Hardware-adaptive.** Self-calibrating profiles from 16 to 128 GB, automatic model selection, scheduled swaps, overnight mode.
 3. **Small-model reliability engine.** Tolerant tool interface, symbol-level edits, parse gate, assembled context, fresh per card, local planner/Worker cascade.
 4. **AI project manager.** Nested boards, decomposition to the machine's competence envelope, dependency scheduling, token and time accounting, WIP limits tied to review capacity.
@@ -791,6 +808,38 @@ The Worker never re-reads its own prior reasoning across rung transitions; each 
 
 Reasoning tokens are suppressed or set to low budget for mechanical edit and tool steps, and raised only for planning or after a Rung 1 failure. Prior reasoning traces are stripped between steps unless the model registry explicitly notes a benefit. **[BENCH]**
 
+**As built, the Worker never planned.** *Found 2026-09-22 replaying suite cards.* "Raised for planning" had no Worker step to attach to: every ordinary turn ran with thinking off, including the first, and the default Worker profile disabled reasoning outright. The replays look like it — a file written on turn one before the test was read, a `finish_card` claiming success over failing tests, library APIs guessed and then searched for. Cyber-Tiel's model card says the opposite of the policy: a capped reasoning budget "degrades overall performance".
+
+So the policy is an experiment the frozen suite decides, recorded in every evidence bundle as `thinking`:
+
+| Policy | Where the Worker thinks |
+| --- | --- |
+| `off` | The original: only on escalated repair rungs |
+| `surgical` | Also on the **first turn of an attempt** — read the test, decide what to write — and on **the turn after a failed check or gate**, where a diagnosis is worth its tokens. Ordinary edit and tool turns stay fast |
+| `all` | Every turn, at the high budget |
+
+`SEKHEMET_THINKING` selects it. The winner is the one with the best pass rate for its wall-clock on the same build and model, over at least two runs; it then becomes the default and this table records the numbers.
+
+### The Worker's working method
+
+*Added 2026-09-22.* The PM works like a senior PM; the Worker must work like a senior engineer, within what a 3B-active model can do. Replays show what is missing — writing before the test is understood, guessing library APIs, claiming done over failing tests, re-running a failing test instead of diagnosing it — and one thing a small model does not do: follow an instruction written in prose. So **every habit is enforced by structure** — what a tool does, what the loop refuses, where thinking happens — never by a sentence in the prompt.
+
+The mechanisms, ranked by the strength of the evidence behind them:
+
+| Habit | Mechanism | Evidence | State |
+| --- | --- | --- | --- |
+| A broken edit never lands | Every write is parsed and secret-scanned before it reaches disk; a failure is the reply | SWE-agent's linting editor, +3 points (arXiv:2405.15793) | Built |
+| Done means proven | `finish_card` is refused while the last `check` on the current files failed | Self-declared completions are wrong about 40% of the time even for frontier models (SWE-smith, arXiv:2504.21798); self-correction without external feedback does not work (arXiv:2310.01798) | Built, behind `SEKHEMET_WORKER_METHOD=strict` |
+| Don't repeat what failed | Re-running the same command with no file changed since is refused with the previous result, not run again | Repetition is the small-model signature failure — over 25% of a 32B model's runs, 89% failing after ten repeats (SWE-smith); OpenHands' stuck detector | Built, behind `SEKHEMET_WORKER_METHOD=strict`; a command differing only in how its output is trimmed is the same command |
+| Know the interface before writing | The acceptance test is inline, and the signatures it imports are shown before any write; `edit` is preferred over rewriting a whole file | Agentless' reproduction step, +5 points (arXiv:2407.01489); SWE-Bench Pro's interface field (arXiv:2509.16941) | Built: the test is inline, and the repo map carries each module's **data contract** — the fields of its exported interfaces and the tables it creates, not only signatures — after suite run 5's vault card guessed a column the schema names differently. Files with nothing to build on (other cards' future tests) are dropped from the map |
+| Think where it matters | Thinking on the first turn and after a failed check | Qwen3 30B-A3B tool calling 58.6 → 69.1 with thinking (arXiv:2505.09388, BFCL — indirect) | The `surgical` A/B |
+| See only what matters | Short views, only recent history in full, failures cut to the assertion | SWE-agent, 3–6 points per setting | Mostly built |
+| Diagnose from the evidence | After a failure, the next edit states which assertion it addresses | Moderate: grounded repair helps, ungrounded self-review does not (arXiv:2306.09896) | A/B candidate |
+
+**What the evidence does not support: a planning tool for the Worker.** An explicit plan or todo list has been measured only for web tasks with a separate planner; nothing shows it helps a small model on a one-to-three-file card. Planning stays upstream, in the design stage and the Planner's cards, where it is done by the role built for it. The Worker gets thinking on its first turn instead.
+
+Every mechanism that changes what the model is allowed to do ships behind a switch and is admitted by the frozen suite, like the thinking policy — a habit that does not raise the pass rate is not a habit worth enforcing.
+
 ## Top-model tool semantics
 
 The frontier harnesses converged on a small set of file tools with exact semantics. Sekhemet adopts those semantics, because they are what the best agents were trained to use well, and adds a deterministic layer beneath them that a small model needs.
@@ -967,6 +1016,12 @@ The backlog is derived, not invented. The Planner lays out the **activities** a 
 Two consequences, both deliberate. The first slice is **narrow and complete** rather than **one part finished properly**, because a complete thin path can be judged and a half-built deep one cannot. And the backbone makes the *shape* of the unbuilt work visible on the board without pretending it is planned, which is what stops a backlog from becoming a wish list.
 
 The riskiest assumption is scheduled first regardless of where it falls in the backbone. Finding out that the thing cannot work is worth more early than late, and it is the one card whose failure is a success.
+
+### A card says what the code must do
+
+*Found 2026-09-22 by planning a billing service.* Every card the planner produced carried the same acceptance sentence — *"⟨title⟩ is observable through the exported surface of ⟨file⟩"* — which an empty export satisfies, and the model-assisted path produced the same sentence, because it asked the model only for titles. And "a retried charge must never charge a customer twice" became the last card, a "happy path", in a file of its own.
+
+So every slice now carries a **behaviour**: one sentence a test can check. The Planner's model is asked for it with concrete values — *given a paid invoice of 1000 cents, refunding 400 leaves 600 and records one refund*. Without a model, the behaviour is the spec's own words for what must happen, which is weaker than a model's and far stronger than a sentence about the card's own title. **A hard invariant is a rule proven early**: "never", "twice", "exactly once", "idempotent" make a clause a rule, and unlike a validation rule — relaxed first, hardened second — it is scheduled right after the contract, because it decides the shape of the code that must keep it. The design stage's riskiest assumption is planned the same way even when the person never wrote it down: a billing spec gets a card, second in line, whose test tries to charge twice.
 
 ### Assumptions are tracked, not forgotten
 
@@ -1286,6 +1341,8 @@ Deterministic checks carry the weight, because local vision models are unreliabl
 Diff-scoped only. Whole-repo mutation runs are not feasible on the gate host. Results are advisory annotations first and become blocking per project once a stable threshold is known. Never gated at 100%, because equivalent mutants exist.
 
 ### Evidence bundle
+
+**The secrets gate judges what the card wrote.** It scans what the branch adds, excluding the acceptance tests the harness staged — files the card cannot edit. Suite run 5's secret-scanner card could never pass otherwise: its staged test holds AWS's documented example key. A key the card writes still fails, as before.
 
 Every card entering Review carries: the diff, all gate results with typed failures, test output, screenshots and diffs, the dependency and secret scan reports, the stop reason, and a short summary of what the Worker tried and abandoned. This is the review surface; reviewing should not require reading the trajectory.
 
@@ -1618,6 +1675,8 @@ A fixed set of 20 to 40 tasks, versioned in the repository, each with a specific
 
 One number comes out of a run — tasks passed — alongside the cost that bought it: wall-clock, tokens, and cards that needed a repair rung. **A change to the harness that does not move that number, or moves it down, is not an improvement regardless of how well it is argued.**
 
+**What it does not measure: planning.** Every fixture ships its cards written by hand, so the suite measures the Worker, the gates and the loop — and never the planner that turns a spec into those cards. That gap hid the planner's tautological acceptance criteria entirely. **[DESIGN]** A planning measure belongs beside the suite: the same fixtures' specs, planned from scratch, scored on whether each generated card's acceptance test fails before the change and passes after the fixture's reference solution — and, end to end, on how much of the project the Worker then builds from the planner's cards rather than the hand-written ones. That is the number that says whether the harness is better at building projects, not only at finishing cards.
+
 ### What it gates
 
 *   **The self-improvement loop.** No proposal from any inlet is admitted without beating the frozen baseline.
@@ -1746,9 +1805,9 @@ Raw logs are never pasted into context; they live in the evidence bundle and are
 
 *Added 2026-09-22 from the first frozen-suite run.* A `suggestedAction` that sends the model to fetch something is a loop, not an action. The tsc remedy for a missing export used to read *"The module does not export that name. Read the module and use its actual export."* A Worker followed it faithfully: it read the module, learned nothing it could act on, read it again — four times — and was stopped for repeating itself. The harness's own instruction produced the loop the harness then punished.
 
-So where an action would ask the model to go and look, the failure carries what it would have found. A missing export lists the module's actual exports inline and says there is no need to read the file again. The general rule, which binds every parser: **the information a remedy depends on belongs in the failure, not behind a tool call the model has to think of making.**
+So where an action would ask the model to go and look, the failure carries what it would have found. A missing export lists the module's actual exports inline and says there is no need to read the file again. An unknown member does the same with the type's real members — the project's own types and Node's, wherever the package manager keeps them: two models in two runs guessed a `node:sqlite` API (`lastInsertRowId`, `{ create: true }`), were told only that it did not exist, and went looking for the declaration until they were stopped, one of them by asking `tool_search` for it eight times. The general rule, which binds every parser: **the information a remedy depends on belongs in the failure, not behind a tool call the model has to think of making.**
 
-The rule binds tool replies as well as gate failures. A third run lost `card_onyx_4_vault` — whose dependencies had all passed and merged — to `tool_search`: the Worker asked it for `crypto.js db.js types.js`, was told *"No tool matches"*, and asked again until it was stopped. `read_file` was loaded the whole time. A `tool_search` query that names files now answers with the `read_file` calls that read them, ready to make. **No reply the Worker receives may be a dead end: if a call cannot do what was asked, the reply names the call that can.**
+The rule binds tool replies as well as gate failures. A third run lost `card_onyx_4_vault` — whose dependencies had all passed and merged — to `tool_search`: the Worker asked it for `crypto.js db.js types.js`, was told *"No tool matches"*, and asked again until it was stopped. `read_file` was loaded the whole time. A `tool_search` query that names files now answers with **the files themselves** — the first fix, naming the `read_file` calls to make, was not enough: in the fourth run the same card, shown the exact calls with `read_file` offered natively, searched for `tool_search` itself and was stopped. Reading is free, so the reply carries what the model would have fetched, at most three files from inside the worktree, each capped; one that names code symbols (`ChronicleEvent`, `openDatabase`, `GENESIS_HASH` — the fourth run lost two turns of `card_chron_ledger` to exactly that query) loads `read_symbol` and names the calls. **No reply the Worker receives may be a dead end: if a call cannot do what was asked, the reply names the call that can.**
 
 ### Three kinds of refusal, one rule
 

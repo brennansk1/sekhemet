@@ -147,3 +147,104 @@ describe("a missing export is answered, not described", () => {
     expect(f?.suggestedAction).toMatch(/does not export that name/);
   });
 });
+
+describe("an unknown member is answered with the type's real members", () => {
+  // Suite runs 4 and 5, on two different models: Nail wrote
+  // `db.lastInsertRowId` (TS2339 on DatabaseSync); Cyber-Tiel passed
+  // `{ create: true }` to new DatabaseSync (TS2353 on DatabaseSyncOptions)
+  // and then asked tool_search for the type's declaration eight times. The
+  // failure should carry what it was looking for.
+  const project = () => {
+    const dir = mkdtempSync(join(tmpdir(), "ts2339-"));
+    mkdirSync(join(dir, "node_modules", "@types", "node"), { recursive: true });
+    writeFileSync(
+      join(dir, "node_modules", "@types", "node", "sqlite.d.ts"),
+      [
+        'declare module "node:sqlite" {',
+        "  interface DatabaseSyncOptions {",
+        "    open?: boolean | undefined;",
+        "    readOnly?: boolean | undefined;",
+        "    enableForeignKeyConstraints?: boolean | undefined;",
+        "  }",
+        "  class DatabaseSync implements Disposable {",
+        "    constructor(path: string, options?: DatabaseSyncOptions);",
+        "    close(): void;",
+        "    exec(sql: string): void;",
+        "    prepare(sql: string): StatementSync;",
+        "    readonly isOpen: boolean;",
+        "  }",
+        "}",
+      ].join("\n"),
+    );
+    mkdirSync(join(dir, "src"));
+    writeFileSync(
+      join(dir, "src", "types.ts"),
+      "export interface Entry {\n  id: number;\n  hash: string;\n}\n",
+    );
+    return dir;
+  };
+  const parse = (cwd: string, line: string) =>
+    defaultParserRegistry.parse({
+      gate: gate("tsc"),
+      exitCode: 2,
+      stdout: line,
+      stderr: "",
+      minimalRepro: "tsc --noEmit",
+      cwd,
+    })[0];
+
+  it("lists a library class's members for a property that does not exist (TS2339)", () => {
+    const f = parse(
+      project(),
+      "src/ledger.ts(92,31): error TS2339: Property 'lastInsertRowId' does not exist on type 'DatabaseSync'.",
+    );
+    expect(f?.suggestedAction).toContain("DatabaseSync has no member lastInsertRowId");
+    expect(f?.suggestedAction).toContain("close, exec, isOpen, prepare");
+    expect(f?.suggestedAction).not.toContain("constructor");
+  });
+
+  it("lists an options type's keys for an unknown key in an object literal (TS2353)", () => {
+    const f = parse(
+      project(),
+      "src/db.ts(8,51): error TS2353: Object literal may only specify known properties, and 'create' does not exist in type 'DatabaseSyncOptions'.",
+    );
+    expect(f?.suggestedAction).toContain("DatabaseSyncOptions has no member create");
+    expect(f?.suggestedAction).toContain("enableForeignKeyConstraints, open, readOnly");
+    expect(f?.suggestedAction).toMatch(/no need to look/);
+  });
+
+  it("finds Node's types where pnpm keeps them, unhoisted", () => {
+    // The first version looked only in node_modules/@types/node; checked
+    // against the real suite repository it found nothing, because pnpm keeps
+    // @types/node under .pnpm/@types+node@<version>/.
+    const dir = mkdtempSync(join(tmpdir(), "ts2353-pnpm-"));
+    const types = join(
+      dir,
+      "node_modules",
+      ".pnpm",
+      "@types+node@22.1.0",
+      "node_modules",
+      "@types",
+      "node",
+    );
+    mkdirSync(types, { recursive: true });
+    writeFileSync(
+      join(types, "sqlite.d.ts"),
+      "interface DatabaseSyncOptions {\n  open?: boolean;\n  readOnly?: boolean;\n}\n",
+    );
+    const f = parse(
+      dir,
+      "src/db.ts(8,51): error TS2353: Object literal may only specify known properties, and 'create' does not exist in type 'DatabaseSyncOptions'.",
+    );
+    expect(f?.suggestedAction).toContain("Its members are exactly: open, readOnly");
+  });
+
+  it("finds the project's own types too", () => {
+    const f = parse(
+      project(),
+      "src/ledger.ts(3,9): error TS2339: Property 'sequence' does not exist on type 'Entry'.",
+    );
+    expect(f?.suggestedAction).toContain("Entry has no member sequence");
+    expect(f?.suggestedAction).toContain("hash, id");
+  });
+});
