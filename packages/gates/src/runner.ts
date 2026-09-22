@@ -172,6 +172,7 @@ export class DeterministicGateRunner implements GateRunner {
       stdout: result.stdout,
       stderr: result.stderr,
       minimalRepro: [gate.command, ...gate.args].join(" "),
+      cwd,
     };
 
     const failures = defaultParserRegistry.parse(ctx);

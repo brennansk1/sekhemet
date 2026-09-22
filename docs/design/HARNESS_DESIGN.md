@@ -490,7 +490,7 @@ stateDiagram-v2
 | --- | --- |
 | Ready | Dependencies done; context pack assembles within budget; acceptance criteria present |
 | Planning | Planner model available; difficulty scored |
-| In Progress | Plan exists; acceptance tests written and failing; scope declared |
+| In Progress | Plan exists; acceptance tests written and failing — for a types-only (`interface`) card, failing typecheck as well as the test runner, since `import type` and `expectTypeOf` erase at runtime and a runtime-only check can never show red; scope declared |
 | Verify | Worker stopped with a recorded stop reason |
 | Review | Every required gate passed; evidence bundle complete |
 | Done | Human acceptance recorded |
@@ -1659,6 +1659,19 @@ interface GateFailure {
 ```
 
 Raw logs are never pasted into context; they live in the evidence bundle and are retrievable by reference. At most three failures are sent per repair attempt, chosen by topological dependency order, because fixing the first often clears the rest.
+
+### A suggested action must be completable in one step
+
+*Added 2026-09-22 from the first frozen-suite run.* A `suggestedAction` that sends the model to fetch something is a loop, not an action. The tsc remedy for a missing export used to read *"The module does not export that name. Read the module and use its actual export."* A Worker followed it faithfully: it read the module, learned nothing it could act on, read it again — four times — and was stopped for repeating itself. The harness's own instruction produced the loop the harness then punished.
+
+So where an action would ask the model to go and look, the failure carries what it would have found. A missing export lists the module's actual exports inline and says there is no need to read the file again. The general rule, which binds every parser: **the information a remedy depends on belongs in the failure, not behind a tool call the model has to think of making.**
+
+### Three kinds of refusal, one rule
+
+A gate failure, a scope denial, and a stall are all refusals the Worker must act on, and all three follow the repair contract: typed, with the action attached. The first frozen-suite run found the second and third missing it.
+
+*   **A scope denial** names what the card may modify and says the fix belongs inside it; if the change genuinely belongs elsewhere, the model is told to stop and report that rather than retry.
+*   **A stall is a warning before it is a verdict.** The first repetition on an unchanged tree is delivered as an observation — the call was repeated, the tree did not move, act on what you have or finish. Only a repeat after that warning ends the card. The detection point is unchanged; what changed is that the Worker is told before it is stopped. In the run that found this, cards with thirty-two step budgets were ending on step two having read one file twice.
 
 ### Repeated sampling
 

@@ -473,6 +473,59 @@ describe("fail-to-pass at card start (G12)", () => {
     expect((await store.getCard(card.id))?.stopReason).toBe("vacuous_tests");
   });
 
+  // Every types-only card in the first frozen-suite run was refused here:
+  // `import type` and `expectTypeOf` erase at runtime, so the staged test
+  // passes against an empty file under the test runner alone. Its red check
+  // is a typecheck.
+  const rungAware = () => {
+    const requested: string[][] = [];
+    const runner: GateRunner = {
+      runGates: async (rungs): Promise<GateResult> => {
+        requested.push([...rungs]);
+        // The runtime test passes; the contract it checks does not exist yet.
+        return rungs.includes("typecheck")
+          ? { passed: false, failures: [{ ...failure }], durationMs: 1, rungResults: [] }
+          : { passed: true, failures: [], durationMs: 1, rungResults: [] };
+      },
+    };
+    return { runner, requested };
+  };
+
+  it("checks a types-only card's red state with typecheck, and runs it", async () => {
+    const card = await newCard({
+      acceptanceTests: ["a.spec.ts"],
+      title: "Define the contract types (SPIDR: Interface)",
+    });
+    const { adapter } = scripted((t) => (t === 1 ? [write(1)] : [finish]));
+    const { runner: gateRunner, requested } = rungAware();
+    const result = await runner(card, {
+      modelAdapter: adapter,
+      gateRunner,
+      onWorktreeReady: withTest(),
+    }).run();
+
+    expect(requested[0]).toEqual(["test", "typecheck"]);
+    expect(result.failToPass?.status).toBe("fails");
+    expect(result.stopReason).not.toBe("vacuous_tests");
+  });
+
+  it("still refuses an ordinary card whose runtime tests already pass", async () => {
+    // The typecheck rung is added for types-only cards alone: widening it
+    // everywhere would let a genuinely vacuous test through on the strength
+    // of an unrelated type error elsewhere in the repository.
+    const card = await newCard({ acceptanceTests: ["a.spec.ts"] });
+    const { adapter } = scripted(() => [finish]);
+    const { runner: gateRunner, requested } = rungAware();
+    const result = await runner(card, {
+      modelAdapter: adapter,
+      gateRunner,
+      onWorktreeReady: withTest(),
+    }).run();
+
+    expect(requested[0]).toEqual(["test"]);
+    expect(result.stopReason).toBe("vacuous_tests");
+  });
+
   it("runs the card when the staged tests fail first, and records that they did", async () => {
     const card = await newCard({ acceptanceTests: ["a.spec.ts"] });
     const { adapter } = scripted((t) => (t === 1 ? [write(1)] : [finish]));

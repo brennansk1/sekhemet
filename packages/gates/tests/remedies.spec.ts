@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { defaultParserRegistry, rankFailures, remedyFor } from "../src/parsers.js";
 import type { GateFailure } from "../src/types.js";
@@ -94,5 +97,53 @@ describe("@sekhemet/gates targeted remedies", () => {
     expect(
       remedyFor("TS2352", "Conversion of type 'Record<string, SQLOutputValue>[]' to type 'Row[]'"),
     ).toMatch(/as unknown as Row\[\]/);
+  });
+});
+
+describe("a missing export is answered, not described", () => {
+  // The first frozen-suite run: told "Read the module and use its actual
+  // export", a Worker read the module four times, learned nothing it could
+  // act on, and was stopped for repeating itself. A suggested action must be
+  // completable in one step, so this one carries what it was sent to fetch.
+  const project = () => {
+    const dir = mkdtempSync(join(tmpdir(), "ts2305-"));
+    mkdirSync(join(dir, "src"));
+    writeFileSync(
+      join(dir, "src", "tokens.ts"),
+      [
+        "export const SPACING = 4;",
+        "export type Tone = 'pass' | 'fail';",
+        "export interface CardView { id: string }",
+        "const hidden = 1;",
+        "export { hidden as VISIBLE };",
+      ].join("\n"),
+    );
+    return dir;
+  };
+  const failureFor = (cwd: string, member: string) =>
+    defaultParserRegistry.parse({
+      gate: gate("tsc"),
+      exitCode: 2,
+      stdout: `src/card_tile.ts(1,15): error TS2305: Module '"./tokens.js"' has no exported member '${member}'.`,
+      stderr: "",
+      minimalRepro: "tsc --noEmit",
+      cwd,
+    })[0];
+
+  it("lists what the module actually exports", () => {
+    const f = failureFor(project(), "CanvasCard");
+    expect(f?.suggestedAction).toContain("does not export CanvasCard");
+    expect(f?.suggestedAction).toContain("CardView, SPACING, Tone, VISIBLE");
+  });
+
+  it("tells the model it does not need to read the module again", () => {
+    expect(failureFor(project(), "CanvasCard")?.suggestedAction).toMatch(
+      /no need to read .* again/,
+    );
+  });
+
+  it("falls back to words when the module cannot be found", () => {
+    const f = failureFor(mkdtempSync(join(tmpdir(), "ts2305-empty-")), "CanvasCard");
+    expect(f?.suggestedAction).toMatch(/does not export that name/);
   });
 });

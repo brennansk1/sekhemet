@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, relative, resolve } from "node:path";
 import type { FailureLocation, GateDefinition, GateFailure } from "./types.js";
 
 export interface ParseContext {
@@ -7,6 +9,8 @@ export interface ParseContext {
   stderr: string;
   /** Command that reproduces this run verbatim. */
   minimalRepro: string;
+  /** Where the gate ran, so a parser can read a file the failure names. */
+  cwd?: string;
 }
 
 export type FailureParser = (ctx: ParseContext) => GateFailure[];
@@ -113,6 +117,77 @@ export function remedyFor(code: string, message: string): string | undefined {
   }
 }
 
+/**
+ * The names a TypeScript module exports, read from its source.
+ *
+ * Deterministic and deliberately shallow — declarations and export lists, no
+ * type checker — because it only has to answer "what may I import from here".
+ * Returns undefined when the file cannot be read, so the caller falls back to
+ * words rather than to a wrong list.
+ */
+export function moduleExports(file: string): string[] | undefined {
+  let src: string;
+  try {
+    src = readFileSync(file, "utf8");
+  } catch {
+    return undefined;
+  }
+  const names = new Set<string>();
+  const decl =
+    /^\s*export\s+(?:declare\s+)?(?:default\s+)?(?:async\s+)?(?:const|let|var|function\*?|class|interface|type|enum|abstract\s+class)\s+([A-Za-z_$][\w$]*)/gm;
+  for (const m of src.matchAll(decl)) if (m[1]) names.add(m[1]);
+  for (const m of src.matchAll(/^\s*export\s*(?:type\s*)?\{([^}]*)\}/gm)) {
+    for (const part of (m[1] ?? "").split(",")) {
+      const name = part
+        .trim()
+        .split(/\s+as\s+/)
+        .pop()
+        ?.replace(/^type\s+/, "")
+        .trim();
+      if (name) names.add(name);
+    }
+  }
+  return [...names].sort();
+}
+
+/** `Module '"./tokens.js"' has no exported member 'X'` -> the module's source path. */
+function moduleFileFor(importer: string, message: string, cwd: string): string | undefined {
+  const spec = /Module '"([^"]+)"'/.exec(message)?.[1];
+  if (!spec?.startsWith(".")) return undefined;
+  const base = resolve(cwd, dirname(importer), spec.replace(/\.(m|c)?js$/, ""));
+  for (const ext of [".ts", ".tsx", ".mts", ".cts", "/index.ts"]) {
+    if (existsSync(`${base}${ext}`)) return `${base}${ext}`;
+  }
+  return undefined;
+}
+
+/**
+ * A missing export, answered rather than described.
+ *
+ * The generic remedy said "Read the module and use its actual export", and
+ * the first frozen-suite run showed where that leads: a Worker read the
+ * module four times, learned nothing it could act on, and was stopped for
+ * repeating itself. A suggested action has to be completable in one step, so
+ * this one carries what the model was being sent to fetch.
+ */
+function missingExportRemedy(
+  code: string,
+  message: string,
+  importer: string,
+  cwd: string | undefined,
+): string | undefined {
+  if ((code !== "TS2305" && code !== "TS2724") || !cwd) return undefined;
+  const target = moduleFileFor(importer, message, cwd);
+  const names = target ? moduleExports(target) : undefined;
+  if (!target || !names) return undefined;
+  const missing = /exported member '([^']+)'/.exec(message)?.[1] ?? "that name";
+  const rel = relative(cwd, target);
+  if (!names.length) {
+    return `${rel} exports nothing yet, so ${missing} cannot be imported from it. Define ${missing} where you use it, or — if it genuinely belongs in ${rel} and that file is outside this card's scope — do not keep reading it: use note to say so, and finish.`;
+  }
+  return `${rel} does not export ${missing}. It exports exactly: ${names.join(", ")}. Import one of those, or define ${missing} yourself. There is no need to read ${rel} again.`;
+}
+
 /** `src/a.ts(12,5): error TS2345: message` */
 const TSC_LINE = /^(.+?)\((\d+),(\d+)\):\s+error\s+(TS\d+):\s+(.*)$/;
 
@@ -144,6 +219,7 @@ const tscParser: FailureParser = (ctx) => {
       actual: `${code}: ${message}`,
       minimalRepro: ctx.minimalRepro,
       suggestedAction:
+        missingExportRemedy(code ?? "", message ?? "", file, ctx.cwd) ??
         remedyFor(code ?? "", message ?? "") ??
         `Resolve ${code} at ${file}:${location.line}. Read the surrounding lines before editing.`,
     });

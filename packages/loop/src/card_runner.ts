@@ -4,7 +4,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { TurnHistoryItem } from "@sekhemet/context";
 import { PrefixStabilityGuard } from "@sekhemet/context";
-import type { GateResult } from "@sekhemet/gates";
+import type { GateResult, GateRung } from "@sekhemet/gates";
 import {
   type EvidenceBundle,
   type GatesConfig,
@@ -23,6 +23,7 @@ import {
   type GateStatus,
   canonicalPayloadHash,
   cardClassOf,
+  cardKind,
   serializeContextPack,
 } from "@sekhemet/kernel";
 import { candidateSettings, harnessCommit } from "@sekhemet/models";
@@ -762,9 +763,17 @@ export class CardRunner {
     const tests = (this.options.card.acceptanceTests ?? []).map((t) =>
       t.startsWith("tests/") ? t : `tests/${t}`,
     );
+    // A types-only card's acceptance test is a contract checked by the type
+    // checker: `import type` and `expectTypeOf` are erased at runtime, so
+    // under the test runner alone it passes against an empty file and the
+    // card can never show red. Every such card in the first frozen-suite run
+    // was refused as vacuous for exactly this reason. Its red check has to
+    // include typecheck; the card is vacuous only if both already pass.
+    const rungs: GateRung[] =
+      cardKind(this.options.card) === "interface" ? ["test", "typecheck"] : ["test"];
     let result: GateResult;
     try {
-      result = await this.options.gateRunner.runGates(["test"], worktreePath);
+      result = await this.options.gateRunner.runGates(rungs, worktreePath);
     } catch (err) {
       return { status: "unknown", tests, detail: `gates could not run: ${refusalReason(err)}` };
     }
