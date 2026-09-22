@@ -72,6 +72,60 @@ describe("sekhemet plan persists the whole contract (P1, P2, P4-P7, defect 6)", 
   });
 });
 
+describe("planning looks for what already exists (reuse before rebuild)", () => {
+  it("puts the survey in the brief and tells each card what it can use instead of writing", async () => {
+    const k = kernel();
+    const out: string[] = [];
+    const queries: string[] = [];
+    await planCommand(
+      k,
+      "a billing service that charges customers monthly, handles refunds, and emails invoices",
+      {
+        print: (l) => out.push(l),
+        research: {
+          libraries: async (q) => {
+            queries.push(q);
+            return q.includes("invoices")
+              ? [
+                  {
+                    name: "nodemailer",
+                    ecosystem: "npm",
+                    version: "6.0.0",
+                    license: "MIT-0",
+                    usable: true,
+                    description: "Send emails with invoices attached",
+                    url: "https://www.npmjs.com/package/nodemailer",
+                  },
+                ]
+              : [];
+          },
+          repos: async () => [],
+        },
+      },
+    );
+    // Only short keyword queries leave the machine.
+    expect(queries.every((q) => q.split(" ").length <= 4)).toBe(true);
+    expect(out.join("\n")).toMatch(/emails invoices: nodemailer \(MIT-0\) may already cover this/);
+    const brief = readFileSync(join(k.repoPath, ".sekhemet", "brief.md"), "utf8");
+    expect(brief).toMatch(/## Prior art\n- \*\*a billing service/);
+    expect(brief).toContain("nodemailer (MIT-0");
+    const cards = await k.cardStore.listCards();
+    const invoices = cards.find((c) => c.tier !== "epic" && /emails invoices/i.test(c.title));
+    expect(invoices).toBeDefined();
+    const notes = (await k.cardStore.getDossier(invoices?.id ?? "")).notes.map((n) => n.text);
+    expect(notes.some((n) => /Before writing this yourself.*nodemailer/.test(n))).toBe(true);
+  });
+
+  it("searches nothing when no sources are given", async () => {
+    const k = kernel();
+    const out: string[] = [];
+    await planCommand(k, "a billing service that charges customers monthly", {
+      print: (l) => out.push(l),
+    });
+    expect(out.join("\n")).not.toMatch(/looked for what already exists/);
+  });
+});
+
 describe("queue prelude (P3, P10, P11, P16, P19-P22, P20)", () => {
   it("sweeps decision deadlines, reports signals and orders Ready by WSJF from config", async () => {
     const k = kernel();

@@ -91,6 +91,7 @@ import {
   type Wave2Command,
   appliedStepBudget,
   applyTunedPolicy,
+  liveReuseDeps,
   modelRegistry,
   observeOutcome,
   planCommand,
@@ -683,11 +684,13 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       argv.includes("--sketcher") && sketcherName
         ? new ModelRoster({ registry: modelRegistry() }).resolve(sketcherName, "manager")
         : undefined;
-    await planCommand(
-      { repoPath: config.repoPath, cardStore, log },
-      spec,
-      sketcher ? { sketcher } : {},
-    );
+    // The reuse survey reads public registries, GitHub and paper indexes with
+    // short keyword queries; --offline plans without looking.
+    const offline = argv.includes("--offline") || process.env.SEKHEMET_OFFLINE === "1";
+    await planCommand({ repoPath: config.repoPath, cardStore, log }, spec, {
+      ...(sketcher ? { sketcher } : {}),
+      ...(offline ? {} : { research: liveReuseDeps() }),
+    });
     await (sketcher as { unload?: () => Promise<void> } | undefined)?.unload?.();
     console.log("View the cards with 'sekhemet board'.\n");
     return;

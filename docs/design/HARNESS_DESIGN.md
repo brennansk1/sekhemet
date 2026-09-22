@@ -1000,7 +1000,22 @@ The proportion is chosen by rules, before any model is loaded, not by the Planne
 
 Two rules apply at every level. **Quality words are constraints, not work**: "fast", "secure", "scale to many users" leave the spec that is decomposed and become constraints, each with a stated default, so the billing service now plans four cards instead of seven. And **every default is an assumption on every card**, in the dossier the Worker reads, and logged on the epic. The request phrasing ("build me", "I want") is dropped from what is built.
 
-**[DESIGN]** Not built yet: the riskiest assumption is named in the brief but not yet scheduled as the first card, and the brief's Prior art section says it was not researched rather than asking the Researcher. Both need the Planner's model at planning time, which the rules above deliberately avoid.
+### Reuse before rebuild
+
+The most expensive thing an agent does on a new project is write what a maintained, legally usable package already does. So whenever the design stage has anything to say at all — everything except a small change to an existing project — planning looks first, before any card is written:
+
+*   **Package registries** (npm; PyPI by name) and **GitHub repositories**, one short keyword query per thing the spec asks for. Only the keywords leave the machine: never the spec, never the code.
+*   **The literature**, only when the work is an algorithm — ranking, matching, scheduling, compression, detection — where a paper knows more than a registry does.
+
+What comes back is filtered before anyone sees it, and the filters were set by what the first live searches returned. **Relevance first**: a candidate must share at least two of the words the need is about, in its name or description — a registry ranks by keyword and popularity, and the first live survey recommended a streams library for "handles refunds" and a GraphQL tool for "deduplicates similar photos", each as something that "already does this". The query itself drops words that say what kind of thing is built ("CLI", "service", "handles") rather than what it is about. **Somebody must use it**: below a thousand downloads a week, or twenty stars, a package is someone's experiment — the first survey recommended a test fork at 187. **Only licences that permit depending on the code are recommended**; weak copyleft is flagged; a real restrictive licence (GPL, AGPL) is named in the exclusions so the choice is visible. Code with no licence at all is dropped without comment: nobody may use it, and listing it was mostly noise.
+
+**Candidates are worth checking, not guaranteed.** They are matched on a name and a description, so the person hears "may already cover this", never "already does this", and the Worker is told to read one before depending on it. Archived repositories, and ones untouched for two years, are not recommended: an unmaintained dependency is a liability, not a head start. **A source that could not be reached is reported as not searched, never as "nothing found"** — the difference between "nobody has built this" and "I did not look" is the whole value of looking.
+
+The results go three places. The person hears them as a PM would say them — the best candidate for each part, in a line. The brief's Prior art section lists everything found, with licences and links. And **each card's dossier tells the Worker what exists for the part it builds**, with the instruction to depend on it or say with `note` why none fits. The Worker never searches itself: it stays offline in its sandbox, and the choice reaches it as part of its card.
+
+`--offline` (or `SEKHEMET_OFFLINE=1`) plans without looking, and says so.
+
+**[DESIGN]** Not built yet: the riskiest assumption is named in the brief but not yet scheduled as the first card; the Planner's model does not yet phrase the design stage, so its words are still the rules' templates; and the deep Researcher — which can read a repository's code and a paper's method, not only find them — is not yet asked before planning. The survey is the fast path that runs on every new project; the deep path needs a model loaded, which on this host competes with the Worker for memory.
 
 ## Starting a project that does not exist yet
 
@@ -1322,6 +1337,8 @@ The failure it raises follows the repair contract: it names the export and the f
 The regression gate restates any failure of a test that exists on `main` — other than the card's own acceptance tests — as a **regression**: that test passed on `main`, this card's change broke it, and the fix is in the files the card changed, which the failure lists. It also refuses what a test run cannot see: a test `main` had that the card removed or emptied. A test that no longer exists cannot fail, and not every project protects its tests in `gates.toml`.
 
 It judges against `main`, never against the card's own new tests, and outside a git repository it judges nothing rather than guess.
+
+**A test is source code, and restoring one is a single write.** The first version treated every file under `tests/` as a test, and the frozen suite's third run found it failing every card for "emptying" `tests/.gitkeep` — a placeholder that is empty on `main` as well. Its remedy, `git checkout main -- <file>`, named a tool the Worker does not have, so the two cards it reached spent their remaining turns looking for one. Now only code files count, a file empty on `main` cannot be emptied, and the failure carries the test's content from `main` so that restoring it is one `write_file`; a test too long to carry is reported with `note` instead.
 
 ### Architecture
 

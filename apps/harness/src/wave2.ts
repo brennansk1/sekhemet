@@ -54,6 +54,17 @@ import {
   triggeredResponses,
 } from "@sekhemet/planner";
 import { planRelease, publishRelease, runActGate } from "@sekhemet/sync";
+import { searchLibraries } from "./pm/libraries.js";
+import {
+  type ReuseDeps,
+  type ReuseFinding,
+  dossierNote,
+  priorArtLines,
+  reuseSurvey,
+  searchRepos,
+  withPriorArt,
+} from "./research/reuse.js";
+import { searchPapers } from "./research/web.js";
 
 /**
  * Production wiring for the planner, eval and sync APIs (wave 2, Builder C):
@@ -97,6 +108,81 @@ export async function repoPlanner(
  * its whole contract, INVEST enforced, the batched decision parked.
  */
 /** No tracked source yet: a project that does not exist. */
+/** The separate things a spec asks for, as the design stage split them. */
+function needsOf(buildSpec: string): string[] {
+  return buildSpec
+    .split(/,\s*/)
+    .map((n) => n.trim())
+    .filter(Boolean)
+    .slice(0, 4);
+}
+
+/** A card built from a need carries the need's opening words in its title. */
+function coversNeed(title: string, need: string): boolean {
+  const head = need.toLowerCase().split(/\s+/).slice(0, 4).join(" ");
+  return title.toLowerCase().includes(head);
+}
+
+/** What a PM would say having looked: the best candidate per need, briefly. */
+function reuseSummary(findings: readonly ReuseFinding[]): string[] {
+  const lines: string[] = [];
+  const unreachable = [...new Set(findings.flatMap((f) => f.unsearched))];
+  for (const f of findings) {
+    const lib = f.libraries[0];
+    const repo = f.repos[0];
+    if (lib)
+      lines.push(`  ${f.need}: ${lib.name} (${lib.license}) may already cover this — ${lib.url}`);
+    else if (repo)
+      lines.push(
+        `  ${f.need}: ${repo.fullName} (${repo.license}) is worth reading first — ${repo.url}`,
+      );
+    if (f.papers[0])
+      lines.push(`  ${f.need}: the literature has ${f.papers[0].title} — ${f.papers[0].url}`);
+  }
+  const out = lines.length
+    ? [
+        "Before planning, I looked for what already exists. Worth checking before writing it:",
+        ...lines,
+        "Each card is told about the options for its part; licences are checked.",
+      ]
+    : unreachable.length === 0
+      ? [
+          "I looked for existing packages and repositories and found nothing that fits better than writing it.",
+        ]
+      : [];
+  if (unreachable.length) {
+    out.push(
+      `I could not reach ${unreachable.join(" or ")}, so I have not checked whether this already exists there.`,
+    );
+  }
+  return out;
+}
+
+/** The public sources the reuse survey reads: registries, GitHub, papers. */
+export function liveReuseDeps(): ReuseDeps {
+  const githubJson = async (url: string): Promise<unknown> => {
+    const res = await fetch(url, {
+      // An unauthenticated search allows ten queries a minute; a token from
+      // the environment raises that. It is read, never stored.
+      headers: {
+        "User-Agent": "sekhemet",
+        Accept: "application/vnd.github+json",
+        ...(process.env.GITHUB_TOKEN
+          ? { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` }
+          : {}),
+      },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) throw new Error(`${res.status} from GitHub`);
+    return res.json();
+  };
+  return {
+    libraries: (q) => searchLibraries(q, "npm"),
+    repos: (q) => searchRepos(q, githubJson),
+    papers: (q) => searchPapers(q),
+  };
+}
+
 function isGreenfield(repoPath: string): boolean {
   try {
     const files = execFileSync("git", ["ls-files"], {
@@ -121,7 +207,12 @@ function tryGateIds(repoPath: string): string[] {
 export async function planCommand(
   k: Kernel,
   spec: string,
-  options: { sketcher?: LocalInferenceAdapter; print?: (line: string) => void } = {},
+  options: {
+    sketcher?: LocalInferenceAdapter;
+    print?: (line: string) => void;
+    /** Where to look for what already exists; omitted, nothing is searched. */
+    research?: ReuseDeps;
+  } = {},
 ): Promise<{ epicId: string; created: number; decisionId?: string }> {
   const print = options.print ?? ((l: string) => console.log(l));
   // The design stage decides how much conversation this spec deserves, says
@@ -130,10 +221,18 @@ export async function planCommand(
   const design = designStage(spec, { greenfield: isGreenfield(k.repoPath) });
   for (const line of design.say) print(line);
   const briefPath = join(k.repoPath, ".sekhemet", "brief.md");
+  // Reuse before rebuild: look for what already exists before any card is
+  // written, whenever the design stage has anything to say at all.
+  const findings =
+    options.research && design.proportion !== "none"
+      ? await reuseSurvey(needsOf(design.buildSpec), options.research)
+      : undefined;
+  if (findings) for (const line of reuseSummary(findings)) print(line);
   if (design.proportion === "brief" && !existsSync(briefPath)) {
     // Never over a brief a person has written or edited.
     mkdirSync(dirname(briefPath), { recursive: true });
-    writeFileSync(briefPath, renderBrief(design, { gates: tryGateIds(k.repoPath) }));
+    const brief = renderBrief(design, { gates: tryGateIds(k.repoPath) });
+    writeFileSync(briefPath, findings ? withPriorArt(brief, priorArtLines(findings)) : brief);
   }
   const epicId = `epic_${Date.now().toString(16)}`;
   await k.cardStore.createCard({
@@ -173,6 +272,16 @@ export async function planCommand(
     ...(options.sketcher ? { sketcher: options.sketcher } : {}),
   });
   print(formatPlanReport(result));
+  // Each card is told what already exists for the part it builds.
+  for (const story of findings ? result.created : []) {
+    const finding = findings?.find((f) => coversNeed(story.title, f.need));
+    const note = finding ? dossierNote(finding) : undefined;
+    if (note) {
+      await k.cardStore
+        .recordDossierEntry({ cardId: story.id, kind: "note", text: note, actor: "planner" })
+        .catch(() => undefined);
+    }
+  }
   return {
     epicId,
     created: result.created.length,
