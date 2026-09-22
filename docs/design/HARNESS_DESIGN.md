@@ -980,12 +980,27 @@ Proportionality is the default behaviour, not an escape hatch, and the small cas
 | --- | --- |
 | "Add a `--json` flag" | Nothing. It is a card. |
 | "Build me a calculator" | One sentence saying what is about to be built. No brief. |
-| "A CLI that syncs my notes to S3" | One or two questions, both about things hard to change later. A short brief. |
+| "A CLI that syncs my notes to S3" | One or two questions, both about things hard to change later, each with the default that will be used. No brief: the answers are assumptions on the cards. |
 | "A multi-tenant billing service" | The full six, a real conversation, and a discussion about whether it is two projects. |
 
 **[DESIGN]** The Planner chooses by its own difficulty estimate and the appetite the person states, and it errs toward less. A brief is written only when there is something in it worth reading later; for everything below that line the decisions are recorded as assumptions on the cards, where they are just as visible and cost nobody a document.
 
 The failure mode to design against is not an under-planned calculator. It is a person who wanted a calculator and got interviewed about their success metrics.
+
+### How the proportion is chosen, as built
+
+*Built 2026-09-22 from a measurement.* Before the design stage existed, the planner handled a calculator, a sync tool and a billing service identically — two, two and seven cards, no question asked of any — and three of the billing service's cards were `"It should be fast: happy path"`, `"Secure: happy path"` and `"Scale to many users: happy path"`. The calculator's cards were titled `"Me a calculator"`.
+
+The proportion is chosen by rules, before any model is loaded, not by the Planner's difficulty estimate as first designed. Rules are deterministic, testable, and cost nothing on a host where loading a second model is the scarcest thing there is; the Planner model is kept for the conversation. In order:
+
+1.  **A brief** when being wrong is expensive: money, identity, or personal data in the spec. It is written to `.sekhemet/brief.md` — never over an existing one — with its riskiest assumption named.
+2.  **Questions** — at most two — when the spec names an external contract that is hard to change once code depends on it: sync conflict rules, storage credentials, the database, the calling protocol.
+3.  **One sentence** for a new project, or a change large enough to be worth restating.
+4.  **Nothing** for a small change to an existing project.
+
+Two rules apply at every level. **Quality words are constraints, not work**: "fast", "secure", "scale to many users" leave the spec that is decomposed and become constraints, each with a stated default, so the billing service now plans four cards instead of seven. And **every default is an assumption on every card**, in the dossier the Worker reads, and logged on the epic. The request phrasing ("build me", "I want") is dropped from what is built.
+
+**[DESIGN]** Not built yet: the riskiest assumption is named in the brief but not yet scheduled as the first card, and the brief's Prior art section says it was not researched rather than asking the Researcher. Both need the Planner's model at planning time, which the rules above deliberately avoid.
 
 ## Starting a project that does not exist yet
 

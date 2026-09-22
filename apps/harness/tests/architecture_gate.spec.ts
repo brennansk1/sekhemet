@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { designStage, renderBrief } from "@sekhemet/planner";
 import { describe, expect, it } from "vitest";
 import { architectureGate, parseInvariants } from "../src/architecture_gate.js";
 
@@ -79,6 +80,16 @@ describe("the architecture gate", () => {
     });
     write(root, "src/types.ts", "export type PartitionKey = string;\n");
     expect(architectureGate(root)).toEqual([]);
+  });
+
+  it("ignores examples in a comment, so a fresh brief enforces nothing", () => {
+    // The design stage writes a brief whose Invariants section shows the two
+    // forms inside an HTML comment. Enforcing them would fail cards for rules
+    // nobody declared.
+    const brief = renderBrief(designStage("a billing service", { greenfield: true }), {
+      gates: ["test"],
+    });
+    expect(parseInvariants(brief)).toEqual({ rules: [], unenforced: [] });
   });
 
   it("enforces nothing when the project declares nothing", () => {

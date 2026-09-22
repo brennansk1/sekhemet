@@ -1,5 +1,6 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { approveSkill, readSkillLock, revokeSkill } from "@sekhemet/context";
 import {
   BudgetPolicyStore,
@@ -18,6 +19,7 @@ import {
   validateToolProposal,
   writeToolCandidate,
 } from "@sekhemet/eval";
+import { loadGatesConfig } from "@sekhemet/gates";
 import { type CardRecord, type CardStore, type EventLog, parseToml } from "@sekhemet/kernel";
 import {
   type LocalInferenceAdapter,
@@ -36,6 +38,7 @@ import {
   ceremoniesDue,
   codebaseMapFromRepo,
   computeSignals,
+  designStage,
   formatPlanReport,
   intakeGoal,
   loadCalibrationLog,
@@ -46,6 +49,7 @@ import {
   processProfileFromConfig,
   rankGoals,
   recordAssumptionOutcome,
+  renderBrief,
   runGoalLoop,
   triggeredResponses,
 } from "@sekhemet/planner";
@@ -92,16 +96,70 @@ export async function repoPlanner(
  * decompose against the real codebase map, then persist every story with
  * its whole contract, INVEST enforced, the batched decision parked.
  */
+/** No tracked source yet: a project that does not exist. */
+function isGreenfield(repoPath: string): boolean {
+  try {
+    const files = execFileSync("git", ["ls-files"], {
+      cwd: repoPath,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return !files.split("\n").some((f) => /\.(?:[cm]?[jt]sx?|py|rs|go|java|rb)$/.test(f));
+  } catch {
+    return true;
+  }
+}
+
+function tryGateIds(repoPath: string): string[] {
+  try {
+    return loadGatesConfig(repoPath).gates.map((g) => g.id);
+  } catch {
+    return [];
+  }
+}
+
 export async function planCommand(
   k: Kernel,
   spec: string,
   options: { sketcher?: LocalInferenceAdapter; print?: (line: string) => void } = {},
 ): Promise<{ epicId: string; created: number; decisionId?: string }> {
   const print = options.print ?? ((l: string) => console.log(l));
+  // The design stage decides how much conversation this spec deserves, says
+  // it, and proceeds: quality words become constraints with defaults, not
+  // cards, and a spec with money or identity at stake gets a written brief.
+  const design = designStage(spec, { greenfield: isGreenfield(k.repoPath) });
+  for (const line of design.say) print(line);
+  const briefPath = join(k.repoPath, ".sekhemet", "brief.md");
+  if (design.proportion === "brief" && !existsSync(briefPath)) {
+    // Never over a brief a person has written or edited.
+    mkdirSync(dirname(briefPath), { recursive: true });
+    writeFileSync(briefPath, renderBrief(design, { gates: tryGateIds(k.repoPath) }));
+  }
   const epicId = `epic_${Date.now().toString(16)}`;
-  await k.cardStore.createCard({ id: epicId, tier: "epic", title: spec, status: "in_progress" });
+  await k.cardStore.createCard({
+    id: epicId,
+    tier: "epic",
+    title: design.buildSpec,
+    status: "in_progress",
+  });
   const planner = await repoPlanner(k);
-  const plan = await planner.decomposeSpec({ parentId: epicId, parentTier: "epic", spec });
+  const plan = await planner.decomposeSpec({
+    parentId: epicId,
+    parentTier: "epic",
+    spec: design.buildSpec,
+  });
+  const now = new Date().toISOString();
+  plan.ambiguity.assumptions.push(
+    ...design.assumptions.map((statement, i) => ({
+      id: `asm_design_${epicId}_${i}`,
+      cardId: epicId,
+      category: "vagueness" as const,
+      statement,
+      basis: "design stage default",
+      excerpt: spec.slice(0, 120),
+      createdAt: now,
+    })),
+  );
   if (plan.rejected) {
     print(`The spec is under-specified: ${plan.rejectionReason ?? "too many open questions"}.`);
     for (const f of plan.ambiguity.findings.filter((x) => x.disposition === "ask")) {

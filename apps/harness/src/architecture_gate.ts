@@ -41,7 +41,8 @@ export function parseInvariants(brief: string): ParsedInvariants {
   const rules: Invariant[] = [];
   const unenforced: string[] = [];
   let inSection = false;
-  for (const raw of brief.split("\n")) {
+  // Comments are not declarations: a brief shows the forms as examples.
+  for (const raw of brief.replace(/<!--[\s\S]*?-->/g, "").split("\n")) {
     const heading = /^#{1,6}\s+(.*)$/.exec(raw.trim());
     if (heading) {
       inSection = /^invariants\b/i.test(heading[1] ?? "");
