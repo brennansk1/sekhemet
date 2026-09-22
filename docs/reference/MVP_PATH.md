@@ -18,10 +18,10 @@ Two exceptions, both narrow: a defect that breaks the path, and a change that de
 | 2 | **`doctor` verifies the weights exist** | An all-green diagnostic followed by file-not-found is worse than no diagnostic | Done |
 | 3 | **The gate command, and hooks that run it** | Our own definition of done; without it, breakage is found by whoever runs tests by hand | Done |
 | 4 | **Phase 0: the tool-arm measurement** | Every quality claim in the design rested on a number that did not exist | **Done — GO at 100%, see [PHASE0.md](PHASE0.md)** |
-| 5 | **The frozen suite produces one number** | Makes every later claim checkable, and is the admission test the self-improvement loop already assumes | Built; has not yet produced a number |
+| 5 | **The frozen suite produces one number** | Makes every later claim checkable, and is the admission test the self-improvement loop already assumes | **Done — run 1 scored 5/30 against hash `192b6e95fa3c`; see [SUITE_RUNS.md](SUITE_RUNS.md) for every run and why each failure failed** |
 | 6 | **One card, Ready → Review, unattended** | The MVP sentence | **Done — 2026-09-21, `card_chron_hasher`, 4 turns, 10/10 gates, evidence `ev_fb8a3ec4d1`** |
 | 7 | **Review shows the evidence, and a person accepts** | The human decision is the product | **Done — board shows it in Review, `accept` squash-merged it to main as `69a8be6` and moved it to Done** |
-| 8 | **The same card runs twice identically** | Byte-identical prompts are what make the cache and the measurement real | Partly: `replay` reconstructs all three attempts faithfully from the log. Byte-identical prompts across two runs of one card is still unverified |
+| 8 | **The same card runs twice identically** | Byte-identical prompts are what make the cache and the measurement real | **Done — `replay` reconstructs every attempt from the log, and `identical_runs.spec.ts` runs one card from two fresh repositories with a scripted Worker: every request the model receives is byte-identical, and none carries the repository's path.** Limit: the scripted card passes on its first attempt, so repair prompts — which carry gate output — are not covered by that test |
 
 Steps 4 and 6 are answered. A local 35B-A3B emits valid, correct tool calls, and a card has gone from Ready to Review unattended with a complete evidence bundle. The thesis holds and the machine works end to end.
 
