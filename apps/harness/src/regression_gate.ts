@@ -25,6 +25,14 @@ import { changedSources } from "./reachability_gate.js";
  */
 
 const TEST = /(^|\/)(tests?|__tests__)\/|\.(spec|test)\.[cm]?[jt]sx?$/;
+/**
+ * A test is source code. Suite run 3 found the first version treating every
+ * file under tests/ as one — including the empty tests/.gitkeep every fixture
+ * has — and failing every card for "emptying" a placeholder.
+ */
+const CODE = /\.(?:[cm]?[jt]sx?|py|rs|go|java|rb)$/;
+/** Content up to this size travels in the failure, so restoring it is one write. */
+const CARRY_LIMIT = 4000;
 /** The acceptance library is staged from, not run; later cards' tests live there. */
 const LIBRARY = /(^|\/)acceptance\//;
 
@@ -46,7 +54,7 @@ function testsOnBase(root: string, base: string): Set<string> | undefined {
       out
         .split("\n")
         .map((f) => f.trim())
-        .filter((f) => f && TEST.test(f) && !LIBRARY.test(f)),
+        .filter((f) => f && TEST.test(f) && CODE.test(f) && !LIBRARY.test(f)),
     );
   } catch {
     return undefined;
@@ -54,6 +62,18 @@ function testsOnBase(root: string, base: string): Set<string> | undefined {
 }
 
 const normalise = (file: string): string => file.replace(/^\.\//, "");
+
+function contentOnBase(root: string, base: string, file: string): string {
+  try {
+    return execFileSync("git", ["show", `${base}:${file}`], {
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch {
+    return "";
+  }
+}
 
 /**
  * The inner gates' failures, with every failure of a test `main` already
@@ -88,6 +108,14 @@ export function regressionFailures(
     const path = join(root, file);
     const gone = !existsSync(path) || readFileSync(path, "utf8").trim() === "";
     if (!gone) continue;
+    const original = contentOnBase(root, base, file);
+    // Empty on main too: nothing was taken away.
+    if (original.trim() === "") continue;
+    // The Worker has write_file, not git: the failure carries what to write.
+    const restore =
+      original.length <= CARRY_LIMIT
+        ? `Restore it in one step: write_file ${file} with exactly this content, as it is on main:\n${original}`
+        : `It is ${original.split("\n").length} lines on main, too long to restore by hand here: say with note that ${file} was removed and needs restoring, and finish.`;
     removed.push({
       rung: "hygiene",
       gate: "regression",
@@ -98,7 +126,7 @@ export function regressionFailures(
       location: { file },
       expected: "every test main has still exists",
       actual: `${file} is gone`,
-      suggestedAction: `Restore ${file} exactly as it is on main (git checkout main -- ${file}). A test that no longer exists cannot fail, which is why removing one is refused; if it is genuinely obsolete, say so with note and let a human remove it.`,
+      suggestedAction: `${file} is a test main already has, and this card removed or emptied it. A test that no longer exists cannot fail, which is why removing one is refused; if it is genuinely obsolete, say so with note and let a human remove it. ${restore}`,
     });
   }
   return [...restated, ...removed];

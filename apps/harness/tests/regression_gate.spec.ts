@@ -74,6 +74,26 @@ describe("the regression gate", () => {
     expect(found.sort()).toEqual(["tests/a.spec.ts", "tests/b.spec.ts"]);
   });
 
+  it("does not mistake a placeholder for a test", () => {
+    // Suite run 3: every fixture has an empty tests/.gitkeep. The first
+    // version called it "removed or emptied" on every card, and its remedy
+    // (git checkout) was a tool the Worker does not have. Two cards died on
+    // it before the run was stopped.
+    const root = repo({ "tests/.gitkeep": "", "tests/README.md": "notes", "src/a.ts": "" });
+    write(root, "src/a.ts", "export const a = 1;\n");
+    expect(regressionFailures(root, [])).toEqual([]);
+  });
+
+  it("carries a removed test's content, so restoring it is one write", () => {
+    const body = "import { it } from 'vitest';\nit('works', () => {});\n";
+    const root = repo({ "tests/a.spec.ts": body });
+    rmSync(join(root, "tests/a.spec.ts"));
+    const [f] = regressionFailures(root, []);
+    expect(f?.suggestedAction).toContain("write_file");
+    expect(f?.suggestedAction).toContain(body);
+    expect(f?.suggestedAction).not.toMatch(/git checkout/);
+  });
+
   it("judges nothing outside a git repository", () => {
     const root = mkdtempSync(join(tmpdir(), "regr-nogit-"));
     const f = testFailure("tests/a.spec.ts");

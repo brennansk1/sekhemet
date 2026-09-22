@@ -41,6 +41,28 @@ const suite = loadFrozenSuite(ROOT);
 const tasks = only ? suite.tasks.filter((t) => only.includes(t.suite)) : suite.tasks;
 console.log(`Frozen suite ${suite.version} ${suite.hash.slice(0, 12)} — ${tasks.length} task(s)`);
 
+const { reachabilityGate } = await import(join(ROOT, "apps/harness/dist/reachability_gate.js"));
+const { regressionFailures } = await import(join(ROOT, "apps/harness/dist/regression_gate.js"));
+const { architectureGate } = await import(join(ROOT, "apps/harness/dist/architecture_gate.js"));
+
+/**
+ * Every project gate must pass an untouched repository. Run 3 was stopped
+ * after two cards because a new gate failed every fixture on its empty
+ * tests/.gitkeep — a defect this check finds in seconds instead of an hour.
+ */
+function preflight(fixture, dir) {
+  const failures = [
+    ...reachabilityGate(dir),
+    ...regressionFailures(dir, []),
+    ...architectureGate(dir),
+  ];
+  if (failures.length) {
+    console.error(`preflight: a project gate fails untouched ${fixture}; not running the suite.`);
+    for (const f of failures) console.error(`  ${f.gate}: ${f.errorExcerpt}`);
+    process.exit(3);
+  }
+}
+
 /** One prepared repository per fixture, seeded once and reused by its cards. */
 const repos = new Map();
 function repoFor(fixture) {
@@ -61,6 +83,7 @@ function repoFor(fixture) {
     ? ["scripts/seed_project.mjs", join(ROOT, "fixtures", fixture), dir]
     : ["scripts/seed_chronicle.mjs", dir];
   execFileSync("node", [join(ROOT, seeder[0]), ...seeder.slice(1)], { stdio: "ignore" });
+  preflight(fixture, dir);
   repos.set(fixture, dir);
   return dir;
 }

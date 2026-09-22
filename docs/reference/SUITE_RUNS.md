@@ -22,6 +22,21 @@ The fixtures were not touched: the suite hash covers the manifest and the fixtur
 
 ---
 
+## Run 3 — stopped after 2 cards: the harness's own new gate
+
+Stopped deliberately after two cards, both lost to one harness defect introduced the same day.
+
+| Card | Result | Cause |
+| --- | --- | --- |
+| `chron_iface` | `replan_requested`, 215s | **Harness: regression gate false positive** |
+| `chron_hasher` | `oscillation_detected`, 97s | **Harness: the same** — its only gate failure |
+
+The new regression gate treated `tests/.gitkeep`, which every fixture has and which is empty on `main`, as a test the card had emptied. Its remedy was `git checkout`, a tool the Worker does not have, so both cards spent their remaining turns searching for one. Continuing would have measured that defect thirty times. Fixed, with tests, and the fix is recorded in the design.
+
+**Process change:** before a full run, every project gate is now run against every seeded fixture with no card changes, where each must pass. A gate that fails an untouched repository is broken, and finding that out costs seconds, not an hour of model time.
+
+---
+
 ## Validating the merge fix — onyx only, 2026-09-22
 
 Before spending an hour on a full run, the eight onyx cards were run alone to see whether merging passing cards changes anything. It does.
