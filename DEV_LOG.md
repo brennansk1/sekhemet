@@ -10,39 +10,53 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-If you are Claude reading this because Gemini reached quota limits or you were summoned to take the lead:
-1. **Current Milestone**: All Monorepo Packages M1–M12, Visual Systems, MCP Server, Anti-Shallow DoD, and Showcase Trifecta Fully Operational!
-2. **Current State**:
-   - Git repository clean on branch `main` (commit `dcaa0a0`).
-   - All 13 workspace projects linked, built (`tsc -b`), passing Biome linter/formatter (`biome check .`), and passing all verification gates.
-   - **75/75 unit and integration tests passing green across 22 test suites in 1.56s**.
-   - Subsystems & Architecture Status:
-     - `@sekhemet/kernel`: Native `node:sqlite` WAL schema (`events`, `cards`, `checkpoints`), SHA-256 hash-chained `EventLog` with tamper detection, `CardStore` with single-source projection replay, and `LifecycleHookEngine` managing the 10 waterfall lifecycle hooks.
-     - `@sekhemet/sandbox`: `ProcessSandbox` with subprocess containment, hard `timeoutMs` termination (`SIGTERM` -> `SIGKILL`), macOS Seatbelt generator, and `PermissionEngine` enforcing strict three-tier (Allow/Ask/Deny) scope confinement, path traversal blocking, and the Test Immutability Law.
-     - `@sekhemet/sync`: `NodeGitSyncAdapter` managing isolated worktrees (`.sekhemet/worktrees/<cardId>`), structured checkpoint commit trailers, `refs/sekhemet/checkpoints` updates, and squashed acceptance merges.
-     - `@sekhemet/models`: Tool Arms A/B/C, `MockInferenceAdapter`, `HttpInferenceAdapter` (Ollama & OpenAI-compatible llama.cpp/MLX endpoints), tool call and text patch parsers, and dedicated `createQwen38_27BAdapter` tuned for `Qwen3.8-27B-GSQ-RCO-IQ3_S-mtp.gguf` on port 8099.
-     - `@sekhemet/gates`: `DeterministicGateRunner`, BoundsCheck verification ($<200$ LOC, 1-3 files), and typed `GateFailure` extraction from compiler and test failure stacks.
-     - `@sekhemet/context`: `DefaultContextEngine`, symbol outline extraction, budget fitting, byte-stable cache prefixes, `SkillsRegistry` with progressive disclosure, `PlaybookRegistry` for `.sekhemet/playbook.toml`, and `ContextCondenser` (RTK command output condensing & in-place observation masking).
-     - `@sekhemet/loop`: `CardExecutionSessionImpl` coordinating turn execution, full tool catalog (`read_file`, `write_file`, `replace_lines`, `edit` with uniqueness check, `read_symbol`, `replace_symbol_body`, `insert_after_symbol`, `find_references`, `note`, `docs`, `list_dir`, `find_files`, `grep_search`, `run_cmd`, `finish_card`), permission validation, verification runs, budget limits, and a 3-turn oscillation circuit breaker.
-     - `@sekhemet/board`: `BoardServiceImpl` managing kanban lifecycle transitions and Review WIP limit backpressure.
-     - `@sekhemet/planner`: `SpidrFeaturePlanner` decomposing epics into SPIDR stories and `ClarEvalAmbiguityClassifier` generating `DecisionRequest` previews for high-entropy tasks.
-     - `@sekhemet/eval`: `BenchmarkHarness` executing task suites and computing Pass@1 metrics.
-     - `@sekhemet/ui`: `VirtualCanvasManager` computing dual-axis layout geometry and viewport culling for 500+ cards at 60 FPS, with Basalt theme tokens.
-     - `apps/harness`: CLI host supporting `sekhemet doctor`, `--restricted`, `board`, `log`, `plan`, `run`, `gate`, `replay`, `bake-off`, `serve` / `ui` (Basalt HTTP dashboard), and `mcp` (stdio JSON-RPC server).
-3. **Showcase Gate Projects Designed**:
-   - `docs/benchmarks/SHOWCASE_TRIFECTA_SPEC.md` defines 3 complete showcase projects to execute as the final gate for `Qwen3.8-27B-GSQ-RCO` before public launch:
-     1. **Project "Onyx"** (Systems & Cryptography): Local secret vault, AES-256-GCM, in-memory process injection, Shannon entropy leak scanning.
-     2. **Project "Basalt Canvas"** (Visual & Frontend Design): High-density dual-axis kanban, interactive pan-and-zoom DAG canvas, gate strips, Basalt theme surface ladder.
-     3. **Project "Vanguard"** (Real-Time & Event Engines): Local webhook proxy, Stripe/GitHub HMAC signature verification, SSE stream, deterministic replay.
-4. **Anti-Shallow Standard**:
-   - Bound by `DEFINITION_OF_DONE.md` and Rule 6 in `AGENTS.md`. Zero synthetic mocks for core systems; mandatory fault injection; deep structural assertions; full permissions and hooks.
-5. **Immediate Next Step for Claude**:
-   - Launch execution of the 3 showcase projects using the local `llama-server` on port 8099, or begin autonomous feature expansion following the SPIDR boundaries.
-6. **Active Checkpoint Git Ref**: `refs/heads/main` (commit `dcaa0a0`).
+*Refreshed 2026-09-22, paused at commit `c5d5bff` on branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`). Read Entry 23 first.*
+
+1. **Positioning** (owner, 2026-09-22): *a harness for professional teams* — it runs the whole professional process (brief → backlog → gated cards → human acceptance) on a board teams already know, teaches beginners the practice, and lets non-developers talk to the PM. Claims table in `docs/design/HARNESS_DESIGN.md` → "Product definition and selling points". v1 stays 100% local; cloud models after v1.
+2. **State:** `pnpm gate` green — 1143 tests, 173 files. MVP_PATH steps 1–8 done. Reachability, regression and architecture gates wrap every card. Eight-command front door, proportional design stage, reuse-before-rebuild survey, planner behaviours and riskiest-assumption-first are built.
+3. **Measurement:** frozen suite `1.0.0` hash `192b6e95fa3c`. Runs 4 (Nail) and 5 (Cyber-Tiel + MTP) were stopped part-way: Nail 7/10, Cyber-Tiel 6/10 on the ten shared cards, every failure attributed in `docs/reference/SUITE_RUNS.md`. **All harness defects they found are fixed in `c5d5bff` but not yet re-measured.** No full scored run exists after the last harness change.
+4. **Models:** the intended Worker is **Cyber-Tiel-Coder-35B-A3B MTP IQ3_XXS** on `/Volumes/My Passport/AI-Models/llm/`, served by Homebrew `llama-server` on port 8098 with `--spec-type draft-mtp` (verified: ~78% draft acceptance). Get the exact launch args from `createCyberTielWorker().launchArgs()`; start the server once, cards attach to it. Loading from the USB drive takes ~5 min. Nail (`nail-35b-a3b-ctx`, Ollama) was the old default.
+5. **Immediate next steps, in order** (owner-approved):
+   1. Thinking A/B on Cyber-Tiel, chronicle+onyx: `SEKHEMET_THINKING=off|surgical|all`, then the top two again; then `SEKHEMET_WORKER_METHOD=strict`.
+   2. Full scored 30-card run with the winning settings; record against the hash.
+   3. Dashboard alignment to professional boards (card anatomy, standard columns, labelled nav, story map, burn-up, blocker causes) and a switchable **Learn** layer for beginners.
+   4. Non-developers: start a new project by conversation with the PM (design stage + Researcher).
+6. **Operations:** 24 GB host, 13 GB Worker. Check `ollama ps` and `memory_pressure -Q` before loading; unload after. Never run `tsc -b`/`pnpm gate` during a suite run (it splits the run across builds). The shell's `grep` wrapper can hide matches — use `/usr/bin/grep -a` when a search comes back empty.
 
 ---
 
 ## Detailed Session Log
+
+### Entry 23 — 2026-09-21 → 2026-09-22 (from Phase 0 to a measured harness; paused)
+
+**Agent:** Claude Opus 5 (`claude-opus-5`), lead driver, in Claude Code. Goal: finish Sekhemet to `HARNESS_DESIGN.md` in `MVP_PATH.md` order, adaptively — evidence-triggered changes, design updated in the same commit. Paused at `c5d5bff` on the owner's instruction.
+
+**MVP path and the frozen suite**
+- Phase 0 GO at 100% (11 cases; `docs/reference/PHASE0.md`). One card Ready → Review unattended; accepted to main. Step 8 verified: one card from two fresh repos sends byte-identical requests (`identical_runs.spec.ts`).
+- Frozen suite built (`fixtures/suite.json`, 30 tasks, hash `192b6e95fa3c`) and run five times. Each run found harness defects, not model limits, until runs 4–5:
+  - run 1 (5/30): stall detector ended cards with no warning; the TS2305 remedy ("read the module") caused read loops; types-only cards were refused (`vacuous_tests`).
+  - run 2 (stopped at 9, swap): the stall warning was spent per card, not per episode.
+  - onyx validation: the runner never merged passing cards, so dependent cards built against empty files — fixed; `onyx_2_crypto` then passed for the first time.
+  - run 3 (stopped at 2): the new regression gate flagged the empty `tests/.gitkeep`, with a remedy (`git checkout`) the Worker has no tool for. Fixed; the runner now preflights every project gate on each untouched fixture.
+  - runs 4–5: see `SUITE_RUNS.md` — `run --worker` was ignored (every run had been Nail with reasoning **disabled**); the secrets gate made the scanner card impossible; `tool_search` dead ends for files and symbols; unknown-member errors with no members; the repo map hid the schema a card had to match. All fixed in `c5d5bff`.
+
+**Built this session (all gate-green, each with tests)**
+- Gates that hold a project together: reachability, regression (restated failures + removed tests), architecture (brief's `## Invariants`, two sentence forms).
+- Front door: eight commands, `dev` namespace, spec-as-sentence, typo refusal, CLI triage (`send-back`/`park`/`unpark`/`review`) shared with the board; six unreachable commands fixed.
+- Design stage (proportional: nothing / a sentence / ≤2 questions / a brief) and reuse-before-rebuild survey (npm, GitHub, papers; relevance, popularity and licence filters set by live results).
+- Planner: checkable behaviours on every slice, hard invariants as early rules, riskiest assumption as the card after the contract, `--planner` model decomposes.
+- Worker working method (design section with sources): surgical-thinking policy and the strict method, both behind switches for the suite to decide; data-contract repo map; files/symbols/type-members carried in replies. The research does not support a Worker planning tool — none built.
+- Dashboard: failed cards no longer shown as "Planner is writing the plan"; one project per folder (`/tmp` vs `/private/tmp`); Insights empty state.
+- Positioning: "a harness for professional teams", with an honest claims table.
+
+**Findings worth keeping**
+- The Worker never planned: thinking was off on every ordinary turn. Cyber-Tiel's card and the Qwen3 report (BFCL +10.5 with thinking at 30B-A3B) argue against that; the A/B is next.
+- Structure beats prose for a 3B-active model: shown the exact `read_file` calls, it still searched for `tool_search`. Habits must live in tools, refusals and thinking placement.
+- MTP works (~78% acceptance) but did not raise generation speed on these short turns (26–32 tok/s); prompt reading on llama-server was ~half Ollama's.
+- The frozen suite never measures planning (cards are hand-written). A planning measure is designed, not built.
+
+**Where the cards stop:** runs 4 and 5 partial (Nail 7/10, Cyber-Tiel 6/10 on shared cards); fixes for every harness-caused failure committed and unmeasured. Nothing running; no model loaded.
+
 
 ### Entry 22 — 2026-09-19 (overnight run: harness units, research hardening, dashboard pass)
 
