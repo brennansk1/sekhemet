@@ -247,6 +247,18 @@ describe("C19: tool_search", () => {
     ]);
     expect(TOOL_SEARCH_SPEC.parameters[0]?.required).toBe(true);
   });
+
+  it("answers a query for files with the tool that reads them, not a dead end", () => {
+    // Suite run 3, card_onyx_4_vault: the Worker asked tool_search for
+    // "crypto.js db.js types.js" six times, was told "No tool matches" six
+    // times, and was stopped for repeating itself. read_file was loaded all
+    // along; the reply never said so. A reply must be completable in one step.
+    const loader = new ToolLoader([...tools, grep], ["read_file", "edit"]);
+    const r = loader.handle("crypto.js db.js types.js");
+    expect(r.text).toMatch(/finds tools, not files/);
+    expect(r.text).toContain('read_file(path: "src/crypto.ts")');
+    expect(r.text).not.toMatch(/No tool matches/);
+  });
 });
 
 describe("C3: query-aware line pruning", () => {

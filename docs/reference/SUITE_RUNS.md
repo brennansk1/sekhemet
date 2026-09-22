@@ -22,6 +22,27 @@ The fixtures were not touched: the suite hash covers the manifest and the fixtur
 
 ---
 
+## Validating the merge fix — onyx only, 2026-09-22
+
+Before spending an hour on a full run, the eight onyx cards were run alone to see whether merging passing cards changes anything. It does.
+
+| Card | Run 1 | Run 2 | Validation | Cause |
+| --- | --- | --- | --- | --- |
+| `onyx_1_types` | refused | pass | **pass** 116s | — merged; `main` now holds `CryptoEnvelope` |
+| `onyx_2_crypto` | fail | fail | **pass** 46s | Dependent card; passed once its dependency was on `main` |
+| `onyx_3_db` | pass | pass | **pass** 37s | stable |
+| `onyx_4_vault` | fail | — | fail 71s | **Harness: dead-end `tool_search` reply** — see below |
+| `onyx_5_scanner` | fail | — | fail 184s | `memory_pressure` — the harness's guard stopped it |
+| `onyx_6`–`onyx_8` | fail | — | fail 1–2s | `memory_pressure` — refused to start |
+
+**The one card that could not be explained by the old runner was a harness defect too.** `onyx_4_vault` had all three dependencies merged. Its replay: seven turns, every one a `tool_search` for `crypto.js db.js types.js`, each answered *"No tool matches"*. The Worker was using the tool-loader as a file finder, and the reply gave it nothing to do next; `read_file` was loaded throughout. The reply now names the `read_file` calls that do what was asked. Fixed, with a test, and the design's one-step rule now binds tool replies as well as gate failures.
+
+**Four cards were lost to memory, not to the task.** Swap reached 6.2 of 7 GB with the Worker loaded; the guard stopped `onyx_5` mid-card and refused the rest. That is the guard doing its job, and it means these four are unmeasured, not failed. They are not counted against the harness or the model.
+
+One run, non-zero temperature: `onyx_2_crypto` passing is consistent with the mechanism — it failed twice against an empty `types.ts` and passed the first time `types.ts` was real — but it is one trial.
+
+---
+
 ## Run 2 — 2026-09-22, stopped at 9 of 30
 
 Stopped deliberately. Swap rose from 1.5 GB to 4.3 GB over the run, stepping up by roughly 100–200 MB per card without recovering, with twenty cards still to go and a prior near-out-of-memory on this host. The partial result is recorded rather than discarded.

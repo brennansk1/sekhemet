@@ -65,6 +65,34 @@ export function searchTools(
     .map((x) => x.s);
 }
 
+/** Terms in a query that name files rather than tools: `crypto.js`, `src/db.ts`. */
+function fileLikeTerms(query: string): string[] {
+  return query
+    .split(/[,\s]+/)
+    .map((s) => s.trim().replace(/^["'`]|["'`]$/g, ""))
+    .filter((s) => /\/|\.[cm]?[jt]sx?$|\.json$/.test(s));
+}
+
+/**
+ * A Worker that asks tool_search for files wants to read them. Telling it "no
+ * tool matches" is a dead end it repeats until the stall detector stops it —
+ * suite run 3 lost card_onyx_4_vault exactly that way — so the reply names the
+ * call that does what it asked, ready to make. A `.js` import names the `.ts`
+ * source beside it, and a bare name is looked for under `src/`.
+ */
+function filesReply(files: readonly string[]): string {
+  const calls = files.map((f) => {
+    const ts = f.replace(/\.[cm]?js(x?)$/, ".ts$1").replace(/^\.\//, "");
+    const path = ts.includes("/") ? ts : `src/${ts}`;
+    return `read_file(path: "${path}")`;
+  });
+  return [
+    "tool_search finds tools, not files. read_file is already loaded; to read these, call:",
+    ...calls,
+    "If a path is wrong, find_files locates it.",
+  ].join("\n");
+}
+
 /**
  * Tracks which tools are loaded for a card. `handle` is the `tool_search`
  * tool's implementation; `visibleSpecs` / `visibleSchemas` are what the next
@@ -88,6 +116,8 @@ export class ToolLoader {
     const found = searchTools(query, this.all);
     for (const t of found) this.loaded.add(t.name);
     if (found.length === 0) {
+      const files = fileLikeTerms(query);
+      if (files.length > 0) return { loaded: [], text: filesReply(files) };
       return { loaded: [], text: `No tool matches "${query}". The index lists every tool.` };
     }
     const text = found

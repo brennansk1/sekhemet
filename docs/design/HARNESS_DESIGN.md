@@ -1684,6 +1684,8 @@ Raw logs are never pasted into context; they live in the evidence bundle and are
 
 So where an action would ask the model to go and look, the failure carries what it would have found. A missing export lists the module's actual exports inline and says there is no need to read the file again. The general rule, which binds every parser: **the information a remedy depends on belongs in the failure, not behind a tool call the model has to think of making.**
 
+The rule binds tool replies as well as gate failures. A third run lost `card_onyx_4_vault` — whose dependencies had all passed and merged — to `tool_search`: the Worker asked it for `crypto.js db.js types.js`, was told *"No tool matches"*, and asked again until it was stopped. `read_file` was loaded the whole time. A `tool_search` query that names files now answers with the `read_file` calls that read them, ready to make. **No reply the Worker receives may be a dead end: if a call cannot do what was asked, the reply names the call that can.**
+
 ### Three kinds of refusal, one rule
 
 A gate failure, a scope denial, and a stall are all refusals the Worker must act on, and all three follow the repair contract: typed, with the action attached. The first frozen-suite run found the second and third missing it.
