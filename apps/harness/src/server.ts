@@ -53,11 +53,11 @@ import {
   requestAbort,
   rewindCard,
 } from "./execute.js";
-import { learnFromSendBack } from "./learning/reflect.js";
 import { startNotifier } from "./notify.js";
 import { createPmApi } from "./pm_api.js";
 import { modelRoster } from "./pm_api.js";
 import { handleRestExtras } from "./rest_extra.js";
+import { park, sendBack } from "./triage.js";
 import { generateDashboardHtml } from "./ui_html.js";
 import { hookEngineFor } from "./user_hooks.js";
 import { handleWave2Route, startRecurringTicker } from "./wave2_server.js";
@@ -850,52 +850,21 @@ export function startDashboardServer(
         }
 
         const body = await readJsonBody(req);
-        const reason = typeof body.reason === "string" ? body.reason.trim().slice(0, 2000) : "";
-        if (verb === "return" && !reason) {
+        const reason = typeof body.reason === "string" ? body.reason : "";
+        if (verb === "return" && !reason.trim()) {
           json(res, 400, { error: "A return needs a reason: it is what the agent is told next" });
           return;
         }
-
+        // One implementation for the board and the command line (triage.ts).
+        const triage = {
+          repoPath,
+          cardStore: store,
+          boardService: boardService as never,
+          log,
+        };
         const to = verb === "return" ? "ready" : "parked";
-        await boardService.transitionCard({
-          cardId,
-          fromStatus: card.status,
-          toStatus: to,
-          actor: "human",
-          reason:
-            verb === "return" ? `returned: ${reason}` : `parked${reason ? `: ${reason}` : ""}`,
-        });
-
-        if (verb === "return") {
-          // The reason is a directive for the card's next attempt: it goes into
-          // the card's dossier, which the runner puts in the Worker's prompt.
-          await store
-            .recordDossierEntry({ cardId, kind: "send_back", text: reason, actor: "human" })
-            .catch(() => undefined);
-          // K12: review/return reaches the project's hooks (a notifier, a ticket).
-          await hookEngineFor(repoPath)
-            .engine.emit("review/return", { cardId, data: { reason } })
-            .catch(() => undefined);
-          // The note teaches both the Worker (a candidate rule) and Seshat (the profile).
-          await learnFromSendBack(pmApi.learning, card, reason).catch(() => undefined);
-          // Every return reason is a candidate playbook rule (design §820):
-          // the correction a human had to make once should not be needed twice.
-          const dir = join(repoPath, ".sekhemet");
-          mkdirSync(dir, { recursive: true });
-          appendFileSync(
-            join(dir, "playbook_candidates.jsonl"),
-            `${JSON.stringify({ cardId, reason, at: new Date().toISOString() })}\n`,
-          );
-        }
-        // A card left Review: cards held on back-pressure can move now.
-        if (card.status === "review") {
-          await releaseHeldCards({
-            repoPath,
-            restrictedMode: false,
-            cardStore: store,
-            boardService: boardService as never,
-          }).catch(() => []);
-        }
+        if (verb === "return") await sendBack(triage, card, reason);
+        else await park(triage, card, reason);
         json(res, 200, { ok: true, status: to });
       } catch (err) {
         json(res, 409, { error: err instanceof Error ? err.message : String(err) });

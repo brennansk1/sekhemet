@@ -61,6 +61,7 @@ import {
   writeQueueReport,
 } from "./execute.js";
 import { reviewPosterFromEnv, runExternalReviews } from "./external_review.js";
+import { COMMANDS, FRONT_DOOR, routeFrontDoor } from "./front_door.js";
 import { runInit } from "./init.js";
 import { notifySlack } from "./integrations.js";
 import { readSettings } from "./integrations.js";
@@ -82,6 +83,7 @@ import { oneShotResearcher } from "./research/service.js";
 import { DEFAULT_DASHBOARD_PORT, startDashboardServer } from "./server.js";
 import { tracesCommand } from "./tracing.js";
 import { trailerGate } from "./trailer_gate.js";
+import { nextForReview, park, sendBack, unpark } from "./triage.js";
 import { loadAttempts, tune, writeTuningReport } from "./tune.js";
 import { hookEngineFor } from "./user_hooks.js";
 import {
@@ -189,32 +191,8 @@ export function parseCliArgs(argv: string[] = process.argv.slice(2)): CliConfig 
   let command: CliConfig["command"] = "help";
   let targetArg: string | undefined;
 
-  const validCommands = [
-    "accept",
-    "tune",
-    "explore",
-    "queue",
-    "doctor",
-    "board",
-    "log",
-    "serve",
-    "ui",
-    "run",
-    "plan",
-    "gate",
-    "gates",
-    "gate-host",
-    "replay",
-    "bake-off",
-    "mcp",
-    "research",
-    "abort",
-    "rewind",
-    "fork",
-    "resume",
-    // Wave 2 (planner, eval, sync): see wave2.ts.
-    ...WAVE2_COMMANDS,
-  ] as const;
+  // One list for the parser and the front door (front_door.ts).
+  const validCommands = COMMANDS;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -377,7 +355,35 @@ export async function printEventLog(log: EventLog): Promise<void> {
   );
 }
 
-export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
+export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<void> {
+  const route = routeFrontDoor(rawArgv);
+  if (route.kind === "help") return printFrontDoorHelp();
+  if (route.kind === "dev-help") return printDevHelp();
+  if (route.kind === "unknown") {
+    console.error(
+      route.suggest
+        ? `sekhemet: no command "${route.word}". Did you mean \`sekhemet ${route.suggest}\`?`
+        : `sekhemet: ${route.word.includes(" ") ? route.word : `no command "${route.word}"`}. \`sekhemet --help\` lists them; to ask for work, describe it in a sentence.`,
+    );
+    process.exitCode = 2;
+    return;
+  }
+  if (route.kind === "spec") {
+    // One verb for "plan this and build it": the plan, then the queue.
+    await main(["plan", route.spec, ...route.flags]);
+    if (process.exitCode) return;
+    return main(["queue", ...route.flags]);
+  }
+  if (route.kind === "home") return openHome(route.flags);
+  if (
+    route.kind === "review" ||
+    route.kind === "send-back" ||
+    route.kind === "park" ||
+    route.kind === "unpark"
+  ) {
+    return runTriage(route, parseCliArgs(route.flags).repoPath);
+  }
+  const argv = route.argv;
   const config = parseCliArgs(argv);
 
   if (config.command === "traces") {
@@ -1921,41 +1927,128 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     return;
   }
 
-  console.log("=================================================");
-  console.log(" Sekhemet — Board-Native Local-First Coding Harness");
-  console.log(` Model: ${config.modelId}`);
-  console.log(
-    ` Restricted Mode: ${config.restrictedMode ? "ENABLED (auditing only)" : "DISABLED"}`,
-  );
-  console.log(` Repository: ${config.repoPath}`);
-  console.log("\nAvailable Commands:");
-  console.log("  sekhemet doctor             Run hardware & local socket diagnostics");
-  console.log("  sekhemet board              Display terminal visual kanban board");
-  console.log("  sekhemet log                View cryptographic event log & SHA-256 chain");
-  console.log("  sekhemet plan <spec>        Decompose feature into SPIDR cards");
-  console.log("  sekhemet run <card-id>      Execute card unattended in worktree");
-  console.log("  sekhemet accept <card-id>   Squash-merge a reviewed card to main");
-  console.log(
-    "  sekhemet queue [--auto-accept] [--worker m] [--manager m]  Run Ready cards; escalate failures to a manager",
-  );
-  console.log("  sekhemet gate [card-id]     Run deterministic verification gates");
-  console.log("  sekhemet gates init         Write the gate template for this project's language");
-  console.log("  sekhemet replay <card-id>   Replay checkpoint trajectory for a card");
-  console.log("  sekhemet abort <card-id>    Stop a running card before its next turn");
-  console.log("  sekhemet rewind <card> <n>  Put a card back to its checkpoint at step n");
-  console.log("  sekhemet fork <card> <n>    Branch a new attempt from step n");
-  console.log("  sekhemet resume <card-id>   Continue a card that stopped part-way");
-  console.log(
-    "  sekhemet bake-off --workers a,b [--fixture f] [--manager m]  Compare workers on a release gate",
-  );
-  console.log("  sekhemet ui / serve         Launch local web visual dashboard");
-  console.log("  sekhemet mcp                Run stdio MCP server for Cursor / Claude / IDEs");
-  console.log('  sekhemet research "<q>" [--deep]  Ask the Researcher; answers with sources');
-  console.log(
-    "  sekhemet overnight [--until 07:00] [queue flags]  Queue rounds while the machine is free",
-  );
+  printFrontDoorHelp();
+}
+
+/** The eight commands a user meets (design: "The command surface"). */
+function printFrontDoorHelp(): void {
+  const width = Math.max(...FRONT_DOOR.map((c) => c.usage.length)) + 2;
+  console.log("Sekhemet — a local coding harness that builds projects one gated card at a time.\n");
+  for (const c of FRONT_DOOR) console.log(`  ${c.usage.padEnd(width)}${c.what}`);
+  console.log("\nEverything else: sekhemet dev --help");
+}
+
+/** Every other command, for whoever develops the harness itself. */
+function printDevHelp(): void {
+  const lines: [string, string][] = [
+    ["plan <spec>", "Decompose a spec into cards without running them"],
+    ["queue [--auto-accept] [--worker m] [--manager m]", "Run Ready cards"],
+    ["resume <card>", "Continue a card that stopped part-way"],
+    ["gate [card]", "Run the verification gates"],
+    ["gates init", "Write the gate template for this project's language"],
+    ["replay <card>", "Replay a card's trajectory from the log"],
+    ["abort <card>", "Stop a running card before its next turn"],
+    ["rewind <card> <n> / fork <card> <n>", "Back to, or branch from, step n"],
+    ["log", "The event log and its hash chain"],
+    ['research "<q>" [--deep]', "Ask the Researcher directly"],
+    ["overnight [--until 07:00]", "Queue rounds while the machine is free"],
+    ["bake-off --workers a,b", "Compare workers on a release gate"],
+    ["serve / ui", "The web dashboard server"],
+    ["mcp / acp", "Stdio servers for editors"],
+    ["calibrate / tune / explore / daemon / traces / init", "Machine and runtime tooling"],
+    [`${WAVE2_COMMANDS.join(" / ")}`, "Planner, evaluation and sync tooling"],
+  ];
+  console.log("sekhemet dev <command> — harness development. These also run without `dev`.\n");
+  for (const [u, w] of lines) console.log(`  ${u}\n      ${w}`);
   console.log(`\n${CRAWL4AI_CREDIT}`);
-  console.log("=================================================");
+}
+
+/**
+ * `sekhemet` with nothing after it is the product: derive the gates on first
+ * run, say in one paragraph what it will use, then open the board.
+ */
+async function openHome(flags: string[]): Promise<void> {
+  const { repoPath } = parseCliArgs(flags);
+  const gatesFile = join(repoPath, ".sekhemet", "gates.toml");
+  const firstRun = !existsSync(gatesFile);
+  if (firstRun) await main(["gates", "init", ...flags]);
+  let gates = "none yet";
+  try {
+    gates =
+      loadGatesConfig(repoPath)
+        .gates.map((g) => g.id)
+        .join(", ") || gates;
+  } catch {
+    // An unreadable gates.toml is reported by doctor, not here.
+  }
+  console.log(
+    `${firstRun ? "Set up. " : ""}Gates: ${gates}.\nReady. Ask for work with: sekhemet "add rate limiting to the API"`,
+  );
+  return main(["board", ...flags]);
+}
+
+type TriageRoute = Extract<
+  ReturnType<typeof routeFrontDoor>,
+  { kind: "review" | "send-back" | "park" | "unpark" }
+>;
+
+/** The board's decisions, from the command line (triage.ts is shared with it). */
+async function runTriage(route: TriageRoute, repoPath: string): Promise<void> {
+  const { db, log, cardStore, boardService } = initLocalKernel(repoPath);
+  const ctx = { repoPath, cardStore, boardService, log };
+  try {
+    if (route.kind === "review") {
+      const card = await nextForReview(ctx);
+      if (!card) {
+        console.log("Nothing is waiting on you.");
+        return;
+      }
+      console.log(`${card.id} — ${card.title}`);
+      const evidence = join(repoPath, ".sekhemet", "evidence", `latest-${card.id}.json`);
+      if (existsSync(evidence)) {
+        const e = JSON.parse(readFileSync(evidence, "utf8")) as {
+          rungResults?: { gate: string; passed: boolean }[];
+          filesTouched?: string[];
+          linesAdded?: number;
+          linesRemoved?: number;
+        };
+        const gates = (e.rungResults ?? []).map((r) => `${r.passed ? "✓" : "✗"} ${r.gate}`);
+        console.log(`  gates: ${gates.join("  ") || "none recorded"}`);
+        console.log(
+          `  changed: ${(e.filesTouched ?? []).join(", ") || "nothing"} (+${e.linesAdded ?? 0} −${e.linesRemoved ?? 0})`,
+        );
+      }
+      console.log(
+        `\n  sekhemet accept ${card.id}\n  sekhemet send-back ${card.id} "<what to change>"\n  sekhemet park ${card.id}`,
+      );
+      return;
+    }
+    const card = await cardStore.getCard(route.cardId);
+    if (!card) {
+      console.error(`sekhemet: no card ${route.cardId}`);
+      process.exitCode = 1;
+      return;
+    }
+    if (route.kind === "send-back") {
+      if (!route.reason.trim()) {
+        console.error(
+          `sekhemet: a send-back needs a reason — it is what the Worker is told next.\n  sekhemet send-back ${card.id} "<what to change>"`,
+        );
+        process.exitCode = 2;
+        return;
+      }
+      await sendBack(ctx, card, route.reason);
+      console.log(`${card.id} is back in Ready. Its next attempt is told: ${route.reason}`);
+    } else if (route.kind === "park") {
+      await park(ctx, card, route.reason);
+      console.log(`${card.id} is parked. Undo: sekhemet unpark ${card.id}`);
+    } else {
+      await unpark(ctx, card);
+      console.log(`${card.id} is back in Ready.`);
+    }
+  } finally {
+    db.close();
+  }
 }
 
 if (process.argv[1]?.endsWith("index.js") || process.argv[1]?.endsWith("sekhemet")) {

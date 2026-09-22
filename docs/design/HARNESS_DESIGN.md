@@ -176,7 +176,15 @@ Eight commands at the front door. A research question is not among them: it is s
 
 Three rules govern what may be added. **A new user-facing command must displace one**, or it belongs under `dev` or in the command palette. **Anything with a `--profile`-style flag that rewrites other flags is not a command, it is a default that has not been chosen** — a flag whose effect depends on a file the user has not read is unpredictable by definition. And **every destructive action reachable from the interface is reachable from the command line, with its undo**: accepting unreviewed work from the CLI with no way back, while the board has one, is an asymmetry that will eventually cost someone a merge.
 
-**[DESIGN]** This is a real cost. The harness's own scripts and release tooling call the moved commands directly and must all be updated; the author's muscle memory is the surface most disrupted by the change. It is paid once, and the alternative is a product whose front door lists forty-three doors.
+**Moved means unlisted, not removed.** A command called without `dev` still runs; it is simply absent from `sekhemet --help`. The first version of this section planned to break those calls and update every caller. Building it found the callers were the frozen-suite runner, the harness's own tests and the author's habits, and breaking them bought the user nothing — the user's surface is the help, and the help lists eight commands. `dev --help` lists the rest.
+
+Three behaviours at the door, each a decision:
+
+*   **A spec is a sentence.** `sekhemet "add rate limiting"` plans and runs. A single word that is not a command is refused with a suggestion (`reveiw` → `review`), because planning a typo writes cards to the board.
+*   **`run` with no card runs the queue**; with a card, it runs or resumes that card.
+*   **The board's decisions are the command line's decisions.** `review` shows the oldest card in Review, its gates and its diff size, and the three commands that decide it. `send-back` (with its required reason, which becomes the next attempt's instruction and a playbook candidate), `park` and `unpark` share one implementation with the board's buttons, so the two surfaces cannot drift.
+
+One list of commands feeds both the parser and the dispatcher. Building the door found six commands — `overnight`, which the old help listed, among them — with handlers the parser never routed to: they printed the help instead.
 
 ### Two rules that follow
 
