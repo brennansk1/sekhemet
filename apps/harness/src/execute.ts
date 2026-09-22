@@ -53,11 +53,13 @@ import { type SpidrSliceKind, scoreDifficulty, stepBudgetForDifficulty } from "@
 import { ProcessSandbox } from "@sekhemet/sandbox";
 import { NodeGitSyncAdapter } from "@sekhemet/sync";
 import { isAirgapped, mirrorRegistry } from "./airgap.js";
+import { withArchitectureGate } from "./architecture_gate.js";
 import { readSettings } from "./integrations.js";
 import { learnFromAttempt } from "./learning/reflect.js";
 import type { LearningStore } from "./learning/store.js";
 import { withLicenseGate } from "./license_gate.js";
 import { withReachabilityGate } from "./reachability_gate.js";
+import { withRegressionGate } from "./regression_gate.js";
 import { buildReproRecord } from "./repro.js";
 import { workerWebDocs } from "./research/service.js";
 import { Tracer, traced } from "./tracing.js";
@@ -308,34 +310,42 @@ export async function executeCard(
   // X20, X26: every verification also runs the licence register gate and
   // the commit-trailer contract on the card's branch — and refuses exports
   // the card added that nothing uses and nothing requires, which is how a
-  // project decays one reasonable change at a time.
-  const gateRunner = withReachabilityGate(
-    withTrailerGate(
-      withLicenseGate(
-        // G24: a separate, mutually authenticated gate host when gates.toml
-        // names one; this machine's sandbox otherwise.
-        gatesConfig.project.gateHost
-          ? new RemoteGateRunner(
-              gatesConfig.project.gateHost.url,
-              readTls(gatesConfig.project.gateHost),
-              {
-                expectedConfigSha256: gatesConfig.sha256,
-                repoRoot: ctx.repoPath,
-              },
-            )
-          : new DeterministicGateRunner(sandbox, {
-              repoRoot: ctx.repoPath,
-              expectedConfigSha256: gatesConfig.sha256,
-            }),
-        ctx.repoPath,
+  // project decays one reasonable change at a time — and refuses a change
+  // that breaks or removes a test main already guarantees, or an invariant
+  // the project's brief declares.
+  const gateRunner = withArchitectureGate(
+    withRegressionGate(
+      withReachabilityGate(
+        withTrailerGate(
+          withLicenseGate(
+            // G24: a separate, mutually authenticated gate host when gates.toml
+            // names one; this machine's sandbox otherwise.
+            gatesConfig.project.gateHost
+              ? new RemoteGateRunner(
+                  gatesConfig.project.gateHost.url,
+                  readTls(gatesConfig.project.gateHost),
+                  {
+                    expectedConfigSha256: gatesConfig.sha256,
+                    repoRoot: ctx.repoPath,
+                  },
+                )
+              : new DeterministicGateRunner(sandbox, {
+                  repoRoot: ctx.repoPath,
+                  expectedConfigSha256: gatesConfig.sha256,
+                }),
+            ctx.repoPath,
+          ),
+        ),
+        // What asked for this card's work — its acceptance tests and its own
+        // spec — makes an export reachable before the code that calls it exists.
+        {
+          tests: inputCard.acceptanceTests ?? [],
+          text: [inputCard.spec ?? "", ...(inputCard.acceptanceCriteria ?? [])].join("\n"),
+        },
       ),
+      { ownTests: inputCard.acceptanceTests ?? [] },
     ),
-    // What asked for this card's work — its acceptance tests and its own
-    // spec — makes an export reachable before the code that calls it exists.
-    {
-      tests: inputCard.acceptanceTests ?? [],
-      text: [inputCard.spec ?? "", ...(inputCard.acceptanceCriteria ?? [])].join("\n"),
-    },
+    { briefPath: join(ctx.repoPath, ".sekhemet", "brief.md") },
   );
   const skills = new SkillsRegistry();
   skills.loadFromDirectory(join(ctx.repoPath, ".sekhemet", "skills"));

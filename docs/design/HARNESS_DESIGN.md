@@ -505,6 +505,8 @@ A parent card is `done` only when every child is `done` **and** the parent's own
 
 Once a card reaches Review, its evidence bundle is snapshotted. Any later revision must re-pass every gate before returning to Review; a revision that regresses a previously passing gate is rejected and the card returns to Planning with the regression named.
 
+That protects one card against its own revisions. Protecting the whole project — every test an accepted card left on `main` — is the regression gate, under *Gates that hold a project together*.
+
 ### WIP limits
 
 The Review column carries a hard WIP limit derived from review capacity:
@@ -942,6 +944,7 @@ A **project brief**, written to `.sekhemet/brief.md`, versioned with the reposit
 | **Riskiest assumption** | The thing most likely to make this not work. It becomes the first card. |
 | **The first slice** | The thinnest path through the whole system that produces something real. |
 | **Definition of done** | The gates. Agreed here rather than discovered at the first Verify. |
+| **Invariants** | The architectural rules the project must keep, written so the architecture gate can enforce them: `` `src/db/` does not import `src/cli.ts` `` and `` `PartitionKey` is defined only in `src/types.ts` ``. A rule in any other form is recorded but not enforced. Most small projects have none, and the section is omitted. |
 
 ### Prior art is researched, not recalled
 
@@ -1288,6 +1291,27 @@ Three design choices, each forced by evidence:
 *   **It errs toward reachable.** A name counts as used wherever it appears in an import clause, without resolving which module that clause names; a name counts as asked for wherever it appears as a word in the card's text. A gate that wrongly fails a card costs a repair cycle and teaches the model the gate is noise. One that misses some dead code costs a line.
 
 The failure it raises follows the repair contract: it names the export and the file, and every remedy it offers — wire it in, un-export it, or say with `note` that a later card needs it — is a single edit.
+
+### Regression
+
+*A card may not take away what `main` already guarantees.* Every accepted card leaves its tests on `main`, so `main`'s tests are the project's accumulated promise, and the test rung already runs them. What was missing was the name. A card that broke an earlier card's test failed as an anonymous test failure whose suggested fix pointed at the test file — protected, and belonging to finished work. The Worker was told to fix the one thing it may not touch.
+
+The regression gate restates any failure of a test that exists on `main` — other than the card's own acceptance tests — as a **regression**: that test passed on `main`, this card's change broke it, and the fix is in the files the card changed, which the failure lists. It also refuses what a test run cannot see: a test `main` had that the card removed or emptied. A test that no longer exists cannot fail, and not every project protects its tests in `gates.toml`.
+
+It judges against `main`, never against the card's own new tests, and outside a git repository it judges nothing rather than guess.
+
+### Architecture
+
+*A card may not break an invariant the brief declares.* The brief's **Invariants** section is read on every verification, and two sentence forms are enforced — the two ways this harness's own build was found decaying: a boundary crossed, and one definition duplicated.
+
+*   `` `src/db/` does not import `src/cli.ts` `` — a file under the first path may not import one under the second. A trailing `/` names a directory.
+*   `` `PartitionKey` is defined only in `src/types.ts` `` — no other file may declare that name.
+
+Like the other project gates, it judges only the files the card changed, so a card is never failed for a violation someone else left, and each remedy is a single edit: remove the import, or delete the duplicate and import the original. A project with no brief, or no invariants in it, enforces nothing — which is the right answer for a calculator.
+
+A line in the section that matches neither form is **not enforced**, and the gate says so rather than treating it as holding. **[DESIGN]** Showing unenforced invariants on the board when the brief is written, so the human can restate them in a checkable form, is not built yet.
+
+All three project gates wrap every card's gate run, whatever the project's `gates.toml` declares.
 
 ## Gate economics
 

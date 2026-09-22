@@ -114,7 +114,7 @@ function importedNames(file: string): Set<string> {
 }
 
 /** Source files the card changed against `base`, committed or not. */
-function changedSources(root: string, base: string): string[] {
+export function changedSources(root: string, base: string): string[] {
   try {
     return execFileSync("git", ["diff", "--name-only", base], {
       cwd: root,
