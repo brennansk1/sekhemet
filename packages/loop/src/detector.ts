@@ -82,7 +82,7 @@ export class OscillationDetector {
       return "warn";
     };
 
-    if (this.history.length < this.threshold) return "none";
+    if (this.history.length < this.threshold) return this.progress();
 
     const recent = this.history.slice(-this.threshold);
     const first = recent[0] as StallSignature;
@@ -119,6 +119,19 @@ export class OscillationDetector {
       }
     }
 
+    return this.progress();
+  }
+
+  /**
+   * A turn that is not a stall ends the current episode, so the next stall
+   * earns its own warning. Without this the warning was spent once per card:
+   * a Worker warned about repeating one call, which then did something
+   * different, was ended on the first repeat of an unrelated call with no
+   * warning about that one — as card_chron_verifier was in the second
+   * frozen-suite run.
+   */
+  private progress(): StallVerdict {
+    this.warned = false;
     return "none";
   }
 

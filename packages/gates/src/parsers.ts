@@ -126,12 +126,19 @@ export function remedyFor(code: string, message: string): string | undefined {
  * words rather than to a wrong list.
  */
 export function moduleExports(file: string): string[] | undefined {
-  let src: string;
   try {
-    src = readFileSync(file, "utf8");
+    return exportsFromSource(readFileSync(file, "utf8"));
   } catch {
     return undefined;
   }
+}
+
+/**
+ * The names a TypeScript source text exports. One definition, used for a
+ * file on disk and for a file's text at an earlier commit, so the two sides
+ * of any comparison can never disagree about syntax.
+ */
+export function exportsFromSource(src: string): string[] {
   const names = new Set<string>();
   const decl =
     /^\s*export\s+(?:declare\s+)?(?:default\s+)?(?:async\s+)?(?:const|let|var|function\*?|class|interface|type|enum|abstract\s+class)\s+([A-Za-z_$][\w$]*)/gm;

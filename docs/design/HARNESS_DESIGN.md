@@ -1271,6 +1271,24 @@ interface EvidenceBundle {
 }
 ```
 
+## Gates that hold a project together
+
+Every other gate asks whether a change is correct. These ask whether the project is still coherent after it — the property that decays when an agent is good at individual changes and nothing holds the whole together. Building this harness with a frontier model in a conversational harness produced three incompatible definitions of one partition key, a design whose prose and schema described different systems, and eleven modules written, tested and never wired in. No individual change was wrong. That is the failure these gates exist to catch at the change that causes it, instead of in an audit weeks later.
+
+### Reachability
+
+*A card may not add code that nothing uses.* An export a card adds is **reachable** when production code imports it, or when the card's **contract** asks for it. The contract is everything that requested the work: the card's acceptance tests, wherever they live, and its own spec and acceptance criteria. An export named in "Write `src/a.ts` exporting `a`" has been asked for before any test or caller exists.
+
+A card's own unit tests do not make its code reachable — "code reachable only from tests is dead" is the audit's rule, and a unit test the contract did not ask for proves nothing wires the code in. Only exports the card itself added are judged, so a card is never failed for code someone else left. Entry points (`index`, `main`, `cli`, `server`, `bin`) are a public surface by position.
+
+Three design choices, each forced by evidence:
+
+*   **Not "no production caller fails the card".** That rule was rejected before it was built: leaves are built before their callers, so it would fail every leaf card in every project.
+*   **Not the fixture layout alone.** A first version recognised acceptance tests only under an `acceptance/` directory, and failed every card in every repository without one — twelve tests in the harness's own suite. The card's declared tests are the contract wherever they are.
+*   **It errs toward reachable.** A name counts as used wherever it appears in an import clause, without resolving which module that clause names; a name counts as asked for wherever it appears as a word in the card's text. A gate that wrongly fails a card costs a repair cycle and teaches the model the gate is noise. One that misses some dead code costs a line.
+
+The failure it raises follows the repair contract: it names the export and the file, and every remedy it offers — wire it in, un-export it, or say with `note` that a later card needs it — is a single edit.
+
 ## Gate economics
 
 Gates are the definition of done, so their cost is the harness's cost and their failure modes are the harness's failure modes. A design that treats them as a free oracle is wrong in the direction that hurts most.
@@ -1671,7 +1689,7 @@ So where an action would ask the model to go and look, the failure carries what 
 A gate failure, a scope denial, and a stall are all refusals the Worker must act on, and all three follow the repair contract: typed, with the action attached. The first frozen-suite run found the second and third missing it.
 
 *   **A scope denial** names what the card may modify and says the fix belongs inside it; if the change genuinely belongs elsewhere, the model is told to stop and report that rather than retry.
-*   **A stall is a warning before it is a verdict.** The first repetition on an unchanged tree is delivered as an observation — the call was repeated, the tree did not move, act on what you have or finish. Only a repeat after that warning ends the card. The detection point is unchanged; what changed is that the Worker is told before it is stopped. In the run that found this, cards with thirty-two step budgets were ending on step two having read one file twice.
+*   **A stall is a warning before it is a verdict.** The first repetition on an unchanged tree is delivered as an observation — the call was repeated, the tree did not move, act on what you have or finish. Only a repeat after that warning ends the card. The detection point is unchanged; what changed is that the Worker is told before it is stopped. In the run that found this, cards with thirty-two step budgets were ending on step two having read one file twice. **The warning belongs to a stall episode, not to the card:** a turn that is not a stall ends the episode, and the next stall earns its own warning. A second run found the first version spending its one warning per card, so a Worker warned about one repeated call, which then changed course, was ended on the first repeat of an unrelated call.
 
 ### Repeated sampling
 

@@ -57,6 +57,7 @@ import { readSettings } from "./integrations.js";
 import { learnFromAttempt } from "./learning/reflect.js";
 import type { LearningStore } from "./learning/store.js";
 import { withLicenseGate } from "./license_gate.js";
+import { withReachabilityGate } from "./reachability_gate.js";
 import { buildReproRecord } from "./repro.js";
 import { workerWebDocs } from "./research/service.js";
 import { Tracer, traced } from "./tracing.js";
@@ -305,26 +306,36 @@ export async function executeCard(
   // subprocess, rather than quietly running the agent unsandboxed.
   const sandbox = new ProcessSandbox({ requireConfinement: ctx.restrictedMode });
   // X20, X26: every verification also runs the licence register gate and
-  // the commit-trailer contract on the card's branch.
-  const gateRunner = withTrailerGate(
-    withLicenseGate(
-      // G24: a separate, mutually authenticated gate host when gates.toml
-      // names one; this machine's sandbox otherwise.
-      gatesConfig.project.gateHost
-        ? new RemoteGateRunner(
-            gatesConfig.project.gateHost.url,
-            readTls(gatesConfig.project.gateHost),
-            {
-              expectedConfigSha256: gatesConfig.sha256,
+  // the commit-trailer contract on the card's branch — and refuses exports
+  // the card added that nothing uses and nothing requires, which is how a
+  // project decays one reasonable change at a time.
+  const gateRunner = withReachabilityGate(
+    withTrailerGate(
+      withLicenseGate(
+        // G24: a separate, mutually authenticated gate host when gates.toml
+        // names one; this machine's sandbox otherwise.
+        gatesConfig.project.gateHost
+          ? new RemoteGateRunner(
+              gatesConfig.project.gateHost.url,
+              readTls(gatesConfig.project.gateHost),
+              {
+                expectedConfigSha256: gatesConfig.sha256,
+                repoRoot: ctx.repoPath,
+              },
+            )
+          : new DeterministicGateRunner(sandbox, {
               repoRoot: ctx.repoPath,
-            },
-          )
-        : new DeterministicGateRunner(sandbox, {
-            repoRoot: ctx.repoPath,
-            expectedConfigSha256: gatesConfig.sha256,
-          }),
-      ctx.repoPath,
+              expectedConfigSha256: gatesConfig.sha256,
+            }),
+        ctx.repoPath,
+      ),
     ),
+    // What asked for this card's work — its acceptance tests and its own
+    // spec — makes an export reachable before the code that calls it exists.
+    {
+      tests: inputCard.acceptanceTests ?? [],
+      text: [inputCard.spec ?? "", ...(inputCard.acceptanceCriteria ?? [])].join("\n"),
+    },
   );
   const skills = new SkillsRegistry();
   skills.loadFromDirectory(join(ctx.repoPath, ".sekhemet", "skills"));

@@ -75,15 +75,22 @@ function repoFor(fixture) {
  * checked against the manifest rather than trusted.
  */
 const idsByFixture = new Map();
+const cardInfo = new Map();
 function cardIdsFor(fixture, expected) {
   const cached = idsByFixture.get(fixture);
   if (cached) return cached;
   const db = new DatabaseSync(join(repoFor(fixture), ".sekhemet", "events.db"), { readOnly: true });
-  const ids = db
-    .prepare("select id from cards order by order_key, id")
-    .all()
-    .map((r) => String(r.id));
+  const rows = db
+    .prepare("select id, scope_files, acceptance_tests from cards order by order_key, id")
+    .all();
   db.close();
+  const ids = rows.map((r) => String(r.id));
+  for (const r of rows) {
+    cardInfo.set(String(r.id), {
+      scope: JSON.parse(String(r.scope_files ?? "[]")),
+      tests: JSON.parse(String(r.acceptance_tests ?? "[]")),
+    });
+  }
   if (ids.length !== expected) {
     throw new Error(
       `frozen suite: ${fixture} seeded ${ids.length} card(s), manifest declares ${expected}`,
@@ -91,6 +98,36 @@ function cardIdsFor(fixture, expected) {
   }
   idsByFixture.set(fixture, ids);
   return ids;
+}
+
+/**
+ * The modules a card's acceptance test needs from *other* cards that are
+ * still empty on main — its unmet dependencies.
+ *
+ * The first two runs of this suite never accepted a passing card, so every
+ * card that builds on another's work ran against the empty seed file: the
+ * model read types.ts for a type that could not be there, read it again, and
+ * was stopped for repeating itself. A card whose dependency was never built
+ * cannot pass, and running it measures nothing but that.
+ */
+function unmetDependencies(repo, cardId) {
+  const info = cardInfo.get(cardId);
+  if (!info) return [];
+  const own = new Set(info.scope.map((f) => f.replace(/\.[cm]?tsx?$/, "")));
+  const needed = new Set();
+  for (const t of info.tests) {
+    const spec = join(repo, "acceptance", t);
+    if (!existsSync(spec)) continue;
+    for (const m of readFileSync(spec, "utf8").matchAll(
+      /from\s+["']\.\.\/(src\/[\w/.-]+?)(?:\.[cm]?js)?["']/g,
+    )) {
+      if (m[1] && !own.has(m[1])) needed.add(m[1]);
+    }
+  }
+  return [...needed].filter((mod) => {
+    const file = [".ts", ".tsx", "/index.ts"].map((e) => join(repo, `${mod}${e}`)).find(existsSync);
+    return !file || readFileSync(file, "utf8").trim() === "";
+  });
 }
 
 /** The evidence bundle is the record of what happened; read it, do not infer. */
@@ -133,6 +170,12 @@ const result = await runFrozenSuite({ ...suite, tasks }, async (task) => {
         Number(task.cardId.slice(task.suite.length + 1)) - 1
       ] ?? task.cardId)
     : task.cardId;
+  const blocked = unmetDependencies(repo, cardId);
+  if (blocked.length) {
+    const why = `blocked: ${blocked.join(", ")} never built (an earlier card failed)`;
+    console.log(`  ${task.suite}/${cardId} ... FAIL 0s (${why})`);
+    return { passed: false, stopReason: why, wallClockSeconds: 0, tokens: 0, rungs: 0 };
+  }
   const t0 = Date.now();
   let timedOut;
   process.stdout.write(`  ${task.suite}/${cardId} ... `);
@@ -159,6 +202,20 @@ const result = await runFrozenSuite({ ...suite, tasks }, async (task) => {
   }
   const seconds = Math.round((Date.now() - t0) / 1000);
   const o = outcomeFrom(repo, cardId, seconds, timedOut);
+  // A passing card is accepted — squash-merged to main — so the cards after
+  // it build on its work, as they would in a real project. Measuring each
+  // card against the empty seed measured nothing about building projects.
+  if (o.passed) {
+    try {
+      execFileSync(
+        "node",
+        [join(ROOT, "apps/harness/dist/index.js"), "accept", cardId, "--repo", repo],
+        { stdio: "ignore", timeout: 5 * 60 * 1000 },
+      );
+    } catch {
+      o.stopReason = "passed, but accept failed: later cards cannot build on it";
+    }
+  }
   console.log(
     `${o.passed ? "PASS" : "FAIL"} ${seconds}s${o.stopReason ? ` (${o.stopReason})` : ""}`,
   );

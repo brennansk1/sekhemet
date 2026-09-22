@@ -98,6 +98,22 @@ describe("@sekhemet/loop", () => {
     expect(moved.recordAndCheck(callA, "tree2")).toBe("none");
   });
 
+  it("warns afresh for each stall episode, not once per card", () => {
+    // card_chron_verifier, second frozen-suite run: warned about repeating
+    // one call, it moved on to something else and was ended on the first
+    // repeat of that — with no warning about it.
+    const detector = new OscillationDetector();
+    const search = [{ id: "1", name: "tool_search", arguments: { q: "read" } }];
+    const read = [{ id: "2", name: "read_file", arguments: { path: "a.ts" } }];
+    expect(detector.recordAndCheck(search, "t1")).toBe("none");
+    expect(detector.recordAndCheck(search, "t1")).toBe("warn");
+    // It did something different: the episode is over.
+    expect(detector.recordAndCheck(read, "t1")).toBe("none");
+    // A new repeat is a new episode, and earns its own warning.
+    expect(detector.recordAndCheck(read, "t1")).toBe("warn");
+    expect(detector.recordAndCheck(read, "t1")).toBe("stop");
+  });
+
   it("L13: A-B-A is an oscillation without waiting for the fourth turn", () => {
     const detector = new OscillationDetector();
     const callA = [{ id: "1", name: "read_file", arguments: { path: "a.ts" } }];

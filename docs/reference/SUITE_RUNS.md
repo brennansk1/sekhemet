@@ -6,6 +6,40 @@ The number to watch is not the pass count alone. It is **why the failures failed
 
 ---
 
+## Both runs so far measured the wrong thing
+
+**Read this before either score below.** The runner never accepted a passing card, so every card ran in a worktree branched from the untouched seed. A card that builds on another card's work — whose acceptance test imports a module an earlier card writes — therefore ran against an **empty file**, however well the earlier card had done.
+
+The evidence is unambiguous. In run 2, `card_onyx_1_types` passed and wrote `CryptoEnvelope` into `src/types.ts` in its own worktree. `card_onyx_2_crypto`, which imports that type, found `src/types.ts` at **0 bytes**, and `main` held nothing but the seed commit. The pattern holds across the run: every passing card imported only its own module, and the dependent cards failed.
+
+So the dominant failure in both runs — `oscillation_detected` on dependent cards — was largely the model reading a file for code that could not be there, reading it again, and being stopped. The harness mechanisms found along the way are real, but their measured effect is confounded, and neither score is a measurement of building a project. It was a measurement of building each card of a project alone.
+
+This matters beyond these two numbers, because building projects is the thing this harness is meant to be best at, and a suite that never lets one card build on another cannot measure that at all.
+
+The runner now accepts each passing card — squash-merging it to `main` — before the next card starts, as a real project would. A card whose contract needs a module that an earlier, failed card never delivered is recorded as **blocked on that dependency** rather than run against an empty file: it cannot pass, and running it measures nothing. That is a named cause, and it is honest about what a failed card costs the cards after it.
+
+The fixtures were not touched: the suite hash covers the manifest and the fixtures, not the runner, so run 3 is comparable with both runs below.
+
+---
+
+## Run 2 — 2026-09-22, stopped at 9 of 30
+
+Stopped deliberately. Swap rose from 1.5 GB to 4.3 GB over the run, stepping up by roughly 100–200 MB per card without recovering, with twenty cards still to go and a prior near-out-of-memory on this host. The partial result is recorded rather than discarded.
+
+| Card | Run 1 | Run 2 | Attributable? |
+| --- | --- | --- | --- |
+| `onyx_1_types` | refused, 1s | **pass** | Yes — types-only cards now show red on typecheck |
+| `chron_iface` | refused, 1s | ran 155s, `memory_pressure` | Yes — unblocked; its outcome was masked by memory |
+| `chron_hasher` | fail | **pass** | No — this card passed, failed and passed across three runs |
+| `chron_db`, `onyx_3_db` | pass | pass | stable |
+| `verifier`, `ledger`, `api`, `onyx_2` | fail | fail | All depend on another card's module — see above |
+
+**2/9 → 4/9 on the paired cards, and half of that is evidence.** The types-only fix is established by mechanism: both types cards went from refused in one second to running. The `chron_hasher` flip is noise until more runs say otherwise. Every card that did not change is a dependent card, which the section above explains.
+
+Replaying those runs also found a bug in the stall fix itself: its one warning was spent per card rather than per stall episode. Fixed, with a test.
+
+
+
 ## Run 1 — 2026-09-21, the baseline
 
 | | |
