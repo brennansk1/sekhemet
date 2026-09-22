@@ -42,11 +42,30 @@ The cost profile says the same thing from another angle: **96.4% of the tokens s
 
 The detector's logic was correct — those turns genuinely made no progress. What was wrong was the consequence. The design requires a failure the Worker must act on to arrive typed and carrying a suggested action; gate failures have always had that, scope denials were given it earlier the same day, and stalls had neither. A Worker that repeats itself once has not been *told* it is repeating, so ending its card assumes a chance it never got.
 
+### Correction: this run was split across two builds
+
+**The run was not a clean baseline, and an earlier version of this record said it was.** The stall fix was compiled into `dist/` at 17:10:39 UTC while the run was in progress, and each card is a fresh process, so it loaded whatever was on disk when it started:
+
+| Build | Cards | Result |
+| --- | --- | --- |
+| Before the fix | 23 (chronicle, onyx, vanguard, `canvas_1`) | 4 passed |
+| With the fix | 7 (`card_canvas_2` to `card_canvas_8`) | **0 passed** — 6 `oscillation_detected`, 1 `no_progress` |
+
+That split is an accident, and it turns out to be informative. It shows the stall fix did what it was built to do and did **not** by itself rescue a card.
+
+**The fix works mechanically.** Pre-fix cards were ended on step two; `card_canvas_3_card_tile`, under the fix, ran eight steps and survived an identical repeat that the old detector would have ended.
+
+**It did not change the outcome, and the reason is the real finding.** That card wrote its file, failed typecheck on three imports that `./tokens.js` does not export, and was told, for each: *"The module does not export that name. Read the module and use its actual export."* It read the module. It read it again, four times in all, then repeated `check` and was stopped.
+
+The harness's own suggested action produced the loop the harness then punished. "Read the module" cannot be completed in one step — reading returns nothing the model can act on — so a model that follows it faithfully repeats it. **A suggested action must be completable in one step; where it asks the model to go and fetch something, the failure should carry that thing instead.**
+
+So the earlier claim that the stall-family failures were "a harness defect the fix addresses" is withdrawn in that form. They are a harness defect, but the defect is in the feedback that leads into the stall, not in the stall detector alone.
+
 ### What this run does not establish
 
-*   **It is not a measurement of the model.** With two thirds of the tasks ended by the harness, this score is a measurement of the harness. The model's actual capability on these tasks is unknown and will stay unknown until a run completes without the stall defect dominating.
-*   **One run, non-zero temperature.** `card_chron_hasher` passed during the runner's validation and failed in this run. Single-trial differences here are noise, and no per-task result should be read as a fact about that task.
-*   **`vacuous_tests` is a fixture question, not a harness one.** All three occurrences are the types-only card in each fixture. Their acceptance tests use `import type` and `expectTypeOf`, both erased at runtime, so the test passes against an empty file and the red-before-green check can never fail. The harness is right to refuse. The fixtures are deliberately left alone: editing one would change the suite hash and make this run incomparable to every run after it, which is the one thing a frozen suite exists to prevent.
+*   **It is not a measurement of the model.** With most failures traceable to harness feedback, this score measures the harness. The model's capability on these tasks is still unknown.
+*   **One run, non-zero temperature.** `card_chron_hasher` passed during the runner's validation and failed here. Single-trial differences are noise.
+*   **`vacuous_tests` is a harness question, not a fixture one.** All three occurrences are the types-only card in each fixture. Their acceptance tests use `import type` and `expectTypeOf`, both erased at runtime, so the test passes against an empty file and the red-before-green check can never fail. The harness is right to refuse to start, and wrong to gate such a card on a runtime test at all: a types-only card's red check is a typecheck. The fixtures are deliberately left alone, because editing one would change the suite hash.
 
 ### Reproducing it
 
