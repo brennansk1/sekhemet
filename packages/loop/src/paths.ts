@@ -77,6 +77,16 @@ export function resolveInWorktree(worktreeRoot: string, candidate: string): stri
   if (resolved !== root && !resolved.startsWith(root + sep)) {
     throw new PathEscapeError(candidate, root, `escapes to ${resolved}`);
   }
+  // Git metadata is never the tools' to touch, however it is reached: the
+  // harness runs git outside the sandbox in this worktree, so a write into
+  // `.git` — directly, nested (`sub/.git`), in another case (`.GIT` on a
+  // case-insensitive disk) or through a symlink, which `resolved` already
+  // followed — could aim that git at configuration the Worker controls
+  // (security findings S1/G1/G2, 2026-09-22).
+  const inside = resolved === root ? "" : resolved.slice(root.length + 1);
+  if (inside.split(sep).some((segment) => segment.toLowerCase() === ".git")) {
+    throw new PathEscapeError(candidate, root, "resolves into git metadata");
+  }
 
   return resolved;
 }

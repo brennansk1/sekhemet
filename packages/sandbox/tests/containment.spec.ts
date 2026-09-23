@@ -87,6 +87,95 @@ describe("@sekhemet/sandbox containment", () => {
     expect(result.stdout).not.toContain("REACHED");
   });
 
+  // Phase A security review, 2026-09-22 (S1): a worktree's `.git` pointer
+  // file says where its git metadata lives, and the harness runs git OUTSIDE
+  // the sandbox in that worktree. A Worker able to rewrite the pointer could
+  // aim git at metadata it controls. The sandbox must never let it.
+  it.runIf(darwin)("refuses to rewrite a worktree's .git pointer file", async () => {
+    const { writeFileSync: w } = await import("node:fs");
+    w(join(work, ".git"), "gitdir: /original/location\n");
+    const result = await sandbox.execute(
+      process.execPath,
+      [
+        "-e",
+        `require('fs').writeFileSync(process.argv[1] + '/.git', 'gitdir: elsewhere\\n')`,
+        work,
+      ],
+      opts(),
+    );
+    expect(result.exitCode).not.toBe(0);
+    expect(readFileSync(join(work, ".git"), "utf8")).toBe("gitdir: /original/location\n");
+  });
+
+  it.runIf(darwin)("refuses to write inside a .git directory", async () => {
+    const { mkdirSync: md, writeFileSync: w } = await import("node:fs");
+    md(join(work, ".git"));
+    w(join(work, ".git", "config"), "[core]\n");
+    const result = await sandbox.execute(
+      process.execPath,
+      ["-e", `require('fs').appendFileSync(process.argv[1] + '/.git/config', 'x')`, work],
+      opts(),
+    );
+    expect(result.exitCode).not.toBe(0);
+    expect(readFileSync(join(work, ".git", "config"), "utf8")).toBe("[core]\n");
+  });
+
+  it.runIf(darwin)("refuses to create git metadata at any depth or in any case", async () => {
+    // Independent review of the S1 fix (G2): only <root>/.git was protected,
+    // so a nested sub/.git — which the harness's git would then descend into —
+    // could still be created.
+    const { mkdirSync: md } = await import("node:fs");
+    md(join(work, "sub"));
+    for (const target of ["sub/.git", "sub/.GIT", ".Git"]) {
+      const result = await sandbox.execute(
+        process.execPath,
+        [
+          "-e",
+          `require('fs').writeFileSync(process.argv[1] + '/' + process.argv[2], 'gitdir: x')`,
+          work,
+          target,
+        ],
+        opts(),
+      );
+      expect(result.exitCode, target).not.toBe(0);
+      expect(existsSync(join(work, target)), target).toBe(false);
+    }
+  });
+
+  // S2: a worktree's node_modules is a link into the user's main checkout.
+  // Granting writes to its target let a card change dependencies the user
+  // later runs unconfined. Toolchains need their cache directories, nothing
+  // more.
+  it.runIf(darwin)("refuses to modify linked dependencies, but allows their caches", async () => {
+    const { mkdirSync: md, symlinkSync, writeFileSync: w } = await import("node:fs");
+    const deps = join(outside, "node_modules");
+    md(join(deps, "dep"), { recursive: true });
+    w(join(deps, "dep", "index.js"), "module.exports = 1;\n");
+    symlinkSync(deps, join(work, "node_modules"));
+    const tamper = await sandbox.execute(
+      process.execPath,
+      [
+        "-e",
+        `require('fs').appendFileSync(process.argv[1] + '/node_modules/dep/index.js', 'x')`,
+        work,
+      ],
+      opts(),
+    );
+    expect(tamper.exitCode).not.toBe(0);
+    expect(readFileSync(join(deps, "dep", "index.js"), "utf8")).toBe("module.exports = 1;\n");
+    const cache = await sandbox.execute(
+      process.execPath,
+      [
+        "-e",
+        `const f=require('fs');f.mkdirSync(process.argv[1]+'/node_modules/.vite-temp',{recursive:true});f.writeFileSync(process.argv[1]+'/node_modules/.vite-temp/x','ok')`,
+        work,
+      ],
+      opts(),
+    );
+    expect(cache.exitCode).toBe(0);
+    expect(readFileSync(join(deps, ".vite-temp", "x"), "utf8")).toBe("ok");
+  });
+
   it("does not leak parent environment variables to the child", async () => {
     // The parent holds model endpoints and credentials; a sandbox that inherits
     // the full environment hands them to any command the agent chooses to run.

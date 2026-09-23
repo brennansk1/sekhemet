@@ -24,6 +24,26 @@ describe("@sekhemet/sandbox PermissionEngine", () => {
     expect(res.reason).toContain("Modifying protected gate");
   });
 
+  it("denies writing a .git pointer file or anything in git metadata, at any depth", () => {
+    // Phase A security review, 2026-09-22 (S1): the pattern /\.git\// matched
+    // ".git/config" but not the ".git" pointer file a worktree has, which
+    // tells the harness's unconfined git where the metadata lives.
+    for (const targetPath of [".git", "./.git", ".git/config", "sub/.git", "sub/.git/hooks/x"]) {
+      const res = engine.evaluate({ toolName: "write_file", targetPath });
+      expect(res, targetPath).toMatchObject({
+        allowed: false,
+        tier: "deny",
+        rule: "protected_system",
+      });
+    }
+    // Not a false positive on ordinary names that merely contain "git".
+    for (const targetPath of [".gitignore", ".github/workflows/ci.yml", "src/git.ts"]) {
+      expect(engine.evaluate({ toolName: "write_file", targetPath }).rule, targetPath).not.toBe(
+        "protected_system",
+      );
+    }
+  });
+
   it("denies implementer from modifying test assertions (Test Immutability Law)", () => {
     const res = engine.evaluate({
       toolName: "write_file",

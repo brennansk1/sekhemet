@@ -36,7 +36,7 @@ import {
 } from "@sekhemet/models";
 import { SpidrFeaturePlanner } from "@sekhemet/planner";
 import { ProcessSandbox } from "@sekhemet/sandbox";
-import { NodeGitSyncAdapter } from "@sekhemet/sync";
+import { NodeGitSyncAdapter, hardenGitForProcess } from "@sekhemet/sync";
 import { runAcpStdio } from "./acp.js";
 import { isAirgapped, mirrorRegistry } from "./airgap.js";
 import { resolveVisionModel, visionPrePass } from "./attachments.js";
@@ -359,6 +359,10 @@ export async function printEventLog(log: EventLog): Promise<void> {
 }
 
 export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<void> {
+  // Every git call this process makes ignores repository config that runs
+  // programs (core.fsmonitor, hooks): git runs outside the sandbox in
+  // worktrees the Worker has written to (Phase A security finding S1).
+  hardenGitForProcess();
   const route = routeFrontDoor(rawArgv);
   if (route.kind === "help") return printFrontDoorHelp();
   if (route.kind === "dev-help") return printDevHelp();

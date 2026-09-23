@@ -4,9 +4,11 @@ The design opens its build phases with a sentence everything after it depends on
 
 ## Result, 2026-09-21
 
+> **Correction, 2026-09-22 (Phase A review).** 11 passes out of 11 does not establish the ≥90% rate the verdict requires. The lowest true rate consistent with 11/11 at 95% confidence is about **76%** (Clopper–Pearson, one-sided: 0.05^(1/11)); showing ≥90% at that confidence needs **29 consecutive passes**. The result is a real signal that the model emits valid tool calls, and the go decision stands as a judgement — but the headline "GO at 100%" claimed more than eleven cases can show.
+
 | | |
 | --- | --- |
-| **Verdict** | **GO** |
+| **Verdict** | **GO on the observed rate — not statistically established** (see the correction below) |
 | Model | `nail-35b-a3b-ctx-16k` (Qwen3.5-35B-A3B, IQ3_S, 13 GB, 16k context) |
 | Rate | **100.0%** valid-and-correct |
 | Winning arm | `arm_a_flat` — though all three tied |

@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { matchesScope } from "@sekhemet/kernel";
+import { hardenGitForProcess } from "./git_hardening.js";
 import type {
   CheckpointCommitParams,
   DiffStats,
@@ -163,6 +164,8 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
     private repoRoot: string,
     projectName?: string,
   ) {
+    // S1 defence in depth: never honour repository config that runs programs.
+    hardenGitForProcess();
     // Default to the repository's own directory name. A fixed "sekhemet"
     // produced branches like sekhemet/sekhemet/<card>, which says nothing about
     // which project the work belongs to.

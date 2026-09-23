@@ -17,7 +17,7 @@ Two exceptions, both narrow: a defect that breaks the path, and a change that de
 | 1 | **Weights resolve from configuration** | Nothing runs at all without this | Done |
 | 2 | **`doctor` verifies the weights exist** | An all-green diagnostic followed by file-not-found is worse than no diagnostic | Done |
 | 3 | **The gate command, and hooks that run it** | Our own definition of done; without it, breakage is found by whoever runs tests by hand | Done |
-| 4 | **Phase 0: the tool-arm measurement** | Every quality claim in the design rested on a number that did not exist | **Done — GO at 100%, see [PHASE0.md](PHASE0.md)** |
+| 4 | **Phase 0: the tool-arm measurement** | Every quality claim in the design rested on a number that did not exist | **Done — 11/11 on 11 cases; a go by judgement, not statistically established (see [PHASE0.md](PHASE0.md))** |
 | 5 | **The frozen suite produces one number** | Makes every later claim checkable, and is the admission test the self-improvement loop already assumes | **Done — run 1 scored 5/30 against hash `192b6e95fa3c`; see [SUITE_RUNS.md](SUITE_RUNS.md) for every run and why each failure failed** |
 | 6 | **One card, Ready → Review, unattended** | The MVP sentence | **Done — 2026-09-21, `card_chron_hasher`, 4 turns, 10/10 gates, evidence `ev_fb8a3ec4d1`** |
 | 7 | **Review shows the evidence, and a person accepts** | The human decision is the product | **Done — board shows it in Review, `accept` squash-merged it to main as `69a8be6` and moved it to Done** |

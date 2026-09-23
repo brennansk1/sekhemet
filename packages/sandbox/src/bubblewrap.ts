@@ -1,4 +1,5 @@
-import { linkedDependencyTargets, realPath } from "./seatbelt.js";
+import { existsSync, mkdirSync } from "node:fs";
+import { linkedDependencyCaches, protectedInsideRoots, realPath } from "./seatbelt.js";
 import type { SandboxOptions } from "./types.js";
 
 /** Where bubblewrap lives on Ubuntu, Debian and Fedora. */
@@ -26,7 +27,20 @@ export function bubblewrapArgv(
   seccompFd?: number,
 ): string[] {
   const roots = [...options.allowedPaths, ...(options.scratchDir ? [options.scratchDir] : [])];
-  const writeRoots = [...new Set([...roots, ...linkedDependencyTargets(roots)].map(realPath))];
+  // Dependency code stays read-only; only its cache directories are writable,
+  // created first because a bind needs an existing path.
+  const caches = linkedDependencyCaches(roots);
+  for (const c of caches) {
+    try {
+      mkdirSync(c, { recursive: true });
+    } catch {
+      // Unwritable from outside too: the toolchain reports the consequence.
+    }
+  }
+  const writeRoots = [...new Set([...roots.map(realPath), ...caches])];
+  // The git metadata inside a granted path is re-mounted read-only after the
+  // writable binds: git runs outside the sandbox in that worktree.
+  const protectedGit = protectedInsideRoots(roots).filter((p) => existsSync(p));
   return [
     "--die-with-parent",
     "--new-session",
@@ -40,6 +54,7 @@ export function bubblewrapArgv(
     "--tmpfs",
     "/tmp",
     ...writeRoots.flatMap((p) => ["--bind", p, p]),
+    ...protectedGit.flatMap((p) => ["--ro-bind", p, p]),
     "--unshare-pid",
     "--unshare-ipc",
     "--unshare-uts",

@@ -89,3 +89,36 @@ describe("@sekhemet/loop path confinement", () => {
     }
   });
 });
+
+describe("git metadata is out of reach for the file tools, however it is named", () => {
+  // Independent review of the S1 fix, 2026-09-22 (G1): the permission engine
+  // checked the path as given, but writes follow symlinks — a link created by
+  // a sandboxed command could aim a later write_file at `.git` from the
+  // unconfined harness. Resolution itself must refuse git metadata.
+  const setup = () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "paths-git-")));
+    writeFileSync(join(root, ".git"), "gitdir: /somewhere\n");
+    mkdirSync(join(root, "sub"));
+    symlinkSync(join(root, ".git"), join(root, "innocent.txt"));
+    return root;
+  };
+
+  it("refuses a symlink that resolves to .git", () => {
+    const root = setup();
+    expect(() => resolveInWorktree(root, "innocent.txt")).toThrow(PathEscapeError);
+  });
+
+  it("refuses .git at any depth and in any case", () => {
+    const root = setup();
+    for (const p of [".git", ".GIT", ".git/config", "sub/.git", "sub/.git/hooks/pre-commit"]) {
+      expect(() => resolveInWorktree(root, p), p).toThrow(PathEscapeError);
+    }
+  });
+
+  it("still allows ordinary names that contain git", () => {
+    const root = setup();
+    for (const p of [".gitignore", ".github/workflows/ci.yml", "src/git.ts", "sub/file.ts"]) {
+      expect(() => resolveInWorktree(root, p), p).not.toThrow();
+    }
+  });
+});

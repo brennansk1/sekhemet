@@ -45,7 +45,9 @@ const PROTECTED_SYSTEM_PATTERNS = [
   /\bconfig\.toml\b/i,
   /\.sekhemet\/(?:events\.db|checkpoints|artifacts)/i,
   /\.githooks\//i,
-  /\.git\//i,
+  // `.git` as a whole path segment: the metadata directory AND a worktree's
+  // `.git` pointer file, which the first pattern (/\.git\//) missed.
+  /(?:^|\/)\.git(?:\/|$)/i,
   /packages\/loop\/src\/(?:session|tools|paths)\.ts$/i,
   /packages\/gates\/src\/runner\.ts$/i,
   /packages\/sandbox\/src\/(?:executor|permissions|seatbelt)\.ts$/i,

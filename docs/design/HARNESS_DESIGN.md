@@ -109,7 +109,7 @@ Where each claim stands, so the positioning never outruns the product:
 
 | Claim | State |
 | --- | --- |
-| Runs on your machine or your server | **Built** — local by default; gates can run on a separate, mutually authenticated gate host |
+| Runs on your machine or your server | **Machine: built. Server: partial** — the dashboard listens only on 127.0.0.1 and records every writer as "human"; the gate host's certificates cover only localhost. A team server needs a bind host, real identity and an accept role (Phase A review, 2026-09-22) |
 | Takes a project through the whole process | **Built end to end**, with gaps: the Worker has no working method yet (see *Reasoning mode*), and the story map and burn-up are not rendered |
 | Fits existing project-management practice | **Partial** — board export to Jira and Linear CSV and GitHub JSON, Slack notifications; no live two-way sync. The board does not yet use the card anatomy and column names those teams know |
 | Teaches the practice to beginners | **Not built** — Insights already frames each chart as a question; a switchable Learn layer is planned |

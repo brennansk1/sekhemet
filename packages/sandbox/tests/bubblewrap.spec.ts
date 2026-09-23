@@ -35,7 +35,10 @@ describe("@sekhemet/sandbox bubblewrap (Linux)", () => {
     expect(argv.slice(-5)).toEqual(["--chdir", work, "--", "pnpm", "test"]);
   });
 
-  it("keeps the network when granted and makes linked dependencies writable", () => {
+  it("keeps the network when granted; linked dependencies stay read-only except their caches", () => {
+    // Phase A security review, 2026-09-22: this test used to assert the whole
+    // linked node_modules was writable — which let a card change dependencies
+    // the user later runs unconfined. Only the cache directories are.
     const repo = mkdtempSync(join(tmpdir(), "bw-repo-"));
     const work = join(repo, "wt");
     dirs.push(repo);
@@ -49,6 +52,23 @@ describe("@sekhemet/sandbox bubblewrap (Linux)", () => {
     );
     expect(argv).not.toContain("--unshare-net");
     const binds = argv.flatMap((a, i) => (a === "--bind" ? [argv[i + 1]] : []));
-    expect(binds.some((b) => b?.endsWith("node_modules"))).toBe(true);
+    expect(binds.some((b) => b?.endsWith("node_modules"))).toBe(false);
+    expect(binds.some((b) => b?.endsWith(join("node_modules", ".vite-temp")))).toBe(true);
+  });
+
+  it("re-mounts a granted path's .git read-only after the writable binds", () => {
+    const work = mkdtempSync(join(tmpdir(), "bw-git-"));
+    dirs.push(work);
+    mkdirSync(join(work, ".git"));
+    const argv = bubblewrapArgv(
+      { allowedPaths: [work], allowNetwork: false, timeoutMs: 1, cwd: work },
+      "node",
+      [],
+    );
+    const lastWritable = argv.lastIndexOf("--bind");
+    const gitRo = argv.findIndex(
+      (a, i) => a === "--ro-bind" && argv[i + 1]?.endsWith(".git") && i > lastWritable,
+    );
+    expect(gitRo).toBeGreaterThan(lastWritable);
   });
 });

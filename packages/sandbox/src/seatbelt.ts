@@ -26,6 +26,34 @@ export function realPath(p: string): string {
  * gate fails on EPERM rather than on the card's work. The grant is deliberately
  * narrow: the dependency tree only, never its parent.
  */
+/**
+ * The cache directories inside linked dependency trees that toolchains must
+ * write (vitest's `.vite-temp`, bundler caches), and nothing else.
+ *
+ * The first version granted writes to the whole linked tree, which is the
+ * user's main checkout's `node_modules`: a card could then change code the
+ * user runs unconfined (Phase A security review, 2026-09-22). The dependency
+ * code itself stays read-only.
+ */
+export const DEPENDENCY_CACHE_DIRS = [".vite-temp", ".vite", ".cache"] as const;
+
+export function linkedDependencyCaches(roots: string[]): string[] {
+  return linkedDependencyTargets(roots)
+    .filter((t) => t.endsWith("node_modules"))
+    .flatMap((t) => DEPENDENCY_CACHE_DIRS.map((d) => join(t, d)));
+}
+
+/**
+ * Paths inside a writable root that the sandbox must never write: the git
+ * metadata. A worktree's `.git` pointer tells git where its metadata lives,
+ * and the harness runs git outside the sandbox in that worktree, so a Worker
+ * able to rewrite it could aim git at configuration it controls (Phase A
+ * security review, 2026-09-22).
+ */
+export function protectedInsideRoots(roots: string[]): string[] {
+  return roots.map((r) => join(realPath(r), ".git"));
+}
+
 export function linkedDependencyTargets(roots: string[]): string[] {
   const targets: string[] = [];
 
@@ -42,6 +70,11 @@ export function linkedDependencyTargets(roots: string[]): string[] {
   }
 
   return targets;
+}
+
+/** Escape a path for embedding in a Seatbelt regex literal. */
+function regexQuote(p: string): string {
+  return p.replace(/[\\^$.*+?()[\]{}|"#]/g, (c) => `\\${c}`);
 }
 
 /** Escape a path for embedding in a Seatbelt profile string literal. */
@@ -63,10 +96,16 @@ export function generateSeatbeltProfile(options: SandboxOptions): string {
   // into any other card's scratch space — which is still an escape, just a
   // quieter one.
   const roots = [...options.allowedPaths, ...(options.scratchDir ? [options.scratchDir] : [])];
-  const writeRoots = [...new Set([...roots, ...linkedDependencyTargets(roots)].map(realPath))];
+  const writeRoots = [...new Set([...roots.map(realPath), ...linkedDependencyCaches(roots)])];
 
   const writeRules = writeRoots
     .map((p) => `  (allow file-write* (subpath "${quote(p)}"))`)
+    .join("\n");
+  // Denials come after the grants: in a Seatbelt profile the later rule wins.
+  // `.git` at any depth and in any case (APFS is case-insensitive): a nested
+  // sub/.git is metadata the harness's git would descend into (review G2).
+  const protectRules = [...new Set(roots.map(realPath))]
+    .map((r) => `  (deny file-write* (regex #"^${regexQuote(r)}/(.*/)?[.][Gg][Ii][Tt](/|$)"))`)
     .join("\n");
 
   // Build tools legitimately write to these character devices; denying them
@@ -118,6 +157,9 @@ export function generateSeatbeltProfile(options: SandboxOptions): string {
 ;; Writes are confined to explicitly granted subpaths.
 ${writeRules}
 ${deviceRules}
+
+;; Never the git metadata inside a granted path: git runs outside the sandbox.
+${protectRules}
 
 ;; Network egress.
 ${networkRule}

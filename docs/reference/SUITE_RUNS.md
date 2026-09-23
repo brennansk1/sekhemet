@@ -28,6 +28,24 @@ Found by the first Phase A review (2026-09-22), confirmed with real git. The rep
 
 ---
 
+## Thinking A/B, arm "off" — Cyber-Tiel on `468f67f`, chronicle and onyx, 2026-09-22
+
+The first arm of the thinking A/B (`SEKHEMET_THINKING=off`, `SEKHEMET_WORKER_METHOD=baseline`), on the build with the content fingerprint, the data-contract section and re-check thinking. Cyber-Tiel-Coder-35B-A3B IQ3_XXS with MTP, 16k context, one llama-server for all cards.
+
+**10 of 14 passed, all first try** · suite 1.0.0 `192b6e95` · 53 min · 453k tokens · 0 repair rungs.
+
+| Card | Result | Cause |
+| --- | --- | --- |
+| chronicle 1–4, onyx 1–3, 5–7 | pass (34–404 s) | `onyx_5_scanner` passed for the first time — impossible before the secrets gate stopped judging the staged test |
+| `chron_ledger` (chronicle_5) | fail, 578 s | `oscillation_detected`: TS2375 with the correct remedy shown; a 230-line diff |
+| `chron_api` (chronicle_6) | blocked | `src/ledger` never built |
+| `onyx_4_vault` | fail, 423 s | `oscillation_detected`: TS2339 `db.run`, with the remedy listing the real members; a 216-line diff |
+| `onyx_8_e2e` | fail, 1,200 s | Timed out against an **empty `vault.ts`**: its spec names its imports as `Vault from "./vault.js"`, a form the runner's dependency check did not read. **A runner defect**, fixed after the run: the card would now be recorded as blocked in 0 s |
+
+**What it shows.** Both real failures are the same shape: a large first diff, a type error the harness explained correctly, and a model that did not converge on the fix. That is the Worker method's territory (small verified steps), not the gates'. **What it does not show:** anything statistical — 14 cards cannot separate arms by less than about 20 points (see [WEB_RESEARCH_2026-09.md](../research/WEB_RESEARCH_2026-09.md), group D). It is the "before" arm for the prompt fixes (COVERAGE M1, M3, M8), which come before the surgical and all arms.
+
+---
+
 ## Runs 4 and 5 — Nail and Cyber-Tiel on one build, both stopped part-way
 
 Same harness build, same fixtures, same suite hash `192b6e95fa3c`; only the Worker differs. Both runs were stopped deliberately — run 4 to switch models, run 5 to pause work — so neither is a score. What they establish is below; what they do not is said after.

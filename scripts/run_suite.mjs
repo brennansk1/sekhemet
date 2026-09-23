@@ -12,7 +12,7 @@
 // another's is not comparable to it, which is the whole point of freezing.
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, posix } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 
@@ -159,6 +159,15 @@ function unmetDependencies(repo, cardId) {
   // imports only src/server.js, so it ran against an empty ledger.ts.
   for (const m of info.spec.matchAll(/\b(src\/[\w/.-]+?)\.[cm]?[jt]sx?\b/g)) {
     if (m[1] && !own.has(m[1])) needed.add(m[1]);
+  }
+  // A spec that dictates the card's own imports names them relative to the
+  // file being written: onyx_8's says `Vault from "./vault.js"`, and it ran
+  // for twenty minutes against an empty vault.ts because neither rule above
+  // saw that form.
+  const home = posix.dirname(info.scope[0] ?? "src/index.ts");
+  for (const m of info.spec.matchAll(/from\s+["']\.\/([\w/.-]+?)\.[cm]?js["']/g)) {
+    const mod = posix.join(home, m[1] ?? "");
+    if (m[1] && !own.has(mod)) needed.add(mod);
   }
   return [...needed].filter((mod) => {
     const file = [".ts", ".tsx", "/index.ts"].map((e) => join(repo, `${mod}${e}`)).find(existsSync);

@@ -45,6 +45,7 @@ Every document in `docs/` is listed here, and nowhere else is the source of trut
 | [MODEL_CANDIDATES.md](research/MODEL_CANDIDATES.md) | Local model candidates, benchmarks and the worker/manager choice. |
 | [IMPLEMENTATION_AUDIT.md](research/IMPLEMENTATION_AUDIT.md) | Every request, research recommendation and paper finding against its commit and test: the gate before the evaluation. |
 | [RESEARCH_REGISTER.md](research/RESEARCH_REGISTER.md) | Candidate techniques through spotted, triaged, shortlisted, benched and adopted or rejected, with evidence and pre-set thresholds; checked by the build. |
+| [WEB_RESEARCH_2026-09.md](research/WEB_RESEARCH_2026-09.md) | Web research for the Opus 5.5 pass: prompt-cache reuse and MTP on hybrid models, sandbox and git safety, the competitive landscape and professional practice, small-sample statistics and model choice. |
 
 ## reference/: exhaustive inventories
 
@@ -57,4 +58,19 @@ Every document in `docs/` is listed here, and nowhere else is the source of trut
 | [PHASE0.md](reference/PHASE0.md) | The go/no-go measurement and its verdict: what was measured, what it does not establish, and how to reproduce it. |
 | [MVP_PATH.md](reference/MVP_PATH.md) | The one sequence that has to work, and what is deliberately sequenced behind it. The gap lists are ordered by unit; this is ordered by what ships. |
 | [MODERNIZATION_PLAN.md](reference/MODERNIZATION_PLAN.md) | The Opus 5.5 pass over the AI brownfield: review every domain, change what the review justifies, measure every change. Supersedes the 2026-09-18 completion plan. |
+| [COVERAGE.md](reference/COVERAGE.md) | Phase A of the modernization: every domain reviewed, the ranked programme, and the decisions that need the owner. |
+| [reviews/domain01_16_surface_docs.md](reference/reviews/domain01_16_surface_docs.md) | Phase A review: product surface and the documents. |
+| [reviews/domain02_09_kernel_review.md](reference/reviews/domain02_09_kernel_review.md) | Phase A review: kernel, lifecycle, review and human decisions. |
+| [reviews/domain03_worker_loop.md](reference/reviews/domain03_worker_loop.md) | Phase A review: the Worker loop and tools. |
+| [reviews/domain04_context.md](reference/reviews/domain04_context.md) | Phase A review: context assembly and prompts. |
+| [reviews/domain05_10_models_measurement.md](reference/reviews/domain05_10_models_measurement.md) | Phase A review: models, hardware, measurement and learning. |
+| [reviews/domain06_gates_dod.md](reference/reviews/domain06_gates_dod.md) | Phase A review: gates, and the DEFINITION_OF_DONE audit. |
+| [reviews/domain07_planner_pm.md](reference/reviews/domain07_planner_pm.md) | Phase A review: the Planner and the PM. |
+| [reviews/domain08_design_research.md](reference/reviews/domain08_design_research.md) | Phase A review: the design stage and research. |
+| [reviews/domain11_14_security_runtime.md](reference/reviews/domain11_14_security_runtime.md) | Phase A review: security and runtime (defensive: findings and fixes). |
+| [reviews/gap_sweep.md](reference/reviews/gap_sweep.md) | Phase A gap sweep: the twelve source files no domain review mentioned. |
+| [reviews/security_fix_review.md](reference/reviews/security_fix_review.md) | Independent review of the S1/S2 sandbox fixes: what they close and what stays open. |
+| [reviews/domain12_15_integrations_ext.md](reference/reviews/domain12_15_integrations_ext.md) | Phase A review: integrations and extensibility. |
+| [reviews/domain13_dashboard.md](reference/reviews/domain13_dashboard.md) | Phase A review: the dashboard and design system. |
+| [reviews/domain17_brand_ux.md](reference/reviews/domain17_brand_ux.md) | Phase A review: brand, visual and interaction design, accessibility, and the three audiences' task walks. |
 | [PROVENANCE.md](reference/PROVENANCE.md) | Every adopted technique's public source and the licence register the `licenses` gate enforces. |
