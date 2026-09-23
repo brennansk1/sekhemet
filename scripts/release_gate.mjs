@@ -133,9 +133,13 @@ doctor();
 await dashboard();
 await mcp();
 const failed = results.filter((r) => !r.ok);
+// A verdict with rungs skipped is not a release verdict: say which ran.
+const skipped = process.argv.includes("--skip-gate");
 console.log(
   failed.length
     ? `\nNOT releasable: ${failed.length} rung(s) failed.`
-    : "\nReleasable: every rung passes.",
+    : skipped
+      ? "\nRungs 6-8 pass; rungs 1-5 were skipped — not a release verdict."
+      : "\nReleasable: every rung passes.",
 );
 process.exitCode = failed.length ? 1 : 0;

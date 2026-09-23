@@ -3,11 +3,13 @@ import {
   appendFileSync,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   realpathSync,
   rmSync,
   symlinkSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { matchesScope } from "@sekhemet/kernel";
 import type {
@@ -334,13 +336,39 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
    * Stall detection compares this across turns: without it, a legitimate retry
    * that follows a successful edit is indistinguishable from a true no-op loop.
    */
+  /**
+   * A fingerprint of the working tree's CONTENT, for the stall detector.
+   *
+   * The first version was HEAD plus `git status --porcelain`, which prints
+   * " M src/a.ts" however many times that file changes: a check → edit →
+   * check on an already-modified file looked like "nothing changed" and drew
+   * a false stall warning (Phase A review, 2026-09-22). Now every tracked and
+   * untracked, non-ignored file is staged into a throwaway index and hashed
+   * as a tree; the real index — and so the Worker's staging — is untouched.
+   */
   public async getRepoStateHash(cardId: string): Promise<string> {
     const worktreePath = this.getWorktreePath(cardId);
     const cwd = existsSync(worktreePath) ? worktreePath : this.repoRoot;
-    // `status --porcelain` reflects staged, unstaged and untracked changes.
-    const status = this.runGit(["status", "--porcelain=v1", "-z"], cwd);
-    const head = this.runGit(["rev-parse", "HEAD"], cwd);
-    return `${head}:${Buffer.from(status).toString("base64").slice(0, 64)}`;
+    const head = this.runGit(["rev-parse", "HEAD"], cwd, true);
+    const scratch = join(mkdtempSync(join(tmpdir(), "sek-fp-")), "index");
+    try {
+      const env = { ...process.env, GIT_INDEX_FILE: scratch };
+      const git = (args: string[]) =>
+        execFileSync("git", args, {
+          cwd,
+          env,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"],
+        }).trim();
+      git(["read-tree", "HEAD"]);
+      git(["add", "-A"]);
+      return `${head}:${git(["write-tree"])}`;
+    } catch {
+      // Not a repository, or no HEAD yet: fall back to what status can say.
+      return `${head}:${Buffer.from(this.runGit(["status", "--porcelain=v1", "-z"], cwd, true)).toString("base64")}`;
+    } finally {
+      rmSync(dirname(scratch), { recursive: true, force: true });
+    }
   }
 
   /** Unified diff for the card's worktree against its merge base. */

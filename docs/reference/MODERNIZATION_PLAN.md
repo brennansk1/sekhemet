@@ -83,6 +83,10 @@ The full frozen suite and the planning measure, against the Phase A baseline. Th
 - Complexity on changed files only: Biome's `noExcessiveCognitiveComplexity`, reported first and gated once the baseline is known.
 - Never rebuild `dist/` while a suite run is in progress; check memory before loading a model and unload after.
 
+## Proposals: new features and existing code
+
+*Owner's standing permission, 2026-09-22.* Reviews may **propose** new features, and legally usable existing repositories and libraries — Python included — in place of building from scratch. Every proposal names what it is, its licence (permissive, or flagged if weak copyleft), how it is maintained, what it replaces or adds, and why. **Nothing is added without the owner's explicit yes**; proposals are collected in `COVERAGE.md` for that decision.
+
 ## Known drift, recorded for Phase A
 
 Found while writing this plan; each is resolved in its domain's review, not silently:

@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { buildRepoMap } from "../src/repo_map.js";
+import { buildRepoMap, dataContracts } from "../src/repo_map.js";
 
 /**
  * The repo map carries the data contract a card builds on. Suite run 5's
@@ -46,12 +46,12 @@ describe("the repo map carries the data contract", () => {
   };
 
   it("shows interface fields, not just the name", () => {
-    const map = buildRepoMap(repo(), ["src/vault.ts"]);
+    const map = dataContracts(repo(), ["src/vault.ts"]);
     expect(map).toContain("createdAt: number;");
   });
 
   it("shows the schema a module creates", () => {
-    const map = buildRepoMap(repo(), ["src/vault.ts"]);
+    const map = dataContracts(repo(), ["src/vault.ts"]);
     expect(map).toMatch(
       /CREATE TABLE IF NOT EXISTS secrets \(\s*project TEXT NOT NULL,\s*key TEXT NOT NULL,\s*created INTEGER NOT NULL\s*\)/,
     );
@@ -66,5 +66,12 @@ describe("the repo map carries the data contract", () => {
   it("is byte-stable across calls, so the prompt stays cacheable", () => {
     const root = repo();
     expect(buildRepoMap(root, ["src/vault.ts"])).toBe(buildRepoMap(root, ["src/vault.ts"]));
+    expect(dataContracts(root, ["src/vault.ts"])).toBe(dataContracts(root, ["src/vault.ts"]));
+  });
+
+  it("leaves the card's own scope out of the contract section", () => {
+    const root = repo();
+    writeFileSync(join(root, "src", "vault.ts"), "export interface Own {\n  x: number;\n}\n");
+    expect(dataContracts(root, ["src/vault.ts"])).not.toContain("interface Own");
   });
 });

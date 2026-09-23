@@ -40,7 +40,7 @@ import {
 } from "./integrity.js";
 import { type LadderState, RepairLadder, type RungPolicy } from "./ladder.js";
 import type { ToolObservation } from "./observation.js";
-import { buildRepoMap } from "./repo_map.js";
+import { buildRepoMap, dataContracts } from "./repo_map.js";
 import {
   TOOL_CATALOG,
   cardClassFor,
@@ -852,9 +852,14 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       } catch {
         ranked = "";
       }
-      this.repoMapCache = ranked.trim()
+      const map = ranked.trim()
         ? ranked
         : buildRepoMap(this.tools.root, this.options.scopeFiles ?? []);
+      // The fields and tables the card builds on, whichever map was chosen.
+      const contracts = dataContracts(this.tools.root, this.options.scopeFiles ?? []);
+      this.repoMapCache = contracts
+        ? `${map}\n\nDATA CONTRACTS (types and tables this card builds on):\n${contracts}`
+        : map;
     }
     return this.repoMapCache;
   }
@@ -1454,6 +1459,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       gateResult = this.lastCheck;
       stopReason = "gate_passed";
     }
+    let recheckFailed = false;
     if (
       !stopReason &&
       !this.tools.wantsFinish() &&
@@ -1476,6 +1482,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         gateResult = recheck;
         stopReason = "gate_passed";
       } else {
+        recheckFailed = true;
         this.lastGateFailure = recheck.failures[0];
         this.lastGateFailures = recheck.failures;
         this.history.push({
@@ -1562,6 +1569,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     // The next turn thinks, under "surgical", when this one failed a check
     // or the gates: that is where a diagnosis is worth its tokens.
     this.lastTurnFailed =
+      recheckFailed ||
       (gateResult !== undefined && !gateResult.passed) ||
       observations.some((o) => (o.tool === "check" || o.tool === "finish_card") && !o.ok);
     if (gateResult) result.gateResult = gateResult;

@@ -66,13 +66,76 @@ export function buildRepoMap(root: string, scopeFiles: string[] = []): string {
       // 5's map was half other cards' future tests, each "(no exports)". The
       // card's own scope files always stay: they are what it may change.
       if (!scopeSet.has(rel) && /\(no export(?:s|ed symbols)\)\s*$/.test(outline)) continue;
-      outlines.push([outline, ...dataContract(src)].join("\n"));
+      // Data contracts are their own section (dataContracts), appended by the
+      // session to whichever map it uses; repeating them here doubled them.
+      outlines.push(outline);
     } catch {
       // Unreadable or non-UTF8 file: omit rather than poison the map.
     }
   }
 
   return outlines.join("\n\n");
+}
+
+/** The data-contract section's budget: enough for a small project's types and schema. */
+const MAX_CONTRACT_CHARS = 2400;
+
+/**
+ * The data contracts outside the card's scope — interface fields and tables —
+ * as their own prompt section, appended to whichever map the session uses.
+ * The first version added them only to the flat fallback map, which runs when
+ * the ranked map is empty, so in production they never reached the prompt
+ * (Phase A review, 2026-09-22). Sorted by file, so the text is byte-stable.
+ */
+export function dataContracts(root: string, scopeFiles: readonly string[] = []): string {
+  const scope = new Set(scopeFiles.map((f) => f.replace(/^\.\//, "")));
+  const files: string[] = [];
+  const stack = [root];
+  while (stack.length && files.length < MAX_FILES) {
+    const dir = stack.pop() as string;
+    let entries: string[];
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const name of entries.sort()) {
+      if (SKIP_DIRS.has(name) || name.startsWith(".")) continue;
+      const abs = join(dir, name);
+      let info: ReturnType<typeof statSync>;
+      try {
+        info = statSync(abs);
+      } catch {
+        continue;
+      }
+      if (info.isDirectory()) stack.push(abs);
+      else if (
+        SOURCE_EXT.test(name) &&
+        !/\.(spec|test)\./.test(name) &&
+        info.size <= MAX_FILE_BYTES
+      ) {
+        files.push(abs);
+      }
+    }
+  }
+  const sections: string[] = [];
+  let used = 0;
+  for (const abs of files.sort()) {
+    const rel = relative(root, abs);
+    if (scope.has(rel) || /(^|\/)(tests?|acceptance)\//.test(rel)) continue;
+    let contract: string[];
+    try {
+      contract = dataContract(readFileSync(abs, "utf8"));
+    } catch {
+      continue;
+    }
+    if (!contract.length) continue;
+    const block = `${rel}:\n${contract.join("\n")}`;
+    if (used + block.length > MAX_CONTRACT_CHARS) break;
+    sections.push(block);
+    used += block.length;
+  }
+  return sections.join("\n\n");
 }
 
 /** Bodies longer than this are shown by name only. */

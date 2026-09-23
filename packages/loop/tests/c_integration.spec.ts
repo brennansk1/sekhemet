@@ -214,6 +214,38 @@ describe("loop callers of Builder C's APIs (C1, C2, C4, C9, C13, C14, C16, C19, 
       expect(await levels("surgical")).toEqual(["medium", "off", "medium", "off"]);
     });
 
+    it("surgical also thinks after a failed automatic re-check", async () => {
+      // Phase A review, 2026-09-22: an edit after a failed check triggers an
+      // automatic re-check; when it failed, the next turn ran without
+      // thinking — the one moment a diagnosis was most needed.
+      const { adapter, seen } = adapterOf((n) =>
+        n === 1
+          ? [{ name: "check", arguments: {} }]
+          : n === 2
+            ? [
+                {
+                  name: "write_file",
+                  arguments: { path: "src/a.ts", content: "export const a = 2;\n" },
+                },
+              ]
+            : [{ name: "read_file", arguments: { path: "src/a.ts" } }],
+      );
+      const session = new CardExecutionSessionImpl({
+        cardId: card.id,
+        card,
+        stepBudget: 8,
+        worktreePath: root,
+        modelAdapter: adapter,
+        gateRunner: failing,
+        scopeFiles: ["src/a.ts"],
+        thinking: "surgical",
+      });
+      for (let i = 0; i < 3; i++) await session.executeTurn();
+      // turn 1: first turn; turn 2: after the failed check; turn 3: after
+      // the failed re-check that turn 2's edit triggered.
+      expect(seen.map((r) => r.reasoning ?? "off")).toEqual(["medium", "medium", "medium"]);
+    });
+
     it("all thinks on every turn", async () => {
       expect(await levels("all")).toEqual(["high", "high", "high", "high"]);
     });
@@ -291,6 +323,34 @@ describe("loop callers of Builder C's APIs (C1, C2, C4, C9, C13, C14, C16, C19, 
       const second = await s.executeTurn();
       expect(second.observations[0]?.summary).not.toMatch(/not run again/);
     });
+  });
+
+  it("puts the data contract in the prompt even when the ranked map is used", async () => {
+    // Phase A review, 2026-09-22: the schema and interface fields were added
+    // only to the fallback map, which runs when the ranked map is empty — so
+    // in production the vault card still never saw the table it had to match.
+    writeFileSync(
+      join(root, "src", "db.ts"),
+      "export function open(): void {\n  const sql = `CREATE TABLE secrets (project TEXT NOT NULL, created INTEGER NOT NULL)`;\n  void sql;\n}\nexport interface SecretRecord {\n  project: string;\n  createdAt: number;\n}\n",
+    );
+    const { adapter, seen } = adapterOf(() => [
+      { name: "read_file", arguments: { path: "src/a.ts" } },
+    ]);
+    const session = new CardExecutionSessionImpl({
+      cardId: card.id,
+      card,
+      stepBudget: 4,
+      worktreePath: root,
+      modelAdapter: adapter,
+      gateRunner: passing,
+      scopeFiles: ["src/a.ts"],
+    });
+    await session.executeTurn();
+    const prompt = `${seen[0]?.systemPrompt ?? ""}\n${seen[0]?.prompt ?? ""}`;
+    expect(prompt).toContain(
+      "CREATE TABLE secrets (project TEXT NOT NULL, created INTEGER NOT NULL)",
+    );
+    expect(prompt).toContain("createdAt: number;");
   });
 
   it("answers a side question in a child context and returns only the answer (C16)", async () => {

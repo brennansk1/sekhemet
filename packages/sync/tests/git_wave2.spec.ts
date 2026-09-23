@@ -232,3 +232,39 @@ describe("X26: the trailer contract", () => {
     expect(git("status", "--porcelain")).toBe("");
   });
 });
+
+describe("the repository fingerprint the stall detector trusts", () => {
+  // Phase A review, 2026-09-22: the fingerprint was HEAD plus
+  // `git status --porcelain`, which prints " M src/a.ts" however many times
+  // the file changes — so a check → edit → check on an already-modified
+  // file looked like "nothing changed" and drew a false stall warning.
+  it("changes when an already-modified file changes again", async () => {
+    const wt = await adapter.createWorktree("fp", "main", "Fingerprint");
+    write(wt, "packages/core/src/a.ts", "export const a = 2;\n");
+    const first = await adapter.getRepoStateHash("fp");
+    write(wt, "packages/core/src/a.ts", "export const a = 3;\n");
+    const second = await adapter.getRepoStateHash("fp");
+    expect(second).not.toBe(first);
+  });
+
+  it("changes when an untracked file's contents change", async () => {
+    const wt = await adapter.createWorktree("fp2", "main", "Fingerprint");
+    write(wt, "packages/core/src/new.ts", "export const n = 1;\n");
+    const first = await adapter.getRepoStateHash("fp2");
+    write(wt, "packages/core/src/new.ts", "export const n = 2;\n");
+    expect(await adapter.getRepoStateHash("fp2")).not.toBe(first);
+  });
+
+  it("is stable when nothing changes, and leaves the real index alone", async () => {
+    const wt = await adapter.createWorktree("fp3", "main", "Fingerprint");
+    write(wt, "packages/core/src/a.ts", "export const a = 9;\n");
+    const before = execFileSync("git", ["status", "--porcelain"], { cwd: wt, encoding: "utf8" });
+    const a = await adapter.getRepoStateHash("fp3");
+    const b = await adapter.getRepoStateHash("fp3");
+    expect(b).toBe(a);
+    // Still unstaged: the fingerprint must not stage the Worker's changes.
+    expect(execFileSync("git", ["status", "--porcelain"], { cwd: wt, encoding: "utf8" })).toBe(
+      before,
+    );
+  });
+});

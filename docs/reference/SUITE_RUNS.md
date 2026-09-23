@@ -22,6 +22,12 @@ The fixtures were not touched: the suite hash covers the manifest and the fixtur
 
 ---
 
+## A defect in every run so far: the stall detector's fingerprint
+
+Found by the first Phase A review (2026-09-22), confirmed with real git. The repository fingerprint the stall detector compares was HEAD plus `git status --porcelain`, which is identical however many times an already-modified file changes. So in **every run recorded below**, an edit to a file that was already changed could look like "the repository is unchanged", drawing a stall warning and, on a repeat, `oscillation_detected`. Some stall-family failures attributed to the model below may have been this; they were not re-examined. The fingerprint now hashes content. An A/B arm started on the old build (thinking off, 4/4 chronicle cards passed) was stopped so that every arm runs on the corrected one.
+
+---
+
 ## Runs 4 and 5 — Nail and Cyber-Tiel on one build, both stopped part-way
 
 Same harness build, same fixtures, same suite hash `192b6e95fa3c`; only the Worker differs. Both runs were stopped deliberately — run 4 to switch models, run 5 to pause work — so neither is a score. What they establish is below; what they do not is said after.
