@@ -105,6 +105,6 @@ Found while writing this plan; each is resolved in its domain's review, not sile
 | Step | State |
 | --- | --- |
 | 0. Handoff: CLAUDE.md, AGENTS.md, DEFINITION_OF_DONE v2, release gate, this plan | Done 2026-09-22 |
-| A. Review and baseline | Next |
+| A. Review and baseline | Review done (17 domains, `COVERAGE.md`); baseline: thinking-off arm 10/14, other arms wait on M1, M3, M8 |
 | B. Workstreams | — |
 | C. Re-measure | — |
