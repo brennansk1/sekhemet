@@ -2,7 +2,7 @@
 
 Sekhemet is **a coding harness for professional teams**: it runs the whole professional process — a brief, a planned backlog on a board teams already know, cards built by a local model against executable gates, and a person's acceptance — on your own machine. It teaches beginners the practice, and non-developers can simply talk to its PM. TypeScript, pnpm monorepo, local models only in v1.
 
-**Read first, every session:** the Executive Status Summary at the top of `DEV_LOG.md`, then `docs/reference/MODERNIZATION_PLAN.md` (what we are doing now and in what order), then `DEFINITION_OF_DONE.md`. The full design is `docs/design/HARNESS_DESIGN.md`; `docs/README.md` indexes every document.
+**Read first, every session:** the Executive Status Summary at the top of `DEV_LOG.md`, then `docs/reference/MODERNIZATION_PLAN.md` (what we are doing now and in what order), then `DEFINITION_OF_DONE.md`. The design starts at `docs/design/SPINE.md`, with one specification per subsystem in `docs/design/specs/` and every settled decision in `docs/design/DECISIONS.md`; `docs/README.md` indexes every document.
 
 ## The spine — fixed; ask the owner before changing any of it
 
@@ -14,7 +14,7 @@ Sekhemet is **a coding harness for professional teams**: it runs the whole profe
 ## How to work here
 
 - **Evidence first.** A change is triggered by a failing card, a replay, a measurement or a review finding, and its commit names that evidence.
-- **The design stays the truth.** Update `HARNESS_DESIGN.md` in the same commit as the code — prose and contract (types, schema, CLI) together.
+- **The design stays the truth.** A workstream starts from its specification in `docs/design/specs/` and updates it in the same commit as the code — behaviour, status and contract together (DEFINITION_OF_DONE §5.2–5.4).
 - **Smallest change that removes the failure.** Split a large file only when you are already working inside it, behind tests (strangler fig, never a big-bang rewrite).
 - **Never make a result look better by redefining it.** Loosening a gate, weakening a test or editing the frozen suite are not improvements.
 - **Tests first** for new behaviour: write the failing test, see it fail, then implement.

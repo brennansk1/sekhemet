@@ -1,0 +1,272 @@
+---
+spec: design-stage
+status: partial
+audiences: [developer, beginner, non-developer]
+code: [packages/planner/src/design_stage.ts, apps/harness/src/wave2.ts, apps/harness/src/init.ts, apps/harness/src/research/reuse.ts, apps/harness/src/pm/libraries.ts, apps/harness/src/research/service.ts, apps/harness/src/research/researcher.ts, apps/harness/src/research/apodex_loop.ts, apps/harness/src/research/web.ts, apps/harness/src/research/polite.ts, apps/harness/src/research/docs.ts, apps/harness/src/research/cards.ts, apps/harness/src/research/claims.ts, apps/harness/src/research/cli.ts]
+tests: [packages/planner/tests/design_stage.spec.ts, apps/harness/tests/reuse_survey.spec.ts, apps/harness/tests/wave2_wiring.spec.ts, apps/harness/tests/libraries.spec.ts, apps/harness/tests/researcher.spec.ts, apps/harness/tests/apodex_research.spec.ts, apps/harness/tests/web_research.spec.ts, apps/harness/tests/research_service.spec.ts, apps/harness/tests/research_cards.spec.ts, apps/harness/tests/research_claims.spec.ts]
+changes: [P2, P7, P14, S8, NEW-design-stage-1, NEW-design-stage-2]
+---
+
+# The design stage, new projects, and research
+
+## 1. Purpose
+
+Before a request has cards it has a shape, and deciding that shape is what a good project manager is for. This subsystem decides **how much** conversation a request deserves — usually none — holds that conversation the way a professional PM would, and, before any card is written, **looks for what already exists**: legally usable libraries and repositories, and the literature when the work is an algorithm. It serves the non-developer ("tell it what you want"), the beginner (a brief is what a professional writes first), and the spine: research is a role with no privileges of its own, and nothing it finds is trusted without a gate. The backlog it hands on is [planner-pm.md](planner-pm.md)'s.
+
+## 2. Behaviour
+
+### 2.1 Proportion: most work needs almost none of this
+
+1. **Proportion is the default behaviour, not an escape hatch**, and the small case is the common one. The failure to design against is not an under-planned calculator; it is a person who wanted a calculator and got interviewed about success metrics. *You don't need a consultation to build a calculator.*
+
+| The request | The design stage is |
+| --- | --- |
+| "Add a `--json` flag" (a small change to an existing project) | Nothing. It is a card. |
+| "Build me a calculator" | One sentence saying what is about to be built, then it starts. No brief, no question. |
+| "A CLI that syncs my notes to S3" | At most two questions, each about something hard to change later, each with the default that will be used. No brief: the answers are assumptions on the cards. |
+| "A multi-tenant billing service" | The six things in §2.3, a real conversation, a brief, and a question about whether it is two projects. |
+
+2. The level is chosen **before any model is loaded**, in this order: **a brief** when being wrong is expensive (money, identity or personal data at stake); **questions** when the request names an external contract hard to change once code depends on it (sync conflict rules, storage credentials, the database, the calling protocol); **one sentence** for a new project or a change large enough to restate; **nothing** for a small change to an existing project. It errs toward less.
+3. The rules only *decide* the level. The Planner role's model *phrases* what is said, classifies risk (the rules are its fallback), and writes the brief's prose (NEW-design-stage-1).
+
+### 2.2 Propose and proceed, rather than ask and wait
+
+1. **The default move is a statement, not a question:** what is about to be built, then doing it — *"A calculator — TypeScript, Vitest, the four operations, a CLI. Starting now."* The person can redirect in the next breath.
+2. **Ask only when the answer is both uncertain and expensive to get wrong** (the data model, the deploy target, the public interface, anything a second person will build on). The test is "what does being wrong cost", not "am I certain".
+3. **One question at a time**, the one that most changes the backlog; then decide whether a second is still worth asking. Never a list. **A question whose answers produce the same cards is not asked.**
+4. **"Just build it" is always a complete answer, and so is silence.** Every blank takes its default, recorded as an assumption, and work starts. Collaboration is offered, never required, and never re-offered after it is declined.
+5. **Nothing is blocked on the conversation.** An unanswered question stays open on the board as a decision with its default ([planner-pm §2.10](planner-pm.md#210-questions-and-decisions)).
+6. It is a conversation, not a form: no step is announced, and the words "requirements", "phase" and "let me gather" never appear in what the product says.
+7. **The stack is detected, not assumed.** A request that names a language or runtime ("a Python script that renames photos") is planned in it; one that names none gets TypeScript on Node with Vitest, the stack the harness verifies best, stated as an assumption.
+8. **Quality words are constraints, not work.** "Fast", "secure", "scalable", "reliable", "easy to use" leave the spec that is decomposed and become constraints with a stated default (for example *secure*: secrets only from the environment, every input validated where it enters). Request phrasing ("build me", "I want") is dropped from what is built.
+9. **Every default is an assumption on every card** — in the dossier the Worker reads, and logged on the epic — and its outcome is recorded when a later card keeps or contradicts it.
+
+### 2.3 What it produces: the brief
+
+For the brief level only, a **project brief** is written to `.sekhemet/brief.md`, versioned with the repository, and never written over an existing one.
+
+| Section | Why it earns its place |
+| --- | --- |
+| **Problem** | Who it is for, what they are trying to do, **what they do today instead** (the baseline to beat). |
+| **Outcome** | What is different when it works, stated so it could be checked. |
+| **Non-goals** | What it deliberately does not do; lets the planner refuse scope later without re-asking. |
+| **Constraints** | Stack, deploy target, appetite, anything fixed; the quality constraints with their defaults. |
+| **Prior art** | What exists, with licences and links, and how it is usually built (§2.5). |
+| **Riskiest assumption** | The thing most likely to make it not work. It becomes the card right after the contract ([planner-pm §2.2](planner-pm.md#22-slicing)). |
+| **The first slice** | The thinnest path through the whole backbone that produces something real. |
+| **Definition of done** | The gates, agreed here rather than discovered at the first Verify. |
+| **Invariants** | Architectural rules in the form the architecture gate enforces (`` `src/db/` does not import `src/cli.ts` ``). Omitted when there are none. |
+
+Problem, Outcome and Non-goals are written from what the person said, and say *"not stated — assumed: …"* where they said nothing; they are never a fixed template. The **backbone** is the activities a user performs, in order; the first slice is narrow and complete through all of them, not one part finished properly.
+
+### 2.4 A project that does not exist yet
+
+1. **Card zero is the ecosystem's own generator**, never a model and never a template library of ours: `npm init` with `tsc --init` and Vitest for TypeScript, `uv init` for Python, `cargo new` for Rust, `pnpm create vite` for a web front end. Gates are derived from what it produced; the generator and its version are recorded in the brief so the scaffold is reproducible. The static layer (typecheck, lint, build) works from the first file.
+2. **Card one is a failing test.** Its acceptance criterion is that the test exists, runs, and fails for the stated reason, verified by executing it. From card two every card has a functional gate.
+3. **The ambiguous hour belongs to the conversation.** For genuinely novel architecture Seshat says *"talk it through with me, then I'll cut the cards"* rather than making a confident autonomous attempt.
+4. A non-developer starts all of this with one sentence to Seshat ([planner-pm §2.9](planner-pm.md#29-starting-a-project-by-conversation)); `sekhemet init` on an empty directory offers the same path instead of stopping at "add typecheck, lint and test scripts".
+
+### 2.5 Reuse before rebuild
+
+The most expensive thing an agent does on a new project is write what a maintained, legally usable package already does. Whenever the design stage says anything at all (every level except *nothing*), planning looks first.
+
+1. **What is searched.** For each *capability* the request needs, the planning model writes one to three short capability queries ("subscription billing", "payment provider SDK", "email sending"); the keyword extractor is the fallback. Sources: the package registry of the project's ecosystem — **npm** for JavaScript and TypeScript, **PyPI** for Python — and **GitHub repositories** in that language; **the literature** (arXiv, OpenAlex) only when the need is an algorithm (ranking, matching, scheduling, compression, detection, similarity, forecasting). PyPI has no search API, so Python candidates are names proposed by the model or found on GitHub, each verified against the PyPI JSON API.
+2. **Only short queries leave the machine** — never the spec, the code or a whole clause. A need with no keyword left after filtering is not searched.
+3. **Filters, applied before anyone sees a result:**
+   - *Relevance:* a candidate shares at least two of the need's content words in its name or description; words that say what kind of thing is built ("CLI", "service", "handles") are dropped from queries.
+   - *Somebody uses it:* at least 1,000 weekly downloads (npm) or 20 GitHub stars. An unknown count is not a pass.
+   - *Maintained:* archived repositories and ones untouched for two years are not recommended.
+   - *Licence,* by one SPDX-based classifier shared with the licence gate ([gates](gates.md)): permissive licences are recommended; weak copyleft (LGPL, MPL, EPL) is flagged; strong copyleft (GPL, AGPL) is named under exclusions so the choice is visible; code with no licence is dropped without comment; a licence the classifier cannot read is excluded and named. An `AND` expression is usable only if every part is; an `OR` if any part is.
+   - *Correct silence:* when nothing passes — or the need is something no one would depend on a library for, like a calculator's arithmetic — nothing is recommended, and that is said.
+4. **Candidates are worth checking, not guaranteed.** People hear *"may already cover this"*, never *"already does this"*. Before the Worker is told to depend on one, the Researcher has read its README (and, for a brief-level project, its API surface).
+5. **A source that could not be reached is "not searched", never "nothing found."** The difference between "nobody has built this" and "I did not look" is the whole value of looking.
+6. **Where results go.** Seshat says the best candidate per capability in one line; the brief's Prior art lists everything found with licences and links; **each card's dossier** carries what exists for the need it builds, linked by the need's id (not by matching words in its title), with the instruction to depend on it or say with `note` why none fits. **The Worker never searches**: it stays offline in its sandbox, and the choice reaches it as part of its card.
+7. **For a brief-level project**, when the Researcher is configured and memory allows, one deep question — *how is this usually built, and what goes wrong* — runs before planning, and its cited answer goes into Prior art. When it cannot run, Prior art says so.
+
+### 2.6 Network policy
+
+1. **Research is opt-in and logged** ([SPINE](../SPINE.md#locked-for-v1): offline by default). The survey and every research fetch run only when the project's research setting allows web access and `config.toml [network] mode` is not `offline`; `--offline` and `SEKHEMET_OFFLINE=1` also turn it off.
+2. The first time a new project is planned with research off, Seshat asks once: *may it search public package registries and GitHub with short keywords (never your spec or code) to avoid building what already exists?* The default if unanswered is no. The answer is the project's research setting. When off, planning says *"I did not look for existing packages: research is off"*.
+3. Every query and its result set is an event in the log, and every fetch goes through the one polite, allowlisted path (robots respected, per-domain rate limits, private and local addresses never fetched). There is no second network path ([security](security.md)).
+
+### 2.7 Research: a role with no privileges of its own
+
+1. Research is a registry role and a card type, not a second harness. Fetching uses the one egress path; claim execution is a gate; model selection is the router; remembering uses the event log and the research cache. **Needing a second sandbox, scheduler, cache or permission model is evidence something does not belong here.**
+2. **Lookup order:** the repository and its installed dependencies at the installed version (types, READMEs, source); local documentation and `llms.txt` per dependency version; the research cache; the live web — only when the earlier tiers miss and the project allows network.
+3. **Deep research** (a card labelled `research`, or `sekhemet research`): restate the question as a brief (what counts as an answer, what is out of scope); decompose into sub-questions; gather with sub-researchers in isolated contexts that return findings with citations, never raw pages; stop on coverage of the sub-questions, not a turn count; verify; synthesise. Effort is `quick`, `standard` or `exhaustive`.
+4. **Verification.** Claims are typed: *executable* (an API exists, has this signature, behaves this way at this version) — run as a gate in the gate host's sandbox with no network, or recorded as *documented, not reproduced* with the reason; *citational* — checked against text actually read, through one reference checker against the fetch ledger; *contested* — both positions reported with source tiers and dates, never silently flattened; *temporal* — dated by the newest source. Every claim carries its confidence and the check it survived.
+5. **Revision is gated, never self-graded.** Every draft carries a grounded risk vector measured outside the generated text: citations that point at nothing read (`badCitations`), open sub-questions (coverage), executable claims that did not reproduce, and grounding confidence from the source ledger. In deep mode one critique pass may propose a revision; it is **accepted only when no component worsens and at least one improves** (`acceptRevision`), otherwise the prior draft stands, and the pass stops when no candidate lowers the risk. Citation and coverage terms are recomputed per candidate (model-free); claims are re-run only for the sentences a revision touched. Contested claims are reported with both positions, their source tiers and dates, and which is better supported and why (`adjudicate`, `renderDisagreements`) — never flattened into one confident sentence.
+6. **What the Worker sees** is a research note: a short, cited summary with the excerpts the task needs, at a fixed budget, outside the byte-stable prompt prefix. Fetched text is always wrapped as untrusted; instructions inside it are inert. Package names found on the web are never installed without the supply-chain gate. No credentials are sent.
+7. **Reproducibility.** Every query, fetch (with content hash), plan, and model and prompt version is recorded, so a run can be re-derived against its cache.
+8. **Retrieval is lexical** (BM25 over heading-sized chunks, weighted toward primary sources). A dense index is rejected on this machine's terms: its resident memory is what the Worker needs, the corpora are hundreds of chunks, and questions name exact identifiers.
+9. **The hardware envelope.** On the 24 GB reference host roles do not co-reside; the Researcher is one registry entry used for both gathering (a tool loop) and synthesis, qualified by the bake-off, not chosen by reputation. Quality comes from more passes, better retrieval and executable checks, not a larger model.
+10. **Tools.** The Researcher has `search`, `fetch`, `docs`, `scholar`, `paper`, `repo`, `deps` and the project's MCP tools. Repository reading is first-class and deterministic, built on `git` and `gh`: a dependency's own source at the installed version; a repository's tree and any file at any ref; code search in a repository and across GitHub; releases and CHANGELOG entries **diffed between the installed and the proposed version**; issues and pull requests including closed ones; blame for a line range; a shallow clone into the cache when a question needs more than a few files. Results at a commit SHA are cached permanently. The Worker's read-only research tools (`docs`, `deps_source`, `repo`, `ask`) are specified in [worker-loop](worker-loop.md); it never has `search` or `fetch`.
+11. **Search** takes 1–6 terms per query, prefers primary sources (official docs, source repositories, standards, papers) over aggregators, and treats recency as a parameter ("the current way" versus "always true"). The web-search provider is one the person configures — a self-hosted SearXNG, or a Brave or Tavily key; papers, page reads and GitHub work without one.
+
+### 2.8 How deep to build: coverage does not rely on the interview
+
+Models find about a third of the requirements people leave unsaid, and almost none of the "style" ones ([research](../../research/PROJECT_DONE_AND_DEPTH.md), ReqElicitGym). So the requirement graph ([planner-pm §2.15](planner-pm.md)) is filled from four sources, and the conversation is only one of them:
+
+1. **The conversation** — clarifying questions (they beat open probing), each asked only when its answer changes the cards, one at a time, with a proposed default.
+2. **A depth profile**, proposed from the request and confirmed with the person: *prototype*, *internal tool*, *production* or *regulated*. The profile selects which rows of a quality checklist built on ISO/IEC 25010:2023 are must-haves — functional suitability, performance, compatibility, interaction capability (including accessibility), reliability (error handling, persistence, recovery), security, maintainability, flexibility, safety — and turns each must-have row into a requirement with a test or a project-gate invariant. A calculator is a *prototype* and gets no questions; a payments service is *production* or *regulated* and gets a short conversation. The profile also sets the default appetite.
+3. **Comparable products.** The Researcher finds comparable open-source projects and products (the same search as the reuse survey, §2.5) and lists their features. A feature most comparables share becomes a *must-be* candidate; a rarer one a *performance* or *attractive* candidate. Every candidate carries its sources; a feature with none — one the model imagined — is a proposal only, never a requirement, until a person accepts it.
+4. **A walkthrough.** The story map is walked once from each user's point of view (Elicitron-style), and each step where the user would be stuck becomes a candidate requirement.
+
+The person sees the candidates grouped by Kano class with must-be first, accepts, edits or rejects them, and can move the line between slices. Nothing the model proposed enters the graph without that acceptance.
+
+## 3. Contract
+
+| Item | Where |
+| --- | --- |
+| `Proportion`, `DesignQuestion`, `QualityConstraint`, `DesignStageResult`, `designStage(spec, ctx)` | `packages/planner/src/design_stage.ts` |
+| `planCommand` (design → survey → brief → plan) | `apps/harness/src/wave2.ts` (to move to a planning module under P1) |
+| `ReuseFinding`, `reuseSurvey`, `queryFor`, `needsLiterature`, `dossierNote`, `priorArtLines` | `apps/harness/src/research/reuse.ts` |
+| Licence classifier (one, SPDX-based) | `apps/harness/src/pm/libraries.ts` today; shared with `license_gate.ts` |
+| `ResearchService`, `researchSources` (network mode, research switch) | `apps/harness/src/research/service.ts` |
+| Research answers, claims, reference checks | `researcher.ts`, `apodex_loop.ts`, `claims.ts` |
+| Brief | `.sekhemet/brief.md` |
+| Events | `research/asked`, and (new, S8) `research/query` with `{ source, query, results, ok }` |
+| CLI | `sekhemet plan "<spec>" [--offline]`, `sekhemet research "<question>" [--deep] [--web\|--offline]`, `sekhemet init` |
+| Config | `config.toml [network] mode = "offline" \| "allowlist" \| …`; the project research switch (`PUT /api/integrations/research-web`) |
+| Seshat tools | `find_library`, `ask_researcher` today; `start_project` ([planner-pm](planner-pm.md)) |
+| Dependencies approved (D5) | `spdx-expression-parse`, `spdx-satisfies`, `spdx-correct` |
+
+## 4. State today
+
+| Capability | State | Evidence | Change |
+| --- | --- | --- | --- |
+| Four proportion levels chosen by rules, wired into `plan` | built | `design_stage.ts:135-207`, `wave2.ts:221`; `design_stage.spec.ts` | — |
+| Quality words as constraints; defaults as assumptions on the epic | built | `design_stage.ts:47-72`, `wave2.ts:255-265` | — |
+| Risk classification without misfires | not-built | Keyword regexes: "charging status" gets a billing brief, "password generator" an auth brief, "sign up" none (`design_stage.ts:74-91`); greedy `scale…` swallows the next sentence (`:60`, `:139`) | NEW-design-stage-1 |
+| Brief asks the highest-value question; prose from the conversation | not-built | Brief level drops its questions (`:190-195`); Problem/Outcome/Non-goals are templates (`:217-224`) | NEW-design-stage-1 |
+| Stack detected from the request | not-built | `RUNTIME` forces TypeScript (`design_stage.ts:126`) | NEW-design-stage-1 |
+| Model phrases the design stage | not-built | Output is the rules' templates | NEW-design-stage-1 |
+| Brief written once, never over an existing one | built | `wave2.ts:230-235` | — |
+| Card zero from the ecosystem generator; card one a failing test | not-built | No generator call anywhere; `init.ts:380` stops at an empty directory | P2 |
+| Reuse survey with relevance, popularity, maintenance filters; "not searched" kept apart | partial | `reuse.ts:138-185, 223`; `reuse_survey.spec.ts` — but it recommends an Amazon scraper for refunds and a Stripe emulator for billing (live, domain08 §1); a missing download count passes (`reuse.ts:180`) | P7 |
+| Capability queries; PyPI and ecosystem choice | not-built | npm hard-coded (`wave2.ts:175`); PyPI by first word (`libraries.ts:78`) | P7 |
+| SPDX licence classifier shared with the licence gate | not-built | MIT-0, Zlib, BlueOak, `AND` rejected (`libraries.ts:24-62`); tests hand-set `usable` | P7 |
+| Dossier linked by need id | not-built | `coversNeed` matches the first four words of a title (`wave2.ts:116`) | P7 |
+| `plan` honours offline config and the research switch; queries logged | not-built | Only `--offline`/`SEKHEMET_OFFLINE` checked (`index.ts:703`); raw `fetch`; no query events | S8 |
+| Only keywords leave the machine | partial | `queryFor(need) \|\| need` sends the whole clause (`reuse.ts:157`) | S8 |
+| Deep research, `sekhemet research`, research cards | built | `researcher.ts`, `apodex_loop.ts`, `cards.ts`; `researcher.spec.ts`, `apodex_research.spec.ts` | — |
+| Claim gate | partial | Any "executable" sentence parks the card with no way out (`cards.ts:100`) | NEW-design-stage-2 |
+| One reference checker against the fetch ledger | partial | Generic pipeline checks only that `[n]` is in range (`researcher.ts:483`) | NEW-design-stage-2 |
+| Literature outage reported as not searched | not-built | `searchPapers` swallows errors (`web.ts:94-198`) | S8 |
+| Research memory scoped to repository and package version | not-built | One global `memory.jsonl` matched on question similarity (`service.ts:50-86`) | NEW-design-stage-2 |
+| Researcher tool set (search, fetch, docs, scholar, paper, repo, deps), robots and rate limits | built | `researcher.ts:216-430`, `polite.ts`, `repo.ts`, `deps.ts`; `web_research.spec.ts` | — |
+| Seshat delegates evidence questions to the Researcher | built | `ask_researcher` (`pm/agent.ts:143`) | — |
+| Grounded risk vector on every answer | built | `researcher.ts:55-72` (`badCitations`, `confidence`, `risk`) | — |
+| Gated critique pass; contested claims reported | not-built | `acceptRevision`, `adjudicate`, `renderDisagreements` (`claims.ts:116-200`) reachable only from tests; no revision stage exists | NEW-design-stage-2 |
+| Research Desk (`grade`, `lookup`, inbox) | not-built | `research/desk.ts` reachable only from tests | — (recommend cut; §7) |
+
+## 5. Changes for v1
+
+### P2 — Start a project by conversation (design side)
+*Non-developers cannot start a project; there is no card zero.*
+
+- WHEN a new project's stack is TypeScript THE SYSTEM SHALL make card zero run the ecosystem generator (npm init, `tsc --init`, Vitest), record the generator and its version in the brief, and derive the gates from its output.
+- WHEN a new project's stack is Python THE SYSTEM SHALL make card zero run `uv init` and derive the gates from its output.
+- WHEN card zero is done THE SYSTEM SHALL make card one a test whose gate passes only when the test runs and fails for its stated reason.
+- WHEN `sekhemet init` runs in an empty directory THE SYSTEM SHALL offer to start a project by conversation instead of printing only "No gates found".
+- WHEN the five greenfield specs (calculator, Python photo renamer, notes-to-S3 sync CLI, billing service, recipe site with sign-up) are started by a scripted non-developer conversation THE SYSTEM SHALL reach green gates after card one on each, with no shell command in the transcript.
+
+### P14 — Depth and coverage: profile, checklist, comparables, walkthrough
+
+Today the design stage produces a brief from the conversation alone; depth is whatever the model thought of ([research](../../research/PROJECT_DONE_AND_DEPTH.md)).
+
+- WHEN a new project or feature brief is started THE SYSTEM SHALL propose a depth profile (prototype, internal tool, production, regulated) with its reason, and SHALL record the person's choice.
+- WHEN a depth profile is chosen THE SYSTEM SHALL add a requirement for every quality-checklist row that profile marks must-have, each with an acceptance criterion or a project-gate invariant; a *prototype* SHALL add none.
+- WHEN research is allowed and the request names a kind of product THE SYSTEM SHALL list comparable projects or products with their sources, and SHALL propose each feature found in at least half of them as a *must-be* candidate citing those sources.
+- WHEN a candidate requirement has no source other than a model THE SYSTEM SHALL label it a proposal and SHALL not add it to the requirement graph until a person accepts it.
+- WHEN the story map exists THE SYSTEM SHALL walk it once per named user role and SHALL record each step with no supporting requirement as a candidate.
+- WHEN the design stage asks a question THE SYSTEM SHALL ask it only if at least two of its answers produce different cards, and SHALL offer a default.
+- WHEN research is not allowed THE SYSTEM SHALL say that comparables were not searched, and SHALL not present the checklist and conversation as complete coverage.
+
+### NEW-design-stage-1 — Design-stage judgement
+*Keyword risk detection misfires both ways, the billing service is asked nothing, the brief is a form letter, and the stack is forced (domain08 §1). No COVERAGE id covers the conversation's quality; P2 covers only the tool.*
+
+- WHEN the request is "a CLI that shows my laptop charging status", "a static blog with author pages", "a password generator CLI" or "a health check endpoint" THE SYSTEM SHALL NOT choose the brief level.
+- WHEN the request is "a recipe website where people can sign up and save favourites" THE SYSTEM SHALL choose the brief level with an identity riskiest assumption.
+- WHEN the request is "build me a calculator" THE SYSTEM SHALL ask no question and say one sentence naming the four operations.
+- WHEN the level is brief THE SYSTEM SHALL ask exactly one question (the one that most changes the backlog), with its default, before planning proceeds on that default.
+- WHEN the request is "a Python script that renames photos" THE SYSTEM SHALL plan it in Python and SHALL NOT assume TypeScript.
+- WHEN a spec reads "…scale to many users. A retried charge must never charge a customer twice." THE SYSTEM SHALL keep the second sentence in the spec that is decomposed, as a hard invariant.
+- WHEN any design-stage text is shown to a person THE SYSTEM SHALL contain none of the words "requirements", "phase" or "let me gather".
+- WHEN a brief is written and the person gave no non-goals THE SYSTEM SHALL write "Not stated — assumed:" with the assumed non-goals rather than a template sentence.
+
+### P7 — Reuse survey by capability, with one SPDX licence classifier
+*Live, the survey recommends wrong packages, rejects MIT-0 (nodemailer), and offers npm to Python projects.*
+
+- WHEN the licence string is `MIT-0`, `Zlib`, `BlueOak-1.0.0`, `BSL-1.0`, `MIT AND Apache-2.0`, `Apache 2.0` or `BSD-3-Clause` THE SYSTEM SHALL classify it permissive in both the survey and the licence gate.
+- WHEN the licence is `LGPL-3.0-or-later` or `MPL-2.0` THE SYSTEM SHALL classify it weak copyleft and flag it; WHEN it is `GPL-3.0-only` or `AGPL-3.0` THE SYSTEM SHALL exclude and name it; WHEN it is absent THE SYSTEM SHALL drop the candidate silently.
+- WHEN the survey and licence-gate tests run THE SYSTEM SHALL compute every `usable` verdict with the production classifier, never from a fixture value.
+- WHEN a candidate's weekly download count is missing or zero and it has fewer than 20 stars THE SYSTEM SHALL NOT recommend it.
+- WHEN the project is Python THE SYSTEM SHALL search PyPI (by verified name) and GitHub in Python, and SHALL NOT query npm.
+- WHEN the need is "a calculator" THE SYSTEM SHALL recommend no package and say that none is needed.
+- WHEN the labelled set of about 40 needs is run THE SYSTEM SHALL record precision@1 and the correct-silence rate, and both SHALL be no lower than the pre-change baseline recorded on the same set.
+- WHEN a planning model rephrases card titles THE SYSTEM SHALL still attach each need's findings to the card built for that need.
+- WHEN Seshat's `find_library` or the Researcher's `find_library` returns candidates THE SYSTEM SHALL have applied the same relevance, popularity, maintenance and licence filters as the survey, and SHALL judge GitHub results with the same classifier whichever search path found them.
+- WHEN the level is brief, the Researcher is configured and no card is running THE SYSTEM SHALL write one cited deep answer to Prior art; otherwise Prior art SHALL say the deep question did not run and why.
+
+### S8 — `plan` honours offline mode and the research setting, and logs its queries
+*The local-first promise.*
+
+- WHEN `config.toml [network] mode = "offline"` or the project's research switch is off THE SYSTEM SHALL make zero network requests during `sekhemet plan` and say that it did not look.
+- WHEN research is off and a new project is planned for the first time THE SYSTEM SHALL ask once whether to enable it, default no, and record the answer as the project's setting.
+- WHEN the survey sends a query THE SYSTEM SHALL append a `research/query` event with the source, the query text and the result names, and the query SHALL contain no word that is not in the need's keyword set.
+- WHEN a need has no keyword left after filtering THE SYSTEM SHALL NOT send a query for it.
+- WHEN the papers source errors THE SYSTEM SHALL report literature as "not searched (unreachable)", never as "nothing found".
+
+### NEW-design-stage-2 — Research that can be verified and does not park wrongly
+*The claim gate cannot pass, citation checks differ by pipeline, memory leaks across repositories, and research quality is unmeasured (domain08 §2, §6.7). Not in COVERAGE.*
+
+- WHEN a research answer contains an executable claim that was not run THE SYSTEM SHALL record it as "documented, not reproduced" and let the card reach Review.
+- WHEN any research pipeline checks citations THE SYSTEM SHALL check each against text actually fetched and recorded, and strike or flag a citation that points at nothing read.
+- WHEN a cached answer was recorded for another repository or another installed version of the package in question THE SYSTEM SHALL NOT reuse it.
+- WHEN a critique pass proposes a revision that raises `badCitations` or the count of unreproduced executable claims THE SYSTEM SHALL keep the prior draft; WHEN it lowers one component and raises none THE SYSTEM SHALL accept it; WHEN no candidate lowers any component THE SYSTEM SHALL stop.
+- WHEN two sources disagree on a claim THE SYSTEM SHALL report both positions with their source tiers and dates and name the better-supported one with its reason.
+- WHEN the research golden set (25 software questions with checkable answers: API signatures at pinned versions, licences, release dates) runs THE SYSTEM SHALL record accuracy and citation precision per pipeline, and the pipeline with the lower score SHALL be removed.
+
+## 6. v1 acceptance
+
+All criteria in §5, plus:
+
+- WHEN the request is "add a --json flag" to an existing project THE SYSTEM SHALL say nothing and produce exactly one card.
+- WHEN the level is brief and `.sekhemet/brief.md` already exists THE SYSTEM SHALL leave it unchanged.
+- WHEN a person answers "just build it" to a question THE SYSTEM SHALL take every remaining default, record each as an assumption, and not ask again in that project.
+- WHEN a design-stage question is unanswered THE SYSTEM SHALL still create the cards on the default.
+- WHEN a quality word appears in the request THE SYSTEM SHALL create no card for it and record it as a constraint with its default.
+- WHEN a survey candidate is shown to a person THE SYSTEM SHALL phrase it "may already cover this".
+- WHEN the Worker runs a card THE SYSTEM SHALL offer it no web search or fetch tool; findings reach it only through the dossier.
+
+- P14: every criterion above passes; on the golden briefs of measurement.md (implicit-requirement recall), recall is recorded against the conversation-only baseline.
+
+## 7. Later
+
+- **The Research Desk** (lookup / question / deep grades on a second slot of the Worker's server; `ask` as a non-blocking request answered by the Researcher; speculative research on each card's open questions before it starts; prefetching `llms.txt` at project open). `research/desk.ts` is reachable only from tests. **Recommendation: cut it now** (git keeps it) and re-propose it with a measurement once the survey and the golden set exist; in v1 the Worker's `ask` answers from its card's contract, and research reaches the Worker through the dossier.
+- **Cache expiry by mutability:** pinned commit or pinned-version docs indefinitely; unversioned docs 90 days; `llms.txt` and papers 30 days; blogs, forums and issues 14 days; registry metadata and search results 1 day; stale entries served and revalidated in the background.
+- **Hosted MCP sources** (Context7, DeepWiki): off by default, untrusted, never the only source of a verified claim.
+- **PDF extraction** (pypdfium2 default, Docling for scanned or table-heavy pages; PyMuPDF4LLM not distributed, AGPL), **trafilatura** or `@mozilla/readability` for static pages (a proposal needing the owner's yes), and **SearXNG** as a self-hosted provider (optional today).
+- **Evaluation on DeepResearch Bench** (RACE, FACT, executable-claim pass rate, disagreement recall). v1 measures on the 25-question golden set.
+- **deps.dev and OpenSSF Scorecard enrichment** — proposed, needs the owner's yes.
+- **Research skills**: research playbooks as Agent Skills (evaluating a library upgrade, triaging a CVE, comparing two implementations, checking whether a paper's technique is worth adopting), supplying sub-questions, source preferences and the report's shape ([extensibility](extensibility.md) owns skills).
+- **Deep-research plan approval**: the sub-question plan posted as a decision request (approve, edit, narrow) with a deadline and safe default while the card stays in Planning. v1 runs the plan without that stop.
+- **A persistent project corpus** over dependency documentation, refreshed when the manifest changes, and a per-question corpus for each deep run. v1 keeps BM25 inside `docs.ts`.
+- **Crawl4AI** as a headless-browser fetch sidecar for JavaScript-rendered pages (`crawl4ai.ts` exists, optional).
+
+## 8. Open questions
+
+1. **Offline by default versus research before building.** SPINE locks "offline by default; research opt-in"; the code searches by default; the owner wants research before anything is built. *Recommendation:* the one-time question in §2.6.2, asked on the first new project, so a person who says yes gets research on every project after, and nothing leaves the machine without that yes.
+2. **Who reads a candidate's README before the Worker is told to depend on it** when no Researcher is configured? *Recommendation:* the planning model reads the README fetched through the same path, and without either the dossier says "unread candidate: check before depending on it".
+
+## 9. Evidence and rationale
+
+- Review: [domain08_design_research.md](../../reference/reviews/domain08_design_research.md) (live survey output, the licence misclassifications, the risk misfires).
+- Planner interplay and the invariant bug: [domain07_planner_pm.md §6](../../reference/reviews/domain07_planner_pm.md).
+- The competitive landscape: Linear Agent already serves non-technical teammates, and Kiro, GitHub Spec Kit, BMAD and Taskmaster all turn specs into tasks — so the edge here is **proportion** (BMAD alone sizes its loop to the change) and **reuse with licences before building**, on a local model; Backlog.md is the closest local-first card anatomy — [WEB_RESEARCH group C §6](../../research/WEB_RESEARCH_2026-09.md#6-competitive-landscape) and its gap analysis. NN/g on help and empty states (§7) shapes the one-sentence default and the `init` path.
+- Gated revision (§2.7.5): no gate that reads only the generated transcript can improve uniformly; a grounded gate can — SRMA (arXiv 2609.02750) accepted 6.2% harmful memory proposals when grounded, 34.5% when self-gated, 100% free-form; Repo-To-Skill's verify stage as the admission rule for skills — [PAPER_REVIEWS_2026-09.md](../../research/PAPER_REVIEWS_2026-09.md) batch 1, which also found nothing in batch 2 that changes this section.
+- Research techniques move through the [RESEARCH_REGISTER](../../research/RESEARCH_REGISTER.md) lifecycle with a threshold set before benching; a dense index (R11) and self-refine loops (R9) are rejected there.
+- Proportion was built from a measurement: before it existed a calculator, a sync tool and a billing service all got two to seven identical-shaped cards, including "Secure: happy path" and a calculator titled "Me a calculator".
+- **Rejected:** a library of project templates (worse than the ecosystem's own, and rots); a dense retrieval index on a 24 GB host; research with its own sandbox, scheduler or network path.
+- **Resolved drift:** the riskiest assumption is scheduled right after the contract (the code), not "first regardless"; the "not yet scheduled" note was stale.

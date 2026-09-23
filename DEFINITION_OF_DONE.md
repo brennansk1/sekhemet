@@ -1,8 +1,8 @@
 # Sekhemet — Comprehensive Definition of Done & Anti-Shallow Engineering Contract
 
-> **Scope:** Monorepo (`/Users/brennankelley/Desktop/Sekhemet`)  
+> **Scope:** this repository — every package, the app, the documents.  
 > **Applicability:** All contributing AI models, human engineers, and subagents.  
-> **Version:** 2, 2026-09-22 — gates and trailers brought up to date with the harness; see §4–§6.  
+> **Version:** 3, 2026-09-22 — adds what done means for a specification, a workstream and the product (§5–§7). Version 2 brought the gates and trailers up to date.  
 > **Principle:** *Zero Vanity Testing. Zero Stubbed Code. Zero Hallucinated Completion.*
 
 ---
@@ -92,27 +92,64 @@ Rungs 6–8 were written down on 2026-09-18 and first automated on 2026-09-22 (`
 
 ---
 
-## 5. Card-Level vs Release-Level Done
+## 5. Done at every level
 
-**A card is done** when, in order:
+Five levels, each built on the one before. Nothing is done at a level because someone said so; each has a check.
+
+### 5.1 A card is done when, in order:
 1. its acceptance tests were staged and **failed** before any work (red first; a types-only card is red on typecheck);
 2. its diff is at most 200 lines across 1–3 files, inside its declared scope;
 3. every declared gate passes, **and the three project gates pass**: *reachability* (no export the card added is used by nothing), *regression* (no test `main` already guarantees is broken or removed), *architecture* (no invariant the project's brief declares is broken);
 4. its **evidence bundle** records the diff, every gate result, the stop reason, the model and settings it ran with (including the thinking policy and working method), and its reproducibility record;
-5. a person accepted it, and it was squash-merged to `main` with full attribution trailers.
+5. a person accepted it, and it was merged to `main` with full attribution trailers.
 
 The model never certifies its own work: the gates decide, and a person accepts.
 
-**The harness is releasable** when:
+### 5.2 A specification is ready for building when:
+1. its front matter and its "State today" table agree with the code;
+2. every `partial` or `not-built` capability names a change ID in `docs/reference/COVERAGE.md`;
+3. every change has acceptance criteria written as `WHEN … THE SYSTEM SHALL …`, each specific enough to be a failing test;
+4. it contradicts no other specification, [DECISIONS.md](docs/design/DECISIONS.md) or [SPINE.md](docs/design/SPINE.md), and its open questions each carry a recommendation.
+
+### 5.3 A workstream is done when:
+1. it started from a ready specification (5.2) and a numbered plan;
+2. each acceptance criterion it carries was written as a test **first**, seen failing, then made to pass — without weakening any existing test;
+3. an **independent review** (a separate model instance or person whose only job is critique) found no unresolved defect;
+4. `pnpm gate` passes, and the frozen suite was re-run if the workstream touched anything a card's run depends on (loop, context, gates, models, sandbox, the runner);
+5. the specification was updated in the same commit — its status, its State table and any behaviour that changed — and the COVERAGE row is marked done with its commit;
+6. `main` was fast-forwarded to it ([DEC-10](docs/design/DECISIONS.md#dec-10)).
+
+### 5.4 A specification is built when:
+every acceptance criterion in its "v1 acceptance" section is a test that passes, and every capability it describes is reachable from a command a user runs. Code reachable only from tests does not count. Its front matter then says `status: built`.
+
+### 5.5 The harness is releasable when:
 1. `pnpm release-gate` passes (rungs 1–8);
 2. the **frozen suite** has been run on the release build, its score recorded in `docs/reference/SUITE_RUNS.md` against the suite hash, and **every failure attributed to a named cause** — none of them a known and unfixed harness defect;
 3. the anti-shallow audit (§2, §3) has been run against the release commit and its findings fixed or recorded;
-4. the documents are current: the README and the claims table in `docs/design/HARNESS_DESIGN.md` ("Product definition") say nothing the product does not do;
+4. the documents are current: the executable documentation checks pass (COVERAGE T10), and the README and the claims table in [SPINE.md](docs/design/SPINE.md) say nothing the product does not do;
 5. the working tree is clean.
 
 ---
 
-## 6. Zero Tolerance Policy
+## 6. The product is done for v1 when
+
+All of these hold on one release commit. This is the target the plan works toward; the ceiling run with a frontier model ([DEC-07](docs/design/DECISIONS.md#dec-07)) comes after it.
+
+1. **Every specification is built** (5.4) — the SPINE status table reads `built` on every row.
+2. **The spine is kept, in code.** Every COVERAGE Tier 0 item (S1–S10) is closed, each with a test that fails when its fix is removed, and a fresh independent security review of the release commit finds no open critical or high issue. Because the Worker is uncensored ([DEC-04](docs/design/DECISIONS.md#dec-04)), the sandbox tests include a Worker that *tries* to leave it: writes to `.git`, to linked dependencies and outside the worktree, network egress, and code run through the gates' own processes — each refused and logged.
+3. **The measurement is valid and recorded.** Every Tier 1 item (M1–M12) is closed. The full frozen suite ran on the release build with the recorded Worker and settings, reported as a pass rate with an exact 95% interval, with every failure named. The planning measure (COVERAGE T7) ran once and its score is recorded. Any comparison between settings is paired and states the smallest difference it could detect.
+4. **The three audiences can do their jobs**, each proven by an end-to-end test against the real dashboard and a real board:
+   - a **developer** finds which card is blocked and why within three actions from the board, at 1440 and 1100 pixels wide;
+   - a **beginner**, with the Learn layer on, reaches the explanation of a WIP limit from the board by keyboard alone;
+   - a **non-developer** starts a new project and gets its status in plain words without a terminal, including at 400 pixels wide.
+5. **Accessible.** Every colour pair the tokens use as text or as a control's only edge meets WCAG 2.2 AA, asserted by a test over the tokens as used; every control has an accessible name; nothing a person needs is available only on hover.
+6. **The company-server minimum works** ([DEC-06](docs/design/DECISIONS.md#dec-06)): bound to a non-loopback address, an unauthenticated request cannot change anything, a person without the Accept permission cannot accept, and every event names its person.
+7. **A new user reaches a first card.** From a fresh clone and an empty repository, one documented first run leads to a card built and gated, on the reference machine, without editing a file by hand.
+8. **Releasable** (5.5), and `main` is at the release commit.
+
+---
+
+## 7. Zero Tolerance Policy
 
 Any contribution that introduces:
 - a dummy test designed only to inflate test counts,

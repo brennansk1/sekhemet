@@ -1,9 +1,7 @@
-# Sekhemet Development Log & Multi-Agent Relay Ledger
+# Sekhemet development log
 
-> **Harness:** claude-code  
-> **Active Agent:** Claude Opus 5 (`claude-opus-5`)  
-> **Collaboration Partner:** Gemini (gemini-2.5-pro via antigravity-cli)  
-> **Protocol:** AGENTS.md Zero-Loss Quota Relay Protocol  
+> **Lead:** Claude Opus 5.5 (`claude-opus-5-5`) in Claude Code; other agents work on disjoint files under AGENTS.md §2.  
+> **Handoff:** the Executive Status Summary below. The Gemini relay protocol was retired on 2026-09-22.  
 > **Created:** 2026-09-17 22:05:01 MDT  
 
 ---

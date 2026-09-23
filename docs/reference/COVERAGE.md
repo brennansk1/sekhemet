@@ -89,13 +89,28 @@ No further model runs start until S1–S2 are fixed; nothing is offered to a use
 | P9 | **GitHub first** (one adapter, one ID, pagination, merge-aware), one notifier, then the company-server minimum | L |
 | P11 | **The navigation** (first slice, one card): grouped and labelled, labels kept at laptop widths, a phone bottom bar (Status · Review · Board · PM), first-letter chords, no bare `t` | S |
 | P12 | **Colour and contrast**: a warning hue apart from the accent gold, neutral disabled buttons, a ≥3:1 control border, no muted text that must be read; checked by axe and screenshots in CI | S |
+| P13 | **Project done is computed, never claimed** (owner, 2026-09-22): a requirement graph from the brief, traceability both ways and no orphan cards, release slices from a walking skeleton, "proven" from tests and gates on `main`, appetite and a circuit breaker ([research](../research/PROJECT_DONE_AND_DEPTH.md)) | L |
+| P14 | **Depth and coverage** (owner, 2026-09-22): a depth profile with an ISO/IEC 25010 checklist, comparable products classified by Kano, a user walkthrough, clarifying questions only where the answer changes the cards | M |
 | P10 | **One first run** for all three audiences — including onboarding an existing team repository, where `onboard.ts` is today a fourth separate way of deriving gates and `--apply` overwrites a hand-tuned `gates.toml` (gap sweep) | M |
 
 ### Tier 3 — structure, as each workstream touches it
 
-One gate pipeline and an AST-based source index (replacing eight regex parsers); a verification controller and one stop-reason table; `index.ts` as a command registry with `queue` in its own module; the dashboard server's 1,045-line closure split; the design rebuilt as a ~300-line spine plus one specification per subsystem and a decisions folder; paired trials with statistics, and the planning measure; self-improvement admitted only on a significant gain; the DEFINITION_OF_DONE test gaps (negative tests, one vanity assertion, skips on Linux).
+| | Change | Size |
+| --- | --- | --- |
+| T1 | One gate pipeline: every gate, built-in or project, runs through one path with one result shape | M |
+| T2 | An AST-based source index replacing the eight regex parsers (exports, imports, symbols) | M |
+| T3 | A verification controller and one stop-reason table shared by the loop, the runner and the evidence bundle | M |
+| T4 | `index.ts` as a command registry, with `queue` in its own module (strangler, between suite runs) | L |
+| T5 | The dashboard server's 1,045-line closure split by route group | M |
+| T6 | The design rebuilt as `SPINE.md`, one specification per subsystem and a decisions log | L |
+| T7 | Paired trials with statistics, and the planning measure | M |
+| T8 | Self-improvement admits a change only on a significant paired gain | S |
+| T9 | The DEFINITION_OF_DONE test gaps: missing negative tests, one vanity assertion, skips on Linux | S |
+| T10 | Executable documentation checks: README ↔ the front door, config schema ↔ `config.ts`, the `SEKHEMET_*` inventory, model names ↔ registry, `file:` links, spec front matter ↔ the SPINE status table | M |
 
 ## Decisions only the owner can make
+
+**Decided by the owner on 2026-09-22** (records in [DECISIONS.md](../design/DECISIONS.md)): D1 keep Cyber-Tiel (DEC-04); D2 merge — done, `main` at `fb59ba2` (DEC-10); D3 as recommended (DEC-05); D4 as recommended (DEC-09); D5 as recommended — SPDX parsing and the official API clients approved, the rest still proposals (DEC-08); D6 after local v1 meets the Definition of Done (DEC-07); D7 as recommended (DEC-06). The sequence to v1 is in [MODERNIZATION_PLAN.md](MODERNIZATION_PLAN.md), Phase B.
 
 | | Decision | Recommendation |
 | --- | --- | --- |

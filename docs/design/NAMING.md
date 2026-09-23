@@ -1,7 +1,7 @@
 # Naming
 
 Status: rule from the user, 2026-09-18 · Applies to the product, the dashboard, the CLI, docs and model prompts.
-Related: `FRONTEND_DESIGN.md` §2.3 (voice and term table), `PM_DESIGN.md` §2.1 (Seshat).
+Related: [SPINE.md](SPINE.md) (voice), [specs/dashboard.md](specs/dashboard.md) and [specs/planner-pm.md](specs/planner-pm.md) (where these names appear), [DECISIONS.md](DECISIONS.md#dec-05) (one persona).
 
 ## The rule
 
@@ -29,7 +29,7 @@ If you are unsure whether something "takes a name", it doesn't. Use the plain wo
 | Name | What it names | Why it earns a name | How it appears first on a surface |
 |---|---|---|---|
 | **Sekhemet** | The product | Products have names. | The wordmark next to the pylon glyph. |
-| **Seshat** | The project-manager persona that runs on the manager model | The user asked to talk to it "like a real project manager you hired", and chose the name (renamed from Seshat, 2026-09-18). Seshat is the Egyptian goddess of writing, measurement and records, "mistress of the house of books", who kept the royal annals and measured out the foundations of temples: a keeper of plans and records, which is what a project manager is. It reads as a name, not a costume, and needs no explanation. | Sidebar: *Seshat · Project manager*. Panel header: *Seshat / Project manager · dirk-27b*. `#/pm` topbar: *Seshat · Project manager*. Palette: *Talk to Seshat, the project manager*. |
+| **Seshat** | The project-manager persona that runs on the manager model | The user asked to talk to it "like a real project manager you hired", and chose the name (renamed from Merit, 2026-09-18). Seshat is the Egyptian goddess of writing, measurement and records, "mistress of the house of books", who kept the royal annals and measured out the foundations of temples: a keeper of plans and records, which is what a project manager is. It reads as a name, not a costume, and needs no explanation. | Navigation: *Project manager*, with *Seshat* as secondary text — people scan for the function (Phase A UX review, 2026-09-22). Panel header: *Seshat · Project manager*, without the model's name. `#/pm` topbar: *Seshat · Project manager*. Palette: *Talk to Seshat, the project manager*. |
 | **Basalt**, **Sand** | The dark and light themes | Themes are named in most tools, and these describe what you see. | The theme toggle's tooltip. |
 
 The brand glyph (a pylon gate with a sun disc) is a mark, not a name, and is never written out.
@@ -40,7 +40,7 @@ The brand glyph (a pylon gate with a sun disc) is a mark, not a name, and is nev
 - **No themed name without its function** on first appearance. *Seshat* alone in a navigation label is not enough; the sidebar says *Seshat · Project manager*.
 - **No second persona.** The Worker, the Planner, the Researcher and the Reviewer are roles, not characters. They get no names, avatars or voices.
 - **No renaming third-party products**, and no abbreviating them in the UI (*GH*, *JIRA*). Monogram tiles on the Integrations page are decoration, marked `aria-hidden`, with the full name beside them.
-- **No mythological copy.** No taglines, epigraphs or "the goddess watches over your build". The voice stays plain and exact (FRONTEND_DESIGN §2.3).
+- **No mythological copy.** No taglines, epigraphs or "the goddess watches over your build". The voice stays plain and exact ([SPINE.md](SPINE.md#voice)).
 - **No gold or iconography used to make a name look special.** Seshat's avatar is a plain monogram on `--bg-overlay`.
 
 ## Audit (2026-09-18)

@@ -46,6 +46,10 @@ Every document in `docs/` is listed here, and nowhere else is the source of trut
 | [IMPLEMENTATION_AUDIT.md](research/IMPLEMENTATION_AUDIT.md) | Every request, research recommendation and paper finding against its commit and test: the gate before the evaluation. |
 | [RESEARCH_REGISTER.md](research/RESEARCH_REGISTER.md) | Candidate techniques through spotted, triaged, shortlisted, benched and adopted or rejected, with evidence and pre-set thresholds; checked by the build. |
 | [WEB_RESEARCH_2026-09.md](research/WEB_RESEARCH_2026-09.md) | Web research for the Opus 5.5 pass: prompt-cache reuse and MTP on hybrid models, sandbox and git safety, the competitive landscape and professional practice, small-sample statistics and model choice. |
+| [WORKER_METHOD_LITERATURE.md](research/WORKER_METHOD_LITERATURE.md) | The literature behind the Worker's senior-engineer working method: interface ablations, planning, verification and repair for small agentic models. |
+| [PAPER_REVIEWS_2026-09.md](research/PAPER_REVIEWS_2026-09.md) | Six September 2026 papers and one model release reviewed against the design, with what to integrate. |
+| [PUBLIC_DATA_SURVEY.md](research/PUBLIC_DATA_SURVEY.md) | Which public datasets could seed the learning loops and the playbook, with verified licences and verdicts. |
+| [PROJECT_DONE_AND_DEPTH.md](research/PROJECT_DONE_AND_DEPTH.md) | Why LLMs misjudge when a project is done and how much to build, what works (requirement graphs, appetite, story-map slices, Kano, comparables, quality checklists), and how Sekhemet builds it in. |
 
 ## reference/: exhaustive inventories
 

@@ -1,15 +1,33 @@
-# Sekhemet
+# Sekhemet — a coding harness for professional teams
 
-A local-first coding harness that runs AI agents against a kanban board. Work is
-cut into small cards; an agent executes each card in an isolated git worktree,
-inside an OS sandbox, until executable verification gates pass; a person reviews
-the evidence and accepts or returns it. Inference runs on your machine.
+Sekhemet runs the whole professional process on your own machine: a brief, a
+planned backlog on a board teams already know, cards built by a **local** model
+against executable gates, and a person's acceptance. Developers get a familiar
+board with evidence on every card; beginners learn the practice as they go;
+non-developers talk to the project manager, Seshat, to start a project and ask
+how it is going.
 
-> **Status — honest, as of 2026-09-18.** The harness core is real and tested (183
-> tests, all green). It is **not yet certified for release**: on the Chronicle
-> release gate the current best run passes 3 of 6 cards on the first attempt,
-> against a bar of 5 of 6. See `DEV_LOG.md` for what has been measured and
-> `docs/reference/FEATURE_INVENTORY.md` for what the design specifies that is not built yet.
+> **Status, 2026-09-22.** The core runs end to end and is tested (1,164 tests,
+> all green), but v1 is **not done**: the Opus 5.5 review found safety, spine and
+> measurement gaps that come first. What is built, per subsystem, is in the
+> status table of [`docs/design/SPINE.md`](docs/design/SPINE.md); what done means
+> is [`DEFINITION_OF_DONE.md`](DEFINITION_OF_DONE.md) §6; the latest measurement
+> is in [`docs/reference/SUITE_RUNS.md`](docs/reference/SUITE_RUNS.md).
+
+## Start
+
+```bash
+sekhemet                    # set up on first run, then open the board
+sekhemet "<what you want>"  # plan the work and run it
+sekhemet run [card]         # run a card, resume a stopped one, or run the queue
+sekhemet review             # the next card waiting on you
+sekhemet accept <card>      # accept and merge (also: send-back, park, unpark)
+sekhemet board              # the board (--terminal for text)
+sekhemet doctor             # check the install, including the model weights
+sekhemet dev <command>      # everything for developing the harness itself
+```
+
+From a checkout, `sekhemet` is `node apps/harness/dist/index.js` (or `pnpm sekhemet`).
 
 ## How a card runs
 
@@ -39,8 +57,9 @@ the evidence and accepts or returns it. Inference runs on your machine.
 These are enforced, and each is covered by tests that attempt the violation:
 
 - **OS sandbox.** On macOS every command runs under `sandbox-exec` with a
-  generated Seatbelt profile: writes only inside the worktree, the linked
-  dependency tree and a private scratch directory; network egress denied. The
+  generated Seatbelt profile: writes only inside the worktree and a private
+  scratch directory, never to its git metadata or the linked dependencies;
+  network egress denied. Git runs with hooks and fsmonitor disabled. The
   parent environment is not inherited (an allowlist is passed instead).
   `sekhemet doctor` proves confinement with a live escape attempt.
 - **Permission tiers.** Deny always wins: path traversal (symlink-resolved),
@@ -59,8 +78,8 @@ One model is resident at a time; `ModelRouter` unloads before it loads.
 
 | Role | Default | Notes |
 |---|---|---|
-| Worker | `nail-35b-a3b-ctx` via Ollama | 35B MoE, ~3B active, 29–30 tok/s measured on an M4 / 24 GB |
-| Worker (alt) | `--worker cyber-tiel` | Cyber-Tiel-Coder 35B-A3B MTP under a harness-managed llama-server with its MTP head |
+| Worker | `--worker cyber-tiel` | Cyber-Tiel-Coder 35B-A3B MTP (IQ3_XXS) under a harness-managed llama-server with its MTP head; 26–32 tok/s on an M4 / 24 GB |
+| Worker (alt) | any Ollama tag | e.g. `nail-35b-a3b-ctx` |
 | Manager | `--manager <ollama model>` | Reviews failed cards in one batch and writes repair plans |
 
 Tool calls use the server's native tool schema, with text parsing (JSON, fenced
@@ -90,9 +109,9 @@ node apps/harness/dist/index.js doctor
   ✓ Node runtime: v26.0.0
 ```
 
-## CLI
+## Every command
 
-Run as `node apps/harness/dist/index.js <command> [--repo <path>]`.
+The front door above covers daily use; these are the underlying commands, run as `node apps/harness/dist/index.js <command> [--repo <path>]`.
 
 | Command | What it does |
 |---|---|
@@ -134,8 +153,9 @@ runs one from a clean scratch repository.
 | `packages/board`, `planner`, `eval`, `ui` | Board rules, decomposition, benchmarks, design tokens |
 | `apps/harness` | CLI, dashboard server, MCP server |
 
-Design and process documents: the design (`Board-Native Local-First AI Coding
-Harness — Design v2.md`), `DEFINITION_OF_DONE.md`, `AGENTS.md`, `DEV_LOG.md`.
+Design and process documents: the design starts at `docs/design/SPINE.md`, with
+one specification per subsystem in `docs/design/specs/`; `DEFINITION_OF_DONE.md`,
+`AGENTS.md`, `DEV_LOG.md`; `docs/README.md` indexes everything.
 
 ## License
 
