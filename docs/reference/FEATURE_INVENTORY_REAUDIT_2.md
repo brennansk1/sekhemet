@@ -1,6 +1,6 @@
 # Feature inventory re-audit, pass 1 (2026-09-19)
 
-An independent re-audit of every unit in [FEATURE_INVENTORY_REAUDIT.md](FEATURE_INVENTORY_REAUDIT.md) except the X (cross-cutting) and U (dashboard) units, which another builder is still changing and which get a second pass. It is scored against commit `9edc3e5`, on the gate the user set in [COMPLETION_PLAN.md](COMPLETION_PLAN.md). Builders' reports and commit messages were used only as leads. Every status comes from reading the code on disk, tracing a production caller and finding the test.
+An independent re-audit of every unit in [FEATURE_INVENTORY_REAUDIT.md](FEATURE_INVENTORY_REAUDIT.md) except the X (cross-cutting) and U (dashboard) units, which another builder is still changing and which get a second pass. It is scored against commit `9edc3e5`, on the gate the user set on 2026-09-18 (every unit BUILT; that completion plan is now superseded by [MODERNIZATION_PLAN.md](MODERNIZATION_PLAN.md)). Builders' reports and commit messages were used only as leads. Every status comes from reading the code on disk, tracing a production caller and finding the test.
 
 ## Method
 

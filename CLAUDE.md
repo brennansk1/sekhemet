@@ -1,86 +1,61 @@
-# CLAUDE.md — Claude Code Operational Guide for Sekhemet
+# CLAUDE.md — working on Sekhemet
 
-## Project Overview
-Sekhemet is a board-native, local-first AI coding harness written in TypeScript as a pnpm monorepo. It features an event-sourced SQLite WAL kernel, executable verification gates, a TanStack Virtual dual-axis kanban, and 100% local inference support.
+Sekhemet is **a coding harness for professional teams**: it runs the whole professional process — a brief, a planned backlog on a board teams already know, cards built by a local model against executable gates, and a person's acceptance — on your own machine. It teaches beginners the practice, and non-developers can simply talk to its PM. TypeScript, pnpm monorepo, local models only in v1.
 
-For complete multi-agent specifications, read [AGENTS.md](file:///Users/brennankelley/Desktop/Sekhemet/AGENTS.md).
+**Read first, every session:** the Executive Status Summary at the top of `DEV_LOG.md`, then `docs/reference/MODERNIZATION_PLAN.md` (what we are doing now and in what order), then `DEFINITION_OF_DONE.md`. The full design is `docs/design/HARNESS_DESIGN.md`; `docs/README.md` indexes every document.
 
----
+## The spine — fixed; ask the owner before changing any of it
 
-## 1. Mandatory Git Commit Trailers
-You **must never** commit without multi-agent attribution trailers. Every commit you produce must end with:
+- Gates decide completion; the model never certifies its own work.
+- The event log is the only durable channel.
+- A card is the unit of work.
+- The human is the rate limiter.
 
-```git
-<type>(<package>): <concise description>
+## How to work here
 
-Card: <card_id>
-Agent-Model: claude-3-7-sonnet-20250219
+- **Evidence first.** A change is triggered by a failing card, a replay, a measurement or a review finding, and its commit names that evidence.
+- **The design stays the truth.** Update `HARNESS_DESIGN.md` in the same commit as the code — prose and contract (types, schema, CLI) together.
+- **Smallest change that removes the failure.** Split a large file only when you are already working inside it, behind tests (strangler fig, never a big-bang rewrite).
+- **Never make a result look better by redefining it.** Loosening a gate, weakening a test or editing the frozen suite are not improvements.
+- **Tests first** for new behaviour: write the failing test, see it fail, then implement.
+- **Builders do not grade themselves.** Get an independent review of each workstream before committing it.
+- **Context hygiene.** Send wide code reading to subagents and keep their digests; at most three agents at once, on disjoint files; keep judgement work yourself. One workstream per session.
+- **Sanity-check every number.** A 0% has been a URL typo, a 100% eleven easy cases, identical hashes a hashed constant, and an "exit 0" the exit code of `tail`. One trial at non-zero temperature is not a finding. Withdraw claims the evidence does not support.
+- **End every session by saying where the cards stop**, and record it in `DEV_LOG.md`.
+
+## Commits
+
+Run `pnpm gate` before every commit. Every commit ends with:
+
+```
+Card: <card or workstream id>
+Agent-Model: <exact model id, e.g. claude-opus-5-5>
 Agent-Harness: claude-code
-Agent-Role: lead-driver | implementer | delegator
-Co-authored-by: Claude <claude@anthropic.com>
-Co-authored-by: Gemini <gemini@antigravity.google>
+Agent-Role: lead-driver | implementer | reviewer
+GateStatus: pass | fail | partial | suspended-quota
+Co-Authored-By: <the attribution line the harness gives>
 ```
 
-For checkpoints, include `Step: X/Y` and `GateStatus: pass|fail|partial|suspended-quota`.
-
----
-
-## 2. Collaboration Protocol with Gemini
-
-You are the **Lead Driver & Delegator**. Gemini acts as your **Architect, Test Author, and Relay Finisher**:
-
-1. **Card Planning & Sizing**:
-   - Keep cards strictly $<200$ LOC diff across 1–3 files.
-   - Decompose features using SPIDR (Spike, Path, Interface, Data, Rule).
-2. **Contract-First TDD**:
-   - Before writing implementation code in `packages/<name>/src`, verify that interfaces in `types.ts` and failing tests in `tests/*.spec.ts` exist.
-   - If tests do not exist, draft them first (or request Gemini generate them) and verify they fail (`RED`).
-   - Never modify test assertions to force a passing gate.
-3. **The Quota Wall / Rate-Limit Relay Handoff**:
-   - If you are approaching rate limits or token exhaustion, commit all work in progress immediately:
-     ```git
-     checkpoint: card execution suspended due to rate limit
-
-     Card: card_xxxx
-     Step: 3/8
-     Agent-Model: claude-3-7-sonnet-20250219
-     Agent-Harness: claude-code
-     Agent-Role: lead-driver
-     GateStatus: suspended-quota
-     Co-authored-by: Claude <claude@anthropic.com>
-     ```
-   - Gemini will detect this state, act as **Relay Finisher**, complete the failing test rungs, run gates to green, and create the merge commit.
-   - When your quota resets, simply check `git log -n 5` to inspect the relayed work and resume the next card.
-
----
-
-## 3. Tooling & Commands
+## Commands
 
 ```bash
-# Workspace setup
 pnpm install
-
-# Build & Typecheck
-pnpm build
-pnpm typecheck
-
-# Testing (Vitest)
-pnpm test
-pnpm test -- filter-term
-
-# Code Hygiene
-pnpm lint          # Biome check
-pnpm format        # Biome format --write
+pnpm gate                 # tsc -b && biome check . && vitest run — before every commit
+pnpm release-gate         # gate + doctor + dashboard + MCP — before any release
+pnpm test -- <filter>     # targeted tests
+pnpm format               # biome check --write .
+pnpm sekhemet <command>   # the CLI (node apps/harness/dist/index.js)
+node scripts/run_suite.mjs --worker cyber-tiel --out <file>   # the frozen suite
 ```
 
----
+## Layout
 
-## 4. Architecture & Package Hierarchy
-Implementation strictly follows this topological order:
-`kernel` -> `sandbox` -> `sync` -> `models` -> `gates` -> `context` -> `loop` -> `board` -> `planner` -> `eval` -> `ui` -> `apps/harness`.
+Packages in dependency order: `kernel` → `sandbox` → `sync` → `models` → `gates` → `context` → `loop` → `board` → `planner` → `eval` → `ui` → `apps/harness`. Node 26 (20+ supported), `node:sqlite` in WAL mode, Biome, Vitest. Tests for `kernel`, `board`, `sandbox` and `sync` use real SQLite files, real subprocesses and real git worktrees (DEFINITION_OF_DONE §2A). Workspace packages resolve each other through `dist/`, so a change in one package is seen by another only after `tsc -b`.
 
-- **Runtime**: Node.js 20+ (current system: Node 26)
-- **Package Manager**: pnpm workspaces
-- **Database**: `better-sqlite3` with WAL mode (`journal_mode = WAL`, `synchronous = NORMAL`)
-- **Linter/Formatter**: Biome (`biome.json`)
-- **Test Runner**: Vitest with isolated in-memory SQLite fixtures (`:memory:`)
+## Operations — this machine
+
+- **24 GB host; the Worker is 13 GB.** Check `ollama ps` and `memory_pressure -Q` before loading a model; unload after. The harness's own memory guard stops a card when swap passes 6 GB.
+- **The Worker is Cyber-Tiel-Coder-35B-A3B MTP (IQ3_XXS)** on `/Volumes/My Passport/AI-Models/llm/`. Start its server once — the arguments come from `createCyberTielWorker().launchArgs()`, port 8098, `--spec-type draft-mtp` — and every card attaches to it. Loading from the USB drive takes about five minutes. Set `SEKHEMET_MODELS_DIR` to that directory.
+- **Never run `tsc -b` or `pnpm gate` during a suite run**: each card is a fresh process and would load a different build.
+- **Experiment switches**, recorded in every evidence bundle: `SEKHEMET_THINKING=off|surgical|all`, `SEKHEMET_WORKER_METHOD=baseline|strict`.
+- The shell's `grep` wrapper can hide matches: when a search comes back empty, retry with `/usr/bin/grep -a`. On macOS `/tmp` is `/private/tmp`.

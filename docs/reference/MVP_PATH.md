@@ -53,3 +53,7 @@ Not cancelled — sequenced. Each of these is defensible work that does not make
 The measure is not units closed. It is **how far a card gets** before something stops it, and that number should move every session. A session that closes six units and leaves the card stopping in the same place has not moved the product.
 
 When step 6 passes, the gap list becomes the roadmap again, and it will be shorter than it is now — because running the thing once will reveal which of the remaining units were never needed.
+
+## After the path
+
+Every step above is done. What follows is [MODERNIZATION_PLAN.md](MODERNIZATION_PLAN.md): the Opus 5.5 review of every domain of the product, the baseline measurement, and the workstreams the review justifies.

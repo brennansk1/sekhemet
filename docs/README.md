@@ -56,5 +56,5 @@ Every document in `docs/` is listed here, and nowhere else is the source of trut
 | [SUITE_RUNS.md](reference/SUITE_RUNS.md) | Every recorded frozen-suite score with its hash, and why the failures failed. |
 | [PHASE0.md](reference/PHASE0.md) | The go/no-go measurement and its verdict: what was measured, what it does not establish, and how to reproduce it. |
 | [MVP_PATH.md](reference/MVP_PATH.md) | The one sequence that has to work, and what is deliberately sequenced behind it. The gap lists are ordered by unit; this is ordered by what ships. |
-| [COMPLETION_PLAN.md](reference/COMPLETION_PLAN.md) | The gate: every inventory unit BUILT, in waves of two builders, verified by an independent re-audit. |
+| [MODERNIZATION_PLAN.md](reference/MODERNIZATION_PLAN.md) | The Opus 5.5 pass over the AI brownfield: review every domain, change what the review justifies, measure every change. Supersedes the 2026-09-18 completion plan. |
 | [PROVENANCE.md](reference/PROVENANCE.md) | Every adopted technique's public source and the licence register the `licenses` gate enforces. |

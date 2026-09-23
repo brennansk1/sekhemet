@@ -1,9 +1,9 @@
 # AGENTS.md — Sekhemet Repository Guidelines & Multi-Agent Protocol
 
 Welcome to **Sekhemet** (`/Users/brennankelley/Desktop/Sekhemet`).
-This repository is a board-native, local-first AI coding harness designed for solo developers, pairing small, fast local models with a dual-axis nested kanban, automated executable gates, and event-sourced SQLite WAL state.
+This repository is **a coding harness for professional teams**: it runs the professional process — brief, planned backlog, cards built by a local model against executable gates, human acceptance — on the user's own machine, pairing small local models with a kanban teams already know, executable gates and an event-sourced SQLite WAL kernel.
 
-This document defines the mandatory development rules, commit attribution standards, and the **Claude + Gemini multi-agent collaboration strategy**.
+This document defines the mandatory development rules and commit attribution standards for any agent working here. What to work on now is in [docs/reference/MODERNIZATION_PLAN.md](docs/reference/MODERNIZATION_PLAN.md).
 
 ---
 
@@ -19,7 +19,7 @@ checkpoint: step 4 passed lint and typecheck
 
 Card: card_8f21
 Step: 4/10
-Agent-Model: claude-3-7-sonnet-20250219
+Agent-Model: claude-opus-5-5
 Agent-Harness: claude-code
 Agent-Role: implementer
 GateStatus: pass
@@ -33,12 +33,14 @@ When a card clears all verification gates and is merged into `main` (or integrat
 feat(kernel): implement hash-chained event log writer
 
 Card: card_8f21
-Agent-Model: claude-3-7-sonnet-20250219
+Agent-Model: claude-opus-5-5
 Agent-Harness: claude-code
 Agent-Role: implementer
-Co-authored-by: Claude <claude@anthropic.com>
-Co-authored-by: Gemini <gemini@antigravity.google>
+GateStatus: pass
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ```
+
+Every commit — checkpoint or merge — carries `GateStatus` (DEFINITION_OF_DONE §6, decided 2026-09-22).
 
 ### Standard Trailer Schema
 
@@ -46,69 +48,19 @@ Co-authored-by: Gemini <gemini@antigravity.google>
 | :--- | :--- | :--- |
 | `Card:` | `card_<hex4>` (e.g. `card_8f21`) | Active task/card identifier |
 | `Step:` | `<index>/<total>` (e.g. `4/10`) | Execution rung index (for checkpoints) |
-| `Agent-Model:` | `claude-3-7-sonnet-20250219`, `gemini-2.5-pro`, `gemini-2.5-flash`, etc. | Exact model ID that generated the patch |
+| `Agent-Model:` | `claude-opus-5-5`, `gemini-2.5-pro`, etc. | Exact model ID that generated the patch |
 | `Agent-Harness:` | `claude-code`, `antigravity-cli`, `cursor-agent`, `sekhemet` | Harness/CLI executing the agent |
-| `Agent-Role:` | `lead-driver`, `delegator`, `implementer`, `architect`, `test-author`, `relay-finisher` | Role performed in this specific commit |
+| `Agent-Role:` | `lead-driver`, `implementer`, `reviewer`, `architect`, `test-author` | Role performed in this specific commit |
 | `GateStatus:` | `pass`, `fail`, `partial`, `suspended-quota` | Status of automated gate checks |
 | `Co-authored-by:` | `Name <email>` | Standard Git co-author trailer |
 
 ---
 
-## 2. Claude + Gemini Collaboration Strategy
+## 2. Working with several agents
 
-This project leverages **Claude** and **Gemini** in tandem. Claude typically acts as the lead orchestrator and high-velocity implementer, while Gemini acts as subagent specialist, test generator, architect, and the **Relay Finisher** when Claude encounters quota or rate limits.
+Claude is the lead: it plans, judges, reviews and commits. Other agents — Claude subagents, or Gemini through the Antigravity CLI — may take well-scoped work on **disjoint files**, at most three at once, and their output is verified by the lead (`pnpm gate`, and a read of the diff) before it is committed. Builders do not grade themselves: every workstream gets an independent review before it lands.
 
-```mermaid
-flowchart TD
-    subgraph LeadExecution["1. Lead Execution (Claude Code)"]
-        C1[Claude: Task Planning & Card Sizing] --> C2[Claude delegates Test Auth to Gemini]
-        C2 --> C3[Gemini writes types & failing tests]
-        C3 --> C4[Claude implements logic against tests]
-        C4 --> C5{Claude hits Quota Limit?}
-    end
-
-    subgraph RelayHandoff["2. Relay Continuity Protocol (Zero-Loss Handoff)"]
-        C5 -- No --> C6[Claude runs gates to Green]
-        C5 -- "Yes (Rate Limit)" --> R1[Claude commits with Agent-Role: lead-driver & GateStatus: suspended-quota]
-        R1 --> R2[Gemini wakes as Relay Finisher]
-        R2 --> R3[Gemini reads Git checkpoint & SQLite WAL]
-        R3 --> R4[Gemini finishes failing rungs]
-        R4 --> R5[Gemini executes gates to Green]
-    end
-
-    subgraph Integration["3. Squashed Commit & Resumption"]
-        C6 --> M1[Commit: dual attribution Claude + Gemini]
-        R5 --> M1
-        M1 --> R6[Claude quota resets -> Resumes next card with zero rework]
-    end
-```
-
-### Role Division Matrix
-
-1. **Claude (Lead Driver & Delegator)**:
-   - Directs high-level task breakdown according to SPIDR boundaries.
-   - Enforces card scope (<200 LOC, 1–3 files).
-   - Writes core business logic in packages.
-   - Delegates test generation and package scaffolding to Gemini subagents.
-2. **Gemini (Subagent Architect & Test Author)**:
-   - Generates contract interfaces (`types.ts`) and failing test suites (`*.spec.ts`) before implementation starts.
-   - Conducts full-repo dependency audits and typecheck runs.
-   - Scaffolds package directory structures and Vitest mock adapters.
-3. **Gemini (Relay Finisher — The Quota Wall Protocol)**:
-   - When Claude reaches hourly token usage or rate-limit walls:
-     1. Claude commits current state with `GateStatus: suspended-quota`.
-     2. Gemini inspects the worktree and checkpoint trailer (`refs/sekhemet/checkpoints/<card-id>`).
-     3. Gemini inspects failing gate rungs (`pnpm test && pnpm typecheck`).
-     4. Gemini finishes the implementation rungs until all gates pass green.
-     5. Gemini commits the squashed merge commit with:
-        ```git
-        Agent-Model: gemini-2.5-pro
-        Agent-Harness: antigravity-cli
-        Agent-Role: relay-finisher
-        Co-authored-by: Gemini <gemini@antigravity.google>
-        Co-authored-by: Claude <claude@anthropic.com>
-        ```
-     6. When Claude's quota resets, Claude reads the clean git history and immediately resumes the next card without duplicate effort.
+The earlier Claude-to-Gemini *relay protocol* (Gemini finishing work when Claude hit a quota) is retired as of 2026-09-22. The handoff between sessions is the Executive Status Summary in `DEV_LOG.md`.
 
 ---
 
@@ -157,19 +109,9 @@ All agents working on Sekhemet must strictly uphold these engineering laws:
 ## 4. Key Developer Commands
 
 ```bash
-# Install dependencies
 pnpm install
-
-# Typecheck all packages
-pnpm typecheck
-
-# Run test suites
-pnpm test
-
-# Format & Lint
-pnpm lint
+pnpm gate            # tsc -b && biome check . && vitest run — before every commit
+pnpm release-gate    # gate + doctor + dashboard + MCP — before any release
+pnpm test -- <filter>
 pnpm format
-
-# Build all packages
-pnpm build
 ```

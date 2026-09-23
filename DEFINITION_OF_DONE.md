@@ -1,7 +1,8 @@
 # Sekhemet — Comprehensive Definition of Done & Anti-Shallow Engineering Contract
 
 > **Scope:** Monorepo (`/Users/brennankelley/Desktop/Sekhemet`)  
-> **Applicability:** All contributing AI models (Claude, Gemini, Qwen), human engineers, and subagents.  
+> **Applicability:** All contributing AI models, human engineers, and subagents.  
+> **Version:** 2, 2026-09-22 — gates and trailers brought up to date with the harness; see §4–§6.  
 > **Principle:** *Zero Vanity Testing. Zero Stubbed Code. Zero Hallucinated Completion.*
 
 ---
@@ -67,58 +68,69 @@ The kernel must provide all 10 waterfall lifecycle hooks (`card/start`, `pre-ste
 
 ---
 
-## 4. Verification Gate Thresholds
+## 4. Verification Gates
 
-Before any commit or public release is accepted, it must clear the full verification gate:
+Two commands, both exit-code checked. Nothing is "done" or "releasable" because someone said so.
 
 ```bash
-pnpm format && pnpm lint && pnpm typecheck && pnpm test && pnpm build
+pnpm gate            # before every commit: rungs 1-5
+pnpm release-gate    # before any release: rungs 1-8
 ```
 
-| Verification Rung | Command | Strict Standard |
+| Rung | Checked by | Standard |
 | :--- | :--- | :--- |
-| **1. Formatting** | `pnpm format` (`biome check --write .`) | 0 unformatted files; zero format drift |
-| **2. Static Analysis** | `pnpm lint` (`biome check .`) | 0 errors, 0 warnings across all 13 workspace projects |
-| **3. Type System** | `pnpm typecheck` (`tsc -b`) | 0 compiler errors; strict composite references; exact optional types |
-| **4. Test Suites** | `pnpm test` (`vitest run`) | **100% test pass rate** across all suites; 0 skipped; 0 failed |
-| **5. Build Artifacts**| `pnpm build` (`tsc -b`) | Clean `.d.ts` and `.js` compilation for all packages |
-| **6. Diagnostics** | `pnpm sekhemet doctor` | Unified memory, inference sockets, worktree isolation, gate runners all PASS |
-| **7. Public Server** | `apps/harness/dist/server.js` | HTTP dashboard returns 200 with complete Basalt UI; `/api/board` returns 200 |
-| **8. MCP Server** | `apps/harness/dist/mcp.js` | Stdio JSON-RPC responds to `tools/list` with complete schema definitions |
+| **1. Formatting** | `biome check .` (in `pnpm gate`) | 0 unformatted files |
+| **2. Static analysis** | `biome check .` | 0 errors across every workspace project |
+| **3. Type system** | `tsc -b` | 0 compiler errors; strict composite references; exact optional types |
+| **4. Tests** | `vitest run` | 100% pass; 0 skipped; 0 failed |
+| **5. Build** | `tsc -b` | clean `.js` and `.d.ts` for every package |
+| **6. Diagnostics** | `sekhemet doctor` (in `pnpm release-gate`) | exit 0: memory, weights, inference server, sandbox confinement, git, registers |
+| **7. Dashboard** | `pnpm release-gate` | the page and `/api/board` return 200 |
+| **8. MCP server** | `pnpm release-gate` | `tools/list` answers with the tool schemas |
+
+Rungs 6–8 were written down on 2026-09-18 and first automated on 2026-09-22 (`scripts/release_gate.mjs`); until then, "releasable" was a claim.
 
 ---
 
-## 5. Card-Level vs Release-Level DoD Matrix
+## 5. Card-Level vs Release-Level Done
 
-```mermaid
-flowchart TD
-    subgraph CardDoD["Card-Level DoD (Per Task)"]
-        C1[Acceptance Tests Written First] --> C2[Diff &#8804; 200 LOC across 1-3 Files]
-        C2 --> C3[Three-Tier Permissions Validated]
-        C3 --> C4[Gates Pass: tsc, vitest, biome = 0]
-        C4 --> C5[Intermediate Checkpoint Committed to refs/sekhemet/checkpoints]
-        C5 --> C6[Squashed Merge to main with Full LLM Attribution Trailers]
-    end
+**A card is done** when, in order:
+1. its acceptance tests were staged and **failed** before any work (red first; a types-only card is red on typecheck);
+2. its diff is at most 200 lines across 1–3 files, inside its declared scope;
+3. every declared gate passes, **and the three project gates pass**: *reachability* (no export the card added is used by nothing), *regression* (no test `main` already guarantees is broken or removed), *architecture* (no invariant the project's brief declares is broken);
+4. its **evidence bundle** records the diff, every gate result, the stop reason, the model and settings it ran with (including the thinking policy and working method), and its reproducibility record;
+5. a person accepted it, and it was squash-merged to `main` with full attribution trailers.
 
-    subgraph ReleaseDoD["Public Release DoD (Full Product)"]
-        R1[All Workspace Packages Pass 100% Tests] --> R2[Visual Dashboard & MCP Server Verified Live]
-        R2 --> R3[Clean Diagnostic Audit: pnpm sekhemet doctor]
-        R3 --> R4[Anti-Shallow Audit: Zero Core Mocks, Deep Fault Injection]
-        R4 --> R5[Full Public Documentation: README, LICENSE, Specifications]
-        R5 --> R6[Working Tree Clean with Zero Staged or Untracked Residue]
-    end
+The model never certifies its own work: the gates decide, and a person accepts.
 
-    CardDoD --> ReleaseDoD
-```
+**The harness is releasable** when:
+1. `pnpm release-gate` passes (rungs 1–8);
+2. the **frozen suite** has been run on the release build, its score recorded in `docs/reference/SUITE_RUNS.md` against the suite hash, and **every failure attributed to a named cause** — none of them a known and unfixed harness defect;
+3. the anti-shallow audit (§2, §3) has been run against the release commit and its findings fixed or recorded;
+4. the documents are current: the README and the claims table in `docs/design/HARNESS_DESIGN.md` ("Product definition") say nothing the product does not do;
+5. the working tree is clean.
 
 ---
 
 ## 6. Zero Tolerance Policy
 
 Any contribution that introduces:
-- A dummy test designed solely to inflate test counts,
-- A bypassed permission check or scope escape,
-- A modified test assertion to hide an implementation failure, or
-- A commit missing structured Git trailers (`Agent-Model`, `Agent-Harness`, `Agent-Role`, `GateStatus`, `Co-authored-by`),
+- a dummy test designed only to inflate test counts,
+- a bypassed permission check or scope escape,
+- a modified test assertion to hide an implementation failure, or
+- a commit missing its structured trailers,
 
-is considered a **critical invariant violation** and must be immediately reverted.
+is a **critical invariant violation** and is reverted.
+
+**Every commit carries these trailers** (decided 2026-09-22: `GateStatus` on every commit, not only checkpoints — it makes each commit's claim explicit):
+
+```
+Card: <card id or workstream id>
+Agent-Model: <exact model id, e.g. claude-opus-5-5>
+Agent-Harness: <e.g. claude-code>
+Agent-Role: lead-driver | implementer | reviewer
+GateStatus: pass | fail | partial | suspended-quota
+Co-Authored-By: <the model, as the harness's attribution line gives it>
+```
+
+Checkpoint commits add `Step: X/Y`.

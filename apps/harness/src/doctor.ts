@@ -31,14 +31,20 @@ function check(name: string, status: CheckStatus, detail: string): DiagnosticChe
 }
 
 /** Probe a local inference server's model list over HTTP. */
-async function probeInference(endpoints: string[]): Promise<DiagnosticCheck> {
+export async function probeInference(endpoints: string[]): Promise<DiagnosticCheck> {
   for (const base of endpoints) {
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 1500);
-      const res = await fetch(`${base}/api/tags`, { signal: controller.signal }).catch(() =>
-        fetch(`${base}/v1/models`, { signal: controller.signal }),
+      // Ollama answers /api/tags; a llama-server answers it with 404, which
+      // does not throw — so a failed status, not only an error, falls back to
+      // the OpenAI-compatible listing.
+      const tags = await fetch(`${base}/api/tags`, { signal: controller.signal }).catch(
+        () => undefined,
       );
+      const res = tags?.ok
+        ? tags
+        : await fetch(`${base}/v1/models`, { signal: controller.signal }).catch(() => undefined);
       clearTimeout(timer);
 
       if (res?.ok) {
@@ -227,7 +233,12 @@ export async function runDoctor(repoPath: string = process.cwd()): Promise<Docto
   const checks: DiagnosticCheck[] = [
     memoryCheck(pressure, free, total, gb),
     weightsCheck(),
-    await probeInference(["http://127.0.0.1:11434", "http://127.0.0.1:8099"]),
+    // Ollama, the managed Worker server (cyber-tiel, 8098) and the legacy 8099.
+    await probeInference([
+      "http://127.0.0.1:11434",
+      "http://127.0.0.1:8098",
+      "http://127.0.0.1:8099",
+    ]),
     probeWorktrees(repoPath),
     await probeConfinement(repoPath),
     probeBinary("node", ["--version"], "Node runtime"),

@@ -10,22 +10,32 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-22, paused at commit `c5d5bff` on branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`). Read Entry 23 first.*
+*Refreshed 2026-09-22 on the change of builder model to **Claude Opus 5.5**. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`). Read Entries 24 and 23 first.*
 
-1. **Positioning** (owner, 2026-09-22): *a harness for professional teams* — it runs the whole professional process (brief → backlog → gated cards → human acceptance) on a board teams already know, teaches beginners the practice, and lets non-developers talk to the PM. Claims table in `docs/design/HARNESS_DESIGN.md` → "Product definition and selling points". v1 stays 100% local; cloud models after v1.
-2. **State:** `pnpm gate` green — 1143 tests, 173 files. MVP_PATH steps 1–8 done. Reachability, regression and architecture gates wrap every card. Eight-command front door, proportional design stage, reuse-before-rebuild survey, planner behaviours and riskiest-assumption-first are built.
-3. **Measurement:** frozen suite `1.0.0` hash `192b6e95fa3c`. Runs 4 (Nail) and 5 (Cyber-Tiel + MTP) were stopped part-way: Nail 7/10, Cyber-Tiel 6/10 on the ten shared cards, every failure attributed in `docs/reference/SUITE_RUNS.md`. **All harness defects they found are fixed in `c5d5bff` but not yet re-measured.** No full scored run exists after the last harness change.
-4. **Models:** the intended Worker is **Cyber-Tiel-Coder-35B-A3B MTP IQ3_XXS** on `/Volumes/My Passport/AI-Models/llm/`, served by Homebrew `llama-server` on port 8098 with `--spec-type draft-mtp` (verified: ~78% draft acceptance). Get the exact launch args from `createCyberTielWorker().launchArgs()`; start the server once, cards attach to it. Loading from the USB drive takes ~5 min. Nail (`nail-35b-a3b-ctx`, Ollama) was the old default.
-5. **Immediate next steps, in order** (owner-approved):
-   1. Thinking A/B on Cyber-Tiel, chronicle+onyx: `SEKHEMET_THINKING=off|surgical|all`, then the top two again; then `SEKHEMET_WORKER_METHOD=strict`.
-   2. Full scored 30-card run with the winning settings; record against the hash.
-   3. Dashboard alignment to professional boards (card anatomy, standard columns, labelled nav, story map, burn-up, blocker causes) and a switchable **Learn** layer for beginners.
-   4. Non-developers: start a new project by conversation with the PM (design stage + Researcher).
-6. **Operations:** 24 GB host, 13 GB Worker. Check `ollama ps` and `memory_pressure -Q` before loading; unload after. Never run `tsc -b`/`pnpm gate` during a suite run (it splits the run across builds). The shell's `grep` wrapper can hide matches — use `/usr/bin/grep -a` when a search comes back empty.
+1. **What we are doing now:** `docs/reference/MODERNIZATION_PLAN.md` — the Opus 5.5 pass over this AI brownfield. **Phase A** reviews all 16 domains (read-only, three agents at a time) into `docs/reference/COVERAGE.md`, while the **baseline** runs on the local machine: the thinking A/B on Cyber-Tiel, then a full scored frozen-suite run. **Phase B** changes what the review justifies; **Phase C** re-measures.
+2. **Positioning** (owner, 2026-09-22): *a harness for professional teams*. Claims table in `docs/design/HARNESS_DESIGN.md` → "Product definition". v1 stays 100% local.
+3. **State:** `pnpm gate` green. MVP_PATH steps 1–8 done; reachability, regression and architecture gates on every card. `pnpm release-gate` (DEFINITION_OF_DONE v2 §4, rungs 1–8) exists and passes rungs 6–8.
+4. **Measurement:** suite `1.0.0`, hash `192b6e95fa3c`. Runs 4 (Nail) and 5 (Cyber-Tiel) were partial and are attributed in `docs/reference/SUITE_RUNS.md`; the fixes they forced are committed and not yet re-measured. No full scored run exists after the last harness change.
+5. **Rules and operations:** `CLAUDE.md` (rewritten 2026-09-22 — read it; it replaces the stale Gemini-relay version) and `DEFINITION_OF_DONE.md` v2. Every commit carries `GateStatus`.
+6. **Owner decision pending:** a ceiling run (the frozen suite with a frontier model as Worker, measurement only).
 
 ---
 
 ## Detailed Session Log
+
+### Entry 24 — 2026-09-22 (builder model changed to Opus 5.5; the handoff)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver, in Claude Code — the same session, continued after the desktop app update.
+
+- **The plan.** `docs/reference/MODERNIZATION_PLAN.md` replaces the 2026-09-18 completion plan (deleted; its inventory is an input and its three honesty rules are kept). It treats Sekhemet as an AI brownfield — 244 source files, ~72k lines, eight files over 1,300 lines, a 3,537-line design that has drifted — and rejects a rewrite in favour of review-everything, change-what-is-justified, measure-every-change. `MVP_PATH.md` points to it.
+- **Documents brought up to date.** `CLAUDE.md` rewritten (it named `better-sqlite3`, a `claude-3-7-sonnet` trailer and a retired Gemini relay). `AGENTS.md`'s trailers, relay section and commands updated. `DEFINITION_OF_DONE.md` v2: real gate commands, the three project gates and the evidence bundle in card-level done, a scored frozen-suite run in release-level done, `GateStatus` on every commit (owner-approved plan; it had been on 0 of the last 20 commits).
+- **`pnpm release-gate`** automates DEFINITION_OF_DONE rungs 6–8 (doctor, dashboard, MCP), which had been written down but never checked. Run live: all pass.
+- **`doctor` fixed:** it never detected a `llama-server` (a 404 from Ollama's endpoint skipped the fallback) and did not probe the managed Worker's port 8098. Tested.
+- **Withdrawn:** a claim that `doctor` exits 0 on failure — the "0" was the exit code of `tail` in a pipe; `doctor` was passing because Ollama had come back up.
+- **Recorded drift for Phase A:** AGENTS.md bans simulated Scrum personas while the product's PM runs standups; the design's "100% local" lock reads as permanent beside a post-v1 cloud plan.
+
+**Where the cards stop:** unchanged from Entry 23 — runs 4 and 5 partial, fixes committed and unmeasured. Next: Phase A reviews and the baseline.
+
 
 ### Entry 23 — 2026-09-21 → 2026-09-22 (from Phase 0 to a measured harness; paused)
 

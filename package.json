@@ -16,7 +16,8 @@
     "test:integration": "vitest run --project integration",
     "test:unit": "vitest run --project unit",
     "test:watch": "vitest",
-    "typecheck": "tsc -b"
+    "typecheck": "tsc -b",
+    "release-gate": "node scripts/release_gate.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
