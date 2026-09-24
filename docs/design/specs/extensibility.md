@@ -10,7 +10,8 @@ code:
   - apps/harness/src/mcp_client.ts
   - apps/harness/src/acp.ts
   - apps/harness/src/pm/slash.ts
-  - packages/sdk/src/index.ts
+  - packages/sdk/src/index.ts          # cut in B0 with the plugin container (DEC-29 O4, NEW-extensibility-5)
+  - packages/kernel/src/container.ts    # cut in B0 (DEC-29 O4, NEW-extensibility-5)
   - packages/eval/src/diagnostics.ts
 tests:
   - packages/kernel/tests/hooks.spec.ts
@@ -22,11 +23,11 @@ tests:
   - apps/harness/tests/mcp_client.spec.ts
   - apps/harness/tests/acp.spec.ts
   - apps/harness/tests/slash.spec.ts
-  - apps/harness/tests/sdk.spec.ts
-changes: [S9, S4, NEW-extensibility-1, NEW-extensibility-2, NEW-extensibility-3, NEW-extensibility-4]
+  - apps/harness/tests/sdk.spec.ts      # cut in B0 with the SDK
+changes: [S9, S4, NEW-extensibility-1, NEW-extensibility-2, NEW-extensibility-3, NEW-extensibility-4, NEW-extensibility-5]
 ---
 
-# Extensibility: hooks, skills, MCP, ACP, commands and the SDK
+# Extensibility: hooks, skills, MCP, ACP, commands and headless use
 
 ## 1. Purpose
 
@@ -42,8 +43,10 @@ A team extends Sekhemet without forking it: it runs its own checks at lifecycle 
 | MCP servers (client) | `.sekhemet/mcp.json` (project), `~/.sekhemet/mcp.json` (user) | outside the sandbox, declared environment only | project file: yes |
 | Skills | `.sekhemet/skills/<name>/` (project), `~/.sekhemet/skills/<name>/` (user) | body is prompt text; `scripts/` run inside the card's sandbox | every skill: human approval by content hash |
 | Slash commands | built in | inside the harness | — |
-| MCP server, ACP, SDK | started by the user | inside the harness, as actor `mcp` (MCP) or the PM chat (ACP) | — |
-| Plugins (until the owner decides their cut, item 29) | `.sekhemet/plugins/<name>/index.mjs` (project) | inside the harness process, unconfined | yes |
+| MCP server, ACP | started by the user | inside the harness, as actor `mcp` (MCP) or the PM chat (ACP) | — |
+| ~~Plugins~~ — **cut in B0** ([DEC-29](../DECISIONS.md#dec-29--the-owners-answers-to-the-decision-queue) O4, item 29) | nothing is loaded from `.sekhemet/plugins/` | — | — |
+
+Workspace trust therefore gates exactly three things a repository can supply: project hooks, the project `mcp.json`, and skills (whose approval is by content hash).
 
 1. A project file that is not trusted is not loaded; the harness says which file waits for trust and what it would run. A user-level file is the user's own configuration and is trusted.
 2. When both levels define the same hook event or MCP server name, both hooks run (user first) and the **user's** MCP server definition wins; a project may add servers, not replace the user's.
@@ -60,7 +63,7 @@ A team extends Sekhemet without forking it: it runs its own checks at lifecycle 
    ```
 4. **Events.** Card lifecycle: `card/start`, `pre-step` (context injection), `pre-tool` (permission and validation), `post-tool` (parse checks, secret scanning), `pre-gate`, `post-gate`, `card/end`, `review/return`, `playbook/propose`, `turn-stopping` (stall detection). Board lifecycle (NEW-extensibility-1): `card/status_changed`, `card/accepted`, `pr/opened`.
 5. **Input.** The event's context as JSON on stdin, and `SEKHEMET_EVENT`, `SEKHEMET_CARD`, `SEKHEMET_TOOL`, `SEKHEMET_TOOL_TARGET` in the environment.
-6. **Result.** Exit 0 continues; a JSON object on stdout with `message` (or `inject: [...]`) adds text to the next model turn. Exit 2 blocks the action and stderr is the reason the model is told. Any other exit, a crash, or a timeout: `pre-step`, `pre-tool` and `pre-gate` fail **closed** (a broken guard must not become a silent allow); every other event fails open and records the error.
+6. **Result.** Exit 0 continues; a JSON object on stdout with `message` (or `inject: [...]`) adds text to the next model step. Exit 2 blocks the action and stderr is the reason the model is told. Any other exit, a crash, or a timeout: `pre-step`, `pre-tool` and `pre-gate` fail **closed** (a broken guard must not become a silent allow); every other event fails open and records the error.
 7. A board-lifecycle hook observes only: it cannot block or reverse a transition that has happened; it can post a message to the card's dossier.
 8. A hook's load error (bad TOML, unknown event) is reported by `doctor` and on the next card's evidence, not discarded. A hook that exits before reading its stdin does not crash the harness.
 9. A hook never runs handlers built from model output. The Worker cannot edit any extension file: the permission engine denies writes to `.sekhemet/hooks.toml`, `.sekhemet/mcp.json`, `.sekhemet/skills/` and `.sekhemet/plugins/` (today it protects only `gates.toml`, `config.toml` and the ledger), and a project file changed by any route needs trust again ([security](security.md) item 39).
@@ -73,6 +76,7 @@ A team extends Sekhemet without forking it: it runs its own checks at lifecycle 
 13. **Scopes.** Project, then user; a project skill with the same name overrides the user's for that project.
 14. `budget_tokens` is read: a body over its budget is truncated at a section boundary and the card's evidence says so.
 15. **Trust.** Each skill is pinned by SHA-256 and loads only after a person approves that content (`sekhemet dev skills approve|revoke <name>`); a changed skill is rejected until re-approved; every decision is audited. There is no trust-on-first-use, and a lock file shipped in the repository does not count ([security](security.md) item 39). A skill whose files would modify gate files, the loop driver or sandbox configuration is rejected when it is imported.
+15a. **A skill is project data, not a harness change.** A project or user skill is listed on every pack that loads it but lies outside the context version, so approving, revoking or changing one never invalidates a model's qualification and never needs a frozen-suite A/B ([DEC-28](../DECISIONS.md#dec-28--one-rule-for-admitting-what-the-system-learns); confirmation review N1). A skill Sekhemet itself ships is part of the harness and is admitted by DEC-28's harness-change row.
 16. **Diagnostics.** `sekhemet doctor` reports, per skill and playbook rule: its token cost against the stable-zone budget, whether it triggered on recent cards, and its measured net gain (pass rate with it minus without, from recorded outcomes). A skill that costs context and shows no gain is proposed for removal; it is never removed automatically.
 17. **Sourcing.** Skills are procedure, not capability. Aggregators and marketplaces are for discovery only; a pulled skill is pinned by commit hash, read before approval, and diffed on update.
 17a. **Verify before admitting.** A skill with an `evals/` directory — and every skill candidate the harness distils from trajectories (`.sekhemet/skill-candidates/`) — has its evals run in the sandbox with no network before a person is asked to approve it; the approval prompt shows the result, and a skill whose evals fail cannot be approved. The admission record keeps the evidence, the checks run and the gaps left open. This is one instance of the rule that nothing durable is admitted unless a signal measured outside the generated text improves ([measurement](measurement.md) owns the rule; more skills can hurt, so gain is measured, item 16).
@@ -98,14 +102,14 @@ A team extends Sekhemet without forking it: it runs its own checks at lifecycle 
 
 26. Slash commands in Seshat's chat (dashboard, ACP): `/help`, `/compact`, `/plan`, `/forecast`, `/capability`, `/research`, `/deep`, `/ready`, `/park`, `/backlog`, `/status`, `/standup`. They share one implementation with the board's buttons and the CLI.
 
-### Headless use and the SDK
+### Headless use
 
-27. Everything the board can do is available headless from the CLI with meaningful exit codes ([surface](surface.md)): run one card unattended, plan without executing, run gates only, bake off models, replay a card against a pinned configuration.
-28. `@sekhemet/sdk` is a typed client for a running server: REST calls and the live event stream. If it ships (open question 1), its types come from the kernel's, not copies, and the event stream is an async iterator. *Changed from the old design's shipped SDK:* its only consumer today is its own test, so whether it ships is an open decision rather than a promise.
+27. Everything the board can do is available headless from the CLI with meaningful exit codes ([surface](surface.md)): run one card unattended, plan without executing, run gates only, bake off models, replay a card against a pinned configuration. Programs drive a running server through the MCP server (items 18–21) or the HTTP API and live stream ([runtime](runtime.md)).
+28. **There is no SDK package in v1.** `@sekhemet/sdk` is cut in B0 ([DEC-29](../DECISIONS.md#dec-29--the-owners-answers-to-the-decision-queue) O4, NEW-extensibility-5): its only consumer was its own test, and its types were copies of the kernel's. *Changed from the old design's shipped SDK.* An SDK returns only when an integration needs one, built from the kernel's types (§7).
 
 ### Plugins
 
-29. **Plugins are trust-gated (S9); cutting them is pending the owner ([O4](../../reference/OPEN_QUESTIONS.md#owner-decisions), §8 Q2).** The loader mounts `.sekhemet/plugins/*/index.mjs` on each card's `ServiceContainer` inside the harness process, unconfined (`execute.ts:378-388`, `packages/kernel/src/container.ts`). Until the owner decides, it stays reachable and loads a plugin only from a workspace the user trusts, by the same mechanism and hash rule as a project `hooks.toml` ([security](security.md) items 38–39): in an untrusted workspace it mounts nothing and says which plugin waits for trust and what it would run. There is no plugin API beyond that loader: a plugin can add only services and hooks, never the tools, gates, sync adapters or UI panels the old design promised. The recommended outcome (O4's default) is to cut `container.ts` and the loader ([DEC-09](../DECISIONS.md#dec-09)), since hooks and MCP cover the need; EXT-28 in §8 Q2 is the criterion that applies if the owner agrees.
+29. **Plugins are cut in B0** ([DEC-29](../DECISIONS.md#dec-29--the-owners-answers-to-the-decision-queue) O4; [DEC-09](../DECISIONS.md#dec-09); NEW-extensibility-5). Today the loader mounts `.sekhemet/plugins/*/index.mjs` on each card's `ServiceContainer` inside the harness process, unconfined and unprompted (`execute.ts:378-388`, `packages/kernel/src/container.ts`). B0 removes `container.ts`, the `ServiceContainer` and `PluginManager` construction in `execute.ts` and their kernel-barrel exports; after it, nothing is loaded from `.sekhemet/plugins/`, and `doctor` says plugins are not supported and that hooks and MCP servers do the same jobs (EXT-28). A plugin could only add services and hooks — never the tools, gates, sync adapters or UI panels the old design promised — and hooks plus MCP cover that need under workspace trust. Because the cut lands in B0, before workspace trust (S9) is built, plugins never need a trust gate. `.sekhemet/plugins/` stays on the Worker's protected list (item 9), so a repository cannot stage a plugin for a later version.
 
 ### Tools outside the Worker
 
@@ -142,7 +146,7 @@ Decisions on what the Planner and the infrastructure use, adopt or build; the ow
 | `McpServerConfig`, `loadMcpConfig`, `McpHub` | `apps/harness/src/mcp_client.ts` |
 | ACP (`ACP_PROTOCOL_VERSION = 1`) | `apps/harness/src/acp.ts` |
 | Slash commands | `apps/harness/src/pm/slash.ts:71-130` |
-| `@sekhemet/sdk` | `packages/sdk/src/index.ts` |
+| `@sekhemet/sdk`; `ServiceContainer`, `PluginManager` — both **cut in B0** (NEW-extensibility-5) | `packages/sdk/src/index.ts`; `packages/kernel/src/container.ts`, constructed at `apps/harness/src/execute.ts:378-388` |
 | CLI: `sekhemet mcp`, `sekhemet acp`, `sekhemet dev skills [list] \| approve \| revoke` | `index.ts`, `wave2.ts:756` |
 
 ## 4. State today
@@ -166,23 +170,28 @@ Decisions on what the Planner and the infrastructure use, adopt or build; the ow
 | MCP client: stdio only, full env, Researcher only | partial | `mcp_client.ts:73-77`; `research/cli.ts:66` | NEW-extensibility-3 |
 | ACP as PM chat | built | `acp.ts`; `acp.spec.ts` | — |
 | Slash commands | built | `slash.ts`; `slash.spec.ts` | — |
-| SDK | not-built (reachable only from its test) | `sdk.spec.ts` is its only consumer; types copied (`sdk/src/index.ts:15-35`) | open question |
-| Plugins gated by workspace trust | not-built (trust) | the loader mounts every plugin found, unprompted (`execute.ts:385-386`), via the kernel barrel | S9; the cut is pending [O4](../../reference/OPEN_QUESTIONS.md#owner-decisions) |
+| SDK package present | present, to be cut | `sdk.spec.ts` is its only consumer; types copied (`sdk/src/index.ts:15-35`) | NEW-extensibility-5 (B0) |
+| Plugin container and loader present | present, to be cut | the loader mounts every plugin found, unprompted and unconfined (`execute.ts:385-386`), via the kernel barrel | NEW-extensibility-5 (B0) |
 
 ## 5. Changes for v1
 
-### S9 — what workspace trust gates
+### S9 — what workspace trust gates (hooks, `mcp.json`, skills)
 - **EXT-1** WHEN an untrusted project `hooks.toml` declares a `pre-tool` hook THE SYSTEM SHALL not run it, and the card SHALL proceed as if no project hook existed, with a note in its evidence.
 - **EXT-2** WHEN an untrusted project `mcp.json` declares a server THE SYSTEM SHALL not start it.
 - **EXT-3** WHEN a skill's content changes after approval THE SYSTEM SHALL not load it until it is approved again.
 - **EXT-4** WHEN a repository has skills and no user-side approval THE SYSTEM SHALL load none of their bodies.
 - **EXT-5** WHEN a skill's `scripts/` file runs THE SYSTEM SHALL run it inside the card's sandbox.
 - **EXT-5a** WHEN the Worker writes `.sekhemet/hooks.toml`, `.sekhemet/mcp.json` or a file under `.sekhemet/skills/` or `.sekhemet/plugins/` in its worktree THE SYSTEM SHALL deny the write with rule `protected_system`.
-- **EXT-5b** WHILE the owner has not decided the plugin cut (O4), WHEN a card runs in a workspace whose `.sekhemet/plugins/` the user has not trusted THE SYSTEM SHALL mount no plugin, and SHALL name each plugin that waits for trust in the card's evidence.
+- **EXT-5b** *(withdrawn 2026-09-24: it held only while O4 was open; the owner cut plugins ([DEC-29](../DECISIONS.md#dec-29--the-owners-answers-to-the-decision-queue) O4), and EXT-28 — no plugin mounts in any workspace, trusted or not — replaces it. The number is not reused.)*
 
 ### S4 — MCP cannot accept
 - **EXT-6** WHEN an MCP client calls `sekhemet_move_card` with `to: "done"` (with or without a reason beginning `override:`) THE SYSTEM SHALL refuse, leave the card's status unchanged, and record nothing but the refusal.
 - **EXT-7** WHEN an MCP client calls `sekhemet_move_card` with a `to` outside `ready`, `backlog`, `parked` THE SYSTEM SHALL answer an invalid-params error.
+
+### NEW-extensibility-5 — cut the plugin container and the SDK (B0)
+*Justification: the owner cut both ([DEC-29](../DECISIONS.md#dec-29--the-owners-answers-to-the-decision-queue) O4). The plugin loader runs repository code inside the harness process, unconfined and unprompted, on every card; the SDK's only consumer is its own test. Hooks and MCP cover what either offered.*
+- **EXT-28** WHEN a repository contains `.sekhemet/plugins/` THE SYSTEM SHALL load nothing from it, and `doctor` SHALL say plugins are not supported and name hooks and MCP servers as the supported routes.
+- **EXT-28a** WHEN the test suite enumerates the workspace's packages and the kernel barrel's exports THE SYSTEM SHALL find no `@sekhemet/sdk` package and no `ServiceContainer` or `PluginManager` export, and no module SHALL import either.
 
 ### NEW-extensibility-1 — board-lifecycle hooks
 *Justification: a team calls its own tracker or CI on "accepted" or "PR opened" without forking; the hook engine covers only the Worker's lifecycle (review of domain 15, senior judgement 4).*
@@ -221,17 +230,18 @@ Decisions on what the Planner and the infrastructure use, adopt or build; the ow
 
 ## 6. v1 acceptance
 
-EXT-1 to EXT-27b (including the lettered criteria; EXT-28 joins them only if the owner cuts plugins, [O4](../../reference/OPEN_QUESTIONS.md#owner-decisions)), plus these built behaviours kept under test:
+EXT-1 to EXT-28a (including the lettered criteria; EXT-5b is withdrawn; EXT-28 and EXT-28a land in B0), plus these built behaviours kept under test:
 - **EXT-29** WHEN a `pre-tool` hook exits 2 THE SYSTEM SHALL block the tool call and tell the model the hook's stderr.
 - **EXT-30** WHEN a `post-tool` hook throws THE SYSTEM SHALL continue the card and record the error.
-- **EXT-31** WHEN a hook prints `{"message": "…"}` and exits 0 THE SYSTEM SHALL add that message to the next model turn.
+- **EXT-31** WHEN a hook prints `{"message": "…"}` and exits 0 THE SYSTEM SHALL add that message to the next model step.
 - **EXT-32** WHEN a skill is not selected for a card THE SYSTEM SHALL include only its manifest line in the prompt.
 - **EXT-33** WHEN an editor sends `session/prompt` over ACP THE SYSTEM SHALL stream Seshat's reply as `session/update` chunks.
 - **EXT-34** WHEN an MCP client creates a card THE SYSTEM SHALL record the event with actor `mcp`.
 
 ## 7. Later
 
-- **A plugin API** (tools, gates, sync adapters, UI panels), with signing and compatibility contracts once the kernel API is stable; a plugin marketplace.
+- **A plugin API** (tools, gates, sync adapters, UI panels), with signing and compatibility contracts once the kernel API is stable; a plugin marketplace. v1 has no plugins at all (item 29); a plugin API would be designed fresh, not grown from the cut `container.ts`.
+- **An SDK** (`@sekhemet/sdk`): a typed client for a running server, REST calls and the live event stream as an async iterator, built from the kernel's types rather than copies — only when an integration needs one (item 28).
 - **Card-level editor protocol and an IDE extension or TUI** — open a card, stream its steps, approve or return it from the editor (SPINE: not in v1).
 - **User-defined commands** as Markdown templates expanding into a card template or a planner instruction (`/onboard`, `/retro`, `/split`, `/bake-off`, `/goal`).
 - **An MCP server over Streamable HTTP**, for a company server's remote clients.
@@ -239,7 +249,7 @@ EXT-1 to EXT-27b (including the lettered criteria; EXT-28 joins them only if the
 - **A skill that declares the gates it adds** (the old design) — v1 skills are procedure only; a gate a skill needs is proposed to `gates.toml` for a person to accept, because a skill may never change gate files (item 15).
 - **Publishing skills back to the Agent Skills ecosystem** — v1 pulls and pins; publishing needs a release and licence process for Sekhemet's own skills, which do not exist yet.
 - **The Codex admin and system skill scopes** — v1 has project and user scopes only (item 13); an admin scope arrives with company-server roles beyond Accept (DEC-06 keeps those out of v1).
-- **Plugin and third-party skill signing** beyond the content-hash approval of item 15 — with the plugin API above; air-gapped skill updates already travel signed ([security](security.md) item 49).
+- **Third-party skill signing** beyond the content-hash approval of item 15, and plugin signing with the plugin API above; air-gapped skill updates already travel signed ([security](security.md) item 49).
 - **The skill catalogue** — sources: Anthropic's official skills (Skill Creator, document skills, frontend design, the format and template), Superpowers (workflow and test-first discipline), the Codex catalogue (its scope model), gstack (review and QA checklists); aggregators for discovery only (item 17). What each becomes in Sekhemet, kept so the mapping is not re-derived:
 
 | Skill | Decision | What it becomes |
@@ -259,9 +269,8 @@ EXT-1 to EXT-27b (including the lettered criteria; EXT-28 joins them only if the
 
 ## 8. Open questions
 
-1. **Publish the SDK or cut it?** (owner decision [O4](../../reference/OPEN_QUESTIONS.md#owner-decisions)) Today its only consumer is its own test, which makes it dead by the rule. *Recommendation:* cut it; rebuild it from the kernel's types when an integration needs it.
-2. **Cut the plugin container?** (owner decision [O4](../../reference/OPEN_QUESTIONS.md#owner-decisions)) DEC-09's premise was wrong: it was cut as "reachable only from a test", but `execute.ts:378-388` constructs `ServiceContainer` and `PluginManager` on every card through the kernel barrel, and cutting reachable code is the owner's decision. Until then plugins are trust-gated (item 29, EXT-5b). *Recommendation:* cut it — plugins add only services and hooks, run repository code unconfined, and hooks plus MCP cover the need — and record the corrected reason in DEC-09. If the owner agrees, this criterion joins §6:
-   - **EXT-28** WHEN a repository contains `.sekhemet/plugins/` THE SYSTEM SHALL load nothing from it, and `doctor` SHALL say plugins are not supported.
+1. **Publish the SDK or cut it?** *Decided 2026-09-24 ([DEC-29](../DECISIONS.md#dec-29--the-owners-answers-to-the-decision-queue) O4): cut in B0* (item 28, NEW-extensibility-5); rebuilt from the kernel's types only when an integration needs it (§7).
+2. **Cut the plugin container?** *Decided 2026-09-24 (DEC-29 O4): cut in B0* (item 29, EXT-28, EXT-28a). DEC-09's first reason ("reachable only from a test") was wrong — `execute.ts:378-388` constructs `ServiceContainer` and `PluginManager` on every card — and DEC-09 now records the owner's decision instead.
 3. **Should the Worker ever get MCP tools in v1?** *Recommendation:* no by default (EXT-21); the M2 A/B decides the Worker's tool set, and an MCP tool joins it only through `worker_tools`.
 
 ## 9. Evidence and rationale
@@ -273,5 +282,5 @@ EXT-1 to EXT-27b (including the lettered criteria; EXT-28 joins them only if the
 - Rulings of 2026-09-22: R5 (`plan_research` is design-stage's), R14 and R16 (the gate-tool list above), R3 (MLX is a later adapter everywhere).
 - Research, [RESEARCH_REGISTER.md](../../research/RESEARCH_REGISTER.md): R6, on-the-fly tool synthesis, is `triaged`, so the Worker gets no self-made tools and MCP tools reach it only through `worker_tools` (item 23).
 - Research: [group B](../../research/WEB_RESEARCH_2026-09.md#group-b-sandbox-and-git-safety) — Gemini CLI GHSA-wpqr-6v78-jr5g (a workspace's agent config trusted automatically in headless runs), the reason trust is never implicit.
-- Decisions: [DEC-08](../DECISIONS.md#dec-08) (`@modelcontextprotocol/sdk`), [DEC-09](../DECISIONS.md#dec-09) (cuts).
+- Decisions: [DEC-08](../DECISIONS.md#dec-08) (`@modelcontextprotocol/sdk`), [DEC-09](../DECISIONS.md#dec-09) (cuts), [DEC-28](../DECISIONS.md#dec-28--one-rule-for-admitting-what-the-system-learns) (skills are project data, outside the context version), [DEC-29](../DECISIONS.md#dec-29--the-owners-answers-to-the-decision-queue) O4 (plugins and the SDK cut in B0).
 - **Why hooks run outside the sandbox:** formatters, notifiers and compliance checks confined to one worktree are useless; that is exactly why a repository's hooks need the user's trust first.

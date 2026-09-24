@@ -47,7 +47,7 @@ No further model runs start until S1–S2 are fixed; nothing is offered to a use
 | S6 | Review WIP from human decisions only, per project, with a floor | Spine: the human is the rate limiter (7,708 today) | S |
 | S7 | One validated transaction per event: append and project together | Spine: the event log is the only durable channel | M |
 | S8 | `plan` honours offline mode and the research setting, and logs its queries | The local-first promise | S |
-| S9 | Workspace trust for repo-supplied hooks, `mcp.json` and plugins | Security | M |
+| S9 | Workspace trust for repo-supplied hooks, `mcp.json` and skills (plugins are cut, DEC-29 O4) | Security | M |
 | S10 | CLI exit codes and `--version` | Scripts must be able to trust the CLI | S |
 
 **S1 done, S2 partly, in the Phase A commit** — reviewed independently (`reviews/security_fix_review.md`), which found four gaps, two now closed:
@@ -108,7 +108,7 @@ No further model runs start until S1–S2 are fixed; nothing is offered to a use
 | T8 | Self-improvement admits a change only on a significant paired gain | S |
 | T9 | The DEFINITION_OF_DONE test gaps: missing negative tests, one vanity assertion, skips on Linux. *Process — no subsystem spec; carried by DEFINITION_OF_DONE §2 and workstream B5.* | S |
 | T10 | Executable documentation checks: README ↔ the front door, config schema ↔ `config.ts`, the `SEKHEMET_*` inventory, model names ↔ registry, `file:` links, spec front matter ↔ the SPINE status table | M |
-| T11 | **Evaluation assets** the acceptance criteria depend on, built before the criteria that use them: the labelled reuse set (~40 needs, P7), the research golden set (25 questions, NEW-design-stage-2), golden briefs with annotated implicit requirements (≥ 10, P14 and T7), a held-out acceptance suite for premature completion (T7), seeded defects for the Reviewer (≥ 20, P8), scripted PM conversations with a rubric (~20, P6), scripted non-developer project starts (5, P2), injection fixtures (NEW-security-4), reference solutions per fixture card (T7), and a labelled set of UI screens for the visual checklist (GT-N4-2). Owned by measurement; each asset is versioned and hashed like the frozen suite | L |
+| T11 | **Evaluation assets** the acceptance criteria depend on, built before the criteria that use them: the labelled reuse set (~40 needs, P7), the research golden set (25 questions, NEW-design-stage-2), golden briefs with annotated implicit requirements (≥ 10, P14 and T7), a held-out acceptance suite for premature completion (T7), seeded defects for the Reviewer (≥ 20, P8), scripted PM conversations with a rubric (~20, P6), scripted non-developer project starts (5, P2), injection fixtures (NEW-security-4), reference solutions per fixture card (T7), and a labelled set of UI screens for the visual checklist (GT-N4-2). Owned by measurement; each asset is versioned and hashed like the frozen suite, and built in the workstream that first uses it ([plan](MODERNIZATION_PLAN.md), "Evaluation assets") | L |
 
 
 ### Changes added by the specifications (2026-09-22)
@@ -128,6 +128,7 @@ The design v3 specifications found gaps the Phase A programme had no ID for. Eac
 | NEW-dashboard-3 | The model's output, live, on the Steps tab | [dashboard](../design/specs/dashboard.md) | B4.6 |
 | NEW-dashboard-4 | Settings | [dashboard](../design/specs/dashboard.md) | B4.2 |
 | NEW-dashboard-5 | Review for a team, and review that forces a look | [dashboard](../design/specs/dashboard.md) | B4.6 |
+| NEW-dashboard-6 | The Configuration page: model folders, role recommendations, explicit downloads, the benchmark, every role's model name (DEC-29 O2, O3) | [dashboard](../design/specs/dashboard.md) | B4.1 |
 | NEW-design-stage-5 | The Researcher asked early, with the card in hand | [design-stage](../design/specs/design-stage.md) | B4.4 |
 | NEW-design-stage-1 | Design-stage judgement | [design-stage](../design/specs/design-stage.md) | B4.4 |
 | NEW-design-stage-2 | Research that can be verified and does not park wrongly | [design-stage](../design/specs/design-stage.md) | B4.4 |
@@ -137,6 +138,7 @@ The design v3 specifications found gaps the Phase A programme had no ID for. Eac
 | NEW-extensibility-2 | Hooks that fail visibly | [extensibility](../design/specs/extensibility.md) | B3.3 |
 | NEW-extensibility-3 | MCP on the official SDK | [extensibility](../design/specs/extensibility.md) | B3.3 |
 | NEW-extensibility-4 | Skills in the Agent Skills format | [extensibility](../design/specs/extensibility.md) | B3.3 |
+| NEW-extensibility-5 | The plugin container and the SDK package cut (DEC-29 O4) | [extensibility](../design/specs/extensibility.md) | B0 |
 | NEW-gates-1 | Unenforced invariants shown to a person | [gates](../design/specs/gates.md) | B2.3 |
 | NEW-gates-2 | Judge only what the card wrote | [gates](../design/specs/gates.md) | B2.3 |
 | NEW-gates-3 | Gate economics and flaky tests | [gates](../design/specs/gates.md) | B2.3 |
@@ -146,7 +148,7 @@ The design v3 specifications found gaps the Phase A programme had no ID for. Eac
 | NEW-gates-7 | Gates for existing codebases | [gates](../design/specs/gates.md) | B4.0b |
 | NEW-gates-8 | The change kind and the test-strength record on the card | [gates](../design/specs/gates.md) | B4.0b |
 | NEW-integrations-1 | Idempotent import | [integrations](../design/specs/integrations.md) | B4.9 |
-| NEW-integrations-2 | Owner and delegate on every tracker | [integrations](../design/specs/integrations.md) | B4.9 |
+| NEW-integrations-2 | Owner, delegate and accepter mapped to every tracker | [integrations](../design/specs/integrations.md) | B4.9 |
 | NEW-integrations-3 | External results name their source | [integrations](../design/specs/integrations.md) | B4.9 |
 | NEW-kernel-1 | Hash chain v3 | [kernel](../design/specs/kernel.md) | B3.1 |
 | NEW-kernel-2 | A `principal` column on events | [kernel](../design/specs/kernel.md) | B3.1 |
@@ -161,6 +163,7 @@ The design v3 specifications found gaps the Phase A programme had no ID for. Eac
 | NEW-measurement-2 | Diagnostics on real inputs | [measurement](../design/specs/measurement.md) | B2.4 |
 | NEW-measurement-3 | Adoptions per phase | [measurement](../design/specs/measurement.md) | B2.4 |
 | NEW-measurement-4 | Test strength and human-built work in the measures | [measurement](../design/specs/measurement.md) | B2.4 |
+| NEW-measurement-5 | Benchmarking model combinations in two tiers: **quick** (role-by-role screening in minutes, cached, hardware-aware, with intervals) and **overnight** (paired, repeated full comparison in the overnight window, resumable, morning report) (DEC-29 O2a) | [measurement](../design/specs/measurement.md) | B4.1 |
 | NEW-models-1 | Calibrate the reference host and correct its tier | [models](../design/specs/models.md) | B4.0a |
 | NEW-models-2 | Floors and the watchdog on every path | [models](../design/specs/models.md) | B4.0a |
 | NEW-models-3 | Declared hours and swap batching | [models](../design/specs/models.md) | B4.0a |
@@ -172,6 +175,7 @@ The design v3 specifications found gaps the Phase A programme had no ID for. Eac
 | NEW-models-9 | One scheduler owns residency | [models](../design/specs/models.md) | B4.0a |
 | NEW-models-10 | Adopting a model is a measured decision | [models](../design/specs/models.md) | B4.0a |
 | NEW-models-11 | The Spark-X2.5-4B Researcher bake-off | [models](../design/specs/models.md) | B4.4 |
+| NEW-models-12 | Scan model folders, identify weights, recommend a model per role with its reason, verified explicit downloads (DEC-29 O2) | [models](../design/specs/models.md) | B4.1 |
 | NEW-planner-pm-1 | Points on the board | [planner-pm](../design/specs/planner-pm.md) | B4.3 |
 | NEW-planner-pm-2 | Signals propose, never mutate | [planner-pm](../design/specs/planner-pm.md) | B4.3 |
 | NEW-planner-pm-3 | Split to the measured horizon | [planner-pm](../design/specs/planner-pm.md) | B4.3 |
@@ -179,6 +183,7 @@ The design v3 specifications found gaps the Phase A programme had no ID for. Eac
 | NEW-planner-pm-5 | Every signal response is carried out, as a proposal where a person owns the field | [planner-pm](../design/specs/planner-pm.md) | B4.3 |
 | NEW-planner-pm-6 | Planning on existing codebases | [planner-pm](../design/specs/planner-pm.md) | B4.3 |
 | NEW-planner-pm-7 | Test approval and strength by depth profile | [planner-pm](../design/specs/planner-pm.md) | B4.3 |
+| NEW-planner-pm-8 | Dependencies from what a card uses, not a blanket rule | [planner-pm](../design/specs/planner-pm.md) | B4.3 |
 | NEW-review-git-1 | A rebase conflict goes back to the Worker as typed failures | [review-git](../design/specs/review-git.md) | B3.2 |
 | NEW-review-git-2 | Restacked children re-run their gates | [review-git](../design/specs/review-git.md) | B3.2 |
 | NEW-review-git-3 | Per-package gates in card verification | [review-git](../design/specs/review-git.md) | B4.0b |
@@ -201,11 +206,14 @@ The design v3 specifications found gaps the Phase A programme had no ID for. Eac
 | NEW-security-5 | Documentation and skills that match the air-gapped project | [security](../design/specs/security.md) | B1 |
 | NEW-security-6 | An Ask that a person really answers | [security](../design/specs/security.md) | B1 |
 | NEW-security-7 | Erase a secret the scanner missed | [security](../design/specs/security.md) | B3.1 |
+| NEW-security-8 | Research asks once, on the first new project; a yes never opens a route for the sandbox (O16) | [security](../design/specs/security.md) | B3.3 |
+| NEW-security-9 | Model downloads only by a person's explicit choice, hash-verified, refused offline (DEC-29 O2) | [security](../design/specs/security.md) | B4.1 |
 | NEW-surface-1 | One user directory | [surface](../design/specs/surface.md) | B3.3 |
 | NEW-surface-2 | A terminal board in the board's words | [surface](../design/specs/surface.md) | B3.3 |
 | NEW-surface-3 | The card layer of the configuration is real or removed | [surface](../design/specs/surface.md) | B3.3 |
 | NEW-surface-4 | One install path per audience | [surface](../design/specs/surface.md) | B4.1 |
 | NEW-surface-5 | One recorded run profile | [surface](../design/specs/surface.md) | B3.3 |
+| NEW-surface-6 | `sekhemet ask` at the front door in place of `board` (O23) | [surface](../design/specs/surface.md) | B4.1 |
 | NEW-worker-loop-1 | Repetition refusals that survive alternation and truncation | [worker-loop](../design/specs/worker-loop.md) | B2.1 |
 | NEW-worker-loop-2 | The ladder's dead fields | [worker-loop](../design/specs/worker-loop.md) | B2.1 |
 | NEW-worker-loop-3 | Remove the session's dead direct-tool API | [worker-loop](../design/specs/worker-loop.md) | B2.1 |
@@ -235,7 +243,7 @@ The design v3 specifications found gaps the Phase A programme had no ID for. Eac
 | Code | Why | Proposed |
 | --- | --- | --- |
 | `packages/ui/src/canvas.ts` | Reachable only from a test | Cut |
-| `container.ts` (kernel/sandbox) | Reachable only from a test | Cut |
+| `container.ts` (kernel/sandbox) | Reachable — built on every card (`execute.ts:378`); plugins run repository code unsandboxed | Cut, with the SDK package (DEC-29 O4, B0) |
 | `retention.ts` | ~~Unused~~ — wired: `queue` prunes on start (`execute.ts:195`); found by the platform spec pass | Keep; retention becomes a recorded erasure after owner decision O1 |
 | `apps/harness/src/research/desk.ts`; `adjudicate` / `acceptRevision` in `claims.ts` | Reachable only from tests | Wire in or cut |
 | `buildFullPromptPack`, `engine.ts` (context) | Dead | Cut |

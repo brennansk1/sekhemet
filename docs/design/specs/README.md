@@ -53,7 +53,7 @@ changes: [M1, M3, M8]          # COVERAGE ids this spec carries
 | [dashboard.md](dashboard.md) | The web dashboard: board, review, status, Learn layer, visual system |
 | [security.md](security.md) | Sandboxing, permissions, egress, secrets, workspace trust, air-gap |
 | [integrations.md](integrations.md) | GitHub, Jira, Linear, notifications, the company-server mode |
-| [extensibility.md](extensibility.md) | Hooks, skills, plugins, MCP, ACP, the SDK |
+| [extensibility.md](extensibility.md) | Hooks, skills, MCP, ACP (plugins and the SDK are cut, DEC-29) |
 | [runtime.md](runtime.md) | Daemon, runner lease, sessions, the HTTP API, audit, telemetry, retention |
 
 ## Where the old design went

@@ -1,6 +1,6 @@
 # Naming
 
-Status: rule from the user, 2026-09-18; state names reconciled with the code and the board, 2026-09-22; card kind, change, split and the run hierarchy settled by [DEC-26](DECISIONS.md#dec-26--one-vocabulary-for-the-kind-of-card-and-the-run), 2026-09-24 · Applies to the product, the dashboard, the CLI, docs and model prompts.
+Status: rule from the user, 2026-09-18; state names reconciled with the code and the board, 2026-09-22; card kind, change, split and the run hierarchy settled by [DEC-26](DECISIONS.md#dec-26--one-vocabulary-for-the-kind-of-card-and-the-run), 2026-09-24; *Configuration* named, 2026-09-24 ([DEC-29](DECISIONS.md#dec-29--the-owners-answers-to-the-decision-queue) O2, O3) · Applies to the product, the dashboard, the CLI, docs and model prompts.
 Related: [SPINE.md](SPINE.md) (voice), [specs/dashboard.md](specs/dashboard.md) and [specs/planner-pm.md](specs/planner-pm.md) (where these names appear), [DECISIONS.md](DECISIONS.md#dec-05) (one persona).
 
 ## The rule
@@ -18,7 +18,7 @@ If you are unsure whether something "takes a name", it doesn't. Use the plain wo
 |---|---|
 | Product and roles | Sekhemet · Worker · Planner · Researcher · Reviewer · You · Project |
 | People on a card | Owner (the responsible person) · Delegate (who builds it: the Worker or a person) · Accepter · *Assignee* only as the alias for Owner in the query language and in exports to trackers whose field has that name |
-| Views | Status · Project manager · Review · Board · List · Story map · Insights · Runs · Dependencies · Playbook · Integrations · Machine · Ledger · Registry · Workspace · Settings. *Inbox* is retired as a view; its route opens Review › *Needs you* |
+| Views | Status · Project manager · Review · Board · List · Story map · Insights · Runs · Dependencies · Playbook · Integrations · Machine · Ledger · Configuration · Workspace. *Inbox* is retired as a view; its route opens Review › *Needs you*. *Registry* and *Settings* are retired as views: both are sections of Configuration, and their routes open them |
 | Work | Card · Subtask · Epic · Cycle · Label · Priority (Urgent, High, Medium, Low, No priority) · Points · Due date · Backlog |
 | Card states, stored (CLI, errors, ledger, pipeline view) | Backlog · Ready · Planning · In progress · Verify · Review · Done · Parked · Rejected — one name per state, in sentence case, the same in the column heading of pipeline view, the stored value's label, an error message and the design (`vocabulary.ts` `COLUMN_LABELS`, whose `In Progress` becomes *In progress* under [dashboard](specs/dashboard.md) NEW-dashboard-2) |
 | Board columns (the default board, and the Jira export) | Backlog · To do (Ready, Planning) · In progress (In progress, Verify) · In review (Review) · Done · On hold (Parked, shown only when non-empty) · Won't do (Rejected, a filter, not a column) |
@@ -29,6 +29,7 @@ If you are unsure whether something "takes a name", it doesn't. Use the plain wo
 | Actions | Accept · Send back · Park · Unpark · Reject · Reopen · Revert accept · Acknowledge · Approve · Apply · Discard · Apply all · Import · Export · Sync · Pull · Push |
 | Flow | WIP limit · Cycle time · Throughput · Cumulative flow · Aging work in progress · Work item age · Swimlane · Saved view |
 | Machine | Memory · Model · Health checks · Worktrees · Sandbox |
+| Configuration | **Configuration** is the page where a person sets Sekhemet up, in plain words: which models it uses for each role and where they are kept, the benchmark that compares them, how many minutes a day the person reviews, and the settings in force. Its sections: Models · Benchmark · Review capacity · This browser · Project configuration. Its words: Model folder · Scan · Recommended · Assign · Load · Unload · Download · Benchmark (the frozen suite, or a bake-off on chosen models) · Baseline. Not *Settings*, *Preferences*, *Admin* or *Registry* for the page: *Configuration* is the word the product already uses for `config.toml` ([surface](specs/surface.md)) |
 
 *Working*, *Checking* and *Closed* are **retired**: they were a third vocabulary for the same states (neither the stored names nor the board's), and a person who read `verify` in an error could not find a column called *Checking*.
 
@@ -66,7 +67,7 @@ One hierarchy, used by every specification, the dashboard and the CLI ([DEC-26](
 
 - An **attempt** is one recorded run of a card to a stop. It holds one **sample**, or up to k under pass@k.
 - A **sample** is a sequence of steps.
-- A **step** is one model request and the tool calls it makes. The step budget counts steps (*8 of 32 steps*).
+- A **step** is one model request and the tool calls it makes. The step budget counts steps (*8 of 40 steps*).
 
 *Turn* is the code's synonym for step (the `turn` field of `card/step`, the `--max-turns` flag) and is used in no specification, criterion or user-facing text. The old design's use of *turn* for all the steps of an attempt, and of *sample* for one of several attempts, is retired.
 
@@ -75,7 +76,7 @@ One hierarchy, used by every specification, the dashboard and the CLI ([DEC-26](
 | Name | What it names | Why it earns a name | How it appears first on a surface |
 |---|---|---|---|
 | **Sekhemet** | The product | Products have names. | The wordmark next to the pylon glyph. |
-| **Seshat** | The project-manager persona, which runs on the Planner role's model | The user asked to talk to it "like a real project manager you hired", and chose the name (renamed from Merit, 2026-09-18). Seshat is the Egyptian goddess of writing, measurement and records, "mistress of the house of books", who kept the royal annals and measured out the foundations of temples: a keeper of plans and records, which is what a project manager is. It reads as a name, not a costume, and needs no explanation. | Navigation: *Project manager*, with *Seshat* as secondary text — people scan for the function (Phase A UX review, 2026-09-22). Panel header: *Seshat · Project manager*, without the model's name (the model's id is in the header's details and on Machine). `#/pm` topbar: *Seshat · Project manager*. Palette: *Talk to Seshat, the project manager*. Tools and APIs use the name in lower case (`sekhemet_ask_seshat`). |
+| **Seshat** | The project-manager persona, which runs on the Planner role's model | The user asked to talk to it "like a real project manager you hired", and chose the name (renamed from Merit, 2026-09-18). Seshat is the Egyptian goddess of writing, measurement and records, "mistress of the house of books", who kept the royal annals and measured out the foundations of temples: a keeper of plans and records, which is what a project manager is. It reads as a name, not a costume, and needs no explanation. | Navigation: *Project manager*, with *Seshat* as secondary text — people scan for the function (Phase A UX review, 2026-09-22). Panel header: *Seshat · Project manager*; the chat panel names no model anywhere — the model's name is on Configuration, with every role's (owner decision O3). `#/pm` topbar: *Seshat · Project manager*. Palette: *Talk to Seshat, the project manager*. Tools and APIs use the name in lower case (`sekhemet_ask_seshat`). |
 | **Basalt**, **Sand** | The dark and light themes | Themes are named in most tools, and these describe what you see. | The theme toggle's tooltip. |
 
 The brand glyph (a pylon gate with a sun disc) is a mark, not a name, and is never written out.
@@ -97,7 +98,7 @@ Checked against the dashboard (`packages/ui/web`), `PM_DESIGN.md` and the mockup
 |---|---|---|
 | Sidebar nav | Showed *Seshat* alone. | Now *Project manager*, with *Seshat* as secondary text and the full sentence in the tooltip. |
 | `#/pm` topbar | *Seshat* with the crumb *Project manager*. | Kept. |
-| Panel header | *Seshat / Project manager · dirk-27b*. | The model id leaves the header (ruling R15): *Seshat · Project manager*, with the model in the header's details and on Machine. |
+| Panel header | *Seshat / Project manager · dirk-27b*. | The model id leaves the chat panel (ruling R15, then owner decision O3): *Seshat · Project manager*; Seshat's model is named on Configuration, with every role's. |
 | Palette | *Go to Seshat (full conversation)*. | Now *Go to Seshat, the project manager*. |
 | Cheat sheet | Section titled *Seshat*. | Now *Seshat · Project manager*. |
 | Integrations | Slack card titled *Slack for the PM*. | Kept: the product name is intact and the function is plain. |

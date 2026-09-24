@@ -78,7 +78,7 @@ function frontMatter(text: string): FrontMatter | undefined {
   let listKey = "";
   for (const line of (m[1] ?? "").split("\n")) {
     // A block list: "code:" followed by "  - path" lines.
-    const item = /^\s+-\s+(.+?)\s*$/.exec(line);
+    const item = /^\s+-\s+(.+?)\s*(?:#.*)?$/.exec(line);
     if (item && listKey) {
       const list = out[listKey];
       if (Array.isArray(list)) list.push(item[1] ?? "");

@@ -24,7 +24,7 @@ tests:
   - apps/harness/tests/cli_gate.spec.ts
   - apps/harness/tests/cli_kernel.spec.ts
   - apps/harness/tests/docs.spec.ts
-changes: [P10, S10, T4, T10, NEW-surface-1, NEW-surface-2, NEW-surface-3, NEW-surface-4, NEW-surface-5]
+changes: [P10, S10, T4, T10, NEW-surface-1, NEW-surface-2, NEW-surface-3, NEW-surface-4, NEW-surface-5, NEW-surface-6]
 ---
 
 # Surface: the command line, the first run, configuration, and onboarding a repository
@@ -50,22 +50,32 @@ The surface is what a person meets before the board: one command that sets Sekhe
 
 5. `sekhemet` with no arguments, in a repository, is the product. On first run — no `.sekhemet/config.toml` — it:
    1. checks the machine (memory, chip) and the toolchain (Node.js and git; the Node.js floor is item 5a), naming the fix for anything missing;
-   2. resolves the roster once from the model registry for this machine's tier — Worker, Planner (Seshat runs on it), Reviewer, Researcher — and says which weights are present, how much must be fetched, and that `--models-dir` points at weights the person already has;
+   2. resolves the roster once from the model registry for this machine's tier — Worker, Planner (Seshat runs on it), Reviewer, Researcher — and says which weights are present, how much a download would be, and that the Configuration page (item 5b) finds weights the person already has;
    3. derives the gates with **one deriver** from the project's own scripts and CI: the package manager from the lockfile or the `packageManager` field (npm when neither says), a typecheck gate when TypeScript is a dependency, the project's lint and test scripts, CI steps including multi-line `run: |` blocks, and the protected test globs;
    4. treats an existing team repository as onboarding (items 9–12);
    5. prints one paragraph — the machine, the models, the gates, how to ask for work — and asks **one confirmation**;
-   6. on confirmation writes `.sekhemet/config.toml`, `.sekhemet/gates.toml` and one marked `.gitignore` block, then serves the board and opens it in a browser. The block ignores `.sekhemet/` **by default** and re-includes only the files a team shares — `config.toml`, `gates.toml`, `hooks.toml`, `mcp.json`, `skills/` and `playbook.toml` — so that evidence bundles, transcripts, artifacts, research pages, observations, live token files, tuning data, traces, runs, blobs, the ledger and its WAL, the daemon files, the gate host's keys and `queue_report.json` are never committable, including any state directory added later ([security](security.md) item 34a). A person who wants another file tracked edits the block; the first run never removes a line a person wrote.
+   6. on confirmation writes `.sekhemet/config.toml`, `.sekhemet/gates.toml` and one marked `.gitignore` block, then serves the board and opens it in a browser — on the Configuration page instead when no model is set up (item 5b). The block ignores `.sekhemet/` **by default** and re-includes only the files a team shares — `config.toml`, `gates.toml`, `hooks.toml`, `mcp.json`, `skills/` and `playbook.toml` — so that evidence bundles, transcripts, artifacts, research pages, observations, live token files, tuning data, traces, runs, blobs, the ledger and its WAL, the daemon files, the gate host's keys and `queue_report.json` are never committable, including any state directory added later ([security](security.md) item 34a). A person who wants another file tracked edits the block; the first run never removes a line a person wrote.
 5a. **Node.js 22.13 or newer** is required, and this is the one place the floor is stated. The ledger is `node:sqlite`, which arrived in Node.js 22.5 behind `--experimental-sqlite` and runs without a flag from 22.13; the harness passes no flag (`apps/harness/src/index.ts:1`), so 22.5–22.12 cannot open the ledger. *Changed from the code:* the first-run check accepts any 22.x (`init.ts:61-64`, `nodeMajor >= 22`); other documents that give another floor point here (P10, SUR-46).
-6. It makes no network request unless `[network] mode` allows one (offline is the default), and it never runs repository code before the person trusts the repository ([security](security.md) S9).
-7. `--yes` confirms without asking and never opens a browser (it prints the board's address). Without a terminal and without `--yes` it prints the plan, writes nothing and exits 2.
-8. Later runs open the board. No file is written by the person before their first card; `config.toml`, `gates.toml`, `hooks.toml`, `mcp.json`, skills, tiers and rosters all exist, and none is met on day one.
+5b. **No models, no dead end.** When no model is set up — no role's weights are found in any model folder the harness knows (`SEKHEMET_MODELS_DIR`, `--models-dir`, or folders named on the page) — `sekhemet` opens the dashboard on the **Configuration page** ([dashboard](dashboard.md) NEW-dashboard-6; [models](models.md) NEW-models-12) instead of the board, on the first run and on every later run until a model is set up. There a person points the harness at the folders where their models live, sees each model found and the recommended model per role with its reason, and may download a recommended model explicitly, hash-verified ([DEC-29](../DECISIONS.md#dec-29--the-owners-answers-to-the-decision-queue) O2; [security](security.md) item 47). Nothing is downloaded before that explicit choice. Under `--yes` or without a browser the first run prints the Configuration page's address instead of the board's.
+6. It makes no network request unless `[network] mode` allows one (offline is the default), and it never runs repository code before the person trusts the repository ([security](security.md) S9). Research asks for the network once, when the person first plans a new project, not during setup ([design-stage](design-stage.md) S8; [security](security.md) item 29a; the default of owner decision [O16](../../reference/OPEN_QUESTIONS.md#owner-decisions), pending).
+7. `--yes` confirms without asking and never opens a browser (it prints the board's address, or the Configuration page's when no model is set up, item 5b). Without a terminal and without `--yes` it prints the plan, writes nothing and exits 2.
+8. Later runs open the board (the Configuration page while no model is set up, item 5b). No file is written by the person before their first card; `config.toml`, `gates.toml`, `hooks.toml`, `mcp.json`, skills, tiers and rosters all exist, and none is met on day one.
 
 ```
 $ sekhemet
-M4, 24 GB. Worker Cyber-Tiel-Coder-35B-A3B, Planner <model> — 14 GB to fetch, or point me at your own with --models-dir.
+M4, 24 GB. Worker Cyber-Tiel-Coder-35B-A3B, Planner <model> — weights present.
 Gates from package.json: typecheck, lint, test.
 Set up here? [Y/n]
 Ready. Ask for work with: sekhemet "add rate limiting to the API"
+```
+
+With no model set up, the paragraph ends differently:
+
+```
+M4, 24 GB. No models found yet — recommended: Worker Cyber-Tiel-Coder-35B-A3B, Planner <model> (14 GB).
+Gates from package.json: typecheck, lint, test.
+Set up here? [Y/n]
+Ready. Opening Configuration to find your models or download these.
 ```
 
 ### Onboarding an existing repository
@@ -81,22 +91,23 @@ Ready. Ask for work with: sekhemet "add rate limiting to the API"
 
 ### The command surface
 
-13. Eight commands at the front door; every other command keeps its implementation under `dev`, listed only by `sekhemet dev --help`, and still runs when called without `dev` (moved means unlisted, not removed):
+13. Eight commands at the front door (with `ask` in place of `board`, the default of owner decision [O23](../../reference/OPEN_QUESTIONS.md#owner-decisions), pending — NEW-surface-6); every other command keeps its implementation under `dev`, listed only by `sekhemet dev --help`, and still runs when called without `dev` (moved means unlisted, not removed):
 
 | Command | What it does |
 | --- | --- |
-| `sekhemet` | First run sets everything up and opens the board; later runs open the board |
+| `sekhemet` | First run sets everything up and opens the board; later runs open the board (the Configuration page while no model is set up, item 5b) |
 | `sekhemet "<spec>"` | Plan the work and run it — one verb, not `plan` then `queue` |
 | `sekhemet run [card]` | With a card: run it or resume it. Without: run the queue |
 | `sekhemet review` | The oldest card in Review: its gates, its diff size, and the commands that decide it |
 | `sekhemet accept <card>` | Accept. Siblings: `send-back <card> "<reason>"`, `park` / `unpark <card>`, and the reversal verbs [review-git](review-git.md) defines |
-| `sekhemet board` | The board; `--terminal` for text |
+| `sekhemet ask "<question>"` | Ask Seshat from the terminal — for non-developers and people on SSH; the reply prints here (NEW-surface-6). Replaces `board`, which the bare `sekhemet` already opens; `board --terminal` moves under `dev`. If the owner declines O23, `board` stays in this row |
 | `sekhemet doctor` | Check the install: toolchain, model weights, confinement, configuration |
 | `sekhemet dev <command>` | Everything for developing the harness itself |
 
 14. **Rules for adding.** A new user-facing command displaces one, or it goes under `dev` or into the dashboard's command palette. A flag that silently rewrites other flags (`--profile`) is a default that has not been chosen, not a command (ruling R13): a run's settings are one resolved `RunProfile` — defaults, config layers, then flags — recorded whole in every evidence bundle, and a named settings file (`--settings <file>`) is allowed because it too is recorded, with its hash ([measurement](measurement.md) M9). **Every destructive action the board offers is on the command line with its undo.**
 15. **A spec is a sentence.** A single word that is not a command is refused with a suggestion within edit distance 2 (`reveiw` → `review`), because planning a typo writes cards to the board. A research question is not a command: it is asked in conversation, and the Researcher answers through the decision queue.
-16. **The board's decisions are the command line's decisions.** `send-back` requires a reason, which becomes the next attempt's instruction and a playbook candidate; `park` prints its undo; all of them share one implementation with the dashboard's buttons.
+16. **The board's decisions are the command line's decisions.** `send-back` requires a reason, which becomes the next attempt's instruction and a playbook candidate; `park` prints its undo; all of them share one implementation with the dashboard's buttons — including who may accept: a solo developer accepts their own cards, and on a project where two or more people hold the Accept permission, `accept` refuses the person who built the card or delegated it to the Worker and names who may accept (owner decision O11, [DEC-29](../DECISIONS.md#dec-29--the-owners-answers-to-the-decision-queue); [review-git](review-git.md) §2.4.1 owns the rule).
+16a. **`ask` is Seshat's conversation, not a second one.** `sekhemet ask "<question>"` sends the question through the PM's queued-answer path ([PM_CONTRACT.md](../PM_CONTRACT.md)) into the same thread the dashboard and ACP show, waits for the reply and prints it; while the Worker runs, Seshat answers between its steps ([runtime](runtime.md) item 4), and the command says it is waiting. Proposals the reply creates are listed with where to apply them; `ask` applies nothing.
 17. **One registry** of commands — name, visibility (front or dev), flags, handler, help — feeds the parser, the dispatcher and both help screens, so a command cannot have a handler the parser never reaches (T4). Flags are parsed once, by `node:util` `parseArgs`, with unknown flags refused.
 18. **Exit codes.** 0 success; 1 failure, including any uncaught error; 2 usage error (unknown command, missing argument, missing confirmation). `sekhemet run <card>` exits 0 when the card reached Review or Done and 1 when it stopped without passing, so scripts and CI can use it headless.
 19. `--version` / `-v` prints the version and does nothing else; `--help` / `-h` prints the front-door help.
@@ -115,27 +126,30 @@ planner = "auto"           # Seshat and the planner run on it
 reviewer = "auto"          # "off" disables review, and the card says so
 researcher = "auto"
 vision = "auto"            # image description for cards with attachments
+folders = []               # model folders the Configuration page scans, besides SEKHEMET_MODELS_DIR and the known stores (models NEW-models-12)
 
 [loop]
-default_step_budget = 40   # max turns (model requests) per sample, when no flag overrides
+default_step_budget = 40   # max steps (model requests) per sample, when no flag overrides
 
 [review]
-review_minutes_per_day = 60   # human review capacity; derives the Review WIP limit
+review_minutes_per_day = 60   # human review capacity; derives the Review WIP limit; must be > 0 (0 or less is refused)
 
 [network]
-mode = "offline"           # "offline" | "allowlist" | "open"
+mode = "offline"           # "offline" | "allowlist" | "open" — card commands and harness requests other than research
+research = "ask"           # "ask" | "yes" | "no" — the Researcher's own requests; set by the first-project question (O16)
 fetch_allow = []           # hosts an outbound request may reach (item 24)
 fetch_deny = []            # hosts never reached, whatever fetch_allow or mode says
 
 [machine]
 reserved_hours = "08:00-18:00 Mon-Fri"   # the person's hours; unattended runs go outside them
+# overnight_hours = "22:00-06:00"       # optional: narrows the overnight window (the complement of reserved_hours)
 power_budget_kwh_day = 0                 # 0 = unlimited
 ```
 
    `[server]` (binding) is in [runtime](runtime.md); `[identity]` in [integrations](integrations.md); both are read only from the user directory.
 
    Two defaults changed deliberately from the 2026-09-17 design: `fetch_allow` starts empty (the old default was `["nodejs.org"]`) because offline is the default and the person names the first site; and the old `[overnight] hours = "18:00-08:00"` (when unattended runs may use the machine) became `[machine] reserved_hours` (the person's own hours, unattended runs go outside them) — the code's meaning, which reads as the person's promise rather than the machine's.
-24. **One network schema, owned here.** Every outbound request — the Researcher's searches and page reads, registry lookups for the supply-chain gate, repository clones, and a card's sandboxed commands through the egress proxy — is decided by `[network]`: `mode` (`offline`: nothing leaves the machine except loopback; `allowlist`: only `fetch_allow` hosts and their subdomains; `open`: any public host), then `fetch_deny`, which wins over both `fetch_allow` and `mode`. **The user's `config.toml` is authoritative.** A project's `.sekhemet/config.toml` may only make the policy stricter: it may **add** hosts to `fetch_deny` and **narrow** `fetch_allow` (the effective list is the intersection of the user's and the project's), and it may not widen `mode`, add a host to `fetch_allow`, or remove one from `fetch_deny`; a key that tries is ignored and `doctor` names it. A card's sandboxed commands reach, in addition, only the hosts the repository's `gates.toml` `[project] network_allow` names — one more narrowing of the same effective `fetch_allow`, empty by default, so a card's commands reach nothing unless the project lists a host ([security](security.md) items 28–30; the key's placement is [gates](gates.md)'). No other file or key names network access: [design-stage](design-stage.md)'s domain allowlist and denylist are `fetch_allow` and `fetch_deny`.
+24. **One network schema, owned here.** Every outbound request — the Researcher's searches and page reads, registry lookups for the supply-chain gate, repository clones, and a card's sandboxed commands through the egress proxy — is decided by `[network]`: `mode` (`offline`: nothing leaves the machine except loopback; `allowlist`: only `fetch_allow` hosts and their subdomains; `open`: any public host), then `fetch_deny`, which wins over both `fetch_allow` and `mode`. **`research`** governs only the Researcher's harness-side requests (search, page reads, repository reading for research): `ask` until the first new project's question is answered, then `yes` or `no`; with `yes`, research may reach any public host not in `fetch_deny`, logged, whatever `mode` says, and `mode` still governs every card command and every other request — so a person can research freely while their cards stay offline ([security](security.md) item 29a, [design-stage](design-stage.md) §2.6). **The user's `config.toml` is authoritative.** A project's `.sekhemet/config.toml` may only make the policy stricter: it may **add** hosts to `fetch_deny` and **narrow** `fetch_allow` (the effective list is the intersection of the user's and the project's), and it may not widen `mode`, add a host to `fetch_allow`, or remove one from `fetch_deny`; a key that tries is ignored and `doctor` names it. A card's sandboxed commands reach, in addition, only the hosts the repository's `gates.toml` `[project] network_allow` names — one more narrowing of the same effective `fetch_allow`, empty by default, so a card's commands reach nothing unless the project lists a host ([security](security.md) items 28–30; the key's placement is [gates](gates.md)'). No other file or key names network access: [design-stage](design-stage.md)'s domain allowlist and denylist are `fetch_allow` and `fetch_deny`.
 25. **Removed** because nothing reads them: `machine.tier` (derived from memory), the whole `[context]` section (budgets come from the tier profile), `loop.stall_window` and `loop.max_rungs` (the repair ladder is not a tunable), `models.pruner`, `[sync]` (configured on the Integrations page), `telemetry.store` (one legal value), and `review.wip` (always derived — [review-git](review-git.md) S6). **Renamed**, with the old name read and reported by `doctor` for one release: `models.executor` → `worker`, `network.allow` → `fetch_allow`, `machine.hours` → `reserved_hours`. **New:** `network.fetch_deny`, whose reader is the one network policy (the research fetch path's denylist, [design-stage](design-stage.md) NEW-design-stage-4, and the egress proxy).
 26. A project `config.toml` cannot widen the network policy (item 24: it may only add to `fetch_deny` and narrow `fetch_allow`) or set `[server]`/`[identity]` keys ([security](security.md) item 28).
 27. **Environment variables** are not a second configuration system. *Changed from the old design's "only `SEKHEMET_CONFIG_DIR` and `SEKHEMET_MODELS_DIR` are honoured":* the code reads about 45 variables, so each is classified below and only the two bootstrap variables are shown to users. Each `SEKHEMET_*` variable is in exactly one class below; a variable in no class is a defect ([docs check](#t10--executable-documentation-checks)).
@@ -160,7 +174,7 @@ power_budget_kwh_day = 0                 # 0 = unlimited
 
 ### Installing
 
-31. **One install path per audience** ([DESIGN_RESEARCH_TEAM_SERVER.md](../../research/DESIGN_RESEARCH_TEAM_SERVER.md)). A person installs Sekhemet from one package and meets one first run (items 5–8). A team server is deployed from one container image whose documentation names the identity proxy ([integrations](integrations.md) item 24) and the inference engine as a separate container. Which artefacts ship is the owner's choice (open question 4, [O9](../../reference/OPEN_QUESTIONS.md#owner-decisions): the default is an npm package and a server container image); until then the source installer of [DEC-21](../DECISIONS.md#dec-21--accepted-substitutions) is the path.
+31. **One install path per audience** ([DESIGN_RESEARCH_TEAM_SERVER.md](../../research/DESIGN_RESEARCH_TEAM_SERVER.md)). A person installs Sekhemet from **one npm package** and meets one first run (items 5–8). A team server is deployed from **one container image** whose documentation names the identity proxy ([integrations](integrations.md) item 24) and the inference engine as a separate container. Both artefacts are approved (owner decision O9, decided 2026-09-24, [DEC-29](../DECISIONS.md#dec-29--the-owners-answers-to-the-decision-queue)). The source installer of [DEC-21](../DECISIONS.md#dec-21--accepted-substitutions) stays as the route for the air-gap kit and for developing the harness; a single executable is Later (§7).
 32. **Upgrades keep a person's data.** An upgrade migrates `config.toml` in the same step as the ledger migration ([runtime](runtime.md) item 38): renamed keys are rewritten after a backup, and `doctor` reports what changed.
 
 ## 3. Contract
@@ -195,7 +209,9 @@ power_budget_kwh_day = 0                 # 0 = unlimited
 | One recorded `RunProfile`; `--settings <file>` | not-built | `queue --profile full` pushes `--explore`, `--escalate-retries`, `--review` and a `--max-turns` cap into `argv` and prints them (`index.ts:1181-1197`); the evidence records no single settings object | NEW-surface-5 |
 | `.gitignore` keeps personal and secret state out of git | not-built | five lines only (`init.ts:348-354`); `.sekhemet/evidence/`, `transcripts/`, `artifacts/`, `research/`, `live/`, `tuning/`, `traces.db`, `runs/`, `blobs/`, `gate-host/` and `queue_report.json` are committable | P10 |
 | Onboarding: team linter/formatter as gates, CI coverage list, diagnostic baseline, workspace graph | not-built | `detectCommands` classifies scripts and CI commands (`onboard.ts:108-190`) but records no step-by-step coverage, no baseline and no flaky run; workspaces are read only for per-package gates (`sync/src/repo_tools.ts:269-290`; pnpm, npm workspaces, Cargo), not recorded at onboarding, and TypeScript project references are not read | P10 |
-| One install path per audience | not-built | source install only ([DEC-21](../DECISIONS.md#dec-21--accepted-substitutions)) | NEW-surface-4 |
+| One install path per audience: npm package, server container image | not-built | source install only ([DEC-21](../DECISIONS.md#dec-21--accepted-substitutions)) | NEW-surface-4 |
+| First run leads to the Configuration page when no model is set up | not-built | bare `sekhemet` opens the board whatever the weights (`index.ts:1995-2014`); no Configuration page exists | P10 |
+| `sekhemet ask` | not-built | no such command; `board` is in `FRONT_DOOR` (`front_door.ts:18`) | NEW-surface-6 |
 | Config schema matches its readers | not-built | unread: `machine.tier`, `[context]`, `loop.stall_window`, `loop.max_rungs`, `models.pruner`, `[sync]`, `telemetry.store`; the design's names (`worker`, `fetch_allow`, `[overnight] hours`) differ from the code's (`executor`, `allow`, `[machine] hours`), and the hours mean the opposite; `fetch_deny` has no reader and a project layer can widen `network.allow` (`config.ts:26, 160`) | P10, T10 |
 | Node.js floor matches `node:sqlite` | not-built | the check accepts any 22.x (`init.ts:61-64`) | P10 |
 | One user directory | not-built | `~/.sekhemet` (`config.ts:195`, `models_dir.ts:25`, `mcp_client.ts:33`) vs `~/.config/sekhemet` (`integrations.ts:44`, `learning/store.ts:91`, `research/service.ts:53`); `config.ts` ignores `SEKHEMET_CONFIG_DIR` | NEW-surface-1 |
@@ -227,8 +243,12 @@ power_budget_kwh_day = 0                 # 0 = unlimited
 - **SUR-37** WHEN onboarding drafts the `AGENTS.md` block THE SYSTEM SHALL limit it to commands, locations and rules that no gate already enforces.
 - **SUR-38** WHEN onboarding runs the existing test suite THE SYSTEM SHALL run it twice, record failing and flaky tests separately, and record the pre-existing type and lint diagnostics, in one baseline event keyed by file, rule and a line-insensitive fingerprint ([gates](gates.md) reports against it).
 - **SUR-46** WHEN the first run finds Node.js older than 22.13 THE SYSTEM SHALL name the version found and the version required, write nothing and exit 1.
-- **SUR-47** WHEN a fresh clone of Sekhemet, installed by the one documented install path, runs the documented first run in an empty git repository on the reference machine — `sekhemet`, then `sekhemet "<spec>"` for a one-sentence spec, with the Worker's weights present or fetched by the documented explicit download command ([models](models.md) NEW-models-7) — THE SYSTEM SHALL bring at least one card built by the Worker to Review with every blocking gate passed and recorded in its evidence bundle, with no file in either repository edited by hand (DEFINITION_OF_DONE §6.7).
+- **SUR-47** WHEN a fresh clone of Sekhemet, installed by the one documented install path, runs the documented first run in an empty git repository on the reference machine — `sekhemet`, then `sekhemet "<spec>"` for a one-sentence spec, with the Worker's weights present or downloaded by a person's explicit choice on the Configuration page ([models](models.md) NEW-models-7, NEW-models-12) — THE SYSTEM SHALL bring at least one card built by the Worker to Review with every blocking gate passed and recorded in its evidence bundle, with no file in either repository edited by hand (DEFINITION_OF_DONE §6.7).
 - **SUR-48** WHEN the user's `config.toml` sets `mode = "allowlist"` and `fetch_allow = ["a.example", "b.example"]` and the project's sets `fetch_allow = ["b.example", "c.example"]` and `fetch_deny = ["b.example"]` THE SYSTEM SHALL reach none of `a.example`, `b.example` and `c.example` from that project, and `doctor` SHALL name `c.example` as an ignored widening.
+- **SUR-48a** WHEN `[network] research = "yes"` and `mode = "offline"` THE SYSTEM SHALL let the Researcher fetch a public host not in `fetch_deny`, logged, and SHALL give every card command no route out.
+- **SUR-48b** WHEN `[review] review_minutes_per_day` is 0 or less THE SYSTEM SHALL refuse to load the configuration, name the key and the value, and keep the previous configuration.
+- **SUR-49** WHEN the first run is confirmed and no role's weights are found in any known model folder THE SYSTEM SHALL open the dashboard on the Configuration page instead of the board, SHALL download nothing, and under `--yes` SHALL print the Configuration page's address instead of opening a browser; and WHEN `sekhemet` runs later while still no model is set up THE SYSTEM SHALL open the Configuration page again.
+- **SUR-50** WHEN the first run is confirmed and the Worker's and the Planner's weights are present THE SYSTEM SHALL open the board, not the Configuration page.
 - **SUR-39** WHEN a repository declares pnpm, npm or yarn workspaces or TypeScript project references THE SYSTEM SHALL record each package's name, dependencies and build order at onboarding, and a card's scope, the source index and per-package gates SHALL read that record.
 
 ### S10 — a command line scripts can trust
@@ -236,6 +256,7 @@ power_budget_kwh_day = 0                 # 0 = unlimited
 - **SUR-14** WHEN any command throws an uncaught error THE SYSTEM SHALL print it and exit 1.
 - **SUR-15** WHEN an unknown flag is given THE SYSTEM SHALL name it and exit 2.
 - **SUR-16** WHEN `sekhemet run <card>` finishes with the card parked or failed THE SYSTEM SHALL exit 1; with the card in Review or Done, 0.
+- **SUR-53** WHEN, on a project where two or more people hold the Accept permission, `sekhemet accept <card>` is run by the person who built the card or delegated it to the Worker THE SYSTEM SHALL change nothing, print who may accept, and exit 1; and WHEN exactly one person holds the Accept permission THE SYSTEM SHALL accept that person's own card and exit 0 (O11).
 - (These are tested by spawning the built binary, not by calling functions.)
 
 ### T4 — `index.ts` as a command registry
@@ -261,15 +282,20 @@ power_budget_kwh_day = 0                 # 0 = unlimited
 - **SUR-40** WHEN a card's record carries `configOverrides` THE SYSTEM SHALL resolve that card's run with them between the project layer and the command line, show them on the card, and list them in its evidence bundle.
 
 ### NEW-surface-4 — one install path per audience
-*Justification: a second install path appears ad hoc unless one is chosen per audience, as three setup paths did before ([DESIGN_RESEARCH_TEAM_SERVER.md](../../research/DESIGN_RESEARCH_TEAM_SERVER.md)). Pending the owner's choice of artefacts (open question 4).*
-- **SUR-41** WHEN Sekhemet is installed for one person THE SYSTEM SHALL install from one package and reach the first run of item 5 with no other step.
+*Justification: a second install path appears ad hoc unless one is chosen per audience, as three setup paths did before ([DESIGN_RESEARCH_TEAM_SERVER.md](../../research/DESIGN_RESEARCH_TEAM_SERVER.md)). The owner approved both artefacts, an npm package and a server container image (O9, [DEC-29](../DECISIONS.md#dec-29--the-owners-answers-to-the-decision-queue)).*
+- **SUR-41** WHEN Sekhemet is installed for one person from the npm package THE SYSTEM SHALL reach the first run of item 5 with no other step.
 - **SUR-42** WHEN Sekhemet is installed as a team server THE SYSTEM SHALL be deployable from one container image whose documentation names the identity proxy and the separate inference container.
 - **SUR-43** WHEN an upgrade finds renamed config keys THE SYSTEM SHALL back up `config.toml`, rewrite the keys, and have `doctor` report each change.
 
 ### NEW-surface-5 — one recorded run profile
-*Justification: `queue --profile full` rewrites other flags, the pattern item 14 forbids; a benchmark must measure what ships (ruling R13; integration review suggestion 12).*
+*Justification: `queue --profile full` rewrites other flags, the pattern item 14 forbids; a benchmark must measure what ships (ruling R13; integration review suggestion 12). **One `RunProfile`, two shares** (confirmation review N7e): [measurement](measurement.md) MS-M9-4/5 (B2.4) build it for measured runs, and B2.5 freezes the baseline profile; SUR-44/45 (B3.3) are the command line's share — the same object, resolved through the command registry (T4) for every run, never a second profile type.*
 - **SUR-44** WHEN a run starts THE SYSTEM SHALL resolve one `RunProfile` from defaults, config layers and flags and record it whole in every card's evidence bundle.
 - **SUR-45** WHEN `--settings <file>` is given THE SYSTEM SHALL apply the file as one layer and record its path, SHA-256 and contents in the evidence; and no flag SHALL change the value of another flag.
+
+### NEW-surface-6 — `sekhemet ask`, Seshat from the terminal
+*Justification: a non-developer on a headless box or over SSH has no way to talk to Seshat without the dashboard; the front door has room for one command only by displacing one (item 14), and `board` duplicates the bare `sekhemet`. The default of owner decision [O23](../../reference/OPEN_QUESTIONS.md#owner-decisions) (pending; blocks B4.1): approve. If the owner declines, these criteria are withdrawn and `board` stays at the front door.*
+- **SUR-51** WHEN `sekhemet ask "<question>"` runs THE SYSTEM SHALL post the question to Seshat's thread as the person's message through the PM's queued-answer path, print Seshat's reply, record both in the same thread the dashboard shows, and exit 0; WHEN no model can answer THE SYSTEM SHALL say why and exit 1; and WHEN the reply creates proposals THE SYSTEM SHALL list them and apply none.
+- **SUR-52** WHEN `sekhemet --help` prints THE SYSTEM SHALL list `ask` among the eight front-door commands and not `board`; and WHEN `sekhemet board` or `sekhemet board --terminal` is called THE SYSTEM SHALL still run it, listed under `sekhemet dev --help`.
 
 ### NEW-surface-2 — a terminal board in the board's words
 *Justification: the terminal board shows internal state IDs and a banner that teach nothing (review of domain 1, the beginner's first ten minutes).*
@@ -277,7 +303,7 @@ power_budget_kwh_day = 0                 # 0 = unlimited
 
 ## 6. v1 acceptance
 
-SUR-1 to SUR-27 and SUR-34 to SUR-48 (SUR-41 and SUR-42 once the owner chooses the artefacts, [O9](../../reference/OPEN_QUESTIONS.md#owner-decisions); SUR-47 is DEFINITION_OF_DONE §6.7 and is run last, on the reference machine), plus these built behaviours kept under test:
+SUR-1 to SUR-27 and SUR-34 to SUR-53 (SUR-51 and SUR-52 hold O23's default until the owner answers; SUR-47 is DEFINITION_OF_DONE §6.7 and is run last, on the reference machine), plus these built behaviours kept under test:
 - **SUR-28** WHEN a single word within edit distance 2 of a front-door command is given THE SYSTEM SHALL suggest that command, write nothing and exit 2.
 - **SUR-29** WHEN `send-back` is given no reason THE SYSTEM SHALL refuse and exit 2.
 - **SUR-30** WHEN `park` succeeds THE SYSTEM SHALL print its undo command.
@@ -296,19 +322,19 @@ SUR-1 to SUR-27 and SUR-34 to SUR-48 (SUR-41 and SUR-42 once the owner chooses t
 
 ## 8. Open questions
 
-1. **`sekhemet ask "<question>"`** — Seshat from the terminal, for non-developers and SSH users, reusing the PM's queued-answer path. It would displace no command only if it replaces one. *Recommendation:* proposed, needs the owner's yes; if approved it joins the front door in place of `board` (which the dashboard already is), with `board --terminal` moving under `dev`.
+1. **`sekhemet ask "<question>"`** — Seshat from the terminal, for non-developers and SSH users, reusing the PM's queued-answer path. Owner decision [O23](../../reference/OPEN_QUESTIONS.md#owner-decisions), pending (blocks B4.1). *Default until decided, written into item 13 and NEW-surface-6:* it joins the front door in place of `board` (which the bare `sekhemet` already opens), with `board --terminal` moving under `dev`.
 2. **Should the first run open a browser at all?** The review found an unasked browser off-putting; the old design opened the board. *Recommendation:* item 5.6/7 — yes after an interactive confirmation, never under `--yes` or without a terminal.
 3. **Keep the old key names beyond one release?** *Recommendation:* no; `doctor` reports them for one release, then they are removed with the schema check (SUR-21) catching strays.
-4. **Which install artefacts ship?** The research recommends an npm package for individuals and a container image for a team server (with the inference engine in its own container), and a single executable later; DEC-21 chose a source installer over packaged offline installers. *Recommendation:* an npm package and a server container image, both needing the owner's yes; they do not reopen DEC-21, which is about offline installers.
+4. **Which install artefacts ship?** *Decided 2026-09-24 (O9, [DEC-29](../DECISIONS.md#dec-29--the-owners-answers-to-the-decision-queue)): both* — an npm package for a person and a container image for a team server, with the inference engine in its own container (item 31, NEW-surface-4); a single executable later (§7). They do not reopen DEC-21, which is about offline installers.
 5. **The card-override layer: wire or cut?** *Recommendation:* wire it (SUR-40) only when a card needs its own settings — the Planner setting a step budget per card is the first candidate; otherwise cut the layer, as rule 4 cuts an unread key.
 
 ## 9. Evidence and rationale
 
 - Review: [domains 1 and 16](../../reference/reviews/domain01_16_surface_docs.md) — the first ten minutes per audience, the setup paths, drift table rows 5 and 6 (config schema, environment variables), the registry split.
 - [Gap sweep](../../reference/reviews/gap_sweep.md) — `onboard.ts` as a fourth gate deriver and its four confirmed defects.
-- Research, [DESIGN_RESEARCH_TESTS_BROWNFIELD.md](../../research/DESIGN_RESEARCH_TESTS_BROWNFIELD.md) §2.2 and §3.5: context files did not raise task success and cost over 20% more (Gloaguen et al., 2602.11988) → item 9a, SUR-37; basedpyright's shrinking baseline → item 9c, SUR-38; pnpm filtering and `vitest --changed` over the workspace graph → item 9d, SUR-39; CI steps needing services become `unavailable` → item 9b, SUR-35. SUR-BF-1…4 are carried as SUR-35…38.
+- Research, [DESIGN_RESEARCH_TESTS_BROWNFIELD.md](../../research/DESIGN_RESEARCH_TESTS_BROWNFIELD.md) §2.2 and §3.5: context files did not raise task success and cost over 20% more (Gloaguen et al., 2602.11988) → item 9a, SUR-37; basedpyright's shrinking baseline → item 9c, SUR-38; pnpm filtering and `vitest --changed` over the workspace graph → item 9d, SUR-39; CI steps needing services become `unavailable` → item 9b, SUR-35. The research document's four brownfield surface criteria are carried as SUR-35…38.
 - Research, [DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md](../../research/DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md) decision 15 (SEC-T1): `init` leaves `.sekhemet/evidence/` and `transcripts/` committable → item 5.6, SUR-34 (widened to deny-by-default because `.sekhemet/` also holds the gate host's keys and state directories the research did not list).
 - Research, [DESIGN_RESEARCH_TEAM_SERVER.md](../../research/DESIGN_RESEARCH_TEAM_SERVER.md): one artefact per audience; `node:sqlite` built in, so no native addon complicates bundling → items 31–32, NEW-surface-4.
-- Decisions: [DEC-01](../DECISIONS.md#dec-01) (three audiences), [DEC-20](../DECISIONS.md#dec-20) (TypeScript first), [DEC-21](../DECISIONS.md#dec-21--accepted-substitutions) (source installer).
+- Decisions: [DEC-29](../DECISIONS.md#dec-29--the-owners-answers-to-the-decision-queue) (O2 the Configuration page → item 5b, SUR-49/50; O9 both install artefacts → item 31; O11 solo self-accept → item 16, SUR-53); pending O16 (item 6) and O23 (item 13, NEW-surface-6), each with its default written in; [DEC-01](../DECISIONS.md#dec-01) (three audiences), [DEC-20](../DECISIONS.md#dec-20) (TypeScript first), [DEC-21](../DECISIONS.md#dec-21--accepted-substitutions) (source installer).
 - **Why "moved means unlisted":** the first plan broke calls to moved commands; building it found the callers were the frozen-suite runner, the harness's tests and the author's habits, and breaking them bought the user nothing — the user's surface is the help.
 - **Why no environment layer for settings:** variables that silently outrank a file the person edited are a second configuration system.

@@ -57,7 +57,7 @@ In the core packages — `kernel`, `sandbox`, `sync`, `gates`, `loop` and `conte
 The mechanism is specified in [security](docs/design/specs/security.md) (the permission engine and its tiers, the protected paths including the extension files, the sandbox, and the network policy, items 20–29 and 35–49); this contract requires that it hold:
 1. **Deny always wins**, and a deny is explicit, never a silent skip: writes outside the card's declared scope, to protected paths (`gates.toml`, tests for the implementer role, the harness's own loop, gate and sandbox sources, `.sekhemet/events.db`, extension files), into git metadata, and path traversal.
 2. **Destructive commands need a person** (`rm -rf`, `sudo`, `git reset --hard`, and the rest of security's Ask list).
-3. **Offline means no route out**, not an approval prompt: in offline mode the sandbox has no network at all ([security](docs/design/specs/security.md) item 29).
+3. **Offline means no route out**, not an approval prompt: in offline mode the sandbox has no network at all ([security](docs/design/specs/security.md) item 29); research reaches the network only when a person has said yes to it (`[network] research`), and never through the sandbox.
 4. **Confinement fails closed:** no confinement mechanism on the host means no Worker commands, unless a person explicitly opts out (S3b).
 
 ### C. Context hygiene
@@ -100,8 +100,12 @@ Rungs 6–8 were written down on 2026-09-18 and first automated on 2026-09-22 (`
 Five levels, each built on the one before. Nothing is done at a level because someone said so; each has a check.
 
 ### 5.1 A card is done when, in order:
-1. its acceptance tests were staged and **failed** before any work (red first; a types-only card is red on typecheck);
-2. its diff is at most 200 lines across 1–3 files, inside its declared scope;
+1. its acceptance tests were staged before any work and shown to test something, by the rule for the card's `change` ([DEC-26](docs/design/DECISIONS.md#dec-26--one-vocabulary-for-the-kind-of-card-and-the-run), [gates](docs/design/specs/gates.md)):
+   - `feature` and `fix`: the tests **failed** at an assertion before any work (red first; a types-only card is red on typecheck);
+   - `characterize`: the tests **pass** on the unchanged code — they capture what it does — and fail against stand-in implementations of the code they cover;
+   - `refactor`: every existing test stays green and no public behaviour changes (the source index shows the exported surface unchanged, unless the card says otherwise);
+   - `upgrade`: the tests the upgrade must keep passing are named, and pass after it;
+2. the lines the Worker wrote are at most 200 across 1–3 files, inside its declared scope; lines applied by a tool on the Worker's behalf (a rename, a formatter, a lockfile) are bounded separately by the project's `max_tool_applied_lines` ([gates](docs/design/specs/gates.md) §3);
 3. every declared gate passes, **and the three project gates pass**: *reachability* (no export the card added is used by nothing), *regression* (no test `main` already guarantees is broken or removed), *architecture* (no invariant the project's brief declares is broken);
 4. its **evidence bundle** records the diff, every gate result, the stop reason, the model and settings it ran with (including the thinking policy and working method), and its reproducibility record;
 5. a person accepted it — or it was auto-accepted under a person's recorded standing decision, which names that person on every acceptance and is never available in company-server mode — and it was merged to `main` with full attribution trailers.

@@ -23,7 +23,7 @@
 Fixed. Changing any of these needs the owner.
 
 1. **Gates decide completion; the model never certifies its own work.** Every column boundary is an entry condition decided by an executable check the model cannot edit.
-2. **The event log is the only durable channel.** Anything a model saw can be reconstructed from it — *model-visible means logged*, enforced at runtime. The board, replay, the audit trail and every measurement are projections of that one stream.
+2. **The event log is the only durable channel.** Anything a model saw can be reconstructed from it — *model-visible means logged*, enforced at runtime — except content erased by a recorded `ledger/erased` event (personal data, a leaked secret, retention), which replay names as a gap ([DEC-29](DECISIONS.md#dec-29--the-owners-answers-to-the-decision-queue)). The board, replay, the audit trail and every measurement are projections of that one stream.
 3. **A card is the unit of work.** One card owns one worktree, one branch, one declared file scope, one deterministically assembled context, one budget, one evidence bundle and one measured outcome. There is no long-running session.
 4. **The human is the rate limiter.** Measured review capacity sets the Review WIP limit, which back-pressures Verify, which back-pressures the Worker. The machine cannot produce more diffs than a person can read.
 
@@ -82,7 +82,6 @@ flowchart LR
 | `planner` | Decomposition, estimation, replanning | [planner-pm](specs/planner-pm.md) |
 | `eval` | The frozen suite, bake-off, statistics | [measurement](specs/measurement.md) |
 | `ui` | Dashboard tokens, vocabulary, web modules | [dashboard](specs/dashboard.md) |
-| `sdk` | Programmatic access for integrations — cut pending the owner ([O4](../reference/OPEN_QUESTIONS.md#owner-decisions)) | [extensibility](specs/extensibility.md) |
 | `apps/harness` | CLI, front door, server, PM, research, runner | [surface](specs/surface.md), [runtime](specs/runtime.md) |
 
 ## Locked for v1

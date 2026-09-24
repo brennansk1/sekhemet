@@ -20,7 +20,14 @@ updated in the same commit.
 | `/api/metrics/flow` `cfd` keys (§3) | `backlog, ready, working, checking, review, done` | the stored states (`in_progress`, `verify`) — *Working* and *Checking* are retired names ([NAMING](NAMING.md)) | NEW-dashboard-2 |
 | PM with no runner (§4) | the server loads the manager model directly | through the residency scheduler only | NEW-models-9 |
 | Slack webhook URL (§5) | `~/.config/sekhemet/…` | the one user directory, `~/.sekhemet/` | NEW-surface-1 |
-| Rule lifecycle (§6) | approval, then helpful/harmful counts on first attempts | [DECISIONS](DECISIONS.md) DEC-28: approval, then paired credit on this project's attempt records, with rotation | NEW-context-4 |
+| Rule lifecycle (§6) | approval, then helpful/harmful counts on first attempts; proposed for retirement at 3 more harmful than helpful | [DECISIONS](DECISIONS.md) DEC-28: approval, then paired credit on this project's attempt records, with rotation; **retired automatically** only at the fixed looks after 20, 40 and 80 pairs, when a one-sided exact test on the discordant pairs shows harm at 0.05/3 (never below 20 pairs); a person may retire a rule at any time. `LearnedRule` gains the credit and the pairs counted | NEW-context-4 |
+| Lessons learned during a run (§6) | none | **Pending owner decision O15** ([OPEN_QUESTIONS](../reference/OPEN_QUESTIONS.md#owner-decisions)). Default until decided: none applies before a person approves it; each is a `candidate` at the run's end, with its evidence. If the owner allows probation: a `LearnedRule` status `probation`, production runs only, never a measurement run | NEW-measurement-3, NEW-context-4 |
+| Profile statements (§6) | used by Seshat as soon as they are derived; editable and dismissible | Pending the owner ([planner-pm](specs/planner-pm.md) §8 Q1; not yet in the owner queue). Default until decided: the code's behaviour. If the owner requires approval first: a `ProfileEntry` status `proposed`, and `POST /api/learning/profile/:id/approve` | — (decided by the owner) |
+| Card `key` (§2, `GET /api/board`) | absent; cards carry only `card_<uuid8>` ids | `key: string` (`CHR-12`), the project's prefix and a per-project number, never reused ([kernel](specs/kernel.md) rule 5) | P3 |
+| Card `kind`, `change`, `split` (§2, `GET /api/board`) | `kind` re-derived from labels, title and keywords | three stored fields: `kind` (seven values), `change` (`feature`, `fix`, `characterize`, `refactor`, `upgrade`), `split` on a split child (`spike`, `path`, `interface`, `data`, `rules`) ([DEC-26](DECISIONS.md#dec-26--one-vocabulary-for-the-kind-of-card-and-the-run); labels in [NAMING](NAMING.md#card-kind-change-and-split)) | NEW-kernel-9 |
+| The `awaitingMerge` hold (`GET /api/board`) | none; a card moves to Done when its pull request opens | `hold?: { kind: "awaitingMerge", pr, since }` on a card in `review`, not counted toward ReviewWIP ([kernel](specs/kernel.md) rule 24) | NEW-kernel-3 |
+| `PmStatus.model` (§3) | the manager model's id, shown by the chat panel | dropped: the chat panel names no model (owner decision O3); every role's model name is served by `GET /api/config/roles` (§3, Configuration) | NEW-dashboard-6 |
+| Configuration endpoints (§3) | none; the Registry view reads `/api/models` and the bake-off matrix | the endpoints under *Configuration* below, including the two-tier benchmark keyed by combination | NEW-dashboard-6, NEW-models-12, NEW-measurement-5 |
 
 ## 1. What the user asked for
 
@@ -79,7 +86,7 @@ interface PmMessage {
 interface PmStatus {
   phase: "idle" | "waiting_for_step" | "loading_pm" | "thinking" | "resuming_worker";
   detail?: string;              // "Pausing the Worker after step 5 · ~40s to load the PM"
-  model?: string;               // "dirk-27b"
+  model?: string;               // the manager model's id; target: dropped (§0, owner decision O3)
   workerPaused?: boolean;
   since?: string;               // ISO time this phase started
   step?: number;                // the Worker step it paused after
@@ -145,12 +152,91 @@ interface PmProposal {
   - next: `jira-sync`, `linear-sync`, `github-actions`, `teams`, `slack-replies`
   - later: `sentry`, `datadog`, `pagerduty`, `notion`, `confluence`
 
+### Configuration (target: NEW-dashboard-6, NEW-models-12, NEW-measurement-5)
+
+The Configuration page's shapes ([dashboard](specs/dashboard.md) §2.16; behaviour of the scan, the recommendations and the download in [models](specs/models.md), of the benchmark in [measurement](specs/measurement.md)). None exists today. Every mutating request here is refused for any actor but a person, needs the Accept permission in company-server mode, and is recorded on the ledger with the principal. Nothing here downloads, loads or benchmarks on its own initiative.
+
+```ts
+type Role = "worker" | "planner" | "reviewer" | "researcher";   // Seshat runs on "planner"
+interface ModelFolder {
+  path: string;
+  source: "config" | "flag" | "env";   // config.toml, --models-dir, SEKHEMET_MODELS_DIR
+  readable: boolean; error?: string;   // why it could not be read
+}
+interface FoundModel {
+  id: string;                          // stable: the file's SHA-256 once hashed
+  name: string; file: string; folder: string;
+  family?: string;                     // decides the Reviewer's eligibility
+  sizeBytes: number; quantisation: string; contextLength: number;
+  fits: "yes" | "swaps" | "no";        // on this machine, against its usable memory
+  fitReason: string;                   // "13 GB of 16 GB usable; swaps with the Planner"
+  verified?: boolean;                  // matches the registry's published SHA-256
+}
+interface RoleAssignment {
+  role: Role;
+  model?: string;                      // the name people read, e.g. Seshat's model under "planner"
+  state: "resident" | "swapped_out" | "not_configured";
+  qualified: boolean;                  // the adoption rule allows this model in this role on this host (models rule 30a)
+  unfilledReason?: string;             // "No model outside the Worker's family is configured"
+  recommendation?: {
+    model: string; reason: string;     // the reason in plain words, with its evidence
+    present: boolean;                  // found in a configured folder
+    download?: { source: string; sizeBytes: number; sha256: string };  // only a registered source
+  };
+}
+interface Combination {                // one model per role; a role may be left unfilled
+  worker: string; planner: string; reviewer?: string; researcher?: string;
+}
+interface Score { value: number; low: number; high: number; n: number }   // with its interval
+interface RoleScore {
+  role: Role; model: string;
+  state: "measured" | "partial" | "not_measured";
+  score?: Score; measuredAt?: string;  // cached: re-measured only when this role's model changes
+}
+interface CombinationResult {
+  combinationId: string;               // derived from the four model ids and the host
+  combination: Combination;
+  tier: "quick" | "overnight";
+  roles: RoleScore[];
+  endToEnd?: { passed: number; total: number };
+  score?: Score;
+  current: boolean; recommended: boolean; reason?: string;
+  indistinguishableFrom: string[];     // combinationIds whose intervals overlap this one
+  resolvedAgainst?: { combinationId: string; outcome: "better" | "worse" }[];  // overnight only
+  versusBaseline?: "better" | "worse" | "not established";   // against the recorded frozen baseline
+  date: string;
+}
+interface BenchmarkRun {
+  runId: string; tier: "quick" | "overnight";
+  combinations: string[];              // combinationIds
+  state: "queued" | "running" | "stopped" | "done" | "failed";
+  schedule?: { window: { start: string; end: string }; fitsTonight: number; nextStart?: string };  // overnight
+  progress?: { role?: Role; model?: string; combinationId?: string; done: number; total: number;
+               elapsedSeconds: number; etaSeconds?: number };
+  partial: boolean;                    // stopped with results kept
+}
+```
+
+- `GET /api/config/models` returns `{ folders: ModelFolder[], suggestedFolders: string[], models: FoundModel[], scannedAt }`; `suggestedFolders` are the likely locations the models spec names that exist on this machine and are not yet configured.
+- `POST /api/config/models/folders` with `{ path }` adds a folder and `DELETE /api/config/models/folders` with `{ path }` removes it; each returns the `GET` shape. A folder is only read, never written, and never outside what the person named.
+- `POST /api/config/models/scan` re-scans every configured folder and returns the `GET` shape; progress is streamed as `config` events on `/api/stream`: `{ kind: "scan", folder, found, done }`.
+- `GET /api/config/roles` returns `{ roles: RoleAssignment[] }`, one per role in the order Worker, Planner, Reviewer, Researcher.
+- `PUT /api/config/roles/:role` with `{ model }` assigns a found model to a role and returns `{ role: RoleAssignment }`. It is refused with 409 `{ error, needs: "benchmark" }` when the adoption rule ([models](specs/models.md) rule 30a) does not yet allow that model in that role on this host, and with 409 `{ error, needs: "other-family" }` when the Reviewer would share the Worker's family.
+- `POST /api/config/roles/:role/load` and `/unload` return `{ role: RoleAssignment }`; both go through the residency scheduler, never around the memory guard. A load that does not fit is refused with the reason; an unload of a model a running card uses takes effect at the next step boundary, and the response says so.
+- `POST /api/config/downloads` with `{ model }` starts an explicit download of a recommended model from its registered source and returns `{ downloadId, destination, sizeBytes, sha256 }`. Progress is streamed as `config` events: `{ kind: "download", downloadId, bytes, total, state: "running" | "verifying" | "done" | "failed", error? }`. The file is used only after its SHA-256 matches the published one; a mismatched file is deleted and the state is `failed`. Refused when the model has no registered source and hash, or when `[network] mode` does not allow the source host (the refusal names the setting). `DELETE /api/config/downloads/:id` cancels.
+- **Start.** `POST /api/config/benchmark` with `{ tier: "quick" | "overnight", combinations: Combination[], schedule?: "tonight" | "next-window" }` returns `{ run: BenchmarkRun, estimateSeconds }`. `quick` takes one combination, measures only the roles whose `RoleScore` is not cached, and starts now; `estimateSeconds` is 0 when everything is cached. `overnight` takes up to 3 combinations (the page's default is the top ones the quick tier could not separate), is queued for the machine's overnight window, and returns the `schedule` with how many fit tonight; it runs only inside the window, stops at the window's end and resumes the next night, and never starts while a card runs or the machine is reserved. A quick run is refused while another run holds the runner, naming it. A combination with a model that does not fit this machine is refused with 409 `{ error, needsGb }`. An estimate without starting: `GET /api/config/benchmark/estimate?tier=&combination=<combinationId>` returns `{ estimateSeconds, toMeasure: { role, model }[] }` (or, for `overnight`, `{ fitsTonight }`).
+- **Progress.** `GET /api/config/benchmark/runs/:runId` returns `{ run: BenchmarkRun }`; changes are streamed as `config` events: `{ kind: "benchmark", run }`.
+- **Stop.** `POST /api/config/benchmark/runs/:runId/stop` ends a queued or running run, keeps every result already measured (`partial: true`), and returns `{ run }`. A stopped overnight run does not resume.
+- **Results, keyed by combination.** `GET /api/config/benchmark` returns `{ runs: BenchmarkRun[], results: CombinationResult[], roleScores: RoleScore[] }`; `GET /api/config/benchmark/:combinationId` returns that combination's results of both tiers over time, its history. `versusBaseline` is `"not established"`, and a pair is absent from `resolvedAgainst`, whenever the difference is smaller than the measurement can resolve ([measurement](specs/measurement.md) NEW-measurement-5). No endpoint here assigns a combination: `PUT /api/config/roles/:role` does, on a person's request.
+- `GET /api/config` returns the effective configuration, read-only, as `{ key, value, source }[]` with `source` one of `default`, `user`, `project`, `flag`, `env` (NEW-dashboard-4).
+- `PUT /api/config/review` with `{ minutesPerDay }` sets `review_minutes_per_day`; a value of 0 or less is refused with 400 naming the key ([review-git](specs/review-git.md) §2.2.3). It returns `{ minutesPerDay, reviewWip }` (NEW-dashboard-4).
+
 ## 4. Preemption protocol (backend only; the UI shows `PmStatus`)
 
 1. The server appends a `pm/message` ledger event (state `queued`).
 2. If a `sekhemet queue` process holds the runner lease
    (`.sekhemet/runner.lock`, holding its pid and a heartbeat), the queue
-   answers. It checks for queued PM messages after every Worker turn. When it
+   answers. It checks for queued PM messages after every Worker step. When it
    finds one it writes the `waiting_for_step` then `loading_pm` status, unloads
    the Worker, loads the manager, answers, reloads the Worker and continues the
    card. The paused time is excluded from the card's time budget.
@@ -199,7 +285,7 @@ The user asked that both the Worker and Seshat get better over time, grow with t
 - context, not weights: no fine-tuning;
 - extracted from gate results and human actions, never from a model's opinion of itself;
 - recorded on the ledger, so it can be audited and rolled back;
-- approved by a human before it takes effect.
+- approved by a human before it takes effect — the owner's rule of 2026-09-18, which holds for playbook rules and for lessons learned during a run until owner decision O15 is made; profile statements are used at once today, pending the owner (§0).
 
 Three loops:
 
@@ -211,7 +297,7 @@ Three loops:
    - **Scope:** each rule is scoped by card kind, file pattern, and/or an error pattern.
    - **Counters:** when an active rule was in a card's prompt, a passing first attempt counts helpful and a failing one counts harmful.
    - **Value:** decays Erev-Roth style: `v ← (1 − 0.1)·v + reward` each time the rule is used.
-   - **Lifecycle:** a candidate becomes active only after human approval. An active rule is proposed for retirement when it has at least 3 more harmful than helpful counts.
+   - **Lifecycle (today; target in §0):** a candidate becomes active only after human approval. Today an active rule is proposed for retirement when it has at least 3 more harmful than helpful counts.
 2. **Policy tuner (Dream-RSI).** `sekhemet tune` replays recorded trajectories and recommends stopping policies (`.sekhemet/tuning/latest.json`).
 3. **User profile.** Statements about what the user wants, each with its evidence and strength:
    - **Categories:** code_style, planning, communication, priorities.

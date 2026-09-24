@@ -45,14 +45,14 @@ v1 includes: binding to a non-loopback address safely; an identity for each pers
 - **Reopen if:** v1 meets its Definition of Done.
 
 ### DEC-08
-**Libraries approved to add, when their workstream arrives.** *Owner, 2026-09-22 (D5).* SPDX parsing (`spdx-expression-parse`, `spdx-satisfies`, `spdx-correct`), and the official clients `@octokit/*`, `@modelcontextprotocol/sdk`, `jira.js`, `@linear/sdk` and Slack Bolt. Every other proposal in COVERAGE still needs the owner's yes, one by one.
+**Libraries approved to add, when their workstream arrives.** *Owner, 2026-09-22 (D5).* SPDX parsing (`spdx-expression-parse`, `spdx-satisfies`, `spdx-correct`), and the official clients `@octokit/*`, `@modelcontextprotocol/sdk`, `jira.js`, `@linear/sdk` and Slack Bolt. Every other proposal in COVERAGE still needs the owner's yes, one by one. **Added 2026-09-24 (DEC-29):** Playwright and axe-core (development only), fast-check, Valibot, vLLM (a separate process).
 - **Why:** they replace hand-rolled code the reviews found wrong (the licence check rejects MIT-0 and "MIT AND …"; three GitHub paths with three ID formats).
 - **Reopen if:** a licence or maintenance check at the time of adding fails.
 
 ### DEC-09
 **Dead code is cut; three modules are wired in or cut by their workstream.** *Owner, 2026-09-22 (D4).* Cut: `packages/ui/src/canvas.ts`, `container.ts` (kernel and sandbox), `buildFullPromptPack` and the context `engine.ts`, the three `FEATURE_INVENTORY` files. Decided by their workstream, recorded in its spec: `retention.ts`, `apps/harness/src/research/desk.ts`, `adjudicate` and `acceptRevision` in `claims.ts`.
 - **Why:** code reachable only from tests is dead; it misleads the next reader and the reachability gate.
-- **Correction (2026-09-22, platform spec pass):** `container.ts` is not dead — `execute.ts:378-386` builds a `ServiceContainer` and `PluginManager` on every card. The recommendation is still to cut it (plugins add only services and hooks, and run repository code unsandboxed), but cutting reachable code is a new decision: **the owner decides** ([extensibility](specs/extensibility.md) §8). Until then it stays, gated by workspace trust (S9).
+- **Correction (2026-09-22, platform spec pass):** `container.ts` is not dead — `execute.ts:378-386` builds a `ServiceContainer` and `PluginManager` on every card. The recommendation is still to cut it (plugins add only services and hooks, and run repository code unsandboxed), but cutting reachable code is a new decision: **the owner decides** ([extensibility](specs/extensibility.md) §8). **Decided 2026-09-24 (DEC-29 O4): cut, with the SDK package, in B0.**
 
 ### DEC-10
 **`main` tracks the work.** *Owner, 2026-09-22 (D2).* `main` was fast-forwarded to the working branch at `fb59ba2`, and is fast-forwarded again when each workstream lands with its gate green.
@@ -62,6 +62,41 @@ v1 includes: binding to a non-loopback address safely; an identity for each pers
 **A project's "done" is computed from evidence, like a card's.** *Owner, 2026-09-22.* LLMs are poor judges of when a project is finished and of how much to build; Sekhemet does not ask them. The brief becomes a graph of accepted requirements; a release slice is proven when every must-have requirement has passing tests and the project gates pass on `main`, and done when a person accepts it. Depth comes from a profile, a quality checklist, comparable products and a walkthrough — the model proposes, a person accepts ([research](../research/PROJECT_DONE_AND_DEPTH.md); COVERAGE P13, P14).
 - **Why:** agents declare done early (a thinking model did so in 49% of NL2Repo tasks), miss about two thirds of unstated requirements, and add work nobody asked for; the spine's rule for cards is the proven fix, applied one level up.
 - **Reopen if:** the implicit-requirement recall or premature-completion measure shows the mechanism no better than the conversation alone.
+
+### DEC-29 — the owner's answers to the decision queue
+*Owner, 2026-09-24. O1–O3 of the owner's list were delegated to the lead ("you decide whatever is best"), who took the recommended option.*
+
+| # | Decision | Outcome |
+| --- | --- | --- |
+| O1 | Spine rule 2 and erasure | **Amended** (lead, delegated): anything a model saw can be reconstructed from the log **except content erased by a recorded `ledger/erased` event, which replay names as a gap**. Erasure (NEW-kernel-7) and retention as recorded erasure proceed in B3 |
+| O10 | Change kinds `characterize`, `refactor`, `upgrade` | **In v1** (lead, delegated) |
+| O14 | Retention of personal free text on a team server | **90 days** after a card closes, then erased (lead, delegated) |
+| O2 | Model weights | **A Configuration page** ([dashboard](specs/dashboard.md), [models](specs/models.md)): a person points the harness at the folders where their models live; it scans them and lists every model it finds as an option to load; it recommends which model to assign to each role, with the reason; a person may download a recommended model from it, explicitly, with the published hash verified; and it runs the benchmark there, to compare the models they have — the harness never downloads on its own |
+| O2a | What "benchmark" on the Configuration page means (owner clarification) | **A quick benchmark of model combinations**: each role's candidate models are scored once on a small screening set, a combination's score is assembled from its roles plus a short end-to-end check, scores are cached so changing one role re-runs only that role, only models that fit the machine are offered, the time is estimated before it runs (about 10–15 minutes per new model, most of it the Worker's five capped cards and loading; under about 40 minutes for a full combination with nothing cached), and combinations whose intervals overlap are shown as indistinguishable. **And an overnight tier** (owner, 2026-09-24): a thorough, paired, repeated comparison of the combinations a person picks (by default the top ones the quick tier could not separate) — the full frozen suite, the planning measure and each role's full evaluation set — run unattended in the machine's overnight window, stopping cleanly at its end and resuming the next night, never while a card runs or the machine is reserved, with a morning report on the Configuration page and in Seshat's standup. A winning combination is applied only by a person's choice ([measurement](specs/measurement.md) NEW-measurement-5) |
+| O3 | Seshat's model name | **Moved to the Configuration page**, with every role's model; not in the chat panel |
+| O11 | Self-accept | **Solo developers can accept their own cards.** On a project where two or more people hold the Accept permission, the person who built a card, or delegated it to the Worker, cannot accept it; a project with one Accept-holder is solo, whether on a laptop or a server |
+| O13 | Accept friction | **Light**: one key per unmet or unclear Reviewer finding; each Implementation file shown once |
+| O12 | Project documents | **The lead decides, to professional documentation standards** — see DEC-30 |
+| O4 | The plugin container and the SDK package | **Cut both** (B0) |
+| O5 | Playwright and axe-core | **Approved** as development dependencies (axe-core unmodified; MPL-2.0) |
+| O6 | fast-check | **Approved** |
+| O7 | Event-payload validation | **Valibot approved** |
+| O8 | vLLM | **Approved** as the optional multi-user engine (a separate process); llama.cpp stays the default |
+| O9 | Install formats | **Both approved**: an npm package and a container image |
+| O16 (default) | Research versus offline | Until the owner answers O16: a separate `[network] research` setting, asked once on the first new project; research may fetch when yes, while `mode` keeps card commands offline |
+| — | "Plan exists" before In Progress | **No** (the find phase and red tests cover it) |
+| — | The Reviewer's default model | **Gemma-4-26B-A4B** (a family other than the Worker's); if it does not qualify on 24 GB, v1 ships the Reviewer unfilled and says so |
+| — | The 131 items moved to Later ([DESIGN_TRACE](../reference/DESIGN_TRACE.md) §3) | **Confirmed** as Later |
+
+### DEC-30 — project documents follow professional conventions
+*Lead, 2026-09-24, under DEC-29 O12.* Sekhemet writes a project's documents where a professional team expects them, adapts to an existing layout rather than imposing one, and never overwrites a person's file:
+- **Architecture decisions** as MADR 4.0 records in `docs/decisions/NNNN-title.md` (MADR's default location), or in the repository's existing ADR folder (`docs/adr/`, `doc/architecture/decisions/`) when one exists.
+- **The product brief and its requirements** in `docs/product/` — `brief.md`, and `requirements.md` with each requirement's EARS criteria, Kano class, slice and status — generated from the ledger; edits people make come back as proposals, never silent changes (design-stage §2.3).
+- **The changelog** in `CHANGELOG.md` at the root, in the Keep a Changelog format, written from accepted cards and released slices; **release notes** per slice for people, from the requirements proven.
+- **Release notes** per slice in `docs/product/releases/<version>.md`.
+- **The README** and `CONTRIBUTING.md` are the person's; Sekhemet proposes changes to them, never writes them.
+- **Documentation it generates for users** is organised by the Diátaxis framework (tutorials, how-to guides, reference, explanation), so it reads like a professional team's.
+- Every generated document is committed through Accept, so it is reviewed like code.
 
 ## Engineering decisions
 
@@ -81,7 +116,7 @@ v1 includes: binding to a non-loopback address safely; an identity for each pers
 | R9 | SPIDR's *Interface* is the user interface; a type contract is a Contract card (see DEC-26) | planner-pm |
 | R10 | Roles have no avatars; the assignee is a text chip | dashboard, NAMING |
 | R11 | A blocked card shows the fail tone, an icon and the word "Blocked" | dashboard |
-| R12 | Execution-verified lessons may apply in production on probation; never in a measurement run | measurement, context |
+| R12 **owner** | Execution-verified lessons may apply in production on probation; never in a measurement run. It reverses the owner's 2026-09-18 rule that nothing learned applies before a person approves it, so it waits for O15; until then approval comes first | measurement, context |
 | R13 | A run's settings are one recorded `RunProfile`; a named settings file is allowed, a flag that rewrites other flags is not | surface, measurement |
 | R14 | Per-language gate templates in gates.md; a language's mutation tool runs when installed, as a subprocess | gates |
 | R15 **owner** | Seshat's model name is not in the panel header; it is in the panel's details and on Machine | dashboard |
@@ -98,27 +133,33 @@ v1 includes: binding to a non-loopback address safely; an identity for each pers
 | R26 | Sampling values and launch profiles are kept in models or its registry file | models |
 | R27 | One memory-watchdog table, owned by models | models |
 | R28 | Test infrastructure lives in DEFINITION_OF_DONE §2D | DoD |
+| R30 | `schedule.ts` is wired, not cut: declared hours are a non-developer's guarantee and the overnight window's source; only its unreached exports are removed, as dead code (DEC-09) | models |
+| R31 | In `loops.ts`, `harvestExemplars` and `siftSlice` map to the exemplar inlet and the re-run rule, `distillSkill` to the skill inlet; the other unreached loops and the variant archive (`archive.ts`) are cut as dead code (DEC-09). Register entry R5 stays `shortlisted` as a technique; rebuilding it would start from the register | measurement |
+| R32 | `tool_search` stays for roles other than the Worker when their tool count exceeds about 10 (MCP tools for the Planner), with loaded tools appended to the conversation, never edited into the tools array | worker-loop |
+| R29 | The `relay-finisher` agent role is dropped with the Gemini relay protocol it served (retired 2026-09-22, AGENTS.md §2); the `suspended-quota` GateStatus stays, for a commit made when a usage limit stops work | AGENTS, CLAUDE |
 
 ### DEC-26 — one vocabulary for the kind of card and the run
 *Lead, 2026-09-24, resolving review blockers B3 and B4.*
 - **`kind`** (stored, closed, `packages/kernel/src/card_class.ts`) is the truth: `spike`, `interface`, `implement`, `data`, `rule`, `review`, `research`. It selects the Worker's tools, the red-first rule and rule scoping. People see labels from one map in [NAMING](NAMING.md): `interface` → *Contract*, `data` → *Storage*, `implement` → *Flow*, `rule` → *Rules*, `spike` → *Spike*, `research` → *Research*, `review` → *Review*. *UI* and *Wiring* are display refinements of `implement` (the card's scope is UI files; the card only connects finished parts), never stored kinds. The dashboard's separate `CardKind` type in `vocabulary.ts` is folded into this map (NEW-dashboard-2).
 - **SPIDR is how a story was split, not what kind of card resulted.** The planner records the axis it split on as `split` (`spike`, `path`, `interface`, `data`, `rules`), where SPIDR's *Interface* means the user interface (Cohn). A type contract is always `kind: interface`, labelled *Contract*.
 - **`change`** (stored, closed): what a card does to existing code — `feature`, `fix`, `characterize`, `refactor`, `upgrade`. A new project's cards are `feature`. It is a separate field from `kind` (gates §8 Q3, decided).
-- **The run:** an **attempt** is one recorded run of a card to a stop; it holds one **sample**, or up to k under pass@k; a sample is a sequence of **steps**; a step is one model request and the tool calls it makes. "Turn" is the code's synonym for step and is not used in specifications. The step budget counts steps.
+- **The run:** an **attempt** is one recorded run of a card to a stop; it holds one **sample**, or up to k under pass@k; a sample is a sequence of **steps**; a step is one model request and the tool calls it makes. "Turn" is the code's synonym for step and is not used in specifications. The step budget counts steps **per sample**; an attempt under pass@k spends at most k times it (decided 2026-09-24).
 
 ### DEC-27 — context budgets are fixed in tokens at the reference window
 *Lead, 2026-09-24, resolving review blocker B5.* At the reference Worker's prompt budget W = 9,984 tokens (16,384 − 4,096 answer − 2,048 thinking − 256), a fraction 0.12W (1,198 tokens) cannot hold a system prompt and tool interface capped at 3,000. The stable zone is therefore budgeted in tokens: **Zone 1 ≤ 2,400 tokens including native tool schemas**, of which the system prompt ≤ 700 and the tool interface ≤ 1,700 (a fixed, flat tool set per card class, M2); the remaining zones share W − Zone 1 in the proportions [context](specs/context.md) rule 10 gives. On a larger window the token caps stay and the proportional zones grow. The allocator asserts these on the live path for the reference Worker's real prompts.
+- **Zone 4 fits by construction** (confirmation review N4). At W = 9,984 with every other zone full, Zone 4 has 3,034 tokens for the step history. It holds: at step 40 of a 40-step card, the five most recent observations, each clamped to 300 tokens (1,500); the latest five tool calls in full (~300); the 34 older steps as one-line summaries with a `recall` pointer (~25 tokens each, ~850); thinking only for the latest step, capped at 300 tokens, older thinking stripped at masking points (DEC-24); and the volatile tail — step counter, unmet criteria, one next action (~60) — about 3,010 tokens in the worst case. When the projected Zone 4 would exceed its budget, the allocator places an out-of-schedule masking point before the prompt is sent, never after. **Honest limit:** with Zones 1–3 at their caps, the worst-case step of a 40-step card fills about 99.7% of W; it fits, but the pressure tiers mask early on such cards, so their late steps may lose the prompt cache. The confirmation review found this; it is measured (context CX-N2-3…5), not assumed away.
+- **One number for card size** (N5): INVEST's "Small" means the card's pack fits Zone 3 at the resolved Worker — 3,792 tokens on the reference Worker — checked once, at the `ready` entry condition. There is no second, separate limit.
 
 ### DEC-28 — one rule for admitting what the system learns
 *Lead, 2026-09-24, resolving review blocker B6. Owned by [measurement](specs/measurement.md) §2; every other document points there.*
 
 | What is learned | Admitted by | Kept or retired by |
 | --- | --- | --- |
-| A **project playbook rule** (this repository's paths, kinds, error codes) | A person's approval | Paired credit on this project's own attempt records, with rotation; retired automatically when its credit turns negative over its last 10 applications |
-| An **execution-verified lesson** during a run | Probation in production only (never in a measurement run) | The same credit; it becomes a candidate for a person's approval at the run's end |
-| A **harness change** (prompt, tool, budget policy, skill, context version) | A paired frozen-suite A/B that shows a gain at the suite's resolution (at least 20 points on 30 cards, exact test at 0.05) | **Inconclusive** (the usual case): the change may be adopted only if it is cheaper or simpler and the paired result shows no significant loss, recorded as "not established"; otherwise it is not adopted |
+| A **project playbook rule** (this repository's paths, kinds, error codes) | A person's approval | Paired credit on this project's own attempt records, with rotation. Tested only at fixed looks — after 20, 40 and 80 pairs — and retired automatically when a one-sided exact test on the discordant pairs shows harm at 0.05/3 at a look; never retired below 20 pairs. A person may retire a rule at any time |
+| An **execution-verified lesson** during a run | **Pending the owner (O15).** Default until decided: nothing learned is applied before a person approves it (the owner's rule of 2026-09-18). If the owner allows probation: production only, never in a measurement run | At the run's end, a candidate for a person's approval with its evidence |
+| A **harness change** (prompt, tool, budget policy, skill, context version) | A paired frozen-suite A/B that shows a gain at the suite's resolution (at least 20 points on 30 cards, exact test at 0.05) | **Inconclusive** (the usual case): adopted only if it is **simpler** — deterministically: it removes prompt tokens from the stable zone, a tool, a switch or code, and adds none — or **cheaper** on the one cost measure named before the run (median tokens per card), shown by a one-sided paired Wilcoxon signed-rank test at 0.05; and the paired pass-rate result is not a loss the suite can resolve. Recorded as "not established"; the suite cannot see losses under about 20 points, so an adopted change is watched and rolled back on the first paired loss a later run resolves |
 
-No admission rule relies on an effect the measurement cannot resolve.
+No admission rule relies on an effect the measurement cannot resolve. The context version covers the **harness** only — prompt templates, the copy module, the tool catalog and descriptions, budget policies; a project's approved rules and skills are project data, listed on each pack but outside the context version, so approving or retiring one never invalidates a model's qualification (confirmation review N1).
 
 
 ### DEC-20
@@ -140,7 +181,7 @@ The harness itself stays TypeScript: a Rust or Python component is allowed only 
 | Six stop reasons | Twenty-three stored in v1 (the 18 in code plus `gate_suspected`, `tests_not_red_for_reason`, `hook_veto`, `git_metadata_tampered`, `crashed`), in one table in [worker-loop](specs/worker-loop.md), shown as seven failure classes (adding "environment") and one success class | Machine failures must never read as the Worker's fault |
 | INVEST pre-flight before In Progress | Before Ready | The Worker must never pick up a card that fails it |
 | Send back returns a card to In Progress | Send back returns it to Ready | A returned card is re-queued, not resumed mid-attempt |
-| INVEST "Small": context pack ≤ 25% of a 32,768-token working context | ≤ 25% of the resolved Worker's window from the registry — 4,096 tokens on the reference Worker's 16,384 | The old default sized cards for a window the Worker does not have (review M11) |
+| INVEST "Small": context pack ≤ 25% of a 32,768-token working context | The pack fits Zone 3 at the resolved Worker — 3,792 tokens on the reference Worker (DEC-27) | The old default sized cards for a window the Worker does not have (review M11) |
 | Unpark returns a card to its previous state | Unpark returns it to Ready, or to Backlog or Planning if it was parked from there | The state machine has no edge back into In Progress, Verify or Review, and a parked attempt is not resumed mid-flight |
 
 ### DEC-21 — accepted substitutions

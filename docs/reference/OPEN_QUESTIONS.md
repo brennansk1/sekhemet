@@ -6,22 +6,22 @@
 
 Decisions only the owner can make, each with the workstream it blocks and the default the design uses until then. A workstream does not start while an unresolved owner decision sits in its path ([plan](MODERNIZATION_PLAN.md#phase-b--build-to-the-definition-of-done-one-workstream-at-a-time)).
 
+**Decided 2026-09-24** — O1–O14, recorded in [DECISIONS](../design/DECISIONS.md) DEC-29 (and DEC-30 for O12): O1 spine amended for erasure; O2 a Configuration page that scans model folders, recommends roles, downloads explicitly and runs the benchmark; O3 model names on the Configuration page; O4 cut the plugin container and the SDK; O5–O9 approved (Playwright, axe-core, fast-check, Valibot, vLLM, npm package and container image); O10 change kinds in v1; O11 solo developers may self-accept, teams may not; O12 professional documentation layout (DEC-30); O13 light Accept friction; O14 90-day retention.
+
+**Open:**
+
 | # | Decision | Blocks | Recommendation (the default until decided) |
 | --- | --- | --- | --- |
-| O1 | **Spine rule 2 and erasure.** Amend "anything a model saw can be reconstructed" to "…except content erased by a recorded `ledger/erased` event, which replay names as a gap" — needed for personal data on a company server, leaked secrets, and retention | B3.1 (NEW-kernel-7), B3.3 (retention) | Amend. Until then nothing is erased or pruned: retention only reports what it would prune |
-| O2 | **Weights by explicit command** (ruling R7): a person may run a download command for a registry model; the published hash is verified | B2.2 (NEW-models-7) | Allow, hash-verified, never automatic |
-| O3 | **Seshat's model name** out of the panel header (ruling R15), shown in details and on Machine | B4.2 | Move it |
-| O4 | **Cut the plugin container** (`container.ts`, reachable from `execute.ts:378`) and **the SDK package** | B0 | Cut both; until then plugins load only in a trusted workspace (S9) |
-| O5 | **Browser test tooling**: Playwright (Apache-2.0) and axe-core (MPL-2.0, weak copyleft, unmodified dev dependency), needed by DEFINITION_OF_DONE §6.4–6.5 and dashboard P12 | B4.2, B4.6, B4.7, Phase C | Approve both as development dependencies. Without them the audience walks run on the harness's own headless-Chromium client, with less coverage |
-| O6 | **fast-check** (MIT) for property-based acceptance tests derived from EARS criteria | B4.3 (NEW-planner-pm-7) | Approve |
-| O7 | **Zod or Valibot** (MIT) for event-payload validation | B3.1 | Approve one (Valibot: smaller, tree-shakable) |
-| O8 | **vLLM** (Apache-2.0, a separate process) as the multi-user NVIDIA engine | B4.9 | Approve as an optional engine; llama.cpp stays the default |
-| O9 | **Install artefacts**: an npm package for a person and a container image for a team server | B4.1 | Approve both; a single executable later |
-| O10 | **Card change kinds in v1** (`characterize`, `refactor`, `upgrade`) for work on existing codebases | B2.3, B4.3 | In v1: without them, refactor and characterization cards fail as `vacuous_tests` |
-| O11 | **Self-accept on a team server**: may the person who handed a card to the Worker accept it? | B3.2, B4.9 | No, unless they are the only person with the Accept permission on the project |
-| O12 | **Where project documents live** in the user's repository | B4.4 | `docs/project/`, configurable, committed through Accept |
-| O13 | **Accept friction**: acknowledge each unmet or unclear Reviewer finding before Accept | B3.2 | Light: one key per finding |
-| O14 | **Retention of personal free text** on a team server | B3.3 | 90 days for closed cards' free text, then erased (after O1) |
+| O15 | **Learning on probation during a run** (ruling R12): may an execution-verified lesson apply to later cards in the same production run before a person approves it? It reverses the owner's 2026-09-18 rule | B2.4 (NEW-measurement-3), B4.0a (NEW-context-4) | No — approval first, as the owner ruled in 2026-09; revisit when the admission measure exists |
+| O16 | **Research before building versus offline by default**: the owner wants research before anything is built; the spine says nothing leaves the machine without a yes | B3.3 (S8), B4.4 | Ask once, on the first new project; a yes turns research on for every later project, and nothing leaves the machine before it |
+| O17 | **Stand-in ("stub-kill") check blocking level**: from the *internal tool* depth profile up, or only from *production* | B4.0b (NEW-gates-6) | From *internal tool*: two or three test runs, catches the commonest test that cannot fail |
+| O18 | **Pin `@typescript/typescript6`** (Apache-2.0) for the harness's own parser | B4.0b (T2) | Not now: stay on `typescript` 5.9 behind the adapter; pin only when a project needs 6.0 syntax |
+| O19 | **`web-tree-sitter`** (MIT) for the Python adapter | Later (after v1's TypeScript index) | Only when Python becomes a target; the fact schema is fixed now |
+| O20 | **The M0 pivot rule**: if the Worker cannot run cards unattended (valid tool calls below 70% on the M0 protocol), narrow the product to planning and review assistance | B2.5 | Keep it as a standing decision, re-checked on every Worker change |
+| O21 | **`llama-bench`** (MIT) for throughput and MTP measurements | B2.2 | Approve (a measurement tool, not a dependency of the product) |
+| O22 | **Public review datasets** as Reviewer evaluation sets: c-CRAB and SWE-PRBench (CC BY 4.0), CodeReviewQA (MIT) | B4.8 (T11) | Approve, used for evaluation only and credited |
+| O23 | **`sekhemet ask "<question>"`**: Seshat from the terminal, for non-developers and SSH users; it would replace `board` in the front door (`board --terminal` moves under `dev`) | B4.1 | Approve |
+| O24 | **Profile statements used at once**: may what Seshat learns about a person ("prefers short answers", "reviews in the morning") shape replies before the person approves it? Every statement is shown on their profile, editable and deletable | B4.8 (P6) | Yes, shown and editable at once; nothing about code or the harness is learned this way |
 
 ## Benchmarks on the reference machine
 
@@ -65,12 +65,12 @@ The 2026-09-17 design listed these as "finalized resolutions" citing work the Ph
 
 | Question | Recommendation | Where it is decided |
 | --- | --- | --- |
-| Retention of context packs and trajectories | Decided with `retention.ts` wire-or-cut ([DEC-09](../design/DECISIONS.md#dec-09)) | [runtime](../design/specs/runtime.md) |
+| Retention of context packs and trajectories | **Closed**: `retention.ts` is wired and prunes as a recorded erasure (DEC-29 O1); 90 days for personal free text (O14) | [runtime](../design/specs/runtime.md) |
 | Gate runner as a separate daemon over mutual TLS, or in process | In process for v1; the separate runner only with company-server mode if the gate host is another machine | [gates](../design/specs/gates.md), [runtime](../design/specs/runtime.md) |
 | A synced external item changes mid-card | Reconcile at the card's end; never pause a card for an external edit. **Adopted** 2026-09-22 (ruling R6): the edit is recorded, and at the card's end a changed scope or criteria sends the card to Planning with the change named | [integrations](../design/specs/integrations.md) item 5 |
-| The spine's "anything a model saw can be reconstructed" once erasure exists | Add "except content erased by a recorded `ledger/erased` event; replay names each gap" — an owner decision on the spine ([DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md](../research/DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md) decision 8) | [kernel](../design/specs/kernel.md); consumed by [security](../design/specs/security.md) item 34b and [runtime](../design/specs/runtime.md) items 34a–36 |
-| Which install artefacts ship | An npm package for a person and a container image for a team server (inference in its own container); a single executable once Node's feature is stable | [surface](../design/specs/surface.md) open question 4 |
+| **Closed** (DEC-29 O1) — the spine's "anything a model saw can be reconstructed" once erasure exists | Add "except content erased by a recorded `ledger/erased` event; replay names each gap" — an owner decision on the spine ([DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md](../research/DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md) decision 8) | [kernel](../design/specs/kernel.md); consumed by [security](../design/specs/security.md) item 34b and [runtime](../design/specs/runtime.md) items 34a–36 |
+| Which install artefacts ship | **Closed** (DEC-29 O9): an npm package and a container image; a single executable later | [surface](../design/specs/surface.md) |
 | macOS confinement if Apple removes `sandbox-exec` | Keep it behind the sandbox interface with loud containment tests; fail closed if it breaks; research a VM per card then | [security](../design/specs/security.md) open question 4 |
 | Whether a local verifier earns its place on the largest tier | Measure before building | [models](../design/specs/models.md) |
-| Plugin isolation and third-party signing | Workspace trust in v1 (COVERAGE S9); signing later | [extensibility](../design/specs/extensibility.md), [security](../design/specs/security.md) |
+| Plugin isolation and third-party signing | **Closed**: plugins are cut (DEC-29 O4); workspace trust gates hooks, `mcp.json` and skills (S9); skill signing later | [extensibility](../design/specs/extensibility.md), [security](../design/specs/security.md) |
 | Keyboard bindings and phone layout | Answered by the Phase A UX review: first-letter chords, a phone bottom bar | [dashboard](../design/specs/dashboard.md) |

@@ -61,6 +61,10 @@ Components the harness depends on, reimplements, calls as a separate program, or
 | Test runner (vitest) | MIT | Development dependency |
 | Linter and formatter (@biomejs/biome) | MIT OR Apache-2.0 | Development dependency |
 | Node type definitions (@types/node) | MIT | Development dependency |
+| Schema validation (valibot) | MIT | **Approved 2026-09-24** (DEC-29 O7) for event-payload validation; not yet added. If removed: hand-written validators per event type |
+| Property-based testing (fast-check) | MIT | **Approved 2026-09-24** (DEC-29 O6) for acceptance tests derived from EARS criteria; not yet added. If removed: example-based tests only |
+| Inference server for teams (vLLM) | Apache-2.0 | **Approved 2026-09-24** (DEC-29 O8) as an optional separate process over its OpenAI-compatible API; not yet used. If removed: llama.cpp serves every host |
+| Inference benchmark (llama-bench, part of llama.cpp) | MIT | Pending owner decision O21, as a measurement tool run as a separate process. If removed: throughput measured from the harness's own records |
 | Inference engine (llama.cpp, `llama-server`) | MIT | Separate process over its OpenAI-compatible HTTP API; the v1 Worker's engine (models). If removed: no local inference until another engine is qualified behind the same adapter |
 | Inference engine (Ollama) | MIT | Separate process over HTTP; an optional engine behind the same adapter (`packages/models/src/http_adapter.ts`). If removed: llama-server serves every role |
 | Apple Silicon inference (MLX, mlx-lm) | MIT | Not used: an engine label only (`packages/models/src/bakeoff.ts:17`); an adapter is Later (ruling R3). If removed: nothing |

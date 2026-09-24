@@ -38,7 +38,7 @@ Every document in `docs/` is listed here, and nowhere else is the source of trut
 | [specs/dashboard.md](design/specs/dashboard.md) | The web dashboard: board, review, status, Learn layer, visual system. |
 | [specs/security.md](design/specs/security.md) | Sandboxing, permissions, egress, secrets, workspace trust, air-gap. |
 | [specs/integrations.md](design/specs/integrations.md) | GitHub, Jira, Linear, notifications, the company-server mode. |
-| [specs/extensibility.md](design/specs/extensibility.md) | Hooks, skills, plugins, MCP, ACP, the SDK. |
+| [specs/extensibility.md](design/specs/extensibility.md) | Hooks, skills, MCP and ACP. |
 | [specs/runtime.md](design/specs/runtime.md) | Daemon, runner lease, sessions, the HTTP API, audit, telemetry, retention. |
 | [PM_CONTRACT.md](design/PM_CONTRACT.md) | The HTTP shapes between the dashboard and the PM, integrations and learning. |
 | [NAMING.md](design/NAMING.md) | The naming rule: what keeps its professional name, what is themed. |
@@ -99,4 +99,5 @@ Every document in `docs/` is listed here, and nowhere else is the source of trut
 | [reviews/domain13_dashboard.md](reference/reviews/domain13_dashboard.md) | Phase A review: the dashboard and design system. |
 | [reviews/domain17_brand_ux.md](reference/reviews/domain17_brand_ux.md) | Phase A review: brand, visual and interaction design, accessibility, and the three audiences' task walks. |
 | [reviews/design_v3_review.md](reference/reviews/design_v3_review.md) | Independent review of design v3: contradictions, readiness for spec-driven development, research coverage, the spine, and depth in the core. |
+| [reviews/design_v3_confirmation.md](reference/reviews/design_v3_confirmation.md) | A second, independent review confirming each finding of the first is resolved, and whether design v3 is ready for spec-driven development. |
 | [PROVENANCE.md](reference/PROVENANCE.md) | Every adopted technique's public source and the licence register the `licenses` gate enforces. |

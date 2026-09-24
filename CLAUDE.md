@@ -7,7 +7,7 @@ Sekhemet is **a coding harness for professional teams**: it runs the whole profe
 ## The spine — fixed; ask the owner before changing any of it
 
 - Gates decide completion; the model never certifies its own work.
-- The event log is the only durable channel.
+- The event log is the only durable channel (content erased by a recorded `ledger/erased` event is named as a gap on replay).
 - A card is the unit of work.
 - The human is the rate limiter.
 
