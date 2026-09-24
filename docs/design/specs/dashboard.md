@@ -243,6 +243,14 @@ The dashboard is where all three audiences meet Sekhemet. For **developers** it 
 
 ### 2.13 Visual system
 
+**The professional standard** (owner, 2026-09-25, from the mockup review). The dashboard reads like Linear, Jira or GitHub, never like a chatbot or a template:
+- Activity is a timeline — system events as one compact line with a small icon, comments as a name, a time and plain text — never chat bubbles.
+- One level of container: a page, a sidebar, a list or a table; no boxes inside boxes. Properties sit in a label/value list without cards.
+- Real icons (inline stroke SVG, one set, one weight), never text glyphs (✓ ✕ × ···) or emoji.
+- Copy is terse: a label or a short fact, never an explanatory sentence where a label will do; explanations belong in Tips.
+- One primary action per view (the dark button); everything else is a secondary button or a link. The brand gold marks only the active item and the logo.
+- The vocabulary is DEC-31's.
+
 1. **Tokens** are the single source of truth for colour, published as CSS custom properties and JSON (`tokens.ts`, `/tokens.css`, `/tokens.json`); components never hard-code a colour. Fifteen roles per theme — `bg-base`, `bg-surface`, `bg-raised`, `bg-overlay` (the surface ladder: depth by luminance, **no drop shadows**), `border-subtle`, `border-strong`, `text-primary`, `text-secondary`, `text-muted`, `accent` (Egyptian gold), `state-pass` (Nile green), `state-fail` (red ochre), `state-running` (lapis), `state-parked` (needs you), `state-blocked` — plus derived `on-accent`, `on-state`, `scrim`, `tint-{pass,fail,running,parked}` (12% Basalt, 10% Sand) and layout constants. The values are in `tokens.ts`, not here; the contrast test (§2.14.1) is what holds them.
 2. **Colour roles (P12):** the warning/parked hue is moved clearly apart from the accent (a copper, ≈ `#C8743A` Basalt / `#9A4F1C` Sand, re-measured); **disabled buttons use a neutral fill**, never faded gold; a **`--border-control`** role at ≥ 3:1 edges every input; **`--text-muted` is decorative only** (line numbers, disabled controls, decorative glyphs) and never carries text a person must read, placeholders included.
 3. **Colour per tone.** A rule is 2 px — on the left of a tile, row or block, or on top of a gates segment. The running, failed-and-retrying and On hold tiles carry one in their tone. Running — fill, rule, text only on base/surface, tint for the live step; pass — quiet, no rule; fail — fill, rule, tint for failure blocks and removals, and the blocker flag (§2.4.4); parked — fill, rule, shell bars; blocked — the dependency link icon and secondary text for *waits on* detail.
