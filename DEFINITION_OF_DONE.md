@@ -27,7 +27,7 @@ When testing kernel state, sandboxing, process execution, git synchronization, o
 3. **Real Git Worktrees:** Tests for `@sekhemet/sync` must create real git worktrees (`git worktree add`), generate real commit objects, and update real ref namespaces (`refs/sekhemet/checkpoints/*`).
 
 ### B. Mandatory Fault Injection & Negative Testing
-For every happy path tested, there must be at least **two negative or boundary test cases**:
+In the core packages — `kernel`, `sandbox`, `sync`, `gates`, `loop` and `context` — every happy path tested has at least **two negative or boundary test cases**. Elsewhere the rule is risk-based: every public behaviour has at least one negative case, and anything that parses input, crosses a trust boundary or changes persistent state has two (decided 2026-09-24; [gates](docs/design/specs/gates.md) §8). The cases to cover:
 1. **Malformed Inputs & Corrupt Data:** Test how the parser, serializer, and state machine handle truncated JSON, invalid types, empty strings, and out-of-range indices.
 2. **Cryptographic Tamper Detection:** Event logs and hash chains must be tested by actively corrupting disk bytes (flipping a bit in an event payload or hash) and asserting that the verifier detects the exact corrupted sequence number.
 3. **Permission Violations:** Test that directory traversal (`../../etc/passwd`), out-of-scope edits, and protected file modifications (`gates.toml`) are rejected with explicit `deny` tiers.
@@ -41,7 +41,7 @@ For every happy path tested, there must be at least **two negative or boundary t
 ### D. Test infrastructure that keeps the loop fast and honest
 1. **Unit and integration are split by what a test touches**, read from the files (`scripts/test_split.mjs`): a spec that uses real git, on-disk SQLite, a listening server or a child process is an integration test. `pnpm test:unit` and `pnpm test:integration` run each; `pnpm test` runs both; `pnpm dev` is the development loop.
 2. **The Worker loop is testable without a model**: a scripted inference adapter replays tool calls, so the loop, stall detection, the repair ladder and condensing are verified offline and deterministically.
-3. **Fixture repositories are cheap to create**: a helper builds a throwaway git repository from `fixtures/` for a test and removes it afterwards.
+3. **Fixture repositories are cheap to create**: a helper builds a throwaway git repository from `fixtures/` for a test and removes it afterwards. The 2026-09-17 target of under 10 ms per repository assumed in-memory SQLite and is not kept: a real git repository on disk is the requirement (§2A); speed is watched as in item 4.
 4. **Speed is watched, not bought with mocks.** The unit project should stay fast enough to run on every save (the 2026-09-17 target was under 3 seconds); the integration project is allowed to be slower because it is real (§2A). A speed target never justifies replacing real infrastructure with a mock.
 
 ---
@@ -53,24 +53,21 @@ For every happy path tested, there must be at least **two negative or boundary t
 2. **CRLF & Whitespace Tolerance:** All surgical line and symbol replacements must handle CRLF (`\r\n`) and LF (`\n`) line endings transparently without corrupting surrounding indentation.
 3. **Exact Uniqueness Constraint:** Whole-string replacements (`edit`) must assert that the target chunk exists **exactly once** in the file. If zero or $>1$ occurrences exist, it must abort with an error rather than guessing.
 
-### B. Three-Tier Permission Confinement
-Every tool execution must pass through the `PermissionEngine`:
-1. **Permanent Deny (Deny Always Wins):**
-   - Modifying `gates.toml`, test files (for implementers), loop configs, or `.sekhemet/events.db`.
-   - Modifying files outside the card's declared `scopeFiles`.
-   - Path traversal outside the worktree.
-2. **Ask Tier (Requires Human Confirmation):**
-   - Destructive commands (`rm -rf`, `sudo`, `git reset --hard`).
-   - Network commands (`curl`, `fetch`) when running in offline mode.
-3. **Allow Tier:**
-   - Safe reads and writes within declared card scope.
+### B. Confinement: permissions, sandbox and network
+The mechanism is specified in [security](docs/design/specs/security.md) (the permission engine and its tiers, the protected paths including the extension files, the sandbox, and the network policy, items 20–29 and 35–49); this contract requires that it hold:
+1. **Deny always wins**, and a deny is explicit, never a silent skip: writes outside the card's declared scope, to protected paths (`gates.toml`, tests for the implementer role, the harness's own loop, gate and sandbox sources, `.sekhemet/events.db`, extension files), into git metadata, and path traversal.
+2. **Destructive commands need a person** (`rm -rf`, `sudo`, `git reset --hard`, and the rest of security's Ask list).
+3. **Offline means no route out**, not an approval prompt: in offline mode the sandbox has no network at all ([security](docs/design/specs/security.md) item 29).
+4. **Confinement fails closed:** no confinement mechanism on the host means no Worker commands, unless a person explicitly opts out (S3b).
 
-### C. Context Hygiene & Compaction
-1. **RTK Command Output Condensing:** Command outputs exceeding line budgets must strip ANSI escapes and progress bars, preserving relevant head and tail compiler errors while omitting noise.
-2. **In-Place Observation Masking:** Turn history older than 2 steps must mask verbose tool outputs into compact semantic pointers (`[Output of read_file from Turn 2 preserved in WAL: 85 lines omitted]`), keeping prompt token density near 100%.
+### C. Context hygiene
+The mechanism is specified in [context](docs/design/specs/context.md); this contract requires:
+1. **Command output is condensed** — ANSI escapes and progress bars stripped, the relevant head and tail kept — and nothing the next repair needs is dropped (context rule 17).
+2. **Older observations are masked into pointers** that `recall` can expand, in batches that keep the prompt prefix byte-stable; the five most recent observations stay whole ([context](docs/design/specs/context.md) rule 3, [DEC-24](docs/design/DECISIONS.md)). Pointers use plain words, not internal jargon.
+3. **Budgets are asserted on the live path**, at the reference window ([DEC-27](docs/design/DECISIONS.md)).
 
-### D. Complete Lifecycle Hook Engine
-The kernel must provide all 10 waterfall lifecycle hooks (`card/start`, `pre-step`, `pre-tool`, `post-tool`, `pre-gate`, `post-gate`, `card/end`, `review/return`, `playbook/propose`, `turn-stopping`) with safe unregistration and error propagation.
+### D. Lifecycle hooks
+The hook events and their semantics are specified in [extensibility](docs/design/specs/extensibility.md); this contract requires that every hook can be unregistered safely, that a hook's error is propagated and recorded rather than swallowed, and that a hook can veto only what its event allows (a veto is a recorded stop reason, `hook_veto`).
 
 ---
 
@@ -107,7 +104,7 @@ Five levels, each built on the one before. Nothing is done at a level because so
 2. its diff is at most 200 lines across 1–3 files, inside its declared scope;
 3. every declared gate passes, **and the three project gates pass**: *reachability* (no export the card added is used by nothing), *regression* (no test `main` already guarantees is broken or removed), *architecture* (no invariant the project's brief declares is broken);
 4. its **evidence bundle** records the diff, every gate result, the stop reason, the model and settings it ran with (including the thinking policy and working method), and its reproducibility record;
-5. a person accepted it, and it was merged to `main` with full attribution trailers.
+5. a person accepted it — or it was auto-accepted under a person's recorded standing decision, which names that person on every acceptance and is never available in company-server mode — and it was merged to `main` with full attribution trailers.
 
 The model never certifies its own work: the gates decide, and a person accepts.
 

@@ -89,7 +89,7 @@ for the model research, with every benchmark number sourced.
 
 ## Quickstart
 
-Requirements: Node 20+ (tested on 26), pnpm, git, and a local inference server
+Requirements: Node 22.13+ (tested on 26), pnpm, git, and a local inference server
 (Ollama, or llama.cpp's `llama-server`).
 
 ```bash

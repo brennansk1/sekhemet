@@ -50,12 +50,12 @@ node scripts/run_suite.mjs --worker cyber-tiel --out <file>   # the frozen suite
 
 ## Layout
 
-Packages in dependency order: `kernel` → `sandbox` → `sync` → `models` → `gates` → `context` → `loop` → `board` → `planner` → `eval` → `ui` → `apps/harness`. Node 26 (20+ supported), `node:sqlite` in WAL mode, Biome, Vitest. Tests for `kernel`, `board`, `sandbox` and `sync` use real SQLite files, real subprocesses and real git worktrees (DEFINITION_OF_DONE §2A). Workspace packages resolve each other through `dist/`, so a change in one package is seen by another only after `tsc -b`.
+Packages in dependency order: `kernel` → `sandbox` → `sync` → `models` → `gates` → `context` → `loop` → `board` → `planner` → `eval` → `ui` → `apps/harness`. Node 26 (22.13+ supported: the built-in `node:sqlite` without a flag), `node:sqlite` in WAL mode, Biome, Vitest. Tests for `kernel`, `board`, `sandbox` and `sync` use real SQLite files, real subprocesses and real git worktrees (DEFINITION_OF_DONE §2A). Workspace packages resolve each other through `dist/`, so a change in one package is seen by another only after `tsc -b`.
 
 ## Operations — this machine
 
 - **24 GB host; the Worker is 13 GB.** Check `ollama ps` and `memory_pressure -Q` before loading a model; unload after. The harness's own memory guard stops a card when swap passes 6 GB.
 - **The Worker is Cyber-Tiel-Coder-35B-A3B MTP (IQ3_XXS)** on `/Volumes/My Passport/AI-Models/llm/`. Start its server once — the arguments come from `createCyberTielWorker().launchArgs()`, port 8098, `--spec-type draft-mtp` — and every card attaches to it. Loading from the USB drive takes about five minutes. Set `SEKHEMET_MODELS_DIR` to that directory.
 - **Never run `tsc -b` or `pnpm gate` during a suite run**: each card is a fresh process and would load a different build.
-- **Experiment switches**, recorded in every evidence bundle: `SEKHEMET_THINKING=off|surgical|all`, `SEKHEMET_WORKER_METHOD=baseline|strict`.
+- **Experiment switches**, recorded in every evidence bundle: `SEKHEMET_THINKING=off|surgical|all`, `SEKHEMET_WORKER_METHOD=baseline|strict`, and (once built, worker-loop rule 29a) `SEKHEMET_EVIDENCE_GATE`.
 - The shell's `grep` wrapper can hide matches: when a search comes back empty, retry with `/usr/bin/grep -a`. On macOS `/tmp` is `/private/tmp`.

@@ -108,6 +108,7 @@ No further model runs start until S1–S2 are fixed; nothing is offered to a use
 | T8 | Self-improvement admits a change only on a significant paired gain | S |
 | T9 | The DEFINITION_OF_DONE test gaps: missing negative tests, one vanity assertion, skips on Linux. *Process — no subsystem spec; carried by DEFINITION_OF_DONE §2 and workstream B5.* | S |
 | T10 | Executable documentation checks: README ↔ the front door, config schema ↔ `config.ts`, the `SEKHEMET_*` inventory, model names ↔ registry, `file:` links, spec front matter ↔ the SPINE status table | M |
+| T11 | **Evaluation assets** the acceptance criteria depend on, built before the criteria that use them: the labelled reuse set (~40 needs, P7), the research golden set (25 questions, NEW-design-stage-2), golden briefs with annotated implicit requirements (≥ 10, P14 and T7), a held-out acceptance suite for premature completion (T7), seeded defects for the Reviewer (≥ 20, P8), scripted PM conversations with a rubric (~20, P6), scripted non-developer project starts (5, P2), injection fixtures (NEW-security-4), reference solutions per fixture card (T7), and a labelled set of UI screens for the visual checklist (GT-N4-2). Owned by measurement; each asset is versioned and hashed like the frozen suite | L |
 
 
 ### Changes added by the specifications (2026-09-22)
@@ -118,12 +119,12 @@ The design v3 specifications found gaps the Phase A programme had no ID for. Eac
 | --- | --- | --- | --- |
 | NEW-context-1 | One token estimator calibrated to the model | [context](../design/specs/context.md) | B2.1 |
 | NEW-context-2 | Budgets asserted on the live path | [context](../design/specs/context.md) | B2.1 |
-| NEW-context-3 | One allocator for every role | [context](../design/specs/context.md) | B2.1 |
-| NEW-context-4 | Rules that are scoped exactly, kept once, and credited fairly | [context](../design/specs/context.md) | B2.1 |
-| NEW-context-5 | The repo map's weighting and cache, and condensing savings | [context](../design/specs/context.md) | B2.1 |
-| NEW-context-6 | The context version gates qualification; prompt changes are measured | [context](../design/specs/context.md) | B2.1 |
-| NEW-dashboard-1 | Evidence that stays readable | [dashboard](../design/specs/dashboard.md) | B4.6 |
-| NEW-dashboard-2 | A web layer under test, with one vocabulary | [dashboard](../design/specs/dashboard.md) | B4.6 |
+| NEW-context-3 | One allocator for every role | [context](../design/specs/context.md) | B4.0a |
+| NEW-context-4 | Rules that are scoped exactly, kept once, and credited fairly | [context](../design/specs/context.md) | B4.0a |
+| NEW-context-5 | The repo map's weighting and cache, and condensing savings | [context](../design/specs/context.md) | B4.0a |
+| NEW-context-6 | The context version gates qualification; prompt changes are measured | [context](../design/specs/context.md) | B4.0a |
+| NEW-dashboard-1 | Evidence that stays readable | [dashboard](../design/specs/dashboard.md) | B4.2 |
+| NEW-dashboard-2 | A web layer under test, with one vocabulary | [dashboard](../design/specs/dashboard.md) | B4.2 |
 | NEW-dashboard-3 | The model's output, live, on the Steps tab | [dashboard](../design/specs/dashboard.md) | B4.6 |
 | NEW-dashboard-4 | Settings | [dashboard](../design/specs/dashboard.md) | B4.2 |
 | NEW-dashboard-5 | Review for a team, and review that forces a look | [dashboard](../design/specs/dashboard.md) | B4.6 |
@@ -140,10 +141,10 @@ The design v3 specifications found gaps the Phase A programme had no ID for. Eac
 | NEW-gates-2 | Judge only what the card wrote | [gates](../design/specs/gates.md) | B2.3 |
 | NEW-gates-3 | Gate economics and flaky tests | [gates](../design/specs/gates.md) | B2.3 |
 | NEW-gates-4 | The visual layer to its design | [gates](../design/specs/gates.md) | B2.3 |
-| NEW-gates-5 | The gates the old design listed: templates, the claim gate, bundled static-analysis rules | [gates](../design/specs/gates.md) | B2.3 |
-| NEW-gates-6 | Tests that can fail, checked before the build | [gates](../design/specs/gates.md) | B2.3 |
-| NEW-gates-7 | Gates for existing codebases | [gates](../design/specs/gates.md) | B2.3 |
-| NEW-gates-8 | The change kind and the test-strength record on the card | [gates](../design/specs/gates.md) | B2.3 |
+| NEW-gates-5 | The gates the old design listed: templates, the claim gate, bundled static-analysis rules | [gates](../design/specs/gates.md) | B4.0b |
+| NEW-gates-6 | Tests that can fail, checked before the build | [gates](../design/specs/gates.md) | B4.0b |
+| NEW-gates-7 | Gates for existing codebases | [gates](../design/specs/gates.md) | B4.0b |
+| NEW-gates-8 | The change kind and the test-strength record on the card | [gates](../design/specs/gates.md) | B4.0b |
 | NEW-integrations-1 | Idempotent import | [integrations](../design/specs/integrations.md) | B4.9 |
 | NEW-integrations-2 | Owner and delegate on every tracker | [integrations](../design/specs/integrations.md) | B4.9 |
 | NEW-integrations-3 | External results name their source | [integrations](../design/specs/integrations.md) | B4.9 |
@@ -155,20 +156,22 @@ The design v3 specifications found gaps the Phase A programme had no ID for. Eac
 | NEW-kernel-6 | Who is on a card, and who built each attempt | [kernel](../design/specs/kernel.md) | B3.1 |
 | NEW-kernel-7 | An erasable ledger | [kernel](../design/specs/kernel.md) | B3.1 |
 | NEW-kernel-8 | Requirement versions and gate-result sources in the record | [kernel](../design/specs/kernel.md) | B3.1 |
+| NEW-kernel-9 | The stored `kind`, `change` and `split` fields (DEC-26) | [kernel](../design/specs/kernel.md) | B3.1 |
 | NEW-measurement-1 | Self-describing, isolated runs | [measurement](../design/specs/measurement.md) | B2.4 |
 | NEW-measurement-2 | Diagnostics on real inputs | [measurement](../design/specs/measurement.md) | B2.4 |
 | NEW-measurement-3 | Adoptions per phase | [measurement](../design/specs/measurement.md) | B2.4 |
 | NEW-measurement-4 | Test strength and human-built work in the measures | [measurement](../design/specs/measurement.md) | B2.4 |
-| NEW-models-1 | Calibrate the reference host and correct its tier | [models](../design/specs/models.md) | B2.2 |
-| NEW-models-2 | Floors and the watchdog on every path | [models](../design/specs/models.md) | B2.2 |
-| NEW-models-3 | Declared hours and swap batching | [models](../design/specs/models.md) | B2.2 |
-| NEW-models-4 | One profile, one role enum, one construction path, a live registry | [models](../design/specs/models.md) | B2.2 |
-| NEW-models-5 | Tool-arm qualification | [models](../design/specs/models.md) | B2.2 |
-| NEW-models-6 | Competence rows that can improve routing | [models](../design/specs/models.md) | B2.2 |
+| NEW-models-1 | Calibrate the reference host and correct its tier | [models](../design/specs/models.md) | B4.0a |
+| NEW-models-2 | Floors and the watchdog on every path | [models](../design/specs/models.md) | B4.0a |
+| NEW-models-3 | Declared hours and swap batching | [models](../design/specs/models.md) | B4.0a |
+| NEW-models-4 | One profile, one role enum, one construction path, a live registry | [models](../design/specs/models.md) | B4.0a |
+| NEW-models-5 | Tool-arm qualification | [models](../design/specs/models.md) | B4.0a |
+| NEW-models-6 | Competence rows that can improve routing | [models](../design/specs/models.md) | B4.0a |
 | NEW-models-7 | Weights that a new user can obtain | [models](../design/specs/models.md) | B2.2 |
 | NEW-models-8 | Engines as adapters, qualified per combination | [models](../design/specs/models.md) | B2.2 |
-| NEW-models-9 | One scheduler owns residency | [models](../design/specs/models.md) | B2.2 |
-| NEW-models-10 | Adopting a model is a measured decision | [models](../design/specs/models.md) | B2.2 |
+| NEW-models-9 | One scheduler owns residency | [models](../design/specs/models.md) | B4.0a |
+| NEW-models-10 | Adopting a model is a measured decision | [models](../design/specs/models.md) | B4.0a |
+| NEW-models-11 | The Spark-X2.5-4B Researcher bake-off | [models](../design/specs/models.md) | B4.4 |
 | NEW-planner-pm-1 | Points on the board | [planner-pm](../design/specs/planner-pm.md) | B4.3 |
 | NEW-planner-pm-2 | Signals propose, never mutate | [planner-pm](../design/specs/planner-pm.md) | B4.3 |
 | NEW-planner-pm-3 | Split to the measured horizon | [planner-pm](../design/specs/planner-pm.md) | B4.3 |
@@ -178,7 +181,7 @@ The design v3 specifications found gaps the Phase A programme had no ID for. Eac
 | NEW-planner-pm-7 | Test approval and strength by depth profile | [planner-pm](../design/specs/planner-pm.md) | B4.3 |
 | NEW-review-git-1 | A rebase conflict goes back to the Worker as typed failures | [review-git](../design/specs/review-git.md) | B3.2 |
 | NEW-review-git-2 | Restacked children re-run their gates | [review-git](../design/specs/review-git.md) | B3.2 |
-| NEW-review-git-3 | Per-package gates in card verification | [review-git](../design/specs/review-git.md) | B3.2 |
+| NEW-review-git-3 | Per-package gates in card verification | [review-git](../design/specs/review-git.md) | B4.0b |
 | NEW-review-git-4 | Versions follow SemVer's 0.y.z rule, per slice | [review-git](../design/specs/review-git.md) | B4.3 |
 | NEW-review-git-5 | Review for a team: who may accept, who should look | [review-git](../design/specs/review-git.md) | B3.2 |
 | NEW-runtime-1 | One supervisor, an atomic lease | [runtime](../design/specs/runtime.md) | B3.3 |
@@ -186,8 +189,8 @@ The design v3 specifications found gaps the Phase A programme had no ID for. Eac
 | NEW-runtime-3 | Crash recovery and bounded rounds | [runtime](../design/specs/runtime.md) | B3.3 |
 | NEW-runtime-4 | Bounded disk | [runtime](../design/specs/runtime.md) | B3.3 |
 | NEW-runtime-5 | The night does what it promises | [runtime](../design/specs/runtime.md) | B3.3 |
-| NEW-runtime-6 | One scheduler, fair across people, per-slot leases | [runtime](../design/specs/runtime.md) | B4.9 |
-| NEW-runtime-7 | Every budget the spec names is enforced | [runtime](../design/specs/runtime.md) | B3.3 |
+| NEW-runtime-6 | One scheduler, fair across people, per-slot leases | [runtime](../design/specs/runtime.md) | B4.10 |
+| NEW-runtime-7 | Every budget the spec names is enforced | [runtime](../design/specs/runtime.md) | B4.10 |
 | NEW-runtime-8 | Backup, restore, export and upgrades that lose nothing | [runtime](../design/specs/runtime.md) | B3.1 |
 | NEW-runtime-9 | Telemetry as specified | [runtime](../design/specs/runtime.md) | B3.3 |
 | NEW-runtime-10 | Pause a project | [runtime](../design/specs/runtime.md) | B3.3 |
@@ -198,7 +201,7 @@ The design v3 specifications found gaps the Phase A programme had no ID for. Eac
 | NEW-security-5 | Documentation and skills that match the air-gapped project | [security](../design/specs/security.md) | B1 |
 | NEW-security-6 | An Ask that a person really answers | [security](../design/specs/security.md) | B1 |
 | NEW-security-7 | Erase a secret the scanner missed | [security](../design/specs/security.md) | B3.1 |
-| NEW-surface-1 | One user directory | [surface](../design/specs/surface.md) | B4.1 |
+| NEW-surface-1 | One user directory | [surface](../design/specs/surface.md) | B3.3 |
 | NEW-surface-2 | A terminal board in the board's words | [surface](../design/specs/surface.md) | B3.3 |
 | NEW-surface-3 | The card layer of the configuration is real or removed | [surface](../design/specs/surface.md) | B3.3 |
 | NEW-surface-4 | One install path per audience | [surface](../design/specs/surface.md) | B4.1 |
@@ -206,25 +209,26 @@ The design v3 specifications found gaps the Phase A programme had no ID for. Eac
 | NEW-worker-loop-1 | Repetition refusals that survive alternation and truncation | [worker-loop](../design/specs/worker-loop.md) | B2.1 |
 | NEW-worker-loop-2 | The ladder's dead fields | [worker-loop](../design/specs/worker-loop.md) | B2.1 |
 | NEW-worker-loop-3 | Remove the session's dead direct-tool API | [worker-loop](../design/specs/worker-loop.md) | B2.1 |
-| NEW-worker-loop-4 | `ask` that can wait for a person without stopping the Worker | [worker-loop](../design/specs/worker-loop.md) | B2.1 |
-| NEW-worker-loop-5 | One attempt record, a grounded re-plan, and equal repair chances | [worker-loop](../design/specs/worker-loop.md) | B2.1 |
-| NEW-worker-loop-6 | Mechanical edits as tools | [worker-loop](../design/specs/worker-loop.md) | B2.1 |
-| NEW-worker-loop-7 | Language servers as bounded tenants, reached through LSP | [worker-loop](../design/specs/worker-loop.md) | B2.1 |
-| NEW-worker-loop-8 | MCP tools without their prefill cost | [worker-loop](../design/specs/worker-loop.md) | B2.1 |
+| NEW-worker-loop-4 | `ask` that can wait for a person without stopping the Worker | [worker-loop](../design/specs/worker-loop.md) | B4.0a |
+| NEW-worker-loop-5 | One attempt record, a grounded re-plan, and equal repair chances | [worker-loop](../design/specs/worker-loop.md) | B4.0a |
+| NEW-worker-loop-6 | Mechanical edits as tools | [worker-loop](../design/specs/worker-loop.md) | B4.0a |
+| NEW-worker-loop-7 | Language servers as bounded tenants, reached through LSP | [worker-loop](../design/specs/worker-loop.md) | B4.0a |
+| NEW-worker-loop-8 | MCP tools without their prefill cost | [worker-loop](../design/specs/worker-loop.md) | B4.0a |
+| NEW-worker-loop-9 | Evidence-gated commit behind `SEKHEMET_EVIDENCE_GATE` (ECLoop), built for the B2.5 A/B | [worker-loop](../design/specs/worker-loop.md) | B2.1 |
 
 ## Decisions only the owner can make
 
 **Decided by the owner on 2026-09-22** (records in [DECISIONS.md](../design/DECISIONS.md)): D1 keep Cyber-Tiel (DEC-04); D2 merge — done, `main` at `fb59ba2` (DEC-10); D3 as recommended (DEC-05); D4 as recommended (DEC-09); D5 as recommended — SPDX parsing and the official API clients approved, the rest still proposals (DEC-08); D6 after local v1 meets the Definition of Done (DEC-07); D7 as recommended (DEC-06). The sequence to v1 is in [MODERNIZATION_PLAN.md](MODERNIZATION_PLAN.md), Phase B.
 
-| | Decision | Recommendation |
+| | Decision (→ outcome) | Recommendation at the time |
 | --- | --- | --- |
-| D1 | **The Worker's weights.** The project's own research rates the uncensored Cyber-Tiel "not recommended" and names Tiel-Coder-35B-A3B-MTP (guardrailed, same size) as a drop-in — a ~13.6 GB download. The web research adds: Cyber-Tiel is an abliterated re-quantization of Ornith-1.5 (not Qwen3.6); its own card says it is "not an ordinary coding agent" and requires OS sandboxing; its published lead over Tiel (13.7 vs 12 of 25) is far too small a sample to mean anything, and no published score was measured at IQ3 | Decide before the A/B completes, so its result belongs to the weights we keep. With the sandbox findings above, the guardrailed model is the safer default |
-| D2 | **Merge this branch to `main`** (240 commits behind; a fresh clone gets the stale CLAUDE.md) | Yes, as a reviewed pull request, after Tier 0's S1–S2 |
-| D3 | **The positioning contradictions**: the locked decisions still say "solo developer" and ban personas | Reword the ban: agents never role-play ceremonies *with each other*; standups and retros are reports *for people* |
-| D4 | **Cuts** (below) | Approve the dead-code cuts; decide wire-or-cut for the rest |
-| D5 | **Library proposals** (below) | Approve the licence classifier and official API clients first |
-| D6 | **A ceiling run** with a frontier model as Worker (measurement only) | Worth it once Tier 1 is done |
-| D7 | **Company-server scope for v1** (bind host, identity, accept role) | Scope it for v1: the positioning names it |
+| D1 → **keep Cyber-Tiel** (DEC-04) | **The Worker's weights.** The project's own research rates the uncensored Cyber-Tiel "not recommended" and names Tiel-Coder-35B-A3B-MTP (guardrailed, same size) as a drop-in — a ~13.6 GB download. The web research adds: Cyber-Tiel is an abliterated re-quantization of Ornith-1.5 (not Qwen3.6); its own card says it is "not an ordinary coding agent" and requires OS sandboxing; its published lead over Tiel (13.7 vs 12 of 25) is far too small a sample to mean anything, and no published score was measured at IQ3 | Decide before the A/B completes, so its result belongs to the weights we keep. With the sandbox findings above, the guardrailed model is the safer default |
+| D2 → **merged** (DEC-10) | **Merge this branch to `main`** (240 commits behind; a fresh clone gets the stale CLAUDE.md) | Yes, as a reviewed pull request, after Tier 0's S1–S2 |
+| D3 → **as recommended** (DEC-05) | **The positioning contradictions**: the locked decisions still say "solo developer" and ban personas | Reword the ban: agents never role-play ceremonies *with each other*; standups and retros are reports *for people* |
+| D4 → **as recommended**; `container.ts` returned to the owner (DEC-09, O4) | **Cuts** (below) | Approve the dead-code cuts; decide wire-or-cut for the rest |
+| D5 → **SPDX and official clients approved** (DEC-08) | **Library proposals** (below) | Approve the licence classifier and official API clients first |
+| D6 → **after local v1** (DEC-07) | **A ceiling run** with a frontier model as Worker (measurement only) | Worth it once Tier 1 is done |
+| D7 → **as recommended** (DEC-06) | **Company-server scope for v1** (bind host, identity, accept role) | Scope it for v1: the positioning names it |
 
 ### Cuts needing sign-off
 
@@ -232,7 +236,7 @@ The design v3 specifications found gaps the Phase A programme had no ID for. Eac
 | --- | --- | --- |
 | `packages/ui/src/canvas.ts` | Reachable only from a test | Cut |
 | `container.ts` (kernel/sandbox) | Reachable only from a test | Cut |
-| `retention.ts` | Unused | Wire in or cut |
+| `retention.ts` | ~~Unused~~ — wired: `queue` prunes on start (`execute.ts:195`); found by the platform spec pass | Keep; retention becomes a recorded erasure after owner decision O1 |
 | `apps/harness/src/research/desk.ts`; `adjudicate` / `acceptRevision` in `claims.ts` | Reachable only from tests | Wire in or cut |
 | `buildFullPromptPack`, `engine.ts` (context) | Dead | Cut |
 | The three `FEATURE_INVENTORY*.md` files | Superseded; the docs index forbids keeping versions side by side | Cut (git keeps them) |

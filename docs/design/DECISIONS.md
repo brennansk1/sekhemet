@@ -65,6 +65,62 @@ v1 includes: binding to a non-loopback address safely; an identity for each pers
 
 ## Engineering decisions
 
+### DEC-25 — the lead's rulings during the design v3 fix pass
+*Lead, 2026-09-22. Each settled a conflict between two new documents or between a document and the code; the code's behaviour won unless a reason is given. Rulings marked **owner** change behaviour a person sees and wait for the owner's confirmation ([OPEN_QUESTIONS](../reference/OPEN_QUESTIONS.md#owner-decisions)); until then the ruling is the default.*
+
+| # | Ruling | Owning spec |
+| --- | --- | --- |
+| R1 | A checkpoint commit after every step that changed files (`execute.ts:422`), and before Verify; the runner's library default of 5 applies to other callers | review-git |
+| R2 | The Worker's `ask` answers from the card's contract; if nothing matches and the PM is available, Seshat answers now. A non-blocking decision request is a gap | worker-loop |
+| R3 | MLX is an engine label only; an adapter is Later | models |
+| R4 | The Worker's research tools are named as the code names them (`git_history`, `dependencies`, `ask`, `recall`) | worker-loop |
+| R5 | `plan_research` is owned by design-stage | design-stage |
+| R6 | A tracker edit never pauses a running card; at its end, a changed scope or criteria sends it to Planning with the change named | integrations |
+| R7 **owner** | Weights are never downloaded on the harness's own initiative; a person may run an explicit download command, and the published hash is verified before use | models, security |
+| R8 | Unsolicited messages: 3 a day per person by default, never more than 5 | planner-pm |
+| R9 | SPIDR's *Interface* is the user interface; a type contract is a Contract card (see DEC-26) | planner-pm |
+| R10 | Roles have no avatars; the assignee is a text chip | dashboard, NAMING |
+| R11 | A blocked card shows the fail tone, an icon and the word "Blocked" | dashboard |
+| R12 | Execution-verified lessons may apply in production on probation; never in a measurement run | measurement, context |
+| R13 | A run's settings are one recorded `RunProfile`; a named settings file is allowed, a flag that rewrites other flags is not | surface, measurement |
+| R14 | Per-language gate templates in gates.md; a language's mutation tool runs when installed, as a subprocess | gates |
+| R15 **owner** | Seshat's model name is not in the panel header; it is in the panel's details and on Machine | dashboard |
+| R16 | Visual-gate libraries stay proposals; the gate's required behaviours are carried regardless | gates |
+| R17 | Every view keeps a way in: `g k` Playbook, `g u` Runs, `g n` Integrations, or the palette | dashboard |
+| R18 | The Settings view is kept | dashboard |
+| R19 | Static file serving refuses `..` and serves correct MIME types | runtime |
+| R20 | The integration review's findings (dossier, residency scheduler, role budgets, rule curation, tools described once, retries, one attempt record) are requirements | kernel, worker-loop, context, models |
+| R21 | Every named third-party component has a licence row; copyleft runs as a separate process | PROVENANCE |
+| R22 | One run hierarchy, defined in NAMING (superseded in detail by DEC-26) | NAMING |
+| R23 | A `built` claim the code does not support is corrected, and so is built code listed as Later | all |
+| R24 | Deliberate reversals are recorded (DEC-24) | all |
+| R25 | The fixtures' recorded bars are kept in measurement | measurement |
+| R26 | Sampling values and launch profiles are kept in models or its registry file | models |
+| R27 | One memory-watchdog table, owned by models | models |
+| R28 | Test infrastructure lives in DEFINITION_OF_DONE §2D | DoD |
+
+### DEC-26 — one vocabulary for the kind of card and the run
+*Lead, 2026-09-24, resolving review blockers B3 and B4.*
+- **`kind`** (stored, closed, `packages/kernel/src/card_class.ts`) is the truth: `spike`, `interface`, `implement`, `data`, `rule`, `review`, `research`. It selects the Worker's tools, the red-first rule and rule scoping. People see labels from one map in [NAMING](NAMING.md): `interface` → *Contract*, `data` → *Storage*, `implement` → *Flow*, `rule` → *Rules*, `spike` → *Spike*, `research` → *Research*, `review` → *Review*. *UI* and *Wiring* are display refinements of `implement` (the card's scope is UI files; the card only connects finished parts), never stored kinds. The dashboard's separate `CardKind` type in `vocabulary.ts` is folded into this map (NEW-dashboard-2).
+- **SPIDR is how a story was split, not what kind of card resulted.** The planner records the axis it split on as `split` (`spike`, `path`, `interface`, `data`, `rules`), where SPIDR's *Interface* means the user interface (Cohn). A type contract is always `kind: interface`, labelled *Contract*.
+- **`change`** (stored, closed): what a card does to existing code — `feature`, `fix`, `characterize`, `refactor`, `upgrade`. A new project's cards are `feature`. It is a separate field from `kind` (gates §8 Q3, decided).
+- **The run:** an **attempt** is one recorded run of a card to a stop; it holds one **sample**, or up to k under pass@k; a sample is a sequence of **steps**; a step is one model request and the tool calls it makes. "Turn" is the code's synonym for step and is not used in specifications. The step budget counts steps.
+
+### DEC-27 — context budgets are fixed in tokens at the reference window
+*Lead, 2026-09-24, resolving review blocker B5.* At the reference Worker's prompt budget W = 9,984 tokens (16,384 − 4,096 answer − 2,048 thinking − 256), a fraction 0.12W (1,198 tokens) cannot hold a system prompt and tool interface capped at 3,000. The stable zone is therefore budgeted in tokens: **Zone 1 ≤ 2,400 tokens including native tool schemas**, of which the system prompt ≤ 700 and the tool interface ≤ 1,700 (a fixed, flat tool set per card class, M2); the remaining zones share W − Zone 1 in the proportions [context](specs/context.md) rule 10 gives. On a larger window the token caps stay and the proportional zones grow. The allocator asserts these on the live path for the reference Worker's real prompts.
+
+### DEC-28 — one rule for admitting what the system learns
+*Lead, 2026-09-24, resolving review blocker B6. Owned by [measurement](specs/measurement.md) §2; every other document points there.*
+
+| What is learned | Admitted by | Kept or retired by |
+| --- | --- | --- |
+| A **project playbook rule** (this repository's paths, kinds, error codes) | A person's approval | Paired credit on this project's own attempt records, with rotation; retired automatically when its credit turns negative over its last 10 applications |
+| An **execution-verified lesson** during a run | Probation in production only (never in a measurement run) | The same credit; it becomes a candidate for a person's approval at the run's end |
+| A **harness change** (prompt, tool, budget policy, skill, context version) | A paired frozen-suite A/B that shows a gain at the suite's resolution (at least 20 points on 30 cards, exact test at 0.05) | **Inconclusive** (the usual case): the change may be adopted only if it is cheaper or simpler and the paired result shows no significant loss, recorded as "not established"; otherwise it is not adopted |
+
+No admission rule relies on an effect the measurement cannot resolve.
+
+
 ### DEC-20
 **Language support is TypeScript first.** *2026-09-20.* The ranked repo map and the parse gate are TypeScript. Python, Rust and Go degrade to a flat file map and an unchecked parse, stated on the card and in the evidence. Their functional gates (`pytest`, `cargo test`, `go test`) stay, because running the tests is most of a gate's value. Symbol-level support through tree-sitter is later work (a proposal in COVERAGE).
 The harness itself stays TypeScript: a Rust or Python component is allowed only where profiling proves a bottleneck — the repo-map builder is the likeliest first candidate, a line pruner the second.
@@ -79,11 +135,13 @@ The harness itself stays TypeScript: a Rust or Python component is allowed only 
 | Earlier reasoning is stripped between steps | Earlier thinking is preserved (or stripped only at a masking point) | An edited prefix forces a full re-read on hybrid-attention models (research group A) |
 | llama.cpp cache flags 8–16 GiB, 32 checkpoints, min-step 8192, `-sps` | Sized per host (2–8 GiB, 6–16 checkpoints), min-step 512–1,024, `-sps` dropped | Checkpoint placement moved to message boundaries upstream; 16k-window hosts keep only two checkpoints at the old spacing |
 | A spec with more than three questions is refused as under-specified | Never refused: propose defaults and proceed | Proportional design stage (owner, 2026-09-22) |
-| A card parks and frees memory while its question is open | Work proceeds on the stated default; a `default_deny` question parks at its deadline | The Worker is not idled by a question it can proceed past |
+| A card parks and frees memory while its question is open | Work proceeds on the stated default; a `default_deny` question (one whose default is "do not proceed") parks the card **from the request** until it is answered or its deadline passes | The Worker is not idled by a question it can proceed past, and never proceeds past one whose default is to stop |
 | Self-improvement rolls back when the pass rate drops over the next ten cards | Rollback on a paired comparison | A ten-card window cannot separate noise from effect (research group D) |
-| Six stop reasons | Eighteen stored, shown as seven classes (adding "environment") | Machine failures must never read as the Worker's fault |
+| Six stop reasons | Twenty-three stored in v1 (the 18 in code plus `gate_suspected`, `tests_not_red_for_reason`, `hook_veto`, `git_metadata_tampered`, `crashed`), in one table in [worker-loop](specs/worker-loop.md), shown as seven failure classes (adding "environment") and one success class | Machine failures must never read as the Worker's fault |
 | INVEST pre-flight before In Progress | Before Ready | The Worker must never pick up a card that fails it |
 | Send back returns a card to In Progress | Send back returns it to Ready | A returned card is re-queued, not resumed mid-attempt |
+| INVEST "Small": context pack ≤ 25% of a 32,768-token working context | ≤ 25% of the resolved Worker's window from the registry — 4,096 tokens on the reference Worker's 16,384 | The old default sized cards for a window the Worker does not have (review M11) |
+| Unpark returns a card to its previous state | Unpark returns it to Ready, or to Backlog or Planning if it was parked from there | The state machine has no edge back into In Progress, Verify or Review, and a parked attempt is not resumed mid-flight |
 
 ### DEC-21 — accepted substitutions
 *Accepted 2026-09-20; the design's claims were amended to match what is built.*

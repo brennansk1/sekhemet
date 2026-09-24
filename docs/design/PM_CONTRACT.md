@@ -1,21 +1,40 @@
 # Project Manager and team practices: backend contract
 
-Status: agreed contract between the backend (lead, Claude) and the dashboard
-(UI subagent). The backend implements every endpoint here; the UI builds
-against these shapes. Change this file first if a shape must change.
+Status: agreed contract between the backend and the dashboard. The backend
+implements every endpoint here; the UI builds against these shapes. Change this
+file first if a shape must change. Behaviour is specified in
+[planner-pm](specs/planner-pm.md), [dashboard](specs/dashboard.md) and
+[integrations](specs/integrations.md); this file holds the HTTP shapes only.
+
+## 0. Design v3: shapes that are current, and the target each moves to
+
+The shapes below are what the code serves today. Design v3 changes several;
+each moves in the workstream of the change that carries it, and this file is
+updated in the same commit.
+
+| Shape (section) | Today | Target | Change |
+|---|---|---|---|
+| `assignee` (§2) | `"worker" \| "human" \| string` | `owner` (a person), `delegate` (the Worker or a person), `accepter` | NEW-kernel-6 |
+| `externalRef.system` (§2) | `"github" \| "forgejo"` | adds `"jira"`, `"linear"` | [integrations](specs/integrations.md) item 8 |
+| Mutation guard (§3) | `X-Sekhemet-Action: 1` header | a per-session token | S3c |
+| `/api/metrics/flow` `cfd` keys (§3) | `backlog, ready, working, checking, review, done` | the stored states (`in_progress`, `verify`) — *Working* and *Checking* are retired names ([NAMING](NAMING.md)) | NEW-dashboard-2 |
+| PM with no runner (§4) | the server loads the manager model directly | through the residency scheduler only | NEW-models-9 |
+| Slack webhook URL (§5) | `~/.config/sekhemet/…` | the one user directory, `~/.sekhemet/` | NEW-surface-1 |
+| Rule lifecycle (§6) | approval, then helpful/harmful counts on first attempts | [DECISIONS](DECISIONS.md) DEC-28: approval, then paired credit on this project's attempt records, with rotation | NEW-context-4 |
 
 ## 1. What the user asked for
 
 - Chat with the project manager the way you would with a PM you hired. The
-  conversation runs on the **manager model** (dirk-27b, Qwen 27B dense), not
-  the worker.
+  conversation runs on the **Planner role's model** (on the reference host a
+  27B dense Qwen model; the registry decides), not the Worker.
 - The board follows the practices real teams use (Kanban Method, Linear,
   Jira, GitHub Projects), so it sits inside an existing company setup.
 - GitHub is the first-class integration. Jira and Linear get import/export in
   their native field vocabulary.
 - **Preemption:** a message sent while the Worker is running pauses the Worker
   at its next step boundary. The PM loads, replies, and the Worker resumes.
-  Only one model is ever resident (24 GB host).
+  On the 24 GB reference host only one model is resident at a time; larger
+  hosts may co-reside models ([models](specs/models.md)).
 
 ## 2. Card fields (kernel `CardRecord`, all optional, back-compatible)
 

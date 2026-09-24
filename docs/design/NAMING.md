@@ -1,6 +1,6 @@
 # Naming
 
-Status: rule from the user, 2026-09-18; state names reconciled with the code and the board, 2026-09-22 · Applies to the product, the dashboard, the CLI, docs and model prompts.
+Status: rule from the user, 2026-09-18; state names reconciled with the code and the board, 2026-09-22; card kind, change, split and the run hierarchy settled by [DEC-26](DECISIONS.md#dec-26--one-vocabulary-for-the-kind-of-card-and-the-run), 2026-09-24 · Applies to the product, the dashboard, the CLI, docs and model prompts.
 Related: [SPINE.md](SPINE.md) (voice), [specs/dashboard.md](specs/dashboard.md) and [specs/planner-pm.md](specs/planner-pm.md) (where these names appear), [DECISIONS.md](DECISIONS.md#dec-05) (one persona).
 
 ## The rule
@@ -20,10 +20,10 @@ If you are unsure whether something "takes a name", it doesn't. Use the plain wo
 | People on a card | Owner (the responsible person) · Delegate (who builds it: the Worker or a person) · Accepter · *Assignee* only as the alias for Owner in the query language and in exports to trackers whose field has that name |
 | Views | Status · Project manager · Review · Board · List · Story map · Insights · Runs · Dependencies · Playbook · Integrations · Machine · Ledger · Registry · Workspace · Settings. *Inbox* is retired as a view; its route opens Review › *Needs you* |
 | Work | Card · Subtask · Epic · Cycle · Label · Priority (Urgent, High, Medium, Low, No priority) · Points · Due date · Backlog |
-| Card states, stored (CLI, errors, ledger, pipeline view) | Backlog · Ready · Planning · In Progress · Verify · Review · Done · Parked · Rejected — one name per state, the same in the column heading of pipeline view, the stored value's label, an error message and the design (`vocabulary.ts` `COLUMN_LABELS`) |
-| Board columns (the default board, and the Jira export) | Backlog · To do (Ready, Planning) · In progress (In Progress, Verify) · In review (Review) · Done · On hold (Parked, shown only when non-empty) · Won't do (Rejected, a filter, not a column) |
-| Card kinds | Contract · Storage · Flow · Rules · Research · UI · Wiring; for existing code Feature · Fix · Characterize · Refactor · Upgrade |
-| The Worker's run | **Step**: one model call and the tool calls it makes — the step budget counts steps, and the code's turn index counts the same thing, so a "turn" in the code is a step ([worker-loop](specs/worker-loop.md) Contract defines it). **Attempt**: one run of a card to a stop. **Sample**: one of several attempts compared by the gates. The old design's use of *turn* for all the steps of an attempt is retired. **Change kind**: what a card does to existing code — build, characterize, refactor, upgrade ([gates](specs/gates.md)) — separate from its card kind |
+| Card states, stored (CLI, errors, ledger, pipeline view) | Backlog · Ready · Planning · In progress · Verify · Review · Done · Parked · Rejected — one name per state, in sentence case, the same in the column heading of pipeline view, the stored value's label, an error message and the design (`vocabulary.ts` `COLUMN_LABELS`, whose `In Progress` becomes *In progress* under [dashboard](specs/dashboard.md) NEW-dashboard-2) |
+| Board columns (the default board, and the Jira export) | Backlog · To do (Ready, Planning) · In progress (In progress, Verify) · In review (Review) · Done · On hold (Parked, shown only when non-empty) · Won't do (Rejected, a filter, not a column) |
+| Card kind, change and split | The labels in [Card kind, change and split](#card-kind-change-and-split) below — *Contract · Storage · Flow · Rules · Spike · Research · Review*, with *UI* and *Wiring* as display refinements; *Feature · Fix · Characterize · Refactor · Upgrade* for the change |
+| The Worker's run | **Attempt ⊃ sample ⊃ step** — defined once in [The run](#the-run) below |
 | Quality | Gates · Evidence · Parse · Types · Tests · Lint · Size · Acceptance tests · Done when · May edit · Findings (the Reviewer's) |
 | Delivery | Requirement · Must-have · Nice-to-have · Slice · Walking skeleton · Appetite · Release · Depth profile (Prototype, Internal tool, Production, Regulated); requirement states Proven · Passing, strength unmet · Planned · Unplanned · Suspect · Cut |
 | Actions | Accept · Send back · Park · Unpark · Reject · Reopen · Revert accept · Acknowledge · Approve · Apply · Discard · Apply all · Import · Export · Sync · Pull · Push |
@@ -31,6 +31,44 @@ If you are unsure whether something "takes a name", it doesn't. Use the plain wo
 | Machine | Memory · Model · Health checks · Worktrees · Sandbox |
 
 *Working*, *Checking* and *Closed* are **retired**: they were a third vocabulary for the same states (neither the stored names nor the board's), and a person who read `verify` in an error could not find a column called *Checking*.
+
+## Card kind, change and split
+
+One card has three separate stored fields ([DEC-26](DECISIONS.md#dec-26--one-vocabulary-for-the-kind-of-card-and-the-run)). This table is the only label map for them: the dashboard, Seshat, the CLI and the exports read their words from it (through `vocabulary.ts`), and no second map exists ([dashboard](specs/dashboard.md) NEW-dashboard-2). The stored value appears only in mono, where a developer might grep for it.
+
+| Field | Stored value | Label people see | What it means |
+|---|---|---|---|
+| `kind` — what the card is; selects the Worker's tools, the red-first rule and rule scoping ([worker-loop](specs/worker-loop.md), [gates](specs/gates.md), [context](specs/context.md)); closed, `packages/kernel/src/card_class.ts` | `interface` | **Contract** | A type, signature or interface contract, before its implementation (a database schema is Storage). An enabler, not a SPIDR story; never the SPIDR *Interface* slice |
+| | `data` | **Storage** | A migration, fixture, schema change or seed |
+| | `implement` | **Flow** | The behaviour behind a contract, end to end |
+| | `implement`, scope is UI files | **UI** (display refinement) | A Flow card whose scope is the user interface. Not a stored kind |
+| | `implement`, only connects finished parts | **Wiring** (display refinement) | A Flow card that joins parts already built. An enabler. Not a stored kind |
+| | `rule` | **Rules** | A validation, policy, invariant or edge case |
+| | `spike` | **Spike** | A question answered by throwaway code: notes and a probe test |
+| | `research` | **Research** | A question answered with sources; no diff |
+| | `review` | **Review** | Reading work, not producing it; no diff. Not the *Review* state or view: the card view says *Review card* where the two could be confused |
+| `change` — what the card does to existing code; selects its red/green rule ([gates](specs/gates.md)); closed. A new project's cards are all `feature` | `feature` | **Feature** | New behaviour |
+| | `fix` | **Fix** | A defect with a reproduction |
+| | `characterize` | **Characterize** | Pin today's behaviour before changing it |
+| | `refactor` | **Refactor** | Restructure without new behaviour |
+| | `upgrade` | **Upgrade** | Move a dependency to a new version |
+| `split` — how the story this card came from was split (SPIDR, as Mike Cohn defined it); absent on a card that was not split. Shown in the card's Plan tab and, with Learn on, beside the kind | `spike` | **Spike** | Uncertainty separated from implementation |
+| | `path` | **Path** | Happy path first, edge cases later |
+| | `interface` | **Interface** (the *user* interface) | Simplest user interface first. Never a type contract |
+| | `data` | **Data** | Restricted data variety first |
+| | `rules` | **Rules** | Relaxed business rules first |
+
+A tile or row shows at most two kind labels, the first primary (for example *Flow · UI*). *Change kind* and *SPIDR kind* are not used: the three fields are *kind*, *change* and *split*.
+
+## The run
+
+One hierarchy, used by every specification, the dashboard and the CLI ([DEC-26](DECISIONS.md#dec-26--one-vocabulary-for-the-kind-of-card-and-the-run)):
+
+- An **attempt** is one recorded run of a card to a stop. It holds one **sample**, or up to k under pass@k.
+- A **sample** is a sequence of steps.
+- A **step** is one model request and the tool calls it makes. The step budget counts steps (*8 of 32 steps*).
+
+*Turn* is the code's synonym for step (the `turn` field of `card/step`, the `--max-turns` flag) and is used in no specification, criterion or user-facing text. The old design's use of *turn* for all the steps of an attempt, and of *sample* for one of several attempts, is retired.
 
 ## Themed names (the complete list)
 
@@ -66,4 +104,6 @@ Checked against the dashboard (`packages/ui/web`), `PM_DESIGN.md` and the mockup
 | Board columns and states | NAMING listed *Working*, *Checking*, *Closed*; the code says In Progress, Verify, Rejected (`vocabulary.ts:92-102`); the board shows five professional columns. *Checking* and *Working* still leak into copy (`shell.js:243`, `evidence.js:98`). | Keep list reconciled above; the leaks are removed under dashboard NEW-dashboard-2. |
 | Tile | The dashboard design put a *W* badge on tiles the Worker builds. | A text chip *Worker* (ruling R10). |
 | MCP tool | `sekhemet_ask_merit` carried the persona's old name. | Renamed `sekhemet_ask_seshat` ([extensibility](specs/extensibility.md)). |
+| Card kinds | Three vocabularies: the kernel's seven stored kinds (`card_class.ts:34-41`), the dashboard's own `CardKind` of seven labels with no *Spike* or *Review* and `spike` shown as *Research* (`vocabulary.ts:19-43`), and a "card kind" list that mixed in the brownfield change values (design review B3). | One table above, per DEC-26: `kind`, `change` and `split` are separate fields with one label map; the dashboard's `CardKind` is folded into it under NEW-dashboard-2. |
+| Run terms | *Turn*, *step*, *sample* and *attempt* were defined two incompatible ways here and in worker-loop (design review B4). | One hierarchy, [The run](#the-run). |
 | Everything else | Views, fields, states, gates and actions all use keep-list words. No themed renames were found. | None. |

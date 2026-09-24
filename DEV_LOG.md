@@ -8,18 +8,32 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-22 on the change of builder model to **Claude Opus 5.5**. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`). Read Entries 24 and 23 first.*
+*Refreshed 2026-09-24. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 25 first.*
 
-1. **What we are doing now:** `docs/reference/MODERNIZATION_PLAN.md` — the Opus 5.5 pass over this AI brownfield. **Phase A** reviews all 16 domains (read-only, three agents at a time) into `docs/reference/COVERAGE.md`, while the **baseline** runs on the local machine: the thinking A/B on Cyber-Tiel, then a full scored frozen-suite run. **Phase B** changes what the review justifies; **Phase C** re-measures.
-2. **Positioning** (owner, 2026-09-22): *a harness for professional teams*. Claims table in `docs/design/HARNESS_DESIGN.md` → "Product definition". v1 stays 100% local.
-3. **State:** `pnpm gate` green. MVP_PATH steps 1–8 done; reachability, regression and architecture gates on every card. `pnpm release-gate` (DEFINITION_OF_DONE v2 §4, rungs 1–8) exists and passes rungs 6–8.
-4. **Measurement:** suite `1.0.0`, hash `192b6e95fa3c`. Runs 4 (Nail) and 5 (Cyber-Tiel) were partial and are attributed in `docs/reference/SUITE_RUNS.md`; the fixes they forced are committed and not yet re-measured. No full scored run exists after the last harness change.
-5. **Rules and operations:** `CLAUDE.md` (rewritten 2026-09-22 — read it; it replaces the stale Gemini-relay version) and `DEFINITION_OF_DONE.md` v2. Every commit carries `GateStatus`.
-6. **Owner decision pending:** a ceiling run (the frozen suite with a frontier model as Worker, measurement only).
+1. **Where we are:** design v3 is complete — the end of Phase A.5 in `docs/reference/MODERNIZATION_PLAN.md`. Next is Phase B, spec-driven, in the plan's order: **B0** the approved cuts, then **B1** Worker containment (security.md), then **B2** measurement validity and the baseline.
+2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
+3. **Done means:** `DEFINITION_OF_DONE.md` v3 — §5 for a card, a spec, a workstream and a release; §6 for the product.
+4. **Measurement:** suite `1.0.0`, hash `192b6e95fa3c`; thinking A/B arm "off" 10/14 on `468f67f` (SUITE_RUNS). The remaining arms wait on M1, M3, M8 (workstream B2.1).
+5. **Owner decisions still open:** listed in Entry 25.
+6. **Operations:** `CLAUDE.md`. Every commit carries `GateStatus`.
 
 ---
 
 ## Detailed Session Log
+
+### Entry 25 — 2026-09-22 → 2026-09-24 (Phase A decided; design v3 written, traced and reviewed)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver, in Claude Code; spec writers, tracers and reviewers as subagents (at most three at once, disjoint files).
+
+- **Owner decisions D1–D7** (2026-09-22): keep Cyber-Tiel (DEC-04); merge — `main` fast-forwarded to `fb59ba2` (DEC-10); one persona for people (DEC-05); cuts (DEC-09, with `container.ts` found reachable and returned to the owner); SPDX parsing and official API clients approved (DEC-08); the ceiling run after local v1 (DEC-07); a company-server minimum in v1 (DEC-06).
+- **Design v3.** The 3,539-line design and its companions were rebuilt as `SPINE.md`, `DECISIONS.md`, fifteen specifications and `OPEN_QUESTIONS.md`; `DEFINITION_OF_DONE.md` v3 defines done for a spec, a workstream and the product; the plan gained Phase A.5 and an ordered Phase B.
+- **Nothing lost.** Four exhaustive traces (2,148 items) compared old and new; three fix passes applied 28 rulings; a verification pass wrote `DESIGN_TRACE.md`. The old files are deleted (readable at `fb59ba2`).
+- **Research added this session** (all in `docs/research/`): web research groups A–D; the Worker-method literature, paper reviews and public-data survey saved from scratch; **project done and depth** (owner request → DEC-11, P13, P14: a project's done is computed from a requirement graph, never claimed; depth from a profile, a quality checklist, comparables and a walkthrough); tests and brownfield; teams, data and change; the team server.
+- **Security fixes committed earlier in the session** (`47097ec`): S1 and most of S2.
+- **Interrupted twice by usage limits;** checkpoints `5bec49c` and `c8cd903` kept the work.
+
+**Where the cards stop:** no card ran this session after the thinking A/B arm "off" (10/14). Phase B starts at B0.
+
 
 ### Entry 24 — 2026-09-22 (builder model changed to Opus 5.5; the handoff)
 

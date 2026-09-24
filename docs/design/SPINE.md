@@ -82,7 +82,7 @@ flowchart LR
 | `planner` | Decomposition, estimation, replanning | [planner-pm](specs/planner-pm.md) |
 | `eval` | The frozen suite, bake-off, statistics | [measurement](specs/measurement.md) |
 | `ui` | Dashboard tokens, vocabulary, web modules | [dashboard](specs/dashboard.md) |
-| `sdk` | Programmatic access for integrations | [extensibility](specs/extensibility.md) |
+| `sdk` | Programmatic access for integrations — cut pending the owner ([O4](../reference/OPEN_QUESTIONS.md#owner-decisions)) | [extensibility](specs/extensibility.md) |
 | `apps/harness` | CLI, front door, server, PM, research, runner | [surface](specs/surface.md), [runtime](specs/runtime.md) |
 
 ## Locked for v1
@@ -129,12 +129,12 @@ One row per spec, from its front matter; `docs.spec.ts` fails the build when the
 | Spec | Status | Changes it carries |
 | --- | --- | --- |
 | [surface](specs/surface.md) | `partial` | P10, S10, T4, T10 + 5 new |
-| [kernel](specs/kernel.md) | `partial` | S4, S7, P3 + 8 new |
-| [worker-loop](specs/worker-loop.md) | `partial` | M1, M2, M3, T3 + 8 new |
+| [kernel](specs/kernel.md) | `partial` | S4, S7, P3 + 9 new |
+| [worker-loop](specs/worker-loop.md) | `partial` | M1, M2, M3, T3 + 9 new |
 | [context](specs/context.md) | `partial` | M1, M5, M8, P1, T2 + 6 new |
 | [gates](specs/gates.md) | `partial` | T1, T2, M6, M10, P1 + 8 new |
-| [models](specs/models.md) | `partial` | M4, M7, M11 + 10 new |
-| [measurement](specs/measurement.md) | `partial` | M9, M10, M12, T7, T8 + 4 new |
+| [models](specs/models.md) | `partial` | M4, M7, M11 + 11 new |
+| [measurement](specs/measurement.md) | `partial` | M9, M10, M12, T7, T8, T11 + 4 new |
 | [planner-pm](specs/planner-pm.md) | `partial` | P1, P2, P6, P13 + 7 new |
 | [design-stage](specs/design-stage.md) | `partial` | P2, P7, P14, S8 + 5 new |
 | [review-git](specs/review-git.md) | `partial` | S5, S6, P8 + 5 new |

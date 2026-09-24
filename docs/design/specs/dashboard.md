@@ -79,12 +79,12 @@ The dashboard is where all three audiences meet Sekhemet. For **developers** it 
 | **Backlog** | backlog | — |
 | **To do** | ready, planning | *Being planned* (pencil) · *Blocked · waits on X* |
 | **In progress** | in_progress, verify | *Step 5 of 32 · editing src/hasher.ts* (running) · *Checking gates…* · *Waiting for the Reviewer* · *Types failed · retrying (rung 1 of 4)* (fail) · *Paused for Seshat · step 5 of 32* |
-| **In review** | review | *4 of 4 gates passed · waiting 2h* (amber after 2 h). The Review WIP limit sits here |
+| **In review** | review | *4 of 4 gates passed · waiting 2h* (amber after 2 h) · *Accepted · PR #n open* (held `awaitingMerge`, not counted against the limit, [review-git §2.5.7](review-git.md)). The Review WIP limit sits here |
 | **Done** | done | *Merged ba1338e · 2h ago* |
 | *On hold* (only when non-empty) | parked | *Paused for memory*, *Looping · parked*, *Decision needed*, or the person's note |
 | *Won't do* (a filter, not a column) | rejected | — (split parents read *Split into 3 cards*) |
 
-   Verify still gates entry to In review (a transition, not a column). **Pipeline stages** (`⇧V`) splits To do and In progress back into the nine machine columns for operators, named as stored (Backlog, Ready, Planning, In Progress, Verify, Review, Done, Parked, Rejected); the choice is kept per browser. Moving a card past a failing gate is never a board gesture: a gate override is a recorded human decision with a reason, made from the CLI or the API ([kernel](kernel.md)); the card view shows that it happened.
+   Verify still gates entry to In review (a transition, not a column). **Pipeline stages** (`⇧V`) splits To do and In progress back into the nine machine columns for operators, named as stored, in sentence case (Backlog, Ready, Planning, In progress, Verify, Review, Done, Parked, Rejected; [NAMING](../NAMING.md)); the choice is kept per browser. Moving a card past a failing gate is never a board gesture: a gate override is a recorded human decision with a reason, made from the CLI or the API ([kernel](kernel.md)); the card view shows that it happened.
 2. **Columns.** Fluid (`min 200px`, `max 300px`, 8 px gap; 8 px body padding, 16 px board padding). **Empty columns collapse into chips above the board** (*Done 4 ›*), never rotated rails; Done is a full column whenever it has cards. In review and On hold are pinned in view when the board scrolls horizontally. Cards in a column keep their recorded order (a fractional `order_key`, [kernel](kernel.md)), except In review and On hold, which sort by wait time, longest first.
 3. **Column header** (36 px, 0 12 px padding): name · `count / limit` for WIP-limited columns · the column's points sum (*13 pts*) · a 2 px capacity bar (`--text-secondary`; amber at capacity; red over) · a Learn *?* when Learn is on · a `⋯` menu (sort by priority, wait time or recently changed; collapse). The In review limit is always shown with its derivation (*limit 3, from 60 review minutes a day at ~20 min per card*); no limit is hidden for being large. At capacity the header says, as visible text in its popover, *Full. The Worker holds finished cards until you clear one.*
 4. **Tile anatomy** (88 px compact; 112 px comfortable adds a one-line spec excerpt and budget detail; width follows the column; 8/12 px padding, 4 px row gap, 6 px radius):
@@ -105,7 +105,7 @@ The dashboard is where all three audiences meet Sekhemet. For **developers** it 
    - **Priority glyph**: a fixed 12 px slot; three rising bars (1–3 lit, unlit bars in `--border-strong`, stroke 3 so the icon test holds) for Low/Medium/High in `--text-secondary`, a boxed exclamation for Urgent in `--text-primary`; the shape, not colour, carries priority. No glyph for *No priority*; the list's Priority column is where priorities scan as a column.
    - **Epic chip** uses one of eight muted epic hues (chrome stays neutral). **Labels**: 11 px secondary text in a 1 px outline.
    - **Gate pips**: one 12×12 box per gate the card's evidence ran, in `gates.toml` order — ✓ passed, ✕ failed, – skipped, ring running, empty not run — with no letters, and **never a gate the evidence did not run** (no synthesised *Parse: pass*); the popover (focus or hover) lists each gate's name, state, duration and first error line.
-   - **Step-budget bar** (2 px) only while In progress: secondary by default, lapis while running, amber ≥ 75%, red at 100%, with *8 of 32 steps*. Card kind (Contract, Flow, Rules…) and difficulty move to the peek drawer and Facts.
+   - **Step-budget bar** (2 px) only while In progress: secondary by default, lapis while running, amber ≥ 75%, red at 100%, with *8 of 32 steps*. Card kind (Contract, Flow, Rules…, from [NAMING](../NAMING.md#card-kind-change-and-split)'s map) and difficulty move to the peek drawer and Facts.
    - **Work item age** shows on every In progress and In review tile (Kanban Guide), turning amber past the 85th-percentile cycle time.
    - **Tile states**: hover `--bg-overlay`; focus a 2 px accent ring; selected (`x`) a `--border-strong` border and a checkbox; focus and selection are visibly distinct and can co-exist. Done tiles are secondary text with no bars.
 5. **Moves between columns happen only through recorded, gated actions** (triage, decisions, proposals); there is no drag between columns. **Reordering within a column** (drag or keys) is allowed and is recorded as one event.
@@ -120,7 +120,7 @@ The dashboard is where all three audiences meet Sekhemet. For **developers** it 
 14. **Swimlanes** by Epic (with its progress bar), Owner, Priority or Cycle; each lane header (32 px) has count and points; the *No epic* (etc.) lane is last; lanes collapse.
 15. **List view** (`#/board/list`, `v`): a real table with columns Priority · Key · Title (with kind) · State · Epic · Cycle · Points · Labels · Owner · Delegate · Due · Updated; 36 px rows; the title fluid, other columns fixed, numbers right-aligned; group headers with count and points; headers are buttons (Tab-reachable) that sort, and a second click reverses (stable, priority as tiebreak); inline edits by click or key with an anchored menu — the **Labels** menu is a checkable list with a *Create label "…"* row; **Due** offers *Today*, *End of this week*, *End of the current cycle*, *No due date* and a date; edits are optimistic, revert on failure and say why; `externalRef` links to the issue. A selected row has a 2 px `--text-primary` left bar.
 16. **Bulk bar** (48 px, bottom centre, 16 px from the bottom, radius 6, `--bg-overlay` with a 1 px `--border-strong` edge) with the selection's count and points: the field actions, **Park** (one reason, one park per card), **Ask Seshat** (the selection as mentions, not sent); one toast reports the result (*Set on 2 of 3. hasher: the server returned 409.*).
-17. **Story map** (`#/board/map`): the backbone of user activities across in user order, the release slices as horizontal bands beneath (the first, the walking skeleton, marked), and each requirement in its slice with its state: **proven**, **passing, strength unmet**, **planned**, **unplanned**, **suspect** (revised since its cards or tests were linked) or **cut**, each an icon plus words ([planner-pm §2.15](planner-pm.md)). Cards keep their tiles and states under their requirement. The story map is a view of the board's cards, not a separate epic hierarchy. **Burn-up**: done points and total scope as two lines per cycle and per project, so scope growth is visible apart from velocity.
+17. **Story map** (`#/board/map`): the backbone of user activities across in user order, the release slices as horizontal bands beneath (the first, the walking skeleton, marked), and each requirement in its slice with its state: **proven**, **passing, strength unmet**, **planned**, **unplanned**, **suspect** (revised since its cards or tests were linked) or **cut**, each an icon plus words ([planner-pm §2.15](planner-pm.md); the requirement graph, walking skeleton and release slices are [PROJECT_DONE_AND_DEPTH](../../research/PROJECT_DONE_AND_DEPTH.md)'s). Cards keep their tiles and states under their requirement. The story map is a view of the board's cards, not a separate epic hierarchy. **Burn-up**: done points and total scope as two lines per cycle and per project, so scope growth is visible apart from velocity.
 18. **Dependencies** (`#/graph`): cards laid out in layers by their longest dependency path (`dag.js`) with `dependsOn` edges; nodes are focusable, named elements (not inside an image), and the view is hidden when there are no edges.
 
 ### 2.5 Review
@@ -148,7 +148,7 @@ The dashboard is where all three audiences meet Sekhemet. For **developers** it 
 - **Evidence** — the Review composition, full width.
 - **Plan** — spec; *Done when* with each criterion's id and approval; the requirements it traces to, with version and a *suspect* mark when revised since; *May edit* and protected *Acceptance tests* (as example tables where staged that way, with their approval state); budgets (steps, tokens, seconds as used/budget bars); difficulty as a 10-segment meter with routing (*Direct / Edit sketch / Split*) and the edit sketch when there is one; *Waits on* and *Unblocks*; the slice's rationale; the planner's repair plan for attempt 2+, read from the card's dossier ([worker-loop](worker-loop.md)).
 - **Steps** — one row per step: tool calls (`write_file src/hasher.ts`) with their observation summaries, gate results, tokens and time right-aligned; loop detection annotated where it fired; the final row states the stop. Live steps append from `card/step` events with no animation, and the running step shows the model's output as it streams (`event: tokens`; NEW-dashboard-3); auto-follow pauses when scrolled up (*3 new steps ↓*); `write_file` rows expand to the written content.
-- **Thread** — the card's ledger timeline in sentences (`/api/events?card=`, newest first, paged): created, moved, returned (note as a quote), parked, decisions, delegated, accepted with sha and whether the accept was independent.
+- **Thread** — the card's ledger timeline in sentences (`/api/events?card=`, newest first, paged): created, moved, returned (note as a quote), parked, decisions, delegated, accepted with sha and whether the accept was independent, or auto-accepted with the name of the person whose standing decision allowed it ([review-git §2.5.6](review-git.md)).
 - **Files** — path, role (*May edit* / *Protected test* / *Outside scope*), `+/−`, gate failures per file; a row jumps to the file in Evidence.
 - Tabs with no data say so (*No steps yet. The Worker hasn't started this card.*).
 
@@ -178,7 +178,7 @@ The dashboard is where all three audiences meet Sekhemet. For **developers** it 
 
 `#/status` (`g s`; the phone's first tab):
 1. A **sentence headline** in plain words from the ledger (*On track: 4 of 6 cards done. 1 needs a new plan; Seshat suggests splitting it.*).
-2. **What's proven**, per release slice: *9 of 11 must-haves proven*, with requirements whose tests pass but whose strength rule is unmet counted apart (*2 passing, not yet strong enough*) and suspect ones named; and the appetite used, in plain words (*18 of 24 cards, 3 of 5 days*).
+2. **What's proven**, per release slice ([PROJECT_DONE_AND_DEPTH](../../research/PROJECT_DONE_AND_DEPTH.md): done is computed from evidence and closed by a person, never claimed): *9 of 11 must-haves proven*, with requirements whose tests pass but whose strength rule is unmet counted apart (*2 passing, not yet strong enough*) and suspect ones named; and the appetite used, in plain words (*18 of 24 cards, 3 of 5 days*).
 3. **Burn-up** for the current cycle or project.
 4. **Needs you**, each item with plain buttons (*Review it*, *Answer*, *Unpark*; for a slice at its appetite, Seshat's three choices *Accept as it is*, *Cut the nice-to-haves*, *Extend*; for a proposed release, *Read the notes* and *Tag the release*; for tests awaiting approval, *Check the examples*).
 5. **What changed today** — the standup in plain mode ([planner-pm](planner-pm.md)).
@@ -190,7 +190,7 @@ The dashboard is where all three audiences meet Sekhemet. For **developers** it 
 
 1. **Off for experts, on for learners**, set by the first-run question and toggled by a labelled **Learn** button (book icon and the word) in the topbar, the footer, Settings and the palette; kept per browser. It sets one `data-learn` attribute; **when off it adds no DOM and no layout**.
 2. **Contextual, dismissible, findable again** (NN/g): when on, key terms get a dotted underline and a small *?* button — on column headers, the WIP count and bar, gate pips and the gates strip, the points field, the cycle header, each Insights chart, the story map's slices and requirement states, and Seshat's proposals (*I split this Path-first because…*). The *?* opens an **accessible popover** (keyboard reachable, not a `title`): two sentences on *what it is*, one line **from your own numbers** (*In review holds at most 3 because you review about 60 minutes a day and a review takes about 20*), and one link to the canon (Kanban Guide, INVEST, SPIDR — linked, not copied: CC BY-SA). Standard conventions are not explained.
-3. **The Learn sheet**: 8–10 short lessons as a checklist — why each column exists and what moves a card; WIP limits and Little's law from their numbers; thin vertical slices (SPIDR) and INVEST; done = gates + a person's accept, and a project done = its must-haves proven; points versus time; cycles, burn-up and cumulative flow; work item age and the service-level expectation; why review is the bottleneck. **Show me** highlights the live element.
+3. **The Learn sheet**: 8–10 short lessons as a checklist — why each column exists and what moves a card; WIP limits and Little's law from their numbers; thin vertical slices (SPIDR) and INVEST; done = gates + a person's accept, and a project done = its chosen slices proven *and* accepted by a person ([planner-pm §2.15](planner-pm.md)); points versus time; cycles, burn-up and cumulative flow; work item age and the service-level expectation; why review is the bottleneck. **Show me** highlights the live element.
 4. Content lives in one pure module (`learn.ts`), unit-tested and shared with Seshat's teaching mode. Empty states double as learning cues.
 
 ### 2.10 Insights
@@ -234,9 +234,9 @@ The dashboard is where all three audiences meet Sekhemet. For **developers** it 
 | --- | --- |
 | Stop reasons | Passed · *All gates passed on step N.* · pass — Passed after a planner retry (`passAfterEscalation`) · pass — Out of steps · *Used all 32 budgeted steps without passing.* · fail — Looping · *Repeated the same actions without changing any file.* · fail — Stalled · *No file changed for 3 steps.* · fail — Couldn't fix · *Tried N repairs; the same gate kept failing.* · fail — **Paused for memory** · *Stopped safely at 94% memory. Resumable.* · **parked, not fail** (a safety stop) — Paused for quota · parked — Harness error · *Sekhemet failed, not the Worker.* · fail — Out of scope · *Tried to edit a file this card may not touch.* · fail — Too hard for this model · *Needs a split or a stronger model.* · parked — Stopped by you · neutral |
 | Gates | Parse · Types · Tests · Lint · Size · Visual (id kept in mono in evidence; Types shows its command); states Passed · Failed · **Skipped** (configured, not run because an earlier blocking gate failed) · **Not run** (the card never reached gates) · Running; *4 of 4 gates passed*; Size's sentence *2 files, +11 −0 (limit 3 files, 200 lines)* |
-| Card kinds | Contract · Storage · Flow · Rules · Research · UI · Wiring (at most two, the first primary), and for existing code Feature · Fix · Characterize · Refactor · Upgrade; each with a one-line description in its popover. With Learn on, a SPIDR kind names its slice — Flow → Path, Storage → Data, Rules → Rules, Research → Spike, UI → Interface (the *user* interface) — and Contract and Wiring are named as enablers, not SPIDR slices ([planner-pm §2.2](planner-pm.md)) |
+| Card kind, change and split | Taken from [NAMING](../NAMING.md#card-kind-change-and-split)'s one map, never a second list (NEW-dashboard-2): **kind** — `interface` Contract · `data` Storage · `implement` Flow (shown as UI or Wiring when its scope is UI files or it only connects finished parts) · `rule` Rules · `spike` Spike · `research` Research · `review` Review, at most two labels, the first primary; **change** — Feature · Fix · Characterize · Refactor · Upgrade; each with a one-line description in its popover. With Learn on, a split child names its SPIDR axis from its stored `split` (Spike, Path, Interface — the *user* interface —, Data, Rules), never derived from its kind, and Contract and Wiring are named as enablers, not SPIDR slices ([planner-pm §2.2](planner-pm.md)) |
 | Requirement states | Proven · Passing, strength unmet · Planned · Unplanned · Suspect · Cut |
-| Card facts | *Done when* (criteria) · *May edit* (scope) · *Acceptance tests* (protected) · *Waits on* / *Unblocks* · *Difficulty 6/10* · *Why it stopped* · *Checkpoints* · *Gate contract* · *8 of 32 steps* (a step is one model call and its tool calls, [NAMING](../NAMING.md)) · *Tokens 16.8k in · 1.4k out* · *Built by* |
+| Card facts | *Done when* (criteria) · *May edit* (scope) · *Acceptance tests* (protected) · *Waits on* / *Unblocks* · *Difficulty 6/10* · *Why it stopped* · *Checkpoints* · *Gate contract* · *8 of 32 steps* (a step is one model request and the tool calls it makes; an attempt holds one or more samples of steps, [NAMING](../NAMING.md#the-run)) · *Tokens 16.8k in · 1.4k out* · *Built by* |
 | Actions | Accept · *Merges to main as one commit.* — Send back · *Returns the card to Ready with your note for the Worker.* — Park · *Sets the card aside. Nothing runs until you unpark it.* |
 | Errors | What, why, action: *Couldn't load evidence for hasher. The server returned 500.* `Retry`; a refused accept quotes the server (*Card is in Verify, not Review.*); *This action must come from the dashboard. Reload the page.* |
 
@@ -278,7 +278,7 @@ The dashboard is where all three audiences meet Sekhemet. For **developers** it 
 | Filter language, proposal diffs, PM markdown, cycle progress, flow maths, waiting phases, capability rows, learning views | `packages/ui/src/pm.ts` (to split by concern) |
 | New pure modules | `learn.ts` (lessons), `keymap.ts` (one keymap for cheat sheet and palette), board/tile/nav models |
 | Web modules | `packages/ui/web/*.js` (shell, keys, board, tile, lanes, list, viewbar, fields, bulk, review, evidence, gates, failures, diff, triage, decision, card tabs, steps, pm_panel/pm_view/pm_thread/proposals, insights, runs, ledger, machine, sparkline, playbook, learning_view, registry, workspace, graph, dag, integrations; new settings, story map) |
-| Shapes the page depends on (named, not copied) | `card.display` (`vocabulary.ts` `describeCard`); the `card/step` event `{ id, turn, calls, gate?, usage }` (`execute.ts:230-250`, `stepEventPayload`); `event: tokens { cardId, text }` (`server.ts:1164`); the transcript `{ attempt, file, steps }` (`/api/cards/:id/transcript`); `/api/events?since=&card=&limit=&order=desc` → `{ events, verification, nextCursor }`; `/api/machine` and `event: machine` every 5 s (`server.ts:570-572`); `/api/gates` → `{ gates, protected, maxFiles, maxDiffLines, sha256, empty }` (`server.ts:803`); `/api/meta` → `{ project, repoPath, triage, reviewMinutesPerDay, version, gitUser }`; `/api/playbook` → `{ rules, candidates }`; `/api/integrations` entries with `tier`, `name`, `detail`, `enabled`, `lastSyncAt`. PM shapes in [PM_CONTRACT](../PM_CONTRACT.md); the page uses these optional fields when present: `PmStatus.since/step/etaSeconds`, `cycleTime[].doneAt`, a thread-level `model`, `epics[].progress.pointsDone`, integration `enabled`, `lastSyncAt`, reply `cites[].url/label`, the import response's `messageId` |
+| Shapes the page depends on (named, not copied) | `card.display` (`vocabulary.ts` `describeCard`); the `card/step` event `{ id, turn, calls, gate?, usage }` (`execute.ts:230-250`, `stepEventPayload`; `turn` is the code's name for the step index, [NAMING](../NAMING.md#the-run)); `event: tokens { cardId, text }` (`server.ts:1164`); the transcript `{ attempt, file, steps }` (`/api/cards/:id/transcript`); `/api/events?since=&card=&limit=&order=desc` → `{ events, verification, nextCursor }`; `/api/machine` and `event: machine` every 5 s (`server.ts:570-572`); `/api/gates` → `{ gates, protected, maxFiles, maxDiffLines, sha256, empty }` (`server.ts:803`); `/api/meta` → `{ project, repoPath, triage, reviewMinutesPerDay, version, gitUser }`; `/api/playbook` → `{ rules, candidates }`; `/api/integrations` entries with `tier`, `name`, `detail`, `enabled`, `lastSyncAt`. PM shapes in [PM_CONTRACT](../PM_CONTRACT.md); the page uses these optional fields when present: `PmStatus.since/step/etaSeconds`, `cycleTime[].doneAt`, a thread-level `model`, `epics[].progress.pointsDone`, integration `enabled`, `lastSyncAt`, reply `cites[].url/label`, the import response's `messageId` |
 | Endpoints consumed (defined in [runtime](runtime.md)) | `/api/board`, `/api/stream`, `/api/meta`, `/api/wip`, `/api/cards/:id`, `/api/evidence/:card?attempt=`, `/api/cards/:id/transcript`, `/api/events`, `/api/gates`, `/api/runs`, `/api/machine`, `/api/models`, `/api/playbook`, `/api/learning`, `/api/decisions`, `/api/pm/*`, `/api/cycles`, `/api/metrics/flow`, `/api/capability`, `/api/integrations`, `/api/import`, `/api/export`, `/api/goals`, `/api/standup`, `/api/signals`, triage `POST`s, `PATCH /api/cards/:id`; new: the requirement graph and slices, releases, test approvals, review records, project settings |
 | Routes | `#/status`, `#/pm`, `#/review`, `#/board`, `#/board/list`, `#/board/map`, `#/card/:id/:tab`, `#/insights`, `#/runs[/:id]`, `#/graph`, `#/playbook[/profile]`, `#/integrations`, `#/machine`, `#/ledger`, `#/registry`, `#/workspace`, `#/settings`, `#/inbox` (opens Review › Needs you) |
 | Per-browser settings | theme, density, Learn, first-run role, pipeline stages, panel open, saved views `{ name, query, group, layout }` |
@@ -316,7 +316,7 @@ The dashboard is where all three audiences meet Sekhemet. For **developers** it 
 | Review ergonomics: risk-ordered files, Reviewer coverage, acknowledgement before Accept, person-built label, supersessions and test approvals | not-built | Files grouped by role, then in the diff's own path order (`diff.js:173-175`) | NEW-dashboard-5 |
 | Tokens, contrast test, icons test | partial | `tokens.spec.ts`, `icons.spec.ts`; warn hue equals accent hue (40°); disabled Accept 2.1:1 (`base.css:163`); `border-strong` 1.3–1.9:1 on inputs; muted placeholders 2.6–3.6:1; body text 14–17:1 (computed from `tokens.ts:34-64`) | P12 |
 | Accessible names and targets | partial | PR switch unnamed (`integrations.js:230`); copy buttons 14×14; graph nodes inside `role="img"` (`graph.js:61`) | P12 |
-| One label map | not-built | Four status maps (`vocabulary.ts:93`, `insights.js:27-34`, `integrations.ts:276-284`, `pm.ts:871`); `Checking`/`Working` leak (`shell.js:243`, `evidence.js:98,151`) | NEW-dashboard-2 |
+| One label map | not-built | Four status maps (`vocabulary.ts:93`, `insights.js:27-34`, `integrations.ts:276-284`, `pm.ts:871`); `Checking`/`Working` leak (`shell.js:243`, `evidence.js:98,151`); `COLUMN_LABELS` says *In Progress* (`vocabulary.ts:98`); a separate seven-value `CardKind` (`contract`, `storage`, `flow`, `rules`, `research`, `ui`, `wiring`) with no *Spike* or *Review*, which files a `spike` slice as *Research* (`vocabulary.ts:19-43`) | NEW-dashboard-2 |
 | Behaviour tests for the web layer | not-built | ~60 modules checked for syntax only (`server.spec.ts:92-130`) | NEW-dashboard-2 |
 | Per-session mutation token, CSP, no framing | not-built | A constant `X-Sekhemet-Action: 1` header (`server.ts:116`) | S3c |
 | Server routes split by resource | not-built | `startDashboardServer` is one ~1,045-line closure (`server.ts:216-1261`) | T5 |
@@ -326,149 +326,153 @@ The dashboard is where all three audiences meet Sekhemet. For **developers** it 
 ### P3 — A professional board
 *The columns are the machine's nine states, the tile shows harness telemetry first, and nothing starts without the CLI.*
 
-- WHEN the board renders THE SYSTEM SHALL show Backlog, To do, In progress, In review and Done, plus On hold only when a card is parked, and map every stored state to exactly one of them as in §2.4.1.
-- WHEN a card in verify has a failing gate THE SYSTEM SHALL show it in In progress with a fail-tone badge naming the gate.
-- WHEN pipeline stages are toggled on THE SYSTEM SHALL show the nine stored states as columns and keep that choice after a reload.
-- WHEN a tile renders THE SYSTEM SHALL show the issue key, type icon, points (when set), owner, delegate chip (when a delegate is set), title, priority glyph (only when priority ≠ 0), epic chip, up to two labels, the status badge and, for In progress and In review, the work item age.
-- WHEN a tile's delegate is the Worker THE SYSTEM SHALL show the text chip *Worker* and no avatar or letter badge.
-- WHEN a card has a `blockedReason` or an unfinished dependency THE SYSTEM SHALL show a blocker flag in the fail tone with the link icon, the word *Blocked* and its cause.
-- WHEN the status text is longer than one line THE SYSTEM SHALL wrap it and never cut off the cause.
-- WHEN a card is in Backlog or Ready THE SYSTEM SHALL show no step budget on the board face.
-- WHEN the In review limit is computed THE SYSTEM SHALL show `count / limit` and its derivation whatever the limit's size, and every column header SHALL show its points sum.
-- WHEN a column is empty THE SYSTEM SHALL show it as a chip above the board, and Done SHALL be a full column whenever it has cards, at every width.
-- WHEN In review or On hold renders THE SYSTEM SHALL order its cards by wait time, longest first.
-- WHEN a person presses `c` or a column's `+` THE SYSTEM SHALL open a create form whose result is a proposal from the planner pipeline, and no message SHALL tell them to use the CLI.
-- WHEN a board has epics with slices THE SYSTEM SHALL render `#/board/map` with epics in backbone order and the first slice marked.
-- WHEN a cycle is in force THE SYSTEM SHALL render a burn-up with separate done and scope lines; WHEN the filter is `cycle:none` THE SYSTEM SHALL hide the cycle header.
-- WHEN a focused card changes column on a stream frame THE SYSTEM SHALL keep focus on it and scroll it into view, and SHALL scroll no other card.
-- WHEN the page is reloaded mid-run THE SYSTEM SHALL show the same columns, tiles and statuses as a page that stayed open.
-- WHEN a developer uses the board at 1440 and 1100 px THE SYSTEM SHALL let them find which card is blocked and why within three actions (DEFINITION_OF_DONE §6.4).
+- **DB-P3-1** WHEN the board renders THE SYSTEM SHALL show Backlog, To do, In progress, In review and Done, plus On hold only when a card is parked, and map every stored state to exactly one of them as in §2.4.1.
+- **DB-P3-2** WHEN a card in verify has a failing gate THE SYSTEM SHALL show it in In progress with a fail-tone badge naming the gate.
+- **DB-P3-3** WHEN pipeline stages are toggled on THE SYSTEM SHALL show the nine stored states as columns and keep that choice after a reload.
+- **DB-P3-4** WHEN a tile renders THE SYSTEM SHALL show the issue key, type icon, points (when set), owner, delegate chip (when a delegate is set), title, priority glyph (only when priority ≠ 0), epic chip, up to two labels, the status badge and, for In progress and In review, the work item age.
+- **DB-P3-5** WHEN a tile's delegate is the Worker THE SYSTEM SHALL show the text chip *Worker* and no avatar or letter badge.
+- **DB-P3-6** WHEN a card has a `blockedReason` or an unfinished dependency THE SYSTEM SHALL show a blocker flag in the fail tone with the link icon, the word *Blocked* and its cause.
+- **DB-P3-7** WHEN the status text is longer than one line THE SYSTEM SHALL wrap it and never cut off the cause.
+- **DB-P3-8** WHEN a card is in Backlog or Ready THE SYSTEM SHALL show no step budget on the board face.
+- **DB-P3-9** WHEN the In review limit is computed THE SYSTEM SHALL show `count / limit` and its derivation whatever the limit's size, and every column header SHALL show its points sum.
+- **DB-P3-10** WHEN a column is empty THE SYSTEM SHALL show it as a chip above the board, and Done SHALL be a full column whenever it has cards, at every width.
+- **DB-P3-11** WHEN In review or On hold renders THE SYSTEM SHALL order its cards by wait time, longest first.
+- **DB-P3-12** WHEN a person presses `c` or a column's `+` THE SYSTEM SHALL open a create form whose result is a proposal from the planner pipeline, and no message SHALL tell them to use the CLI.
+- **DB-P3-13** WHEN a board has epics with slices THE SYSTEM SHALL render `#/board/map` with epics in backbone order and the first slice marked.
+- **DB-P3-14** WHEN a cycle is in force THE SYSTEM SHALL render a burn-up with separate done and scope lines; WHEN the filter is `cycle:none` THE SYSTEM SHALL hide the cycle header.
+- **DB-P3-15** WHEN a focused card changes column on a stream frame THE SYSTEM SHALL keep focus on it and scroll it into view, and SHALL scroll no other card.
+- **DB-P3-16** WHEN the page is reloaded mid-run THE SYSTEM SHALL show the same columns, tiles and statuses as a page that stayed open.
+- **DB-P3-17** WHEN a developer uses the board at 1440 and 1100 px THE SYSTEM SHALL let them find which card is blocked and why within three actions (DEFINITION_OF_DONE §6.4).
 
 ### P4 — The Learn layer
 *The claims table says "not built"; teaching exists only in hover tooltips.*
 
-- WHEN Learn is off THE SYSTEM SHALL render zero Learn nodes and the same layout as without the feature.
-- WHEN Learn is on THE SYSTEM SHALL show a *?* on every column header, WIP count, gate pip group, points field, cycle header, Insights chart and story-map slice.
-- WHEN a *?* is activated by keyboard THE SYSTEM SHALL open a popover with the concept, a line computed from the project's own numbers, and a link to its canonical source, and `Esc` SHALL return focus to the *?*.
-- WHEN the In review limit is 3 at 60 review minutes a day THE SYSTEM SHALL say so in that popover with those numbers.
-- WHEN `learn.ts` is tested THE SYSTEM SHALL have a lesson for every board column, every gate family and every Insights metric.
-- WHEN Learn is on and a Contract card's kind is explained THE SYSTEM SHALL call it an enabler and SHALL NOT name a SPIDR slice for it.
-- WHEN a person answers the first-run question with "I'm learning" THE SYSTEM SHALL turn Learn on; with "I write code" it SHALL stay off.
-- WHEN a beginner with Learn on starts from the board THE SYSTEM SHALL let them reach the explanation of a WIP limit by keyboard alone (DEFINITION_OF_DONE §6.4).
+- **DB-P4-1** WHEN Learn is off THE SYSTEM SHALL render zero Learn nodes and the same layout as without the feature.
+- **DB-P4-2** WHEN Learn is on THE SYSTEM SHALL show a *?* on every column header, WIP count, gate pip group, points field, cycle header, Insights chart and story-map slice.
+- **DB-P4-3** WHEN a *?* is activated by keyboard THE SYSTEM SHALL open a popover with the concept, a line computed from the project's own numbers, and a link to its canonical source, and `Esc` SHALL return focus to the *?*.
+- **DB-P4-4** WHEN the In review limit is 3 at 60 review minutes a day THE SYSTEM SHALL say so in that popover with those numbers.
+- **DB-P4-5** WHEN `learn.ts` is tested THE SYSTEM SHALL have a lesson for every board column, every gate family and every Insights metric.
+- **DB-P4-6** WHEN Learn is on and a Contract card's kind is explained THE SYSTEM SHALL call it an enabler and SHALL NOT name a SPIDR slice for it.
+- **DB-P4-7** WHEN a person answers the first-run question with "I'm learning" THE SYSTEM SHALL turn Learn on; with "I write code" it SHALL stay off.
+- **DB-P4-8** WHEN a beginner with Learn on starts from the board THE SYSTEM SHALL let them reach the explanation of a WIP limit by keyboard alone (DEFINITION_OF_DONE §6.4).
 
 ### P5 — Status for non-developers, and starting a project without a terminal
 *Non-developers land in jargon; the standup, signals and goals APIs are unused; every "start" path ends at a terminal.*
 
-- WHEN a person opens `#/status` THE SYSTEM SHALL show a plain-language headline, the proven count per slice, a burn-up, *Needs you* with buttons, today's standup in plain mode, the fired signals as sentences, an Ask box and a **Start a new project** button.
-- WHEN any Status or plain-mode text is rendered THE SYSTEM SHALL contain no stop-reason code, card id without a title, or gate id without words.
-- WHEN **Start a new project** is pressed THE SYSTEM SHALL open Seshat with the start-project conversation, and applying its proposal group SHALL create the project's cards with no terminal step.
-- WHEN the palette query is "new project" THE SYSTEM SHALL offer *Start a new project*; WHEN a query matches nothing THE SYSTEM SHALL offer *Ask Seshat: <query>*.
-- WHEN the composer's cost line renders THE SYSTEM SHALL contain no API path, and a model id only in the idle line.
-- WHEN the Seshat panel header renders THE SYSTEM SHALL show *Seshat · Project manager* and the presence line, and SHALL show the model id only inside the header's details disclosure.
-- WHEN a non-developer at 400 px wide starts a project and then asks how it is going THE SYSTEM SHALL complete both without a terminal (DEFINITION_OF_DONE §6.4).
+- **DB-P5-1** WHEN a person opens `#/status` THE SYSTEM SHALL show a plain-language headline, the proven count per slice, a burn-up, *Needs you* with buttons, today's standup in plain mode, the fired signals as sentences, an Ask box and a **Start a new project** button.
+- **DB-P5-2** WHEN any Status or plain-mode text is rendered THE SYSTEM SHALL contain no stop-reason code, card id without a title, or gate id without words.
+- **DB-P5-3** WHEN **Start a new project** is pressed THE SYSTEM SHALL open Seshat with the start-project conversation, and applying its proposal group SHALL create the project's cards with no terminal step.
+- **DB-P5-4** WHEN the palette query is "new project" THE SYSTEM SHALL offer *Start a new project*; WHEN a query matches nothing THE SYSTEM SHALL offer *Ask Seshat: <query>*.
+- **DB-P5-5** WHEN the composer's cost line renders THE SYSTEM SHALL contain no API path, and a model id only in the idle line.
+- **DB-P5-6** WHEN the Seshat panel header renders THE SYSTEM SHALL show *Seshat · Project manager* and the presence line, and SHALL show the model id only inside the header's details disclosure.
+- **DB-P5-7** WHEN a non-developer at 400 px wide starts a project and then asks how it is going THE SYSTEM SHALL complete both without a terminal (DEFINITION_OF_DONE §6.4).
 
 ### P11 — The navigation
 *14 flat items, labels lost at laptop widths, no phone navigation, chords that are not mnemonics, a bare `t`.*
 
-- WHEN the dashboard has no runs, no dependency edges, no bake-off and one project THE SYSTEM SHALL show no Runs, Dependencies, Registry or Workspace item.
-- WHEN the window is 1100 px wide THE SYSTEM SHALL show every nav label.
-- WHEN the window is 400 px wide THE SYSTEM SHALL show a bottom bar with Status, Review, Board and PM, each reachable in one tap.
-- WHEN a person presses `g` then a letter THE SYSTEM SHALL go to the visible view the keymap assigns that chord; every visible view SHALL have exactly one chord, no two views SHALL share one, and `t` alone SHALL do nothing.
-- WHEN Playbook, Runs or Integrations is visible THE SYSTEM SHALL reach it with `g k`, `g u` or `g n` respectively, and from the palette.
-- WHEN the cheat sheet opens in a 900 px-high window THE SYSTEM SHALL show every key group without clipping, and every entry SHALL come from the same keymap as the palette.
-- WHEN decisions are waiting THE SYSTEM SHALL list them under Review › *Needs you* and `#/inbox` SHALL open that group.
+- **DB-P11-1** WHEN the dashboard has no runs, no dependency edges, no bake-off and one project THE SYSTEM SHALL show no Runs, Dependencies, Registry or Workspace item.
+- **DB-P11-2** WHEN the window is 1100 px wide THE SYSTEM SHALL show every nav label.
+- **DB-P11-3** WHEN the window is 400 px wide THE SYSTEM SHALL show a bottom bar with Status, Review, Board and PM, each reachable in one tap.
+- **DB-P11-4** WHEN a person presses `g` then a letter THE SYSTEM SHALL go to the visible view the keymap assigns that chord; every visible view SHALL have exactly one chord, no two views SHALL share one, and `t` alone SHALL do nothing.
+- **DB-P11-5** WHEN Playbook, Runs or Integrations is visible THE SYSTEM SHALL reach it with `g k`, `g u` or `g n` respectively, and from the palette.
+- **DB-P11-6** WHEN the cheat sheet opens in a 900 px-high window THE SYSTEM SHALL show every key group without clipping, and every entry SHALL come from the same keymap as the palette.
+- **DB-P11-7** WHEN decisions are waiting THE SYSTEM SHALL list them under Review › *Needs you* and `#/inbox` SHALL open that group.
 
 ### P12 — Colour and contrast
 *Gold and warning amber share a hue; disabled Accept is 2.1:1; input borders 1.3–1.9:1; placeholders carry instructions in muted text.*
 
-- WHEN the token test runs THE SYSTEM SHALL assert every text pair as used ≥ 4.5:1, body text (`--text-primary` on base and surface) ≥ 7:1, and every control edge, state icon and the accent ≥ 3:1, in both themes.
-- WHEN the parked/warning hue and the accent hue are compared THE SYSTEM SHALL find at least 20° of hue between them in both themes.
-- WHEN a button is disabled THE SYSTEM SHALL render it with a neutral fill, and its reason as adjacent text.
-- WHEN any input renders THE SYSTEM SHALL edge it with `--border-control`.
-- WHEN any placeholder or information-bearing text renders THE SYSTEM SHALL NOT use `--text-muted`.
-- WHEN the accessibility check runs over every route at 400, 1100 and 1440 px in both themes THE SYSTEM SHALL find no control without an accessible name, no target under 24×24 px on desktop, and no information available only on hover.
+- **DB-P12-1** WHEN the token test runs THE SYSTEM SHALL assert every text pair as used ≥ 4.5:1, body text (`--text-primary` on base and surface) ≥ 7:1, and every control edge, state icon and the accent ≥ 3:1, in both themes.
+- **DB-P12-2** WHEN the parked/warning hue and the accent hue are compared THE SYSTEM SHALL find at least 20° of hue between them in both themes.
+- **DB-P12-3** WHEN a button is disabled THE SYSTEM SHALL render it with a neutral fill, and its reason as adjacent text.
+- **DB-P12-4** WHEN any input renders THE SYSTEM SHALL edge it with `--border-control`.
+- **DB-P12-5** WHEN any placeholder or information-bearing text renders THE SYSTEM SHALL NOT use `--text-muted`.
+- **DB-P12-6** WHEN the accessibility check runs over every route at 400, 1100 and 1440 px in both themes THE SYSTEM SHALL find no control without an accessible name, no target under 24×24 px on desktop, and no information available only on hover.
 
 ### P13 — Where "done" is drawn (page side)
+*The requirement graph, release slices, test strength and appetite that decide a project's done are drawn nowhere ([PROJECT_DONE_AND_DEPTH](../../research/PROJECT_DONE_AND_DEPTH.md); behaviour in [planner-pm §2.15](planner-pm.md)).*
 
-- WHEN a project has a requirement graph THE SYSTEM SHALL show its story map with the backbone of user activities, the release slices as horizontal bands, and each requirement as proven, passing with strength unmet, planned, unplanned, suspect or cut.
-- WHEN the Status view shows a project THE SYSTEM SHALL state the proven count of must-have requirements per slice ("9 of 11 must-haves proven"), count requirements whose tests pass without meeting their strength rule apart from the proven ones, and state the appetite used, in plain words.
-- WHEN a requirement's tests pass but its test-strength record does not meet the profile's rule THE SYSTEM SHALL show *Passing, strength unmet* on the story map and in Status, and SHALL NOT show it as proven (research TESTS_BROWNFIELD PM-TQ-8).
-- WHEN a requirement has been revised since a card or test was linked to it THE SYSTEM SHALL mark it *Suspect* on the story map and in the card's Plan tab.
-- WHEN a slice reaches its appetite THE SYSTEM SHALL show Seshat's three choices (accept as proven, cut named nice-to-haves, extend) as buttons in Needs you.
-- WHEN a release is proposed for a slice THE SYSTEM SHALL show its notes and changelog in Needs you with a *Tag the release* button, and SHALL tag nothing without that press.
-- WHEN tests await a person's approval under the depth profile THE SYSTEM SHALL list them in Needs you and render each as its example table (given → expected) with Approve.
-- WHEN the Learn layer is on THE SYSTEM SHALL explain the walking skeleton, release slices, must-have versus nice-to-have, appetite and *strength unmet* where they appear.
+- **DB-P13-1** WHEN a project has a requirement graph THE SYSTEM SHALL show its story map with the backbone of user activities, the release slices as horizontal bands, and each requirement as proven, passing with strength unmet, planned, unplanned, suspect or cut.
+- **DB-P13-2** WHEN the Status view shows a project THE SYSTEM SHALL state the proven count of must-have requirements per slice ("9 of 11 must-haves proven"), count requirements whose tests pass without meeting their strength rule apart from the proven ones, and state the appetite used, in plain words.
+- **DB-P13-3** WHEN a requirement's tests pass but its test-strength record does not meet the profile's rule THE SYSTEM SHALL show *Passing, strength unmet* on the story map and in Status, and SHALL NOT show it as proven (research TESTS_BROWNFIELD PM-TQ-8).
+- **DB-P13-4** WHEN a requirement has been revised since a card or test was linked to it THE SYSTEM SHALL mark it *Suspect* on the story map and in the card's Plan tab.
+- **DB-P13-5** WHEN a slice reaches its appetite THE SYSTEM SHALL show Seshat's three choices (accept as proven, cut named nice-to-haves, extend) as buttons in Needs you.
+- **DB-P13-6** WHEN every card of a project is Done but a chosen slice has not been accepted by a person THE SYSTEM SHALL NOT describe the project as done anywhere, and Status SHALL show the slice awaiting acceptance in Needs you.
+- **DB-P13-7** WHEN a release is proposed for a slice THE SYSTEM SHALL show its notes and changelog in Needs you with a *Tag the release* button, and SHALL tag nothing without that press.
+- **DB-P13-8** WHEN tests await a person's approval under the depth profile THE SYSTEM SHALL list them in Needs you and render each as its example table (given → expected) with Approve.
+- **DB-P13-9** WHEN the Learn layer is on THE SYSTEM SHALL explain the walking skeleton, release slices, must-have versus nice-to-have, appetite and *strength unmet* where they appear.
 
 ### T5 — The dashboard server split by route group (page side)
 *The UI is served by one ~1,045-line closure; the server split itself is [runtime](runtime.md)'s.*
 
-- WHEN the route table is enumerated in a test THE SYSTEM SHALL resolve every endpoint in §3's consumed list to exactly one handler module, and the existing server specs SHALL pass unchanged.
+- **DB-T5-1** WHEN the route table is enumerated in a test THE SYSTEM SHALL resolve every endpoint in §3's consumed list to exactly one handler module, and the existing server specs SHALL pass unchanged.
 
 ### S3c — Dashboard hardening (page side)
-- WHEN a mutating request is sent without this page's session token THE SYSTEM SHALL refuse it, and the page SHALL send the token on every mutation it makes.
-- WHEN the page is loaded THE SYSTEM SHALL run with a Content-Security-Policy that allows no inline script and `frame-ancestors 'none'`, and every view SHALL still work.
-- WHEN model or repository text contains HTML THE SYSTEM SHALL render it as text in every view.
+- **DB-S3c-1** WHEN a mutating request is sent without this page's session token THE SYSTEM SHALL refuse it, and the page SHALL send the token on every mutation it makes.
+- **DB-S3c-2** WHEN the page is loaded THE SYSTEM SHALL run with a Content-Security-Policy that allows no inline script and `frame-ancestors 'none'`, and every view SHALL still work.
+- **DB-S3c-3** WHEN model or repository text contains HTML THE SYSTEM SHALL render it as text in every view.
 
 ### NEW-dashboard-1 — Evidence that stays readable
 *The gates strip, the product's central evidence element, breaks at 14 gates and on a phone (domain17 §2, top change 4). Not in COVERAGE.*
 
-- WHEN a card has 14 gates in 5 families THE SYSTEM SHALL show 5 grouped segments, failing groups first, and a *+n passed* overflow.
-- WHEN the strip renders at 400 px THE SYSTEM SHALL render it as a vertical list with no overlapping text.
-- WHEN a card in Planning has failing evidence THE SYSTEM SHALL show one badge describing its current state (*Needs a new plan*), never a failure mark on a stage name.
-- WHEN a card's evidence ran no Parse gate THE SYSTEM SHALL show no Parse segment or pip for it.
+- **DB-N1-1** WHEN a card has 14 gates in 5 families THE SYSTEM SHALL show 5 grouped segments, failing groups first, and a *+n passed* overflow.
+- **DB-N1-2** WHEN the strip renders at 400 px THE SYSTEM SHALL render it as a vertical list with no overlapping text.
+- **DB-N1-3** WHEN a card in Planning has failing evidence THE SYSTEM SHALL show one badge describing its current state (*Needs a new plan*), never a failure mark on a stage name.
+- **DB-N1-4** WHEN a card's evidence ran no Parse gate THE SYSTEM SHALL show no Parse segment or pip for it.
 
 ### NEW-dashboard-2 — A web layer under test, with one vocabulary
 *About 60 modules are checked for syntax only; four status maps; wave-named CSS; a hard-coded integrations roadmap (domain13 §3, §5). Not in COVERAGE beyond T9's general gaps.*
 
-- WHEN the board, tile and nav models are tested THE SYSTEM SHALL assert exact outputs for every stored state, including at least two negative cases per model.
-- WHEN the ledger fails verification THE SYSTEM SHALL disable Accept on Review, the card view and the peek drawer, asserted by a test.
-- WHEN the repository is searched for status-to-label maps THE SYSTEM SHALL find exactly one, in `vocabulary.ts`.
-- WHEN the vocabulary is asked for a stop reason it does not know THE SYSTEM SHALL return its humanised enum.
-- WHEN `/api/integrations` omits an integration THE SYSTEM SHALL NOT show it; WHEN it returns entries with tiers THE SYSTEM SHALL group them as Now, Next and Later, and Next and Later cards SHALL have no button.
-- WHEN each state named in §2.7.8 (pending rows), §2.10.3–4 (capability and stopping policy) and §2.11 (Playbook, profile, Machine roster) is rendered from a fixture THE SYSTEM SHALL produce its specified text, asserted by a test, including the 404 state of each endpoint.
-- WHEN Machine renders THE SYSTEM SHALL show the active hardware tier.
+- **DB-N2-1** WHEN the board, tile and nav models are tested THE SYSTEM SHALL assert exact outputs for every stored state, including at least two negative cases per model.
+- **DB-N2-2** WHEN the ledger fails verification THE SYSTEM SHALL disable Accept on Review, the card view and the peek drawer, asserted by a test.
+- **DB-N2-3** WHEN the repository is searched for status-to-label maps THE SYSTEM SHALL find exactly one, in `vocabulary.ts`, and its label for `in_progress` SHALL be *In progress*.
+- **DB-N2-4** WHEN a card's `kind` is labelled THE SYSTEM SHALL map `interface` → *Contract*, `data` → *Storage*, `implement` → *Flow*, `rule` → *Rules*, `spike` → *Spike*, `research` → *Research* and `review` → *Review*, as [NAMING](../NAMING.md#card-kind-change-and-split) gives them, and `vocabulary.ts` SHALL declare no kind enumeration of its own; *UI* and *Wiring* SHALL appear only as refinements of an `implement` card.
+- **DB-N2-5** WHEN a card has a `change` or a `split` THE SYSTEM SHALL label it from the same map, and SHALL NOT infer a card's `split` from its `kind` or its title.
+- **DB-N2-6** WHEN the vocabulary is asked for a stop reason it does not know THE SYSTEM SHALL return its humanised enum.
+- **DB-N2-7** WHEN `/api/integrations` omits an integration THE SYSTEM SHALL NOT show it; WHEN it returns entries with tiers THE SYSTEM SHALL group them as Now, Next and Later, and Next and Later cards SHALL have no button.
+- **DB-N2-8** WHEN each state named in §2.7.8 (pending rows), §2.10.3–4 (capability and stopping policy) and §2.11 (Playbook, profile, Machine roster) is rendered from a fixture THE SYSTEM SHALL produce its specified text, asserted by a test, including the 404 state of each endpoint.
+- **DB-N2-9** WHEN Machine renders THE SYSTEM SHALL show the active hardware tier.
 
 ### NEW-dashboard-3 — The model's output, live, on the Steps tab
 *The server streams `event: tokens` but no page listens, so a long model call looks like a stall (inventory M2; `server.ts:1164`, `app.js:188-246`).*
 
-- WHEN the Steps tab of a running card is open and the stream sends `tokens` frames for that card THE SYSTEM SHALL append their text to the current step row, with no animation, and SHALL replace it with the step's summary when its `card/step` event arrives.
-- WHEN the Steps tab is not open THE SYSTEM SHALL keep no token text in memory.
+- **DB-N3-1** WHEN the Steps tab of a running card is open and the stream sends `tokens` frames for that card THE SYSTEM SHALL append their text to the current step row, with no animation, and SHALL replace it with the step's summary when its `card/step` event arrives.
+- **DB-N3-2** WHEN the Steps tab is not open THE SYSTEM SHALL keep no token text in memory.
 
 ### NEW-dashboard-4 — Settings
 *The Settings view (theme, density, review minutes per day, read-only configuration) was dropped without a Later entry (trace pm_fe row 347; ruling R18).*
 
-- WHEN a person opens `#/settings` or presses `g ,` THE SYSTEM SHALL show theme, density, Learn and first-run role, and the project's review minutes per day and effective configuration with each value's source.
-- WHEN a person holding the Accept permission changes review minutes per day THE SYSTEM SHALL record the change as an event with the principal and show the recomputed ReviewWIP at once; WHEN a person without it tries THE SYSTEM SHALL disable the field with that reason beside it.
+- **DB-N4-1** WHEN a person opens `#/settings` or presses `g ,` THE SYSTEM SHALL show theme, density, Learn and first-run role, and the project's review minutes per day and effective configuration with each value's source.
+- **DB-N4-2** WHEN a person holding the Accept permission changes review minutes per day THE SYSTEM SHALL record the change as an event with the principal and show the recomputed ReviewWIP at once; WHEN a person without it tries THE SYSTEM SHALL disable the field with that reason beside it.
 
 ### NEW-dashboard-5 — Review for a team, and review that forces a look
 *Files are grouped alphabetically, the Reviewer's coverage is invisible, Accept can be pressed without looking, and a team cannot filter by who owns or builds a card ([DESIGN_RESEARCH_TEAMS_DATA_CHANGE](../../research/DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md) decisions 1, 16; DB-T1…T6; TESTS_BROWNFIELD decisions 6, 8).*
 
-- WHEN a card's diff is shown in Review THE SYSTEM SHALL order Implementation files by failures, then Reviewer-unmet or unclear hunks, then changed lines, and SHALL NOT order them alphabetically (DB-T3).
-- WHEN Reviewer findings are shown THE SYSTEM SHALL show the Reviewer's coverage: files not read, and changed lines cited by no finding (DB-T4).
-- WHEN any `unmet` or `unclear` finding is unacknowledged, or any Implementation file has not been shown, THE SYSTEM SHALL keep Accept disabled and write which remain beside the button (DB-T5).
-- WHEN a card is person-built THE SYSTEM SHALL say so in the outcome line and in Facts (DB-T6).
-- WHEN the query `delegate:worker` or `owner:@me` is entered THE SYSTEM SHALL filter by those fields; `assignee:` SHALL mean the owner (DB-T2).
-- WHEN a tile is shown THE SYSTEM SHALL show the owner's avatar when the owner is a person and, while a delegate is set, the delegate as a text chip — *Worker*, or the person's name (DB-T1 as ruled by R10).
-- WHEN a card supersedes a base test THE SYSTEM SHALL list the old and new test side by side in the Acceptance tests group.
-- WHEN the depth profile requires a person's approval of a card's tests THE SYSTEM SHALL show each test's approval state in the Acceptance tests group, and an approval voided by a content change SHALL read *Needs approval again*.
-- WHEN independent accept applies and the viewer may not accept THE SYSTEM SHALL disable Accept and name who may accept.
+- **DB-N5-1** WHEN a card's diff is shown in Review THE SYSTEM SHALL order Implementation files by failures, then Reviewer-unmet or unclear hunks, then changed lines, and SHALL NOT order them alphabetically (DB-T3).
+- **DB-N5-2** WHEN Reviewer findings are shown THE SYSTEM SHALL show the Reviewer's coverage: files not read, and changed lines cited by no finding (DB-T4).
+- **DB-N5-3** WHEN any `unmet` or `unclear` finding is unacknowledged, or any Implementation file has not been shown, THE SYSTEM SHALL keep Accept disabled and write which remain beside the button (DB-T5).
+- **DB-N5-4** WHEN a card is person-built THE SYSTEM SHALL say so in the outcome line and in Facts (DB-T6).
+- **DB-N5-5** WHEN the query `delegate:worker` or `owner:@me` is entered THE SYSTEM SHALL filter by those fields; `assignee:` SHALL mean the owner (DB-T2).
+- **DB-N5-6** WHEN a tile is shown THE SYSTEM SHALL show the owner's avatar when the owner is a person and, while a delegate is set, the delegate as a text chip — *Worker*, or the person's name (DB-T1 as ruled by R10).
+- **DB-N5-7** WHEN a card supersedes a base test THE SYSTEM SHALL list the old and new test side by side in the Acceptance tests group.
+- **DB-N5-8** WHEN the depth profile requires a person's approval of a card's tests THE SYSTEM SHALL show each test's approval state in the Acceptance tests group, and an approval voided by a content change SHALL read *Needs approval again*.
+- **DB-N5-9** WHEN independent accept applies and the viewer may not accept THE SYSTEM SHALL disable Accept and name who may accept.
 
 ## 6. v1 acceptance
 
 All criteria in §5, plus:
 
-- WHEN Accept is pressed THE SYSTEM SHALL show a 3-second grace toast, and `z` within it SHALL cancel with no request sent.
-- WHEN send back is submitted with an empty note THE SYSTEM SHALL block it client-side with *Add a note for the Worker.*
-- WHEN one shell state is active and another begins THE SYSTEM SHALL show only the higher-priority bar (ledger altered > offline > memory pause > review full > Worker paused for Seshat).
-- WHEN the stream is silent for more than 10 s and `/api/meta` fails THE SYSTEM SHALL show *Offline since …*, freeze timestamps and disable every action.
-- WHEN a stream frame changes one card THE SYSTEM SHALL patch that tile only, keeping scroll position, focus and any open drawer.
-- WHEN a card is parked through the API THE SYSTEM SHALL show it in On hold within 1 s with the scroll position preserved.
-- WHEN a Seshat reply mentions an id that is not a card THE SYSTEM SHALL render it as plain text.
-- WHEN a proposal is stale THE SYSTEM SHALL disable its Apply and say why.
-- WHEN 500 cards are loaded THE SYSTEM SHALL scroll the board with no main-thread task over 50 ms and under 50 MB of DOM memory.
-- WHEN `prefers-reduced-motion: reduce` is set THE SYSTEM SHALL show no pulse and no translate.
-- WHEN a tile is in a WIP-limited column at capacity THE SYSTEM SHALL colour its capacity bar amber, and red over the limit.
-- WHEN Machine is open THE SYSTEM SHALL draw the memory, decode-speed and prefix-cache sparklines from samples taken every 5 s.
+- **DB-1** WHEN Accept is pressed THE SYSTEM SHALL show a 3-second grace toast, and `z` within it SHALL cancel with no request sent.
+- **DB-2** WHEN send back is submitted with an empty note THE SYSTEM SHALL block it client-side with *Add a note for the Worker.*
+- **DB-3** WHEN one shell state is active and another begins THE SYSTEM SHALL show only the higher-priority bar (ledger altered > offline > memory pause > review full > Worker paused for Seshat).
+- **DB-4** WHEN the stream is silent for more than 10 s and `/api/meta` fails THE SYSTEM SHALL show *Offline since …*, freeze timestamps and disable every action.
+- **DB-5** WHEN a stream frame changes one card THE SYSTEM SHALL patch that tile only, keeping scroll position, focus and any open drawer.
+- **DB-6** WHEN a card is parked through the API THE SYSTEM SHALL show it in On hold within 1 s with the scroll position preserved.
+- **DB-7** WHEN a Seshat reply mentions an id that is not a card THE SYSTEM SHALL render it as plain text.
+- **DB-8** WHEN a proposal is stale THE SYSTEM SHALL disable its Apply and say why.
+- **DB-9** WHEN 500 cards are loaded THE SYSTEM SHALL scroll the board with no main-thread task over 50 ms and under 50 MB of DOM memory.
+- **DB-10** WHEN `prefers-reduced-motion: reduce` is set THE SYSTEM SHALL show no pulse and no translate.
+- **DB-11** WHEN a tile is in a WIP-limited column at capacity THE SYSTEM SHALL colour its capacity bar amber, and red over the limit.
+- **DB-12** WHEN Machine is open THE SYSTEM SHALL draw the memory, decode-speed and prefix-cache sparklines from samples taken every 5 s.
 
 ## 7. Later
 
@@ -500,6 +504,7 @@ All criteria in §5, plus:
 - Seshat quiet by default, offering in the panel rather than pinging (offering preferred 90% vs 47%; an interruption costs ~23 minutes), capability shown as Wilson intervals from the ledger rather than public leaderboards, and the swap-cost wait explained as steps — [PM_RESEARCH_SYNTHESIS.md](../../research/PM_RESEARCH_SYNTHESIS.md) §1 rows 8, 10, 11.
 - Review ergonomics and teams (§2.5.3–9, §2.4.4, §2.4.12): file order changes what is found (Fregnan et al., ESEC/FSE 2022: 64% lower odds for the last file); reviewers follow where an LLM points (arXiv 2411.11401), hence coverage; findings as reminders, not verdicts (Spadini et al., ICSE 2020, search-only); light cognitive forcing (Buçinca et al., CSCW 2021); owner and delegate as two typed fields (Linear) — [DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md](../../research/DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md) §2.1, §2.5. *Passing, strength unmet* and test approval by example table: [DESIGN_RESEARCH_TESTS_BROWNFIELD.md](../../research/DESIGN_RESEARCH_TESTS_BROWNFIELD.md) decisions 1, 5, 6. The team-server research ([DESIGN_RESEARCH_TEAM_SERVER.md](../../research/DESIGN_RESEARCH_TEAM_SERVER.md)) adds nothing page-side beyond the scheduler's fair share, which [runtime](runtime.md) owns.
 - What was taken from each tool (priority scale, points, cycles, swimlanes, GitHub query syntax, keyboard triage, Copilot Workspace's editable plan as the proposal, Cursor's per-change apply, Claude's thread typography): the old PM design Part 1 (git `fb59ba2:docs/design/PM_DESIGN.md`).
+- Where "done" is drawn (§2.4.17, §2.8.2–4, P13): the requirement graph, reasoning is not evidence, appetite and the circuit breaker, no orphan cards, the story map with a walking skeleton and release slices, and done as proven *and* accepted by a person — [PROJECT_DONE_AND_DEPTH.md](../../research/PROJECT_DONE_AND_DEPTH.md) (via [DEC-11](../DECISIONS.md#dec-11)); the page draws what [planner-pm §2.15](planner-pm.md) computes.
 - Mockups: `docs/design/mockups/` (board, review, card, runs, pm, board-v2, insights).
 - **Resolved drift and deliberate reversals** (each: what changed, why):
   - Server-sent events and the page's own windowing replace the old design's WebSocket and `@tanstack/virtual` — no build step, air-gapped; a React/TanStack stack was rejected for the same reason.
@@ -520,3 +525,5 @@ All criteria in §5, plus:
   - The model id leaves the panel header (R15) — non-developers read it as noise; it stays one disclosure away and on Machine.
   - The Integrations page no longer carries its own catalogue for a 404 — a page-held catalogue drifts from the server's; the API's `tier` keeps the roadmap visible.
   - Card tabs underline in `--text-primary`, not gold — gold stays in its four places.
+  - Kind labels come from NAMING's one map of the kernel's seven stored kinds, and a split's SPIDR axis from the stored `split` field; the page's own seven-value `CardKind`, which had no Spike or Review and showed a spike as Research, is folded in (DEC-26, review B3).
+  - The stored state `in_progress` reads *In progress*, not *In Progress* — sentence case everywhere, stored labels included (review m4).

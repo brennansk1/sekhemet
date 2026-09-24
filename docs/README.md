@@ -78,6 +78,11 @@ Every document in `docs/` is listed here, and nowhere else is the source of trut
 | [MODERNIZATION_PLAN.md](reference/MODERNIZATION_PLAN.md) | The Opus 5.5 pass over the AI brownfield: review every domain, change what the review justifies, measure every change. Supersedes the 2026-09-18 completion plan. |
 | [COVERAGE.md](reference/COVERAGE.md) | Phase A of the modernization: every domain reviewed, the ranked programme, and the decisions that need the owner. |
 | [OPEN_QUESTIONS.md](reference/OPEN_QUESTIONS.md) | Benchmarks still owed, unverified research gaps and open design questions, each with its state and where it is decided. |
+| [DESIGN_TRACE.md](reference/DESIGN_TRACE.md) | The proof that design v3 lost nothing: every item of the 2026-09-17 design, its companions and the feature inventories traced to where it lives now, with what moved to Later and what changed on purpose. |
+| [trace_sources/trace_hd1.md](reference/trace_sources/trace_hd1.md) | Raw trace rows of the old design, lines 1–1800, as first traced on 2026-09-22; the verified status is in DESIGN_TRACE.md. |
+| [trace_sources/trace_hd2.md](reference/trace_sources/trace_hd2.md) | Raw trace rows of the old design, lines 1801–end, and the integration review, as first traced on 2026-09-22; the verified status is in DESIGN_TRACE.md. |
+| [trace_sources/trace_pm_fe.md](reference/trace_sources/trace_pm_fe.md) | Raw trace rows of the old PM and frontend designs, as first traced on 2026-09-22; the verified status is in DESIGN_TRACE.md. |
+| [trace_sources/trace_inv.md](reference/trace_sources/trace_inv.md) | Raw trace rows of the three feature inventories, as first traced on 2026-09-22; the verified status is in DESIGN_TRACE.md. |
 | [reviews/integration_review_2026-09-18.md](reference/reviews/integration_review_2026-09-18.md) | A dated review of how the Worker, Seshat, reviewer, Researcher, learning and scheduling fit together; its findings are folded into the specs. |
 | [reviews/domain01_16_surface_docs.md](reference/reviews/domain01_16_surface_docs.md) | Phase A review: product surface and the documents. |
 | [reviews/domain02_09_kernel_review.md](reference/reviews/domain02_09_kernel_review.md) | Phase A review: kernel, lifecycle, review and human decisions. |
@@ -93,4 +98,5 @@ Every document in `docs/` is listed here, and nowhere else is the source of trut
 | [reviews/domain12_15_integrations_ext.md](reference/reviews/domain12_15_integrations_ext.md) | Phase A review: integrations and extensibility. |
 | [reviews/domain13_dashboard.md](reference/reviews/domain13_dashboard.md) | Phase A review: the dashboard and design system. |
 | [reviews/domain17_brand_ux.md](reference/reviews/domain17_brand_ux.md) | Phase A review: brand, visual and interaction design, accessibility, and the three audiences' task walks. |
+| [reviews/design_v3_review.md](reference/reviews/design_v3_review.md) | Independent review of design v3: contradictions, readiness for spec-driven development, research coverage, the spine, and depth in the core. |
 | [PROVENANCE.md](reference/PROVENANCE.md) | Every adopted technique's public source and the licence register the `licenses` gate enforces. |

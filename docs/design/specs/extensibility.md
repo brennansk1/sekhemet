@@ -43,6 +43,7 @@ A team extends Sekhemet without forking it: it runs its own checks at lifecycle 
 | Skills | `.sekhemet/skills/<name>/` (project), `~/.sekhemet/skills/<name>/` (user) | body is prompt text; `scripts/` run inside the card's sandbox | every skill: human approval by content hash |
 | Slash commands | built in | inside the harness | — |
 | MCP server, ACP, SDK | started by the user | inside the harness, as actor `mcp` (MCP) or the PM chat (ACP) | — |
+| Plugins (until the owner decides their cut, item 29) | `.sekhemet/plugins/<name>/index.mjs` (project) | inside the harness process, unconfined | yes |
 
 1. A project file that is not trusted is not loaded; the harness says which file waits for trust and what it would run. A user-level file is the user's own configuration and is trusted.
 2. When both levels define the same hook event or MCP server name, both hooks run (user first) and the **user's** MCP server definition wins; a project may add servers, not replace the user's.
@@ -104,7 +105,7 @@ A team extends Sekhemet without forking it: it runs its own checks at lifecycle 
 
 ### Plugins
 
-29. There is no plugin API in v1. `packages/kernel/src/container.ts` is cut ([DEC-09](../DECISIONS.md#dec-09)), and with it the loader that mounted `.sekhemet/plugins/*/index.mjs` on each card (`execute.ts:374-387`). A plugin could only add services and hooks, never the tools, gates, sync adapters or UI panels the old design promised; hooks and MCP cover the need.
+29. **Plugins are trust-gated (S9); cutting them is pending the owner ([O4](../../reference/OPEN_QUESTIONS.md#owner-decisions), §8 Q2).** The loader mounts `.sekhemet/plugins/*/index.mjs` on each card's `ServiceContainer` inside the harness process, unconfined (`execute.ts:378-388`, `packages/kernel/src/container.ts`). Until the owner decides, it stays reachable and loads a plugin only from a workspace the user trusts, by the same mechanism and hash rule as a project `hooks.toml` ([security](security.md) items 38–39): in an untrusted workspace it mounts nothing and says which plugin waits for trust and what it would run. There is no plugin API beyond that loader: a plugin can add only services and hooks, never the tools, gates, sync adapters or UI panels the old design promised. The recommended outcome (O4's default) is to cut `container.ts` and the loader ([DEC-09](../DECISIONS.md#dec-09)), since hooks and MCP cover the need; EXT-28 in §8 Q2 is the criterion that applies if the owner agrees.
 
 ### Tools outside the Worker
 
@@ -166,7 +167,7 @@ Decisions on what the Planner and the infrastructure use, adopt or build; the ow
 | ACP as PM chat | built | `acp.ts`; `acp.spec.ts` | — |
 | Slash commands | built | `slash.ts`; `slash.spec.ts` | — |
 | SDK | not-built (reachable only from its test) | `sdk.spec.ts` is its only consumer; types copied (`sdk/src/index.ts:15-35`) | open question |
-| Plugins | to cut | loader live at `execute.ts:374-387` via the kernel barrel | DEC-09 |
+| Plugins gated by workspace trust | not-built (trust) | the loader mounts every plugin found, unprompted (`execute.ts:385-386`), via the kernel barrel | S9; the cut is pending [O4](../../reference/OPEN_QUESTIONS.md#owner-decisions) |
 
 ## 5. Changes for v1
 
@@ -176,7 +177,8 @@ Decisions on what the Planner and the infrastructure use, adopt or build; the ow
 - **EXT-3** WHEN a skill's content changes after approval THE SYSTEM SHALL not load it until it is approved again.
 - **EXT-4** WHEN a repository has skills and no user-side approval THE SYSTEM SHALL load none of their bodies.
 - **EXT-5** WHEN a skill's `scripts/` file runs THE SYSTEM SHALL run it inside the card's sandbox.
-- **EXT-5a** WHEN the Worker writes `.sekhemet/hooks.toml`, `.sekhemet/mcp.json` or a file under `.sekhemet/skills/` in its worktree THE SYSTEM SHALL deny the write with rule `protected_system`.
+- **EXT-5a** WHEN the Worker writes `.sekhemet/hooks.toml`, `.sekhemet/mcp.json` or a file under `.sekhemet/skills/` or `.sekhemet/plugins/` in its worktree THE SYSTEM SHALL deny the write with rule `protected_system`.
+- **EXT-5b** WHILE the owner has not decided the plugin cut (O4), WHEN a card runs in a workspace whose `.sekhemet/plugins/` the user has not trusted THE SYSTEM SHALL mount no plugin, and SHALL name each plugin that waits for trust in the card's evidence.
 
 ### S4 — MCP cannot accept
 - **EXT-6** WHEN an MCP client calls `sekhemet_move_card` with `to: "done"` (with or without a reason beginning `override:`) THE SYSTEM SHALL refuse, leave the card's status unchanged, and record nothing but the refusal.
@@ -217,12 +219,9 @@ Decisions on what the Planner and the infrastructure use, adopt or build; the ow
 - **EXT-27a** WHEN a skill or a distilled skill candidate has `evals/` THE SYSTEM SHALL run them confined with no network before asking for approval, and SHALL refuse approval while any fails.
 - **EXT-27b** WHEN a distilled skill candidate has no `evals/` THE SYSTEM SHALL not offer it for approval.
 
-### DEC-09 — cut the plugin loader
-- **EXT-28** WHEN a repository contains `.sekhemet/plugins/` THE SYSTEM SHALL load nothing from it, and `doctor` SHALL say plugins are not supported.
-
 ## 6. v1 acceptance
 
-EXT-1 to EXT-28 (including the lettered criteria), plus these built behaviours kept under test:
+EXT-1 to EXT-27b (including the lettered criteria; EXT-28 joins them only if the owner cuts plugins, [O4](../../reference/OPEN_QUESTIONS.md#owner-decisions)), plus these built behaviours kept under test:
 - **EXT-29** WHEN a `pre-tool` hook exits 2 THE SYSTEM SHALL block the tool call and tell the model the hook's stderr.
 - **EXT-30** WHEN a `post-tool` hook throws THE SYSTEM SHALL continue the card and record the error.
 - **EXT-31** WHEN a hook prints `{"message": "…"}` and exits 0 THE SYSTEM SHALL add that message to the next model turn.
@@ -260,8 +259,9 @@ EXT-1 to EXT-28 (including the lettered criteria), plus these built behaviours k
 
 ## 8. Open questions
 
-1. **Publish the SDK or cut it?** Today its only consumer is its own test, which makes it dead by the rule. *Recommendation:* cut it now; rebuild it from the kernel's types when an integration needs it.
-2. **DEC-09's premise for `container.ts` is wrong.** It was cut as "reachable only from a test", but `execute.ts:378-386` constructs `ServiceContainer` and `PluginManager` on every card through the kernel barrel. *Recommendation:* cut it anyway — plugins add only services and hooks, run repository code unconfined, and hooks plus MCP cover the need — and record the corrected reason in DEC-09.
+1. **Publish the SDK or cut it?** (owner decision [O4](../../reference/OPEN_QUESTIONS.md#owner-decisions)) Today its only consumer is its own test, which makes it dead by the rule. *Recommendation:* cut it; rebuild it from the kernel's types when an integration needs it.
+2. **Cut the plugin container?** (owner decision [O4](../../reference/OPEN_QUESTIONS.md#owner-decisions)) DEC-09's premise was wrong: it was cut as "reachable only from a test", but `execute.ts:378-388` constructs `ServiceContainer` and `PluginManager` on every card through the kernel barrel, and cutting reachable code is the owner's decision. Until then plugins are trust-gated (item 29, EXT-5b). *Recommendation:* cut it — plugins add only services and hooks, run repository code unconfined, and hooks plus MCP cover the need — and record the corrected reason in DEC-09. If the owner agrees, this criterion joins §6:
+   - **EXT-28** WHEN a repository contains `.sekhemet/plugins/` THE SYSTEM SHALL load nothing from it, and `doctor` SHALL say plugins are not supported.
 3. **Should the Worker ever get MCP tools in v1?** *Recommendation:* no by default (EXT-21); the M2 A/B decides the Worker's tool set, and an MCP tool joins it only through `worker_tools`.
 
 ## 9. Evidence and rationale

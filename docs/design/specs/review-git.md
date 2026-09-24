@@ -22,9 +22,9 @@ Review is where a person decides whether a card is done, and git is the file sys
 
 ### 2.2 Review capacity sets the pace
 
-1. **ReviewWIP = ⌊reviewMinutesPerDay ÷ median review minutes per card⌋**, floored at 1, computed **per project** and recomputed after every human decision. Worker-built and person-built cards consume the same review minutes and both count.
+1. **ReviewWIP = ⌊reviewMinutesPerDay ÷ median review minutes per card⌋**, floored at 1, computed **per project** and recomputed after every human decision. `reviewMinutesPerDay` is the project's `[review] review_minutes_per_day`, **60 by default** ([surface](surface.md) item 23; `config.ts:43`). Worker-built and person-built cards consume the same review minutes and both count. A card held `awaitingMerge` (§2.5.7) is not in the Review count.
 2. **Only human decisions count.** A review's duration runs from `review/opened` (the evidence was shown to a person) to `review/decided` (accept, send back, park, reject) by a human principal. Exits from Review by `harness` (`--auto-accept`), `system` or any other non-human actor are excluded.
-3. **Until five human reviews exist, the median is a prior of 15 minutes per card**; after that it is measured.
+3. **Until five human reviews exist, the median is a prior of 15 minutes per card**; after that it is measured. The prior applies **from the first card, before any human review**: at the default 60 minutes a day it gives ReviewWIP = 4. The kernel's static Review limit of 3 (`board_service.ts:19`) applies only when a project explicitly sets `review_minutes_per_day` to 0 or less; an unset value is the default 60. Today the code falls back to that static 3 whenever no review has been measured (`board_service.ts:209-213`); S6 replaces the fallback with the prior.
 4. When the cards in Review reach ReviewWIP, finished cards are **held in Verify** ("Holding for review") and released in order as soon as a review completes. The planner does not start more work toward Review than this allows, and parallel Workers are capped by it: running more than review can absorb produces diffs nobody reads.
 5. **Review is recorded as reading, not clicking.** `review/opened` carries `{ principal, filesShown }`; `review/decided` carries `{ principal, decision, linesReviewed, minutes, acknowledgedFindings }`. The review rate (changed lines ÷ minutes) is recorded for every human decision; a decision faster than **500 changed lines an hour** is marked *fast review* and reported separately in Insights and beside the ReviewWIP derivation. It is never blocked. The ≤ 200-line card is the review-size budget.
 
@@ -54,9 +54,9 @@ Every decision is one implementation shared by the CLI and the dashboard (`triag
 
 | Decision | From | To | Rules |
 | --- | --- | --- | --- |
-| **Accept** | Review | Done | §2.5. Requires the Accept permission in company-server mode, and an independent accepter where §2.4.1 requires one |
+| **Accept** | Review | Done (with pull-request-on-accept: stays in Review, held `awaitingMerge`, until the pull request merges, §2.5.7) | §2.5. Requires the Accept permission in company-server mode, and an independent accepter where §2.4.1 requires one |
 | **Send back** | Review, Parked | Ready | A reason is required: it is what the Worker is told next (dossier). It becomes a playbook candidate **on the ledger** only when it names something actionable (a file, symbol, gate or error pattern) |
-| **Park** / **Unpark** | any open state / Parked | Parked / its previous state | Optional reason; presets *Waiting on me*, *Needs a decision*, *Not now* |
+| **Park** / **Unpark** | any open state / Parked | Parked / Ready, or Backlog or Planning when it was parked from that state | Optional reason; presets *Waiting on me*, *Needs a decision*, *Not now*. Unpark follows [kernel](kernel.md)'s legal edges (`parked` → `ready`, `planning`, `backlog`, `rejected`): a card parked from In progress, Verify or Review returns to Ready, re-queued rather than resumed mid-attempt, as a send-back is |
 | **Reject** | Review, Parked, Ready, Backlog | Rejected | A reason is required |
 | **Reopen** | Rejected, Done | Ready | For Done, only through Revert accept |
 | **Revert accept** | Done | Ready | A revert commit of the card's squash on the integration branch, then the transition; recorded as `card/reverted` with both shas |
@@ -82,15 +82,15 @@ Agent-Model: cyber-tiel-coder-35b-a3b-mtp
 Agent-Harness: sekhemet
 Agent-Role: implementer
 GateStatus: pass | fail | partial        (from the evidence, never hard-coded)
-Accepted-by: Jane Doe <jane@example.com> (or "sekhemet --auto-accept")
+Accepted-by: Jane Doe <jane@example.com> (or "sekhemet --auto-accept (for <the person who enabled it>)")
 Ledger-Head: 212:9f3a…                    (seq and hash at accept)
 Co-authored-by: <every model that contributed a checkpoint>
 ```
 
 A squash missing a required trailer is refused before any ref moves. Git trailers keep the person's name, as git authorship already does; the ledger stores an opaque principal id ([kernel](kernel.md)).
 5. **After Accept:** the card's worktree is removed; cards held on back-pressure are released; stacked children rebase onto the integration branch and re-run their gates (a child that conflicts is reported, never forced); raw checkpoints stay at `refs/sekhemet/checkpoints/<card-id>`.
-6. **Auto-accept** (`sekhemet queue --auto-accept`, for the benchmark and unattended runs) is the harness's verdict, recorded with actor `harness` and `Accepted-by: sekhemet --auto-accept`. It runs only after the Reviewer, is never counted as a human review, and is refused in company-server mode.
-7. **Pull request on Accept** (when enabled, [integrations](integrations.md)): Accept pushes the card branch and opens a pull request whose body is the evidence summary — the spec, *Done when*, gates with durations, tests added, diff stats, what was tried and abandoned, and the visual gate's screenshots when there are any. The card records `card/accepted { pr }` and reaches Done when the pull request merges; until then it shows *Accepted · PR #n open* and does not count toward ReviewWIP. Without an adapter, the same summary is written into the squash commit body.
+6. **Auto-accept** (`sekhemet queue --auto-accept`, for the benchmark and unattended runs) is **a person's recorded standing decision, never the harness's own verdict**. Switching it on is recorded as `review/auto_accept_enabled { principal, run }`, naming the person who ran the command; **every `card/accepted` it writes carries actor `harness`, `auto: true` and that person as `principal`**, and the squash says `Accepted-by: sekhemet --auto-accept (for Jane Doe <jane@example.com>)` ([kernel](kernel.md) rule 19; DEFINITION_OF_DONE §5.1.5: a card is done when a person accepts it, or when it is auto-accepted under a person's recorded standing decision that names them on every acceptance). An auto-accept with no enabling principal is refused. It runs only after the Reviewer and is never counted as a human review. **Auto-accept is never available in company-server mode**: the flag is refused there, and no setting enables it.
+7. **Pull request on Accept** (when enabled, [integrations](integrations.md)): Accept pushes the card branch and opens a pull request whose body is the evidence summary — the spec, *Done when*, gates with durations, tests added, diff stats, what was tried and abandoned, and the visual gate's screenshots when there are any. The card records `card/accepted { pr }` and **stays in Review under [kernel](kernel.md)'s `awaitingMerge { pr, since }` hold** (a typed hold, like the back-pressure hold, set by `card/pr_opened` and cleared by `card/pr_closed`; no new state). A held card is **excluded from the Review count**, so it neither counts toward ReviewWIP nor triggers back-pressure, and it shows *Accepted · PR #n open*. When the pull request merges, the card moves to Done; when it is closed without merging, the hold is cleared, the earlier acceptance is recorded as not completed, and the card is back in Review's queue awaiting a new decision — counting toward ReviewWIP again — with who closed it recorded ([integrations](integrations.md) INT-14). Without an adapter, the same summary is written into the squash commit body.
 
 ### 2.6 The git workflow
 
@@ -118,7 +118,7 @@ A card may target a pull request Sekhemet did not create. It fetches the head in
 | `CheckpointRecord` | `packages/loop/src/card_runner.ts:659-671`, stored through the card store |
 | `planRelease`, `nextVersion`, `publishRelease` | `packages/sync/src/repo_tools.ts` |
 | `prBody` | `apps/harness/src/wave2_github.ts:55` |
-| Events | `card/accepted { sha \| pr, principal, independent }`, `card/reverted` (new), `review/opened { principal, filesShown }` (new), `review/decided { principal, decision, linesReviewed, minutes, acknowledgedFindings }` (new), `card/review` (Reviewer findings), `playbook/candidate` (new; replaces `.sekhemet/playbook_candidates.jsonl`), `release/proposed`, `release/tagged` ([planner-pm](planner-pm.md)) |
+| Events | `card/accepted { sha \| pr, principal, independent, auto? }` (`auto: true` only from auto-accept, with the enabling person as `principal`), `review/auto_accept_enabled { principal, run }` (new), `card/pr_opened { pr, url, headSha }` and `card/pr_closed { pr, merged }` (the `awaitingMerge` hold, [kernel](kernel.md) rule 24; who closed an unmerged pull request is recorded by [integrations](integrations.md) INT-14), `card/reverted` (new), `review/opened { principal, filesShown }` (new), `review/decided { principal, decision, linesReviewed, minutes, acknowledgedFindings }` (new), `card/review` (Reviewer findings), `playbook/candidate` (new; replaces `.sekhemet/playbook_candidates.jsonl`), `release/proposed`, `release/tagged` ([planner-pm](planner-pm.md)) |
 | CLI | `sekhemet review`, `accept <card>`, `send-back <card> "<reason>"`, `park <card> [reason]`, `unpark <card>`; new `reject <card> "<reason>"`, `reopen <card>`, `revert <card>`; `queue --auto-accept [--review]`; `release [--confirm]` |
 | Endpoints (owned by [runtime](runtime.md)) | `POST /api/cards/:id/{accept,return,park,unpark}`; new `reject`, `reopen`, `revert` |
 | Config | `reviewMinutesPerDay`; the integration branch (new); `require_independent_accept` and `require_code_owner_accept` (new, per project); `github-pr` switch ([integrations](integrations.md)) |
@@ -137,9 +137,11 @@ A card may target a pull request Sekhemet did not create. It fetches the head in
 | Unattributed squash refused | built | `missingTrailers` (`git_adapter.ts`); `git_wave2.spec.ts` | — |
 | Reject, reopen, revert accept | not-built | No verbs; Rejected reachable only by override or MCP | S5 |
 | Integration branch configurable | not-built | `"main"` hard-coded (`execute.ts:1346, 1378`) | S5 |
-| PR on accept reaches Done only on merge | not-built | Moves to Done when the PR opens (`execute.ts:1319-1333`) | S5 |
+| PR on accept reaches Done only on merge, held `awaitingMerge` and out of the Review count meanwhile | not-built | Moves to Done when the PR opens (`execute.ts:1319-1333`); kernel has no `awaitingMerge` hold yet | S5 (the hold: [kernel](kernel.md)) |
+| Auto-accept names the person who enabled it; never available on a server | not-built | `acceptCard(ctx, reviewed, "harness")` with no principal (`index.ts:1639-1644`) | S5 |
+| Unpark returns to Ready unless parked from Backlog or Planning | partial | A decision's late answer already does (`packages/planner/src/decisions.ts:233-236`); `unpark` always moves to Ready (`triage.ts:86-95`), so a card parked from Backlog or Planning skips them | S5 |
 | PR body is the evidence summary | partial | spec, *Done when*, gates, files (`wave2_github.ts:55-76`); no tests added, diff stats, abandoned attempts or screenshots | S5 |
-| ReviewWIP formula, back-pressure, held cards released | partial | `board_service.ts:207-222, 454`; `entry_conditions.spec.ts`, `runner_backpressure.spec.ts` — but counts automated exits (live limit 7,708), global not per project, calibrated once at start (`index.ts:547`), no prior | S6 |
+| ReviewWIP formula, back-pressure, held cards released | partial | `board_service.ts:207-222, 454`; `entry_conditions.spec.ts`, `runner_backpressure.spec.ts` — but counts automated exits (live limit 7,708), global not per project, calibrated once at start (`index.ts:547`), no prior: with no measured review it falls back to the static 3 (`board_service.ts:209-213`) | S6 |
 | Review records with files shown, lines, minutes; review rate | not-built | No `review/*` events | S6, NEW-review-git-5 |
 | Reviewer runs before Review and before auto-accept | not-built | Runs at the end of the queue pass, after the retries (`index.ts:1886-1896`) but after `--auto-accept` merged (`index.ts:1639`) | P8 |
 | Reviewer judges criteria with citations, reads assumptions, writes to the dossier, reports coverage | not-built | Checks preferences only; returns `[]` without learned preferences (`review.ts:23`); diff cut at 12,000 chars (`review.ts:28`); findings reach only the dashboard | P8 |
@@ -161,97 +163,102 @@ A card may target a pull request Sekhemet did not create. It fetches the head in
 *Accept merges before the board agrees, in the person's own checkout, with a hard-coded `GateStatus: pass`, and cannot be undone.*
 
 Tests use real repositories (DEFINITION_OF_DONE §2A).
-- WHEN a card is accepted THE SYSTEM SHALL leave the person's `HEAD`, index and working-tree files byte-identical to before.
-- WHEN the person's checkout is dirty or on another branch THE SYSTEM SHALL still accept without touching it.
-- WHEN the board refuses the transition to Done THE SYSTEM SHALL leave the integration branch at its previous commit and the card in Review.
-- WHEN the integration branch moved and the squash conflicts THE SYSTEM SHALL write no commit, leave no conflict markers anywhere, and report the conflicting files.
-- WHEN two accepts for the same project run at once THE SYSTEM SHALL complete one and refuse or queue the other, and the integration branch SHALL contain both changes or exactly one, never a lost update.
-- WHEN the card branch's head differs from the evidence bundle's repository-state hash THE SYSTEM SHALL refuse the accept and say the card changed after it was reviewed.
-- WHEN a card is accepted THE SYSTEM SHALL write `GateStatus` from the evidence, `Accepted-by` naming the person (or `sekhemet --auto-accept`), and `Ledger-Head` with the seq and hash at accept.
-- WHEN a person reverts an accepted card THE SYSTEM SHALL add a revert commit of its squash to the integration branch, move the card to Ready, and record `card/reverted` with both shas.
-- WHEN a person rejects a card THE SYSTEM SHALL require a reason and move it to Rejected; WHEN they reopen it THE SYSTEM SHALL move it to Ready.
-- WHEN send-back is requested for a card in In progress or Verify THE SYSTEM SHALL refuse it and name `abort`.
-- WHEN a card is sent back THE SYSTEM SHALL record the playbook candidate as a ledger event and write no file under `.sekhemet/`.
-- WHEN the integration branch is configured as `develop` THE SYSTEM SHALL branch from and merge into `develop`.
-- WHEN pull-request-on-accept is on THE SYSTEM SHALL keep the card out of Done until the pull request is merged, and SHALL NOT count it toward ReviewWIP meanwhile.
-- WHEN a pull request is opened on Accept THE SYSTEM SHALL write into its body the gates with durations, the tests added, the diff stats, the abandoned attempts, and a link to each visual-gate screenshot when there is one.
-- WHEN a structural diff is requested for a card whose worktree is gone THE SYSTEM SHALL compute it without writing to the person's repository.
+- **RG-S5-1** WHEN a card is accepted THE SYSTEM SHALL leave the person's `HEAD`, index and working-tree files byte-identical to before.
+- **RG-S5-2** WHEN the person's checkout is dirty or on another branch THE SYSTEM SHALL still accept without touching it.
+- **RG-S5-3** WHEN the board refuses the transition to Done THE SYSTEM SHALL leave the integration branch at its previous commit and the card in Review.
+- **RG-S5-4** WHEN the integration branch moved and the squash conflicts THE SYSTEM SHALL write no commit, leave no conflict markers anywhere, and report the conflicting files.
+- **RG-S5-5** WHEN two accepts for the same project run at once THE SYSTEM SHALL complete one and refuse or queue the other, and the integration branch SHALL contain both changes or exactly one, never a lost update.
+- **RG-S5-6** WHEN the card branch's head differs from the evidence bundle's repository-state hash THE SYSTEM SHALL refuse the accept and say the card changed after it was reviewed.
+- **RG-S5-7** WHEN a card is accepted THE SYSTEM SHALL write `GateStatus` from the evidence, `Accepted-by` naming the person (or `sekhemet --auto-accept` with the person who enabled it), and `Ledger-Head` with the seq and hash at accept.
+- **RG-S5-8** WHEN auto-accept accepts a card THE SYSTEM SHALL record `card/accepted` with actor `harness`, `auto: true` and, as `principal`, the person recorded by `review/auto_accept_enabled` for that run; WHEN no enabling principal is recorded THE SYSTEM SHALL refuse the accept.
+- **RG-S5-9** WHEN `--auto-accept` is requested in company-server mode THE SYSTEM SHALL refuse it before any card runs, and no configuration SHALL enable it there.
+- **RG-S5-10** WHEN a person reverts an accepted card THE SYSTEM SHALL add a revert commit of its squash to the integration branch, move the card to Ready, and record `card/reverted` with both shas.
+- **RG-S5-11** WHEN a person rejects a card THE SYSTEM SHALL require a reason and move it to Rejected; WHEN they reopen it THE SYSTEM SHALL move it to Ready.
+- **RG-S5-12** WHEN send-back is requested for a card in In progress or Verify THE SYSTEM SHALL refuse it and name `abort`.
+- **RG-S5-13** WHEN a card is sent back THE SYSTEM SHALL record the playbook candidate as a ledger event and write no file under `.sekhemet/`.
+- **RG-S5-14** WHEN the integration branch is configured as `develop` THE SYSTEM SHALL branch from and merge into `develop`.
+- **RG-S5-15** WHEN pull-request-on-accept is on and a card is accepted THE SYSTEM SHALL keep it in Review with the `awaitingMerge` hold, record `card/pr_opened`, keep it out of Done until the pull request is merged, and SHALL NOT count it toward ReviewWIP or back-pressure meanwhile.
+- **RG-S5-16** WHEN a held card's pull request merges THE SYSTEM SHALL move it to Done and record `card/pr_closed` with `merged: true`; WHEN it is closed without merging THE SYSTEM SHALL clear the hold, leave the card in Review awaiting a new decision and counted toward ReviewWIP again, and record who closed it.
+- **RG-S5-17** WHEN a card parked from In progress, Verify or Review is unparked THE SYSTEM SHALL move it to Ready; WHEN it was parked from Backlog or Planning THE SYSTEM SHALL return it there.
+- **RG-S5-18** WHEN a pull request is opened on Accept THE SYSTEM SHALL write into its body the gates with durations, the tests added, the diff stats, the abandoned attempts, and a link to each visual-gate screenshot when there is one.
+- **RG-S5-19** WHEN a structural diff is requested for a card whose worktree is gone THE SYSTEM SHALL compute it without writing to the person's repository.
 
 ### S6 — Review WIP from human decisions only
 *The human is not the rate limiter: automated sub-second exits make the live limit 7,708.*
 
-- WHEN five sub-second `harness` exits from Review and no human reviews exist THE SYSTEM SHALL compute ReviewWIP from the 15-minute prior (60 min/day gives 4).
-- WHEN five human reviews of 20 minutes exist at 60 review minutes a day THE SYSTEM SHALL compute ReviewWIP = 3, whatever automated exits are also in the log.
-- WHEN a human decision is recorded THE SYSTEM SHALL recompute ReviewWIP before the next card is released from Verify.
-- WHEN two projects share a server THE SYSTEM SHALL compute and enforce each project's ReviewWIP from its own reviews and its own Review count.
-- WHEN a person opens a card's evidence in Review THE SYSTEM SHALL record `review/opened` with the files shown; WHEN they decide THE SYSTEM SHALL record `review/decided` with the principal, lines reviewed, minutes and acknowledged findings (research RG-T4).
-- WHEN ReviewWIP is computed THE SYSTEM SHALL count Worker-built and person-built cards alike, and SHALL report decisions faster than 500 changed lines an hour separately without refusing them (RG-T5).
+- **RG-S6-1** WHEN five sub-second `harness` exits from Review and no human reviews exist THE SYSTEM SHALL compute ReviewWIP from the 15-minute prior (60 min/day gives 4).
+- **RG-S6-2** WHEN a project has no recorded review at all and sets no `review_minutes_per_day` THE SYSTEM SHALL use 60 review minutes a day and the 15-minute prior, giving ReviewWIP = 4, not the static limit of 3.
+- **RG-S6-3** WHEN five human reviews of 20 minutes exist at 60 review minutes a day THE SYSTEM SHALL compute ReviewWIP = 3, whatever automated exits are also in the log.
+- **RG-S6-4** WHEN a human decision is recorded THE SYSTEM SHALL recompute ReviewWIP before the next card is released from Verify.
+- **RG-S6-5** WHEN two projects share a server THE SYSTEM SHALL compute and enforce each project's ReviewWIP from its own reviews and its own Review count.
+- **RG-S6-6** WHEN a person opens a card's evidence in Review THE SYSTEM SHALL record `review/opened` with the files shown; WHEN they decide THE SYSTEM SHALL record `review/decided` with the principal, lines reviewed, minutes and acknowledged findings (research RG-T4).
+- **RG-S6-7** WHEN ReviewWIP is computed THE SYSTEM SHALL count Worker-built and person-built cards alike, and SHALL report decisions faster than 500 changed lines an hour separately without refusing them (RG-T5).
 
 ### P8 — The Reviewer rebuilt to the design
 *Today it checks style only, never runs on a new project, reads a truncated diff and runs after the merge.*
 
-- WHEN a card with a diff passes its gates THE SYSTEM SHALL produce one `ReviewFinding` per acceptance criterion, each with a verdict and a `file:line`, before the card appears in the Review queue.
-- WHEN `--auto-accept` is on THE SYSTEM SHALL run the Reviewer before merging, and record its findings on the card even when it merges.
-- WHEN several cards pass in one queue pass on a host where roles do not co-reside THE SYSTEM SHALL hold them in Verify, load the Reviewer once after the retries, and review each before any is shown in Review.
-- WHEN the project has no learned preferences or rules THE SYSTEM SHALL still review the card against its criteria.
-- WHEN the diff exceeds the Reviewer's budget THE SYSTEM SHALL review it file by file and list any file it did not read; it SHALL NOT silently truncate.
-- WHEN findings are produced THE SYSTEM SHALL include a coverage line: files read of files changed, and changed lines cited by no finding (research DB-T4).
-- WHEN a criterion has no staged test case that exercises it THE SYSTEM SHALL report a finding for it, and the Reviewer SHALL never mark a criterion met on that check alone.
-- WHEN the Worker recorded an assumption in the card's dossier THE SYSTEM SHALL give it to the Reviewer, which SHALL report each assumption the diff contradicts.
-- WHEN findings are produced THE SYSTEM SHALL write them to the card's dossier as well as the evidence bundle, and Seshat's snapshot of the card SHALL contain them.
-- WHEN the only configured non-Worker model shares the Worker's family THE SYSTEM SHALL leave the role unfilled and show the reason in Review.
-- WHEN the Reviewer's input is assembled THE SYSTEM SHALL exclude the Worker's transcript.
-- WHEN findings are shown THE SYSTEM SHALL attribute them to *Reviewer* and its model id, and SHALL show no model-stated confidence.
-- WHEN the seeded-defect set (gate-passing defects on frozen-suite cards) is reviewed THE SYSTEM SHALL record the Reviewer's recall against an empty finding list and its false-positive rate per card, and P8 is done only if recall is higher than the empty list's.
-- WHEN the Reviewer's preference findings are measured over the project's send-backs THE SYSTEM SHALL record the share of send-back reasons a finding caught before the person saw the card, against the register's adoption threshold of one in five (R8).
-- WHEN a send-back note names no file, symbol, gate or error pattern THE SYSTEM SHALL keep it as a dossier note and SHALL NOT propose it as a playbook rule.
+- **RG-P8-1** WHEN a card with a diff passes its gates THE SYSTEM SHALL produce one `ReviewFinding` per acceptance criterion, each with a verdict and a `file:line`, before the card appears in the Review queue.
+- **RG-P8-2** WHEN `--auto-accept` is on THE SYSTEM SHALL run the Reviewer before merging, and record its findings on the card even when it merges.
+- **RG-P8-3** WHEN several cards pass in one queue pass on a host where roles do not co-reside THE SYSTEM SHALL hold them in Verify, load the Reviewer once after the retries, and review each before any is shown in Review.
+- **RG-P8-4** WHEN the project has no learned preferences or rules THE SYSTEM SHALL still review the card against its criteria.
+- **RG-P8-5** WHEN the diff exceeds the Reviewer's budget THE SYSTEM SHALL review it file by file and list any file it did not read; it SHALL NOT silently truncate.
+- **RG-P8-6** WHEN findings are produced THE SYSTEM SHALL include a coverage line: files read of files changed, and changed lines cited by no finding (research DB-T4).
+- **RG-P8-7** WHEN a criterion has no staged test case that exercises it THE SYSTEM SHALL report a finding for it, and the Reviewer SHALL never mark a criterion met on that check alone.
+- **RG-P8-8** WHEN the Worker recorded an assumption in the card's dossier THE SYSTEM SHALL give it to the Reviewer, which SHALL report each assumption the diff contradicts.
+- **RG-P8-9** WHEN findings are produced THE SYSTEM SHALL write them to the card's dossier as well as the evidence bundle, and Seshat's snapshot of the card SHALL contain them.
+- **RG-P8-10** WHEN the only configured non-Worker model shares the Worker's family THE SYSTEM SHALL leave the role unfilled and show the reason in Review.
+- **RG-P8-11** WHEN the Reviewer's input is assembled THE SYSTEM SHALL exclude the Worker's transcript.
+- **RG-P8-12** WHEN findings are shown THE SYSTEM SHALL attribute them to *Reviewer* and its model id, and SHALL show no model-stated confidence.
+- **RG-P8-13** WHEN the seeded-defect set (at least 20 gate-passing defects seeded into frozen-suite cards) is reviewed THE SYSTEM SHALL record the Reviewer's recall and its false positives per card; P8 is done only when **recall is at least 0.3 with no more than 1 false positive per card** (counted on each card, not averaged).
+- **RG-P8-14** WHEN the Reviewer's preference findings are measured over the project's send-backs THE SYSTEM SHALL record the share of send-back reasons a finding caught before the person saw the card, against the register's adoption threshold of one in five (R8).
+- **RG-P8-15** WHEN a send-back note names no file, symbol, gate or error pattern THE SYSTEM SHALL keep it as a dossier note and SHALL NOT propose it as a playbook rule.
 
 ### NEW-review-git-1 — A rebase conflict goes back to the Worker as typed failures
 *The spec said `built`; every conflict goes to Planning with one line (inventory Y6, R2 SHALLOW; `card_runner.ts:1282-1283, 1635-1638`).*
 
-- WHEN a rebase before Verify conflicts only inside the card's scope THE SYSTEM SHALL return the card to the Worker with `rebase_conflict` and one typed failure per conflicting file naming its hunks, within the card's remaining budget.
-- WHEN a rebase conflict touches a file outside the card's scope THE SYSTEM SHALL park the card with the files named.
-- WHEN the Worker's budget ends with the conflict unresolved THE SYSTEM SHALL post one decision request naming both cards.
+- **RG-N1-1** WHEN a rebase before Verify conflicts only inside the card's scope THE SYSTEM SHALL return the card to the Worker with `rebase_conflict` and one typed failure per conflicting file naming its hunks, within the card's remaining budget.
+- **RG-N1-2** WHEN a rebase conflict touches a file outside the card's scope THE SYSTEM SHALL park the card with the files named.
+- **RG-N1-3** WHEN the Worker's budget ends with the conflict unresolved THE SYSTEM SHALL post one decision request naming both cards.
 
 ### NEW-review-git-2 — Restacked children re-run their gates
 *The spec said `built`; restack records an event and runs no gate (inventory Y7, R2 SHALLOW; `execute.ts:1380-1389`).*
 
-- WHEN a parent card is accepted and a stacked child rebases cleanly THE SYSTEM SHALL re-run the child's gates on the rebased branch and record the result as the child's evidence.
-- WHEN a restacked child's gates fail THE SYSTEM SHALL return it to the Worker with the failures, and SHALL NOT leave it in Review.
+- **RG-N2-1** WHEN a parent card is accepted and a stacked child rebases cleanly THE SYSTEM SHALL re-run the child's gates on the rebased branch and record the result as the child's evidence.
+- **RG-N2-2** WHEN a restacked child's gates fail THE SYSTEM SHALL return it to the Worker with the failures, and SHALL NOT leave it in Review.
 
 ### NEW-review-git-3 — Per-package gates in card verification
 *Per-package gates run only from `sekhemet gate`, and cross-repository splitting has no caller (inventory Y19, R2 SHALLOW).*
 
-- WHEN a card's diff touches two workspace packages THE SYSTEM SHALL run both packages' gate sets during the card's verification, and the card SHALL enter Review only when both pass.
-- WHEN a planned change spans two repositories THE SYSTEM SHALL create two cards with a dependency edge, never one card with two worktrees.
+- **RG-N3-1** WHEN a card's diff touches two workspace packages THE SYSTEM SHALL run both packages' gate sets during the card's verification, and the card SHALL enter Review only when both pass.
+- **RG-N3-2** WHEN a planned change spans two repositories THE SYSTEM SHALL create two cards with a dependency edge, never one card with two worktrees.
 
 ### NEW-review-git-4 — Versions follow SemVer's 0.y.z rule, per slice
 *`nextVersion` jumps `0.y.z` to `1.0.0` on a breaking change, and releases are not tied to slices ([DESIGN_RESEARCH_TEAMS_DATA_CHANGE](../../research/DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md) decision 13; RG-T6).*
 
-- WHEN a release is proposed for a slice THE SYSTEM SHALL compute the version from the Conventional-Commit squashes since the last tag, bumping minor (not major) for a breaking change while the version is `0.y.z`.
-- WHEN a release is proposed THE SYSTEM SHALL tag only on a person's confirmation, and record `release/tagged` with the tag, the sha and the principal.
+- **RG-N4-1** WHEN a release is proposed for a slice THE SYSTEM SHALL compute the version from the Conventional-Commit squashes since the last tag, bumping minor (not major) for a breaking change while the version is `0.y.z`.
+- **RG-N4-2** WHEN a release is proposed THE SYSTEM SHALL tag only on a person's confirmation, and record `release/tagged` with the tag, the sha and the principal.
 
 ### NEW-review-git-5 — Review for a team: who may accept, who should look
 *Nothing stops the person who delegated a card from accepting it on a server, the Review queue cannot route work, and review time cannot tell a read from a rubber stamp ([DESIGN_RESEARCH_TEAMS_DATA_CHANGE](../../research/DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md) decisions 3, 4, 16, 17; RG-T1…T3).*
 
-- WHEN independent accept is required and the principal accepting built the card, or owns the card that was delegated to the Worker while another person holds the Accept permission on the project, THE SYSTEM SHALL refuse with a message naming who may accept.
-- WHEN the project runs in company-server mode and `require_independent_accept` is unset THE SYSTEM SHALL treat it as on.
-- WHEN a card is created with a declared scope and the repository has a `CODEOWNERS` file THE SYSTEM SHALL compute suggested accepters from the last matching pattern for each file in scope.
-- WHEN a project requires code-owner acceptance THE SYSTEM SHALL refuse an accept by a principal who owns none of the card's files.
-- WHEN any `unmet` or `unclear` finding is unacknowledged, or any Implementation file has not been shown, THE SYSTEM SHALL refuse the accept on every surface and name which remain.
-- WHEN a card was built by a person THE SYSTEM SHALL apply the same entry conditions, gates and Reviewer as for a Worker-built card, and a failing blocking gate SHALL refuse the move to Review without an `override:` reason.
+- **RG-N5-1** WHEN independent accept is required and the principal accepting built the card, or owns the card that was delegated to the Worker while another person holds the Accept permission on the project, THE SYSTEM SHALL refuse with a message naming who may accept.
+- **RG-N5-2** WHEN the project runs in company-server mode and `require_independent_accept` is unset THE SYSTEM SHALL treat it as on.
+- **RG-N5-3** WHEN a card is created with a declared scope and the repository has a `CODEOWNERS` file THE SYSTEM SHALL compute suggested accepters from the last matching pattern for each file in scope.
+- **RG-N5-4** WHEN a project requires code-owner acceptance THE SYSTEM SHALL refuse an accept by a principal who owns none of the card's files.
+- **RG-N5-5** WHEN any `unmet` or `unclear` finding is unacknowledged, or any Implementation file has not been shown, THE SYSTEM SHALL refuse the accept on every surface and name which remain.
+- **RG-N5-6** WHEN a card was built by a person THE SYSTEM SHALL apply the same entry conditions, gates and Reviewer as for a Worker-built card, and a failing blocking gate SHALL refuse the move to Review without an `override:` reason.
 
 ## 6. v1 acceptance
 
 All criteria in §5, plus:
 
-- WHEN a send-back has an empty reason THE SYSTEM SHALL refuse it on every surface.
-- WHEN a squash message lacks `Card`, `Agent-Model`, `Agent-Harness` or `Agent-Role` THE SYSTEM SHALL refuse it before any ref moves.
-- WHEN two cards' `filesTouched` intersect THE SYSTEM SHALL not run them concurrently.
-- WHEN the product path runs a card that writes a file on each of three steps THE SYSTEM SHALL record three checkpoint commits and three checkpoint records.
-- WHEN a parent card is accepted THE SYSTEM SHALL rebase each stacked child onto the integration branch and re-run its gates, reporting any child that conflicts.
-- WHEN cards in Review reach ReviewWIP THE SYSTEM SHALL hold newly finished cards in Verify and release the oldest when a review completes.
-- WHEN an external review card's gates fail THE SYSTEM SHALL record the failures as findings and SHALL NOT present the card as passing.
+- **RG-1** WHEN a send-back has an empty reason THE SYSTEM SHALL refuse it on every surface.
+- **RG-2** WHEN a squash message lacks `Card`, `Agent-Model`, `Agent-Harness` or `Agent-Role` THE SYSTEM SHALL refuse it before any ref moves.
+- **RG-3** WHEN two cards' `filesTouched` intersect THE SYSTEM SHALL not run them concurrently.
+- **RG-4** WHEN the product path runs a card that writes a file on each of three steps THE SYSTEM SHALL record three checkpoint commits and three checkpoint records.
+- **RG-5** WHEN a parent card is accepted THE SYSTEM SHALL rebase each stacked child onto the integration branch and re-run its gates, reporting any child that conflicts.
+- **RG-6** WHEN cards in Review reach ReviewWIP THE SYSTEM SHALL hold newly finished cards in Verify and release the oldest when a review completes.
+- **RG-7** WHEN an external review card's gates fail THE SYSTEM SHALL record the failures as findings and SHALL NOT present the card as passing.
 
 ## 7. Later
 
@@ -287,10 +294,14 @@ All criteria in §5, plus:
 - Teams and review ergonomics (§2.1, §2.2.5, §2.4.1–3): the requester of agent work is not an independent approver (GitHub's Copilot rule); CODEOWNERS' last-match rule; files shown last had 64% lower odds of their defect being found (Fregnan et al., ESEC/FSE 2022); LLM-assisted reviewers focus where the LLM pointed (arXiv 2411.11401), hence the coverage line; cognitive forcing reduces over-reliance but is disliked (Buçinca et al., CSCW 2021), hence the light level; under 500 LOC an hour (SmartBear, a vendor source) — [DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md](../../research/DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md) §2.1, §2.5, decisions 3, 4, 16, 17. SemVer 0.y.z and the release hand-off (§2.6.7): the same, §2.3, decision 13; git-cliff stays optional, release-please and semantic-release are not dependencies.
 - Spec-to-test fidelity as a fail-only Reviewer check, and supersessions and test approvals shown in Review: [DESIGN_RESEARCH_TESTS_BROWNFIELD.md](../../research/DESIGN_RESEARCH_TESTS_BROWNFIELD.md) §2.1 and decisions 6, 8.
 - **Resolved drift and deliberate reversals:**
-  - Send back goes to Ready (the code), not In Progress — the Worker restarts from the dossier with the note, not mid-attempt.
+  - Send back goes to Ready (the code), not In progress — the Worker restarts from the dossier with the note, not mid-attempt.
   - The design's example trailers named `claude-code` as harness — Sekhemet's squashes say `sekhemet`.
   - The Reviewer is a role, so "Seshat's review" in the product becomes "Reviewer" (DEC-05, [NAMING](../NAMING.md)).
   - Review's target is "a decision in under a minute", not "5-second acceptance" — the 5-second figure assumed a diff nobody reads; the minute is what a gated, small card needs.
   - Only an actionable send-back note becomes a playbook candidate, not every return reason — vague review comments poison rule induction (arXiv 2502.02757).
   - Checkpoints after every step that changed files (the product path), not "every 5 steps" nor "at every masking boundary" — rewind and fork must reach any step (`execute.ts:420-422`); there is no masking-boundary trigger in the code, and none is needed once every write is checkpointed.
   - The Reviewer runs once per queue pass on a 24 GB host, not per card — both old rules ("per card before Review" and "once at the end") hold together when passed cards wait in Verify for it.
+  - Unpark returns a card to Ready (or to Backlog or Planning if it came from there), not "its previous state" — Parked has no legal edge back to In progress, Verify or Review ([kernel](kernel.md) rule 25), and a card that left a running attempt is re-queued, as a send-back is (review M7).
+  - A pull-request-on-accept card waits in Review under a typed `awaitingMerge` hold that the Review count excludes, not in an unnamed "accepted" limbo — kernel has no state for it and none is added (review M10).
+  - Auto-accept is a person's recorded standing decision, named on every acceptance, not the harness's own verdict — the spine lets no machine accept, so the only acceptable auto-accept is one a named person turned on (review M20; DEFINITION_OF_DONE §5.1.5).
+  - The Reviewer's bar is recall ≥ 0.3 on ≥ 20 seeded defects with ≤ 1 false positive per card, not "better than an empty list", whose recall is 0 (review M5).

@@ -91,9 +91,9 @@ The harness runs code written by a local model on the owner's machine. The v1 Wo
 
 ### Egress (S3)
 
-28. One network policy. The user's `config.toml` is authoritative; a repository's `gates.toml` `network_allow` may only **narrow** it; a project `config.toml` may not widen `[network] mode`.
+28. One network policy, in the one schema [surface](surface.md) item 24 owns: `[network] mode`, `fetch_allow`, `fetch_deny`. The user's `config.toml` is authoritative; a project's `config.toml` may only add hosts to `fetch_deny` and narrow `fetch_allow`, never widen `mode`; `fetch_deny` wins over everything. A card's sandboxed commands are narrowed once more by the repository's `gates.toml` `[project] network_allow` (empty: the card's commands reach nothing), which can never add a host the effective `fetch_allow` lacks.
 29. Offline is the default. With `mode = "offline"` no sandboxed command has a route out, and harness-side requests reach only loopback.
-30. With an allowlist, sandboxed commands reach the network only through the harness's proxy. The proxy: treats an empty allowlist as deny-all; canonicalises hostnames and rejects NUL bytes and non-hostname characters; resolves names itself and refuses loopback, private, link-local and metadata addresses after resolution; allows only ports 80 and 443; and records every request, allowed or refused, as a `card/egress` event with the SHA-256 of its payload.
+30. With an allowlist, sandboxed commands reach the network only through the harness's proxy, whose list is the effective `fetch_allow` narrowed by `network_allow`, minus `fetch_deny`. The proxy: treats an empty allowlist as deny-all; canonicalises hostnames and rejects NUL bytes and non-hostname characters; resolves names itself and refuses loopback, private, link-local and metadata addresses after resolution; allows only ports 80 and 443; and records every request, allowed or refused, as a `card/egress` event with the SHA-256 of its payload.
 31. The sandbox has no resolver of its own (DNS is itself an exfiltration channel).
 31a. An allowlist names exact hosts. The proxy decides on the hostname the client supplies and does not inspect TLS, so a broad or upload-capable entry — a wildcard, a code host such as `github.com`, a registry's publish endpoint — is an exfiltration path: it is accepted only with a warning shown when it is added and recorded on every card that runs under it.
 32. Every harness-side outbound request that input from the Worker or a repository can influence — registry lookups for the supply-chain gate, research fetches, repository clones — goes through one `NetworkPolicy` wrapper that applies the mode and logs to the ledger. Registry lookups never run inside a worktree (so a worktree `.npmrc` is ignored).
@@ -113,7 +113,7 @@ The harness runs code written by a local model on the owner's machine. The v1 Wo
 
 ### Workspace trust (S9)
 
-38. Repository-supplied configuration that makes the harness run code outside the sandbox — `.sekhemet/hooks.toml`, `.sekhemet/mcp.json`, `.sekhemet/plugins/`, skill `scripts/` — is inert until the user trusts it. [Extensibility](extensibility.md) lists what each gates.
+38. Repository-supplied configuration that makes the harness run code outside the sandbox — `.sekhemet/hooks.toml`, `.sekhemet/mcp.json`, `.sekhemet/plugins/`, skill `scripts/` — is inert until the user trusts it. Plugins are trust-gated like the rest; cutting them is pending the owner ([O4](../../reference/OPEN_QUESTIONS.md#owner-decisions), [extensibility](extensibility.md) item 29 and §8 Q2). [Extensibility](extensibility.md) lists what each gates.
 39. Trust is recorded in the user directory, never in the repository, keyed by the repository's real path and the SHA-256 of each trusted file. A changed hash is untrusted again, including after an Accept merges a Worker's edit to one of these files.
 40. The trust prompt shows exactly what would run. Headless and non-TTY runs never trust implicitly; `--trust` must be given per invocation.
 41. The Review evidence flags any diff to files that execute later outside the sandbox: the paths in item 38, `.githooks/`, `.husky/`, `.pre-commit-config.yaml`, `.gitattributes`, `.gitmodules`, and editor task configuration (`.vscode/`, `.idea/`) (NEW-security-1).
@@ -137,9 +137,9 @@ The harness runs code written by a local model on the owner's machine. The v1 Wo
 
 45. With no network, a machine can install from source ([DEC-21](../DECISIONS.md#dec-21--accepted-substitutions)), work cards, add mirrored dependencies and look up documentation.
 46. **Mirrors:** an allowlist exported from the lockfiles (for pnpm, the store is filled from the lockfile with `pnpm fetch`, so `pnpm install --offline` works); the supply-chain gate resolves against it, so an unmirrored package cannot be installed — the correct default when there is no network.
-47. **Models:** the harness never downloads weights on its own. A person may run an explicit download command for a registry model, which verifies the published hash before the weights are used ([models](models.md) NEW-models-7); in air-gap mode weights are copied in by hand. A manifest lists each approved model's checksum, quantisation, chat-template checksum and the tier it qualifies for; weights are registered only when both checksums match, and the qualification suite still runs on this machine, because a model that qualifies on one machine may not on another. A signed manifest is required in air-gap mode.
+47. **Models:** the harness never downloads weights on its own. A person may run an explicit download command for a registry model, which verifies the published hash before the weights are used ([models](models.md) NEW-models-7; ruling R7, owner decision [O2](../../reference/OPEN_QUESTIONS.md#owner-decisions), whose default is this behaviour); in air-gap mode weights are copied in by hand. A manifest lists each approved model's checksum, quantisation, chat-template checksum and the tier it qualifies for; weights are registered only when both checksums match, and the qualification suite still runs on this machine, because a model that qualifies on one machine may not on another. A signed manifest is required in air-gap mode.
 48. **Documentation:** a library's docs are prefetched into the research cache on a connected machine, exported as one bundle with its SHA-256, and imported on the air-gapped one — the same route carries the whole research cache. The bundle holds docsets and `llms.txt` snapshots at the versions the lockfiles pin, and is marked stale (and named by the self-test) when a lockfile changes after it was built (NEW-security-5).
-49. **Updates:** by signed bundle (`ssh-keygen -Y`, namespace `sekhemet-update`), applied by hand, with a compatibility note for the event-log schema; the ledger is backed up before any update, and the log is never migrated in place without that backup. Skill updates travel the same signed route in air-gap mode (plugins are cut, [extensibility](extensibility.md)) (NEW-security-5).
+49. **Updates:** by signed bundle (`ssh-keygen -Y`, namespace `sekhemet-update`), applied by hand, with a compatibility note for the event-log schema; the ledger is backed up before any update, and the log is never migrated in place without that backup. Skill updates travel the same signed route in air-gap mode (NEW-security-5). Plugins have no update route: they are trust-gated (S9, item 38) and their cut is pending the owner ([O4](../../reference/OPEN_QUESTIONS.md#owner-decisions)); a changed plugin is untrusted again by item 39.
 50. **Self-test:** a full card run produces no outbound connection attempt, checked at the proxy; every gate command is runnable; every registered model loads; the docs index answers a known query. The result goes to the audit log.
 
 ## 3. Contract
@@ -161,7 +161,7 @@ The harness runs code written by a local model on the owner's machine. The v1 Wo
 | `ManifestModel` (`sha256`, `quant`, `tier`, `templateChecksum`) | `apps/harness/src/airgap.ts:165-173` |
 | Events: `card/egress` (payload `EgressRecord`) | `packages/loop/src/card_runner.ts:884-895` |
 | Env: `SEKHEMET_ALLOW_UNCONFINED`, `SEKHEMET_AIRGAP`, `SEKHEMET_MAX_COMMAND_MEMORY_MB` | inventory in [surface](surface.md) |
-| Config: `[network] mode`, `fetch_allow` (user `config.toml`); `[project] network_allow`, `protected` (`gates.toml`) | [surface](surface.md), [gates](gates.md) |
+| Config: `[network] mode`, `fetch_allow`, `fetch_deny` (user `config.toml`, narrowed by the project's; [surface](surface.md) item 24 owns the schema); `[project] network_allow`, `protected` (`gates.toml`) | [surface](surface.md), [gates](gates.md) |
 | CLI: `--restricted`; `sekhemet dev airgap` with `mirror`, `manifest`, `verify-models`, `docs`, `export-docs`, `import-docs`, `sign`, `update`, `selftest`; `sekhemet dev skills approve`, `revoke` | `apps/harness/src/airgap.ts:495-611`, `wave2.ts:756` |
 
 ## 4. State today
@@ -209,7 +209,7 @@ Tests use canary markers — a fixture that would write a marker file outside th
 ### S1 — git metadata (remaining: G2, G3, G6)
 *Harness git still honours most program-running config, and bubblewrap protects only the root `.git`.*
 - **SEC-1** WHEN a sandboxed command on Linux attempts to create or write `sub/.git/config` under a granted root THE SYSTEM SHALL fail the write and leave no such file.
-- **SEC-2** WHEN a worktree's `.git` pointer names a gitdir other than the harness's record THE SYSTEM SHALL run no git command there and SHALL stop the card with stop reason `git_metadata_tampered`.
+- **SEC-2** WHEN a worktree's `.git` pointer names a gitdir other than the harness's record THE SYSTEM SHALL run no git command there and SHALL stop the card with stop reason `git_metadata_tampered`, a stored reason in [worker-loop](worker-loop.md)'s one stop-reason table (rule 31), which gives its class, `parks` and next action; this spec keeps no list of its own.
 - **SEC-3** WHEN a worktree's git config sets any key listed in item 21 THE SYSTEM SHALL refuse to run git in it and name the key.
 - **SEC-4** WHEN `.gitattributes` in a worktree selects a clean filter or diff driver THE SYSTEM SHALL complete `status`, `diff` and `commit` without running the named program (marker absent).
 - **SEC-5** WHEN `SEKHEMET_GIT_HARDENED=1` is set but the hardened keys are absent THE SYSTEM SHALL apply them.
@@ -228,6 +228,7 @@ Tests use canary markers — a fixture that would write a marker file outside th
 - **SEC-10** WHEN a sandboxed command sends CONNECT to an allowlisted host on a port other than 80 or 443 THE SYSTEM SHALL refuse it.
 - **SEC-11** WHEN a hostname contains a NUL byte or characters outside hostname syntax THE SYSTEM SHALL refuse it.
 - **SEC-12** WHEN the repository's `gates.toml` lists a host the user's `config.toml` does not permit THE SYSTEM SHALL not reach that host.
+- **SEC-12a** WHEN a host is in the user's `fetch_allow` and the repository's `network_allow` but the project's `config.toml` adds it to `fetch_deny` THE SYSTEM SHALL refuse it at the proxy and record `allowed: false`.
 - **SEC-13** WHEN no user config sets `[network] mode` THE SYSTEM SHALL behave as offline in `plan`, the supply-chain gate and research, with no outbound request recorded.
 - **SEC-14** WHEN the supply-chain gate looks up a package THE SYSTEM SHALL send the request through `NetworkPolicy`, record it on the ledger, and not read the worktree's `.npmrc`.
 - **SEC-15** WHEN a sandboxed command on Linux connects to a host UNIX socket (session bus, `docker.sock`) or on macOS asks LaunchServices to open an application THE SYSTEM SHALL refuse it.
@@ -239,8 +240,7 @@ Tests use canary markers — a fixture that would write a marker file outside th
 - **SEC-17** WHEN a language server, a package gate, an onboarding probe, `--validate-tools` or the `browse` tool's browser runs a fixture that writes a marker outside the worktree THE SYSTEM SHALL leave the marker absent.
 - **SEC-18** WHEN the test suite enumerates the modules that import `node:child_process` THE SYSTEM SHALL find exactly the written allowlist.
 - **SEC-19** WHILE `--restricted` is set THE SYSTEM SHALL start no dev server, browser, language server, package gate or hook.
-
-- WHEN the harness runs a program other than git over worktree content outside the sandbox (today: difftastic for the review diff) THE SYSTEM SHALL resolve it by absolute path from a fixed allowlist, run it with no network and with time and memory limits, and SHALL refuse any program not on the allowlist.
+- **SEC-19a** WHEN the harness runs a program other than git over worktree content outside the sandbox (today: difftastic for the review diff) THE SYSTEM SHALL resolve it by absolute path from a fixed allowlist, run it with no network and with time and memory limits, and SHALL refuse any program not on the allowlist.
 
 ### S3b — fail closed
 - **SEC-20** WHEN no confinement mechanism is available and `SEKHEMET_ALLOW_UNCONFINED` is unset THE SYSTEM SHALL refuse every Worker command and gate with exit code 126 and a message naming the fix.
@@ -255,7 +255,7 @@ Tests use canary markers — a fixture that would write a marker file outside th
 - **SEC-27** WHEN an integration token is saved on a host with no keychain THE SYSTEM SHALL write it with mode 0600 in a 0700 directory, and SHALL correct wider modes on an existing file.
 
 ### S9 — workspace trust
-- **SEC-28** WHEN a repository with `.sekhemet/hooks.toml`, `mcp.json` or plugins is opened for the first time THE SYSTEM SHALL run none of them and SHALL show what each would run.
+- **SEC-28** WHEN a repository with `.sekhemet/hooks.toml`, `mcp.json` or plugins is opened for the first time THE SYSTEM SHALL run none of them and SHALL show what each would run (plugins while their cut is pending, [O4](../../reference/OPEN_QUESTIONS.md#owner-decisions)).
 - **SEC-29** WHEN a trusted file's SHA-256 changes (including through an accepted card) THE SYSTEM SHALL treat it as untrusted until the user trusts the new content.
 - **SEC-30** WHEN the harness runs headless or without a TTY and without `--trust` THE SYSTEM SHALL not trust any repository configuration.
 - **SEC-31** WHEN a repository ships its own trust or skills lock THE SYSTEM SHALL ignore it for trust decisions.
@@ -317,7 +317,7 @@ SEC-1 to SEC-37b and SEC-44 to SEC-51 (including the lettered criteria; SEC-50 a
 - **A VM per test gate or per card** (Apple `container`, gVisor, Firecracker) — stronger isolation, not researched for our hosts; also the planned route off `sandbox-exec` if Apple removes it (item 13).
 - **Registry mirrors as services** (verdaccio, devpi, a crates mirror), pre-seeded from the lockfile allowlist **plus a curated set** of common packages — v1 ships the lockfile allowlist alone; a transitive dependency not yet in any lockfile cannot be mirrored in advance, which is the open policy question the design left, and a curated set needs someone to curate it.
 - **Crypto-shredding of backups and exports** — deleting the `private` rows plus a declared backup window covers v1 (runtime's backup and restore re-apply erasures); per-subject keys add key management the product does not otherwise need ([research](../../research/DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md) §5).
-- **Plugin signing** — plugins are cut in v1 ([extensibility](extensibility.md)).
+- **Plugin signing** — in v1 plugins are trust-gated by content hash (item 38) and their cut is pending the owner ([O4](../../reference/OPEN_QUESTIONS.md#owner-decisions)); signing comes only with a plugin API ([extensibility](extensibility.md) §7).
 
 ## 8. Open questions
 

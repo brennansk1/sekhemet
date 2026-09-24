@@ -237,7 +237,7 @@ The `gh` transport and `gh pr create` are tested against a fake `gh` on `PATH`, 
 ## 8. Open questions
 
 1. **What may a non-accepter do?** DEC-06 grants "one permission beyond reading". *Recommendation:* item 26 — talking to Seshat counts as reading (non-developers must be able to ask), every board decision needs the Accept permission.
-2. **Where does a person's identity live in the event?** The `actor` column is a checked enum (`packages/kernel/src/types.ts:325-339`). *Recommendation:* a nullable `principal` column in the envelope, covered by the hash chain, added in [kernel](kernel.md)'s S7 migration; `actor` stays `human`.
+2. **Where does a person's identity live in the event?** *Closed 2026-09-24:* [kernel](kernel.md) rule 19 and NEW-kernel-2 specify it — a `principal` column naming an opaque, stable subject id, covered by the chain hash, required on `human` events and on events a person caused through a machine actor; `actor` stays a closed set and people are never added to it. This spec's identity layer resolves a session or proxy header to that principal (items 24–26).
 3. **Can a third-party App appear in GitHub's agent-session surface?** The research confirms the surface for Copilot, Claude and Codex, not its openness. *Recommendation:* ship the Projects status field (INT-20b) in v1 and add the session surface when GitHub documents it for Apps.
 4. **Forgejo.** The design listed it as the offline-friendly self-hosted target — issues, dependencies, boards and webhooks; the adapter exists, covers issues only, and is the only tested pull path. *Recommendation:* keep it behind the same adapter interface; not a v1 promise beyond what its tests cover (the rest is in §7).
 

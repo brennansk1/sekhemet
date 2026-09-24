@@ -61,7 +61,7 @@ Sekhemet runs cards unattended for hours on a machine people also use. The runti
 
 ### Crash recovery (resume)
 
-10. At start-up the supervisor sweeps: any card in In Progress whose attempt is still marked running, with no live lease holder, is a crashed attempt. Its attempt is finished with stop reason `crashed`, the partial step is discarded, the worktree is restored to its last checkpoint commit, and the card returns to Ready with the attempt recorded. The next run resumes it at the last completed step. Nothing that was logged is lost, and nothing unlogged is trusted.
+10. At start-up the supervisor sweeps: any card in In Progress whose attempt is still marked running, with no live lease holder, is a crashed attempt. Its attempt is finished with stop reason `crashed` — a stored reason of class **environment** in [worker-loop](worker-loop.md)'s one stop-reason table (rule 31), which is where its `parks`, `resumable` and next action are given; this spec defines no list of its own — the partial step is discarded, the worktree is restored to its last checkpoint commit, and the card returns to Ready with the attempt recorded. The next run resumes it at the last completed step. Nothing that was logged is lost, and nothing unlogged is trusted.
 
 ### Checkpoints, rewind, fork, replay
 
@@ -112,9 +112,13 @@ Sekhemet runs cards unattended for hours on a machine people also use. The runti
 
 ### Retention and logs
 
-33. **Retention** runs at the start of every queue: context packs, masked observations and transcripts of cards closed (Done or rejected) more than 30 days ago are pruned; a pack shared with an open card stays. Never pruned: the ledger, evidence bundles (which hold the final diff and gate results), and anything of an open card.
+33. **Retention** runs at the start of every queue and selects the context packs, masked observations and transcripts of cards closed (Done or rejected) more than 30 days ago; a pack shared with an open card stays. Never pruned: the ledger, evidence bundles (which hold the final diff and gate results), and anything of an open card. **Pruning is a recorded erasure** ([kernel](kernel.md) rule 34): the selected blobs are deleted and, in the same transaction, one `ledger/erased {blobIds, reason: "retention", principal}` event lists every one of them, so a replay of a step whose pack was pruned names the gap and the `ledger/erased` seq instead of reporting a missing blob (K-N7-6, K-N7-8). The event's actor is the harness and its `principal` is the person who set the project's retention period — an event a person caused through a machine actor ([kernel](kernel.md) rule 19) — so that person must hold the Accept permission (K-N7-1); a retention period set by no one with that permission prunes nothing. **Until the owner decides [O1](../../reference/OPEN_QUESTIONS.md#owner-decisions)** (spine rule 2's wording for erasure and retention), retention deletes nothing: it reports, on the console and in the queue's run report, the packs, observations and transcripts it would prune, with their card ids. *Changed from the code:* `queue` prunes today with no ledger record (`index.ts:1242-1247`, `retention.ts:54-58`), which breaks spine rule 2 silently.
 34. `daemon.log` and run logs rotate by size and keep a bounded number of files; `traces.db` keeps 30 days of spans; parked cards' worktrees are removed when the card is closed. Disk growth per 100 cards is bounded.
-34a. **Retention of personal text.** Once the ledger has an erasable `private` part ([kernel](kernel.md) NEW-kernel-1), a project's retention period for `private` fields of closed cards erases them with reason `retention`, keeping structural fields and commitments, so the chain still verifies (NEW-runtime-8).
+34a. **Retention of personal text.** Once the ledger has an erasable `private` part ([kernel](kernel.md) NEW-kernel-1), a project's retention period for `private` fields of closed cards erases them with reason `retention`, keeping structural fields and commitments, so the chain still verifies (NEW-runtime-8). The period's default is [O14](../../reference/OPEN_QUESTIONS.md#owner-decisions)'s (90 days for closed cards' free text); until the owner decides O1 and O14, this retention too only reports what it would erase.
+
+### Run reports
+
+34b. **A queue run's report is a ledger event.** When `queue` or an overnight round ends, its report (`QueueReport`: per-card entries with attempt, stop reason, steps, tokens and duration; pass@1, pass after escalation, model swaps, throughput, prefix-cache summary, the watchdog level at the end, and retention's report) is appended as one `queue/reported {report}` event. `.sekhemet/queue_report.json` and `.sekhemet/runs/<startedAt>.json` are **derived caches** of those events (kernel rule 16: a cache that is safe to delete): they are written from the event, and when missing they are rebuilt from the ledger. The Runs view (`GET /api/runs`, `/api/runs/:id`) reads the projection of `queue/reported` events, not the directory. *Changed from the code:* the report exists only as files today, and the code calls the latest file "the record" (`execute.ts:1468-1482`, `dashboard_api.ts:311-343`) — a durable fact outside the ledger, which kernel rule 16 names a defect (NEW-runtime-9).
 
 ### Backup, restore, export and upgrades
 
@@ -135,7 +139,9 @@ Sekhemet runs cards unattended for hours on a machine people also use. The runti
 | Recurring labels: `template`, `schedule:<cron>`, `trigger:file:<glob>`, `trigger:release:npm:<pkg>`, `trigger:webhook:<name>`, `urgent` | `apps/harness/src/recurring.ts` |
 | `trajectories`, replay diff | `apps/harness/src/replay.ts` |
 | `Tracer`, `tracesCommand` | `apps/harness/src/tracing.ts` |
-| `pruneRetention`, `RETENTION_DAYS = 30`; `pruneRunData` | `packages/kernel/src/retention.ts`; `apps/harness/src/execute.ts:193` |
+| `pruneRetention`, `RETENTION_DAYS = 30`, `RetentionReport`; `pruneRunData` | `packages/kernel/src/retention.ts`; `apps/harness/src/execute.ts:193` |
+| `QueueReport`, `QueueEntry`, `writeQueueReport`; `listRuns` (the Runs view's source) | `apps/harness/src/execute.ts:1395-1482`; `apps/harness/src/dashboard_api.ts:311` |
+| Events (new): `queue/reported {report}`; retention appends [kernel](kernel.md)'s `ledger/erased` with `reason: "retention"` | this spec; the event catalogue is kernel's |
 | HTTP routes | `server.ts`, `rest_extra.ts`, `wave2_server.ts`, `pm_api.ts`, `integrations.ts`, `dashboard_api.ts` — listed below |
 | CLI: `serve`, `board`, `daemon start\|stop\|status`, `run [card]`, `queue`, `overnight [--until HH:MM] [--idle-min N] [--max-failures N]`, `abort`, `rewind`, `fork`, `resume`, `replay <card> [--attempt N] [--diff A,B] [--as <model>]`, `log`, `traces [--since-hours N] [--out f] [--otlp url]` | `apps/harness/src/index.ts` |
 | CLI (new): `dev backup <path>`, `dev restore <path>`, `dev export --ledger [--no-private]`, `dev pause\|resume <project>` | this spec |
@@ -191,7 +197,8 @@ The design's 2026-09-17 route table (`/workspace`, `/projects/:id/board`, `PATCH
 | Backup, restore with erasures, ledger export, forward-only migrations | not-built | none | NEW-runtime-8 |
 | Local traces, OTLP export on request | partial (was `built`; ruling R23) | card, turn and model-request spans (`execute.ts:531`, `tracing.ts:144-192`), export by `sekhemet dev traces` (`tracing.spec.ts`); no tool-call span; no dashboard view (nothing under `packages/ui/web` reads traces) | NEW-runtime-9 |
 | Tokens removed by condensing, as a metric | not-built | the condenser computes `tokensSaved` per result (`context/src/condenser.ts:74-77, 414-420`); nothing outside it reads the figure | NEW-runtime-9 |
-| Retention of packs, observations, transcripts | partial | wired at queue start (`index.ts:1243`), tested in the kernel (`blobs_retention.spec.ts`) but not through `queue` | NEW-runtime-4 |
+| Retention of packs, observations, transcripts | partial | wired at queue start (`index.ts:1243`), tested in the kernel (`blobs_retention.spec.ts`) but not through `queue`; it deletes with no `ledger/erased` record and does not wait for O1 (`retention.ts:54-58`) | NEW-runtime-4 |
+| Run reports as a ledger event, files as a rebuildable cache | not-built | files only: `queue_report.json` and `runs/<startedAt>.json` (`execute.ts:1468-1482`); the Runs view reads the directory (`dashboard_api.ts:311-343`) | NEW-runtime-9 |
 | Log rotation, trace retention, worktree cleanup | not-built | `daemon.log` appends forever; `traces.db` has no retention (`tracing.ts:39-48`) | NEW-runtime-4 |
 
 ## 5. Changes for v1
@@ -214,14 +221,16 @@ The review's runtime items had no programme ID; they are proposed here.
 
 ### NEW-runtime-3 — crash recovery and bounded rounds
 *Justification: a crashed card stays In Progress for ever, and a hung queue child blocks the whole night (review of domain 14, senior judgement 3).*
-- **RUN-9** WHEN the supervisor starts and finds a card In Progress with a running attempt and no live lease THE SYSTEM SHALL finish the attempt with stop reason `crashed`, restore the worktree to its last checkpoint and return the card to Ready.
+- **RUN-9** WHEN the supervisor starts and finds a card In Progress with a running attempt and no live lease THE SYSTEM SHALL finish the attempt with stop reason `crashed` (read, with its class and next action, from [worker-loop](worker-loop.md)'s stop-reason table, rule 31), restore the worktree to its last checkpoint and return the card to Ready.
 - **RUN-10** WHEN a crashed card is next run THE SYSTEM SHALL continue from its last completed step.
 - **RUN-11** WHEN an overnight round exceeds its wall-clock limit THE SYSTEM SHALL kill the round's process tree, count one failure and continue with the next round.
 - **RUN-12** WHEN a chaos test kills the runner with SIGKILL mid-card THE SYSTEM SHALL, after restart, show no card stuck In Progress and no orphaned process.
 
 ### NEW-runtime-4 — bounded disk
-*Justification: logs and traces grow without limit; retention is wired but untested through the command that runs it (review of domain 14, senior judgement 4).*
-- **RUN-13** WHEN `queue` starts and a card closed 31 days ago has context packs THE SYSTEM SHALL prune them and keep its evidence bundle and every ledger event.
+*Justification: logs and traces grow without limit; retention is wired but untested through the command that runs it (review of domain 14, senior judgement 4); and it prunes what a model saw with no record, so replay cannot tell a pruned pack from a lost one (design v3 review B7). RUN-13 and RUN-54 apply once the owner decides [O1](../../reference/OPEN_QUESTIONS.md#owner-decisions); RUN-55 holds until then.*
+- **RUN-13** WHEN `queue` starts and a card closed 31 days ago has context packs THE SYSTEM SHALL prune them, record them in one `ledger/erased` event with `reason: "retention"`, and keep its evidence bundle and every other ledger event.
+- **RUN-54** WHEN retention prunes a context pack THE SYSTEM SHALL record it in a `ledger/erased` event with `reason: "retention"` and the pack's blob id, and replay of a step that used the pack SHALL name the gap and that event's seq, never report the pack as missing.
+- **RUN-55** WHILE owner decision O1 is undecided, WHEN `queue` starts and a card closed 31 days ago has context packs, observations or transcripts THE SYSTEM SHALL delete none of them and SHALL report each one it would prune, with its card id.
 - **RUN-14** WHEN `daemon.log` exceeds its size limit THE SYSTEM SHALL rotate it and keep at most the configured number of files.
 - **RUN-15** WHEN spans in `traces.db` are older than 30 days THE SYSTEM SHALL delete them at the next retention pass.
 - **RUN-16** WHEN a parked card is closed THE SYSTEM SHALL remove its worktree and keep its branch.
@@ -247,16 +256,17 @@ The review's runtime items had no programme ID; they are proposed here.
 *Justification: an erasable ledger needs backups that do not resurrect erased data, a portable export, and migrations that never strand a ledger ([DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md](../../research/DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md) decisions 9–10, RUN-T1–T5; [DESIGN_RESEARCH_TEAM_SERVER.md](../../research/DESIGN_RESEARCH_TEAM_SERVER.md), upgrades). RUN-40, RUN-41 and RUN-43 depend on [kernel](kernel.md) NEW-kernel-1.*
 - **RUN-39** WHEN `sekhemet dev backup <path>` runs THE SYSTEM SHALL write a consistent copy of the ledger with the SQLite online backup API while writers continue, and record `ledger/backed_up` with the path and the sequence number.
 - **RUN-40** WHEN a backup is restored THE SYSTEM SHALL re-apply every erasure in the erasure register newer than the backup's sequence number before the server accepts requests, and SHALL refuse to start if the register is missing and erasures are known to exist.
-- **RUN-41** WHEN a project's retention period for `private` fields elapses for a closed card THE SYSTEM SHALL erase them with reason `retention`, and SHALL keep structural fields and commitments.
+- **RUN-41** WHEN a project's retention period for `private` fields elapses for a closed card (after [O1](../../reference/OPEN_QUESTIONS.md#owner-decisions); until then as RUN-55, reporting only) THE SYSTEM SHALL erase them with reason `retention`, and SHALL keep structural fields and commitments.
 - **RUN-42** WHEN `sekhemet dev export --ledger` runs THE SYSTEM SHALL write NDJSON with every event's `seq`, `hash`, `prevHash`, commitment and CloudEvents-mapped attributes, and a verifier run on that file alone SHALL reproduce the chain verdict.
 - **RUN-43** WHEN `--no-private` is given THE SYSTEM SHALL omit every `private` part, and the exported chain SHALL still verify.
 - **RUN-44** WHEN the harness starts on a database whose schema is newer than it knows THE SYSTEM SHALL refuse to start and name the version needed; WHEN the schema is older THE SYSTEM SHALL back it up, migrate it forward and verify the hash chain before serving.
 
 ### NEW-runtime-9 — telemetry as specified
-*Justification: the state table said `built`, but there is no tool-call span and no dashboard view of traces (inventory H22, ruling R23); the condensing saving is computed and never reported (old design: RTK tracks savings).*
+*Justification: the state table said `built`, but there is no tool-call span and no dashboard view of traces (inventory H22, ruling R23); the condensing saving is computed and never reported (old design: RTK tracks savings); run reports live only in files the code calls the record (design trace PMFE:440, kernel rule 16).*
 - **RUN-45** WHEN the Worker makes a tool call THE SYSTEM SHALL record a span for it, child of the turn's span, with the tool's name and outcome.
 - **RUN-46** WHEN a person opens a card's traces in the dashboard THE SYSTEM SHALL show its card, turn, model-request and tool-call spans with their durations.
 - **RUN-47** WHEN a queue run's report is written THE SYSTEM SHALL include, per card, the tokens removed by output condensing.
+- **RUN-56** WHEN a queue run ends THE SYSTEM SHALL append its report as one `queue/reported` event; and WHEN `.sekhemet/runs/` and `queue_report.json` are deleted THE SYSTEM SHALL list the same runs, with the same figures, in the Runs view, rebuilt from those events.
 
 ### NEW-runtime-10 — pause a project
 *Justification: the old design's "Pause project" scheduler control is referenced by [planner-pm](planner-pm.md) and specified nowhere.*
@@ -275,7 +285,7 @@ The review's runtime items had no programme ID; they are proposed here.
 
 ## 6. v1 acceptance
 
-RUN-1 to RUN-25 and RUN-34 to RUN-48 (with RUN-18a; RUN-40, RUN-41 and RUN-43 once [kernel](kernel.md) NEW-kernel-1 lands), plus these built behaviours kept under test:
+RUN-1 to RUN-25 and RUN-34 to RUN-48, RUN-54 to RUN-56 (with RUN-18a; RUN-40, RUN-41 and RUN-43 once [kernel](kernel.md) NEW-kernel-1 lands; RUN-13, RUN-41 and RUN-54 once the owner decides [O1](../../reference/OPEN_QUESTIONS.md#owner-decisions), RUN-55 until then), plus these built behaviours kept under test:
 - **RUN-26** WHEN a card is rewound past a step whose gates passed THE SYSTEM SHALL mark that pass invalid and keep the abandoned state at a preserved ref.
 - **RUN-27** WHEN an attempt is forked at step N THE SYSTEM SHALL create a new attempt with a parent reference and leave the parent unchanged.
 - **RUN-28** WHEN `replay --diff A,B` compares two attempts THE SYSTEM SHALL name the first divergent step and the reproducibility fields that differ.
@@ -305,7 +315,7 @@ RUN-1 to RUN-25 and RUN-34 to RUN-48 (with RUN-18a; RUN-40, RUN-41 and RUN-43 on
 
 ## 8. Open questions
 
-1. **`retention.ts`: wire in or cut (DEC-09)?** It is already wired — `queue` prunes on every start (`index.ts:1243`) — so COVERAGE's "unused" is out of date. *Recommendation:* keep it, extend it to logs, traces and closed worktrees (NEW-runtime-4), and test it through `queue`.
+1. **`retention.ts`: wire in or cut (DEC-09)?** It is already wired — `queue` prunes on every start (`index.ts:1243`) — so COVERAGE's "unused" is out of date. *Recommendation:* keep it, extend it to logs, traces and closed worktrees (NEW-runtime-4), test it through `queue`, and make every prune a `ledger/erased` record (item 33); until the owner decides [O1](../../reference/OPEN_QUESTIONS.md#owner-decisions) it reports only.
 2. **Where do reproducibility records live?** Every card must record model, quantisation, template checksum, prompt-set version, playbook version, tool-schema version and engine settings. *Recommendation:* owned by M4 in [models](models.md) and [measurement](measurement.md); replay (item 14) consumes them.
 3. **Supervisor as its own process, or the dashboard server?** *Recommendation:* the server process, started by `daemon start` or `serve`, with `run`/`queue` from the CLI taking the same lease; a separate supervisor only if the chaos test (RUN-12) cannot pass otherwise.
 

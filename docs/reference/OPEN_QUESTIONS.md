@@ -2,6 +2,27 @@
 
 *Moved from the 2026-09-17 design, with a state per item as of 2026-09-22. Every item blocks something; none closes by reading more. A spec that depends on one links here. When an item closes, record the evidence and the decision (in [DECISIONS.md](../design/DECISIONS.md) if it is one), then mark it closed — do not delete it.*
 
+## Owner decisions
+
+Decisions only the owner can make, each with the workstream it blocks and the default the design uses until then. A workstream does not start while an unresolved owner decision sits in its path ([plan](MODERNIZATION_PLAN.md#phase-b--build-to-the-definition-of-done-one-workstream-at-a-time)).
+
+| # | Decision | Blocks | Recommendation (the default until decided) |
+| --- | --- | --- | --- |
+| O1 | **Spine rule 2 and erasure.** Amend "anything a model saw can be reconstructed" to "…except content erased by a recorded `ledger/erased` event, which replay names as a gap" — needed for personal data on a company server, leaked secrets, and retention | B3.1 (NEW-kernel-7), B3.3 (retention) | Amend. Until then nothing is erased or pruned: retention only reports what it would prune |
+| O2 | **Weights by explicit command** (ruling R7): a person may run a download command for a registry model; the published hash is verified | B2.2 (NEW-models-7) | Allow, hash-verified, never automatic |
+| O3 | **Seshat's model name** out of the panel header (ruling R15), shown in details and on Machine | B4.2 | Move it |
+| O4 | **Cut the plugin container** (`container.ts`, reachable from `execute.ts:378`) and **the SDK package** | B0 | Cut both; until then plugins load only in a trusted workspace (S9) |
+| O5 | **Browser test tooling**: Playwright (Apache-2.0) and axe-core (MPL-2.0, weak copyleft, unmodified dev dependency), needed by DEFINITION_OF_DONE §6.4–6.5 and dashboard P12 | B4.2, B4.6, B4.7, Phase C | Approve both as development dependencies. Without them the audience walks run on the harness's own headless-Chromium client, with less coverage |
+| O6 | **fast-check** (MIT) for property-based acceptance tests derived from EARS criteria | B4.3 (NEW-planner-pm-7) | Approve |
+| O7 | **Zod or Valibot** (MIT) for event-payload validation | B3.1 | Approve one (Valibot: smaller, tree-shakable) |
+| O8 | **vLLM** (Apache-2.0, a separate process) as the multi-user NVIDIA engine | B4.9 | Approve as an optional engine; llama.cpp stays the default |
+| O9 | **Install artefacts**: an npm package for a person and a container image for a team server | B4.1 | Approve both; a single executable later |
+| O10 | **Card change kinds in v1** (`characterize`, `refactor`, `upgrade`) for work on existing codebases | B2.3, B4.3 | In v1: without them, refactor and characterization cards fail as `vacuous_tests` |
+| O11 | **Self-accept on a team server**: may the person who handed a card to the Worker accept it? | B3.2, B4.9 | No, unless they are the only person with the Accept permission on the project |
+| O12 | **Where project documents live** in the user's repository | B4.4 | `docs/project/`, configurable, committed through Accept |
+| O13 | **Accept friction**: acknowledge each unmet or unclear Reviewer finding before Accept | B3.2 | Light: one key per finding |
+| O14 | **Retention of personal free text** on a team server | B3.3 | 90 days for closed cards' free text, then erased (after O1) |
+
 ## Benchmarks on the reference machine
 
 The reference machine is a 24 GB Apple Silicon Mac running the Worker (Cyber-Tiel MTP, IQ3_XXS). Statistics follow [measurement.md](../design/specs/measurement.md): paired arms, exact or Bayesian intervals, and no claim smaller than the suite can resolve.
@@ -25,6 +46,7 @@ The reference machine is a 24 GB Apple Silicon Mac running the Worker (Cyber-Tie
 | 15 | Each inlet against its frozen baseline | Inlet enablement | Open |
 | 16 | Thinking off / surgical / all for the Worker | The Worker's method | **In progress** — arm "off" 10/14 (SUITE_RUNS, 2026-09-22); remaining arms after M1, M3, M8 |
 | 17 | Scope precision and recall against the files a person would have named, per card class | The scope cap ([context](../design/specs/context.md)) | Open — carried from the 2026-09-17 design's [BENCH] item; CX-P1-3 records each file's provenance, but nothing yet measures precision or recall |
+| 18 | How much of the Worker's failure rate is quantisation (IQ3_XXS) rather than the harness: the frozen suite at a higher quantisation of the same model, paired | DEC-04's reopen condition; where to spend effort (PM_RESEARCH_SYNTHESIS §2 step 2) | Open — needs a host with the memory for the higher quantisation, or a smaller fixture subset; [measurement](../design/specs/measurement.md) |
 
 ## Research gaps
 

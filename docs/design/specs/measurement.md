@@ -28,7 +28,7 @@ tests:
   - apps/harness/tests/registers.spec.ts
   - apps/harness/tests/learning.spec.ts
   - apps/harness/tests/tune.spec.ts
-changes: [M9, M10, M12, T7, T8, NEW-measurement-1, NEW-measurement-2, NEW-measurement-3, NEW-measurement-4]
+changes: [M9, M10, M12, T7, T8, T11, NEW-measurement-1, NEW-measurement-2, NEW-measurement-3, NEW-measurement-4]
 ---
 
 # Measurement and self-improvement
@@ -50,7 +50,7 @@ Every claim Sekhemet makes about quality is unfalsifiable until it is measured o
 6a. **Only the Worker's work is measured as the Worker's.** An attempt a person built ([kernel.md](kernel.md) rule 22) never counts in a pass rate, a comparison, an inlet signal or the competence model; the frozen suite's comparison with live use would otherwise lose its meaning.
 7. **The model stays resident** across the cards of a run; model load time is reported separately and never counted in a card's wall-clock.
 8. **Reference solutions.** Each fixture card has a reference solution, validated against the frozen tests and hashed into the suite. A card can then run alone on a `main` holding its predecessors' reference work, which makes every card an independent, re-runnable trial. The "build the whole project" run, where each card builds on the Worker's own earlier cards, stays as a separate measure.
-9. **One measurement path.** The suite runner lives in `packages/eval` as a tested module, and the bake-off, the rule gate, `m0` and every benchmark call it; each goes through the same card execution the product ships — same prompt, tools, thinking policy, working method, context window and tool arm, and the same roles and policies switched on (exploration, the Reviewer, the Researcher, escalated retries, the turn cap) as the product ships them, so the benchmark measures what ships, not a harness with most features off. Any wrapper around a model adapter forwards every property, not only `generate`, and meters cached prompt tokens.
+9. **One measurement path.** The suite runner lives in `packages/eval` as a tested module, and the bake-off, the rule gate, `m0` and every benchmark call it; each goes through the same card execution the product ships — same prompt, tools, thinking policy, working method, context window and tool arm, and the same roles and policies switched on (exploration, the Reviewer, the Researcher, escalated retries, the step cap) as the product ships them, so the benchmark measures what ships, not a harness with most features off. Any wrapper around a model adapter forwards every property, not only `generate`, and meters cached prompt tokens.
 9a. **A run's settings are one recorded object.** Every run resolves its settings once — configuration, then flags — into one `RunProfile` (roles present, policies on, model roster, budgets, switches) that is written into the run's evidence. A named settings file (`--settings <file>`) is allowed, because the file itself is recorded; a flag that silently changes other flags (a `--profile benchmark` that turns on four others) is not ([surface.md](surface.md)).
 
 ### Statistics fit for 14–30 tasks
@@ -72,9 +72,32 @@ Every claim Sekhemet makes about quality is unfalsifiable until it is measured o
 
 16. A learned component is compared with the cheapest thing that could work, at equal budget, before it ships. The context pruner is measured against structure-preserving random line dropping at the same token budget; if it does not clear that baseline on the suite it is deleted with its register row.
 
+### Admission: one rule for what the system learns
+
+This section owns the rule ([DEC-28](../DECISIONS.md#dec-28--one-rule-for-admitting-what-the-system-learns)); [context.md](context.md), [planner-pm.md](planner-pm.md), [extensibility.md](extensibility.md), [worker-loop.md](worker-loop.md) and PM_CONTRACT point here and restate nothing.
+
+16a. **The admission table.** What is learned is admitted, kept and retired by the rule for its kind, and **no admission rule relies on an effect the measurement cannot resolve**:
+
+    | What is learned | Admitted by | Kept or retired by |
+    | --- | --- | --- |
+    | A **project playbook rule** (this repository's paths, kinds, error codes) | A person's approval | Paired credit on this project's own attempt records, with rotation (rule 16b); retired automatically when its credit turns negative over its last 10 applications |
+    | An **execution-verified lesson** during a run | Probation in production only (never in a measurement run, rule 6) | The same credit; it becomes a candidate for a person's approval at the run's end |
+    | A **harness change** (prompt, tool, budget policy, skill, context version) | A paired frozen-suite A/B that shows a gain at the suite's resolution (at least 20 points on 30 cards, one-sided exact test at 0.05; rule 16c) | **Inconclusive** (the usual case): the change may be adopted only if it is cheaper or simpler and the paired result shows no significant loss, recorded as "not established"; otherwise it is not adopted |
+
+    The frozen suite never admits a project rule: its fixtures cannot exercise a rule scoped to one repository's paths and error codes, so a suite score would measure nothing about it. The six inlets of rule 17 map onto the table: playbook rules are the first row; exemplar and skill *mechanisms*, prompts, tools and budget *policies* are harness changes; an individual exemplar enters by its inlet's volume threshold and structural filter (rules 20, MS-T8-6) and never within a measurement run; budgets and routes recalibrated inside an admitted policy are measurements, bounded by rule 17's ≤ 15% and rule 20's volume threshold; synthesised tasks are measurement instruments, admitted by revert-and-fail; generated tests stay advisory until a person promotes them. A skill a person installs into their own project is their configuration, like a hand-written `playbook.toml` rule: approved by them once its own checks pass ([extensibility.md](extensibility.md) item 17a), never a harness change.
+16b. **Rotation and paired credit** — the statistic for the first two rows:
+    - **Comparable cards** are cards of the same project and the same card class (`kind:ext`, [models.md](models.md) rule 31) whose scope the rule matches on every declared condition ([context.md](context.md) rule 24b).
+    - **Rotation.** Among the comparable cards a rule matches, in the order they start, the rule is in the prompt of one and withheld from the next, alternately; each attempt record lists the rules its prompt held ([worker-loop.md](worker-loop.md) rule 39), so "with" and "without" are read from the ledger, never inferred.
+    - **A pair** is two consecutive comparable cards, one with the rule and one without. Only **first attempts** count — never a retry or an escalated pass — and person-built attempts never do (rule 6a). A pair's outcome is whether each first attempt passed its gates (stop reason `gate_passed`).
+    - **Credit** over the rule's last 10 pairs is the number of *helpful* pairs (with it passed, without it failed) minus the number of *harmful* pairs (the reverse); pairs where both passed or both failed count for nothing. These are the rule's helpful and harmful counts; nothing else increments them. Below 10 pairs the rule reports "insufficient data" and is neither credited nor retired.
+    - **Retirement.** When the credit is below zero the rule is retired automatically, with its pairs as the evidence. A retired rule returns only by a person's approval, starting a fresh count.
+    - **Probation** uses the same rotation and statistic within one production run, with no minimum: a lesson is withdrawn as soon as its credit over the pairs completed in the run is below zero, and one still on probation at the run's end goes to a person for approval with its pairs.
+    - A rule with no real effect will sometimes retire by chance on 10 pairs. That is accepted: a person's approval, not the credit, admitted it, and retiring a rule that does nothing costs nothing; the credit only has to catch rules that hurt.
+16c. **Harness changes.** The A/B is paired and interleaved on the frozen suite (rules 10, 13, MS-T7-4), at least two paired runs per arm (rule 19), against the recorded baseline `RunProfile` (rule 9a). **Admitted** when a one-sided exact test rejects "no gain" at 0.05 with a difference of at least 20 points (rule 11). **Inconclusive** — neither a resolvable gain nor a resolvable loss — the change may still be adopted when it is **cheaper** (lower median seconds per card, or tokens per card, over the paired runs) or **simpler** (it removes code, a tool, a switch or prompt tokens and adds none), **and** a one-sided exact test does not reject "no loss" at 0.05; `SUITE_RUNS.md` records it as "not established — cheaper" or "— simpler", with the context version or harness commit it admits. Otherwise the change is not adopted. An adopted change is watched and rolled back on a paired loss the suite resolves (rule 18).
+
 ### Self-improvement: one mechanism, six inlets
 
-17. An objective signal becomes a bounded proposal; every proposal, whatever produced it, is scored against the frozen suite before it takes effect, pinned by hash or commit when it does, and watched afterwards. What varies between inlets is what they propose; how a proposal earns its place does not vary.
+17. An objective signal becomes a bounded proposal; every proposal, whatever produced it, is admitted by the rule for its kind in the admission table (rule 16a) — a harness change by the frozen suite, a project rule by a person and then its paired credit — pinned by hash or commit when it takes effect, and watched afterwards. What varies between inlets is what they propose; how a proposal earns its place does not vary.
 
     | Inlet | Recorded signal | Proposes | Bound |
     | --- | --- | --- | --- |
@@ -87,7 +110,7 @@ Every claim Sekhemet makes about quality is unfalsifiable until it is measured o
 
     A seventh inlet must justify itself by the size of the signal it reads, not by the paper it comes from. Offline policy tuning (`sekhemet tune`: replaying recorded trajectories to choose when to stop an attempt; conservative, since a replayed policy can only stop earlier) feeds the budgets-and-routes inlet and proposes, never applies; a fresh repository with no history of its own starts from the machine's global tuning report, as a proposal through the same inlet. Every signal an inlet reads is tagged with its **source** (a gate transition, an attempt record, a person's action including an edit, a model's synthesis) and **how it was verified** (executed, approved by a person, or unverified); an unverified model synthesis never admits anything on its own.
 18. **Guardrails.** (1) Every change is triggered by an objective, recorded signal; self-assessment is rejected. (2) Each inlet's bound holds; whole-system rewrites are blocked. (3) Every change is versioned or hash-pinned and rolled back automatically if the pass rate drops, compared **paired** — the same kind of cards with and without the change — never against whatever different cards ran before. (4) **Admission is grounded, never textual:** nothing durable is admitted unless a quantity measured outside the generated text strictly improves. For skills and generated tests the grounded signal is execution: a skill's own checks run in the gate host's sandbox as gates before the suite is even consulted.
-19. **Admission needs a significant gain:** a one-sided exact test (or an interval excluding zero) over at least two paired runs on the suite path, with the suite hash checked. A delta of zero is not a gain.
+19. **A harness change's admission needs a significant gain:** a one-sided exact test (or an interval excluding zero) over at least two paired runs on the suite path, with the suite hash checked. A delta of zero is not a gain. The one exception is rule 16c's inconclusive case — cheaper or simpler with no significant loss — which is recorded as "not established", never as a gain.
 20. **Volume thresholds.** Below its minimum an inlet reports "insufficient data" instead of acting:
 
     | Inlet | Minimum before it may act |
@@ -102,7 +125,7 @@ Every claim Sekhemet makes about quality is unfalsifiable until it is measured o
 21. **A cheap pre-filter must be calibrated.** A fast surrogate score used to discard proposals before the full suite is calibrated against an anchor set scored both ways, with a monotone (isotonic) map, and is used only once the anchor set holds `MIN_ARM_TRIALS` pairs.
 22. **What public data may seed.** Difficulty may be initialised from the SWE-bench Verified human annotations (1,699 instances, three annotators each), to calibrate the 1–10 scale only, never to rank TypeScript cards (the labels are Python time-to-fix estimates, 46% of them one repository). The pre-filter's calibration *form* may start from public (surrogate, ground-truth) pairs. Public outcome matrices may enter only as derived pass/fail booleans, never patch text. **Exemplars, playbook rules and routing are local-only by construction**: public trajectories carry another harness's tool vocabulary, review corpora have no join key to this harness's gates, and public data has no tool-arm dimension. Nothing is imported without the owner's yes.
 23. **Excluded from v1:** weight updates (fine-tuning, RL) of any model. **Permanently excluded from self-modification:** the loop driver, the gate runner, sandbox boundaries and permission tables.
-24. **Diagnostics** (`sekhemet doctor`'s playbook check and `qualify`) measure each skill and rule against a bare baseline on the suite: net pass-rate gain, token overhead in Zone 2 (a rule adding more than 300 tokens without a significant gain of at least 3 points is flagged as context debt), and conflicting, redundant or obsolete rules, each offered for retirement in one action. The diagnostics read the real outcomes, skills and rules — including rules on the ledger — not an empty input.
+24. **Diagnostics** (`sekhemet doctor`'s playbook check and `qualify`) measure each skill and rule against a bare baseline on the suite: net pass-rate gain, token overhead in Zone 2 (a rule or skill adding more than 300 tokens to Zone 2 is flagged as **context debt** when its admission record shows no gain: for a rule, a paired credit (rule 16b) of zero or less over its last 10 pairs, or still "insufficient data" after 20 comparable cards; for a skill, a suite A/B recorded "not established" — a "significant gain of at least 3 points" was the earlier test, which the 30-card suite cannot detect), and conflicting, redundant or obsolete rules, each offered for retirement in one action. The diagnostics read the real outcomes, skills and rules — including rules on the ledger — not an empty input.
 25. **Mutation as a measure.** A mutation campaign (the generated-tests inlet, `improve --mutants`) first runs the tests on the unmutated checkout and refuses to score if they fail; a change with no mutable lines scores "not applicable"; a language the campaign cannot mutate is reported, never silently skipped.
 
 ### The research register
@@ -112,6 +135,7 @@ Every claim Sekhemet makes about quality is unfalsifiable until it is measured o
 ### Open benchmarks on the reference machine
 
 27. The benchmarks still owed on the reference machine (tool arm, step-budget curve, engine and cache retention, prefix-cache hit, planner swap cost, card size against pass rate, KV quantisation, pruner latency, mutation cost — seconds per mutant for acceptance-test-only runs and for suite runs, separately — vision false-pass rate, MTP, prompt optimiser, condensing reduction, scope precision and recall, goal-monitoring thresholds, each inlet against its baseline, the thinking policy) are kept, with their state and what each blocks, in [OPEN_QUESTIONS.md](../../reference/OPEN_QUESTIONS.md). Each is answered under this spec's statistics, recorded in `SUITE_RUNS.md`, and closed in the spec that owns the setting it decides.
+27a. **Quantisation against the harness** ([PM_RESEARCH_SYNTHESIS.md](../../research/PM_RESEARCH_SYNTHESIS.md) §1 row 13 and §2 step 2). Nobody knows how much of the Worker's 25–40% failure rate is the 3-bit quantisation rather than the harness, and every harness improvement is bounded by the answer. The run: the frozen suite, paired and interleaved (rule 10), on the same Worker weights at IQ3_XXS and at a higher quantisation (Q4_K_M or above), with the same engine build, settings, context version and `RunProfile`, both arms on the same host. No build of the Worker above IQ3 fits the 24 GB reference host beside its KV cache (the Ornith-1.5 base's official GGUF is Q4_K_M at 21.7 GB, [MODEL_CANDIDATES.md](../../research/MODEL_CANDIDATES.md)), so both arms run on a larger host; whether a higher build of the same weights is published is checked first, and if none is, the run is recorded as blocked rather than substituted. The research proposed "more than ~15 points"; the suite resolves only 20 (rule 11), so a gain of at least 20 points says the quantisation, not the harness, is the bottleneck, and a smaller difference is "not established". It is the evidence [DEC-04](../DECISIONS.md#dec-04)'s "reopen if" needs — a paired run of at least 30 tasks with another local model of the same size ahead by 20 points — and it is to be listed among OPEN_QUESTIONS' benchmarks as blocking that decision.
 
 ### The fixtures' recorded bars
 
@@ -119,9 +143,26 @@ Every claim Sekhemet makes about quality is unfalsifiable until it is measured o
 
     | Bar | Set for | Still in force? |
     | --- | --- | --- |
-    | Chronicle scorecard: Pass@1 ≥ 80% (5 of 6 cards on the first turn), repair within ≤ 3 rungs, zero test mutation, zero out-of-scope writes, all 6 cards < 18 min on an M4 | Chronicle, the first fixture | As diagnostics only: zero test mutation and zero out-of-scope writes are enforced by gates and the write contract for every card; the 5/6 and 18-minute figures are single-run targets, reported beside the suite result, not pass conditions |
-    | Showcase Trifecta: 24 cards (onyx, vanguard, basalt-canvas), < 140 changed lines per card, ~39 min autonomous, ≥ 98% slot-0 prompt-cache hit | The three showcase fixtures | The card-size bound is superseded by the 200-line gate; the cache target by [context.md](context.md)'s median ≥ 0.85 after the first turn; the 39-minute run time is reported, not required |
+    | Chronicle scorecard: Pass@1 ≥ 80% (5 of 6 cards on the first attempt), repair within ≤ 3 rungs, zero test mutation, zero out-of-scope writes, all 6 cards < 18 min on an M4 | Chronicle, the first fixture | As diagnostics only: zero test mutation and zero out-of-scope writes are enforced by gates and the write contract for every card; the 5/6 and 18-minute figures are single-run targets, reported beside the suite result, not pass conditions |
+    | Showcase Trifecta: 24 cards (onyx, vanguard, basalt-canvas), < 140 changed lines per card, ~39 min autonomous, ≥ 98% slot-0 prompt-cache hit | The three showcase fixtures | The card-size bound is superseded by the 200-line gate; the cache target by [context.md](context.md)'s median ≥ 0.85 after the first step; the 39-minute run time is reported, not required |
     | M0 go/no-go: ≥ 90% valid-and-correct tool execution over 30 seeded tasks × 3 runs at step budgets 50 and 150; rework at 70–90%; below 70%, narrow the product to planning and review assistance | Phase 0's Worker decision | The protocol is kept in `sekhemet m0` (`m0.ts:6-46`: 30 tasks, 3 runs, budgets 50 and 150); the bar is historical — Phase 0's 11/11 establishes ≥ 76% at 95%, not ≥ 90% — and whether the pivot rule stands as a standing decision is §8 Q4 (tool-arm measurement is [models.md](models.md) NEW-models-5) |
+
+### Evaluation assets (T11)
+
+29. Several acceptance criteria in other specifications are scored against labelled data that must exist before the criterion can fail. These **evaluation assets** are owned here and treated like the frozen suite: each is versioned, hashed and listed in one manifest (`fixtures/eval_assets.json`) with its size, who labelled it and the criteria that use it; a result records the hash of the asset it was scored on and is comparable only with results on the same hash; an item is never edited to improve a result — a change is a new version. Labels are a person's or executed (a reference solution passes its frozen tests), never a model's. A **held-out** part is never shown to the role it tests. The assets, each built before the first criterion that uses it:
+
+    | Asset | Size | Held out | Used by | Built in |
+    | --- | --- | --- | --- | --- |
+    | Reference solutions per fixture card | one per card (30) | from the Worker | MS-T7-2, MS-T7-3; scope precision and recall ([context.md](context.md) CX-P1-5) | B2.4 |
+    | Golden briefs with annotated implicit requirements | ≥ 10 briefs | the annotations, from the Planner and Seshat | MS-T7-7; P14 ([design-stage.md](design-stage.md)) | B2.4 |
+    | Held-out acceptance suite for premature completion | one per golden brief and fixture specification | wholly, from the Planner and Seshat | MS-T7-8 | B2.4 |
+    | Research golden set | 25 questions with sourced answers | the answers, from the Researcher | NEW-design-stage-2; the Researcher bake-off ([models.md](models.md) NEW-models-11) | B2.4 |
+    | Labelled reuse set | ~40 needs, each with the package a person judged right | the judgements, from the design stage | P7 ([design-stage.md](design-stage.md)) | B2.4 |
+    | Seeded defects for the Reviewer | ≥ 20 defects in real diffs | the defects' locations, from the Reviewer | P8 ([review-git.md](review-git.md)) | B2.4 |
+    | Scripted PM conversations with a rubric | ~20 | the rubric's expected answers, from Seshat | P6 ([planner-pm.md](planner-pm.md)) | B2.4 |
+    | Scripted non-developer project starts | 5 | — | P2 ([planner-pm.md](planner-pm.md), [design-stage.md](design-stage.md)) | B2.4 |
+    | Injection fixtures | one per injection route | from the Worker | NEW-security-4 ([security.md](security.md)) | B1, with S3 |
+    | Labelled UI screens for the vision checklist | ≥ 60 a person approved, ≥ 30 with a seeded visual defect | the labels, from the vision model | [gates.md](gates.md) rule 30, GT-N4-2 | B2.4 |
 
 ## 3. Contract
 
@@ -145,6 +186,8 @@ Every claim Sekhemet makes about quality is unfalsifiable until it is measured o
 | Run settings `RunProfile` (new), `--settings <file>` | `apps/harness/src/index.ts` |
 | CLI: `sekhemet m0`, `qualify`, `improve [--mutants]`, `bake-off`, `tune`, `register advance|check` | `apps/harness/src/wave2.ts`, `index.ts` |
 | Record of runs | [SUITE_RUNS.md](../../reference/SUITE_RUNS.md) |
+| Evaluation-asset manifest (new, T11) | `fixtures/eval_assets.json` |
+| Rule credit (new, rule 16b): one function over `attempt/finished` records | `packages/eval` (T8) |
 
 ## 4. State today
 
@@ -181,6 +224,9 @@ Every claim Sekhemet makes about quality is unfalsifiable until it is measured o
 | At most two adoptions per phase | not-built | the register does not count adoptions per phase | NEW-measurement-3 |
 | Research register with pre-set thresholds | built | `registers.ts`; `registers.spec.ts` | — |
 | M0 protocol (30 tasks × 3 runs × budgets 50/150) | built | `m0.ts:6-46`; `sekhemet m0` | — (its runner: M9) |
+| One admission table; paired rule credit with rotation; the inconclusive rule | not-built | rules credited with every card's outcome (`learning/store.ts:258-280`); `runFrozenRegressionGate` has no inconclusive verdict (`guardrails.ts:94-104`) | T8 (with [context.md](context.md) NEW-context-4) |
+| Evaluation assets: manifest, hashes, held-out parts | not-built | only the frozen suite exists (`fixtures/suite.json`); none of the assets of rule 29 | T11 |
+| Quantisation against the harness run | not-built | never run | T7 |
 
 ## 5. Changes for v1
 
@@ -216,13 +262,13 @@ Every claim Sekhemet makes about quality is unfalsifiable until it is measured o
 - **MS-T7-5** WHEN the planning measure runs on a fixture THE SYSTEM SHALL report, per generated card, SPIDR shape, scope (files, lines), fail-at-seed, pass-on-reference and mutants killed; and, end to end, the share of held-out hand-written acceptance tests passing on the final `main`, next to — never merged into — the suite score.
 - **MS-T7-6** WHEN the context pruner is evaluated THE SYSTEM SHALL compare it on the suite with structure-preserving random line dropping at the same token budget and record the result against register R3.
 
-- WHEN the planning measure runs THE SYSTEM SHALL also score **implicit-requirement recall**: the share of annotated unstated requirements in a golden set of briefs (at least 10 briefs, ReqElicitGym-style) that end up in the accepted requirement graph, reported with an exact interval.
-- WHEN the planning measure runs THE SYSTEM SHALL score the **premature-completion rate**: projects or slices the system marked proven that a held-out acceptance suite, never shown to the planner, shows are not.
+- **MS-T7-7** WHEN the planning measure runs THE SYSTEM SHALL also score **implicit-requirement recall**: the share of annotated unstated requirements in the golden set of briefs (at least 10 briefs, ReqElicitGym-style, T11) that end up in the accepted requirement graph, reported with an exact interval ([PROJECT_DONE_AND_DEPTH.md](../../research/PROJECT_DONE_AND_DEPTH.md) §3).
+- **MS-T7-8** WHEN the planning measure runs THE SYSTEM SHALL score the **premature-completion rate**: the share of projects or slices the system marked proven that the held-out acceptance suite (T11), never shown to the planner, shows are not, reported with an exact interval ([PROJECT_DONE_AND_DEPTH.md](../../research/PROJECT_DONE_AND_DEPTH.md) §3).
 
-### T8 — admission only on a significant paired gain
+### T8 — admission by the one rule: a significant paired gain for harness changes
 
-- **MS-T8-1** WHEN a proposal's candidate run passes the same number of tasks as the baseline THE SYSTEM SHALL NOT admit it.
-- **MS-T8-2** WHEN a proposal is evaluated THE SYSTEM SHALL use at least two paired runs on the suite path with the suite hash checked, and admit only if a one-sided exact test rejects "no gain" at 0.05.
+- **MS-T8-1** WHEN a harness change's candidate run passes the same number of tasks as the baseline THE SYSTEM SHALL NOT admit it as a gain.
+- **MS-T8-2** WHEN a harness change is evaluated THE SYSTEM SHALL use at least two paired runs on the suite path with the suite hash checked, and admit it as a gain only if a one-sided exact test rejects "no gain" at 0.05 (the inconclusive case is MS-T8-13).
 - **MS-T8-3** WHEN an admitted change is watched THE SYSTEM SHALL compare cards run with and without it (paired), and roll it back automatically, flagging it, when the paired comparison shows a drop; with no history, it SHALL NOT assume a baseline of 1.0.
 - **MS-T8-4** WHEN an inlet is below its volume threshold THE SYSTEM SHALL report "insufficient data" and propose nothing; one struggle SHALL NOT create a rule in force.
 - **MS-T8-5** WHEN a skill candidate is proposed THE SYSTEM SHALL run its own checks in the gate host's sandbox first and discard it if they fail.
@@ -233,6 +279,19 @@ Every claim Sekhemet makes about quality is unfalsifiable until it is measured o
 - **MS-T8-10** WHEN an admitted change is rolled back THE SYSTEM SHALL demote every generated test promoted because of it to advisory, and say so on each test's card.
 - **MS-T8-11** WHEN `sekhemet tune` runs in a repository with fewer than `MIN_ARM_TRIALS` recorded attempts per class THE SYSTEM SHALL propose from the machine's global tuning report and label the proposal as inherited.
 - **MS-T8-12** WHEN a task is synthesised from a fixing commit THE SYSTEM SHALL install its dependencies in an ephemeral worktree for that task, keep it only if the test fails on the commit before the fix and passes on the fix, and scrub file paths from its problem statement.
+- **MS-T8-13** WHEN a harness change's paired A/B is inconclusive THE SYSTEM SHALL record it as adoptable only if the change is cheaper (lower median seconds or tokens per card over the paired runs) or simpler (it removes code, a tool, a switch or prompt tokens and adds none) and a one-sided exact test does not reject "no loss" at 0.05, and SHALL write the verdict "not established — cheaper" or "not established — simpler" with the context version or harness commit; in every other inconclusive case it SHALL record "not adopted".
+- **MS-T8-14** WHEN a rule's or a probationary lesson's credit is needed THE SYSTEM SHALL compute it with one function in `packages/eval` from `attempt/finished` records alone — rotation membership, pairs of first attempts on comparable cards, helpful minus harmful over the last 10 pairs, "insufficient data" below 10 — and a test with ten scripted pairs (three helpful, five harmful) SHALL return −2 and retire the rule.
+
+### T11 — evaluation assets
+
+*Problem:* criteria in design-stage, planner-pm, review-git, gates, security and here are scored against labelled data nobody was scheduled to build, so they cannot fail and cannot pass (review M4).
+
+- **MS-T11-1** WHEN an evaluation asset is registered THE SYSTEM SHALL record in `fixtures/eval_assets.json` its name, version, content hash, item count, the principal who labelled it and the criteria that use it, and SHALL refuse an entry missing any of them.
+- **MS-T11-2** WHEN a criterion is scored against an asset THE SYSTEM SHALL verify the asset's hash against the manifest and refuse to score on a mismatch or on fewer items than the manifest declares, naming the asset; the result SHALL record the asset's hash, and two results SHALL be compared only when their hashes match.
+- **MS-T11-3** WHEN the role an asset tests assembles a prompt over the asset's inputs THE SYSTEM SHALL include none of its held-out content (a test assembles the Planner's, Seshat's, the Researcher's, the Reviewer's and the vision checklist's prompts over each asset and searches them for every held-out item).
+- **MS-T11-4** WHEN an asset's labels are recorded THE SYSTEM SHALL record the principal who labelled each item, and SHALL refuse a label whose only source is a model; a reference solution SHALL count as labelled only when it passes its card's frozen tests (MS-T7-2).
+- **MS-T11-5** WHEN an asset item changes THE SYSTEM SHALL record a new version and hash, and the manifest SHALL keep the earlier version's hash so results on it stay identifiable.
+- **MS-T11-6** WHEN every asset in rule 29's table is registered THE SYSTEM SHALL report each at or above the size the table gives (≥ 10 golden briefs, 25 research questions, ~40 reuse needs, ≥ 20 seeded defects, ~20 PM conversations, 5 project starts, one reference solution per fixture card, ≥ 60 approved and ≥ 30 defective screens).
 
 ### NEW-measurement-1 — self-describing, isolated runs
 
@@ -248,7 +307,7 @@ Every claim Sekhemet makes about quality is unfalsifiable until it is measured o
 *Justification:* the doctor's playbook check is called with no outcomes, skills or cards, so net gain and context debt can never appear.
 
 - **MS-N2-1** WHEN `sekhemet doctor` runs in a project with recorded outcomes, skills and rules THE SYSTEM SHALL pass them to the diagnostics, including rules on the ledger.
-- **MS-N2-2** WHEN a rule adds more than 300 Zone-2 tokens without a significant gain of at least 3 points THE SYSTEM SHALL flag it as context debt and offer its retirement.
+- **MS-N2-2** WHEN a rule adds more than 300 Zone-2 tokens and its paired credit (rule 16b) over its last 10 pairs is zero or less — or it still has "insufficient data" after 20 comparable cards — or a skill adds more than 300 Zone-2 tokens and its suite A/B is recorded "not established", THE SYSTEM SHALL flag it as context debt, naming the tokens and the record, and offer its retirement.
 
 ### NEW-measurement-3 — adoptions per phase
 
@@ -286,11 +345,13 @@ This spec is `built` when §5 passes, the full frozen suite has run on the relea
 
 1. **Thinking A/B design.** DoD and the old design said "best pass rate for its wall-clock over at least two runs"; that cannot separate arms on 14–30 cards. *Recommendation:* rule 12 — paired, and when inseparable, the cheaper arm wins; run the surgical and all arms only after M1, M3 and M8, as COVERAGE sequences them.
 2. **Loops 3, 4, 5, 8, 9 in `loops.ts`, and the variant archive (loop 7).** *Recommendation:* map `harvestExemplars` and `siftSlice` to the exemplar inlet and the re-run rule, `distillSkill` to the skill inlet, and cut the rest (needs the owner's sign-off). The variant archive (`archive.ts`, register R5: sample parents by performance, restore a previous variant pointer) is not one of the six inlets; *recommendation:* cut it, since rollback is by the paired rule and version pins, unless a seventh inlet is justified by its signal size (rule 17).
-3. **Which public data to import.** *Recommendation:* only the SWE-bench Verified difficulty annotations (flag: licence unstated) and, for the pre-filter's form, the four scalar columns of `nebius/SWE-rebench-openhands-trajectories` (CC-BY-4.0); nothing else in v1.
+3. **Which public data to import.** *Recommendation:* only the SWE-bench Verified difficulty annotations (flag: licence unstated) and, for the pre-filter's form, the four scalar columns of `nebius/SWE-rebench-openhands-trajectories` (CC-BY-4.0); nothing else in v1. The survey's "single best import", `nebius/SWE-rebench-V2`, is not taken: it supplies difficulty *features* without labels (the Verified annotations are the only labels) and instances for anchor pairs, but each instance must be run under this harness — in its own container image and build environment — to become an anchor, which the one reference machine cannot afford in v1, and it carries patch text (59 copyleft rows, 5,038 with an unresolved licence) where rule 22 admits only derived booleans; its language-agnostic pipeline pointed at this project's own dependencies is the §7 item instead ([PUBLIC_DATA_SURVEY.md](../../research/PUBLIC_DATA_SURVEY.md) §1 and "The git-history alternative").
 4. **The M0 pivot rule (owner decision).** If the Worker cannot run cards unattended (tool execution below 70% on the M0 protocol), the old plan narrowed the product to planning and review assistance. *Recommendation:* keep it as a standing decision in DECISIONS.md, re-evaluated on every Worker change, because it is the product's answer to its riskiest assumption.
 
 ## 9. Evidence and rationale
 
+- Independent review of design v3 ([design_v3_review.md](../../reference/reviews/design_v3_review.md)): B6 (the admission table, [DEC-28](../DECISIONS.md#dec-28--one-rule-for-admitting-what-the-system-learns), owned here), M4 (T11), M5 and M6 (MS-N2-2, MS-T7-7, MS-T7-8), and the research-coverage notes on PM_RESEARCH_SYNTHESIS §2 step 2 (rule 27a), PROJECT_DONE_AND_DEPTH and `nebius/SWE-rebench-V2` (§8 Q3).
+- Knowing when a project is done: [PROJECT_DONE_AND_DEPTH.md](../../research/PROJECT_DONE_AND_DEPTH.md) §3 — the two planning-measure items it adds to T7, implicit-requirement recall (ReqElicitGym, arXiv:2602.18306) and the premature-completion rate (NL2Repo-Bench's 49% early termination, arXiv:2512.12730), carried as MS-T7-7 and MS-T7-8.
 - Review: [domain05_10_models_measurement.md](../../reference/reviews/domain05_10_models_measurement.md) (Domain 10); gap sweep ([gap_sweep.md](../../reference/reviews/gap_sweep.md): `instrumentation.ts`, `mutation_step.ts`, `diagnostics.ts`).
 - Runs: [SUITE_RUNS.md](../../reference/SUITE_RUNS.md) — "both runs so far measured the wrong thing", the fingerprint defect in every run, run 1 split across two builds, the thinking A/B "off" arm (10/14, not separable from anything under 20 points).
 - Statistics: [WEB_RESEARCH_2026-09.md](../../research/WEB_RESEARCH_2026-09.md) group D §C — Miller, "Adding Error Bars to Evals" (arXiv:2411.00640, paired differences, clustered errors, resampling); Bowyer et al. (arXiv:2503.01747, CLT intervals badly optimistic below a few hundred items); Bjarnason et al. (arXiv:2602.07150, single-run swings of 2.2–6.0 points, report pass@k and pass^k); HAL (arXiv:2510.11977); the power table (≈76/155/233 paired tasks at 10/20/30% disagreement; 6–7% power at 25 tasks). Phase 0's 11/11 establishes ≥ 76% at 95% (one-sided exact), not ≥ 90%.

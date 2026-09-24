@@ -21,7 +21,7 @@ The planner turns a brief into a backlog a professional team would recognise —
 2. **Decompose is model first.** The Planner role's model (by default the same model Seshat runs on) writes the slices and their behaviours. Deterministic rules decide proportion (design-stage), validate the output, and are the fallback. When no planning model is available the heuristic slicer runs and the plan says, in its first line, that it was planned without a model. **Without a model the plan uses the spec's own words**: it names only what the spec names and invents no feature, entity or rule.
 3. Model output is requested as JSON against a schema at temperature 0, with the brief, non-goals and constraints in the prompt, and few-shot examples; a separate critic pass scores each acceptance criterion against the rubric in §2.3 ([research §8](../../research/WEB_RESEARCH_2026-09.md#8-checkable-acceptance-criteria-and-evidence-on-their-quality)). Malformed, truncated or wrong-kind output is refused and retried once, then the heuristic runs.
 4. **Validate** applies INVEST (§2.4), the acceptance-criterion lint (§2.3), the scope bound (at most 3 files and 200 changed lines per card, `MAX_SCOPE_FILES`), and an acyclic dependency graph. A card that fails is split or refused, never persisted as-is.
-5. **Persist** writes each card with its spec, behaviour, acceptance criteria (each with a stable criterion id), declared scope, token/second/step budgets, difficulty, routing, **points** (§2.6), kind label, the **requirement ids and versions it traces to** (§2.15), and the design stage's assumptions in its dossier. Acceptance tests are staged and must fail before the card is handed to the Worker (red first, judged by [gates](gates.md); a contract-only card is red on typecheck).
+5. **Persist** writes each card with its spec, behaviour, acceptance criteria (each with a stable criterion id), declared scope, token/second/step budgets, difficulty, routing, **points** (§2.6), its **`kind`**, **`change`** and, for a split child, **`split`** (the three fields of [DEC-26](../DECISIONS.md#dec-26--one-vocabulary-for-the-kind-of-card-and-the-run), labelled from [NAMING](../NAMING.md#card-kind-change-and-split)), the **requirement ids and versions it traces to** (§2.15), and the design stage's assumptions in its dossier. Acceptance tests are staged and must fail before the card is handed to the Worker (red first, judged by [gates](gates.md); a contract-only card is red on typecheck).
 6. **Each card carries the interface its acceptance test expects** — the exact symbol names, signatures and file paths the test imports — so the Worker cannot build a working solution under names the test does not use. The harness supplies the tests; the Worker is not asked to write its own (harness-supplied reproduction tests are worth more than agent-written ones, which cost 33–49% more input tokens for about 2 points).
 7. **Each staged test case names the criterion it proves.** The criterion id is in the test's title (or a tag the source index reads), so the requirement graph can say which test proves which criterion, and test-strength checks report per criterion ([gates](gates.md)). A staged test that proves no criterion of its card is refused; a criterion with no staged test case keeps the card in Planning, naming the criterion.
 8. **Behaviour criteria with concrete values are staged as example tables** — one row per example (`it.each` in Vitest, `pytest.mark.parametrize` in pytest), each row naming its criterion — in the project's own test framework and test location. A table is what a person can check quickly (§2.17).
@@ -30,17 +30,18 @@ The planner turns a brief into a backlog a professional team would recognise —
 
 ### 2.2 Slicing
 
-1. Stories are **vertical slices**: each produces something observable end to end. SPIDR is used as Mike Cohn defined it — **S**pike, **P**ath, **I**nterface (the *user* interface), **D**ata, **R**ules:
+1. Stories are **vertical slices**: each produces something observable end to end. SPIDR is used as Mike Cohn defined it — **S**pike, **P**ath, **I**nterface (the *user* interface), **D**ata, **R**ules — and it records **how a story was split, not what kind of card resulted** ([DEC-26](../DECISIONS.md#dec-26--one-vocabulary-for-the-kind-of-card-and-the-run)). Each child of a split carries the axis in its **`split`** field; its **`kind`** is set separately, by what the card does (the seven stored values, [NAMING](../NAMING.md#card-kind-change-and-split)):
 
-| Slice | Heuristic | Applied to code |
-| --- | --- | --- |
-| Spike | Separate uncertainty from implementation | An unknown API or dependency becomes a research card that writes notes and a probe test |
-| Path | Happy path first, edge cases after | Baseline path first; retries, timeouts and boundary errors as later cards |
-| Interface | Simplest interface first | One entry point or one screen first; richer interfaces later |
-| Data | Restrict data variety | Single entity or basic payload first; batching and polymorphism later |
-| Rules | Relax business rules first | Core operation first; authorisation, rate limits and validation later — **except hard invariants (below)** |
+| Slice (`split`) | Heuristic | Applied to code | Usual `kind` of the children (label) |
+| --- | --- | --- | --- |
+| Spike (`spike`) | Separate uncertainty from implementation | An unknown API or dependency becomes a card that writes notes and a probe test | `spike` (*Spike*); `research` (*Research*) when the answer is sources, not code |
+| Path (`path`) | Happy path first, edge cases after | Baseline path first; retries, timeouts and boundary errors as later cards | `implement` (*Flow*) |
+| Interface (`interface` — the *user* interface) | Simplest interface first | One entry point or one screen first; richer interfaces later | `implement` (*Flow*, shown as *UI* when its scope is UI files) |
+| Data (`data`) | Restrict data variety | Single entity or basic payload first; batching and polymorphism later | `data` (*Storage*) or `implement` |
+| Rules (`rules`) | Relax business rules first | Core operation first; authorisation, rate limits and validation later — **except hard invariants (below)** | `rule` (*Rules*) |
 
-2. A **contract card** (types, interfaces, schema) is an *enabler task*, labelled `Contract`, not presented as a SPIDR story. It exists because a small Worker does better against a fixed contract. The dashboard's Learn text follows this: Contract and Wiring are enablers, not SPIDR slices ([dashboard](dashboard.md)).
+   A card that is not the child of a split has no `split`. `split: interface` never means a type contract.
+2. A **contract card** (types and signatures; a database schema is `kind: data`, *Storage*) is always **`kind: interface`**, labelled *Contract*. It is an *enabler task*, not a SPIDR story and not the Interface slice. It exists because a small Worker does better against a fixed contract. A card that only connects finished parts is `kind: implement`, shown as *Wiring*; *UI* and *Wiring* are display refinements, never stored kinds. The dashboard's Learn text follows this: Contract and Wiring are enablers, not SPIDR slices ([dashboard](dashboard.md)).
 3. **A hard invariant is a rule proven early.** A clause with "never", "twice", "exactly once" or "idempotent" is scheduled right after the contract card, because it decides the shape of the code that keeps it. Its criterion states the correct behaviour: a retried charge *returns the original result*; it is not "rejected".
 4. **The riskiest assumption** named by the design stage becomes a card scheduled right after the contract card, whether or not the person wrote it down. It is the one card whose failure is a success.
 5. **The backbone** (design-stage) is laid out as epics in user order; only the thinnest slice through all of them becomes Ready cards. The rest stays visible as unplanned epics, never as a wish list of cards.
@@ -50,11 +51,11 @@ The planner turns a brief into a backlog a professional team would recognise —
 
 1. Every slice — hazard, split child and riskiest-assumption slices included — carries a **behaviour**: one Given/When/Then sentence with concrete values (*given a paid invoice of 1000 cents, refunding 400 leaves 600 and records one refund*), plus at least one negative case where one exists.
 2. The **criterion lint** refuses a criterion that (a) does not name a domain noun from the spec, (b) names no observable outcome, (c) has no concrete value, (d) repeats the card title, or (e) is satisfied by the title alone (an export named after the title passes it).
-3. A split child keeps its own behaviour; each part inherits only the acceptance tests that exercise its own behaviour, never the parent's full set. **The split parent leaves the board as done work does not**: it moves to Rejected (*Won't do*) with the reason *Split into N cards* and links to its parts, so it neither runs nor waits in *Needs you*.
+3. A split child keeps its own behaviour; each part inherits only the acceptance tests that exercise its own behaviour, never the parent's full set. **The split parent leaves the board as done work does not**: it moves to Rejected (*Won't do*) with the reason *Split into N cards* and links to its parts, so it neither runs nor waits in *Needs you*. **The parts are siblings** at the parent's level, not its subtasks: a split never adds a level of card nesting ([kernel](kernel.md)'s two-level card/subtask limit, `MAX_CARD_DEPTH = 2`, is untouched by splitting).
 
 ### 2.4 INVEST pre-flight
 
-INVEST runs in the **validate** step, before a card is persisted as Ready; a card that fails it is held in Planning. The queue schedules planned work from Ready, so this is also the check before execution (the board's own edges, including Planning → In Progress, are [kernel](kernel.md)'s).
+INVEST runs in the **validate** step, before a card is persisted as Ready; a card that fails it is held in Planning. The queue schedules planned work from Ready, so this is also the check before execution (the board's own edges, including Planning → In progress, are [kernel](kernel.md)'s).
 
 | Criterion | Check | On failure |
 | --- | --- | --- |
@@ -62,12 +63,14 @@ INVEST runs in the **validate** step, before a card is persisted as Ready; a car
 | Negotiable | Criteria and invariants, not line-by-line code | Refuse; convert to goal criteria |
 | Valuable | Links to a project gate, a goal criterion, an epic behaviour or an accepted requirement (§2.15) | Refuse orphan cards |
 | Estimable | Difficulty 1–10 maps to the measured throughput envelope | Difficulty > 7 forces a re-split |
-| Small | Context pack ≤ 25% of the tier's **working context** (`workingContextTokens`, 32,768 by default; `INVEST_CONTEXT_FRACTION`) **and** step budget ≤ 40 (`INVEST_MAX_STEPS`) — both, because a tiny pack with 90 steps thrashes and an 8-step card that needs the whole window has no room to repair | SPIDR split |
+| Small | Context pack ≤ 25% (`INVEST_CONTEXT_FRACTION`) of the **resolved Worker's working context** (`workingContextTokens`, read from that model's window in the registry, [models](models.md) NEW-models-4) — **4,096 tokens on the reference Worker's 16,384** — **and** step budget ≤ 40 (`INVEST_MAX_STEPS`). Both, because a tiny pack with 90 steps thrashes and an 8-step card that needs the whole window has no room to repair | SPIDR split |
 | Testable | Acceptance tests exist, every criterion has a test case (§2.1.7), and the tests fail before handoff | Held in Planning until a failing test is staged |
+
+The Small check sizes a card to the Worker that will run it, not to a nominal tier. The code's fixed default of 32,768 tokens (`DEFAULT_TIER_BUDGET`, `constants.ts:60`) is twice the reference Worker's window: a card sized to its 8,192-token pack would leave under 2,000 tokens of the Worker's 9,984-token prompt budget ([DEC-27](../DECISIONS.md#dec-27--context-budgets-are-fixed-in-tokens-at-the-reference-window)) for history and repair. The default is retired for the registry value; the reversal is recorded in [DEC-24](../DECISIONS.md#dec-24--deliberate-reversals-in-design-v3).
 
 ### 2.5 Routing and escalation
 
-Difficulty < 4 goes straight to the Worker with a plan; 4–7 gets an edit sketch first (§2.1.9); > 7 is split. Maximum split depth is 4.
+Difficulty < 4 goes straight to the Worker with a plan; 4–7 gets an edit sketch first (§2.1.9); > 7 is split. **Maximum split depth is 4** (`DEFAULT_MAX_SPLIT_DEPTH`). Because split children are siblings (§2.3.3), depth counts **re-splits of one lineage** — a child of a split is depth 1, a child of that child's split depth 2 (`spidr.ts:622`; each child takes the split story's own parent, `spidr.ts:603`) — not card nesting. A story still over the bounds at depth 4 is not split again; it fails INVEST and is held in Planning (§2.4) with the smallest human action that would unblock it.
 
 **Split to the Worker's measured horizon.** Success decays with task length (a task at the 50% horizon doubled in length passes about half as often), and retries do not grow the solvable set, so cards are split aggressively. From the ledger the planner keeps a capability model per card kind and failing gate: pass rates with 95% Wilson intervals, and a logistic fit of pass against difficulty and changed lines that gives the Worker's **80% size horizon**. A card whose predicted pass probability is below 0.6, or whose estimated size exceeds the 80% horizon, is split before it is scheduled. Until a kind has 10 attempts its interval is shown as a rough range and the static bounds (3 files, 200 lines) apply. Person-built attempts are excluded from this model ([kernel](kernel.md) `builtBy`). On a rung-3 retry failure, or when the estimated context exceeds the tier budget at maximum decomposition, the card stops with `capability_ceiling` and escalates. Every escalation states the diagnosis, what was tried, and the smallest human action that unblocks it. Escalation also fires on a dependency outside the repository, a gate failing for a reason the ladder cannot fix (missing credentials, environment drift), and a budget forecast over the project cap. What the rung-3 re-plan is given (active rules, explored constraints, API hints) is [worker-loop](worker-loop.md)'s repair ladder.
 
@@ -109,7 +112,7 @@ Difficulty < 4 goes straight to the Worker with a plan; 4–7 gets an edit sketc
 5. **It holds the whole workspace.** Answers come from the event log across every project, not from the transcript: the board, runs, Worker capability, cycles, **goals, open decisions, the brief, the requirement graph and its proven count, assumptions, the risk register, the Reviewer's findings on each card, the approved rules addressed to Seshat, and its profile of the person** (the card dossier, [worker-loop](worker-loop.md)). Card ids it invents render as plain text.
 6. **Waiting is a visible procedure.** A message while the Worker runs pauses the Worker at its next step boundary, never mid-step; only one model is resident on a 24 GB host; the PM loads, answers and the Worker resumes; paused time is excluded from the card's time budget. Status phases (`waiting_for_step`, `loading_pm`, `thinking`, `resuming_worker`) are streamed. Messages are answered in order. The protocol is [PM_CONTRACT §4](../PM_CONTRACT.md#4-preemption-protocol-backend-only-the-ui-shows-pmstatus); on a team server, interactive PM replies go ahead of Worker steps under the scheduler's fair share ([runtime](runtime.md)).
 7. **Slash commands** `/plan`, `/status` (`/standup`), `/forecast`, `/capability`, `/research`, `/deep`, `/ready`, `/park`, `/backlog` are human commands typed in chat; the board changes they make go through the board's transition law like any other human action ([kernel](kernel.md)).
-8. **The senior-PM skill.** Seshat's standing instructions are a versioned skill file, not an inline string, covering: proportionality; vertical slicing and labelled enablers; Given/When/Then craft; flow (WIP, aging against the 85th percentile, Expedite kept rare); forecasting as ranges; cycle planning with slack; risk first; authority limits; and the sample exchanges in §2.8.17 as few-shots. It is scored on about 20 scripted conversations run on the real model.
+8. **The senior-PM skill.** Seshat's standing instructions are a versioned skill file, not an inline string, covering: proportionality; vertical slicing and labelled enablers; Given/When/Then craft; flow (WIP, aging against the 85th percentile, Expedite kept rare); forecasting as ranges; cycle planning with slack; risk first; authority limits; and the sample exchanges in §2.8.17 as few-shots. It is scored on 20 scripted conversations run on the real model, and passes when at least 16 of them meet every rubric item (P6).
 9. **Audience modes.** For non-developers, standups and status use plain words (`plainStatus`, shared with the [dashboard](dashboard.md)): no stop-reason codes, no ids in backticks. For beginners with Learn on, Seshat adds the one-sentence *why* from the same lesson content the dashboard uses.
 10. **It plans for the Worker it has.** Seshat reads the Worker's measured record (pass rate by card kind with its 95% interval, and the change size it passes 80% of the time). It proposes a split — not a retry — when a card exceeds that 80% size horizon, when its kind has a low measured pass rate, or when the Worker failed or looped on it, and it treats kinds with fewer than 10 attempts as rough ranges.
 11. **Answers explain failures from evidence.** Asked why a card failed, Seshat names the stop reason and the step, the gate and the exact error location from the evidence bundle, the upstream cause when the evidence shows one (for example a protected test whose fix belongs in the implementation), and proposes the send-back note or split it would make. When the evidence is missing it says which evidence is missing.
@@ -140,7 +143,7 @@ Difficulty < 4 goes straight to the Worker with a plan; 4–7 gets an edit sketc
 1. **One question policy, and it never blocks.** Each open point is **Assume** (a convention or sensible default exists: proceed, record the assumption on the card), **Ask** (divergent interpretations change a public API, user-visible behaviour or scope, and being wrong is expensive), or **Spike** (a probe must run first: a time-boxed research card). A question whose answers produce the same cards is not asked. **A question the playbook, the brief or an earlier answer already settles is a defect**, not a question. At most two questions are open per planning pass, each its own decision request; the rest take their defaults. A spec is never refused as under-specified.
 2. An Ask becomes a `DecisionRequest` on the board with options (each with its consequence, effort delta and risk note), a recommendation with its rationale, a policy, a deadline (default 12 hours, `DEFAULT_DECISION_DEADLINE_MS`), who may answer (a person; the Researcher only for an evidence question from the Worker's `ask`, [worker-loop](worker-loop.md)) and, once answered, when the answer was delivered to the asker (`deliveredAt`). Work proceeds on the recommended default meanwhile, unless the policy is `default_deny`. Answering is one step from the board, the CLI (`sekhemet decide <id> <n>`) or a notification, and is recorded as `decision/answered`.
    - **Implementation previews.** When the choice is architectural (two data structures, two patterns), each of two or three options carries a `previewSketch`: files touched, candidate symbol changes and estimated blast radius, so a person can choose before the Worker touches a file.
-3. `safe_default` applies the recommendation at the deadline and records `decision/default_applied`. `default_deny` — required for overriding gates, deleting files, adding untrusted dependencies and changing a database schema — keeps the card parked from the request until it is answered (its Worker slot and memory are released, and the queue takes the next card); at the deadline it records `decision/parked` and notifies. A later answer resumes the card to the state it was parked from, or Ready (`decisions.ts:153-240`). Destructive options are never auto-approved.
+3. `safe_default` applies the recommendation at the deadline and records `decision/default_applied`. `default_deny` — required for overriding gates, deleting files, adding untrusted dependencies and changing a database schema — **parks the card from the request** until it is answered (its Worker slot and memory are released, and the queue takes the next card); at the deadline it stays parked, records `decision/parked` and notifies. This is the one exception to "work proceeds on the default", and it is safer for destructive options than parking at the deadline; where DEC-24's row and [kernel](kernel.md) rule 27 say "at its deadline", this reading is the one that holds (review M8). A later answer unparks the card along [kernel](kernel.md)'s legal edges (`parked` → `ready`, `planning`, `backlog`, `rejected`): **to Ready, or back to Backlog or Planning when it was parked from one of those**; a card parked from In progress, Verify or Review goes to Ready, never back to the state it left (review M7; the code already does this, `decisions.ts:233-236`). Destructive options are never auto-approved.
 4. **Trust calibration.** Every assumption's outcome (kept or overridden) is recorded. When the override rate in a category exceeds 15% (`OVERRIDE_RATE_SHIFT_THRESHOLD`) the category shifts from Assume to Ask; consistently accepted recommendations on low-risk decisions shift back. Thresholds are visible and adjustable.
 
 ### 2.11 Goals
@@ -170,7 +173,7 @@ A response is automatic only when it changes no card field a person owns (a fore
 ### 2.13 What Seshat learns
 
 1. Learning is context, not weights, from recorded signals only — each recorded with its source (a gate transition, an attempt record, a human action including an edit, or a model's synthesis) and how it was verified — on the ledger, reversible ([PM_CONTRACT §6](../PM_CONTRACT.md#6-learning-self-improvement-and-the-user-profile-2026-09-18)). How rules enter the Worker's prompt is [context.md](context.md); how a change to the harness is admitted is [measurement.md](measurement.md).
-2. **Playbook rules** come from struggles, send-back notes and Seshat's end-of-run reflection; each is scoped (kind, path pattern, error pattern), counted helpful or harmful, valued `v ← 0.9·v + reward`, active only after a person approves, and proposed for retirement at 3 more harmful than helpful counts. **Nothing durable is admitted on the model's word**: a rule is promoted only when a signal measured outside the generated text improves (its A/B on held-out fixtures, [measurement](measurement.md) T8) *and* a person approves; per card only the top-k matching rules enter the prompt ([context](context.md)).
+2. **Playbook rules** come from struggles, send-back notes and Seshat's end-of-run reflection; each is scoped (kind, path pattern, error pattern) and credited from this project's attempt records, and retired automatically when its paired credit turns negative ([DEC-28](../DECISIONS.md#dec-28); the helpful/harmful counts and `v ← 0.9·v + reward` of the 2026-09-18 design are replaced). **Nothing durable is admitted on the model's word.** How a rule is admitted, kept and retired is the one table in [measurement](measurement.md) §2 ([DEC-28](../DECISIONS.md#dec-28--one-rule-for-admitting-what-the-system-learns)): a project playbook rule is active only after a person approves it, and is then kept or retired automatically by paired credit on this project's own attempt records; a change to the harness itself is admitted only by the frozen-suite A/B that table names. Per card only the top-k matching rules enter the prompt ([context](context.md)).
    - A send-back note becomes a rule candidate only when it names something actionable — a file, a symbol, a gate or an error pattern; vague notes stay notes (public review comments are documented as substantially vague and non-actionable, which poisons naive rule induction).
 3. **What Seshat has learned about you** is a set of statements (code style, planning, communication, priorities), each with evidence and a strength (0..1) that decays without new evidence, derived from send-back notes, which proposals are applied or discarded, and fields edited after Seshat changed them. Every statement is visible, editable and dismissible; a dismissed statement is never used again. An edit a person makes to one of Seshat's proposals (proposed value → applied value) is recorded as a preference pair; a proposal nobody acted on is **not** a negative signal. Statements decay (Erev–Roth style) and are scoped per repository or card kind. Rules and statements have a reach: *this project* (the project's ledger) or *all projects* (`~/.config/sekhemet`).
 4. **The stopping-policy tuner** (`sekhemet tune`) replays recorded trajectories and recommends a step budget and failed-check limit (`.sekhemet/tuning/latest.json`); `tune --apply` sets the budget the queue uses. Replay only stops a recorded run earlier than it stopped, so it never credits a pass the Worker did not make, and it cannot say whether a looser cap would have rescued a failure.
@@ -198,7 +201,7 @@ The spine says the model never certifies a card. The same holds one level up: **
 2. **Traceability both ways, down to the test.** Every card traces to at least one requirement, every must-have requirement to at least one card, and every staged test case to the criterion it proves (§2.1.7). Links are written by the machine as a side effect — the planner writes card → requirement, red-first staging writes test → criterion — never by a person filling a matrix. **No orphan cards:** an idea the model has during planning or building that traces to no accepted requirement becomes a proposed change for a person to accept, never a card.
 3. **Versioned links and impact.** Each card → requirement and test → requirement link records the requirement version it was made against. When a requirement is revised (by a person in Seshat, or by an accepted edit of the exported `requirements.md`, [design-stage](design-stage.md)), every link made against an earlier version becomes **suspect**: open cards that trace to it are held in Planning (a running card is never paused; its result is re-checked against the revised criteria at its end, and goes to Planning with the change named if they changed), done cards and their tests make the slice *unproven*, and Seshat proposes a change card for each suspect done card. A suspect link stays suspect until a person re-confirms it or a change card is accepted.
 4. **Release slices.** The story map's backbone is the user activities; the first slice is the **walking skeleton** — one story under every activity, the smallest journey that works end to end. Each later slice adds depth. A slice has exit criteria: the list of its must-have requirements.
-5. **Done is a computation.** A requirement is *proven* when its acceptance tests pass on `main` **and** their test-strength record meets the depth profile's rule ([gates](gates.md)) **and** no link to it is suspect; tests that pass without meeting the rule show *passing, strength unmet* and do not count. A slice is *proven* when every must-have requirement in it is proven and the project gates pass on `main`. It is *done* when it is proven and a person accepts the slice. A project is done when the slices the person chose are done. The count is shown as it is: "9 of 11 must-haves proven".
+5. **Done is a computation, closed by a person.** A requirement is *proven* when its acceptance tests pass on `main` **and** their test-strength record meets the depth profile's rule ([gates](gates.md)) **and** no link to it is suspect; tests that pass without meeting the rule show *passing, strength unmet* and do not count. A slice is *proven* when every must-have requirement in it is proven and the project gates pass on `main`. It is *done* only when it is proven **and a person accepts the slice** (`slice/accepted { slice, principal }`). **A project is done only through a person's slice acceptance**: when the last of the slices the person chose is accepted, and at no other moment. No rollup of card states sets it — a project whose cards are all Done but whose must-haves are unplanned or unproven is not done — and [kernel](kernel.md)'s project status takes `done` only from that acceptance (review M12). The count is shown as it is: "9 of 11 must-haves proven".
 6. **Reasoning is not evidence.** A statement by any model that the work is complete, or that a release is ready, counts for nothing; only executed tests and gates move a requirement to proven.
 7. **Appetite and a circuit breaker.** Each project and each slice has an appetite — a card budget and a time budget — set in the brief *before* planning, from the depth profile. Scope is fitted to the appetite, not the reverse: nice-to-haves are planned last and cut first. When a slice reaches its appetite, Seshat stops scheduling it and asks the person to choose: accept the slice as proven so far, cut named nice-to-haves, or extend. Extension is offered only when every remaining card already has its red tests written and no requirement is still unplanned.
 8. **Release per slice.** When a slice is accepted, Seshat proposes a release: the version and tag computed from the slice's Conventional-Commit squashes ([review-git §2.6](review-git.md)), a changelog grouped into Keep a Changelog's categories (Added, Changed, Deprecated, Removed, Fixed, Security), and **release notes written from the slice's proven requirements in the brief's words** ("You can now …"), not from commits. The release is recorded as `release/proposed { slice, version, changelog, notes }` and tagged only on a person's confirmation (`release/tagged { tag, sha, principal }`). The tag is what the team's CD reacts to; Sekhemet never deploys.
@@ -206,9 +209,9 @@ The spine says the model never certifies a card. The same holds one level up: **
 
 ### 2.16 Existing codebases: from an issue to a card
 
-1. **Card kinds for code that already exists.** In a repository with history every planned card has one kind, and the kind selects its red/green rule ([gates](gates.md) owns the rules):
+1. **What a card does to existing code: its `change`.** Every planned card carries one **`change`** value, a stored field separate from its `kind` ([DEC-26](../DECISIONS.md#dec-26--one-vocabulary-for-the-kind-of-card-and-the-run); [gates](gates.md) §8 Q3, decided). A new project's cards are all `feature`; in a repository with history the planner chooses among the five. The `change` selects the card's red/green rule ([gates](gates.md) owns the rules); the `kind` still selects its tools and rule scoping. Whether `characterize`, `refactor` and `upgrade` ship in v1 is owner decision [O10](../../reference/OPEN_QUESTIONS.md#owner-decisions); the default until then is **in v1**, because without them refactor and characterization cards fail as `vacuous_tests`.
 
-| Kind | What it is | Red/green rule |
+| `change` | What it is | Red/green rule |
 | --- | --- | --- |
 | `feature` | New behaviour | Acceptance tests red on the base, at an assertion |
 | `fix` | A defect with a reproduction | The reproduction test red on the base, at an assertion |
@@ -243,7 +246,8 @@ The spine says the model never certifies a card. The same holds one level up: **
 | CLI | `sekhemet plan "<spec>" [--planner m] [--offline]`, `goal`, `goal approve`, `goal status`, `decide [<id> <n>]`, `assume [list\|keep\|override]`, `abort <card> [reason]`, `release [--confirm]` (`wave2.ts:783-794`) |
 | Config | `[models] planner` (`config.ts`), prioritisation model and weights, process profile (`config.toml`) |
 | Endpoints (consumed by the dashboard; owned by [runtime](runtime.md)) | `/api/pm/*`, `/api/cycles`, `/api/metrics/flow`, `/api/goals`, `/api/standup`, `/api/signals`, `/api/assumptions`, `/api/decisions`, `/api/learning` |
-| New | Seshat tool `start_project`; the senior-PM skill file; a `criterion_lint` result on each planned card; requirement and trace-link records with versions and a suspect flag (events in [kernel](kernel.md)); `release/proposed`, `release/tagged`; card kinds `feature`, `fix`, `characterize`, `refactor`, `upgrade` with `supersedes` (test ids); criterion ids on staged test cases; test approvals keyed by content hash |
+| Card vocabulary ([DEC-26](../DECISIONS.md#dec-26--one-vocabulary-for-the-kind-of-card-and-the-run); labels in [NAMING](../NAMING.md#card-kind-change-and-split)) | `kind`: the seven stored values `spike`, `interface`, `implement`, `data`, `rule`, `review`, `research` (`CardKind`, `packages/kernel/src/card_class.ts:34-41`). New: `change` ∈ `feature`, `fix`, `characterize`, `refactor`, `upgrade`, with `supersedes` (test ids); `split` ∈ `spike`, `path`, `interface`, `data`, `rules` on a split child, with `splitFrom` and `splitDepth` (`packages/planner/src/types.ts:119-121`) |
+| New | Seshat tool `start_project`; the senior-PM skill file; a `criterion_lint` result on each planned card; requirement and trace-link records with versions and a suspect flag (events in [kernel](kernel.md)); `slice/accepted { slice, principal }` (the only event that makes a slice, and so a project, done), `release/proposed`, `release/tagged`; criterion ids on staged test cases; test approvals keyed by content hash; the INVEST pack cap read from the resolved Worker's registry window instead of `DEFAULT_TIER_BUDGET.workingContextTokens` |
 
 ## 4. State today
 
@@ -282,10 +286,11 @@ The spine says the model never certifies a card. The same holds one level up: **
 | Decision previews (`previewSketch`) | built | `decision.ts`, rendered by `decisions.ts:146` | — |
 | Stopping-policy tuner | built | `sekhemet tune`, `tune.ts`; `tune.spec.ts` | — |
 | Subtasks as cards, overlapping scopes serialised | built | `persist.ts` serialisation (`result.serialized`), INVEST-I | — |
-| Card kind read from labels everywhere | not-built | Five places parse a `(SPIDR: X)` title suffix the planner no longer writes; `pm/capability.ts:50` files every planned card under "Other" | P1 |
+| `kind`, `change` and `split` stored as three fields and read from them everywhere | not-built | Five places parse a `(SPIDR: X)` title suffix the planner no longer writes; `pm/capability.ts:50` files every planned card under "Other"; the dashboard keeps its own seven-value `CardKind` (`packages/ui/src/vocabulary.ts:19`), folded into NAMING's map under [dashboard](dashboard.md) NEW-dashboard-2 | P1 |
+| INVEST Small sized to the resolved Worker's window | not-built | The pack cap is 25% of a fixed 32,768 (`constants.ts:60`, `invest.ts:292`), twice the reference Worker's 16,384 | P1 (the registry window: [models](models.md) NEW-models-4) |
 | Requirement graph, versioned links, suspect marking, proven count | not-built | No requirement record anywhere in `packages/` or `apps/` | P13 |
 | Release per slice | partial | `sekhemet release [--confirm]` proposes a version and changelog from commits and tags on confirmation (`wave2.ts:783-794`, `repo_tools.ts:44-50`); not tied to a slice, notes from commits, 0.y.z jumps to 1.0.0 on a breaking change | P13 (version rule: [review-git](review-git.md) NEW-review-git-4) |
-| Card kinds for existing code, supersession, upgrade pipeline, fix localisation | not-built | Kinds are SPIDR labels only | NEW-planner-pm-6 |
+| `change` for existing code, supersession, upgrade pipeline, fix localisation | not-built | No `change` field; cards carry SPIDR labels only | NEW-planner-pm-6 |
 | Test approval by depth profile; property tests and oracle cross-check | not-built | — | NEW-planner-pm-7 |
 
 ## 5. Changes for v1
@@ -293,139 +298,145 @@ The spine says the model never certifies a card. The same holds one level up: **
 ### P1 — One planner, model first, with an acceptance-criterion contract
 *Two contract-free planning paths; the default path writes title-echo criteria; five confirmed bugs.*
 
-- WHEN `sekhemet plan`, `/plan`, `propose_create_card`, `propose_split_card` or `start_project` produces a card THE SYSTEM SHALL have run INVEST, the criterion lint and scope validation on it, and staged a failing acceptance test before it can leave Planning.
-- WHEN no `[models] planner` is configured THE SYSTEM SHALL plan with the model Seshat uses.
-- WHEN no planning model can be loaded THE SYSTEM SHALL plan heuristically and print, as the plan's first line, that it planned without a model, and every card title and criterion SHALL use only nouns that appear in the spec.
-- WHEN the model returns malformed JSON, truncated output, an unknown slice kind or an empty slice list THE SYSTEM SHALL refuse it, retry once, and then fall back to the heuristic.
-- WHEN a criterion repeats its card's title, lacks a concrete value, or is satisfied by an empty export named after the title THE SYSTEM SHALL refuse it in the lint.
-- WHEN the spec contains "A retried charge must never charge a customer twice" THE SYSTEM SHALL produce a criterion whose retried request returns the original result and records exactly one charge.
-- WHEN a card is split THE SYSTEM SHALL give each child its own behaviour and only the acceptance tests that exercise that behaviour, and SHALL move the parent to Rejected with the reason "Split into N cards" and links to its parts.
-- WHEN a card is replanned after a rung-3 failure THE SYSTEM SHALL carry the riskiest-assumption card and the original spec into the new plan, and never park the riskiest card as removed.
-- WHEN "Let users log in with email and password" is planned THE SYSTEM SHALL produce no card titled from a clause fragment ("Email: happy path", "Password: happy path").
-- WHEN any module needs a card's kind THE SYSTEM SHALL read it from the card's labels; `capabilityReport` on a planned project SHALL show no planned card under "Other".
-- WHEN the persistence, goals and impact tests run THE SYSTEM SHALL use an on-disk SQLite file (DEFINITION_OF_DONE §2A).
-- WHEN a card's staged acceptance test imports `hashEvent` from `src/hasher.ts` THE SYSTEM SHALL record that symbol, its file and its expected signature on the card's interface, and the Worker's prompt SHALL contain them.
-- WHEN a planning model is available and a card's difficulty is 4–7 THE SYSTEM SHALL persist an edit sketch with target symbols, preconditions, invariants, a diff outline and a blast radius, and SHALL NOT include a literal patch.
-- WHEN the planner stages an acceptance test THE SYSTEM SHALL record, for each test case, the id of the criterion it proves, and SHALL refuse a staged test that proves no criterion of its card (research PM-TQ-1).
-- WHEN a card's criterion has no staged test case THE SYSTEM SHALL keep the card in Planning and name the criterion (PM-TQ-2).
-- WHEN a behaviour criterion has concrete example values THE SYSTEM SHALL stage it as a table of cases, one row per example, each row naming the criterion, in the project's own test framework and test location (PM-TQ-3).
-- WHEN a plan contains a single card for a mechanism listed in §2.1.10 THE SYSTEM SHALL refuse it and re-split it as an epic.
+- **PM-P1-1** WHEN `sekhemet plan`, `/plan`, `propose_create_card`, `propose_split_card` or `start_project` produces a card THE SYSTEM SHALL have run INVEST, the criterion lint and scope validation on it, and staged a failing acceptance test before it can leave Planning.
+- **PM-P1-2** WHEN no `[models] planner` is configured THE SYSTEM SHALL plan with the model Seshat uses.
+- **PM-P1-3** WHEN no planning model can be loaded THE SYSTEM SHALL plan heuristically and print, as the plan's first line, that it planned without a model, and every card title and criterion SHALL use only nouns that appear in the spec.
+- **PM-P1-4** WHEN the model returns malformed JSON, truncated output, an unknown slice kind or an empty slice list THE SYSTEM SHALL refuse it, retry once, and then fall back to the heuristic.
+- **PM-P1-5** WHEN a criterion repeats its card's title, lacks a concrete value, or is satisfied by an empty export named after the title THE SYSTEM SHALL refuse it in the lint.
+- **PM-P1-6** WHEN the spec contains "A retried charge must never charge a customer twice" THE SYSTEM SHALL produce a criterion whose retried request returns the original result and records exactly one charge.
+- **PM-P1-7** WHEN a card is split THE SYSTEM SHALL give each child its own behaviour and only the acceptance tests that exercise that behaviour, and SHALL move the parent to Rejected with the reason "Split into N cards" and links to its parts.
+- **PM-P1-8** WHEN a card is replanned after a rung-3 failure THE SYSTEM SHALL carry the riskiest-assumption card and the original spec into the new plan, and never park the riskiest card as removed.
+- **PM-P1-9** WHEN "Let users log in with email and password" is planned THE SYSTEM SHALL produce no card titled from a clause fragment ("Email: happy path", "Password: happy path").
+- **PM-P1-10** WHEN any module needs a card's kind THE SYSTEM SHALL read it from the card's stored `kind` field, one of the seven values of [DEC-26](../DECISIONS.md#dec-26--one-vocabulary-for-the-kind-of-card-and-the-run), and never from a title suffix; `capabilityReport` on a planned project SHALL show no planned card under "Other".
+- **PM-P1-11** WHEN a story is split along a SPIDR axis THE SYSTEM SHALL record the axis in each child's `split` field (`spike`, `path`, `interface`, `data` or `rules`) and set each child's `kind` separately; WHEN a card defines only types or signatures THE SYSTEM SHALL store `kind: interface`, whatever its `split`.
+- **PM-P1-12** WHEN a planned card is persisted THE SYSTEM SHALL store exactly one `change` value, and on a new project that value SHALL be `feature`.
+- **PM-P1-13** WHEN a story at split depth 1 is split again THE SYSTEM SHALL give its children split depth 2 and the same parent card as the story, and SHALL create no card/subtask level for the split; WHEN a story at depth 4 still fails INVEST THE SYSTEM SHALL hold it in Planning and SHALL NOT split it again.
+- **PM-P1-14** WHEN the persistence, goals and impact tests run THE SYSTEM SHALL use an on-disk SQLite file (DEFINITION_OF_DONE §2A).
+- **PM-P1-15** WHEN a card's staged acceptance test imports `hashEvent` from `src/hasher.ts` THE SYSTEM SHALL record that symbol, its file and its expected signature on the card's interface, and the Worker's prompt SHALL contain them.
+- **PM-P1-16** WHEN a planning model is available and a card's difficulty is 4–7 THE SYSTEM SHALL persist an edit sketch with target symbols, preconditions, invariants, a diff outline and a blast radius, and SHALL NOT include a literal patch.
+- **PM-P1-17** WHEN the planner stages an acceptance test THE SYSTEM SHALL record, for each test case, the id of the criterion it proves, and SHALL refuse a staged test that proves no criterion of its card (research PM-TQ-1).
+- **PM-P1-18** WHEN a card's criterion has no staged test case THE SYSTEM SHALL keep the card in Planning and name the criterion (PM-TQ-2).
+- **PM-P1-19** WHEN a behaviour criterion has concrete example values THE SYSTEM SHALL stage it as a table of cases, one row per example, each row naming the criterion, in the project's own test framework and test location (PM-TQ-3).
+- **PM-P1-20** WHEN a plan contains a single card for a mechanism listed in §2.1.10 THE SYSTEM SHALL refuse it and re-split it as an epic.
 
 ### P2 — Start a project by conversation (planner side)
 *Non-developers cannot start a project; two question systems with opposite blocking rules.*
 
-- WHEN a person tells Seshat "start a new project: <sentence>" THE SYSTEM SHALL return one proposal group containing the epics, the first slice's cards with criteria and points, the proposed requirements, and card zero, and SHALL create nothing until it is applied.
-- WHEN the proposal group is applied THE SYSTEM SHALL create the cards through the pipeline of §2.1 with the person as actor, and no terminal command SHALL be required at any step.
-- WHEN a planning pass has more than two open questions THE SYSTEM SHALL post the two whose answers most change the backlog and record the rest as assumptions with their defaults.
-- WHEN a question is open THE SYSTEM SHALL leave the affected cards schedulable on the recommended default unless the request's policy is `default_deny`.
-- WHEN a spec yields four or more questions THE SYSTEM SHALL still plan it, and SHALL NOT refuse it as under-specified.
-- WHEN a question's answer is already recorded in an approved playbook rule, the brief or an earlier decision THE SYSTEM SHALL NOT ask it, and SHALL record the settled answer as the assumption with its source.
-- WHEN a decision's answer reaches the card that asked THE SYSTEM SHALL record `deliveredAt` on the decision.
+- **PM-P2-1** WHEN a person tells Seshat "start a new project: <sentence>" THE SYSTEM SHALL return one proposal group containing the epics, the first slice's cards with criteria and points, the proposed requirements, and card zero, and SHALL create nothing until it is applied.
+- **PM-P2-2** WHEN the proposal group is applied THE SYSTEM SHALL create the cards through the pipeline of §2.1 with the person as actor, and no terminal command SHALL be required at any step.
+- **PM-P2-3** WHEN a planning pass has more than two open questions THE SYSTEM SHALL post the two whose answers most change the backlog and record the rest as assumptions with their defaults.
+- **PM-P2-4** WHEN a question is open THE SYSTEM SHALL leave the affected cards schedulable on the recommended default unless the request's policy is `default_deny`.
+- **PM-P2-5** WHEN a spec yields four or more questions THE SYSTEM SHALL still plan it, and SHALL NOT refuse it as under-specified.
+- **PM-P2-6** WHEN a question's answer is already recorded in an approved playbook rule, the brief or an earlier decision THE SYSTEM SHALL NOT ask it, and SHALL record the settled answer as the assumption with its source.
+- **PM-P2-7** WHEN a decision's answer reaches the card that asked THE SYSTEM SHALL record `deliveredAt` on the decision.
 
 ### P6 — The senior-PM skill, evaluated
 *A 12-line prompt; a snapshot blind to goals, decisions and assumptions; a jargon standup.*
 
-- WHEN Seshat is asked "what's our goal?" or "what did you assume?" THE SYSTEM SHALL answer from the goal store and the assumption log, citing them.
-- WHEN Seshat is asked about a card the Reviewer has reviewed THE SYSTEM SHALL have the card's findings in Seshat's snapshot and cite them.
-- WHEN a standup is produced for chat, Slack or the CLI THE SYSTEM SHALL use one builder, list only cards done since the previous standup under *Done*, list the next cards the queue will take in order, and contain no stop-reason code or backticked id in its plain mode.
-- WHEN Seshat's skill file changes THE SYSTEM SHALL record its version on every `pm/reply`.
-- WHEN the skill file is built THE SYSTEM SHALL contain the five sample exchanges of §2.8.17 as few-shots.
-- WHEN asked why a card failed and its evidence bundle exists THE SYSTEM SHALL name the stop reason, the step, the failing gate and the first failure's `file:line`, and cite the evidence id.
-- WHEN asked what is at risk THE SYSTEM SHALL list the at-risk items with their basis and at least one item that is not at risk with its reason.
-- WHEN asked to plan the next cycle THE SYSTEM SHALL propose a bet no larger than 85% of the mean points completed over the last three cycles, and state that basis.
-- WHEN a card's changed-line estimate exceeds the Worker's measured 80% size horizon THE SYSTEM SHALL propose a split rather than a retry.
-- WHEN Seshat has sent 3 unsolicited messages to a person today THE SYSTEM SHALL hold further non-urgent ones for the next day's standup, and SHALL never send a 6th; WHEN the person has had the board in focus in the last 5 minutes THE SYSTEM SHALL show the item in the panel instead of notifying.
-- WHEN two PM prompts are built for one project with different board states THE SYSTEM SHALL produce identical bytes up to the start of the board digest.
-- WHEN a cycle closes THE SYSTEM SHALL record forecast calibration, proposal acceptance rate, the first-attempt pass rate of Seshat-planned cards and the count of fields people edited after Seshat changed them.
-- WHEN the scripted-conversation evaluation runs on the configured PM model THE SYSTEM SHALL score each of about 20 conversations against the rubric (answer first; numbers with a basis; no invented ids; a calculator gets zero questions; a billing service gets a brief; every proposal passes INVEST and the criterion lint) and record the score with the skill version.
+- **PM-P6-1** WHEN Seshat is asked "what's our goal?" or "what did you assume?" THE SYSTEM SHALL answer from the goal store and the assumption log, citing them.
+- **PM-P6-2** WHEN Seshat is asked about a card the Reviewer has reviewed THE SYSTEM SHALL have the card's findings in Seshat's snapshot and cite them.
+- **PM-P6-3** WHEN a standup is produced for chat, Slack or the CLI THE SYSTEM SHALL use one builder, list only cards done since the previous standup under *Done*, list the next cards the queue will take in order, and contain no stop-reason code or backticked id in its plain mode.
+- **PM-P6-4** WHEN Seshat's skill file changes THE SYSTEM SHALL record its version on every `pm/reply`.
+- **PM-P6-5** WHEN the skill file is built THE SYSTEM SHALL contain the five sample exchanges of §2.8.17 as few-shots.
+- **PM-P6-6** WHEN asked why a card failed and its evidence bundle exists THE SYSTEM SHALL name the stop reason, the step, the failing gate and the first failure's `file:line`, and cite the evidence id.
+- **PM-P6-7** WHEN asked what is at risk THE SYSTEM SHALL list the at-risk items with their basis and at least one item that is not at risk with its reason.
+- **PM-P6-8** WHEN asked to plan the next cycle THE SYSTEM SHALL propose a bet no larger than 85% of the mean points completed over the last three cycles, and state that basis.
+- **PM-P6-9** WHEN a card's changed-line estimate exceeds the Worker's measured 80% size horizon THE SYSTEM SHALL propose a split rather than a retry.
+- **PM-P6-10** WHEN Seshat has sent 3 unsolicited messages to a person today THE SYSTEM SHALL hold further non-urgent ones for the next day's standup, and SHALL never send a 6th; WHEN the person has had the board in focus in the last 5 minutes THE SYSTEM SHALL show the item in the panel instead of notifying.
+- **PM-P6-11** WHEN two PM prompts are built for one project with different board states THE SYSTEM SHALL produce identical bytes up to the start of the board digest.
+- **PM-P6-12** WHEN a cycle closes THE SYSTEM SHALL record forecast calibration, proposal acceptance rate, the first-attempt pass rate of Seshat-planned cards and the count of fields people edited after Seshat changed them.
+- **PM-P6-13** WHEN the scripted-conversation evaluation runs on the configured PM model THE SYSTEM SHALL score each of 20 scripted conversations against every rubric item (answer first; numbers with a basis; no invented ids; a calculator gets zero questions; a billing service gets a brief; every proposal passes INVEST and the criterion lint) and record the per-item results with the skill version; P6 passes only when **at least 16 of the 20 conversations meet every rubric item**.
 
 ### P13 — Project done is computed from requirements, never claimed
 
 Today the planner writes cards with acceptance criteria but nothing ties them to a brief-level requirement, no slice has exit criteria, no appetite bounds a project, links have no version, releases are not tied to slices, and nothing stops the PM calling a project finished ([research](../../research/PROJECT_DONE_AND_DEPTH.md); versioned links and releases: [DESIGN_RESEARCH_TEAMS_DATA_CHANGE](../../research/DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md) decisions 11 and 13; test strength: [DESIGN_RESEARCH_TESTS_BROWNFIELD](../../research/DESIGN_RESEARCH_TESTS_BROWNFIELD.md) decisions 1 and 5).
 
-- WHEN a brief is accepted THE SYSTEM SHALL store its requirements as events, each with an id, a version, its dependencies, a Kano class, a must-have or nice-to-have mark, its acceptance criteria and its slice.
-- WHEN the planner creates a card THE SYSTEM SHALL record the requirement ids and versions it traces to, and SHALL refuse to create a card that traces to none, offering a proposed change instead.
-- WHEN a must-have requirement has no card THE SYSTEM SHALL show it as unplanned on the story map and in Seshat's status, and SHALL not report its slice as proven.
-- WHEN every must-have requirement in a slice has passing acceptance tests on `main` that meet the depth profile's test-strength rule, no suspect link, and the project gates pass on `main` THE SYSTEM SHALL mark the slice proven; WHEN any of those tests later fails on `main` THE SYSTEM SHALL mark it unproven again.
-- WHEN a requirement's tests pass on `main` but its test-strength record does not meet the profile's rule THE SYSTEM SHALL show it as *passing, strength unmet* and SHALL NOT count it as proven (PM-TQ-8).
-- WHEN a model's message states that a project or slice is complete while any must-have requirement in it is unproven THE SYSTEM SHALL not change the slice's state, and Seshat's reply SHALL state the proven count instead.
-- WHEN a slice is proven THE SYSTEM SHALL ask a person to accept it, and SHALL mark it done only on that acceptance.
-- WHEN a slice's cards or hours reach its appetite THE SYSTEM SHALL stop scheduling its cards and SHALL ask the person to accept as proven, cut named nice-to-haves, or extend; it SHALL offer "extend" only when every remaining card has red tests and no requirement in the slice is unplanned.
-- WHEN a release report is written THE SYSTEM SHALL list proven, cut and remaining requirements against the baseline stated in the brief.
-- WHEN a requirement is revised THE SYSTEM SHALL mark every card → requirement and test → requirement link made against an earlier version suspect, hold the open cards that trace to it in Planning (a running card finishes and is re-checked at its end), mark its slice unproven if any done card or test link is now suspect, and have Seshat propose a change card for each suspect done card (PM-T1).
-- WHEN a link is suspect THE SYSTEM SHALL keep it suspect until a person re-confirms it or a change card is accepted.
-- WHEN a slice is accepted THE SYSTEM SHALL propose a release whose notes list the slice's proven requirements in the brief's words, and whose changelog groups the squashes into Added, Changed, Deprecated, Removed, Fixed and Security (PM-T2).
-- WHEN a model's message asserts that a release is ready while a must-have requirement in the slice is unproven THE SYSTEM SHALL not propose the release (PM-T3).
+- **PM-P13-1** WHEN a brief is accepted THE SYSTEM SHALL store its requirements as events, each with an id, a version, its dependencies, a Kano class, a must-have or nice-to-have mark, its acceptance criteria and its slice.
+- **PM-P13-2** WHEN the planner creates a card THE SYSTEM SHALL record the requirement ids and versions it traces to, and SHALL refuse to create a card that traces to none, offering a proposed change instead.
+- **PM-P13-3** WHEN a must-have requirement has no card THE SYSTEM SHALL show it as unplanned on the story map and in Seshat's status, and SHALL not report its slice as proven.
+- **PM-P13-4** WHEN every must-have requirement in a slice has passing acceptance tests on `main` that meet the depth profile's test-strength rule, no suspect link, and the project gates pass on `main` THE SYSTEM SHALL mark the slice proven; WHEN any of those tests later fails on `main` THE SYSTEM SHALL mark it unproven again.
+- **PM-P13-5** WHEN a requirement's tests pass on `main` but its test-strength record does not meet the profile's rule THE SYSTEM SHALL show it as *passing, strength unmet* and SHALL NOT count it as proven (PM-TQ-8).
+- **PM-P13-6** WHEN a model's message states that a project or slice is complete while any must-have requirement in it is unproven THE SYSTEM SHALL not change the slice's state, and Seshat's reply SHALL state the proven count instead.
+- **PM-P13-7** WHEN a slice is proven THE SYSTEM SHALL ask a person to accept it, and SHALL mark it done only on that acceptance, recorded as `slice/accepted` with the person's principal.
+- **PM-P13-8** WHEN every card of a project is Done but a slice the person chose has not been accepted by a person THE SYSTEM SHALL NOT report the project as done; WHEN a person accepts the last chosen slice THE SYSTEM SHALL report the project done, and no other event SHALL do so.
+- **PM-P13-9** WHEN a slice's cards or hours reach its appetite THE SYSTEM SHALL stop scheduling its cards and SHALL ask the person to accept as proven, cut named nice-to-haves, or extend; it SHALL offer "extend" only when every remaining card has red tests and no requirement in the slice is unplanned.
+- **PM-P13-10** WHEN a release report is written THE SYSTEM SHALL list proven, cut and remaining requirements against the baseline stated in the brief.
+- **PM-P13-11** WHEN a requirement is revised THE SYSTEM SHALL mark every card → requirement and test → requirement link made against an earlier version suspect, hold the open cards that trace to it in Planning (a running card finishes and is re-checked at its end), mark its slice unproven if any done card or test link is now suspect, and have Seshat propose a change card for each suspect done card (PM-T1).
+- **PM-P13-12** WHEN a link is suspect THE SYSTEM SHALL keep it suspect until a person re-confirms it or a change card is accepted.
+- **PM-P13-13** WHEN a slice is accepted THE SYSTEM SHALL propose a release whose notes list the slice's proven requirements in the brief's words, and whose changelog groups the squashes into Added, Changed, Deprecated, Removed, Fixed and Security (PM-T2).
+- **PM-P13-14** WHEN a model's message asserts that a release is ready while a must-have requirement in the slice is unproven THE SYSTEM SHALL not propose the release (PM-T3).
 
 ### NEW-planner-pm-1 — Points on the board
 *Every planned card is "unestimated", so the cycle header counts each as 1 point (domain07 §1). Not covered by P1's five bugs.*
 
-- WHEN the planner persists a card THE SYSTEM SHALL write an `estimate` in {1, 2, 3, 5, 8} derived from its difficulty and the project's history.
-- WHEN a derived estimate would be 8 THE SYSTEM SHALL propose splitting the card in the same plan.
+- **PM-N1-1** WHEN the planner persists a card THE SYSTEM SHALL write an `estimate` in {1, 2, 3, 5, 8} derived from its difficulty and the project's history.
+- **PM-N1-2** WHEN a derived estimate would be 8 THE SYSTEM SHALL propose splitting the card in the same plan.
 
 ### NEW-planner-pm-2 — Signals propose, never mutate
 *`queuePrelude` silently sets blockers to Urgent (`wave2.ts:349-351`), inflating the Expedite class and breaking "proposes, never does".*
 
-- WHEN the blocked-time signal fires THE SYSTEM SHALL post a proposal to raise priority and SHALL NOT change any card's `priority` with the `planner` actor.
+- **PM-N2-1** WHEN the blocked-time signal fires THE SYSTEM SHALL post a proposal to raise priority and SHALL NOT change any card's `priority` with the `planner` actor.
 
 ### NEW-planner-pm-3 — Split to the measured horizon
 *Cards are capped by static bounds (3 files, 200 lines) that ignore the Worker's measured record; the capability model exists only for Seshat's prose (PM_RESEARCH_SYNTHESIS §1 rows 2, 3, 8; §2 step 3). Not in COVERAGE.*
 
-- WHEN a kind has at least 10 attempts THE SYSTEM SHALL fit pass probability against difficulty and changed lines from the ledger and record the 80% size horizon with its interval.
-- WHEN the predicted pass probability of a planned card is below 0.6 or its estimated size exceeds the 80% horizon THE SYSTEM SHALL split it before scheduling.
-- WHEN a kind has fewer than 10 attempts THE SYSTEM SHALL apply only the static bounds and mark its rate as a rough range.
-- WHEN an attempt was built by a person THE SYSTEM SHALL exclude it from the capability model.
+- **PM-N3-1** WHEN a kind has at least 10 attempts THE SYSTEM SHALL fit pass probability against difficulty and changed lines from the ledger and record the 80% size horizon with its interval.
+- **PM-N3-2** WHEN the predicted pass probability of a planned card is below 0.6 or its estimated size exceeds the 80% horizon THE SYSTEM SHALL split it before scheduling.
+- **PM-N3-3** WHEN a kind has fewer than 10 attempts THE SYSTEM SHALL apply only the static bounds and mark its rate as a rough range.
+- **PM-N3-4** WHEN an attempt was built by a person THE SYSTEM SHALL exclude it from the capability model.
 
 ### NEW-planner-pm-4 — The goal loop re-evaluates on the right events
 *The spec said `built`; the loop runs only in the queue prelude and is given no metrics, human marks or environment changes, so two criterion kinds and one trigger are dead (inventory P19, R2 SHALLOW; `wave2.ts:369-377`).*
 
-- WHEN a card closes THE SYSTEM SHALL re-evaluate every active goal's criteria; WHEN the daemon has run an hour without a card closing THE SYSTEM SHALL re-evaluate them.
-- WHEN a goal has a `metric` criterion THE SYSTEM SHALL evaluate its query against values read from the log or repository, and mark it met when the threshold holds.
-- WHEN a person marks a `human` criterion met THE SYSTEM SHALL record it as a goal event and use it at the next evaluation.
-- WHEN the lockfile or the toolchain version changes between evaluations THE SYSTEM SHALL fire the `environment_changed` trigger and replan.
-- WHEN a goal is replanned THE SYSTEM SHALL post the diff and its one-paragraph reason in Seshat's thread.
+- **PM-N4-1** WHEN a card closes THE SYSTEM SHALL re-evaluate every active goal's criteria; WHEN the daemon has run an hour without a card closing THE SYSTEM SHALL re-evaluate them.
+- **PM-N4-2** WHEN a goal has a `metric` criterion THE SYSTEM SHALL evaluate its query against values read from the log or repository, and mark it met when the threshold holds.
+- **PM-N4-3** WHEN a person marks a `human` criterion met THE SYSTEM SHALL record it as a goal event and use it at the next evaluation.
+- **PM-N4-4** WHEN the lockfile or the toolchain version changes between evaluations THE SYSTEM SHALL fire the `environment_changed` trigger and replan.
+- **PM-N4-5** WHEN a goal is replanned THE SYSTEM SHALL post the diff and its one-paragraph reason in Seshat's thread.
 
 ### NEW-planner-pm-5 — Every signal response is carried out, as a proposal where a person owns the field
 *The spec said signals were `built`; only one response is acted on (inventory P20, R2 SHALLOW; `wave2.ts:345-353`).*
 
-- WHEN scope drift exceeds 20% THE SYSTEM SHALL hold auxiliary cards and post a decision request asking whether the goal has grown.
-- WHEN three or more gate failures land in one file THE SYSTEM SHALL post a proposal to re-split the card along Interface or Data, and SHALL NOT pause the card.
-- WHEN a column's p95 cycle time exceeds 2.5 × its p50 THE SYSTEM SHALL propose a step-budget change, and WHEN the Worker's pass rate over its last 10 attempts falls below the lower bound of its 95% interval THE SYSTEM SHALL name possible model degradation in *What's at risk*.
-- WHEN a high-risk assumption is unverified for more than 24 h THE SYSTEM SHALL propose a verification spike card.
+- **PM-N5-1** WHEN scope drift exceeds 20% THE SYSTEM SHALL hold auxiliary cards and post a decision request asking whether the goal has grown.
+- **PM-N5-2** WHEN three or more gate failures land in one file THE SYSTEM SHALL post a proposal to re-split the card along Interface or Data, and SHALL NOT pause the card.
+- **PM-N5-3** WHEN a column's p95 cycle time exceeds 2.5 × its p50 THE SYSTEM SHALL propose a step-budget change, and WHEN the Worker's pass rate over its last 10 attempts falls below the lower bound of its 95% interval THE SYSTEM SHALL name possible model degradation in *What's at risk*.
+- **PM-N5-4** WHEN a high-risk assumption is unverified for more than 24 h THE SYSTEM SHALL propose a verification spike card.
 
 ### NEW-planner-pm-6 — Planning on existing codebases
 *Every refactor and characterization card is refused today (its tests pass on the base and stop with `vacuous_tests`), and a behaviour change a base test asserts is unbuildable ([DESIGN_RESEARCH_TESTS_BROWNFIELD](../../research/DESIGN_RESEARCH_TESTS_BROWNFIELD.md) decisions 7, 8; PM-BF-1…5).*
 
-- WHEN a card is planned in a repository with history THE SYSTEM SHALL give it one kind of `feature`, `fix`, `characterize`, `refactor` or `upgrade`, and the kind SHALL select its red/green rule.
-- WHEN a `feature` or `fix` card's scope files have no test that executes them on the base THE SYSTEM SHALL plan a `characterize` card for those files before it.
-- WHEN a card changes behaviour that a test on the base asserts THE SYSTEM SHALL list that test as superseded on the card and stage its new version through the test-author step.
-- WHEN an `upgrade` card is planned THE SYSTEM SHALL plan the version change as a tool step and the adaptations as child `fix` cards created from the failing gates, each citing the changelog entries between the installed and proposed versions.
-- WHEN scope declaration runs for a `fix` card with a reproduction test THE SYSTEM SHALL rank candidate lines by spectrum-based suspiciousness from the failing and passing tests' coverage and record the ranking with the scope.
+- **PM-N6-1** WHEN a card is planned in a repository with history THE SYSTEM SHALL give it one `change` of `feature`, `fix`, `characterize`, `refactor` or `upgrade`, stored apart from its `kind`, and the `change` SHALL select its red/green rule.
+- **PM-N6-2** WHEN a `feature` or `fix` card's scope files have no test that executes them on the base THE SYSTEM SHALL plan a `characterize` card for those files before it.
+- **PM-N6-3** WHEN a card changes behaviour that a test on the base asserts THE SYSTEM SHALL list that test as superseded on the card and stage its new version through the test-author step.
+- **PM-N6-4** WHEN an `upgrade` card is planned THE SYSTEM SHALL plan the version change as a tool step and the adaptations as child `fix` cards created from the failing gates, each citing the changelog entries between the installed and proposed versions.
+- **PM-N6-5** WHEN scope declaration runs for a `fix` card with a reproduction test THE SYSTEM SHALL rank candidate lines by spectrum-based suspiciousness from the failing and passing tests' coverage and record the ranking with the scope.
 
 ### NEW-planner-pm-7 — Test approval and strength by depth profile
 *A planner-written test is a model's oracle; who checks it, and how hard, must scale with the stakes ([DESIGN_RESEARCH_TESTS_BROWNFIELD](../../research/DESIGN_RESEARCH_TESTS_BROWNFIELD.md) decision 6; PM-TQ-4…7).*
 
-- WHEN a criterion contains "never", "always", "exactly once", "idempotent", "for any" or a round trip AND the depth profile is production or regulated THE SYSTEM SHALL stage a property-based test for it with a fixed seed recorded in the card's evidence.
-- WHEN the depth profile is production or regulated THE SYSTEM SHALL sample the expected values of each must-have example row a second time, independently of the first, and WHEN the two disagree THE SYSTEM SHALL post a `DecisionRequest` showing both values instead of choosing one.
-- WHEN the depth profile is production THE SYSTEM SHALL present the example tables of must-have requirements to a person for approval before their cards leave Planning; WHEN it is regulated, every staged acceptance-test file; WHEN it is prototype or internal tool, none.
-- WHEN an approved acceptance test's content hash changes THE SYSTEM SHALL mark its approval void and require it again before the card leaves Planning.
-- WHEN any card leaves Planning THE SYSTEM SHALL have a person's approval of its criteria recorded.
+- **PM-N7-1** WHEN a criterion contains "never", "always", "exactly once", "idempotent", "for any" or a round trip AND the depth profile is production or regulated THE SYSTEM SHALL stage a property-based test for it with a fixed seed recorded in the card's evidence.
+- **PM-N7-2** WHEN the depth profile is production or regulated THE SYSTEM SHALL sample the expected values of each must-have example row a second time, independently of the first, and WHEN the two disagree THE SYSTEM SHALL post a `DecisionRequest` showing both values instead of choosing one.
+- **PM-N7-3** WHEN the depth profile is production THE SYSTEM SHALL present the example tables of must-have requirements to a person for approval before their cards leave Planning; WHEN it is regulated, every staged acceptance-test file; WHEN it is prototype or internal tool, none.
+- **PM-N7-4** WHEN an approved acceptance test's content hash changes THE SYSTEM SHALL mark its approval void and require it again before the card leaves Planning.
+- **PM-N7-5** WHEN any card leaves Planning THE SYSTEM SHALL have a person's approval of its criteria recorded.
 
 ## 6. v1 acceptance
 
 All criteria in §5, plus:
 
-- WHEN a proposal's card changed after the proposal was made THE SYSTEM SHALL mark it `stale` and refuse to apply it.
-- WHEN *Apply all* hits a failing proposal THE SYSTEM SHALL stop there and report how many applied and why the next failed.
-- WHEN a person asks Seshat to accept a card, override a gate or mark work done THE SYSTEM SHALL refuse and name the action in Review that does it.
-- WHEN a message arrives while the Worker runs THE SYSTEM SHALL pause the Worker only at a step boundary and exclude the paused time from the card's time budget.
-- WHEN a `safe_default` decision passes its deadline THE SYSTEM SHALL apply the recommendation and record `decision/default_applied`; WHEN a `default_deny` one does, THE SYSTEM SHALL keep the card parked and record `decision/parked`; WHEN that decision is answered later THE SYSTEM SHALL return the card to the state it was parked from or Ready.
-- WHEN the override rate for an assumption category exceeds 15% THE SYSTEM SHALL classify the next point in that category as Ask.
-- WHEN every criterion of a goal is `human` THE SYSTEM SHALL flag the goal unverifiable at intake.
-- WHEN a goal's budget is exhausted with criteria unmet THE SYSTEM SHALL set it `blocked` with the met and unmet criteria listed, never `met`.
-- WHEN a profile statement is dismissed THE SYSTEM SHALL omit it from every later PM prompt.
-- WHEN a run's retries finish THE SYSTEM SHALL run Seshat's reflection after them, with each retry's outcome in its input.
-- WHEN the INVEST Small check runs on a 32,768-token tier THE SYSTEM SHALL refuse a card whose pack exceeds 8,192 tokens or whose step budget exceeds 40.
+- **PM-1** WHEN a proposal's card changed after the proposal was made THE SYSTEM SHALL mark it `stale` and refuse to apply it.
+- **PM-2** WHEN *Apply all* hits a failing proposal THE SYSTEM SHALL stop there and report how many applied and why the next failed.
+- **PM-3** WHEN a person asks Seshat to accept a card, override a gate or mark work done THE SYSTEM SHALL refuse and name the action in Review that does it.
+- **PM-4** WHEN a message arrives while the Worker runs THE SYSTEM SHALL pause the Worker only at a step boundary and exclude the paused time from the card's time budget.
+- **PM-5** WHEN a `safe_default` decision passes its deadline THE SYSTEM SHALL apply the recommendation and record `decision/default_applied`; WHEN a `default_deny` one does, THE SYSTEM SHALL keep the card parked and record `decision/parked`; WHEN that decision is answered later THE SYSTEM SHALL move the card to Backlog or Planning if it was parked from that state, and to Ready otherwise.
+- **PM-6** WHEN a `default_deny` decision is requested for a card THE SYSTEM SHALL park the card at the request, before its deadline, and release its Worker slot.
+- **PM-7** WHEN the override rate for an assumption category exceeds 15% THE SYSTEM SHALL classify the next point in that category as Ask.
+- **PM-8** WHEN every criterion of a goal is `human` THE SYSTEM SHALL flag the goal unverifiable at intake.
+- **PM-9** WHEN a goal's budget is exhausted with criteria unmet THE SYSTEM SHALL set it `blocked` with the met and unmet criteria listed, never `met`.
+- **PM-10** WHEN a profile statement is dismissed THE SYSTEM SHALL omit it from every later PM prompt.
+- **PM-11** WHEN a run's retries finish THE SYSTEM SHALL run Seshat's reflection after them, with each retry's outcome in its input.
+- **PM-12** WHEN the INVEST Small check runs for the reference Worker (a 16,384-token window in the registry) THE SYSTEM SHALL refuse a card whose pack exceeds 4,096 tokens or whose step budget exceeds 40.
+- **PM-13** WHEN the registry's window for the resolved Worker changes THE SYSTEM SHALL compute the Small pack cap from the new window (25% of it), with no fixed default in between.
 
 - P13: every criterion above passes, on a fixture project whose brief has at least eight requirements across two slices, one of which is revised after its slice is proven.
 
@@ -434,7 +445,7 @@ All criteria in §5, plus:
 - **Steering a running card** (a steer delivered at the next step boundary as `card/steer`, landing in the volatile tail with no restart and no prefix invalidation; a mid-card scope amendment the Worker is told about). Abort-with-reason and send-back cover v1, and steering is never required for correctness. When built: a steer is recorded before delivery, cannot relax a gate, widen a permission or accept work, and a steered card is excluded from unattended pass-rate statistics.
 - **Holding the Worker's slot for an attached human** (answer within 60 s without unloading). v1 always proceeds on the default.
 - **Reroute** (force a model per card) and **Explain** (the evidence behind an estimate, a route or a decision) as board commands; Seshat already explains on request.
-- **The same conversation in the terminal** (`sekhemet` with no arguments opening Seshat; a quoted spec as a one-turn conversation). In v1 `sekhemet` opens the board ([surface](surface.md)) and `sekhemet "<spec>"` plans; the conversation is on the dashboard.
+- **The same conversation in the terminal** (`sekhemet` with no arguments opening Seshat; a quoted spec as a one-message conversation). In v1 `sekhemet` opens the board ([surface](surface.md)) and `sekhemet "<spec>"` plans the work and runs it (one verb, [surface](surface.md)); the conversation is on the dashboard.
 - **A `/goal` chat command** opening goal intake in Seshat's thread. Goals are CLI and API in v1 (`sekhemet goal`); the chat path waits for the goal view.
 - **Master board across workspaces and a goal view** (statement, criteria, burn-up, strategy graph, risk register, forecast range, filtered *Needs you*), including **highlighting a goal with no state change in a configurable window** — the highlight needs the view to live in. Goals are CLI and API in v1; the dashboard shows burn-up and criteria only ([dashboard](dashboard.md)).
 - **Calibrating ask-versus-assume against ClarEval** (arXiv:2602.14820), and measuring the two failure modes it names — questions a person answers "you should have known", and send-backs whose reason was knowable before the card ran: no local benchmark run exists; the override-rate shift is the v1 mechanism.
@@ -447,7 +458,7 @@ All criteria in §5, plus:
 1. **Should a profile statement need approval before Seshat uses it?** PM_CONTRACT §6 says everything learned is approved first; the code activates statements at once (`learning/store.ts:329`) and the UI offers dismiss. *Recommendation:* keep immediate use for profile statements (they shape only Seshat's wording and proposals, never gates or the Worker's prompt) and require approval for playbook rules; correct PM_CONTRACT §6 to say so.
 2. **PM_CONTRACT names the apply event `pm/proposal_applied`; the code writes `pm/proposal_state`.** *Recommendation:* the code's name is right (it also records discards); correct the contract.
 3. **Test approval at *production*: the example tables of must-haves only, or every test file?** *Recommendation:* the example tables of must-haves only (written into §2.17); every file only at *regulated*. Every file at production would make the person the bottleneck on every card.
-4. **Card kinds `characterize`, `refactor` and `upgrade` in v1?** *Recommendation:* yes (written into §2.16); they are rule changes, not new machinery, and without them no brownfield card can be planned.
+4. **The `change` values `characterize`, `refactor` and `upgrade` in v1?** Owner decision [O10](../../reference/OPEN_QUESTIONS.md#owner-decisions). *Recommendation, and the default until decided:* yes (written into §2.16); they are rule changes, not new machinery, and without them no brownfield card can be planned. The field's name, `change`, is decided ([DEC-26](../DECISIONS.md#dec-26--one-vocabulary-for-the-kind-of-card-and-the-run)).
 5. **Where exported project documents are committed** (the integration branch or a docs branch) is design-stage's open question; this spec assumes the recommended default, the integration branch through the Accept path.
 
 ## 9. Evidence and rationale
@@ -469,8 +480,10 @@ All criteria in §5, plus:
   - "Reject a spec with more than 3 questions" is dropped — it contradicts propose-and-proceed; the design stage's measurement showed people want work started on defaults.
   - **A card no longer parks while a question is open** (except `default_deny`) — the old Pause-and-Persist rule parked every asking card; propose-and-proceed keeps it schedulable on the default, and the code (`decisions.ts:104-131`) changes under P2.
   - Questions are one decision request each, at most two per pass, instead of one batched request — each question has its own default and deadline, and a person can answer one without the other.
-  - SPIDR *Interface* is the user interface (Cohn's meaning); type contracts are a `Contract` enabler card, not the Interface slice — the old design's reading made every backlog start with a non-user-facing "story".
-  - INVEST runs before a card is persisted as Ready rather than at Planning → In Progress — the queue takes planned work from Ready, so the check is earlier and cheaper.
+  - SPIDR *Interface* is the user interface (Cohn's meaning); type contracts are a *Contract* enabler card (`kind: interface`), not the Interface slice — the old design's reading made every backlog start with a non-user-facing "story". SPIDR is recorded as the `split` axis, apart from `kind`, and the brownfield values are a separate `change` field ([DEC-26](../DECISIONS.md#dec-26--one-vocabulary-for-the-kind-of-card-and-the-run), resolving review B3): one field cannot say both what a card is and what it does to existing code.
+  - The INVEST Small cap follows the resolved Worker's window (4,096 tokens of pack on the reference Worker), not a fixed 32,768-token tier (review M11; DEC-24).
+  - `default_deny` parks at the request, and a late answer returns the card to Ready (or Backlog or Planning if it came from there) — the only legal exits from Parked (review M7, M8).
+  - INVEST runs before a card is persisted as Ready rather than at Planning → In progress — the queue takes planned work from Ready, so the check is earlier and cheaper.
   - Priority is Linear's 0–4 field, and WSJF only orders Ready — the old design stored the WSJF score in `priority`, which a person could not set.
   - Failure concentration proposes a re-split instead of pausing implementation — signals propose; they do not take a card from the Worker.
   - The goal loop's "on a timer" is kept (restored under NEW-planner-pm-4), as is the dependency-change replan trigger.
