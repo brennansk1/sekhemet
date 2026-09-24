@@ -46,7 +46,7 @@ v1 includes: binding to a non-loopback address safely; an identity for each pers
 - **Reopen if:** v1 meets its Definition of Done.
 
 ### DEC-08
-**Libraries approved to add, when their workstream arrives.** *Owner, 2026-09-22 (D5).* SPDX parsing (`spdx-expression-parse`, `spdx-satisfies`, `spdx-correct`), and the official clients `@octokit/*`, `@modelcontextprotocol/sdk`, `jira.js`, `@linear/sdk` and Slack Bolt. Every other proposal in COVERAGE still needs the owner's yes, one by one. **Added 2026-09-24 (DEC-29):** Playwright and axe-core (development only), fast-check, Valibot, vLLM (a separate process).
+**Libraries approved to add, when their workstream arrives.** *Owner, 2026-09-22 (D5).* SPDX parsing (`spdx-expression-parse`, `spdx-satisfies`, `spdx-correct`), and the official clients `@octokit/*`, `@modelcontextprotocol/sdk`, `jira.js`, `@linear/sdk` and Slack Bolt. Every other proposal in COVERAGE still needs the owner's yes, one by one. **Added 2026-09-24 (DEC-29):** Playwright and axe-core (development only), fast-check, Valibot, vLLM (a separate process). **Added 2026-09-25 (DEC-38):** SimpleWebAuthn and `openid-client`, and a bundled common-password list with a permissive licence.
 - **Why:** they replace hand-rolled code the reviews found wrong (the licence check rejects MIT-0 and "MIT AND …"; three GitHub paths with three ID formats).
 - **Reopen if:** a licence or maintenance check at the time of adding fails.
 
@@ -151,18 +151,18 @@ What professional boards do not show is left off the card face: the agent's step
 - **Reopen if:** only the owner.
 
 ### DEC-35 — one product, two setups: Solo and Team
-**People work together on projects in v1, the way a team does in Jira.** *Owner direction, 2026-09-25 (quoted). The four access levels, the sign-in design and the rules below are the lead's design under that direction, presented to the owner with the mockups for review. Supersedes DEC-06's "not in v1: roles beyond that, SSO integrations beyond the proxy"; the rest of DEC-06 stands.* The owner asked for a product that "a solo developer who doesn't know much about coding" and "teams with enterprise hardware" can both use, with the account in the corner, a login screen, and several people working on the same projects and issues.
+**People work together on projects in v1, the way a team does in Jira.** *Owner direction, 2026-09-25 (quoted). The four access levels, the sign-in design and the rules below are the lead's design under that direction, presented to the owner with the mockups for review, and confirmed by the owner on 2026-09-25 ([DEC-38](#dec-38--the-owner-approves-the-teams-recommendations)). Supersedes DEC-06's "not in v1: roles beyond that, SSO integrations beyond the proxy"; the rest of DEC-06 stands.* The owner asked for a product that "a solo developer who doesn't know much about coding" and "teams with enterprise hardware" can both use, with the account in the corner, a login screen, and several people working on the same projects and issues.
 - **Solo** is one person on their own machine. The server binds loopback, there is no sign-in screen and no roles UI, and the operating-system user is the one principal and holds every permission. The account menu still shows who you are.
 - **Team** is one install on the team's own server, which can have data-centre GPUs and run stronger open-weight models chosen on Configuration (inference stays local, [DEC-03](#dec-03)). It adds accounts, a workspace holding the projects, access levels, invites, an inbox, @mentions of people, watchers, presence, an audit view, project updates and a fair model queue ([teams](specs/teams.md)).
 - A project moves from Solo to Team without migration: the same event log, the same principals.
 - **Access levels (workspace-wide, with a per-project override):** *Admin* (members, models, configuration, the queue); *Member* (create, edit and move issues, start and guide the Agent, review, approve plans); *Stakeholder* (file issues, comment, talk to Seshat, answer questions addressed to them; cannot start the Agent, change scope or priority, or accept); *Viewer* (read, comment and ask Seshat questions). Job titles (Product owner, Developer, Reviewer, Researcher, Designer…) are profile labels that set a person's home page and notification defaults, never permissions.
 - **Accept stays a per-project rule, not a level:** who may accept, required reviewers from CODEOWNERS, and the independence rule of DEC-29 O11.
-- **Sign-in:** none in Solo. In Team: a one-time setup token, written to a 0600 file whose path the server console prints, creates the first Admin; people join by single-use, expiring invite links that carry their level; local accounts use passwords under NIST SP 800-63B-4 rules; sign-in attempts are rate-limited per account and per address; the trusted identity proxy of DEC-06 stays. Passkeys and company SSO (OIDC) are designed in and wait for the owner's approval of their libraries ([OPEN_QUESTIONS](../reference/OPEN_QUESTIONS.md) O28, O29). SCIM provisioning is Later.
+- **Sign-in:** none in Solo. In Team: a one-time setup token, written to a 0600 file whose path the server console prints, creates the first Admin; people join by single-use, expiring invite links that carry their level; local accounts use passwords under NIST SP 800-63B-4 rules; sign-in attempts are rate-limited per account and per address; the trusted identity proxy of DEC-06 stays. Passkeys and company SSO (OIDC) are in v1 ([DEC-38](#dec-38--the-owner-approves-the-teams-recommendations)). SCIM provisioning is Later.
 - **Why:** the owner's direction (2026-09-25). Research: [DESIGN_RESEARCH_COLLABORATION.md](../research/DESIGN_RESEARCH_COLLABORATION.md) §1, §4, §5 — Jira, Linear, GitHub and Azure DevOps converge on these four tiers; approval is a rule on the work, not a role.
 - **Reopen if:** only the owner.
 
 ### DEC-36 — the AI is a teammate that proposes; people decide
-**Seshat and the Agent work with people without directing them.** *Owner direction, 2026-09-25 (quoted): "collaborating with the PM but not making it feel like an AI is bossing you around". The rules below are the lead's design under that direction, presented to the owner with the mockups for review.*
+**Seshat and the Agent work with people without directing them.** *Owner direction, 2026-09-25 (quoted): "collaborating with the PM but not making it feel like an AI is bossing you around". The rules below are the lead's design under that direction, presented to the owner with the mockups for review, and confirmed by the owner on 2026-09-25 ([DEC-38](#dec-38--the-owner-approves-the-teams-recommendations)).*
 - Every issue has a human owner; the Agent is only ever its delegate (integrations item 6).
 - Seshat and the Agent are labelled AI identities with an "AI" badge. They are not members, hold no access level and take no seat. People reach them the way they reach a colleague: delegate an issue to the Agent, or @mention `@Agent` or `@Seshat` in a comment.
 - The harness acknowledges them within seconds, without waiting for a model, and shows one state on the card, the issue and the inbox: *queued*, *working*, *needs you*, *paused*, *done* or *failed*. Stop takes effect at the next step boundary, and nothing resumes until a person re-engages it (DEC-34).
@@ -176,7 +176,7 @@ What professional boards do not show is left off the card face: the agent's step
 - **Reopen if:** only the owner.
 
 ### DEC-37 — Status serves the stakeholder and the team from the same data
-**Status is a real project page, not a summary line.** *Owner direction, 2026-09-25 (quoted): the status page "seems shallow" and must serve someone who isn't a software engineer and someone collaborating on the project. The page below is the lead's design under that direction, presented to the owner with the mockups for review.*
+**Status is a real project page, not a summary line.** *Owner direction, 2026-09-25 (quoted): the status page "seems shallow" and must serve someone who isn't a software engineer and someone collaborating on the project. The page below is the lead's design under that direction, presented to the owner with the mockups for review, and confirmed by the owner on 2026-09-25 ([DEC-38](#dec-38--the-owner-approves-the-teams-recommendations)).*
 - **Health** (*On track*, *At risk*, *Off track*) is set by the project lead, with their name and date. It is never set by a model. Seshat drafts the weekly **project update** (status, done, next, risks, asks), and a person edits and posts it. In the Team setup the page shows *Update missing* when 7 days pass without one; in Solo health and the update are optional and nothing is shown as missing.
 - **Forecasts are always a range:** 50% and 85% dates by Monte Carlo over issue throughput (planner-pm §2.6 item 3), with "not enough history yet" below the minimum. Never a single date.
 - Status shows:
@@ -192,6 +192,19 @@ What professional boards do not show is left off the card face: the agent's step
   - a one-line flow summary that links to Insights.
 - **Never shown:** per-person velocity, leaderboards, Agent-versus-person rankings, DORA numbers as targets.
 - **Why:** research §6 (Linear project updates, Atlassian's weekly update, the Kanban Guide, DORA's warning against targets).
+- **Reopen if:** only the owner.
+
+### DEC-38 — the owner approves the teams recommendations
+**The owner accepts every recommendation from the teams review.** *Owner, 2026-09-25: "I approve all your recommendations for the decisions."*
+- **O28:** passkeys (WebAuthn) are in v1 for the Team setup's local accounts, with SimpleWebAuthn (MIT).
+- **O29:** company SSO over OIDC is in v1, with `openid-client` (MIT): PKCE, a claim-to-level mapping and strict mode.
+- **O30:** the password check uses a bundled, offline list of common and breached passwords with a permissive licence, never an online lookup. The list is picked in B4.10 under DEC-08's licence and maintenance check.
+- **Confirmed as designed:**
+  - the four access levels and the per-project Accept rule (DEC-35);
+  - Seshat's rules (DEC-36);
+  - the Status design, including *Write update* (DEC-37);
+  - the account menu at the bottom of the sidebar.
+- **Why:** the owner's answer to the decision list presented with the mockups.
 - **Reopen if:** only the owner.
 
 ## Engineering decisions

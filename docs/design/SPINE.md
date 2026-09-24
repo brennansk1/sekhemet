@@ -100,7 +100,7 @@ The full records, with evidence and the condition that would reopen each, are in
 | Network | Offline by default; research, git remotes and sync are opt-in and logged |
 | Language | TypeScript first; other languages get functional gates and say what they do not check |
 
-**Not in v1:** cloud inference; passkeys and company SSO (OIDC) unless the owner approves O28 and O29; SCIM provisioning; several workspaces on one install; a compliance pack or any compliance claim; multi-machine inference pooling; live two-way sync with Jira or Linear (export and import only); an Azure DevOps connector; an IDE extension or TUI; fine-tuning our own models. Each is either a later version's work or rejected on evidence ([DECISIONS](DECISIONS.md)).
+**Not in v1:** cloud inference; SCIM provisioning; several workspaces on one install; a compliance pack or any compliance claim; multi-machine inference pooling; live two-way sync with Jira or Linear (export and import only); an Azure DevOps connector; an IDE extension or TUI; fine-tuning our own models. Each is either a later version's work or rejected on evidence ([DECISIONS](DECISIONS.md)).
 
 ## What we claim, and what is true
 

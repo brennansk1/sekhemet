@@ -10,13 +10,13 @@ Decisions only the owner can make, each with the default the design uses until t
 
 **Decided 2026-09-25:** O15–O27 take their recommended defaults ([DEC-33](../design/DECISIONS.md#dec-33)). The table below keeps each question and its answer for the record.
 
-**Awaiting the owner** (added 2026-09-25 with [DEC-35](../design/DECISIONS.md#dec-35--one-product-two-setups-solo-and-team)):
+**Decided 2026-09-25:** O28–O30 take their recommendations ([DEC-38](../design/DECISIONS.md#dec-38--the-owner-approves-the-teams-recommendations)): passkeys and company SSO are in v1; the password list is bundled and offline. Added with [DEC-35](../design/DECISIONS.md#dec-35--one-product-two-setups-solo-and-team); kept below for the record:
 
 | # | Decision | Affects | Recommendation (the default until decided) |
 | --- | --- | --- | --- |
-| O28 | **Passkeys in v1** with SimpleWebAuthn (MIT) for the Team setup's local accounts | B4.10 (NEW-teams-4, [teams](../design/specs/teams.md) item 12) | Yes — passkeys resist phishing and NIST SP 800-63B-4 allows syncable passkeys at AAL2. Until decided: passwords only (teams item 11) |
-| O29 | **Company SSO (OIDC) in v1** with `openid-client` (MIT): PKCE, a claim-to-level mapping and strict mode | B4.10 (NEW-teams-4, [teams](../design/specs/teams.md) item 12) | Yes — enterprise teams expect it, and the proxy route asks every team to run oauth2-proxy. Until decided: invites, passwords and the trusted identity proxy |
-| O30 | **Bundle a common-password list** for the Team setup's password check — which list, and under which licence? | B4.10 (NEW-teams-3, [teams](../design/specs/teams.md) item 11, TEAM-9) | A bundled, offline list with a permissive licence, never an online lookup (which would break air-gapped installs and the egress rules). Until decided: the check is 15 characters minimum plus the person's own name, email and the workspace name |
+| O28 | **Passkeys in v1** with SimpleWebAuthn (MIT) for the Team setup's local accounts | B4.10 (NEW-teams-4, [teams](../design/specs/teams.md) item 12) | **Decided: yes** (DEC-38). Passkeys resist phishing and NIST SP 800-63B-4 allows syncable passkeys at AAL2 |
+| O29 | **Company SSO (OIDC) in v1** with `openid-client` (MIT): PKCE, a claim-to-level mapping and strict mode | B4.10 (NEW-teams-4, [teams](../design/specs/teams.md) item 12) | **Decided: yes** (DEC-38). Enterprise teams expect it, and the proxy route asks every team to run oauth2-proxy |
+| O30 | **Bundle a common-password list** for the Team setup's password check — which list, and under which licence? | B4.10 (NEW-teams-3, [teams](../design/specs/teams.md) item 11, TEAM-9) | **Decided** (DEC-38): a bundled, offline list with a permissive licence, never an online lookup (which would break air-gapped installs and the egress rules). The specific list is chosen in B4.10 under DEC-08's licence and maintenance check |
 
 **Answered:**
 

@@ -224,7 +224,7 @@ The design v3 specifications found gaps the Phase A programme had no ID for. Eac
 | NEW-teams-1 | The two setups, Solo and Team (DEC-35) | [teams](../design/specs/teams.md) | B4.10 |
 | NEW-teams-2 | Workspace, projects and access levels | [teams](../design/specs/teams.md) | B4.10 |
 | NEW-teams-3 | Accounts and sessions: setup token, invites, passwords, sessions, personal tokens | [teams](../design/specs/teams.md) | B4.10 |
-| NEW-teams-4 | Passkeys and company SSO, once O28 and O29 are approved | [teams](../design/specs/teams.md) | B4.10 |
+| NEW-teams-4 | Passkeys and company SSO (DEC-38) | [teams](../design/specs/teams.md) | B4.10 |
 | NEW-teams-5 | AI teammates: identities, states, `@Agent` and `@Seshat`, `on_behalf_of` (DEC-36) | [teams](../design/specs/teams.md) | B4.11 |
 | NEW-teams-6 | Seshat proposes, people decide: suggestions with reasons; a stakeholder's plan sent for approval (DEC-36) | [teams](../design/specs/teams.md) | B4.11 |
 | NEW-teams-7 | Subscriptions, watch, @mentions of people, the Inbox | [teams](../design/specs/teams.md) | B4.11 |
@@ -284,7 +284,7 @@ Reported by the reviewers; **licences and maintenance to be verified before any 
 | Zod or Valibot | MIT | Event-payload validation |
 | Octokit, `@modelcontextprotocol/sdk`, `jira.js`, `@linear/sdk`, Slack Bolt | MIT / Apache-2.0 (to verify) | Official clients instead of hand-rolled ones |
 | `oauth2-proxy` | MIT | Identity through a proxy in the Team setup (DEC-35 keeps the proxy route) |
-| SimpleWebAuthn; `openid-client` | MIT | Passkeys and company SSO (OIDC) in the Team setup — [OPEN_QUESTIONS](OPEN_QUESTIONS.md#owner-decisions) O28, O29, awaiting the owner |
+| SimpleWebAuthn; `openid-client` | MIT | Passkeys and company SSO (OIDC) in the Team setup — [OPEN_QUESTIONS](OPEN_QUESTIONS.md#owner-decisions) O28, O29 — **approved** (DEC-38) |
 | Inspect AI, `llama-bench`, `statsmodels`, mini-swe-agent, Terminal-Bench | MIT / BSD-3 / Apache-2.0 (to verify) | Evaluation, throughput and statistics |
 | Node's `util.parseArgs`, `@clack/prompts`, `execa`; Vale, MADR | built-in / MIT / MIT | CLI parsing and prompts; docs linting; decision records |
 | Tiel-Coder-35B-A3B-MTP weights | (model card) | See D1 |

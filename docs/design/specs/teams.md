@@ -80,11 +80,11 @@ It builds on rules already specified elsewhere and does not restate them:
 10. People join through **invite links** that an Admin creates. Each link is single-use, expires after 7 days by default, carries an access level and, optionally, a project. Opening the link (`GET /api/invites/:id`) only shows the invite: the workspace, the level and who sent it. Accepting is a separate `POST /api/invites/:id/accept` from that page, so a link unfurler or mail scanner that fetches the link cannot consume it. Open sign-up is off. When an Admin turns it on for an email domain, new accounts are *pending* until an Admin approves them.
 11. **Local accounts** sign in with an email and a password:
     - 15 characters minimum, no composition rules, no forced rotation;
-    - refused when it contains the person's own name or email or the workspace name, and — once the owner chooses the list (O30) — when it is on a bundled, offline list of common and breached passwords; never checked by an online lookup;
+    - refused when it contains the person's own name or email or the workspace name, or when it is on the bundled, offline list of common and breached passwords (DEC-38; the list is picked in B4.10 under DEC-08's licence check); never checked by an online lookup;
     - hashed with scrypt from `node:crypto`, and kept in the credential store (item 16).
 
     A password reset is a single-use link an Admin issues, or an email if a mail relay is configured. Issuing it and using it are recorded (`password/reset_issued`, `password/changed`).
-12. **Passkeys** (WebAuthn) and **company SSO** (OIDC, with PKCE, a claim-to-level mapping and strict mode) are designed here. They wait for the owner's approval of their libraries (O28, O29).
+12. **Passkeys** (WebAuthn) and **company SSO** (OIDC, with PKCE, a claim-to-level mapping and strict mode) are in v1 (DEC-38), with SimpleWebAuthn and `openid-client`. An Admin turns each on.
     - When built, a level set inside Sekhemet is never silently overwritten by the identity provider, unless the Admin chose "levels managed by the identity provider".
     - The first Admin is always created by the setup token, never by the first SSO sign-in.
 13. The trusted identity proxy of DEC-06 is kept. The user header is read only from addresses in `trusted_proxies`; a user header from any other address is ignored, and the request is unauthenticated, so a protected endpoint answers 401 (the same rule as [integrations](integrations.md) INT-21). Sekhemet enforces CSRF protection itself rather than leaving it to the proxy. A person first seen through the proxy is created *pending* and can do nothing until an Admin approves them, unless an invite for their email exists, in which case they join at the invite's level.
@@ -215,7 +215,7 @@ It builds on rules already specified elsewhere and does not restate them:
 | Solo setup: loopback, one principal | partial | the server binds loopback (`server.ts:1190`); every write is actor `"human"`, no principal ([integrations](integrations.md) §4) | NEW-teams-1 |
 | Workspace, Projects page, access levels, per-project override, project settings | not-built | — | NEW-teams-2 |
 | Setup token, invites, passwords, sessions, sign-in limits, personal tokens, the credential store | not-built | [runtime](runtime.md) items 26–27 specify binding and a token sign-in only | NEW-teams-3 |
-| Passkeys and OIDC | not-built | waiting for O28, O29 | NEW-teams-4 |
+| Passkeys and OIDC | not-built | approved (DEC-38) | NEW-teams-4 |
 | AI teammates: identities, states, `@Agent`/`@Seshat` by level, `on_behalf_of` | not-built | the delegate exists in the design (kernel rule 21) | NEW-teams-5 |
 | Seshat's suggestions instead of assignments; stakeholder plan approval | not-built | — | NEW-teams-6 |
 | Subscriptions, watch, @mentions of people, Inbox | not-built | `@` mentions cards only ([dashboard](dashboard.md) item on the composer) | NEW-teams-7 |
@@ -241,7 +241,7 @@ It builds on rules already specified elsewhere and does not restate them:
 
 **NEW-teams-3 — accounts and sessions.**
 - **TEAM-8** WHEN an invite link is used a second time, or after it expires, THE SYSTEM SHALL refuse it and create no account.
-- **TEAM-9** WHEN a password shorter than 15 characters, or one containing the person's name or email or the workspace name, is set THE SYSTEM SHALL refuse it and say which rule failed, without composition rules; once O30 is decided, a password on the bundled list SHALL be refused the same way, and no password SHALL be sent off the server to be checked.
+- **TEAM-9** WHEN a password shorter than 15 characters, or one containing the person's name or email or the workspace name, is set THE SYSTEM SHALL refuse it and say which rule failed, without composition rules; a password on the bundled list SHALL be refused the same way, and no password SHALL be sent off the server to be checked.
 - **TEAM-10** WHEN a person signs in or their level changes THE SYSTEM SHALL issue a new session id; WHEN a session is idle for `idle_minutes` or older than `absolute_hours` THE SYSTEM SHALL end it on the server.
 - **TEAM-11** WHEN a credential is created, used, reset or revoked THE SYSTEM SHALL record the event without the credential or its hash in the event log, and SHALL keep the hash only in the credential store (mode 0600, outside `events.db`, in every backup, in no export).
 - **TEAM-12** WHEN a request carries the user header from an address outside `trusted_proxies` THE SYSTEM SHALL ignore the header and treat the request as unauthenticated, so that a protected endpoint answers 401 (the same rule as [integrations](integrations.md) INT-21).
@@ -252,7 +252,7 @@ It builds on rules already specified elsewhere and does not restate them:
 - **TEAM-37** WHEN a personal access token is used after its expiry (90 days by default, never more than one year) THE SYSTEM SHALL refuse it; WHEN a valid token is used THE SYSTEM SHALL act at the lower of the token's scope and the person's current level.
 - **TEAM-38** WHEN a person is first seen through the trusted proxy and no invite for their email exists THE SYSTEM SHALL create them *pending* and allow them nothing until an Admin approves them; WHEN an invite for their email exists THE SYSTEM SHALL join them at the invite's level.
 
-**NEW-teams-4 — passkeys and company SSO** (after O28/O29).
+**NEW-teams-4 — passkeys and company SSO** (DEC-38).
 - **TEAM-13** WHEN the identity provider's claim maps to no level and strict mode is on THE SYSTEM SHALL refuse the sign-in and name the missing mapping.
 - **TEAM-14** WHEN levels are managed in Sekhemet THE SYSTEM SHALL NOT change a person's level from an identity-provider claim.
 
@@ -295,7 +295,7 @@ It builds on rules already specified elsewhere and does not restate them:
 
 ## 6. v1 acceptance
 
-TEAM-1 to TEAM-45 pass, except TEAM-13 and TEAM-14, which apply only once O28 and O29 are approved, and TEAM-9's list check, which applies once O30 is decided. The spec is `built` when a Team install, with five people at four levels, runs one project from a stakeholder's conversation to an accepted release, and every write in that run is attributed and permitted.
+TEAM-1 to TEAM-45 pass. The spec is `built` when a Team install, with five people at four levels, runs one project from a stakeholder's conversation to an accepted release, and every write in that run is attributed and permitted.
 
 ## 7. Later
 
@@ -307,9 +307,7 @@ TEAM-1 to TEAM-45 pass, except TEAM-13 and TEAM-14, which apply only once O28 an
 
 ## 8. Open questions
 
-- **O28** Passkeys in v1 with SimpleWebAuthn (MIT)? *Recommendation: yes.* Passkeys resist phishing and are what NIST allows at AAL2.
-- **O29** Company SSO (OIDC) in v1 with `openid-client` (MIT)? *Recommendation: yes.* Enterprise teams expect it, and the proxy route asks every team to run oauth2-proxy.
-- **O30** Which common-password list to bundle, under which licence ([OPEN_QUESTIONS](../../reference/OPEN_QUESTIONS.md#owner-decisions))? *Recommendation:* a bundled, offline list with a permissive licence, never an online lookup, which would break air-gapped installs and the egress rules. Until decided, item 11 checks length and the person's own name, email and the workspace name.
+O28, O29 and O30 were decided by the owner on 2026-09-25 ([DEC-38](../DECISIONS.md#dec-38--the-owner-approves-the-teams-recommendations)): passkeys and company SSO are in v1, and the password list is bundled and offline. No open questions remain.
 
 ## 9. Evidence and rationale
 

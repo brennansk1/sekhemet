@@ -89,8 +89,8 @@ Sekhemet sits beside the tracker and the code host a team already uses; it does 
 
 24. In the Team setup ([runtime](runtime.md) owns binding; [teams](teams.md) owns accounts and sessions) every request is made by a **person**. Identity comes from the sources listed in `[identity] sources`, set in the server's user configuration, never the repository's:
    - an identity-aware proxy's user header, trusted only when the request arrives from an address in `trusted_proxies`; from any other address the header is ignored and the request is unauthenticated ([teams](teams.md) item 13);
-   - local accounts — email and password, and passkeys once O28 is approved — joined by invite, with personal access tokens (stored hashed) for the CLI and MCP clients ([teams](teams.md) items 10–16; superseded in part by DEC-35: "each with its own token" was the sign-in);
-   - company SSO over OIDC, once O29 is approved ([teams](teams.md) item 12).
+   - local accounts — email and password, and passkeys (DEC-38) — joined by invite, with personal access tokens (stored hashed) for the CLI and MCP clients ([teams](teams.md) items 10–16; superseded in part by DEC-35: "each with its own token" was the sign-in);
+   - company SSO over OIDC (DEC-38) ([teams](teams.md) item 12).
 
    Who may accept is **the project's Accept rule** ([teams](teams.md) §2.2 item 7), which replaces the `accepters` list (superseded by DEC-35).
 25. Every event a person causes records who they are; no person-caused event is recorded as an anonymous `human`, and no model role's event (a Worker question, a Seshat reply) is ever attributed to a person.
