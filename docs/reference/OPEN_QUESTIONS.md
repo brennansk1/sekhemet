@@ -10,6 +10,14 @@ Decisions only the owner can make, each with the default the design uses until t
 
 **Decided 2026-09-25:** O15–O27 take their recommended defaults ([DEC-33](../design/DECISIONS.md#dec-33)). The table below keeps each question and its answer for the record.
 
+**Awaiting the owner** (added 2026-09-25 with [DEC-35](../design/DECISIONS.md#dec-35--one-product-two-setups-solo-and-team)):
+
+| # | Decision | Affects | Recommendation (the default until decided) |
+| --- | --- | --- | --- |
+| O28 | **Passkeys in v1** with SimpleWebAuthn (MIT) for the Team setup's local accounts | B4.10 (NEW-teams-4, [teams](../design/specs/teams.md) item 12) | Yes — passkeys resist phishing and NIST SP 800-63B-4 allows syncable passkeys at AAL2. Until decided: passwords only (teams item 11) |
+| O29 | **Company SSO (OIDC) in v1** with `openid-client` (MIT): PKCE, a claim-to-level mapping and strict mode | B4.10 (NEW-teams-4, [teams](../design/specs/teams.md) item 12) | Yes — enterprise teams expect it, and the proxy route asks every team to run oauth2-proxy. Until decided: invites, passwords and the trusted identity proxy |
+| O30 | **Bundle a common-password list** for the Team setup's password check — which list, and under which licence? | B4.10 (NEW-teams-3, [teams](../design/specs/teams.md) item 11, TEAM-9) | A bundled, offline list with a permissive licence, never an online lookup (which would break air-gapped installs and the egress rules). Until decided: the check is 15 characters minimum plus the person's own name, email and the workspace name |
+
 **Answered:**
 
 | # | Decision | Affects | Recommendation (the default until decided) |
@@ -71,7 +79,7 @@ The 2026-09-17 design listed these as "finalized resolutions" citing work the Ph
 | Question | Recommendation | Where it is decided |
 | --- | --- | --- |
 | Retention of context packs and trajectories | **Closed**: `retention.ts` is wired and prunes as a recorded erasure (DEC-29 O1); 90 days for personal free text (O14) | [runtime](../design/specs/runtime.md) |
-| Gate runner as a separate daemon over mutual TLS, or in process | In process for v1; the separate runner only with company-server mode if the gate host is another machine | [gates](../design/specs/gates.md), [runtime](../design/specs/runtime.md) |
+| Gate runner as a separate daemon over mutual TLS, or in process | In process for v1; the separate runner only with the Team setup if the gate host is another machine | [gates](../design/specs/gates.md), [runtime](../design/specs/runtime.md) |
 | A synced external item changes mid-card | Reconcile at the card's end; never pause a card for an external edit. **Adopted** 2026-09-22 (ruling R6): the edit is recorded, and at the card's end a changed scope or criteria sends the card to Planning with the change named | [integrations](../design/specs/integrations.md) item 5 |
 | **Closed** (DEC-29 O1) — the spine's "anything a model saw can be reconstructed" once erasure exists | Add "except content erased by a recorded `ledger/erased` event; replay names each gap" — an owner decision on the spine ([DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md](../research/DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md) decision 8) | [kernel](../design/specs/kernel.md); consumed by [security](../design/specs/security.md) item 34b and [runtime](../design/specs/runtime.md) items 34a–36 |
 | Which install artefacts ship | **Closed** (DEC-29 O9): an npm package and a container image; a single executable later | [surface](../design/specs/surface.md) |

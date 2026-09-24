@@ -38,6 +38,7 @@ Sekhemet runs the whole professional process — brief, planned backlog on a fam
 v1 includes: binding to a non-loopback address safely; an identity for each person, taken from an identity-aware proxy or a local account; one permission beyond reading — who may Accept; and every event attributed to its person. Not in v1: roles beyond that, SSO integrations beyond the proxy, multi-tenant boards.
 - **Why:** the positioning names "your company's server"; without identity, every writer is "human" and anyone who can reach the port can accept.
 - **Reopen if:** the owner narrows v1.
+- Superseded in part by [DEC-35](#dec-35--one-product-two-setups-solo-and-team) (roles, SSO).
 
 ### DEC-07
 **A ceiling run with a frontier model only after local v1 is done.** *Owner, 2026-09-22 (D6).*
@@ -147,6 +148,50 @@ What professional boards do not show is left off the card face: the agent's step
 - **Line comments in review:** sending an issue back can carry comments on specific diff lines, which become the agent's next instructions.
 - Reverses the 2026-09-24 product pass's deferral of "steering a running card" to Later ([DESIGN_TRACE](../reference/DESIGN_TRACE.md)).
 - **Why:** the owner calls collaboration with the agent a key feature; it is what a professional team does with a colleague on a ticket, and it keeps the person in charge without taking the work off the machine.
+- **Reopen if:** only the owner.
+
+### DEC-35 — one product, two setups: Solo and Team
+**People work together on projects in v1, the way a team does in Jira.** *Owner direction, 2026-09-25 (quoted). The four access levels, the sign-in design and the rules below are the lead's design under that direction, presented to the owner with the mockups for review. Supersedes DEC-06's "not in v1: roles beyond that, SSO integrations beyond the proxy"; the rest of DEC-06 stands.* The owner asked for a product that "a solo developer who doesn't know much about coding" and "teams with enterprise hardware" can both use, with the account in the corner, a login screen, and several people working on the same projects and issues.
+- **Solo** is one person on their own machine. The server binds loopback, there is no sign-in screen and no roles UI, and the operating-system user is the one principal and holds every permission. The account menu still shows who you are.
+- **Team** is one install on the team's own server, which can have data-centre GPUs and run stronger open-weight models chosen on Configuration (inference stays local, [DEC-03](#dec-03)). It adds accounts, a workspace holding the projects, access levels, invites, an inbox, @mentions of people, watchers, presence, an audit view, project updates and a fair model queue ([teams](specs/teams.md)).
+- A project moves from Solo to Team without migration: the same event log, the same principals.
+- **Access levels (workspace-wide, with a per-project override):** *Admin* (members, models, configuration, the queue); *Member* (create, edit and move issues, start and guide the Agent, review, approve plans); *Stakeholder* (file issues, comment, talk to Seshat, answer questions addressed to them; cannot start the Agent, change scope or priority, or accept); *Viewer* (read, comment and ask Seshat questions). Job titles (Product owner, Developer, Reviewer, Researcher, Designer…) are profile labels that set a person's home page and notification defaults, never permissions.
+- **Accept stays a per-project rule, not a level:** who may accept, required reviewers from CODEOWNERS, and the independence rule of DEC-29 O11.
+- **Sign-in:** none in Solo. In Team: a one-time setup token, written to a 0600 file whose path the server console prints, creates the first Admin; people join by single-use, expiring invite links that carry their level; local accounts use passwords under NIST SP 800-63B-4 rules; sign-in attempts are rate-limited per account and per address; the trusted identity proxy of DEC-06 stays. Passkeys and company SSO (OIDC) are designed in and wait for the owner's approval of their libraries ([OPEN_QUESTIONS](../reference/OPEN_QUESTIONS.md) O28, O29). SCIM provisioning is Later.
+- **Why:** the owner's direction (2026-09-25). Research: [DESIGN_RESEARCH_COLLABORATION.md](../research/DESIGN_RESEARCH_COLLABORATION.md) §1, §4, §5 — Jira, Linear, GitHub and Azure DevOps converge on these four tiers; approval is a rule on the work, not a role.
+- **Reopen if:** only the owner.
+
+### DEC-36 — the AI is a teammate that proposes; people decide
+**Seshat and the Agent work with people without directing them.** *Owner direction, 2026-09-25 (quoted): "collaborating with the PM but not making it feel like an AI is bossing you around". The rules below are the lead's design under that direction, presented to the owner with the mockups for review.*
+- Every issue has a human owner; the Agent is only ever its delegate (integrations item 6).
+- Seshat and the Agent are labelled AI identities with an "AI" badge. They are not members, hold no access level and take no seat. People reach them the way they reach a colleague: delegate an issue to the Agent, or @mention `@Agent` or `@Seshat` in a comment.
+- The harness acknowledges them within seconds, without waiting for a model, and shows one state on the card, the issue and the inbox: *queued*, *working*, *needs you*, *paused*, *done* or *failed*. Stop takes effect at the next step boundary, and nothing resumes until a person re-engages it (DEC-34).
+- The Agent acts with the permissions of the person who started it, never more, and every action records that person.
+- **Seshat facilitates; it does not manage.** It never assigns work to a person, never edits another person's issue, and never sets a project's health. Triage (assignee, labels, duplicates, priority, a split) comes as a **suggestion with its reason**, accepted or dismissed in one action and not raised again once dismissed. Only an Admin can turn on auto-apply, per project and per property, and only for labels, the duplicate link, priority and a split — never for the assignee or health; each auto-applied change records as its principal the Admin who turned the rule on and shows "applied by <Admin>'s rule" ([teams](specs/teams.md) item 20).
+- **Planner rules that change cards directly** — the split before scheduling, holding auxiliary cards on scope drift, the rung-3 and goal re-plans — follow the same rule in the Team setup: when the issue has a human owner other than the person who asked, the change is posted to that owner as a suggestion. In Solo, and for issues still in Planning that no one owns, they are unchanged ([planner-pm](specs/planner-pm.md) §2.18.6).
+- A person below Member cannot start the Agent: their `@Agent` becomes a request to the issue's owner. Seshat answers a Viewer's questions with no proposals, and answers each person only from what that person can see ([teams](specs/teams.md) item 19a).
+- Reminders ("update due", "3 issues waiting for review") come from the product in neutral text, not in Seshat's voice, and go to the owner of the item.
+- The language rules (lead with the answer, say why, name who decides, give alternatives when unsure, no filler or false cheer, never "I've assigned" or "I approved") are in [planner-pm](specs/planner-pm.md) §2.18.
+- **Why:** research §2–3 (Linear's agent guidelines, GitLab Pajamas, Microsoft HAX, Google PAIR): authority from evidence and the person's own settings, proposals with reasons, one-click dismissal.
+- **Reopen if:** only the owner.
+
+### DEC-37 — Status serves the stakeholder and the team from the same data
+**Status is a real project page, not a summary line.** *Owner direction, 2026-09-25 (quoted): the status page "seems shallow" and must serve someone who isn't a software engineer and someone collaborating on the project. The page below is the lead's design under that direction, presented to the owner with the mockups for review.*
+- **Health** (*On track*, *At risk*, *Off track*) is set by the project lead, with their name and date. It is never set by a model. Seshat drafts the weekly **project update** (status, done, next, risks, asks), and a person edits and posts it. In the Team setup the page shows *Update missing* when 7 days pass without one; in Solo health and the update are optional and nothing is shown as missing.
+- **Forecasts are always a range:** 50% and 85% dates by Monte Carlo over issue throughput (planner-pm §2.6 item 3), with "not enough history yet" below the minimum. Never a single date.
+- Status shows:
+  - a plain-sentence headline;
+  - key numbers: the forecast range, requirements done, issues done, the sprint, and what needs attention;
+  - the release burn-up, with a scope line, the forecast range and the target;
+  - *Needs you* and *Waiting on others*, each with its owner;
+  - requirements by MoSCoW group and state;
+  - risks, each with a suggestion and its reason;
+  - what was done this week and who accepted it;
+  - who is working on what, people and the Agent, current item only;
+  - the load on the models;
+  - a one-line flow summary that links to Insights.
+- **Never shown:** per-person velocity, leaderboards, Agent-versus-person rankings, DORA numbers as targets.
+- **Why:** research §6 (Linear project updates, Atlassian's weekly update, the Kanban Guide, DORA's warning against targets).
 - **Reopen if:** only the owner.
 
 ## Engineering decisions

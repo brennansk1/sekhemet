@@ -24,11 +24,11 @@ tests:
 changes: [P9, S3c, NEW-integrations-1, NEW-integrations-2, NEW-integrations-3]
 ---
 
-# Integrations: GitHub, Jira, Linear, notifications, and people on a company server
+# Integrations: GitHub, Jira, Linear, notifications, and identity in the Team setup
 
 ## 1. Purpose
 
-Sekhemet sits beside the tracker and the code host a team already uses; it does not replace them ([DEC-23](../DECISIONS.md#dec-23--what-the-harness-is-not)). This spec covers how cards reach GitHub, Jira and Linear, how people are told when they are needed, and — for the company-server mode ([DEC-06](../DECISIONS.md#dec-06)) — who each person is and who may Accept. It serves developers (the board fits their workflow) and non-developers (they are notified and can act without a terminal); the spine rule it guards is that the human, and the right human, decides.
+Sekhemet sits beside the tracker and the code host a team already uses; it does not replace them ([DEC-23](../DECISIONS.md#dec-23--what-the-harness-is-not)). This spec covers how cards reach GitHub, Jira and Linear, how people are told when they are needed, and — for the Team setup ([DEC-06](../DECISIONS.md#dec-06), [DEC-35](../DECISIONS.md#dec-35--one-product-two-setups-solo-and-team)) — where each person's identity comes from and who may Accept. Accounts, access levels, the Inbox and @mentions of people are [teams](teams.md)'s. It serves developers (the board fits their workflow) and non-developers (they are notified and can act without a terminal); the spine rule it guards is that the human, and the right human, decides.
 
 ## 2. Behaviour
 
@@ -79,21 +79,24 @@ Sekhemet sits beside the tracker and the code host a team already uses; it does 
 
 ### Notifications (one notifier)
 
-20. One notifier tails the ledger and sends what needs a person, through channels the user connected: ntfy or Gotify (push), and Slack incoming webhooks; Microsoft Teams webhooks later. Slack is a channel of the same notifier, not a second pipeline.
+20. One notifier tails the ledger and sends what needs a person, through channels the user connected: ntfy or Gotify (push), and Slack incoming webhooks; Microsoft Teams webhooks later. Slack is a channel of the same notifier, not a second pipeline. In the Team setup a notice is addressed to a person: it follows the Inbox's reasons and subscriptions, and an email or chat digest carries only items still unread in their Inbox ([teams](teams.md) items 22–24); each person picks the reasons that reach them under Notifications ([dashboard](dashboard.md) §2.2.6).
 21. Kinds: `review` (a card passed its gates and waits), `parked`, `budget` (parked by a budget), `question` (the Worker asked), `decision` (a decision request waits), `standup` (Seshat's daily report), `needs_you` (anything waiting on a person, summarised), `run_report` (a queue run finished). The user chooses kinds per channel.
 22. It starts after the current last event (no replay of history), polls every 5 s, and never sends the same (kind, card) twice within 10 minutes. Every send is recorded as `pm/notify` with `{ channel, kind, ok }`.
 23. Push notifications go to the user's own ntfy or Gotify server; `ntfy.sh` only if the user chooses it. Approving or parking from a phone needs nothing cloud-hosted beyond what the user picked.
 23a. **A budget on interruptions.** Unsolicited messages to one person are capped at 3 a day by default and never more than 5, whatever the configuration ([planner-pm](planner-pm.md) owns the budget; this notifier applies it); past the cap — the fourth, by default — notices are held for the next standup, which carries them in its `needs_you` summary; none is sent while the person is actively using the board. A notice offers the action ("3 cards wait for review — open Review"), it does not nag, and none repeats a notice the person has already acted on. Replies to something the person asked for are not counted.
 
-### People on a company server (identity and Accept)
+### People in the Team setup (identity and Accept)
 
-24. In company-server mode ([runtime](runtime.md) owns binding and sessions) every request is made by a **person**. Identity comes from one of two sources, set in the server's user configuration, never the repository's:
-   - an identity-aware proxy's user header, trusted only when the request arrives from an address in `trusted_proxies`;
-   - local accounts, each with its own token, stored hashed.
+24. In the Team setup ([runtime](runtime.md) owns binding; [teams](teams.md) owns accounts and sessions) every request is made by a **person**. Identity comes from the sources listed in `[identity] sources`, set in the server's user configuration, never the repository's:
+   - an identity-aware proxy's user header, trusted only when the request arrives from an address in `trusted_proxies`; from any other address the header is ignored and the request is unauthenticated ([teams](teams.md) item 13);
+   - local accounts — email and password, and passkeys once O28 is approved — joined by invite, with personal access tokens (stored hashed) for the CLI and MCP clients ([teams](teams.md) items 10–16; superseded in part by DEC-35: "each with its own token" was the sign-in);
+   - company SSO over OIDC, once O29 is approved ([teams](teams.md) item 12).
+
+   Who may accept is **the project's Accept rule** ([teams](teams.md) §2.2 item 7), which replaces the `accepters` list (superseded by DEC-35).
 25. Every event a person causes records who they are; no person-caused event is recorded as an anonymous `human`, and no model role's event (a Worker question, a Seshat reply) is ever attributed to a person.
-26. **One permission beyond reading: Accept.** People listed as accepters may accept, send back, park and unpark, override, revert, run cards and apply PM proposals. Every authenticated person may read the board and evidence and talk to Seshat; their messages may create proposals, which an accepter applies. Holding the permission does not make every accept allowed: which cards a person may accept is O11's rule (item 6b).
+26. **Access levels and the Accept rule** (superseded by DEC-35: DEC-06's "one permission beyond reading" became four access levels, [teams](teams.md) item 6). Accept, override and revert are held by the people the project's Accept rule names; send back, park and unpark, run cards and apply PM proposals need the **Member** level. Every signed-in person may read the board and evidence and ask Seshat questions; a Viewer gets answers only, with no proposals, and a **Stakeholder**'s messages may create proposals, which a Member applies ([teams](teams.md) item 19a). Being named in the Accept rule does not make every accept allowed: which cards a person may accept is O11's rule (item 6b).
 27. A refused decision is answered with who may make it; it changes nothing and is recorded.
-28. On a single machine bound to loopback, the one local user is the only person and an accepter; nothing above changes their experience. A project with one person holding Accept is solo, on a laptop or a server, and that person accepts their own cards (O11; recorded `independent: false`, [review-git](review-git.md) §2.4.1).
+28. On a single machine bound to loopback (the Solo setup, [teams](teams.md) item 1), the one local user is the only person and an accepter; nothing above changes their experience. A project with one person holding Accept is solo, on a laptop or a server, and that person accepts their own cards (O11; recorded `independent: false`, [review-git](review-git.md) §2.4.1).
 
 ## 3. Contract
 
@@ -109,7 +112,7 @@ Sekhemet sits beside the tracker and the code host a team already uses; it does 
 | HTTP: `GET /api/integrations`; `POST /api/integrations/github/sync`; `GET /api/export?format=`; `POST /api/import`; `PUT /api/integrations/github-pr`; `PUT` and `DELETE /api/integrations/slack`, `POST …/slack/test`; `PUT /api/integrations/push`, `POST …/push/test`; `POST /webhooks/github` | shapes in [PM_CONTRACT.md §3 and §5](../PM_CONTRACT.md); routes in `integrations.ts:652-841`, `wave2_server.ts:158` |
 | Events: `sync/conflict`, `github/command`, `pm/notify`, `card/accepted` | `wave2_github.ts:304`, `wave2_server.ts:105`, `notify.ts:125`, `execute.ts:1332` |
 | Env (developer and CI use): `SEKHEMET_GITHUB_APP_ID`, `_INSTALLATION_ID`, `_APP_KEYCHAIN`, `_APP_KEY_PATH`, `_HOST`, `_REPO`, `_AUTOMERGE`, `_WEBHOOK_SECRET`, `SEKHEMET_FORGEJO_*` | inventory in [surface](surface.md) |
-| Company-server identity keys (new): `[identity] source = "proxy" \| "tokens"`, `user_header`, `trusted_proxies`, `accepters` | this spec; server user config |
+| Identity keys (new): `[identity] sources = ["accounts", "proxy", "oidc"]`, `user_header`, `trusted_proxies` (the full list, with sessions and the queue, is [teams](teams.md) §3); `accepters` is replaced by the project's Accept rule (DEC-35) | [teams](teams.md) §3; server user config |
 
 The integration tiers (now, next, later) and the reasons for GitHub first (Stack Overflow 2025: GitHub 81%, Jira 46%) are in [PM_CONTRACT.md §5](../PM_CONTRACT.md); this spec overrides its "Jira/Linear live sync: next" only by keeping it out of v1.
 
@@ -140,12 +143,12 @@ The integration tiers (now, next, later) and the reasons for GitHub first (Stack
 | Interruption budget | not-built | the notifier sends every matching event, deduplicated only per 10 minutes (`notify.ts:186-214`) | P9 |
 | Slack as a channel; standup, needs_you, decision | not-built | Slack is a separate pipeline called only for the run report (`index.ts:1936`) | P9 |
 | Tokens stored safely | not-built | plaintext JSON, 0600 only at creation (`integrations.ts:57-67`) | S3c |
-| Company-server identity and Accept role | not-built | server binds loopback (`server.ts:1190`); every write is actor `"human"` | P9 (DEC-06) |
+| Identity sources and the Accept rule on a server | not-built | server binds loopback (`server.ts:1190`); every write is actor `"human"` | P9 (DEC-06); accounts, levels and sign-in are [teams](teams.md) NEW-teams-1–4 |
 | `githubCache` keyed by repository | not-built | module global (`integrations.ts:106`) | P9 |
 
 ## 5. Changes for v1
 
-### P9 — GitHub first, one notifier, then people on a company server
+### P9 — GitHub first, one notifier, then people in the Team setup
 
 *Three GitHub paths with three ID formats, no pagination, lost edits, Done before the merge; Slack outside the notifier; no identity.*
 
@@ -185,13 +188,13 @@ The integration tiers (now, next, later) and the reasons for GitHub first (Stack
 - **INT-20b** WHEN a card linked to a GitHub issue moves from Ready to In Progress to Review to Done THE SYSTEM SHALL set the issue's project status to queued, working, waiting for review and completed in turn, and leave the issue's assignee unchanged.
 - **INT-20c** WHEN a tracker moves a linked card to Done before it has passed its gates and been accepted THE SYSTEM SHALL keep the card's board state and record a `sync/conflict`.
 
-**People on a company server.**
-- **INT-21** WHEN identity comes from a proxy and a request carrying the user header arrives from an address outside `trusted_proxies` THE SYSTEM SHALL answer 401.
-- **INT-22** WHEN a person who is not an accepter asks to accept a card THE SYSTEM SHALL answer 403, change nothing, and record the refusal with the person's identity.
+**People in the Team setup** (superseded in part by DEC-35; accounts, levels and sessions are [teams](teams.md) NEW-teams-2 and NEW-teams-3).
+- **INT-21** WHEN identity comes from a proxy and a request carrying the user header arrives from an address outside `trusted_proxies` THE SYSTEM SHALL ignore the header and treat the request as unauthenticated, so that a protected endpoint answers 401 (the same rule as [teams](teams.md) TEAM-12).
+- **INT-22** WHEN a person the project's Accept rule does not name asks to accept a card THE SYSTEM SHALL answer 403, change nothing, and record the refusal with the person's identity (wording superseded by DEC-35: "not an accepter"; the general rule is [teams](teams.md) TEAM-4).
 - **INT-23** WHEN an accepter accepts a card THE SYSTEM SHALL record their identity on the `card/accepted` event.
-- **INT-24** WHEN a person who is not an accepter talks to Seshat THE SYSTEM SHALL answer, and any proposal the conversation creates SHALL wait for an accepter to apply it.
+- **INT-24** WHEN a Stakeholder talks to Seshat THE SYSTEM SHALL answer, and any proposal the conversation creates SHALL wait for a Member to apply it (superseded by DEC-35: "a person who is not an accepter … an accepter"; see [teams](teams.md) TEAM-5).
 - **INT-25** WHEN the Worker asks a question THE SYSTEM SHALL record it as the Worker's, never as a person's.
-- **INT-26** WHEN the `accepters` key appears in a repository's `.sekhemet/config.toml` THE SYSTEM SHALL ignore it.
+- **INT-26** WHEN an `[identity]`, `[team]`, `[sessions]` or `[queue]` key, or an Accept rule, appears in a repository's `.sekhemet/config.toml` THE SYSTEM SHALL ignore it (superseded in part by DEC-35: the `accepters` key became the project's Accept rule, [teams](teams.md) §3).
 
 ### NEW-integrations-1 — idempotent import
 *Justification: export followed by import duplicates every card and loses every link; SPINE makes export/import the whole v1 Jira and Linear story.*
@@ -234,16 +237,16 @@ The `gh` transport and `gh pr create` are tested against a fake `gh` on `PATH`, 
 - **Slack replies** (talk to Seshat from a thread; Bolt Socket Mode needs no public ingress), **Microsoft Teams**; **Sentry, Datadog, PagerDuty** as bug-card proposals; **Notion, Confluence** publishing (PM_CONTRACT §5 "next" and "later").
 - **CI as a gate source** — `sekhemet dev ci` runs a workflow through `act` by hand; a gate rung that runs it, or reads the PR's existing check runs, is later ([gates](gates.md)).
 - **Releases** — `sekhemet dev release` proposes a version and changelog (git-cliff, Conventional Commits) and tags on `--confirm`; publishing a GitHub Release is later.
-- **Roles beyond Accept, SSO beyond one proxy, multi-tenant boards** (DEC-06).
+- **SCIM provisioning and several workspaces on one install** ([teams](teams.md) §7). Roles beyond Accept and company SSO, which DEC-06 kept out, are v1 under DEC-35.
 - **Remote control from a phone beyond notifications** (acting on a card from the notification itself), and team-chat entry points other than Slack replies.
-- **Webhook ingress on a laptop** (smee-client, cloudflared) — proposals needing the owner's yes; in company-server mode the endpoint is reachable directly.
+- **Webhook ingress on a laptop** (smee-client, cloudflared) — proposals needing the owner's yes; in the Team setup (DEC-35) the endpoint is reachable directly.
 - **An Azure DevOps connector** — the old design's non-goal for v1, kept out: SPINE puts GitHub first and Jira/Linear as export and import; no user has asked for it.
 - **Reading CI check results as blocking gates** (webhooks for `check_suite`, mapping a branch's required checks) — v1 records external results with their source and treats them as advisory (item 15a); making one blocking comes with the CI-as-gate-source work above.
 - **Forgejo beyond issues** — the old design's dependencies, boards and webhooks for Forgejo; v1 keeps only what the adapter's tests cover (open question 4).
 
 ## 8. Open questions
 
-1. **What may a non-accepter do?** DEC-06 grants "one permission beyond reading". *Recommendation:* item 26 — talking to Seshat counts as reading (non-developers must be able to ask), every board decision needs the Accept permission. (Which cards an Accept-holder may accept is decided: O11, item 6b.)
+1. *Superseded by DEC-35:* the four access levels answer it ([teams](teams.md) item 6). **What may a non-accepter do?** DEC-06 grants "one permission beyond reading". *Recommendation:* item 26 — talking to Seshat counts as reading (non-developers must be able to ask), every board decision needs the Accept permission. (Which cards an Accept-holder may accept is decided: O11, item 6b.)
 2. **Where does a person's identity live in the event?** *Closed 2026-09-24:* [kernel](kernel.md) rule 19 and NEW-kernel-2 specify it — a `principal` column naming an opaque, stable subject id, covered by the chain hash, required on `human` events and on events a person caused through a machine actor; `actor` stays a closed set and people are never added to it. This spec's identity layer resolves a session or proxy header to that principal (items 24–26).
 3. **Can a third-party App appear in GitHub's agent-session surface?** The research confirms the surface for Copilot, Claude and Codex, not its openness. *Recommendation:* ship the Projects status field (INT-20b) in v1 and add the session surface when GitHub documents it for Apps.
 4. **Forgejo.** The design listed it as the offline-friendly self-hosted target — issues, dependencies, boards and webhooks; the adapter exists, covers issues only, and is the only tested pull path. *Recommendation:* keep it behind the same adapter interface; not a v1 promise beyond what its tests cover (the rest is in §7).
@@ -256,5 +259,5 @@ The `gh` transport and `gh pr create` are tested against a fake `gh` on `PATH`, 
 - Research, [PM_RESEARCH_SYNTHESIS.md](../../research/PM_RESEARCH_SYNTHESIS.md) finding 10: at most 3–5 unsolicited pings a day, offering beats nagging (preferred 90% vs 47%, CHI 2025), ~23 minutes to recover from an interruption → item 23a, INT-20a (numbers owned by [planner-pm](planner-pm.md), DEC-25 R8).
 - Research, [DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md](../../research/DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md): decision 1 (owner, delegate and accepter as typed roles; Linear's delegate field; Jira's agent in the assignee picker) → item 6, INT-36; decision 12 (gate results name their source; GitHub's combined-status rule) → item 15a, INT-37, INT-38; decision 4 (CODEOWNERS routing) → [review-git](review-git.md); reading CI results as blocking and publishing releases stay Later (§7).
 - DEC-25 R6 (2026-09-22): the mid-card edit rule in item 5 settles the contradiction with [OPEN_QUESTIONS.md](../../reference/OPEN_QUESTIONS.md) ("reconcile at the card's end; never pause a card for an external edit").
-- Decisions: [DEC-29](../DECISIONS.md#dec-29--the-owners-answers-to-the-decision-queue) O11 (solo developers may self-accept; on a team, neither the builder nor the delegator may → items 6, 6b, 26, 28, INT-39–41); [DEC-06](../DECISIONS.md#dec-06) (company-server minimum), [DEC-08](../DECISIONS.md#dec-08) (official clients), [DEC-23](../DECISIONS.md#dec-23--what-the-harness-is-not).
+- Decisions: [DEC-29](../DECISIONS.md#dec-29--the-owners-answers-to-the-decision-queue) O11 (solo developers may self-accept; on a team, neither the builder nor the delegator may → items 6, 6b, 26, 28, INT-39–41); [DEC-06](../DECISIONS.md#dec-06) (company-server minimum), [DEC-35](../DECISIONS.md#dec-35--one-product-two-setups-solo-and-team) (Solo and Team, access levels, the Accept rule, identity sources; research: [DESIGN_RESEARCH_COLLABORATION.md](../../research/DESIGN_RESEARCH_COLLABORATION.md) §1, §5), [DEC-08](../DECISIONS.md#dec-08) (official clients), [DEC-23](../DECISIONS.md#dec-23--what-the-harness-is-not).
 - **Why the card is not Done at PR open:** the PR is where a team decides a change is done; a board that says Done for a rejected PR teaches people to distrust the board.

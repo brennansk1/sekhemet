@@ -65,7 +65,7 @@ flowchart LR
 
 ## How the parts fit
 
-**Processes.** One core host runs the kernel, board, planner, loop and dashboard server; an inference host serves models over HTTP (the same machine on a single-box install); gates run confined, on the core host or a separate runner. In company-server mode the core host binds to the network with per-person identity ([runtime](specs/runtime.md), [integrations](specs/integrations.md)).
+**Processes.** One core host runs the kernel, board, planner, loop and dashboard server; an inference host serves models over HTTP (the same machine on a single-box install); gates run confined, on the core host or a separate runner. In the Team setup the core host binds to the network, and people sign in with accounts at one of four access levels ([runtime](specs/runtime.md), [teams](specs/teams.md)).
 
 **Packages**, in dependency order — each depends only on those before it:
 
@@ -93,14 +93,14 @@ The full records, with evidence and the condition that would reopen each, are in
 | Positioning | A coding harness for professional teams, serving developers, beginners and non-developers |
 | Inference | Local only in v1; cloud models per role after v1 |
 | Worker | Cyber-Tiel-Coder-35B-A3B MTP, IQ3_XXS, on a 24 GB Mac as the reference host |
-| Deployment | A single machine, or a company server with per-person identity and an Accept role |
+| Deployment | A single machine (Solo) or the team's own server (Team) with accounts, four access levels and a per-project Accept rule — [DEC-35](DECISIONS.md#dec-35--one-product-two-setups-solo-and-team) |
 | Hardware range | 16 GB to 128 GB, self-calibrating |
 | Context | Fresh per card; no long-running session |
 | Done | Executable gates and a person's acceptance |
 | Network | Offline by default; research, git remotes and sync are opt-in and logged |
 | Language | TypeScript first; other languages get functional gates and say what they do not check |
 
-**Not in v1:** cloud inference; RBAC beyond "who may accept"; SSO beyond one identity proxy; a compliance pack or any compliance claim; multi-machine inference pooling; live two-way sync with Jira or Linear (export and import only); an Azure DevOps connector; an IDE extension or TUI; fine-tuning our own models. Each is either a later version's work or rejected on evidence ([DECISIONS](DECISIONS.md)).
+**Not in v1:** cloud inference; passkeys and company SSO (OIDC) unless the owner approves O28 and O29; SCIM provisioning; several workspaces on one install; a compliance pack or any compliance claim; multi-machine inference pooling; live two-way sync with Jira or Linear (export and import only); an Azure DevOps connector; an IDE extension or TUI; fine-tuning our own models. Each is either a later version's work or rejected on evidence ([DECISIONS](DECISIONS.md)).
 
 ## What we claim, and what is true
 
@@ -108,7 +108,7 @@ The claims table is the positioning's honesty check: nothing in the README or th
 
 | Claim | State | Carried by |
 | --- | --- | --- |
-| Runs on your machine or your server | Machine: built. Server: not built (v1 scope) | [runtime](specs/runtime.md), [integrations](specs/integrations.md) |
+| Runs on your machine or your team's server | Machine (Solo): built. Team setup — accounts, access levels, working together: not built (v1 scope) | [runtime](specs/runtime.md), [teams](specs/teams.md) |
 | Takes a project through the whole process | Built end to end, with gaps in the Worker's method and planning quality | [planner-pm](specs/planner-pm.md), [worker-loop](specs/worker-loop.md) |
 | Fits existing project-management practice | Partial: exports only; the board does not yet use the card anatomy teams know | [dashboard](specs/dashboard.md), [integrations](specs/integrations.md) |
 | Teaches the practice to beginners | Not built | [dashboard](specs/dashboard.md) |
@@ -127,21 +127,22 @@ One row per spec, from its front matter; `docs.spec.ts` fails the build when the
 <!-- status-table:start -->
 | Spec | Status | Changes it carries |
 | --- | --- | --- |
-| [surface](specs/surface.md) | `partial` | P10, S10, T4, T10 + 5 new |
-| [kernel](specs/kernel.md) | `partial` | S4, S7, P3 + 9 new |
-| [worker-loop](specs/worker-loop.md) | `partial` | M1, M2, M3, T3 + 9 new |
+| [surface](specs/surface.md) | `partial` | P10, S10, T4, T10 + 7 new |
+| [kernel](specs/kernel.md) | `partial` | S4, S7, P3 + 10 new |
+| [worker-loop](specs/worker-loop.md) | `partial` | M1, M2, M3, T3 + 10 new |
 | [context](specs/context.md) | `partial` | M1, M5, M8, P1, T2 + 6 new |
 | [gates](specs/gates.md) | `partial` | T1, T2, M6, M10, P1 + 8 new |
-| [models](specs/models.md) | `partial` | M4, M7, M11 + 11 new |
-| [measurement](specs/measurement.md) | `partial` | M9, M10, M12, T7, T8, T11 + 4 new |
-| [planner-pm](specs/planner-pm.md) | `partial` | P1, P2, P6, P13 + 7 new |
+| [models](specs/models.md) | `partial` | M4, M7, M11 + 13 new |
+| [measurement](specs/measurement.md) | `partial` | M9, M10, M12, T7, T8, T11 + 5 new |
+| [planner-pm](specs/planner-pm.md) | `partial` | P1, P2, P6, P13 + 9 new |
 | [design-stage](specs/design-stage.md) | `partial` | P2, P7, P14, S8 + 5 new |
 | [review-git](specs/review-git.md) | `partial` | S5, S6, P8 + 5 new |
-| [dashboard](specs/dashboard.md) | `partial` | P3, P4, P5, P11, P12, P13, T5, S3c + 5 new |
-| [security](specs/security.md) | `partial` | S1, S2, S3, S3a, S3b, S3c, S9 + 7 new |
+| [dashboard](specs/dashboard.md) | `partial` | P3, P4, P5, P11, P12, P13, T5, S3c + 10 new |
+| [security](specs/security.md) | `partial` | S1, S2, S3, S3a, S3b, S3c, S9 + 10 new |
 | [integrations](specs/integrations.md) | `partial` | P9, S3c + 3 new |
-| [extensibility](specs/extensibility.md) | `partial` | S9, S4 + 4 new |
+| [extensibility](specs/extensibility.md) | `partial` | S9, S4 + 5 new |
 | [runtime](specs/runtime.md) | `partial` | T5, P9, S3c + 10 new |
+| [teams](specs/teams.md) | `not-built` | 11 new |
 <!-- status-table:end -->
 
 ## Voice

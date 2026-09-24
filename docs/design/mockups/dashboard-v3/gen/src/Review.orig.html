@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Review · CHR-6</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;font-family:'Inter',-apple-system,'Segoe UI',sans-serif;color:#1D1B17;background:#FFFFFF;-webkit-font-smoothing:antialiased}
+a{color:#1D1B17;text-decoration:none}a:hover{text-decoration:underline}
+button,textarea{font-family:inherit}
+code{font-family:'JetBrains Mono',monospace;font-size:12px;background:#F3F1EC;border-radius:3px;padding:1px 4px}
+</style>
+</helmet>
+<div style="width: 1440px; height: 960px; display: flex; flex-direction: column; background: #FFFFFF; font-size: 13px;">
+
+<header style="height: 48px; display: flex; align-items: center; gap: 10px; padding: 0 24px; border-bottom: 1px solid #ECE9E3; flex-shrink: 0;">
+<nav aria-label="Breadcrumb" style="display: flex; align-items: center; gap: 6px; color: #6B6456;"><a href="Main.dc.html" style="color: #6B6456;">Chronicle</a><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#A9A293" stroke-width="2" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg><span style="color: #1D1B17; font-weight: 500;">Review</span></nav>
+<div style="flex-grow: 1;"></div>
+<span style="font-size: 12.5px; color: #6B6456;">2 waiting · limit 4</span>
+</header>
+
+<div style="flex-grow: 1; display: flex; min-height: 0;">
+
+<nav aria-label="Waiting for review" style="width: 280px; flex-shrink: 0; border-right: 1px solid #ECE9E3; display: flex; flex-direction: column; background: #FCFBF9;">
+<a href="#" aria-current="page" style="display: flex; flex-direction: column; gap: 4px; padding: 12px 16px; border-bottom: 1px solid #ECE9E3; background: #FFFFFF; box-shadow: inset 2px 0 0 #1D1B17;">
+<span style="display: flex; gap: 8px; font-size: 12px; color: #6B6456;"><span style="font-family: 'JetBrains Mono', monospace;">CHR-6</span><span>waiting 2 h</span></span>
+<span style="font-size: 13px; line-height: 1.4;">Verify the whole hash chain on start</span>
+<span style="font-size: 12px; color: #6B6456;">Checks passed · 1 question</span>
+</a>
+<a href="#" style="display: flex; flex-direction: column; gap: 4px; padding: 12px 16px; border-bottom: 1px solid #ECE9E3;">
+<span style="display: flex; gap: 8px; font-size: 12px; color: #6B6456;"><span style="font-family: 'JetBrains Mono', monospace;">CHR-5</span><span>waiting 40 min</span></span>
+<span style="font-size: 13px; line-height: 1.4;">Define the ledger event types</span>
+<span style="font-size: 12px; color: #6B6456;">Checks passed</span>
+</a>
+</nav>
+
+<main style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column;">
+<div style="padding: 18px 28px 0; display: flex; flex-direction: column; gap: 6px;">
+<h1 style="margin: 0; font-size: 18px; font-weight: 600;">Verify the whole hash chain on start <span style="font-family: 'JetBrains Mono', monospace; font-size: 14px; font-weight: 400; color: #6B6456;">CHR-6</span></h1>
+<div style="font-size: 12.5px; color: #6B6456;">Agent · 2 files changed <span style="font-family: 'JetBrains Mono', monospace; color: #2E7D4A;">+61</span> <span style="font-family: 'JetBrains Mono', monospace; color: #B3402F;">−4</span> · <span style="font-family: 'JetBrains Mono', monospace;">chronicle/chr-6-verify</span> into <span style="font-family: 'JetBrains Mono', monospace;">main</span></div>
+<div role="tablist" aria-label="Review sections" style="display: flex; gap: 18px; border-bottom: 1px solid #ECE9E3; margin-top: 10px;">
+<button role="tab" aria-selected="false" style="border: 0; background: transparent; padding: 0 0 9px; font-size: 13px; color: #6B6456;">Summary</button>
+<button role="tab" aria-selected="true" style="border: 0; background: transparent; padding: 0 0 9px; font-size: 13px; font-weight: 500; color: #1D1B17; box-shadow: inset 0 -2px 0 #1D1B17;">Files changed</button>
+<button role="tab" aria-selected="false" style="border: 0; background: transparent; padding: 0 0 9px; font-size: 13px; color: #6B6456;">Checks</button>
+<button role="tab" aria-selected="false" style="border: 0; background: transparent; padding: 0 0 9px; font-size: 13px; color: #6B6456;">Activity</button>
+</div>
+</div>
+
+<div style="flex-grow: 1; overflow: hidden; padding: 16px 28px;">
+<div style="border: 1px solid #E2DDD3; border-radius: 8px; overflow: hidden; font-family: 'JetBrains Mono', monospace; font-size: 12px;">
+<div style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #FCFBF9; border-bottom: 1px solid #E2DDD3; font-family: 'Inter', sans-serif; font-size: 12.5px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#6B6456" stroke-width="2" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg><span style="font-family: 'JetBrains Mono', monospace; font-size: 12px;">src/verify.ts</span><span style="color: #2E7D4A; font-family: 'JetBrains Mono', monospace; font-size: 11.5px;">+47</span><span style="color: #B3402F; font-family: 'JetBrains Mono', monospace; font-size: 11.5px;">−4</span><div style="flex-grow: 1;"></div><label style="display: flex; align-items: center; gap: 6px; color: #6B6456;"><input type="checkbox" style="accent-color: #1D1B17;">Viewed</label></div>
+<sc-for list="{{lines}}" as="l" hint-placeholder-count="12">
+<div style="display: flex; background: {{l.bg}}; line-height: 20px;"><span style="width: 44px; text-align: right; padding-right: 8px; color: #A9A293; flex-shrink: 0;">{{l.n}}</span><span style="width: 16px; color: {{l.signColor}}; flex-shrink: 0;">{{l.sign}}</span><span style="white-space: pre; color: #2B2822;">{{l.code}}</span></div>
+<sc-if value="{{l.hasComment}}" hint-placeholder-val="{{false}}">
+<div style="font-family: 'Inter', sans-serif; font-size: 13px; border-top: 1px solid #E2DDD3; border-bottom: 1px solid #E2DDD3; background: #FFFFFF; padding: 12px 16px 12px 68px; display: flex; flex-direction: column; gap: 8px;">
+<div style="display: flex; gap: 10px;"><span style="width: 20px; height: 20px; border-radius: 10px; background: #1D1B17; color: #E2C07A; font-size: 9px; font-weight: 600; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">AI</span><div style="display: flex; flex-direction: column; gap: 4px;"><div style="font-size: 12.5px;"><strong style="font-weight: 500;">AI review</strong> <span style="color: #6B6456;">· question on criterion 3</span></div><div style="line-height: 1.55; color: #2B2822;">This reads every event into memory before checking. On a large ledger that could exhaust memory; the spec doesn't set a size. Is that acceptable for this release?</div></div></div>
+<div style="display: flex; gap: 10px;"><span style="width: 20px; height: 20px; border-radius: 10px; background: #E3DCCB; font-size: 9px; font-weight: 600; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">BK</span><textarea aria-label="Reply" rows="1" placeholder="Reply, or comment for the agent…" style="flex-grow: 1; resize: none; border: 1px solid #DAD5CB; border-radius: 6px; padding: 6px 9px; font-size: 13px; background: #FFFFFF;"></textarea></div>
+</div>
+</sc-if>
+</sc-for>
+</div>
+</div>
+</main>
+
+<aside aria-label="Merge" style="width: 300px; flex-shrink: 0; border-left: 1px solid #ECE9E3; background: #FCFBF9; display: flex; flex-direction: column;">
+<div style="padding: 18px 20px; display: flex; flex-direction: column; gap: 18px; flex-grow: 1;">
+<section aria-labelledby="crit-h" style="display: flex; flex-direction: column; gap: 8px;">
+<div style="display: flex; align-items: center;"><h2 id="crit-h" style="margin: 0; font-size: 12.5px; font-weight: 600;">Acceptance criteria</h2><div style="flex-grow: 1;"></div><span style="font-size: 12px; color: #2E7D4A;">4 / 4</span></div>
+<sc-for list="{{criteria}}" as="c" hint-placeholder-count="4">
+<div style="display: flex; gap: 8px; font-size: 12.5px; line-height: 1.45;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2E7D4A" stroke-width="2.2" aria-label="Passing" style="flex-shrink: 0; margin-top: 2px;"><path d="M5 12.5l4 4L19 7"/></svg><span>{{c}}</span></div>
+</sc-for>
+</section>
+<section aria-labelledby="chk-h" style="display: flex; flex-direction: column; gap: 8px;">
+<div style="display: flex; align-items: center;"><h2 id="chk-h" style="margin: 0; font-size: 12.5px; font-weight: 600;">Checks</h2><div style="flex-grow: 1;"></div><span style="font-size: 12px; color: #2E7D4A;">All passed</span></div>
+<sc-for list="{{checks}}" as="k" hint-placeholder-count="7">
+<div style="display: flex; gap: 8px; align-items: center; font-size: 12.5px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2E7D4A" stroke-width="2.2" aria-hidden="true"><path d="M5 12.5l4 4L19 7"/></svg><span style="flex-grow: 1;">{{k.name}}</span><span style="color: #A9A293; font-size: 12px;">{{k.detail}}</span></div>
+</sc-for>
+</section>
+<section aria-labelledby="ai-h" style="display: flex; flex-direction: column; gap: 6px;">
+<h2 id="ai-h" style="margin: 0; font-size: 12.5px; font-weight: 600;">AI review</h2>
+<div style="font-size: 12.5px; color: #3A362E;">1 open question</div>
+</section>
+</div>
+<div style="padding: 16px 20px; border-top: 1px solid #ECE9E3; display: flex; flex-direction: column; gap: 8px; background: #FFFFFF;">
+<button style="border: 0; background: #1D1B17; color: #FFFFFF; padding: 9px 0; border-radius: 7px; font-size: 13px; font-weight: 500;">Accept and merge</button>
+<button style="border: 1px solid #DAD5CB; background: #FFFFFF; color: #1D1B17; padding: 8px 0; border-radius: 7px; font-size: 13px;">Request changes</button>
+<span style="font-size: 12px; color: #6B6456; text-align: center;">Squash-merged into main. Can be reverted.</span>
+</div>
+</aside>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":960}}'>
+class Component extends DCLogic {
+  renderVals() {
+    var addBg = '#EEF6F0', delBg = '#FBEDEA';
+    function L(n, sign, code, comment) {
+      return { n: n, sign: sign, code: code, hasComment: !!comment,
+        bg: sign === '+' ? addBg : sign === '-' ? delBg : '#FFFFFF',
+        signColor: sign === '+' ? '#2E7D4A' : sign === '-' ? '#B3402F' : '#A9A293' };
+    }
+    return {
+      lines: [
+        L(18, ' ', 'import { hashEvent } from "./hash.js";'),
+        L(19, ' ', 'import type { LedgerEvent } from "./types.js";'),
+        L(20, ' ', ''),
+        L(21, '-', 'export function verify(): boolean {'),
+        L(21, '+', 'export function verify(db: Db): VerifyResult {'),
+        L(22, '+', '  const events = db.all<LedgerEvent>("SELECT * FROM events ORDER BY seq");', true),
+        L(23, '+', '  let previous = GENESIS_HASH;'),
+        L(24, '+', '  for (const event of events) {'),
+        L(25, '+', '    if (event.prevHash !== previous) {'),
+        L(26, '+', '      return { ok: false, brokenAt: event.seq };'),
+        L(27, '+', '    }'),
+        L(28, '+', '    previous = hashEvent(event);'),
+        L(29, '+', '  }'),
+        L(30, '+', '  return { ok: true };'),
+        L(31, ' ', '}')
+      ],
+      criteria: [
+        'Verifies every event from the first on start',
+        'Reports the first broken sequence number',
+        'Uses the same hash as appending',
+        'Refuses to start the API on a broken chain'
+      ],
+      checks: [
+        { name: 'Type check', detail: '2 s' }, { name: 'Lint', detail: '1 s' }, { name: 'Tests', detail: '14 passed' },
+        { name: 'No regressions', detail: 'main' }, { name: 'No unused exports', detail: '' }, { name: 'Architecture rules', detail: '' },
+        { name: 'Security scan', detail: '' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -108,7 +108,7 @@ Five levels, each built on the one before. Nothing is done at a level because so
 2. the lines the Worker wrote are at most 200 across 1–3 files, inside its declared scope; lines applied by a tool on the Worker's behalf (a rename, a formatter, a lockfile) are bounded separately by the project's `max_tool_applied_lines` ([gates](docs/design/specs/gates.md) §3);
 3. every declared gate passes, **and the three project gates pass**: *reachability* (no export the card added is used by nothing), *regression* (no test `main` already guarantees is broken or removed), *architecture* (no invariant the project's brief declares is broken);
 4. its **evidence bundle** records the diff, every gate result, the stop reason, the model and settings it ran with (including the thinking policy and working method), and its reproducibility record;
-5. a person accepted it — or it was auto-accepted under a person's recorded standing decision, which names that person on every acceptance and is never available in company-server mode — and it was merged to `main` with full attribution trailers.
+5. a person accepted it — or it was auto-accepted under a person's recorded standing decision, which names that person on every acceptance and is never available in the Team setup — and it was merged to `main` with full attribution trailers.
 
 The model never certifies its own work: the gates decide, and a person accepts.
 
@@ -151,7 +151,7 @@ All of these hold on one release commit. This is the target the plan works towar
    - a **beginner**, with the Learn layer on, reaches the explanation of a WIP limit from the board by keyboard alone;
    - a **non-developer** starts a new project and gets its status in plain words without a terminal, including at 400 pixels wide.
 5. **Accessible.** Every colour pair the tokens use as text or as a control's only edge meets WCAG 2.2 AA, asserted by a test over the tokens as used; every control has an accessible name; nothing a person needs is available only on hover.
-6. **The company-server minimum works** ([DEC-06](docs/design/DECISIONS.md#dec-06)): bound to a non-loopback address, an unauthenticated request cannot change anything, a person without the Accept permission cannot accept, and every event names its person.
+6. **The Team setup works** ([DEC-35](docs/design/DECISIONS.md#dec-35--one-product-two-setups-solo-and-team), extending [DEC-06](docs/design/DECISIONS.md#dec-06)): bound to a non-loopback address, an unauthenticated request cannot change anything, each of the four access levels can do only what [teams](docs/design/specs/teams.md) §2.2 allows, a person the project's Accept rule does not name cannot accept, and every event names its person.
 7. **A new user reaches a first card.** From a fresh clone and an empty repository, one documented first run leads to a card built and gated, on the reference machine, without editing a file by hand.
 8. **Releasable** (5.5), and `main` is at the release commit.
 

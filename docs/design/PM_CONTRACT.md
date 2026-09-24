@@ -159,7 +159,7 @@ interface PmProposal {
 
 ### Configuration (target: NEW-dashboard-6, NEW-models-12, NEW-measurement-5)
 
-The Configuration page's shapes ([dashboard](specs/dashboard.md) §2.16; behaviour of the scan, the recommendations and the download in [models](specs/models.md), of the benchmark in [measurement](specs/measurement.md)). None exists today. Every mutating request here is refused for any actor but a person, needs the Accept permission in company-server mode, and is recorded on the ledger with the principal. Nothing here downloads, loads or benchmarks on its own initiative.
+The Configuration page's shapes ([dashboard](specs/dashboard.md) §2.16; behaviour of the scan, the recommendations and the download in [models](specs/models.md), of the benchmark in [measurement](specs/measurement.md)). None exists today. Every mutating request here is refused for any actor but a person, needs the Admin level in the Team setup (Review capacity: an Admin or a person the project's Accept rule names; [dashboard](specs/dashboard.md) §2.16), and is recorded on the ledger with the principal. Nothing here downloads, loads or benchmarks on its own initiative.
 
 ```ts
 type Role = "worker" | "planner" | "reviewer" | "researcher" | "vision";   // Seshat runs on "planner"; "vision" describes images on cards

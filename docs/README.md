@@ -37,7 +37,8 @@ Every document in `docs/` is listed here, and nowhere else is the source of trut
 | [specs/review-git.md](design/specs/review-git.md) | The Reviewer, Accept, the git workflow. |
 | [specs/dashboard.md](design/specs/dashboard.md) | The web dashboard: board, review, status, Learn layer, visual system. |
 | [specs/security.md](design/specs/security.md) | Sandboxing, permissions, egress, secrets, workspace trust, air-gap. |
-| [specs/integrations.md](design/specs/integrations.md) | GitHub, Jira, Linear, notifications, the company-server mode. |
+| [specs/integrations.md](design/specs/integrations.md) | GitHub, Jira, Linear, notifications, identity sources for the Team setup. |
+| [specs/teams.md](design/specs/teams.md) | Solo and Team setups, accounts and sign-in, access levels, AI teammates, inbox, presence, audit, project updates. |
 | [specs/extensibility.md](design/specs/extensibility.md) | Hooks, skills, MCP and ACP. |
 | [specs/runtime.md](design/specs/runtime.md) | Daemon, runner lease, sessions, the HTTP API, audit, telemetry, retention. |
 | [PM_CONTRACT.md](design/PM_CONTRACT.md) | The HTTP shapes between the dashboard and the PM, integrations and learning. |
@@ -67,6 +68,7 @@ Every document in `docs/` is listed here, and nowhere else is the source of trut
 | [DESIGN_RESEARCH_TESTS_BROWNFIELD.md](research/DESIGN_RESEARCH_TESTS_BROWNFIELD.md) | Test strength as the basis of "proven", working in existing codebases, and a source index that can take Python without a rebuild (TypeScript 7 has no programmatic API). |
 | [DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md](research/DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md) | Mixed human and AI teams, erasure in a hash-chained log, backups, change and release, project documents in the repository, and review ergonomics for AI-written code. |
 | [DESIGN_RESEARCH_TEAM_SERVER.md](research/DESIGN_RESEARCH_TEAM_SERVER.md) | Multi-user local inference on a team server, fair scheduling, qualification per engine, packaging and upgrades. |
+| [DESIGN_RESEARCH_COLLABORATION.md](research/DESIGN_RESEARCH_COLLABORATION.md) | Access levels, the AI as a teammate that proposes, collaboration mechanics, sign-in on a team's own hardware, sharing one model fairly, and status for stakeholders and engineers. |
 
 ## reference/: plans, measurements, reviews and registers
 

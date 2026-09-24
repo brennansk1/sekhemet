@@ -52,7 +52,8 @@ changes: [M1, M3, M8]          # COVERAGE ids this spec carries
 | [review-git.md](review-git.md) | The Reviewer, Accept, the git workflow |
 | [dashboard.md](dashboard.md) | The web dashboard: board, review, status, Learn layer, visual system |
 | [security.md](security.md) | Sandboxing, permissions, egress, secrets, workspace trust, air-gap |
-| [integrations.md](integrations.md) | GitHub, Jira, Linear, notifications, the company-server mode |
+| [integrations.md](integrations.md) | GitHub, Jira, Linear, notifications, identity sources for the Team setup |
+| [teams.md](teams.md) | Solo and Team setups, accounts and sign-in, access levels, AI teammates, inbox, presence, audit, project updates |
 | [extensibility.md](extensibility.md) | Hooks, skills, MCP, ACP (plugins and the SDK are cut, DEC-29) |
 | [runtime.md](runtime.md) | Daemon, runner lease, sessions, the HTTP API, audit, telemetry, retention |
 

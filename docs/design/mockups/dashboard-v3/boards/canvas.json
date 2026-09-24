@@ -1,0 +1,147 @@
+{
+  "v": 3,
+  "createdOnFiles": { "v": 1, "at": "2026-09-24T19:29:32Z" },
+  "title": "Sekhemet dashboard mockups",
+  "launch": { "view": "canvas" },
+  "pages": [],
+  "boards": {
+    "Projects.dc.html": { "x": 0, "y": 0, "w": 1440, "h": 900, "title": "Projects" },
+    "Status.dc.html": { "x": 1520, "y": 0, "w": 1440, "h": 1160, "title": "Status" },
+    "Main.dc.html": { "x": 3040, "y": 0, "w": 1440, "h": 900, "title": "Board" },
+    "Issue.dc.html": { "x": 4560, "y": 0, "w": 1440, "h": 960, "title": "Issue" },
+    "Review.dc.html": { "x": 6080, "y": 0, "w": 1440, "h": 960, "title": "Review" },
+    "Start.dc.html": {
+      "x": 0,
+      "y": 1320,
+      "w": 1440,
+      "h": 1000,
+      "title": "Start a project · conversation"
+    },
+    "StartPlan.dc.html": {
+      "x": 1520,
+      "y": 1320,
+      "w": 1440,
+      "h": 780,
+      "title": "Start a project · plan for approval"
+    },
+    "Inbox.dc.html": { "x": 3040, "y": 1320, "w": 1440, "h": 900, "title": "Inbox" },
+    "Members.dc.html": { "x": 4560, "y": 1320, "w": 1440, "h": 900, "title": "Members" },
+    "Configuration.dc.html": {
+      "x": 6080,
+      "y": 1320,
+      "w": 1440,
+      "h": 1040,
+      "title": "Configuration · Models"
+    },
+    "Login.dc.html": { "x": 0, "y": 2520, "w": 1440, "h": 900, "title": "Sign in (Team)" },
+    "SoloBoard.dc.html": {
+      "x": 1520,
+      "y": 2520,
+      "w": 1440,
+      "h": 900,
+      "title": "Solo · account menu"
+    },
+    "TipsBoard.dc.html": { "x": 3040, "y": 2520, "w": 1440, "h": 900, "title": "Board · Tips on" },
+    "StatusPhone.dc.html": { "x": 4560, "y": 2520, "w": 390, "h": 844, "title": "Status · phone" },
+    "ReviewPhone.dc.html": { "x": 5030, "y": 2520, "w": 390, "h": 844, "title": "Review · phone" },
+    "Logo.dc.html": { "x": 5500, "y": 2520, "w": 1440, "h": 900, "title": "Logo" },
+    "ProjectsDark.dc.html": { "x": 0, "y": 3780, "w": 1440, "h": 900, "title": "Projects (dark)" },
+    "StatusDark.dc.html": { "x": 1520, "y": 3780, "w": 1440, "h": 1160, "title": "Status (dark)" },
+    "MainDark.dc.html": { "x": 3040, "y": 3780, "w": 1440, "h": 900, "title": "Board (dark)" },
+    "IssueDark.dc.html": { "x": 4560, "y": 3780, "w": 1440, "h": 960, "title": "Issue (dark)" },
+    "ReviewDark.dc.html": { "x": 6080, "y": 3780, "w": 1440, "h": 960, "title": "Review (dark)" },
+    "StartDark.dc.html": {
+      "x": 0,
+      "y": 5100,
+      "w": 1440,
+      "h": 1000,
+      "title": "Start a project · conversation (dark)"
+    },
+    "StartPlanDark.dc.html": {
+      "x": 1520,
+      "y": 5100,
+      "w": 1440,
+      "h": 780,
+      "title": "Start a project · plan for approval (dark)"
+    },
+    "InboxDark.dc.html": { "x": 3040, "y": 5100, "w": 1440, "h": 900, "title": "Inbox (dark)" },
+    "MembersDark.dc.html": { "x": 4560, "y": 5100, "w": 1440, "h": 900, "title": "Members (dark)" },
+    "ConfigurationDark.dc.html": {
+      "x": 6080,
+      "y": 5100,
+      "w": 1440,
+      "h": 1040,
+      "title": "Configuration · Models (dark)"
+    },
+    "LoginDark.dc.html": {
+      "x": 0,
+      "y": 6300,
+      "w": 1440,
+      "h": 900,
+      "title": "Sign in (Team) (dark)"
+    },
+    "SoloBoardDark.dc.html": {
+      "x": 1520,
+      "y": 6300,
+      "w": 1440,
+      "h": 900,
+      "title": "Solo · account menu (dark)"
+    },
+    "TipsBoardDark.dc.html": {
+      "x": 3040,
+      "y": 6300,
+      "w": 1440,
+      "h": 900,
+      "title": "Board · Tips on (dark)"
+    },
+    "StatusPhoneDark.dc.html": {
+      "x": 4560,
+      "y": 6300,
+      "w": 390,
+      "h": 844,
+      "title": "Status · phone (dark)"
+    },
+    "ReviewPhoneDark.dc.html": {
+      "x": 5030,
+      "y": 6300,
+      "w": 390,
+      "h": 844,
+      "title": "Review · phone (dark)"
+    }
+  },
+  "order": [
+    "Projects.dc.html",
+    "Status.dc.html",
+    "Main.dc.html",
+    "Issue.dc.html",
+    "Review.dc.html",
+    "Start.dc.html",
+    "StartPlan.dc.html",
+    "Inbox.dc.html",
+    "Members.dc.html",
+    "Configuration.dc.html",
+    "Login.dc.html",
+    "SoloBoard.dc.html",
+    "TipsBoard.dc.html",
+    "StatusPhone.dc.html",
+    "ReviewPhone.dc.html",
+    "Logo.dc.html",
+    "ProjectsDark.dc.html",
+    "StatusDark.dc.html",
+    "MainDark.dc.html",
+    "IssueDark.dc.html",
+    "ReviewDark.dc.html",
+    "StartDark.dc.html",
+    "StartPlanDark.dc.html",
+    "InboxDark.dc.html",
+    "MembersDark.dc.html",
+    "ConfigurationDark.dc.html",
+    "LoginDark.dc.html",
+    "SoloBoardDark.dc.html",
+    "TipsBoardDark.dc.html",
+    "StatusPhoneDark.dc.html",
+    "ReviewPhoneDark.dc.html"
+  ],
+  "notes": {},
+  "designSystems": []
+}

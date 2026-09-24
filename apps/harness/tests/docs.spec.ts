@@ -131,8 +131,8 @@ function coverageIds(): Set<string> {
 describe("the design: spine and specifications", () => {
   const specs = indexedSpecs();
 
-  it("indexes fifteen specifications, each present with valid front matter", () => {
-    expect(specs.length).toBe(15);
+  it("indexes sixteen specifications, each present with valid front matter", () => {
+    expect(specs.length).toBe(16);
     const problems: string[] = [];
     for (const name of specs) {
       const path = join(SPECS, `${name}.md`);
@@ -191,7 +191,7 @@ describe("the design: spine and specifications", () => {
         .map((n) => [n, String(frontMatter(readFileSync(join(SPECS, `${n}.md`), "utf8"))?.status)]),
     );
     expect(Object.fromEntries(rows)).toEqual(Object.fromEntries(expected));
-    expect(rows.size).toBe(15);
+    expect(rows.size).toBe(16);
   });
 
   it("links nothing by absolute file:// path, which breaks in every other checkout", () => {

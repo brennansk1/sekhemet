@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sign in</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;font-family:'Inter',-apple-system,'Segoe UI',sans-serif;color:#1D1B17;background:#F7F6F3;-webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums}
+a{color:inherit;text-decoration:none}
+button,input,textarea,select{font-family:inherit}
+.mono{font-family:'JetBrains Mono',monospace}
+
+</style>
+</helmet>
+<div style="width: 1440px; height: 900px; display: flex; flex-direction: column; align-items: center; background: #F7F6F3; font-size: 13px; color: #1D1B17;">
+<div style="flex-grow: 1;"></div>
+<div style="display: flex; flex-direction: column; align-items: center; gap: 12px; margin-bottom: 26px;"><svg width="40" height="40" viewBox="0 0 24 24" aria-hidden="true"><path d="M2.2 21L4.4 6.5H9.3V21zM21.8 21L19.6 6.5h-4.9V21z" fill="#1D1B17"/><circle cx="12" cy="6.5" r="2.4" fill="#8E6512"/></svg><h1 style="margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.01em;">Sign in to Northwind</h1><span style="font-size: 12px; color: #6B6456; font-size: 13px;">sekhemet.northwind.internal</span></div>
+<main style="width: 380px; background: #FFFFFF; border: 1px solid #E6E3DC; border-radius: 12px; padding: 26px 28px; box-sizing: border-box; display: flex; flex-direction: column; gap: 16px;">
+<button style="height: 40px; border: 1px solid #B7B0A2; background: #FFFFFF; color: #1D1B17; border-radius: 8px; font-size: 13.5px; font-weight: 500; display: flex; align-items: center; justify-content: center; gap: 10px;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.5 3.5 5.5 3.5 8.5s-1 6-3.5 8.5c-2.5-2.5-3.5-5.5-3.5-8.5s1-6 3.5-8.5z"/></svg>Continue with company SSO</button>
+<button style="height: 40px; border: 1px solid #B7B0A2; background: #FFFFFF; color: #1D1B17; border-radius: 8px; font-size: 13.5px; font-weight: 500; display: flex; align-items: center; justify-content: center; gap: 10px;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M16 7l3 3M14 9l2 2"/></svg>Sign in with a passkey</button>
+<div style="display: flex; align-items: center; gap: 12px; color: #8C8577; font-size: 12px;"><span style="flex-grow: 1; height: 1px; background: #E6E3DC;"></span>or<span style="flex-grow: 1; height: 1px; background: #E6E3DC;"></span></div>
+<form style="display: flex; flex-direction: column; gap: 14px;" onsubmit="return false"><label style="display: flex; flex-direction: column; gap: 6px;"><span style="font-weight: 500;">Email</span><input type="email" value="brennan@northwind.dev" autocomplete="username" style="height: 38px; border: 1px solid #B7B0A2; border-radius: 8px; padding: 0 12px; font-size: 13.5px; background: #FFFFFF; color: #1D1B17; outline: none;"></label><label style="display: flex; flex-direction: column; gap: 6px;"><span style="display: flex;"><span style="font-weight: 500; flex-grow: 1;">Password</span><a href="#" style="font-size: 12.5px; color: #2F6FB5;">Forgot password?</a></span><input type="password" value="••••••••••••" autocomplete="current-password" style="height: 38px; border: 1px solid #B7B0A2; border-radius: 8px; padding: 0 12px; font-size: 13.5px; background: #FFFFFF; color: #1D1B17; outline: none;"></label><button type="submit" style="border: 0; background: #1D1B17; color: #FFFFFF; padding: 7px 14px; border-radius: 7px; font-size: 12.5px; font-weight: 500; height: 40px; font-size: 13.5px;">Sign in</button></form>
+</main>
+<p style="margin: 18px 0 0; font-size: 12px; color: #6B6456; font-size: 12.5px;">New to Northwind? Ask an admin for an invite link.</p>
+<div style="flex-grow: 1;"></div>
+<footer style="padding: 18px; display: flex; gap: 16px; font-size: 12px; color: #6B6456;"><span>Sekhemet 1.0 · self-hosted</span><span style="display: inline-flex; align-items: center; gap: 5px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#6B6456" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></svg>Your code and data stay on this server</span></footer>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic { renderVals() { return {}; } }
+</script>
+</body>
+</html>

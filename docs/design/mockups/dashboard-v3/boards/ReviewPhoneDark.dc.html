@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Review · phone (dark)</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+:root{color-scheme:dark}
+body{margin:0;font-family:'Inter',-apple-system,'Segoe UI',sans-serif;color:#EDE7DA;background:#1C1A16;-webkit-font-smoothing:antialiased}
+a{color:#EDE7DA;text-decoration:none}
+button{font-family:inherit}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; display: flex; flex-direction: column; background: #1C1A16; font-size: 14px; color: #EDE7DA;">
+<header style="padding: 10px 12px; border-bottom: 1px solid #2E2A24; display: flex; align-items: center; gap: 6px;">
+<a href="StatusPhoneDark.dc.html" aria-label="Back" style="width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; color: #EDE7DA;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></a>
+<div style="display: flex; flex-direction: column;"><span style="font-size: 12px; color: #A79E8C;">Review · 1 of 2</span><span style="font-family: 'JetBrains Mono', monospace; font-size: 13px;">CHR-6</span></div>
+</header>
+
+<main style="flex-grow: 1; overflow: hidden; padding: 16px 20px; display: flex; flex-direction: column; gap: 18px;">
+<div style="display: flex; flex-direction: column; gap: 6px;">
+<h1 style="margin: 0; font-size: 18px; font-weight: 600; line-height: 1.3;">Verify the whole hash chain on start</h1>
+<span style="font-size: 12.5px; color: #A79E8C;">Agent · 2 files · <span style="color: #4FA36B;">+61</span> <span style="color: #D2614F;">−4</span></span>
+</div>
+
+<div style="display: flex; flex-direction: column; border-top: 1px solid #2E2A24;">
+<div style="display: flex; align-items: center; min-height: 48px; border-bottom: 1px solid #2E2A24; gap: 10px;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4FA36B" stroke-width="2.2" aria-hidden="true"><path d="M5 12.5l4 4L19 7"/></svg><span style="flex-grow: 1;">Acceptance criteria</span><span style="color: #4FA36B; font-size: 13px;">4 / 4</span></div>
+<div style="display: flex; align-items: center; min-height: 48px; border-bottom: 1px solid #2E2A24; gap: 10px;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4FA36B" stroke-width="2.2" aria-hidden="true"><path d="M5 12.5l4 4L19 7"/></svg><span style="flex-grow: 1;">Checks</span><span style="color: #4FA36B; font-size: 13px;">All 7 passed</span></div>
+<a href="#" style="display: flex; align-items: center; min-height: 48px; border-bottom: 1px solid #2E2A24; gap: 10px;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#A79E8C" stroke-width="1.8" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.5M3 12h.5M3 18h.5"/></svg><span style="flex-grow: 1;">Files changed</span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#857E70" stroke-width="2" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></a>
+</div>
+
+<section style="display: flex; flex-direction: column; gap: 10px;">
+<h2 style="margin: 0; font-size: 13px; font-weight: 600;">AI review · 1 question</h2>
+<div style="border: 1px solid #3D382F; border-radius: 10px; padding: 12px 14px; line-height: 1.5; font-size: 13.5px; color: #D9D2C3;">This reads every event into memory before checking. On a large ledger that could exhaust memory. Is that acceptable for this release?<div style="font-family: 'JetBrains Mono', monospace; font-size: 11.5px; color: #A79E8C; margin-top: 8px;">src/verify.ts:22</div></div>
+</section>
+</main>
+
+<div style="padding: 12px 20px 26px; border-top: 1px solid #2E2A24; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; background: #1C1A16;">
+<button style="min-height: 48px; border: 1px solid #3D382F; background: #1C1A16; border-radius: 10px; font-size: 14px;">Request changes</button>
+<button style="min-height: 48px; border: 0; background: #EDE7DA; color: #14120F; border-radius: 10px; font-size: 14px; font-weight: 500;">Accept and merge</button>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic { renderVals() { return {}; } }
+</script>
+</body>
+</html>

@@ -120,10 +120,11 @@ Each workstream is one session: specification → numbered plan → failing test
 | B4.4 | Start a project by conversation; depth profile, comparables and walkthrough; project documents in the repository | P2, P14 | [planner-pm](../design/specs/planner-pm.md), [design-stage](../design/specs/design-stage.md) | B4.3 | L |
 | B4.5 | Reuse survey by capability, with the SPDX licence classifier | P7 | [design-stage](../design/specs/design-stage.md) | B4.4 | M |
 | B4.6 | A professional board: familiar columns and card anatomy, story map and burn-up | P3 | [dashboard](../design/specs/dashboard.md) | B4.3 | M |
-| B4.7 | The Learn layer; the status view for non-developers | P4, P5 | [dashboard](../design/specs/dashboard.md) | B4.6 | M |
-| B4.8 | The senior-PM skill, scored; the Reviewer rebuilt | P6, P8 | [planner-pm](../design/specs/planner-pm.md), [review-git](../design/specs/review-git.md) | B4.4, B3.2 | M |
+| B4.7 | The Learn layer; the Status page for the stakeholder and the team (DEC-37), the Projects page and the brand mark (the first part of NEW-dashboard-9) | P4, P5 | [dashboard](../design/specs/dashboard.md) | B4.6 | M |
+| B4.8 | The senior-PM skill, scored; the Reviewer rebuilt; how Seshat speaks and proposes (NEW-planner-pm-9) | P6, P8 | [planner-pm](../design/specs/planner-pm.md), [review-git](../design/specs/review-git.md) | B4.4, B3.2; B4.10 for PM-N9-2 (auto-apply needs the Admin level) | M |
 | B4.9 | GitHub first: one adapter, one ID, merge-aware, owner and delegate mapped | P9 | [integrations](../design/specs/integrations.md) | B3.2 | M |
-| B4.10 | The company-server minimum: bind, identity, Accept permission, fair scheduling across people | P9, DEC-06 | [runtime](../design/specs/runtime.md), [integrations](../design/specs/integrations.md) | B4.9 | L |
+| B4.10 | **Team setup**: setup token, invites, accounts and sessions, access levels, fair queue in tokens and per-person Agent cap; bind and identity sources; the per-project Accept rule; passkeys and OIDC once O28/O29 are approved; the Sign in page, the account menu and the session UI (NEW-teams-1–4, the queue part of NEW-teams-11, the sign-in part of NEW-dashboard-9) | P9, DEC-06, DEC-35 | [teams](../design/specs/teams.md), [runtime](../design/specs/runtime.md), [integrations](../design/specs/integrations.md) | B4.9 | L |
+| B4.11 | **Working together**: AI teammates, Seshat's suggestions, subscriptions and Inbox, @mentions of people, review verdicts, presence, audit view, project health and updates; `on_behalf_of` on the Agent's events; the Inbox, My issues, Members and Audit pages (NEW-teams-5–10, the health and updates part of NEW-teams-11, NEW-kernel-10) | DEC-36, DEC-37 | [teams](../design/specs/teams.md), [dashboard](../design/specs/dashboard.md), [planner-pm](../design/specs/planner-pm.md), [review-git](../design/specs/review-git.md), [kernel](../design/specs/kernel.md) | B4.10, B4.6 | L |
 | **B5** | **Structure**, as each workstream above touches it — never on its own | T4, T5, T9, T10 | per spec | — | — |
 
 ### Milestones the owner sees
@@ -134,7 +135,8 @@ Each workstream is one session: specification → numbered plan → failing test
 | B2.5 | A recorded, reproducible baseline: one RunProfile, the full suite and the planning measure, every failure named |
 | B3 | A person can safely accept, undo and send back cards on a real repository, and the ledger survives a crash and an upgrade |
 | B4.4 | A non-developer starts a project on the reference machine by conversation and watches its must-haves become proven |
-| B4.10 | A small team uses one server: each person's identity, who may accept, fair turns on the model |
+| B4.10 | A team shares one server: each person signs in at their access level, the project's Accept rule decides who may accept, and each person gets fair turns on the model |
+| B4.11 | A team of five, at four access levels, takes a project from a stakeholder's conversation to an accepted release on one server |
 | C | v1: DEFINITION_OF_DONE §6 on one release commit |
 
 ### The baseline RunProfile
@@ -183,7 +185,7 @@ Two rules carried from the 2026-09-17 design govern the order and the estimates:
 
 ## Phase C — measure, then release
 
-Phase C is DEFINITION_OF_DONE §6 checked on one release commit: every specification built, the spine kept in code, the full frozen suite and the planning measure against the B2.5 baseline, the three audience walks, accessibility, the company-server minimum, a new user's first card, and the release gate. The difference from the baseline is the answer to whether the pass made the product better.
+Phase C is DEFINITION_OF_DONE §6 checked on one release commit: every specification built, the spine kept in code, the full frozen suite and the planning measure against the B2.5 baseline, the three audience walks, accessibility, the Team setup's minimum, a new user's first card, and the release gate. The difference from the baseline is the answer to whether the pass made the product better.
 
 **After v1:** the ceiling run with a frontier model as the Worker ([DEC-07](../design/DECISIONS.md#dec-07)), then cloud models per role ([DEC-03](../design/DECISIONS.md#dec-03)).
 

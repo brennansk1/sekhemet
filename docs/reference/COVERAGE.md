@@ -87,7 +87,7 @@ No further model runs start until S1–S2 are fixed; nothing is offered to a use
 | P6 | **The senior-PM skill**, versioned and scored on ~20 scripted conversations | M |
 | P7 | **Reuse survey by capability**, with one SPDX licence classifier shared with the licence gate | M |
 | P8 | **The Reviewer rebuilt** to the design: per-criterion findings, before Review and before auto-accept | M |
-| P9 | **GitHub first** (one adapter, one ID, pagination, merge-aware), one notifier, then the company-server minimum | L |
+| P9 | **GitHub first** (one adapter, one ID, pagination, merge-aware), one notifier, then the Team setup's minimum (DEC-06, [DEC-35](../design/DECISIONS.md#dec-35--one-product-two-setups-solo-and-team)) | L |
 | P11 | **The navigation** (first slice, one card): grouped and labelled, labels kept at laptop widths, a phone bottom bar (Status · Review · Board · PM), first-letter chords, no bare `t` | S |
 | P12 | **Colour and contrast**: a warning hue apart from the accent gold, neutral disabled buttons, a ≥3:1 control border, no muted text that must be read; checked by axe and screenshots in CI | S |
 | P13 | **Project done is computed, never claimed** (owner, 2026-09-22): a requirement graph from the brief, traceability both ways and no orphan cards, release slices from a walking skeleton, "proven" from tests and gates on `main`, appetite and a circuit breaker ([research](../research/PROJECT_DONE_AND_DEPTH.md)) | L |
@@ -131,6 +131,7 @@ The design v3 specifications found gaps the Phase A programme had no ID for. Eac
 | NEW-dashboard-6 | The Configuration page: model folders, role recommendations, explicit downloads, the benchmark, every role's model name (DEC-29 O2, O3) | [dashboard](../design/specs/dashboard.md) | B4.1 |
 | NEW-dashboard-7 | Every on-screen word from DEC-31's professional vocabulary; issue types, checks, sprint, release | [dashboard](../design/specs/dashboard.md) | B4.2 |
 | NEW-dashboard-8 | The issue page for working with the agent (DEC-34) | [dashboard](../design/specs/dashboard.md) | B4.6 |
+| NEW-dashboard-9 | The pages for working together: Status for the stakeholder and the team (DEC-37), Projects, Sign in, Inbox, My issues, Members, Audit, the account menu, the brand mark and the AI badge | [dashboard](../design/specs/dashboard.md) | B4.7 (Status, Projects, brand mark); B4.10 (Sign in, the account menu and session UI); B4.11 (Inbox, My issues, Members, Audit) |
 | NEW-design-stage-5 | The Researcher asked early, with the card in hand | [design-stage](../design/specs/design-stage.md) | B4.4 |
 | NEW-design-stage-1 | Design-stage judgement | [design-stage](../design/specs/design-stage.md) | B4.4 |
 | NEW-design-stage-2 | Research that can be verified and does not park wrongly | [design-stage](../design/specs/design-stage.md) | B4.4 |
@@ -161,6 +162,7 @@ The design v3 specifications found gaps the Phase A programme had no ID for. Eac
 | NEW-kernel-7 | An erasable ledger | [kernel](../design/specs/kernel.md) | B3.1 |
 | NEW-kernel-8 | Requirement versions and gate-result sources in the record | [kernel](../design/specs/kernel.md) | B3.1 |
 | NEW-kernel-9 | The stored `kind`, `change` and `split` fields (DEC-26) | [kernel](../design/specs/kernel.md) | B3.1 |
+| NEW-kernel-10 | `on_behalf_of` on the Agent's events, covered by the hash chain (DEC-36) | [kernel](../design/specs/kernel.md) | B4.11 |
 | NEW-measurement-1 | Self-describing, isolated runs | [measurement](../design/specs/measurement.md) | B2.4 |
 | NEW-measurement-2 | Diagnostics on real inputs | [measurement](../design/specs/measurement.md) | B2.4 |
 | NEW-measurement-3 | Adoptions per phase | [measurement](../design/specs/measurement.md) | B2.4 |
@@ -187,6 +189,7 @@ The design v3 specifications found gaps the Phase A programme had no ID for. Eac
 | NEW-planner-pm-6 | Planning on existing codebases | [planner-pm](../design/specs/planner-pm.md) | B4.3 |
 | NEW-planner-pm-7 | Test approval and strength by depth profile | [planner-pm](../design/specs/planner-pm.md) | B4.3 |
 | NEW-planner-pm-8 | Dependencies from what a card uses, not a blanket rule | [planner-pm](../design/specs/planner-pm.md) | B4.3 |
+| NEW-planner-pm-9 | How Seshat speaks and proposes: suggestions with reasons, never assigning people or setting health, neutral reminders, the drafted weekly update, answers scoped to what the person can see, planner changes to an owned issue as suggestions (DEC-36) | [planner-pm](../design/specs/planner-pm.md) | B4.8; its auto-apply criterion PM-N9-2 with B4.10 |
 | NEW-review-git-1 | A rebase conflict goes back to the Worker as typed failures | [review-git](../design/specs/review-git.md) | B3.2 |
 | NEW-review-git-2 | Restacked children re-run their gates | [review-git](../design/specs/review-git.md) | B3.2 |
 | NEW-review-git-3 | Per-package gates in card verification | [review-git](../design/specs/review-git.md) | B4.0b |
@@ -218,6 +221,17 @@ The design v3 specifications found gaps the Phase A programme had no ID for. Eac
 | NEW-surface-4 | One install path per audience | [surface](../design/specs/surface.md) | B4.1 |
 | NEW-surface-5 | One recorded run profile | [surface](../design/specs/surface.md) | B3.3 |
 | NEW-surface-6 | `sekhemet ask` at the front door in place of `board` (O23) | [surface](../design/specs/surface.md) | B4.1 |
+| NEW-teams-1 | The two setups, Solo and Team (DEC-35) | [teams](../design/specs/teams.md) | B4.10 |
+| NEW-teams-2 | Workspace, projects and access levels | [teams](../design/specs/teams.md) | B4.10 |
+| NEW-teams-3 | Accounts and sessions: setup token, invites, passwords, sessions, personal tokens | [teams](../design/specs/teams.md) | B4.10 |
+| NEW-teams-4 | Passkeys and company SSO, once O28 and O29 are approved | [teams](../design/specs/teams.md) | B4.10 |
+| NEW-teams-5 | AI teammates: identities, states, `@Agent` and `@Seshat`, `on_behalf_of` (DEC-36) | [teams](../design/specs/teams.md) | B4.11 |
+| NEW-teams-6 | Seshat proposes, people decide: suggestions with reasons; a stakeholder's plan sent for approval (DEC-36) | [teams](../design/specs/teams.md) | B4.11 |
+| NEW-teams-7 | Subscriptions, watch, @mentions of people, the Inbox | [teams](../design/specs/teams.md) | B4.11 |
+| NEW-teams-8 | Review verdicts: Comment, stale-accept dismissal, resolved threads | [teams](../design/specs/teams.md) | B4.11 |
+| NEW-teams-9 | Presence | [teams](../design/specs/teams.md) | B4.11 |
+| NEW-teams-10 | The audit view and export | [teams](../design/specs/teams.md) | B4.11 |
+| NEW-teams-11 | Health set by a person, project updates (DEC-37), and the shared queue in tokens with a per-person Agent cap | [teams](../design/specs/teams.md) | B4.10 (the shared queue); B4.11 (health and updates) |
 | NEW-worker-loop-1 | Repetition refusals that survive alternation and truncation | [worker-loop](../design/specs/worker-loop.md) | B2.1 |
 | NEW-worker-loop-2 | The ladder's dead fields | [worker-loop](../design/specs/worker-loop.md) | B2.1 |
 | NEW-worker-loop-3 | Remove the session's dead direct-tool API | [worker-loop](../design/specs/worker-loop.md) | B2.1 |
@@ -269,7 +283,8 @@ Reported by the reviewers; **licences and maintenance to be verified before any 
 | `promptfoo`; GEPA (later) | MIT | Prompt evaluation; prompt optimisation |
 | Zod or Valibot | MIT | Event-payload validation |
 | Octokit, `@modelcontextprotocol/sdk`, `jira.js`, `@linear/sdk`, Slack Bolt | MIT / Apache-2.0 (to verify) | Official clients instead of hand-rolled ones |
-| `oauth2-proxy` | MIT | Identity for the company-server mode |
+| `oauth2-proxy` | MIT | Identity through a proxy in the Team setup (DEC-35 keeps the proxy route) |
+| SimpleWebAuthn; `openid-client` | MIT | Passkeys and company SSO (OIDC) in the Team setup — [OPEN_QUESTIONS](OPEN_QUESTIONS.md#owner-decisions) O28, O29, awaiting the owner |
 | Inspect AI, `llama-bench`, `statsmodels`, mini-swe-agent, Terminal-Bench | MIT / BSD-3 / Apache-2.0 (to verify) | Evaluation, throughput and statistics |
 | Node's `util.parseArgs`, `@clack/prompts`, `execa`; Vale, MADR | built-in / MIT / MIT | CLI parsing and prompts; docs linting; decision records |
 | Tiel-Coder-35B-A3B-MTP weights | (model card) | See D1 |

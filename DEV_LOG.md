@@ -14,12 +14,23 @@
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
 3. **Done means:** `DEFINITION_OF_DONE.md` v3 — §5 for a card, a spec, a workstream and a release; §6 for the product.
 4. **Measurement:** suite `1.0.0`, hash `192b6e95fa3c`; thinking A/B arm "off" 10/14 on `468f67f` (SUITE_RUNS). The remaining arms wait on M1, M3, M8 (workstream B2.1).
-5. **Owner decisions:** O1–O14 decided (DEC-29, DEC-30); O15–O27 open with defaults that unblock work (OPEN_QUESTIONS).
+5. **Owner decisions:** O1–O14 decided (DEC-29, DEC-30); O15–O27 decided (DEC-33); O28–O30 (passkeys, OIDC, password blocklist) await the owner. Teams design: DEC-35–37 and `specs/teams.md` (Entry 27).
 6. **Operations:** `CLAUDE.md`. Every commit carries `GateStatus`.
 
 ---
 
 ## Detailed Session Log
+
+### Entry 27 — 2026-09-25 (teams, Solo and Team, deeper Status and Start; mockups)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver.
+
+- Owner direction: several people collaborating on projects and issues like a Jira team (with PM, researcher and other roles), usable by a solo non-coder and by teams with enterprise hardware; the PM must not feel like an AI bossing people; a login screen, an account menu, a light and dark logo; a Status page useful to non-engineers and collaborators; Start a project per the design, a stakeholder working with Seshat.
+- Research: `docs/research/DESIGN_RESEARCH_COLLABORATION.md` (roles in Jira/Linear/GitHub/Azure, AI agents as teammates, non-directive AI language, collaboration mechanics, self-hosted sign-in, shared inference, status reporting).
+- Design: DEC-35 (Solo and Team setups; Admin/Member/Stakeholder/Viewer; Accept stays a per-project rule; sign-in), DEC-36 (the AI proposes, people decide; Seshat never assigns people), DEC-37 (Status for stakeholder and team; health set by a person; forecast ranges; project updates). New 16th spec `docs/design/specs/teams.md` (NEW-teams-1…11, TEAM-1…45); NEW-dashboard-9, NEW-planner-pm-9, NEW-kernel-10; B4.10 amended, B4.11 added. O28 (passkeys), O29 (OIDC) and O30 (password blocklist source) await the owner.
+- Independent review: no blockers; nine majors (mention and slash-command bypass of levels, Seshat's cross-project visibility, auto-apply vs "never assigns", planner rules on owned issues, durable state outside the log, the access matrix, sign-in hardening, Solo nagging, scope honesty) — all fixed.
+- Mockups: 31 boards (light and dark) on the design canvas — Projects, Status, Board, Issue, Review, Start (conversation and plan for approval), Inbox, Members, Configuration, Sign in, Solo account menu, Tips, two phone screens, Logo. Source and generator in `docs/design/mockups/dashboard-v3/`.
+- **Where the cards stop:** design and mockups await the owner's review; Phase B starts at B0 after it.
 
 ### Entry 26 — 2026-09-24 → 2026-09-25 (design v3 finished)
 

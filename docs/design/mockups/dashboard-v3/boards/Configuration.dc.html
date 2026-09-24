@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Configuration · Models</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;font-family:'Inter',-apple-system,'Segoe UI',sans-serif;color:#1D1B17;background:#F7F6F3}
+a{color:#2F6FB5}a:hover{color:#1F4F85}
+button,input{font-family:inherit}
+</style>
+</helmet>
+<div style="width: 1440px; height: 1040px; display: flex; flex-direction: column; background: #F7F6F3; font-size: 13px; color: #1D1B17;">
+
+<header style="background: #FFFFFF; border-bottom: 1px solid #E6E3DC; padding: 18px 32px 0; display: flex; flex-direction: column; gap: 12px;">
+<div style="display: flex; align-items: center; gap: 12px;">
+<h1 style="margin: 0; font-size: 20px; font-weight: 600;">Configuration</h1>
+<div style="flex-grow: 1;"></div>
+<span style="display: flex; align-items: center; gap: 8px; color: #5F584B; font-size: 12.5px;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>This Mac · Apple M4 · 24 GB unified memory · ~120 GB/s memory bandwidth</span>
+</div>
+<nav aria-label="Sections" style="display: flex; gap: 24px;">
+<a href="#" aria-current="page" style="color: #1D1B17; font-weight: 500; padding: 10px 0; box-shadow: inset 0 -2px 0 #1D1B17;">Models</a>
+<a href="#" style="color: #5F584B; padding: 10px 0;">Benchmark</a>
+<a href="#" style="color: #5F584B; padding: 10px 0;">Review capacity</a>
+<a href="#" style="color: #5F584B; padding: 10px 0;">Preferences</a>
+<a href="#" style="color: #5F584B; padding: 10px 0;">Project</a>
+</nav>
+</header>
+
+<div style="flex-grow: 1; display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 24px; padding: 24px 32px; overflow: hidden;">
+
+<div style="display: flex; flex-direction: column; gap: 20px; min-width: 0;">
+<section aria-labelledby="lib-h" style="background: #FFFFFF; border: 1px solid #E6E3DC; border-radius: 10px; padding: 18px 20px; display: flex; flex-direction: column; gap: 14px;">
+<div style="display: flex; align-items: center; gap: 10px;">
+<h2 id="lib-h" style="margin: 0; font-size: 15px; font-weight: 600;">Model library</h2>
+<div style="flex-grow: 1;"></div>
+<button style="border: 1px solid #D4CFC4; background: #FFFFFF; color: #1D1B17; padding: 6px 12px; border-radius: 7px; font-size: 12.5px;">Add folder</button>
+<button style="border: 0; background: #1D1B17; color: #FFFFFF; padding: 7px 14px; border-radius: 7px; font-size: 12.5px; font-weight: 500;">Scan</button>
+</div>
+<div style="display: flex; flex-direction: column; border: 1px solid #E6E3DC; border-radius: 8px;">
+<div style="display: flex; align-items: center; gap: 12px; padding: 9px 12px; border-bottom: 1px solid #E6E3DC;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#5F584B" stroke-width="1.7" aria-hidden="true"><path d="M3 7h6l2 2h10v10H3z"/></svg><span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; flex-grow: 1;">/Volumes/My Passport/AI-Models</span><span style="color: #5F584B; font-size: 12px;">7 models · 3 subfolders</span><button aria-label="Remove folder" style="border: 0; background: transparent; color: #5F584B; padding: 4px; display: flex;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+<div style="display: flex; align-items: center; gap: 12px; padding: 9px 12px;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#5F584B" stroke-width="1.7" aria-hidden="true"><path d="M3 7h6l2 2h10v10H3z"/></svg><span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; flex-grow: 1;">~/.ollama/models</span><span style="color: #5F584B; font-size: 12px;">4 models</span><button aria-label="Remove folder" style="border: 0; background: transparent; color: #5F584B; padding: 4px; display: flex;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+</div>
+<div style="display: flex; align-items: center; gap: 20px; font-size: 12.5px;">
+<label style="display: flex; align-items: center; gap: 8px;"><input type="checkbox" checked style="width: 16px; height: 16px; accent-color: #1D1B17;">Include subfolders</label>
+<label style="display: flex; align-items: center; gap: 8px;"><input type="checkbox" checked style="width: 16px; height: 16px; accent-color: #1D1B17;">Look up specs on Hugging Face</label>
+<div style="flex-grow: 1;"></div>
+<span style="color: #5F584B;">Last scan: 11 models found · 2 files skipped</span>
+</div>
+<div style="display: flex; gap: 8px; align-items: flex-start; font-size: 12px; color: #5F584B; line-height: 1.45; background: #F7F6F3; border-radius: 6px; padding: 8px 10px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true" style="margin-top: 1px; flex-shrink: 0;"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg><span>Read-only: headers only, no links outside these folders, only model names sent to Hugging Face.</span></div>
+</section>
+
+<section aria-labelledby="avail-h" style="background: #FFFFFF; border: 1px solid #E6E3DC; border-radius: 10px; overflow: hidden;">
+<div style="display: flex; align-items: center; padding: 14px 20px;"><h2 id="avail-h" style="margin: 0; font-size: 15px; font-weight: 600;">Available models</h2><span style="margin-left: 8px; color: #5F584B;">11</span></div>
+<table style="width: 100%; border-collapse: collapse; font-size: 12.5px;">
+<thead><tr style="text-align: left; color: #5F584B; background: #FBFAF8;">
+<th style="padding: 8px 20px; font-weight: 500; border-top: 1px solid #E6E3DC; border-bottom: 1px solid #E6E3DC;">Model</th>
+<th style="padding: 8px 8px; font-weight: 500; border-top: 1px solid #E6E3DC; border-bottom: 1px solid #E6E3DC;">Parameters</th>
+<th style="padding: 8px 8px; font-weight: 500; border-top: 1px solid #E6E3DC; border-bottom: 1px solid #E6E3DC;">Quantization</th>
+<th style="padding: 8px 8px; font-weight: 500; border-top: 1px solid #E6E3DC; border-bottom: 1px solid #E6E3DC; text-align: right;">Size</th>
+<th style="padding: 8px 8px; font-weight: 500; border-top: 1px solid #E6E3DC; border-bottom: 1px solid #E6E3DC; text-align: right;">Speed</th>
+<th style="padding: 8px 8px; font-weight: 500; border-top: 1px solid #E6E3DC; border-bottom: 1px solid #E6E3DC;">Fits</th>
+<th style="padding: 8px 20px 8px 8px; font-weight: 500; border-top: 1px solid #E6E3DC; border-bottom: 1px solid #E6E3DC;">Specs from</th>
+</tr></thead>
+<tbody>
+<sc-for list="{{models}}" as="m" hint-placeholder-count="6">
+<tr>
+<td style="padding: 9px 20px; border-bottom: 1px solid #EFECE6;"><div style="font-weight: 500;">{{m.name}}</div><div style="color: #5F584B; font-size: 11.5px;">{{m.family}}</div></td>
+<td style="padding: 9px 8px; border-bottom: 1px solid #EFECE6;">{{m.params}}</td>
+<td style="padding: 9px 8px; border-bottom: 1px solid #EFECE6; font-family: 'JetBrains Mono', monospace; font-size: 11.5px;">{{m.quant}}</td>
+<td style="padding: 9px 8px; border-bottom: 1px solid #EFECE6; text-align: right;">{{m.size}}</td>
+<td style="padding: 9px 8px; border-bottom: 1px solid #EFECE6; text-align: right;"><div>{{m.speed}}</div><div style="color: #5F584B; font-size: 11px;">{{m.speedKind}}</div></td>
+<td style="padding: 9px 8px; border-bottom: 1px solid #EFECE6; color: {{m.fitColor}};">{{m.fits}}</td>
+<td style="padding: 9px 20px 9px 8px; border-bottom: 1px solid #EFECE6; color: #5F584B;">{{m.source}}</td>
+</tr>
+</sc-for>
+</tbody>
+</table>
+<div style="padding: 10px 20px; font-size: 12px; color: #5F584B;">Speed is decode tokens per second. <em>Predicted</em> comes from memory bandwidth and the bytes read per token; <em>measured</em> comes from runs on this Mac.</div>
+</section>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 20px; min-width: 0;">
+<section aria-labelledby="sugg-h" style="background: #FFFFFF; border: 1px solid #E6E3DC; border-radius: 10px; padding: 18px 20px; display: flex; flex-direction: column; gap: 14px;">
+<div style="display: flex; align-items: center; gap: 10px;"><h2 id="sugg-h" style="margin: 0; font-size: 15px; font-weight: 600;">Suggested setup</h2><span style="font-size: 12px; color: #5F584B;">from Seshat</span></div>
+<sc-for list="{{roles}}" as="r" hint-placeholder-count="4">
+<div style="display: flex; flex-direction: column; gap: 4px; padding-bottom: 12px; border-bottom: 1px solid #EFECE6;">
+<div style="display: flex; align-items: baseline; gap: 8px;"><span style="font-weight: 600; font-size: 13px;">{{r.role}}</span><span style="color: #5F584B; font-size: 12px;">{{r.note}}</span><div style="flex-grow: 1;"></div><span style="font-size: 12px; color: {{r.changeColor}};">{{r.change}}</span></div>
+<div style="font-size: 13px;">{{r.model}}</div>
+<div style="font-size: 12px; color: #5F584B; line-height: 1.45;">{{r.reason}}</div>
+</div>
+</sc-for>
+<ul style="list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: #3A362E;"><li style="display: flex; align-items: center; gap: 5px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#2E7D4A" stroke-width="2.2" aria-hidden="true"><path d="M5 12.5l4 4L19 7"/></svg>Fits in memory</li><li style="display: flex; align-items: center; gap: 5px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#2E7D4A" stroke-width="2.2" aria-hidden="true"><path d="M5 12.5l4 4L19 7"/></svg>Verified on this Mac</li><li style="display: flex; align-items: center; gap: 5px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#2E7D4A" stroke-width="2.2" aria-hidden="true"><path d="M5 12.5l4 4L19 7"/></svg>Review model from another family</li></ul>
+<div style="display: flex; gap: 8px;"><button style="border: 0; background: #1D1B17; color: #FFFFFF; padding: 7px 14px; border-radius: 7px; font-size: 12.5px; font-weight: 500;">Apply suggestion</button><button style="border: 1px solid #D4CFC4; background: #FFFFFF; color: #1D1B17; padding: 7px 12px; border-radius: 7px; font-size: 12.5px;">Choose each role</button></div>
+</section>
+
+<section aria-labelledby="bm-h" style="background: #FFFFFF; border: 1px solid #E6E3DC; border-radius: 10px; padding: 18px 20px; display: flex; flex-direction: column; gap: 10px;">
+<h2 id="bm-h" style="margin: 0; font-size: 15px; font-weight: 600;">Compare setups</h2>
+
+<div style="display: flex; gap: 8px; align-items: center;"><button style="border: 1px solid #D4CFC4; background: #FFFFFF; color: #1D1B17; padding: 7px 12px; border-radius: 7px; font-size: 12.5px;">Quick benchmark · ~22 min</button><button style="border: 1px solid #D4CFC4; background: #FFFFFF; color: #1D1B17; padding: 7px 12px; border-radius: 7px; font-size: 12.5px;">Schedule overnight</button></div>
+</section>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1040}}'>
+class Component extends DCLogic {
+  renderVals() {
+    var ok = '#2E7D4A', warn = '#9A4F1C', muted = '#5F584B';
+    return {
+      models: [
+        { name: 'Cyber-Tiel-Coder-35B-A3B MTP', family: 'Ornith · coding', params: '35B · 3B active', quant: 'IQ3_XXS', size: '13.6 GB', speed: '29 tok/s', speedKind: 'measured', fits: 'Yes', fitColor: ok, source: 'Hugging Face' },
+        { name: 'Tiel-Coder-35B-A3B MTP', family: 'Ornith · coding', params: '35B · 3B active', quant: 'IQ3_XXS', size: '13.6 GB', speed: '~30 tok/s', speedKind: 'predicted', fits: 'Yes', fitColor: ok, source: 'Hugging Face' },
+        { name: 'Dirk-Qwen3.8-27B', family: 'Qwen · general', params: '27B', quant: 'Q4_K_M', size: '~15.2 GB', speed: '~6 tok/s', speedKind: 'predicted', fits: 'Alone', fitColor: warn, source: 'Hugging Face' },
+        { name: 'Nail-35B-A3B', family: 'Qwen · coding', params: '35B · 3B active', quant: 'Q3_K_M', size: '[SIZE]', speed: '[n] tok/s', speedKind: 'predicted', fits: 'Yes', fitColor: ok, source: 'Hugging Face' },
+        { name: 'Apodex-1.1-mini', family: '[family]', params: '[PARAMS]', quant: 'Q4_K_M', size: '[SIZE]', speed: '[n] tok/s', speedKind: 'predicted', fits: 'Yes', fitColor: ok, source: 'File header only' },
+        { name: 'Llama-3.3-70B-Instruct', family: 'Llama · general', params: '70B', quant: 'Q4_K_M', size: '~39 GB', speed: '—', speedKind: '', fits: 'No · needs 48 GB', fitColor: muted, source: 'Hugging Face' }
+      ],
+      roles: [
+        { role: 'Coding model', note: 'builds issues', model: 'Cyber-Tiel-Coder-35B-A3B MTP · 29 tok/s', change: 'Keep', changeColor: muted,
+          reason: 'The fastest verified coding model that fits with room for its context.' },
+        { role: 'Planning model', note: 'plans work; Seshat', model: 'Dirk-Qwen3.8-27B · ~6 tok/s', change: 'Keep', changeColor: muted,
+          reason: 'Best planning results among your models; loads while the coding model is idle.' },
+        { role: 'Review model', note: 'reviews before you do', model: 'Gemma-4-26B-A4B · ~43 tok/s predicted', change: 'Download [SIZE] GB', changeColor: '#2F6FB5',
+          reason: 'Needs a different model family from the coding model. None of your models qualifies; this one fits on its own.' },
+        { role: 'Research model', note: 'finds libraries and sources', model: 'Apodex-1.1-mini', change: 'Keep', changeColor: muted,
+          reason: 'Verified on this Mac. Research uses the network only after you allow it.' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

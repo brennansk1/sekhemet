@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Board (dark)</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+:root{color-scheme:dark}
+body{margin:0;font-family:'Inter',-apple-system,'Segoe UI',sans-serif;color:#EDE7DA;background:#14120F}
+a{color:#EDE7DA;text-decoration:none}a:hover{color:#000}
+button,input{font-family:inherit}
+</style>
+</helmet>
+<div style="width: 1440px; height: 900px; display: flex; background: #14120F; font-size: 13px; color: #EDE7DA;">
+
+<nav aria-label="Main" style="width: 232px; flex-shrink: 0; background: #181612; border-right: 1px solid #2E2A24; display: flex; flex-direction: column; padding: 14px 10px 10px; box-sizing: border-box; gap: 16px; position: relative; font-size: 13px;">
+<div style="display: flex; align-items: center; gap: 9px; padding: 2px 8px;"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M2.2 21L4.4 6.5H9.3V21zM21.8 21L19.6 6.5h-4.9V21z" fill="#EDE7DA"/><circle cx="12" cy="6.5" r="2.4" fill="#C8952A"/></svg><span style="font-weight: 600; font-size: 15px; letter-spacing: -0.01em; color: #EDE7DA;">Sekhemet</span><div style="flex-grow: 1;"></div><button aria-label="Search (Ctrl K)" style="width: 28px; height: 28px; border: 0; background: transparent; color: #A79E8C; border-radius: 6px; display: flex; align-items: center; justify-content: center;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4-4"/></svg></button></div>
+<div style="display: flex; flex-direction: column; gap: 1px;">
+<a href="ProjectsDark.dc.html" style="display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 6px; color: #A79E8C;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg><span>Projects</span></a>
+<a href="#" style="display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 6px; color: #A79E8C;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 13l3-8h12l3 8v6H3z"/><path d="M3 13h5l1 2h6l1-2h5"/></svg><span>Inbox</span><span style="margin-left: auto; font-size: 11px; font-weight: 600; background: #2C2822; color: #EDE7DA; border-radius: 10px; padding: 1px 7px;">3</span></a>
+<a href="#" style="display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 6px; color: #A79E8C;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg><span>My issues</span></a>
+</div>
+<div style="display: flex; flex-direction: column; gap: 1px;">
+<button aria-label="Switch project" style="display: flex; align-items: center; gap: 8px; padding: 5px 10px; margin-bottom: 3px; border: 0; background: transparent; border-radius: 6px; font-size: 12px; font-weight: 600; color: #EDE7DA; text-align: left;"><span aria-hidden="true" style="width: 16px; height: 16px; border-radius: 4px; background: #4C8ED9; color: #1C1A16; font-size: 8.5px; font-weight: 600; display: flex; align-items: center; justify-content: center;">CH</span><span style="flex-grow: 1;">Chronicle</span><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#7D7667" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 9l4-4 4 4M8 15l4 4 4-4"/></svg></button>
+<a href="StatusDark.dc.html" style="display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 6px; color: #A79E8C;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 13h4l2-6 4 12 2-6h6"/></svg><span>Status</span></a>
+<a href="MainDark.dc.html" aria-current="page" style="display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 6px; background: #2C2822; color: #EDE7DA; font-weight: 500; box-shadow: inset 2px 0 0 #C8952A;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="5" height="16" rx="1"/><rect x="10" y="4" width="5" height="10" rx="1"/><rect x="17" y="4" width="4" height="13" rx="1"/></svg><span>Board</span></a>
+<a href="ReviewDark.dc.html" style="display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 6px; color: #A79E8C;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l4 4 10-10"/></svg><span>Review</span><span style="margin-left: auto; font-size: 11px; font-weight: 600; background: #2C2822; color: #EDE7DA; border-radius: 10px; padding: 1px 7px;">2</span></a>
+<a href="StartDark.dc.html" style="display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 6px; color: #A79E8C;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/></svg><span>Project manager</span><span style="margin-left: auto; font-size: 11.5px; color: #7D7667;">Seshat</span></a>
+<a href="#" style="display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 6px; color: #A79E8C;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg><span>Insights</span></a>
+<details style="margin-top: 2px;"><summary style="list-style: none; padding: 5px 10px 5px 36px; color: #7D7667; font-size: 12px; cursor: pointer;">More</summary></details>
+</div>
+<div style="flex-grow: 1;"></div>
+<div style="display: flex; flex-direction: column; gap: 1px;">
+<div style="display: flex; align-items: center; gap: 8px; padding: 6px 10px; color: #A79E8C; font-size: 12px;"><span style="width: 7px; height: 7px; border-radius: 4px; background: #4C8ED9;" aria-hidden="true"></span>Agent working on CHR-7</div>
+<a href="ConfigurationDark.dc.html" style="display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 6px; color: #A79E8C;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/></svg><span>Configuration</span></a>
+</div>
+<button aria-haspopup="menu" aria-expanded="false" style="display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 0; border-top: 1px solid #2E2A24; background: transparent; border-radius: 0 0 6px 6px; text-align: left; margin: 0 -2px;"><span aria-hidden="true" style="width: 28px; height: 28px; border-radius: 14px; background: #3D382F; color: #EDE7DA; font-size: 11.8px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;">BK</span><span style="display: flex; flex-direction: column; line-height: 1.3; flex-grow: 1; min-width: 0;"><span style="font-size: 13px; font-weight: 500; color: #EDE7DA;">Brennan Kelley</span><span style="font-size: 11.5px; color: #A79E8C;">Admin · Northwind</span></span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7D7667" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 9l4-4 4 4M8 15l4 4 4-4"/></svg></button>
+</nav>
+
+<main style="flex-grow: 1; display: flex; flex-direction: column; min-width: 0;">
+<header style="display: flex; align-items: center; gap: 12px; padding: 14px 28px; background: #1C1A16; border-bottom: 1px solid #2E2A24;">
+<div style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #A79E8C;"><span>Chronicle</span><span aria-hidden="true">/</span><h1 style="margin: 0; font-size: 15px; font-weight: 600; color: #EDE7DA;">Board</h1></div>
+<div role="tablist" aria-label="Views" style="display: flex; gap: 2px; background: #24211C; border-radius: 7px; padding: 2px; margin-left: 16px;">
+<button role="tab" aria-selected="true" style="border: 0; background: #1C1A16; color: #EDE7DA; padding: 5px 12px; border-radius: 5px; font-size: 12.5px; font-weight: 500; box-shadow: 0 1px 2px rgba(0,0,0,0.08);">Board</button>
+<button role="tab" aria-selected="false" style="border: 0; background: transparent; color: #A79E8C; padding: 5px 12px; border-radius: 5px; font-size: 12.5px;">List</button>
+<button role="tab" aria-selected="false" style="border: 0; background: transparent; color: #A79E8C; padding: 5px 12px; border-radius: 5px; font-size: 12.5px;">Story map</button>
+</div>
+<div style="flex-grow: 1;"></div>
+<label style="display: flex; align-items: center; gap: 8px; border: 1px solid #3D382F; border-radius: 7px; padding: 6px 10px; width: 260px; color: #A79E8C; background: #1C1A16;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg><input aria-label="Search issues" placeholder="Search issues" style="border: 0; background: transparent; color: #EDE7DA; font-size: 13px; outline: none; width: 100%;"><kbd style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #A79E8C; border: 1px solid #3D382F; border-radius: 4px; padding: 0 4px;">/</kbd></label>
+<button aria-pressed="false" style="display: flex; align-items: center; gap: 6px; border: 1px solid #3D382F; background: #1C1A16; color: #A79E8C; padding: 6px 10px; border-radius: 7px; font-size: 12.5px;">Tips</button>
+<button style="border: 1px solid #3D382F; background: #1C1A16; color: #EDE7DA; padding: 6px 12px; border-radius: 7px; font-size: 12.5px;">Ask Seshat</button>
+<button style="display: flex; align-items: center; gap: 6px; border: 0; background: #EDE7DA; color: #14120F; padding: 7px 14px; border-radius: 7px; font-size: 12.5px; font-weight: 500;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New issue</button>
+</header>
+
+<section aria-label="Sprint" style="display: flex; align-items: center; gap: 18px; padding: 10px 28px; background: #1C1A16; border-bottom: 1px solid #2E2A24;">
+<span style="font-weight: 600;">Sprint 3</span>
+<span style="color: #A79E8C;">Sep 22 – Oct 5</span>
+<span style="width: 1px; height: 16px; background: #2E2A24;" aria-hidden="true"></span>
+<span style="color: #A79E8C;">Release 1</span>
+<div style="width: 160px; height: 6px; border-radius: 3px; background: #2C2822; display: flex; overflow: hidden;" aria-hidden="true"><span style="width: 45%; background: #4FA36B;"></span><span style="width: 18%; background: #4C8ED9;"></span></div>
+<span style="color: #A79E8C;">5 of 11 requirements done</span>
+<div style="flex-grow: 1;"></div>
+<div style="display: flex; gap: 6px;">
+<button style="border: 1px solid #3D382F; background: #1C1A16; color: #A79E8C; padding: 4px 10px; border-radius: 6px; font-size: 12px;">Assignee</button>
+<button style="border: 1px solid #3D382F; background: #1C1A16; color: #A79E8C; padding: 4px 10px; border-radius: 6px; font-size: 12px;">Epic</button>
+<button style="border: 1px solid #3D382F; background: #1C1A16; color: #A79E8C; padding: 4px 10px; border-radius: 6px; font-size: 12px;">Priority</button>
+<button style="border: 1px solid #3D382F; background: #1C1A16; color: #A79E8C; padding: 4px 10px; border-radius: 6px; font-size: 12px;">Label</button>
+<span style="width: 1px; background: #2E2A24; margin: 0 4px;" aria-hidden="true"></span>
+<button style="border: 1px solid #3D382F; background: #1C1A16; color: #C8743A; padding: 4px 10px; border-radius: 6px; font-size: 12px;">On hold · 1</button>
+<button style="border: 1px solid #3D382F; background: #1C1A16; color: #A79E8C; padding: 4px 10px; border-radius: 6px; font-size: 12px;">Won't do</button>
+</div>
+</section>
+
+<div style="flex-grow: 1; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; padding: 18px 28px; overflow: hidden;">
+<sc-for list="{{columns}}" as="col" hint-placeholder-count="5">
+<section aria-label="{{col.name}}" style="display: flex; flex-direction: column; gap: 8px; min-width: 0;">
+<div style="display: flex; align-items: center; gap: 8px; padding: 2px 2px 4px;">
+<h2 style="margin: 0; font-size: 12.5px; font-weight: 600;">{{col.name}}</h2>
+<span style="color: #A79E8C; font-size: 12px;">{{col.count}}</span>
+<div style="flex-grow: 1;"></div>
+<span style="color: #A79E8C; font-size: 11.5px;" title="{{col.limitTitle}}">{{col.limit}}</span>
+</div>
+<sc-if value="{{col.hasLimit}}" hint-placeholder-val="{{false}}">
+<div style="height: 3px; border-radius: 2px; background: #2C2822; display: flex; margin-bottom: 2px;" aria-hidden="true"><span style="width: {{col.fill}}; background: #A79E8C; border-radius: 2px;"></span></div>
+</sc-if>
+<sc-for list="{{col.cards}}" as="card" hint-placeholder-count="3">
+<article style="background: #1C1A16; border: 1px solid #2E2A24; border-radius: 8px; padding: 11px 12px; display: flex; flex-direction: column; gap: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.04);">
+<div style="font-size: 13px; line-height: 1.4; color: #EDE7DA;">{{card.title}}</div>
+<sc-if value="{{card.hasStatus}}" hint-placeholder-val="{{true}}">
+<div style="display: flex; gap: 6px; align-items: flex-start; font-size: 12px; line-height: 1.4; color: {{card.statusColor}};"><span style="width: 6px; height: 6px; border-radius: 3px; background: {{card.statusColor}}; margin-top: 5px; flex-shrink: 0;" aria-hidden="true"></span><span>{{card.status}}</span></div>
+</sc-if>
+<div style="display: flex; align-items: center; gap: 7px; font-size: 11.5px;">
+<span title="{{card.type}}" aria-label="{{card.type}}" style="width: 14px; height: 14px; border-radius: 3px; background: {{card.typeColor}}; display: flex; align-items: center; justify-content: center;"><span style="width: 6px; height: 6px; border-radius: {{card.typeShape}}; background: #1C1A16;"></span></span>
+<span style="font-family: 'JetBrains Mono', monospace; font-size: 11.5px; color: #A79E8C;">{{card.key}}</span>
+<span style="color: #A79E8C; background: #24211C; border-radius: 4px; padding: 1px 6px;">{{card.epic}}</span>
+<div style="flex-grow: 1;"></div>
+<span title="Priority: {{card.priorityName}}" aria-label="Priority: {{card.priorityName}}" style="display: flex; gap: 2px; align-items: flex-end; height: 11px;"><span style="width: 3px; height: 4px; border-radius: 1px; background: {{card.p1}};"></span><span style="width: 3px; height: 7px; border-radius: 1px; background: {{card.p2}};"></span><span style="width: 3px; height: 11px; border-radius: 1px; background: {{card.p3}};"></span></span>
+<span title="Assignee: {{card.assigneeName}}" style="width: 22px; height: 22px; border-radius: 11px; background: {{card.avatarBg}}; color: {{card.avatarFg}}; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 600;">{{card.avatar}}</span>
+</div>
+</article>
+</sc-for>
+</section>
+</sc-for>
+</div>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    var on = '#A79E8C', off = '#3D382F';
+    var types = { Story: ['#4FA36B', '1px'], Task: ['#4C8ED9', '1px'], Bug: ['#D2614F', '3px'], Spike: ['#9A7FD1', '3px'] };
+    function card(key, type, title, epic, p, who, status, color) {
+      var lit = { 1: 3, 2: 3, 3: 2, 4: 1 }[p];
+      var agent = who === 'Agent';
+      return { key: key, type: type, typeColor: types[type][0], typeShape: types[type][1], title: title, epic: epic,
+        priorityName: { 1: 'Urgent', 2: 'High', 3: 'Medium', 4: 'Low' }[p],
+        p1: lit >= 1 ? on : off, p2: lit >= 2 ? on : off, p3: lit >= 3 ? on : off,
+        assigneeName: agent ? 'Agent' : 'Brennan Kelley', avatar: agent ? 'AI' : 'BK',
+        avatarBg: agent ? '#EDE7DA' : '#3D382F', avatarFg: agent ? '#8E6512' : '#EDE7DA',
+        hasStatus: !!status, status: status || '', statusColor: color || '#A79E8C' };
+    }
+    var run = '#4C8ED9', pass = '#4FA36B', fail = '#D2614F', muted = '#A79E8C';
+    return { columns: [
+      { name: 'Backlog', count: 4, limit: '', limitTitle: '', hasLimit: false, cards: [
+        card('CHR-12', 'Story', 'Export the ledger as NDJSON from the CLI', 'CLI', 3, 'Agent'),
+        card('CHR-13', 'Story', 'Rate-limit writes to the HTTP API', 'API', 4, 'Agent'),
+        card('CHR-14', 'Task', 'Document the API for other teams', 'API', 4, 'You'),
+        card('CHR-11', 'Spike', 'Can the verifier stream a 1 GB ledger?', 'Ledger', 3, 'Agent')
+      ] },
+      { name: 'To do', count: 2, limit: '', limitTitle: '', hasLimit: false, cards: [
+        card('CHR-9', 'Story', 'Store events in SQLite with WAL', 'Ledger', 2, 'Agent', 'Ready · tests written', muted),
+        card('CHR-10', 'Story', 'HTTP API: append and read events', 'API', 2, 'Agent', 'Blocked by CHR-9', fail)
+      ] },
+      { name: 'In progress', count: 2, limit: '2 / 3', limitTitle: 'WIP limit 3', hasLimit: true, fill: '66%', cards: [
+        card('CHR-7', 'Story', 'Append events to the ledger with a hash chain', 'Ledger', 1, 'Agent', 'Agent working · 2 tests failing', run),
+        card('CHR-8', 'Bug', 'Refuse an event whose previous hash does not match', 'Ledger', 2, 'You', 'Started 2 hours ago', muted)
+      ] },
+      { name: 'In review', count: 2, limit: '2 / 4', limitTitle: 'WIP limit 4', hasLimit: true, fill: '50%', cards: [
+        card('CHR-6', 'Story', 'Verify the whole hash chain on start', 'Ledger', 2, 'Agent', 'All checks passed · AI review: 1 question', pass),
+        card('CHR-5', 'Task', 'Define the ledger event types', 'Ledger', 3, 'Agent', 'All checks passed · ready for review', pass)
+      ] },
+      { name: 'Done', count: 4, limit: '', limitTitle: '', hasLimit: false, cards: [
+        card('CHR-4', 'Story', 'Hash events with SHA-256 over canonical JSON', 'Ledger', 3, 'Agent'),
+        card('CHR-3', 'Task', 'Create the events table and indexes', 'Ledger', 3, 'Agent'),
+        card('CHR-2', 'Task', 'Agree the event schema', 'Ledger', 3, 'You'),
+        card('CHR-1', 'Spike', 'Which hash is fast enough on this machine?', 'Ledger', 4, 'Agent')
+      ] }
+    ] };
+  }
+}
+</script>
+</body>
+</html>

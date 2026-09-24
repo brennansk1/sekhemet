@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>CHR-7 Append events to the ledger with a hash chain (dark)</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+:root{color-scheme:dark}
+body{margin:0;font-family:'Inter',-apple-system,'Segoe UI',sans-serif;color:#EDE7DA;background:#1C1A16;-webkit-font-smoothing:antialiased}
+a{color:#EDE7DA;text-decoration:none}a:hover{text-decoration:underline}
+button,textarea{font-family:inherit}
+code{font-family:'JetBrains Mono',monospace;font-size:12px;background:#24211C;border-radius:3px;padding:1px 4px}
+</style>
+</helmet>
+<div style="width: 1440px; height: 960px; display: flex; flex-direction: column; background: #1C1A16; font-size: 13px; color: #EDE7DA;">
+
+<header style="height: 48px; display: flex; align-items: center; gap: 8px; padding: 0 24px; border-bottom: 1px solid #2E2A24; flex-shrink: 0;">
+<nav aria-label="Breadcrumb" style="display: flex; align-items: center; gap: 6px; color: #A79E8C; font-size: 13px;"><a href="MainDark.dc.html" style="color: #A79E8C;">Chronicle</a><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#857E70" stroke-width="2" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg><span style="color: #EDE7DA; font-weight: 500;">CHR-7</span></nav>
+<div style="flex-grow: 1;"></div>
+<div style="display: flex; align-items: center; gap: 8px; margin-right: 6px;"><span title="Priya Nair is viewing" style="position: relative; display: inline-flex;"><span aria-hidden="true" style="width: 24px; height: 24px; border-radius: 12px; background: #1E2B21; color: #7FC495; font-size: 10.1px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;">PN</span><span style="position: absolute; right: -1px; bottom: -1px; width: 8px; height: 8px; border-radius: 4px; background: #4FA36B; border: 2px solid #1C1A16;"></span></span><span style="font-size: 12px; color: #A79E8C;">Priya is viewing</span></div><button aria-pressed="true" style="display: flex; align-items: center; gap: 6px; border: 1px solid #3D382F; background: #1C1A16; color: #EDE7DA; padding: 5px 10px; border-radius: 6px; font-size: 12.5px; margin-right: 4px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16V11a6 6 0 0112 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 004 0"/></svg>Watching<span style="color: #A79E8C;">3</span></button>
+<button aria-label="Copy link" style="width: 28px; height: 28px; border: 0; background: transparent; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #A79E8C;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg></button>
+<button aria-label="Previous issue" style="width: 28px; height: 28px; border: 0; background: transparent; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #A79E8C;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg></button>
+<button aria-label="Next issue" style="width: 28px; height: 28px; border: 0; background: transparent; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #A79E8C;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
+<button aria-label="More actions" style="width: 28px; height: 28px; border: 0; background: transparent; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #A79E8C;"><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>
+</header>
+
+<div style="flex-grow: 1; display: flex; min-height: 0;">
+
+<main style="flex-grow: 1; overflow: hidden; display: flex; justify-content: center;">
+<div style="width: 760px; padding: 32px 0; display: flex; flex-direction: column; gap: 28px;">
+
+<div style="display: flex; flex-direction: column; gap: 12px;">
+<h1 style="margin: 0; font-size: 22px; font-weight: 600; line-height: 1.3; letter-spacing: -0.01em;">Append events to the ledger with a hash chain</h1>
+<p style="margin: 0; line-height: 1.6; color: #D9D2C3;">Add <code>appendEvent(event)</code> to <code>src/ledger.ts</code>. Each stored event records the hash of the event before it, so any change to history breaks the chain and <code>verify()</code> reports where.</p>
+</div>
+
+<section aria-labelledby="ac-h" style="display: flex; flex-direction: column; gap: 2px;">
+<div style="display: flex; align-items: center; margin-bottom: 6px;"><h2 id="ac-h" style="margin: 0; font-size: 13px; font-weight: 600;">Acceptance criteria</h2><span style="margin-left: 8px; font-size: 12px; color: #A79E8C;">2 / 4</span></div>
+<sc-for list="{{criteria}}" as="c" hint-placeholder-count="4">
+<div style="display: flex; gap: 10px; align-items: flex-start; padding: 5px 0; line-height: 1.5;">
+<sc-if value="{{c.pass}}" hint-placeholder-val="{{true}}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4FA36B" stroke-width="2" aria-label="Passing" style="flex-shrink: 0; margin-top: 2px;"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.5 2.5L16 9.5"/></svg></sc-if>
+<sc-if value="{{c.fail}}" hint-placeholder-val="{{false}}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#D2614F" stroke-width="2" aria-label="Failing" style="flex-shrink: 0; margin-top: 2px;"><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/></svg></sc-if>
+<sc-if value="{{c.none}}" hint-placeholder-val="{{false}}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5C564B" stroke-width="2" stroke-dasharray="3 3" aria-label="Not tested yet" style="flex-shrink: 0; margin-top: 2px;"><circle cx="12" cy="12" r="9"/></svg></sc-if>
+<span style="color: {{c.textColor}};">{{c.text}}</span>
+</div>
+</sc-for>
+</section>
+
+<section aria-labelledby="act-h" style="display: flex; flex-direction: column;">
+<div style="display: flex; align-items: center; gap: 18px; border-bottom: 1px solid #2E2A24; margin-bottom: 18px;" role="tablist" aria-label="Issue sections">
+<button role="tab" aria-selected="true" id="act-h" style="border: 0; background: transparent; padding: 0 0 9px; font-size: 13px; font-weight: 500; color: #EDE7DA; box-shadow: inset 0 -2px 0 #EDE7DA;">Activity</button>
+<button role="tab" aria-selected="false" style="border: 0; background: transparent; padding: 0 0 9px; font-size: 13px; color: #A79E8C;">Checks <span style="display: inline-block; min-width: 16px; font-size: 11px; font-weight: 600; color: #D2614F; background: #3A231F; border-radius: 8px; padding: 0 5px; margin-left: 4px;">1</span></button>
+<button role="tab" aria-selected="false" style="border: 0; background: transparent; padding: 0 0 9px; font-size: 13px; color: #A79E8C;">Changes <span style="font-family: 'JetBrains Mono', monospace; font-size: 11.5px; color: #4FA36B; margin-left: 4px;">+84</span> <span style="font-family: 'JetBrains Mono', monospace; font-size: 11.5px; color: #D2614F;">−3</span></button>
+<button role="tab" aria-selected="false" style="border: 0; background: transparent; padding: 0 0 9px; font-size: 13px; color: #A79E8C;">AI review</button>
+</div>
+
+<ol style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 16px;">
+<li style="display: flex; gap: 10px; align-items: center; font-size: 12.5px; color: #A79E8C;"><span style="width: 20px; display: flex; justify-content: center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span><span><strong style="color: #EDE7DA; font-weight: 500;">Agent</strong> moved this to In progress</span><span style="color: #857E70;">10:01</span></li>
+
+<li style="display: flex; gap: 10px;"><span aria-hidden="true" style="width: 20px; height: 20px; border-radius: 6px; background: #2C2822; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#E2C07A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1.5"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg></span><div style="display: flex; flex-direction: column; gap: 4px; flex-grow: 1;"><div style="font-size: 12.5px;"><strong style="font-weight: 500;">Agent</strong><span title="AI teammate" style="margin-left: 5px; font-size: 10px; font-weight: 600; letter-spacing: 0.02em; color: #A79E8C; border: 1px solid #3D382F; border-radius: 4px; padding: 0 4px; vertical-align: 1px;">AI</span> <span style="color: #857E70; margin-left: 4px;">10:02</span></div><div style="line-height: 1.6; color: #D9D2C3;">Plan: add <code>appendEvent</code> to <code>src/ledger.ts</code> reading the last stored hash, reuse <code>hashEvent</code> from <code>src/hash.ts</code>, and run the tests after each change.</div></div></li>
+
+<li style="display: flex; gap: 10px; align-items: center; font-size: 12.5px; color: #A79E8C;"><span style="width: 20px; display: flex; justify-content: center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#D2614F" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/></svg></span><span>Checks: type check passed, <span style="color: #D2614F;">2 of 5 tests failed</span></span><span style="color: #857E70;">10:06</span></li>
+
+<li style="display: flex; gap: 10px;"><span aria-hidden="true" style="width: 20px; height: 20px; border-radius: 6px; background: #2C2822; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#E2C07A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1.5"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg></span><div style="display: flex; flex-direction: column; gap: 8px; flex-grow: 1;"><div style="font-size: 12.5px;"><strong style="font-weight: 500;">Agent</strong><span title="AI teammate" style="margin-left: 5px; font-size: 10px; font-weight: 600; letter-spacing: 0.02em; color: #A79E8C; border: 1px solid #3D382F; border-radius: 4px; padding: 0 4px; vertical-align: 1px;">AI</span> <span style="color: #A79E8C;">asked a question</span> <span style="color: #857E70; margin-left: 4px;">10:09</span></div><div style="border: 1px solid #3D382F; border-radius: 8px; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px;"><div style="line-height: 1.55;">What should the first event's previous hash be?</div><div style="display: flex; gap: 6px;"><button aria-pressed="true" style="border: 1px solid #EDE7DA; background: #EDE7DA; color: #14120F; padding: 5px 10px; border-radius: 6px; font-size: 12px;">64 zeros</button><button aria-pressed="false" style="border: 1px solid #3D382F; background: #1C1A16; color: #EDE7DA; padding: 5px 10px; border-radius: 6px; font-size: 12px;">Empty string</button><button aria-pressed="false" style="border: 1px solid #3D382F; background: #1C1A16; color: #EDE7DA; padding: 5px 10px; border-radius: 6px; font-size: 12px;">null</button></div><div style="font-size: 12px; color: #A79E8C;">Default: 64 zeros. The agent continues with it.</div></div></div></li>
+
+<li style="display: flex; gap: 10px;"><span style="width: 20px; height: 20px; border-radius: 10px; background: #3D382F; color: #EDE7DA; font-size: 9px; font-weight: 600; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">BK</span><div style="display: flex; flex-direction: column; gap: 4px; flex-grow: 1;"><div style="font-size: 12.5px;"><strong style="font-weight: 500;">Brennan Kelley</strong> <span style="color: #857E70; margin-left: 4px;">10:11</span><span style="color: #A79E8C; margin-left: 8px; font-size: 12px;">· seen by the agent</span></div><div style="line-height: 1.6; color: #D9D2C3;">64 zeros. Keep the error message format the same as <code>verify()</code>.</div></div></li>
+
+<li style="display: flex; gap: 10px;"><span aria-hidden="true" style="width: 20px; height: 20px; border-radius: 10px; background: #1E2B21; color: #7FC495; font-size: 8.4px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;">PN</span><div style="display: flex; flex-direction: column; gap: 4px; flex-grow: 1;"><div style="font-size: 12.5px;"><strong style="font-weight: 500;">Priya Nair</strong> <span style="color: #A79E8C;">Developer</span><span style="color: #857E70; margin-left: 6px;">10:14</span></div><div style="line-height: 1.6; color: #D9D2C3;"><a href="#" style="color: #4C8ED9; font-weight: 500;">@Agent</a> when <code>verify()</code> fails, include both the stored and the recomputed hash in the message. It saves a lookup when I review.</div></div></li>
+
+<li style="display: flex; gap: 10px;"><span aria-hidden="true" style="width: 20px; height: 20px; border-radius: 10px; background: #2C2822; color: #E2C07A; font-size: 8.4px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;">S</span><div style="display: flex; flex-direction: column; gap: 8px; flex-grow: 1;"><div style="font-size: 12.5px;"><strong style="font-weight: 500;">Seshat</strong><span title="AI teammate" style="margin-left: 5px; font-size: 10px; font-weight: 600; letter-spacing: 0.02em; color: #A79E8C; border: 1px solid #3D382F; border-radius: 4px; padding: 0 4px; vertical-align: 1px;">AI</span> <span style="color: #A79E8C;">suggested</span><span style="color: #857E70; margin-left: 6px;">10:15</span></div><div style="display: flex; align-items: center; gap: 12px; border-left: 2px solid #3D382F; padding: 2px 0 2px 12px;"><div style="flex-grow: 1; line-height: 1.55;"><div>Link <a href="#" style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #4C8ED9;">CHR-11</a> as related.</div><div style="font-size: 12px; color: #A79E8C;">Why: both change <code>verify()</code> in <code>src/ledger.ts</code>.</div></div><button style="border: 1px solid #3D382F; background: #1C1A16; color: #EDE7DA; padding: 4px 10px; border-radius: 6px; font-size: 12px;">Apply</button><button style="border: 0; background: transparent; color: #A79E8C; padding: 4px 6px; font-size: 12px;">Dismiss</button></div></div></li>
+
+<li style="display: flex; gap: 10px; align-items: center; font-size: 12.5px; color: #A79E8C;"><span style="width: 20px; display: flex; justify-content: center;"><span style="width: 8px; height: 8px; border-radius: 4px; background: #4C8ED9;" aria-hidden="true"></span></span><span><strong style="color: #EDE7DA; font-weight: 500;">Agent</strong> is running tests after editing <code>src/ledger.ts</code></span><span style="color: #857E70;">now</span></li>
+</ol>
+
+<div style="margin-top: 22px; border: 1px solid #3D382F; border-radius: 8px; display: flex; flex-direction: column;">
+<textarea aria-label="Comment" rows="3" placeholder="Leave a comment…" style="border: 0; resize: none; padding: 11px 12px; font-size: 13px; color: #EDE7DA; background: transparent; outline: none; border-radius: 8px;"></textarea>
+<div style="display: flex; align-items: center; gap: 8px; padding: 6px 8px 8px 12px;"><span style="font-size: 12px; color: #857E70;">Type @ to mention a person or the Agent. The Agent reads comments at its next step.</span><div style="flex-grow: 1;"></div><button style="border: 0; background: #EDE7DA; color: #14120F; padding: 6px 12px; border-radius: 6px; font-size: 12.5px; font-weight: 500;">Comment</button></div>
+</div>
+</section>
+</div>
+</main>
+
+<aside aria-label="Properties" style="width: 300px; flex-shrink: 0; border-left: 1px solid #2E2A24; padding: 20px 20px; display: flex; flex-direction: column; gap: 20px; background: #181612;">
+<div style="display: flex; flex-direction: column; gap: 10px;">
+<button style="display: flex; align-items: center; gap: 8px; border: 1px solid #3D382F; background: #1C1A16; color: #EDE7DA; padding: 6px 10px; border-radius: 6px; font-size: 12.5px; width: fit-content;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4C8ED9" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 9 9" stroke-width="3"/></svg>In progress<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#A79E8C" stroke-width="2" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
+<div style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #A79E8C;"><div style="flex-grow: 1; height: 4px; border-radius: 2px; background: #2E2A24;" aria-hidden="true"><div style="width: 40%; height: 4px; border-radius: 2px; background: #4C8ED9;"></div></div><span>Step 16 of 40</span></div>
+<div style="display: flex; gap: 6px;"><button style="flex-grow: 1; display: flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid #3D382F; background: #1C1A16; color: #EDE7DA; padding: 6px 0; border-radius: 6px; font-size: 12.5px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>Pause</button><button style="flex-grow: 1; border: 1px solid #3D382F; background: #1C1A16; color: #EDE7DA; padding: 6px 0; border-radius: 6px; font-size: 12.5px;">Take over</button></div>
+</div>
+<dl style="margin: 0; display: grid; grid-template-columns: 92px minmax(0, 1fr); row-gap: 12px; align-items: center; font-size: 12.5px;">
+<dt style="color: #A79E8C;">Owner</dt><dd style="margin: 0; display: flex; align-items: center; gap: 6px;"><span aria-hidden="true" style="width: 18px; height: 18px; border-radius: 9px; background: #3D382F; color: #EDE7DA; font-size: 7.6px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;">BK</span>Brennan Kelley</dd>
+<dt style="color: #A79E8C;">Delegate</dt><dd style="margin: 0; display: flex; align-items: center; gap: 6px;"><span aria-hidden="true" style="width: 18px; height: 18px; border-radius: 6px; background: #2C2822; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#E2C07A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1.5"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg></span>Agent<span title="AI teammate" style="margin-left: 5px; font-size: 10px; font-weight: 600; letter-spacing: 0.02em; color: #A79E8C; border: 1px solid #3D382F; border-radius: 4px; padding: 0 4px; vertical-align: 1px;">AI</span></dd>
+<dt style="color: #A79E8C;">Reviewer</dt><dd style="margin: 0; display: flex; align-items: center; gap: 6px;"><span aria-hidden="true" style="width: 18px; height: 18px; border-radius: 9px; background: #1E2B21; color: #7FC495; font-size: 7.6px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;">PN</span>Priya Nair</dd>
+<dt style="color: #A79E8C;">Reporter</dt><dd style="margin: 0; display: flex; align-items: center; gap: 6px;"><span aria-hidden="true" style="width: 18px; height: 18px; border-radius: 9px; background: #1D2A3A; color: #7FB0E8; font-size: 7.6px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;">DR</span>Dana Reyes</dd>
+<dt style="color: #A79E8C;">Type</dt><dd style="margin: 0; display: flex; align-items: center; gap: 6px;"><span style="width: 12px; height: 12px; border-radius: 3px; background: #4FA36B;" aria-hidden="true"></span>Story</dd>
+<dt style="color: #A79E8C;">Priority</dt><dd style="margin: 0;">Urgent</dd>
+<dt style="color: #A79E8C;">Sprint</dt><dd style="margin: 0;">Sprint 3</dd>
+<dt style="color: #A79E8C;">Epic</dt><dd style="margin: 0;">Ledger</dd>
+<dt style="color: #A79E8C;">Release</dt><dd style="margin: 0;">Release 1</dd>
+<dt style="color: #A79E8C;">Blocked by</dt><dd style="margin: 0;"><a href="#" style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #4C8ED9;">CHR-5</a> <span style="color: #4FA36B;">Done</span></dd>
+<dt style="color: #A79E8C;">Branch</dt><dd style="margin: 0; font-family: 'JetBrains Mono', monospace; font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="chronicle/chr-7-append">chronicle/chr-7-append</dd>
+<dt style="color: #A79E8C;">Watchers</dt><dd style="margin: 0; display: flex; align-items: center; gap: 0;"><span aria-hidden="true" style="width: 20px; height: 20px; border-radius: 10px; background: #3D382F; color: #EDE7DA; font-size: 8.4px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;">BK</span><span style="margin-left: -5px; display: inline-flex; border: 2px solid #181612; border-radius: 12px;"><span aria-hidden="true" style="width: 20px; height: 20px; border-radius: 10px; background: #1D2A3A; color: #7FB0E8; font-size: 8.4px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;">DR</span></span><span style="margin-left: -5px; display: inline-flex; border: 2px solid #181612; border-radius: 12px;"><span aria-hidden="true" style="width: 20px; height: 20px; border-radius: 10px; background: #1E2B21; color: #7FC495; font-size: 8.4px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;">PN</span></span></dd>
+</dl>
+</aside>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":960}}'>
+class Component extends DCLogic {
+  renderVals() {
+    function c(state, text) {
+      return { pass: state === 'pass', fail: state === 'fail', none: state === 'none', text: text,
+        textColor: state === 'none' ? '#A79E8C' : '#EDE7DA' };
+    }
+    return {
+      criteria: [
+        c('pass', 'Appending an event stores it with the hash of the previous event.'),
+        c('pass', 'The first event’s previous hash is 64 zeros.'),
+        c('fail', 'Changing a stored event makes verify() report its sequence number.'),
+        c('none', 'Appending 10,000 events takes under 2 seconds on this machine.')
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>
