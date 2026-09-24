@@ -103,10 +103,10 @@ Proposed reasons are marked *(proposed)*: they are the reviewer's reading of the
 > **Steering a running card** (a steer: free text delivered at the next step boundary as a first-class turn, ahead of tool results, recorded as `card/steer` with its text; it does not restart the card, rebuild the context pack or invalidate the prefix — it lands in the volatile tail. A scope amendment: adding or removing a file from the card's scope mid-card, with the Worker told what changed — the intervention that saves a card which is correct but boxed in.) Abort-with-reason and send-back cover v1, and steering is never required for correctness. When built: a steer is recorded before delivery, so the transcript stays reconstructible; it cannot relax a gate, widen a permission or accept work; and a steered card's outcome is still written to the competence model, flagged as steered, and excluded from unattended pass-rate statistics.
 
 **§7, "Reroute … and Explain"** — HD1:475. Replace "**Reroute** (force a model per card)" with "**Reroute** (force a model or arm for a card)" and append *(proposed)*:
-> Reroute waits for something to route to: v1 has one qualified Worker and one fixed tool set per card class (worker-loop M2), so it returns with a second qualified Worker ([worker-loop](worker-loop.md) §7, *Escalating the model*). The `reroute` route exists in code only ([runtime](runtime.md) §3).
+> Reroute waits for something to route to: v1 has one qualified Worker and one fixed tool set per card class (worker-loop M2), so it returns with a second qualified Worker ([worker-loop](../../design/specs/worker-loop.md) §7, *Escalating the model*). The `reroute` route exists in code only ([runtime](../../design/specs/runtime.md) §3).
 
-**§7, "Master board across workspaces and a goal view"** — HD1:497, PMFE:308, PMFE:540. Replace "Goals are CLI and API in v1; the dashboard shows burn-up and criteria only ([dashboard](dashboard.md))." — the dashboard spec shows no goal criteria and no goal burn-up — with *(proposed)*:
-> Goals are CLI and API in v1 (`sekhemet goal`, `goal status`; §2.11); the dashboard shows no goal yet — its burn-up is per cycle and per project ([dashboard](dashboard.md) rule 13, §2.8). The view waits until goals are created from the dashboard: v1's non-developer home is Status, which already shows the proven slices, the burn-up and *Needs you*.
+**§7, "Master board across workspaces and a goal view"** — HD1:497, PMFE:308, PMFE:540. Replace "Goals are CLI and API in v1; the dashboard shows burn-up and criteria only ([dashboard](../../design/specs/dashboard.md))." — the dashboard spec shows no goal criteria and no goal burn-up — with *(proposed)*:
+> Goals are CLI and API in v1 (`sekhemet goal`, `goal status`; §2.11); the dashboard shows no goal yet — its burn-up is per cycle and per project ([dashboard](../../design/specs/dashboard.md) rule 13, §2.8). The view waits until goals are created from the dashboard: v1's non-developer home is Status, which already shows the proven slices, the burn-up and *Needs you*.
 
 (Alternative: add a goal summary — statement, each criterion with its check and status — to dashboard §2.8 Status with an EARS criterion, and keep planner-pm's sentence.)
 
@@ -124,13 +124,13 @@ Add a matching row to §4 (built, `crawl4ai.ts`, `research/cli.ts:27`).
 > **Cache expiry by mutability**, not by file type: a repository file or tree at a pinned commit SHA — indefinite; official API documentation at a pinned package version — indefinite, evicted by size; official API documentation at an unversioned URL — 90 days; `llms.txt` and documentation sitemaps — 30 days; papers and preprints — 30 days; blog posts, forums and issue threads — 14 days; package registry metadata — 1 day; search result sets — 1 day. A stale entry is served at once and revalidated in the background, so a stale-but-present answer never costs a build a round trip. v1 keeps the research cache without expiry: every entry carries its fetch date and content hash (§2.7 rule 2) and a person can clear it; expiry arrives with the persistent project corpus, whose lookups it serves.
 
 **§7, "Hosted MCP sources"** — HD2:104, HD2:144. Append *(old text for the reason and the two services' roles)*:
-> — off by default because they send queries off the machine and do not exist in air-gapped mode. Context7 is a version-pinned documentation service (the documentation tier); DeepWiki answers questions about public repositories; both would be wired through the MCP client as ordinary tools ([extensibility](extensibility.md) item 22). v1 reads documentation from the installed dependency and the research cache first (§2.7 rule 2).
+> — off by default because they send queries off the machine and do not exist in air-gapped mode. Context7 is a version-pinned documentation service (the documentation tier); DeepWiki answers questions about public repositories; both would be wired through the MCP client as ordinary tools ([extensibility](../../design/specs/extensibility.md) item 22). v1 reads documentation from the installed dependency and the research cache first (§2.7 rule 2).
 
 And in PROVENANCE, row "Documentation lookup services (Context7, DeepWiki)": replace "Named by design-stage as sources; reached over the network only when the network policy allows" with "Not used: design-stage Later (hosted MCP sources)", since no code reaches either service.
 
 **§7, "PDF extraction … trafilatura … SearXNG"** — HD2:122. Append a reason for pypdfium2 and Docling *(proposed)*: "— proposals needing the owner's yes (PROVENANCE: 'Not used: proposed'); each is a Python package, so it would run as a separate process (PROVENANCE rule 1)". Also remove "and **SearXNG** as a self-hosted provider (optional today)": §2.7 rule 11 already makes a self-hosted SearXNG a v1 provider the person configures, so listing it as Later contradicts §2.
 
-**§7, "Research skills"** — HD2:149. Append *(proposed)*: "— a research playbook is a skill, and v1 ships the skill mechanism without a catalogue ([extensibility](extensibility.md) §7); until one exists, deep research decomposes each brief itself (§2.7 rule 3)."
+**§7, "Research skills"** — HD2:149. Append *(proposed)*: "— a research playbook is a skill, and v1 ships the skill mechanism without a catalogue ([extensibility](../../design/specs/extensibility.md) §7); until one exists, deep research decomposes each brief itself (§2.7 rule 3)."
 
 ### extensibility.md
 
@@ -156,20 +156,20 @@ In the table, change the *Frontend design guidance* row's third cell to "For Sek
 ### gates.md
 
 **§7, new bullet** — HD2:220 (the audit's #108). Add:
-> **A Java/Kotlin gate template** (static: javac, checkstyle; functional: JUnit; mutation: PIT when installed) — rule 23a lists it as not built. Later: its language server starts slowly, and no v1 target is a JVM project ([DEC-20](../DECISIONS.md#dec-20)).
+> **A Java/Kotlin gate template** (static: javac, checkstyle; functional: JUnit; mutation: PIT when installed) — rule 23a lists it as not built. Later: its language server starts slowly, and no v1 target is a JVM project ([DEC-20](../../design/DECISIONS.md#dec-20)).
 
 ### security.md
 
-**Rule 43, last sentence** — HD2:41. Replace "A structural diff preview joins when difftastic does ([gates](gates.md) §7)." — difftastic already runs in v1 Review (review-git rule 6; SEC-19a) — with *(proposed)*:
+**Rule 43, last sentence** — HD2:41. Replace "A structural diff preview joins when difftastic does ([gates](../../design/specs/gates.md) §7)." — difftastic already runs in v1 Review (review-git rule 6; SEC-19a) — with *(proposed)*:
 > A structural diff preview joins once review-git's difftastic path writes nothing to the repository (RG-S5-19): today it can run `git add -A` or `checkout` in the repository root when the worktree is gone (review-git §4), which an audit of an untrusted repository must never do.
 
 ### integrations.md
 
 **§7, "Comment commands … `workflow_dispatch`"** — HD2:72, HD2:75. Append *(proposed)*:
-> `/plan`, `/split` and `/estimate` act on a linked card from outside the board, so they wait for one identity per item on every path and the accepter rules of a team server (items 8, 24–28); v1 takes `/review` (item 12), which creates a card rather than acting on one. `workflow_dispatch` needs a self-hosted GitHub runner on the person's machine beside the Worker's sandbox; v1 starts unattended work only from its own queue, within the declared hours ([runtime](runtime.md)).
+> `/plan`, `/split` and `/estimate` act on a linked card from outside the board, so they wait for one identity per item on every path and the accepter rules of a team server (items 8, 24–28); v1 takes `/review` (item 12), which creates a card rather than acting on one. `workflow_dispatch` needs a self-hosted GitHub runner on the person's machine beside the Worker's sandbox; v1 starts unattended work only from its own queue, within the declared hours ([runtime](../../design/specs/runtime.md)).
 
 **§7, "Review comments → repair subtasks"** — HD2:83, HD2:205, INV:O89. Append *(proposed)*:
-> A repair subtask that pushes and resolves a thread would let the Worker change a PR after a person accepted the card; in v1 a person answers a PR comment by sending the card back with a note ([review-git](review-git.md) §2.4), and the card is Done only when the PR merges (item 15).
+> A repair subtask that pushes and resolves a thread would let the Worker change a PR after a person accepted the card; in v1 a person answers a PR comment by sending the card back with a note ([review-git](../../design/specs/review-git.md) §2.4), and the card is Done only when the PR merges (item 15).
 
 (review-git §7's "Pull-request review comments flowing back into the card thread" bullet should point to this reason.)
 
@@ -181,9 +181,9 @@ In the table, change the *Frontend design guidance* row's third cell to "For Sek
 ### dashboard.md
 
 **§7, "A native wrapper, an IDE extension, a TUI …"** — HD2:312. Append *(old reason, restated)*:
-> The dashboard is a local web app on loopback, so it already works over an SSH tunnel and on a headless box ([runtime](runtime.md) item 23); a native wrapper adds packaging, not capability. The IDE extension and TUI are SPINE's "Not in v1".
+> The dashboard is a local web app on loopback, so it already works over an SSH tunnel and on a headless box ([runtime](../../design/specs/runtime.md) item 23); a native wrapper adds packaging, not capability. The IDE extension and TUI are SPINE's "Not in v1".
 
-**§7, "Retry with planner"** — PMFE:534. Append *(proposed)*: "— in v1 Send back returns the card to Ready with the person's note in the next attempt's dossier ([review-git](review-git.md) §2.4), which is the retry; a second retry path from Review would re-run without the note that makes the retry measurable. The `run` route itself is v1 ([runtime](runtime.md) §3)."
+**§7, "Retry with planner"** — PMFE:534. Append *(proposed)*: "— in v1 Send back returns the card to Ready with the person's note in the next attempt's dossier ([review-git](../../design/specs/review-git.md) §2.4), which is the retry; a second retry path from Review would re-run without the note that makes the retry measurable. The `run` route itself is v1 ([runtime](../../design/specs/runtime.md) §3)."
 
 **§7, "goal view"** — HD1:497, PMFE:308, PMFE:540. Append the same reason as planner-pm §7 above, and note that Registry is built as Configuration (§2.16).
 

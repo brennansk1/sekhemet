@@ -45,8 +45,8 @@ Components the harness depends on, reimplements, calls as a separate program, or
 | LSP symbol tooling reference (multilspy; Serena's SolidLSP) | MIT (multilspy, Serena's SolidLSP); GPL-3.0-or-later (the Serena application) | Patterns reimplemented in TypeScript; no Serena application code is used or copied, which keeps its GPL out (the 2026-09-17 row said MIT for all of Serena; its licence file is per component). If removed: nothing |
 | Line pruner (SWE-Pruner / Pro) | MIT | Not adopted: deferred behind its null baseline (DECISIONS DEC-21); a keyword heuristic is used. If removed: nothing. (Not re-checked 2026-09-22.) |
 | Grammar-constrained decoding (XGrammar / llguidance) | Apache-2.0 / MIT | Not used: tool calls rely on the inference server; hard schema constraints are a per-model choice (DEC-22). If removed: nothing |
-| Browser automation (playwright) | Apache-2.0 | Not a dependency: the visual gate drives a local headless Chromium directly, and uses a Playwright-cached Chromium if one is installed; adding the library is a proposal awaiting the owner (ruling R16). If removed: nothing |
-| Accessibility engine (axe-core) | MPL-2.0 | Not used: proposed as an unmodified development dependency, awaiting the owner (weak copyleft, file-level; unmodified use keeps it out of scope of rule 1). If removed: the in-house accessibility subset remains |
+| Browser automation (playwright) | Apache-2.0 | Not a dependency: the visual gate drives a local headless Chromium directly, and uses a Playwright-cached Chromium if one is installed; adding the library was **approved 2026-09-24** (DEC-29 O5); not yet added. If removed: nothing |
+| Accessibility engine (axe-core) | MPL-2.0 | Not used: **approved 2026-09-24** (DEC-29 O5) as an unmodified development dependency, not yet added; use inside the product's visual gate is owner decision O27 (default: not in v1) (weak copyleft, file-level; unmodified use keeps it out of scope of rule 1). If removed: the in-house accessibility subset remains |
 | Image diffing (pixelmatch) | ISC | Not used: proposed for the visual gate's element screenshots, awaiting the owner (ruling R16). If removed: the in-house PNG comparison remains |
 | Mutation testing tools (Stryker, mutmut, cargo-mutants, PIT) | Apache-2.0 / BSD-3-Clause / MIT / Apache-2.0 | Not used today: the harness's own diff-scoped mutation step covers TypeScript, and the Python, Rust and Go gate templates (`packages/gates/src/templates.ts`) name no mutation tool. Running each language's tool as an optional subprocess when installed, with the evidence saying when it was not, is a gap owned by gates (ruling R14). If removed: that language has no mutation score and the evidence says so |
 | Secret scanner (gitleaks) | MIT | Subprocess over the changed files when installed, beside the built-in scanner (`packages/gates/src/builtin.ts:193-200`). If removed: the built-in scanner alone |
@@ -55,8 +55,6 @@ Components the harness depends on, reimplements, calls as a separate program, or
 | Output condensing (RTK) | Apache-2.0 | Strategies reimplemented natively (context owns condensing); the RTK binary is never called. If removed: nothing |
 | Git forge integration (Forgejo) | GPL-3.0-or-later | Separate service over its HTTP API. If removed: the Forgejo adapter has no target; GitHub is unaffected. (Not re-checked 2026-09-22.) |
 | PM reference implementation (Taskmaster) | MIT + Commons Clause | Reference patterns only; no code copied. If removed: nothing |
-| Toolchain version manager (mise) | MIT | Not used; a proposal for pinning toolchains per project. If removed: nothing |
-| Git hooks manager (lefthook) | MIT | Not used; the repository's own `.githooks/` are used instead. If removed: nothing |
 | TypeScript compiler (typescript) | Apache-2.0 | Build, the parse gate and the repo map's facts (DEC-20). If removed: no build; there is no fallback |
 | Test runner (vitest) | MIT | Development dependency |
 | Linter and formatter (@biomejs/biome) | MIT OR Apache-2.0 | Development dependency |
@@ -69,7 +67,7 @@ Components the harness depends on, reimplements, calls as a separate program, or
 | Inference engine (Ollama) | MIT | Separate process over HTTP; an optional engine behind the same adapter (`packages/models/src/http_adapter.ts`). If removed: llama-server serves every role |
 | Apple Silicon inference (MLX, mlx-lm) | MIT | Not used: an engine label only (`packages/models/src/bakeoff.ts:17`); an adapter is Later (ruling R3). If removed: nothing |
 | Model swapping proxy (llama-swap) | MIT | Not used: a minimal router is built instead (models). If removed: nothing |
-| Server inference engines (vLLM, SGLang) | Apache-2.0 | Proposals for a multi-user NVIDIA team server, as separate processes over an OpenAI-compatible API (DESIGN_RESEARCH_TEAM_SERVER); awaiting the owner. If removed: llama-server |
+| Server inference engine (SGLang) | Apache-2.0 | A proposal for a multi-user NVIDIA team server, as a separate process over an OpenAI-compatible API (DESIGN_RESEARCH_TEAM_SERVER); awaiting the owner (vLLM, above, is approved). If removed: vLLM or llama-server |
 | Linux sandbox (bubblewrap, `bwrap`) | LGPL-2.1 (licence file) | Called as a separate program, never linked; the Linux confinement mechanism (security, DEC-21). If removed: Linux has no confinement and cards fail closed |
 | Headless browser (Chromium) | BSD-3-Clause | A separate process driven over the DevTools protocol by the visual gate and the `browse` tool, confined (security item 4). If removed: visual checks cannot run and the card says so |
 | Push notifications (ntfy) | Apache-2.0 and GPL-2.0 (dual) | The user's own separate service, reached over HTTP; never embedded (rule 1 covers the GPL option). If removed: Gotify or Slack, or no push |
@@ -86,7 +84,7 @@ Components the harness depends on, reimplements, calls as a separate program, or
 | PDF to Markdown (PyMuPDF4LLM) | AGPL-3.0 | Not used and never distributed; only ever as a separate, user-installed process (rule 1). If removed: nothing |
 | Offline documentation service (DevDocs) | MPL-2.0 | Not used: the old air-gap kit named it; the kit's own docs bundle is used instead (security item 48). If removed: nothing |
 | Offline documentation service (Kiwix, kiwix-tools) | GPL-3.0 | Not used: as above; a separate service only, if ever (rule 1). If removed: nothing |
-| Documentation lookup services (Context7, DeepWiki) | MIT (Context7); DeepWiki is a hosted service with no code used | Named by design-stage as sources; reached over the network only when the network policy allows. If removed: the version-pinned local docs |
+| Documentation lookup services (Context7, DeepWiki) | MIT (Context7); DeepWiki is a hosted service with no code used | Not used: design-stage Later (hosted MCP sources); no code reaches either service. If removed: nothing |
 | Parser generator (tree-sitter, `web-tree-sitter`) | MIT | Not used in v1 (DEC-20); the proposed parser for languages other than TypeScript. If removed: TypeScript-only facts |
 | Structural search (ast-grep) | MIT | Not used: a proposed structural search and codemod tool (Later in worker-loop and context). If removed: nothing |
 | Text search (ripgrep) | Unlicense OR MIT | Not called: `grep_search` is implemented in the harness. If removed: nothing |
@@ -95,9 +93,9 @@ Components the harness depends on, reimplements, calls as a separate program, or
 | Changelog generation (git-cliff) | MIT OR Apache-2.0 | Subprocess when installed, for `sekhemet dev release` (`packages/sync/src/repo_tools.ts:92`). If removed: the built-in grouping |
 | Local CI runner (nektos act) | MIT | Subprocess for `sekhemet dev ci`; typed `unavailable` when missing (`repo_tools.ts:204-215`). If removed: CI runs only in CI |
 | Package registry mirrors (verdaccio; devpi) | MIT; MIT | Not used: mirror services are Later (security §7); v1 ships the lockfile allowlist. If removed: nothing |
-| Container log viewer (Dozzle) | MIT | Not used: named by the old design for container logs; no container runs in v1. If removed: nothing |
+| Container log viewer (Dozzle) | MIT | Not used: named by the old design for container logs on service hosts; v1 runs one container on a team server (DEC-29 O9), whose logs `docker logs` already shows. If removed: nothing |
 | Minimal agent reference (mini-SWE-agent) | MIT | Reference only; no code used. If removed: nothing |
-| Toolchain and hook managers (mise; lefthook) | MIT; MIT | Not used: the old design named them for pinned toolchains and git hooks; Sekhemet's own git never runs hooks (security item 23). If removed: nothing |
+| Toolchain and hook managers (mise; lefthook) | MIT; MIT | Not used. lefthook: Sekhemet's own git never runs hooks (security item 23), and the repository's own `.githooks/` serve its development. mise: gates run a project's own tools as they are, with the team's own configuration (gates rule 23a), so the harness does not pin toolchains for a project. If removed: nothing |
 | Benchmark and spelling tools (hyperfine; typos) | MIT OR Apache-2.0 | Not used: the old design's benchmark gate runner and spelling hygiene check; neither gate exists in gates today. If removed: nothing |
 | JSON and YAML query (jq; yq) | MIT; MIT | Not used by the harness. If removed: nothing |
 | Continuous SQLite replication (Litestream) | Apache-2.0 | Proposal for a company server's backups (runtime §7); single machines use `node:sqlite` backup. If removed: the built-in backup |

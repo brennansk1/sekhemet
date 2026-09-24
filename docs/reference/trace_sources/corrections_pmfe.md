@@ -299,11 +299,11 @@ Old text is quoted from `fb59ba2`. "Add" means insert into the named item; "repl
 
 **§9 Evidence and rationale ("Resolved drift and deliberate reversals")**
 - **D47** add these bullets (each: what changed, why):
-  - (PMFE:86, 116, 338, 373; with P2 for PMFE:57) "Copy examples use a 40-step budget (*8 of 40 steps*, *step 5 of 40*), not the old mockups' 32 — 40 is the one step cap the planner enforces (`INVEST_MAX_STEPS`, [planner-pm §2.4](planner-pm.md)), so an example never shows a budget no card can have."
+  - (PMFE:86, 116, 338, 373; with P2 for PMFE:57) "Copy examples use a 40-step budget (*8 of 40 steps*, *step 5 of 40*), not the old mockups' 32 — 40 is the one step cap the planner enforces (`INVEST_MAX_STEPS`, [planner-pm §2.4](../../design/specs/planner-pm.md)), so an example never shows a budget no card can have."
   - (PMFE:282, 517) "The verification widths are 1440×900, 1100×800 and 400×812, not 1024×768 and 375×812 — 1100 sits inside the 1024–1279 band whose labelled sidebar is new (§2.2.2), and 400 is the width at which Status must work for a non-developer (§2.8.8)."
   - (PMFE:340, 341) "The default route follows the first-run role (§2.2.5) rather than always being Review-or-Board — a non-developer's home is Status, and a beginner's is the Board with Learn on; *I write code* keeps the old rule."
   - (PMFE:441, 455) "Runs and Playbook have no empty state: each is hidden until it has content (§2.2.1), so their old empty copy (with `sekhemet queue --auto-accept`) is gone — a hidden view is never a dead link, and no path ends in a terminal."
-  - (PMFE:453, 454) "The old Playbook table (instruction, trigger gate, teaching card, since, pattern) and its *Promote* / *Dismiss* of suggested rules are replaced by the learning view (§2.11) — rules are approved, scoped and credited from the learning store ([DEC-28](../DECISIONS.md#dec-28--one-rule-for-admitting-what-the-system-learns)), not promoted from a candidates file with one trigger gate."
+  - (PMFE:453, 454) "The old Playbook table (instruction, trigger gate, teaching card, since, pattern) and its *Promote* / *Dismiss* of suggested rules are replaced by the learning view (§2.11) — rules are approved, scoped and credited from the learning store ([DEC-28](../../design/DECISIONS.md#dec-28--one-rule-for-admitting-what-the-system-learns)), not promoted from a candidates file with one trigger gate."
   - (PMFE:415, if D6 is not restored) "On hold's count is no longer amber: <reason>."
 
 ### docs/design/specs/planner-pm.md
@@ -314,7 +314,7 @@ Old text is quoted from `fb59ba2`. "Add" means insert into the named item; "repl
 ### docs/design/PM_CONTRACT.md
 
 - **C1** (PMFE:258) §3 `PmMessage` — replace `cites?: { cardId?: string; runId?: string; evidenceId?: string }[];` with `cites?: { cardId?: string; runId?: string; evidenceId?: string; url?: string; label?: string }[];   // url + label: a research source, rendered in the Sources list (http/https only)`. (PM:544.)
-- **C2** (PMFE:255) §3 Integrations — add `research-web` to the "now" ids, and add the line: "`PUT /api/integrations/research-web` with `{ enabled }` returns the entry; the server's `detail` names the search provider or says how to configure one ([design-stage](specs/design-stage.md) §3)." (PM:543.)
+- **C2** (PMFE:255) §3 Integrations — add `research-web` to the "now" ids, and add the line: "`PUT /api/integrations/research-web` with `{ enabled }` returns the entry; the server's `detail` names the search provider or says how to configure one ([design-stage](../../design/specs/design-stage.md) §3)." (PM:543.)
 - **C3** (PMFE:197) §5 roadmap table — add a column **What leaves the machine**: GitHub Issues + Projects: *Card fields, to the chosen repository*; GitHub PR on accept: *Branch, diff, gate results*; Jira and Linear import/export: *Nothing (you upload the file)*; Slack for the PM: *Those messages*; Jira / Linear live sync: *Card fields*; GitHub Actions gate mirror: *Gate results*; Microsoft Teams: *Those messages*; Slack replies: *The conversation*; Sentry / Datadog / PagerDuty: *Nothing (data comes in)*; Notion / Confluence: *Those pages*. (PM:426–438.)
 - **C4** (PMFE:231) §6 Endpoints — replace "`POST /api/learning/rules/:id/(approve|retire)`" with "`POST /api/learning/rules/:id/approve` with `{ reach?: "project" | "global" }` (default `project`; `global` stores the rule in the user directory), `POST /api/learning/rules/:id/retire`". (PM:503.)
 

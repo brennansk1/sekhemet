@@ -149,7 +149,7 @@ Sekhemet runs cards unattended for hours on a machine people also use. The runti
 | `SandboxOptions.maxBufferBytes` (default 10 MB, `DEFAULT_MAX_BUFFER`) | `packages/sandbox/src/types.ts:13`; `executor.ts:11, 196, 289-341` |
 | `resolveStaticPath`, `MIME` | `apps/harness/src/server.ts:127-172` |
 | SSE events: `append` (with `replay: {from, through, complete}`), `tokens` (`{cardId, text}`); live token file `.sekhemet/live/<card>.txt` | `server.ts:563-600, 1145-1170`; `liveTokenWriter` (`execute.ts:683`) |
-| Request bodies: `cards/:id/split` takes `{parts: [{title, …}]}` (at least two; the SPIDR strategy is the planner's, [planner-pm](planner-pm.md)); `cards/:id/run` takes none | `rest_extra.ts:158-200` |
+| Request bodies: `cards/:id/split` takes `{parts: [{title, …}]}` (at least two; the SPIDR strategy is the planner's, [planner-pm](planner-pm.md)); `cards/:id/run` takes none and answers 202 `{ started, pid, cardId }`, or 409 while a queue holds the lease (RUN-4) | `rest_extra.ts:158-203` |
 
 **Routes today** (all under `/api` unless noted; mutations are POST, PUT or DELETE):
 - Board and cards: `board`, `workspace`, `projects`, `projects/:id`, `cards/:id`, `cards/:id/explain`, `cards/:id/attempts`, `cards/:id/transcript`, `cards/:id/diff`, `cards/:id/review`, `cards/:id/attachments`, `cycles`, `goals`, `decisions`, `planner/decisions`, `assumptions`, `recurring`, `wip`, `queue`.
@@ -212,7 +212,7 @@ The review's runtime items had no programme ID; they are proposed here.
 - **RUN-1** WHEN `daemon stop` runs and the recorded pid now belongs to a process with a different start time THE SYSTEM SHALL signal nothing, remove the stale file and print "Not running".
 - **RUN-2** WHEN two processes try to take the runner lease at the same moment THE SYSTEM SHALL grant it to exactly one.
 - **RUN-3** WHEN `sekhemet run <card>` starts while another runner holds the lease THE SYSTEM SHALL exit 1 naming the holder's pid, and run nothing.
-- **RUN-4** WHEN `POST /api/cards/:id/run` starts a run THE SYSTEM SHALL have the run take the lease and write its output to a log file whose path the response returns.
+- **RUN-4** WHEN `POST /api/cards/:id/run` is called and no runner holds the lease THE SYSTEM SHALL launch `sekhemet run <card>` detached and answer 202 `{ started: true, pid, cardId }` (`rest_extra.ts:192-203`) — the launched run's pid, not the old design's `{ attemptId }`, because the run creates its attempt after the response — and the launched run SHALL take the lease and write its output to a log file under `.sekhemet/logs/` (rule 6); WHEN a runner (a queue) holds the lease THE SYSTEM SHALL answer 409 naming the holder's pid and launch nothing.
 - **RUN-5** WHEN the lease holder was killed with SIGKILL THE SYSTEM SHALL let the next runner take the lease without manual cleanup.
 
 ### NEW-runtime-2 — kills that reach every descendant

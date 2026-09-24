@@ -60,7 +60,7 @@ The 2026-09-17 design listed these as "finalized resolutions" citing work the Ph
 | Task synthesis from git history | Mine closed PRs with code and test changes; require fail-to-pass (the pre-change commit fails, the change passes); scrub paths from problem statements; isolate each task's dependencies in an ephemeral worktree | Open; sources to verify |
 | Clarify versus assume | Convert a category of assumption into a question when people override it more than a threshold (proposed 15%). Measure both failure modes: questions a person says the harness "should have known" (asked too much), and send-backs whose reason was knowable before the card started (asked too little) | Open; threshold unmeasured |
 | Prompt-injection defence | Architectural containment, not model filtering — confirmed by 2026 literature (research groups B and D) | **Direction settled**; implementation is COVERAGE S3–S3c |
-| Layout-defect detection | Playwright locator geometry, element screenshots, axe-core | Open; Playwright and axe-core are proposals awaiting the owner |
+| Layout-defect detection | Playwright locator geometry, element screenshots, axe-core | Open; Playwright and axe-core approved (DEC-29 O5); axe-core in the product gate is O27 |
 | Long-horizon reliability for open-weight Workers | Thin cards, fresh context, capped retries with gate verification | Direction settled; measured by the suite |
 | Project-building measure | Candidates: Commit0 lite, ProjDevBench, DevBench, NL2Repo (research group D) | Open — COVERAGE T7 |
 

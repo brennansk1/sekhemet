@@ -168,9 +168,12 @@ The integration tiers (now, next, later) and the reasons for GitHub first (Stack
 
 **Merge-aware Accept.**
 - **INT-12** WHEN a card is accepted with PR-on-accept THE SYSTEM SHALL open a PR against the project's configured integration branch on the configured remote, and SHALL keep the card in Review held `awaitingMerge`, not Done — including when the integration branch is not the repository's default branch.
+- **INT-12a** WHEN PR-on-accept opens a pull request THE SYSTEM SHALL open it as a draft whose body is the evidence summary: the gates passed, diff stats, coverage and the abandoned attempts.
+- **INT-12b** WHEN every check run on that pull request reports `success` THE SYSTEM SHALL mark it ready for review and request the reviewers `CODEOWNERS` names for its changed files.
 - **INT-13** WHEN that PR is merged THE SYSTEM SHALL mark the card Done and record the merge commit.
 - **INT-14** WHEN that PR is closed without merging THE SYSTEM SHALL clear the card's `awaitingMerge` hold and its accepter, keep it in Review counted toward the WIP limit, and record who closed the PR.
 - **INT-15** WHEN `gh` is not installed or not logged in THE SYSTEM SHALL say which, and SHALL leave the card in Review.
+- **INT-16a** WHEN a signed `pull_request.opened` webhook arrives for a pull request authored by Dependabot or Renovate THE SYSTEM SHALL create a verification card that runs the project's full gates on the pull request's head; WHEN every gate passes and the project's policy allows auto-merge THE SYSTEM SHALL enable auto-merge on it.
 - **INT-16** WHEN a dependency-bot PR passes every gate and the project's policy does not allow auto-merge THE SYSTEM SHALL leave it for a person.
 
 **One notifier.**
@@ -226,8 +229,8 @@ The `gh` transport and `gh pr create` are tested against a fake `gh` on `PATH`, 
 
 - **Jira and Linear live sync** through `jira.js` and `@linear/sdk` (approved in [DEC-08](../DECISIONS.md#dec-08) for when the workstream arrives).
 - **Octokit** in place of the hand-rolled client (approved, DEC-08) — may land with P9 if it is the cheaper route to INT-2/INT-8.
-- **Review comments → repair subtasks**, thread replies and `resolveReviewThread`; `openThreads`/`resolveThread` are cut until then (reachable only from tests).
-- **Comment commands** `/plan`, `/split`, `/estimate`, with a reply in the thread; **`workflow_dispatch`** enqueuing a local run within the declared hours.
+- **Review comments → repair subtasks**, thread replies and `resolveReviewThread`; `openThreads`/`resolveThread` are cut until then (reachable only from tests). A repair subtask that pushes and resolves a thread would let the Worker change a pull request after a person accepted the card; in v1 a person answers a PR comment by sending the card back with a note ([review-git](review-git.md) §2.4), and the card is Done only when the PR merges (item 15).
+- **Comment commands** `/plan`, `/split`, `/estimate`, with a reply in the thread; **`workflow_dispatch`** enqueuing a local run within the declared hours. `/plan`, `/split` and `/estimate` change a linked card from outside the board, so they need the item's one external identity on every path (item 8, P9) and the commenter mapped to a person who holds the right to change it (items 24–26); v1 takes `/review` (item 12), which creates a card rather than changing one. `workflow_dispatch` was the old design's opt-in event from a self-hosted GitHub runner on the person's machine, beside the Worker's sandbox; v1 starts unattended work only from its own queue, within the declared hours ([runtime](runtime.md)).
 - **Slack replies** (talk to Seshat from a thread; Bolt Socket Mode needs no public ingress), **Microsoft Teams**; **Sentry, Datadog, PagerDuty** as bug-card proposals; **Notion, Confluence** publishing (PM_CONTRACT §5 "next" and "later").
 - **CI as a gate source** — `sekhemet dev ci` runs a workflow through `act` by hand; a gate rung that runs it, or reads the PR's existing check runs, is later ([gates](gates.md)).
 - **Releases** — `sekhemet dev release` proposes a version and changelog (git-cliff, Conventional Commits) and tags on `--confirm`; publishing a GitHub Release is later.

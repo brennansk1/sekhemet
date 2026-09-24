@@ -24,23 +24,20 @@ Rows that rested on a decided: no "plan exists" condition (DEC-29; kernel K-N5-8
 
 | Source | Items | Not `carried` when traced | `carried` | `gap` | `deliberate` | `later` | `still-weaker` | `still-missing` |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `HARNESS_DESIGN.md` | 1109 | 335 | 796 | 127 | 99 | 87 | 0 | 0 |
-| `INTEGRATION_REVIEW.md` | 75 | 65 | 20 | 51 | 3 | 1 | 0 | 0 |
+| `HARNESS_DESIGN.md` | 1109 | 335 | 604 | 296 | 115 | 94 | 0 | 0 |
+| `INTEGRATION_REVIEW.md` | 75 | 65 | 12 | 59 | 3 | 1 | 0 | 0 |
 | `PM_DESIGN.md` | 290 | 104 | 258 | 5 | 21 | 6 | 0 | 0 |
 | `FRONTEND_DESIGN.md` | 256 | 93 | 204 | 17 | 28 | 7 | 0 | 0 |
-| The three `FEATURE_INVENTORY` files | 418 | 126 | 291 | 73 | 41 | 13 | 0 | 0 |
-| **All** | 2148 | 723 | 1569 | 273 | 192 | 114 | 0 | 0 |
+| The three `FEATURE_INVENTORY` files | 418 | 126 | 225 | 126 | 53 | 14 | 0 | 0 |
+| **All** | 2148 | 723 | 1303 | 503 | 220 | 122 | 0 | 0 |
 
 ## 2. Still open
 
-None. The three rows the verification left open were resolved by the lead on 2026-09-24:
-- **HD2:488** → `gap`: [planner-pm](../design/specs/planner-pm.md) NEW-planner-pm-8 (dependencies only from what a card declares, names or imports; never a blanket wait on a types card).
-- **PMFE:221** → `deliberate`: [dashboard](../design/specs/dashboard.md) §2.11 now shows DEC-28's paired-credit retirement; PM_CONTRACT §6 marks the counts as today's behaviour with the target in its §0.
-- **INV:O104** → `deliberate`: [DECISIONS](../design/DECISIONS.md) DEC-25 R29 (the `relay-finisher` role left with the relay protocol; `suspended-quota` stays).
+**No row is missing or unaccounted for.** Every row has a final status. What remains is detail: the full checks of 2026-09-25 wrote exact text to restore for some rows whose status is now correct (a criterion for a `gap` row, a lost field name, a reason). Those restorations for the specs the first workstreams use (security, extensibility, PROVENANCE) and every contradiction they found are applied. The rest are listed, by spec and section, in the "Spec restorations" sections of [corrections_hd_full.md](trace_sources/corrections_hd_full.md) and [corrections_inv_full.md](trace_sources/corrections_inv_full.md), and are part of each spec's readiness check: a workstream applies its spec's outstanding restorations before it starts (DEFINITION_OF_DONE §5.2).
 
 ## 3. Moved to Later (confirmed by the owner, DEC-29, 2026-09-24; corrected 2026-09-25)
 
-114 items. Each sits in the named document's Later list with its reason, and returns only with the evidence or version that reason names. Grouped by the document that holds them now.
+122 items. Each sits in the named document's Later list with its reason, and returns only with the evidence or version that reason names. Grouped by the document that holds them now.
 
 **context** (10) — HD1:26 Tree-sitter symbol-level support is v2; HD1:217 Line-level pruning with SWE-Pruner on gate host; HD1:236 MLX path: unified memory reuse, MTPLX native MTP heads; HD1:247 Learned line pruning (SWE-Pruner Pro); HD1:271 0.6B skimmer strips 40–60% of code lines; HD1:281 Exemplar source: accepted cards and fixing commits from repo's own git; HD1:599 Offline optimiser in idle hours with planner as reflection engine; kee; INV:C3 SWE-Pruner line pruning; INV:E9 Loop 3 prompt evolution; INV:O53 Prompt optimiser kill switch < 5%
 
@@ -50,35 +47,37 @@ None. The three rows the verification left open were resolved by the lead on 202
 
 **SPINE** (2) — HD1:150 IDE extension (VS Code over ACP) and TUI; HD2:437 Phase 4 deferred: RBAC and SSO, extra tracker adapters, multi-machine 
 
-**extensibility** (14) — HD1:155 Still deferred: plugin marketplace; HD1:165 Plugin isolation and third-party versioning deferred past v1; HD2:62 An editor-protocol surface so external editors can drive a card; HD2:161 Commands: Markdown templates expanding into a card template or planner; HD2:164 ACP lets VS Code, JetBrains and Neovim open a card, stream steps, insp; HD2:171 Plugin API: register services, tools, gates, hooks, sync adapters or U; HD2:172 Plugin signing and compatibility contracts deferred until the kernel A; HD2:245 Skill sources: Anthropic official (Skill Creator, document skills, fro; HD2:246 Per-skill pull/adapt/build decisions (19 rows, e.g. brainstorming → in; HD2:251 Every skill ships with at least one eval card; HD2:451 Open: plugin isolation and third-party signing; INV:K10 Reversible plugin manager; INV:H14 ACP editor surface; INV:O60 Every skill ships an eval card
+**extensibility** (15) — HD1:155 Still deferred: plugin marketplace; HD1:165 Plugin isolation and third-party versioning deferred past v1; HD2:62 An editor-protocol surface so external editors can drive a card; HD2:161 Commands: Markdown templates expanding into a card template or planner; HD2:164 ACP lets VS Code, JetBrains and Neovim open a card, stream steps, insp; HD2:171 Plugin API: register services, tools, gates, hooks, sync adapters or U; HD2:172 Plugin signing and compatibility contracts deferred until the kernel A; HD2:245 Skill sources: Anthropic official (Skill Creator, document skills, fro; HD2:246 Per-skill pull/adapt/build decisions (19 rows, e.g. brainstorming → in; HD2:251 Every skill ships with at least one eval card; HD2:451 Open: plugin isolation and third-party signing; INV:K10 Reversible plugin manager; INV:H14 ACP editor surface; INV:H16 Slash commands (`/onboard` … `/goal`); INV:O60 Every skill ships an eval card
 
 **integrations** (13) — HD1:156 Still deferred: remote control from mobile beyond notifications; HD1:157 Still deferred: team chat entry points; HD2:63 CI as a gate source: existing CI checks declared as gates, run locally; HD2:72 `issue_comment.created` with `/plan`, `/split`, `/estimate`, `/review`; HD2:75 `workflow_dispatch` enqueues a local card run within declared hours; HD2:83 Review comments create repair subtasks scoped to line ranges; the Work; PMFE:187 Jira and Linear live sync (OS keychain token); PMFE:189 Microsoft Teams; PMFE:190 Slack replies; PMFE:191 Sentry, Datadog, PagerDuty as card sources (bug-card proposals); PMFE:192 Notion and Confluence publishing (plans, run reports, decision logs; r; INV:Y18 CI via `act`; INV:O85 `act` for GitHub Actions as gates
 
 **OPEN_QUESTIONS** (1) — HD1:218 [BENCH] pruner CPU latency on 4-core host
 
-**worker-loop** (6) — HD1:267 Worker applies sketch mechanically via symbol replacement; HD1:276 Parallel pass@k on L/XL or overnight; k ∈ [2,4], T ∈ [0.4,0.7]; HD2:15 N is capped, and the cap is per hardware tier; HD2:256 `read` passes images and PDFs through to the vision path; HD2:263 Structural rewrite fallback with ast-grep for languages without a lang; INV:O97 ast-grep fallback without a language server
+**worker-loop** (10) — HD1:267 Worker applies sketch mechanically via symbol replacement; HD1:276 Parallel pass@k on L/XL or overnight; k ∈ [2,4], T ∈ [0.4,0.7]; HD1:299 `docs` version-pinned documentation across knowledge tiers; HD1:341 After a failure the next edit states which assertion it addresses (A/B; HD2:15 N is capped, and the cap is per hardware tier; HD2:256 `read` passes images and PDFs through to the vision path; HD2:263 Structural rewrite fallback with ast-grep for languages without a lang; HD2:265 `docs` tool: tiered lookup served from the project corpus; INV:L10 Tiered `docs`; INV:O97 ast-grep fallback without a language server
 
 **planner-pm** (13) — HD1:397 Terminal is default conversation surface; `sekhemet` opens it; board c; HD1:398 [RESEARCH] Calibrate ask-vs-assume on ClarEval; symmetric failure mode; HD1:445 Steer: free text delivered at next step boundary as `card/steer`, no r; HD1:446 Scope amendment mid-card; Worker told; HD1:448 Steer cannot relax gate, widen permission, accept; HD1:449 Steer recorded before delivery; steered outcome flagged, excluded from; HD1:450 Steering not required for correctness; HD1:451 Card state decides: attached human answers in seconds while Worker hol; HD1:475 Human cmd: Reroute (force model or arm for a card); HD1:476 Human cmd: Explain evidence behind estimate, route or decision; HD1:497 Goal view: statement, criteria, burn-up, strategy graph, risk register; HD1:498 Goal with no state change in a configurable window is highlighted; HD2:489 C6: the tuner's 12-step cap (keeps 17 of 18 passes, cuts time 38%) is 
 
 **gates** (4) — HD1:519 Evidence `structuralDiff` (difftastic); HD2:17 Local verifier to rank passing attempts / triage failing ones; only if; HD2:297 hyperfine as the benchmark gate runner for performance criteria; HD2:298 typos as a source-code spelling gate in the hygiene layer
 
-**measurement** (1) — HD1:616 IRT calibration against SWE-bench per-instance results (~10⁵)
+**measurement** (2) — HD1:616 IRT calibration against SWE-bench per-instance results (~10⁵); HD1:631 Difficulty prior from SWE-bench Verified annotations (1,699, 3 annotat
 
-**design-stage** (20) — HD2:87 Two research modes, Research Desk and Deep Research (serves; trigger; ; HD2:95 The Desk loads no model: a second slot of the Worker's server, same we; HD2:98 Desk grades: Lookup (seconds, no model), Question (1–3 min, short tool; HD2:100 Speculative research: the planner writes each card's open questions an; HD2:101 At project open, prefetch each package's `llms.txt`/doc sitemap into t; HD2:104 Context7 and DeepWiki as optional MCP sources: off by default, untrust; HD2:106 Plan: sub-questions with a budget each, posted as a decision request (; HD2:111 Crawling within a doc site uses an adaptive strategy that stops when t; HD2:121 Static-page fast path: HTML to markdown with trafilatura; HD2:122 PDFs: pypdfium2 by default, Docling for scanned or table-heavy pages; ; HD2:127 Persistent project corpus over dependency docs, refreshed when the man; HD2:128 Per-question corpus for each deep run, so synthesis can quote a source; HD2:144 Answers from external MCP research services are untrusted like fetched; HD2:148 The Planner additionally sees `plan_research(card)`; HD2:149 Research playbooks as Agent Skills (library upgrade, CVE triage, compa; HD2:150 Deep Research evaluated on DeepResearch Bench RACE and FACT plus execu; HD2:151 Desk measured on latency per grade and on how often an answer reaching; HD2:152 Cache TTL by mutability: pinned SHA indefinite; pinned-version docs in; HD2:153 A stale cache entry is served immediately and revalidated in the backg; INV:X9 Doc cache TTLs
+**design-stage** (21) — HD2:87 Two research modes, Research Desk and Deep Research (serves; trigger; ; HD2:95 The Desk loads no model: a second slot of the Worker's server, same we; HD2:98 Desk grades: Lookup (seconds, no model), Question (1–3 min, short tool; HD2:100 Speculative research: the planner writes each card's open questions an; HD2:101 At project open, prefetch each package's `llms.txt`/doc sitemap into t; HD2:103 Repository results cached by commit SHA, permanently; HD2:104 Context7 and DeepWiki as optional MCP sources: off by default, untrust; HD2:106 Plan: sub-questions with a budget each, posted as a decision request (; HD2:111 Crawling within a doc site uses an adaptive strategy that stops when t; HD2:121 Static-page fast path: HTML to markdown with trafilatura; HD2:122 PDFs: pypdfium2 by default, Docling for scanned or table-heavy pages; ; HD2:127 Persistent project corpus over dependency docs, refreshed when the man; HD2:128 Per-question corpus for each deep run, so synthesis can quote a source; HD2:144 Answers from external MCP research services are untrusted like fetched; HD2:148 The Planner additionally sees `plan_research(card)`; HD2:149 Research playbooks as Agent Skills (library upgrade, CVE triage, compa; HD2:150 Deep Research evaluated on DeepResearch Bench RACE and FACT plus execu; HD2:151 Desk measured on latency per grade and on how often an answer reaching; HD2:152 Cache TTL by mutability: pinned SHA indefinite; pinned-version docs in; HD2:153 A stale cache entry is served immediately and revalidated in the backg; INV:X9 Doc cache TTLs
 
 **runtime** (2) — HD2:187 Overnight prompt optimiser when enabled; HD2:438 Phase 4 deferred: the compliance pack
 
-**review-git** (9) — HD2:199 On acceptance, checkpoints squashed into one or more intent-grouped Co; HD2:205 Review comments on the PR flow back into the card thread; HD2:210 Squash policy per project (keep checkpoint history on main); HD2:334 A human edit in the worktree is a commit by a human actor (`card/human; HD2:335 Gates re-run on a human-edited tree; HD2:336 The evidence bundle keeps the Worker's diff and the human's separately; HD2:337 The competence row records `passed_with_human_edit`, never an unattend; HD2:338 Partial accept takes a subset of hunks; the rest becomes a new card wi; INV:S14 CoW worktrees + linked deps
+**review-git** (8) — HD2:199 On acceptance, checkpoints squashed into one or more intent-grouped Co; HD2:205 Review comments on the PR flow back into the card thread; HD2:210 Squash policy per project (keep checkpoint history on main); HD2:334 A human edit in the worktree is a commit by a human actor (`card/human; HD2:335 Gates re-run on a human-edited tree; HD2:336 The evidence bundle keeps the Worker's diff and the human's separately; HD2:337 The competence row records `passed_with_human_edit`, never an unattend; HD2:338 Partial accept takes a subset of hunks; the rest becomes a new card wi
 
 **surface** (1) — HD2:226 Convention extraction combining `crag` linter/CI parsing with `codebas
 
 **security** (2) — HD2:229 Package mirrors (verdaccio, devpi, a crates mirror) pre-seeded from th; HD2:242 Open: mirror seeding for transitive dependencies not in any lockfile
 
-**models** (1) — HD2:449 Open: whether a local verifier earns its place on XL
+**models** (2) — HD2:281 Inference wraps the llama.cpp server; MLX as an Apple Silicon adapter; HD2:449 Open: whether a local verifier earns its place on XL
+
+**MVP_PATH** (1) — HD2:412 M5 board: master and project boards; Review presents evidence; one rea
 
 ## 4. Deliberate changes
 
-192 items, each with where its reason is recorded.
+220 items, each with where its reason is recorded.
 
 | Row | Old | Item | Reason recorded in |
 | --- | --- | --- | --- |
@@ -87,15 +86,22 @@ None. The three rows the verification left open were resolved by the lead on 202
 | HD1:28 | HD:60 | Non-goals v1: teams, multi-user boards, RBAC, SSO | DEC-06 (company-server minimum in v1; RBAC and SSO stay out) |
 | HD1:64 | HD:190 | `sekhemet board` the board in the terminal | surface rule 13 (`ask` replaces `board` at the front door; `board --terminal` under `dev`), NEW-surface-6; owner decision O23 pending, default "approve" (corrected 2026-09-25) |
 | HD1:78 | HD:214 | Parity claim: matches top five except cloud scale and cloud latency | SPINE §What we claim ("**Never claim** parity with frontier models on ambiguous work…"); DEC-23 ("It does not aim to beat frontier models on ambiguous, long-horizon or novel design work, and it is slower per card than cloud tools. These trades are deliberate."); specs/README "Where the old design went" (corrected 2026-09-25) |
+| HD1:89 | HD:230 | Context: AST repo map + RTK (60–90%) + SWE-Pruner Pro (40–60%) + masking | context rule 17, §9 (register R2: ≥ 60%, not yet benched); rule 3, DEC-24 (masking); DEC-21 (keyword heuristic for SWE-Pruner Pro) (corrected 2026-09-25) |
+| HD1:102 | HD:252 | OS sandbox macOS Seatbelt; Linux namespaces + Landlock + seccomp | security rules 9–17; DEC-21 (bubblewrap on Linux, Landlock and seccomp as hardening) (corrected 2026-09-25) |
 | HD1:119 | HD:291 | TypeScript SDK with async-iterator event streams | extensibility rule 28, §8 Q1 ("changed from the old design's shipped SDK") |
 | HD1:122 | HD:307 | Headless LSP expansion stage | context rule 28, §9 |
 | HD1:123 | HD:307 | Masking tool outputs older than 2 steps with 15-token pointers | context rule 3; DEC-24 |
 | HD1:124 | HD:315 | Per-card worktrees with copy-on-write cloning | DEC-21 (plain worktrees) |
 | HD1:125 | HD:315 | Checkpoint commits on every passing step | review-git rule 3, §9 (every step that changed files; R1) |
+| HD1:133 | HD:326 | Robustness: diff-scoped mutation (Stryker / cargo-mutants) | gates rule 32, §9 (the built-in diff mutator for TypeScript); rule 23a, NEW-gates-5 (GT-N5-2) for cargo-mutants and the other languages' tools (corrected 2026-09-25) |
 | HD1:136 | HD:329 | EvidenceBundle with difftastic enabling "5-second human acceptance" | review-git rule 2, §9 (a decision in under a minute); structural diff rule 6 (partial, S5) |
 | HD1:158 | HD:362 | Every capability is a plugin claiming a service key (Cordis) | extensibility rule 29, §7 (plugin API later), §8 Q2 (container cut in B0 (DEC-29 O4)); SPINE packages |
+| HD1:160 | HD:370 | Service keys ctx.events … ctx.sync and what each owns | SPINE package table; extensibility rule 29 (the `ServiceContainer` cut in B0, DEC-29 O4) (corrected 2026-09-25) |
 | HD1:162 | HD:398 | Step = one model request + tool calls; turn = steps for one card attempt | DEC-26; NAMING "The run" (the old use of *turn* for all the steps of an attempt is retired); worker-loop §3 Terms (corrected 2026-09-25) |
 | HD1:163 | HD:398 | Turn-flow events: card/start, step/start, context/assembled, model/request, model/response, tool/call, tool/result, ste… | kernel §3 closing note (never the code's; mapped) |
+| HD1:167 | HD:412 | Workspace: id, name, machine profile, active project cap (default 3) | kernel rule 2; rule 6 (after restoration) (corrected 2026-09-25) |
+| HD1:168 | HD:413 | Project: repo path, gate contract, conventions ref, stage, playbook ref | kernel rule 6 (Project: gate contract, conventions, stage and playbook are not columns; each one's home named) (corrected 2026-09-25) |
+| HD1:194 | HD:499 | Edge Ready→Planning (planner claims); Planning→InProgress (plan + criteria approved) | kernel rules 25, 27, §8 Q6; DEC-29 (corrected 2026-09-25) |
 | HD1:196 | HD:505 | Edge Review→InProgress on human change request | review-git §2.4, §9; DEC-24 (send back to Ready) |
 | HD1:197 | HD:507 | Edge InProgress→Parked on stall or budget | kernel rule 25 (LEGAL_TRANSITIONS, now in the spec); worker-loop rule 31 (budget reasons park unless the gates ran; `oscillation_detected` and `no_progress` go to Verify), §9 (after the reason is added) (corrected 2026-09-25) |
 | HD1:200 | HD:518 | InProgress entry: plan exists; acceptance tests written and failing (types-only card red on typecheck); scope declared | kernel rule 27, §8 Q6 (decided: no "plan exists" condition (DEC-29; kernel K-N5-8)) |
@@ -113,6 +119,7 @@ None. The three rows the verification left open were resolved by the lead on 202
 | HD1:286 | HD:734 | 2026 cache flags (8–16 GiB, 32 checkpoints, 8192 min-step, -sps) | context rule 6; DEC-24 |
 | HD1:287 | HD:735 | Native MTP 1.6×–2.6× decode speed-up | models rule 13, §9 (1.6–2.6× claim withdrawn; ~1.28× decode with a prefill penalty measured) |
 | HD1:301 | HD:763 | `repo`: tree, file at a ref, code search, releases between two versions | worker-loop rule 12 (`list_dir`, `grep_search`, `git_history` over this repository), §7 "Release notes between two versions" (reason); design-stage §2.7 rule 10 (the Researcher's `repo`: any repository, any ref, code search across GitHub, release diffs) (corrected 2026-09-25) |
+| HD1:306 | HD:773 | Write path 2: Tree-sitter AST parse | worker-loop rule 14; gates §9 (the compiler, not tree-sitter; DEC-20) (corrected 2026-09-25) |
 | HD1:312 | HD:782 | Both terminate the turn immediately | worker-loop rule 18, §9 |
 | HD1:314 | HD:787 | Stop reason `done_pending_gates` | worker-loop rule 33, §9 (after the reason is added) (corrected 2026-09-25) |
 | HD1:321 | HD:794 | Six is the vocabulary; new conditions are details, not new members | worker-loop rule 31, §9; DEC-24 (23 stored reasons in one table, seven failure classes and one success class) |
@@ -126,12 +133,14 @@ None. The three rows the verification left open were resolved by the lead on 202
 | HD1:379 | HD:923 | Estimates in tokens, seconds, steps; never story points | planner-pm §2.6, §9 |
 | HD1:394 | HD:956 | Conversation never evicts a running Worker; reply waits for step boundary | planner-pm §2.8.6, §9 |
 | HD1:395 | HD:957 | Conversation has no memory of its own; no user profile | planner-pm §2.13.3, §9 |
+| HD1:407 | HD:994 | Brief at `.sekhemet/brief.md`, versioned, amendable | design-stage §2.3 "Where the project's documents live", §9 Resolved drift; DEC-30 (corrected 2026-09-25) |
 | HD1:412 | HD:1020 | Riskiest assumption scheduled first regardless of backbone | design-stage §9; planner-pm §2.2.4 |
 | HD1:444 | HD:1105 | Format interactions for rapid "5-second approvals" | review-git rule 2, §9 (a decision in under a minute, not 5 seconds) |
 | HD1:454 | HD:1134 | Durable resume on answer (UI, CLI, notification webhook): `decision/answered`, rehydrate context, resume | planner-pm §2.10.3, §9; DEC-24 (a late answer returns the card to Ready, or to Backlog or Planning if parked from there) |
 | HD1:456 | HD:1142 | Questions batched into one decision request per planning pass | planner-pm §2.10.1, §9 |
 | HD1:457 | HD:1142 | >3 questions → spec rejected as under-specified | planner-pm §9; DEC-24 |
 | HD1:493 | HD:1291 | Signal: ≥3 gate failures in one file → pause implementation, route to Planner to re-split on Interface/Data | planner-pm §2.12, §9 |
+| HD1:513 | HD:1336 | Visual 4: axe-core at 1280 and 375 px, zero critical | gates rule 29, §9, §8 Q1 (in-house accessibility subset; axe-core in the product gate is owner decision O27, default no) (corrected 2026-09-25) |
 | HD1:593 | HD:1607 | System prompt short; <1,000 tokens; tool interface <2,000 | context rule 10; DEC-27 (system prompt ≤ 700, tool interface ≤ 1,700 tokens) |
 | HD1:618 | HD:1702 | One mechanism: signal → bounded proposal → suite → pinned → auto-rollback if pass rate drops over next ten cards | measurement rule 18(3), §9; DEC-24 (paired rollback) |
 | HD1:623 | HD:1737 | Guardrail 3: atomic rollback over moving ten-card window | measurement rule 18; DEC-24 |
@@ -144,13 +153,17 @@ None. The three rows the verification left open were resolved by the lead on 202
 | HD2:64 | HD:1911 | Externally edited issue mid-card: non-scope fields reconciled on completion; a scope/criteria change pauses the card an… | integrations §2.5, §9 (R6), INT-11a |
 | HD2:67 | HD:1921 | Private keys and tokens in the OS keychain, never written to disk or config files | integrations §2.10; security item 35 |
 | HD2:114 | HD:2088 | Self-hosted SearXNG: no API keys, no query logging to third parties; a separate service to keep its copyleft licence ou… | design-stage §2.7.11, §9 (after the reason is added); PROVENANCE SearXNG row (corrected 2026-09-25) |
+| HD2:126 | HD:2104 | Code context stays deterministic; prose retrieval may become lexical+dense, code may not | design-stage §2.7.8; context rule 28; DEC-22 (corrected 2026-09-25) |
 | HD2:154 | HD:2186 | Every extension mechanism is a plugin on the kernel | extensibility rule 29, §7, §8 Q2 (O4); DEC-09 correction |
 | HD2:170 | HD:2226 | A TypeScript SDK exposes these operations, with the event log as an async iterator | extensibility rule 28 (cut in B0, DEC-29 O4, NEW-extensibility-5), §8 Q1 (decided) (corrected 2026-09-25) |
 | HD2:177 | HD:2252 | Checkpoints: the Worker commits after every gate-passing step and every masked-observation boundary | review-git rule 3, §9 (R1); runtime rule 11 links to it |
+| HD2:192 | HD:2278 | A rebase conflict produces `rebase_conflict` with the card returned to Planning | review-git §2.6.4, NEW-review-git-1 (after worker-loop rule 31 and kernel rule 25 are aligned) (corrected 2026-09-25) |
 | HD2:211 | HD:2344 | Onboarding step 1: build the tree-sitter repo map and cache it | surface rule 9; DEC-20 (map from the TypeScript compiler; tree-sitter later, surface §7) |
 | HD2:217 | HD:2350 | Onboarding step 7: run the qualification suite on this repo's code | surface rule 11, §9 (after the reason is added) (corrected 2026-09-25) |
 | HD2:274 | HD:2496 | Parse gate wraps tree-sitter | gates §9; DEC-20 |
 | HD2:278 | HD:2504-2507 | Console/network/DOM and layout-bounds checks over Playwright; screenshot diff with Playwright + pixelmatch; accessibili… | gates §9, §8 Q1 (the in-house client stays the gate; Playwright and axe-core approved for development only, DEC-29 O5; axe-core in the product gate is owner decision O27, default no — was pending the owner, R16; behaviours kept rule 29) |
+| HD2:283 | HD:2517 | Constrained decoding (XGrammar or llguidance) behind the tool-arm interface | extensibility tool table; models rule 28; DEC-22; PROVENANCE (XGrammar/llguidance: not used) (corrected 2026-09-25) |
+| HD2:284 | HD:2518-2519 | Sandbox built over platform facilities; worktrees over git and COW cloning | extensibility tool table; security rule 24a; DEC-21 (plain worktrees, not copy-on-write) (corrected 2026-09-25) |
 | HD2:299 | HD:2578-2579 | mise (pinned toolchain environments) and lefthook (git hooks manager) | PROVENANCE rows "Toolchain version manager (mise)" and "Toolchain and hook managers (mise; lefthook)" (corrected 2026-09-25) |
 | HD2:300 | HD:2542-2543, 2572 | DevDocs and Kiwix as offline documentation services; Dozzle as a container log viewer | PROVENANCE "Container log viewer (Dozzle)" row (corrected 2026-09-25) |
 | HD2:307 | HD:2615 | kWh computed from hardware TDP and GPU utilisation | runtime rule 18, §7, §9 |
@@ -166,7 +179,9 @@ None. The three rows the verification left open were resolved by the lead on 202
 | HD2:366 | HD:2782 | No environment-variable layer: only `SEKHEMET_CONFIG_DIR` and `SEKHEMET_MODELS_DIR` are honoured | surface rule 27 (about 45 variables classified; only the two bootstrap ones shown to users) |
 | HD2:372 | HD:2801 | `fetch_allow = ["nodejs.org"]` default | surface rule 23 (fetch_allow starts empty, with the reason) |
 | HD2:373 | HD:2804 | `[overnight] hours = "18:00-08:00"`: when unattended runs may use the machine | surface rule 23 ([machine] reserved_hours replaces [overnight] hours, with the reason) |
+| HD2:375 | HD:2808 | `fetch_allow` (Researcher page reads) and `network_allow` (sandbox commands) are distinct, and each file's comment name… | surface rule 24; gates §3 (`network_allow` is a narrowing of the effective `fetch_allow`); security items 28–30 (S3) (corrected 2026-09-25) |
 | HD2:377 | HD:2815 | Actor set of seven: human, planner, worker, reviewer, researcher, gate, system | kernel rule 19, §9 |
+| HD2:381 | HD:2832-2866 | Example payloads: CardStart (budget steps/tokens/seconds), StepStart (contextPackHash, activeZoneBudget), ToolCall (arg… | kernel §3 closing note ("the code's names stand"); rule 6 (Step: `success`, `tokens_condensed` not stored) (corrected 2026-09-25) |
 | HD2:387 | HD:2915-2933 | `cards` table: 9-state CHECK; difficulty 1–10; step_budget 40; token_budget 32000; assigned_tier; blocked_reason; order… | kernel rules 6 (Card bullet, after restoration), 15 (order key), 23 (nine states), 24 (typed holds); K-S7-1 (difficulty 1–10); planner-pm §2.4 (step budget ≤ 40); worker-loop §3 Token budget row (none by default) (corrected 2026-09-25) |
 | HD2:388 | HD:2925 | `cards.priority REAL` holds the WSJF score | planner-pm §2.7, §9 |
 | HD2:391 | HD:2961-2974 | `steps`: tool, arguments, argument_hash, repo_state_hash, success, result_summary, tokens_condensed, duration | kernel rule 6 Step ("not stored: … a step's verdict is its gate results, and condensing savings are context's measure"); worker-loop rule 17 (corrected 2026-09-25) |
@@ -182,7 +197,7 @@ None. The three rows the verification left open were resolved by the lead on 202
 | HD2:436 | HD:3412 | Phase 4 deferred: teams and multi-user | DEC-06 |
 | HD2:439 | HD:3416 | Scoping rule: anything not feeding the gates → failure data → decomposition/routing → reproducibility loop is a candida… | SPINE §Where the edge is; DEC-01 |
 | HD2:473 | IR:114-117 | B1: on the benchmark nothing learned reaches the Worker (fresh `events.db`; approval needed; only playbook.toml and… | measurement rule 6, §9; ruling R12 (isolation in measurement runs; production probation in context rule 24f) |
-| HD2:513 | IR:226 | Suggestion 8: in-run probation for executable-verified learning (a config constraint, a remedy keyed to an error code,… | context rule 24f, measurement rule 6, §9; ruling R12 (probation in production only); NEW-context-4 (CX-N4-7) |
+| HD2:513 | IR:226 | Suggestion 8: in-run probation for executable-verified learning (a config constraint, a remedy keyed to an error code,… | context rule 24f, CX-N4-7; measurement rule 6; owner decision O15 open, default "no probation: approval first" (corrected 2026-09-25) |
 | HD2:520 | IR:234-239 | Batch sequence on 24 GB: Worker pass → Researcher (every unexplained struggle, with card and code) → Seshat (plans usin… | review-git §2.3.2, §9 (Reviewer once per queue pass, after retries, before Review); swap order models rule 20a |
 | PMFE:4 | PM:20 | Priority glyph language: bars High/Med/Low, boxed exclamation Urgent, three dashes for none | dashboard §9 |
 | PMFE:11 | PM:22 | Epics appear as swimlanes, filter and table column, never as a separate hierarchy screen | dashboard §9 (story map is a view of the cards) |
@@ -235,15 +250,21 @@ None. The three rows the verification left open were resolved by the lead on 202
 | PMFE:517 | FE:825-831 | Verification recipe: seed, serve, three viewports, both themes, compare mockups, keyboard only, empty error console | dash §2.15.5 (corrected 2026-09-25) |
 | INV:K9 | FI:53 / R2:79 | Service container | extensibility rule 29 (cut in B0, DEC-29 O4; no trust gate needed), §8 Q2 (decided) (corrected 2026-09-25) |
 | INV:K17 | FI:61 / R2:87 | `steps` table incl. `repo_state_hash`, `success`, `tokens_condensed` | kernel rule 6 (not stored, with the reason) |
+| INV:K22 | FI:66 / R2:92 | Full card record shape | kernel rule 6 Card bullet (after restoration R2 of corrections_hd_inv.md — not yet applied: kernel rule 6 still has no Card bullet); planner-pm §2.1.5, §2.7.1–2 and §9 (priority is a person's 0–4 field; WSJF only orders Ready); kernel rule 24 (typed holds); PM_CONTRACT §2 (corrected 2026-09-25) |
 | INV:S3 | FI:84 / R2:106 | Linux namespaces + Landlock + seccomp | DEC-21; security rule 17 |
-| INV:Y3 | FI:108 / R2:126 | Commit after every gate-passing step and every masking boundary | review-git rule 3, §9 (R1) |
+| INV:S14 | FI:95 / R2:117 | CoW worktrees + linked deps | DEC-21 (plain worktrees instead of copy-on-write clones, with its reason and reopen condition); security §9; CoW also listed in review-git §7; linked `node_modules`/`.venv` security rule 24 (§4 partial, S2) (corrected 2026-09-25) |
+| INV:Y3 | FI:108 / R2:126 | Commit after every gate-passing step and every masking boundary | review-git §2.6.3, §9 (checkpoints after every step that changed files; R1) (corrected 2026-09-25) |
 | INV:Y20 | FI:125 / R2:143 | Mid-card external-edit reconciliation | integrations §2.5, §9 (R6) |
 | INV:M17 | FI:151 / R2:165 | Prompt-cache configuration | context rule 6; DEC-24 |
 | INV:G1 | FI:169 / R2:179 | `gates.toml` parser and keys | gates §3 (schedule, threshold, languages each dropped or renamed with the reason) |
+| INV:G20 | FI:188 / R2:198 | axe-core at 1280 / 375, zero critical | gates rule 29, §9 (the in-house CDP client with every required behaviour kept), §8 Q1 (Playwright and axe-core approved as development dependencies, DEC-29 O5; axe-core inside the product gate open, O27) (corrected 2026-09-25) |
 | INV:C5 | FI:211 / R2:215 | System < 1,000 tokens, tools < 2,000 | context rule 10; DEC-27 (≤ 700 / ≤ 1,700 tokens) |
 | INV:C6 | FI:212 / R2:216 | Masking with ~15-token pointers + EvidenceRef | context rule 3; DEC-24 |
 | INV:C18 | FI:224 / R2:228 | Reasoning traces stripped between steps | context rule 4; DEC-24 |
+| INV:L14 | FI:253 / R2:251 | Six stop reasons, never collapsed | worker-loop rules 30–31, §9 and DEC-24 (six stop reasons became twenty-three stored reasons in seven failure classes plus success); the table and classes T3 (not built) (corrected 2026-09-25) |
+| INV:P1 | FI:309 / R2:292 | SPIDR five heuristics, split until it fits | planner-pm §2.2 (Cohn's SPIDR: Interface is the user interface; types first became the Contract enabler card, §2.2.2), §2.4 (split until the card fits Zone 3), §9; DEC-26 (corrected 2026-09-25) |
 | INV:P2 | FI:310 / R2:293 | INVEST six checks, 25%, ≤ 40, > 7 | planner-pm §2.4; DEC-24 (Small sized to the resolved Worker's window; other checks unchanged) |
+| INV:P4 | FI:312 / R2:295 | Estimation formula; actuals write back | planner-pm §2.6.1–2, §9 ("Estimates are tokens for the machine and points for people (not 'never points')") (corrected 2026-09-25) |
 | INV:P8 | FI:316 / R2:299 | Assume/Ask/Spike; batch; > 3 questions rejects | planner-pm §2.10.1, §9; DEC-24 |
 | INV:P11 | FI:319 / R2:302 | Pause & persist, VRAM released, rehydrate | planner-pm §2.10.2–3, §9; DEC-24 |
 | INV:E1 | FI:343 / R2:322 | Pass@1 harness under the real loop; M0 protocol | measurement rule 28 (M0 protocol built, `m0.ts`; the ≥ 90% bar recorded as historical with the reason); pivot rule §8 Q4 |
@@ -251,7 +272,10 @@ None. The three rows the verification left open were resolved by the lead on 202
 | INV:E15 | FI:357 / R2:336 | Loop 9 tool synthesis | worker-loop §9 (register R6 triaged, not in v1); security rule 4a, §8 Q1 (decided: `--validate-tools` kept and confined) (corrected 2026-09-25) |
 | INV:E17 | FI:359 / R2:338 | Guardrails; rollback over 10-card window | measurement rule 18, §9; DEC-24 |
 | INV:U3 | FI:373 / R1:369 | Basalt/Sand exact values, light theme | dashboard §2.13.1, §9 |
+| INV:U10 | FI:380 / R1:376 | Keyboard system | dashboard §2.3, §9 ("No bare `t`; chords reassigned (`g p` PM, `g s` Status, `g i` Insights)", with the reason); the new keymap P11 (not built, §4) (corrected 2026-09-25) |
 | INV:U13 | FI:383 / R1:379 | Card tile components | dashboard §9 |
+| INV:H2 | FI:402 / R2:347 | `board` opens the web UI | surface rules 5.6 and 13 (the bare `sekhemet` opens the board; `ask` replaces `board` at the front door, `board` still runs under `dev`), NEW-surface-6; owner decision O23 pending, default approve (corrected 2026-09-25) |
+| INV:H12 | FI:412 / R2:357 | REST API | runtime §3 ("The design's 2026-09-17 route table … is superseded by the routes above; the code is the contract") (corrected 2026-09-25) |
 | INV:H13 | FI:413 / R2:358 | SDK with async iterator | extensibility rule 28, §8 Q1 (O4) |
 | INV:H25 | FI:425 / R2:370 | Offline installers, first-run wizard | DEC-21 (source installer); DEC-29 O9 (npm package and container image approved) |
 | INV:X7 | FI:441 / R1:431 | Research note; embeddings only here | design-stage §2.7.8, §9; DEC-22 |
@@ -264,11 +288,14 @@ None. The three rows the verification left open were resolved by the lead on 202
 | INV:O6 | FI:476 | Traces stripped unless registry flag | context rule 4; DEC-24 |
 | INV:O15 | FI:485 | INVEST-S ≤ 25% and ≤ 40 steps | planner-pm §2.4 Small row; DEC-27 N5; DEC-24 (corrected 2026-09-25) |
 | INV:O17 | FI:487 | > 3 questions rejects the spec | planner-pm §9; DEC-24 |
-| INV:O30 | FI:500 | Checkpoint at gate passes and masking boundaries | review-git rule 3, §9 (R1) |
+| INV:O30 | FI:500 | Checkpoint at gate passes and masking boundaries | review-git §2.6.3, §9 (R1) (corrected 2026-09-25) |
+| INV:O36 | FI:506 | axe-core at 1280 and 375, zero critical | as INV:G20 (corrected 2026-09-25) |
 | INV:O43 | FI:513 | CoW cloning + symlinked `node_modules`/`.venv` | DEC-21 (plain worktrees); security rule 24 (node_modules and `.venv` links) |
 | INV:O44 | FI:514 | llama.cpp cache flags from the machine profile | context rule 6; DEC-24 |
+| INV:O52 | FI:522 | Context debt: > 300 tokens and ≥ +3% (both halves) | measurement rule 24 (the > 300-token overhead kept; the ≥ 3-point gain replaced by the admission record's paired credit, with the reason "which the 30-card suite cannot detect"); §4 "Diagnostics on real inputs" partial, NEW-measurement-2 (corrected 2026-09-25) |
 | INV:O54 | FI:524 | Rollback on a moving 10-card window | measurement rule 18; DEC-24 |
 | INV:O56 | FI:526 | Loop 9 signal: repeated bash chains | worker-loop §9 (register R6 triaged, not in v1) |
+| INV:O71 | FI:541 | `[machine] hours`, `power_budget_kwh_day` | surface rule 23 (the old `[overnight] hours` became `[machine] reserved_hours`, with the reason), rule 25 (`machine.hours` → `reserved_hours`); `power_budget_kwh_day` kept (corrected 2026-09-25) |
 | INV:O72 | FI:542 | `[context] map_tokens = 1024`, `mask_after_observations = 2` | surface rule 25; context §9 ([context] keys removed) |
 | INV:O73 | FI:543 | `[loop] default_step_budget = 40`, `stall_window = 3`, `max_rungs = 4` | surface rule 25 (step budget 40 kept; stall_window and max_rungs removed); worker-loop §9 |
 | INV:O83 | FI:553 | Every return reason becomes a candidate rule | review-git §2.4, §9 |
@@ -290,18 +317,18 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:4 | HD:21 | Event log is the only durable channel; model-visible means logged, enforced at runtime | carried | carried | SPINE spine 2; kernel rules 16–17 (corrected 2026-09-25) |
 | HD1:5 | HD:21 | Board, replay, fork, audit trail, competence model are projections of the one stream | carried | carried | SPINE spine 2; kernel rule 14 |
 | HD1:6 | HD:23 | Every column boundary is an entry condition decided by an executable gate, never the model | carried | carried | SPINE spine 1; kernel rule 27 (corrected 2026-09-25) |
-| HD1:7 | HD:23 | Failure → one typed shape; top few reach the model, rest in evidence by reference | carried | carried | gates rules 19–20 |
-| HD1:8 | HD:25 | Human is the rate limiter: review minutes → Review WIP → back-pressures Verify → Worker | carried | carried | SPINE spine 4; review-git §2.2 |
-| HD1:9 | HD:27 | Learning only from recorded signals; spent only in the stable prompt zone at a card boundary | carried | carried | SPINE consequence 1; context rule 23 |
+| HD1:7 | HD:23 | Failure → one typed shape; top few reach the model, rest in evidence by reference | carried | gap | gates rules 19–20; §4 "`GateFailure` fields required; at most three per attempt" partial, T1 (GT-T1-4), M6 (GT-M6-6) (corrected 2026-09-25) |
+| HD1:8 | HD:25 | Human is the rate limiter: review minutes → Review WIP → back-pressures Verify → Worker | carried | gap | SPINE spine 4; review-git §2.2, §4 "ReviewWIP formula, back-pressure, held cards released" partial, S6; kernel rule 29 (corrected 2026-09-25) |
+| HD1:9 | HD:27 | Learning only from recorded signals; spent only in the stable prompt zone at a card boundary | carried | gap | SPINE consequence 1; context rule 23; context NEW-context-3 (CX-N3-4), M8 (CX-M8-1) (corrected 2026-09-25) |
 | HD1:10 | HD:27 | Imported prior never admitted as a change; only sets a starting value the first local signal overrules | carried | carried | measurement rule 22 |
 | HD1:11 | HD:29 | Feature not traceable to the six paragraphs is a candidate for deletion | carried-weaker | deliberate | SPINE §Where the edge is (the test is now "serves one of the three edges"; DEC-01) |
 | HD1:12 | HD:35 | Locked: 100% local inference in v1 | carried | carried | DEC-03; SPINE Locked |
 | HD1:13 | HD:36 | Locked: target user = solo developer running local models | contradicted | deliberate | DEC-01 |
-| HD1:14 | HD:37 | Locked: hardware 16–128 GB self-calibrating | carried | carried | SPINE Locked; models §2 rule 8 |
+| HD1:14 | HD:37 | Locked: hardware 16–128 GB self-calibrating | carried | gap | SPINE Locked; models rules 7–8; §4 "Calibration command and machine profile" partial and "Tier of the reference host" not-built, NEW-models-1 (corrected 2026-09-25) |
 | HD1:15 | HD:38 | Locked: four roles as registry entries, never agents/personas; swapped small, co-loaded large | carried | carried | SPINE §Roles; models rules 21–22; DEC-05 |
 | HD1:16 | HD:39 | Locked: fresh context per card; no long-running session | carried | carried | SPINE Locked; runtime rule 1 |
 | HD1:17 | HD:40 | Locked: done = executable gates only; agent never certifies own work | carried | carried | SPINE Locked ("gates and a person's acceptance") |
-| HD1:18 | HD:41 | Locked: offline by default; git remotes and GitHub sync opt-in adapters | carried | carried | SPINE Locked; security rule 29 |
+| HD1:18 | HD:41 | Locked: offline by default; git remotes and GitHub sync opt-in adapters | carried | gap | SPINE Locked; security rule 29, §4 "Offline default honoured everywhere" partial, S3; design-stage S8 (DS-S8-1) (corrected 2026-09-25) |
 | HD1:19 | HD:42 | Locked: TypeScript throughout v1 | carried | carried | SPINE Locked; DEC-20 |
 | HD1:20 | HD:43 | Rejected on evidence: Scrum-role agents, parallel same-file writers, self-refine, debate, unbounded best-of-N, embeddin… | carried | carried | DEC-22 (all nine present) |
 | HD1:21 | HD:51 | Substitution: bubblewrap on Linux instead of Landlock+seccomp; isolation level recorded per card | carried | carried | DEC-21; security rules 8, 17 |
@@ -310,7 +337,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:24 | HD:54 | Substitution: source installer instead of packaged offline installers | carried | carried | DEC-21; security rule 45 |
 | HD1:25 | HD:56 | Python/Rust/Go degrade to flat map + unchecked parse, stated on card and evidence; functional gate templates kept | carried | carried | DEC-20; surface rule 30, SUR-33 |
 | HD1:26 | HD:56 | Tree-sitter symbol-level support is v2 | later | later | context §7; DEC-20 |
-| HD1:27 | HD:56 | Harness may do less for a language but never claim to have checked | carried | carried | SPINE consequence 2 |
+| HD1:27 | HD:56 | Harness may do less for a language but never claim to have checked | carried | gap | SPINE consequence 3; gates rules 9, 35, §4 "Fail closed; `unavailable` outcome" not-built, T1 (GT-T1-2, GT-T1-11); surface rule 30 (corrected 2026-09-25) |
 | HD1:28 | HD:60 | Non-goals v1: teams, multi-user boards, RBAC, SSO | contradicted | deliberate | DEC-06 (company-server minimum in v1; RBAC and SSO stay out) |
 | HD1:29 | HD:60 | Non-goals v1: compliance pack; Azure DevOps connector | carried-weaker | carried | SPINE "Not in v1"; runtime §7; integrations §7 |
 | HD1:30 | HD:60 | Non-goals v1: Jira/Linear connectors | carried | carried | SPINE Not in v1 (live two-way sync); integrations rule 19 (export/import only) |
@@ -326,11 +353,11 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:40 | HD:118 | Claim: frozen suite and bake-off built; SWE-rebench not integrated | carried | carried | SPINE claims; measurement Later (SWE-rebench mining) |
 | HD1:41 | HD:119 | Claim: cloud models after v1, plug into a role, never a requirement | later | later | DEC-03; models §7 |
 | HD1:42 | HD:123 | Pillar 1: zero telemetry, offline-capable install | carried | carried | runtime rules 31, RUN-33; security air-gap |
-| HD1:43 | HD:124 | Pillar 2: automatic model selection, scheduled swaps, overnight mode | carried | carried | models rules 20, 26; runtime rule 17 |
+| HD1:43 | HD:124 | Pillar 2: automatic model selection, scheduled swaps, overnight mode | carried | gap | models rules 4c, 20, 20a, 26; runtime rule 17; §4 "Model folders scanned…recommendation" not-built (NEW-models-12), "One residency scheduler" not-built (NEW-models-9), "Declared hours, swap batching by project" partial (NEW-models-3) (corrected 2026-09-25) |
 | HD1:44 | HD:125 | Pillar 3: tolerant tool interface, symbol edits, parse gate, assembled context, fresh per card, planner/Worker cascade | carried | carried | models rule 28 (arm B); worker-loop rules 12, 14; context §2 |
 | HD1:45 | HD:126 | Pillar 4: nested boards, decomposition to competence envelope, dependency scheduling, token/time accounting, WIP tied t… | carried | carried | planner-pm §2.4–2.6; kernel rules 3, 29 (corrected 2026-09-25) |
 | HD1:46 | HD:127 | Pillar 5: per-column gates with status rollup and evidence bundle | carried | carried | kernel rules 27 (entry conditions), 30 (rollup); gates rule 35 (corrected 2026-09-25) |
-| HD1:47 | HD:128 | Pillar 6: git-native, GitHub and Forgejo sync, AGENTS.md/CLAUDE.md, MCP and ACP, existing CI as gate source | carried | carried | integrations; surface rules 5.3, 9; extensibility |
+| HD1:47 | HD:128 | Pillar 6: git-native, GitHub and Forgejo sync, AGENTS.md/CLAUDE.md, MCP and ACP, existing CI as gate source | carried | gap | integrations §4 "GitHub sync through `gh`" and "GitHub/Forgejo adapter" partial, P9; CI as a gate source integrations §7; surface rules 5.3, 9; extensibility (corrected 2026-09-25) |
 | HD1:48 | HD:132 | Structural advantage: compute accounting (tokens, time) | carried | carried | runtime rules 18, 32; planner-pm §2.6 |
 | HD1:49 | HD:136 | Claims not to make: frontier parity on ambiguous work, guaranteed correctness, unmeasured benchmarks, nonexistent compl… | carried | carried | SPINE §Never claim |
 | HD1:50 | HD:140 | Simplicity bar = Claude Code (one command, conversation, permission prompt, unread project file) | carried | carried | surface §1 |
@@ -338,11 +365,11 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:52 | HD:150 | Gates derived from project scripts, seen but not written on day one | carried | carried | surface rules 1, 5.3 |
 | HD1:53 | HD:155 | Everything else exported to the user is a defect until defaulted or progressive | carried | carried | surface rule 2 |
 | HD1:54 | HD:159 | First run: resolve profile, derive gates, verify model files, print one paragraph, one confirmation, open board | carried | gap | surface rule 5, P10 (SUR-2, SUR-3) (corrected 2026-09-25) |
-| HD1:55 | HD:163 | First-run text names "14 GB to fetch" and `--models-dir` | carried | carried | surface rule 5 example |
+| HD1:55 | HD:163 | First-run text names "14 GB to fetch" and `--models-dir` | carried | gap | surface rule 5 (example), §4 "One first run" not-built, P10 (SUR-2, SUR-49) (corrected 2026-09-25) |
 | HD1:56 | HD:168 | No file written by the user before the first card; config/gates/hooks/mcp/skills/tiers/rosters/stop reasons exist, none… | carried | carried | surface rule 8 |
 | HD1:57 | HD:174 | Four verdicts per surface item: Day one, Default, Progressive (trigger named; empty view hidden), Developer (`dev` name… | carried | carried | surface rule 2 |
 | HD1:58 | HD:181 | Eight front-door commands; research question is not a command | carried | carried | surface rules 13, 15 |
-| HD1:59 | HD:185 | `sekhemet` opens board (first run sets up) | carried | carried | surface rule 13 table |
+| HD1:59 | HD:185 | `sekhemet` opens board (first run sets up) | carried | gap | surface rule 13; §4 "One first run" not-built, P10 (SUR-2, SUR-3) (corrected 2026-09-25) |
 | HD1:60 | HD:186 | `sekhemet "<spec>"` plans and runs in one verb | carried | carried | surface rule 13 |
 | HD1:61 | HD:187 | `sekhemet run [card]` absorbs queue/run/resume | carried | carried | surface rule 13 |
 | HD1:62 | HD:188 | `sekhemet review` opens next card waiting on a person | carried | carried | surface rule 13 |
@@ -351,16 +378,16 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:65 | HD:191 | `sekhemet doctor` checks install incl. weights exist | carried | carried | surface rule 13; models rule 5 |
 | HD1:66 | HD:192 | `sekhemet dev <x>`; listed only by `dev --help` | carried | carried | surface rule 13 |
 | HD1:67 | HD:194 | New user-facing command must displace one | carried | carried | surface rule 14 |
-| HD1:68 | HD:194 | A `--profile`-style flag rewriting other flags is an unchosen default | carried | carried | surface rule 14 |
-| HD1:69 | HD:194 | Every destructive action reachable from UI is reachable from CLI with its undo | carried | carried | surface rule 14; review-git §2.4 |
+| HD1:68 | HD:194 | A `--profile`-style flag rewriting other flags is an unchosen default | carried | gap | surface rule 14; §4 "One recorded `RunProfile`; `--settings <file>`" not-built, NEW-surface-5 (corrected 2026-09-25) |
+| HD1:69 | HD:194 | Every destructive action reachable from UI is reachable from CLI with its undo | carried | gap | surface rule 14; review-git §2.4; kernel §4 "Exits from Parked and Rejected reachable from the CLI" partial, S4 (K-S4-7) (corrected 2026-09-25) |
 | HD1:70 | HD:196 | Moved means unlisted, not removed (calls without `dev` still run) | carried | carried | surface rule 13, SUR-31 |
 | HD1:71 | HD:200 | Single non-command word refused with suggestion (`reveiw`→`review`) | carried | carried | surface rule 15 (edit distance 2), SUR-28 |
 | HD1:72 | HD:201 | `run` with no card runs the queue; with a card runs or resumes it | carried | carried | surface rule 13 |
 | HD1:73 | HD:202 | `review` shows oldest Review card, gates, diff size, three deciding commands | carried | carried | surface rule 13 |
 | HD1:74 | HD:202 | send-back reason required; becomes next attempt's instruction and playbook candidate; shares implementation with board… | carried | carried | surface rule 16; review-git §2.4 |
-| HD1:75 | HD:204 | One list of commands feeds parser and dispatcher (six unrouted handlers incl. `overnight` found) | carried | carried | surface rule 17, T4 |
-| HD1:76 | HD:208 | A wrong default fails loudly, naming the file to edit | carried | carried | surface rule 3, SUR-12 |
-| HD1:77 | HD:210 | A parsed config key must be read, else deleted from schema | carried | carried | surface rule 4, SUR-21 |
+| HD1:75 | HD:204 | One list of commands feeds parser and dispatcher (six unrouted handlers incl. `overnight` found) | carried | gap | surface rule 17; §4 "One command registry and parser" not-built, T4 (corrected 2026-09-25) |
+| HD1:76 | HD:208 | A wrong default fails loudly, naming the file to edit | carried | gap | surface rule 3; P10 (SUR-12); §4 "One gate deriver" not-built (corrected 2026-09-25) |
+| HD1:77 | HD:210 | A parsed config key must be read, else deleted from schema | carried | gap | surface rule 4; §4 "Config schema matches its readers" not-built, P10, T10 (SUR-21) (corrected 2026-09-25) |
 | HD1:78 | HD:214 | Parity claim: matches top five except cloud scale and cloud latency | carried-weaker | deliberate | SPINE §What we claim ("**Never claim** parity with frontier models on ambiguous work…"); DEC-23 ("It does not aim to beat frontier models on ambiguous, long-horizon or novel design work, and it is slower per card than cloud tools. These trades are deliberate."); specs/README "Where the old design went" (corrected 2026-09-25) |
 | HD1:79 | HD:220 | Primary interface: board-native nested kanban; CLI/TUI secondary | carried | carried | SPINE; surface Later (TUI later); dashboard §1 |
 | HD1:80 | HD:221 | Inference: llama.cpp / MLX, zero telemetry | contradicted | carried | models rule 14 (llama.cpp baseline); runtime rule 31 ("There is no background telemetry"); models §7 and context §7 (MLX) (corrected 2026-09-25) |
@@ -368,33 +395,33 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:82 | HD:223 | Tools: symbol-scoped AST tools + LSP + RTK sandboxed bash | carried | carried | worker-loop rule 12 (TS language service); context rule 17 |
 | HD1:83 | HD:224 | Permissions: 3-tier Allow/Ask/Deny + OS sandbox + scope write confinement | carried | carried | security rules 4–17, 25 |
 | HD1:84 | HD:225 | Hooks: 10-point waterfall across loop, gate, sync events | carried | carried | extensibility rule 4 |
-| HD1:85 | HD:226 | Skills: open Agent Skills (`SKILL.md`) + tiered rules + doctor diagnostics | carried | carried | extensibility rules 10–17 |
+| HD1:85 | HD:226 | Skills: open Agent Skills (`SKILL.md`) + tiered rules + doctor diagnostics | carried | gap | extensibility rules 10–17; §4 "Skills format…" partial and "Skill diagnostics" partial, NEW-extensibility-4 (corrected 2026-09-25) |
 | HD1:86 | HD:227 | MCP: dual client and server (boards, cards, gates, evidence exposed) | carried | gap | extensibility rules 18–24, NEW-extensibility-3 (EXT-17: evidence and registry tools) (corrected 2026-09-25) |
 | HD1:87 | HD:228 | Session: fresh deterministic context per card; replay, fork, rewind from SQLite WAL | carried | carried | runtime rules 1, 11–14 |
 | HD1:88 | HD:229 | Subagents: nested board DAG + SPIDR + branch-and-return isolation | carried | carried | planner-pm §2.7.9; context rule 18 |
-| HD1:89 | HD:230 | Context: AST repo map + RTK (60–90%) + SWE-Pruner Pro (40–60%) + masking | carried-weaker | carried | context rule 17, §9 (R2 ≥ 60%); pruner DEC-21 |
+| HD1:89 | HD:230 | Context: AST repo map + RTK (60–90%) + SWE-Pruner Pro (40–60%) + masking | carried-weaker | deliberate | context rule 17, §9 (register R2: ≥ 60%, not yet benched); rule 3, DEC-24 (masking); DEC-21 (keyword heuristic for SWE-Pruner Pro) (corrected 2026-09-25) |
 | HD1:90 | HD:231 | Git: per-card worktrees, checkpoint commits, squash-on-accept Conventional Commits, stacked branches, difftastic | carried | carried | review-git §2.5–2.6 |
 | HD1:91 | HD:232 | DoD: Static, Functional, Robustness, Security, Visual, Hygiene; agent never certifies | carried | carried | gates rule 3 |
-| HD1:92 | HD:233 | Hardware self-calibration S/M/L/XL + memory pressure watchdog with dynamic throttling | carried | carried | models rules 7–9, 19 |
+| HD1:92 | HD:233 | Hardware self-calibration S/M/L/XL + memory pressure watchdog with dynamic throttling | carried | gap | models rules 7–9, 19; §4 "Calibration command and machine profile" partial and "Tier of the reference host" not-built (NEW-models-1); "Watchdog levels and actions" partial (NEW-models-2) (corrected 2026-09-25) |
 | HD1:93 | HD:234 | Air-gap kit with local package mirrors (npm, devpi, crates) + byte-identical prompt caching | carried-weaker | carried | security §Air-gap kit rules 45–49 (the kit); context rule 1 (byte-identical prompt); security §7 (mirror services) (corrected 2026-09-25) |
 | HD1:94 | HD:244 | `read` line-numbered 1-based, byte-budgeted | carried | carried | worker-loop rule 12 (start/end; outline over 200 lines) |
 | HD1:95 | HD:244 | `edit` exact replacement with uniqueness constraint | carried | carried | worker-loop rule 12 |
 | HD1:96 | HD:244 | `grep` over ripgrep with three modes (files, content, counts) | carried-weaker | carried | worker-loop rule 12 (built) |
 | HD1:97 | HD:244 | `glob` mtime-sorted | carried-weaker | carried | worker-loop rule 12 |
 | HD1:98 | HD:244 | `run` sandboxed bash with RTK condensing | carried | carried | worker-loop rule 12 `run_cmd`; context rule 17 |
-| HD1:99 | HD:244 | AST tools `replace_symbol_body`, `insert_after_symbol`, `read_symbol`, `find_references` backed by an LSP client pool | carried | carried | worker-loop rule 12 (TS language service; adds `go_to_definition`) |
+| HD1:99 | HD:244 | AST tools `replace_symbol_body`, `insert_after_symbol`, `read_symbol`, `find_references` backed by an LSP client pool | carried | gap | worker-loop rule 12; §4 "Symbol tools reach the TypeScript service through LSP" not-built, NEW-worker-loop-7 (WL-N7-1) (corrected 2026-09-25) |
 | HD1:100 | HD:244 | Search and fetch tools segregated to research cards | carried | carried | worker-loop rule 12; design-stage §2.7.10, v1 acceptance |
 | HD1:101 | HD:252 | Three-tier permission model, Deny always wins | carried | carried | security rule 25 |
-| HD1:102 | HD:252 | OS sandbox macOS Seatbelt; Linux namespaces + Landlock + seccomp | carried | carried | security rules 9–17 (bubblewrap per DEC-21; Landlock/seccomp hardening) |
+| HD1:102 | HD:252 | OS sandbox macOS Seatbelt; Linux namespaces + Landlock + seccomp | carried | deliberate | security rules 9–17; DEC-21 (bubblewrap on Linux, Landlock and seccomp as hardening) (corrected 2026-09-25) |
 | HD1:103 | HD:252 | Writes outside `filesTouched` denied | carried | carried | worker-loop rule 14; security rule 25 |
 | HD1:104 | HD:252 | gates.toml, gate tests, loop control, sandbox configs permanently denied without human override | carried | carried | security rule 25; gates rules 2, 7 |
 | HD1:105 | HD:252 | Untrusted content tagged; triggers elevated restrictions | carried | carried | security rule 42 |
 | HD1:106 | HD:260 | Ten hook events: card/start, pre-step, pre-tool, post-tool, pre-gate, post-gate, card/end, review/return, playbook/prop… | carried | carried | extensibility rule 4 |
 | HD1:107 | HD:260 | Hooks run outside the sandbox with user privileges (formatters, lint fixers, notifications) | carried | carried | extensibility §2 table; rule 6 adds fail-closed for pre-* events |
-| HD1:108 | HD:268 | Skills under `.sekhemet/skills/<name>/` with SKILL.md, scripts, references, regression evals | carried | carried | extensibility rule 10 |
-| HD1:109 | HD:268 | Manifest lines budgeted into Zone 2; full instructions load only when card class matches triggers | carried | carried | extensibility rules 11–12, 14; context rule 8 |
-| HD1:110 | HD:268 | Doctor benchmarks each skill on held-out tasks, prunes context-bloat rules | carried | carried | extensibility rule 16; measurement rule 24 |
-| HD1:111 | HD:277 | MCP client: servers declared in `config.toml`; discovered tools budgeted and exposed to planner and Worker | carried | carried | extensibility rules 22–23 (declared in `mcp.json`; Worker only via `worker_tools`) |
+| HD1:108 | HD:268 | Skills under `.sekhemet/skills/<name>/` with SKILL.md, scripts, references, regression evals | carried | gap | extensibility rule 10; §4 "Skills format… `scripts/`, `references/`, `evals/` ignored" partial, NEW-extensibility-4; S9 (EXT-5) (corrected 2026-09-25) |
+| HD1:109 | HD:268 | Manifest lines budgeted into Zone 2; full instructions load only when card class matches triggers | carried | gap | extensibility rules 11–12, 14; context rule 8; §4 "Skills format… substring match… `budgetTokens` unread" partial, NEW-extensibility-4 (corrected 2026-09-25) |
+| HD1:110 | HD:268 | Doctor benchmarks each skill on held-out tasks, prunes context-bloat rules | carried | gap | extensibility rule 16; measurement rule 24; §4 "Skill diagnostics" partial, NEW-extensibility-4 (corrected 2026-09-25) |
+| HD1:111 | HD:277 | MCP client: servers declared in `config.toml`; discovered tools budgeted and exposed to planner and Worker | carried | gap | extensibility rules 22–23; §4 "MCP client: stdio only, full env, Researcher only" partial, NEW-extensibility-3 (corrected 2026-09-25) |
 | HD1:112 | HD:278 | MCP server exposes workspace, boards, cards, gates, evidence bundles, model registry to IDEs/CLI/CI | carried | gap | extensibility rule 18, NEW-extensibility-3 (EXT-17) (corrected 2026-09-25) |
 | HD1:113 | HD:286 | Append-only SHA-256 hash-chained event log | carried | carried | kernel rules 8–11 (corrected 2026-09-25) |
 | HD1:114 | HD:287 | Resume: reconstruct board state, restore worktree to last checkpoint, resume | carried | carried | runtime rule 10 |
@@ -411,12 +438,12 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:125 | HD:315 | Checkpoint commits on every passing step | contradicted | deliberate | review-git rule 3, §9 (every step that changed files; R1) |
 | HD1:126 | HD:315 | Squash-on-accept into Conventional Commits | carried | carried | review-git §2.5.4 |
 | HD1:127 | HD:315 | Stacked branches for decomposed feature chains | carried | carried | review-git §2.6.2, §2.5.5 |
-| HD1:128 | HD:315 | Structural diffs (difftastic) | carried | carried | review-git §2.6.6 (partial, S5); gates Later for the bundle field |
+| HD1:128 | HD:315 | Structural diffs (difftastic) | carried | gap | review-git §2.6.6; §4 "Structural diff (difftastic)" partial, S5; gates §7 (the bundle field) (corrected 2026-09-25) |
 | HD1:129 | HD:315 | Opt-in GitHub App adapter managing the PR lifecycle | carried | gap | integrations rules 10, 15; review-git §2.5.7; P9, S5 (INT-12–14, RG-S5-18) (corrected 2026-09-25) |
 | HD1:130 | HD:323 | Gates run on an isolated gate host | carried | gap | gates rule 11, T1 (corrected 2026-09-25) |
 | HD1:131 | HD:324 | Static: in-memory AST parse, `tsc --noEmit`, linter | carried | carried | gates rule 3; worker-loop rule 14 |
-| HD1:132 | HD:325 | Functional: unit, integration, acceptance tests that must fail before implementation | carried | carried | gates rules 3, 5–6 |
-| HD1:133 | HD:326 | Robustness: diff-scoped mutation (Stryker / cargo-mutants) | carried | carried | gates rule 32 (own diff-scoped step; PROVENANCE) |
+| HD1:132 | HD:325 | Functional: unit, integration, acceptance tests that must fail before implementation | carried | gap | gates rules 3, 5–6; §4 "Red-first on every card" not-built, P1 (GT-P1-1, GT-P1-2) (corrected 2026-09-25) |
+| HD1:133 | HD:326 | Robustness: diff-scoped mutation (Stryker / cargo-mutants) | carried | deliberate | gates rule 32, §9 (the built-in diff mutator for TypeScript); rule 23a, NEW-gates-5 (GT-N5-2) for cargo-mutants and the other languages' tools (corrected 2026-09-25) |
 | HD1:134 | HD:327 | Security: gitleaks, existence/slopsquatting checks, osv-scanner | carried | carried | gates rules 3, 15; security rule 44; GT-10 |
 | HD1:135 | HD:328 | Visual: Playwright DOM assertions, layout bounding boxes, pixelmatch element screenshots, axe-core | carried-weaker | gap | gates rule 29, §8 Q1, NEW-gates-4 (GT-N4-6); Playwright and axe-core approved (DEC-29 O5), axe-core inside the product gate open (O27) (corrected 2026-09-25) |
 | HD1:136 | HD:329 | EvidenceBundle with difftastic enabling "5-second human acceptance" | contradicted | deliberate | review-git rule 2, §9 (a decision in under a minute); structural diff rule 6 (partial, S5) |
@@ -428,14 +455,14 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:142 | HD:340 | Omitted: parallel agents writing same files; overlapping siblings serialized | carried | carried | DEC-22; kernel rule 4 |
 | HD1:143 | HD:341 | Omitted: embedding RAG as code context | carried | carried | DEC-22; context rule 28 |
 | HD1:144 | HD:347 | Rewind from card view: "rewind to step N", truncates nothing, invalidates later gate pass | later | later | dashboard §7 (CLI built) |
-| HD1:145 | HD:348 | Dynamic tool loading: deferred tools by name, `tool_search` loads schema into volatile zone | carried | carried | worker-loop rule 11 and M2 A/B; worker-loop OQ2, context OQ2 (append as message, never edit tools array) |
+| HD1:145 | HD:348 | Dynamic tool loading: deferred tools by name, `tool_search` loads schema into volatile zone | carried | gap | worker-loop rule 11, §4 "Fixed tool set per class, stable array" not-built, M2 (after WL-M2-8 is added); context §8 Q2 (corrected 2026-09-25) |
 | HD1:146 | HD:348 | MCP servers with many tools usable without prefill cost | carried-weaker | gap | worker-loop rule 11a, NEW-worker-loop-8 |
-| HD1:147 | HD:349 | External review cards on PRs not created by the harness; never edits; findings as evidence / review comments | carried | carried | review-git §2.7; integrations rule 13 |
+| HD1:147 | HD:349 | External review cards on PRs not created by the harness; never edits; findings as evidence / review comments | carried | gap | review-git §2.7; integrations rule 13; §4 "External review cards" partial, kernel S4 (K-S4-4) (corrected 2026-09-25) |
 | HD1:148 | HD:350 | Scheduled (cron) and triggered (webhook, file change, dependency release) recurring cards cloned from template; declare… | carried | carried | runtime rule 21 |
-| HD1:149 | HD:351 | Agent-driven browser `browse` (navigate, a11y tree, click, type, screenshot); reads free, writes need URL allowlist; sc… | carried | carried | security rule 42a; worker-loop rule 12 |
+| HD1:149 | HD:351 | Agent-driven browser `browse` (navigate, a11y tree, click, type, screenshot); reads free, writes need URL allowlist; sc… | carried | gap | security rule 42a; worker-loop rule 12; §4 "`browse`: loopback-only outside research cards, pages tagged" partial, S3a (corrected 2026-09-25) |
 | HD1:150 | HD:352 | IDE extension (VS Code over ACP) and TUI | later | later | SPINE "Not in v1"; dashboard §7 |
 | HD1:151 | HD:353 | Implementation previews: 2–3 approach previews in decision requests | carried | carried | planner-pm §2.10.2 (previewSketch) |
-| HD1:152 | HD:354 | Skill and playbook diagnostics (net gain, prune bloat) | carried | carried | measurement rule 24; extensibility rule 16 |
+| HD1:152 | HD:354 | Skill and playbook diagnostics (net gain, prune bloat) | carried | gap | measurement rule 24; extensibility rule 16; §4 "Diagnostics on real inputs" partial, NEW-measurement-2 (corrected 2026-09-25) |
 | HD1:153 | HD:355 | Memory watchdog: disable speculative decoding, shed observation caches, throttle parallel worktrees at 85–90% | carried-weaker | gap | models rule 19 (owner, R27), NEW-models-2 (the 0.90 stage) |
 | HD1:154 | HD:356 | Restricted mode: no `run`, read-only AST inspection, static gates only | carried | carried | worker-loop rule 13; security rule 43 |
 | HD1:155 | HD:358 | Still deferred: plugin marketplace | later | later | extensibility §7 |
@@ -443,20 +470,20 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:157 | HD:358 | Still deferred: team chat entry points | later | later | integrations §7 |
 | HD1:158 | HD:362 | Every capability is a plugin claiming a service key (Cordis) | contradicted | deliberate | extensibility rule 29, §7 (plugin API later), §8 Q2 (container cut in B0 (DEC-29 O4)); SPINE packages |
 | HD1:159 | HD:366 | Invariant: model-visible means logged, runtime assertion enforces it | carried-weaker | carried | kernel rule 17, §4 (built), K-9 |
-| HD1:160 | HD:370 | Service keys ctx.events … ctx.sync and what each owns | carried | carried | SPINE package table (renamed to packages) |
+| HD1:160 | HD:370 | Service keys ctx.events … ctx.sync and what each owns | carried | deliberate | SPINE package table; extensibility rule 29 (the `ServiceContainer` cut in B0, DEC-29 O4) (corrected 2026-09-25) |
 | HD1:161 | HD:387 | Processes: board UI, core host, inference host, gate runner (Linux sandbox), SQLite store; same machine on single box | carried | carried | SPINE §How the parts fit |
 | HD1:162 | HD:398 | Step = one model request + tool calls; turn = steps for one card attempt | contradicted | deliberate | DEC-26; NAMING "The run" (the old use of *turn* for all the steps of an attempt is retired); worker-loop §3 Terms (corrected 2026-09-25) |
 | HD1:163 | HD:398 | Turn-flow events: card/start, step/start, context/assembled, model/request, model/response, tool/call, tool/result, ste… | carried-weaker | deliberate | kernel §3 closing note (never the code's; mapped) |
 | HD1:164 | HD:400 | Waterfall extension points: pre-step (inject checkpoints/questions), pre/post-tool (permissions, parse gate, secret sca… | carried | carried | extensibility rules 4–6 |
 | HD1:165 | HD:402 | Plugin isolation and third-party versioning deferred past v1 | later | later | extensibility §7 |
 | HD1:166 | HD:406 | Four-level hierarchy capped; deeper nesting rejected at creation | carried | carried | kernel rule 1, K-3 |
-| HD1:167 | HD:412 | Workspace: id, name, machine profile, active project cap (default 3) | carried | carried | kernel rule 2 |
-| HD1:168 | HD:413 | Project: repo path, gate contract, conventions ref, stage, playbook ref | carried-weaker | carried | kernel rule 6 |
+| HD1:167 | HD:412 | Workspace: id, name, machine profile, active project cap (default 3) | carried | deliberate | kernel rule 2; rule 6 (after restoration) (corrected 2026-09-25) |
+| HD1:168 | HD:413 | Project: repo path, gate contract, conventions ref, stage, playbook ref | carried-weaker | deliberate | kernel rule 6 (Project: gate contract, conventions, stage and playbook are not columns; each one's home named) (corrected 2026-09-25) |
 | HD1:169 | HD:414 | Card key fields (parent, spec, criteria, state, difficulty, budgets, actuals, route, deps, evidence ref) | carried | carried | kernel rule 6 (`CardRecord`); planner-pm §2.1.5 |
-| HD1:170 | HD:416 | ContextPack: id, card ref, sections, token counts, prefix hash | carried-weaker | carried | kernel rule 6; context rule 29 |
-| HD1:171 | HD:417 | EvidenceBundle entity fields | carried | carried | gates rule 35 |
-| HD1:172 | HD:418 | Attempt: model, quant, step budget, stop reason, cost | carried | carried | kernel rule 6 (`AttemptRecord`); gates rule 35 settings |
-| HD1:173 | HD:419 | GateResult: name, status, typed failures, duration, artifacts | carried | carried | gates Contract (`GateResult`) |
+| HD1:170 | HD:416 | ContextPack: id, card ref, sections, token counts, prefix hash | carried-weaker | gap | kernel rule 6; context rule 29, NEW-context-2 (CX-N2-1 records per-zone tokens) (corrected 2026-09-25) |
+| HD1:171 | HD:417 | EvidenceBundle entity fields | carried | gap | gates rule 35, §4 "Evidence bundle" partial, T1 (GT-T1-8, GT-T1-9) (corrected 2026-09-25) |
+| HD1:172 | HD:418 | Attempt: model, quant, step budget, stop reason, cost | carried | gap | kernel rule 6 (`AttemptRecord`); gates rule 35 settings; models M4 (MD-M4-5) (corrected 2026-09-25) |
+| HD1:173 | HD:419 | GateResult: name, status, typed failures, duration, artifacts | carried | gap | gates §3 `GateResult`; rule 35, §4 "Evidence bundle" partial, T1 (GT-T1-8) (corrected 2026-09-25) |
 | HD1:174 | HD:420 | Goal sits above projects | carried | carried | planner-pm §2.11 rule 1 (after restoration) (corrected 2026-09-25) |
 | HD1:175 | HD:433 | Card difficulty 1..10, planner-assigned | carried | carried | planner-pm §2.4 Estimable; K-S7-1 |
 | HD1:176 | HD:434 | Card budget and actuals: steps, tokens, seconds | carried | carried | planner-pm §2.1.5 (budgets), §2.6.1 (actuals written back on acceptance); worker-loop rule 21; kernel rule 6 Attempt (tokens and seconds used) (corrected 2026-09-25) |
@@ -469,15 +496,15 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:183 | HD:467 | Hash chain over (seq, ts, actor, type, cardId, payloadHash, prevHash) — one definition | carried | gap | kernel rule 9, NEW-kernel-1 (K-N1-1) (corrected 2026-09-25) |
 | HD1:184 | HD:467 | Board state is a projection, rebuildable | carried | carried | kernel rule 14 (corrected 2026-09-25) |
 | HD1:185 | HD:467 | Context packs and evidence on disk under `.sekhemet/`, referenced by hash | carried | carried | kernel rule 16 (corrected 2026-09-25) |
-| HD1:186 | HD:469 | Retention: packs and raw observations pruned 30 days after close; evidence, final diff, gate pass events kept forever | carried | carried | runtime rule 33 |
+| HD1:186 | HD:469 | Retention: packs and raw observations pruned 30 days after close; evidence, final diff, gate pass events kept forever | carried | gap | runtime rule 33; §4 "Retention of packs, observations, transcripts" partial, NEW-runtime-4 (corrected 2026-09-25) |
 | HD1:187 | HD:473 | Columns are states; each transition has an entry gate | carried | carried | kernel rules 23 (nine states), 27 (entry conditions) (corrected 2026-09-25) |
 | HD1:188 | HD:473 | UI offers an explicit override (drag past a gate) recorded as a human decision | carried-weaker | later | dashboard §7; kernel rule 28 (CLI, API) |
 | HD1:189 | HD:477 | Nine states, one name each across storage, column, error, docs | carried | carried | kernel rule 23; NAMING (corrected 2026-09-25) |
 | HD1:190 | HD:481 | State table: backlog, ready, planning, in_progress, verify, review, done, parked, rejected with meanings | carried | carried | kernel rule 23 (corrected 2026-09-25) |
-| HD1:191 | HD:491 | Working/Checking/Closed retired | carried | carried | kernel OQ1 (NAMING.md still conflicts; recommendation to fix) |
+| HD1:191 | HD:491 | Working/Checking/Closed retired | carried | gap | kernel §8 Q1; NAMING (retired); dashboard §4 "One label map" not-built, NEW-dashboard-2 (DB-N2-3) (corrected 2026-09-25) |
 | HD1:192 | HD:493 | parked→ready and rejected→ready reachable from CLI | carried | gap | kernel rule 25 (unpark, reopen), K-S4-7, S4 (corrected 2026-09-25) |
 | HD1:193 | HD:498 | Edge Backlog→Ready (deps met, context fits) | carried | gap | kernel rules 25, 27 (Small at `ready`); context §4 "Card size checked once, as Zone 3's fit at `ready`" not-built, NEW-context-2 (corrected 2026-09-25) |
-| HD1:194 | HD:499 | Edge Ready→Planning (planner claims); Planning→InProgress (plan + criteria approved) | carried-weaker | carried | kernel rule 25 |
+| HD1:194 | HD:499 | Edge Ready→Planning (planner claims); Planning→InProgress (plan + criteria approved) | carried-weaker | deliberate | kernel rules 25, 27, §8 Q6; DEC-29 (corrected 2026-09-25) |
 | HD1:195 | HD:503 | Edge Verify→Planning on gate fail (replan) | carried-weaker | carried | kernel rule 25 |
 | HD1:196 | HD:505 | Edge Review→InProgress on human change request | contradicted | deliberate | review-git §2.4, §9; DEC-24 (send back to Ready) |
 | HD1:197 | HD:507 | Edge InProgress→Parked on stall or budget | carried | deliberate | kernel rule 25 (LEGAL_TRANSITIONS, now in the spec); worker-loop rule 31 (budget reasons park unless the gates ran; `oscillation_detected` and `no_progress` go to Verify), §9 (after the reason is added) (corrected 2026-09-25) |
@@ -488,12 +515,12 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:202 | HD:520 | Review entry: every required gate passed; evidence complete | carried | carried | kernel rule 27 (corrected 2026-09-25) |
 | HD1:203 | HD:521 | Done entry: human acceptance recorded | carried | carried | kernel rule 27; review-git §2.5 (corrected 2026-09-25) |
 | HD1:204 | HD:522 | Parked entry: stall, budget exhaustion, capability ceiling | carried-weaker | gap | kernel rule 27, NEW-kernel-5 |
-| HD1:205 | HD:523 | Rejected: closed unmerged; reopen → Ready | carried | carried | review-git §2.4 |
+| HD1:205 | HD:523 | Rejected: closed unmerged; reopen → Ready | carried | gap | review-git §2.4; §4 "Reject, reopen, revert accept" not-built, S5; kernel S4 (K-S4-7) (corrected 2026-09-25) |
 | HD1:206 | HD:527 | Rollup: parent done only if all children done AND parent integration gate passes on merged result | carried | carried | kernel rule 30, K-7 (corrected 2026-09-25) |
 | HD1:207 | HD:527 | Project status is rollup of top-level cards | carried-weaker | gap | kernel rule 6, NEW-kernel-5 (K-N5-3) |
 | HD1:208 | HD:531 | Regression protection: evidence snapshotted at Review; revision must re-pass every gate | carried | carried | kernel rule 31 (corrected 2026-09-25) |
 | HD1:209 | HD:531 | A revision regressing a previously passing gate is rejected; card returns to Planning with the regression named | carried-weaker | gap | kernel rule 31, NEW-kernel-5 |
-| HD1:210 | HD:538 | ReviewWIP = floor(reviewMinutesPerDay / medianReviewMinutesPerCard) | carried | carried | review-git §2.2.1 |
+| HD1:210 | HD:538 | ReviewWIP = floor(reviewMinutesPerDay / medianReviewMinutesPerCard) | carried | gap | review-git §2.2.1; §4 "ReviewWIP formula, back-pressure, held cards released" partial, S6 (corrected 2026-09-25) |
 | HD1:211 | HD:541 | When Review full, no card may enter Verify | carried | carried | kernel rule 29 (corrected 2026-09-25) |
 | HD1:212 | HD:545 | Context assembled deterministically per card, never accumulated | carried | carried | context rule 1 |
 | HD1:213 | HD:549 | Repo map: tag extraction, file graph, personalized PageRank seeded to scope, binary-search fit | carried | carried | context rule 13 (TS compiler, not Tree-sitter; budget 1,200) |
@@ -502,34 +529,34 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:216 | HD:550 | LSP expansion stage, headless servers pooled per project | contradicted | deliberate | context rule 28, §9; pool backs tools (worker-loop 12) |
 | HD1:217 | HD:551 | Line-level pruning with SWE-Pruner on gate host | later | later | context §7; DEC-21 |
 | HD1:218 | HD:551 | [BENCH] pruner CPU latency on 4-core host | later | later | OPEN_QUESTIONS benchmark 8 (deferred with the pruner) |
-| HD1:219 | HD:552 | Budget fit to tier working budget, below window | carried | carried | context rule 10 |
-| HD1:220 | HD:558 | Four-zone prompt layout and stability | carried | carried | context rule 8 (Zone 3 now per attempt incl. spec; Zone 4 per turn) |
+| HD1:219 | HD:552 | Budget fit to tier working budget, below window | carried | gap | context rule 10, §4 "Zone budgets asserted on the live path" partial, NEW-context-2 (CX-N2-1); NEW-context-3 (CX-N3-1) (corrected 2026-09-25) |
+| HD1:220 | HD:558 | Four-zone prompt layout and stability | carried | gap | context rule 8, §4 "Four-zone layout" partial, M8 (CX-M8-6) (corrected 2026-09-25) |
 | HD1:221 | HD:563 | Zone 4 = card spec, criteria, scope, open TODOs, latest observation, re-injected goal | contradicted | deliberate | context rule 8, §9 (M8) |
-| HD1:222 | HD:565 | Zone 2 versioned, updated only between cards | carried | carried | context rules 8, 24; CX-5 |
+| HD1:222 | HD:565 | Zone 2 versioned, updated only between cards | carried | gap | context rules 8, 24; §4 "Static per-card blocks before scope files; rung directive in the tail" not-built, NEW-context-3 (CX-N3-4); M8 (CX-M8-1) (corrected 2026-09-25) |
 | HD1:223 | HD:569 | Masked pointer example (~15 tokens with EvidenceRef) | carried | deliberate | context rule 3 (one line of ≤ 30 tokens at masking points, CX-M8-8), §9; DEC-24 (corrected 2026-09-25) |
 | HD1:224 | HD:569 | Full observations remain in log/disk, retrievable by reference | carried | carried | context rules 3, 17 |
 | HD1:225 | HD:569 | Goal and open TODOs re-injected at tail every step | carried | carried | context rule 8 |
 | HD1:226 | HD:573 | `run` routes commands through the RTK binary | carried-weaker | deliberate | context rule 17; PROVENANCE "Output condensing (RTK)" row (corrected 2026-09-25) |
 | HD1:227 | HD:574 | RTK four strategies: filtering, grouping, truncation, deduplication | carried | carried | context rule 17 |
 | HD1:228 | HD:579 | RTK tracks savings statistics | missing | gap | context rule 17, NEW-context-5 |
-| HD1:229 | HD:579 | read/grep/glob native condensing; lossless for repair data; raw output saved to evidence | carried | carried | context rule 17, CX-3 |
+| HD1:229 | HD:579 | read/grep/glob native condensing; lossless for repair data; raw output saved to evidence | carried | gap | context rule 17, CX-3 (after restoration: §4 row and CX-N5-4) (corrected 2026-09-25) |
 | HD1:230 | HD:581 | [BENCH] condensing reduction on real command mix, dropped strings | carried | carried | OPEN_QUESTIONS #13 |
 | HD1:231 | HD:585 | Subtask branching: child seeded from parent zones 1–2 + own scope; returns summary + evidence ref | carried | carried | context rule 18, CX-4 |
 | HD1:232 | HD:590 | llama.cpp: `--cache-ram` 8–16 GiB, `--ctx-checkpoints 32`, `--checkpoint-min-step 8192` | contradicted | deliberate | context rule 6, §9; DEC-24 |
 | HD1:233 | HD:590 | Slot prefix similarity `-sps` | missing | deliberate | context rule 6; DEC-24 |
 | HD1:234 | HD:590 | `cache_prompt: true` on every request | carried | carried | context rule 6 |
-| HD1:235 | HD:591 | Zero silent cache invalidation; volatile data banned from prefix | carried | carried | context rule 5 |
+| HD1:235 | HD:591 | Zero silent cache invalidation; volatile data banned from prefix | carried | gap | context rule 5; §4 "Append-only prompt" not-built, M8 (CX-M8-1, CX-M8-2); NEW-context-3 (CX-N3-4) (corrected 2026-09-25) |
 | HD1:236 | HD:592 | MLX path: unified memory reuse, MTPLX native MTP heads | later | later | context §7; models §7 |
 | HD1:237 | HD:593 | Prefix-cache hit rate recorded per step; <85% on tool-result steps is a defect | carried | carried | context rule 7 (median over turns after first) |
 | HD1:238 | HD:593 | Low hit rate alerts the operator | carried-weaker | gap | context rule 7, §4 "Cache hit alert" partial, M8 (after CX-M8-10 is added) (corrected 2026-09-25) |
 | HD1:239 | HD:599 | Planner declares scope by bounded search before Ready, outside Worker budget | carried | gap | context rule 22, P1 (CX-P1-1…5) (corrected 2026-09-25) |
-| HD1:240 | HD:601 | Step 1: identifiers looked up in symbol table | carried | carried | context rule 22, CX-P1-1 |
-| HD1:241 | HD:602 | Step 2: lexical search ranked defs>refs, source>tests>generated | carried | carried | context rule 22, CX-P1-4 |
-| HD1:242 | HD:603 | Step 3: one-hop graph expansion | carried | carried | context rule 22, CX-P1-3 |
-| HD1:243 | HD:604 | Step 4: cap 12 tool calls and one Planner turn; else decision request asking which files | carried | carried | context rule 22, CX-P1-2 |
+| HD1:240 | HD:601 | Step 1: identifiers looked up in symbol table | carried | gap | context rule 22, §4 "Bounded scope declaration" not-built, P1 (CX-P1-1) (corrected 2026-09-25) |
+| HD1:241 | HD:602 | Step 2: lexical search ranked defs>refs, source>tests>generated | carried | gap | context rule 22, §4 "Bounded scope declaration" not-built, P1 (CX-P1-4) (corrected 2026-09-25) |
+| HD1:242 | HD:603 | Step 3: one-hop graph expansion | carried | gap | context rule 22, §4 "Bounded scope declaration" not-built, P1 (CX-P1-3) (corrected 2026-09-25) |
+| HD1:243 | HD:604 | Step 4: cap 12 tool calls and one Planner turn; else decision request asking which files | carried | gap | context rule 22, §4 "Bounded scope declaration" not-built, P1 (CX-P1-2) (corrected 2026-09-25) |
 | HD1:244 | HD:606 | filesTouched is a declaration: may read outside, may not write outside | carried | carried | context rule 22 |
 | HD1:245 | HD:606 | [BENCH] scope precision/recall vs human-named files decides the cap | missing | gap | context rule 22, P1 (CX-P1-5 precision and recall) |
-| HD1:246 | HD:616 | Decompose to fit with headroom; unfittable card is a planning failure | carried | carried | planner-pm §2.4 Small; context rule 10 |
+| HD1:246 | HD:616 | Decompose to fit with headroom; unfittable card is a planning failure | carried | gap | planner-pm §2.4 Small; §4 "INVEST Small equal to the resolved Worker's Zone 3 cap" not-built, P1 (PM-12, PM-13, PM-14); context rule 10, NEW-context-2 (CX-N2-2) (corrected 2026-09-25) |
 | HD1:247 | HD:619 | Learned line pruning (SWE-Pruner Pro) | later | later | context §7 |
 | HD1:248 | HD:620 | Zone caps: Z1 ≤0.12W, Z2 ≤0.10W, Z3 ≤0.50W, Z4 remainder ≥0.20W; shrink map, drop symbols, fail Ready | carried | deliberate | context rule 10; DEC-27 (Zone 1 fixed in tokens, ≤ 2,400 incl. schemas; the other zones as fractions of W − 2,400) |
 | HD1:249 | HD:626 | Observation masking: older than last two replaced in place | contradicted | deliberate | context rule 3; DEC-24 |
@@ -545,11 +572,11 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:259 | HD:644 | No model-written trajectory summaries | carried | carried | context rule 28 |
 | HD1:260 | HD:645 | No embedding compression of code | carried | carried | context rule 28; DEC-22 |
 | HD1:261 | HD:646 | No large windows; larger tier buys co-residency and parallel cards | carried | carried | context rule 28; models rule 8 |
-| HD1:262 | HD:650 | Measurement per step (zone tokens, masked count, hit rate) and per card (peak, steps to first pass, pass vs pack size);… | carried | carried | context rule 29 |
+| HD1:262 | HD:650 | Measurement per step (zone tokens, masked count, hit rate) and per card (peak, steps to first pass, pass vs pack size);… | carried | gap | context rule 29 (after restoration: CX-N2-6); per-zone tokens CX-N2-1 (corrected 2026-09-25) |
 | HD1:263 | HD:656 | Target envelope: 3B-active MoE or ~30B class with 16k–32k working context, bounded verifiable cards | carried | carried | models rules 2, 8 |
 | HD1:264 | HD:682 | Localization stage 1: tag queries + PageRank rank symbols | carried | carried | context rule 13 |
 | HD1:265 | HD:683 | Localization stage 2: LSP expands defs/refs/signatures for declared scope | contradicted | deliberate | context rule 28, §9 |
-| HD1:266 | HD:688 | Edit sketch from Planner: target AST symbols, preconditions, invariant contracts, diff sketch without boilerplate | carried-weaker | carried | planner-pm §2.1.9, P1 |
+| HD1:266 | HD:688 | Edit sketch from Planner: target AST symbols, preconditions, invariant contracts, diff sketch without boilerplate | carried-weaker | gap | planner-pm §2.1.9; §4 "Edit sketch for difficulty 4–7" partial, P1 (PM-P1-16) (corrected 2026-09-25) |
 | HD1:267 | HD:689 | Worker applies sketch mechanically via symbol replacement | carried-weaker | later | worker-loop §7 |
 | HD1:268 | HD:692 | Format tax: grammar constraints degrade small-model reasoning 15–30% | carried | carried | models rule 28; DEC-22 |
 | HD1:269 | HD:693 | Constraints help on terminal payloads, hurt on reasoning and selection | carried | carried | models rule 28 |
@@ -562,10 +589,10 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:276 | HD:712 | Parallel pass@k on L/XL or overnight; k ∈ [2,4], T ∈ [0.4,0.7] | carried-weaker | later | worker-loop rule 37 (`pass_at_k` 1–4, samples 2..k at 0.4, 0.55, 0.7, each from the same starting tree, first passing sample taken; v1, built); worker-loop §7 (parallel samples, per-tier cap) (corrected 2026-09-25) |
 | HD1:277 | HD:713 | Each sample verified in isolated ephemeral worktree; first to pass selected | carried | carried | worker-loop rule 37 |
 | HD1:278 | HD:719 | GateFailure example with location/expected/actual/minimalRepro | carried | carried | gates rule 19 |
-| HD1:279 | HD:721 | Only top 3 topologically ordered failures reach the model | carried | carried | gates rule 20 |
+| HD1:279 | HD:721 | Only top 3 topologically ordered failures reach the model | carried | gap | gates rule 20; §4 "at most three per attempt" partial, T1 (GT-T1-4); "Failures ordered by the import graph within a rung" not-built, M6 (GT-M6-7) (corrected 2026-09-25) |
 | HD1:280 | HD:722 | 4-rung ladder enforces fresh context | carried | carried | worker-loop rule 34 |
 | HD1:281 | HD:726 | Exemplar source: accepted cards and fixing commits from repo's own git history | carried-weaker | later | context §7 |
-| HD1:282 | HD:727 | 1–2 accepted trajectories of same class into Zone 2 | carried | carried | context rules 8, 25 (as diff hunks) |
+| HD1:282 | HD:727 | 1–2 accepted trajectories of same class into Zone 2 | carried | gap | context rules 8, 25; §4 "Exemplars as accepted diff hunks" not-built, M1 (CX-M1-7, CX-M1-11) (corrected 2026-09-25) |
 | HD1:283 | HD:731 | Up to 40% of tool-call failures from template bugs | carried-weaker | carried | models rule 12 and §9 (after restoration) (corrected 2026-09-25) |
 | HD1:284 | HD:732 | Vendor-exact Jinja templates SHA-256 pinned; change invalidates qualification | carried | carried | models rule 12, MD-2 |
 | HD1:285 | HD:733 | KV 8-bit; 4-bit prohibited for tool-calling models | carried | carried | models rule 10, MD-1 |
@@ -575,21 +602,21 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:289 | HD:739 | SPIDR sizing: scope 1–3 files, <200 lines diff | carried | carried | gates rule 12; planner-pm §2.1.4 |
 | HD1:290 | HD:740 | Sandbox blocks writes outside scope | carried | carried | worker-loop rule 14 |
 | HD1:291 | HD:747 | Worker: single writer, one card at a time | carried | carried | worker-loop rule 4 |
-| HD1:292 | HD:751 | Tool arm chosen per model by measurement; registry records winner | carried | carried | models rule 28 |
+| HD1:292 | HD:751 | Tool arm chosen per model by measurement; registry records winner | carried | gap | models rule 28; §4 "Tool arm measured and pinned" not-built, NEW-models-5 (MD-N5-1) (corrected 2026-09-25) |
 | HD1:293 | HD:755 | Tool set flat, no nested objects or unions | carried-weaker | carried | worker-loop rule 10a, WL-17 |
 | HD1:294 | HD:756 | `read` line-numbered byte-budgeted | carried | carried | worker-loop rule 12 |
 | HD1:295 | HD:757 | `read_symbol`, `find_references` | carried | carried | worker-loop rule 12 |
 | HD1:296 | HD:758 | `replace_symbol_body`, `insert_after_symbol` | carried | carried | worker-loop rule 12 |
 | HD1:297 | HD:759 | `edit` fallback with uniqueness | carried | carried | worker-loop rule 12 |
 | HD1:298 | HD:760 | `run` sandboxed with RTK | carried | carried | worker-loop rule 12 |
-| HD1:299 | HD:761 | `docs` version-pinned documentation across knowledge tiers | carried | carried | worker-loop rule 12 |
+| HD1:299 | HD:761 | `docs` version-pinned documentation across knowledge tiers | carried | later | worker-loop rule 12 (`docs` at the installed version, built); the tiered project corpus design-stage §7 (corrected 2026-09-25) |
 | HD1:300 | HD:762 | `deps_source` installed dependency source at resolved version | carried | carried | worker-loop rule 12 (`dependencies`) |
 | HD1:301 | HD:763 | `repo`: tree, file at a ref, code search, releases between two versions | carried-weaker | deliberate | worker-loop rule 12 (`list_dir`, `grep_search`, `git_history` over this repository), §7 "Release notes between two versions" (reason); design-stage §2.7 rule 10 (the Researcher's `repo`: any repository, any ref, code search across GitHub, release diffs) (corrected 2026-09-25) |
 | HD1:302 | HD:764 | `ask` non-blocking question answered at a later step boundary | contradicted | gap | worker-loop rule 12, NEW-worker-loop-4 (R2) |
-| HD1:303 | HD:765 | `note` writes to card thread or posts a decision request | carried | carried | worker-loop rule 12 |
-| HD1:304 | HD:767 | Code-mode single script when registry marks Worker script-capable | carried | carried | worker-loop rule 12 `run_script`, WL-M2-4 |
+| HD1:303 | HD:765 | `note` writes to card thread or posts a decision request | carried | gap | worker-loop rule 12 (`note` → dossier, built); NEW-worker-loop-4 (after WL-N4-3 is added) (corrected 2026-09-25) |
+| HD1:304 | HD:767 | Code-mode single script when registry marks Worker script-capable | carried | gap | worker-loop rule 12 `run_script`, M2 (WL-M2-4) (corrected 2026-09-25) |
 | HD1:305 | HD:772 | Write path 1: scope check | carried | carried | worker-loop rule 14 |
-| HD1:306 | HD:773 | Write path 2: Tree-sitter AST parse | carried | carried | worker-loop rule 14 (compiler for TS/JS; other languages where a checker exists) |
+| HD1:306 | HD:773 | Write path 2: Tree-sitter AST parse | carried | deliberate | worker-loop rule 14; gates §9 (the compiler, not tree-sitter; DEC-20) (corrected 2026-09-25) |
 | HD1:307 | HD:774 | Write path 3: gitleaks-pattern secret scan | carried | carried | worker-loop rule 14 |
 | HD1:308 | HD:775 | Failure aborts write, typed error, disk untouched | carried | carried | worker-loop rule 14, WL-3 |
 | HD1:309 | HD:779 | Rolling window of (tool, argumentHash, repoStateHash) | carried | carried | worker-loop rule 17 |
@@ -598,14 +625,14 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:312 | HD:782 | Both terminate the turn immediately | contradicted | deliberate | worker-loop rule 18, §9 |
 | HD1:313 | HD:782 | Step budgets set dynamically per card class by the planner | carried | carried | worker-loop rule 21 (p80×1.25, ±15%, ≥4) |
 | HD1:314 | HD:787 | Stop reason `done_pending_gates` | carried | deliberate | worker-loop rule 33, §9 (after the reason is added) (corrected 2026-09-25) |
-| HD1:315 | HD:788 | Stop reason `budget_exhausted` | carried | carried | worker-loop OQ1 class |
+| HD1:315 | HD:788 | Stop reason `budget_exhausted` | carried | carried | worker-loop rule 31 (table row `budget_exhausted`, detail rule 31a) (corrected 2026-09-25) |
 | HD1:316 | HD:789 | Stop reason `no_progress` | carried | carried | worker-loop rule 19 |
 | HD1:317 | HD:790 | Stop reason `scope_violation` | carried | carried | worker-loop rule 32 |
 | HD1:318 | HD:791 | Stop reason `capability_ceiling` | carried | carried | worker-loop rule 34.4 |
 | HD1:319 | HD:792 | Stop reason `human_abort` | carried | carried | worker-loop rule 32 (hook veto separated) |
 | HD1:320 | HD:794 | Stop reasons never collapsed; core competence signal | carried | carried | worker-loop rule 30 |
 | HD1:321 | HD:794 | Six is the vocabulary; new conditions are details, not new members | carried-weaker | deliberate | worker-loop rule 31, §9; DEC-24 (23 stored reasons in one table, seven failure classes and one success class) |
-| HD1:322 | HD:796 | Every stop reason names the next action (vacuous tests named; scope file named with widen offer; ceiling names escalati… | carried | carried | worker-loop rules 31–32, WL-11 |
+| HD1:322 | HD:796 | Every stop reason names the next action (vacuous tests named; scope file named with widen offer; ceiling names escalati… | carried | gap | worker-loop rules 31–32; §4 "One stop-reason table with next actions" not-built, T3 (WL-T3-2, WL-T3-3); WL-11 (corrected 2026-09-25) |
 | HD1:323 | HD:800 | Rung 1: typed feedback, same context, max 2 | carried | carried | worker-loop rule 34.1 |
 | HD1:324 | HD:801 | Rung 2: fresh pack, same plan, max 1 | carried | carried | worker-loop rule 34.2 |
 | HD1:325 | HD:802 | Rung 3: narrow scope or escalate one model tier (competence model chooses); re-decomposition only at rung 4 | contradicted | deliberate | worker-loop rule 34.3, §7, §9 |
@@ -613,7 +640,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:327 | HD:805 | Worker never re-reads its prior reasoning across rungs; each rung rebuilds from clean pack | carried | carried | worker-loop rule 35 |
 | HD1:328 | HD:809 | Reasoning suppressed for mechanical steps; raised for planning or after rung-1 failure | carried | carried | worker-loop rule 24 (policy table) |
 | HD1:329 | HD:809 | Prior reasoning stripped between steps unless registry notes benefit | contradicted | deliberate | context rule 4; DEC-24 |
-| HD1:330 | HD:811 | Finding: Worker never planned; default profile disabled reasoning | carried | carried | worker-loop §9 / OQ16 context (narrative) |
+| HD1:330 | HD:811 | Finding: Worker never planned; default profile disabled reasoning | carried | carried | worker-loop §9 (after restoration) (corrected 2026-09-25) |
 | HD1:331 | HD:816 | Thinking policy off / surgical / all, `SEKHEMET_THINKING`, recorded in evidence | carried | carried | worker-loop rules 24, 27 |
 | HD1:332 | HD:821 | Winner = best pass rate for wall-clock, same build/model, ≥2 runs | contradicted | deliberate | measurement rule 12, §8 Q1, §9 (paired; the cheaper arm wins a tie) |
 | HD1:333 | HD:825 | Every habit enforced by structure, never a prompt sentence | carried | carried | worker-loop rule 1 |
@@ -621,10 +648,10 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:335 | HD:832 | Done means proven: `finish_card` refused while last check failed (strict) | carried | carried | worker-loop rule 26 |
 | HD1:336 | HD:833 | Don't repeat what failed: re-running same command with no file change refused; trimming-only variants are the same | carried | carried | worker-loop rule 26, NEW-worker-loop-1 |
 | HD1:337 | HD:834 | Acceptance test inline; imported signatures shown before any write; `edit` preferred over whole-file rewrite | carried | carried | worker-loop rule 12; context rules 14–15; planner-pm §2.1.6 |
-| HD1:338 | HD:834 | Data contract (interface fields, CREATE TABLE) in the map; files with nothing to build on dropped | carried | carried | context rules 13–14, M5 |
+| HD1:338 | HD:834 | Data contract (interface fields, CREATE TABLE) in the map; files with nothing to build on dropped | carried | gap | context rules 13–14; §4 "Repo map shows only files with something to build on" not-built, M1 (CX-M1-4); "Data contracts as their own high-priority section" not-built, M5 (corrected 2026-09-25) |
 | HD1:339 | HD:835 | Think on first turn and after a failed check | carried | carried | worker-loop rule 24 |
 | HD1:340 | HD:836 | Short views, recent history in full, failures cut to the assertion | carried | carried | worker-loop rule 29 (100-line window A/B); context rules 3, 16 |
-| HD1:341 | HD:837 | After a failure the next edit states which assertion it addresses (A/B) | carried | carried | worker-loop rule 29 (`hypothesis`) |
+| HD1:341 | HD:837 | After a failure the next edit states which assertion it addresses (A/B) | carried | later | worker-loop rule 29 and §7 (after restoration) (corrected 2026-09-25) |
 | HD1:342 | HD:839 | Fingerprint hashes working-tree content via throwaway index | carried | carried | worker-loop rule 17, WL-1 |
 | HD1:343 | HD:839 | Data contract as own section appended to whichever map is used | carried | gap | context rule 14, M5 (corrected 2026-09-25) |
 | HD1:344 | HD:839 | Surgical thinking also after a failed automatic re-check | carried | carried | worker-loop rule 24, WL-7 |
@@ -635,19 +662,19 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:349 | HD:855 | Write discouraged for existing files | carried | carried | worker-loop rule 12 |
 | HD1:350 | HD:856 | Grep regex, three modes, context lines, head limit, gitignore-aware | carried-weaker | carried | worker-loop rule 12 (regex, three modes, context lines, capped, gitignore-aware) |
 | HD1:351 | HD:858 | Bash with timeout and description field | carried-weaker | carried | worker-loop rule 12 (`run_cmd` timeout and description) |
-| HD1:352 | HD:863 | Incremental discovery; fewer tools per agent (reviewer: read/grep/glob; implementer + edit/bash; researcher + fetch) | carried-weaker | carried | worker-loop rule 10 |
+| HD1:352 | HD:863 | Incremental discovery; fewer tools per agent (reviewer: read/grep/glob; implementer + edit/bash; researcher + fetch) | carried-weaker | gap | worker-loop rule 10; §4 "Fixed tool set per class, stable array" not-built, M2 (WL-M2-1, WL-M2-3) (corrected 2026-09-25) |
 | HD1:353 | HD:869 | Line numbers 1-based start/end, not offsets | carried | carried | worker-loop rule 12 |
 | HD1:354 | HD:870 | Symbol edits + exact-replace fallback with parse gate before write | carried | carried | worker-loop rules 12, 14 |
 | HD1:355 | HD:871 | Grep capped, gitignore-aware; repo map answers first | carried | carried | worker-loop rule 12; context rule 13 |
 | HD1:356 | HD:872 | Glob identical semantics | carried-weaker | carried | worker-loop rule 12 (`find_files` newest first) |
 | HD1:357 | HD:873 | `run` denies raw `cat`/`grep`/`sed` when structured equivalent exists | carried | carried | worker-loop rule 12, WL-5 |
-| HD1:358 | HD:874 | Explore, Plan, Implement as card classes with fixed tool lists | carried | carried | worker-loop rule 10; models rule 31 (kinds renamed: spike/interface/implement/data/rule/review/research) |
+| HD1:358 | HD:874 | Explore, Plan, Implement as card classes with fixed tool lists | carried | gap | worker-loop rule 10; models rule 31; §4 "Fixed tool set per class" not-built, M2 (WL-M2-1) (corrected 2026-09-25) |
 | HD1:359 | HD:875 | Todo = subtask list + open TODOs in volatile tail | carried | carried | context rule 8 |
-| HD1:360 | HD:876 | Ask user = `note` with question and options into card thread and inbox | carried | carried | worker-loop rule 12 (`ask`/`note`) |
+| HD1:360 | HD:876 | Ask user = `note` with question and options into card thread and inbox | carried | gap | worker-loop rule 12 (`ask`, `note`); NEW-worker-loop-4 (WL-N4-1; WL-N4-3 after it is added) (corrected 2026-09-25) |
 | HD1:361 | HD:880 | Deterministic map first, budgeted search second; read-before-edit and uniqueness enforced mechanically; mask and end st… | carried | carried | worker-loop rules 12, 14; context rules 3, 12 |
 | HD1:362 | HD:884 | Planner rejects Scrum role-play; deterministic scheduling + automated decomposition | carried | carried | planner-pm §2.7.4; DEC-05 |
 | HD1:363 | HD:888 | Responsibilities: decomposition, criteria, difficulty, DAG, prioritisation, budgets, routing, replanning, status from g… | carried | carried | planner-pm §2.1–2.7 |
-| HD1:364 | HD:892 | Split until every leaf satisfies tier context and step budget | carried | carried | planner-pm §2.4 Small |
+| HD1:364 | HD:892 | Split until every leaf satisfies tier context and step budget | carried | gap | planner-pm §2.4 Small; §4 "INVEST Small equal to the resolved Worker's Zone 3 cap" not-built, P1 (PM-12) (corrected 2026-09-25) |
 | HD1:365 | HD:896 | SPIDR Spike: research/spike card writing notes and a toy test | carried | carried | planner-pm §2.2 table |
 | HD1:366 | HD:897 | SPIDR Path: happy path first | carried | carried | planner-pm §2.2 table |
 | HD1:367 | HD:898 | SPIDR Interface = type contracts/schemas first | contradicted | deliberate | planner-pm §2.2, §9 |
@@ -659,7 +686,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:373 | HD:910 | Valuable: links to project gate or goal criterion; reject orphans | carried | carried | planner-pm §2.4 (adds epic behaviour) |
 | HD1:374 | HD:911 | Estimable: difficulty maps to throughput envelope; >7 forces re-split | carried | carried | planner-pm §2.4 |
 | HD1:375 | HD:912 | Small: pack ≤25% of tier working context; step budget ≤40 | carried-weaker | deliberate | planner-pm §2.4 Small row, §9; DEC-27 (one number for card size, N5); DEC-24 (corrected 2026-09-25) |
-| HD1:376 | HD:913 | Testable: failing test committed before handoff | carried | carried | planner-pm §2.4; gates GT-P1-1 |
+| HD1:376 | HD:913 | Testable: failing test committed before handoff | carried | gap | planner-pm §2.4 Testable, §2.1.5; §4 "One planner…" partial and "Each card carries the interface its test imports…" not-built, P1 (PM-P1-1, PM-P1-18); gates P1 (GT-P1-1) (corrected 2026-09-25) |
 | HD1:377 | HD:918 | WSJF = (value + time criticality + risk reduction)/(estimated steps × difficulty) | carried | carried | planner-pm §2.7.2 |
 | HD1:378 | HD:919 | RICE for idea-stage repos; weights in config.toml; planner never invents weights | carried | carried | planner-pm §2.7.2 |
 | HD1:379 | HD:923 | Estimates in tokens, seconds, steps; never story points | contradicted | deliberate | planner-pm §2.6, §9 |
@@ -673,7 +700,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:387 | HD:941 | Conversation is the main input surface; board is the state; nothing durable in transcript | carried | carried | planner-pm §2.8.3–2.8.5 |
 | HD1:388 | HD:943 | Ambiguity resolved in conversation is cheapest; Planner talkative here | carried | carried | design-stage §2.2 |
 | HD1:389 | HD:947 | Holds the whole workspace; answers from event log across projects | carried | carried | planner-pm §2.8.5 |
-| HD1:390 | HD:948 | Asks before assuming on scope/invariant ambiguity; decides when conventions answer | carried | carried | planner-pm §2.10.1 |
+| HD1:390 | HD:948 | Asks before assuming on scope/invariant ambiguity; decides when conventions answer | carried | gap | planner-pm §2.10.1; §4 "One non-blocking question policy" partial, P2 (PM-P2-3…6) (corrected 2026-09-25) |
 | HD1:391 | HD:948 | Asking about something the playbook already settles is a defect | missing | gap | planner-pm §2.10.1 (a question already settled is a defect), P2 |
 | HD1:392 | HD:949 | Proposes; board records; editing in conversation edits cards | carried | carried | planner-pm §2.8.3 |
 | HD1:393 | HD:950 | Reports from evidence; never characterises work as going well | carried | carried | planner-pm §2.8.2, §2.8.14 |
@@ -686,18 +713,18 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:400 | HD:972 | Never announce steps; never say "requirements", "phase", "let me gather" | carried | carried | design-stage §2.2.6 |
 | HD1:401 | HD:976 | Propose and proceed (calculator example) | carried | carried | design-stage §2.2.1 |
 | HD1:402 | HD:982 | Ask only when uncertain and expensive to get wrong | carried | carried | design-stage §2.2.2 |
-| HD1:403 | HD:984 | One question at a time, the one that most changes the backlog | carried | carried | design-stage §2.2.3 |
-| HD1:404 | HD:986 | A question whose answers produce the same cards is not asked | carried | carried | design-stage §2.2.3; planner-pm §2.10.1 |
+| HD1:403 | HD:984 | One question at a time, the one that most changes the backlog | carried | gap | design-stage §2.2.3; §4 "Brief asks the highest-value question" not-built, NEW-design-stage-1 (DS-N1-4) (corrected 2026-09-25) |
+| HD1:404 | HD:986 | A question whose answers produce the same cards is not asked | carried | gap | design-stage §2.2.3; §4 "Depth profile, checklist…" not-built, P14 (DS-P14-8) (corrected 2026-09-25) |
 | HD1:405 | HD:988 | "Just build it" and silence are complete answers; never re-offered | carried | carried | design-stage §2.2.4 |
 | HD1:406 | HD:990 | Nothing blocked on the conversation; question left open on board | carried | carried | design-stage §2.2.5 |
-| HD1:407 | HD:994 | Brief at `.sekhemet/brief.md`, versioned, amendable | carried | carried | design-stage §2.3 |
+| HD1:407 | HD:994 | Brief at `.sekhemet/brief.md`, versioned, amendable | carried | deliberate | design-stage §2.3 "Where the project's documents live", §9 Resolved drift; DEC-30 (corrected 2026-09-25) |
 | HD1:408 | HD:998 | Brief sections: Problem (incl. "today instead"), Outcome, Non-goals, Constraints, Prior art (cited, Researcher), Riskie… | carried | carried | design-stage §2.3 |
 | HD1:409 | HD:1010 | Prior art researched by the Researcher with sources, not recalled from weights | carried | gap | design-stage §2.5.7, P7 (corrected 2026-09-25) |
 | HD1:410 | HD:1016 | Backbone of user activities; thinnest slice through all becomes first cards | carried | carried | design-stage §2.3; planner-pm §2.2.5 |
 | HD1:411 | HD:1018 | Narrow and complete over one part deep; unbuilt shape visible | carried | carried | design-stage §2.3; planner-pm §2.2.5 |
 | HD1:412 | HD:1020 | Riskiest assumption scheduled first regardless of backbone | contradicted | deliberate | design-stage §9; planner-pm §2.2.4 |
-| HD1:413 | HD:1026 | Every slice carries a behaviour with concrete values; model asked for it | carried | carried | planner-pm §2.3.1 |
-| HD1:414 | HD:1026 | Without a model, behaviour = spec's own words | carried-weaker | carried | planner-pm §2.1.2, P1 |
+| HD1:413 | HD:1026 | Every slice carries a behaviour with concrete values; model asked for it | carried | gap | planner-pm §2.3.1; §4 "Acceptance criteria that say what the code must do" partial, P1 (PM-P1-5, PM-P1-6) (corrected 2026-09-25) |
+| HD1:414 | HD:1026 | Without a model, behaviour = spec's own words | carried-weaker | gap | planner-pm §2.1.2; §4 "Acceptance criteria…" partial, P1 (PM-P1-3, PM-P1-9) (corrected 2026-09-25) |
 | HD1:415 | HD:1026 | Hard invariants ("never", "twice", "exactly once", "idempotent") scheduled right after contract | carried | carried | planner-pm §2.2.3 |
 | HD1:416 | HD:1026 | Riskiest assumption planned even if unwritten (billing gets a charge-twice card second in line) | carried | carried | planner-pm §2.2.4 |
 | HD1:417 | HD:1030 | Assumptions recorded with defaults, visible on board, outcome recorded when contradicted; measures default quality | carried | carried | design-stage §2.2.9; planner-pm §2.10.4 |
@@ -715,17 +742,17 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:429 | HD:1065 | Literature only for algorithmic work | carried | carried | design-stage §2.5.1 |
 | HD1:430 | HD:1067 | Relevance: ≥2 need words in name/description; kind words dropped from query | carried | carried | design-stage §2.5.3 |
 | HD1:431 | HD:1067 | Popularity: ≥1,000 weekly downloads or 20 stars | carried | carried | design-stage §2.5.3 |
-| HD1:432 | HD:1067 | Licences: permissive recommended; weak copyleft flagged; GPL/AGPL named in exclusions; no licence dropped silently | carried | carried | design-stage §2.5.3 |
+| HD1:432 | HD:1067 | Licences: permissive recommended; weak copyleft flagged; GPL/AGPL named in exclusions; no licence dropped silently | carried | gap | design-stage §2.5.3; §4 "SPDX licence classifier shared with the licence gate" not-built, P7 (DS-P7-1, DS-P7-2) (corrected 2026-09-25) |
 | HD1:433 | HD:1069 | "May already cover this", never "already does this"; Worker told to read one before depending | carried | carried | design-stage §2.5.4 (Researcher reads README first; OQ2) |
 | HD1:434 | HD:1069 | Archived or untouched 2 years not recommended | carried | carried | design-stage §2.5.3 |
-| HD1:435 | HD:1069 | Unreachable source reported as not searched | carried | carried | design-stage §2.5.5 |
+| HD1:435 | HD:1069 | Unreachable source reported as not searched | carried | gap | design-stage §2.5.5; §4 "Literature outage reported as not searched" not-built, S8 (DS-S8-5) (corrected 2026-09-25) |
 | HD1:436 | HD:1071 | Results to person (one line), brief Prior art, each card's dossier with depend-or-note instruction; Worker never search… | carried | carried | design-stage §2.5.6 |
 | HD1:437 | HD:1073 | `--offline` / `SEKHEMET_OFFLINE=1` plans without looking and says so | carried | carried | design-stage §2.6.1 |
 | HD1:438 | HD:1075 | Not built: riskiest-assumption scheduling, model phrasing, deep Researcher before planning | gap | gap | planner-pm P1; design-stage NEW-design-stage-1, P7 |
-| HD1:439 | HD:1081 | New TS project has static layer from first file | carried | carried | design-stage §2.4.1 |
+| HD1:439 | HD:1081 | New TS project has static layer from first file | carried | gap | design-stage §2.4.1; §4 "Card zero from the ecosystem generator" not-built, P2 (DS-P2-1) (corrected 2026-09-25) |
 | HD1:440 | HD:1087 | Card zero runs ecosystem generator (`cargo new`, `uv init`, `pnpm create vite`, `npm init`) | carried | gap | design-stage §2.4.1, P2 (corrected 2026-09-25) |
-| HD1:441 | HD:1089 | Template library rejected; generator + version recorded in brief | carried | carried | design-stage §2.4.1, §9 Rejected |
-| HD1:442 | HD:1093 | Card one: failing test exists, runs, fails for stated reason | carried | carried | design-stage §2.4.2 |
+| HD1:441 | HD:1089 | Template library rejected; generator + version recorded in brief | carried | gap | design-stage §2.4.1, §9 Rejected; §4 "Card zero…" not-built, P2 (DS-P2-1) (corrected 2026-09-25) |
+| HD1:442 | HD:1093 | Card one: failing test exists, runs, fails for stated reason | carried | gap | design-stage §2.4.2; §4 "…card one a failing test" not-built, P2 (DS-P2-3) (corrected 2026-09-25) |
 | HD1:443 | HD:1101 | Novel architecture: "talk it through with me, then I will cut the cards" | carried | carried | design-stage §2.4.3 |
 | HD1:444 | HD:1105 | Format interactions for rapid "5-second approvals" | contradicted | deliberate | review-git rule 2, §9 (a decision in under a minute, not 5 seconds) |
 | HD1:445 | HD:1113 | Steer: free text delivered at next step boundary as `card/steer`, no restart, no prefix invalidation, lands in volatile… | later | later | planner-pm §7 (steering) (corrected 2026-09-25) |
@@ -761,47 +788,47 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:475 | HD:1205 | Human cmd: Reroute (force model or arm for a card) | later | later | planner-pm §7 (Reroute); runtime §3 (the `reroute` route exists in code) (corrected 2026-09-25) |
 | HD1:476 | HD:1206 | Human cmd: Explain evidence behind estimate, route or decision | later | later | planner-pm §7 |
 | HD1:477 | HD:1207 | Human cmd: Pause project | missing | gap | runtime §2.17a, NEW-runtime-10 |
-| HD1:478 | HD:1207 | Human cmd: Set hours | carried | carried | surface rule 23 `reserved_hours`; runtime rule 17 |
+| HD1:478 | HD:1207 | Human cmd: Set hours | carried | gap | surface rule 23 `reserved_hours`; runtime rule 17; models §4 "Declared hours, swap batching by project" partial, NEW-models-3 (MD-N3-1) (corrected 2026-09-25) |
 | HD1:479 | HD:1211 | Trust calibration: override rate moves assume→ask, accepted recommendations ask→assume; thresholds visible and adjustab… | carried | carried | planner-pm §2.10.4 |
 | HD1:480 | HD:1213 | Override rate >15% shifts category to Ask | carried | carried | planner-pm §2.10.4, v1 acceptance |
-| HD1:481 | HD:1217 | Goal: outcome with criteria pursued until met or reported impossible; runs continuously | carried | carried | planner-pm §2.11 |
+| HD1:481 | HD:1217 | Goal: outcome with criteria pursued until met or reported impossible; runs continuously | carried | gap | planner-pm §2.11; §4 "Goal loop: re-evaluation on card close and timer…" partial, NEW-planner-pm-4 (PM-N4-1) (corrected 2026-09-25) |
 | HD1:482 | HD:1222 | Goal record fields (workspaceId, projectIds, statement, criteria kind/check/status, budget tokens/hours/deadline, strat… | carried | carried | planner-pm Contract (`Goal` in goals.ts) |
-| HD1:483 | HD:1247 | Criteria semantics gate / metric / human; all-human flagged unverifiable | carried | carried | planner-pm §2.11.1 |
+| HD1:483 | HD:1247 | Criteria semantics gate / metric / human; all-human flagged unverifiable | carried | gap | planner-pm §2.11.1; §4 "Goal loop… metric and human criteria" partial, NEW-planner-pm-4 (PM-N4-2, PM-N4-3); PM-8 (all-human flag, built) (corrected 2026-09-25) |
 | HD1:484 | HD:1251 | `/goal <statement>` opens intake: restate, criteria, budget, assumptions; nothing runs until approved | carried-weaker | carried | planner-pm §2.11 rule 2 (`sekhemet goal` drafts restated outcome, criteria, budget from the competence model, assumptions; nothing runs until a person approves; versioned strategy); planner-pm §7 (the `/goal` chat command) (corrected 2026-09-25) |
 | HD1:485 | HD:1251 | Strategy versioned so replans can be diffed | carried | carried | planner-pm §2.11.2–3 |
 | HD1:486 | HD:1266 | Criteria re-evaluated on every card close and on a timer | carried-weaker | gap | planner-pm §2.11.3, NEW-planner-pm-4 |
 | HD1:487 | HD:1266 | Replan triggers: rung-3 fail, regression of met criterion, budget over cap, dependency or environment change, card adva… | carried-weaker | gap | planner-pm §2.11.3, NEW-planner-pm-4 |
 | HD1:488 | HD:1266 | Replan posted to the goal thread with diff and one-paragraph reason | carried-weaker | gap | planner-pm §2.11.3 (posted in Seshat's thread with diff and reason), NEW-planner-pm-4 |
 | HD1:489 | HD:1287 | Signal: burn-up vs scope (two curves) → forecast ETA | carried | carried | planner-pm §2.12 |
-| HD1:490 | HD:1288 | Signal: scope drift >20% → halt auxiliary cards; decision request | carried | carried | planner-pm §2.12 |
+| HD1:490 | HD:1288 | Signal: scope drift >20% → halt auxiliary cards; decision request | carried | gap | planner-pm §2.12; §4 "Signal responses executed as proposals" partial, NEW-planner-pm-5 (PM-N5-1) (corrected 2026-09-25) |
 | HD1:491 | HD:1289 | Signal: column p95 > 2.5× p50 → flag congestion, adjust step budget, flag model degradation | carried-weaker | gap | planner-pm §2.12, NEW-planner-pm-5 |
 | HD1:492 | HD:1290 | Signal: blocker >12 h (2 h during active work) → top of inbox, batch decisions | carried | carried | planner-pm §2.12 |
 | HD1:493 | HD:1291 | Signal: ≥3 gate failures in one file → pause implementation, route to Planner to re-split on Interface/Data | carried-weaker | deliberate | planner-pm §2.12, §9 |
 | HD1:494 | HD:1292 | Signal: Review backlog ≥ ReviewWIP → hard back-pressure | carried | carried | planner-pm §2.12 |
-| HD1:495 | HD:1293 | Signal: RAID risk register; high-risk assumption >24 h → verification spike | carried | carried | planner-pm §2.12 (proposed spike) |
-| HD1:496 | HD:1295 | Responses automatic within visible preset bounds, else decision request | carried | carried | planner-pm §2.12 (automatic only when no person-owned field changes) |
+| HD1:495 | HD:1293 | Signal: RAID risk register; high-risk assumption >24 h → verification spike | carried | gap | planner-pm §2.12; §4 "Signal responses executed as proposals" partial, NEW-planner-pm-5 (PM-N5-4) (corrected 2026-09-25) |
+| HD1:496 | HD:1295 | Responses automatic within visible preset bounds, else decision request | carried | gap | planner-pm §2.12; §4 "Signals propose rather than mutate" not-built, NEW-planner-pm-2 (PM-N2-1); NEW-planner-pm-5 (corrected 2026-09-25) |
 | HD1:497 | HD:1299 | Goal view: statement, criteria, burn-up, strategy graph, risk register, forecast range, filtered inbox | later | later | planner-pm §7; dashboard §7 (corrected 2026-09-25) |
 | HD1:498 | HD:1299 | Goal with no state change in a configurable window is highlighted | missing | later | planner-pm §7 (goal view) |
 | HD1:499 | HD:1303 | Multiple goals by WSJF; one may be sole active; scheduler explains per window | carried | carried | planner-pm §2.11.4 |
 | HD1:500 | HD:1307 | Goal met only when all criteria met and verified; blocked with diagnosis; never partial as done | carried | carried | planner-pm §2.11.5 |
 | HD1:501 | HD:1311 | gates.toml versioned, Worker cannot modify; tampering detected by hash fails the card | carried | carried | gates rule 2, GT-1 |
 | HD1:502 | HD:1317 | Layer Static (parse, format, lint, typecheck) on gate host | carried | carried | gates rule 3 |
-| HD1:503 | HD:1318 | Layer Functional incl. acceptance tests first | carried | carried | gates rule 3 |
+| HD1:503 | HD:1318 | Layer Functional incl. acceptance tests first | carried | gap | gates rule 3; §4 "Red-first on every card" not-built, P1 (GT-P1-1) (corrected 2026-09-25) |
 | HD1:504 | HD:1319 | Layer Robustness: mutation score, coverage delta; nightly for large diffs | carried-weaker | gap | gates rule 3, NEW-gates-5 (GT-N5-5 nightly beyond mutation_max); coverage delta later §7 |
 | HD1:505 | HD:1320 | Layer Security: secret scan, dependency existence + allowlist, vuln scan | carried | carried | gates rule 3 |
 | HD1:506 | HD:1321 | Layer Visual on gate host with a browser | carried | carried | gates rules 3, 29 |
 | HD1:507 | HD:1322 | Layer Hygiene: changelog, no debug output, commit trailers (Agent-Model, Agent-Harness, Agent-Role, Co-authored-by) on… | carried | carried | gates rules 3, 17; review-git §2.5.4 |
 | HD1:508 | HD:1323 | Layer Human: review with evidence on the board | carried | carried | gates rule 3 |
-| HD1:509 | HD:1327 | Planner writes acceptance tests first; they must fail; Worker cannot edit gate test patterns | carried | carried | gates rules 5–7 |
+| HD1:509 | HD:1327 | Planner writes acceptance tests first; they must fail; Worker cannot edit gate test patterns | carried | gap | gates rules 5–7; §4 "Red-first on every card" not-built, P1 (GT-P1-1); planner-pm P1 (the test-author step) (corrected 2026-09-25) |
 | HD1:510 | HD:1333 | Visual 1: runtime exceptions, HTTP ≥400, unhandled rejections | carried | carried | gates rule 29 |
-| HD1:511 | HD:1334 | Visual 2: bounding boxes: overlap, zero size, off-screen, horizontal overflow | carried | carried | gates rule 29 |
-| HD1:512 | HD:1335 | Visual 3: element screenshots, masking, animations off, maxDiffPixelRatio 0.01 | carried | carried | gates rule 29 |
-| HD1:513 | HD:1336 | Visual 4: axe-core at 1280 and 375 px, zero critical | carried | carried | gates rule 29 |
+| HD1:511 | HD:1334 | Visual 2: bounding boxes: overlap, zero size, off-screen, horizontal overflow | carried | gap | gates rule 29; §4 "Visual: overlap predicate…" not-built, NEW-gates-4 (GT-N4-4) (corrected 2026-09-25) |
+| HD1:512 | HD:1335 | Visual 3: element screenshots, masking, animations off, maxDiffPixelRatio 0.01 | carried | gap | gates rule 29; §4 "Visual: …masking of dynamic content, animations off…" not-built, NEW-gates-4 (GT-N4-5) (corrected 2026-09-25) |
+| HD1:513 | HD:1336 | Visual 4: axe-core at 1280 and 375 px, zero critical | carried | deliberate | gates rule 29, §9, §8 Q1 (in-house accessibility subset; axe-core in the product gate is owner decision O27, default no) (corrected 2026-09-25) |
 | HD1:514 | HD:1337 | Visual 5: atomic yes/no checklist at temperature 0 | carried | gap | gates rule 30, NEW-gates-4 (GT-N4-2) (corrected 2026-09-25) |
-| HD1:515 | HD:1339 | Vision model can fail but never pass; baselines need human approval; blocks nothing until false-pass measured | carried | carried | gates rules 30–31; OPEN_QUESTIONS #10 |
+| HD1:515 | HD:1339 | Vision model can fail but never pass; baselines need human approval; blocks nothing until false-pass measured | carried | gap | gates rules 30–31; §4 "Visual baselines require a person" not-built and "Vision checklist (fail-only)" not-built, NEW-gates-4 (GT-N4-1, GT-N4-2) (corrected 2026-09-25) |
 | HD1:516 | HD:1343 | Mutation diff-scoped, advisory then blocking per project, never 100% | carried | carried | gates rule 32 |
 | HD1:517 | HD:1347 | Secrets gate scans what the branch adds, excluding staged acceptance tests | carried | carried | gates rule 15, GT-4 |
-| HD1:518 | HD:1349 | Evidence contents: diff, gate results, test output, screenshots, scan reports, stop reason, tried-and-abandoned | carried | carried | gates rule 35 |
+| HD1:518 | HD:1349 | Evidence contents: diff, gate results, test output, screenshots, scan reports, stop reason, tried-and-abandoned | carried | gap | gates rule 35, §4 "Evidence bundle" partial, T1 (GT-T1-8) (corrected 2026-09-25) |
 | HD1:519 | HD:1357 | Evidence `structuralDiff` (difftastic) | later | later | gates §7 (structural diff in the bundle) |
 | HD1:520 | HD:1370 | Evidence `trajectoryRef` = SHA-256 of event-log slice | carried-weaker | gap | gates rule 35, T1 (GT-T1-9 trajectory hash) |
 | HD1:521 | HD:1380 | Reachability: export reachable if production imports it or contract asks for it (tests wherever, spec, criteria) | carried | carried | gates rule 24 |
@@ -818,7 +845,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:532 | HD:1400 | A test too long to carry is reported with `note` instead | missing | carried | gates rule 21, GT-12 (built) |
 | HD1:533 | HD:1404 | Architecture gate reads brief Invariants on every verification | carried | carried | gates rule 26 |
 | HD1:534 | HD:1406 | Form `A/` does not import `B` (trailing `/` = directory) | carried | carried | gates rule 26 |
-| HD1:535 | HD:1407 | Form `Name` is defined only in `path` | carried | carried | gates rule 26, GT-T2-2 |
+| HD1:535 | HD:1407 | Form `Name` is defined only in `path` | carried | gap | gates rule 26; §4 "Architecture gate (two forms)" partial, T2 (GT-T2-2) (corrected 2026-09-25) |
 | HD1:536 | HD:1409 | Judges only changed files; remedies single edit (remove import / delete duplicate and import original) | carried | carried | gates rules 15, 21, GT-7 |
 | HD1:537 | HD:1409 | No brief or no invariants → enforces nothing | carried | carried | gates rule 26 |
 | HD1:538 | HD:1411 | Unmatched line is "not enforced" and said so; showing on board not built | gap | gap | gates rule 26, NEW-gates-1 |
@@ -829,14 +856,14 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:543 | HD:1425 | Static before functional, ordered by cost | carried | gap | gates rule 33, NEW-gates-3 (GT-N3-3) (corrected 2026-09-25) |
 | HD1:544 | HD:1426 | Each gate has a timeout; timeout = failure with own repair procedure | carried | carried | gates rule 33 |
 | HD1:545 | HD:1432 | Flaky: re-run failing tests once on unchanged tree before first rung; quarantine, report with both runs | carried | gap | gates rule 34, NEW-gates-3 (GT-N3-4) (corrected 2026-09-25) |
-| HD1:546 | HD:1433 | Wrong gate: Worker stops with a stop reason naming gate and reason; human decides | carried | carried | gates rule 18, GT-M6-5 (`gate_suspected`, gap) |
-| HD1:547 | HD:1434 | Gate that cannot run: needs declared in gates.toml; unavailable stated in evidence, never silently skipped | carried | carried | gates rules 9–10, GT-T1-7 |
+| HD1:546 | HD:1433 | Wrong gate: Worker stops with a stop reason naming gate and reason; human decides | carried | gap | gates rule 18; §4 "`gate_suspected` stop" not-built, M6 (GT-M6-5) (corrected 2026-09-25) |
+| HD1:547 | HD:1434 | Gate that cannot run: needs declared in gates.toml; unavailable stated in evidence, never silently skipped | carried | gap | gates rules 9–10; §4 "Fail closed; `unavailable` outcome; gates declare needs" not-built, T1 (GT-T1-2, GT-T1-7) (corrected 2026-09-25) |
 | HD1:548 | HD:1438 | Harness never asks user to pick model or context size | carried | carried | surface rule 2 (Default); models rule 7 |
 | HD1:549 | HD:1446 | Named defaults fetchable and hash-verified from a source in the component register | gap | gap | models rule 4, NEW-models-7 (explicit fetch, hash-verified; R7) |
-| HD1:550 | HD:1447 | doctor verifies weights exist, readable, hash before anything green | carried | carried | models rule 5, MD-6 (hash: NEW-models-7) |
+| HD1:550 | HD:1447 | doctor verifies weights exist, readable, hash before anything green | carried | gap | models rule 5, MD-6 (existence, built); §4 "Weights fetchable and hash-verified" not-built, NEW-models-7 (MD-N7-2) (corrected 2026-09-25) |
 | HD1:551 | HD:1448 | One override `--models-dir` + config equivalent; per-model env vars not a surface | carried | carried | models rule 6; surface rule 27 |
 | HD1:552 | HD:1450 | No shipped model path outside user config (absolute, external volume, author dirs) | carried | carried | models rule 6, MD-N7-3 |
-| HD1:553 | HD:1454 | Calibration: memory budget, bandwidth, prefill/decode per context length; sweep batch and offload one step back from cl… | carried | carried | models rule 7, NEW-models-1 |
+| HD1:553 | HD:1454 | Calibration: memory budget, bandwidth, prefill/decode per context length; sweep batch and offload one step back from cl… | carried | gap | models rule 7; §4 "Calibration command and machine profile" partial, NEW-models-1 (MD-N1-3) (corrected 2026-09-25) |
 | HD1:554 | HD:1458 | Tier table S/M/L/XL (budget, planner, worker, co-load, working context, parallel cards) | carried | carried | models rule 8 (identical) |
 | HD1:555 | HD:1465 | Model names absent; registry fills from measurement; larger tiers buy co-residency not prompt | carried | carried | models rule 8 |
 | HD1:556 | HD:1469 | Throughput floors: overnight 40/10 ~70 s; interactive 100/20 ~30 s; recommended 300/40 ~12 s | carried | carried | models rule 9 (identical) |
@@ -844,16 +871,16 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:558 | HD:1479 | KV 8-bit; lower only if model qualifies with it | carried | carried | models rule 10 |
 | HD1:559 | HD:1479 | Flash attention on; prefill batch swept; expert offload only when needed | carried | carried | models rule 10 |
 | HD1:560 | HD:1479 | Speculative decoding via MTP or qualified draft models where bandwidth permits | carried-weaker | gap | models rule 13, M7/M11, NEW-models-8 |
-| HD1:561 | HD:1481 | Sampling per model in registry, not global | carried | carried | models rule 11, MD-N4-2 |
+| HD1:561 | HD:1481 | Sampling per model in registry, not global | carried | gap | models rule 11; §4 "Sampling, window, reasoning read from the registry" not-built, NEW-models-4 (MD-N4-2) (corrected 2026-09-25) |
 | HD1:562 | HD:1481 | Templates pinned per build with SHA-256 | carried | carried | models rule 12 |
-| HD1:563 | HD:1485 | Engine adapter: llama.cpp baseline; MLX on Apple Silicon; choose by measurement weighting cache retention | carried | carried | models rule 14 (MLX status contradicted, see HD:221) |
+| HD1:563 | HD:1485 | Engine adapter: llama.cpp baseline; MLX on Apple Silicon; choose by measurement weighting cache retention | carried | gap | models rule 14; §4 "Qualification keyed by (engine, model, host, settings)" not-built, NEW-models-8; MLX path models §7 (corrected 2026-09-25) |
 | HD1:564 | HD:1485 | [BENCH] engine choice on 24 GB M4 | carried | carried | OPEN_QUESTIONS #3 |
 | HD1:565 | HD:1490 | Watchdog polls OS pressure and VRAM every 2 s | carried | carried | models rule 19 |
 | HD1:566 | HD:1491 | 85%: suspend speculative decoding | carried | carried | models rule 19 (elevated, 0.85), MD-M11-3 |
 | HD1:567 | HD:1492 | 90%: throttle parallel cards to 1, trim LSP symbol caches, cascade observation pointers across older turns | carried-weaker | gap | models rule 19 (high level: parallel cards to one, LSP caches, forced masking), NEW-models-2 |
 | HD1:568 | HD:1493 | 94%: pause active turns gracefully and persist state to SQLite WAL | carried | carried | models rule 19 (critical 0.94 pauses; emergency unloads) |
 | HD1:569 | HD:1497 | Declared hours; backlog worked outside; swaps batched by project; planning in scheduled blocks when co-loading impossib… | carried | gap | models rule 20, NEW-models-3 (corrected 2026-09-25) |
-| HD1:570 | HD:1505 | Four roles and their jobs; Reviewer from a different family | carried | carried | models rule 21 |
+| HD1:570 | HD:1505 | Four roles and their jobs; Reviewer from a different family | carried | gap | models rules 3, 21; §4 "Every default's family recorded; a Reviewer of another family" not-built, NEW-models-4 (MD-N4-9); review-git P8 (corrected 2026-09-25) |
 | HD1:571 | HD:1507 | Roles are `ModelEntry.roles` values, not agents; no simulated conversation | carried | carried | models rule 22; DEC-05 |
 | HD1:572 | HD:1509 | One model may hold several roles; never co-reside below 32 GB | carried | carried | models rule 22 |
 | HD1:573 | HD:1509 | Absent role degrades to named fallback (no Reviewer → unreviewed and card says so; no Researcher → repo only) | carried | carried | models rule 23, MD-5 |
@@ -861,61 +888,61 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:575 | HD:1516 | ModelEntry fields (family, quant, size, window, template, sampling, reasoning, toolArm, scriptCapable, throughput per b… | carried | carried | models rule 25 (vision now a capability, not a role) |
 | HD1:576 | HD:1551 | Qualification suite: own tool schemas, deterministic scoring; schema validity, selection, arguments, multi-turn recover… | carried | carried | models rule 27 |
 | HD1:577 | HD:1553 | Worker bar internal, not comparable to public leaderboards; multi-turn below single-turn accounted | carried | carried | models rule 27 |
-| HD1:578 | HD:1557 | Bake-off: closed issues + fixing commits → fail-to-pass; recent commits → reconstruction; run under real harness | carried | carried | models rule 30 |
-| HD1:579 | HD:1559 | Every result recorded with full settings; number without settings inadmissible | carried | carried | models rule 30; models §1 |
+| HD1:578 | HD:1557 | Bake-off: closed issues + fixing commits → fail-to-pass; recent commits → reconstruction; run under real harness | carried | gap | models rule 30; §4 "Bake-off under the real harness" partial, NEW-models-4 (MD-N4-7) (corrected 2026-09-25) |
+| HD1:579 | HD:1559 | Every result recorded with full settings; number without settings inadmissible | carried | gap | models rule 30; §4 "Bake-off under the real harness" partial, NEW-models-4 (MD-N4-6); M4 (MD-M4-5) (corrected 2026-09-25) |
 | HD1:580 | HD:1566 | cardClass = "<kind>:<ext>" | carried | carried | models rule 31 |
 | HD1:581 | HD:1569 | Seven closed kinds; ext from primary scope extension or `none` | carried | carried | models rule 31 |
 | HD1:582 | HD:1573 | Class properties: predictable, knowable before run, coarse enough to fill | carried | carried | models rule 31 |
 | HD1:583 | HD:1577 | Tool sets by kind; budgets, routes, exemplars by whole class | carried | carried | models rule 31 |
-| HD1:584 | HD:1581 | Competence row: class, files, difficulty, model, arm, step budget, stop reason, gate failures | carried | carried | models rule 32 |
+| HD1:584 | HD:1581 | Competence row: class, files, difficulty, model, arm, step budget, stop reason, gate failures | carried | gap | models rule 32; §4 "Competence rows" partial, NEW-models-6 (MD-N6-1) (corrected 2026-09-25) |
 | HD1:585 | HD:1583 | Prediction, decision, outcome as three separate fields | gap | gap | models rule 32, NEW-models-6 |
 | HD1:586 | HD:1585 | [RESEARCH] task synthesis: closed PRs, fail-to-pass invariant, scrubbed paths | carried | carried | OPEN_QUESTIONS research gaps row 1 |
 | HD1:587 | HD:1587 | [BENCH] card size vs pass rate sets decomposition granularity | carried | carried | OPEN_QUESTIONS #6 |
 | HD1:588 | HD:1591 | Every prompt change A/B tested against the card eval before shipping | carried-weaker | gap | context rule 21a, NEW-context-6 (CX-N6-2); measurement rule 16c |
-| HD1:589 | HD:1597 | Guidance: scoped, dated, attributed, retired, delivered in stable zone at card boundary | carried | carried | context rule 23 |
-| HD1:590 | HD:1599 | Measurements keyed by class and settings | carried | carried | context rule 23 |
+| HD1:589 | HD:1597 | Guidance: scoped, dated, attributed, retired, delivered in stable zone at card boundary | carried | gap | context rule 23; M8 (CX-M8-1), NEW-context-3 (CX-N3-4) (corrected 2026-09-25) |
+| HD1:590 | HD:1599 | Measurements keyed by class and settings | carried | gap | context rule 23; models M4 (MD-M4-5), NEW-models-6 (corrected 2026-09-25) |
 | HD1:591 | HD:1601 | Fetched bytes content-addressed, expire by mutability, safe to delete | carried | carried | context rule 23 (expiry schedule in design-stage Later) |
-| HD1:592 | HD:1603 | A fourth store is a design error; one location and one writer per kind | carried | carried | context rule 23; DEC-22 ("seventh durable store" row — numbering odd but intent kept) |
+| HD1:592 | HD:1603 | A fourth store is a design error; one location and one writer per kind | carried | gap | context rule 23; kernel rule 16, §4 "Ledger as the only durable channel" partial, S7 (K-S7-6, K-S7-7) (corrected 2026-09-25) |
 | HD1:593 | HD:1607 | System prompt short; <1,000 tokens; tool interface <2,000 | carried | deliberate | context rule 10; DEC-27 (system prompt ≤ 700, tool interface ≤ 1,700 tokens) |
-| HD1:594 | HD:1609 | Positive concrete instructions; no persona; tags not JSON reasoning | carried | carried | context rule 21 |
+| HD1:594 | HD:1609 | Positive concrete instructions; no persona; tags not JSON reasoning | carried | gap | context rule 21, §4 "Coherent prompt (no contradictions); one copy module" not-built, M1 (CX-M1-1, CX-M1-2) (corrected 2026-09-25) |
 | HD1:595 | HD:1613 | Playbook per project, versioned, zone 2, grows by delta | carried | carried | context rule 24 |
 | HD1:596 | HD:1615 | Entries from gate failures and retros, deduplicated, applied at card boundaries, with origin, retirable | carried | carried | context rule 24 |
-| HD1:597 | HD:1618 | Playbook TOML fields: id, originCard, triggerGate, pattern, instruction, effectiveDate, evalPassRateDelta | carried | carried | context rule 24 (id, origin card, trigger gate, instruction, effective date, evidence; pattern → scope) |
+| HD1:597 | HD:1618 | Playbook TOML fields: id, originCard, triggerGate, pattern, instruction, effectiveDate, evalPassRateDelta | carried | carried | context rule 24 and §3 (after restoration) (corrected 2026-09-25) |
 | HD1:598 | HD:1631 | Exemplars: 1–2 from own history; no generic examples | carried | carried | context rule 25 |
 | HD1:599 | HD:1635 | Offline optimiser in idle hours with planner as reflection engine; keep only if clears threshold; drop if <5% | later | later | context §7 |
 | HD1:600 | HD:1639 | Prompts, playbooks, tool schemas versioned together; change invalidates qualification and triggers a re-run | carried-weaker | gap | context rule 27, NEW-context-6; DEC-28 (playbook rules deliberately outside the context version) (corrected 2026-09-25) |
-| HD1:601 | HD:1643 | Reviewer answers "does this change do what the card asked?" | carried | carried | review-git §2.3.1 |
-| HD1:602 | HD:1647 | Trigger: every card entering Review with a diff; research/no-diff skip | carried | carried | review-git §2.3.2 |
-| HD1:603 | HD:1649 | Inputs: spec, criteria, diff, gate results; not the transcript | carried | carried | review-git §2.3.3 |
-| HD1:604 | HD:1651 | Procedure: per criterion met/unmet with hunk; three failure modes gates miss | carried | carried | review-git §2.3.4 |
-| HD1:605 | HD:1656 | ReviewFinding shape | carried | carried | review-git §2.3.5 |
+| HD1:601 | HD:1643 | Reviewer answers "does this change do what the card asked?" | carried | gap | review-git §2.3.1; §4 "Reviewer judges criteria with citations…" not-built, P8 (corrected 2026-09-25) |
+| HD1:602 | HD:1647 | Trigger: every card entering Review with a diff; research/no-diff skip | carried | gap | review-git §2.3.2; §4 "Reviewer runs before Review and before auto-accept" not-built, P8 (corrected 2026-09-25) |
+| HD1:603 | HD:1649 | Inputs: spec, criteria, diff, gate results; not the transcript | carried | gap | review-git §2.3.3; §4 "Reviewer judges criteria…" not-built, P8 (corrected 2026-09-25) |
+| HD1:604 | HD:1651 | Procedure: per criterion met/unmet with hunk; three failure modes gates miss | carried | gap | review-git §2.3.4; §4 "Reviewer judges criteria…" not-built, P8 (corrected 2026-09-25) |
+| HD1:605 | HD:1656 | ReviewFinding shape | carried | gap | review-git §2.3.5; §4 "Reviewer judges criteria…" not-built, P8 (corrected 2026-09-25) |
 | HD1:606 | HD:1664 | Authority none | carried | carried | review-git §2.3.6 |
 | HD1:607 | HD:1666 | Different family enforced; unfilled role said in Review | carried | gap | review-git §2.3.7, P8 (corrected 2026-09-25) |
-| HD1:608 | HD:1668 | Acceptance: flags more seeded defects than empty list; FP low enough that a human reads by card 20 | carried | carried | review-git P8, OQ2 |
+| HD1:608 | HD:1668 | Acceptance: flags more seeded defects than empty list; FP low enough that a human reads by card 20 | carried | gap | review-git P8, §8 Q2 (corrected 2026-09-25) |
 | HD1:609 | HD:1676 | Frozen suite 20–40 tasks, versioned; no edits to improve results; hash recorded with every result | carried | carried | measurement rules 1–2 |
-| HD1:610 | HD:1678 | One number (tasks passed) with cost (wall-clock, tokens, repair-rung cards); non-improving change is not an improvement | carried | carried | measurement rule 4 |
+| HD1:610 | HD:1678 | One number (tasks passed) with cost (wall-clock, tokens, repair-rung cards); non-improving change is not an improvement | carried | gap | measurement rule 4; §4 "Paired comparison…" not-built (M12, T7) and "Admission requires a significant gain" not-built (T8) (corrected 2026-09-25) |
 | HD1:611 | HD:1680 | Suite doesn't measure planning; planning measure beside it (fail-before/pass-after reference; end-to-end share) | carried | gap | measurement rule 14, T7 (corrected 2026-09-25) |
-| HD1:612 | HD:1684 | Suite gates the self-improvement loop | carried | carried | measurement rule 17 |
+| HD1:612 | HD:1684 | Suite gates the self-improvement loop | carried | gap | measurement rules 17, 19; §4 "Admission requires a significant gain" not-built, T8 (corrected 2026-09-25) |
 | HD1:613 | HD:1685 | Suite qualifies registry models | carried | carried | models rule 27 |
-| HD1:614 | HD:1686 | Suite gates asserted-not-measured components (pruner) | carried | carried | measurement rule 16 |
-| HD1:615 | HD:1690 | Null baselines at equal budget; random line dropping; 31 of 60; delete if not beaten | carried | carried | measurement rule 16; context §9 |
+| HD1:614 | HD:1686 | Suite gates asserted-not-measured components (pruner) | carried | gap | measurement rule 16; §4 "Pruner null baseline" not-built, T7 (corrected 2026-09-25) |
+| HD1:615 | HD:1690 | Null baselines at equal budget; random line dropping; 31 of 60; delete if not beaten | carried | gap | measurement rule 16; context §9; §4 "Pruner null baseline" not-built, T7 (corrected 2026-09-25) |
 | HD1:616 | HD:1696 | IRT calibration against SWE-bench per-instance results (~10⁵) | later | later | measurement §7 (IRT calibration against SWE-bench) |
 | HD1:617 | HD:1698 | Limits: Python-heavy; scaffold dominates (16.7% vs 47.9%); only pass/fail matrix importable, not patches | carried | carried | measurement Later; models rule 32 |
 | HD1:618 | HD:1702 | One mechanism: signal → bounded proposal → suite → pinned → auto-rollback if pass rate drops over next ten cards | contradicted | deliberate | measurement rule 18(3), §9; DEC-24 (paired rollback) |
-| HD1:619 | HD:1722 | Six inlets with signals, proposals, bounds (1 rule/retro; ≤15%/cycle; 1 skill; 2/class; revert-and-fail; advisory tests) | carried | carried | measurement rule 17 (identical) |
+| HD1:619 | HD:1722 | Six inlets with signals, proposals, bounds (1 rule/retro; ≤15%/cycle; 1 skill; 2/class; revert-and-fail; advisory tests) | carried | gap | measurement rule 17; §4 "Six inlets exist" partial, T8 (corrected 2026-09-25) |
 | HD1:620 | HD:1731 | Seventh inlet justified by signal size, not paper | carried | carried | measurement rule 17 |
 | HD1:621 | HD:1735 | Guardrail 1: measured signal; subjective self-assessment rejected everywhere incl. research prose | carried | carried | measurement rule 18; design-stage §2.7.5 |
 | HD1:622 | HD:1736 | Guardrail 2: bounded change; whole-system rewrites blocked | carried | carried | measurement rule 18 |
 | HD1:623 | HD:1737 | Guardrail 3: atomic rollback over moving ten-card window | contradicted | deliberate | measurement rule 18; DEC-24 |
-| HD1:624 | HD:1738 | Guardrail 4: grounded admission (100% / 34.5% / 6.2%); skills and tests admitted by execution as GateResults | carried | carried | measurement rule 18(4); §9 |
-| HD1:625 | HD:1742 | Volume thresholds below which inlets report insufficient data | carried | carried | measurement rule 20 |
-| HD1:626 | HD:1746 | Playbook: 3 occurrences | carried | carried | measurement rule 20 |
+| HD1:624 | HD:1738 | Guardrail 4: grounded admission (100% / 34.5% / 6.2%); skills and tests admitted by execution as GateResults | carried | gap | measurement rule 18(4); §4 "Skill admission by its own checks" not-built, T8 (and extensibility NEW-extensibility-4) (corrected 2026-09-25) |
+| HD1:625 | HD:1742 | Volume thresholds below which inlets report insufficient data | carried | gap | measurement rule 20; §4 "Volume thresholds" partial, T8 (corrected 2026-09-25) |
+| HD1:626 | HD:1746 | Playbook: 3 occurrences | carried | gap | measurement rule 20; §4 "Volume thresholds" partial, T8 (corrected 2026-09-25) |
 | HD1:627 | HD:1747 | Budgets/routes: MIN_ARM_TRIALS per arm, Wilson excludes incumbent | carried | carried | measurement rule 20 (MIN_ARM_TRIALS = 5) |
-| HD1:628 | HD:1748 | Skills: 3 instances and checks pass | carried | carried | measurement rule 20 |
-| HD1:629 | HD:1749 | Exemplars: 5 accepted cards in class | carried | carried | measurement rule 20 |
+| HD1:628 | HD:1748 | Skills: 3 instances and checks pass | carried | gap | measurement rule 20; §4 "Volume thresholds" partial and "Skill admission by its own checks" not-built, T8 (corrected 2026-09-25) |
+| HD1:629 | HD:1749 | Exemplars: 5 accepted cards in class | carried | gap | measurement rule 20; §4 "Volume thresholds" partial, T8 (corrected 2026-09-25) |
 | HD1:630 | HD:1750 | Synthesized tasks and generated tests: no minimum | carried | carried | measurement rule 20 |
-| HD1:631 | HD:1753 | Difficulty prior from SWE-bench Verified annotations (1,699, 3 annotators), scale only | carried | carried | measurement rule 22 |
-| HD1:632 | HD:1753 | Pre-filter calibrated from public pairs by monotone correction, gated on minimum trials | carried | carried | measurement rules 21–22 |
+| HD1:631 | HD:1753 | Difficulty prior from SWE-bench Verified annotations (1,699, 3 annotators), scale only | carried | later | measurement rule 22, §8 Q3; OPEN_QUESTIONS O26 (open, default: do not import in v1) (corrected 2026-09-25) |
+| HD1:632 | HD:1753 | Pre-filter calibrated from public pairs by monotone correction, gated on minimum trials | carried | gap | measurement rules 21–22; §4 "Calibrated pre-filter" not-built, T8 (corrected 2026-09-25) |
 | HD1:633 | HD:1753 | Exemplars, playbook rules, routing local-only | carried | carried | measurement rule 22; context rule 25; DEC-22 |
 | HD1:634 | HD:1757 | Weight updates excluded in v1; fine-tuning deferred until in-context plateaus | carried | carried | measurement rule 23; DEC-22 |
 | HD1:635 | HD:1757 | Loop driver, gate runner, sandbox boundaries, permission tables permanently excluded from self-modification | carried | carried | measurement rule 23 |
@@ -923,7 +950,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:637 | HD:1763 | `sekhemet dev audit` command | carried-weaker | deliberate | measurement rule 24, §9; surface §7 (corrected 2026-09-25) |
 | HD1:638 | HD:1764 | Net gain per skill/rule vs bare baseline on the suite | carried | gap | measurement rule 24, NEW-measurement-2 (MS-N2-2) (corrected 2026-09-25) |
 | HD1:639 | HD:1765 | Context debt: >300 Zone-2 tokens without significant ≥+3% gain | carried | deliberate | measurement rule 24; DEC-28 (context debt judged on paired credit or a "not established" A/B; the 3-point test cannot be resolved on 30 cards) |
-| HD1:640 | HD:1766 | Conflicting/redundant/obsolete rules flagged; retire with a single keystroke | carried | carried | measurement rule 24 ("one action") |
+| HD1:640 | HD:1766 | Conflicting/redundant/obsolete rules flagged; retire with a single keystroke | carried | gap | measurement rule 24; §4 "Diagnostics on real inputs" partial, NEW-measurement-2 (corrected 2026-09-25) |
 | HD1:641 | HD:1774 | No self-critique; extra compute to bounded repeated sampling with gate selection; applies to code, plans, research prose | carried | carried | worker-loop rule 3; design-stage §2.7.5 |
 | HD1:642 | HD:1780 | Ladder rung 1 same context typed failure | carried | carried | worker-loop rule 34.1 |
 | HD1:643 | HD:1781 | Rung 2 fresh context discarding the polluted conversation | carried | carried | worker-loop rule 34.2 |
@@ -931,12 +958,12 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:645 | HD:1783 | Rung 4 park with a decision request; never silent | carried | carried | worker-loop rule 34.4 |
 | HD1:646 | HD:1785 | A rung that does not change inputs is not a rung | carried | carried | worker-loop rule 35 |
 | HD1:647 | HD:1785 | Three failures with different contexts → route to Planner for decomposition, not a fourth attempt | carried | carried | worker-loop rule 36 |
-| HD1:648 | HD:1787 | Every stop reason names next action; `vacuous_tests`, `rebase_conflict`, `integration_failed` carry remedy | carried | carried | worker-loop rules 31–32; OQ1 environment class |
-| HD1:649 | HD:1794 | GateFailure shape: gate, location, expected, actual, minimalRepro, suggestedAction | carried | carried | gates rule 19, GT-M6-6 |
+| HD1:648 | HD:1787 | Every stop reason names next action; `vacuous_tests`, `rebase_conflict`, `integration_failed` carry remedy | carried | gap | worker-loop rules 31–32; §4 "One stop-reason table with next actions" not-built, T3 (WL-T3-2) (corrected 2026-09-25) |
+| HD1:649 | HD:1794 | GateFailure shape: gate, location, expected, actual, minimalRepro, suggestedAction | carried | gap | gates rule 19; §4 "`GateFailure` fields required" partial, M6 (GT-M6-6) (corrected 2026-09-25) |
 | HD2:1 | HD:1804 | Raw logs never pasted into context; kept in the evidence bundle, retrievable by reference | carried | carried | gates.md §2.19; context.md §2.16 |
-| HD2:2 | HD:1804 | At most three failures per repair attempt | carried | carried | gates.md §2.20, GT-T1-4 (cap applied once, after all gates) |
-| HD2:3 | HD:1804 | Failures chosen in topological dependency order (fixing the first often clears the rest) | carried | carried | gates.md §2.20 (parse, typecheck, test, bounds, lint; most-referenced file first) |
-| HD2:4 | HD:1808-1810 | A suggestedAction must be completable in one step; the information a remedy depends on belongs in the failure | carried | carried | gates.md §2.21; worker-loop.md §2.2 |
+| HD2:2 | HD:1804 | At most three failures per repair attempt | carried | gap | gates rule 20; §4 "at most three per attempt" partial, T1 (GT-T1-4) (corrected 2026-09-25) |
+| HD2:3 | HD:1804 | Failures chosen in topological dependency order (fixing the first often clears the rest) | carried | gap | gates rule 20; §4 "Failures ordered by the import graph within a rung" not-built, M6 (GT-M6-7) (corrected 2026-09-25) |
+| HD2:4 | HD:1808-1810 | A suggestedAction must be completable in one step; the information a remedy depends on belongs in the failure | carried | gap | gates rule 21; §4 "One-step remedies" partial, M6 (GT-M6-3) (corrected 2026-09-25) |
 | HD2:5 | HD:1810 | Missing export: failure lists the module's real exports inline and says there is no need to re-read | gap | gap | gates rule 21, M6 (GT-M6-3) |
 | HD2:6 | HD:1810 | Unknown member: failure lists the type's real members, from project types and Node's wherever the package manager keeps… | carried | carried | gates.md §2.21 |
 | HD2:7 | HD:1812 | No reply the Worker receives is a dead end: if a call cannot do what was asked, the reply names the call that can | carried | carried | worker-loop.md §2.2 |
@@ -977,14 +1004,14 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:42 | HD:1867 | Issue text, PR comments, file contents and synced data are untrusted data, never instructions | carried | carried | security.md §2.1 (threat model), §2.42 |
 | HD2:43 | HD:1867 | Wrapped as `<untrusted_content source="…">` with a system contract that instructions inside cannot issue tool calls | carried | carried | security.md §2.42 |
 | HD2:44 | HD:1867 | Tool calls from a step whose context holds untrusted content fall under strict permission policies | carried | carried | security.md §2.42, SEC-40 (no Ask-tier or network commands in that step) |
-| HD2:45 | HD:1869 | Prompt-injection defence by architectural containment: sandbox, `filesTouched` writes, egress denial, human gate for ir… | carried | carried | security.md §2.42b, 42c |
+| HD2:45 | HD:1869 | Prompt-injection defence by architectural containment: sandbox, `filesTouched` writes, egress denial, human gate for ir… | carried | gap | security rules 42b, 42c; §4 "Ask answered by a person through a decision request" partial, NEW-security-6 (corrected 2026-09-25) |
 | HD2:46 | HD:1873 | Works fully offline; every integration is an opt-in adapter; none is load-bearing | carried | carried | integrations.md §2.1 |
 | HD2:47 | HD:1878-1888 | `SyncAdapter` interface: `pull(since)`, `push(card)`, `update(ref, patch)`, capabilities (hierarchy, dependencies, webh… | carried | carried | integrations.md §2.7 |
-| HD2:48 | HD:1891 | The board owns card state, gate results and budgets; the tracker owns title, description, assignee and labels | carried | carried | integrations.md §2.4 |
+| HD2:48 | HD:1891 | The board owns card state, gate results and budgets; the tracker owns title, description, assignee and labels | carried | gap | integrations rule 4; §4 "GitHub/Forgejo adapter" partial, P9 (INT-6) (corrected 2026-09-25) |
 | HD2:49 | HD:1891 | Shared-field conflicts: last-writer-wins by timestamp, loser kept in card history | contradicted | deliberate | integrations §2.4 |
 | HD2:50 | HD:1897 | Git adapter always on: branches, worktrees, commits, local remotes | carried | carried | review-git.md §2.6 |
 | HD2:51 | HD:1898 | Forgejo as the offline-friendly self-hosted sync target: issues, dependencies, boards, webhooks | carried-weaker | carried | integrations rule 8 (`forgejo` external refs), §4 "GitHub/Forgejo adapter — partial, P9", §8 Q4; integrations §7 "Forgejo beyond issues" (corrected 2026-09-25) |
-| HD2:52 | HD:1899 | GitHub adapter: issues, sub-issues, projects, pull requests, check runs | carried | carried | integrations.md §2.10-16 |
+| HD2:52 | HD:1899 | GitHub adapter: issues, sub-issues, projects, pull requests, check runs | carried | gap | integrations rules 10–16; §4 "GitHub sync…", "GitHub/Forgejo adapter", "Agent status mirrored on the issue and Projects board" partial or not-built, P9 (corrected 2026-09-25) |
 | HD2:53 | HD:1901 | GraphQL is needed for sub-issues/projects and has a separate rate budget from REST | gap | gap | integrations §2.11a, P9 |
 | HD2:54 | HD:1901 | Adapter prefers webhooks over polling | missing | gap | integrations §2.11a, P9 |
 | HD2:55 | HD:1901 | Adapter batches nested GraphQL queries | missing | gap | integrations §2.11a, P9 |
@@ -993,7 +1020,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:58 | HD:1901 | Hierarchy depth clamped to the shallower of the harness's four levels and the target's | carried | carried | integrations.md §2.7 |
 | HD2:59 | HD:1905 | Reads `AGENTS.md` and `CLAUDE.md` when present and folds them into project conventions in prompt Zone 2 | carried-weaker | carried | context rule 8, CX-8 |
 | HD2:60 | HD:1905 | Exposes an MCP server over board and card operations | carried | carried | extensibility.md §2.18-21 |
-| HD2:61 | HD:1905 | Consumes MCP tools a project declares | carried | carried | extensibility.md §2.22-24 |
+| HD2:61 | HD:1905 | Consumes MCP tools a project declares | carried | gap | extensibility rules 22–24; §4 "MCP client…" partial, NEW-extensibility-3; "Repo hooks, `mcp.json` load without trust" not-built, S9 (corrected 2026-09-25) |
 | HD2:62 | HD:1905 | An editor-protocol surface so external editors can drive a card | later | later | extensibility §7 (card-level editor protocol) |
 | HD2:63 | HD:1909 | CI as a gate source: existing CI checks declared as gates, run locally through `act` or native runners, results uniform | later | later | integrations §7 |
 | HD2:64 | HD:1911 | Externally edited issue mid-card: non-scope fields reconciled on completion; a scope/criteria change pauses the card an… | contradicted | deliberate | integrations §2.5, §9 (R6), INT-11a |
@@ -1018,15 +1045,15 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:83 | HD:1976 | Review comments create repair subtasks scoped to line ranges; the Worker repairs, pushes, replies, and resolves the thr… | later | later | integrations §7; review-git §7 (corrected 2026-09-25) |
 | HD2:84 | HD:1977 | Merge per repo policy: `enablePullRequestAutoMerge`, the merge queue, or a person | gap | gap | integrations §2.15, P9 |
 | HD2:85 | HD:1981 | Release card: aggregate accepted cards since the last tag, `git-cliff` changelog, semver bump, publish a GitHub Release… | later | gap | review-git §2.6 rule 7 (version from Conventional Commits, 0.y.z rule, changelog built in or by git-cliff, tag on `--confirm`), NEW-review-git-4 (RG-N4-1); planner-pm §2.15.8 (release per slice, P13); integrations §7, planner-pm §7, review-git §7 (publishing a GitHub Release) (corrected 2026-09-25) |
-| HD2:86 | HD:1985 | Research answers from local sources first, web second; web is opt-in, off in air-gap, and all fetched content is untrus… | carried | carried | design-stage.md §2.6, §2.7.2, §2.7.6 |
+| HD2:86 | HD:1985 | Research answers from local sources first, web second; web is opt-in, off in air-gap, and all fetched content is untrus… | carried | gap | design-stage §2.6, §2.7.2, §2.7.6; §4 "`plan` honours offline config and the research switch" not-built, S8 (DS-S8-1) (corrected 2026-09-25) |
 | HD2:87 | HD:1989-1995 | Two research modes, Research Desk and Deep Research (serves; trigger; latency ms–3 min vs minutes–overnight; model; out… | later | later | design-stage §7 (Desk); Deep research §2.7.3 |
-| HD2:88 | HD:2003 | Research fetching uses the same egress proxy under the allowlist, logged and hashed; no second network path | carried | carried | design-stage.md §2.6.3, §2.7.1; security.md §2.32 |
-| HD2:89 | HD:2004 | Claim execution is a gate: gate command, gate host sandbox, `GateResult` in the evidence bundle | carried | carried | design-stage.md §2.7.1, §2.7.4 |
+| HD2:88 | HD:2003 | Research fetching uses the same egress proxy under the allowlist, logged and hashed; no second network path | carried | gap | design-stage §2.6.3, §2.7.1; security §2.32; §4 "…queries logged" not-built, S8 (DS-S8-3) (corrected 2026-09-25) |
+| HD2:89 | HD:2004 | Claim execution is a gate: gate command, gate host sandbox, `GateResult` in the evidence bundle | carried | gap | design-stage §2.7.1, §2.7.4; §4 "Claim gate" partial, NEW-design-stage-2 (DS-N2-2, DS-N2-3); gates NEW-gates-5 (GT-N5-3) (corrected 2026-09-25) |
 | HD2:90 | HD:2005 | Model selection is the router; the Researcher is a registry role, loaded and evicted by the same swap policy | carried | carried | design-stage.md §2.7.1; models.md §2.21 |
-| HD2:91 | HD:2006 | Research remembers only through the three stores (guidance, measurements, fetched bytes) | carried | carried | context.md §2.23; design-stage.md §2.7.1 |
+| HD2:91 | HD:2006 | Research remembers only through the three stores (guidance, measurements, fetched bytes) | carried | gap | context rule 23; design-stage §2.7.1; §4 "Research memory scoped to repository and package version" not-built, NEW-design-stage-2 (DS-N2-5) (corrected 2026-09-25) |
 | HD2:92 | HD:2008 | Needing a second sandbox, scheduler, cache or permission model is evidence the feature does not belong | carried | carried | design-stage.md §2.7.1 |
 | HD2:93 | HD:2012 | Hardware envelope: 24 GB M4; ~16 GB for weights; roles do not co-reside; quality from passes, retrieval and verificatio… | carried | carried | design-stage.md §2.7.9; models.md §2.22 |
-| HD2:94 | HD:2014 | The Researcher's gathering and synthesis modes are one registry entry used two ways, chosen by the bake-off, not by rep… | carried | carried | design-stage.md §2.7.9 |
+| HD2:94 | HD:2014 | The Researcher's gathering and synthesis modes are one registry entry used two ways, chosen by the bake-off, not by rep… | carried | gap | design-stage §2.7.9; models §4 "A smaller Researcher decided by bake-off" not-built, NEW-models-11 (MD-N11-1, MD-N11-2) (corrected 2026-09-25) |
 | HD2:95 | HD:2016 | The Desk loads no model: a second slot of the Worker's server, same weights, no additional memory | later | later | design-stage §7 |
 | HD2:96 | HD:2020-2023 | Knowledge tiers in lookup order: repo and installed deps at the exact version incl. source; docsets + `llms.txt`/… | carried | carried | design-stage §2.7.2 (after restoration) (corrected 2026-09-25) |
 | HD2:97 | HD:2022 | Research cache: pages stored as extracted markdown with URL, fetch date and content hash, indexed lexically | carried-weaker | carried | design-stage §2.7.2, §3 |
@@ -1035,17 +1062,17 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:100 | HD:2036 | Speculative research: the planner writes each card's open questions and the Desk answers them before the card starts | later | later | design-stage §7 |
 | HD2:101 | HD:2038 | At project open, prefetch each package's `llms.txt`/doc sitemap into the corpus, pinned to the installed version | later | later | design-stage §7 |
 | HD2:102 | HD:2042-2050 | Repository reading tools on `git`/`gh`: dependency source at the resolved version; tree/file at any ref; code search in… | carried | carried | design-stage.md §2.7.10 |
-| HD2:103 | HD:2052 | Repository results cached by commit SHA, permanently | carried | carried | design-stage.md §2.7.10 |
+| HD2:103 | HD:2052 | Repository results cached by commit SHA, permanently | carried | later | design-stage §7 (cache expiry in full: a SHA-pinned entry indefinite) (after §2.7.10 is corrected) (corrected 2026-09-25) |
 | HD2:104 | HD:2054 | Context7 and DeepWiki as optional MCP sources: off by default, untrusted, weighted below primary sources, never the sol… | later | later | design-stage §7 (hosted MCP sources) (corrected 2026-09-25) |
 | HD2:105 | HD:2074 | Deep research brief: restate the question, success criteria, out of scope; ambiguity resolved or raised to the user, no… | carried | carried | design-stage §2.7.3 (after restoration) (corrected 2026-09-25) |
 | HD2:106 | HD:2076 | Plan: sub-questions with a budget each, posted as a decision request (approve / edit / narrow) with deadline and safe d… | later | later | design-stage §7 |
 | HD2:107 | HD:2078 | Gather: a supervisor delegates sub-questions to sub-agents with isolated contexts; findings come back with citations, n… | carried | carried | design-stage.md §2.7.3 |
 | HD2:108 | HD:2078 | Everything fetched lands in the corpus index that later stages read | later | carried | design-stage §2.7 rule 2 (the research cache stores each fetched page as extracted text with URL, fetch date and content hash, indexed lexically), rule 8 (BM25 retrieval over it) (corrected 2026-09-25) |
-| HD2:109 | HD:2080 | Research stops on coverage of the sub-questions, not a turn count | carried | carried | design-stage.md §2.7.3 |
+| HD2:109 | HD:2080 | Research stops on coverage of the sub-questions, not a turn count | carried | gap | design-stage §2.7.3; §4 "Effort levels; sub-question closing…" not-built, NEW-design-stage-4 (DS-N4-2) (corrected 2026-09-25) |
 | HD2:110 | HD:2080 | A sub-question closes when it has independent sources of sufficient tier; open ones are re-dispatched with different qu… | missing | gap | design-stage §2.7.3, NEW-design-stage-4 |
 | HD2:111 | HD:2080 | Crawling within a doc site uses an adaptive strategy that stops when the question is answered | later | later | design-stage §7 (Crawl4AI, adaptive crawl) (corrected 2026-09-25) |
 | HD2:112 | HD:2084 | Effort `quick`/`standard`/`exhaustive` sets the number of sub-questions, pages per sub-question and verification depth;… | carried-weaker | gap | design-stage §2.7.3, NEW-design-stage-4 |
-| HD2:113 | HD:2084 | Revision needs no effort setting; it stops when no candidate lowers measured risk | carried | carried | design-stage.md §2.7.5 |
+| HD2:113 | HD:2084 | Revision needs no effort setting; it stops when no candidate lowers measured risk | carried | gap | design-stage §2.7.5; §4 "Gated critique pass" not-built, NEW-design-stage-2 (DS-N2-6) (corrected 2026-09-25) |
 | HD2:114 | HD:2088 | Self-hosted SearXNG: no API keys, no query logging to third parties; a separate service to keep its copyleft licence ou… | carried-weaker | deliberate | design-stage §2.7.11, §9 (after the reason is added); PROVENANCE SearXNG row (corrected 2026-09-25) |
 | HD2:115 | HD:2088 | Queries are 1–6 terms | carried | carried | design-stage.md §2.7.11 |
 | HD2:116 | HD:2088 | Every query and its result set is recorded in the event log | gap | gap | design-stage §2.6.3, S8 |
@@ -1058,11 +1085,11 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:123 | HD:2096 | Extracted content chunked by heading and deduplicated by content hash rather than URL | carried-weaker | carried | design-stage §2.7.8 |
 | HD2:124 | HD:2100 | Lexical retrieval: BM25 over heading chunks, merged with the source-authority preference | carried | carried | design-stage.md §2.7.8 |
 | HD2:125 | HD:2102 | Dense index rejected on this machine's terms; if a measurement shows it pays, it goes in its own cache DB and nothing e… | carried | carried | design-stage.md §2.7.8; DEC-22 |
-| HD2:126 | HD:2104 | Code context stays deterministic; prose retrieval may become lexical+dense, code may not | carried | carried | context.md §2.28; DEC-22 |
+| HD2:126 | HD:2104 | Code context stays deterministic; prose retrieval may become lexical+dense, code may not | carried | deliberate | design-stage §2.7.8; context rule 28; DEC-22 (corrected 2026-09-25) |
 | HD2:127 | HD:2108 | Persistent project corpus over dependency docs, refreshed when the manifest changes | later | later | design-stage §7 |
 | HD2:128 | HD:2109 | Per-question corpus for each deep run, so synthesis can quote a source long after it left context | later | later | design-stage §7 |
 | HD2:129 | HD:2111 | Research never enters the Worker raw: a research note (short, cited, fixed budget) outside the byte-stable prefix | carried | carried | design-stage.md §2.7.6 |
-| HD2:130 | HD:2119 | Executable claims: install the package at the stated version, run the claim script as a gate with no network; a failing… | carried | carried | design-stage.md §2.7.4 (striking a failed claim is not mentioned; minor) |
+| HD2:130 | HD:2119 | Executable claims: install the package at the stated version, run the claim script as a gate with no network; a failing… | carried | gap | design-stage §2.7.4 (after restoration); §4 "Claim gate" partial, NEW-design-stage-2 (DS-N2-1, DS-N2-3) (corrected 2026-09-25) |
 | HD2:131 | HD:2120 | Citational claims verified against text actually read, by URL or by normalised title | carried-weaker | gap | design-stage §2.7.4, NEW-design-stage-2 |
 | HD2:132 | HD:2121 | Contested claims: both positions with tiers and dates; name the better-supported one and why; never flatten | gap | gap | design-stage §2.7.4–5, NEW-design-stage-2 |
 | HD2:133 | HD:2122 | Temporal claims carry the date of their newest supporting source | carried | carried | design-stage.md §2.7.4 |
@@ -1071,7 +1098,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:136 | HD:2132 | Grounded risk vector: bad citations, open sub-questions, unreproduced executable claims, grounding confidence; a revisi… | gap | gap | design-stage §2.7.5, NEW-design-stage-2 |
 | HD2:137 | HD:2134 | The critique loop's stopping condition: stop when no candidate revision lowers risk | gap | gap | design-stage §2.7.5, NEW-design-stage-2 |
 | HD2:138 | HD:2136 | No separate citation-repair turn; the report reaches Review when every executable claim has a verdict and no revision c… | carried-weaker | gap | design-stage §2.7.5, NEW-design-stage-2 |
-| HD2:139 | HD:2140 | Reproducible research run: corpus, queries, fetches with hashes, plan, model and prompt versions recorded; re-run again… | carried | carried | design-stage.md §2.7.7 |
+| HD2:139 | HD:2140 | Reproducible research run: corpus, queries, fetches with hashes, plan, model and prompt versions recorded; re-run again… | carried | gap | design-stage §2.7.7; §4 "…queries logged" not-built, S8 (DS-S8-3) (corrected 2026-09-25) |
 | HD2:140 | HD:2146 | Fetched content wrapped as untrusted; instructions inert; stricter permissions for a step holding it | carried | carried | design-stage.md §2.7.6; security.md §2.42 |
 | HD2:141 | HD:2147 | Robots directives respected; per-domain rate limits enforced | carried | carried | design-stage.md §2.6.3 |
 | HD2:142 | HD:2148 | Package names found on the web never installed without passing the supply-chain gate | carried | carried | design-stage.md §2.7.6 |
@@ -1087,20 +1114,20 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:152 | HD:2169-2180 | Cache TTL by mutability: pinned SHA indefinite; pinned-version docs indefinite (evicted by size); unversioned docs 90 d… | later | later | design-stage §7 (cache expiry) (corrected 2026-09-25) |
 | HD2:153 | HD:2182 | A stale cache entry is served immediately and revalidated in the background | later | later | design-stage §7 (cache expiry) (corrected 2026-09-25) |
 | HD2:154 | HD:2186 | Every extension mechanism is a plugin on the kernel | contradicted | deliberate | extensibility rule 29, §7, §8 Q2 (O4); DEC-09 correction |
-| HD2:155 | HD:2190-2197 | Skill directory: `SKILL.md`, `scripts/`, `references/`, `evals/` | carried | carried | extensibility.md §2.10 |
-| HD2:156 | HD:2198 | Only the manifest line in Zone 2; the body loads only when matched to the card class | carried | carried | extensibility.md §2.11, EXT-32 |
+| HD2:155 | HD:2190-2197 | Skill directory: `SKILL.md`, `scripts/`, `references/`, `evals/` | carried | gap | extensibility rule 10; §4 "Skills format…" partial, NEW-extensibility-4 (corrected 2026-09-25) |
+| HD2:156 | HD:2198 | Only the manifest line in Zone 2; the body loads only when matched to the card class | carried | gap | extensibility rule 11, EXT-32; §4 "Skills format…" partial, NEW-extensibility-4 (corrected 2026-09-25) |
 | HD2:157 | HD:2198 | Skills are project- or user-scoped and versioned, and declare any gates they add | carried-weaker | carried | extensibility rule 13 (project and user scopes), rules 15 and 17 (pinned by SHA-256 and commit hash, diffed on update); extensibility §7 (a skill that declares its gates) (corrected 2026-09-25) |
 | HD2:158 | HD:2202 | Hook events: card/start, pre-step, pre-tool, post-tool, pre-gate, post-gate, card/end, review/return, playbook/propose | carried | carried | extensibility.md §2.4 (adds `turn-stopping` and board events) |
 | HD2:159 | HD:2202 | A hook can observe, block with a reason, or inject messages | carried | carried | extensibility.md §2.6 |
 | HD2:160 | HD:2202 | Hooks run outside the sandbox with user permissions | carried | carried | extensibility.md §2 table, §9 rationale |
 | HD2:161 | HD:2206 | Commands: Markdown templates expanding into a card template or planner instruction (`/onboard`, `/research`, `/split`,… | later | later | extensibility §7 (user-defined commands); extensibility rule 26 (the fixed slash commands, incl. `/research`) (corrected 2026-09-25) |
-| HD2:162 | HD:2210 | MCP client: tools offered to the planner and, where the registry permits, the Worker; tool descriptions strictly budget… | carried | carried | extensibility.md §2.23 |
+| HD2:162 | HD:2210 | MCP client: tools offered to the planner and, where the registry permits, the Worker; tool descriptions strictly budget… | carried | gap | extensibility rule 23; §4 "MCP client…" partial, NEW-extensibility-3 (corrected 2026-09-25) |
 | HD2:163 | HD:2211 | MCP server exposes boards, cards, gates, evidence bundles and the model registry | gap | gap | extensibility rule 18, NEW-extensibility-3 (evidence and registry read-only) |
 | HD2:164 | HD:2215 | ACP lets VS Code, JetBrains and Neovim open a card, stream steps, inspect gates, approve or return | later | later | extensibility §7 (ACP card surface; v1 ACP is Seshat's chat) |
 | HD2:165 | HD:2220 | `sekhemet run <card-id>` runs one card unattended | carried | carried | surface.md §2.13, §2.18 |
 | HD2:166 | HD:2221 | `sekhemet plan "<spec>"` decomposes into cards without executing | carried | carried | planner-pm.md §3 CLI; design-stage.md §3 |
 | HD2:167 | HD:2222 | `sekhemet gate <card-id>` runs gates only | carried | carried | gates.md §3, GT-T1-1 |
-| HD2:168 | HD:2223 | `sekhemet bake-off [--models]` qualifies and benchmarks models on the repo | carried | carried | models.md §2.30 |
+| HD2:168 | HD:2223 | `sekhemet bake-off [--models]` qualifies and benchmarks models on the repo | carried | gap | models rule 30; NEW-models-4 (MD-N4-7) (corrected 2026-09-25) |
 | HD2:169 | HD:2224 | `sekhemet replay <card-id> [--as <config>]` | carried-weaker | carried | runtime rule 14 (other configs are a fork from step 0) |
 | HD2:170 | HD:2226 | A TypeScript SDK exposes these operations, with the event log as an async iterator | carried-weaker | deliberate | extensibility rule 28 (cut in B0, DEC-29 O4, NEW-extensibility-5), §8 Q1 (decided) (corrected 2026-09-25) |
 | HD2:171 | HD:2230 | Plugin API: register services, tools, gates, hooks, sync adapters or UI panels through a typed manifest; fully reversib… | later | later | extensibility §7 (plugin API) |
@@ -1120,12 +1147,12 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:185 | HD:2268 | Outside declared hours the scheduler keeps caches warm | missing | gap | runtime rule 17, NEW-runtime-5 (RUN-18a) |
 | HD2:186 | HD:2268 | Nightly gate jobs: full mutation and a full vulnerability scan | gap | gap | runtime rule 20, NEW-runtime-5 |
 | HD2:187 | HD:2268 | Overnight prompt optimiser when enabled | later | later | runtime §7 |
-| HD2:188 | HD:2268 | A morning summary: what reached Review, what parked, and why | carried | carried | runtime.md §2.20 (Seshat's standup via the notifier) |
+| HD2:188 | HD:2268 | A morning summary: what reached Review, what parked, and why | carried | gap | runtime rule 20; integrations rules 20–21; §4 "Slack as a channel; standup, needs_you, decision" not-built, P9 (corrected 2026-09-25) |
 | HD2:189 | HD:2272 | Git is the file system of record: every card a branch, every checkpoint a commit, no board state git cannot reconstruct | carried | carried | review-git.md §2.6.1 |
 | HD2:190 | HD:2278 | Scope declared and enforced: cards with intersecting `filesTouched` never run together; a scope violation is a stop rea… | carried | carried | review-git.md §2.6.4; kernel.md §2.4 |
 | HD2:191 | HD:2278 | The second card rebases before Verify, not after Review, while the Worker still has budget | carried | carried | review-git.md §2.6.4 (every card rebases) |
-| HD2:192 | HD:2278 | A rebase conflict produces `rebase_conflict` with the card returned to Planning | carried | carried | review-git.md §2.6.4 resolves the old document's own Planning-vs-In-Progress inconsistency: a conflict inside scope returns to the Worker with typed hunks, one outside s… |
-| HD2:193 | HD:2280 | A conflict the Worker cannot resolve is a decision request against both cards, shown as a pair | carried | carried | review-git.md §2.6.4 |
+| HD2:192 | HD:2278 | A rebase conflict produces `rebase_conflict` with the card returned to Planning | carried | deliberate | review-git §2.6.4, NEW-review-git-1 (after worker-loop rule 31 and kernel rule 25 are aligned) (corrected 2026-09-25) |
+| HD2:193 | HD:2280 | A conflict the Worker cannot resolve is a decision request against both cards, shown as a pair | carried | gap | review-git §2.6.4, NEW-review-git-1 (RG-N1-3) (corrected 2026-09-25) |
 | HD2:194 | HD:2280 | The harness never resolves a semantic conflict by preferring one side | carried | carried | review-git.md §2.6.4 |
 | HD2:195 | HD:2282 | Concurrency capped by review capacity, not cores | carried | carried | review-git.md §2.2.4 |
 | HD2:196 | HD:2286 | Branch `sekhemet/<project>/<card-id>-<slug>`, from the parent card's branch or the integration branch | carried | carried | review-git.md §2.6.2 |
@@ -1134,14 +1161,14 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:199 | HD:2302 | On acceptance, checkpoints squashed into one or more intent-grouped Conventional Commits attributing every collabor… | carried-weaker | later | review-git §7 (squash policy incl. several intent commits); v1 one squash, body intent-grouped |
 | HD2:200 | HD:2313 | Raw checkpoints preserved at `refs/sekhemet/checkpoints/<card-id>` | carried | carried | review-git.md §2.5.5 |
 | HD2:201 | HD:2317 | Before Verify, rebase onto the current integration branch; a clean rebase proceeds | carried | carried | review-git.md §2.6.4 |
-| HD2:202 | HD:2317 | Conflict hunks become typed failures; the Worker resolves inside scope only; conflicts outside scope park the card | carried | carried | review-git.md §2.6.4 and v1 acceptance |
+| HD2:202 | HD:2317 | Conflict hunks become typed failures; the Worker resolves inside scope only; conflicts outside scope park the card | carried | gap | review-git §2.6.4; §4 "Rebase conflict returned with typed hunks; out-of-scope parks" not-built, NEW-review-git-1 (RG-N1-1, RG-N1-2) (corrected 2026-09-25) |
 | HD2:203 | HD:2317 | Merge order across sibling cards follows the DAG, then WSJF | carried | carried | review-git.md §2.6.4 |
 | HD2:204 | HD:2321 | PR description: gates passed, tests added, screenshots, what was tried and abandoned | carried-weaker | gap | review-git §2.5.7, S5 (RG-S5-18 screenshots in the PR body) |
 | HD2:205 | HD:2321 | Review comments on the PR flow back into the card thread | later | later | review-git §7; integrations §7 (corrected 2026-09-25) |
 | HD2:206 | HD:2321 | Without an adapter, the same summary goes into the merge commit | carried | carried | review-git.md §2.5.7 |
 | HD2:207 | HD:2325 | Stacked cards: accepting a lower card rebases the cards above and re-runs their gates | carried | gap | review-git §2.5.5, §4 "Restacked children re-run their gates" not-built, NEW-review-git-2 (corrected 2026-09-25) |
 | HD2:208 | HD:2329 | Monorepos: scope and gates per package; a card touching two packages runs both gate sets; cross-repo work is two cards… | carried | gap | review-git §2.6.5, §4 "Per-package gates in card verification; cross-repository change as two cards" partial, NEW-review-git-3 (corrected 2026-09-25) |
-| HD2:209 | HD:2333 | The review view offers difftastic's syntax-aware diff alongside the line diff | carried | carried | review-git.md §2.6.6; dashboard.md §2.5.6 |
+| HD2:209 | HD:2333 | The review view offers difftastic's syntax-aware diff alongside the line diff | carried | gap | review-git §2.6.6; dashboard §2.5.6; §4 "Structural diff (difftastic)" partial, S5 (corrected 2026-09-25) |
 | HD2:210 | HD:2335 | Squash policy per project (keep checkpoint history on main) | later | later | review-git §7 |
 | HD2:211 | HD:2344 | Onboarding step 1: build the tree-sitter repo map and cache it | carried-weaker | deliberate | surface rule 9; DEC-20 (map from the TypeScript compiler; tree-sitter later, surface §7) |
 | HD2:212 | HD:2345 | Onboarding step 2: start headless language servers and record which succeed | gap | gap | surface rule 9 (servers confined, after trust), S3a, S9 |
@@ -1160,7 +1187,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:225 | HD:2374 | Convention drift: re-evaluated nightly against recent commits, diffed against the playbook, reported as a planner note | gap | gap | surface rule 12, P10 (SUR-10) |
 | HD2:226 | HD:2376 | Convention extraction combining `crag` linter/CI parsing with `codebase-md` AST pattern discovery | later | later | surface §7 (crag, codebase-md) |
 | HD2:227 | HD:2376 | Generated AGENTS.md and playbook drafts need human sign-off at onboarding | carried | carried | surface.md §2.10 |
-| HD2:228 | HD:2380 | An air-gapped machine can install, calibrate, work cards, add dependencies and look up docs | carried | carried | security.md §2.45 (calibrate not named; minor) |
+| HD2:228 | HD:2380 | An air-gapped machine can install, calibrate, work cards, add dependencies and look up docs | carried | gap | security rule 45 (after restoration); §4 "Air-gap mirror, manifest, docs, signed updates, self-test" partial, NEW-security-2 (corrected 2026-09-25) |
 | HD2:229 | HD:2384 | Package mirrors (verdaccio, devpi, a crates mirror) pre-seeded from the lockfile allowlist plus a curated set | later | later | security §7 (mirror services incl. the curated set) |
 | HD2:230 | HD:2384 | The supply-chain gate resolves against the mirror, so an unmirrored package cannot be installed | carried | carried | security.md §2.46 |
 | HD2:231 | HD:2388 | Model weights are never downloaded by the harness | contradicted | gap | security rule 47, models rule 4 (now agree: never on its own; explicit hash-verified download, R7), NEW-models-7 |
@@ -1179,12 +1206,12 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:244 | HD:2406 | Skills are procedure, not capability: enter context only when matched, never widen the tool set | carried | carried | extensibility.md §2.12, §2.17 |
 | HD2:245 | HD:2410-2416 | Skill sources: Anthropic official (Skill Creator, document skills, frontend design); Superpowers; Codex catalogue (scop… | later | later | extensibility §7 (the skill catalogue) (corrected 2026-09-25) |
 | HD2:246 | HD:2420-2440 | Per-skill pull/adapt/build decisions (19 rows, e.g. brainstorming → intake questions as decision requests; TDD enforced… | later | later | extensibility §7 (the skill catalogue table) (corrected 2026-09-25) |
-| HD2:247 | HD:2446 | `SKILL.md` YAML front matter (name, description, triggers, tools) plus a Markdown body | carried | carried | extensibility.md §2.10 (adds `budget_tokens`) |
+| HD2:247 | HD:2446 | `SKILL.md` YAML front matter (name, description, triggers, tools) plus a Markdown body | carried | gap | extensibility rule 10; §4 "Skills format: regex front matter, required inline `triggers`…" partial, NEW-extensibility-4 (corrected 2026-09-25) |
 | HD2:248 | HD:2447 | A skill's `scripts/` run inside the sandbox | gap | gap | extensibility §2 table (`scripts/` in the sandbox), S9 (EXT-5) |
 | HD2:249 | HD:2452 | Trigger classes let the planner attach a skill deterministically | gap | gap | extensibility rule 12, NEW-extensibility-4 |
 | HD2:250 | HD:2452 | A skill declares its required tools; if the card lacks them, the skill is omitted | carried | carried | extensibility.md §2.12 |
 | HD2:251 | HD:2452 | Every skill ships with at least one eval card | later | later | extensibility §7 (an eval card for every skill) |
-| HD2:252 | HD:2456 | Pulled skills pinned by commit hash, audited on import, diffed on update | carried | carried | extensibility.md §2.15, §2.17 |
+| HD2:252 | HD:2456 | Pulled skills pinned by commit hash, audited on import, diffed on update | carried | gap | extensibility rules 15, 17; §4 "Skills: SHA-256 pin, approve/revoke, audit" partial, S9 (corrected 2026-09-25) |
 | HD2:253 | HD:2456 | A skill touching gate files, the loop driver or sandbox configuration is rejected at import | carried | carried | extensibility.md §2.15, EXT-27 |
 | HD2:254 | HD:2466 | Worker `read`: 1-based line ranges | carried | carried | worker-loop.md §2.12 |
 | HD2:255 | HD:2466 | `read` enforces a byte budget | carried-weaker | carried | worker-loop rule 12, WL-12 |
@@ -1194,14 +1221,14 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:259 | HD:2469 | `edit`: exact replace with a uniqueness rule | carried | carried | worker-loop.md §2.12 |
 | HD2:260 | HD:2469 | `edit` is CRLF-aware | carried | carried | worker-loop.md §2.12 ("line endings normalised") |
 | HD2:261 | HD:2469 | AST parse gate before any write | carried | carried | worker-loop.md §2.14, WL-3 |
-| HD2:262 | HD:2470 | Symbol tools (`replace_symbol_body`, `insert_after_symbol`, `read_symbol`, `find_references`) over an LSP server pool (… | carried-weaker | carried | worker-loop rule 12; other languages §7 |
+| HD2:262 | HD:2470 | Symbol tools (`replace_symbol_body`, `insert_after_symbol`, `read_symbol`, `find_references`) over an LSP server pool (… | carried-weaker | gap | worker-loop rule 12; NEW-worker-loop-7 (WL-N7-1); other languages §7 (corrected 2026-09-25) |
 | HD2:263 | HD:2471 | Structural rewrite fallback with ast-grep for languages without a language server | later | later | worker-loop §7 |
 | HD2:264 | HD:2472 | `run`: sandbox, timeout, command allowlist, description field, RTK output condensing | carried-weaker | carried | worker-loop rule 12; security permission table; context 17 |
-| HD2:265 | HD:2473 | `docs` tool: tiered lookup served from the project corpus | carried-weaker | carried | worker-loop rule 12; corpus later (design-stage §7) |
-| HD2:266 | HD:2477 | `note`: thread and inbox communication | carried | carried | worker-loop.md §2.12 |
-| HD2:267 | HD:2478 | Script execution (code-mode): a sandboxed runner exposing the tools as JS/TS functions | carried | carried | worker-loop.md §2.12 (`run_script`, only for script-capable models), WL-M2-4 |
+| HD2:265 | HD:2473 | `docs` tool: tiered lookup served from the project corpus | carried-weaker | later | worker-loop rule 12; the tiered corpus design-stage §7 (corrected 2026-09-25) |
+| HD2:266 | HD:2477 | `note`: thread and inbox communication | carried | gap | worker-loop rule 12; NEW-worker-loop-4 (WL-N4-3 after it is added) (corrected 2026-09-25) |
+| HD2:267 | HD:2478 | Script execution (code-mode): a sandboxed runner exposing the tools as JS/TS functions | carried | gap | worker-loop rule 12 `run_script`, M2 (WL-M2-4) (corrected 2026-09-25) |
 | HD2:268 | HD:2484 | Planner repo-map query: tree-sitter, PageRank, binary-search budget fit (Aider reference) | carried | carried | context.md §2.13 (TypeScript compiler; tree-sitter later); extensibility.md tool table |
-| HD2:269 | HD:2485 | Dependency and impact analysis over LSP references, for scope and DAG inference | carried | carried | extensibility.md tool table; context.md §2.22 (one hop along the reference graph) |
+| HD2:269 | HD:2485 | Dependency and impact analysis over LSP references, for scope and DAG inference | carried | gap | extensibility tool table; context rule 22, P1 (CX-P1-3); planner-pm NEW-planner-pm-8 (corrected 2026-09-25) |
 | HD2:270 | HD:2486 | Task decomposition built from Taskmaster's patterns, not its code (Commons Clause) | carried | carried | extensibility.md tool table; PROVENANCE |
 | HD2:271 | HD:2487 | Difficulty scoring from scope, symbols, tests and history | carried | carried | extensibility.md tool table; planner-pm.md §2.5 |
 | HD2:272 | HD:2488 | Search and fetch (SearXNG, trafilatura, Crawl4AI) for research cards only, never the Worker | carried | carried | extensibility.md tool table; design-stage.md §6 |
@@ -1209,16 +1236,16 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:274 | HD:2496 | Parse gate wraps tree-sitter | contradicted | deliberate | gates §9; DEC-20 |
 | HD2:275 | HD:2497-2498 | Format, lint and typecheck wrap per-language toolchains; tests wrap per-language runners with a parser to `GateFailure` | gap | gap | gates rules 23, 23a, M6 (GT-M6-2) |
 | HD2:276 | HD:2499 | Mutation wraps Stryker, mutmut, cargo-mutants and PIT, with diff scoping built where lacking | contradicted | gap | gates rule 23a (each language's tool when installed, R14), NEW-gates-5 (GT-N5-2) |
-| HD2:277 | HD:2500-2503 | Secret scan (gitleaks), dependency existence/typosquat over registry and mirror, osv-scanner offline, Semgrep CE with c… | carried | carried | gates.md §2.3, §3; security.md §2.44 |
+| HD2:277 | HD:2500-2503 | Secret scan (gitleaks), dependency existence/typosquat over registry and mirror, osv-scanner offline, Semgrep CE with c… | carried | gap | gates rule 3, §3; §4 "Static analysis (semgrep) with a bundled offline rule set" partial, NEW-gates-5 (GT-N5-4); the registry mirror is security §7 Later (corrected 2026-09-25) |
 | HD2:278 | HD:2504-2507 | Console/network/DOM and layout-bounds checks over Playwright; screenshot diff with Playwright + pixelmatch; accessibili… | contradicted | deliberate | gates §9, §8 Q1 (the in-house client stays the gate; Playwright and axe-core approved for development only, DEC-29 O5; axe-core in the product gate is owner decision O27, default no — was pending the owner, R16; behaviours kept rule 29) |
 | HD2:279 | HD:2508 | Vision checklist over a local vision model at temperature 0 | gap | gap | gates rule 30, NEW-gates-4 (GT-N4-2) |
 | HD2:280 | HD:2509 | Hygiene: changelog verification and a debug-output scanner | carried | carried | gates.md §2.3, §2.17 |
-| HD2:281 | HD:2515 | Inference wraps the llama.cpp server; MLX as an Apple Silicon adapter | carried | carried | models.md §2.14 (MLX later: context.md §7, extensibility.md tool table) |
+| HD2:281 | HD:2515 | Inference wraps the llama.cpp server; MLX as an Apple Silicon adapter | carried | later | models rule 14 (llama.cpp, built); models §7 and context §7 (the MLX adapter) (corrected 2026-09-25) |
 | HD2:282 | HD:2516 | Model swapping wraps llama-swap or builds a minimal equivalent | carried | carried | extensibility.md tool table (a minimal router) |
-| HD2:283 | HD:2517 | Constrained decoding (XGrammar or llguidance) behind the tool-arm interface | carried | carried | extensibility.md tool table; models.md §2.28 (a per-model measured choice; PROVENANCE marks it not used yet) |
-| HD2:284 | HD:2518-2519 | Sandbox built over platform facilities; worktrees over git and COW cloning | carried | carried | extensibility.md tool table (Seatbelt, bubblewrap, git; COW per DEC-21) |
+| HD2:283 | HD:2517 | Constrained decoding (XGrammar or llguidance) behind the tool-arm interface | carried | deliberate | extensibility tool table; models rule 28; DEC-22; PROVENANCE (XGrammar/llguidance: not used) (corrected 2026-09-25) |
+| HD2:284 | HD:2518-2519 | Sandbox built over platform facilities; worktrees over git and COW cloning | carried | deliberate | extensibility tool table; security rule 24a; DEC-21 (plain worktrees, not copy-on-write) (corrected 2026-09-25) |
 | HD2:285 | HD:2520-2522 | Notifications wrap ntfy/Gotify; structural diff wraps difftastic; event log and hash chain over SQLite WAL | carried | carried | extensibility.md tool table |
-| HD2:286 | HD:2523 | Output condensing: RTK for `run`; native condensers for read, grep, glob | carried | carried | extensibility.md tool table; context.md §2.17 (native reimplementation of RTK's four strategies) |
+| HD2:286 | HD:2523 | Output condensing: RTK for `run`; native condensers for read, grep, glob | carried | gap | extensibility tool table; context rule 17 (after the HD1:229 restoration, CX-N5-4) (corrected 2026-09-25) |
 | HD2:287 | HD:2524 | Goal monitoring built on event-log queries with threshold evaluation | carried | carried | planner-pm.md §2.12 |
 | HD2:288 | HD:2528 | Every component's licence verified against its primary repository licence file at the pinned version | carried | carried | PROVENANCE.md (Licences footnote) |
 | HD2:289 | HD:2528, 2586 | Copyleft (AGPL/GPL) components run as separate processes reached over a socket, never linked into the harness, and repl… | missing | carried | PROVENANCE rule 1 (copyleft out of process) |
@@ -1235,12 +1262,12 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:300 | HD:2542-2543, 2572 | DevDocs and Kiwix as offline documentation services; Dozzle as a container log viewer | missing | deliberate | PROVENANCE "Container log viewer (Dozzle)" row (corrected 2026-09-25) |
 | HD2:301 | HD:2592 | All observability local; no outbound telemetry path at all | carried | carried | runtime.md §2.31, RUN-33 (OTLP export only when the person asks, once; deliberate refinement) |
 | HD2:302 | HD:2596 | Audit: monotonic seq and SHA-256 over content plus the previous hash; tampering found by walking the chain from genesis… | carried | carried | runtime.md §2.29; kernel.md §2.8-9, K-1 |
-| HD2:303 | HD:2600 | OpenTelemetry agent conventions: agent span per card, model span per request with token counts, tool span per call | carried | carried | runtime.md §2.30 |
-| HD2:304 | HD:2600 | Traces stored locally in SQLite and viewable in the UI | carried | carried | runtime.md §2.30 (`.sekhemet/traces.db`) |
+| HD2:303 | HD:2600 | OpenTelemetry agent conventions: agent span per card, model span per request with token counts, tool span per call | carried | gap | runtime rule 30; §4 "Local traces, OTLP export on request" partial, NEW-runtime-9 (corrected 2026-09-25) |
+| HD2:304 | HD:2600 | Traces stored locally in SQLite and viewable in the UI | carried | gap | runtime rule 30; §4 "Local traces…" partial, NEW-runtime-9 (corrected 2026-09-25) |
 | HD2:305 | HD:2604-2611 | Metrics that matter: pass rate by class/model; prefix-cache hit per step; tokens and seconds estimate vs actual; gate-f… | carried | carried | runtime.md §2.32 |
 | HD2:306 | HD:2615 | Budgets per card and per project in tokens, seconds and kWh | carried | gap | runtime rule 19, §4 "Per-card kWh budget; per-project caps" not-built, NEW-runtime-7 (corrected 2026-09-25) |
 | HD2:307 | HD:2615 | kWh computed from hardware TDP and GPU utilisation | contradicted | deliberate | runtime rule 18, §7, §9 |
-| HD2:308 | HD:2615 | Circuit breakers park a card at its cap; a project cap stops the scheduler | carried | carried | runtime.md §2.19 |
+| HD2:308 | HD:2615 | Circuit breakers park a card at its cap; a project cap stops the scheduler | carried | gap | runtime rule 19; §4 "Per-card kWh budget; per-project caps" not-built, NEW-runtime-7 (corrected 2026-09-25) |
 | HD2:309 | HD:2615 | Cost reported in machine time and energy, not API dollars | carried | carried | runtime.md §2.19 |
 | HD2:310 | HD:2619 | Every card records model, quant, template checksum, prompt-set version, playbook version, tool-schema version and engin… | carried-weaker | gap | models MD-M4-5 (seven-field reproducibility record), M4; runtime §8 Q2 points to it |
 | HD2:311 | HD:2623 | The UI is a local web app on loopback, so it works over SSH and on a headless box | carried-weaker | carried | runtime rule 23 |
@@ -1250,11 +1277,11 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:315 | HD:2633 | Card view: five tabs, Evidence (default), Plan, Steps, Thread, Files | carried | carried | dashboard.md §2.6 |
 | HD2:316 | HD:2634 | Inbox appears when a decision request is open | carried | carried | dashboard.md §2.2.1 (merged into Review › Needs you; `#/inbox` opens it) |
 | HD2:317 | HD:2635 | Machine appears when a run is active, or from the status line | contradicted | deliberate | dashboard §9 (always in the System menu) |
-| HD2:318 | HD:2636-2639 | Runs after the first completed run; Playbook at the first proposed rule; Graph when a card has `dependsOn`; Registry af… | carried | carried | dashboard.md §2.2.1 |
+| HD2:318 | HD:2636-2639 | Runs after the first completed run; Playbook at the first proposed rule; Graph when a card has `dependsOn`; Registry af… | carried | gap | dashboard §2.2.1; §4 "Grouped, labelled, progressive navigation…" not-built, P11 (corrected 2026-09-25) |
 | HD2:319 | HD:2640 | Insights appears only after enough cards for a trend (the competence model's threshold) | contradicted | deliberate | dashboard §9 (teaching empty state) |
 | HD2:320 | HD:2641 | Integrations appears when one is configured, or from settings | contradicted | deliberate | dashboard §9 (always listed) |
-| HD2:321 | HD:2642 | Workspace appears on the second project | carried | carried | dashboard.md §2.2.1 |
-| HD2:322 | HD:2644 | A nav item for an empty view is hidden, not empty | carried | carried | dashboard.md §2.2.1, P11 |
+| HD2:321 | HD:2642 | Workspace appears on the second project | carried | gap | dashboard §2.2.1; §4 "Grouped, labelled, progressive navigation…" not-built, P11 (corrected 2026-09-25) |
+| HD2:322 | HD:2644 | A nav item for an empty view is hidden, not empty | carried | gap | dashboard §2.2.1; §4 "Grouped, labelled, progressive navigation…" not-built, P11 (corrected 2026-09-25) |
 | HD2:323 | HD:2650 | Navigation and triage keys: j/k, h/l, Enter, Space peek, a/r/p, ?, Esc | carried | carried | dashboard.md §2.3 |
 | HD2:324 | HD:2651 | Command palette Cmd+K; a palette entry is the default home for a new action | carried | carried | dashboard.md §2.3.1 |
 | HD2:325 | HD:2652 | `g` chords: one per visible view, first letter of the view's name | gap | gap | dashboard §2.3.1, P11 |
@@ -1283,7 +1310,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:348 | HD:2693-2701 | Design principles: state is colour; density; evidence first; keyboard-complete; both themes first-class, dark default,… | carried | carried | dashboard.md §2.1 |
 | HD2:349 | HD:2705 | Surface ladder: depth by luminance steps, not drop shadows; both themes native | carried | carried | dashboard.md §2.13.1 |
 | HD2:350 | HD:2707-2723 | Colour token table: 15 roles with hex values per theme and APCA/WCAG figures | carried-weaker | deliberate | dashboard §2.13.1, §9 (values only in `tokens.ts`, held by the contrast test) |
-| HD2:351 | HD:2725 | Contrast exceeds WCAG 2.1 AA: 4.5:1 for interactive text, 7:1 for body copy | carried-weaker | carried | dashboard §2.14.1, P12 |
+| HD2:351 | HD:2725 | Contrast exceeds WCAG 2.1 AA: 4.5:1 for interactive text, 7:1 for body copy | carried-weaker | gap | dashboard §2.14.1; §4 "Tokens, contrast test, icons test" partial, P12 (corrected 2026-09-25) |
 | HD2:352 | HD:2725 | State always carried by icons and badges as well as colour | carried | carried | dashboard.md §2.1.2, §2.14.1 |
 | HD2:353 | HD:2729-2745 | Typography: Inter / JetBrains Mono with system fallbacks; 11/12.5/13/15/18/22 px; leading 1.25/1.45/1.55 | carried | carried | dashboard.md §2.13.4 (exact fallback stacks left to `tokens.ts`) |
 | HD2:354 | HD:2747 | Tabular numerals on every metric and timestamp | carried | carried | dashboard.md §2.13.4 |
@@ -1296,24 +1323,24 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:361 | HD:2765 | Machine panel: VRAM utilisation, active tier, loaded models, throughput sparklines, cache hit rate | carried-weaker | gap | dashboard §2.11 (sparklines built); tier NEW-dashboard-2 |
 | HD2:362 | HD:2766 | Command palette (Cmd+K / Ctrl+K): fuzzy navigation across cards, projects, commands and settings | carried | carried | dashboard.md §2.15.4 |
 | HD2:363 | HD:2770 | A single-weight 1.5 px line icon set; no illustrations, mascots or lioness; the brand lives in the name, palette and gl… | carried | carried | dashboard.md §2.13.6 |
-| HD2:364 | HD:2774 | Tokens published as CSS custom properties and JSON, consumed by the UI and plugin panels; the source of truth; componen… | carried | carried | dashboard.md §2.13.1, §2.15.2 (`/vocab.json` for plugin panels) |
-| HD2:365 | HD:2782 | Settings resolve: defaults → user → project → card overrides → CLI flags | carried | carried | surface.md §2.21 |
+| HD2:364 | HD:2774 | Tokens published as CSS custom properties and JSON, consumed by the UI and plugin panels; the source of truth; componen… | carried | carried | dashboard §2.13.1, §2.15.2 (after the plugin consumer is removed); extensibility NEW-extensibility-5, DEC-29 O4 (corrected 2026-09-25) |
+| HD2:365 | HD:2782 | Settings resolve: defaults → user → project → card overrides → CLI flags | carried | gap | surface rule 21; §4 "Config layer: card overrides" not-built, NEW-surface-3 (corrected 2026-09-25) |
 | HD2:366 | HD:2782 | No environment-variable layer: only `SEKHEMET_CONFIG_DIR` and `SEKHEMET_MODELS_DIR` are honoured | contradicted | deliberate | surface rule 27 (about 45 variables classified; only the two bootstrap ones shown to users) |
 | HD2:367 | HD:2784 | Every key is read by something; a parsed-but-unread key is deleted from the schema | gap | gap | surface rule 4, T10 (SUR-21) |
-| HD2:368 | HD:2788-2791 | `[models]` worker/planner/reviewer/researcher = "auto"; reviewer "off" disables review and the card says so | carried | carried | surface.md §2.23 (adds `vision`) |
+| HD2:368 | HD:2788-2791 | `[models]` worker/planner/reviewer/researcher = "auto"; reviewer "off" disables review and the card says so | carried | gap | surface rule 23; §4 "Config schema matches its readers" not-built, P10, T10 (corrected 2026-09-25) |
 | HD2:369 | HD:2794 | `[loop] default_step_budget = 40` | carried | carried | surface.md §2.23 |
-| HD2:370 | HD:2797 | `[review] review_minutes_per_day = 60` derives the Review WIP limit | carried | carried | surface.md §2.23; review-git.md §2.2 |
+| HD2:370 | HD:2797 | `[review] review_minutes_per_day = 60` derives the Review WIP limit | carried | gap | surface rule 23; review-git §2.2, S6; kernel rule 29 (corrected 2026-09-25) |
 | HD2:371 | HD:2800 | `[network] mode = "offline" / "allowlist" / "open"` | carried | carried | surface.md §2.23 |
 | HD2:372 | HD:2801 | `fetch_allow = ["nodejs.org"]` default | contradicted | deliberate | surface rule 23 (fetch_allow starts empty, with the reason) |
 | HD2:373 | HD:2804 | `[overnight] hours = "18:00-08:00"`: when unattended runs may use the machine | contradicted | deliberate | surface rule 23 ([machine] reserved_hours replaces [overnight] hours, with the reason) |
 | HD2:374 | HD:2805 | `power_budget_kwh_day = 0` means unlimited | carried | carried | surface.md §2.23 (under `[machine]`) |
-| HD2:375 | HD:2808 | `fetch_allow` (Researcher page reads) and `network_allow` (sandbox commands) are distinct, and each file's comment name… | carried | carried | surface.md §2.24 |
-| HD2:376 | HD:2810 | Keys removed because nothing read them: `machine.tier`, `[context]`, `loop.stall_window`, `loop.max_rungs`,… | carried | carried | surface.md §2.25 (identical list) |
+| HD2:375 | HD:2808 | `fetch_allow` (Researcher page reads) and `network_allow` (sandbox commands) are distinct, and each file's comment name… | carried | deliberate | surface rule 24; gates §3 (`network_allow` is a narrowing of the effective `fetch_allow`); security items 28–30 (S3) (corrected 2026-09-25) |
+| HD2:376 | HD:2810 | Keys removed because nothing read them: `machine.tier`, `[context]`, `loop.stall_window`, `loop.max_rungs`,… | carried | gap | surface rule 25; §4 "Config schema matches its readers" not-built, P10, T10 (corrected 2026-09-25) |
 | HD2:377 | HD:2815 | Actor set of seven: human, planner, worker, reviewer, researcher, gate, system | contradicted | deliberate | kernel rule 19, §9 |
 | HD2:378 | HD:2817-2829 | Event fields: seq (1-based monotonic), ts, actor, type, cardId, attemptId, stepId, payload, payloadHash (canonical JSON… | carried | carried | kernel.md §2.6-8 (shapes by reference to `types.ts`) |
 | HD2:379 | HD:2828 | The chain hash covers (seq, ts, actor, type, cardId, payloadHash, prevHash) | gap | gap | kernel rule 9, NEW-kernel-1 |
 | HD2:380 | HD:2825 | Large payload blobs stored under `.sekhemet/artifacts/` | carried | carried | kernel rule 16 (corrected 2026-09-25) |
-| HD2:381 | HD:2832-2866 | Example payloads: CardStart (budget steps/tokens/seconds), StepStart (contextPackHash, activeZoneBudget), ToolCall (arg… | carried | carried | kernel.md §3 (retired in favour of the types in `types.ts`) |
+| HD2:381 | HD:2832-2866 | Example payloads: CardStart (budget steps/tokens/seconds), StepStart (contextPackHash, activeZoneBudget), ToolCall (arg… | carried | deliberate | kernel §3 closing note ("the code's names stand"); rule 6 (Step: `success`, `tokens_condensed` not stored) (corrected 2026-09-25) |
 | HD2:382 | HD:2869 | Events are immutable; corrections are appended as new events | carried | carried | kernel rule 8 (plus the `UPDATE`/`DELETE` refusal, NEW-kernel-1) (corrected 2026-09-25) |
 | HD2:383 | HD:2878-2881 | PRAGMAs: journal_mode WAL, synchronous NORMAL, foreign_keys ON, busy_timeout 5000 | carried | carried | kernel rule 38, `pragmas.spec.ts` (corrected 2026-09-25) |
 | HD2:384 | HD:2884-2901 | `events` table with an actor CHECK, a unique hash and indexes on card, attempt, type, seq | carried | carried | kernel.md §2.6 (SQL by reference to `schema.ts`) |
@@ -1328,7 +1355,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:393 | HD:2991-3003 | `evidence_bundles`: diff, structural diff, gate summary, passed/failed checks, abandoned hypotheses, trajectory ref | gap | gap | gates rule 35, T1 (GT-T1-8); structural diff later §7 |
 | HD2:394 | HD:3005-3022 | `decision_requests`: options {label, consequence, effortDelta, riskNote}, recommendation, answerer human/researcher, bl… | carried-weaker | gap | planner-pm §2.10.2, P2; non-blocking `ask` NEW-worker-loop-4 |
 | HD2:395 | HD:3024-3038 | `competence_entries`: repo, class, files touched, difficulty, model, arm, step budget, stop reason, passed, tokens, sec… | gap | gap | models rule 32, NEW-models-6 |
-| HD2:396 | HD:3043 | `.sekhemet/gates.toml` derived on first run from the project's scripts; edited only when a derived gate is wrong | carried | carried | gates.md §2.36; surface.md §2.5.3 |
+| HD2:396 | HD:3043 | `.sekhemet/gates.toml` derived on first run from the project's scripts; edited only when a derived gate is wrong | carried | gap | gates rule 36; surface rule 5.3; §4 "One gate deriver" not-built, P10 (SUR-1, SUR-8, SUR-35) (corrected 2026-09-25) |
 | HD2:397 | HD:3047 | `[project] languages = [...]` key | missing | deliberate | gates §3 (`languages` dropped: detected from manifests, recorded in evidence) |
 | HD2:398 | HD:3048 | Default `protected` includes `tests/acceptance/**` and `.sekhemet/gates.toml` | carried | carried | gates.md §3 (`DEFAULT_PROJECT_CONFIG`, a superset) |
 | HD2:399 | HD:3050-3081 | Worked `gates.toml` example: tsc typecheck; vitest unit; stryker mutation with `blocking = false`, `timeout_s = 1800`;… | carried-weaker | carried | gates rule 36 (copyable example incl. 1,800 s mutation timeout, gitleaks args) |
@@ -1343,11 +1370,11 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:408 | HD:3120 | M1 kernel: hash-chained log in SQLite WAL; byte-identical projection rebuild; reversible plugin mount/unmount | carried | carried | kernel K-1, K-2; plugins cut in B0 (DEC-29 O4; extensibility rule 29) (corrected 2026-09-25) |
 | HD2:409 | HD:3121 | M2 context: deterministic assembly; byte-identical prompts; prefix-cache hit > 85% on tool-result steps | gap | gap | context rules 1, 7; M8 |
 | HD2:410 | HD:3122 | M3 Worker: Ready → Verify unattended; stall/oscillation detector aborts within 3 steps; stop reason logged | carried | carried | worker-loop.md §2.18, WL-2, §2.30; MVP_PATH step 6 |
-| HD2:411 | HD:3123 | M4 gates: static, functional and security gates sandboxed on the gate host; typed `GateFailure`; tampering with test fi… | carried | carried | gates.md §2.2, §2.7, §2.11, §2.19 |
-| HD2:412 | HD:3124 | M5 board: master and project boards; Review presents evidence; one real card accepted end to end on the founder's repo | carried | carried | MVP_PATH steps 6–7; dashboard.md |
+| HD2:411 | HD:3123 | M4 gates: static, functional and security gates sandboxed on the gate host; typed `GateFailure`; tampering with test fi… | carried | gap | gates rules 2, 7, 11, 19; §4 "Built-in and project gates on the gate host" not-built, T1 (GT-T1-5); "`GateFailure` fields required" partial, M6 (corrected 2026-09-25) |
+| HD2:412 | HD:3124 | M5 board: master and project boards; Review presents evidence; one real card accepted end to end on the founder's repo | carried | later | MVP_PATH steps 6–7 (Review with evidence, one card accepted end to end: built); master board dashboard §7 (PMFE:540) (corrected 2026-09-25) |
 | HD2:413 | HD:3125 | M6 PM: nested boards with rollup; SPIDR fitted to tier; Review WIP back-pressures Verify; retry ladder; playbook v1 | carried | carried | kernel rules 29 (back-pressure), 30 (rollup); planner-pm §2.4 (corrected 2026-09-25) |
-| HD2:414 | HD:3126 | M7 depth: visual, mutation and dependency gates; bake-off matrix; GitHub App PR with check runs and annotations | carried | carried | gates.md; models.md §2.30; integrations.md §2.14-15 |
-| HD2:415 | HD:3127 | M8 self-improvement: each inlet beats its frozen baseline on held-out evals before enablement; a variant archive keeps… | carried | carried | measurement.md §2.17-19 (variant archive in §3 contract) |
+| HD2:414 | HD:3126 | M7 depth: visual, mutation and dependency gates; bake-off matrix; GitHub App PR with check runs and annotations | carried | gap | gates rules 29, 32; models rule 30; integrations rules 14–15, P9 (INT-12…INT-14) (corrected 2026-09-25) |
+| HD2:415 | HD:3127 | M8 self-improvement: each inlet beats its frozen baseline on held-out evals before enablement; a variant archive keeps… | carried | gap | measurement rules 17–19; §4 "Admission requires a significant gain", "Paired rollback guard" not-built, T8 (corrected 2026-09-25) |
 | HD2:416 | HD:3135 | TypeScript on Node throughout; inference over HTTP, never in-process; language servers, formatters and scanners as sand… | carried | carried | SPINE "How the parts fit"; models.md §2.14; security.md §2.4 |
 | HD2:417 | HD:3137 | Rust or Python components only later, where profiling proves a bottleneck (repo map first, pruner second) | missing | carried | DEC-20 (harness stays TypeScript; repo map first, pruner second) |
 | HD2:418 | HD:3141-3158 | Repository layout: packages kernel, board, context, models, loop, planner, gates, sandbox, sync, ui, eval; apps/harness… | carried-weaker | carried | SPINE packages; CLAUDE.md layout; multi-language fixtures later, measurement §7 |
@@ -1363,11 +1390,11 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:428 | HD:3372-3380 | Phase 0 spike: 30 tasks × 3 runs × 3 arms at budgets 50/150; go ≥ 90%, rework 70–90%, pivot < 70% (narrow to planning a… | later | deliberate | measurement rule 28 (M0 row) and rule 28a (the pivot rule, O20), §8 Q4 (corrected 2026-09-25) |
 | HD2:429 | HD:3384 | The frozen suite is written before the features it judges; a phase is complete only when its result is recorded against… | carried | carried | measurement.md §2.1-4 (the ordering rationale is history) |
 | HD2:430 | HD:3388-3390 | Phase 1 MVP: a card goes Ready → Review unattended with an evidence bundle on the founder's repository | carried | carried | MVP_PATH.md (done) |
-| HD2:431 | HD:3394 | Phase 2 PM-layer list (nested boards, decomposition, DAG, WIP, ladder, masking, RTK, playbook, hooks/skills/commands, r… | carried | carried | Each item carried in the owning spec (see its rows) |
+| HD2:431 | HD:3394 | Phase 2 PM-layer list (nested boards, decomposition, DAG, WIP, ladder, masking, RTK, playbook, hooks/skills/commands, r… | carried | gap | the owning specs' rows (e.g. review-git S6, context M8, extensibility NEW-extensibility-1, review-git NEW-review-git-2); structural diffs gates §7 (corrected 2026-09-25) |
 | HD2:432 | HD:3398 | Work sized in cards under 200 lines across 1–3 files | carried | carried | planner-pm.md §2.1.4; gates.md §2.12 |
-| HD2:433 | HD:3398-3400 | Some mechanisms are packages, not cards (Deep Research, the GitHub App adapter, the LSP pool, the seccomp-BPF assembler… | missing | carried | planner-pm §2.1.10, P1 |
+| HD2:433 | HD:3398-3400 | Some mechanisms are packages, not cards (Deep Research, the GitHub App adapter, the LSP pool, the seccomp-BPF assembler… | missing | gap | planner-pm §2.1.10, P1 (PM-P1-20) (corrected 2026-09-25) |
 | HD2:434 | HD:3404 | Depth before reach: the core (loop, gates, context, review, measurement) is held to the full bar; SDK, editor protocol,… | carried-weaker | carried | MODERNIZATION_PLAN "Depth before reach" |
-| HD2:435 | HD:3408 | Phase 3 list (visual gates, multimodal, mutation/security gates, bake-off, prompt optimisation, sync + PRs, overnight,… | carried | carried | Each item carried or Later in its owning spec (Go/Java templates missing: see the language-template rows) |
+| HD2:435 | HD:3408 | Phase 3 list (visual gates, multimodal, mutation/security gates, bake-off, prompt optimisation, sync + PRs, overnight,… | carried | gap | the owning specs' rows (e.g. integrations P9, gates NEW-gates-4/5, runtime, extensibility NEW-extensibility-5 for the SDK cut); Java template gates §7 (corrected 2026-09-25) |
 | HD2:436 | HD:3412 | Phase 4 deferred: teams and multi-user | contradicted | deliberate | DEC-06 |
 | HD2:437 | HD:3412 | Phase 4 deferred: RBAC and SSO, extra tracker adapters, multi-machine pooling, local verifier | later | later | SPINE "Not in v1"; DEC-06; integrations §7; models §7 |
 | HD2:438 | HD:3412 | Phase 4 deferred: the compliance pack | missing | later | runtime §7 (compliance pack) |
@@ -1377,7 +1404,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:442 | HD:3444 | Task synthesis from git history: mine closed PRs; fail-to-pass (C₋₁ fails, C₀ passes); scrub paths from problem stateme… | carried-weaker | gap | measurement rule 17 (ephemeral worktree per task), T8 (MS-T8-12) |
 | HD2:443 | HD:3445 | Clarify vs assume: an ambiguity-entropy threshold θ_ambig; an override rate > 15% in a category converts it to a decisi… | carried | carried | planner-pm.md §2.10.4, OPEN_QUESTIONS.md (15%; θ_ambig and ClarEval moved to later, planner-pm.md §7) |
 | HD2:444 | HD:3446 | Prompt-injection defence by architectural containment | carried | carried | OPEN_QUESTIONS.md; security.md §2.42b |
-| HD2:445 | HD:3447 | Layout defects: `boundingBox()` overlaps, zero-size containers, negative coordinates, scroll overflow; element screensh… | carried | carried | gates.md §2.29 (off-screen position covers negative coordinates) |
+| HD2:445 | HD:3447 | Layout defects: `boundingBox()` overlaps, zero-size containers, negative coordinates, scroll overflow; element screensh… | carried | gap | gates rule 29; §4 "Visual: overlap predicate, masking of dynamic content…" not-built, NEW-gates-4 (GT-N4-4, GT-N4-5); axe-core replaced on purpose (§9, O27) (corrected 2026-09-25) |
 | HD2:446 | HD:3448 | Long-horizon reliability: SPIDR cards (1–3 files, < 200 LOC), fresh packs per card, Pass@k with gate verification | carried | carried | OPEN_QUESTIONS.md; planner-pm.md; worker-loop.md §2.37 |
 | HD2:447 | HD:3452 | Open: retention of packs and trajectories, 30 days vs indefinite | carried | carried | runtime.md §2.33 (30 days after close; evidence and ledger kept) |
 | HD2:448 | HD:3453 | Open: gate runner as a separate mTLS daemon or in-process | carried | carried | OPEN_QUESTIONS.md; runtime.md §7 (gate host on 127.0.0.1:7443) |
@@ -1398,13 +1425,13 @@ Columns: row key · old location · item (shortened) · status when first traced
 
 | Row | Old | Item | Traced | Final | Now in |
 | --- | --- | --- | --- | --- | --- |
-| HD2:461 | IR:55 | Worker request budget: 16,384 − 4,096 − 256 = 12,032 tokens | carried | carried | worker-loop.md §2.22 (more precise: the thinking cap is also subtracted, giving 9,984) |
+| HD2:461 | IR:55 | Worker request budget: 16,384 − 4,096 − 256 = 12,032 tokens | carried | gap | worker-loop rule 22; §4 "Separate prompt, thinking and answer budgets" not-built, M3 (WL-M3-1, WL-M3-5); DEC-27 (corrected 2026-09-25) |
 | HD2:462 | IR:57-61 | A1: no single allocator; `buildPrompt` reduces only 4 of 14 sources (repo map, scope files, history, tests); rules, ski… | carried-weaker | gap | context rule 10a, NEW-context-3 |
 | HD2:463 | IR:63-66 | A2: tools described twice per turn (text interface in Zone 1 and native JSON schemas, rendered again by the template),… | missing | carried | context rule 10b, CX-7 |
 | HD2:464 | IR:68-72 | A3: the same fact reaches the prompt from up to four places (seeded rule, explore rule, `remedyFor`, struggle candidate… | missing | gap | context rule 24c, NEW-context-4 |
 | HD2:465 | IR:74-81 | A4: `activeFor` ignores `errorPattern`; empty `pathPattern`, `scope: {}` and `"src/"` match every card; `triggerGate` O… | carried-weaker | gap | context rule 24b, NEW-context-4 |
 | HD2:466 | IR:83-86 | A5: `executeCard` → `playbook.addRule` → `save()` writes every active learned rule into `.sekhemet/playbook.toml` (comm… | missing | carried | context rule 24a, CX-9 |
-| HD2:467 | IR:88-93 | A6: contradictory re-read directives (fresh-context rung vs pinned "do not read_file" vs `completedWork` "do not re-rea… | carried | carried | context.md CX-M1-1; worker-loop.md WL-M1-2/3 |
+| HD2:467 | IR:88-93 | A6: contradictory re-read directives (fresh-context rung vs pinned "do not read_file" vs `completedWork` "do not re-rea… | carried | gap | context §4 "Coherent prompt" not-built, M1 (CX-M1-1); worker-loop M1 (WL-M1-2, WL-M1-3) (corrected 2026-09-25) |
 | HD2:468 | IR:94 | A6: the repair plan says "Follow it exactly", but `planRepair` never sees active rules, explored constraints or API hin… | missing | gap | worker-loop rule 34.3, NEW-worker-loop-5 |
 | HD2:469 | IR:96-98 | A7: the rung directive is unshifted into Zone 2 rules and `triggerGate` rules change mid-card, so the system prompt cha… | carried-weaker | gap | context rule 8 (static blocks before scope files; rung directive in the tail), NEW-context-3 (CX-N3-4, -5) |
 | HD2:470 | IR:100-102 | A8: `WorkingMemory.seed` keeps the first 6 lines, so Seshat's appended answer is dropped; `lines()` cuts at 10 with see… | missing | gap | context rule 26, NEW-context-3 |
@@ -1425,32 +1452,32 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:485 | IR:153-156 | C2: `askTeam` during an escalated retry: `isResident("manager")` is true for the escalation model (shared id), so the r… | missing | gap | models rule 20a (never two large models; questions during an escalated retry wait), NEW-models-9 |
 | HD2:486 | IR:158-160 | C3: manager (num_ctx 8192), escalation (12288) and PM (8192) are separate adapters on the same weights; Ollama reloads… | missing | gap | models NEW-models-9 (MD-N9-1) |
 | HD2:487 | IR:162-164 | C4: the dashboard's `kick` loads Seshat and the Researcher (as an Ollama model) with no router and no footprint check;… | carried-weaker | gap | runtime rule 4, NEW-runtime-6; models NEW-models-9 |
-| HD2:488 | IR:166-168 | C5: deferred cards run after the only manager batch, so a failing deferred card never gets a plan or retry;… | missing | gap | NEW-planner-pm-8 (dependency inference) and NEW-worker-loop-5 (deferred cards' repair chances); deferred cards' repair chances are gap NEW-worker-loop-5 (rule 40), but no spec bounds dependency inference (`inferDependencies`, `planner/src/impact.ts`, still makes ca… |
+| HD2:488 | IR:166-168 | C5: deferred cards run after the only manager batch, so a failing deferred card never gets a plan or retry;… | missing | gap | planner-pm NEW-planner-pm-8 (PM-N8-1…3, dependency inference); worker-loop rule 40, NEW-worker-loop-5 (WL-N5-4, deferred cards' repair chances) (corrected 2026-09-25) |
 | HD2:489 | IR:170-173 | C6: the tuner's 12-step cap (keeps 17 of 18 passes, cuts time 38%) is never applied; the queue uses the 40-step budget;… | carried-weaker | later | planner-pm §7 |
 | HD2:490 | IR:173 | C6: each verification starts 5 extra `biome` processes (autofix plus one per style rule); fix: one… | missing | gap | gates rule 34b, NEW-gates-3 (GT-N3-5) |
-| HD2:491 | IR:178 | D1: the Worker's questions are appended to the human's chat as `actor: "human"` | carried | carried | integrations.md §2.25, INT-25; kernel.md §2.16 |
+| HD2:491 | IR:178 | D1: the Worker's questions are appended to the human's chat as `actor: "human"` | carried | carried | integrations rule 25, INT-25; kernel rule 19 (corrected 2026-09-25) |
 | HD2:492 | IR:179 | D1: Seshat answers all queued questions in one reply and `collectAnswers` attaches that whole reply (first 400 chars) t… | missing | carried | kernel rule 20, K-10 (each answer threaded under the question it names, built) |
 | HD2:493 | IR:181-189 | D2: no single place holds what the team knows about a card (plan on the ledger, lessons and answers in memory, research… | carried-weaker | carried | kernel rule 20 (dossier, built) |
-| HD2:494 | IR:194 | E1: card kind parsed from the title with `/\(SPIDR:…/` in 4 places; Seshat's cards become "Other" | carried | carried | planner-pm.md P1 (kind from labels everywhere) |
-| HD2:495 | IR:195 | E1: the error-code regex is duplicated (index.ts, reflect.ts) | missing | gap | context rule 24c (one `errorCode()` helper), NEW-context-4 |
+| HD2:494 | IR:194 | E1: card kind parsed from the title with `/\(SPIDR:…/` in 4 places; Seshat's cards become "Other" | carried | gap | planner-pm §4 "`kind`, `change` and `split` stored…" not-built, P1 (PM-P1-10); kernel NEW-kernel-9 (corrected 2026-09-25) |
+| HD2:495 | IR:195 | E1: the error-code regex is duplicated (index.ts, reflect.ts) | missing | gap | context rule 24c, NEW-context-4 (after CX-N4-8 is added) (corrected 2026-09-25) |
 | HD2:496 | IR:196 | E1: `<think>` stripped 8 times although the adapter already strips reasoning; `/\{[\s\S]*\}/` JSON extraction in 4 plac… | missing | gap | models MD-N4-8, NEW-models-4 |
-| HD2:497 | IR:197 | E1: two similarity measures (`store.similarity` and `askObservation`'s ad-hoc overlap) | missing | gap | context rule 24c (one similarity function), NEW-context-4 |
+| HD2:497 | IR:197 | E1: two similarity measures (`store.similarity` and `askObservation`'s ad-hoc overlap) | missing | gap | context rule 24c, NEW-context-4 (after CX-N4-8 is added) (corrected 2026-09-25) |
 | HD2:498 | IR:198 | E1: `session.ts` has four verification paths, each updating state differently | gap | gap | worker-loop rule 9, T3 |
-| HD2:499 | IR:199 | E1: `moduleApiSummary` wrapped three times (API hints, curriculum, the Researcher's `module_api`) | carried | carried | gates.md GT-T2-3 (one AST index answers exports for every consumer) |
+| HD2:499 | IR:199 | E1: `moduleApiSummary` wrapped three times (API hints, curriculum, the Researcher's `module_api`) | carried | gap | gates rule 28, §4 "One AST source index" not-built, T2 (GT-T2-3) (corrected 2026-09-25) |
 | HD2:500 | IR:200 | E1: two playbook stores and two sinks for send-backs | carried-weaker | gap | kernel K-S7-6, S7; one store built (context 24a) |
-| HD2:501 | IR:203 | E2: configuration spread over nine places (17 flags, 9 env vars, repos/.json, global_playbook.json, gates.toml, playbo… | carried | carried | surface.md §2.21-27 (one resolution order, one user directory, an environment inventory) |
+| HD2:501 | IR:203 | E2: configuration spread over nine places (17 flags, 9 env vars, repos/.json, global_playbook.json, gates.toml, playbo… | carried | gap | surface rules 21–27; §4 "One user directory" not-built (NEW-surface-1), "Environment inventory" not-built (T10), "One recorded `RunProfile`" not-built (NEW-surface-5) (corrected 2026-09-25) |
 | HD2:502 | IR:204 | E2: `config.ts` is read only by `server.ts` | gap | gap | surface SUR-11, SUR-21 (P10, T10) |
 | HD2:503 | IR:205 | E2: model profiles written inline in index.ts, pm_api.ts and pm/service.ts with magic names | gap | gap | models NEW-models-4 (one profile record, one construction path) |
-| HD2:504 | IR:208 | E3: dead code: `pressure.ts`, `DefaultContextEngine`, `FileEvidenceStore`, `RulePerformance`/`auditContextDebt`, the RT… | carried-weaker | carried | context CX-M1-8, §4, rule 24e (`FileEvidenceStore` is reachable from `execute.ts`) |
+| HD2:504 | IR:208 | E3: dead code: `pressure.ts`, `DefaultContextEngine`, `FileEvidenceStore`, `RulePerformance`/`auditContextDebt`, the RT… | carried-weaker | gap | context §4 "Dead code" not-built (cut), M1 (CX-M1-8); rule 24e, NEW-context-4 (`RulePerformance` derived); `pressure.ts` kept dormant on purpose (§4 "built (dormant)") (corrected 2026-09-25) |
 | HD2:505 | IR:209 | E3: the benchmark command runs with `--explore`, `--review`, `--reviewer`, `--researcher`, `--escalate-retries` and… | carried-weaker | gap | measurement rule 9 (product roles and policies on), M9 (MS-M9-4) |
 | HD2:506 | IR:219 | Suggestion 1: reorder the manager batch by residency; remove the per-question `router.use("manager")`; `askTeam` return… | missing | gap | models rule 20a, NEW-models-9 |
 | HD2:507 | IR:220 | Suggestion 2: loop pass → manager batch → retry until nothing changes (cap 2 batches), so deferred cards get plans; ref… | missing | gap | worker-loop rule 40, NEW-worker-loop-5; reflection after retries built (planner-pm §2.8.13) |
 | HD2:508 | IR:221 | Suggestion 3: `errorPattern` only while that code stands; `triggerGate` as AND; `addRule` in memory only; key facts and… | carried-weaker | gap | context rules 24a (built), 24b–c, NEW-context-4 |
 | HD2:509 | IR:222 | Suggestion 4: describe tools once; rung directive out of Zone 2 into the volatile tail; static per-card blocks before t… | carried-weaker | gap | context rule 10b (built), rule 8, NEW-context-3 |
 | HD2:510 | IR:223 | Suggestion 5: apply the tuned stopping policy by default from a global report; one biome call | missing | gap | gates rule 34b, NEW-gates-3 (one biome call); tuned policy by default later, planner-pm §7 |
-| HD2:511 | IR:224 | Suggestion 6: a card dossier on the ledger: typed events `card/lesson`, `card/note`, `card/question` (actor worker),… | missing | carried | kernel rule 20 (built); worker-loop 5a |
+| HD2:511 | IR:224 | Suggestion 6: a card dossier on the ledger: typed events `card/lesson`, `card/note`, `card/question` (actor worker),… | missing | gap | kernel rule 20 (built); kernel §4 "Ledger as the only durable channel" partial, S7 (K-S7-6) (corrected 2026-09-25) |
 | HD2:512 | IR:225 | Suggestion 7: one context allocator replaces `buildPrompt`'s levels and `pressure.ts`, for every role | carried-weaker | gap | context rule 10a, NEW-context-3 |
-| HD2:513 | IR:226 | Suggestion 8: in-run probation for executable-verified learning (a config constraint, a remedy keyed to an error code,… | contradicted | deliberate | context rule 24f, measurement rule 6, §9; ruling R12 (probation in production only); NEW-context-4 (CX-N4-7) |
+| HD2:513 | IR:226 | Suggestion 8: in-run probation for executable-verified learning (a config constraint, a remedy keyed to an error code,… | contradicted | deliberate | context rule 24f, CX-N4-7; measurement rule 6; owner decision O15 open, default "no probation: approval first" (corrected 2026-09-25) |
 | HD2:514 | IR:227 | Suggestion 9: one attempt record `card/attempt_finished` (attempt number, role, model, rules in the prompt, turns, toke… | missing | gap | worker-loop rule 39, NEW-worker-loop-5 (attempt/finished read by every consumer) |
 | HD2:515 | IR:228 | Suggestion 10: a scheduler that owns residency and work queues: adapters keyed by weights with the largest `num_ctx`; p… | missing | gap | models NEW-models-9; runtime NEW-runtime-6 |
 | HD2:516 | IR:229 | Suggestion 11: shared helpers: a `kind` field on CardRecord, `errorCode()`, `extractJson()`, one `verify()`, one simila… | carried-weaker | gap | stored kind NEW-kernel-9 (models rule 31); errorCode and similarity NEW-context-4; extractJson NEW-models-4 (MD-N4-8); one verify T3 |
@@ -1458,14 +1485,14 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:518 | IR:231 | Suggestion 13: delete or merge dead code (`pressure.ts` into the allocator, `RulePerformance` into the attempt record,… | carried-weaker | gap | context CX-M1-8 (DefaultContextEngine cut, M1), rule 24e (RulePerformance derived); JSONL sink S5/S7; pressure.ts kept dormant |
 | HD2:519 | IR:232 | Suggestion 14: an adversarial Reviewer: check the diff against the spec and criteria, list untested behaviour, read the… | carried-weaker | gap | review-git §2.3.3–5, P8 (RG-P8-8 assumptions, RG-P8-9 dossier); the likely_send_back retry later §7 with its reason |
 | HD2:520 | IR:234-239 | Batch sequence on 24 GB: Worker pass → Researcher (every unexplained struggle, with card and code) → Seshat (plans usin… | contradicted | deliberate | review-git §2.3.2, §9 (Reviewer once per queue pass, after retries, before Review); swap order models rule 20a |
-| HD2:521 | IR:245-252 | Target: one card dossier, with the ledger as the only channel; every role writes typed events (Worker lessons/notes/que… | missing | carried | kernel rule 20 (one dossier, `getDossier`, built) |
+| HD2:521 | IR:245-252 | Target: one card dossier, with the ledger as the only channel; every role writes typed events (Worker lessons/notes/que… | missing | gap | kernel rule 20 (built); kernel §4 "Ledger as the only durable channel" partial, S7 (K-S7-6, K-S7-7) (corrected 2026-09-25) |
 | HD2:522 | IR:253 | Target: the PM chat becomes a view showing the human conversation plus Worker questions labelled as the Worker's | carried-weaker | carried | dashboard §2.7.3; kernel rule 19 |
 | HD2:523 | IR:255 | Target: one context allocator for every role: typed sections with priority, token cap and fact key; deduplicate keys; f… | carried-weaker | gap | context rules 10a–c, 24c; NEW-context-3, -4 |
 | HD2:524 | IR:256-265 | Target Worker priority order: laws/tools once; contract and acceptance tests; the standing failure with excerpt and one… | carried-weaker | gap | context rule 10a, NEW-context-3; rule count §8.3 |
 | HD2:525 | IR:267 | Target: the goal is always restated at the tail | carried | carried | context.md §2.8 ("the tail restates the goal in one line") |
 | HD2:526 | IR:270-274 | Target learning signals from four sources (gate transitions, attempt records, human actions incl. edits, model synthese… | carried-weaker | gap | measurement rule 17 (source and verification tags), T8 (MS-T8-9) |
 | HD2:527 | IR:275 | Target: one Curator turns signals into keyed facts, deduplicates against seeded rules and `remedyFor` by key, and scope… | missing | gap | context rule 24c (one curator), NEW-context-4 |
-| HD2:528 | IR:276 | Target lifecycle: candidate → probation (in-run; executable-verified facts only) → active (human-approved; project or g… | contradicted | gap | context rule 24f, NEW-context-4 (R12) |
+| HD2:528 | IR:276 | Target lifecycle: candidate → probation (in-run; executable-verified facts only) → active (human-approved; project or g… | contradicted | gap | context rule 24f, NEW-context-4 (CX-N4-7); owner decision O15 open, default "no probation"; automatic retirement is O25, default "retire automatically with a notice" (corrected 2026-09-25) |
 | HD2:529 | IR:277 | Target: rule outcomes come from the attempt record, with rotation giving a with/without comparison | missing | gap | measurement rule 16b, T8; context rule 24e, NEW-context-4 |
 | HD2:530 | IR:278 | Target consumers: the Worker's allocator, Seshat's snapshot (manager rules and profile), the Reviewer; the tuner and ca… | carried-weaker | gap | context rule 24d, NEW-context-4 (PM rules in Seshat's snapshot); worker-loop rule 39, NEW-worker-loop-5 (one attempt record) |
 | HD2:531 | IR:281 | Target scheduler: adapters keyed by weights, not role; roles on the same weights share one adapter with the largest con… | missing | gap | models rule 20a (adapters keyed by weights), NEW-models-9 |
@@ -2056,14 +2083,14 @@ Columns: row key · old location · item (shortened) · status when first traced
 | INV:K18 | FI:62 / R2:88 | `gate_results` table | carried | carried | kernel rule 6, Gate result bullet (after restoration); rules 14, 37 (corrected 2026-09-25) |
 | INV:K19 | FI:63 / R2:89 | `evidence_bundles` table fields | carried-weaker | gap | gates rule 35, T1 |
 | INV:K20 | FI:64 / R2:90 | `decision_requests` table | carried | carried | kernel §2.6; planner §2.10, §4 built — agree |
-| INV:K21 | FI:65 / R2:91 | Competence entries driving budgets/routes | carried | carried | models §2.32, §4 partial (NEW-models-6: prediction/decision/outcome) — spec-stricter |
-| INV:K22 | FI:66 / R2:92 | Full card record shape | carried | carried | kernel §2.6 types; planner §2.1.5; PM_CONTRACT §2 — agree |
+| INV:K21 | FI:65 / R2:91 | Competence entries driving budgets/routes | carried | gap | models rule 32, §4 "Competence rows" partial, NEW-models-6 (MD-N6-1, MD-N6-2) (corrected 2026-09-25) |
+| INV:K22 | FI:66 / R2:92 | Full card record shape | carried | deliberate | kernel rule 6 Card bullet (after restoration R2 of corrections_hd_inv.md — not yet applied: kernel rule 6 still has no Card bullet); planner-pm §2.1.5, §2.7.1–2 and §9 (priority is a person's 0–4 field; WSJF only orders Ready); kernel rule 24 (typed holds); PM_CONTRACT §2 (corrected 2026-09-25) |
 | INV:K23 | FI:67 / R2:93 | `busy_timeout = 5000` (with a test) | carried | carried | kernel rule 38, tests `pragmas.spec.ts` (corrected 2026-09-25) |
 | INV:K24 | FI:68 / R2:94 | Column enum incl. Planning | carried | carried | kernel rule 23, §4 built (corrected 2026-09-25) |
 | INV:K25 | FI:69 / R2:95 | Difficulty 1..10 | carried | carried | planner §2.4; K-S7-1 (difficulty 11 refused) — agree |
 | INV:K26 | FI:70 / R2:96 | Packs/evidence under `.sekhemet/` by hash | carried | carried | kernel rule 16; §4 "ledger only durable channel" partial S7 (corrected 2026-09-25) |
-| INV:K27 | FI:71 / R2:97 | 30-day retention | carried | carried | runtime §2.33, NEW-runtime-4 partial — R2 BUILT, spec-stricter |
-| INV:K28 | FI:72 / R2:98 | Checkpoint DB record with attribution | carried-weaker | carried | review-git rule 3 (checkpoint database record with attribution), §4 built |
+| INV:K27 | FI:71 / R2:97 | 30-day retention | carried | gap | runtime rule 33, §4 "Retention of packs, observations, transcripts" partial, NEW-runtime-4 (RUN-13, RUN-54, RUN-57) (corrected 2026-09-25) |
+| INV:K28 | FI:72 / R2:98 | Checkpoint DB record with attribution | carried-weaker | carried | review-git §2.6.3 (checkpoint database record with attribution), §4 built (corrected 2026-09-25) |
 
 **Sandbox (S)**
 
@@ -2082,7 +2109,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | INV:S11 | FI:92 / R2:114 | `osv-scanner` offline | carried | carried | security §2.44 — agree |
 | INV:S12 | FI:93 / R2:115 | Restricted mode | carried | gap | security rule 43, worker-loop rule 13, §4 "Restricted mode strips tools" partial, S3a (corrected 2026-09-25) |
 | INV:S13 | FI:94 / R2:116 | Worktree manager (create/cleanup) | carried | carried | security §2.24a; review-git §2.6.2 built — agree |
-| INV:S14 | FI:95 / R2:117 | CoW worktrees + linked deps | later | later | review-git §7 (copy-on-write); DEC-21; linked deps security rule 24 |
+| INV:S14 | FI:95 / R2:117 | CoW worktrees + linked deps | later | deliberate | DEC-21 (plain worktrees instead of copy-on-write clones, with its reason and reopen condition); security §9; CoW also listed in review-git §7; linked `node_modules`/`.venv` security rule 24 (§4 partial, S2) (corrected 2026-09-25) |
 | INV:S15 | FI:96 / R2:118 | Per-card env allowlist | carried | carried | security §2.6, §4 built — agree |
 
 **Sync and git (Y)**
@@ -2091,14 +2118,14 @@ Columns: row key · old location · item (shortened) · status when first traced
 | --- | --- | --- | --- | --- | --- |
 | INV:Y1 | FI:106 / R2:124 | Branch `sekhemet/<project>/<card-id>-<slug>` from parent branch | carried | carried | review-git §2.6.2, §4 built — agree |
 | INV:Y2 | FI:107 / R2:125 | Checkpoint commit trailers; `refs/sekhemet/checkpoints/<card-id>` | carried | carried | review-git §2.6.3, §2.5.5, §4 built — agree |
-| INV:Y3 | FI:108 / R2:126 | Commit after every gate-passing step and every masking boundary | contradicted | deliberate | review-git rule 3, §9 (R1) |
-| INV:Y4 | FI:109 / R2:127 | Squash into intent-grouped Conventional Commits | carried | carried | review-git §2.5.4; real trailers S5 — agree |
-| INV:Y5 | FI:110 / R2:128 | Injection-safe git | carried | carried | security §2.18-20 (absolute path, pinned env, hardened config) — agree |
+| INV:Y3 | FI:108 / R2:126 | Commit after every gate-passing step and every masking boundary | contradicted | deliberate | review-git §2.6.3, §9 (checkpoints after every step that changed files; R1) (corrected 2026-09-25) |
+| INV:Y4 | FI:109 / R2:127 | Squash into intent-grouped Conventional Commits | carried | gap | review-git §2.5.4, §4 "Real `GateStatus`, `Accepted-by`, `Ledger-Head` trailers" not-built, S5 (RG-S5-7); several commits per card Later (review-git §7) (corrected 2026-09-25) |
+| INV:Y5 | FI:110 / R2:128 | Injection-safe git | carried | carried | security rule 18 (after restoration: git's arguments as an argument vector, never a shell), rules 19–20 (corrected 2026-09-25) |
 | INV:Y6 | FI:111 / R2:129 | Rebase before Verify; typed conflicts; out-of-scope parks | carried-weaker | gap | review-git §4 corrected, NEW-review-git-1 |
 | INV:Y7 | FI:112 / R2:130 | Stacked branches; accept restacks and re-runs gates | carried-weaker | gap | review-git §4 corrected, NEW-review-git-2 |
-| INV:Y8 | FI:113 / R2:131 | difftastic structural diff | carried | carried | review-git §2.6.6 partial S5; gates §7 (in bundle later) — spec-stricter |
-| INV:Y9 | FI:114 / R2:132 | Head sha, diff generation | carried | carried | implied by review-git §2.2 (repo-state hash) and gates §2.35 (diff) — agree |
-| INV:Y10 | FI:115 / R2:133 | `SyncAdapter` pull/push/update/capabilities; conflict rule | carried | carried | integrations §2.7 (three-way merge, not LWW), §4 partial P9 — spec-stricter |
+| INV:Y8 | FI:113 / R2:131 | difftastic structural diff | carried | gap | review-git §2.6.6, §4 "Structural diff (difftastic)" partial, S5 (RG-S5-19); in the evidence bundle Later (gates §7) (corrected 2026-09-25) |
+| INV:Y9 | FI:114 / R2:132 | Head sha, diff generation | carried | carried | review-git §2.5.1 (branch head equals the evidence's repository-state hash), §2.6.2 (branches); gates rule 35 (diff) (corrected 2026-09-25) |
+| INV:Y10 | FI:115 / R2:133 | `SyncAdapter` pull/push/update/capabilities; conflict rule | carried | gap | integrations rules 4, 7, §4 "GitHub/Forgejo adapter" partial, P9 (INT-2–INT-6) (corrected 2026-09-25) |
 | INV:Y11 | FI:116 / R2:134 | Forgejo adapter | carried-weaker | carried | integrations rule 8, §4 (GitHub/Forgejo adapter, partial, P9), §8 Q4; integrations §7 "Forgejo beyond issues" (corrected 2026-09-25) |
 | INV:Y12 | FI:117 / R2:135 | GitHub App RS256 JWT, 1-h tokens, keychain, 7 scopes, GHES, no PAT | carried | carried | integrations §2.10, §4 built — agree |
 | INV:Y13 | FI:118 / R2:136 | HMAC webhook + 5 triggers | carried-weaker | gap | integrations §2.12, P9 |
@@ -2121,9 +2148,9 @@ Columns: row key · old location · item (shortened) · status when first traced
 | INV:M5 | FI:139 / R2:153 | Qwen3.8-27B code + planning sampling profile | carried-weaker | carried | models rule 3a (Qwen code and planning profiles, values verbatim) |
 | INV:M6 | FI:140 / R2:154 | Per-request reasoning control | carried | carried | worker-loop §2.24-25 (`reasoning.ts`), built — agree |
 | INV:M7 | FI:141 / R2:155 | Tolerant tool-call parser (arm B) | carried | carried | models §2.28 — agree |
-| INV:M8 | FI:142 / R2:156 | Arm A grammar-constrained decoding | carried | carried | models §2.28 + DEC-22 (per-model measured, never default); NEW-models-5 — agree |
+| INV:M8 | FI:142 / R2:156 | Arm A grammar-constrained decoding | carried | gap | models rule 28 + DEC-22 (constraints only where measured), §4 "Tool arm measured and pinned" not-built, NEW-models-5 (MD-N5-1) (corrected 2026-09-25) |
 | INV:M9 | FI:143 / R2:157 | Arm C search/replace patches | carried | gap | models rule 28, §4 "Tool arm measured and pinned" not-built, NEW-models-5 (corrected 2026-09-25) |
-| INV:M10 | FI:144 / R2:158 | Mock adapter contract | missing | carried | DEFINITION_OF_DONE §2D.2 (scripted adapter); models §4 adapter_contract.spec.ts |
+| INV:M10 | FI:144 / R2:158 | Mock adapter contract | missing | carried | DEFINITION_OF_DONE §2D.2; models §3 (after restoration: the scripted adapter's contract) (corrected 2026-09-25) |
 | INV:M11 | FI:145 / R2:159 | Model registry fields | carried | gap | models rule 25, §4 not-built, NEW-models-4 (corrected 2026-09-25) |
 | INV:M12 | FI:146 / R2:160 | Template SHA-256 pin invalidates qualification | carried | carried | models §2.12, MD-2, built — agree |
 | INV:M13 | FI:147 / R2:161 | Hardware calibration procedure | carried | gap | models rule 7, §4 "Calibration command and machine profile" partial, NEW-models-1 (corrected 2026-09-25) |
@@ -2134,10 +2161,10 @@ Columns: row key · old location · item (shortened) · status when first traced
 | INV:M18 | FI:152 / R2:166 | Cache hit telemetry; < 85% on tool-result steps = defect + alert | carried-weaker | gap | context rule 7, §4, M8 (after CX-M8-10 is added) (corrected 2026-09-25) |
 | INV:M19 | FI:153 / R2:167 | Speculative decoding / MTP by measurement; draft model | carried-weaker | gap | models rule 13, NEW-models-8 (`-md`), M7/M11 |
 | INV:M20 | FI:154 / R2:168 | Memory watchdog 2 s, 85/90/94% actions | carried-weaker | gap | models rule 19 (0.90 stage restored), NEW-models-2 |
-| INV:M21 | FI:155 / R2:169 | Model swapping | carried | carried | models §2.17, §2.20; extensibility tools table — agree |
+| INV:M21 | FI:155 / R2:169 | Model swapping | carried | gap | models rules 17, 20, 20a, §4 "Declared hours, swap batching by project" partial, NEW-models-3 (MD-N3-2) and "One residency scheduler" not-built, NEW-models-9 (corrected 2026-09-25) |
 | INV:M22 | FI:156 / R2:170 | Qualification suite, deterministic scoring | carried | carried | models §2.27, §4 built — agree |
 | INV:M23 | FI:157 / R2:171 | Per-repo bake-off on history tasks, full settings | carried | gap | models rule 30, §4 "Bake-off under the real harness" partial, NEW-models-4; history-mined tasks measurement T8 (corrected 2026-09-25) |
-| INV:M24 | FI:158 / R2:172 | Engine selection by measurement incl. cache retention | carried | carried | models §2.14, §2.26 (NEW-models-4) — agree |
+| INV:M24 | FI:158 / R2:172 | Engine selection by measurement incl. cache retention | carried | gap | models rules 14, 26, §4 "One role enum; one profile record; one construction path" not-built, NEW-models-4 (after restoration: an EARS criterion for applying the measured engine) (corrected 2026-09-25) |
 | INV:M25 | FI:159 / R2:173 | Declared hours, batched swaps | carried | gap | models rule 20, §4 "Declared hours, swap batching" partial, NEW-models-3; runtime rule 17 (corrected 2026-09-25) |
 
 **Gates (G)**
@@ -2146,7 +2173,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | --- | --- | --- | --- | --- | --- |
 | INV:G1 | FI:169 / R2:179 | `gates.toml` parser and keys | carried-weaker | deliberate | gates §3 (schedule, threshold, languages each dropped or renamed with the reason) |
 | INV:G2 | FI:170 / R2:180 | Hash verified on every card start | carried | carried | gates §2.2, GT-1 — agree |
-| INV:G3 | FI:171 / R2:181 | Six layers + runs-on hosts | carried-weaker | carried | gates rule 3 (layers with runs-on hosts); per-layer host later §7 |
+| INV:G3 | FI:171 / R2:181 | Six layers + runs-on hosts | carried-weaker | gap | gates rule 3, §4 "Built-in and project gates on the gate host" not-built, T1 (GT-T1-5); a per-layer `runs_on` Later (gates §7) (corrected 2026-09-25) |
 | INV:G4 | FI:172 / R2:182 | Runner executes declared commands, per-gate timeout | carried | carried | gates §2.8, §2.33, §4 built — agree |
 | INV:G5 | FI:173 / R2:183 | Full-layer run, not short-circuit | carried | carried | gates §2.8 (rank once at end), GT-T1-2; §2.33 scoped short-circuit for functional only — agree |
 | INV:G6 | FI:174 / R2:184 | In-memory parse gate before write | carried | carried | worker-loop §2.14 (TS/JS; others where a checker exists), DEC-20 — agree |
@@ -2163,7 +2190,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | INV:G17 | FI:185 / R2:195 | Visual: console, rejections, HTTP ≥ 400 | carried | carried | gates §2.29, §4 built — agree |
 | INV:G18 | FI:186 / R2:196 | Visual: overlap, zero size, off-screen, overflow | carried-weaker | gap | gates §4 corrected (overlap not built), NEW-gates-4 (GT-N4-4) |
 | INV:G19 | FI:187 / R2:197 | Screenshot diff 0.01, masked, animations off | carried-weaker | gap | gates §4 corrected, NEW-gates-4 (GT-N4-5) |
-| INV:G20 | FI:188 / R2:198 | axe-core at 1280 / 375, zero critical | carried | carried | gates §2.29, OQ1 (in-house subset; axe proposal) — agree |
+| INV:G20 | FI:188 / R2:198 | axe-core at 1280 / 375, zero critical | carried | deliberate | gates rule 29, §9 (the in-house CDP client with every required behaviour kept), §8 Q1 (Playwright and axe-core approved as development dependencies, DEC-29 O5; axe-core inside the product gate open, O27) (corrected 2026-09-25) |
 | INV:G21 | FI:189 / R2:199 | Vision checklist fail-only; human-approved baselines | gap | gap | gates rules 30–31, NEW-gates-4 |
 | INV:G22 | FI:190 / R2:200 | Hygiene: changelog, debug output, trailers | carried | carried | gates §2.3, §2.17, §2.27; NEW-gates-2 (changelog in scope) — agree |
 | INV:G23 | FI:191 / R2:201 | Regression protection on re-entering Review → Planning | carried-weaker | gap | kernel rule 31, NEW-kernel-5 |
@@ -2192,10 +2219,10 @@ Columns: row key · old location · item (shortened) · status when first traced
 | INV:C14 | FI:220 / R2:224 | Context pack assembly | carried | carried | context §2.1-15, contract `buildWorkerPrompt` — agree |
 | INV:C15 | FI:221 / R2:225 | Byte-identical prompt for identical inputs | carried | carried | context §2.1, CX-1 built — agree |
 | INV:C16 | FI:222 / R2:226 | Subtask branch-and-return | carried | carried | context §2.18, CX-4 built — agree |
-| INV:C17 | FI:223 / R2:227 | Fresh context on rung change | carried | carried | context §2.19; worker-loop §2.34, M1 partial — spec-stricter |
+| INV:C17 | FI:223 / R2:227 | Fresh context on rung change | carried | gap | worker-loop rule 34.2, §4 "Fresh context resets read set, seen marks and lessons; directive shown once" partial, M1 (WL-M1-2, WL-M1-3); context rule 19 (corrected 2026-09-25) |
 | INV:C18 | FI:224 / R2:228 | Reasoning traces stripped between steps | contradicted | deliberate | context rule 4; DEC-24 |
-| INV:C19 | FI:225 / R2:229 | Dynamic tool loading via `tool_search` | carried | carried | worker-loop §2.11, M2 A/B; context OQ2 — R2 SHALLOW; DISAGREE, code sets `progressiveTools: true` (`execute.ts:476`): spec right |
-| INV:C20 | FI:226 / R2:230 | Per-step and per-card context metrics | carried-weaker | carried | context rule 29 |
+| INV:C19 | FI:225 / R2:229 | Dynamic tool loading via `tool_search` | carried | gap | worker-loop rules 11, 12 (`tool_search`), §4 "Fixed tool set per class, stable array" not-built and "`tool_search` answers symbol queries" not-built, M2 (WL-M2-2, WL-M2-7); context §8 Q2 (loaded tools appended as a message) (corrected 2026-09-25) |
+| INV:C20 | FI:226 / R2:230 | Per-step and per-card context metrics | carried-weaker | gap | context rule 29 (after restoration: a §4 row and a criterion, proposed CX-N5-4) (corrected 2026-09-25) |
 | INV:C21 | FI:227 / R2:231 | Joint versioning invalidates qualification | carried-weaker | gap | context §4 (corrected), NEW-context-6 |
 | INV:C22 | FI:228 / R2:232 | AGENTS.md / CLAUDE.md in Zone 2 | carried | carried | context §2.8 (project conventions) — agree |
 
@@ -2211,18 +2238,18 @@ Columns: row key · old location · item (shortened) · status when first traced
 | INV:L6 | FI:245 / R2:243 | `grep` modes, context, gitignore, capped | carried-weaker | carried | worker-loop rule 12 |
 | INV:L7 | FI:246 / R2:244 | `glob` mtime-sorted, gitignore | carried-weaker | carried | worker-loop rule 12 |
 | INV:L8 | FI:247 / R2:245 | `run`: sandbox, timeout, description, deny raw cat/grep/sed, condensing | carried | carried | worker-loop rule 12 (`run_cmd` timeout and `description`), WL-5; context rule 17 (corrected 2026-09-25) |
-| INV:L9 | FI:248 / R2:246 | Symbol tools over LSP | carried | carried | worker-loop §2.12 (TS language service) — see C2 |
-| INV:L10 | FI:249 / R2:247 | Tiered `docs` | carried | carried | worker-loop §2.12; design-stage §2.7.2 — agree |
+| INV:L9 | FI:248 / R2:246 | Symbol tools over LSP | carried | gap | worker-loop rule 12, §4 "Symbol tools reach the TypeScript service through LSP" not-built, NEW-worker-loop-7 (WL-N7-1); symbol edits beyond TS/JS Later (worker-loop §7) (corrected 2026-09-25) |
+| INV:L10 | FI:249 / R2:247 | Tiered `docs` | carried | later | worker-loop rule 12 (the Worker's `docs` reads the repository tier: project docs, a dependency's README and types at the installed version); the tiered corpus design-stage §7 (a persistent project corpus) (corrected 2026-09-25) |
 | INV:L11 | FI:250 / R2:248 | `note` to the card thread | carried | carried | worker-loop §2.12 — agree |
 | INV:L12 | FI:251 / R2:249 | Code mode (`run_script`) | carried | carried | worker-loop §2.12, WL-M2-4 — agree |
 | INV:L13 | FI:252 / R2:250 | Stall `(tool, argHash, repoStateHash)`; 2 = stall; A-B-A | carried | carried | worker-loop §2.17-20, WL-2 built (warn then stop) — R2 SHALLOW (threshold 3, A-B-A-B); spec redefines the episode; A-B-A vs A-B-A-B not re-checked |
-| INV:L14 | FI:253 / R2:251 | Six stop reasons, never collapsed | carried | carried | worker-loop §2.30-33, OQ1 (18 stored, 7 classes), T3 — agree |
+| INV:L14 | FI:253 / R2:251 | Six stop reasons, never collapsed | carried | deliberate | worker-loop rules 30–31, §9 and DEC-24 (six stop reasons became twenty-three stored reasons in seven failure classes plus success); the table and classes T3 (not built) (corrected 2026-09-25) |
 | INV:L15 | FI:254 / R2:252 | Ladder 2/1/1, park with diagnostic | carried | carried | worker-loop §2.34-36, WL-8 built — agree |
 | INV:L16 | FI:255 / R2:253 | `validateWrite` contract | carried | carried | worker-loop §2.14 — agree |
 | INV:L17 | FI:256 / R2:254 | Read-before-edit | carried | carried | worker-loop §2.12, WL-4 — agree |
 | INV:L18 | FI:257 / R2:255 | Tool sets per card class | carried | gap | worker-loop rule 10, M2 (WL-M2-1) (corrected 2026-09-25) |
 | INV:L19 | FI:258 / R2:256 | search/fetch only on research cards | carried | carried | worker-loop §2.12; design-stage §2.7.10 — agree |
-| INV:L20 | FI:259 / R2:257 | `browse` sandboxed browser | carried | carried | worker-loop §2.12; security §2.42a (click/type need URL allowlist) — agree |
+| INV:L20 | FI:259 / R2:257 | `browse` sandboxed browser | carried | gap | security rule 42a, §4 "`browse`" partial, S3a (SEC-17); screenshots to evidence and the accessibility-tree read (after restoration) (corrected 2026-09-25) |
 | INV:L21 | FI:260 / R2:258 | Planner-set step budgets | carried | carried | worker-loop §2.21 (p80 × 1.25, ≤ 15%, ≥ 4), WL-10 — agree |
 | INV:L22 | FI:261 / R2:259 | Token/seconds/kWh budgets, park at cap | carried-weaker | gap | runtime rule 19, NEW-runtime-7 |
 | INV:L23 | FI:262 / R2:260 | Background processes per card, ports | carried | carried | runtime §2.15, §4 built — agree |
@@ -2232,7 +2259,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | INV:L27 | FI:273 / R2:264 | CRLF/EOL utilities | carried | carried | worker-loop §2.12 "line endings normalised" — agree |
 | INV:L28 | FI:274 / R2:265 | Real glob engine | carried | carried | implied (`find_files`, protected globs) — agree |
 | INV:L29 | FI:275 / R2:266 | Observation contract + 2,400/1,200 clamp | carried-weaker | carried | worker-loop §3, §4 |
-| INV:L30 | FI:276 / R2:267 | `ToolExecutor` returning observations; ask escalation | carried | carried | worker-loop §3 contract — agree |
+| INV:L30 | FI:276 / R2:267 | `ToolExecutor` returning observations; ask escalation | carried | gap | worker-loop §3 (tool executor); security rule 25a, §4 "Ask answered by a person through a decision request" partial, NEW-security-6 (SEC-47–49) (corrected 2026-09-25) |
 | INV:L31 | FI:277 / R2:268 | Symbol spans | carried | carried | worker-loop §2.12 — agree |
 
 **Board (B)**
@@ -2257,10 +2284,10 @@ Columns: row key · old location · item (shortened) · status when first traced
 
 | Row | Old | Item | Traced | Final | Now in |
 | --- | --- | --- | --- | --- | --- |
-| INV:P1 | FI:309 / R2:292 | SPIDR five heuristics, split until it fits | carried | carried | planner §2.1-2.2 (Cohn's SPIDR; old "Interface = types first" becomes the Contract enabler card), P1 model-first — agree |
+| INV:P1 | FI:309 / R2:292 | SPIDR five heuristics, split until it fits | carried | deliberate | planner-pm §2.2 (Cohn's SPIDR: Interface is the user interface; types first became the Contract enabler card, §2.2.2), §2.4 (split until the card fits Zone 3), §9; DEC-26 (corrected 2026-09-25) |
 | INV:P2 | FI:310 / R2:293 | INVEST six checks, 25%, ≤ 40, > 7 | carried | deliberate | planner-pm §2.4; DEC-24 (Small sized to the resolved Worker's window; other checks unchanged) |
 | INV:P3 | FI:311 / R2:294 | WSJF / RICE from config | carried | carried | planner §2.7.2 — agree |
-| INV:P4 | FI:312 / R2:295 | Estimation formula; actuals write back | carried | carried | planner §2.6.1 (points added for people — Resolved drift) — agree |
+| INV:P4 | FI:312 / R2:295 | Estimation formula; actuals write back | carried | deliberate | planner-pm §2.6.1–2, §9 ("Estimates are tokens for the machine and points for people (not 'never points')") (corrected 2026-09-25) |
 | INV:P5 | FI:313 / R2:296 | Difficulty scoring | carried | carried | planner §2.4-2.5; extensibility tools table — agree |
 | INV:P6 | FI:314 / R2:297 | Routing < 4 / 4–7 / > 7; capability_ceiling escalation | carried | carried | planner §2.5 (+ max split depth 4) — agree |
 | INV:P7 | FI:315 / R2:298 | Edit-sketch cascade | carried | carried | planner-pm §2.1.9 (edit sketch), §2.5; worker-loop rule 28 (corrected 2026-09-25) |
@@ -2269,11 +2296,11 @@ Columns: row key · old location · item (shortened) · status when first traced
 | INV:P10 | FI:318 / R2:301 | `safe_default` / `default_deny` | carried | carried | planner §2.10.3, built — agree |
 | INV:P11 | FI:319 / R2:302 | Pause & persist, VRAM released, rehydrate | contradicted | deliberate | planner-pm §2.10.2–3, §9; DEC-24 |
 | INV:P12 | FI:320 / R2:303 | Six planner sessions | carried | carried | planner §2.7.8 table — agree (standup builders P6) |
-| INV:P13 | FI:321 / R2:304 | Status from gate results with ranges | carried | carried | planner §2.6.3, §2.8.14 — agree |
+| INV:P13 | FI:321 / R2:304 | Status from gate results with ranges | carried | gap | planner-pm §2.6.3, §2.7.8 (Standup row), §4 "Plain-language standup; … the next window's plan" partial, P6 (PM-P6-3) (corrected 2026-09-25) |
 | INV:P14 | FI:322 / R2:305 | Escalation diagnostics, smallest human action | carried | carried | planner §2.5 — agree |
 | INV:P15 | FI:323 / R2:306 | Trust calibration 15% | carried | carried | planner §2.10.4, §4 built — R2 DEAD; DISAGREE, code has `sekhemet assume` (`wave2.ts:665`): spec right |
-| INV:P16 | FI:324 / R2:307 | Process profiles | carried-weaker | carried | planner-pm §2.7.3 (not in §4) |
-| INV:P17 | FI:325 / R2:308 | `Goal` record | carried | carried | planner §2.11.1, §3 events — agree |
+| INV:P16 | FI:324 / R2:307 | Process profiles | carried-weaker | gap | planner-pm §2.7.3–4, §2.7.8 Retrospective row (after restoration: a §4 row and PM-P6-16) (corrected 2026-09-25) |
+| INV:P17 | FI:325 / R2:308 | `Goal` record | carried | carried | planner-pm §2.11.1 (after restoration: the record's fields); §3 `Goal` (corrected 2026-09-25) |
 | INV:P18 | FI:326 / R2:309 | `/goal` intake, approval first | carried | carried | planner §2.11.2 — agree |
 | INV:P19 | FI:327 / R2:310 | Goal loop, replan triggers | carried-weaker | gap | planner-pm §4 (partial), NEW-planner-pm-4 |
 | INV:P20 | FI:328 / R2:311 | Seven signals and responses | carried-weaker | gap | planner-pm §4 (partial), NEW-planner-pm-5 |
@@ -2293,14 +2320,14 @@ Columns: row key · old location · item (shortened) · status when first traced
 | INV:E4 | FI:346 / R2:325 | `MODEL_MATRIX.md` | carried-weaker | carried | models §3, §4 |
 | INV:E5 | FI:347 / R2:326 | Frozen suite gates every learning loop | carried | gap | measurement rules 16a–19, §4 "Admission requires a significant gain" not-built, T8 (corrected 2026-09-25) |
 | INV:E6 | FI:348 / R2:327 | Qualification scoring | carried | carried | models §2.27 — agree |
-| INV:E7 | FI:349 / R2:328 | Loop 1 playbook deltas (1 per retro) | carried | carried | measurement §2.17 table; context §2.24 — agree |
+| INV:E7 | FI:349 / R2:328 | Loop 1 playbook deltas (1 per retro) | carried | gap | measurement rules 16a, 17, 20, §4 "Six inlets exist" partial and "Volume thresholds" partial, T8; context NEW-context-4 (CX-N4-6) (corrected 2026-09-25) |
 | INV:E8 | FI:350 / R2:329 | Loop 2 budgets ≤ 15% | carried | carried | measurement §2.17; worker-loop §2.21 — agree |
 | INV:E9 | FI:351 / R2:330 | Loop 3 prompt evolution | later | later | context §7 |
-| INV:E10 | FI:352 / R2:331 | Loop 4 skill distillation | carried | carried | measurement §2.17; extensibility §2.17a, EXT-27a/b — agree |
-| INV:E11 | FI:353 / R2:332 | Loop 5 exemplars top-2 | carried | carried | measurement §2.17 (two per class, min 5 cards) — agree |
-| INV:E12 | FI:354 / R2:333 | Loop 6 task synthesis | carried | carried | measurement §2.17 — agree |
+| INV:E10 | FI:352 / R2:331 | Loop 4 skill distillation | carried | gap | measurement rule 17; extensibility rule 17a, §4 "Skill evals run before approval" not-built, NEW-extensibility-4 (EXT-27a, EXT-27b) (corrected 2026-09-25) |
+| INV:E11 | FI:353 / R2:332 | Loop 5 exemplars top-2 | carried | gap | measurement rules 17, 20 (two per class, at least 5 structurally complete cards), §4 "Volume thresholds" partial, T8; context rule 25, §4 "Exemplars as accepted diff hunks" not-built, M1 (CX-M1-7, CX-M1-11) (corrected 2026-09-25) |
+| INV:E12 | FI:354 / R2:333 | Loop 6 task synthesis | carried | gap | measurement rule 17 (synthesised tasks), §4 "Synthesised tasks install dependencies in an ephemeral worktree" not-built, T8 (MS-T8-12) (corrected 2026-09-25) |
 | INV:E13 | FI:355 / R2:334 | Loop 7 variant archives | carried-weaker | deliberate | DEC-25 R31 (variant archive cut as dead code under DEC-09) |
-| INV:E14 | FI:356 / R2:335 | Loop 8 SIFT pre-filter | carried | carried | measurement §2.13, §2.21, MS-T8-7 — agree |
+| INV:E14 | FI:356 / R2:335 | Loop 8 SIFT pre-filter | carried | gap | measurement rules 13, 21, §4 "Calibrated pre-filter" not-built, T8 (MS-T8-7) (corrected 2026-09-25) |
 | INV:E15 | FI:357 / R2:336 | Loop 9 tool synthesis | later | deliberate | worker-loop §9 (register R6 triaged, not in v1); security rule 4a, §8 Q1 (decided: `--validate-tools` kept and confined) (corrected 2026-09-25) |
 | INV:E16 | FI:358 / R2:337 | Loop 10 mutants → tests | carried-weaker | gap | measurement rule 17 (demoted on rollback), T8 (MS-T8-10) |
 | INV:E17 | FI:359 / R2:338 | Guardrails; rollback over 10-card window | contradicted | deliberate | measurement rule 18, §9; DEC-24 |
@@ -2320,61 +2347,61 @@ Columns: row key · old location · item (shortened) · status when first traced
 | INV:U7 | FI:377 / R1:373 | Six views | carried | carried | dashboard §2.2, §2.11 (Workspace, Machine), §2.16 Configuration (the old Registry view, DEC-29 O2, O3); master board Later (dashboard §7) (corrected 2026-09-25) |
 | INV:U8 | FI:378 / R1:374 | Review view | carried | carried | dashboard §2.5, §4 built; intent grouping Later — agree |
 | INV:U9 | FI:379 / R1:375 | Live stream, replay from genesis | carried-weaker | carried | runtime rule 25a |
-| INV:U10 | FI:380 / R1:376 | Keyboard system | carried | carried | dashboard §2.3 (redefined chords), P11 — agree |
+| INV:U10 | FI:380 / R1:376 | Keyboard system | carried | deliberate | dashboard §2.3, §9 ("No bare `t`; chords reassigned (`g p` PM, `g s` Status, `g i` Insights)", with the reason); the new keymap P11 (not built, §4) (corrected 2026-09-25) |
 | INV:U11 | FI:381 / R1:377 | Command palette | carried | carried | dashboard §2.3, §2.15.4, built — agree |
 | INV:U12 | FI:382 / R1:378 | Decision inbox by wait time | carried | carried | dashboard §2.5.2 *Needs you* — agree |
 | INV:U13 | FI:383 / R1:379 | Card tile components | contradicted | deliberate | dashboard §9 |
 | INV:U14 | FI:384 / R1:380 | Column header `N / limit` | carried | gap | dashboard §2.4.3, P3 (corrected 2026-09-25) |
-| INV:U15 | FI:385 / R1:381 | Decision Request component with countdown | carried | carried | dashboard §2.5.14 — no State row; R1 MISSING, code `decision.js` now exists |
+| INV:U15 | FI:385 / R1:381 | Decision Request component with countdown | carried | carried | dashboard §2.5.14, §4 "Decision request component" built (`decision.js`, countdown and amber under 15 minutes) (corrected 2026-09-25) |
 | INV:U16 | FI:386 / R1:382 | Diff viewer | carried | carried | dashboard §2.5.6 built — agree |
-| INV:U17 | FI:387 / R1:383 | Pan-and-zoom DAG | carried-weaker | later | dashboard §7 (layered layout built) |
+| INV:U17 | FI:387 / R1:383 | Pan-and-zoom DAG | carried-weaker | later | dashboard §7 (pan and zoom and the critical path on the dependency graph; after restoration: the reason) (corrected 2026-09-25) |
 | INV:U18 | FI:388 / R1:384 | Sparklines | contradicted | carried | dashboard §2.11, §4 (R23) |
 | INV:U19 | FI:389 / R1:385 | Icons 1.5 px, no lioness | carried | carried | dashboard §2.13.6 — agree |
-| INV:U20 | FI:390 / R1:386 | Mobile read-only + one-tap triage | carried | carried | dashboard §2.2.2, §2.15.3, P11 — agree |
+| INV:U20 | FI:390 / R1:386 | Mobile read-only + one-tap triage | carried | gap | dashboard §2.2.2, §2.15.3, §4 "…phone bottom bar…" not-built, P11 (corrected 2026-09-25) |
 | INV:U21 | FI:391 / R1:387 | `IBoardUIState` | missing | later | dashboard §7 |
 
 **Harness app (H)**
 
 | Row | Old | Item | Traced | Final | Now in |
 | --- | --- | --- | --- | --- | --- |
-| INV:H1 | FI:401 / R2:346 | `daemon` with PID file, detach | carried | carried | runtime §2.5, NEW-runtime-1 partial — spec-stricter |
-| INV:H2 | FI:402 / R2:347 | `board` opens the web UI | carried | carried | surface §2.5.6, §2.13 — agree |
-| INV:H3 | FI:403 / R2:348 | `calibrate` writes machine config | carried | carried | models §2.7, NEW-models-1 — agree |
+| INV:H1 | FI:401 / R2:346 | `daemon` with PID file, detach | carried | gap | runtime rule 5, §4 "Daemon start/stop/status" partial, NEW-runtime-1 (RUN-1) (corrected 2026-09-25) |
+| INV:H2 | FI:402 / R2:347 | `board` opens the web UI | carried | deliberate | surface rules 5.6 and 13 (the bare `sekhemet` opens the board; `ask` replaces `board` at the front door, `board` still runs under `dev`), NEW-surface-6; owner decision O23 pending, default approve (corrected 2026-09-25) |
+| INV:H3 | FI:403 / R2:348 | `calibrate` writes machine config | carried | gap | models rule 7, §4 "Calibration command and machine profile" partial, NEW-models-1 (MD-N1-3) (corrected 2026-09-25) |
 | INV:H4 | FI:404 / R2:349 | `run <card>` unattended | carried | carried | surface §2.13, §2.18 — agree |
 | INV:H5 | FI:405 / R2:350 | `plan "<spec>"` | carried | carried | planner §2.1; surface `sekhemet "<spec>"` — agree |
-| INV:H6 | FI:406 / R2:351 | `gate <card>` in the card's worktree | carried | carried | gates §2.8, T1 — R2 BUILT, DISAGREE (spec newer) |
-| INV:H7 | FI:407 / R2:352 | `bake-off` qualifies and benchmarks on the repo | carried | carried | models §2.30, surface §2.11 — agree |
+| INV:H6 | FI:406 / R2:351 | `gate <card>` in the card's worktree | carried | gap | gates rule 8, §4 "One pipeline, one rank-and-cap; CLI = card verdict" not-built, T1 (GT-T1-1) (corrected 2026-09-25) |
+| INV:H7 | FI:407 / R2:352 | `bake-off` qualifies and benchmarks on the repo | carried | gap | models rule 30, §4 "Bake-off under the real harness" partial, NEW-models-4 (MD-N4-7); surface rule 11 (corrected 2026-09-25) |
 | INV:H8 | FI:408 / R2:353 | `replay --as`, diff trajectories | carried | carried | runtime §2.14, RUN-28 — agree |
 | INV:H9 | FI:409 / R2:354 | `doctor` real probes | carried | carried | surface §2.13; models §2.5 — agree |
-| INV:H10 | FI:410 / R2:355 | MCP server tools incl. evidence and registry | carried | carried | extensibility §2.18-21, NEW-extensibility-3 — agree |
-| INV:H11 | FI:411 / R2:356 | MCP client budgeted to planner/executor | carried | carried | extensibility §2.22-24 (Worker only via `worker_tools`) — agree |
-| INV:H12 | FI:412 / R2:357 | REST API | carried | carried | runtime §3 route list (old table superseded) — agree |
+| INV:H10 | FI:410 / R2:355 | MCP server tools incl. evidence and registry | carried | gap | extensibility rules 18–21, §4 "MCP server: … no evidence/registry tools …" partial, NEW-extensibility-3 (EXT-17) (corrected 2026-09-25) |
+| INV:H11 | FI:411 / R2:356 | MCP client budgeted to planner/executor | carried | gap | extensibility rules 22–24, §4 "MCP client: stdio only, full env, Researcher only" partial, NEW-extensibility-3 (EXT-18–EXT-21) (corrected 2026-09-25) |
+| INV:H12 | FI:412 / R2:357 | REST API | carried | deliberate | runtime §3 ("The design's 2026-09-17 route table … is superseded by the routes above; the code is the contract") (corrected 2026-09-25) |
 | INV:H13 | FI:413 / R2:358 | SDK with async iterator | carried-weaker | deliberate | extensibility rule 28, §8 Q1 (O4) |
 | INV:H14 | FI:414 / R2:359 | ACP editor surface | later | later | extensibility §7 |
 | INV:H15 | FI:415 / R2:360 | `config.toml` chain incl. card overrides | carried | gap | surface rules 21–25, §4 "Config layer: card overrides" not-built, NEW-surface-3 (corrected 2026-09-25) |
-| INV:H16 | FI:416 / R2:361 | Slash commands (`/onboard` … `/goal`) | carried | carried | extensibility §2.26; planner §2.8.7; templates Later — agree |
+| INV:H16 | FI:416 / R2:361 | Slash commands (`/onboard` … `/goal`) | carried | later | extensibility §7 (user-defined commands as Markdown templates: `/onboard`, `/retro`, `/split`, `/bake-off`, `/goal`); the built-in slash commands are extensibility rule 26 (corrected 2026-09-25) |
 | INV:H17 | FI:417 / R2:362 | Session resume from the log | carried | gap | runtime rule 10, NEW-runtime-3 (RUN-9, RUN-10) (corrected 2026-09-25) |
 | INV:H18 | FI:418 / R2:363 | Fork at step N | carried | carried | runtime §2.13, RUN-27 — agree |
 | INV:H19 | FI:419 / R2:364 | Rewind to step N, invalidate passes | carried | gap | runtime rule 12; kernel rule 32, S7 (K-S7-8) (corrected 2026-09-25) |
-| INV:H20 | FI:420 / R2:365 | ntfy/Gotify notifications | carried | carried | integrations §2.20-23 — agree |
-| INV:H21 | FI:421 / R2:366 | Idle/overnight scheduler, nightly jobs, morning summary | carried | carried | runtime §2.17-20, NEW-runtime-5 — agree |
+| INV:H20 | FI:420 / R2:365 | ntfy/Gotify notifications | carried | gap | integrations rules 20–23, §4 "Slack as a channel; standup, needs_you, decision" not-built, P9 (INT-19) (corrected 2026-09-25) |
+| INV:H21 | FI:421 / R2:366 | Idle/overnight scheduler, nightly jobs, morning summary | carried | gap | runtime rules 17–20, §4 "Nightly full vulnerability scan" not-built, NEW-runtime-5 (RUN-17); warm caches models §4 not-built, NEW-models-3 (MD-N3-3); the prompt optimiser Later (runtime §7) (corrected 2026-09-25) |
 | INV:H22 | FI:422 / R2:367 | OTel spans incl. tool spans, in UI | carried-weaker | gap | runtime §4 (corrected, R23), NEW-runtime-9 |
-| INV:H23 | FI:423 / R2:368 | Compute governance kWh, breakers | carried | carried | runtime §2.18-19 (watts × time replaces TDP × GPU utilisation) — agree |
-| INV:H24 | FI:424 / R2:369 | Reproducibility record per card | carried | carried | runtime OQ2 → models M4, gates §2.35 — agree |
+| INV:H23 | FI:423 / R2:368 | Compute governance kWh, breakers | carried | gap | runtime rules 18–19, §4 "Per-card kWh budget; per-project caps" not-built, NEW-runtime-7 (RUN-37, RUN-38); energy as watts × time on purpose (rule 18, §7) (corrected 2026-09-25) |
+| INV:H24 | FI:424 / R2:369 | Reproducibility record per card | carried | gap | models M4 (MD-M4-5), §4 "Per-step provenance…" not-built; gates rule 35; runtime §8 Q2 (corrected 2026-09-25) |
 | INV:H25 | FI:425 / R2:370 | Offline installers, first-run wizard | later | deliberate | DEC-21 (source installer); DEC-29 O9 (npm package and container image approved) |
-| INV:H26 | FI:426 / R2:371 | Memory daemon 2 s | carried | carried | models §2.19 — agree |
-| INV:H27 | FI:427 / R2:372 | Restricted-mode wiring | carried | carried | see S12 |
+| INV:H26 | FI:426 / R2:371 | Memory daemon 2 s | carried | gap | models rule 19, §4 "Watchdog levels and actions" partial, NEW-models-2 (MD-N2-2) (corrected 2026-09-25) |
+| INV:H27 | FI:427 / R2:372 | Restricted-mode wiring | carried | gap | security rule 43, worker-loop rule 13, §4 "Restricted mode strips tools" partial, S3a (SEC-19) (corrected 2026-09-25) |
 
 **Cross-cutting (X; latest R1)**
 
 | Row | Old | Item | Traced | Final | Now in |
 | --- | --- | --- | --- | --- | --- |
-| INV:X1 | FI:435 / R1:425 | `/onboard` seven steps; review before enforcement | carried | carried | surface §2.5, §2.9-11, P10 — spec newer |
-| INV:X2 | FI:436 / R1:426 | Nightly convention drift report | carried | carried | surface §2.12; runtime §2.20 — spec newer |
+| INV:X1 | FI:435 / R1:425 | `/onboard` seven steps; review before enforcement | carried | gap | surface rules 9–11, §4 "Onboarding" partial, P10, S3a, S9 (SUR-7–SUR-10, SUR-35–SUR-39); qualification offered, not run (rule 11) (corrected 2026-09-25) |
+| INV:X2 | FI:436 / R1:426 | Nightly convention drift report | carried | gap | surface rule 12, §4 "Onboarding" partial (drift fires every run), P10 (SUR-10); runtime rule 20 (corrected 2026-09-25) |
 | INV:X3 | FI:437 / R1:427 | Multimodal card input via vision model | carried | carried | surface §2.28-29, SUR-32, built — spec newer |
-| INV:X4 | FI:438 / R1:428 | Four-tier research knowledge | carried | carried | design-stage §2.7.2 — agree |
+| INV:X4 | FI:438 / R1:428 | Four-tier research knowledge | carried | gap | design-stage rule 2.7.2; security rule 48, §4 "`llms.txt` snapshots, staleness on lockfile change…" not-built, NEW-security-5 (SEC-44) (corrected 2026-09-25) |
 | INV:X5 | FI:439 / R1:429 | SearXNG; 1–6 terms; logged; primary sources | carried | gap | design-stage §2.7.11, §2.6.3, §4 "`plan` honours offline config … queries logged" not-built, S8 (corrected 2026-09-25) |
-| INV:X6 | FI:440 / R1:430 | Fetch & extraction pipeline | carried-weaker | carried | design-stage §2.6.3, §2.7.2, §2.7.8; libraries §7 |
+| INV:X6 | FI:440 / R1:430 | Fetch & extraction pipeline | carried-weaker | gap | design-stage rules 2.6.3, 2.7.2, 2.7.8, §4 "Fetch denylist (`fetch_deny`)…" not-built, NEW-design-stage-4; trafilatura, Docling and Playwright extraction Later (design-stage §7) (corrected 2026-09-25) |
 | INV:X7 | FI:441 / R1:431 | Research note; embeddings only here | contradicted | deliberate | design-stage §2.7.8, §9; DEC-22 |
 | INV:X8 | FI:442 / R1:432 | Research safety | carried | carried | design-stage §2.6.3, §2.7.6; security §2.42 — agree |
 | INV:X9 | FI:443 / R1:433 | Doc cache TTLs | later | later | design-stage §7 (corrected 2026-09-25) |
@@ -2383,7 +2410,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | INV:X12 | FI:446 / R1:436 | Doc bundles | carried | gap | security rule 48, §4 "`llms.txt` snapshots, staleness on lockfile change" not-built, NEW-security-5 (SEC-44, SEC-45); the docs bundle and cache export are built (corrected 2026-09-25) |
 | INV:X13 | FI:447 / R1:437 | Signed update bundles, log backup | carried | gap | security rule 49, §4 "signed skill updates" not-built, NEW-security-5 (SEC-46); SEC-42 (corrected 2026-09-25) |
 | INV:X14 | FI:448 / R1:438 | Air-gap self-test at the proxy | carried | gap | security rule 50, NEW-security-2 (SEC-33) (corrected 2026-09-25) |
-| INV:X15 | FI:449 / R1:439 | External review cards, never edit | carried | carried | review-git §2.7; integrations §2.13 — spec newer |
+| INV:X15 | FI:449 / R1:439 | External review cards, never edit | carried | gap | review-git §2.7, §4 "External review cards" partial, S4 (kernel K-S4-4; RG-7); integrations rule 13 (corrected 2026-09-25) |
 | INV:X16 | FI:450 / R1:440 | Scheduled and recurring cards; hours respected unless urgent | carried | carried | runtime §2.21, RUN-31 — spec newer |
 | INV:X17 | FI:451 / R1:441 | `PROVENANCE.md` | carried | carried | `docs/reference/PROVENANCE.md` (13 technique rows) — spec newer |
 | INV:X18 | FI:452 / R1:442 | `RESEARCH_REGISTER.md` with pre-set thresholds | carried | carried | measurement §2.26, MS-2 — spec newer |
@@ -2415,7 +2442,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | INV:O10 | FI:480 | Stall signature includes repoStateHash | carried | carried | worker-loop §2.17 |
 | INV:O11 | FI:481 | Rung caps 2/1/1 | carried | carried | worker-loop §2.34 |
 | INV:O12 | FI:482 | ≤ 3 failures by topological order | carried-weaker | gap | gates rule 20, M6 (GT-M6-7) |
-| INV:O13 | FI:483 | `minimalRepro` exact command | carried | carried | gates §2.19, §2.22 |
+| INV:O13 | FI:483 | `minimalRepro` exact command | carried | gap | gates rules 19, 22, §4 "`vitest` parser on real output; repro selects the test" not-built, M6 (GT-M6-1) (corrected 2026-09-25) |
 | INV:O14 | FI:484 | Routing < 4 / 4–7 (edit sketch) / > 7 | carried | carried | planner §2.5 |
 | INV:O15 | FI:485 | INVEST-S ≤ 25% and ≤ 40 steps | carried | deliberate | planner-pm §2.4 Small row; DEC-27 N5; DEC-24 (corrected 2026-09-25) |
 | INV:O16 | FI:486 | INVEST-E difficulty > 7 forces re-split | carried | carried | planner §2.4 |
@@ -2426,19 +2453,19 @@ Columns: row key · old location · item (shortened) · status when first traced
 | INV:O21 | FI:491 | Scope drift > 20% halts auxiliary creation | carried | gap | planner-pm §2.12, §4 "Signal responses executed as proposals" partial, NEW-planner-pm-5 (corrected 2026-09-25) |
 | INV:O22 | FI:492 | p95 > 2.5 × p50 (vs 2× conflict) | carried | carried | planner §2.12 (2.5× chosen) |
 | INV:O23 | FI:493 | Blocked 12 h / 2 h active | carried | carried | planner §2.12 |
-| INV:O24 | FI:494 | ≥ 3 failures in one file → re-split Interface/Data | carried | carried | planner §2.12 |
-| INV:O25 | FI:495 | RAID > 24 h → verification spike | carried | carried | planner §2.12 |
-| INV:O26 | FI:496 | ReviewWIP floored at 1, from own history | carried | carried | review-git §2.2.1-3 |
+| INV:O24 | FI:494 | ≥ 3 failures in one file → re-split Interface/Data | carried | gap | planner-pm §2.12, §9 (re-split proposed instead of pausing, with the reason), §4 "Signal responses executed as proposals" partial, NEW-planner-pm-5 (PM-N5-2) (corrected 2026-09-25) |
+| INV:O25 | FI:495 | RAID > 24 h → verification spike | carried | gap | planner-pm §2.12, §4 "Signal responses executed as proposals" partial, NEW-planner-pm-5 (PM-N5-4) (corrected 2026-09-25) |
+| INV:O26 | FI:496 | ReviewWIP floored at 1, from own history | carried | gap | review-git §2.2.1–3, §4 "ReviewWIP formula, back-pressure, held cards released" partial, S6 (corrected 2026-09-25) |
 | INV:O27 | FI:497 | Back-pressure blocks Verify, not Review | carried | carried | kernel rule 29 (corrected 2026-09-25) |
 | INV:O28 | FI:498 | Rollup needs the parent's integration gate | carried | carried | kernel rule 30 (corrected 2026-09-25) |
 | INV:O29 | FI:499 | Regression → Planning with regression named | carried-weaker | gap | kernel rule 31, NEW-kernel-5 |
-| INV:O30 | FI:500 | Checkpoint at gate passes and masking boundaries | contradicted | deliberate | review-git rule 3, §9 (R1) |
+| INV:O30 | FI:500 | Checkpoint at gate passes and masking boundaries | contradicted | deliberate | review-git §2.6.3, §9 (R1) (corrected 2026-09-25) |
 | INV:O31 | FI:501 | `refs/sekhemet/checkpoints/<card-id>` | carried | carried | review-git §2.5.5 |
 | INV:O32 | FI:502 | Branch naming from parent | carried | carried | review-git §2.6.2 |
 | INV:O33 | FI:503 | Accepting a lower card restacks and re-runs gates | carried | gap | review-git §2.5.5, NEW-review-git-2 (corrected 2026-09-25) |
 | INV:O34 | FI:504 | Conflict hunks typed; out-of-scope parks | carried | gap | review-git §2.6.4, NEW-review-git-1 (corrected 2026-09-25) |
-| INV:O35 | FI:505 | Vision fail-only; baselines need a person | carried | carried | gates §2.30-31, NEW-gates-4 |
-| INV:O36 | FI:506 | axe-core at 1280 and 375, zero critical | carried | carried | gates §2.29 (subset; axe proposal OQ1) |
+| INV:O35 | FI:505 | Vision fail-only; baselines need a person | carried | gap | gates rules 30–31, §4 "Vision checklist (fail-only)" and "Visual baselines require a person" not-built, NEW-gates-4 (GT-N4-1, GT-N4-2) (corrected 2026-09-25) |
+| INV:O36 | FI:506 | axe-core at 1280 and 375, zero critical | carried | deliberate | as INV:G20 (corrected 2026-09-25) |
 | INV:O37 | FI:507 | `maxDiffPixelRatio` 0.01, masked, no animation | carried | gap | gates rule 29, NEW-gates-4 (GT-N4-5) (corrected 2026-09-25) |
 | INV:O38 | FI:508 | Four layout predicates | carried | gap | gates rule 29, NEW-gates-4 (GT-N4-4) (corrected 2026-09-25) |
 | INV:O39 | FI:509 | Mutation diff-scoped, never 100%, advisory first | carried | carried | gates §2.32 |
@@ -2452,28 +2479,28 @@ Columns: row key · old location · item (shortened) · status when first traced
 | INV:O47 | FI:517 | Template checksum change invalidates qualification | carried | carried | models §2.12 |
 | INV:O48 | FI:518 | Pass@k k 2–4, T 0.4–0.7, isolated worktrees, first pass wins | carried-weaker | carried | worker-loop rule 37; parallel §7 |
 | INV:O49 | FI:519 | Cross-validation routes to the planner | carried | carried | worker-loop §2.38 |
-| INV:O50 | FI:520 | Exemplars top-2 per class from this repo | carried | carried | context §2.25 |
+| INV:O50 | FI:520 | Exemplars top-2 per class from this repo | carried | gap | context rule 25, §4 "Exemplars as accepted diff hunks" not-built, M1 (CX-M1-7, CX-M1-11); fixing commits Later (context §7) (corrected 2026-09-25) |
 | INV:O51 | FI:521 | Playbook by delta, at card boundaries | carried | carried | context §2.24, CX-5 |
-| INV:O52 | FI:522 | Context debt: > 300 tokens and ≥ +3% (both halves) | carried | carried | measurement §2.24, MS-N2-2 |
+| INV:O52 | FI:522 | Context debt: > 300 tokens and ≥ +3% (both halves) | carried | deliberate | measurement rule 24 (the > 300-token overhead kept; the ≥ 3-point gain replaced by the admission record's paired credit, with the reason "which the 30-card suite cannot detect"); §4 "Diagnostics on real inputs" partial, NEW-measurement-2 (corrected 2026-09-25) |
 | INV:O53 | FI:523 | Prompt optimiser kill switch < 5% | carried | later | context §7 (offline prompt optimisation, kept only if it gains ≥ 5%) (corrected 2026-09-25) |
 | INV:O54 | FI:524 | Rollback on a moving 10-card window | contradicted | deliberate | measurement rule 18; DEC-24 |
 | INV:O55 | FI:525 | Loop driver, gates, sandbox, permissions excluded from self-modification | carried | carried | measurement §2.23 |
 | INV:O56 | FI:526 | Loop 9 signal: repeated bash chains | later | deliberate | worker-loop §9 (register R6 triaged, not in v1) |
 | INV:O57 | FI:527 | Loop 10 demoted to advisory on rollback | carried-weaker | gap | measurement rule 17, T8 (MS-T8-10) |
-| INV:O58 | FI:528 | Skill manifest line only; omitted when tools lacking | carried | carried | extensibility §2.11-12, EXT-32 |
-| INV:O59 | FI:529 | Skills pinned, audited, diffed; reject protected-touching | carried | carried | extensibility §2.15, §2.17, EXT-27 |
+| INV:O58 | FI:528 | Skill manifest line only; omitted when tools lacking | carried | gap | extensibility rules 11–12 (EXT-32 built for the manifest line), §4 "Skills format…" partial, NEW-extensibility-4 (after restoration: EXT-22a for the required-tools omission) (corrected 2026-09-25) |
+| INV:O59 | FI:529 | Skills pinned, audited, diffed; reject protected-touching | carried | gap | extensibility rules 15, 17, §4 "Skills: SHA-256 pin, approve/revoke, audit" partial, S9; EXT-27 (NEW-extensibility-4) (corrected 2026-09-25) |
 | INV:O60 | FI:530 | Every skill ships an eval card | later | later | extensibility §7 |
-| INV:O61 | FI:531 | `skills/<name>/{SKILL.md, scripts/, references/, evals/}` | carried | carried | extensibility §2.10 |
+| INV:O61 | FI:531 | `skills/<name>/{SKILL.md, scripts/, references/, evals/}` | carried | gap | extensibility rule 10, §4 "Skills format…" partial, NEW-extensibility-4 (corrected 2026-09-25) |
 | INV:O62 | FI:532 | Hooks outside the sandbox with user rights | carried | carried | extensibility §2 table, §9 |
 | INV:O63 | FI:533 | Hook observe / block / inject | carried | carried | extensibility §2.6 |
-| INV:O64 | FI:534 | `tool_search` loads a schema into the volatile zone | carried | carried | worker-loop §2.11 (A/B); context OQ2 (append as a message) |
+| INV:O64 | FI:534 | `tool_search` loads a schema into the volatile zone | carried | gap | as INV:C19 (corrected 2026-09-25) |
 | INV:O65 | FI:535 | Subtask returns summary + evidence ref only | carried | carried | context §2.18 |
 | INV:O66 | FI:536 | Background processes killed at card end; ports | carried | carried | runtime §2.15 (promotion Later) |
 | INV:O67 | FI:537 | Rewind invalidates passes; log never truncated | carried | gap | runtime rule 12; kernel rule 32, §4 "Rewind invalidates earlier evidence for Review" not-built, S7 (K-S7-8) (corrected 2026-09-25) |
 | INV:O68 | FI:538 | Replay reproduces deterministic stages exactly | carried | carried | runtime §2.14 |
 | INV:O69 | FI:539 | Reload re-streams from genesis/checkpoint | missing | carried | runtime rule 25a; dashboard §2.4.8 |
 | INV:O70 | FI:540 | Config order includes card overrides | carried | gap | surface rule 21, §4 "Config layer: card overrides" not-built, NEW-surface-3 (corrected 2026-09-25) |
-| INV:O71 | FI:541 | `[machine] hours`, `power_budget_kwh_day` | carried | carried | surface §2.23 (`reserved_hours`) |
+| INV:O71 | FI:541 | `[machine] hours`, `power_budget_kwh_day` | carried | deliberate | surface rule 23 (the old `[overnight] hours` became `[machine] reserved_hours`, with the reason), rule 25 (`machine.hours` → `reserved_hours`); `power_budget_kwh_day` kept (corrected 2026-09-25) |
 | INV:O72 | FI:542 | `[context] map_tokens = 1024`, `mask_after_observations = 2` | contradicted | deliberate | surface rule 25; context §9 ([context] keys removed) |
 | INV:O73 | FI:543 | `[loop] default_step_budget = 40`, `stall_window = 3`, `max_rungs = 4` | contradicted | deliberate | surface rule 25 (step budget 40 kept; stall_window and max_rungs removed); worker-loop §9 |
 | INV:O74 | FI:544 | `[network] mode` tri-state | carried | carried | surface §2.23 |
@@ -2489,13 +2516,13 @@ Columns: row key · old location · item (shortened) · status when first traced
 | INV:O84 | FI:554 | git-cliff changelog + semver on a release card | later | gap | review-git §2.6 rule 7, NEW-review-git-4 (RG-N4-1); planner-pm §2.15.8 (P13); integrations §7 (publishing only) (corrected 2026-09-25) |
 | INV:O85 | FI:555 | `act` for GitHub Actions as gates | later | later | integrations §7 |
 | INV:O86 | FI:556 | GraphQL separate budget, webhooks over polling, batching, idempotency keys, secondary backoff | carried-weaker | gap | integrations §2.11, §2.11a, P9 |
-| INV:O87 | FI:557 | Hierarchy depth clamped to the tracker's | carried | carried | integrations §2.7 |
+| INV:O87 | FI:557 | Hierarchy depth clamped to the tracker's | carried | gap | integrations rule 7 (after restoration: a §4 row and INT-11e) (corrected 2026-09-25) |
 | INV:O88 | FI:558 | GHES `api_url`/`graphql_url` + CA bundle | carried | carried | integrations §2.10 |
 | INV:O89 | FI:559 | `resolveReviewThread`; auto-merge; merge queue | later | carried | integrations rule 15 ("merging follows the repository's policy (auto-merge, merge queue, or a person)"); integrations §7 (`resolveReviewThread`) (corrected 2026-09-25) |
 | INV:O90 | FI:560 | Check Run annotation shape incl. `raw_details` | carried-weaker | carried | integrations §2.14 |
 | INV:O91 | FI:561 | SARIF gzip then base64 | carried | carried | integrations §2.14 |
 | INV:O92 | FI:562 | LWW by timestamp, loser in history | contradicted | deliberate | integrations §2.4 |
-| INV:O93 | FI:563 | Per-class tool sets named | carried-weaker | carried | worker-loop rule 10 |
+| INV:O93 | FI:563 | Per-class tool sets named | carried-weaker | gap | worker-loop rule 10, §4 "Fixed tool set per class, stable array" not-built, M2 (WL-M2-1) (corrected 2026-09-25) |
 | INV:O94 | FI:564 | `run` denies raw cat/grep/sed | carried | carried | worker-loop §2.12, WL-5 |
 | INV:O95 | FI:565 | Read before edit, mechanically | carried | carried | worker-loop §2.12, WL-4 |
 | INV:O96 | FI:566 | Search/fetch only on research cards | carried | carried | worker-loop §2.12; design-stage §2.5.6 |
@@ -2504,7 +2531,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | INV:O99 | FI:569 | Qwen `min_p = 0.0` mandatory over server default 0.05 | carried-weaker | carried | models rule 3a (min_p 0 mandatory, overrides the server's 0.05) |
 | INV:O100 | FI:570 | MTP off on M4 because measured 21% slower | carried | carried | models rule 13, §9 (after restoration) (corrected 2026-09-25) |
 | INV:O101 | FI:571 | Bracketed placeholders banned in prompt templates | missing | gap | context rule 21, M1 (CX-M1-12) |
-| INV:O102 | FI:572 | Single-model serialisation on 24 GB | carried | carried | models §2.22 (no co-residence below 32 GB); planner §2.8.6 |
+| INV:O102 | FI:572 | Single-model serialisation on 24 GB | carried | gap | models rules 20a, 22, §4 "One residency scheduler…" not-built, NEW-models-9 (MD-N9-3) (corrected 2026-09-25) |
 | INV:O103 | FI:573 | Test immutability is role-scoped | carried | carried | gates §2.7; worker-loop §2.15; planner test-author step |
 | INV:O104 | FI:574 | `suspended-quota`, `relay-finisher` protocol values | missing | deliberate | DEC-25 R29 (the `relay-finisher` role dropped with the Gemini relay protocol; `suspended-quota` kept) (corrected 2026-09-25) |
 | INV:O105 | FI:575 | DoD §2.A no in-memory SQLite | carried | carried | planner P1 criterion; DoD §2A |
@@ -2517,11 +2544,11 @@ Columns: row key · old location · item (shortened) · status when first traced
 | Row | Old | Item | Traced | Final | Now in |
 | --- | --- | --- | --- | --- | --- |
 | INV:D1 | R1:71 | Held card instead of a crash when Review is full | carried | carried | kernel rules 24 (holds), 29 (back-pressure), NEW-kernel-3 (corrected 2026-09-25) |
-| INV:D2 | R1:72 | Checkpoints written to the DB | carried-weaker | carried | review-git rule 3 (checkpoint database record) |
+| INV:D2 | R1:72 | Checkpoints written to the DB | carried-weaker | carried | review-git §2.6.3 (checkpoint database record) (corrected 2026-09-25) |
 | INV:D3 | R1:73 | Restricted mode confines the Worker's tools | carried | carried | security §2.43, worker-loop §2.13 |
 | INV:D4 | R1:74 | Ask tier asks someone (decision approver) | carried-weaker | gap | security rule 25a, §4 "Ask answered by a person through a decision request" partial, NEW-security-6 (SEC-47–49) (corrected 2026-09-25) |
 | INV:D5 | R1:75 | `gates.toml` protected globs reach the permission engine | carried | carried | security §2.25 ("test globs the project protects") |
 | INV:D6 | R1:76 | Planned cards keep their contract | carried | carried | planner §2.1.5 |
 | INV:D7 | R1:77 | MCP offers no DB-refused tier | carried | carried | extensibility §2.19-20 (server-side validation) |
-| INV:D8 | R1:78 | Card actuals written on finish | carried | carried | kernel §2.6 `CardRecord` (runner write not a stated behaviour) |
+| INV:D8 | R1:78 | Card actuals written on finish | carried | carried | kernel rule 6 Attempt bullet (stop reason, tokens and seconds used, evidence id) and Card bullet (after restorations R2 and below); planner-pm §2.6.1 (actuals written back on acceptance) (corrected 2026-09-25) |
 

@@ -113,7 +113,7 @@ Workspace trust therefore gates exactly three things a repository can supply: pr
 
 ### Tools outside the Worker
 
-Decisions on what the Planner and the infrastructure use, adopt or build; the owning spec states each one's behaviour and state. The Worker's tools are in [worker-loop](worker-loop.md); the gates' tools are listed with their gates in [gates](gates.md), which owns the per-language gate template table (ruling R14): the parse check through the TypeScript compiler ([DEC-20](../DECISIONS.md#dec-20); tree-sitter for other languages later); tsc, ruff, clippy, eslint; per-language test runners with a parser to `GateFailure`; mutation through each language's own tool (Stryker, mutmut, cargo-mutants, PIT) as an optional subprocess when installed, beside the harness's own diff-scoped TypeScript step; gitleaks; registry existence and typosquat checks; osv-scanner offline; Semgrep CE; the visual gate's console, network, DOM-assertion and layout checks, element screenshot diff and accessibility checks — whose libraries (Playwright, pixelmatch, axe-core) are proposals awaiting the owner (ruling R16); a local vision checklist at temperature 0; hygiene checks.
+Decisions on what the Planner and the infrastructure use, adopt or build; the owning spec states each one's behaviour and state. The Worker's tools are in [worker-loop](worker-loop.md); the gates' tools are listed with their gates in [gates](gates.md), which owns the per-language gate template table (ruling R14): the parse check through the TypeScript compiler ([DEC-20](../DECISIONS.md#dec-20); tree-sitter for other languages later); tsc, ruff, clippy, eslint; per-language test runners with a parser to `GateFailure`; mutation through each language's own tool (Stryker, mutmut, cargo-mutants, PIT) as an optional subprocess when installed, beside the harness's own diff-scoped TypeScript step; gitleaks; registry existence and typosquat checks; osv-scanner offline; Semgrep CE; the visual gate's console, network, DOM-assertion and layout checks, element screenshot diff and accessibility checks — built on the harness's own headless-Chromium client (Playwright and axe-core are approved as development dependencies by DEC-29 O5; axe-core inside the product gate is owner decision O27; pixelmatch is not used — DEC-25 R16); a local vision checklist at temperature 0; hygiene checks.
 
 | Tool | Decision | Owner |
 | --- | --- | --- |
@@ -243,14 +243,14 @@ EXT-1 to EXT-28a (including the lettered criteria; EXT-5b is withdrawn; EXT-28 a
 - **A plugin API** (tools, gates, sync adapters, UI panels), with signing and compatibility contracts once the kernel API is stable; a plugin marketplace. v1 has no plugins at all (item 29); a plugin API would be designed fresh, not grown from the cut `container.ts`.
 - **An SDK** (`@sekhemet/sdk`): a typed client for a running server, REST calls and the live event stream as an async iterator, built from the kernel's types rather than copies — only when an integration needs one (item 28).
 - **Card-level editor protocol and an IDE extension or TUI** — open a card, stream its steps, approve or return it from the editor (SPINE: not in v1).
-- **User-defined commands** as Markdown templates expanding into a card template or a planner instruction (`/onboard`, `/retro`, `/split`, `/bake-off`, `/goal`).
+- **User-defined commands** as Markdown templates expanding into a card template or a planner instruction, invoked from the board or the CLI (`/onboard`, `/retro`, `/split`, `/bake-off`, `/goal`; the old list's `/research` is already a built-in, item 26). v1's commands are item 26's fixed set, which shares one implementation with the board's buttons and the CLI; a template language would be a second path beside it, so it waits until a person needs a command the fixed set lacks.
 - **An MCP server over Streamable HTTP**, for a company server's remote clients.
 - **An eval card for every shipped skill**, run by `doctor` (v1 runs the evals a skill has, EXT-27a; v1 does not yet require every skill to have one).
 - **A skill that declares the gates it adds** (the old design) — v1 skills are procedure only; a gate a skill needs is proposed to `gates.toml` for a person to accept, because a skill may never change gate files (item 15).
 - **Publishing skills back to the Agent Skills ecosystem** — v1 pulls and pins; publishing needs a release and licence process for Sekhemet's own skills, which do not exist yet.
 - **The Codex admin and system skill scopes** — v1 has project and user scopes only (item 13); an admin scope arrives with company-server roles beyond Accept (DEC-06 keeps those out of v1).
 - **Third-party skill signing** beyond the content-hash approval of item 15, and plugin signing with the plugin API above; air-gapped skill updates already travel signed ([security](security.md) item 49).
-- **The skill catalogue** — sources: Anthropic's official skills (Skill Creator, document skills, frontend design, the format and template), Superpowers (workflow and test-first discipline), the Codex catalogue (its scope model), gstack (review and QA checklists); aggregators for discovery only (item 17). What each becomes in Sekhemet, kept so the mapping is not re-derived:
+- **The skill catalogue** — sources: Anthropic's official skills (Skill Creator, document skills, frontend design, the format and template), Superpowers (workflow and test-first discipline), the Codex catalogue (its scope model), gstack (review and QA checklists); aggregators for discovery only (item 17). Later because v1 ships the skill mechanism (items 10–17) but no catalogue: every pulled skill must be read, pinned and approved by a person (item 15) and should carry an eval (EXT-27a), and no catalogue skill has been through that yet. What each becomes in Sekhemet, kept so the mapping is not re-derived:
 
 | Skill | Decision | What it becomes |
 | --- | --- | --- |
@@ -260,12 +260,19 @@ EXT-1 to EXT-28a (including the lettered criteria; EXT-5b is withdrawn; EXT-28 a
 | Systematic debugging | Pull | Reproduce, isolate, hypothesise, test — inside one card |
 | Code review checklist | Adapt | The Reviewer's procedure and the evidence summary's format |
 | Git worktree workflow | Replace | Built into the harness |
-| Frontend design guidance | Pull | For user projects with a UI |
+| Frontend design guidance | Pull | For Sekhemet's own UI and user projects with a UI |
 | Skill Creator | Adapt | The authoring template for distilled skill candidates |
 | Document skills (docx, pdf, xlsx) | Pull, optional | For projects that produce documents; not core |
 | Language and framework experts | Selective pull | Only where a gate template exists for the language |
 | Security testing procedures | Selective pull | Review-only; never auto-remediate |
-| Repository onboarding, research card procedure, gate authoring, SPIDR splitting, retrospective to playbook, model bake-off, visual acceptance, repair from a typed failure | Build | Sekhemet's own; no existing skill encodes these rules |
+| Repository onboarding | Build | No existing skill handles gate detection and convention extraction |
+| Research card procedure | Build | Tiered lookup, citation format, budget |
+| Gate authoring | Build | How to write acceptance tests the Worker cannot game |
+| Card splitting (SPIDR) | Build | Encodes the decomposition rules |
+| Retrospective to playbook | Build | Failure pattern to playbook entry |
+| Model bake-off | Build | Runs the eval and writes the matrix |
+| Visual acceptance | Build | From a mock or screenshot to a checklist of atomic checks |
+| Repair from a typed failure | Build | Per gate type, a concrete repair procedure for the Worker |
 
 ## 8. Open questions
 

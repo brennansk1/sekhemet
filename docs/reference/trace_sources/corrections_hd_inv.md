@@ -213,17 +213,17 @@ The text to add or change, grouped by file and section, each with its row keys. 
 with
 > The old design's per-project "gate contract, conventions ref, stage, playbook ref" and its `tier` column (default `'auto'`) are not columns:
 
-and add at the end of that sentence, after "…and the stage is the design stage's ([design-stage.md](design-stage.md))":
-> ; the hardware tier belongs to the host, not the project — it is derived from the host's memory by calibration ([models.md](models.md) rules 7–8), which is also why [surface.md](surface.md) rule 25 removed `machine.tier`.
+and add at the end of that sentence, after "…and the stage is the design stage's ([design-stage.md](../../design/specs/design-stage.md))":
+> ; the hardware tier belongs to the host, not the project — it is derived from the host's memory by calibration ([models.md](../../design/specs/models.md) rules 7–8), which is also why [surface.md](../../design/specs/surface.md) rule 25 removed `machine.tier`.
 
 **R2 — new Card bullet, placed after the "What kind of card it is" bullet** (HD2:387):
-> - **Card** (`CardRecord`, `schema.ts` `CARDS_TABLE_BODY`): the planner's fields ([planner-pm.md](planner-pm.md) §2.1.5), the kind fields above, owner, delegate and accepter (rule 21), dependencies (rule 3) and the order key (rule 15). Three columns of the old `cards` table are not kept as they were: `assigned_tier` (default `'auto'`) is not stored, because the tier is the host's (Project, above); `blocked_reason` is today's free-text encoding of a hold and is replaced by the typed hold of rule 24 (NEW-kernel-3); and the old default `token_budget = 32000` is replaced by no token budget by default, since tokens are bounded by the step budget (40 per sample) and the per-request prompt budget ([worker-loop.md](worker-loop.md) §3, WL-T3-11).
+> - **Card** (`CardRecord`, `schema.ts` `CARDS_TABLE_BODY`): the planner's fields ([planner-pm.md](../../design/specs/planner-pm.md) §2.1.5), the kind fields above, owner, delegate and accepter (rule 21), dependencies (rule 3) and the order key (rule 15). Three columns of the old `cards` table are not kept as they were: `assigned_tier` (default `'auto'`) is not stored, because the tier is the host's (Project, above); `blocked_reason` is today's free-text encoding of a hold and is replaced by the typed hold of rule 24 (NEW-kernel-3); and the old default `token_budget = 32000` is replaced by no token budget by default, since tokens are bounded by the step budget (40 per sample) and the per-request prompt budget ([worker-loop.md](../../design/specs/worker-loop.md) §3, WL-T3-11).
 
 **R3 — Attempt bullet: `done_pending_gates`** (HD2:390). After "status (`running`, `passed`, `failed`, `halted`)" insert:
-> — the old status `done_pending_gates` is not an attempt status but a stop reason ([worker-loop.md](worker-loop.md) rules 31, 33), recorded in the attempt's stop reason —
+> — the old status `done_pending_gates` is not an attempt status but a stop reason ([worker-loop.md](../../design/specs/worker-loop.md) rules 31, 33), recorded in the attempt's stop reason —
 
 **R4 — new Gate result bullet, placed after the Step bullet** (INV:K18, HD2:392):
-> - **Gate result** (`GateResultRecord`, `schema.ts:198-210`): attempt, card, step, gate name, **layer** — one of `static`, `functional`, `robustness`, `security`, `visual`, `hygiene`, enforced by a `CHECK` ([gates.md](gates.md) rule 3) — status `pass` or `fail`, exit code, the typed failures ([gates.md](gates.md) rule 19), duration in milliseconds, and its source (rule 37).
+> - **Gate result** (`GateResultRecord`, `schema.ts:198-210`): attempt, card, step, gate name, **layer** — one of `static`, `functional`, `robustness`, `security`, `visual`, `hygiene`, enforced by a `CHECK` ([gates.md](../../design/specs/gates.md) rule 3) — status `pass` or `fail`, exit code, the typed failures ([gates.md](../../design/specs/gates.md) rule 19), duration in milliseconds, and its source (rule 37).
 
 ### `docs/design/specs/models.md` — §9 Evidence and rationale
 
@@ -301,7 +301,7 @@ with
 ### `docs/design/specs/surface.md` — §9 Evidence and rationale
 
 **R18 — why the qualification is offered, not run** (HD2:217). Add:
-> - **Why onboarding offers the qualification instead of running it:** the old design ran the qualification suite during onboarding. On the reference host that loads each model in turn and takes minutes to hours, which the first run must not spend without asking. It is offered (rule 11), and the Configuration page runs it with the benchmark when a person asks ([DEC-29](../DECISIONS.md#dec-29--the-owners-answers-to-the-decision-queue) O2).
+> - **Why onboarding offers the qualification instead of running it:** the old design ran the qualification suite during onboarding. On the reference host that loads each model in turn and takes minutes to hours, which the first run must not spend without asking. It is offered (rule 11), and the Configuration page runs it with the benchmark when a person asks ([DEC-29](../../design/DECISIONS.md#dec-29--the-owners-answers-to-the-decision-queue) O2).
 
 ### `docs/design/DECISIONS.md` — DEC-22, rejected techniques
 

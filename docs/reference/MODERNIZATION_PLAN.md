@@ -204,6 +204,6 @@ Phase C is DEFINITION_OF_DONE §6 checked on one release commit: every specifica
 | --- | --- |
 | 0. Handoff: CLAUDE.md, AGENTS.md, DEFINITION_OF_DONE v2, release gate, this plan | Done 2026-09-22 |
 | A. Review and baseline | Review done (17 domains, `COVERAGE.md`); owner decisions D1–D7 taken; baseline arm "off" 10/14, the rest in B2.5 |
-| A.5 Design refined for spec-driven development | In progress |
+| A.5 Design refined for spec-driven development | **Done 2026-09-25**: design v3, three independent reviews, owner decisions O1–O14, a full trace (2,148 rows, none missing); remaining detail restorations are each spec's readiness check |
 | B. Workstreams B0–B5 | — |
 | C. Measure and release | — |

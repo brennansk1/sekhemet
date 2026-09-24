@@ -116,7 +116,8 @@ The model never certifies its own work: the gates decide, and a person accepts.
 1. its front matter and its "State today" table agree with the code;
 2. every `partial` or `not-built` capability names a change ID in `docs/reference/COVERAGE.md`;
 3. every change has acceptance criteria written as `WHEN … THE SYSTEM SHALL …`, each specific enough to be a failing test;
-4. it contradicts no other specification, [DECISIONS.md](docs/design/DECISIONS.md) or [SPINE.md](docs/design/SPINE.md), and its open questions each carry a recommendation.
+4. it contradicts no other specification, [DECISIONS.md](docs/design/DECISIONS.md) or [SPINE.md](docs/design/SPINE.md), and its open questions each carry a recommendation;
+5. every restoration listed for it in the trace's correction files ([DESIGN_TRACE.md](docs/reference/DESIGN_TRACE.md) §2) is applied.
 
 ### 5.3 A workstream is done when:
 1. it started from a ready specification (5.2) and a numbered plan;

@@ -148,7 +148,7 @@ Difficulty < 4 goes straight to the Worker with a plan; 4–7 gets an edit sketc
 
 ### 2.11 Goals
 
-1. A goal is an outcome with checkable criteria of kind `gate` (a named gate passes on the integration branch), `metric` (a query over the log or repository meets a threshold) or `human`. A goal whose criteria are all `human` is flagged unverifiable and Seshat asks for one checkable criterion.
+1. A goal sits above projects: it may name cards and slices in more than one project. A goal is an outcome with checkable criteria of kind `gate` (a named gate passes on the integration branch), `metric` (a query over the log or repository meets a threshold) or `human`. A goal whose criteria are all `human` is flagged unverifiable and Seshat asks for one checkable criterion.
 2. `sekhemet goal "<statement>"` drafts: restated outcome, proposed criteria, a budget from the competence model, assumptions. **Nothing runs until a person approves.** The strategy is a versioned plan of cards.
 3. Criteria are re-evaluated **on every card close and on a timer** (every queue pass at least, and hourly while the daemon runs), with metric values read from the log and human marks from the goal's events. A replan — a new strategy version with a diff and a one-paragraph reason, posted in Seshat's thread and recorded as `goal/replanned` — happens when a card fails at rung 3, a met criterion regresses, the budget forecast exceeds the cap, **a dependency or the environment changes**, or a new card would advance no unmet criterion.
 4. Goals compete by WSJF; one may be marked the only active goal. The scheduler says which goal it worked and why.
@@ -348,6 +348,8 @@ The spine says the model never certifies a card. The same holds one level up: **
 - **PM-P6-12** WHEN a cycle closes THE SYSTEM SHALL record forecast calibration, proposal acceptance rate, the first-attempt pass rate of Seshat-planned cards and the count of fields people edited after Seshat changed them.
 - **PM-P6-13** WHEN the scripted-conversation evaluation runs on the configured PM model THE SYSTEM SHALL score each of 20 scripted conversations against every rubric item (answer first; numbers with a basis; no invented ids; a calculator gets zero questions; a billing service gets a brief; every proposal passes INVEST and the criterion lint) and record the per-item results with the skill version; P6 passes only when **at least 16 of the 20 conversations meet every rubric item**.
 - **PM-P6-14** WHEN an overnight benchmark finished since the previous standup THE SYSTEM SHALL state its result in the next standup in plain words — the best combination, or that the leading combinations are indistinguishable — with no model id outside a link to Configuration, and SHALL NOT assign any model; WHEN asked to apply it THE SYSTEM SHALL name the Configuration action that does.
+
+- **PM-P6-15** WHEN a profile statement receives no new evidence THE SYSTEM SHALL lower its strength by the decay the statement's scope records (Erev–Roth style, trace row HD2:481; today the strength only rises, `learning/store.ts`), and SHALL stop using a statement whose strength falls below 0.2 until new evidence raises it.
 
 ### P13 — Project done is computed from requirements, never claimed
 

@@ -56,7 +56,7 @@ Gates are how Sekhemet knows a card is done: declared, executable checks that th
    | --- | --- | --- |
    | Static | Parse, format, lint, typecheck | Gate host |
    | Functional | Unit, integration and end-to-end tests; the card's acceptance tests, written before implementation; a research card's claim gate (rule 27a) | Gate host |
-   | Robustness | Diff-scoped mutation scores (suite and acceptance-test, rule 32), coverage delta | Gate host; a diff with more mutants than `mutation_max` runs its full campaign in the nightly run ([runtime.md](runtime.md)) |
+   | Robustness | Diff-scoped mutation scores (suite and acceptance-test, rule 32); coverage delta later (§7) | Gate host; a diff with more mutants than `mutation_max` runs its full campaign in the nightly run ([runtime.md](runtime.md)) |
    | Security | Secret scan, dependency existence, typosquat and allowlist, vulnerability scan, static analysis | Gate host |
    | Visual | Console and network errors, DOM assertions, layout bounds, element screenshot diff, accessibility, a vision checklist that can only fail | Gate host with a browser |
    | Hygiene | Changelog entry when in scope, no debug output, commit trailers | This machine (the core host) |
@@ -467,6 +467,7 @@ This spec is `built` when §5 passes and these stay under test:
 - **A benchmark gate for performance criteria** (hyperfine: *proposed*) — until a card carries a measurable performance criterion.
 - **A spelling gate in the hygiene layer** (typos: *proposed*) — low value against its false positives on identifiers until measured.
 - **A Python index adapter** (tree-sitter-python and its tags query, `web-tree-sitter` — a proposal, §8 Q7, O19), with the criterion kept for when it is built: **IX-6** WHEN a Python file is indexed with the Python adapter enabled THE SYSTEM SHALL produce the same fact kinds as for TypeScript, with `parseStatus` set from error and missing nodes. v1 keeps Python at a flat map and an unchecked parse ([DEC-20](../DECISIONS.md#dec-20)); the interface and fact schema IX-1 fixes are what make the adapter an addition, not a redesign.
+- **A Java/Kotlin gate template** (static: javac, checkstyle; functional: JUnit; mutation: PIT when installed) — rule 23a lists it as not built. Later: its language server starts slowly, and v1's language support is TypeScript first, with Python, Rust and Go the other templates ([DEC-20](../DECISIONS.md#dec-20)).
 - **Rust, Go and Java/Kotlin index adapters** — same interface as T2; their functional gates stay meanwhile ([DEC-20](../DECISIONS.md#dec-20)). SCIP or stack-graph precise indexes — heavier than the gates' needs; only for cross-repository navigation.
 - **Reading CI results as blocking gates** (webhooks for check suites, mapping required checks). The schema field is fixed now (rule 35, [kernel.md](kernel.md) rule 37); the behaviour comes with the integrations workstream after v1.
 - **Coverage delta** as a robustness check — after mutation is stable per project.

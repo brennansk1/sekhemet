@@ -10,16 +10,27 @@
 
 *Refreshed 2026-09-24. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 25 first.*
 
-1. **Where we are:** design v3 is complete — the end of Phase A.5 in `docs/reference/MODERNIZATION_PLAN.md`. Next is Phase B, spec-driven, in the plan's order: **B0** the approved cuts, then **B1** Worker containment (security.md), then **B2** measurement validity and the baseline.
+1. **Where we are:** design v3 is complete (Phase A.5 done 2026-09-25). Next: frontend mockups with the owner (dashboard spec, Configuration page first), and Phase B spec-driven in the plan's order — **B0** cuts, **B1** Worker containment, **B2** measurement and the baseline. Before a workstream starts, apply its spec's outstanding trace restorations (DoD §5.2.5).
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
 3. **Done means:** `DEFINITION_OF_DONE.md` v3 — §5 for a card, a spec, a workstream and a release; §6 for the product.
 4. **Measurement:** suite `1.0.0`, hash `192b6e95fa3c`; thinking A/B arm "off" 10/14 on `468f67f` (SUITE_RUNS). The remaining arms wait on M1, M3, M8 (workstream B2.1).
-5. **Owner decisions still open:** listed in Entry 25.
+5. **Owner decisions:** O1–O14 decided (DEC-29, DEC-30); O15–O27 open with defaults that unblock work (OPEN_QUESTIONS).
 6. **Operations:** `CLAUDE.md`. Every commit carries `GateStatus`.
 
 ---
 
 ## Detailed Session Log
+
+### Entry 26 — 2026-09-24 → 2026-09-25 (design v3 finished)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver.
+
+- Three independent reviews (design_v3_review, design_v3_confirmation, design_v3_final_check) — every blocker and major fixed; DEC-25–DEC-30 record the lead's rulings, the vocabulary, token budgets, learning admission, the owner's answers and the documentation layout.
+- Owner decisions O1–O14 taken; a Configuration page with a quick and an overnight benchmark of model combinations (NEW-dashboard-6, NEW-models-12, NEW-measurement-5); research on project done and depth (DEC-11), tests and brownfield, teams/data/change, and the team server.
+- The trace: an independent audit found 11% of rows wrong; full re-verification corrected 629 rows (mostly unbuilt capabilities marked carried → gap). Final: 1,303 carried, 503 gap, 220 deliberate, 122 later, none missing. Remaining detail restorations are listed per spec and applied at each workstream's start.
+- Usage limits interrupted three times; the session scratch was wiped once — traces were recovered from agent transcripts. Lesson: commit checkpoints, never keep work only in scratch.
+
+**Where the cards stop:** no card ran. Next: frontend mockups with the owner, then B0.
 
 ### Entry 25 — 2026-09-22 → 2026-09-24 (Phase A decided; design v3 written, traced and reviewed)
 
