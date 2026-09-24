@@ -28,6 +28,10 @@ updated in the same commit.
 | The `awaitingMerge` hold (`GET /api/board`) | none; a card moves to Done when its pull request opens | `hold?: { kind: "awaitingMerge", pr, since }` on a card in `review`, not counted toward ReviewWIP ([kernel](specs/kernel.md) rule 24) | NEW-kernel-3 |
 | `PmStatus.model` (§3) | the manager model's id, shown by the chat panel | dropped: the chat panel names no model (owner decision O3); every role's model name is served by `GET /api/config/roles` (§3, Configuration) | NEW-dashboard-6 |
 | Configuration endpoints (§3) | none; the Registry view reads `/api/models` and the bake-off matrix | the endpoints under *Configuration* below, including the two-tier benchmark keyed by combination | NEW-dashboard-6, NEW-models-12, NEW-measurement-5 |
+| Reply citations (§3, `PmMessage.cites`) | served with `url` and `label` (`apps/harness/src/pm/types.ts:38-45`; rendered as Sources by `packages/ui/src/pm.ts:1306`), but this file listed only `cardId`, `runId`, `evidenceId` | `cites[]` carries `url?` and `label?` for a research source, rendered in the Sources list, http and https only ([dashboard](specs/dashboard.md) §2.7.4) — now in §3 | — (built; this file lagged) |
+| Integration id `research-web` (§3, Integrations) | served, with `PUT /api/integrations/research-web` `{ enabled }` (`apps/harness/src/integrations.ts:92,664`), but missing from the canonical ids | a *now* id, its `detail` naming the search provider ([design-stage](specs/design-stage.md) §3) — now in §3 | — (built; this file lagged) |
+| What leaves the machine (§5, roadmap) | stated per integration on the Integrations page (`packages/ui/web/integrations.js`, *Leaves this machine* / *Would send*), but the roadmap table had no column for it | the roadmap's **What leaves the machine** column — now in §5 | — (built; this file lagged) |
+| `reach` on rule approval (§6) | `POST /api/learning/rules/:id/approve` reads `{ reach: "project" \| "global" }` (`apps/harness/src/pm_api.ts:320-331`); this file said approve takes no body | `{ reach? }`, default `project`, and `LearnedRule.reach` (`apps/harness/src/learning/store.ts:28`) — now in §6 | — (built; this file lagged) |
 
 ## 1. What the user asked for
 
@@ -81,7 +85,7 @@ interface PmMessage {
   state: "queued" | "thinking" | "done" | "error";
   context?: { cardId?: string; view?: string };
   proposals?: PmProposal[];     // changes the PM wants to make
-  cites?: { cardId?: string; runId?: string; evidenceId?: string }[];
+  cites?: { cardId?: string; runId?: string; evidenceId?: string; url?: string; label?: string }[];   // url + label: a research source, rendered in the Sources list (http/https only)
 }
 interface PmStatus {
   phase: "idle" | "waiting_for_step" | "loading_pm" | "thinking" | "resuming_worker";
@@ -147,8 +151,9 @@ interface PmProposal {
   a preview using the same `PmProposal` flow, so import is never silent. Their
   ids work with `/api/pm/proposals/:id/apply` and `/discard`.
 - `PUT /api/integrations/github-pr` with `{ enabled: boolean }` returns the entry.
+- `PUT /api/integrations/research-web` with `{ enabled }` returns the entry; the server's `detail` names the search provider or says how to configure one ([design-stage](specs/design-stage.md) §3).
 - Integration ids (canonical):
-  - now: `github`, `github-pr`, `jira`, `linear`, `slack`
+  - now: `github`, `github-pr`, `jira`, `linear`, `slack`, `research-web`
   - next: `jira-sync`, `linear-sync`, `github-actions`, `teams`, `slack-replies`
   - later: `sentry`, `datadog`, `pagerduty`, `notion`, `confluence`
 
@@ -254,19 +259,19 @@ CI). Every integration is off until the user connects it: syncing sends card
 content to that service. Sekhemet uses the user's own CLI logins or webhook
 URLs and stores no tokens in the repo.
 
-| Tier | Integration | What it does |
-|---|---|---|
-| **Now** | GitHub Issues + Projects | Two-way card and issue sync via `gh`. Priority, estimate and cycle map to Projects fields. Card and issue are linked via `externalRef`. |
-| **Now** | GitHub PR on accept | Optional: Accept pushes the card branch and opens a PR whose body is the evidence (gates, diff stats, transcript link), instead of squash-merging locally. |
-| **Now** | Jira import/export | CSV in Jira's own import columns (Summary, Issue Type, Priority, Story Points, Sprint, Epic Link, Labels, Description). Import is previewed as PM proposals. |
-| **Now** | Linear import/export | CSV/JSON in Linear's fields (title, priority 0-4, estimate, cycle, project, labels). |
-| **Now** | Slack for the PM | An incoming webhook. The PM posts the daily standup, "needs you" alerts (a card waiting on review or a decision) and run reports. Replying from Slack arrives in the next tier. |
-| Next | Jira / Linear live sync | REST/GraphQL with the user's token from the OS keychain. |
-| Next | GitHub Actions gate mirror | Post the card's gate results as a check run on its PR. |
-| Next | Microsoft Teams | The same messages as Slack, via an incoming webhook. |
-| Next | Slack replies | Talk to the PM from a Slack thread. |
-| Later | Sentry / Datadog / PagerDuty | New errors, regressions and incident follow-ups arrive as PM proposals for bug cards. |
-| Later | Notion / Confluence | The PM publishes cycle plans, run reports and decision logs as pages, and reads linked specs as card context. |
+| Tier | Integration | What it does | What leaves the machine |
+|---|---|---|---|
+| **Now** | GitHub Issues + Projects | Two-way card and issue sync via `gh`. Priority, estimate and cycle map to Projects fields. Card and issue are linked via `externalRef`. | Card fields, to the chosen repository |
+| **Now** | GitHub PR on accept | Optional: Accept pushes the card branch and opens a PR whose body is the evidence (gates, diff stats, transcript link), instead of squash-merging locally. | Branch, diff, gate results |
+| **Now** | Jira import/export | CSV in Jira's own import columns (Summary, Issue Type, Priority, Story Points, Sprint, Epic Link, Labels, Description). Import is previewed as PM proposals. | Nothing (you upload the file) |
+| **Now** | Linear import/export | CSV/JSON in Linear's fields (title, priority 0-4, estimate, cycle, project, labels). | Nothing (you upload the file) |
+| **Now** | Slack for the PM | An incoming webhook. The PM posts the daily standup, "needs you" alerts (a card waiting on review or a decision) and run reports. Replying from Slack arrives in the next tier. | Those messages |
+| Next | Jira / Linear live sync | REST/GraphQL with the user's token from the OS keychain. | Card fields |
+| Next | GitHub Actions gate mirror | Post the card's gate results as a check run on its PR. | Gate results |
+| Next | Microsoft Teams | The same messages as Slack, via an incoming webhook. | Those messages |
+| Next | Slack replies | Talk to the PM from a Slack thread. | The conversation |
+| Later | Sentry / Datadog / PagerDuty | New errors, regressions and incident follow-ups arrive as PM proposals for bug cards. | Nothing (data comes in) |
+| Later | Notion / Confluence | The PM publishes cycle plans, run reports and decision logs as pages, and reads linked specs as card context. | Those pages |
 
 Slack endpoints (Now tier):
 - `PUT /api/integrations/slack` with `{ webhookUrl }`. The URL is stored in
@@ -310,13 +315,14 @@ Three loops:
 
 Endpoints:
 - `GET /api/learning` returns `{ rules: LearnedRule[], profile: ProfileEntry[], tuning?: TuningReport }`.
-- `POST /api/learning/rules/:id/(approve|retire)` and `PATCH /api/learning/rules/:id` with `{ text }`.
+- `POST /api/learning/rules/:id/approve` with `{ reach?: "project" | "global" }` (default `project`; `global` stores the rule in the user directory and applies it in every repository on this machine), `POST /api/learning/rules/:id/retire`, and `PATCH /api/learning/rules/:id` with `{ text }`.
 - `POST /api/learning/profile/:id/dismiss` and `PATCH /api/learning/profile/:id` with `{ statement }`.
 
 ```ts
 interface LearnedRule {
   id: string; role: "worker" | "manager"; text: string;
   scope: { kind?: string; pathPattern?: string; errorPattern?: string };
+  reach: "project" | "global";            // chosen by the person at approval
   status: "candidate" | "active" | "retired";
   helpful: number; harmful: number; value: number;
   source: "struggle" | "send_back" | "reflection" | "seed";

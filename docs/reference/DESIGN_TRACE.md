@@ -4,11 +4,13 @@
 
 ## 1. What this is, and how it was checked
 
+**Corrections, 2026-09-25.** An independent audit of 124 rows ([design_trace_audit.md](reviews/design_trace_audit.md)) found an 11% error rate, so every `later` and `deliberate` row, every PM and frontend row, and every flagged harness-design and inventory row was re-verified, and the rest checked in full; the corrections are in [trace_sources/](trace_sources/) (`corrections_*.md`), and the details they found lost were restored to the specs.
+
 **Method.** Four traces went through each old source from top to bottom (2026-09-22). Each extracted every normative item: a capability, behaviour, mechanism, number, threshold, field, command, UI state or edge case. Each item was classified against the new documents as `carried`, `carried-weaker`, `gap`, `later`, `contradicted` or `missing`. Fix passes then worked on every row that was not `carried`, following the lead's rulings ([DEC-25](../design/DECISIONS.md), R1–R28), and an independent review revised the specs again (`8b5ccb9`). This verification re-read the spec text for **every row that was not `carried`** (723 rows), without relying on the fix passes' own reports.
 
 The 1,425 rows first traced as `carried` keep the trace's location. They were not re-read one by one. Instead they were swept for the decisions taken after the traces ran: DEC-24's later rows, DEC-26 (one vocabulary for kind and run), DEC-27 (token budgets) and DEC-28 (one admission rule). Six that those decisions changed are re-marked `deliberate`. Final statuses:
 
-- `carried` — the spec states the item with its original precision;
+- `carried` — the spec states the item with its original precision **and the capability is built** (a capability specified but not yet built is `gap`, never `carried`);
 - `gap` — carried as a capability that is not built yet, with a change ID and acceptance criteria;
 - `deliberate` — changed on purpose, with the reason written in the spec's §9, in [DECISIONS](../design/DECISIONS.md) (DEC-24 lists the reversals, DEC-25 the rulings) or in the owning spec's own text;
 - `later` — in a spec's §7 Later (or SPINE's "Not in v1", or OPEN_QUESTIONS), with a reason;
@@ -22,12 +24,12 @@ Rows that rested on a decided: no "plan exists" condition (DEC-29; kernel K-N5-8
 
 | Source | Items | Not `carried` when traced | `carried` | `gap` | `deliberate` | `later` | `still-weaker` | `still-missing` |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `HARNESS_DESIGN.md` | 1109 | 335 | 826 | 95 | 87 | 101 | 0 | 0 |
-| `INTEGRATION_REVIEW.md` | 75 | 65 | 21 | 50 | 3 | 1 | 0 | 0 |
-| `PM_DESIGN.md` | 290 | 104 | 266 | 0 | 18 | 6 | 0 | 0 |
-| `FRONTEND_DESIGN.md` | 256 | 93 | 219 | 12 | 18 | 7 | 0 | 0 |
-| The three `FEATURE_INVENTORY` files | 418 | 126 | 331 | 31 | 40 | 16 | 0 | 0 |
-| **All** | 2148 | 723 | 1663 | 188 | 166 | 131 | 0 | 0 |
+| `HARNESS_DESIGN.md` | 1109 | 335 | 796 | 127 | 99 | 87 | 0 | 0 |
+| `INTEGRATION_REVIEW.md` | 75 | 65 | 20 | 51 | 3 | 1 | 0 | 0 |
+| `PM_DESIGN.md` | 290 | 104 | 258 | 5 | 21 | 6 | 0 | 0 |
+| `FRONTEND_DESIGN.md` | 256 | 93 | 204 | 17 | 28 | 7 | 0 | 0 |
+| The three `FEATURE_INVENTORY` files | 418 | 126 | 291 | 73 | 41 | 13 | 0 | 0 |
+| **All** | 2148 | 723 | 1569 | 273 | 192 | 114 | 0 | 0 |
 
 ## 2. Still open
 
@@ -36,54 +38,55 @@ None. The three rows the verification left open were resolved by the lead on 202
 - **PMFE:221** → `deliberate`: [dashboard](../design/specs/dashboard.md) §2.11 now shows DEC-28's paired-credit retirement; PM_CONTRACT §6 marks the counts as today's behaviour with the target in its §0.
 - **INV:O104** → `deliberate`: [DECISIONS](../design/DECISIONS.md) DEC-25 R29 (the `relay-finisher` role left with the relay protocol; `suspended-quota` stays).
 
-## 3. Moved to Later (confirmed by the owner, DEC-29, 2026-09-24)
+## 3. Moved to Later (confirmed by the owner, DEC-29, 2026-09-24; corrected 2026-09-25)
 
-131 items. Each sits in the named document's Later list with its reason, and returns only with the evidence or version that reason names. They are grouped by the document that holds them now.
+114 items. Each sits in the named document's Later list with its reason, and returns only with the evidence or version that reason names. Grouped by the document that holds them now.
 
-**design-stage** (22) — HD2:87 Two research modes, Research Desk and Deep Research (serves; trigger;…; HD2:95 The Desk loads no model: a second slot of the Worker's server, same w…; HD2:98 Desk grades: Lookup (seconds, no model), Question (1–3 min, short too…; HD2:100 Speculative research: the planner writes each card's open questions a…; HD2:101 At project open, prefetch each package's `llms.txt`/doc sitemap into…; HD2:104 Context7 and DeepWiki as optional MCP sources: off by default, untrus…; HD2:106 Plan: sub-questions with a budget each, posted as a decision request…; HD2:108 Everything fetched lands in the corpus index that later stages read; HD2:111 Crawling within a doc site uses an adaptive strategy that stops when…; HD2:120 Crawl4AI warm headless-browser sidecar: JS rendering, question-keyed…; HD2:121 Static-page fast path: HTML to markdown with trafilatura; HD2:122 PDFs: pypdfium2 by default, Docling for scanned or table-heavy pages;…; HD2:127 Persistent project corpus over dependency docs, refreshed when the ma…; HD2:128 Per-question corpus for each deep run, so synthesis can quote a sourc…; HD2:144 Answers from external MCP research services are untrusted like fetche…; HD2:148 The Planner additionally sees `plan_research(card)`; HD2:149 Research playbooks as Agent Skills (library upgrade, CVE triage, comp…; HD2:150 Deep Research evaluated on DeepResearch Bench RACE and FACT plus exec…; HD2:151 Desk measured on latency per grade and on how often an answer reachin…; HD2:152 Cache TTL by mutability: pinned SHA indefinite; pinned-version docs i…; HD2:153 A stale cache entry is served immediately and revalidated in the back…; INV:X9 Doc cache TTLs.
+**context** (10) — HD1:26 Tree-sitter symbol-level support is v2; HD1:217 Line-level pruning with SWE-Pruner on gate host; HD1:236 MLX path: unified memory reuse, MTPLX native MTP heads; HD1:247 Learned line pruning (SWE-Pruner Pro); HD1:271 0.6B skimmer strips 40–60% of code lines; HD1:281 Exemplar source: accepted cards and fixing commits from repo's own git; HD1:599 Offline optimiser in idle hours with planner as reflection engine; kee; INV:C3 SWE-Pruner line pruning; INV:E9 Loop 3 prompt evolution; INV:O53 Prompt optimiser kill switch < 5%
 
-**integrations** (19) — HD1:156 Still deferred: remote control from mobile beyond notifications; HD1:157 Still deferred: team chat entry points; HD2:51 Forgejo as the offline-friendly self-hosted sync target: issues, depe…; HD2:63 CI as a gate source: existing CI checks declared as gates, run locall…; HD2:72 `issue_comment.created` with `/plan`, `/split`, `/estimate`,…; HD2:75 `workflow_dispatch` enqueues a local card run within declared hours; HD2:83 Review comments create repair subtasks scoped to line ranges; the Wor…; HD2:85 Release card: aggregate accepted cards since the last tag,…; PMFE:187 Jira and Linear live sync (OS keychain token); PMFE:189 Microsoft Teams; PMFE:190 Slack replies; PMFE:191 Sentry, Datadog, PagerDuty as card sources (bug-card proposals); PMFE:192 Notion and Confluence publishing (plans, run reports, decision logs;…; INV:Y11 Forgejo adapter; INV:Y17 Release cards; INV:Y18 CI via `act`; INV:O84 git-cliff changelog + semver on a release card; INV:O85 `act` for GitHub Actions as gates; INV:O89 `resolveReviewThread`; auto-merge; merge queue.
+**DEC-** (1) — HD1:41 Claim: cloud models after v1, plug into a role, never a requirement
 
-**extensibility** (16) — HD1:155 Still deferred: plugin marketplace; HD1:165 Plugin isolation and third-party versioning deferred past v1; HD2:62 An editor-protocol surface so external editors can drive a card; HD2:157 Skills are project- or user-scoped and versioned, and…; HD2:161 Commands: Markdown templates expanding into a card template or planne…; HD2:164 ACP lets VS Code, JetBrains and Neovim open a card, stream steps, ins…; HD2:171 Plugin API: register services, tools, gates, hooks, sync adapters or…; HD2:172 Plugin signing and compatibility contracts deferred until the kernel…; HD2:243 Open Agent Skills format; pull from the ecosystem…; HD2:245 Skill sources: Anthropic official (Skill Creator, document skills, fr…; HD2:246 Per-skill pull/adapt/build decisions (19 rows, e.g. brainstorming → i…; HD2:251 Every skill ships with at least one eval card; HD2:451 Open: plugin isolation and third-party signing; INV:K10 Reversible plugin manager; INV:H14 ACP editor surface; INV:O60 Every skill ships an eval card.
+**dashboard** (14) — HD1:144 Rewind from card view: "rewind to step N", truncates nothing, invalida; HD1:188 UI offers an explicit override (drag past a gate) recorded as a human ; HD2:312 A native wrapper is optional and deferred; HD2:329 Diffs grouped by conceptual intent ("Core Interface Definition", "Hand; PMFE:288 Saved-view sync waits for `/api/views`; PMFE:308 Goal view: burn-up, criteria, risk register; PMFE:503 Fonts: system fallback must look right; WOFF2 bundling optional; PMFE:534 Later: `POST /cards/:id/run` (Retry with planner); PMFE:537 Later: dependency lines overlay; PMFE:538 Later: bundled fonts; PMFE:540 Later: master board, Registry, Goals; PMFE:541 Later: difftastic intent grouping; INV:U17 Pan-and-zoom DAG; INV:U21 `IBoardUIState`
 
-**dashboard** (14) — HD1:144 Rewind from card view: "rewind to step N", truncates nothing, invalid…; HD1:188 UI offers an explicit override (drag past a gate) recorded as a human…; HD2:312 A native wrapper is optional and deferred; HD2:329 Diffs grouped by conceptual intent ("Core Interface Definition", "Han…; PMFE:288 Saved-view sync waits for `/api/views`; PMFE:308 Goal view: burn-up, criteria, risk register; PMFE:503 Fonts: system fallback must look right; WOFF2 bundling optional; PMFE:534 Later: `POST /cards/:id/run` (Retry with planner); PMFE:537 Later: dependency lines overlay; PMFE:538 Later: bundled fonts; PMFE:540 Later: master board, Registry, Goals; PMFE:541 Later: difftastic intent grouping; INV:U17 Pan-and-zoom DAG; INV:U21 `IBoardUIState`.
+**SPINE** (2) — HD1:150 IDE extension (VS Code over ACP) and TUI; HD2:437 Phase 4 deferred: RBAC and SSO, extra tracker adapters, multi-machine 
 
-**planner-pm** (14) — HD1:397 Terminal is default conversation surface; `sekhemet` opens it; board…; HD1:398 [RESEARCH] Calibrate ask-vs-assume on ClarEval; symmetric failure mod…; HD1:445 Steer: free text delivered at next step boundary as `card/steer`, no…; HD1:446 Scope amendment mid-card; Worker told; HD1:448 Steer cannot relax gate, widen permission, accept; HD1:449 Steer recorded before delivery; steered outcome flagged, excluded fro…; HD1:450 Steering not required for correctness; HD1:451 Card state decides: attached human answers in seconds while Worker ho…; HD1:475 Human cmd: Reroute (force model or arm for a card); HD1:476 Human cmd: Explain evidence behind estimate, route or decision; HD1:484 `/goal <statement>` opens intake: restate, criteria, budget, assumpti…; HD1:497 Goal view: statement, criteria, burn-up, strategy graph, risk registe…; HD1:498 Goal with no state change in a configurable window is highlighted; HD2:489 C6: the tuner's 12-step cap (keeps 17 of 18 passes, cuts time 38%) is….
+**extensibility** (14) — HD1:155 Still deferred: plugin marketplace; HD1:165 Plugin isolation and third-party versioning deferred past v1; HD2:62 An editor-protocol surface so external editors can drive a card; HD2:161 Commands: Markdown templates expanding into a card template or planner; HD2:164 ACP lets VS Code, JetBrains and Neovim open a card, stream steps, insp; HD2:171 Plugin API: register services, tools, gates, hooks, sync adapters or U; HD2:172 Plugin signing and compatibility contracts deferred until the kernel A; HD2:245 Skill sources: Anthropic official (Skill Creator, document skills, fro; HD2:246 Per-skill pull/adapt/build decisions (19 rows, e.g. brainstorming → in; HD2:251 Every skill ships with at least one eval card; HD2:451 Open: plugin isolation and third-party signing; INV:K10 Reversible plugin manager; INV:H14 ACP editor surface; INV:O60 Every skill ships an eval card
 
-**context** (9) — HD1:26 Tree-sitter symbol-level support is v2; HD1:217 Line-level pruning with SWE-Pruner on gate host; HD1:236 MLX path: unified memory reuse, MTPLX native MTP heads; HD1:247 Learned line pruning (SWE-Pruner Pro); HD1:271 0.6B skimmer strips 40–60% of code lines; HD1:281 Exemplar source: accepted cards…; HD1:599 Offline optimiser in idle hours with planner as reflection engine; ke…; INV:C3 SWE-Pruner line pruning; INV:E9 Loop 3 prompt evolution.
+**integrations** (13) — HD1:156 Still deferred: remote control from mobile beyond notifications; HD1:157 Still deferred: team chat entry points; HD2:63 CI as a gate source: existing CI checks declared as gates, run locally; HD2:72 `issue_comment.created` with `/plan`, `/split`, `/estimate`, `/review`; HD2:75 `workflow_dispatch` enqueues a local card run within declared hours; HD2:83 Review comments create repair subtasks scoped to line ranges; the Work; PMFE:187 Jira and Linear live sync (OS keychain token); PMFE:189 Microsoft Teams; PMFE:190 Slack replies; PMFE:191 Sentry, Datadog, PagerDuty as card sources (bug-card proposals); PMFE:192 Notion and Confluence publishing (plans, run reports, decision logs; r; INV:Y18 CI via `act`; INV:O85 `act` for GitHub Actions as gates
 
-**review-git** (9) — HD2:199 On acceptance, checkpoints squashed into…; HD2:205 Review comments on the PR flow back into the card thread; HD2:210 Squash policy per project (keep checkpoint history on main); HD2:334 A human edit in the worktree is a commit by a human actor (…; HD2:335 Gates re-run on a human-edited tree; HD2:336 The evidence bundle keeps the Worker's diff and the human's separately; HD2:337 The competence row records `passed_with_human_edit`, never an unatten…; HD2:338 Partial accept takes a subset of hunks; the rest becomes a new card w…; INV:S14 CoW worktrees + linked deps.
+**OPEN_QUESTIONS** (1) — HD1:218 [BENCH] pruner CPU latency on 4-core host
 
-**worker-loop** (8) — HD1:267 Worker applies sketch mechanically via symbol replacement; HD1:276 Parallel pass@k on L/XL or overnight; k ∈ [2,4], T ∈ [0.4,0.7]; HD1:301 `repo`: tree, file at a ref, code search, releases between two versio…; HD2:15 N is capped, and the cap is per hardware tier; HD2:147 Worker research tools are read-only and never include `search`/…; HD2:256 `read` passes images and PDFs through to the vision path; HD2:263 Structural rewrite fallback with ast-grep for languages without a lan…; INV:O97 ast-grep fallback without a language server.
+**worker-loop** (6) — HD1:267 Worker applies sketch mechanically via symbol replacement; HD1:276 Parallel pass@k on L/XL or overnight; k ∈ [2,4], T ∈ [0.4,0.7]; HD2:15 N is capped, and the cap is per hardware tier; HD2:256 `read` passes images and PDFs through to the vision path; HD2:263 Structural rewrite fallback with ast-grep for languages without a lang; INV:O97 ast-grep fallback without a language server
 
-**gates** (5) — HD1:519 Evidence `structuralDiff` (difftastic); HD2:17 Local verifier to rank passing attempts / triage failing ones; only i…; HD2:220 Go and Java/Kotlin templates as Phase 3, with Java's slower LSP start…; HD2:297 hyperfine as the benchmark gate runner for performance criteria; HD2:298 typos as a source-code spelling gate in the hygiene layer.
+**planner-pm** (13) — HD1:397 Terminal is default conversation surface; `sekhemet` opens it; board c; HD1:398 [RESEARCH] Calibrate ask-vs-assume on ClarEval; symmetric failure mode; HD1:445 Steer: free text delivered at next step boundary as `card/steer`, no r; HD1:446 Scope amendment mid-card; Worker told; HD1:448 Steer cannot relax gate, widen permission, accept; HD1:449 Steer recorded before delivery; steered outcome flagged, excluded from; HD1:450 Steering not required for correctness; HD1:451 Card state decides: attached human answers in seconds while Worker hol; HD1:475 Human cmd: Reroute (force model or arm for a card); HD1:476 Human cmd: Explain evidence behind estimate, route or decision; HD1:497 Goal view: statement, criteria, burn-up, strategy graph, risk register; HD1:498 Goal with no state change in a configurable window is highlighted; HD2:489 C6: the tuner's 12-step cap (keeps 17 of 18 passes, cuts time 38%) is 
 
-**security** (4) — HD1:93 Air-gap kit with local package mirrors (npm, devpi, crates) + byte-id…; HD2:41 Restricted mode: read-only AST inspection, static analysis (typecheck…; HD2:229 Package mirrors (verdaccio, devpi, a crates mirror) pre-seeded from t…; HD2:242 Open: mirror seeding for transitive dependencies not in any lockfile.
+**gates** (4) — HD1:519 Evidence `structuralDiff` (difftastic); HD2:17 Local verifier to rank passing attempts / triage failing ones; only if; HD2:297 hyperfine as the benchmark gate runner for performance criteria; HD2:298 typos as a source-code spelling gate in the hygiene layer
 
-**runtime** (3) — HD2:187 Overnight prompt optimiser when enabled; HD2:406 Request bodies: `split { strategy }`, `run { budgetOverride }`; HD2:438 Phase 4 deferred: the compliance pack.
+**measurement** (1) — HD1:616 IRT calibration against SWE-bench per-instance results (~10⁵)
 
-**SPINE** (2) — HD1:150 IDE extension (VS Code over ACP) and TUI; HD2:437 Phase 4 deferred: RBAC and SSO, extra tracker adapters, multi-machine….
+**design-stage** (20) — HD2:87 Two research modes, Research Desk and Deep Research (serves; trigger; ; HD2:95 The Desk loads no model: a second slot of the Worker's server, same we; HD2:98 Desk grades: Lookup (seconds, no model), Question (1–3 min, short tool; HD2:100 Speculative research: the planner writes each card's open questions an; HD2:101 At project open, prefetch each package's `llms.txt`/doc sitemap into t; HD2:104 Context7 and DeepWiki as optional MCP sources: off by default, untrust; HD2:106 Plan: sub-questions with a budget each, posted as a decision request (; HD2:111 Crawling within a doc site uses an adaptive strategy that stops when t; HD2:121 Static-page fast path: HTML to markdown with trafilatura; HD2:122 PDFs: pypdfium2 by default, Docling for scanned or table-heavy pages; ; HD2:127 Persistent project corpus over dependency docs, refreshed when the man; HD2:128 Per-question corpus for each deep run, so synthesis can quote a source; HD2:144 Answers from external MCP research services are untrusted like fetched; HD2:148 The Planner additionally sees `plan_research(card)`; HD2:149 Research playbooks as Agent Skills (library upgrade, CVE triage, compa; HD2:150 Deep Research evaluated on DeepResearch Bench RACE and FACT plus execu; HD2:151 Desk measured on latency per grade and on how often an answer reaching; HD2:152 Cache TTL by mutability: pinned SHA indefinite; pinned-version docs in; HD2:153 A stale cache entry is served immediately and revalidated in the backg; INV:X9 Doc cache TTLs
 
-**models** (2) — HD1:80 Inference: llama.cpp / MLX, zero telemetry; HD2:449 Open: whether a local verifier earns its place on XL.
+**runtime** (2) — HD2:187 Overnight prompt optimiser when enabled; HD2:438 Phase 4 deferred: the compliance pack
 
-**DEC-03** (1) — HD1:41 Claim: cloud models after v1, plug into a role, never a requirement.
+**review-git** (9) — HD2:199 On acceptance, checkpoints squashed into one or more intent-grouped Co; HD2:205 Review comments on the PR flow back into the card thread; HD2:210 Squash policy per project (keep checkpoint history on main); HD2:334 A human edit in the worktree is a commit by a human actor (`card/human; HD2:335 Gates re-run on a human-edited tree; HD2:336 The evidence bundle keeps the Worker's diff and the human's separately; HD2:337 The competence row records `passed_with_human_edit`, never an unattend; HD2:338 Partial accept takes a subset of hunks; the rest becomes a new card wi; INV:S14 CoW worktrees + linked deps
 
-**OPEN_QUESTIONS** (1) — HD1:218 [BENCH] pruner CPU latency on 4-core host.
+**surface** (1) — HD2:226 Convention extraction combining `crag` linter/CI parsing with `codebas
 
-**measurement** (1) — HD1:616 IRT calibration against SWE-bench per-instance results (~10⁵).
+**security** (2) — HD2:229 Package mirrors (verdaccio, devpi, a crates mirror) pre-seeded from th; HD2:242 Open: mirror seeding for transitive dependencies not in any lockfile
 
-**surface** (1) — HD2:226 Convention extraction combining `crag` linter/CI parsing with….
+**models** (1) — HD2:449 Open: whether a local verifier earns its place on XL
 
 ## 4. Deliberate changes
 
-164 items changed on purpose. The last column says where each reason is recorded.
+192 items, each with where its reason is recorded.
 
 | Row | Old | Item | Reason recorded in |
 | --- | --- | --- | --- |
 | HD1:11 | HD:29 | Feature not traceable to the six paragraphs is a candidate for deletion | SPINE §Where the edge is (the test is now "serves one of the three edges"; DEC-01) |
 | HD1:13 | HD:36 | Locked: target user = solo developer running local models | DEC-01 |
 | HD1:28 | HD:60 | Non-goals v1: teams, multi-user boards, RBAC, SSO | DEC-06 (company-server minimum in v1; RBAC and SSO stay out) |
-| HD1:78 | HD:214 | Parity claim: matches top five except cloud scale and cloud latency | specs/README "Where the old design went" (dated competitor columns removed) |
+| HD1:64 | HD:190 | `sekhemet board` the board in the terminal | surface rule 13 (`ask` replaces `board` at the front door; `board --terminal` under `dev`), NEW-surface-6; owner decision O23 pending, default "approve" (corrected 2026-09-25) |
+| HD1:78 | HD:214 | Parity claim: matches top five except cloud scale and cloud latency | SPINE §What we claim ("**Never claim** parity with frontier models on ambiguous work…"); DEC-23 ("It does not aim to beat frontier models on ambiguous, long-horizon or novel design work, and it is slower per card than cloud tools. These trades are deliberate."); specs/README "Where the old design went" (corrected 2026-09-25) |
 | HD1:119 | HD:291 | TypeScript SDK with async-iterator event streams | extensibility rule 28, §8 Q1 ("changed from the old design's shipped SDK") |
 | HD1:122 | HD:307 | Headless LSP expansion stage | context rule 28, §9 |
 | HD1:123 | HD:307 | Masking tool outputs older than 2 steps with 15-token pointers | context rule 3; DEC-24 |
@@ -91,12 +94,15 @@ None. The three rows the verification left open were resolved by the lead on 202
 | HD1:125 | HD:315 | Checkpoint commits on every passing step | review-git rule 3, §9 (every step that changed files; R1) |
 | HD1:136 | HD:329 | EvidenceBundle with difftastic enabling "5-second human acceptance" | review-git rule 2, §9 (a decision in under a minute); structural diff rule 6 (partial, S5) |
 | HD1:158 | HD:362 | Every capability is a plugin claiming a service key (Cordis) | extensibility rule 29, §7 (plugin API later), §8 Q2 (container cut in B0 (DEC-29 O4)); SPINE packages |
-| HD1:163 | HD:398 | Turn-flow events: card/start, step/start, context/assembled, model/request, model/response, tool/call, tool/r… | kernel §3 closing note (never the code's; mapped) |
+| HD1:162 | HD:398 | Step = one model request + tool calls; turn = steps for one card attempt | DEC-26; NAMING "The run" (the old use of *turn* for all the steps of an attempt is retired); worker-loop §3 Terms (corrected 2026-09-25) |
+| HD1:163 | HD:398 | Turn-flow events: card/start, step/start, context/assembled, model/request, model/response, tool/call, tool/result, ste… | kernel §3 closing note (never the code's; mapped) |
 | HD1:196 | HD:505 | Edge Review→InProgress on human change request | review-git §2.4, §9; DEC-24 (send back to Ready) |
-| HD1:200 | HD:518 | InProgress entry: plan exists; acceptance tests written and failing (types-only card red on typecheck); scope… | kernel rule 27, §8 Q6 (decided: no "plan exists" condition (DEC-29; kernel K-N5-8)) |
+| HD1:197 | HD:507 | Edge InProgress→Parked on stall or budget | kernel rule 25 (LEGAL_TRANSITIONS, now in the spec); worker-loop rule 31 (budget reasons park unless the gates ran; `oscillation_detected` and `no_progress` go to Verify), §9 (after the reason is added) (corrected 2026-09-25) |
+| HD1:200 | HD:518 | InProgress entry: plan exists; acceptance tests written and failing (types-only card red on typecheck); scope declared | kernel rule 27, §8 Q6 (decided: no "plan exists" condition (DEC-29; kernel K-N5-8)) |
 | HD1:216 | HD:550 | LSP expansion stage, headless servers pooled per project | context rule 28, §9; pool backs tools (worker-loop 12) |
 | HD1:221 | HD:563 | Zone 4 = card spec, criteria, scope, open TODOs, latest observation, re-injected goal | context rule 8, §9 (M8) |
-| HD1:226 | HD:573 | `run` routes commands through the RTK binary | context rule 17 (native condenser; binary on no v1 path) |
+| HD1:223 | HD:569 | Masked pointer example (~15 tokens with EvidenceRef) | context rule 3 (one line of ≤ 30 tokens at masking points, CX-M8-8), §9; DEC-24 (corrected 2026-09-25) |
+| HD1:226 | HD:573 | `run` routes commands through the RTK binary | context rule 17; PROVENANCE "Output condensing (RTK)" row (corrected 2026-09-25) |
 | HD1:232 | HD:590 | llama.cpp: `--cache-ram` 8–16 GiB, `--ctx-checkpoints 32`, `--checkpoint-min-step 8192` | context rule 6, §9; DEC-24 |
 | HD1:233 | HD:590 | Slot prefix similarity `-sps` | context rule 6; DEC-24 |
 | HD1:248 | HD:620 | Zone caps: Z1 ≤0.12W, Z2 ≤0.10W, Z3 ≤0.50W, Z4 remainder ≥0.20W; shrink map, drop symbols, fail Ready | context rule 10; DEC-27 (Zone 1 fixed in tokens, ≤ 2,400 incl. schemas; the other zones as fractions of W − 2,400) |
@@ -106,7 +112,9 @@ None. The three rows the verification left open were resolved by the lead on 202
 | HD1:272 | HD:701 | Observation masking older than 2 steps | context rule 3; DEC-24 |
 | HD1:286 | HD:734 | 2026 cache flags (8–16 GiB, 32 checkpoints, 8192 min-step, -sps) | context rule 6; DEC-24 |
 | HD1:287 | HD:735 | Native MTP 1.6×–2.6× decode speed-up | models rule 13, §9 (1.6–2.6× claim withdrawn; ~1.28× decode with a prefill penalty measured) |
+| HD1:301 | HD:763 | `repo`: tree, file at a ref, code search, releases between two versions | worker-loop rule 12 (`list_dir`, `grep_search`, `git_history` over this repository), §7 "Release notes between two versions" (reason); design-stage §2.7 rule 10 (the Researcher's `repo`: any repository, any ref, code search across GitHub, release diffs) (corrected 2026-09-25) |
 | HD1:312 | HD:782 | Both terminate the turn immediately | worker-loop rule 18, §9 |
+| HD1:314 | HD:787 | Stop reason `done_pending_gates` | worker-loop rule 33, §9 (after the reason is added) (corrected 2026-09-25) |
 | HD1:321 | HD:794 | Six is the vocabulary; new conditions are details, not new members | worker-loop rule 31, §9; DEC-24 (23 stored reasons in one table, seven failure classes and one success class) |
 | HD1:325 | HD:802 | Rung 3: narrow scope or escalate one model tier (competence model chooses); re-decomposition only at rung 4 | worker-loop rule 34.3, §7, §9 |
 | HD1:329 | HD:809 | Prior reasoning stripped between steps unless registry notes benefit | context rule 4; DEC-24 |
@@ -114,7 +122,7 @@ None. The three rows the verification left open were resolved by the lead on 202
 | HD1:348 | HD:854 | Edit: unique match; `replace_all` for renames; exact whitespace/line endings | worker-loop rule 12, §9 |
 | HD1:367 | HD:898 | SPIDR Interface = type contracts/schemas first | planner-pm §2.2, §9 |
 | HD1:370 | HD:904 | INVEST pre-flight before Planning → In Progress | planner-pm §2.4, §9; DEC-24 |
-| HD1:375 | HD:912 | Small: pack ≤25% of tier working context; step budget ≤40 | planner-pm §2.4, §9; DEC-24 (INVEST Small: 25% of the resolved Worker's window, 4,096 of 16,384; P1 PM-12, PM-13) |
+| HD1:375 | HD:912 | Small: pack ≤25% of tier working context; step budget ≤40 | planner-pm §2.4 Small row, §9; DEC-27 (one number for card size, N5); DEC-24 (corrected 2026-09-25) |
 | HD1:379 | HD:923 | Estimates in tokens, seconds, steps; never story points | planner-pm §2.6, §9 |
 | HD1:394 | HD:956 | Conversation never evicts a running Worker; reply waits for step boundary | planner-pm §2.8.6, §9 |
 | HD1:395 | HD:957 | Conversation has no memory of its own; no user profile | planner-pm §2.13.3, §9 |
@@ -125,24 +133,26 @@ None. The three rows the verification left open were resolved by the lead on 202
 | HD1:457 | HD:1142 | >3 questions → spec rejected as under-specified | planner-pm §9; DEC-24 |
 | HD1:493 | HD:1291 | Signal: ≥3 gate failures in one file → pause implementation, route to Planner to re-split on Interface/Data | planner-pm §2.12, §9 |
 | HD1:593 | HD:1607 | System prompt short; <1,000 tokens; tool interface <2,000 | context rule 10; DEC-27 (system prompt ≤ 700, tool interface ≤ 1,700 tokens) |
-| HD1:618 | HD:1702 | One mechanism: signal → bounded proposal → suite → pinned → auto-rollback if pass rate drops… | measurement rule 18(3), §9; DEC-24 (paired rollback) |
+| HD1:618 | HD:1702 | One mechanism: signal → bounded proposal → suite → pinned → auto-rollback if pass rate drops over next ten cards | measurement rule 18(3), §9; DEC-24 (paired rollback) |
 | HD1:623 | HD:1737 | Guardrail 3: atomic rollback over moving ten-card window | measurement rule 18; DEC-24 |
-| HD1:637 | HD:1763 | `sekhemet dev audit` command | measurement rule 24, §9 (dev audit's function in doctor and qualify) |
+| HD1:637 | HD:1763 | `sekhemet dev audit` command | measurement rule 24, §9; surface §7 (corrected 2026-09-25) |
 | HD1:639 | HD:1765 | Context debt: >300 Zone-2 tokens without significant ≥+3% gain | measurement rule 24; DEC-28 (context debt judged on paired credit or a "not established" A/B; the 3-point test cannot be resolved on 30 cards) |
 | HD1:644 | HD:1782 | Rung 3 narrowed scope or escalated model, chosen by competence model | worker-loop rule 34.3, §7, §9 |
 | HD2:21 | HD:1837 | Linux: user namespaces + Landlock path restrictions + seccomp-bpf syscall filters | security rule 17; DEC-21 (bubblewrap; Landlock and seccomp as hardening) |
 | HD2:29 | HD:1845 | Worktrees made by copy-on-write cloning (APFS, reflink on Btrfs/XFS) | security rule 24a; DEC-21 (plain worktrees) |
 | HD2:49 | HD:1891 | Shared-field conflicts: last-writer-wins by timestamp, loser kept in card history | integrations §2.4 |
-| HD2:64 | HD:1911 | Externally edited issue mid-card: non-scope fields reconciled on completion; a scope/criteria change pauses t… | integrations §2.5, §9 (R6), INT-11a |
+| HD2:64 | HD:1911 | Externally edited issue mid-card: non-scope fields reconciled on completion; a scope/criteria change pauses the card an… | integrations §2.5, §9 (R6), INT-11a |
 | HD2:67 | HD:1921 | Private keys and tokens in the OS keychain, never written to disk or config files | integrations §2.10; security item 35 |
+| HD2:114 | HD:2088 | Self-hosted SearXNG: no API keys, no query logging to third parties; a separate service to keep its copyleft licence ou… | design-stage §2.7.11, §9 (after the reason is added); PROVENANCE SearXNG row (corrected 2026-09-25) |
 | HD2:154 | HD:2186 | Every extension mechanism is a plugin on the kernel | extensibility rule 29, §7, §8 Q2 (O4); DEC-09 correction |
-| HD2:170 | HD:2226 | A TypeScript SDK exposes these operations, with the event log as an async iterator | extensibility rule 28, §8 Q1 ("changed from the old design's shipped SDK"; publish or cut is owner decision O4) |
+| HD2:170 | HD:2226 | A TypeScript SDK exposes these operations, with the event log as an async iterator | extensibility rule 28 (cut in B0, DEC-29 O4, NEW-extensibility-5), §8 Q1 (decided) (corrected 2026-09-25) |
 | HD2:177 | HD:2252 | Checkpoints: the Worker commits after every gate-passing step and every masked-observation boundary | review-git rule 3, §9 (R1); runtime rule 11 links to it |
 | HD2:211 | HD:2344 | Onboarding step 1: build the tree-sitter repo map and cache it | surface rule 9; DEC-20 (map from the TypeScript compiler; tree-sitter later, surface §7) |
+| HD2:217 | HD:2350 | Onboarding step 7: run the qualification suite on this repo's code | surface rule 11, §9 (after the reason is added) (corrected 2026-09-25) |
 | HD2:274 | HD:2496 | Parse gate wraps tree-sitter | gates §9; DEC-20 |
-| HD2:278 | HD:2504-2507 | Console/network/DOM and layout-bounds checks over Playwright; screenshot diff with Playwright + pixelmatch; a… | gates §9, §8 Q1 (the in-house client stays the gate; Playwright and axe-core approved for development only, DEC-29 O5; axe-core in the product gate is owner decision O27, default no — was pending the owner, R16; behaviours kept rule 29) |
-| HD2:299 | HD:2578-2579 | mise (pinned toolchain environments) and lefthook (git hooks manager) | PROVENANCE (mise, lefthook: not used, the repository's own `.githooks/` instead) |
-| HD2:300 | HD:2542-2543, 2572 | DevDocs and Kiwix as offline documentation services; Dozzle as a container log viewer | PROVENANCE (DevDocs, Kiwix, Dozzle: not used — the kit's own docs bundle, no containers in v1) |
+| HD2:278 | HD:2504-2507 | Console/network/DOM and layout-bounds checks over Playwright; screenshot diff with Playwright + pixelmatch; accessibili… | gates §9, §8 Q1 (the in-house client stays the gate; Playwright and axe-core approved for development only, DEC-29 O5; axe-core in the product gate is owner decision O27, default no — was pending the owner, R16; behaviours kept rule 29) |
+| HD2:299 | HD:2578-2579 | mise (pinned toolchain environments) and lefthook (git hooks manager) | PROVENANCE rows "Toolchain version manager (mise)" and "Toolchain and hook managers (mise; lefthook)" (corrected 2026-09-25) |
+| HD2:300 | HD:2542-2543, 2572 | DevDocs and Kiwix as offline documentation services; Dozzle as a container log viewer | PROVENANCE "Container log viewer (Dozzle)" row (corrected 2026-09-25) |
 | HD2:307 | HD:2615 | kWh computed from hardware TDP and GPU utilisation | runtime rule 18, §7, §9 |
 | HD2:313 | HD:2625 | Three views are the product (Review, Board, Card); the rest appear when they have something to say | dashboard §9 (five primary views always, for three audiences) |
 | HD2:317 | HD:2635 | Machine appears when a run is active, or from the status line | dashboard §9 (always in the System menu) |
@@ -152,24 +162,28 @@ None. The three rows the verification left open were resolved by the lead on 202
 | HD2:339 | HD:2676 | Headless dual-axis virtualisation via `@tanstack/virtual` | dashboard §9 (own windowing, no build step) |
 | HD2:343 | HD:2683 | Card steps stream over a local WebSocket `ws://127.0.0.1:4040/stream` | runtime rule 25, §9 |
 | HD2:350 | HD:2707-2723 | Colour token table: 15 roles with hex values per theme and APCA/WCAG figures | dashboard §2.13.1, §9 (values only in `tokens.ts`, held by the contrast test) |
-| HD2:357 | HD:2759 | Card tile: title, class chip, difficulty, budget bar (tokens/seconds), one box per gate,… | dashboard §9 (professional tile) |
+| HD2:357 | HD:2759 | Card tile: title, class chip, difficulty, budget bar (tokens/seconds), one box per gate, dependency count badge | dashboard §9 (professional tile) |
 | HD2:366 | HD:2782 | No environment-variable layer: only `SEKHEMET_CONFIG_DIR` and `SEKHEMET_MODELS_DIR` are honoured | surface rule 27 (about 45 variables classified; only the two bootstrap ones shown to users) |
 | HD2:372 | HD:2801 | `fetch_allow = ["nodejs.org"]` default | surface rule 23 (fetch_allow starts empty, with the reason) |
 | HD2:373 | HD:2804 | `[overnight] hours = "18:00-08:00"`: when unattended runs may use the machine | surface rule 23 ([machine] reserved_hours replaces [overnight] hours, with the reason) |
 | HD2:377 | HD:2815 | Actor set of seven: human, planner, worker, reviewer, researcher, gate, system | kernel rule 19, §9 |
+| HD2:387 | HD:2915-2933 | `cards` table: 9-state CHECK; difficulty 1–10; step_budget 40; token_budget 32000; assigned_tier; blocked_reason; order… | kernel rules 6 (Card bullet, after restoration), 15 (order key), 23 (nine states), 24 (typed holds); K-S7-1 (difficulty 1–10); planner-pm §2.4 (step budget ≤ 40); worker-loop §3 Token budget row (none by default) (corrected 2026-09-25) |
 | HD2:388 | HD:2925 | `cards.priority REAL` holds the WSJF score | planner-pm §2.7, §9 |
+| HD2:391 | HD:2961-2974 | `steps`: tool, arguments, argument_hash, repo_state_hash, success, result_summary, tokens_condensed, duration | kernel rule 6 Step ("not stored: … a step's verdict is its gate results, and condensing savings are context's measure"); worker-loop rule 17 (corrected 2026-09-25) |
 | HD2:397 | HD:3047 | `[project] languages = [...]` key | gates §3 (`languages` dropped: detected from manifests, recorded in evidence) |
-| HD2:407 | HD:3119 | M0 spike: ≥ 90% valid-and-correct tool execution across 30 seeded tasks (3 runs each, budgets 50 and 150) und… | measurement rule 28 (M0 bar historical; protocol in `sekhemet m0`) |
-| HD2:419 | HD:3164-3345 | Package interface contracts (IEventLog, IProjectionEngine, IServiceContainer, IBoardEngine, IDependencyDAG, I… | specs/README "Where the old design went" (interfaces replaced by the code's types in each Contract) |
+| HD2:405 | HD:3096-3115 | REST route table (workspace, board, cards CRUD, split, run, gate, accept, return, park, rewind, evidence, events?since,… | runtime §3 ("superseded by the routes above; the code is the contract, and a route change updates this list") (corrected 2026-09-25) |
+| HD2:406 | HD:3102-3103 | Request bodies: `split { strategy }`, `run { budgetOverride }` | runtime §3 request-body row (`cards/:id/split` takes `{parts: [{title, …}]}`, "the SPIDR strategy is the planner's"); runtime §7 (per-run budget override) (corrected 2026-09-25) |
+| HD2:407 | HD:3119 | M0 spike: ≥ 90% valid-and-correct tool execution across 30 seeded tasks (3 runs each, budgets 50 and 150) under the win… | measurement rule 28 (M0 bar historical; protocol in `sekhemet m0`) |
+| HD2:419 | HD:3164-3345 | Package interface contracts (IEventLog, IProjectionEngine, IServiceContainer, IBoardEngine, IDependencyDAG, IRepoMapBui… | specs/README "Where the old design went" (interfaces replaced by the code's types in each Contract) |
 | HD2:424 | HD:3352 | Synthetic git fixtures across TS, Python and Rust; `createTestWorktree()` clones one in under 10 ms | DEFINITION_OF_DONE §2D.3 (the < 10 ms target assumed in-memory SQLite; real repositories required); multi-language fixtures later, measurement §7 |
 | HD2:425 | HD:3353 | All unit and integration tests on in-memory SQLite (`:memory:`), setup under 5 ms per file | DEFINITION_OF_DONE §2A (real on-disk SQLite) |
 | HD2:426 | HD:3354 | The whole monorepo unit suite runs in under 3 seconds | DEFINITION_OF_DONE §2D.4 (the 3 s target kept as history; speed never bought with mocks) |
-| HD2:428 | HD:3372-3380 | Phase 0 spike: 30 tasks × 3 runs × 3 arms at budgets 50/150; go ≥ 90%, rework 70–90%, pivot < 70% (narrow to… | measurement rule 28 (the pivot rule is owner decision O20, default: a standing decision) — was: §8 Q4 (pivot rule proposed as a standing decision, owner) |
+| HD2:428 | HD:3372-3380 | Phase 0 spike: 30 tasks × 3 runs × 3 arms at budgets 50/150; go ≥ 90%, rework 70–90%, pivot < 70% (narrow to planning a… | measurement rule 28 (M0 row) and rule 28a (the pivot rule, O20), §8 Q4 (corrected 2026-09-25) |
 | HD2:436 | HD:3412 | Phase 4 deferred: teams and multi-user | DEC-06 |
-| HD2:439 | HD:3416 | Scoping rule: anything not feeding the gates → failure data → decomposition/routing → reproducibility loop is… | SPINE §Where the edge is; DEC-01 |
-| HD2:473 | IR:114-117 | B1: on the benchmark nothing learned reaches the Worker (fresh `events.db`; approval needed; only playbook.to… | measurement rule 6, §9; ruling R12 (isolation in measurement runs; production probation in context rule 24f) |
-| HD2:513 | IR:226 | Suggestion 8: in-run probation for executable-verified learning (a config constraint, a remedy keyed to an er… | context rule 24f, measurement rule 6, §9; ruling R12 (probation in production only); NEW-context-4 (CX-N4-7) |
-| HD2:520 | IR:234-239 | Batch sequence on 24 GB: Worker pass → Researcher (every unexplained struggle, with card and code) → Seshat (… | review-git §2.3.2, §9 (Reviewer once per queue pass, after retries, before Review); swap order models rule 20a |
+| HD2:439 | HD:3416 | Scoping rule: anything not feeding the gates → failure data → decomposition/routing → reproducibility loop is a candida… | SPINE §Where the edge is; DEC-01 |
+| HD2:473 | IR:114-117 | B1: on the benchmark nothing learned reaches the Worker (fresh `events.db`; approval needed; only playbook.toml and… | measurement rule 6, §9; ruling R12 (isolation in measurement runs; production probation in context rule 24f) |
+| HD2:513 | IR:226 | Suggestion 8: in-run probation for executable-verified learning (a config constraint, a remedy keyed to an error code,… | context rule 24f, measurement rule 6, §9; ruling R12 (probation in production only); NEW-context-4 (CX-N4-7) |
+| HD2:520 | IR:234-239 | Batch sequence on 24 GB: Worker pass → Researcher (every unexplained struggle, with card and code) → Seshat (plans usin… | review-git §2.3.2, §9 (Reviewer once per queue pass, after retries, before Review); swap order models rule 20a |
 | PMFE:4 | PM:20 | Priority glyph language: bars High/Med/Low, boxed exclamation Urgent, three dashes for none | dashboard §9 |
 | PMFE:11 | PM:22 | Epics appear as swimlanes, filter and table column, never as a separate hierarchy screen | dashboard §9 (story map is a view of the cards) |
 | PMFE:47 | PM:62 | Panel header always shows Seshat · Project manager · dirk-27b so the user sees the correct model | dashboard §8.3, §9; R15 |
@@ -180,32 +194,46 @@ None. The three rows the verification left open were resolved by the lead on 202
 | PMFE:125 | PM:300 | Priority glyph in a fixed 12 px slot at the far left so priorities scan as a column | dashboard §9 (List view scans priority) |
 | PMFE:149 | PM:353 | Rails still collapse empty columns board-wide | dashboard §9 (chips) |
 | PMFE:170 | PM:390 | Integrations `#/integrations` on `g s` | dashboard §2.3.1, §9; R17 (`g n`) |
-| PMFE:194 | PM:420 | Integrations 404: sections still render from the catalogue; Now cards Not available on this server yet, no… | dashboard §9 |
+| PMFE:181 | PM:402 | Webhook URL is a credential: `~/.config/sekhemet/repos/…`, mode 0600, never in repo or ledger | surface item 22, NEW-surface-1 (justification: one secret-bearing directory the sandbox can deny); PMC §0 (Slack row); dash §2.11 (corrected 2026-09-25) |
+| PMFE:194 | PM:420 | Integrations 404: sections still render from the catalogue; Now cards Not available on this server yet, no controls | dashboard §9 |
 | PMFE:198 | PM:440 | Insights `#/insights` on `g f` | dashboard §2.3.1, §9 |
 | PMFE:217 | PM:485 | Everything learned is context not weights, from gate results and human actions, on the ledger,… | planner-pm §2.13.3, §8.1 (profile statements: owner decision O24, default used at once; rules need approval; was awaiting the owner) |
+| PMFE:221 | PM:490 | Active: retirement proposals (≥ 3 more harmful than helpful) first, amber rule, sentence with the counts,… | dashboard §2.11 Playbook (*Active*: rules whose paired credit is falling first); DEC-28; measurement rule 16b (corrected 2026-09-25) |
 | PMFE:234 | PM:505-510 | Seshat's review (`card/review`) between Gates and Failures; count title; advice, not a gate line;… | review-git §2.3.5, §9 (the Reviewer, not Seshat; shown first); advisory line and order kept in dashboard §2.5.3 |
-| PMFE:250 | PM:536 | Four roles: Worker; Seshat · PM; Adversarial reviewer (different family); Researcher (Apodex-1.1-mini, cites… | models rule 21; DEC-05 (roles are Worker, Planner, Reviewer, Researcher; Seshat is the persona on the Planner's weights) |
+| PMFE:250 | PM:536 | Four roles: Worker; Seshat · PM; Adversarial reviewer (different family); Researcher (Apodex-1.1-mini, cites sources) | models rule 21; DEC-05 (roles are Worker, Planner, Reviewer, Researcher; Seshat is the persona on the Planner's weights) |
 | PMFE:259 | PM:554 | `#/pm` on `g a` | dashboard §2.3.1, §9 |
 | PMFE:261 | PM:557-558 | `g f` Insights, `g s` Integrations | dashboard §2.3.1, §9; R17 |
+| PMFE:263 | PM:571 | No new colour roles: fifteen roles plus derived tints | dash §2.13.2 (P12: `--border-control` at ≥ 3:1 edges every input, because `border-strong` is 1.3–1.9:1 on inputs, dash §5 P12 intro) (corrected 2026-09-25) |
+| PMFE:282 | PM:617 | Every item checked in both themes at 1440 and 1024 | dash §2.15.5 (corrected 2026-09-25) |
 | PMFE:314 | FE:60 | Tile: class chip, difficulty, token/second budget bars, dependency badge | dashboard §9 |
+| PMFE:340 | FE:144 | Review is default when the queue is non-empty; `g r` | dash §2.2.5 (corrected 2026-09-25) |
+| PMFE:341 | FE:145 | Board default otherwise; `g b` | dash §2.2.5 (corrected 2026-09-25) |
 | PMFE:343 | FE:147 | Runs `#/runs[/:runId]` on `g q` | dashboard §2.3.1; R17 (`g u`) |
 | PMFE:345 | FE:150 | Playbook on `g p` | dashboard §2.3.1; R17 (`g k`) |
-| PMFE:346 | FE:151 | Inbox `#/inbox` `g i`, hidden until `/api/decisions` returns 200 | dashboard §2.2.1, P11 (merged into Review › Needs you; §9 records the chord change, not a separate reason for the merge) |
+| PMFE:346 | FE:151 | Inbox `#/inbox` `g i`, hidden until `/api/decisions` returns 200 | dashboard §2.2 rule 1 ("**Inbox** is merged into Review's *Needs you* group (its route stays and opens it)"); P11 (corrected 2026-09-25) |
 | PMFE:352 | FE:162 | 1024–1279 px: 52 px icon rail, tooltips, count badges | dashboard §9 |
-| PMFE:353 | FE:163 | < 768 px: bottom tabs Review, Board, Runs; single-column board with switcher; Evidence only; 48 px one-ta… | dashboard §9 |
-| PMFE:359 | FE:183-190 | Kind mapping Interface→Contract, Data→Storage, Path→Flow, Rule→Rules, Spike→Research, Visual→UI, Integration→… | DEC-26 (one kind map in NAMING; SPIDR is the split axis, R9); dashboard §2.12.4 |
-| PMFE:360 | FE:191-199 | Column names Backlog, Ready, Planning, Working, Checking, Review, Done, Parked (visible), Closed (only if non… | dashboard §2.4.1, §8.2; NAMING |
+| PMFE:353 | FE:163 | < 768 px: bottom tabs Review, Board, Runs; single-column board with switcher; Evidence only; 48 px one-tap triage | dashboard §9 |
+| PMFE:359 | FE:183-190 | Kind mapping Interface→Contract, Data→Storage, Path→Flow, Rule→Rules, Spike→Research, Visual→UI, Integration→Wiring; to… | DEC-26 (one kind map in NAMING; SPIDR is the split axis, R9); dashboard §2.12.4 |
+| PMFE:360 | FE:191-199 | Column names Backlog, Ready, Planning, Working, Checking, Review, Done, Parked (visible), Closed (only if non-empty) | dashboard §2.4.1, §8.2; NAMING |
 | PMFE:376 | FE:247 | Empty Review copy ends with the command `sekhemet queue` | dashboard §2.5.13, §9 |
 | PMFE:414 | FE:368 | Empty columns collapse to 36 px rails (after 5 min empty; Done below 1600 px) | dashboard §9 |
+| PMFE:415 | FE:369 | Parked full column far right with amber count; Closed only when non-empty | dash §2.4.1 (On hold only when non-empty, pinned; *Won't do* a filter, not a column); NAMING (*Closed* retired, with the reason) (corrected 2026-09-25) |
 | PMFE:425 | FE:388 | Empty board: No cards yet + `sekhemet plan …` and the fixture seed command | dashboard §2.4.10, §9 |
 | PMFE:430 | FE:407 | Tabs 32 px with a 2 px `--accent` underline on the active tab | dashboard §2.6, §9 (underline in --text-primary; gold kept to four places) |
+| PMFE:441 | FE:459 | No runs yet + `sekhemet queue --auto-accept` | dash §2.2.1 (Runs hidden until the first completed run) (corrected 2026-09-25) |
+| PMFE:453 | FE:486 | Playbook rules table: instruction (2-line clamp), trigger gate, teaching card, since, pattern | dash §2.11 Playbook (learning view) (corrected 2026-09-25) |
+| PMFE:454 | FE:487 | Suggested rules with Promote (editor, pick trigger gate) and Dismiss | dash §2.11 Playbook (*Needs your approval*: Approve, Edit, Retire) (corrected 2026-09-25) |
+| PMFE:455 | FE:488 | Empty Playbook copy | dash §2.2.1 (Playbook hidden until the first rule or suggestion) (corrected 2026-09-25) |
 | PMFE:459 | FE:504 | Row 1 kind tag · short id | dashboard §9 |
 | PMFE:462 | FE:516 | Ready: Ready · 32-step budget | dashboard P3, §9 |
 | PMFE:463 | FE:517 | Blocked: link icon in `--state-blocked`, Waits on X, title in `--text-secondary` | dashboard §2.4.4, §9; R11 |
+| PMFE:470 | FE:528 | Dependency badge: link icon + count, tooltip lists titles | dash §2.4.4 (blocker flag); dash §9 ("the tile shows … a dependency count is replaced by the professional anatomy"; R11 blocker flag) (corrected 2026-09-25) |
 | PMFE:471 | FE:529 | Difficulty diamond on the tile in comfortable density | dashboard §9 |
 | PMFE:485 | FE:586 | Disabled = 40% opacity; reason in adjacent text, never only a tooltip | dashboard §2.13.2, §9 |
 | PMFE:492 | FE:635-643 | Key additions: `g q`, `g l`, `g p`, `1–5`, `[ ]`, `u`, `n/N`, `f`, `t` theme, `z`, `/` | dashboard §2.3, §9 |
-| INV:K9 | FI:53 / R2:79 | Service container | extensibility rule 29, §8 Q2 (container is reachable; trust-gated until the owner decides the cut, O4) |
+| PMFE:499 | FE:664 | `POST /api/cards/:id/run` returns `{ attemptId }` | runtime RUN-4, §3 (corrected 2026-09-25) |
+| PMFE:517 | FE:825-831 | Verification recipe: seed, serve, three viewports, both themes, compare mockups, keyboard only, empty error console | dash §2.15.5 (corrected 2026-09-25) |
+| INV:K9 | FI:53 / R2:79 | Service container | extensibility rule 29 (cut in B0, DEC-29 O4; no trust gate needed), §8 Q2 (decided) (corrected 2026-09-25) |
 | INV:K17 | FI:61 / R2:87 | `steps` table incl. `repo_state_hash`, `success`, `tokens_condensed` | kernel rule 6 (not stored, with the reason) |
 | INV:S3 | FI:84 / R2:106 | Linux namespaces + Landlock + seccomp | DEC-21; security rule 17 |
 | INV:Y3 | FI:108 / R2:126 | Commit after every gate-passing step and every masking boundary | review-git rule 3, §9 (R1) |
@@ -220,7 +248,7 @@ None. The three rows the verification left open were resolved by the lead on 202
 | INV:P11 | FI:319 / R2:302 | Pause & persist, VRAM released, rehydrate | planner-pm §2.10.2–3, §9; DEC-24 |
 | INV:E1 | FI:343 / R2:322 | Pass@1 harness under the real loop; M0 protocol | measurement rule 28 (M0 protocol built, `m0.ts`; the ≥ 90% bar recorded as historical with the reason); pivot rule §8 Q4 |
 | INV:E13 | FI:355 / R2:334 | Loop 7 variant archives | DEC-25 R31 (variant archive cut as dead code under DEC-09) |
-| INV:E15 | FI:357 / R2:336 | Loop 9 tool synthesis | worker-loop §9 (register R6 triaged, not in v1); security §8 Q1 (recommend cutting `--validate-tools`) |
+| INV:E15 | FI:357 / R2:336 | Loop 9 tool synthesis | worker-loop §9 (register R6 triaged, not in v1); security rule 4a, §8 Q1 (decided: `--validate-tools` kept and confined) (corrected 2026-09-25) |
 | INV:E17 | FI:359 / R2:338 | Guardrails; rollback over 10-card window | measurement rule 18, §9; DEC-24 |
 | INV:U3 | FI:373 / R1:369 | Basalt/Sand exact values, light theme | dashboard §2.13.1, §9 |
 | INV:U13 | FI:383 / R1:379 | Card tile components | dashboard §9 |
@@ -228,12 +256,13 @@ None. The three rows the verification left open were resolved by the lead on 202
 | INV:H25 | FI:425 / R2:370 | Offline installers, first-run wizard | DEC-21 (source installer); DEC-29 O9 (npm package and container image approved) |
 | INV:X7 | FI:441 / R1:431 | Research note; embeddings only here | design-stage §2.7.8, §9; DEC-22 |
 | INV:X21 | FI:455 / R1:445 | Fixture generator, `createTestWorktree` < 10 ms | DEFINITION_OF_DONE §2D.3 (the < 10 ms target assumed in-memory SQLite; real repositories required) |
+| INV:X22 | FI:456 / R1:446 | No in-memory SQLite for kernel/board (DoD §2.A.1) | DEFINITION_OF_DONE §2A.1 (real on-disk SQLite; in-memory databases forbidden) (corrected 2026-09-25) |
 | INV:X25 | FI:459 / R1:449 | Suite under 3 s | DEFINITION_OF_DONE §2D.4 |
 | INV:X27 | FI:461 / R1:451 | Chronicle fixture and scorecard | measurement rule 28 (Chronicle bars kept as diagnostics, with the reason) |
 | INV:X28 | FI:462 / R1:452 | Showcase Trifecta and its targets | measurement rule 28 (Trifecta targets superseded, with the reason) |
 | INV:X29 | FI:463 / R1:453 | CHRONICLE `llama-server` profile | models rule 3a (Chronicle profile recorded and superseded by the DEC-04 Worker on 8098) |
 | INV:O6 | FI:476 | Traces stripped unless registry flag | context rule 4; DEC-24 |
-| INV:O15 | FI:485 | INVEST-S ≤ 25% and ≤ 40 steps | planner-pm §2.4; DEC-24 (25% of the resolved Worker's window, ≤ 40 steps) |
+| INV:O15 | FI:485 | INVEST-S ≤ 25% and ≤ 40 steps | planner-pm §2.4 Small row; DEC-27 N5; DEC-24 (corrected 2026-09-25) |
 | INV:O17 | FI:487 | > 3 questions rejects the spec | planner-pm §9; DEC-24 |
 | INV:O30 | FI:500 | Checkpoint at gate passes and masking boundaries | review-git rule 3, §9 (R1) |
 | INV:O43 | FI:513 | CoW cloning + symlinked `node_modules`/`.venv` | DEC-21 (plain worktrees); security rule 24 (node_modules and `.venv` links) |
@@ -244,6 +273,8 @@ None. The three rows the verification left open were resolved by the lead on 202
 | INV:O73 | FI:543 | `[loop] default_step_budget = 40`, `stall_window = 3`, `max_rungs = 4` | surface rule 25 (step budget 40 kept; stall_window and max_rungs removed); worker-loop §9 |
 | INV:O83 | FI:553 | Every return reason becomes a candidate rule | review-git §2.4, §9 |
 | INV:O92 | FI:562 | LWW by timestamp, loser in history | integrations §2.4 |
+| INV:O104 | FI:574 | `suspended-quota`, `relay-finisher` protocol values | DEC-25 R29 (the `relay-finisher` role dropped with the Gemini relay protocol; `suspended-quota` kept) (corrected 2026-09-25) |
+
 
 ## 5. Every row, by source
 
@@ -256,9 +287,9 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:1 | HD:17 | Mission: spec → diff surviving checks nobody could edit; records enough that next attempt is cheaper | carried | carried | SPINE §What Sekhemet is, spine 1–2 |
 | HD1:2 | HD:19 | A card owns one worktree, branch, declared scope, deterministic context, budget, attempt, evidence bundle, measured out… | carried | carried | SPINE spine 3; kernel §2 |
 | HD1:3 | HD:19 | Same card + same repo → byte-identical prompt (prefix cache + honest measurement) | carried | carried | context §2.1 rule 1; CX-1 |
-| HD1:4 | HD:21 | Event log is the only durable channel; model-visible means logged, enforced at runtime | carried | carried | SPINE spine 2; kernel rule 15 |
+| HD1:4 | HD:21 | Event log is the only durable channel; model-visible means logged, enforced at runtime | carried | carried | SPINE spine 2; kernel rules 16–17 (corrected 2026-09-25) |
 | HD1:5 | HD:21 | Board, replay, fork, audit trail, competence model are projections of the one stream | carried | carried | SPINE spine 2; kernel rule 14 |
-| HD1:6 | HD:23 | Every column boundary is an entry condition decided by an executable gate, never the model | carried | carried | SPINE spine 1; kernel rule 21 |
+| HD1:6 | HD:23 | Every column boundary is an entry condition decided by an executable gate, never the model | carried | carried | SPINE spine 1; kernel rule 27 (corrected 2026-09-25) |
 | HD1:7 | HD:23 | Failure → one typed shape; top few reach the model, rest in evidence by reference | carried | carried | gates rules 19–20 |
 | HD1:8 | HD:25 | Human is the rate limiter: review minutes → Review WIP → back-pressures Verify → Worker | carried | carried | SPINE spine 4; review-git §2.2 |
 | HD1:9 | HD:27 | Learning only from recorded signals; spent only in the stable prompt zone at a card boundary | carried | carried | SPINE consequence 1; context rule 23 |
@@ -297,8 +328,8 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:42 | HD:123 | Pillar 1: zero telemetry, offline-capable install | carried | carried | runtime rules 31, RUN-33; security air-gap |
 | HD1:43 | HD:124 | Pillar 2: automatic model selection, scheduled swaps, overnight mode | carried | carried | models rules 20, 26; runtime rule 17 |
 | HD1:44 | HD:125 | Pillar 3: tolerant tool interface, symbol edits, parse gate, assembled context, fresh per card, planner/Worker cascade | carried | carried | models rule 28 (arm B); worker-loop rules 12, 14; context §2 |
-| HD1:45 | HD:126 | Pillar 4: nested boards, decomposition to competence envelope, dependency scheduling, token/time accounting, WIP tied t… | carried | carried | planner-pm §2.4–2.6; kernel rules 3, 23 |
-| HD1:46 | HD:127 | Pillar 5: per-column gates with status rollup and evidence bundle | carried | carried | kernel rules 21, 24; gates rule 35 |
+| HD1:45 | HD:126 | Pillar 4: nested boards, decomposition to competence envelope, dependency scheduling, token/time accounting, WIP tied t… | carried | carried | planner-pm §2.4–2.6; kernel rules 3, 29 (corrected 2026-09-25) |
+| HD1:46 | HD:127 | Pillar 5: per-column gates with status rollup and evidence bundle | carried | carried | kernel rules 27 (entry conditions), 30 (rollup); gates rule 35 (corrected 2026-09-25) |
 | HD1:47 | HD:128 | Pillar 6: git-native, GitHub and Forgejo sync, AGENTS.md/CLAUDE.md, MCP and ACP, existing CI as gate source | carried | carried | integrations; surface rules 5.3, 9; extensibility |
 | HD1:48 | HD:132 | Structural advantage: compute accounting (tokens, time) | carried | carried | runtime rules 18, 32; planner-pm §2.6 |
 | HD1:49 | HD:136 | Claims not to make: frontier parity on ambiguous work, guaranteed correctness, unmeasured benchmarks, nonexistent compl… | carried | carried | SPINE §Never claim |
@@ -306,7 +337,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:51 | HD:146 | Six day-one concepts: card, accept/send back, gates, evidence, model pair, repository | carried | carried | surface rule 1 ("the models" replaces "model pair") |
 | HD1:52 | HD:150 | Gates derived from project scripts, seen but not written on day one | carried | carried | surface rules 1, 5.3 |
 | HD1:53 | HD:155 | Everything else exported to the user is a defect until defaulted or progressive | carried | carried | surface rule 2 |
-| HD1:54 | HD:159 | First run: resolve profile, derive gates, verify model files, print one paragraph, one confirmation, open board | carried | carried | surface rule 5, SUR-2/3 (gap P10) |
+| HD1:54 | HD:159 | First run: resolve profile, derive gates, verify model files, print one paragraph, one confirmation, open board | carried | gap | surface rule 5, P10 (SUR-2, SUR-3) (corrected 2026-09-25) |
 | HD1:55 | HD:163 | First-run text names "14 GB to fetch" and `--models-dir` | carried | carried | surface rule 5 example |
 | HD1:56 | HD:168 | No file written by the user before the first card; config/gates/hooks/mcp/skills/tiers/rosters/stop reasons exist, none… | carried | carried | surface rule 8 |
 | HD1:57 | HD:174 | Four verdicts per surface item: Day one, Default, Progressive (trigger named; empty view hidden), Developer (`dev` name… | carried | carried | surface rule 2 |
@@ -316,7 +347,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:61 | HD:187 | `sekhemet run [card]` absorbs queue/run/resume | carried | carried | surface rule 13 |
 | HD1:62 | HD:188 | `sekhemet review` opens next card waiting on a person | carried | carried | surface rule 13 |
 | HD1:63 | HD:189 | `accept`, `send-back <card> "<reason>"`, `park`/`unpark` | carried | carried | surface rule 13; review-git §2.4 |
-| HD1:64 | HD:190 | `sekhemet board` the board in the terminal | carried | carried | surface rule 13 (`--terminal` for text) |
+| HD1:64 | HD:190 | `sekhemet board` the board in the terminal | carried | deliberate | surface rule 13 (`ask` replaces `board` at the front door; `board --terminal` under `dev`), NEW-surface-6; owner decision O23 pending, default "approve" (corrected 2026-09-25) |
 | HD1:65 | HD:191 | `sekhemet doctor` checks install incl. weights exist | carried | carried | surface rule 13; models rule 5 |
 | HD1:66 | HD:192 | `sekhemet dev <x>`; listed only by `dev --help` | carried | carried | surface rule 13 |
 | HD1:67 | HD:194 | New user-facing command must displace one | carried | carried | surface rule 14 |
@@ -330,22 +361,22 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:75 | HD:204 | One list of commands feeds parser and dispatcher (six unrouted handlers incl. `overnight` found) | carried | carried | surface rule 17, T4 |
 | HD1:76 | HD:208 | A wrong default fails loudly, naming the file to edit | carried | carried | surface rule 3, SUR-12 |
 | HD1:77 | HD:210 | A parsed config key must be read, else deleted from schema | carried | carried | surface rule 4, SUR-21 |
-| HD1:78 | HD:214 | Parity claim: matches top five except cloud scale and cloud latency | carried-weaker | deliberate | specs/README "Where the old design went" (dated competitor columns removed) |
+| HD1:78 | HD:214 | Parity claim: matches top five except cloud scale and cloud latency | carried-weaker | deliberate | SPINE §What we claim ("**Never claim** parity with frontier models on ambiguous work…"); DEC-23 ("It does not aim to beat frontier models on ambiguous, long-horizon or novel design work, and it is slower per card than cloud tools. These trades are deliberate."); specs/README "Where the old design went" (corrected 2026-09-25) |
 | HD1:79 | HD:220 | Primary interface: board-native nested kanban; CLI/TUI secondary | carried | carried | SPINE; surface Later (TUI later); dashboard §1 |
-| HD1:80 | HD:221 | Inference: llama.cpp / MLX, zero telemetry | contradicted | later | models rule 14, §7 (MLX only a label; R3) |
+| HD1:80 | HD:221 | Inference: llama.cpp / MLX, zero telemetry | contradicted | carried | models rule 14 (llama.cpp baseline); runtime rule 31 ("There is no background telemetry"); models §7 and context §7 (MLX) (corrected 2026-09-25) |
 | HD1:81 | HD:222 | Core architecture: Cordis-inspired TS kernel + SQLite WAL event log | carried | carried | kernel; PROVENANCE techniques |
 | HD1:82 | HD:223 | Tools: symbol-scoped AST tools + LSP + RTK sandboxed bash | carried | carried | worker-loop rule 12 (TS language service); context rule 17 |
 | HD1:83 | HD:224 | Permissions: 3-tier Allow/Ask/Deny + OS sandbox + scope write confinement | carried | carried | security rules 4–17, 25 |
 | HD1:84 | HD:225 | Hooks: 10-point waterfall across loop, gate, sync events | carried | carried | extensibility rule 4 |
 | HD1:85 | HD:226 | Skills: open Agent Skills (`SKILL.md`) + tiered rules + doctor diagnostics | carried | carried | extensibility rules 10–17 |
-| HD1:86 | HD:227 | MCP: dual client and server (boards, cards, gates, evidence exposed) | carried | carried | extensibility rules 18–24 |
+| HD1:86 | HD:227 | MCP: dual client and server (boards, cards, gates, evidence exposed) | carried | gap | extensibility rules 18–24, NEW-extensibility-3 (EXT-17: evidence and registry tools) (corrected 2026-09-25) |
 | HD1:87 | HD:228 | Session: fresh deterministic context per card; replay, fork, rewind from SQLite WAL | carried | carried | runtime rules 1, 11–14 |
 | HD1:88 | HD:229 | Subagents: nested board DAG + SPIDR + branch-and-return isolation | carried | carried | planner-pm §2.7.9; context rule 18 |
 | HD1:89 | HD:230 | Context: AST repo map + RTK (60–90%) + SWE-Pruner Pro (40–60%) + masking | carried-weaker | carried | context rule 17, §9 (R2 ≥ 60%); pruner DEC-21 |
 | HD1:90 | HD:231 | Git: per-card worktrees, checkpoint commits, squash-on-accept Conventional Commits, stacked branches, difftastic | carried | carried | review-git §2.5–2.6 |
 | HD1:91 | HD:232 | DoD: Static, Functional, Robustness, Security, Visual, Hygiene; agent never certifies | carried | carried | gates rule 3 |
 | HD1:92 | HD:233 | Hardware self-calibration S/M/L/XL + memory pressure watchdog with dynamic throttling | carried | carried | models rules 7–9, 19 |
-| HD1:93 | HD:234 | Air-gap kit with local package mirrors (npm, devpi, crates) + byte-identical prompt caching | carried-weaker | later | security §7 (mirror services); lockfile allowlist in v1 |
+| HD1:93 | HD:234 | Air-gap kit with local package mirrors (npm, devpi, crates) + byte-identical prompt caching | carried-weaker | carried | security §Air-gap kit rules 45–49 (the kit); context rule 1 (byte-identical prompt); security §7 (mirror services) (corrected 2026-09-25) |
 | HD1:94 | HD:244 | `read` line-numbered 1-based, byte-budgeted | carried | carried | worker-loop rule 12 (start/end; outline over 200 lines) |
 | HD1:95 | HD:244 | `edit` exact replacement with uniqueness constraint | carried | carried | worker-loop rule 12 |
 | HD1:96 | HD:244 | `grep` over ripgrep with three modes (files, content, counts) | carried-weaker | carried | worker-loop rule 12 (built) |
@@ -364,11 +395,11 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:109 | HD:268 | Manifest lines budgeted into Zone 2; full instructions load only when card class matches triggers | carried | carried | extensibility rules 11–12, 14; context rule 8 |
 | HD1:110 | HD:268 | Doctor benchmarks each skill on held-out tasks, prunes context-bloat rules | carried | carried | extensibility rule 16; measurement rule 24 |
 | HD1:111 | HD:277 | MCP client: servers declared in `config.toml`; discovered tools budgeted and exposed to planner and Worker | carried | carried | extensibility rules 22–23 (declared in `mcp.json`; Worker only via `worker_tools`) |
-| HD1:112 | HD:278 | MCP server exposes workspace, boards, cards, gates, evidence bundles, model registry to IDEs/CLI/CI | carried | carried | extensibility rule 18 (evidence and registry read-only: NEW-extensibility-3 gap) |
-| HD1:113 | HD:286 | Append-only SHA-256 hash-chained event log | carried | carried | kernel rules 7–10 |
+| HD1:112 | HD:278 | MCP server exposes workspace, boards, cards, gates, evidence bundles, model registry to IDEs/CLI/CI | carried | gap | extensibility rule 18, NEW-extensibility-3 (EXT-17) (corrected 2026-09-25) |
+| HD1:113 | HD:286 | Append-only SHA-256 hash-chained event log | carried | carried | kernel rules 8–11 (corrected 2026-09-25) |
 | HD1:114 | HD:287 | Resume: reconstruct board state, restore worktree to last checkpoint, resume | carried | carried | runtime rule 10 |
 | HD1:115 | HD:288 | Fork at step N with modified model route, prompt version or budget | carried | carried | runtime rule 13, RUN-27 |
-| HD1:116 | HD:289 | Rewind: reset worktree to step N checkpoint, record event, invalidate later gate passes | carried | carried | runtime rule 12; kernel rule 26, K-S7-8 |
+| HD1:116 | HD:289 | Rewind: reset worktree to step N checkpoint, record event, invalidate later gate passes | carried | gap | runtime rule 12; kernel rule 32, §4 "Rewind invalidates earlier evidence for Review" not-built, S7 (K-S7-8) (corrected 2026-09-25) |
 | HD1:117 | HD:290 | Replay against pinned configurations for A/B | carried | carried | runtime rule 14 |
 | HD1:118 | HD:291 | Headless CLI `sekhemet run <card>` | carried | carried | surface rule 18; extensibility rule 27 |
 | HD1:119 | HD:291 | TypeScript SDK with async-iterator event streams | carried-weaker | deliberate | extensibility rule 28, §8 Q1 ("changed from the old design's shipped SDK") |
@@ -381,13 +412,13 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:126 | HD:315 | Squash-on-accept into Conventional Commits | carried | carried | review-git §2.5.4 |
 | HD1:127 | HD:315 | Stacked branches for decomposed feature chains | carried | carried | review-git §2.6.2, §2.5.5 |
 | HD1:128 | HD:315 | Structural diffs (difftastic) | carried | carried | review-git §2.6.6 (partial, S5); gates Later for the bundle field |
-| HD1:129 | HD:315 | Opt-in GitHub App adapter managing the PR lifecycle | carried | carried | integrations rule 10; review-git §2.5.7 (gap P9/S5) |
-| HD1:130 | HD:323 | Gates run on an isolated gate host | carried | carried | gates rule 11 (separate host when configured, else local sandbox; T1 gap) |
+| HD1:129 | HD:315 | Opt-in GitHub App adapter managing the PR lifecycle | carried | gap | integrations rules 10, 15; review-git §2.5.7; P9, S5 (INT-12–14, RG-S5-18) (corrected 2026-09-25) |
+| HD1:130 | HD:323 | Gates run on an isolated gate host | carried | gap | gates rule 11, T1 (corrected 2026-09-25) |
 | HD1:131 | HD:324 | Static: in-memory AST parse, `tsc --noEmit`, linter | carried | carried | gates rule 3; worker-loop rule 14 |
 | HD1:132 | HD:325 | Functional: unit, integration, acceptance tests that must fail before implementation | carried | carried | gates rules 3, 5–6 |
 | HD1:133 | HD:326 | Robustness: diff-scoped mutation (Stryker / cargo-mutants) | carried | carried | gates rule 32 (own diff-scoped step; PROVENANCE) |
 | HD1:134 | HD:327 | Security: gitleaks, existence/slopsquatting checks, osv-scanner | carried | carried | gates rules 3, 15; security rule 44; GT-10 |
-| HD1:135 | HD:328 | Visual: Playwright DOM assertions, layout bounding boxes, pixelmatch element screenshots, axe-core | carried-weaker | gap | gates rule 29, NEW-gates-4 (GT-N4-6); libraries still proposals (R16) |
+| HD1:135 | HD:328 | Visual: Playwright DOM assertions, layout bounding boxes, pixelmatch element screenshots, axe-core | carried-weaker | gap | gates rule 29, §8 Q1, NEW-gates-4 (GT-N4-6); Playwright and axe-core approved (DEC-29 O5), axe-core inside the product gate open (O27) (corrected 2026-09-25) |
 | HD1:136 | HD:329 | EvidenceBundle with difftastic enabling "5-second human acceptance" | contradicted | deliberate | review-git rule 2, §9 (a decision in under a minute); structural diff rule 6 (partial, S5) |
 | HD1:137 | HD:335 | Omitted: cloud routing and fallback (data leakage, hides competence limits) | carried | carried | DEC-03; models rule 1 ("never a silent fallback") |
 | HD1:138 | HD:336 | Omitted: continuous conversational accumulation (context rot) | carried | carried | runtime rationale "Why no sessions"; DEC-23 |
@@ -414,7 +445,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:159 | HD:366 | Invariant: model-visible means logged, runtime assertion enforces it | carried-weaker | carried | kernel rule 17, §4 (built), K-9 |
 | HD1:160 | HD:370 | Service keys ctx.events … ctx.sync and what each owns | carried | carried | SPINE package table (renamed to packages) |
 | HD1:161 | HD:387 | Processes: board UI, core host, inference host, gate runner (Linux sandbox), SQLite store; same machine on single box | carried | carried | SPINE §How the parts fit |
-| HD1:162 | HD:398 | Step = one model request + tool calls; turn = steps for one card attempt | contradicted | carried | DEC-26; worker-loop §3 Terms (a step is one model request and its tool calls; "turn" is only the code's synonym) |
+| HD1:162 | HD:398 | Step = one model request + tool calls; turn = steps for one card attempt | contradicted | deliberate | DEC-26; NAMING "The run" (the old use of *turn* for all the steps of an attempt is retired); worker-loop §3 Terms (corrected 2026-09-25) |
 | HD1:163 | HD:398 | Turn-flow events: card/start, step/start, context/assembled, model/request, model/response, tool/call, tool/result, ste… | carried-weaker | deliberate | kernel §3 closing note (never the code's; mapped) |
 | HD1:164 | HD:400 | Waterfall extension points: pre-step (inject checkpoints/questions), pre/post-tool (permissions, parse gate, secret sca… | carried | carried | extensibility rules 4–6 |
 | HD1:165 | HD:402 | Plugin isolation and third-party versioning deferred past v1 | later | later | extensibility §7 |
@@ -426,44 +457,44 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:171 | HD:417 | EvidenceBundle entity fields | carried | carried | gates rule 35 |
 | HD1:172 | HD:418 | Attempt: model, quant, step budget, stop reason, cost | carried | carried | kernel rule 6 (`AttemptRecord`); gates rule 35 settings |
 | HD1:173 | HD:419 | GateResult: name, status, typed failures, duration, artifacts | carried | carried | gates Contract (`GateResult`) |
-| HD1:174 | HD:420 | Goal sits above projects | carried | carried | planner-pm §2.11 |
+| HD1:174 | HD:420 | Goal sits above projects | carried | carried | planner-pm §2.11 rule 1 (after restoration) (corrected 2026-09-25) |
 | HD1:175 | HD:433 | Card difficulty 1..10, planner-assigned | carried | carried | planner-pm §2.4 Estimable; K-S7-1 |
-| HD1:176 | HD:434 | Card budget and actuals: steps, tokens, seconds | carried | carried | planner-pm §2.1.5; worker-loop rule 21 |
+| HD1:176 | HD:434 | Card budget and actuals: steps, tokens, seconds | carried | carried | planner-pm §2.1.5 (budgets), §2.6.1 (actuals written back on acceptance); worker-loop rule 21; kernel rule 6 Attempt (tokens and seconds used) (corrected 2026-09-25) |
 | HD1:177 | HD:444 | Card route: planner and worker model ids | carried | carried | planner-pm §2.1.5 ("routing") |
 | HD1:178 | HD:448 | dependsOn DAG, cycle-checked on write | carried | carried | kernel rule 3 |
 | HD1:179 | HD:449 | filesTouched declared scope; writes outside fail the card | carried | carried | worker-loop rules 14, 16 (typed refusal; `scope_violation`) |
 | HD1:180 | HD:452 | externalRef {system github/forgejo, id, url} | carried | carried | integrations rule 8 (adds jira, linear) |
 | HD1:181 | HD:463 | Eligible only when every dependency done; overlapping siblings serialized | carried | carried | kernel rules 3–4 |
-| HD1:182 | HD:467 | SQLite WAL, single writer | carried | carried | kernel rule 27 |
-| HD1:183 | HD:467 | Hash chain over (seq, ts, actor, type, cardId, payloadHash, prevHash) — one definition | carried | carried | kernel rule 8 (one formula in code; timestamp coverage is NEW-kernel-1 gap) |
-| HD1:184 | HD:467 | Board state is a projection, rebuildable | carried | carried | kernel rule 13 |
-| HD1:185 | HD:467 | Context packs and evidence on disk under `.sekhemet/`, referenced by hash | carried | carried | kernel rule 15 |
+| HD1:182 | HD:467 | SQLite WAL, single writer | carried | carried | kernel rule 38 (corrected 2026-09-25) |
+| HD1:183 | HD:467 | Hash chain over (seq, ts, actor, type, cardId, payloadHash, prevHash) — one definition | carried | gap | kernel rule 9, NEW-kernel-1 (K-N1-1) (corrected 2026-09-25) |
+| HD1:184 | HD:467 | Board state is a projection, rebuildable | carried | carried | kernel rule 14 (corrected 2026-09-25) |
+| HD1:185 | HD:467 | Context packs and evidence on disk under `.sekhemet/`, referenced by hash | carried | carried | kernel rule 16 (corrected 2026-09-25) |
 | HD1:186 | HD:469 | Retention: packs and raw observations pruned 30 days after close; evidence, final diff, gate pass events kept forever | carried | carried | runtime rule 33 |
-| HD1:187 | HD:473 | Columns are states; each transition has an entry gate | carried | carried | kernel rules 17, 21 |
+| HD1:187 | HD:473 | Columns are states; each transition has an entry gate | carried | carried | kernel rules 23 (nine states), 27 (entry conditions) (corrected 2026-09-25) |
 | HD1:188 | HD:473 | UI offers an explicit override (drag past a gate) recorded as a human decision | carried-weaker | later | dashboard §7; kernel rule 28 (CLI, API) |
-| HD1:189 | HD:477 | Nine states, one name each across storage, column, error, docs | carried | carried | kernel rule 17 |
-| HD1:190 | HD:481 | State table: backlog, ready, planning, in_progress, verify, review, done, parked, rejected with meanings | carried | carried | kernel rule 17 |
+| HD1:189 | HD:477 | Nine states, one name each across storage, column, error, docs | carried | carried | kernel rule 23; NAMING (corrected 2026-09-25) |
+| HD1:190 | HD:481 | State table: backlog, ready, planning, in_progress, verify, review, done, parked, rejected with meanings | carried | carried | kernel rule 23 (corrected 2026-09-25) |
 | HD1:191 | HD:491 | Working/Checking/Closed retired | carried | carried | kernel OQ1 (NAMING.md still conflicts; recommendation to fix) |
-| HD1:192 | HD:493 | parked→ready and rejected→ready reachable from CLI | carried | carried | kernel rule 19, K-S4-7 (gap S4/S5) |
-| HD1:193 | HD:498 | Edge Backlog→Ready (deps met, context fits) | carried | carried | kernel rule 21 table |
+| HD1:192 | HD:493 | parked→ready and rejected→ready reachable from CLI | carried | gap | kernel rule 25 (unpark, reopen), K-S4-7, S4 (corrected 2026-09-25) |
+| HD1:193 | HD:498 | Edge Backlog→Ready (deps met, context fits) | carried | gap | kernel rules 25, 27 (Small at `ready`); context §4 "Card size checked once, as Zone 3's fit at `ready`" not-built, NEW-context-2 (corrected 2026-09-25) |
 | HD1:194 | HD:499 | Edge Ready→Planning (planner claims); Planning→InProgress (plan + criteria approved) | carried-weaker | carried | kernel rule 25 |
 | HD1:195 | HD:503 | Edge Verify→Planning on gate fail (replan) | carried-weaker | carried | kernel rule 25 |
 | HD1:196 | HD:505 | Edge Review→InProgress on human change request | contradicted | deliberate | review-git §2.4, §9; DEC-24 (send back to Ready) |
-| HD1:197 | HD:507 | Edge InProgress→Parked on stall or budget | carried | carried | code table; worker-loop rule 34.4 |
-| HD1:198 | HD:516 | Ready entry: deps done; context pack assembles within budget; criteria present | carried | carried | kernel rule 21; context rule 10, CX-N2-2 |
+| HD1:197 | HD:507 | Edge InProgress→Parked on stall or budget | carried | deliberate | kernel rule 25 (LEGAL_TRANSITIONS, now in the spec); worker-loop rule 31 (budget reasons park unless the gates ran; `oscillation_detected` and `no_progress` go to Verify), §9 (after the reason is added) (corrected 2026-09-25) |
+| HD1:198 | HD:516 | Ready entry: deps done; context pack assembles within budget; criteria present | carried | gap | kernel rule 27; context rule 10, NEW-context-2 (corrected 2026-09-25) |
 | HD1:199 | HD:517 | Planning entry: planner model available; difficulty scored | missing | gap | kernel rule 27, NEW-kernel-5 |
 | HD1:200 | HD:518 | InProgress entry: plan exists; acceptance tests written and failing (types-only card red on typecheck); scope declared | carried-weaker | deliberate | kernel rule 27, §8 Q6 (decided: no "plan exists" condition (DEC-29; kernel K-N5-8)) |
-| HD1:201 | HD:519 | Verify entry: Worker stopped with recorded stop reason | carried | carried | kernel rule 21, K-S4-6 (gap S4) |
-| HD1:202 | HD:520 | Review entry: every required gate passed; evidence complete | carried | carried | kernel rule 21; gates rule 9 |
-| HD1:203 | HD:521 | Done entry: human acceptance recorded | carried | carried | kernel rule 21 |
+| HD1:201 | HD:519 | Verify entry: Worker stopped with recorded stop reason | carried | gap | kernel rule 27 (`verify` entry), K-S4-6, S4 (corrected 2026-09-25) |
+| HD1:202 | HD:520 | Review entry: every required gate passed; evidence complete | carried | carried | kernel rule 27 (corrected 2026-09-25) |
+| HD1:203 | HD:521 | Done entry: human acceptance recorded | carried | carried | kernel rule 27; review-git §2.5 (corrected 2026-09-25) |
 | HD1:204 | HD:522 | Parked entry: stall, budget exhaustion, capability ceiling | carried-weaker | gap | kernel rule 27, NEW-kernel-5 |
 | HD1:205 | HD:523 | Rejected: closed unmerged; reopen → Ready | carried | carried | review-git §2.4 |
-| HD1:206 | HD:527 | Rollup: parent done only if all children done AND parent integration gate passes on merged result | carried | carried | kernel rule 24, K-7 |
+| HD1:206 | HD:527 | Rollup: parent done only if all children done AND parent integration gate passes on merged result | carried | carried | kernel rule 30, K-7 (corrected 2026-09-25) |
 | HD1:207 | HD:527 | Project status is rollup of top-level cards | carried-weaker | gap | kernel rule 6, NEW-kernel-5 (K-N5-3) |
-| HD1:208 | HD:531 | Regression protection: evidence snapshotted at Review; revision must re-pass every gate | carried | carried | kernel rule 25 |
+| HD1:208 | HD:531 | Regression protection: evidence snapshotted at Review; revision must re-pass every gate | carried | carried | kernel rule 31 (corrected 2026-09-25) |
 | HD1:209 | HD:531 | A revision regressing a previously passing gate is rejected; card returns to Planning with the regression named | carried-weaker | gap | kernel rule 31, NEW-kernel-5 |
 | HD1:210 | HD:538 | ReviewWIP = floor(reviewMinutesPerDay / medianReviewMinutesPerCard) | carried | carried | review-git §2.2.1 |
-| HD1:211 | HD:541 | When Review full, no card may enter Verify | carried | carried | kernel rule 23; review-git §2.2.4 |
+| HD1:211 | HD:541 | When Review full, no card may enter Verify | carried | carried | kernel rule 29 (corrected 2026-09-25) |
 | HD1:212 | HD:545 | Context assembled deterministically per card, never accumulated | carried | carried | context rule 1 |
 | HD1:213 | HD:549 | Repo map: tag extraction, file graph, personalized PageRank seeded to scope, binary-search fit | carried | carried | context rule 13 (TS compiler, not Tree-sitter; budget 1,200) |
 | HD1:214 | HD:549 | Aider edge-weight multipliers: mentioned and well-named identifiers up, in-scope files highest | carried-weaker | gap | context rule 13, NEW-context-5 |
@@ -475,10 +506,10 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:220 | HD:558 | Four-zone prompt layout and stability | carried | carried | context rule 8 (Zone 3 now per attempt incl. spec; Zone 4 per turn) |
 | HD1:221 | HD:563 | Zone 4 = card spec, criteria, scope, open TODOs, latest observation, re-injected goal | contradicted | deliberate | context rule 8, §9 (M8) |
 | HD1:222 | HD:565 | Zone 2 versioned, updated only between cards | carried | carried | context rules 8, 24; CX-5 |
-| HD1:223 | HD:569 | Masked pointer example (~15 tokens with EvidenceRef) | carried | carried | context rule 3 (`recall(ref)`) |
+| HD1:223 | HD:569 | Masked pointer example (~15 tokens with EvidenceRef) | carried | deliberate | context rule 3 (one line of ≤ 30 tokens at masking points, CX-M8-8), §9; DEC-24 (corrected 2026-09-25) |
 | HD1:224 | HD:569 | Full observations remain in log/disk, retrievable by reference | carried | carried | context rules 3, 17 |
 | HD1:225 | HD:569 | Goal and open TODOs re-injected at tail every step | carried | carried | context rule 8 |
-| HD1:226 | HD:573 | `run` routes commands through the RTK binary | carried-weaker | deliberate | context rule 17 (native condenser; binary on no v1 path) |
+| HD1:226 | HD:573 | `run` routes commands through the RTK binary | carried-weaker | deliberate | context rule 17; PROVENANCE "Output condensing (RTK)" row (corrected 2026-09-25) |
 | HD1:227 | HD:574 | RTK four strategies: filtering, grouping, truncation, deduplication | carried | carried | context rule 17 |
 | HD1:228 | HD:579 | RTK tracks savings statistics | missing | gap | context rule 17, NEW-context-5 |
 | HD1:229 | HD:579 | read/grep/glob native condensing; lossless for repair data; raw output saved to evidence | carried | carried | context rule 17, CX-3 |
@@ -490,8 +521,8 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:235 | HD:591 | Zero silent cache invalidation; volatile data banned from prefix | carried | carried | context rule 5 |
 | HD1:236 | HD:592 | MLX path: unified memory reuse, MTPLX native MTP heads | later | later | context §7; models §7 |
 | HD1:237 | HD:593 | Prefix-cache hit rate recorded per step; <85% on tool-result steps is a defect | carried | carried | context rule 7 (median over turns after first) |
-| HD1:238 | HD:593 | Low hit rate alerts the operator | carried-weaker | gap | context rule 7, M8 |
-| HD1:239 | HD:599 | Planner declares scope by bounded search before Ready, outside Worker budget | carried | carried | context rule 22 (gap P1) |
+| HD1:238 | HD:593 | Low hit rate alerts the operator | carried-weaker | gap | context rule 7, §4 "Cache hit alert" partial, M8 (after CX-M8-10 is added) (corrected 2026-09-25) |
+| HD1:239 | HD:599 | Planner declares scope by bounded search before Ready, outside Worker budget | carried | gap | context rule 22, P1 (CX-P1-1…5) (corrected 2026-09-25) |
 | HD1:240 | HD:601 | Step 1: identifiers looked up in symbol table | carried | carried | context rule 22, CX-P1-1 |
 | HD1:241 | HD:602 | Step 2: lexical search ranked defs>refs, source>tests>generated | carried | carried | context rule 22, CX-P1-4 |
 | HD1:242 | HD:603 | Step 3: one-hop graph expansion | carried | carried | context rule 22, CX-P1-3 |
@@ -522,20 +553,20 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:267 | HD:689 | Worker applies sketch mechanically via symbol replacement | carried-weaker | later | worker-loop §7 |
 | HD1:268 | HD:692 | Format tax: grammar constraints degrade small-model reasoning 15–30% | carried | carried | models rule 28; DEC-22 |
 | HD1:269 | HD:693 | Constraints help on terminal payloads, hurt on reasoning and selection | carried | carried | models rule 28 |
-| HD1:270 | HD:695 | Tri-arm A/B/C qualified per model; winner pinned [BENCH] | carried | carried | models rule 28, NEW-models-5; OPEN_QUESTIONS #1 |
-| HD1:271 | HD:700 | 0.6B skimmer strips 40–60% of code lines | later | later | context §7 |
+| HD1:270 | HD:695 | Tri-arm A/B/C qualified per model; winner pinned [BENCH] | carried | gap | models rule 28, §4 "Tool arm measured and pinned" not-built, NEW-models-5; OPEN_QUESTIONS benchmark 1 (corrected 2026-09-25) |
+| HD1:271 | HD:700 | 0.6B skimmer strips 40–60% of code lines | later | later | context §7 (learned line pruner) (corrected 2026-09-25) |
 | HD1:272 | HD:701 | Observation masking older than 2 steps | contradicted | deliberate | context rule 3; DEC-24 |
 | HD1:273 | HD:706 | Symbol replacements cannot match twice, no offset arithmetic, whitespace-immune | carried | carried | worker-loop rule 12 |
 | HD1:274 | HD:707 | Every edit passes in-memory parse gate before disk; syntax errors abort without burning steps | carried | carried | worker-loop rule 14, WL-3 |
 | HD1:275 | HD:711 | Ban ungrounded self-reflection loops | carried | carried | worker-loop rule 3; DEC-22 |
-| HD1:276 | HD:712 | Parallel pass@k on L/XL or overnight; k ∈ [2,4], T ∈ [0.4,0.7] | carried-weaker | later | worker-loop §7 |
+| HD1:276 | HD:712 | Parallel pass@k on L/XL or overnight; k ∈ [2,4], T ∈ [0.4,0.7] | carried-weaker | later | worker-loop rule 37 (`pass_at_k` 1–4, samples 2..k at 0.4, 0.55, 0.7, each from the same starting tree, first passing sample taken; v1, built); worker-loop §7 (parallel samples, per-tier cap) (corrected 2026-09-25) |
 | HD1:277 | HD:713 | Each sample verified in isolated ephemeral worktree; first to pass selected | carried | carried | worker-loop rule 37 |
 | HD1:278 | HD:719 | GateFailure example with location/expected/actual/minimalRepro | carried | carried | gates rule 19 |
 | HD1:279 | HD:721 | Only top 3 topologically ordered failures reach the model | carried | carried | gates rule 20 |
 | HD1:280 | HD:722 | 4-rung ladder enforces fresh context | carried | carried | worker-loop rule 34 |
 | HD1:281 | HD:726 | Exemplar source: accepted cards and fixing commits from repo's own git history | carried-weaker | later | context §7 |
 | HD1:282 | HD:727 | 1–2 accepted trajectories of same class into Zone 2 | carried | carried | context rules 8, 25 (as diff hunks) |
-| HD1:283 | HD:731 | Up to 40% of tool-call failures from template bugs | carried-weaker | carried | models rule 12 (templates pinned by SHA-256); the 40% figure is rationale only |
+| HD1:283 | HD:731 | Up to 40% of tool-call failures from template bugs | carried-weaker | carried | models rule 12 and §9 (after restoration) (corrected 2026-09-25) |
 | HD1:284 | HD:732 | Vendor-exact Jinja templates SHA-256 pinned; change invalidates qualification | carried | carried | models rule 12, MD-2 |
 | HD1:285 | HD:733 | KV 8-bit; 4-bit prohibited for tool-calling models | carried | carried | models rule 10, MD-1 |
 | HD1:286 | HD:734 | 2026 cache flags (8–16 GiB, 32 checkpoints, 8192 min-step, -sps) | contradicted | deliberate | context rule 6; DEC-24 |
@@ -553,7 +584,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:298 | HD:760 | `run` sandboxed with RTK | carried | carried | worker-loop rule 12 |
 | HD1:299 | HD:761 | `docs` version-pinned documentation across knowledge tiers | carried | carried | worker-loop rule 12 |
 | HD1:300 | HD:762 | `deps_source` installed dependency source at resolved version | carried | carried | worker-loop rule 12 (`dependencies`) |
-| HD1:301 | HD:763 | `repo`: tree, file at a ref, code search, releases between two versions | carried-weaker | later | worker-loop §7 (R4) |
+| HD1:301 | HD:763 | `repo`: tree, file at a ref, code search, releases between two versions | carried-weaker | deliberate | worker-loop rule 12 (`list_dir`, `grep_search`, `git_history` over this repository), §7 "Release notes between two versions" (reason); design-stage §2.7 rule 10 (the Researcher's `repo`: any repository, any ref, code search across GitHub, release diffs) (corrected 2026-09-25) |
 | HD1:302 | HD:764 | `ask` non-blocking question answered at a later step boundary | contradicted | gap | worker-loop rule 12, NEW-worker-loop-4 (R2) |
 | HD1:303 | HD:765 | `note` writes to card thread or posts a decision request | carried | carried | worker-loop rule 12 |
 | HD1:304 | HD:767 | Code-mode single script when registry marks Worker script-capable | carried | carried | worker-loop rule 12 `run_script`, WL-M2-4 |
@@ -566,7 +597,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:311 | HD:781 | A-B-A → oscillation | carried | carried | worker-loop rule 18 |
 | HD1:312 | HD:782 | Both terminate the turn immediately | contradicted | deliberate | worker-loop rule 18, §9 |
 | HD1:313 | HD:782 | Step budgets set dynamically per card class by the planner | carried | carried | worker-loop rule 21 (p80×1.25, ±15%, ≥4) |
-| HD1:314 | HD:787 | Stop reason `done_pending_gates` | carried | carried | worker-loop rule 33 (meaning refined) |
+| HD1:314 | HD:787 | Stop reason `done_pending_gates` | carried | deliberate | worker-loop rule 33, §9 (after the reason is added) (corrected 2026-09-25) |
 | HD1:315 | HD:788 | Stop reason `budget_exhausted` | carried | carried | worker-loop OQ1 class |
 | HD1:316 | HD:789 | Stop reason `no_progress` | carried | carried | worker-loop rule 19 |
 | HD1:317 | HD:790 | Stop reason `scope_violation` | carried | carried | worker-loop rule 32 |
@@ -595,7 +626,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:340 | HD:836 | Short views, recent history in full, failures cut to the assertion | carried | carried | worker-loop rule 29 (100-line window A/B); context rules 3, 16 |
 | HD1:341 | HD:837 | After a failure the next edit states which assertion it addresses (A/B) | carried | carried | worker-loop rule 29 (`hypothesis`) |
 | HD1:342 | HD:839 | Fingerprint hashes working-tree content via throwaway index | carried | carried | worker-loop rule 17, WL-1 |
-| HD1:343 | HD:839 | Data contract as own section appended to whichever map is used | carried | carried | context rule 14 (gap M5) |
+| HD1:343 | HD:839 | Data contract as own section appended to whichever map is used | carried | gap | context rule 14, M5 (corrected 2026-09-25) |
 | HD1:344 | HD:839 | Surgical thinking also after a failed automatic re-check | carried | carried | worker-loop rule 24, WL-7 |
 | HD1:345 | HD:841 | No planning/todo tool for the Worker; planning upstream | carried | carried | worker-loop rule 28 |
 | HD1:346 | HD:843 | Every behaviour-changing mechanism ships behind a switch, admitted by the frozen suite | carried | carried | worker-loop rule 1 |
@@ -627,13 +658,13 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:372 | HD:909 | Negotiable: criteria not line-by-line syntax; reject → goal criteria | carried | carried | planner-pm §2.4 |
 | HD1:373 | HD:910 | Valuable: links to project gate or goal criterion; reject orphans | carried | carried | planner-pm §2.4 (adds epic behaviour) |
 | HD1:374 | HD:911 | Estimable: difficulty maps to throughput envelope; >7 forces re-split | carried | carried | planner-pm §2.4 |
-| HD1:375 | HD:912 | Small: pack ≤25% of tier working context; step budget ≤40 | carried-weaker | deliberate | planner-pm §2.4, §9; DEC-24 (INVEST Small: 25% of the resolved Worker's window, 4,096 of 16,384; P1 PM-12, PM-13) |
+| HD1:375 | HD:912 | Small: pack ≤25% of tier working context; step budget ≤40 | carried-weaker | deliberate | planner-pm §2.4 Small row, §9; DEC-27 (one number for card size, N5); DEC-24 (corrected 2026-09-25) |
 | HD1:376 | HD:913 | Testable: failing test committed before handoff | carried | carried | planner-pm §2.4; gates GT-P1-1 |
 | HD1:377 | HD:918 | WSJF = (value + time criticality + risk reduction)/(estimated steps × difficulty) | carried | carried | planner-pm §2.7.2 |
 | HD1:378 | HD:919 | RICE for idea-stage repos; weights in config.toml; planner never invents weights | carried | carried | planner-pm §2.7.2 |
 | HD1:379 | HD:923 | Estimates in tokens, seconds, steps; never story points | contradicted | deliberate | planner-pm §2.6, §9 |
 | HD1:380 | HD:924 | EstimatedTokens = BasePackTokens + Difficulty × HistoricalTokensPerDifficulty[Class]; actuals write back | carried | carried | planner-pm §2.6.1 |
-| HD1:381 | HD:929 | ReviewWIP from project's accepted-card history, floored at 1 | carried | carried | review-git §2.2.1–2.2.3 (per project; 15-min prior; gap S6) |
+| HD1:381 | HD:929 | ReviewWIP from project's accepted-card history, floored at 1 | carried | gap | review-git §2.2.1–2.2.3, S6 (corrected 2026-09-25) |
 | HD1:382 | HD:929 | Planner opens no more work toward Review than allowed; prefers splitting to keep diffs small | carried | carried | planner-pm §2.7.5 |
 | HD1:383 | HD:933 | Routing: difficulty <4 direct with plan; 4–7 edit sketch; >7 split | carried | carried | planner-pm §2.5 |
 | HD1:384 | HD:933 | Rung-3 failure or context exceeds tier budget at max decomposition → `capability_ceiling`, escalate with diagnostic | carried | carried | planner-pm §2.5 |
@@ -661,7 +692,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:406 | HD:990 | Nothing blocked on the conversation; question left open on board | carried | carried | design-stage §2.2.5 |
 | HD1:407 | HD:994 | Brief at `.sekhemet/brief.md`, versioned, amendable | carried | carried | design-stage §2.3 |
 | HD1:408 | HD:998 | Brief sections: Problem (incl. "today instead"), Outcome, Non-goals, Constraints, Prior art (cited, Researcher), Riskie… | carried | carried | design-stage §2.3 |
-| HD1:409 | HD:1010 | Prior art researched by the Researcher with sources, not recalled from weights | carried | carried | design-stage §2.5.7 (gap P7) |
+| HD1:409 | HD:1010 | Prior art researched by the Researcher with sources, not recalled from weights | carried | gap | design-stage §2.5.7, P7 (corrected 2026-09-25) |
 | HD1:410 | HD:1016 | Backbone of user activities; thinnest slice through all becomes first cards | carried | carried | design-stage §2.3; planner-pm §2.2.5 |
 | HD1:411 | HD:1018 | Narrow and complete over one part deep; unbuilt shape visible | carried | carried | design-stage §2.3; planner-pm §2.2.5 |
 | HD1:412 | HD:1020 | Riskiest assumption scheduled first regardless of backbone | contradicted | deliberate | design-stage §9; planner-pm §2.2.4 |
@@ -680,7 +711,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:425 | HD:1058 | Quality words become constraints with defaults, not cards | carried | carried | design-stage §2.2.8 |
 | HD1:426 | HD:1058 | Every default an assumption on every card and on the epic; request phrasing dropped | carried | carried | design-stage §2.2.8–9 |
 | HD1:427 | HD:1062 | Reuse survey whenever design stage says anything | carried | carried | design-stage §2.5 |
-| HD1:428 | HD:1064 | Registries (npm; PyPI by name) and GitHub, one short keyword query per need; only keywords leave | carried | carried | design-stage §2.5.1–2 (gap P7/S8) |
+| HD1:428 | HD:1064 | Registries (npm; PyPI by name) and GitHub, one short keyword query per need; only keywords leave | carried | gap | design-stage §2.5.1–2.5.2, P7, S8 (corrected 2026-09-25) |
 | HD1:429 | HD:1065 | Literature only for algorithmic work | carried | carried | design-stage §2.5.1 |
 | HD1:430 | HD:1067 | Relevance: ≥2 need words in name/description; kind words dropped from query | carried | carried | design-stage §2.5.3 |
 | HD1:431 | HD:1067 | Popularity: ≥1,000 weekly downloads or 20 stars | carried | carried | design-stage §2.5.3 |
@@ -692,16 +723,16 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:437 | HD:1073 | `--offline` / `SEKHEMET_OFFLINE=1` plans without looking and says so | carried | carried | design-stage §2.6.1 |
 | HD1:438 | HD:1075 | Not built: riskiest-assumption scheduling, model phrasing, deep Researcher before planning | gap | gap | planner-pm P1; design-stage NEW-design-stage-1, P7 |
 | HD1:439 | HD:1081 | New TS project has static layer from first file | carried | carried | design-stage §2.4.1 |
-| HD1:440 | HD:1087 | Card zero runs ecosystem generator (`cargo new`, `uv init`, `pnpm create vite`, `npm init`) | carried | carried | design-stage §2.4.1 (gap P2) |
+| HD1:440 | HD:1087 | Card zero runs ecosystem generator (`cargo new`, `uv init`, `pnpm create vite`, `npm init`) | carried | gap | design-stage §2.4.1, P2 (corrected 2026-09-25) |
 | HD1:441 | HD:1089 | Template library rejected; generator + version recorded in brief | carried | carried | design-stage §2.4.1, §9 Rejected |
 | HD1:442 | HD:1093 | Card one: failing test exists, runs, fails for stated reason | carried | carried | design-stage §2.4.2 |
 | HD1:443 | HD:1101 | Novel architecture: "talk it through with me, then I will cut the cards" | carried | carried | design-stage §2.4.3 |
 | HD1:444 | HD:1105 | Format interactions for rapid "5-second approvals" | contradicted | deliberate | review-git rule 2, §9 (a decision in under a minute, not 5 seconds) |
-| HD1:445 | HD:1113 | Steer: free text delivered at next step boundary as `card/steer`, no restart, no prefix invalidation, lands in volatile… | later | later | planner-pm §7 |
-| HD1:446 | HD:1114 | Scope amendment mid-card; Worker told | later | later | planner-pm §7 |
+| HD1:445 | HD:1113 | Steer: free text delivered at next step boundary as `card/steer`, no restart, no prefix invalidation, lands in volatile… | later | later | planner-pm §7 (steering) (corrected 2026-09-25) |
+| HD1:446 | HD:1114 | Scope amendment mid-card; Worker told | later | later | planner-pm §7 (steering) (corrected 2026-09-25) |
 | HD1:447 | HD:1115 | Abort with a reason → stop detail + playbook candidate | carried | carried | planner-pm §2.14 |
 | HD1:448 | HD:1119 | Steer cannot relax gate, widen permission, accept | later | later | planner-pm §7 |
-| HD1:449 | HD:1120 | Steer recorded before delivery; steered outcome flagged, excluded from unattended stats | later | later | planner-pm §7 |
+| HD1:449 | HD:1120 | Steer recorded before delivery; steered outcome flagged, excluded from unattended stats | later | later | planner-pm §7 (steering) (corrected 2026-09-25) |
 | HD1:450 | HD:1121 | Steering not required for correctness | later | later | planner-pm §7 |
 | HD1:451 | HD:1127 | Card state decides: attached human answers in seconds while Worker holds its slot; 60 s single timeout | later | later | planner-pm §7 |
 | HD1:452 | HD:1127 | Unattached/deadline: `safe_default` takes recommendation, `default_deny` parks | carried | carried | planner-pm §2.10.3 |
@@ -726,8 +757,8 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:471 | HD:1196 | Escalate on capability_ceiling, external dependency, gate failing for credentials/env drift, budget forecast over cap;… | carried | carried | planner-pm §2.5 |
 | HD1:472 | HD:1202 | Human cmd: Accept, Return with reason, Split | carried | carried | planner-pm §2.14 |
 | HD1:473 | HD:1203 | Human cmd: Park, Unpark, Reprioritize (recomputes schedule) | carried | carried | planner-pm §2.14 |
-| HD1:474 | HD:1204 | Human cmd: Override gate with recorded reason, never security | carried | carried | planner-pm §2.14; kernel rule 22 |
-| HD1:475 | HD:1205 | Human cmd: Reroute (force model or arm for a card) | later | later | planner-pm §7 |
+| HD1:474 | HD:1204 | Human cmd: Override gate with recorded reason, never security | carried | carried | kernel rule 28, K-5 (corrected 2026-09-25) |
+| HD1:475 | HD:1205 | Human cmd: Reroute (force model or arm for a card) | later | later | planner-pm §7 (Reroute); runtime §3 (the `reroute` route exists in code) (corrected 2026-09-25) |
 | HD1:476 | HD:1206 | Human cmd: Explain evidence behind estimate, route or decision | later | later | planner-pm §7 |
 | HD1:477 | HD:1207 | Human cmd: Pause project | missing | gap | runtime §2.17a, NEW-runtime-10 |
 | HD1:478 | HD:1207 | Human cmd: Set hours | carried | carried | surface rule 23 `reserved_hours`; runtime rule 17 |
@@ -736,7 +767,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:481 | HD:1217 | Goal: outcome with criteria pursued until met or reported impossible; runs continuously | carried | carried | planner-pm §2.11 |
 | HD1:482 | HD:1222 | Goal record fields (workspaceId, projectIds, statement, criteria kind/check/status, budget tokens/hours/deadline, strat… | carried | carried | planner-pm Contract (`Goal` in goals.ts) |
 | HD1:483 | HD:1247 | Criteria semantics gate / metric / human; all-human flagged unverifiable | carried | carried | planner-pm §2.11.1 |
-| HD1:484 | HD:1251 | `/goal <statement>` opens intake: restate, criteria, budget, assumptions; nothing runs until approved | carried-weaker | later | planner-pm §7 |
+| HD1:484 | HD:1251 | `/goal <statement>` opens intake: restate, criteria, budget, assumptions; nothing runs until approved | carried-weaker | carried | planner-pm §2.11 rule 2 (`sekhemet goal` drafts restated outcome, criteria, budget from the competence model, assumptions; nothing runs until a person approves; versioned strategy); planner-pm §7 (the `/goal` chat command) (corrected 2026-09-25) |
 | HD1:485 | HD:1251 | Strategy versioned so replans can be diffed | carried | carried | planner-pm §2.11.2–3 |
 | HD1:486 | HD:1266 | Criteria re-evaluated on every card close and on a timer | carried-weaker | gap | planner-pm §2.11.3, NEW-planner-pm-4 |
 | HD1:487 | HD:1266 | Replan triggers: rung-3 fail, regression of met criterion, budget over cap, dependency or environment change, card adva… | carried-weaker | gap | planner-pm §2.11.3, NEW-planner-pm-4 |
@@ -749,7 +780,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:494 | HD:1292 | Signal: Review backlog ≥ ReviewWIP → hard back-pressure | carried | carried | planner-pm §2.12 |
 | HD1:495 | HD:1293 | Signal: RAID risk register; high-risk assumption >24 h → verification spike | carried | carried | planner-pm §2.12 (proposed spike) |
 | HD1:496 | HD:1295 | Responses automatic within visible preset bounds, else decision request | carried | carried | planner-pm §2.12 (automatic only when no person-owned field changes) |
-| HD1:497 | HD:1299 | Goal view: statement, criteria, burn-up, strategy graph, risk register, forecast range, filtered inbox | later | later | planner-pm §7; dashboard §7 |
+| HD1:497 | HD:1299 | Goal view: statement, criteria, burn-up, strategy graph, risk register, forecast range, filtered inbox | later | later | planner-pm §7; dashboard §7 (corrected 2026-09-25) |
 | HD1:498 | HD:1299 | Goal with no state change in a configurable window is highlighted | missing | later | planner-pm §7 (goal view) |
 | HD1:499 | HD:1303 | Multiple goals by WSJF; one may be sole active; scheduler explains per window | carried | carried | planner-pm §2.11.4 |
 | HD1:500 | HD:1307 | Goal met only when all criteria met and verified; blocked with diagnosis; never partial as done | carried | carried | planner-pm §2.11.5 |
@@ -766,7 +797,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:511 | HD:1334 | Visual 2: bounding boxes: overlap, zero size, off-screen, horizontal overflow | carried | carried | gates rule 29 |
 | HD1:512 | HD:1335 | Visual 3: element screenshots, masking, animations off, maxDiffPixelRatio 0.01 | carried | carried | gates rule 29 |
 | HD1:513 | HD:1336 | Visual 4: axe-core at 1280 and 375 px, zero critical | carried | carried | gates rule 29 |
-| HD1:514 | HD:1337 | Visual 5: atomic yes/no checklist at temperature 0 | carried | carried | gates rule 30 (gap NEW-gates-4) |
+| HD1:514 | HD:1337 | Visual 5: atomic yes/no checklist at temperature 0 | carried | gap | gates rule 30, NEW-gates-4 (GT-N4-2) (corrected 2026-09-25) |
 | HD1:515 | HD:1339 | Vision model can fail but never pass; baselines need human approval; blocks nothing until false-pass measured | carried | carried | gates rules 30–31; OPEN_QUESTIONS #10 |
 | HD1:516 | HD:1343 | Mutation diff-scoped, advisory then blocking per project, never 100% | carried | carried | gates rule 32 |
 | HD1:517 | HD:1347 | Secrets gate scans what the branch adds, excluding staged acceptance tests | carried | carried | gates rule 15, GT-4 |
@@ -793,11 +824,11 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:538 | HD:1411 | Unmatched line is "not enforced" and said so; showing on board not built | gap | gap | gates rule 26, NEW-gates-1 |
 | HD1:539 | HD:1413 | All three project gates wrap every card's gate run regardless of gates.toml | carried | carried | gates §Project gates intro |
 | HD1:540 | HD:1421 | Arithmetic: 4 rungs × 4 samples = 16 gate runs; gates dominate cost | carried | carried | gates rule 33 |
-| HD1:541 | HD:1423 | Impacted tests first, short-circuit; full suite once before Review | carried | carried | gates rule 33, GT-N3-2 (gap) |
-| HD1:542 | HD:1424 | Verdict cached by tree hash + gate's pinned hash | carried | carried | gates rule 33, GT-N3-1 (gap) |
-| HD1:543 | HD:1425 | Static before functional, ordered by cost | carried | carried | gates rule 33, GT-N3-3 (gap) |
+| HD1:541 | HD:1423 | Impacted tests first, short-circuit; full suite once before Review | carried | gap | gates rule 33, NEW-gates-3 (GT-N3-2) (corrected 2026-09-25) |
+| HD1:542 | HD:1424 | Verdict cached by tree hash + gate's pinned hash | carried | gap | gates rule 33, NEW-gates-3 (GT-N3-1) (corrected 2026-09-25) |
+| HD1:543 | HD:1425 | Static before functional, ordered by cost | carried | gap | gates rule 33, NEW-gates-3 (GT-N3-3) (corrected 2026-09-25) |
 | HD1:544 | HD:1426 | Each gate has a timeout; timeout = failure with own repair procedure | carried | carried | gates rule 33 |
-| HD1:545 | HD:1432 | Flaky: re-run failing tests once on unchanged tree before first rung; quarantine, report with both runs | carried | carried | gates rule 34, GT-N3-4 (gap) |
+| HD1:545 | HD:1432 | Flaky: re-run failing tests once on unchanged tree before first rung; quarantine, report with both runs | carried | gap | gates rule 34, NEW-gates-3 (GT-N3-4) (corrected 2026-09-25) |
 | HD1:546 | HD:1433 | Wrong gate: Worker stops with a stop reason naming gate and reason; human decides | carried | carried | gates rule 18, GT-M6-5 (`gate_suspected`, gap) |
 | HD1:547 | HD:1434 | Gate that cannot run: needs declared in gates.toml; unavailable stated in evidence, never silently skipped | carried | carried | gates rules 9–10, GT-T1-7 |
 | HD1:548 | HD:1438 | Harness never asks user to pick model or context size | carried | carried | surface rule 2 (Default); models rule 7 |
@@ -809,7 +840,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:554 | HD:1458 | Tier table S/M/L/XL (budget, planner, worker, co-load, working context, parallel cards) | carried | carried | models rule 8 (identical) |
 | HD1:555 | HD:1465 | Model names absent; registry fills from measurement; larger tiers buy co-residency not prompt | carried | carried | models rule 8 |
 | HD1:556 | HD:1469 | Throughput floors: overnight 40/10 ~70 s; interactive 100/20 ~30 s; recommended 300/40 ~12 s | carried | carried | models rule 9 (identical) |
-| HD1:557 | HD:1475 | Below overnight floor refuse cards and say why; below 16 GB unsupported | carried | carried | models rule 9, MD-N2-1 (gap) |
+| HD1:557 | HD:1475 | Below overnight floor refuse cards and say why; below 16 GB unsupported | carried | gap | models rule 9, NEW-models-2 (MD-N2-1) (corrected 2026-09-25) |
 | HD1:558 | HD:1479 | KV 8-bit; lower only if model qualifies with it | carried | carried | models rule 10 |
 | HD1:559 | HD:1479 | Flash attention on; prefill batch swept; expert offload only when needed | carried | carried | models rule 10 |
 | HD1:560 | HD:1479 | Speculative decoding via MTP or qualified draft models where bandwidth permits | carried-weaker | gap | models rule 13, M7/M11, NEW-models-8 |
@@ -821,7 +852,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:566 | HD:1491 | 85%: suspend speculative decoding | carried | carried | models rule 19 (elevated, 0.85), MD-M11-3 |
 | HD1:567 | HD:1492 | 90%: throttle parallel cards to 1, trim LSP symbol caches, cascade observation pointers across older turns | carried-weaker | gap | models rule 19 (high level: parallel cards to one, LSP caches, forced masking), NEW-models-2 |
 | HD1:568 | HD:1493 | 94%: pause active turns gracefully and persist state to SQLite WAL | carried | carried | models rule 19 (critical 0.94 pauses; emergency unloads) |
-| HD1:569 | HD:1497 | Declared hours; backlog worked outside; swaps batched by project; planning in scheduled blocks when co-loading impossib… | carried | carried | models rule 20, NEW-models-3 (gap) |
+| HD1:569 | HD:1497 | Declared hours; backlog worked outside; swaps batched by project; planning in scheduled blocks when co-loading impossib… | carried | gap | models rule 20, NEW-models-3 (corrected 2026-09-25) |
 | HD1:570 | HD:1505 | Four roles and their jobs; Reviewer from a different family | carried | carried | models rule 21 |
 | HD1:571 | HD:1507 | Roles are `ModelEntry.roles` values, not agents; no simulated conversation | carried | carried | models rule 22; DEC-05 |
 | HD1:572 | HD:1509 | One model may hold several roles; never co-reside below 32 GB | carried | carried | models rule 22 |
@@ -852,18 +883,18 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:597 | HD:1618 | Playbook TOML fields: id, originCard, triggerGate, pattern, instruction, effectiveDate, evalPassRateDelta | carried | carried | context rule 24 (id, origin card, trigger gate, instruction, effective date, evidence; pattern → scope) |
 | HD1:598 | HD:1631 | Exemplars: 1–2 from own history; no generic examples | carried | carried | context rule 25 |
 | HD1:599 | HD:1635 | Offline optimiser in idle hours with planner as reflection engine; keep only if clears threshold; drop if <5% | later | later | context §7 |
-| HD1:600 | HD:1639 | Prompts, playbooks, tool schemas versioned together; change invalidates qualification and triggers a re-run | carried-weaker | gap | context rule 27, NEW-context-6 |
+| HD1:600 | HD:1639 | Prompts, playbooks, tool schemas versioned together; change invalidates qualification and triggers a re-run | carried-weaker | gap | context rule 27, NEW-context-6; DEC-28 (playbook rules deliberately outside the context version) (corrected 2026-09-25) |
 | HD1:601 | HD:1643 | Reviewer answers "does this change do what the card asked?" | carried | carried | review-git §2.3.1 |
 | HD1:602 | HD:1647 | Trigger: every card entering Review with a diff; research/no-diff skip | carried | carried | review-git §2.3.2 |
 | HD1:603 | HD:1649 | Inputs: spec, criteria, diff, gate results; not the transcript | carried | carried | review-git §2.3.3 |
 | HD1:604 | HD:1651 | Procedure: per criterion met/unmet with hunk; three failure modes gates miss | carried | carried | review-git §2.3.4 |
 | HD1:605 | HD:1656 | ReviewFinding shape | carried | carried | review-git §2.3.5 |
 | HD1:606 | HD:1664 | Authority none | carried | carried | review-git §2.3.6 |
-| HD1:607 | HD:1666 | Different family enforced; unfilled role said in Review | carried | carried | review-git §2.3.7 (gap P8) |
+| HD1:607 | HD:1666 | Different family enforced; unfilled role said in Review | carried | gap | review-git §2.3.7, P8 (corrected 2026-09-25) |
 | HD1:608 | HD:1668 | Acceptance: flags more seeded defects than empty list; FP low enough that a human reads by card 20 | carried | carried | review-git P8, OQ2 |
 | HD1:609 | HD:1676 | Frozen suite 20–40 tasks, versioned; no edits to improve results; hash recorded with every result | carried | carried | measurement rules 1–2 |
 | HD1:610 | HD:1678 | One number (tasks passed) with cost (wall-clock, tokens, repair-rung cards); non-improving change is not an improvement | carried | carried | measurement rule 4 |
-| HD1:611 | HD:1680 | Suite doesn't measure planning; planning measure beside it (fail-before/pass-after reference; end-to-end share) | carried | carried | measurement rule 14 (gap T7) |
+| HD1:611 | HD:1680 | Suite doesn't measure planning; planning measure beside it (fail-before/pass-after reference; end-to-end share) | carried | gap | measurement rule 14, T7 (corrected 2026-09-25) |
 | HD1:612 | HD:1684 | Suite gates the self-improvement loop | carried | carried | measurement rule 17 |
 | HD1:613 | HD:1685 | Suite qualifies registry models | carried | carried | models rule 27 |
 | HD1:614 | HD:1686 | Suite gates asserted-not-measured components (pruner) | carried | carried | measurement rule 16 |
@@ -889,8 +920,8 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:634 | HD:1757 | Weight updates excluded in v1; fine-tuning deferred until in-context plateaus | carried | carried | measurement rule 23; DEC-22 |
 | HD1:635 | HD:1757 | Loop driver, gate runner, sandbox boundaries, permission tables permanently excluded from self-modification | carried | carried | measurement rule 23 |
 | HD1:636 | HD:1759 | [BENCH] inlet gains; each enabled only after beating baseline | carried | carried | OPEN_QUESTIONS #15 |
-| HD1:637 | HD:1763 | `sekhemet dev audit` command | carried-weaker | deliberate | measurement rule 24, §9 (dev audit's function in doctor and qualify) |
-| HD1:638 | HD:1764 | Net gain per skill/rule vs bare baseline on the suite | carried | carried | measurement rule 24 (gap NEW-measurement-2) |
+| HD1:637 | HD:1763 | `sekhemet dev audit` command | carried-weaker | deliberate | measurement rule 24, §9; surface §7 (corrected 2026-09-25) |
+| HD1:638 | HD:1764 | Net gain per skill/rule vs bare baseline on the suite | carried | gap | measurement rule 24, NEW-measurement-2 (MS-N2-2) (corrected 2026-09-25) |
 | HD1:639 | HD:1765 | Context debt: >300 Zone-2 tokens without significant ≥+3% gain | carried | deliberate | measurement rule 24; DEC-28 (context debt judged on paired credit or a "not established" A/B; the 3-point test cannot be resolved on 30 cards) |
 | HD1:640 | HD:1766 | Conflicting/redundant/obsolete rules flagged; retire with a single keystroke | carried | carried | measurement rule 24 ("one action") |
 | HD1:641 | HD:1774 | No self-critique; extra compute to bounded repeated sampling with gate selection; applies to code, plans, research prose | carried | carried | worker-loop rule 3; design-stage §2.7.5 |
@@ -910,7 +941,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:6 | HD:1810 | Unknown member: failure lists the type's real members, from project types and Node's wherever the package manager keeps… | carried | carried | gates.md §2.21 |
 | HD2:7 | HD:1812 | No reply the Worker receives is a dead end: if a call cannot do what was asked, the reply names the call that can | carried | carried | worker-loop.md §2.2 |
 | HD2:8 | HD:1812 | A `tool_search` query that names files answers with the files themselves: at most 3 files, from inside the worktree, ea… | missing | carried | worker-loop rule 12, WL-13 |
-| HD2:9 | HD:1812 | A `tool_search` query naming code symbols (e.g. `ChronicleEvent`, `GENESIS_HASH`) loads `read_symbol` and names the cal… | missing | gap | worker-loop rule 12, M2 |
+| HD2:9 | HD:1812 | A `tool_search` query naming code symbols (e.g. `ChronicleEvent`, `GENESIS_HASH`) loads `read_symbol` and names the cal… | missing | gap | worker-loop rule 12, §4 row, M2 (after WL-M2-7 is added) (corrected 2026-09-25) |
 | HD2:10 | HD:1814-1816 | Gate failure, scope denial and stall are all refusals under the repair contract: typed, with the action attached | carried | carried | worker-loop.md §2.16 |
 | HD2:11 | HD:1818 | Scope denial names what the card may modify; if the change belongs elsewhere, stop and report rather than retry | carried | carried | worker-loop.md §2.16 |
 | HD2:12 | HD:1819 | Stall: the first repetition on an unchanged tree is a warning; only a repeat after the warning ends the card | carried | carried | worker-loop.md §2.18, WL-2 |
@@ -942,7 +973,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:38 | HD:1856 | Vulnerability scanning offline with `osv-scanner` | carried | carried | security.md §2.44 |
 | HD2:39 | HD:1860-1861 | Restricted mode: the `run` (bash) tool is stripped | carried | carried | security.md §2.43; worker-loop.md §2.13, WL-6 |
 | HD2:40 | HD:1862 | Restricted mode: all egress blocked at the OS sandbox layer | carried | carried | security.md §2.43 |
-| HD2:41 | HD:1863 | Restricted mode: read-only AST inspection, static analysis (typecheck, lint) and structural diff preview | carried-weaker | later | security rule 43; gates §7 (structural diff preview joins with difftastic) |
+| HD2:41 | HD:1863 | Restricted mode: read-only AST inspection, static analysis (typecheck, lint) and structural diff preview | carried-weaker | carried | security rule 43 (read-only inspection, static checks by the harness, nothing from the repository executes); the structural diff preview is the Later part (corrected 2026-09-25) |
 | HD2:42 | HD:1867 | Issue text, PR comments, file contents and synced data are untrusted data, never instructions | carried | carried | security.md §2.1 (threat model), §2.42 |
 | HD2:43 | HD:1867 | Wrapped as `<untrusted_content source="…">` with a system contract that instructions inside cannot issue tool calls | carried | carried | security.md §2.42 |
 | HD2:44 | HD:1867 | Tool calls from a step whose context holds untrusted content fall under strict permission policies | carried | carried | security.md §2.42, SEC-40 (no Ask-tier or network commands in that step) |
@@ -952,7 +983,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:48 | HD:1891 | The board owns card state, gate results and budgets; the tracker owns title, description, assignee and labels | carried | carried | integrations.md §2.4 |
 | HD2:49 | HD:1891 | Shared-field conflicts: last-writer-wins by timestamp, loser kept in card history | contradicted | deliberate | integrations §2.4 |
 | HD2:50 | HD:1897 | Git adapter always on: branches, worktrees, commits, local remotes | carried | carried | review-git.md §2.6 |
-| HD2:51 | HD:1898 | Forgejo as the offline-friendly self-hosted sync target: issues, dependencies, boards, webhooks | carried-weaker | later | integrations §7, §8 Q4 |
+| HD2:51 | HD:1898 | Forgejo as the offline-friendly self-hosted sync target: issues, dependencies, boards, webhooks | carried-weaker | carried | integrations rule 8 (`forgejo` external refs), §4 "GitHub/Forgejo adapter — partial, P9", §8 Q4; integrations §7 "Forgejo beyond issues" (corrected 2026-09-25) |
 | HD2:52 | HD:1899 | GitHub adapter: issues, sub-issues, projects, pull requests, check runs | carried | carried | integrations.md §2.10-16 |
 | HD2:53 | HD:1901 | GraphQL is needed for sub-issues/projects and has a separate rate budget from REST | gap | gap | integrations §2.11a, P9 |
 | HD2:54 | HD:1901 | Adapter prefers webhooks over polling | missing | gap | integrations §2.11a, P9 |
@@ -973,20 +1004,20 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:69 | HD:1923 | GHES via configurable `api_url`/`graphql_url` with a custom CA bundle | carried | carried | integrations.md §2.10 |
 | HD2:70 | HD:1927 | Webhooks verified with HMAC-SHA256 (`X-Hub-Signature-256`) before processing | carried | carried | integrations.md §2.12, INT-10 |
 | HD2:71 | HD:1931 | `issues.labeled` with `sekhemet` creates a card, converts sub-issues to subtasks and links the issue URL | carried | carried | integrations.md §2.12, INT-32 |
-| HD2:72 | HD:1932 | `issue_comment.created` with `/plan`, `/split`, `/estimate`, `/review`: dispatch against the linked card and reply in t… | later | later | integrations §7 |
+| HD2:72 | HD:1932 | `issue_comment.created` with `/plan`, `/split`, `/estimate`, `/review`: dispatch against the linked card and reply in t… | later | later | integrations rule 12 webhook table (`/review` on a PR, v1); integrations §7 (`/plan`, `/split`, `/estimate`) (corrected 2026-09-25) |
 | HD2:73 | HD:1933 | `pull_request.labeled` with `sekhemet:review` creates an external review card, runs gates on a checkout and posts a rev… | carried | carried | integrations.md §2.12-13, INT-34; review-git.md §2.7 |
-| HD2:74 | HD:1934 | `pull_request.opened` by Dependabot/Renovate creates a verification card that runs full gates and auto-merges if policy… | gap | gap | integrations §2.12, P9 |
-| HD2:75 | HD:1935 | `workflow_dispatch` enqueues a local card run within declared hours | later | later | integrations §7 |
+| HD2:74 | HD:1934 | `pull_request.opened` by Dependabot/Renovate creates a verification card that runs full gates and auto-merges if policy… | gap | gap | integrations rule 12, INT-16, P9 (after INT-16a is added) (corrected 2026-09-25) |
+| HD2:75 | HD:1935 | `workflow_dispatch` enqueues a local card run within declared hours | later | later | integrations §7 (`workflow_dispatch`) (corrected 2026-09-25) |
 | HD2:76 | HD:1937 | Inbound issue text and comments treated as untrusted and wrapped in prompt tags | carried | carried | integrations.md §2.3; INT-32 |
 | HD2:77 | HD:1941-1942 | Every gate execution becomes a Check Run: `queued` → `in_progress` → `completed` with `success`/`failure` | carried | carried | integrations.md §2.14 |
-| HD2:78 | HD:1943-1954 | Typed failures become Check Run annotations (path, start/end line, level, message, title, raw_details) | carried | carried | integrations.md §2.14 (redacted first; `raw_details` not listed, minor) |
+| HD2:78 | HD:1943-1954 | Typed failures become Check Run annotations (path, start/end line, level, message, title, raw_details) | carried | carried | integrations rule 14 (annotations with `raw_details`, redacted first) (corrected 2026-09-25) |
 | HD2:79 | HD:1955 | Checks can be required status checks in branch protection | carried | carried | integrations.md §2.14 |
 | HD2:80 | HD:1959 | SARIF v2.1.0 from gitleaks, Semgrep and osv-scanner; gzip + base64; `POST …/code-scanning/sarifs` | carried | carried | integrations.md §2.14 |
-| HD2:81 | HD:1974 | On acceptance, a draft PR with the evidence summary (gates, diff stats, coverage, abandoned attempts) | gap | gap | integrations §2.15, P9 |
-| HD2:82 | HD:1975 | PR marked ready when all checks succeed; reviewers from CODEOWNERS | gap | gap | integrations §2.15, P9 |
-| HD2:83 | HD:1976 | Review comments create repair subtasks scoped to line ranges; the Worker repairs, pushes, replies, and resolves the thr… | later | later | integrations §7; review-git §7 |
+| HD2:81 | HD:1974 | On acceptance, a draft PR with the evidence summary (gates, diff stats, coverage, abandoned attempts) | gap | gap | integrations rule 15, INT-12, P9 (after INT-12a is added) (corrected 2026-09-25) |
+| HD2:82 | HD:1975 | PR marked ready when all checks succeed; reviewers from CODEOWNERS | gap | gap | integrations rule 15, P9 (after INT-12b is added) (corrected 2026-09-25) |
+| HD2:83 | HD:1976 | Review comments create repair subtasks scoped to line ranges; the Worker repairs, pushes, replies, and resolves the thr… | later | later | integrations §7; review-git §7 (corrected 2026-09-25) |
 | HD2:84 | HD:1977 | Merge per repo policy: `enablePullRequestAutoMerge`, the merge queue, or a person | gap | gap | integrations §2.15, P9 |
-| HD2:85 | HD:1981 | Release card: aggregate accepted cards since the last tag, `git-cliff` changelog, semver bump, publish a GitHub Release… | later | later | integrations §7; planner-pm §2.15.8 |
+| HD2:85 | HD:1981 | Release card: aggregate accepted cards since the last tag, `git-cliff` changelog, semver bump, publish a GitHub Release… | later | gap | review-git §2.6 rule 7 (version from Conventional Commits, 0.y.z rule, changelog built in or by git-cliff, tag on `--confirm`), NEW-review-git-4 (RG-N4-1); planner-pm §2.15.8 (release per slice, P13); integrations §7, planner-pm §7, review-git §7 (publishing a GitHub Release) (corrected 2026-09-25) |
 | HD2:86 | HD:1985 | Research answers from local sources first, web second; web is opt-in, off in air-gap, and all fetched content is untrus… | carried | carried | design-stage.md §2.6, §2.7.2, §2.7.6 |
 | HD2:87 | HD:1989-1995 | Two research modes, Research Desk and Deep Research (serves; trigger; latency ms–3 min vs minutes–overnight; model; out… | later | later | design-stage §7 (Desk); Deep research §2.7.3 |
 | HD2:88 | HD:2003 | Research fetching uses the same egress proxy under the allowlist, logged and hashed; no second network path | carried | carried | design-stage.md §2.6.3, §2.7.1; security.md §2.32 |
@@ -997,7 +1028,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:93 | HD:2012 | Hardware envelope: 24 GB M4; ~16 GB for weights; roles do not co-reside; quality from passes, retrieval and verificatio… | carried | carried | design-stage.md §2.7.9; models.md §2.22 |
 | HD2:94 | HD:2014 | The Researcher's gathering and synthesis modes are one registry entry used two ways, chosen by the bake-off, not by rep… | carried | carried | design-stage.md §2.7.9 |
 | HD2:95 | HD:2016 | The Desk loads no model: a second slot of the Worker's server, same weights, no additional memory | later | later | design-stage §7 |
-| HD2:96 | HD:2020-2023 | Knowledge tiers in lookup order: repo and installed deps at the exact version incl. source; docsets + `llms.txt`/… | carried | carried | design-stage.md §2.7.2 (`llms-full.txt` not named; minor) |
+| HD2:96 | HD:2020-2023 | Knowledge tiers in lookup order: repo and installed deps at the exact version incl. source; docsets + `llms.txt`/… | carried | carried | design-stage §2.7.2 (after restoration) (corrected 2026-09-25) |
 | HD2:97 | HD:2022 | Research cache: pages stored as extracted markdown with URL, fetch date and content hash, indexed lexically | carried-weaker | carried | design-stage §2.7.2, §3 |
 | HD2:98 | HD:2027-2031 | Desk grades: Lookup (seconds, no model), Question (1–3 min, short tool loop), Deep (promoted to a research card; the as… | later | later | design-stage §7 |
 | HD2:99 | HD:2035 | `ask` posts a non-blocking decision request answered by the Researcher, delivered at the next step boundary; `note` wit… | contradicted | gap | worker-loop rule 12, NEW-worker-loop-4; Researcher path later (design-stage §7) |
@@ -1005,25 +1036,25 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:101 | HD:2038 | At project open, prefetch each package's `llms.txt`/doc sitemap into the corpus, pinned to the installed version | later | later | design-stage §7 |
 | HD2:102 | HD:2042-2050 | Repository reading tools on `git`/`gh`: dependency source at the resolved version; tree/file at any ref; code search in… | carried | carried | design-stage.md §2.7.10 |
 | HD2:103 | HD:2052 | Repository results cached by commit SHA, permanently | carried | carried | design-stage.md §2.7.10 |
-| HD2:104 | HD:2054 | Context7 and DeepWiki as optional MCP sources: off by default, untrusted, weighted below primary sources, never the sol… | later | later | design-stage §7 |
-| HD2:105 | HD:2074 | Deep research brief: restate the question, success criteria, out of scope; ambiguity resolved or raised to the user, no… | carried | carried | design-stage.md §2.7.3 ("raise to the user" is implicit only) |
+| HD2:104 | HD:2054 | Context7 and DeepWiki as optional MCP sources: off by default, untrusted, weighted below primary sources, never the sol… | later | later | design-stage §7 (hosted MCP sources) (corrected 2026-09-25) |
+| HD2:105 | HD:2074 | Deep research brief: restate the question, success criteria, out of scope; ambiguity resolved or raised to the user, no… | carried | carried | design-stage §2.7.3 (after restoration) (corrected 2026-09-25) |
 | HD2:106 | HD:2076 | Plan: sub-questions with a budget each, posted as a decision request (approve / edit / narrow) with deadline and safe d… | later | later | design-stage §7 |
 | HD2:107 | HD:2078 | Gather: a supervisor delegates sub-questions to sub-agents with isolated contexts; findings come back with citations, n… | carried | carried | design-stage.md §2.7.3 |
-| HD2:108 | HD:2078 | Everything fetched lands in the corpus index that later stages read | later | later | design-stage §7 |
+| HD2:108 | HD:2078 | Everything fetched lands in the corpus index that later stages read | later | carried | design-stage §2.7 rule 2 (the research cache stores each fetched page as extracted text with URL, fetch date and content hash, indexed lexically), rule 8 (BM25 retrieval over it) (corrected 2026-09-25) |
 | HD2:109 | HD:2080 | Research stops on coverage of the sub-questions, not a turn count | carried | carried | design-stage.md §2.7.3 |
 | HD2:110 | HD:2080 | A sub-question closes when it has independent sources of sufficient tier; open ones are re-dispatched with different qu… | missing | gap | design-stage §2.7.3, NEW-design-stage-4 |
-| HD2:111 | HD:2080 | Crawling within a doc site uses an adaptive strategy that stops when the question is answered | later | later | design-stage §7 |
+| HD2:111 | HD:2080 | Crawling within a doc site uses an adaptive strategy that stops when the question is answered | later | later | design-stage §7 (Crawl4AI, adaptive crawl) (corrected 2026-09-25) |
 | HD2:112 | HD:2084 | Effort `quick`/`standard`/`exhaustive` sets the number of sub-questions, pages per sub-question and verification depth;… | carried-weaker | gap | design-stage §2.7.3, NEW-design-stage-4 |
 | HD2:113 | HD:2084 | Revision needs no effort setting; it stops when no candidate lowers measured risk | carried | carried | design-stage.md §2.7.5 |
-| HD2:114 | HD:2088 | Self-hosted SearXNG: no API keys, no query logging to third parties; a separate service to keep its copyleft licence ou… | carried-weaker | carried | design-stage §2.7.11; PROVENANCE |
+| HD2:114 | HD:2088 | Self-hosted SearXNG: no API keys, no query logging to third parties; a separate service to keep its copyleft licence ou… | carried-weaker | deliberate | design-stage §2.7.11, §9 (after the reason is added); PROVENANCE SearXNG row (corrected 2026-09-25) |
 | HD2:115 | HD:2088 | Queries are 1–6 terms | carried | carried | design-stage.md §2.7.11 |
 | HD2:116 | HD:2088 | Every query and its result set is recorded in the event log | gap | gap | design-stage §2.6.3, S8 |
 | HD2:117 | HD:2088 | Rank primary sources (official docs, source repos, standards bodies, papers) above aggregators | carried | carried | design-stage.md §2.7.11 |
 | HD2:118 | HD:2088 | Recency is a first-class search parameter | carried | carried | design-stage.md §2.7.11 |
 | HD2:119 | HD:2092 | Fetches go through the proxy with a per-project domain allowlist and denylist | carried-weaker | gap | design-stage §2.6.3, NEW-design-stage-4 |
-| HD2:120 | HD:2092 | Crawl4AI warm headless-browser sidecar: JS rendering, question-keyed content filter, link scoring | later | later | design-stage §7 |
+| HD2:120 | HD:2092 | Crawl4AI warm headless-browser sidecar: JS rendering, question-keyed content filter, link scoring | later | carried | design-stage §2.7 (to add: pages are read through Crawl4AI when it is installed, else the built-in polite fetcher); PROVENANCE "Page crawler (Crawl4AI)" row; design-stage §7 keeps only the adaptive crawl and question-keyed filter (corrected 2026-09-25) |
 | HD2:121 | HD:2092 | Static-page fast path: HTML to markdown with trafilatura | later | later | design-stage §7 |
-| HD2:122 | HD:2094 | PDFs: pypdfium2 by default, Docling for scanned or table-heavy pages; PyMuPDF4LLM never default or distributed, but a u… | later | later | design-stage §7 |
+| HD2:122 | HD:2094 | PDFs: pypdfium2 by default, Docling for scanned or table-heavy pages; PyMuPDF4LLM never default or distributed, but a u… | later | later | design-stage §7 (PDF extraction) (corrected 2026-09-25) |
 | HD2:123 | HD:2096 | Extracted content chunked by heading and deduplicated by content hash rather than URL | carried-weaker | carried | design-stage §2.7.8 |
 | HD2:124 | HD:2100 | Lexical retrieval: BM25 over heading chunks, merged with the source-authority preference | carried | carried | design-stage.md §2.7.8 |
 | HD2:125 | HD:2102 | Dense index rejected on this machine's terms; if a measurement shows it pays, it goes in its own cache DB and nothing e… | carried | carried | design-stage.md §2.7.8; DEC-22 |
@@ -1045,24 +1076,24 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:141 | HD:2147 | Robots directives respected; per-domain rate limits enforced | carried | carried | design-stage.md §2.6.3 |
 | HD2:142 | HD:2148 | Package names found on the web never installed without passing the supply-chain gate | carried | carried | design-stage.md §2.7.6 |
 | HD2:143 | HD:2149 | Claim execution inherits the gate host sandbox: no network, no repository write access; scripts are untrusted input | carried-weaker | gap | design-stage §2.7.4, NEW-design-stage-2 |
-| HD2:144 | HD:2150 | Answers from external MCP research services are untrusted like fetched pages | later | later | design-stage §7 |
+| HD2:144 | HD:2150 | Answers from external MCP research services are untrusted like fetched pages | later | later | design-stage §7 (hosted MCP sources) (corrected 2026-09-25) |
 | HD2:145 | HD:2151 | No credentials ever sent; authenticated fetches unsupported in v1 | carried | carried | design-stage.md §2.7.6 |
 | HD2:146 | HD:2155 | Researcher tools: `search`, `fetch`, `docs`, `scholar`, `paper`, `repo`, `deps`, plus project MCP tools | carried | carried | design-stage.md §2.7.10 |
-| HD2:147 | HD:2157 | Worker research tools are read-only and never include `search`/`fetch`: `docs(symbol or package, version)`,… | carried-weaker | later | worker-loop §7; design-stage §9 (R4) |
+| HD2:147 | HD:2157 | Worker research tools are read-only and never include `search`/`fetch`: `docs(symbol or package, version)`,… | carried-weaker | carried | worker-loop rule 12 (`docs`, `dependencies`, `git_history`, `ask`; "Web search and fetch are never Worker tools"); design-stage §2.5 rule 6 ("The Worker never searches"); gap NEW-worker-loop-4 (the non-blocking `ask`); worker-loop §7 (release diffs) (corrected 2026-09-25) |
 | HD2:148 | HD:2157 | The Planner additionally sees `plan_research(card)` | contradicted | later | design-stage §7 (`plan_research`, owned there per R5); extensibility table links to it |
-| HD2:149 | HD:2161 | Research playbooks as Agent Skills (library upgrade, CVE triage, comparing implementations, paper technique), supplying… | later | later | design-stage §7 |
+| HD2:149 | HD:2161 | Research playbooks as Agent Skills (library upgrade, CVE triage, comparing implementations, paper technique), supplying… | later | later | design-stage §7 (research skills) (corrected 2026-09-25) |
 | HD2:150 | HD:2165 | Deep Research evaluated on DeepResearch Bench RACE and FACT plus executable-claim pass rate and disagreement recall; ta… | later | later | design-stage §7 (targets kept) |
 | HD2:151 | HD:2165 | Desk measured on latency per grade and on how often an answer reaching a Worker was later contradicted by the code | later | later | design-stage §7 |
-| HD2:152 | HD:2169-2180 | Cache TTL by mutability: pinned SHA indefinite; pinned-version docs indefinite (evicted by size); unversioned docs 90 d… | later | later | design-stage §7 (values identical) |
-| HD2:153 | HD:2182 | A stale cache entry is served immediately and revalidated in the background | later | later | design-stage §7 |
+| HD2:152 | HD:2169-2180 | Cache TTL by mutability: pinned SHA indefinite; pinned-version docs indefinite (evicted by size); unversioned docs 90 d… | later | later | design-stage §7 (cache expiry) (corrected 2026-09-25) |
+| HD2:153 | HD:2182 | A stale cache entry is served immediately and revalidated in the background | later | later | design-stage §7 (cache expiry) (corrected 2026-09-25) |
 | HD2:154 | HD:2186 | Every extension mechanism is a plugin on the kernel | contradicted | deliberate | extensibility rule 29, §7, §8 Q2 (O4); DEC-09 correction |
 | HD2:155 | HD:2190-2197 | Skill directory: `SKILL.md`, `scripts/`, `references/`, `evals/` | carried | carried | extensibility.md §2.10 |
 | HD2:156 | HD:2198 | Only the manifest line in Zone 2; the body loads only when matched to the card class | carried | carried | extensibility.md §2.11, EXT-32 |
-| HD2:157 | HD:2198 | Skills are project- or user-scoped and versioned, and declare any gates they add | carried-weaker | later | extensibility §7 (a skill that declares its gates; reason: skills never change gate files) |
+| HD2:157 | HD:2198 | Skills are project- or user-scoped and versioned, and declare any gates they add | carried-weaker | carried | extensibility rule 13 (project and user scopes), rules 15 and 17 (pinned by SHA-256 and commit hash, diffed on update); extensibility §7 (a skill that declares its gates) (corrected 2026-09-25) |
 | HD2:158 | HD:2202 | Hook events: card/start, pre-step, pre-tool, post-tool, pre-gate, post-gate, card/end, review/return, playbook/propose | carried | carried | extensibility.md §2.4 (adds `turn-stopping` and board events) |
 | HD2:159 | HD:2202 | A hook can observe, block with a reason, or inject messages | carried | carried | extensibility.md §2.6 |
 | HD2:160 | HD:2202 | Hooks run outside the sandbox with user permissions | carried | carried | extensibility.md §2 table, §9 rationale |
-| HD2:161 | HD:2206 | Commands: Markdown templates expanding into a card template or planner instruction (`/onboard`, `/research`, `/split`,… | later | later | extensibility §7 (user-defined commands) |
+| HD2:161 | HD:2206 | Commands: Markdown templates expanding into a card template or planner instruction (`/onboard`, `/research`, `/split`,… | later | later | extensibility §7 (user-defined commands); extensibility rule 26 (the fixed slash commands, incl. `/research`) (corrected 2026-09-25) |
 | HD2:162 | HD:2210 | MCP client: tools offered to the planner and, where the registry permits, the Worker; tool descriptions strictly budget… | carried | carried | extensibility.md §2.23 |
 | HD2:163 | HD:2211 | MCP server exposes boards, cards, gates, evidence bundles and the model registry | gap | gap | extensibility rule 18, NEW-extensibility-3 (evidence and registry read-only) |
 | HD2:164 | HD:2215 | ACP lets VS Code, JetBrains and Neovim open a card, stream steps, inspect gates, approve or return | later | later | extensibility §7 (ACP card surface; v1 ACP is Seshat's chat) |
@@ -1071,7 +1102,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:167 | HD:2222 | `sekhemet gate <card-id>` runs gates only | carried | carried | gates.md §3, GT-T1-1 |
 | HD2:168 | HD:2223 | `sekhemet bake-off [--models]` qualifies and benchmarks models on the repo | carried | carried | models.md §2.30 |
 | HD2:169 | HD:2224 | `sekhemet replay <card-id> [--as <config>]` | carried-weaker | carried | runtime rule 14 (other configs are a fork from step 0) |
-| HD2:170 | HD:2226 | A TypeScript SDK exposes these operations, with the event log as an async iterator | carried-weaker | deliberate | extensibility rule 28, §8 Q1 ("changed from the old design's shipped SDK"; publish or cut is owner decision O4) |
+| HD2:170 | HD:2226 | A TypeScript SDK exposes these operations, with the event log as an async iterator | carried-weaker | deliberate | extensibility rule 28 (cut in B0, DEC-29 O4, NEW-extensibility-5), §8 Q1 (decided) (corrected 2026-09-25) |
 | HD2:171 | HD:2230 | Plugin API: register services, tools, gates, hooks, sync adapters or UI panels through a typed manifest; fully reversib… | later | later | extensibility §7 (plugin API) |
 | HD2:172 | HD:2232 | Plugin signing and compatibility contracts deferred until the kernel API stabilises | later | later | extensibility §7; security §7 |
 | HD2:173 | HD:2236 | No chat sessions; a card attempt is the unit of execution | carried | carried | runtime.md §2.1 |
@@ -1106,10 +1137,10 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:202 | HD:2317 | Conflict hunks become typed failures; the Worker resolves inside scope only; conflicts outside scope park the card | carried | carried | review-git.md §2.6.4 and v1 acceptance |
 | HD2:203 | HD:2317 | Merge order across sibling cards follows the DAG, then WSJF | carried | carried | review-git.md §2.6.4 |
 | HD2:204 | HD:2321 | PR description: gates passed, tests added, screenshots, what was tried and abandoned | carried-weaker | gap | review-git §2.5.7, S5 (RG-S5-18 screenshots in the PR body) |
-| HD2:205 | HD:2321 | Review comments on the PR flow back into the card thread | later | later | review-git §7; integrations §7 |
+| HD2:205 | HD:2321 | Review comments on the PR flow back into the card thread | later | later | review-git §7; integrations §7 (corrected 2026-09-25) |
 | HD2:206 | HD:2321 | Without an adapter, the same summary goes into the merge commit | carried | carried | review-git.md §2.5.7 |
-| HD2:207 | HD:2325 | Stacked cards: accepting a lower card rebases the cards above and re-runs their gates | carried | carried | review-git.md §2.5.5 |
-| HD2:208 | HD:2329 | Monorepos: scope and gates per package; a card touching two packages runs both gate sets; cross-repo work is two cards… | carried | carried | review-git.md §2.6.5 |
+| HD2:207 | HD:2325 | Stacked cards: accepting a lower card rebases the cards above and re-runs their gates | carried | gap | review-git §2.5.5, §4 "Restacked children re-run their gates" not-built, NEW-review-git-2 (corrected 2026-09-25) |
+| HD2:208 | HD:2329 | Monorepos: scope and gates per package; a card touching two packages runs both gate sets; cross-repo work is two cards… | carried | gap | review-git §2.6.5, §4 "Per-package gates in card verification; cross-repository change as two cards" partial, NEW-review-git-3 (corrected 2026-09-25) |
 | HD2:209 | HD:2333 | The review view offers difftastic's syntax-aware diff alongside the line diff | carried | carried | review-git.md §2.6.6; dashboard.md §2.5.6 |
 | HD2:210 | HD:2335 | Squash policy per project (keep checkpoint history on main) | later | later | review-git §7 |
 | HD2:211 | HD:2344 | Onboarding step 1: build the tree-sitter repo map and cache it | carried-weaker | deliberate | surface rule 9; DEC-20 (map from the TypeScript compiler; tree-sitter later, surface §7) |
@@ -1118,10 +1149,10 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:214 | HD:2347 | Onboarding step 4: propose a `gates.toml` from the detected toolchains | gap | gap | surface rule 10, P10 (SUR-7) |
 | HD2:215 | HD:2348 | Onboarding step 5: extract conventions (naming, layout, error patterns, test style) into a draft playbook with evidence… | carried | carried | surface.md §2.9 (broader list) |
 | HD2:216 | HD:2349 | Onboarding step 6: generate or update `AGENTS.md` and `CLAUDE.md` | gap | gap | surface rules 9–10, P10 (SUR-9 idempotent AGENTS.md) |
-| HD2:217 | HD:2350 | Onboarding step 7: run the qualification suite on this repo's code | carried | carried | surface.md §2.11 (offered, not run silently; deliberate) |
+| HD2:217 | HD:2350 | Onboarding step 7: run the qualification suite on this repo's code | carried | deliberate | surface rule 11, §9 (after the reason is added) (corrected 2026-09-25) |
 | HD2:218 | HD:2351 | The user reviews proposed gates and playbook before anything is enforced | carried | carried | surface.md §2.10 |
 | HD2:219 | HD:2355-2362 | Gate templates by language: TS/JS (tsc, eslint, prettier / vitest, jest, playwright / Stryker); Python (pyright, ruff /… | missing | gap | gates rule 23a (per-language template table, R14), NEW-gates-5 (format and mutation tools) |
-| HD2:220 | HD:2360-2361 | Go and Java/Kotlin templates as Phase 3, with Java's slower LSP startup noted | missing | later | gates rule 23a (Go template built; Java/Kotlin later, its language server starts slowly) |
+| HD2:220 | HD:2360-2361 | Go and Java/Kotlin templates as Phase 3, with Java's slower LSP startup noted | missing | carried | gates rule 23a (Go template, built with `go build`, `go vet`, `go test`); gates §7 (Java/Kotlin template) (corrected 2026-09-25) |
 | HD2:221 | HD:2364 | Full language support needs a grammar, a working headless language server and a gate template; missing any degrades to… | carried | carried | surface.md §2.30, SUR-33 ("a parser" instead of a tree-sitter grammar) |
 | HD2:222 | HD:2366 | TypeScript-first map and parse gate; others get a flat map with no PageRank and an unchecked parse; the degradation is… | carried | carried | DEC-20; context.md §7 |
 | HD2:223 | HD:2370 | Cards accept images, saved to the evidence bundle; the vision model returns a structured description and an atomic visu… | carried | carried | surface.md §2.28-29, SUR-32 (adds a 10 MB cap) |
@@ -1144,10 +1175,10 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:240 | HD:2396 | Plugin and skill updates travel the same signed-bundle route | missing | gap | security rule 49, NEW-security-5 (SEC-46 signed skill updates) |
 | HD2:241 | HD:2400 | Air-gap self-test: no outbound attempt during a full card run (at the proxy), all gates runnable, all models loadable,… | gap | gap | security rule 50, NEW-security-2 (SEC-33) |
 | HD2:242 | HD:2402 | Open: mirror seeding for transitive dependencies not in any lockfile | later | later | security §7 (transitive-dependency seeding kept as the open policy question) |
-| HD2:243 | HD:2406 | Open Agent Skills format; pull from the ecosystem and publish back to it | carried-weaker | later | extensibility §7 (publishing skills back) |
+| HD2:243 | HD:2406 | Open Agent Skills format; pull from the ecosystem and publish back to it | carried-weaker | carried | extensibility rule 10 (open Agent Skills format), rule 17 (pull, pin, diff); extensibility §7 (publishing back) (corrected 2026-09-25) |
 | HD2:244 | HD:2406 | Skills are procedure, not capability: enter context only when matched, never widen the tool set | carried | carried | extensibility.md §2.12, §2.17 |
-| HD2:245 | HD:2410-2416 | Skill sources: Anthropic official (Skill Creator, document skills, frontend design); Superpowers; Codex catalogue (scop… | later | later | extensibility §7 (the skill catalogue; Codex admin and system scopes) |
-| HD2:246 | HD:2420-2440 | Per-skill pull/adapt/build decisions (19 rows, e.g. brainstorming → intake questions as decision requests; TDD enforced… | later | later | extensibility §7 (per-skill mapping table kept in full) |
+| HD2:245 | HD:2410-2416 | Skill sources: Anthropic official (Skill Creator, document skills, frontend design); Superpowers; Codex catalogue (scop… | later | later | extensibility §7 (the skill catalogue) (corrected 2026-09-25) |
+| HD2:246 | HD:2420-2440 | Per-skill pull/adapt/build decisions (19 rows, e.g. brainstorming → intake questions as decision requests; TDD enforced… | later | later | extensibility §7 (the skill catalogue table) (corrected 2026-09-25) |
 | HD2:247 | HD:2446 | `SKILL.md` YAML front matter (name, description, triggers, tools) plus a Markdown body | carried | carried | extensibility.md §2.10 (adds `budget_tokens`) |
 | HD2:248 | HD:2447 | A skill's `scripts/` run inside the sandbox | gap | gap | extensibility §2 table (`scripts/` in the sandbox), S9 (EXT-5) |
 | HD2:249 | HD:2452 | Trigger classes let the planner attach a skill deterministically | gap | gap | extensibility rule 12, NEW-extensibility-4 |
@@ -1200,20 +1231,20 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:296 | HD:2536-2582 | Remaining register rows: llama-swap, MLX/mlx-lm, trafilatura, pypdfium2, Docling, PyMuPDF4LLM (AGPL, not distributed),… | missing | carried | PROVENANCE (a row for every named component, R21) |
 | HD2:297 | HD:2580 | hyperfine as the benchmark gate runner for performance criteria | missing | later | gates §7 (hyperfine benchmark gate, proposal) |
 | HD2:298 | HD:2581 | typos as a source-code spelling gate in the hygiene layer | missing | later | gates §7 (typos spelling gate, proposal) |
-| HD2:299 | HD:2578-2579 | mise (pinned toolchain environments) and lefthook (git hooks manager) | missing | deliberate | PROVENANCE (mise, lefthook: not used, the repository's own `.githooks/` instead) |
-| HD2:300 | HD:2542-2543, 2572 | DevDocs and Kiwix as offline documentation services; Dozzle as a container log viewer | missing | deliberate | PROVENANCE (DevDocs, Kiwix, Dozzle: not used — the kit's own docs bundle, no containers in v1) |
+| HD2:299 | HD:2578-2579 | mise (pinned toolchain environments) and lefthook (git hooks manager) | missing | deliberate | PROVENANCE rows "Toolchain version manager (mise)" and "Toolchain and hook managers (mise; lefthook)" (corrected 2026-09-25) |
+| HD2:300 | HD:2542-2543, 2572 | DevDocs and Kiwix as offline documentation services; Dozzle as a container log viewer | missing | deliberate | PROVENANCE "Container log viewer (Dozzle)" row (corrected 2026-09-25) |
 | HD2:301 | HD:2592 | All observability local; no outbound telemetry path at all | carried | carried | runtime.md §2.31, RUN-33 (OTLP export only when the person asks, once; deliberate refinement) |
 | HD2:302 | HD:2596 | Audit: monotonic seq and SHA-256 over content plus the previous hash; tampering found by walking the chain from genesis… | carried | carried | runtime.md §2.29; kernel.md §2.8-9, K-1 |
 | HD2:303 | HD:2600 | OpenTelemetry agent conventions: agent span per card, model span per request with token counts, tool span per call | carried | carried | runtime.md §2.30 |
 | HD2:304 | HD:2600 | Traces stored locally in SQLite and viewable in the UI | carried | carried | runtime.md §2.30 (`.sekhemet/traces.db`) |
 | HD2:305 | HD:2604-2611 | Metrics that matter: pass rate by class/model; prefix-cache hit per step; tokens and seconds estimate vs actual; gate-f… | carried | carried | runtime.md §2.32 |
-| HD2:306 | HD:2615 | Budgets per card and per project in tokens, seconds and kWh | carried | carried | runtime.md §2.19 |
+| HD2:306 | HD:2615 | Budgets per card and per project in tokens, seconds and kWh | carried | gap | runtime rule 19, §4 "Per-card kWh budget; per-project caps" not-built, NEW-runtime-7 (corrected 2026-09-25) |
 | HD2:307 | HD:2615 | kWh computed from hardware TDP and GPU utilisation | contradicted | deliberate | runtime rule 18, §7, §9 |
 | HD2:308 | HD:2615 | Circuit breakers park a card at its cap; a project cap stops the scheduler | carried | carried | runtime.md §2.19 |
 | HD2:309 | HD:2615 | Cost reported in machine time and energy, not API dollars | carried | carried | runtime.md §2.19 |
 | HD2:310 | HD:2619 | Every card records model, quant, template checksum, prompt-set version, playbook version, tool-schema version and engin… | carried-weaker | gap | models MD-M4-5 (seven-field reproducibility record), M4; runtime §8 Q2 points to it |
 | HD2:311 | HD:2623 | The UI is a local web app on loopback, so it works over SSH and on a headless box | carried-weaker | carried | runtime rule 23 |
-| HD2:312 | HD:2623 | A native wrapper is optional and deferred | later | later | dashboard §7 |
+| HD2:312 | HD:2623 | A native wrapper is optional and deferred | later | later | dashboard §7 (native wrapper) (corrected 2026-09-25) |
 | HD2:313 | HD:2625 | Three views are the product (Review, Board, Card); the rest appear when they have something to say | contradicted | deliberate | dashboard §9 (five primary views always, for three audiences) |
 | HD2:314 | HD:2631 | Review view: gate strip, intent-grouped structural diffs, test summaries, screenshot diffs | carried | carried | dashboard.md §2.5 (intent grouping later) |
 | HD2:315 | HD:2633 | Card view: five tabs, Evidence (default), Plan, Steps, Thread, Files | carried | carried | dashboard.md §2.6 |
@@ -1239,7 +1270,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:335 | HD:2669 | Gates re-run on a human-edited tree | later | later | review-git §7 |
 | HD2:336 | HD:2670 | The evidence bundle keeps the Worker's diff and the human's separately | later | later | review-git §7 |
 | HD2:337 | HD:2671 | The competence row records `passed_with_human_edit`, never an unattended pass | later | later | review-git §7 |
-| HD2:338 | HD:2672 | Partial accept takes a subset of hunks; the rest becomes a new card with the reviewer's reason | later | later | review-git §7 (partial accept) |
+| HD2:338 | HD:2672 | Partial accept takes a subset of hunks; the rest becomes a new card with the reviewer's reason | later | later | review-git §7 (partial accept) (corrected 2026-09-25) |
 | HD2:339 | HD:2676 | Headless dual-axis virtualisation via `@tanstack/virtual` | contradicted | deliberate | dashboard §9 (own windowing, no build step) |
 | HD2:340 | HD:2677 | Horizontal virtualiser: off-screen columns cost no DOM | carried | carried | dashboard.md §2.4.9 ("windowed columns and cards") |
 | HD2:341 | HD:2678 | Vertical virtualiser via `translateY()` with an overscan buffer of 3 cards | carried-weaker | carried | dashboard §2.4.9 |
@@ -1281,19 +1312,19 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:377 | HD:2815 | Actor set of seven: human, planner, worker, reviewer, researcher, gate, system | contradicted | deliberate | kernel rule 19, §9 |
 | HD2:378 | HD:2817-2829 | Event fields: seq (1-based monotonic), ts, actor, type, cardId, attemptId, stepId, payload, payloadHash (canonical JSON… | carried | carried | kernel.md §2.6-8 (shapes by reference to `types.ts`) |
 | HD2:379 | HD:2828 | The chain hash covers (seq, ts, actor, type, cardId, payloadHash, prevHash) | gap | gap | kernel rule 9, NEW-kernel-1 |
-| HD2:380 | HD:2825 | Large payload blobs stored under `.sekhemet/artifacts/` | carried | carried | kernel.md §2.15 (content-addressed blobs referenced by hash) |
+| HD2:380 | HD:2825 | Large payload blobs stored under `.sekhemet/artifacts/` | carried | carried | kernel rule 16 (corrected 2026-09-25) |
 | HD2:381 | HD:2832-2866 | Example payloads: CardStart (budget steps/tokens/seconds), StepStart (contextPackHash, activeZoneBudget), ToolCall (arg… | carried | carried | kernel.md §3 (retired in favour of the types in `types.ts`) |
-| HD2:382 | HD:2869 | Events are immutable; corrections are appended as new events | carried | carried | kernel.md §2.7 (plus an UPDATE/DELETE refusal, NEW-kernel-1) |
-| HD2:383 | HD:2878-2881 | PRAGMAs: journal_mode WAL, synchronous NORMAL, foreign_keys ON, busy_timeout 5000 | carried | carried | kernel.md §2.27 |
+| HD2:382 | HD:2869 | Events are immutable; corrections are appended as new events | carried | carried | kernel rule 8 (plus the `UPDATE`/`DELETE` refusal, NEW-kernel-1) (corrected 2026-09-25) |
+| HD2:383 | HD:2878-2881 | PRAGMAs: journal_mode WAL, synchronous NORMAL, foreign_keys ON, busy_timeout 5000 | carried | carried | kernel rule 38, `pragmas.spec.ts` (corrected 2026-09-25) |
 | HD2:384 | HD:2884-2901 | `events` table with an actor CHECK, a unique hash and indexes on card, attempt, type, seq | carried | carried | kernel.md §2.6 (SQL by reference to `schema.ts`) |
-| HD2:385 | HD:2903 | Projections derived deterministically from the log and rebuildable from scratch | carried | carried | kernel.md §2.13, K-2 |
-| HD2:386 | HD:2904-2913 | `projects` table (tier default 'auto', review_minutes_per_day default 60, unique root_path) | carried | carried | kernel.md §2.6 (by reference) |
-| HD2:387 | HD:2915-2933 | `cards` table: 9-state CHECK; difficulty 1–10; step_budget 40; token_budget 32000; assigned_tier; blocked_reason; order… | carried | carried | kernel.md §2.6, §2.17 (by reference to `schema.ts`; K-S7-1 refuses difficulty 11). The defaults are not restated in any spec |
+| HD2:385 | HD:2903 | Projections derived deterministically from the log and rebuildable from scratch | carried | carried | kernel rule 14, K-2 (corrected 2026-09-25) |
+| HD2:386 | HD:2904-2913 | `projects` table (tier default 'auto', review_minutes_per_day default 60, unique root_path) | carried | carried | kernel rule 6 Project bullet (after restoration) (corrected 2026-09-25) |
+| HD2:387 | HD:2915-2933 | `cards` table: 9-state CHECK; difficulty 1–10; step_budget 40; token_budget 32000; assigned_tier; blocked_reason; order… | carried | deliberate | kernel rules 6 (Card bullet, after restoration), 15 (order key), 23 (nine states), 24 (typed holds); K-S7-1 (difficulty 1–10); planner-pm §2.4 (step budget ≤ 40); worker-loop §3 Token budget row (none by default) (corrected 2026-09-25) |
 | HD2:388 | HD:2925 | `cards.priority REAL` holds the WSJF score | contradicted | deliberate | planner-pm §2.7, §9 |
 | HD2:389 | HD:2938-2942 | `card_dependencies` table; the dependency DAG | carried | carried | kernel.md §2.3 |
-| HD2:390 | HD:2944-2957 | `attempts`: rung 1–4, tool_arm A/B/C, status (running, done_pending_gates, passed, failed, halted), stop_reason, tokens… | carried | carried | kernel.md §2.6; worker-loop.md §2.34 (4 rungs); models.md §2.28 (arms) |
-| HD2:391 | HD:2961-2974 | `steps`: tool, arguments, argument_hash, repo_state_hash, success, result_summary, tokens_condensed, duration | carried | carried | kernel.md §2.6; worker-loop.md §2.17 |
-| HD2:392 | HD:2978-2987 | `gate_results` with a layer CHECK and status pass/fail | carried | carried | kernel.md §2.6; gates.md §2.9 adds `unavailable` |
+| HD2:390 | HD:2944-2957 | `attempts`: rung 1–4, tool_arm A/B/C, status (running, done_pending_gates, passed, failed, halted), stop_reason, tokens… | carried | carried | kernel rule 6 Attempt (after restoration); worker-loop rules 31, 33, 34; models rule 28 (corrected 2026-09-25) |
+| HD2:391 | HD:2961-2974 | `steps`: tool, arguments, argument_hash, repo_state_hash, success, result_summary, tokens_condensed, duration | carried | deliberate | kernel rule 6 Step ("not stored: … a step's verdict is its gate results, and condensing savings are context's measure"); worker-loop rule 17 (corrected 2026-09-25) |
+| HD2:392 | HD:2978-2987 | `gate_results` with a layer CHECK and status pass/fail | carried | carried | kernel rule 6 Gate result bullet (after restoration) (corrected 2026-09-25) |
 | HD2:393 | HD:2991-3003 | `evidence_bundles`: diff, structural diff, gate summary, passed/failed checks, abandoned hypotheses, trajectory ref | gap | gap | gates rule 35, T1 (GT-T1-8); structural diff later §7 |
 | HD2:394 | HD:3005-3022 | `decision_requests`: options {label, consequence, effortDelta, riskNote}, recommendation, answerer human/researcher, bl… | carried-weaker | gap | planner-pm §2.10.2, P2; non-blocking `ask` NEW-worker-loop-4 |
 | HD2:395 | HD:3024-3038 | `competence_entries`: repo, class, files touched, difficulty, model, arm, step budget, stop reason, passed, tokens, sec… | gap | gap | models rule 32, NEW-models-6 |
@@ -1306,15 +1337,15 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:402 | HD:3088 | `rung`, `layer` and `timeout_s` inferred from `id` and `parser` unless stated | gap | gap | gates §3 inference, T1 (GT-T1-6) |
 | HD2:403 | HD:3090 | The file's SHA-256 verified on every card start; an unauthorised change aborts | carried | carried | gates.md §2.2, GT-1 (also re-checked before every verification) |
 | HD2:404 | HD:3094 | REST and WebSocket served on loopback `http://127.0.0.1:4040` | carried | carried | runtime.md §2.23 |
-| HD2:405 | HD:3096-3115 | REST route table (workspace, board, cards CRUD, split, run, gate, accept, return, park, rewind, evidence, events?since,… | carried | carried | runtime.md §3 ("superseded by the routes above; the code is the contract"). Every function has an `/api` route |
-| HD2:406 | HD:3102-3103 | Request bodies: `split { strategy }`, `run { budgetOverride }` | carried-weaker | later | runtime §7 (budget override); split body §3 |
+| HD2:405 | HD:3096-3115 | REST route table (workspace, board, cards CRUD, split, run, gate, accept, return, park, rewind, evidence, events?since,… | carried | deliberate | runtime §3 ("superseded by the routes above; the code is the contract, and a route change updates this list") (corrected 2026-09-25) |
+| HD2:406 | HD:3102-3103 | Request bodies: `split { strategy }`, `run { budgetOverride }` | carried-weaker | deliberate | runtime §3 request-body row (`cards/:id/split` takes `{parts: [{title, …}]}`, "the SPIDR strategy is the planner's"); runtime §7 (per-run budget override) (corrected 2026-09-25) |
 | HD2:407 | HD:3119 | M0 spike: ≥ 90% valid-and-correct tool execution across 30 seeded tasks (3 runs each, budgets 50 and 150) under the win… | later | deliberate | measurement rule 28 (M0 bar historical; protocol in `sekhemet m0`) |
-| HD2:408 | HD:3120 | M1 kernel: hash-chained log in SQLite WAL; byte-identical projection rebuild; reversible plugin mount/unmount | carried | carried | kernel.md K-1, K-2 (plugins cut: DEC-09) |
+| HD2:408 | HD:3120 | M1 kernel: hash-chained log in SQLite WAL; byte-identical projection rebuild; reversible plugin mount/unmount | carried | carried | kernel K-1, K-2; plugins cut in B0 (DEC-29 O4; extensibility rule 29) (corrected 2026-09-25) |
 | HD2:409 | HD:3121 | M2 context: deterministic assembly; byte-identical prompts; prefix-cache hit > 85% on tool-result steps | gap | gap | context rules 1, 7; M8 |
 | HD2:410 | HD:3122 | M3 Worker: Ready → Verify unattended; stall/oscillation detector aborts within 3 steps; stop reason logged | carried | carried | worker-loop.md §2.18, WL-2, §2.30; MVP_PATH step 6 |
 | HD2:411 | HD:3123 | M4 gates: static, functional and security gates sandboxed on the gate host; typed `GateFailure`; tampering with test fi… | carried | carried | gates.md §2.2, §2.7, §2.11, §2.19 |
 | HD2:412 | HD:3124 | M5 board: master and project boards; Review presents evidence; one real card accepted end to end on the founder's repo | carried | carried | MVP_PATH steps 6–7; dashboard.md |
-| HD2:413 | HD:3125 | M6 PM: nested boards with rollup; SPIDR fitted to tier; Review WIP back-pressures Verify; retry ladder; playbook v1 | carried | carried | kernel.md §2.24; planner-pm.md §2.2; review-git.md §2.2; worker-loop.md §2.34; context.md §2.24 |
+| HD2:413 | HD:3125 | M6 PM: nested boards with rollup; SPIDR fitted to tier; Review WIP back-pressures Verify; retry ladder; playbook v1 | carried | carried | kernel rules 29 (back-pressure), 30 (rollup); planner-pm §2.4 (corrected 2026-09-25) |
 | HD2:414 | HD:3126 | M7 depth: visual, mutation and dependency gates; bake-off matrix; GitHub App PR with check runs and annotations | carried | carried | gates.md; models.md §2.30; integrations.md §2.14-15 |
 | HD2:415 | HD:3127 | M8 self-improvement: each inlet beats its frozen baseline on held-out evals before enablement; a variant archive keeps… | carried | carried | measurement.md §2.17-19 (variant archive in §3 contract) |
 | HD2:416 | HD:3135 | TypeScript on Node throughout; inference over HTTP, never in-process; language servers, formatters and scanners as sand… | carried | carried | SPINE "How the parts fit"; models.md §2.14; security.md §2.4 |
@@ -1329,7 +1360,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:425 | HD:3353 | All unit and integration tests on in-memory SQLite (`:memory:`), setup under 5 ms per file | contradicted | deliberate | DEFINITION_OF_DONE §2A (real on-disk SQLite) |
 | HD2:426 | HD:3354 | The whole monorepo unit suite runs in under 3 seconds | missing | deliberate | DEFINITION_OF_DONE §2D.4 (the 3 s target kept as history; speed never bought with mocks) |
 | HD2:427 | HD:3358-3368 | Build pipeline: pnpm workspaces; composite `tsc -b`; Biome; scripts build, test, test:unit, test:integration, typecheck… | carried-weaker | carried | DEFINITION_OF_DONE §2D.1 (test:unit, test:integration, pnpm dev); CLAUDE.md commands |
-| HD2:428 | HD:3372-3380 | Phase 0 spike: 30 tasks × 3 runs × 3 arms at budgets 50/150; go ≥ 90%, rework 70–90%, pivot < 70% (narrow to planning a… | later | deliberate | measurement rule 28 (the pivot rule is owner decision O20, default: a standing decision) — was: §8 Q4 (pivot rule proposed as a standing decision, owner) |
+| HD2:428 | HD:3372-3380 | Phase 0 spike: 30 tasks × 3 runs × 3 arms at budgets 50/150; go ≥ 90%, rework 70–90%, pivot < 70% (narrow to planning a… | later | deliberate | measurement rule 28 (M0 row) and rule 28a (the pivot rule, O20), §8 Q4 (corrected 2026-09-25) |
 | HD2:429 | HD:3384 | The frozen suite is written before the features it judges; a phase is complete only when its result is recorded against… | carried | carried | measurement.md §2.1-4 (the ordering rationale is history) |
 | HD2:430 | HD:3388-3390 | Phase 1 MVP: a card goes Ready → Review unattended with an evidence bundle on the founder's repository | carried | carried | MVP_PATH.md (done) |
 | HD2:431 | HD:3394 | Phase 2 PM-layer list (nested boards, decomposition, DAG, WIP, ladder, masking, RTK, playbook, hooks/skills/commands, r… | carried | carried | Each item carried in the owning spec (see its rows) |
@@ -1354,7 +1385,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:450 | HD:3456 | Open: keyboard bindings and mobile viewport limits | carried | carried | dashboard.md §2.3, §2.15.3 (answered) |
 | HD2:451 | HD:3457 | Open: plugin isolation and third-party signing | later | later | extensibility §7; security §7 |
 | HD2:452 | HD:3461 | Founder decisions: name, licence, business model, network boundary (GitHub sync opt-in), defence go-to-market | carried | carried | DECISIONS.md founder section; SPINE "Locked for v1" Network row |
-| HD2:453 | HD:3469-3487 | Rejected techniques (19 rows: Scrum roles, parallel writers, self-certification, self-refine, debate, unbounded best-of… | carried | carried | DEC-22 (all 19; "politeness" dropped from the persona row, minor) |
+| HD2:453 | HD:3469-3487 | Rejected techniques (19 rows: Scrum roles, parallel writers, self-certification, self-refine, debate, unbounded best-of… | carried | carried | DECISIONS DEC-22 (after restoration) (corrected 2026-09-25) |
 | HD2:454 | HD:3491 | Non-goals: not a chat assistant, IDE, CI system or tracker replacement; not aiming at frontier parity; slower per card | carried | carried | DEC-23 |
 | HD2:455 | HD:3499 | PROVENANCE maps every adopted technique to a public source; never leaked code or verbatim prompts | carried | carried | PROVENANCE.md Techniques |
 | HD2:456 | HD:3503-3513 | Technique rows (11) with dates verified | carried | carried | PROVENANCE.md (identical plus 2 rows) |
@@ -1387,7 +1418,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:478 | IR:135 | B5: Reviewer findings reach only the dashboard, not Seshat's snapshot, a retry or learning | missing | gap | review-git §2.3.5, P8 (RG-P8-9 findings to the dossier and Seshat's snapshot) |
 | HD2:479 | IR:136 | B5: a send-back note is not seen by the returned card's next attempt | carried | carried | review-git.md §2.4 ("it is what the Worker is told next (dossier)") |
 | HD2:480 | IR:137 | B5: `manager` rules: the role exists in the type, but nothing produces or reads them | missing | gap | context rule 24d, NEW-context-4 |
-| HD2:481 | IR:138 | B5: user-profile decay is specified in PM_CONTRACT §6 and not implemented | carried | carried | planner-pm.md §2.13.3 (decay kept as behaviour; not flagged in its state table) |
+| HD2:481 | IR:138 | B5: user-profile decay is specified in PM_CONTRACT §6 and not implemented | carried | gap | planner-pm §2.13.3, §4 (after a "Profile statements decay" row is added), P6 (after PM-P6 criterion is added) (corrected 2026-09-25) |
 | HD2:482 | IR:139 | B5: `lessonsByCard` lives in memory and is lost when the queue restarts | missing | carried | kernel rule 20 (`card/lesson` on the ledger, built) |
 | HD2:483 | IR:142-144 | B6: the Researcher gets only the error text and a hard-coded "TypeScript project"; it runs after the repair plans; its… | missing | gap | design-stage NEW-design-stage-5 |
 | HD2:484 | IR:148-151 | C1: `askResearcher` swaps researcher ↔ manager per question: 10 evictions where 4 are needed, at 40–120 s each (4–12 mi… | missing | gap | models rule 20a (per-role queues, swaps ordered by the residency plan), NEW-models-9 |
@@ -1452,9 +1483,9 @@ Columns: row key · old location · item (shortened) · status when first traced
 | PMFE:3 | PM:20 | Priority 0..4 on Linear's scale (0 none, 1 Urgent … 4 Low) | carried | carried | ppm §2.7.1; PMC §2 |
 | PMFE:4 | PM:20 | Priority glyph language: bars High/Med/Low, boxed exclamation Urgent, three dashes for none | contradicted | deliberate | dashboard §9 |
 | PMFE:5 | PM:20 | Sort 1,2,3,4 then 0 | carried | carried | ppm §2.7.1 |
-| PMFE:6 | PM:21 | Fibonacci points 1,2,3,5,8 shown as `3 pts` | carried | carried | ppm §2.6.2; NEW-planner-pm-1 |
-| PMFE:7 | PM:21 | Nothing larger than 8; an 8 is a card the Planner should split, and the PM says so | carried | carried | ppm §2.6.2, NEW-planner-pm-1 |
-| PMFE:8 | PM:21 | Points summed per column, cycle and epic | carried-weaker | carried | dashboard §2.4.3, P3 |
+| PMFE:6 | PM:21 | Fibonacci points 1,2,3,5,8 shown as `3 pts` | carried | gap | ppm §2.6.2; NEW-planner-pm-1 (PM-N1-1) (corrected 2026-09-25) |
+| PMFE:7 | PM:21 | Nothing larger than 8; an 8 is a card the Planner should split, and the PM says so | carried | gap | ppm §2.6.2; NEW-planner-pm-1 (PM-N1-2) (corrected 2026-09-25) |
+| PMFE:8 | PM:21 | Points summed per column, cycle and epic | carried-weaker | gap | dash §2.4.3 (column points sum), §2.4.13–14 (cycle and lane points, built); P3 (DB-P3-9) (corrected 2026-09-25) |
 | PMFE:9 | PM:22 | `epicId` → card with `tier: "epic"` | carried | carried | PMC §2 |
 | PMFE:10 | PM:22 | Epic progress from `/api/board` `epics[]` | carried | carried | PMC §3 |
 | PMFE:11 | PM:22 | Epics appear as swimlanes, filter and table column, never as a separate hierarchy screen | contradicted | deliberate | dashboard §9 (story map is a view of the cards) |
@@ -1480,7 +1511,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | PMFE:31 | PM:39 | Aging WIP is the first chart | carried | carried | dash §2.10.2 ("first") |
 | PMFE:32 | PM:40 | Cycle planning asks appetite (points to bet), not capacity to the brim | carried | carried | ppm §2.7.7 |
 | PMFE:33 | PM:40 | Leave 15–20% of a cycle unplanned by default | carried | carried | ppm §2.7.3, §2.7.7 |
-| PMFE:34 | PM:41 | Standup: Done since yesterday · In flight · Needs you, each line a card chip | carried | carried | ppm §2.7.8 table; P6 (since the previous standup) |
+| PMFE:34 | PM:41 | Standup: Done since yesterday · In flight · Needs you, each line a card chip | carried | gap | ppm §2.7.8 table; P6 (PM-P6-3) (corrected 2026-09-25) |
 | PMFE:35 | PM:41 | Standup posted to Slack when connected | carried | carried | ppm §2.7.8; int INT-18 |
 | PMFE:36 | PM:47 | PM is a named team member with an avatar and a presence line | carried-weaker | carried | dashboard §2.7.2 |
 | PMFE:37 | PM:47 | PM messages cite cards and runs | carried | carried | dash §2.7.4 |
@@ -1499,11 +1530,11 @@ Columns: row key · old location · item (shortened) · status when first traced
 | PMFE:50 | PM:70 | Voice: answer first, then evidence | carried | carried | ppm §2.8.2 |
 | PMFE:51 | PM:71 | Numbers with a basis | carried | carried | ppm §2.8.2 |
 | PMFE:52 | PM:72 | Every card mentioned is an `@card` chip | carried | carried | ppm §2.8.2; dash §2.7.4 |
-| PMFE:53 | PM:73 | Proposes, never does; says "I've proposed…", never "I've changed…" | carried | carried | ppm §2.8.3 (the phrasing rule is lost; the behaviour is kept) |
+| PMFE:53 | PM:73 | Proposes, never does; says "I've proposed…", never "I've changed…" | carried | carried | ppm §2.8.2 (*"I've proposed…"*, never *"I've changed…"*), §2.8.3 (corrected 2026-09-25) |
 | PMFE:54 | PM:74 | Says what it doesn't know; guesses marked My read (not verified): | carried | carried | ppm §2.8.2, §2.8.11 |
 | PMFE:55 | PM:75 | Most replies under 120 words; long answers use the three-heading standup shape | carried-weaker | carried | planner-pm §2.8.2 |
-| PMFE:56 | PM:76 | No flattery, filler, exclamation, emoji, sign-off | carried | carried | ppm §2.8.2 |
-| PMFE:57 | PM:84-94 | Sample exchange: standup (sections, pace sentence, Based on: board time · run · ledger #) | carried-weaker | carried | planner-pm §2.8.17 |
+| PMFE:56 | PM:76 | No flattery, filler, exclamation, emoji, sign-off | carried | carried | ppm §2.8.2 (corrected 2026-09-25) |
+| PMFE:57 | PM:84-94 | Sample exchange: standup (sections, pace sentence, Based on: board time · run · ledger #) | carried-weaker | carried | ppm §2.8.17; §9 (corrected 2026-09-25) |
 | PMFE:58 | PM:96-110 | Sample: "why did the ledger card fail?" — stop reason, step, repeated action, upstream protected-test cause, send-back… | carried-weaker | carried | planner-pm §2.8.17 |
 | PMFE:59 | PM:112-122 | Sample: "split this card" — over the 3-file bound, split along routes,… | carried-weaker | carried | planner-pm §2.8.17, §2.3.3 |
 | PMFE:60 | PM:124-136 | Sample: "plan next cycle" — bet below the average with the basis, goal sentence, in/out deliberately, asks appetite on… | carried | carried | ppm §2.7.7; P6 (bet ≤ 85% of the mean of the last three cycles) |
@@ -1516,25 +1547,25 @@ Columns: row key · old location · item (shortened) · status when first traced
 | PMFE:67 | PM:157 | Full view `#/pm` on chord `g a` | contradicted | deliberate | dashboard §2.3.1, §9 |
 | PMFE:68 | PM:157 | Full view: 720 px reading column, 288 px rail with Open proposals, Worker (state, step, paused), What Seshat can see (b… | carried | carried | dash §2.7.1 |
 | PMFE:69 | PM:181 | Your messages: `--bg-raised`, right-aligned, max 85%, time in 11 px secondary | carried-weaker | carried | dashboard §2.7.3 |
-| PMFE:70 | PM:182 | Seshat's replies: full-width prose, no bubble, one-line header (avatar, name, time) | carried | carried | dash §2.7.3 |
-| PMFE:71 | PM:183 | System messages: one centred 11 px secondary line | carried | carried | dash §2.7.3 |
+| PMFE:70 | PM:182 | Seshat's replies: full-width prose, no bubble, one-line header (avatar, name, time) | carried | carried | dash §2.7.3 (corrected 2026-09-25) |
+| PMFE:71 | PM:183 | System messages: one centred 11 px secondary line | carried | carried | dash §2.7.3 (corrected 2026-09-25) |
 | PMFE:72 | PM:184 | Markdown limited to paragraphs, lists, bold, code, fenced code, `###` | carried | carried | dash §2.7.3 |
 | PMFE:73 | PM:184 | Pure escape-first renderer (`renderPmMarkdown`), unit-tested; model text never injects markup | carried | carried | dash §2.7.3, S3c |
 | PMFE:74 | PM:184 | Raw links render as text | carried | carried | dash §2.7.3 |
 | PMFE:75 | PM:188 | `@card_id` chip: state icon, short id in mono, title truncated at 32 chars | carried | carried | dash §2.7.4 (id → key) |
 | PMFE:76 | PM:188 | Click chip peeks; ⌘-click opens card view | carried | carried | dash §2.7.4 |
 | PMFE:77 | PM:189 | Unknown ids render as plain mono text | carried | carried | dash §2.7.4, §6 |
-| PMFE:78 | PM:190 | `@` in composer opens fuzzy card picker; `↵` inserts the chip token | carried | carried | dash §2.7.4, §2.3 |
+| PMFE:78 | PM:190 | `@` in composer opens fuzzy card picker; `↵` inserts the chip token | carried | carried | dash §2.7.4 (corrected 2026-09-25) |
 | PMFE:79 | PM:191 | Cites under the reply as Based on: chips for cards, runs (→ `#/runs/<id>`) and evidence (→ the card's evidence tab) | carried-weaker | carried | dashboard §2.7.4 |
 | PMFE:80 | PM:193 | Context chip Looking at: Board · Cycle 12 · 2 filters / @hasher | carried | carried | dash §2.7.5 |
 | PMFE:81 | PM:193 | Sent as `context: { cardId?, view }`; `✕` drops it for the next message; it returns when you move | carried | carried | dash §2.7.5; PMC §3 |
 | PMFE:82 | PM:193 | Why the chip exists (silent context feels like surveillance; none makes you repeat yourself) | carried-weaker | carried | dashboard §2.7.5 |
-| PMFE:83 | PM:197 | Composer grows 1–8 lines; `↵` send, `⇧↵` newline, `Esc` returns focus without closing the panel | carried | carried | dash §2.7.6, §2.3 |
+| PMFE:83 | PM:197 | Composer grows 1–8 lines; `↵` send, `⇧↵` newline, `Esc` returns focus without closing the panel | carried | carried | dash §2.7.6, §2.3 (corrected 2026-09-25) |
 | PMFE:84 | PM:198 | Starter prompts when thread empty or idle 12 h (Standup, What's at risk, Plan the next cycle) + contextual (Why did @x… | carried | carried | dash §2.7.6 (+ *Start a new project*) |
-| PMFE:85 | PM:199 | Cost line under the composer, 11 px secondary, says what sending does | carried | carried | dash §2.7.6 |
-| PMFE:86 | PM:200 | Worker-running cost line names the step (step 5 of 32) and the ETA (about 40s) | carried-weaker | carried | dashboard §2.7.6 |
+| PMFE:85 | PM:199 | Cost line under the composer, 11 px secondary, says what sending does | carried | carried | dash §2.7.6 (corrected 2026-09-25) |
+| PMFE:86 | PM:200 | Worker-running cost line names the step (step 5 of 32) and the ETA (about 40s) | carried-weaker | carried | dash §2.7.6 (corrected 2026-09-25) |
 | PMFE:87 | PM:201 | Idle cost line Seshat runs locally on dirk-27b. Replies take about a minute. | contradicted | deliberate | dashboard §2.7.6, §9; R15 |
-| PMFE:88 | PM:202 | Read-only cost line + composer disabled | carried | carried | dash §2.7.6 |
+| PMFE:88 | PM:202 | Read-only cost line + composer disabled | carried | carried | dash §2.7.6 (corrected 2026-09-25) |
 | PMFE:89 | PM:204 | A reply with `proposals[]` ends in a proposal group | carried | carried | dash §2.7.7 |
 | PMFE:90 | PM:207 | Group header Proposed changes · 3 open, Discard all, Apply all ⇧Y | carried | carried | dash §2.7.7 |
 | PMFE:91 | PM:224 | Field diff row: label (secondary, 96 px), before struck on `--tint-fail`, arrow, after (primary, 500 weight) on… | carried-weaker | carried | dashboard §2.7.7 |
@@ -1543,44 +1574,44 @@ Columns: row key · old location · item (shortened) · status when first traced
 | PMFE:94 | PM:224 | Colour never the only signal in a diff (arrow, strike, words) | carried | carried | dash §2.1.2, §2.14 |
 | PMFE:95 | PM:225 | Create/split: numbered new cards with title, kind, points, waits on 1 | carried | carried | dash §2.7.7 |
 | PMFE:96 | PM:226 | Reorder shows Position 7 → 2 in Ready; move shows Ready → Backlog | carried-weaker | carried | dashboard §2.7.7 |
-| PMFE:97 | PM:227 | Park and unpark proposals show the reason | carried | carried | dash §2.7.7 ("park shows the reason") |
-| PMFE:98 | PM:229-232 | Proposal states Open / Applied (pass check, by you at 09:05) / Discarded (struck line) / Stale (amber rule, reason in… | carried | carried | dash §2.7.7, §6 |
+| PMFE:97 | PM:227 | Park and unpark proposals show the reason | carried | carried | dash §2.7.7 (corrected 2026-09-25) |
+| PMFE:98 | PM:229-232 | Proposal states Open / Applied (pass check, by you at 09:05) / Discarded (struck line) / Stale (amber rule, reason in… | carried | carried | dash §2.7.7 (corrected 2026-09-25) |
 | PMFE:99 | PM:233 | Apply all copy Apply 3 changes to 5 cards; in order; stops at first failure with Applied 2 of 3… | carried | carried | dash §2.7.7; ppm §2.8.3, §6 |
-| PMFE:100 | PM:233 | Applied changes are ledger events with actor You | carried | carried | ppm §2.8.3 (PMC §3 event name `pm/proposal_applied` vs code `pm/proposal_state` — ppm §8.2) |
+| PMFE:100 | PM:233 | Applied changes are ledger events with actor You | carried | carried | ppm §2.8.3; PMC §3 (`pm/proposal_state`, actor `human`) (corrected 2026-09-25) |
 | PMFE:101 | PM:234 | Proposal keys y / n / ⇧Y / j,k when focused | carried | carried | dash §2.3 |
 | PMFE:102 | PM:235 | Import uses the same component; never silent; Import from Jira CSV · 42 cards | carried | carried | dash §2.7.7, §2.11 |
 | PMFE:103 | PM:239 | The wait is a visible procedure driven by `PmStatus.phase` | carried | carried | dash §2.7.8; PMC §3 |
 | PMFE:104 | PM:241 | Pending reply block under Seshat's header where the reply will land | carried | carried | dash §2.7.8 |
 | PMFE:105 | PM:249-251 | Block's explanation (Only one model fits in memory… continues from step 6… You can keep working; the reply lands here.… | missing | carried | dashboard §2.7.8 |
 | PMFE:106 | PM:256 | `waiting_for_step`: Pausing the Worker after step 5 (step from `detail` or `step`); Waiting for step 5 to finish. Th… | carried | carried | dash §2.7.8; PMC §3 |
-| PMFE:107 | PM:257 | `loading_pm`: about 40s; 2 px lapis bar to the ETA (`detail`'s `~40s` or `etaSeconds`); past the ETA the bar stops an… | carried | carried | dash §2.7.8; PMC §3 |
+| PMFE:107 | PM:257 | `loading_pm`: about 40s; 2 px lapis bar to the ETA (`detail`'s `~40s` or `etaSeconds`); past the ETA the bar stops an… | carried | carried | dash §2.7.8 (corrected 2026-09-25) |
 | PMFE:108 | PM:258 | `thinking`: elapsed only; after 90 s Long answers can take up to two minutes on this machine. | carried | carried | dash §2.7.8 |
-| PMFE:109 | PM:259 | `resuming_worker`: Reloading the Worker; step 6 starts next.; the reply is usually already above | carried | carried | dash §2.7.8 |
+| PMFE:109 | PM:259 | `resuming_worker`: Reloading the Worker; step 6 starts next.; the reply is usually already above | carried | carried | dash §2.7.8 (corrected 2026-09-25) |
 | PMFE:110 | PM:260 | `idle`: block removed | carried-weaker | carried | dashboard §2.7.8 (`idle`: block removed) |
 | PMFE:111 | PM:263-265 | Row states: completed = pass check + duration; current = lapis ring + running timer (tabular, ticks once a second, noth… | carried-weaker | carried | dashboard §2.7.8 |
 | PMFE:112 | PM:266 | No runner lease → Worker rows omitted (Loading the PM → Thinking) | carried | carried | dash §2.7.8 |
 | PMFE:113 | PM:267 | Header timer = total since your message was queued | carried | carried | dash §2.7.8 ("total timer") |
 | PMFE:114 | PM:268 | Panel header repeats the current phase in one line with its time | carried | carried | dash §2.7.2 |
 | PMFE:115 | PM:269 | Shell bar (lowest priority) while `workerPaused`: Worker paused after step 5 while Seshat replies. +… | carried-weaker | carried | dashboard §2.2.4 |
-| PMFE:116 | PM:270 | Running tile reads Paused for Seshat · step 5 of 32 | carried | carried | dash §2.7.8 |
+| PMFE:116 | PM:270 | Running tile reads Paused for Seshat · step 5 of 32 | carried | carried | dash §2.7.8, §2.4.1 (corrected 2026-09-25) |
 | PMFE:117 | PM:271 | Second message during a wait: Queued · Seshat answers in order | carried | carried | dash §2.7.8 |
 | PMFE:118 | PM:272 | Error state: Seshat couldn't reply. + server text verbatim + `Retry` (same text and context) | carried | carried | dash §2.7.8 |
-| PMFE:119 | PM:273 | Offline freezes timers, disables composer with Offline. Your message would not reach Seshat. | carried | carried | dash §2.7.8 (copy lost, behaviour kept) |
-| PMFE:120 | PM:279 | Thread 404: Seshat isn't on this server yet + how to fix; composer disabled with reason; nav item stays | carried | carried | dash §2.7.9 |
+| PMFE:119 | PM:273 | Offline freezes timers, disables composer with Offline. Your message would not reach Seshat. | carried | carried | dash §2.7.8 (corrected 2026-09-25) |
+| PMFE:120 | PM:279 | Thread 404: Seshat isn't on this server yet + how to fix; composer disabled with reason; nav item stays | carried | carried | dash §2.7.9 (corrected 2026-09-25) |
 | PMFE:121 | PM:280 | First conversation: local intro paragraph (not sent), then starters | carried | carried | dash §2.7.9 |
 | PMFE:122 | PM:281 | Loading: three skeleton lines | carried | carried | dash §2.7.9 |
-| PMFE:123 | PM:282 | Thread 5xx: Couldn't load the conversation. The server returned 500. `Retry` | carried | carried | dash §2.7.9 ("thread error with Retry") |
+| PMFE:123 | PM:282 | Thread 5xx: Couldn't load the conversation. The server returned 500. `Retry` | carried | carried | dash §2.7.9 (corrected 2026-09-25) |
 | PMFE:124 | PM:292 | Tile row 1: priority · kind · labels (max 2, +n) · points · id | contradicted | deliberate | dashboard §9 |
 | PMFE:125 | PM:300 | Priority glyph in a fixed 12 px slot at the far left so priorities scan as a column | carried-weaker | deliberate | dashboard §9 (List view scans priority) |
 | PMFE:126 | PM:302 | Low/Med/High = 1–3 of three rising bars; unlit bars `--border-strong` | carried-weaker | carried | dashboard §2.4.4 |
 | PMFE:127 | PM:303-304 | Urgent: rounded square with exclamation; glyph `--text-secondary`, Urgent `--text-primary`; shape, not colour | carried | carried | dash §2.4.4 |
-| PMFE:128 | PM:305 | Labels: 11 px secondary in 1 px `--border-subtle` outline, at most two, then `+n` | carried | carried | dash §2.4.4 |
+| PMFE:128 | PM:305 | Labels: 11 px secondary in 1 px `--border-subtle` outline, at most two, then `+n` | carried | carried | dash §2.4.4 (corrected 2026-09-25) |
 | PMFE:129 | PM:306 | Points `3 pts`, omitted when unset | carried | carried | dash §2.4.4, P3 |
-| PMFE:130 | PM:307 | Tile height stays 88 px because windowing depends on it | carried | carried | dash §2.4.4 (88 px; reason lost) |
-| PMFE:131 | PM:311 | View bar 40 px under the topbar on `--bg-base` with a hairline | carried | carried | dash §2.4.11 (colour lost) |
+| PMFE:130 | PM:307 | Tile height stays 88 px because windowing depends on it | carried | carried | dash §2.4.4 (corrected 2026-09-25) |
+| PMFE:131 | PM:311 | View bar 40 px under the topbar on `--bg-base` with a hairline | carried | carried | dash §2.4.11 (corrected 2026-09-25) |
 | PMFE:132 | PM:317 | Board / List segmented control, `v` | carried | carried | dash §2.4.11, §2.3 |
-| PMFE:133 | PM:318 | Named views (All cards default, Current cycle, Needs you, Urgent and high, Unestimated) + saved; query in mono | carried | carried | dash §2.4.11 |
-| PMFE:134 | PM:319 | Filter chips (click to edit, `✕`); `+ Filter` fields Priority, Label, Epic, Cycle, Assignee, Kind, State | carried | carried | dash §2.4.11 |
+| PMFE:133 | PM:318 | Named views (All cards default, Current cycle, Needs you, Urgent and high, Unestimated) + saved; query in mono | carried | carried | dash §2.4.11 (corrected 2026-09-25) |
+| PMFE:134 | PM:319 | Filter chips (click to edit, `✕`); `+ Filter` fields Priority, Label, Epic, Cycle, Assignee, Kind, State | carried | carried | dash §2.4.11 (corrected 2026-09-25) |
 | PMFE:135 | PM:320-329 | Query terms incl. `cycle:current\|none`, `is:blocked\|needs-you\|running\|unestimated`, free words, `-` negation | carried | carried | dash §2.4.12 (+ AND/OR semantics) |
 | PMFE:136 | PM:331 | Chips and text are one filter object (`parseQuery`/`formatQuery`, unit-tested) | carried | carried | dash §2.4.12; tests `pm.spec.ts` (§4) |
 | PMFE:137 | PM:332 | Group None/Epic/Assignee/Priority/Cycle; `⇧S` cycles | carried | carried | dash §2.4.11, §2.3 |
@@ -1593,17 +1624,17 @@ Columns: row key · old location · item (shortened) · status when first traced
 | PMFE:144 | PM:345 | Unestimated cards count as 1 pt; header says how many | carried | carried | dash §2.4.13 |
 | PMFE:145 | PM:346 | Plan next cycle with Seshat opens the panel with the prompt filled in, not sent | carried | carried | dash §2.4.13 |
 | PMFE:146 | PM:350 | Lane: 32 px header (chevron, name, count, points) and a row of the same columns | carried | carried | dash §2.4.14 |
-| PMFE:147 | PM:351 | Epic lanes show epic progress (`done / total` cards) | carried | carried | dash §2.4.14 (basis lost) |
+| PMFE:147 | PM:351 | Epic lanes show epic progress (`done / total` cards) | carried | carried | dash §2.4.14 (corrected 2026-09-25) |
 | PMFE:148 | PM:352 | Always a No epic / No assignee / No cycle / No priority lane, last | carried | carried | dash §2.4.14 |
 | PMFE:149 | PM:353 | Rails still collapse empty columns board-wide | contradicted | deliberate | dashboard §9 (chips) |
 | PMFE:150 | PM:354-355 | Lane collapses with its chevron; `j/k` cross lanes, `h/l` stay | carried | carried | dash §2.4.14, §2.3 |
 | PMFE:151 | PM:356 | Lanes not windowed (filtered views); ungrouped board virtualized for 500+ | carried | carried | dash §2.4.9 |
-| PMFE:152 | PM:360 | List shares filter, grouping and selection with the board | carried | carried | dash §2.4.15 |
-| PMFE:153 | PM:362 | List columns (checkbox, Priority, ID, Title+kind, State, Epic, Cycle, Points, Labels, Assignee, Due, Updated) | carried | carried | dash §2.4.15 (ID → Key) |
+| PMFE:152 | PM:360 | List shares filter, grouping and selection with the board | carried | carried | dash §2.4.15 (corrected 2026-09-25) |
+| PMFE:153 | PM:362 | List columns (checkbox, Priority, ID, Title+kind, State, Epic, Cycle, Points, Labels, Assignee, Due, Updated) | carried | carried | dash §2.4.15 (corrected 2026-09-25) |
 | PMFE:154 | PM:366 | Rows 36 px; title fluid, others fixed, numeric right-aligned | carried-weaker | carried | dashboard §2.4.15 |
-| PMFE:155 | PM:367 | Group header 32 px with count and points; `Space` collapses | carried | carried | dash §2.4.15, §2.3 |
+| PMFE:155 | PM:367 | Group header 32 px with count and points; `Space` collapses | carried | carried | dash §2.4.15, §2.3 (corrected 2026-09-25) |
 | PMFE:156 | PM:368 | Sort: headers are buttons (Tab-reachable); second click reverses; stable, priority tiebreak | carried-weaker | carried | dashboard §2.4.15 |
-| PMFE:157 | PM:369 | Inline edit by click or key (⇧P ⇧E ⇧L ⇧C ⇧A `.`) on Priority/Epic/Cycle/Points/Labels/Assignee/Due | carried | carried | dash §2.4.15, §2.3 |
+| PMFE:157 | PM:369 | Inline edit by click or key (⇧P ⇧E ⇧L ⇧C ⇧A `.`) on Priority/Epic/Cycle/Points/Labels/Assignee/Due | carried | carried | dash §2.4.15, §2.3 (corrected 2026-09-25) |
 | PMFE:158 | PM:370 | Anchored menu with number keys | carried | carried | dash §2.3 (`1–9`) |
 | PMFE:159 | PM:371 | Labels menu is a checkable list with a Create label "…" row | missing | carried | dashboard §2.4.15 |
 | PMFE:160 | PM:372 | Due offers Today, End of this week, End of the current cycle, No due date | missing | carried | dashboard §2.4.15 |
@@ -1611,23 +1642,23 @@ Columns: row key · old location · item (shortened) · status when first traced
 | PMFE:162 | PM:374 | Selection `x`, ⇧J/⇧K, ⌘A, Esc, shift-click | carried | carried | dash §2.3 |
 | PMFE:163 | PM:375 | List keys follow the board (`Enter` open, `Space` peek) | carried | carried | dash §2.3 |
 | PMFE:164 | PM:379 | Bulk bar bottom-centre, 48 px, `--bg-overlay`, 1 px `--border-strong` | carried-weaker | carried | dashboard §2.4.16 |
-| PMFE:165 | PM:382 | Bulk bar contents: count · points, field actions with key hints, Park, Ask Seshat, ✕ Esc | carried | carried | dash §2.4.16 |
-| PMFE:166 | PM:385 | Field actions reuse the inline-edit menus and apply to all selected | carried | carried | dash §2.4.16 |
+| PMFE:165 | PM:382 | Bulk bar contents: count · points, field actions with key hints, Park, Ask Seshat, ✕ Esc | carried | carried | dash §2.4.16 (corrected 2026-09-25) |
+| PMFE:166 | PM:385 | Field actions reuse the inline-edit menus and apply to all selected | carried | carried | dash §2.4.16 (corrected 2026-09-25) |
 | PMFE:167 | PM:386 | Park asks one reason, one park per card | carried | carried | dash §2.4.16 |
 | PMFE:168 | PM:387 | Ask Seshat: selection as mentions, not sent (context carries one card) | carried | carried | dash §2.4.16 |
 | PMFE:169 | PM:388 | One toast reports the result, including partial failures | carried | carried | dash §2.4.16 |
 | PMFE:170 | PM:390 | Integrations `#/integrations` on `g s` | contradicted | deliberate | dashboard §2.3.1, §9; R17 (`g n`) |
 | PMFE:171 | PM:392 | Every integration card says what leaves the machine; nothing connected by default | carried | carried | dash §2.11; int Principles 1 |
-| PMFE:172 | PM:392 | Page in three sections Now / Next / Later following the roadmap | contradicted | carried | dashboard §2.11 (by API `tier`), NEW-dashboard-2 |
+| PMFE:172 | PM:392 | Page in three sections Now / Next / Later following the roadmap | contradicted | gap | dash §2.11 (by API `tier`); NEW-dashboard-2 (DB-N2-7) (corrected 2026-09-25) |
 | PMFE:173 | PM:398 | GitHub card: status, Last synced (`lastSyncAt`), last result counts, linked `owner/repo#n` in list view | carried | carried | dash §2.11, §2.4.15; int item 8 |
-| PMFE:174 | PM:398 | Pull / Push / Sync both; Syncing with GitHub… while running; errors verbatim | carried-weaker | carried | dashboard §2.11 |
+| PMFE:174 | PM:398 | Pull / Push / Sync both; Syncing with GitHub… while running; errors verbatim | carried-weaker | carried | dash §2.11 (corrected 2026-09-25) |
 | PMFE:175 | PM:398 | GitHub leaves: titles, specs, priority, points, cycle, state; uses `gh` login; no stored token | carried | carried | dash §2.11 |
 | PMFE:176 | PM:399 | PR on Accept switch (`PUT /api/integrations/github-pr`), current behaviour stated; leaves branch, diff, gate results | carried | carried | dash §2.11; int item 15, §3 |
 | PMFE:177 | PM:400 | Jira CSV columns (Summary, Issue Type, Priority, Story Points, Sprint, Epic Link, Labels, Description); Export/Import;… | carried | carried | int item 17, INT-31; dash §2.11 |
 | PMFE:178 | PM:401 | Linear: same in Linear's fields | carried | carried | int item 17 |
 | PMFE:179 | PM:402 | Slack: standup, needs-you, run reports; host in mono, last message, delivered (`pm/notify ok`) | carried | carried | dash §2.11; int items 20–22 |
 | PMFE:180 | PM:402 | Slack controls: webhook field, Connect, Send test message, Disconnect | carried | carried | dash §2.11; PMC §5 |
-| PMFE:181 | PM:402 | Webhook URL is a credential: `~/.config/sekhemet/repos/…`, mode 0600, never in repo or ledger | carried | carried | dash §2.11; int INT-30; PMC §5 |
+| PMFE:181 | PM:402 | Webhook URL is a credential: `~/.config/sekhemet/repos/…`, mode 0600, never in repo or ledger | carried | deliberate | surface item 22, NEW-surface-1 (justification: one secret-bearing directory the sandbox can deny); PMC §0 (Slack row); dash §2.11 (corrected 2026-09-25) |
 | PMFE:182 | PM:404 | Import sheet: format picker (Jira CSV, Linear CSV, GitHub JSON, Sekhemet JSON), file chooser, paste box | carried | carried | dash §2.11 |
 | PMFE:183 | PM:404 | Preview → `/api/import` → proposals headed Import from Jira CSV · 42 proposed changes; apply one, some or all; never… | carried | carried | dash §2.11; int item 18 |
 | PMFE:184 | PM:404 | Server posts the preview into Seshat's thread (`messageId`); the sheet says so | carried-weaker | carried | dashboard §2.11, §3 |
@@ -1643,15 +1674,15 @@ Columns: row key · old location · item (shortened) · status when first traced
 | PMFE:194 | PM:420 | Integrations 404: sections still render from the catalogue; Now cards Not available on this server yet, no controls | contradicted | deliberate | dashboard §9 |
 | PMFE:195 | PM:424 | Tier rationale (Stack Overflow 2025: GitHub 81%, Jira 46%, GitLab 36%; JetBrains 2025: Actions 33%) | carried | carried | PMC §5; int §3 |
 | PMFE:196 | PM:424 | UI copy keyed on ids; unknown id renders from the server's `name` and `detail` | carried-weaker | carried | dashboard §2.11 |
-| PMFE:197 | PM:426-438 | Roadmap table: ids and what leaves the machine per integration | carried | carried | PMC §3 (ids), §5 (table) |
+| PMFE:197 | PM:426-438 | Roadmap table: ids and what leaves the machine per integration | carried | carried | PMC §3 (ids), §5 (table) (corrected 2026-09-25) |
 | PMFE:198 | PM:440 | Insights `#/insights` on `g f` | contradicted | deliberate | dashboard §2.3.1, §9 |
 | PMFE:199 | PM:442 | `/api/metrics/flow?days=30`, 7/30/90 selectable | carried | carried | dash §2.10; PMC §3 |
 | PMFE:200 | PM:444-449 | Headline: cycle time 85th pct, throughput, WIP (with how many over 85th), oldest in progress | carried | carried | dash §2.10.1 |
-| PMFE:201 | PM:453-456 | Aging WIP: columns Ready→Review on x, age on y, bands, amber above 85%, hover shows the card, click peeks | carried | carried | dash §2.10.2 (hover weaker) |
-| PMFE:202 | PM:457-459 | Cycle time: dashed percentile lines labelled `50% 2.1h` etc.; subtitle sentence | carried | carried | dash §2.10.2 |
+| PMFE:201 | PM:453-456 | Aging WIP: columns Ready→Review on x, age on y, bands, amber above 85%, hover shows the card, click peeks | carried | carried | dash §2.10.2 (corrected 2026-09-25) |
+| PMFE:202 | PM:457-459 | Cycle time: dashed percentile lines labelled `50% 2.1h` etc.; subtitle sentence | carried | carried | dash §2.10.2 (corrected 2026-09-25) |
 | PMFE:203 | PM:460-461 | Throughput: daily bars + 7-day moving average | carried | carried | dash §2.10.2 |
 | PMFE:204 | PM:462-465 | CFD: Backlog bottom → Done top; band colours by state role (running = Working, parked = Review as the human queue, pass… | carried-weaker | carried | dashboard §2.10.2 |
-| PMFE:205 | PM:467-472 | Chart rules: token classes, tabular, baseline + percentile rules only, `figcaption` | carried | carried | dash §2.10.5 |
+| PMFE:205 | PM:467-472 | Chart rules: token classes, tabular, baseline + percentile rules only, `figcaption` | carried | carried | dash §2.10.6 (corrected 2026-09-25) |
 | PMFE:206 | PM:474 | Worker capability section (`GET /api/capability`) under the flow charts | carried | carried | dash §2.10.3; rt routes |
 | PMFE:207 | PM:476 | Per-kind row: point on 0–100% track, 95% Wilson bar, 16 of 18 passed · 89% (67–97%) | carried | carried | dash §2.10.3 |
 | PMFE:208 | PM:476 | Rows ordered by attempts (best-evidenced first) | missing | carried | dashboard §2.10.3 |
@@ -1661,27 +1692,27 @@ Columns: row key · old location · item (shortened) · status when first traced
 | PMFE:212 | PM:478 | Size buckets with < 10 attempts faded and labelled | missing | carried | dashboard §2.10.3 |
 | PMFE:213 | PM:478 | The server's `note` shown verbatim under the section | missing | carried | dashboard §2.10.3 |
 | PMFE:214 | PM:479 | Capability states: 404 names the endpoint; `sampleSize` 0 → No finished attempts yet; renders independently of flow m… | carried-weaker | carried | dashboard §2.10.3 |
-| PMFE:215 | PM:481 | Under 3 finished cards: Not enough finished cards… need at least 3; you have 1. | carried | carried | dash §2.10.5 |
-| PMFE:216 | PM:481 | Flow 404 message naming `/api/metrics/flow` | carried | carried | dash §2.12.3 (generic) |
+| PMFE:215 | PM:481 | Under 3 finished cards: Not enough finished cards… need at least 3; you have 1. | carried | carried | dash §2.10.6 (corrected 2026-09-25) |
+| PMFE:216 | PM:481 | Flow 404 message naming `/api/metrics/flow` | carried | carried | dash §2.10.6 (verbatim) (corrected 2026-09-25) |
 | PMFE:217 | PM:485 | Everything learned is context not weights, from gate results and human actions, on the ledger,… | contradicted | deliberate | planner-pm §2.13.3, §8.1 (profile statements: owner decision O24, default used at once; rules need approval; was awaiting the owner) |
 | PMFE:218 | PM:485 | Plain names (Playbook, rules, What Seshat has learned about you, Stopping policy) | carried | carried | dash §2.11, §2.10.4; NAMING |
 | PMFE:219 | PM:487 | Playbook lede (learned from gates and your actions, never a model grading itself; on this machine; on the ledger; takes… | missing | carried | dashboard §2.11 |
 | PMFE:220 | PM:489 | Needs your approval: candidates newest first; Approve (primary), Edit, Retire | carried-weaker | carried | dashboard §2.11 |
-| PMFE:221 | PM:490 | Active: retirement proposals (≥ 3 more harmful than helpful) first, amber rule, sentence with the counts,… | carried-weaker | deliberate | DEC-28 retirement, now in dashboard §2.11; was: dashboard §2.11 still lists "retirement proposals — at least 3 more harmful than helpful uses" (and PM_CONTRACT §6 the same rule), while DEC-28, measurement §2.16a–b and… |
+| PMFE:221 | PM:490 | Active: retirement proposals (≥ 3 more harmful than helpful) first, amber rule, sentence with the counts,… | carried-weaker | deliberate | dashboard §2.11 Playbook (*Active*: rules whose paired credit is falling first); DEC-28; measurement rule 16b (corrected 2026-09-25) |
 | PMFE:222 | PM:491 | Retired collapsed | carried-weaker | carried | dashboard §2.11 |
 | PMFE:223 | PM:494 | Rule audience For the Worker / For Seshat | carried | carried | dash §2.11 ("audience") |
 | PMFE:224 | PM:495 | Source in words (four sources) and its age | carried-weaker | carried | dashboard §2.11 |
-| PMFE:225 | PM:496 | Scope chips (Kind, Files, Error, Applies to every card) | carried | carried | dash §2.11 |
+| PMFE:225 | PM:496 | Scope chips (Kind, Files, Error, Applies to every card) | carried | carried | dash §2.11 Playbook (corrected 2026-09-25) |
 | PMFE:226 | PM:497 | Signed value bar relative to the page's largest \|value\|, red when negative; helpful/harmful counts with icons | carried-weaker | carried | dashboard §2.11 (signed bar, helpful/harmful counts); the counts' meaning is DEC-28's paired credit — see PMFE:221 |
 | PMFE:227 | PM:498 | Evidence as `@card` chips with quoted note; first two shown, rest n more signals | carried-weaker | carried | dashboard §2.11 |
 | PMFE:228 | PM:501 | Inline edit: textarea, `⌘↵` saves, `Esc` cancels | carried-weaker | carried | dashboard §2.11 |
 | PMFE:229 | PM:501 | Every learning action optimistic, reverts on failure, states the result (Approved. The rule is given to the Worker fro… | missing | carried | dashboard §2.11 |
 | PMFE:230 | PM:501 | `/api/learning` 404 → keep seeded rules and send-back suggestions from `/api/playbook` under a banner naming the endpoi… | missing | carried | dashboard §2.11 |
-| PMFE:231 | PM:503 | Approve opens a reach picker This project (1) / All projects (2), sent as `{ reach: "global" }`; footer names… | carried-weaker | carried | dashboard §2.11 |
+| PMFE:231 | PM:503 | Approve opens a reach picker This project (1) / All projects (2), sent as `{ reach: "global" }`; footer names… | carried-weaker | carried | dash §2.11 Playbook; PMC §6 (corrected 2026-09-25) |
 | PMFE:232 | PM:503 | Active rules carry a reach chip; all-projects rules drawn stronger | carried-weaker | carried | dashboard §2.11 (reach chip; all projects drawn stronger) |
 | PMFE:233 | PM:503 | Seeded rules from `.sekhemet/playbook.toml` shown as active, read-only (Edit in playbook.toml) when the store lacks t… | missing | carried | dashboard §2.11 |
 | PMFE:234 | PM:505-510 | Seshat's review (`card/review`) between Gates and Failures; count title; advice, not a gate line;… | contradicted | deliberate | review-git §2.3.5, §9 (the Reviewer, not Seshat; shown first); advisory line and order kept in dashboard §2.5.3 |
-| PMFE:235 | PM:512 | Retries run on the escalation model excluded from capability rates and said so | carried | carried | dash §2.10.3 |
+| PMFE:235 | PM:512 | Retries run on the escalation model excluded from capability rates and said so | carried | carried | dash §2.10.3 (corrected 2026-09-25) |
 | PMFE:236 | PM:514 | What Seshat has learned about you is a Playbook section `#/playbook/profile` | carried | carried | dash §2.11 |
 | PMFE:237 | PM:516 | Profile lock line (stays on this machine; edit to correct; dismiss and Seshat stops using it) | carried-weaker | carried | dashboard §2.11 |
 | PMFE:238 | PM:517 | Active statements grouped by category, strongest first | carried-weaker | carried | dashboard §2.11 |
@@ -1700,24 +1731,24 @@ Columns: row key · old location · item (shortened) · status when first traced
 | PMFE:251 | PM:538 | Machine › Models (`GET /api/models`): fixed role order; model id in mono; state dot Resident / Swapped out / Not c… | carried-weaker | carried | dashboard §2.11 |
 | PMFE:252 | PM:538 | A note every role shares (No run in progress) said once in the footer | carried-weaker | carried | dashboard §2.11 |
 | PMFE:253 | PM:539-541 | Footer memory model: 24 GB one model resident; swaps about 40 seconds each; `coResident` → room for all four, nothin… | carried-weaker | carried | dashboard §2.11 |
-| PMFE:254 | PM:542 | Roster 404 message naming the endpoint | carried | carried | dash §2.12.3 |
-| PMFE:255 | PM:543 | Researcher web access Now card: switch `PUT /api/integrations/research-web`; server `detail` names provider or how to s… | carried | carried | dash §2.11; design-stage §3 |
-| PMFE:256 | PM:543 | Provider line: SearXNG, or Brave/Tavily key; papers, page reads, GitHub need none | carried | carried | design-stage §2.11 |
+| PMFE:254 | PM:542 | Roster 404 message naming the endpoint | carried | carried | dash §2.11 Machine (verbatim) (corrected 2026-09-25) |
+| PMFE:255 | PM:543 | Researcher web access Now card: switch `PUT /api/integrations/research-web`; server `detail` names provider or how to s… | carried | carried | design-stage §3 (`PUT /api/integrations/research-web`); dash §2.11 (corrected 2026-09-25) |
+| PMFE:256 | PM:543 | Provider line: SearXNG, or Brave/Tavily key; papers, page reads, GitHub need none | carried | carried | design-stage §2.7.11 (corrected 2026-09-25) |
 | PMFE:257 | PM:543 | Leaves: search queries and page URLs; private/local addresses never fetched | carried | carried | dash §2.11; design-stage §2.3 |
-| PMFE:258 | PM:544 | Research cites `{ url?, label }` → numbered Sources list (http/https only, new tab, `noopener noreferrer`, host in… | carried-weaker | carried | dashboard §2.7.4, §3 |
+| PMFE:258 | PM:544 | Research cites `{ url?, label }` → numbered Sources list (http/https only, new tab, `noopener noreferrer`, host in… | carried-weaker | carried | dash §2.7.4, §3 (corrected 2026-09-25) |
 | PMFE:259 | PM:554 | `#/pm` on `g a` | contradicted | deliberate | dashboard §2.3.1, §9 |
 | PMFE:260 | PM:555-556 | `⌘J` panel; `#/board` `g b`, `v` | carried | carried | dash §2.3 |
 | PMFE:261 | PM:557-558 | `g f` Insights, `g s` Integrations | contradicted | deliberate | dashboard §2.3.1, §9; R17 |
 | PMFE:262 | PM:562-567 | Field keys, select/extend/all/clear, `/` `v` `⇧S`, field menu `1–9 ↑↓ ↵`, composer and proposal keys | carried | carried | dash §2.3 |
-| PMFE:263 | PM:571 | No new colour roles: fifteen roles plus derived tints | carried | carried | dash §2.13.1; tokens.ts (dash adds `--border-control`, not yet in tokens.ts — gap P12) |
+| PMFE:263 | PM:571 | No new colour roles: fifteen roles plus derived tints | carried | deliberate | dash §2.13.2 (P12: `--border-control` at ≥ 3:1 edges every input, because `border-strong` is 1.3–1.9:1 on inputs, dash §5 P12 intro) (corrected 2026-09-25) |
 | PMFE:264 | PM:573-588 | New icons: priority-none/low/medium/high/urgent, chat, insights, plug, split, arrow-right, list, filter, cycle, layers,… | carried | carried | All defined in `packages/ui/src/icons.ts` (dash §3 names it as the source) |
 | PMFE:265 | PM:590 | Priority bars thickened in CSS (`stroke-width: 3`), unlit class `off`, icon test still holds | carried-weaker | carried | dashboard §2.4.4 |
-| PMFE:266 | PM:594 | Panel sizes: 400 (360 at 1024–1279), header 52, composer min 44, padding 16, message gap 24 | carried-weaker | carried | dashboard §2.7.1, §2.13.7 |
+| PMFE:266 | PM:594 | Panel sizes: 400 (360 at 1024–1279), header 52, composer min 44, padding 16, message gap 24 | carried-weaker | carried | dash §2.7.1, §2.13.7 (corrected 2026-09-25) |
 | PMFE:267 | PM:595 | Proposal group: `--bg-surface`, 1 px `--border-subtle`, radius 6, header 36, proposal padding 12/16, diff rows 24 | carried-weaker | carried | dashboard §2.7.7 |
 | PMFE:268 | PM:596 | Pending block: rows 24, icons 12, times 11 right-aligned tabular, ETA bar 2 | carried-weaker | carried | dashboard §2.7.8 |
 | PMFE:269 | PM:597 | View bar 40, padding 16, gaps 8 | carried-weaker | carried | dashboard §2.4.11 |
 | PMFE:270 | PM:598 | Cycle header 56, two lines, progress bar 6 px | carried-weaker | carried | dashboard §2.4.13 (56 px, two lines, 6 px bar) |
-| PMFE:271 | PM:599-600 | Lane header 32; table row 36, group header 32 | carried | carried | dash §2.13.7, §2.4.15 |
+| PMFE:271 | PM:599-600 | Lane header 32; table row 36, group header 32 | carried | carried | dash §2.13.7, §2.4.15 (corrected 2026-09-25) |
 | PMFE:272 | PM:601 | Bulk bar 48, bottom 16, centred, radius 6 | carried-weaker | carried | dashboard §2.4.16 |
 | PMFE:273 | PM:602 | Chart panel `--bg-surface`, 1 px hairline, 16 padding, 240 plot | carried-weaker | carried | dashboard §2.10.2 |
 | PMFE:274 | PM:606 | Panel is a `complementary` landmark labelled Seshat, project manager | carried-weaker | carried | dashboard §2.14.3 |
@@ -1725,15 +1756,15 @@ Columns: row key · old location · item (shortened) · status when first traced
 | PMFE:276 | PM:608 | Pending block's current row `aria-busy="true"` | missing | carried | dashboard §2.14.3 |
 | PMFE:277 | PM:609 | Proposals a list of labelled groups; Apply/Discard names include the summary | carried | carried | dash §2.14.3 |
 | PMFE:278 | PM:610 | Field diffs as `dl` (Priority: Medium, changes to Urgent) | carried | carried | dash §2.14.3 |
-| PMFE:279 | PM:611 | Charts: `figcaption` + hidden data table | carried | carried | dash §2.10.5 |
+| PMFE:279 | PM:611 | Charts: `figcaption` + hidden data table | carried | carried | dash §2.10.6, §2.14.3 (corrected 2026-09-25) |
 | PMFE:280 | PM:612 | List is a real `table` with `aria-sort` on sorted headers and `aria-selected` on rows | carried-weaker | carried | dashboard §2.14.3 |
 | PMFE:281 | PM:613 | Bulk bar `role="toolbar"` announcing 3 selected | carried | carried | dash §2.14.3 |
-| PMFE:282 | PM:617 | Every item checked in both themes at 1440 and 1024 | carried | carried | dash §2.15.5 (widths now 1440/1100/400) |
+| PMFE:282 | PM:617 | Every item checked in both themes at 1440 and 1024 | carried | deliberate | dash §2.15.5 (corrected 2026-09-25) |
 | PMFE:283 | PM:619-627 | `src/pm.ts` pure logic served as `/app/lib/pm.js` (priority, diffs, markdown, filter, grouping, cycle progress, flow ma… | carried | carried | dash §2.15.1, §3 |
 | PMFE:284 | PM:628-636 | Web modules list | carried | carried | dash §3 |
 | PMFE:285 | PM:640 | Backend endpoints for PM, PATCH, cycles, flow, integrations, export, import | carried | carried | rt §3 routes; PMC §3 |
 | PMFE:286 | PM:640 | UI checked against a contract-shaped fixture server and a server with the endpoints absent | carried-weaker | carried | dashboard §2.15.5 (fixture server and a server with endpoints absent) |
-| PMFE:287 | PM:640 | Optional contract fields used when present: `PmStatus.since/step/etaSeconds`, `cycleTime[].doneAt`, thread `model`,… | carried-weaker | carried | dashboard §3 (optional fields); PM_CONTRACT §3 (`pointsDone`, `model`) |
+| PMFE:287 | PM:640 | Optional contract fields used when present: `PmStatus.since/step/etaSeconds`, `cycleTime[].doneAt`, thread `model`,… | carried-weaker | carried | dash §3 (optional fields); PMC §0 (`PmStatus.model` dropped, O3) (corrected 2026-09-25) |
 | PMFE:288 | PM:642 | Saved-view sync waits for `/api/views` | later | later | dashboard §7 |
 | PMFE:289 | PM:642 | No drag and drop; moves explicit and recorded | carried | carried | dash §2.4.5 (reorder within a column now allowed; between columns still gated) |
 | PMFE:290 | PM:642 | No Undo for applied proposals; Applied is final and says so | carried | carried | dash §2.7.7; undo in dash §7 (later) |
@@ -1746,10 +1777,10 @@ Columns: row key · old location · item (shortened) · status when first traced
 | PMFE:292 | FE:30 | Triage endpoints need UI (accept/return/park) | carried | carried | dash §2.5.9–12; rg §3 |
 | PMFE:293 | FE:31 | Parked and rejected cards must be visible ("nothing blocks silently") | carried | carried | dash §2.4.1 (On hold column; Won't do filter) |
 | PMFE:294 | FE:32 | `canvas.ts` `COLUMN_ORDER` disagrees with the page | carried | carried | canvas.ts cut (DEC-09); `BOARD_COLUMN_ORDER` in vocabulary (dash §3) |
-| PMFE:295 | FE:33 | Model-authored labels (tier, `(SPIDR: …)`, raw stop enums) must not leak | carried | carried | dash §2.12; ppm P1 (kind from labels) |
-| PMFE:296 | FE:34 | Gate strip must not invent gates: no fixed P T U L B, no synthesised `parse: pass` | carried-weaker | carried | dashboard §2.4.4, NEW-dashboard-1 |
+| PMFE:295 | FE:33 | Model-authored labels (tier, `(SPIDR: …)`, raw stop enums) must not leak | carried | gap | dash §2.12.1; NEW-dashboard-2 (DB-N2-3…5); ppm P1 (PM-P1-10) (corrected 2026-09-25) |
+| PMFE:296 | FE:34 | Gate strip must not invent gates: no fixed P T U L B, no synthesised `parse: pass` | carried-weaker | gap | dash §2.4.4, §2.5.4; NEW-dashboard-1 (DB-N1-4); gates T1 (GT-T1-11) (corrected 2026-09-25) |
 | PMFE:297 | FE:34 | `bounds` must not count staged acceptance-test lines | missing | carried | gates rule 12, GT-11 (built); staged tests outside tests/ P1 (GT-P1-4) |
-| PMFE:298 | FE:35 | Diff separates staged protected tests; `suggestedFixFiles` must not point at protected tests | carried | carried | dash §2.5.6; gates §7, GT-3 |
+| PMFE:298 | FE:35 | Diff separates staged protected tests; `suggestedFixFiles` must not point at protected tests | carried | carried | dash §2.5.6; gates rule 7, GT-3 (corrected 2026-09-25) |
 | PMFE:299 | FE:36 | `gatesConfigSha256` = empty-string hash: UI flags it and the backend must hash the real `gates.toml` | carried-weaker | gap | gates T1 (GT-T1-10, GT-T1-13) |
 | PMFE:300 | FE:37 | Contrast defects (muted 2.6–3.3:1, fail on raised 3.92:1, border-strong 1.26–1.85:1 unfit for focus) | carried | carried | dash §2.13.2, §2.14, P12 |
 | PMFE:301 | FE:46 | Master board: multi-project rollup, hardware load, cards blocked on you with wait time | carried-weaker | carried | dashboard §2.11 Workspace; beyond rollup later §7 |
@@ -1757,9 +1788,9 @@ Columns: row key · old location · item (shortened) · status when first traced
 | PMFE:303 | FE:48 | Card view with 5 tabs | carried | carried | dash §2.6 |
 | PMFE:304 | FE:49 | Review as the primary surface | carried | carried | dash §2.5 |
 | PMFE:305 | FE:50 | Machine: VRAM, active tier, loaded models, throughput sparklines, cache hit rate | carried-weaker | gap | dashboard §2.11 (cache-hit sparkline built); active tier NEW-dashboard-2 |
-| PMFE:306 | FE:51 | Registry: models, qualification, bake-off matrix | carried | carried | dash §2.11 |
+| PMFE:306 | FE:51 | Registry: models, qualification, bake-off matrix | carried | carried | dash §2.16.1 (Qualify to assign), §2.16.2 (History absorbs the bake-off matrix, `writeBakeOffMatrix`) (corrected 2026-09-25) |
 | PMFE:307 | FE:52 | Decision inbox sorted by wait time | carried | carried | dash §2.5.2 (Review › Needs you) |
-| PMFE:308 | FE:53 | Goal view: burn-up, criteria, risk register | later | later | dashboard §7, planner-pm §7 |
+| PMFE:308 | FE:53 | Goal view: burn-up, criteria, risk register | later | later | dashboard §7 (goal view); planner-pm §7 (corrected 2026-09-25) |
 | PMFE:309 | FE:54 | Runs with history (not overwritten) | carried | carried | dash §2.11; rt routes `runs` |
 | PMFE:310 | FE:55 | Ledger in sentences, filterable, linked to the card, paged beyond 200 | carried | carried | dash §2.11 (paging: see row 452) |
 | PMFE:311 | FE:56 | Playbook view | carried | carried | dash §2.11 |
@@ -1789,33 +1820,33 @@ Columns: row key · old location · item (shortened) · status when first traced
 | PMFE:335 | FE:112 | No all-caps; headings sentence case 12.5/600 primary | carried | carried | dash §2.1.4, §2.13.4 |
 | PMFE:336 | FE:113 | Gold in exactly four places | carried | carried | dash §2.1.4 |
 | PMFE:337 | FE:114 | Chips rare; status in the sidebar footer as text + one dot | carried | carried | dash §2.2.3 |
-| PMFE:338 | FE:115-117 | Units and basis on every number; nothing generic; chrome neutral, state is colour + icon + words | carried | carried | dash §2.1.2, §2.1.5 |
+| PMFE:338 | FE:115-117 | Units and basis on every number; nothing generic; chrome neutral, state is colour + icon + words | carried | carried | dash §2.1.5 (corrected 2026-09-25) |
 | PMFE:339 | FE:122-139 | Sidebar: project switcher (Chronicle ▾), count badges on nav items, footer (live · ledger · memory bar · model state… | carried-weaker | carried | dashboard §2.2.1 |
-| PMFE:340 | FE:144 | Review is default when the queue is non-empty; `g r` | carried | carried | dash §2.2.5 (for *I write code*), §2.2.1 |
-| PMFE:341 | FE:145 | Board default otherwise; `g b` | carried | carried | dash §2.2.1, §2.2.5 |
+| PMFE:340 | FE:144 | Review is default when the queue is non-empty; `g r` | carried | deliberate | dash §2.2.5 (corrected 2026-09-25) |
+| PMFE:341 | FE:145 | Board default otherwise; `g b` | carried | deliberate | dash §2.2.5 (corrected 2026-09-25) |
 | PMFE:342 | FE:146 | Card route; `Enter` | carried | carried | dash §2.6 |
 | PMFE:343 | FE:147 | Runs `#/runs[/:runId]` on `g q` | contradicted | deliberate | dashboard §2.3.1; R17 (`g u`) |
 | PMFE:344 | FE:148-149 | Ledger `g l`; Machine `g m` | carried | carried | dash §2.2.1 |
 | PMFE:345 | FE:150 | Playbook on `g p` | contradicted | deliberate | dashboard §2.3.1; R17 (`g k`) |
-| PMFE:346 | FE:151 | Inbox `#/inbox` `g i`, hidden until `/api/decisions` returns 200 | contradicted | deliberate | dashboard §2.2.1, P11 (merged into Review › Needs you; §9 records the chord change, not a separate reason for the merge) |
-| PMFE:347 | FE:152 | Settings `#/settings` `g ,`: theme, density, review minutes per day, read-only config (Later) | missing | gap | dashboard §2.11, NEW-dashboard-4 (R18) |
-| PMFE:348 | FE:153 | Workspace, Registry, Goals deferred | carried | carried | Registry, Workspace in dash §2.11; goals later |
+| PMFE:346 | FE:151 | Inbox `#/inbox` `g i`, hidden until `/api/decisions` returns 200 | contradicted | deliberate | dashboard §2.2 rule 1 ("**Inbox** is merged into Review's *Needs you* group (its route stays and opens it)"); P11 (corrected 2026-09-25) |
+| PMFE:347 | FE:152 | Settings `#/settings` `g ,`: theme, density, review minutes per day, read-only config (Later) | missing | gap | dash §2.16.3–5 (Review capacity, This browser, Project configuration); NEW-dashboard-4 (R18, O2) (corrected 2026-09-25) |
+| PMFE:348 | FE:153 | Workspace, Registry, Goals deferred | carried | carried | dash §2.16 (Registry → Configuration › Benchmark), §2.11 (Workspace); goals dash §7 (corrected 2026-09-25) |
 | PMFE:349 | FE:155 | Log drawer leaves the board; integrity in the footer | carried | carried | dash §2.2.3, §2.11 |
 | PMFE:350 | FE:157 | Review landing rationale; empty Review says Nothing to review. 4 cards are ready to run. | carried | carried | dash §2.5.13 |
 | PMFE:351 | FE:161 | ≥ 1280 px sidebar 216 px | carried | carried | dash §2.2.2 |
 | PMFE:352 | FE:162 | 1024–1279 px: 52 px icon rail, tooltips, count badges | contradicted | deliberate | dashboard §9 |
 | PMFE:353 | FE:163 | < 768 px: bottom tabs Review, Board, Runs; single-column board with switcher; Evidence only; 48 px one-tap triage | contradicted | deliberate | dashboard §9 |
 | PMFE:354 | FE:167 | Voice: plain, exact, calm; verbs and numbers; name the gate | carried | carried | SPINE Voice |
-| PMFE:355 | FE:167 | Naming conventions (Workspace, Project, Card, Subtask, Gates, Evidence, Playbook, Worker, Planner, Library) | carried | carried | NAMING keep list |
+| PMFE:355 | FE:167 | Naming conventions (Workspace, Project, Card, Subtask, Gates, Evidence, Playbook, Worker, Planner, Library) | carried | carried | NAMING keep list (corrected 2026-09-25) |
 | PMFE:356 | FE:171-175 | Principles: outcome first; sentence case, no !/emoji; enums only in mono where greppable; quote errors verbatim; actor… | carried | carried | dash §2.12.2 |
 | PMFE:357 | FE:181 | Tier label removed; hierarchy by breadcrumb and a 3 subtasks badge | carried-weaker | carried | dashboard §2.6 (breadcrumb with *3 subtasks*) |
-| PMFE:358 | FE:182 | Strip `(SPIDR: …)` suffix; planner stores the slice as a field | carried | carried | ppm P1 (kind from labels) |
+| PMFE:358 | FE:182 | Strip `(SPIDR: …)` suffix; planner stores the slice as a field | carried | gap | ppm §2.2.1, §3 (`split` field); P1 (PM-P1-10, PM-P1-11) (corrected 2026-09-25) |
 | PMFE:359 | FE:183-190 | Kind mapping Interface→Contract, Data→Storage, Path→Flow, Rule→Rules, Spike→Research, Visual→UI, Integration→Wiring; to… | carried-weaker | deliberate | DEC-26 (one kind map in NAMING; SPIDR is the split axis, R9); dashboard §2.12.4 |
 | PMFE:360 | FE:191-199 | Column names Backlog, Ready, Planning, Working, Checking, Review, Done, Parked (visible), Closed (only if non-empty) | contradicted | deliberate | dashboard §2.4.1, §8.2; NAMING |
 | PMFE:361 | FE:200 | 3 of 6 first try; Runs headline Passed on the first try; `Pass@1` only as a mono secondary label | carried-weaker | carried | dashboard §2.11 Runs |
 | PMFE:362 | FE:201 | `passAfterEscalation` → Passed after a planner retry | missing | carried | dashboard §2.12.4 |
 | PMFE:363 | FE:202 | `modelSwaps` → Model swaps | carried | carried | dash §2.11 Runs |
-| PMFE:364 | FE:203-213 | Eleven stop-reason labels and sentences; `memory_pressure` amber, not red | carried | carried | dash §2.12.4 (tones explicit) |
+| PMFE:364 | FE:203-213 | Eleven stop-reason labels and sentences; `memory_pressure` amber, not red | carried | carried | dash §2.12.4 (corrected 2026-09-25) |
 | PMFE:365 | FE:214-219 | Gate labels with ids in mono; Types shows its command; Size sentence 2 files, +11 −0 (limit 3 files, 200 lines) | carried-weaker | carried | dashboard §2.12.4 |
 | PMFE:366 | FE:220 | Gate states; Skipped vs Not run definitions | carried | carried | dash §2.12.4 |
 | PMFE:367 | FE:221 | Noun Gates; 4 of 4 gates passed | carried | carried | dash §2.12.4 |
@@ -1824,20 +1855,20 @@ Columns: row key · old location · item (shortened) · status when first traced
 | PMFE:370 | FE:224 | Stream copy Live / Reconnecting… / Offline since … | carried | carried | dash §2.2.3–4 |
 | PMFE:371 | FE:225-227 | Nav words Ledger, Machine / Health checks, Suggested rules | carried | carried | dash §2.2.1, §2.11 (Suggested rules → *Needs your approval*) |
 | PMFE:372 | FE:228-230 | Triage labels, sentences and keys | carried | carried | dash §2.12.4 |
-| PMFE:373 | FE:231-242 | Card-fact vocabulary (steps, tokens, May edit, Done when, Protected, Waits on/Unblocks, Difficulty, Why it stopped, Che… | carried | carried | dash §2.12.4, §2.5.8 |
+| PMFE:373 | FE:231-242 | Card-fact vocabulary (steps, tokens, May edit, Done when, Protected, Waits on/Unblocks, Difficulty, Why it stopped, Che… | carried | carried | dash §2.12.4 (corrected 2026-09-25) |
 | PMFE:374 | FE:243 | Actors executor/planner/human → Worker/Planner/You | carried | carried | dash §2.12.2 |
-| PMFE:375 | FE:244-246 | Ledger sentence patterns | carried | carried | dash §2.11 Ledger |
+| PMFE:375 | FE:244-246 | Ledger sentence patterns | carried | carried | dash §2.11 Ledger (corrected 2026-09-25) |
 | PMFE:376 | FE:247 | Empty Review copy ends with the command `sekhemet queue` | contradicted | deliberate | dashboard §2.5.13, §9 |
-| PMFE:377 | FE:248 | Empty copy for each of eight columns | carried-weaker | carried | dashboard §2.4.10 |
-| PMFE:378 | FE:249 | Empty evidence: No attempts yet… Budget: 32 steps. | carried | carried | dash §2.5.13 |
-| PMFE:379 | FE:250-253 | Errors: what, why, action; 409 verbatim; 400 prevented client-side; 403 copy | carried | carried | dash §2.12.4, §6 |
-| PMFE:380 | FE:254 | Read-only copy | carried | carried | dash §2.2.4 |
+| PMFE:377 | FE:248 | Empty copy for each of eight columns | carried-weaker | carried | dash §2.4.10 (corrected 2026-09-25) |
+| PMFE:378 | FE:249 | Empty evidence: No attempts yet… Budget: 32 steps. | carried | carried | dash §2.5.13 (corrected 2026-09-25) |
+| PMFE:379 | FE:250-253 | Errors: what, why, action; 409 verbatim; 400 prevented client-side; 403 copy | carried | carried | dash §2.12.4, §6 (corrected 2026-09-25) |
+| PMFE:380 | FE:254 | Read-only copy | carried | carried | dash §2.2.4 (corrected 2026-09-25) |
 | PMFE:381 | FE:262 | Loading: skeleton of real geometry, no spinner; after 3 s Connecting… | carried | carried | dash §2.2.4 |
 | PMFE:382 | FE:263-264 | Live green dot; Reconnecting amber, content stays, mutations enabled 10 s | carried | carried | dash §2.2.4 |
-| PMFE:383 | FE:265 | Offline: > 10 s and `/api/meta` fails; bar (`--bg-raised`, 1 px parked border); Retry; triage disabled with Offline;… | carried | carried | dash §2.2.4, §6 (bar styling lost) |
+| PMFE:383 | FE:265 | Offline: > 10 s and `/api/meta` fails; bar (`--bg-raised`, 1 px parked border); Retry; triage disabled with Offline;… | carried | carried | dash §2.2.4 (corrected 2026-09-25) |
 | PMFE:384 | FE:266 | Read-only: triage replaced by a note; `a/r/p` toast the same copy | carried | carried | dash §2.2.4 |
 | PMFE:385 | FE:267 | Review full amber bar with `Open review` | carried | carried | dash §2.2.4 |
-| PMFE:386 | FE:268 | Memory pause trigger (critical, or last queue entry `memory_pressure`); copy; `Machine` action; running tile flips | carried-weaker | carried | dashboard §2.2.4 |
+| PMFE:386 | FE:268 | Memory pause trigger (critical, or last queue entry `memory_pressure`); copy; `Machine` action; running tile flips | carried-weaker | carried | dash §2.2.4 (corrected 2026-09-25) |
 | PMFE:387 | FE:269 | Ledger altered: red, not dismissible; Accept disabled everywhere | carried | carried | dash §2.2.4, NEW-dashboard-2 |
 | PMFE:388 | FE:271 | One bar at a time; ledger > offline > memory > review full | carried | carried | dash §2.2.4, §6 |
 | PMFE:389 | FE:275 | Review goal: decide in under a minute without reading the trajectory | carried | carried | rg §2.1.2 |
@@ -1849,32 +1880,32 @@ Columns: row key · old location · item (shortened) · status when first traced
 | PMFE:395 | FE:308-313 | Title 18/600; outcome line; gates strip; failures by gate; grouped changes; What the Worker tried | carried | carried | dash §2.5.3 |
 | PMFE:396 | FE:317 | Done when neutral bullets; with all gates passing: All gates passed. Criteria are checked by the acceptance tests. | carried-weaker | carried | dashboard §2.5.8 |
 | PMFE:397 | FE:318-320 | Run facts; Scope; Provenance with Copy | carried | carried | dash §2.5.8 |
-| PMFE:398 | FE:322 | Triage bar sticky, 52 px, `--bg-surface`, top hairline | carried | carried | dash §2.5.9 |
-| PMFE:399 | FE:324 | Accept enabled only in review, blocking gates passed, triage on, ledger intact; reason inline | carried | carried | dash §2.5.9 (+ permission) |
+| PMFE:398 | FE:322 | Triage bar sticky, 52 px, `--bg-surface`, top hairline | carried | carried | dash §2.5.9 (corrected 2026-09-25) |
+| PMFE:399 | FE:324 | Accept enabled only in review, blocking gates passed, triage on, ledger intact; reason inline | carried | carried | dash §2.5.9 (corrected 2026-09-25) |
 | PMFE:400 | FE:325-326 | Send back secondary; Park ghost | carried | carried | dash §2.5.9 |
 | PMFE:401 | FE:327 | Right-aligned hint `j k` · `Space` · `?` in the triage bar | missing | carried | dashboard §2.5.9 |
 | PMFE:402 | FE:328 | Need-you cards: Retry with planner once `POST …/run` exists; until then Send back and Park | carried | carried | dash §2.5.9; later dash §7 |
 | PMFE:403 | FE:332 | Accept: Merging…, 3 s grace toast with Undo Z, then POST; success toast with sha + Copy; row leaves, focus next; 40… | carried | carried | dash §2.5.10, §6 |
-| PMFE:404 | FE:333-338 | Send back composer: inline; required textarea; quick notes from failures; Suggest as a playbook rule on (informationa… | carried | carried | dash §2.5.11; rg §2.4 (candidate only when actionable) |
-| PMFE:405 | FE:339 | Park popover: optional reason, three presets, `↩` confirms | carried | carried | dash §2.5.12 |
+| PMFE:404 | FE:333-338 | Send back composer: inline; required textarea; quick notes from failures; Suggest as a playbook rule on (informationa… | carried | carried | dash §2.5.11 (corrected 2026-09-25) |
+| PMFE:405 | FE:339 | Park popover: optional reason, three presets, `↩` confirms | carried | carried | dash §2.5.12 (corrected 2026-09-25) |
 | PMFE:406 | FE:340 | Keys `j/k`, `o`/`Enter`, `[ ]`, `f`, `u` | carried | carried | dash §2.3 |
 | PMFE:407 | FE:344-346 | Data: board `display` + `enteredColumnAt`; evidence; attempts endpoint | carried | carried | dash §2.15.2; rt routes |
-| PMFE:408 | FE:352 | Loading evidence: 4 gate boxes + 3 diff-line skeletons; queue interactive | carried | carried | dash §2.5.13 |
+| PMFE:408 | FE:352 | Loading evidence: 4 gate boxes + 3 diff-line skeletons; queue interactive | carried | carried | dash §2.5.13 (corrected 2026-09-25) |
 | PMFE:409 | FE:353 | Empty queue: 24 px glyph in `--text-muted`, copy, Ready count, right rail hidden | carried-weaker | carried | dashboard §2.5.13 |
 | PMFE:410 | FE:354-357 | No evidence (only Park); inline error with retry; state-change notice with Reload; offline/read-only | carried | carried | dash §2.5.13 |
-| PMFE:411 | FE:359 | 1024: Facts disclosure, queue 248; mobile queue full screen, file list tap-to-diff, bottom bar, send back in a sheet | carried | carried | dash §2.5.1, §2.15.3 |
+| PMFE:411 | FE:359 | 1024: Facts disclosure, queue 248; mobile queue full screen, file list tap-to-diff, bottom bar, send back in a sheet | carried | carried | dash §2.5.1, §2.15.3 (corrected 2026-09-25) |
 | PMFE:412 | FE:365 | Board topbar: filter chips, `Dependencies` toggle, density toggle | carried-weaker | carried | dashboard §2.4.11 (view bar, density toggle), §2.4.18 (Dependencies view) |
-| PMFE:413 | FE:367 | Columns fluid min 200, max 300, gap 8, board padding 16 | carried | carried | dash §2.4.2 (padding 16 lost) |
+| PMFE:413 | FE:367 | Columns fluid min 200, max 300, gap 8, board padding 16 | carried | carried | dash §2.4.2 (corrected 2026-09-25) |
 | PMFE:414 | FE:368 | Empty columns collapse to 36 px rails (after 5 min empty; Done below 1600 px) | contradicted | deliberate | dashboard §9 |
-| PMFE:415 | FE:369 | Parked full column far right with amber count; Closed only when non-empty | carried | carried | dash §2.4.1 (On hold; Won't do filter) |
-| PMFE:416 | FE:370 | > 6 columns → horizontal windowing; Review and Parked pinned | carried | carried | dash §2.4.2, §2.4.9 |
+| PMFE:415 | FE:369 | Parked full column far right with amber count; Closed only when non-empty | carried | deliberate | dash §2.4.1 (On hold only when non-empty, pinned; *Won't do* a filter, not a column); NAMING (*Closed* retired, with the reason) (corrected 2026-09-25) |
+| PMFE:416 | FE:370 | > 6 columns → horizontal windowing; Review and Parked pinned | carried | carried | dash §2.4.2, §2.4.9 (corrected 2026-09-25) |
 | PMFE:417 | FE:372 | Column header 36; name · count; WIP `1 / 3` + 2 px bar; secondary/amber/red; derivation tooltip; `⋯` menu (sort, collap… | carried | carried | dash §2.4.3 |
 | PMFE:418 | FE:374 | In-column order by `orderKey`; Review and Parked sort by wait time, longest first | carried-weaker | carried | dashboard §2.4.2, P3 |
-| PMFE:419 | FE:378 | `h/l` keep the row index clamped; `j/k` | carried | carried | dash §2.3 |
+| PMFE:419 | FE:378 | `h/l` keep the row index clamped; `j/k` | carried | carried | dash §2.3 (corrected 2026-09-25) |
 | PMFE:420 | FE:379 | Peek drawer 480 px with triage keys; `Enter` opens card | carried | carried | dash §2.4.6 |
 | PMFE:421 | FE:380 | `c` creates once `POST /cards` exists, else a toast with the CLI | gap | gap | dashboard §2.4.7, P3 |
 | PMFE:422 | FE:381 | No drag and drop in v1; moves via recorded triage | carried | carried | dash §2.4.5 (within-column reorder now allowed) |
-| PMFE:423 | FE:382 | Click selects; `Space` or double-click peeks | carried-weaker | carried | dashboard §2.3 (`Space` or double-click) |
+| PMFE:423 | FE:382 | Click selects; `Space` or double-click peeks | carried-weaker | carried | dash §2.3 (corrected 2026-09-25) |
 | PMFE:424 | FE:384 | SSE patches only changed tiles; keeps scroll/focus/drawer;… | carried-weaker | carried | dashboard §2.4.8, P3 |
 | PMFE:425 | FE:388 | Empty board: No cards yet + `sekhemet plan …` and the fixture seed command | contradicted | deliberate | dashboard §2.4.10, §9 |
 | PMFE:426 | FE:389-392 | Empty column copy at top; filter no-match + Clear filter; review full + Holding for review; memory pause | carried | carried | dash §2.4.10 |
@@ -1886,63 +1917,63 @@ Columns: row key · old location · item (shortened) · status when first traced
 | PMFE:432 | FE:420 | Persist the Planner's repair plan into evidence or the ledger | carried-weaker | gap | worker-loop rule 34.3, NEW-worker-loop-5 (WL-N5-5: the re-plan recorded as `card/repair_plan`, kernel rule 20 / §3); dashboard §2.6 reads it |
 | PMFE:433 | FE:422-429 | Steps tab: tool calls with observation summaries, gate results, tokens/time right-aligned, loop annotation, stop row, l… | carried | carried | dash §2.6 |
 | PMFE:434 | FE:433-437 | Thread tab (quotes for notes); Files tab; no-data tab states | carried | carried | dash §2.6 |
-| PMFE:435 | FE:443 | Runs list 240 px (date, time, model, `3/6`, duration) | carried | carried | dash §2.11 (width lost) |
+| PMFE:435 | FE:443 | Runs list 240 px (date, time, model, `3/6`, duration) | carried | carried | dash §2.11 Runs (corrected 2026-09-25) |
 | PMFE:436 | FE:445-450 | Headline blocks: Passed first try, Passed after retry, Total time, Tokens; deltas vs previous run | carried-weaker | carried | dashboard §2.11 |
 | PMFE:437 | FE:451 | Timeline: segments proportional to duration, filled by outcome, labelled by short id | carried-weaker | carried | dashboard §2.11 |
 | PMFE:438 | FE:452 | Cards table columns (title, attempt, result, why stopped, steps, time, tokens, accepted sha), sortable | carried-weaker | carried | dashboard §2.11 |
 | PMFE:439 | FE:453-454 | Stops by reason, each linked; run settings | carried | carried | dash §2.11 |
 | PMFE:440 | FE:456 | `writeQueueReport` also writes `.sekhemet/runs/<startedAt>.json` | carried-weaker | gap | runtime rule 34b, NEW-runtime-9 (RUN-56: `queue/reported` event; the files are derived caches) |
-| PMFE:441 | FE:459 | No runs yet + `sekhemet queue --auto-accept` | carried | carried | Superseded: Runs is hidden until the first run (dash §2.2.1) |
-| PMFE:442 | FE:460 | Run in progress: Running · 2 of 6 cards · 4m; timeline grows live | carried | carried | dash §2.11 ("grows live"; copy lost) |
-| PMFE:443 | FE:464 | Ledger columns seq, time, actor, type, hash (8 chars); prev-hash tooltip | carried | carried | dash §2.11 |
-| PMFE:444 | FE:466-469 | Filters card/actor/type; `Enter` detail with payload, payload hash, hash, prev; integrity header with verified time; fi… | carried | carried | dash §2.11 |
+| PMFE:441 | FE:459 | No runs yet + `sekhemet queue --auto-accept` | carried | deliberate | dash §2.2.1 (Runs hidden until the first completed run) (corrected 2026-09-25) |
+| PMFE:442 | FE:460 | Run in progress: Running · 2 of 6 cards · 4m; timeline grows live | carried | carried | dash §2.11 Runs (corrected 2026-09-25) |
+| PMFE:443 | FE:464 | Ledger columns seq, time, actor, type, hash (8 chars); prev-hash tooltip | carried | carried | dash §2.11 Ledger (corrected 2026-09-25) |
+| PMFE:444 | FE:466-469 | Filters card/actor/type; `Enter` detail with payload, payload hash, hash, prev; integrity header with verified time; fi… | carried | carried | dash §2.11 Ledger (corrected 2026-09-25) |
 | PMFE:445 | FE:475 | Memory gauge: used/total GB, level Normal/Warning/Critical, swap in use, 85/90/94% ticks, a sentence each | carried-weaker | carried | dashboard §2.11 |
 | PMFE:446 | FE:476 | Model: worker id, resident, endpoint, keep-alive; tokens/s sparklines later | carried-weaker | carried | dashboard §2.11 |
-| PMFE:447 | FE:477-479 | Health checks with icon, name, plain detail, fix hint; sandbox mode; worktrees | carried | carried | dash §2.11 |
+| PMFE:447 | FE:477-479 | Health checks with icon, name, plain detail, fix hint; sandbox mode; worktrees | carried | carried | dash §2.11 Machine (corrected 2026-09-25) |
 | PMFE:448 | FE:480 | Re-run checks bypasses the 15 s cache with `?fresh=1` | carried-weaker | carried | dashboard §2.11 |
 | PMFE:449 | FE:482 | `GET /api/machine` shape; pushed on SSE as `event: machine` every 5 s | carried-weaker | carried | dashboard §2.11, §3 |
 | PMFE:450 | FE:658 (+FE:396, 431, 8… | `card/step` ledger event per turn `{ id, turn, calls, gate?, usage }` from `card_runner` `onProgress`; drives the runni… | carried-weaker | carried | dashboard §3; kernel §3 |
 | PMFE:451 | FE:657 | Transcript endpoint shape `{ attempt, file, steps: [...] }` | carried-weaker | carried | dashboard §3 |
 | PMFE:452 | FE:471, 659 | `GET /api/events?since=&card=&limit=&order=desc` → `{ events, verification, nextCursor }`, paged newest first | carried-weaker | carried | runtime 25a; dashboard §3 |
-| PMFE:453 | FE:486 | Playbook rules table: instruction (2-line clamp), trigger gate, teaching card, since, pattern | carried | carried | Superseded by the learning view (dash §2.11); fields in context §24 |
-| PMFE:454 | FE:487 | Suggested rules with Promote (editor, pick trigger gate) and Dismiss | carried | carried | dash §2.11 (*Needs your approval*: Approve, Edit, Retire) |
-| PMFE:455 | FE:488 | Empty Playbook copy | carried | carried | Superseded: Playbook hidden until the first rule (dash §2.2.1) |
+| PMFE:453 | FE:486 | Playbook rules table: instruction (2-line clamp), trigger gate, teaching card, since, pattern | carried | deliberate | dash §2.11 Playbook (learning view) (corrected 2026-09-25) |
+| PMFE:454 | FE:487 | Suggested rules with Promote (editor, pick trigger gate) and Dismiss | carried | deliberate | dash §2.11 Playbook (*Needs your approval*: Approve, Edit, Retire) (corrected 2026-09-25) |
+| PMFE:455 | FE:488 | Empty Playbook copy | carried | deliberate | dash §2.2.1 (Playbook hidden until the first rule or suggestion) (corrected 2026-09-25) |
 | PMFE:456 | FE:490, 661 | `GET /api/playbook` shape `{ rules, candidates }` | carried-weaker | carried | dashboard §3 |
 | PMFE:457 | FE:494 | Inbox: nav hidden until the endpoint exists; never a dead link | carried | carried | dash §2.2.1 |
 | PMFE:458 | FE:500 | Tile compact: 264 px wide, 8/12 padding, 4 px gap | carried-weaker | carried | dashboard §2.4.4; width follows fluid columns §2.4.2 |
 | PMFE:459 | FE:504 | Row 1 kind tag · short id | contradicted | deliberate | dashboard §9 |
-| PMFE:460 | FE:505-508 | Title 13/500 2-line clamp; pips + status line; budget bar only when started | carried | carried | dash §2.4.4 |
+| PMFE:460 | FE:505-508 | Title 13/500 2-line clamp; pips + status line; budget bar only when started | carried | carried | dash §2.4.4 (corrected 2026-09-25) |
 | PMFE:461 | FE:512 | The status line is the card's current truth, derived per state | carried | carried | dash §2.4.4 |
 | PMFE:462 | FE:516 | Ready: Ready · 32-step budget | contradicted | deliberate | dashboard P3, §9 |
 | PMFE:463 | FE:517 | Blocked: link icon in `--state-blocked`, Waits on X, title in `--text-secondary` | contradicted | deliberate | dashboard §2.4.4, §9; R11 |
 | PMFE:464 | FE:518 | Planning: pencil, Planner is writing the plan | carried | carried | dash §2.4.1 (*Being planned*) |
-| PMFE:465 | FE:519 | Working: pulsing lapis dot, step line, 2 px running rule, lapis budget | carried | carried | dash §2.4.4, §2.13.3, §2.13.5 |
-| PMFE:466 | FE:520-521 | Checking: running pip ring; Failed-will-retry: red pips, rung line, fail rule | carried | carried | dash §2.4.1, §2.13.3 |
+| PMFE:465 | FE:519 | Working: pulsing lapis dot, step line, 2 px running rule, lapis budget | carried | carried | dash §2.4.4, §2.13.3 (corrected 2026-09-25) |
+| PMFE:466 | FE:520-521 | Checking: running pip ring; Failed-will-retry: red pips, rung line, fail rule | carried | carried | dash §2.4.1, §2.13.3 (corrected 2026-09-25) |
 | PMFE:467 | FE:522-524 | Review waiting (amber after 2 h); Parked (pause, amber, rule); Done (check-circle, secondary, no bars, sha + age) | carried | carried | dash §2.4.1, §2.4.4 |
-| PMFE:468 | FE:526 | Gate pips: 12×12 per configured gate in order; glyphs; glyph on fill; not-run 1 px outline; no letters; popover | carried | carried | dash §2.4.4; `--on-state` in tokens.ts |
+| PMFE:468 | FE:526 | Gate pips: 12×12 per configured gate in order; glyphs; glyph on fill; not-run 1 px outline; no letters; popover | carried | carried | dash §2.4.4 (corrected 2026-09-25) |
 | PMFE:469 | FE:527 | Budget bar 2 px; secondary/lapis/amber ≥ 75%/red 100%; tokens and seconds as a second line in comfortable density | carried | carried | dash §2.4.4 |
-| PMFE:470 | FE:528 | Dependency badge: link icon + count, tooltip lists titles | carried | carried | Replaced by the blocker flag with cause (dash §2.4.4, P3) |
+| PMFE:470 | FE:528 | Dependency badge: link icon + count, tooltip lists titles | carried | deliberate | dash §2.4.4 (blocker flag); dash §9 ("the tile shows … a dependency count is replaced by the professional anatomy"; R11 blocker flag) (corrected 2026-09-25) |
 | PMFE:471 | FE:529 | Difficulty diamond on the tile in comfortable density | contradicted | deliberate | dashboard §9 |
-| PMFE:472 | FE:531-536 | Tile states (hover, focus ring offset −1, selected border + checkbox, both); heights 88/112 | carried | carried | dash §2.4.4 |
+| PMFE:472 | FE:531-536 | Tile states (hover, focus ring offset −1, selected border + checkbox, both); heights 88/112 | carried | carried | dash §2.4.4 (corrected 2026-09-25) |
 | PMFE:473 | FE:540 | Column header variants incl. at-capacity tooltip Full. The Worker holds finished cards until you clear one. | carried-weaker | carried | dashboard §2.4.3 |
-| PMFE:474 | FE:544 | Gates segment `[icon] Name duration`, 32 px, hairlines, `--bg-surface`; failed = 2 px fail top rule + count | carried | carried | dash §2.5.4 |
-| PMFE:475 | FE:546 | Popover (max 420 px): id and command, exit code, first 3 typed failures, Show all | carried | carried | dash §2.5.4 (420 lost) |
+| PMFE:474 | FE:544 | Gates segment `[icon] Name duration`, 32 px, hairlines, `--bg-surface`; failed = 2 px fail top rule + count | carried | carried | dash §2.5.4 (corrected 2026-09-25) |
+| PMFE:475 | FE:546 | Popover (max 420 px): id and command, exit code, first 3 typed failures, Show all | carried | carried | dash §2.5.4 (corrected 2026-09-25) |
 | PMFE:476 | FE:547 | Click on a passed gate opens its raw log once stored; until then No output recorded for passed gates. | carried-weaker | carried | dashboard §2.5.4 |
-| PMFE:477 | FE:548-549 | Order + derived Size; skipped with reason; empty-contract amber segment + tooltip | carried | carried | dash §2.5.4 |
-| PMFE:478 | FE:555-561 | Failure block: header, excerpt, Expected/Actual, repro + copy, Suggested, protected-file warning, fail rule, grouping | carried | carried | dash §2.5.5 |
-| PMFE:479 | FE:565 | Diff groups incl. Other; identical-to-`acceptance/<name>` note | carried | carried | dash §2.5.6 |
-| PMFE:480 | FE:566-571 | Sticky 32 px file header; 40 px gutters (muted allowed); tints; hunk headers secondary on raised; sign kept | carried | carried | dash §2.5.6 |
+| PMFE:477 | FE:548-549 | Order + derived Size; skipped with reason; empty-contract amber segment + tooltip | carried | carried | dash §2.5.4 (corrected 2026-09-25) |
+| PMFE:478 | FE:555-561 | Failure block: header, excerpt, Expected/Actual, repro + copy, Suggested, protected-file warning, fail rule, grouping | carried | carried | dash §2.5.5 (corrected 2026-09-25) |
+| PMFE:479 | FE:565 | Diff groups incl. Other; identical-to-`acceptance/<name>` note | carried | carried | dash §2.5.6 (corrected 2026-09-25) |
+| PMFE:480 | FE:566-571 | Sticky 32 px file header; 40 px gutters (muted allowed); tints; hunk headers secondary on raised; sign kept | carried | carried | dash §2.5.6 (corrected 2026-09-25) |
 | PMFE:481 | FE:572 | Annotation rows: 2 px fail rule, gate icon, message; `role="note"`, focusable; `n/N` | carried-weaker | carried | dashboard §2.5.6 |
 | PMFE:482 | FE:573-574 | Unified/split `u`; whitespace toggle; > 400 lines collapse; lockfiles/generated collapsed | carried | carried | dash §2.5.6 |
-| PMFE:483 | FE:580-584 | Button variants: primary (accent / `--on-accent`), secondary (raised, primary, border-subtle), ghost | carried-weaker | carried | dashboard §2.13.7 |
+| PMFE:483 | FE:580-584 | Button variants: primary (accent / `--on-accent`), secondary (raised, primary, border-subtle), ghost | carried-weaker | carried | dash §2.13.7 (corrected 2026-09-25) |
 | PMFE:484 | FE:586 | Buttons 32 px high, 4 px radius, 12 px padding, `kbd` hint inside, 11 px mono | carried-weaker | carried | dashboard §2.13.7 |
 | PMFE:485 | FE:586 | Disabled = 40% opacity; reason in adjacent text, never only a tooltip | contradicted | deliberate | dashboard §2.13.2, §9 |
-| PMFE:486 | FE:592-597 | Decision request: question 15/600 + category; options with consequence, effort, risk, Preview; Recommended (neutral) +… | carried | carried | dash §2.5.14; ppm §2.10 |
+| PMFE:486 | FE:592-597 | Decision request: question 15/600 + category; options with consequence, effort, risk, Preview; Recommended (neutral) +… | carried | carried | dash §2.5.14 (corrected 2026-09-25) |
 | PMFE:487 | FE:601 | Scorecard block: label 11 secondary, value 22/600 tabular, delta 11 in state colour + arrow icon | carried-weaker | carried | dashboard §2.11 |
-| PMFE:488 | FE:605-607 | Machine components: 6 px gauge with ticks; check row sizes; sparkline 120×24 (later) | carried-weaker | carried | dashboard §2.11, §2.13.7 |
-| PMFE:489 | FE:611-617 | Palette: 600 px at 12vh, raised + strong border, `--scrim`; 48 px/15 px input; groups; fuzzy highlight; shortcuts; `>`/… | carried | carried | dash §2.15.4, §2.3 |
-| PMFE:490 | FE:621-625 | Toasts: bottom-left 16 px, max 3, 360 px, overlay + strong border, icon, one line, action; 4 s / errors stay;… | carried-weaker | carried | dashboard §2.13.7 |
-| PMFE:491 | FE:629-631 | Cheat sheet: 720 px modal, four columns; dimmed inapplicable keys; reachable from the sidebar footer | carried | carried | dash §2.3.3, §2.2.1 (Keys) |
+| PMFE:488 | FE:605-607 | Machine components: 6 px gauge with ticks; check row sizes; sparkline 120×24 (later) | carried-weaker | carried | dash §2.11, §2.13.7 (corrected 2026-09-25) |
+| PMFE:489 | FE:611-617 | Palette: 600 px at 12vh, raised + strong border, `--scrim`; 48 px/15 px input; groups; fuzzy highlight; shortcuts; `>`/… | carried | carried | dash §2.15.4 (corrected 2026-09-25) |
+| PMFE:490 | FE:621-625 | Toasts: bottom-left 16 px, max 3, 360 px, overlay + strong border, icon, one line, action; 4 s / errors stay;… | carried-weaker | carried | dash §2.13.7 (corrected 2026-09-25) |
+| PMFE:491 | FE:629-631 | Cheat sheet: 720 px modal, four columns; dimmed inapplicable keys; reachable from the sidebar footer | carried | carried | dash §2.3.3 (corrected 2026-09-25) |
 | PMFE:492 | FE:635-643 | Key additions: `g q`, `g l`, `g p`, `1–5`, `[ ]`, `u`, `n/N`, `f`, `t` theme, `z`, `/` | contradicted | deliberate | dashboard §2.3, §9 |
 | PMFE:493 | FE:645 | Keys ignored in text fields except `Esc` and `⌘↩` | carried | carried | dash §2.3.4 |
 | PMFE:494 | FE:653 | `card.display` shape (title, kinds enum, shortId, stateLabel, statusLine, tone enum, stopLabel, enteredColumnAt, waitsO… | carried-weaker | carried | dashboard §2.15.2, §3 |
@@ -1950,52 +1981,52 @@ Columns: row key · old location · item (shortened) · status when first traced
 | PMFE:496 | FE:655-656 | `GET /api/cards/:id` with attempts; `evidence?attempt=` | carried | carried | dash §3; rt §3 |
 | PMFE:497 | FE:660 | `GET /api/runs[/:id]` | carried | carried | rt §3 |
 | PMFE:498 | FE:663 | `/api/meta` adds `project, repoPath, triage, reviewMinutesPerDay, version, gitUser` | carried-weaker | carried | dashboard §3 |
-| PMFE:499 | FE:664 | `POST /api/cards/:id/run` returns `{ attemptId }` | carried | carried | rt RUN-4 (response returns the log path) |
+| PMFE:499 | FE:664 | `POST /api/cards/:id/run` returns `{ attemptId }` | carried | deliberate | runtime RUN-4, §3 (corrected 2026-09-25) |
 | PMFE:500 | FE:665 | `GET /api/decisions`, answer endpoint | carried | carried | rt §3; ppm §2.10 |
 | PMFE:501 | FE:667-676 | Vocabulary functions in `vocabulary.ts`; server calls them; `/vocab.json`; browser never re-derives a label | gap | gap | dashboard §2.12.1, NEW-dashboard-2 |
-| PMFE:502 | FE:684-692 | Token additions `--on-accent`, `--on-state`, `--scrim`, tints (12% / 10%), `--sidebar-w`/`--rail-w`/`--topbar-h` | carried | carried | dash §2.13.1; tokens.ts defines every one |
+| PMFE:502 | FE:684-692 | Token additions `--on-accent`, `--on-state`, `--scrim`, tints (12% / 10%), `--sidebar-w`/`--rail-w`/`--topbar-h` | carried | carried | dash §2.13.1; tokens.ts (corrected 2026-09-25) |
 | PMFE:503 | FE:694 | Fonts: system fallback must look right; WOFF2 bundling optional | later | later | dashboard §7 |
-| PMFE:504 | FE:698-710 | Type usage table | carried | carried | dash §2.13.4 (wordmark tracking −0.01em and the `kbd` style lost) |
-| PMFE:505 | FE:714-727 | Spacing per component (sidebar item padding/gaps/footer, topbar 16/12, column body 8, evidence 24 gap / 8 heading, fail… | carried-weaker | carried | dashboard §2.13.7 and inline |
+| PMFE:504 | FE:698-710 | Type usage table | carried | carried | dash §2.13.4 (corrected 2026-09-25) |
+| PMFE:505 | FE:714-727 | Spacing per component (sidebar item padding/gaps/footer, topbar 16/12, column body 8, evidence 24 gap / 8 heading, fail… | carried-weaker | carried | dash §2.13.7, §2.4.2 (corrected 2026-09-25) |
 | PMFE:506 | FE:729-763 | Icon set (names and drawings) | carried | carried | `packages/ui/src/icons.ts` defines every one |
 | PMFE:507 | FE:765 | No filled icons, duotone, emoji, Unicode ✓ ✗ | carried | carried | dash §2.13.6 |
-| PMFE:508 | FE:767-776 | Colour application per tone | carried | carried | dash §2.13.3 |
-| PMFE:509 | FE:780-783 | Motion rules | carried | carried | dash §2.13.5, §6 |
+| PMFE:508 | FE:767-776 | Colour application per tone | carried | carried | dash §2.13.3 (corrected 2026-09-25) |
+| PMFE:509 | FE:780-783 | Motion rules | carried | carried | dash §2.13.5, §6 (corrected 2026-09-25) |
 | PMFE:510 | FE:787 | Focus: 2 px accent outline, offset 1, `:focus-visible`; replaces `--border-strong` which fails | carried | carried | dash §2.14.5 |
 | PMFE:511 | FE:788-789 | Selection: overlay + strong border, or a 2 px `--text-primary` left bar in lists; focus and selection distinct | carried-weaker | carried | dashboard §2.4.4, §2.4.15 |
-| PMFE:512 | FE:793-797 | Brand: pylon glyph path, wordmark, favicon 32 px on 6 px rounded bg-base; no tagline, mascot, lion | carried | carried | dash §2.13.6 |
+| PMFE:512 | FE:793-797 | Brand: pylon glyph path, wordmark, favicon 32 px on 6 px rounded bg-base; no tagline, mascot, lion | carried | carried | dash §2.13.6 (corrected 2026-09-25) |
 | PMFE:513 | FE:801-805 | Contrast rules (secondary ≥ 5.3, muted decorative, state text only on base/surface, state icons ≥ 3:1) + unit test | gap | gap | dashboard §2.14.1, P12 |
-| PMFE:514 | FE:806-813 | Colour never alone; landmarks; board listbox roles; gates strip list; tabs; modal dialogs; one live region; Review focu… | carried | carried | dash §2.14.3–4 |
-| PMFE:515 | FE:814-815 | Targets 24×24 / 44×44; 200% zoom | gap | gap | dashboard §2.14.5, P12 |
+| PMFE:514 | FE:806-813 | Colour never alone; landmarks; board listbox roles; gates strip list; tabs; modal dialogs; one live region; Review focu… | carried | carried | dash §2.14.3–4 (corrected 2026-09-25) |
+| PMFE:515 | FE:814-815 | Targets 24×24 / 44×44; 200% zoom | gap | gap | dash §2.14.5; P12 (DB-P12-6) (corrected 2026-09-25) |
 | PMFE:516 | FE:823 | Static build-free ES modules under `/app/`; no framework/CDN; air-gapped; React/TanStack rejected; own virtualization | carried | carried | dash §2.15.1, §9 resolved drift |
-| PMFE:517 | FE:825-831 | Verification recipe: seed, serve, three viewports, both themes, compare mockups, keyboard only, empty error console | carried | carried | dash §2.15.5 (viewports now 1440×900, 1100×800, 400×812) |
+| PMFE:517 | FE:825-831 | Verification recipe: seed, serve, three viewports, both themes, compare mockups, keyboard only, empty error console | carried | deliberate | dash §2.15.5 (corrected 2026-09-25) |
 | PMFE:518 | FE:837 | Vocabulary covers every `ExecutionStopReason` and fixture suffix; an unknown reason falls back to the humanised enum | carried-weaker | carried | dashboard §2.12.1, NEW-dashboard-2 |
 | PMFE:519 | FE:838 | Contrast test thresholds (secondary ≥ 4.5 all surfaces; state ≥ 4.5 on base/surface, ≥ 3 on raised; accent ≥ 3; on-acce… | gap | gap | dashboard §2.14.1, P12 |
 | PMFE:520 | FE:839 | Icon test: 24 viewBox, 1.5 stroke, no fill except `dot` | carried | carried | dash §2.13.6; `icons.spec.ts` |
 | PMFE:521 | FE:840 | Static serving: `..` refused (path traversal), correct MIME types, every served `.js` passes `node --check`,… | missing | carried | runtime rule 23a, RUN-49 (traversal refused, MIME types; built); dashboard §2.15.2 (/vocab.json), §4 (syntax checks) |
 | PMFE:522 | FE:841 | Shell page about 60 lines | carried | carried | dash §2.15.1 ("a small shell") |
-| PMFE:523 | FE:847 | Board enrichment: gate list from evidence rung results in execution order, no synthetic `parse`; hasher example values | carried-weaker | carried | dashboard §2.4.4; gates rule 35 (no synthetic parse) |
+| PMFE:523 | FE:847 | Board enrichment: gate list from evidence rung results in execution order, no synthetic `parse`; hasher example values | carried-weaker | gap | dash §2.4.4; gates rule 35, T1 (GT-T1-11); NEW-dashboard-1 (DB-N1-4) (corrected 2026-09-25) |
 | PMFE:524 | FE:848 | Killing the server: Reconnecting, then Offline within 10 s, actions disabled | carried | carried | dash §6 |
 | PMFE:525 | FE:849 | No uppercase text on screen; pips have `aria-label`s | carried | carried | dash §2.1.4, §2.14.3 |
 | PMFE:526 | FE:850 | Parking via curl appears in Parked within 1 s with scroll preserved; 500 cards, no task > 50 ms | carried-weaker | carried | dashboard §2.4.8, §6 |
-| PMFE:527 | FE:851-853 | Keys work with the mouse unplugged; peek `Esc` returns focus to the tile; palette ranking and `>acc` | carried | carried | dash §2.1.3, §2.3; palette §2.15.4 |
+| PMFE:527 | FE:851-853 | Keys work with the mouse unplugged; peek `Esc` returns focus to the tile; palette ranking and `>acc` | carried | carried | dash §2.3, §2.4.6, §2.15.4 (corrected 2026-09-25) |
 | PMFE:528 | FE:859 | `/api/gates` returns gates in order; `empty: true` for `e3b0c442…` | carried-weaker | gap | gates §3 (/api/gates empty), T1 (GT-T1-10) |
 | PMFE:529 | FE:862-863 | Diff parser test; triage acceptance (A merges, empty R blocks, note → candidate, Z within 3 s sends nothing) | carried | carried | dash §6; rg §2.4 |
 | PMFE:530 | FE:870-871 | Transcript returns 8 steps with `stopReason`; one `card/step` per turn, chain valid | carried-weaker | carried | dashboard §3 (transcript, card/step) |
 | PMFE:531 | FE:873-876 | Card view acceptance (Enter opens evidence tab, 1–5, live steps, return note as a quote, running tile) | carried | carried | dash §2.6, §2.4.4 |
 | PMFE:532 | FE:881-886 | Runs history rows; Ledger tamper disables Accept; memory level at 0.85; Playbook view | carried | carried | dash §2.11, NEW-dashboard-2; models (classifyMemoryPressure) |
 | PMFE:533 | FE:890 | Later: Inbox and decision requests | carried | carried | Built, in Review › Needs you (dash §2.5.2, §2.5.14) |
-| PMFE:534 | FE:891 | Later: `POST /cards/:id/run` (Retry with planner) | later | later | dashboard §7 |
+| PMFE:534 | FE:891 | Later: `POST /cards/:id/run` (Retry with planner) | later | later | dashboard §7 (Retry with planner); dashboard §2.5 rule 9 (v1: only Send back and Park) (corrected 2026-09-25) |
 | PMFE:535 | FE:892 | Later: promoting playbook candidates | carried | carried | Approve in Playbook (dash §2.11) |
 | PMFE:536 | FE:893 | Later: mobile triage polish | carried | carried | dash §2.15.3 |
 | PMFE:537 | FE:894 | Later: dependency lines overlay | later | later | dashboard §7 |
 | PMFE:538 | FE:895 | Later: bundled fonts | later | later | dashboard §7 |
 | PMFE:539 | FE:896 | Later: sparklines | later | carried | dashboard §2.11, §6 (built) |
-| PMFE:540 | FE:897 | Later: master board, Registry, Goals | later | later | dashboard §7; Registry built |
+| PMFE:540 | FE:897 | Later: master board, Registry, Goals | later | later | dashboard §2.16 Configuration (Registry, built: carried); dashboard §7 (master board, goal view) (corrected 2026-09-25) |
 | PMFE:541 | FE:898 | Later: difftastic intent grouping | later | later | dashboard §7 |
-| PMFE:542 | FE:900-901 | Planner stores `slice` on the card; fixture titles drop `(SPIDR: …)` | carried | carried | ppm P1 (kind from labels; five parsers fixed) |
+| PMFE:542 | FE:900-901 | Planner stores `slice` on the card; fixture titles drop `(SPIDR: …)` | carried | gap | ppm §2.2.1 (`split` field); P1 (PM-P1-11) (corrected 2026-09-25) |
 | PMFE:543 | FE:902 | `gatesConfigSha256` must hash the real `gates.toml` | carried-weaker | gap | gates T1 (GT-T1-13) |
-| PMFE:544 | FE:903 | `suggestedFixFiles` must not point at protected tests | carried | carried | gates §7, GT-3 |
+| PMFE:544 | FE:903 | `suggestedFixFiles` must not point at protected tests | carried | carried | gates rule 7, GT-3 (corrected 2026-09-25) |
 | PMFE:545 | FE:904 | `bounds` must exclude staged acceptance tests | missing | carried | gates rule 12, GT-11 |
 | PMFE:546 | FE:905 | `COLUMN_ORDER` should include planning and parked | carried | carried | canvas.ts cut (DEC-09) |
 
@@ -2005,32 +2036,32 @@ Columns: row key · old location · item (shortened) · status when first traced
 
 | Row | Old | Item | Traced | Final | Now in |
 | --- | --- | --- | --- | --- | --- |
-| INV:K1 | FI:45 / R2:71 | SHA-256 hash-chained append-only log, genesis, immutable | carried | carried | kernel §2.7-8, §4 built — R2 BUILT, agree |
-| INV:K2 | FI:46 / R2:72 | Verification names first broken seq | carried | carried | kernel §2.9, K-1; runtime §2.29, RUN-32 — agree (adds incremental verify, NEW-kernel-1) |
-| INV:K3 | FI:47 / R2:73 | Separate `payload_hash`, canonical JSON | carried | carried | kernel §2.8 — agree |
+| INV:K1 | FI:45 / R2:71 | SHA-256 hash-chained append-only log, genesis, immutable | carried | carried | kernel rules 8–9, §4 built (corrected 2026-09-25) |
+| INV:K2 | FI:46 / R2:72 | Verification names first broken seq | carried | carried | kernel rule 10, K-1; runtime rule 29, RUN-32 (corrected 2026-09-25) |
+| INV:K3 | FI:47 / R2:73 | Separate `payload_hash`, canonical JSON | carried | carried | kernel rule 9 (corrected 2026-09-25) |
 | INV:K4 | FI:48 / R2:74 | Typed card/attempt/step columns + indexes | carried-weaker | carried | kernel rule 7 |
-| INV:K5 | FI:49 / R2:75 | Actor enum CHECK | carried | carried | kernel §2.16 (`EVENT_ACTORS`, CHECK + append; 13 actors; principal separate, NEW-kernel-2) — agree |
+| INV:K5 | FI:49 / R2:75 | Actor enum CHECK | carried | carried | kernel rule 19 (`EVENT_ACTORS`), NEW-kernel-2 (corrected 2026-09-25) |
 | INV:K6 | FI:50 / R2:76 | `subscribe(filter, cb)` | carried-weaker | carried | kernel rule 18 |
 | INV:K7 | FI:51 / R2:77 | `getRange(since, limit)` | carried-weaker | carried | kernel rule 18; runtime 25a |
-| INV:K8 | FI:52 / R2:78 | Projection rebuild, byte-identical | carried | carried | kernel §2.13, K-2, §4 built — agree |
-| INV:K9 | FI:53 / R2:79 | Service container | later | deliberate | extensibility rule 29, §8 Q2 (container is reachable; trust-gated until the owner decides the cut, O4) |
-| INV:K10 | FI:54 / R2:80 | Reversible plugin manager | later | later | extensibility §7 (plugin API); cut pending O4 |
+| INV:K8 | FI:52 / R2:78 | Projection rebuild, byte-identical | carried | carried | kernel rule 14, K-2 (corrected 2026-09-25) |
+| INV:K9 | FI:53 / R2:79 | Service container | later | deliberate | extensibility rule 29 (cut in B0, DEC-29 O4; no trust gate needed), §8 Q2 (decided) (corrected 2026-09-25) |
+| INV:K10 | FI:54 / R2:80 | Reversible plugin manager | later | later | extensibility §7 (a plugin API designed fresh, after v1); extensibility rule 29 (plugins cut in B0, DEC-29 O4) (corrected 2026-09-25) |
 | INV:K11 | FI:55 / R2:81 | Model-visible means logged, runtime assertion | carried-weaker | carried | kernel rule 17, §4 (built), K-9 |
 | INV:K12 | FI:56 / R2:82 | 10-event waterfall hooks (observe, block, inject), outside sandbox | carried | carried | extensibility §2.3-6, §4 built — R2 SHALLOW; **DISAGREE**, code emits `playbook/propose` (`learning/store.ts:190`): spec right |
 | INV:K13 | FI:57 / R2:83 | 4-level hierarchy cap | carried | carried | kernel §2.1, K-3 (`MAX_CARD_DEPTH = 2`) built — agree |
-| INV:K14 | FI:58 / R2:84 | `projects` table | carried | carried | kernel §2.2, §2.6 `ProjectRecord`; built — agree |
+| INV:K14 | FI:58 / R2:84 | `projects` table | carried | carried | kernel rules 2, 6 Project bullet (after restoration) (corrected 2026-09-25) |
 | INV:K15 | FI:59 / R2:85 | Dependencies DAG, cycle refusal, eligibility | carried | carried | kernel §2.3, §4 built — agree |
 | INV:K16 | FI:60 / R2:86 | `attempts` table incl. `rung`, `tool_arm` | carried-weaker | carried | kernel rule 6, §4 |
 | INV:K17 | FI:61 / R2:87 | `steps` table incl. `repo_state_hash`, `success`, `tokens_condensed` | carried-weaker | deliberate | kernel rule 6 (not stored, with the reason) |
-| INV:K18 | FI:62 / R2:88 | `gate_results` table | carried | carried | kernel §2.6, §2.13 — agree |
+| INV:K18 | FI:62 / R2:88 | `gate_results` table | carried | carried | kernel rule 6, Gate result bullet (after restoration); rules 14, 37 (corrected 2026-09-25) |
 | INV:K19 | FI:63 / R2:89 | `evidence_bundles` table fields | carried-weaker | gap | gates rule 35, T1 |
 | INV:K20 | FI:64 / R2:90 | `decision_requests` table | carried | carried | kernel §2.6; planner §2.10, §4 built — agree |
 | INV:K21 | FI:65 / R2:91 | Competence entries driving budgets/routes | carried | carried | models §2.32, §4 partial (NEW-models-6: prediction/decision/outcome) — spec-stricter |
 | INV:K22 | FI:66 / R2:92 | Full card record shape | carried | carried | kernel §2.6 types; planner §2.1.5; PM_CONTRACT §2 — agree |
-| INV:K23 | FI:67 / R2:93 | `busy_timeout = 5000` (with a test) | carried | carried | kernel §2.27, tests `pragmas.spec.ts` — R2 SHALLOW; code test exists (`pragmas.spec.ts:34`), R2 stale |
-| INV:K24 | FI:68 / R2:94 | Column enum incl. Planning | carried | carried | kernel §2.17 nine states, §4 built — agree |
+| INV:K23 | FI:67 / R2:93 | `busy_timeout = 5000` (with a test) | carried | carried | kernel rule 38, tests `pragmas.spec.ts` (corrected 2026-09-25) |
+| INV:K24 | FI:68 / R2:94 | Column enum incl. Planning | carried | carried | kernel rule 23, §4 built (corrected 2026-09-25) |
 | INV:K25 | FI:69 / R2:95 | Difficulty 1..10 | carried | carried | planner §2.4; K-S7-1 (difficulty 11 refused) — agree |
-| INV:K26 | FI:70 / R2:96 | Packs/evidence under `.sekhemet/` by hash | carried | carried | kernel §2.15; §4 "ledger only durable channel" partial S7 — agree |
+| INV:K26 | FI:70 / R2:96 | Packs/evidence under `.sekhemet/` by hash | carried | carried | kernel rule 16; §4 "ledger only durable channel" partial S7 (corrected 2026-09-25) |
 | INV:K27 | FI:71 / R2:97 | 30-day retention | carried | carried | runtime §2.33, NEW-runtime-4 partial — R2 BUILT, spec-stricter |
 | INV:K28 | FI:72 / R2:98 | Checkpoint DB record with attribution | carried-weaker | carried | review-git rule 3 (checkpoint database record with attribution), §4 built |
 
@@ -2041,7 +2072,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | INV:S1 | FI:82 / R2:104 | Seatbelt profile, writes only to worktree/tmp | carried | carried | security §2.9-13, §4 built — agree |
 | INV:S2 | FI:83 / R2:105 | Commands run under `sandbox-exec` | carried | carried | security §2.13 — agree |
 | INV:S3 | FI:84 / R2:106 | Linux namespaces + Landlock + seccomp | later | deliberate | DEC-21; security rule 17 |
-| INV:S4 | FI:85 / R2:107 | Fail closed when confinement missing | carried | carried | security §2.7, §4 not-built S3b — R2 BUILT; **DISAGREE** (see table: gates opt out) |
+| INV:S4 | FI:85 / R2:107 | Fail closed when confinement missing | carried | gap | security rule 7, §4 "Fail closed: gates" not-built, S3b (SEC-20) (corrected 2026-09-25) |
 | INV:S5 | FI:86 / R2:108 | Network denied; allowlist proxy; request log with payload hash | carried | carried | security §2.28-33; proxy built, hardening S3 — spec-stricter |
 | INV:S6 | FI:87 / R2:109 | Timeout SIGTERM → 500 ms → SIGKILL | carried | carried | runtime §2.7, §4 built — agree |
 | INV:S7 | FI:88 / R2:110 | Buffer cap / OOM detection | carried-weaker | carried | runtime rules 8, 8a |
@@ -2049,7 +2080,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | INV:S9 | FI:90 / R2:112 | `<untrusted_content>` tagging, stricter step policy | carried | carried | security §2.42, SEC-40, §4 built — agree |
 | INV:S10 | FI:91 / R2:113 | Supply chain: existence, age, download profile, Levenshtein | carried-weaker | carried | security rule 44, SEC-41, SEC-43a (age 30 days, distance 2/1, own registry; download profile advisory with the reason) |
 | INV:S11 | FI:92 / R2:114 | `osv-scanner` offline | carried | carried | security §2.44 — agree |
-| INV:S12 | FI:93 / R2:115 | Restricted mode | carried | carried | security §2.43, worker-loop §2.13, §4 partial S3a — R2 BUILT, spec-stricter |
+| INV:S12 | FI:93 / R2:115 | Restricted mode | carried | gap | security rule 43, worker-loop rule 13, §4 "Restricted mode strips tools" partial, S3a (corrected 2026-09-25) |
 | INV:S13 | FI:94 / R2:116 | Worktree manager (create/cleanup) | carried | carried | security §2.24a; review-git §2.6.2 built — agree |
 | INV:S14 | FI:95 / R2:117 | CoW worktrees + linked deps | later | later | review-git §7 (copy-on-write); DEC-21; linked deps security rule 24 |
 | INV:S15 | FI:96 / R2:118 | Per-card env allowlist | carried | carried | security §2.6, §4 built — agree |
@@ -2068,13 +2099,13 @@ Columns: row key · old location · item (shortened) · status when first traced
 | INV:Y8 | FI:113 / R2:131 | difftastic structural diff | carried | carried | review-git §2.6.6 partial S5; gates §7 (in bundle later) — spec-stricter |
 | INV:Y9 | FI:114 / R2:132 | Head sha, diff generation | carried | carried | implied by review-git §2.2 (repo-state hash) and gates §2.35 (diff) — agree |
 | INV:Y10 | FI:115 / R2:133 | `SyncAdapter` pull/push/update/capabilities; conflict rule | carried | carried | integrations §2.7 (three-way merge, not LWW), §4 partial P9 — spec-stricter |
-| INV:Y11 | FI:116 / R2:134 | Forgejo adapter | carried-weaker | later | integrations §7 (beyond issues) |
+| INV:Y11 | FI:116 / R2:134 | Forgejo adapter | carried-weaker | carried | integrations rule 8, §4 (GitHub/Forgejo adapter, partial, P9), §8 Q4; integrations §7 "Forgejo beyond issues" (corrected 2026-09-25) |
 | INV:Y12 | FI:117 / R2:135 | GitHub App RS256 JWT, 1-h tokens, keychain, 7 scopes, GHES, no PAT | carried | carried | integrations §2.10, §4 built — agree |
 | INV:Y13 | FI:118 / R2:136 | HMAC webhook + 5 triggers | carried-weaker | gap | integrations §2.12, P9 |
-| INV:Y14 | FI:119 / R2:137 | Check Runs with annotations | carried | carried | integrations §2.14, §4 built — agree (`raw_details` lost, O90) |
+| INV:Y14 | FI:119 / R2:137 | Check Runs with annotations | carried | carried | integrations rule 14, §4 built (annotations with `raw_details`) (corrected 2026-09-25) |
 | INV:Y15 | FI:120 / R2:138 | SARIF v2.1.0 gzip then base64 | carried | carried | integrations §2.14 — agree |
-| INV:Y16 | FI:121 / R2:139 | PR lifecycle draft→checks→ready→CODEOWNERS→auto-merge, merge queue | carried | carried | integrations §2.15 partial P9; threads Later — agree |
-| INV:Y17 | FI:122 / R2:140 | Release cards | later | later | integrations §7 |
+| INV:Y16 | FI:121 / R2:139 | PR lifecycle draft→checks→ready→CODEOWNERS→auto-merge, merge queue | carried | gap | integrations rule 15, INT-12–INT-14, P9 (draft, ready, CODEOWNERS and merge policy not built); review threads Later (integrations §7) (corrected 2026-09-25) |
+| INV:Y17 | FI:122 / R2:140 | Release cards | later | gap | review-git §2.6 rule 7, NEW-review-git-4; planner-pm §2.15.8 (P13); integrations §7 (publishing a GitHub Release) (corrected 2026-09-25) |
 | INV:Y18 | FI:123 / R2:141 | CI via `act` | later | later | integrations §7 |
 | INV:Y19 | FI:124 / R2:142 | Monorepo per-package gates; cross-repo = two cards | carried-weaker | gap | review-git §2.6.5, NEW-review-git-3 |
 | INV:Y20 | FI:125 / R2:143 | Mid-card external-edit reconciliation | contradicted | deliberate | integrations §2.5, §9 (R6) |
@@ -2091,23 +2122,23 @@ Columns: row key · old location · item (shortened) · status when first traced
 | INV:M6 | FI:140 / R2:154 | Per-request reasoning control | carried | carried | worker-loop §2.24-25 (`reasoning.ts`), built — agree |
 | INV:M7 | FI:141 / R2:155 | Tolerant tool-call parser (arm B) | carried | carried | models §2.28 — agree |
 | INV:M8 | FI:142 / R2:156 | Arm A grammar-constrained decoding | carried | carried | models §2.28 + DEC-22 (per-model measured, never default); NEW-models-5 — agree |
-| INV:M9 | FI:143 / R2:157 | Arm C search/replace patches | carried | carried | models §2.28; §4 "tool arm measured" not-built — R2 BUILT (qualify measures); spec-stricter for the Worker |
+| INV:M9 | FI:143 / R2:157 | Arm C search/replace patches | carried | gap | models rule 28, §4 "Tool arm measured and pinned" not-built, NEW-models-5 (corrected 2026-09-25) |
 | INV:M10 | FI:144 / R2:158 | Mock adapter contract | missing | carried | DEFINITION_OF_DONE §2D.2 (scripted adapter); models §4 adapter_contract.spec.ts |
-| INV:M11 | FI:145 / R2:159 | Model registry fields | carried | carried | models §2.25, §4 not-built NEW-models-4 — R2 BUILT, spec-stricter |
+| INV:M11 | FI:145 / R2:159 | Model registry fields | carried | gap | models rule 25, §4 not-built, NEW-models-4 (corrected 2026-09-25) |
 | INV:M12 | FI:146 / R2:160 | Template SHA-256 pin invalidates qualification | carried | carried | models §2.12, MD-2, built — agree |
-| INV:M13 | FI:147 / R2:161 | Hardware calibration procedure | carried | carried | models §2.7 (Metal limit ⅔ ≤36 GB, ¾ above; sweep; one step back) partial NEW-models-1 — agree |
-| INV:M14 | FI:148 / R2:162 | Tier profiles S/M/L/XL | carried | carried | models §2.8 table identical, partial — agree |
-| INV:M15 | FI:149 / R2:163 | Throughput floors 40/10, 100/20, 300/40; refuse; <16 GB unsupported | carried | carried | models §2.9 identical, §4 not-built — R2 BUILT; **DISAGREE** (code: queue prelude calls it) |
+| INV:M13 | FI:147 / R2:161 | Hardware calibration procedure | carried | gap | models rule 7, §4 "Calibration command and machine profile" partial, NEW-models-1 (corrected 2026-09-25) |
+| INV:M14 | FI:148 / R2:162 | Tier profiles S/M/L/XL | carried | gap | models rule 8, §4 "Tier of the reference host" not-built, NEW-models-1 (corrected 2026-09-25) |
+| INV:M15 | FI:149 / R2:163 | Throughput floors 40/10, 100/20, 300/40; refuse; <16 GB unsupported | carried | gap | models rule 9, §4 "Throughput floors refuse cards" partial, NEW-models-2 (corrected 2026-09-25) |
 | INV:M16 | FI:150 / R2:164 | 8-bit KV; 4-bit refused for tool calling | carried | carried | models §2.10, MD-1 built — agree |
 | INV:M17 | FI:151 / R2:165 | Prompt-cache configuration | contradicted | deliberate | context rule 6; DEC-24 |
-| INV:M18 | FI:152 / R2:166 | Cache hit telemetry; < 85% on tool-result steps = defect + alert | carried-weaker | gap | context rule 7, M8 |
+| INV:M18 | FI:152 / R2:166 | Cache hit telemetry; < 85% on tool-result steps = defect + alert | carried-weaker | gap | context rule 7, §4, M8 (after CX-M8-10 is added) (corrected 2026-09-25) |
 | INV:M19 | FI:153 / R2:167 | Speculative decoding / MTP by measurement; draft model | carried-weaker | gap | models rule 13, NEW-models-8 (`-md`), M7/M11 |
 | INV:M20 | FI:154 / R2:168 | Memory watchdog 2 s, 85/90/94% actions | carried-weaker | gap | models rule 19 (0.90 stage restored), NEW-models-2 |
 | INV:M21 | FI:155 / R2:169 | Model swapping | carried | carried | models §2.17, §2.20; extensibility tools table — agree |
 | INV:M22 | FI:156 / R2:170 | Qualification suite, deterministic scoring | carried | carried | models §2.27, §4 built — agree |
-| INV:M23 | FI:157 / R2:171 | Per-repo bake-off on history tasks, full settings | carried | carried | models §2.30, §4 partial (settings only) — history gap unowned (Needs attention 64) |
+| INV:M23 | FI:157 / R2:171 | Per-repo bake-off on history tasks, full settings | carried | gap | models rule 30, §4 "Bake-off under the real harness" partial, NEW-models-4; history-mined tasks measurement T8 (corrected 2026-09-25) |
 | INV:M24 | FI:158 / R2:172 | Engine selection by measurement incl. cache retention | carried | carried | models §2.14, §2.26 (NEW-models-4) — agree |
-| INV:M25 | FI:159 / R2:173 | Declared hours, batched swaps | carried | carried | models §2.20, NEW-models-3; runtime §2.17 — R2 BUILT, spec-stricter |
+| INV:M25 | FI:159 / R2:173 | Declared hours, batched swaps | carried | gap | models rule 20, §4 "Declared hours, swap batching" partial, NEW-models-3; runtime rule 17 (corrected 2026-09-25) |
 
 **Gates (G)**
 
@@ -2124,7 +2155,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | INV:G9 | FI:177 / R2:187 | Parser registry per tool | carried | carried | gates §2.23, §3; pytest/cargo/go M6 — agree |
 | INV:G10 | FI:178 / R2:188 | Bounds ≤ 3 files, ≤ 200 lines | carried | carried | gates §2.12, GT-2 — agree |
 | INV:G11 | FI:179 / R2:189 | Evidence bundle shape | carried-weaker | gap | gates rule 35, T1 (GT-T1-8, -9) |
-| INV:G12 | FI:180 / R2:190 | Acceptance tests first; red before work; protected | carried | carried | gates §2.5-7, P1; §4 fixtures built, every card not-built — spec-stricter |
+| INV:G12 | FI:180 / R2:190 | Acceptance tests first; red before work; protected | carried | gap | gates rules 5–7, P1 (§4: every card not-built) (corrected 2026-09-25) |
 | INV:G13 | FI:181 / R2:191 | Diff-scoped mutation, advisory then blocking, never 100% | carried | carried | gates §2.32, §4 built; tools replaced by own step (PROVENANCE); non-TS "reported" (MS-M10-3) — agree |
 | INV:G14 | FI:182 / R2:192 | Secret scan (gitleaks) | carried | carried | gates §2.3, §2.15; worker-loop §2.14 — agree |
 | INV:G15 | FI:183 / R2:193 | Dependency existence/typosquat gate | carried-weaker | carried | security rule 44 |
@@ -2147,17 +2178,17 @@ Columns: row key · old location · item (shortened) · status when first traced
 | --- | --- | --- | --- | --- | --- |
 | INV:C1 | FI:207 / R2:211 | Repo map, PageRank, budget fit, cache | carried-weaker | gap | context rule 13, NEW-context-5 |
 | INV:C2 | FI:208 / R2:212 | Headless LSP client pool | contradicted | carried | worker-loop rule 12, §4 (built) |
-| INV:C3 | FI:209 / R2:213 | SWE-Pruner line pruning | later | later | context §7; DEC-21 |
-| INV:C4 | FI:210 / R2:214 | Four zones, byte-stable prefix | carried | carried | context §2.8-10, §4 partial M8 — R2 BUILT; DISAGREE (spec newer) |
+| INV:C3 | FI:209 / R2:213 | SWE-Pruner line pruning | later | later | context §7 (corrected 2026-09-25) |
+| INV:C4 | FI:210 / R2:214 | Four zones, byte-stable prefix | carried | gap | context rules 8–10, §4 "Four-zone layout" partial, M8 (corrected 2026-09-25) |
 | INV:C5 | FI:211 / R2:215 | System < 1,000 tokens, tools < 2,000 | carried | deliberate | context rule 10; DEC-27 (≤ 700 / ≤ 1,700 tokens) |
 | INV:C6 | FI:212 / R2:216 | Masking with ~15-token pointers + EvidenceRef | contradicted | deliberate | context rule 3; DEC-24 |
 | INV:C7 | FI:213 / R2:217 | Pressure 70/80/85/90, stop at 95% | carried | carried | context §2.12, CX-2, built (dormant) — agree |
 | INV:C8 | FI:214 / R2:218 | RTK four strategies, lossless | carried | carried | context §2.17, CX-3, built — agree |
-| INV:C9 | FI:215 / R2:219 | Agent Skills registry, progressive disclosure | carried | carried | extensibility §2.10-14, partial NEW-extensibility-4 — agree |
-| INV:C10 | FI:216 / R2:220 | Skill trust: pin, audit, diff, reject protected-touching | carried | carried | extensibility §2.15, §2.17, EXT-27; partial S9 — agree |
+| INV:C9 | FI:215 / R2:219 | Agent Skills registry, progressive disclosure | carried | gap | extensibility rules 10–14, §4 skills-format and diagnostics rows partial, NEW-extensibility-4 (corrected 2026-09-25) |
+| INV:C10 | FI:216 / R2:220 | Skill trust: pin, audit, diff, reject protected-touching | carried | gap | extensibility rules 15, 17, EXT-27; §4 "Skills: SHA-256 pin, approve/revoke, audit" partial, S9 (corrected 2026-09-25) |
 | INV:C11 | FI:217 / R2:221 | Playbook: delta, card boundary, retire | carried | carried | context §2.24, §4 built — agree |
-| INV:C12 | FI:218 / R2:222 | Context-debt audit > 300 tokens / ≥ +3% | carried | carried | measurement §2.24, MS-N2-2 partial — agree |
-| INV:C13 | FI:219 / R2:223 | Exemplar store top-2, same class, this repo | carried | carried | context §2.25; M1 (diff hunks, structural filter) — spec-stricter |
+| INV:C12 | FI:218 / R2:222 | Context-debt audit > 300 tokens / ≥ +3% | carried | gap | measurement rule 24, §4 partial, NEW-measurement-2 (MS-N2-2) (corrected 2026-09-25) |
+| INV:C13 | FI:219 / R2:223 | Exemplar store top-2, same class, this repo | carried | gap | context rule 25, M1 (CX-M1-11) (corrected 2026-09-25) |
 | INV:C14 | FI:220 / R2:224 | Context pack assembly | carried | carried | context §2.1-15, contract `buildWorkerPrompt` — agree |
 | INV:C15 | FI:221 / R2:225 | Byte-identical prompt for identical inputs | carried | carried | context §2.1, CX-1 built — agree |
 | INV:C16 | FI:222 / R2:226 | Subtask branch-and-return | carried | carried | context §2.18, CX-4 built — agree |
@@ -2179,7 +2210,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | INV:L5 | FI:244 / R2:242 | `edit` unique, CRLF, parse gate | carried | carried | worker-loop §2.12, §2.14 — agree |
 | INV:L6 | FI:245 / R2:243 | `grep` modes, context, gitignore, capped | carried-weaker | carried | worker-loop rule 12 |
 | INV:L7 | FI:246 / R2:244 | `glob` mtime-sorted, gitignore | carried-weaker | carried | worker-loop rule 12 |
-| INV:L8 | FI:247 / R2:245 | `run`: sandbox, timeout, description, deny raw cat/grep/sed, condensing | carried | carried | worker-loop §2.12, WL-5; context §2.17 — agree (`description` unstated) |
+| INV:L8 | FI:247 / R2:245 | `run`: sandbox, timeout, description, deny raw cat/grep/sed, condensing | carried | carried | worker-loop rule 12 (`run_cmd` timeout and `description`), WL-5; context rule 17 (corrected 2026-09-25) |
 | INV:L9 | FI:248 / R2:246 | Symbol tools over LSP | carried | carried | worker-loop §2.12 (TS language service) — see C2 |
 | INV:L10 | FI:249 / R2:247 | Tiered `docs` | carried | carried | worker-loop §2.12; design-stage §2.7.2 — agree |
 | INV:L11 | FI:250 / R2:248 | `note` to the card thread | carried | carried | worker-loop §2.12 — agree |
@@ -2189,7 +2220,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | INV:L15 | FI:254 / R2:252 | Ladder 2/1/1, park with diagnostic | carried | carried | worker-loop §2.34-36, WL-8 built — agree |
 | INV:L16 | FI:255 / R2:253 | `validateWrite` contract | carried | carried | worker-loop §2.14 — agree |
 | INV:L17 | FI:256 / R2:254 | Read-before-edit | carried | carried | worker-loop §2.12, WL-4 — agree |
-| INV:L18 | FI:257 / R2:255 | Tool sets per card class | carried | carried | worker-loop §2.10, M2 not-built — R2 BUILT, spec-stricter |
+| INV:L18 | FI:257 / R2:255 | Tool sets per card class | carried | gap | worker-loop rule 10, M2 (WL-M2-1) (corrected 2026-09-25) |
 | INV:L19 | FI:258 / R2:256 | search/fetch only on research cards | carried | carried | worker-loop §2.12; design-stage §2.7.10 — agree |
 | INV:L20 | FI:259 / R2:257 | `browse` sandboxed browser | carried | carried | worker-loop §2.12; security §2.42a (click/type need URL allowlist) — agree |
 | INV:L21 | FI:260 / R2:258 | Planner-set step budgets | carried | carried | worker-loop §2.21 (p80 × 1.25, ≤ 15%, ≥ 4), WL-10 — agree |
@@ -2208,18 +2239,18 @@ Columns: row key · old location · item (shortened) · status when first traced
 
 | Row | Old | Item | Traced | Final | Now in |
 | --- | --- | --- | --- | --- | --- |
-| INV:B1 | FI:287 / R2:274 | Legal edges, entry conditions, override logged | carried | carried | kernel §2.19-22, §4 built — agree |
+| INV:B1 | FI:287 / R2:274 | Legal edges, entry conditions, override logged | carried | carried | kernel rules 25 (edges), 27 (entry conditions), 28 (override logged) (corrected 2026-09-25) |
 | INV:B2 | FI:288 / R2:275 | Planning column incl. Verify→Planning | carried-weaker | carried | kernel rule 25 |
-| INV:B3 | FI:289 / R2:276 | ReviewWIP from own history | carried | carried | review-git §2.2 (floor 1, per project, 15-min prior until 5 reviews), S6 partial — R2 BUILT, spec-stricter |
-| INV:B4 | FI:290 / R2:277 | Back-pressure blocks entry to Verify | carried | carried | kernel §2.23, K-6 built — agree |
+| INV:B3 | FI:289 / R2:276 | ReviewWIP from own history | carried | gap | review-git §2.2, §4 "ReviewWIP formula, back-pressure" partial, S6 (corrected 2026-09-25) |
+| INV:B4 | FI:290 / R2:277 | Back-pressure blocks entry to Verify | carried | carried | kernel rule 29 (corrected 2026-09-25) |
 | INV:B5 | FI:291 / R2:278 | Dependency DAG | carried | carried | kernel §2.3 — agree |
 | INV:B6 | FI:292 / R2:279 | Overlapping scopes serialised | carried | carried | kernel §2.4, K-8 — agree |
-| INV:B7 | FI:293 / R2:280 | Parent rollup with integration gate | carried | carried | kernel §2.24, K-7 — agree |
+| INV:B7 | FI:293 / R2:280 | Parent rollup with integration gate | carried | carried | kernel rule 30, K-7 (corrected 2026-09-25) |
 | INV:B8 | FI:294 / R2:281 | Project-scoped board | carried | carried | kernel `ProjectRecord`; review-git S6 per project; dashboard Workspace — agree |
 | INV:B9 | FI:295 / R2:282 | `createCard` | carried | carried | kernel `CardStore` — agree |
-| INV:B10 | FI:296 / R2:283 | WIP evaluation | carried | carried | kernel §2.21, §3 defaults (planning 3, in_progress 5, verify 5, review 3) — agree |
+| INV:B10 | FI:296 / R2:283 | WIP evaluation | carried | carried | kernel rule 27 (WIP limits), §3 defaults row (corrected 2026-09-25) |
 | INV:B11 | FI:297 / R2:284 | Fractional `order_key` | carried-weaker | carried | kernel rule 15 |
-| INV:B12 | FI:298 / R2:285 | Human commands; override never on security | carried | carried | planner §2.14; kernel §2.22, K-5 built; Reroute/Explain Later — R2 SHALLOW, DISAGREE (spec cites a test) |
+| INV:B12 | FI:298 / R2:285 | Human commands; override never on security | carried | carried | planner-pm §2.14; kernel rule 28 (override, never on security), K-5; Reroute and Explain Later (planner-pm §7) (corrected 2026-09-25) |
 | INV:B13 | FI:299 / R2:286 | Active project cap 3 | carried | carried | kernel §2.2 — agree |
 
 **Planner (P)**
@@ -2232,7 +2263,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | INV:P4 | FI:312 / R2:295 | Estimation formula; actuals write back | carried | carried | planner §2.6.1 (points added for people — Resolved drift) — agree |
 | INV:P5 | FI:313 / R2:296 | Difficulty scoring | carried | carried | planner §2.4-2.5; extensibility tools table — agree |
 | INV:P6 | FI:314 / R2:297 | Routing < 4 / 4–7 / > 7; capability_ceiling escalation | carried | carried | planner §2.5 (+ max split depth 4) — agree |
-| INV:P7 | FI:315 / R2:298 | Edit-sketch cascade | carried | carried | planner §2.1.7, §2.5; worker-loop §2.28 — agree |
+| INV:P7 | FI:315 / R2:298 | Edit-sketch cascade | carried | carried | planner-pm §2.1.9 (edit sketch), §2.5; worker-loop rule 28 (corrected 2026-09-25) |
 | INV:P8 | FI:316 / R2:299 | Assume/Ask/Spike; batch; > 3 questions rejects | contradicted | deliberate | planner-pm §2.10.1, §9; DEC-24 |
 | INV:P9 | FI:317 / R2:300 | `DecisionRequest` full shape | carried | carried | planner §2.10.2 (default deadline 12 h), built — agree |
 | INV:P10 | FI:318 / R2:301 | `safe_default` / `default_deny` | carried | carried | planner §2.10.3, built — agree |
@@ -2249,7 +2280,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | INV:P21 | FI:329 / R2:312 | Multiple goals, WSJF, per-window explanation | carried | carried | planner §2.11.4 — agree |
 | INV:P22 | FI:330 / R2:313 | Stopping honestly | carried | carried | planner §2.11.5 — agree |
 | INV:P23 | FI:331 / R2:314 | Board operations tool | carried | carried | planner §2.8.3 — agree |
-| INV:P24 | FI:332 / R2:315 | Impact analysis over language-server references | carried | carried | extensibility tools table; context §2.22 (P1 not-built) — agree |
+| INV:P24 | FI:332 / R2:315 | Impact analysis over language-server references | carried | gap | context rule 22, P1; extensibility tool table (corrected 2026-09-25) |
 | INV:P25 | FI:333 / R2:316 | Implementation previews | carried | carried | planner §2.10.2 `previewSketch`, built — agree |
 
 **Eval (E)**
@@ -2257,10 +2288,10 @@ Columns: row key · old location · item (shortened) · status when first traced
 | Row | Old | Item | Traced | Final | Now in |
 | --- | --- | --- | --- | --- | --- |
 | INV:E1 | FI:343 / R2:322 | Pass@1 harness under the real loop; M0 protocol | carried-weaker | deliberate | measurement rule 28 (M0 protocol built, `m0.ts`; the ≥ 90% bar recorded as historical with the reason); pivot rule §8 Q4 |
-| INV:E2 | FI:344 / R2:323 | Git task synthesis, fail-to-pass, scrub paths | carried | carried | models §2.30; measurement §2.17 inlet; OPEN_QUESTIONS research gap — agree |
-| INV:E3 | FI:345 / R2:324 | Full-settings recording | carried | carried | gates §2.35; models §2.30, M4; measurement §2.5 — spec-stricter |
+| INV:E2 | FI:344 / R2:323 | Git task synthesis, fail-to-pass, scrub paths | carried | gap | measurement rule 17 (synthesised-tasks inlet), T8 (MS-T8-12); models rule 30 (corrected 2026-09-25) |
+| INV:E3 | FI:345 / R2:324 | Full-settings recording | carried | gap | gates rule 35; models rule 30, M4 (MD-M4-5); measurement rule 5 (corrected 2026-09-25) |
 | INV:E4 | FI:346 / R2:325 | `MODEL_MATRIX.md` | carried-weaker | carried | models §3, §4 |
-| INV:E5 | FI:347 / R2:326 | Frozen suite gates every learning loop | carried | carried | measurement §2.17-19, T8 — agree |
+| INV:E5 | FI:347 / R2:326 | Frozen suite gates every learning loop | carried | gap | measurement rules 16a–19, §4 "Admission requires a significant gain" not-built, T8 (corrected 2026-09-25) |
 | INV:E6 | FI:348 / R2:327 | Qualification scoring | carried | carried | models §2.27 — agree |
 | INV:E7 | FI:349 / R2:328 | Loop 1 playbook deltas (1 per retro) | carried | carried | measurement §2.17 table; context §2.24 — agree |
 | INV:E8 | FI:350 / R2:329 | Loop 2 budgets ≤ 15% | carried | carried | measurement §2.17; worker-loop §2.21 — agree |
@@ -2270,11 +2301,11 @@ Columns: row key · old location · item (shortened) · status when first traced
 | INV:E12 | FI:354 / R2:333 | Loop 6 task synthesis | carried | carried | measurement §2.17 — agree |
 | INV:E13 | FI:355 / R2:334 | Loop 7 variant archives | carried-weaker | deliberate | DEC-25 R31 (variant archive cut as dead code under DEC-09) |
 | INV:E14 | FI:356 / R2:335 | Loop 8 SIFT pre-filter | carried | carried | measurement §2.13, §2.21, MS-T8-7 — agree |
-| INV:E15 | FI:357 / R2:336 | Loop 9 tool synthesis | later | deliberate | worker-loop §9 (register R6 triaged, not in v1); security §8 Q1 (recommend cutting `--validate-tools`) |
+| INV:E15 | FI:357 / R2:336 | Loop 9 tool synthesis | later | deliberate | worker-loop §9 (register R6 triaged, not in v1); security rule 4a, §8 Q1 (decided: `--validate-tools` kept and confined) (corrected 2026-09-25) |
 | INV:E16 | FI:358 / R2:337 | Loop 10 mutants → tests | carried-weaker | gap | measurement rule 17 (demoted on rollback), T8 (MS-T8-10) |
 | INV:E17 | FI:359 / R2:338 | Guardrails; rollback over 10-card window | contradicted | deliberate | measurement rule 18, §9; DEC-24 |
 | INV:E18 | FI:360 / R2:339 | Permanent self-modification exclusions | carried | carried | measurement §2.23; security §2.25 — agree |
-| INV:E19 | FI:361 / R2:340 | Doctor net gain, bloat, pruning | carried | carried | measurement §2.24, NEW-measurement-2; extensibility §2.16 — agree |
+| INV:E19 | FI:361 / R2:340 | Doctor net gain, bloat, pruning | carried | gap | measurement rule 24, §4 "Diagnostics on real inputs" partial, NEW-measurement-2 (MS-N2-2); extensibility rule 16 (corrected 2026-09-25) |
 
 **Dashboard (U; latest R1)**
 
@@ -2286,14 +2317,14 @@ Columns: row key · old location · item (shortened) · status when first traced
 | INV:U4 | FI:374 / R1:370 | Typography, tabular numerals | carried | carried | dashboard §2.13.4 identical — agree |
 | INV:U5 | FI:375 / R1:371 | Spacing, radius, elevation, motion | carried | carried | dashboard §2.13.5 identical — agree |
 | INV:U6 | FI:376 / R1:372 | Dual-axis virtualization | carried-weaker | carried | dashboard §2.4.9 |
-| INV:U7 | FI:377 / R1:373 | Six views | carried | carried | dashboard §2.2, §2.11 (Registry, Workspace); master board Later — agree |
+| INV:U7 | FI:377 / R1:373 | Six views | carried | carried | dashboard §2.2, §2.11 (Workspace, Machine), §2.16 Configuration (the old Registry view, DEC-29 O2, O3); master board Later (dashboard §7) (corrected 2026-09-25) |
 | INV:U8 | FI:378 / R1:374 | Review view | carried | carried | dashboard §2.5, §4 built; intent grouping Later — agree |
 | INV:U9 | FI:379 / R1:375 | Live stream, replay from genesis | carried-weaker | carried | runtime rule 25a |
 | INV:U10 | FI:380 / R1:376 | Keyboard system | carried | carried | dashboard §2.3 (redefined chords), P11 — agree |
 | INV:U11 | FI:381 / R1:377 | Command palette | carried | carried | dashboard §2.3, §2.15.4, built — agree |
 | INV:U12 | FI:382 / R1:378 | Decision inbox by wait time | carried | carried | dashboard §2.5.2 *Needs you* — agree |
 | INV:U13 | FI:383 / R1:379 | Card tile components | contradicted | deliberate | dashboard §9 |
-| INV:U14 | FI:384 / R1:380 | Column header `N / limit` | carried | carried | dashboard §2.4.3, P3 — spec-stricter |
+| INV:U14 | FI:384 / R1:380 | Column header `N / limit` | carried | gap | dashboard §2.4.3, P3 (corrected 2026-09-25) |
 | INV:U15 | FI:385 / R1:381 | Decision Request component with countdown | carried | carried | dashboard §2.5.14 — no State row; R1 MISSING, code `decision.js` now exists |
 | INV:U16 | FI:386 / R1:382 | Diff viewer | carried | carried | dashboard §2.5.6 built — agree |
 | INV:U17 | FI:387 / R1:383 | Pan-and-zoom DAG | carried-weaker | later | dashboard §7 (layered layout built) |
@@ -2320,11 +2351,11 @@ Columns: row key · old location · item (shortened) · status when first traced
 | INV:H12 | FI:412 / R2:357 | REST API | carried | carried | runtime §3 route list (old table superseded) — agree |
 | INV:H13 | FI:413 / R2:358 | SDK with async iterator | carried-weaker | deliberate | extensibility rule 28, §8 Q1 (O4) |
 | INV:H14 | FI:414 / R2:359 | ACP editor surface | later | later | extensibility §7 |
-| INV:H15 | FI:415 / R2:360 | `config.toml` chain incl. card overrides | carried | carried | surface §2.21-25 (keys removed by decision) — R2 SHALLOW; DISAGREE on card layer |
+| INV:H15 | FI:415 / R2:360 | `config.toml` chain incl. card overrides | carried | gap | surface rules 21–25, §4 "Config layer: card overrides" not-built, NEW-surface-3 (corrected 2026-09-25) |
 | INV:H16 | FI:416 / R2:361 | Slash commands (`/onboard` … `/goal`) | carried | carried | extensibility §2.26; planner §2.8.7; templates Later — agree |
-| INV:H17 | FI:417 / R2:362 | Session resume from the log | carried | carried | runtime §2.10, NEW-runtime-3 — spec-stricter |
+| INV:H17 | FI:417 / R2:362 | Session resume from the log | carried | gap | runtime rule 10, NEW-runtime-3 (RUN-9, RUN-10) (corrected 2026-09-25) |
 | INV:H18 | FI:418 / R2:363 | Fork at step N | carried | carried | runtime §2.13, RUN-27 — agree |
-| INV:H19 | FI:419 / R2:364 | Rewind to step N, invalidate passes | carried | carried | runtime §2.12, kernel §2.26, K-S7-8 — spec-stricter |
+| INV:H19 | FI:419 / R2:364 | Rewind to step N, invalidate passes | carried | gap | runtime rule 12; kernel rule 32, S7 (K-S7-8) (corrected 2026-09-25) |
 | INV:H20 | FI:420 / R2:365 | ntfy/Gotify notifications | carried | carried | integrations §2.20-23 — agree |
 | INV:H21 | FI:421 / R2:366 | Idle/overnight scheduler, nightly jobs, morning summary | carried | carried | runtime §2.17-20, NEW-runtime-5 — agree |
 | INV:H22 | FI:422 / R2:367 | OTel spans incl. tool spans, in UI | carried-weaker | gap | runtime §4 (corrected, R23), NEW-runtime-9 |
@@ -2342,16 +2373,16 @@ Columns: row key · old location · item (shortened) · status when first traced
 | INV:X2 | FI:436 / R1:426 | Nightly convention drift report | carried | carried | surface §2.12; runtime §2.20 — spec newer |
 | INV:X3 | FI:437 / R1:427 | Multimodal card input via vision model | carried | carried | surface §2.28-29, SUR-32, built — spec newer |
 | INV:X4 | FI:438 / R1:428 | Four-tier research knowledge | carried | carried | design-stage §2.7.2 — agree |
-| INV:X5 | FI:439 / R1:429 | SearXNG; 1–6 terms; logged; primary sources | carried | carried | design-stage §2.7.11, §2.6.3, S8 — agree |
+| INV:X5 | FI:439 / R1:429 | SearXNG; 1–6 terms; logged; primary sources | carried | gap | design-stage §2.7.11, §2.6.3, §4 "`plan` honours offline config … queries logged" not-built, S8 (corrected 2026-09-25) |
 | INV:X6 | FI:440 / R1:430 | Fetch & extraction pipeline | carried-weaker | carried | design-stage §2.6.3, §2.7.2, §2.7.8; libraries §7 |
 | INV:X7 | FI:441 / R1:431 | Research note; embeddings only here | contradicted | deliberate | design-stage §2.7.8, §9; DEC-22 |
 | INV:X8 | FI:442 / R1:432 | Research safety | carried | carried | design-stage §2.6.3, §2.7.6; security §2.42 — agree |
-| INV:X9 | FI:443 / R1:433 | Doc cache TTLs | later | later | design-stage §7 |
+| INV:X9 | FI:443 / R1:433 | Doc cache TTLs | later | later | design-stage §7 (corrected 2026-09-25) |
 | INV:X10 | FI:444 / R1:434 | Air-gap package mirrors | carried | carried | security §2.46 (allowlist); services Later — agree |
-| INV:X11 | FI:445 / R1:435 | Signed model manifest | carried | carried | security §2.47, SEC-34 — agree |
-| INV:X12 | FI:446 / R1:436 | Doc bundles | carried | carried | security §2.48 — agree |
-| INV:X13 | FI:447 / R1:437 | Signed update bundles, log backup | carried | carried | security §2.49, SEC-42 — agree |
-| INV:X14 | FI:448 / R1:438 | Air-gap self-test at the proxy | carried | carried | security §2.50, NEW-security-2 — agree |
+| INV:X11 | FI:445 / R1:435 | Signed model manifest | carried | gap | security rule 47, §4 air-gap row partial (manifest `tier` and `templateChecksum` optional and never checked; signature optional), NEW-security-2 (SEC-34) (corrected 2026-09-25) |
+| INV:X12 | FI:446 / R1:436 | Doc bundles | carried | gap | security rule 48, §4 "`llms.txt` snapshots, staleness on lockfile change" not-built, NEW-security-5 (SEC-44, SEC-45); the docs bundle and cache export are built (corrected 2026-09-25) |
+| INV:X13 | FI:447 / R1:437 | Signed update bundles, log backup | carried | gap | security rule 49, §4 "signed skill updates" not-built, NEW-security-5 (SEC-46); SEC-42 (corrected 2026-09-25) |
+| INV:X14 | FI:448 / R1:438 | Air-gap self-test at the proxy | carried | gap | security rule 50, NEW-security-2 (SEC-33) (corrected 2026-09-25) |
 | INV:X15 | FI:449 / R1:439 | External review cards, never edit | carried | carried | review-git §2.7; integrations §2.13 — spec newer |
 | INV:X16 | FI:450 / R1:440 | Scheduled and recurring cards; hours respected unless urgent | carried | carried | runtime §2.21, RUN-31 — spec newer |
 | INV:X17 | FI:451 / R1:441 | `PROVENANCE.md` | carried | carried | `docs/reference/PROVENANCE.md` (13 technique rows) — spec newer |
@@ -2359,7 +2390,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | INV:X19 | FI:453 / R1:443 | `MODEL_MATRIX.md` | carried-weaker | carried | models §3, §4 |
 | INV:X20 | FI:454 / R1:444 | Licence register enforcement rules | carried-weaker | carried | PROVENANCE; gates rule 27 |
 | INV:X21 | FI:455 / R1:445 | Fixture generator, `createTestWorktree` < 10 ms | missing | deliberate | DEFINITION_OF_DONE §2D.3 (the < 10 ms target assumed in-memory SQLite; real repositories required) |
-| INV:X22 | FI:456 / R1:446 | No in-memory SQLite for kernel/board (DoD §2.A.1) | carried | carried | planner P1 criterion; DoD §2A; kernel K-1 on disk — agree (still open) |
+| INV:X22 | FI:456 / R1:446 | No in-memory SQLite for kernel/board (DoD §2.A.1) | carried | deliberate | DEFINITION_OF_DONE §2A.1 (real on-disk SQLite; in-memory databases forbidden) (corrected 2026-09-25) |
 | INV:X23 | FI:457 / R1:447 | `test:unit` / `test:integration` | missing | carried | DEFINITION_OF_DONE §2D.1 |
 | INV:X24 | FI:458 / R1:448 | `pnpm dev` | missing | carried | DEFINITION_OF_DONE §2D.1 |
 | INV:X25 | FI:459 / R1:449 | Suite under 3 s | missing | deliberate | DEFINITION_OF_DONE §2D.4 |
@@ -2386,30 +2417,30 @@ Columns: row key · old location · item (shortened) · status when first traced
 | INV:O12 | FI:482 | ≤ 3 failures by topological order | carried-weaker | gap | gates rule 20, M6 (GT-M6-7) |
 | INV:O13 | FI:483 | `minimalRepro` exact command | carried | carried | gates §2.19, §2.22 |
 | INV:O14 | FI:484 | Routing < 4 / 4–7 (edit sketch) / > 7 | carried | carried | planner §2.5 |
-| INV:O15 | FI:485 | INVEST-S ≤ 25% and ≤ 40 steps | carried | deliberate | planner-pm §2.4; DEC-24 (25% of the resolved Worker's window, ≤ 40 steps) |
+| INV:O15 | FI:485 | INVEST-S ≤ 25% and ≤ 40 steps | carried | deliberate | planner-pm §2.4 Small row; DEC-27 N5; DEC-24 (corrected 2026-09-25) |
 | INV:O16 | FI:486 | INVEST-E difficulty > 7 forces re-split | carried | carried | planner §2.4 |
 | INV:O17 | FI:487 | > 3 questions rejects the spec | contradicted | deliberate | planner-pm §9; DEC-24 |
 | INV:O18 | FI:488 | Assume→Ask shift at 15% override | carried | carried | planner §2.10.4 |
 | INV:O19 | FI:489 | `policy` safe_default/default_deny; never auto-approve destructive | carried | carried | planner §2.10.3 |
 | INV:O20 | FI:490 | `decision/default_applied` distinct event | carried | carried | planner §2.10.3, §3 |
-| INV:O21 | FI:491 | Scope drift > 20% halts auxiliary creation | carried | carried | planner §2.12 (execution unbuilt, Needs attention 19) |
+| INV:O21 | FI:491 | Scope drift > 20% halts auxiliary creation | carried | gap | planner-pm §2.12, §4 "Signal responses executed as proposals" partial, NEW-planner-pm-5 (corrected 2026-09-25) |
 | INV:O22 | FI:492 | p95 > 2.5 × p50 (vs 2× conflict) | carried | carried | planner §2.12 (2.5× chosen) |
 | INV:O23 | FI:493 | Blocked 12 h / 2 h active | carried | carried | planner §2.12 |
 | INV:O24 | FI:494 | ≥ 3 failures in one file → re-split Interface/Data | carried | carried | planner §2.12 |
 | INV:O25 | FI:495 | RAID > 24 h → verification spike | carried | carried | planner §2.12 |
 | INV:O26 | FI:496 | ReviewWIP floored at 1, from own history | carried | carried | review-git §2.2.1-3 |
-| INV:O27 | FI:497 | Back-pressure blocks Verify, not Review | carried | carried | kernel §2.23 |
-| INV:O28 | FI:498 | Rollup needs the parent's integration gate | carried | carried | kernel §2.24 |
+| INV:O27 | FI:497 | Back-pressure blocks Verify, not Review | carried | carried | kernel rule 29 (corrected 2026-09-25) |
+| INV:O28 | FI:498 | Rollup needs the parent's integration gate | carried | carried | kernel rule 30 (corrected 2026-09-25) |
 | INV:O29 | FI:499 | Regression → Planning with regression named | carried-weaker | gap | kernel rule 31, NEW-kernel-5 |
 | INV:O30 | FI:500 | Checkpoint at gate passes and masking boundaries | contradicted | deliberate | review-git rule 3, §9 (R1) |
 | INV:O31 | FI:501 | `refs/sekhemet/checkpoints/<card-id>` | carried | carried | review-git §2.5.5 |
 | INV:O32 | FI:502 | Branch naming from parent | carried | carried | review-git §2.6.2 |
-| INV:O33 | FI:503 | Accepting a lower card restacks and re-runs gates | carried | carried | review-git §2.5.5 (code gap: Needs attention 17) |
-| INV:O34 | FI:504 | Conflict hunks typed; out-of-scope parks | carried | carried | review-git §2.6.4 (code gap: Needs attention 16) |
+| INV:O33 | FI:503 | Accepting a lower card restacks and re-runs gates | carried | gap | review-git §2.5.5, NEW-review-git-2 (corrected 2026-09-25) |
+| INV:O34 | FI:504 | Conflict hunks typed; out-of-scope parks | carried | gap | review-git §2.6.4, NEW-review-git-1 (corrected 2026-09-25) |
 | INV:O35 | FI:505 | Vision fail-only; baselines need a person | carried | carried | gates §2.30-31, NEW-gates-4 |
 | INV:O36 | FI:506 | axe-core at 1280 and 375, zero critical | carried | carried | gates §2.29 (subset; axe proposal OQ1) |
-| INV:O37 | FI:507 | `maxDiffPixelRatio` 0.01, masked, no animation | carried | carried | gates §2.29 (code gap: Needs attention 14) |
-| INV:O38 | FI:508 | Four layout predicates | carried | carried | gates §2.29 (code gap: overlap) |
+| INV:O37 | FI:507 | `maxDiffPixelRatio` 0.01, masked, no animation | carried | gap | gates rule 29, NEW-gates-4 (GT-N4-5) (corrected 2026-09-25) |
+| INV:O38 | FI:508 | Four layout predicates | carried | gap | gates rule 29, NEW-gates-4 (GT-N4-4) (corrected 2026-09-25) |
 | INV:O39 | FI:509 | Mutation diff-scoped, never 100%, advisory first | carried | carried | gates §2.32 |
 | INV:O40 | FI:510 | Levenshtein typosquat | carried | carried | security §2.44 (distance 2; 1 for ≤ 4 chars) |
 | INV:O41 | FI:511 | Proxied requests logged with SHA-256 payload hash | carried | carried | security §2.30 |
@@ -2417,14 +2448,14 @@ Columns: row key · old location · item (shortened) · status when first traced
 | INV:O43 | FI:513 | CoW cloning + symlinked `node_modules`/`.venv` | later | deliberate | DEC-21 (plain worktrees); security rule 24 (node_modules and `.venv` links) |
 | INV:O44 | FI:514 | llama.cpp cache flags from the machine profile | contradicted | deliberate | context rule 6; DEC-24 |
 | INV:O45 | FI:515 | 4-bit KV prohibited for tool calling | carried | carried | models §2.10, MD-1 |
-| INV:O46 | FI:516 | Hit < 85% on tool-result steps is a defect + operator alert | carried-weaker | gap | context rule 7, M8 |
+| INV:O46 | FI:516 | Hit < 85% on tool-result steps is a defect + operator alert | carried-weaker | gap | context rule 7, §4, M8 (after CX-M8-10 is added) (corrected 2026-09-25) |
 | INV:O47 | FI:517 | Template checksum change invalidates qualification | carried | carried | models §2.12 |
 | INV:O48 | FI:518 | Pass@k k 2–4, T 0.4–0.7, isolated worktrees, first pass wins | carried-weaker | carried | worker-loop rule 37; parallel §7 |
 | INV:O49 | FI:519 | Cross-validation routes to the planner | carried | carried | worker-loop §2.38 |
 | INV:O50 | FI:520 | Exemplars top-2 per class from this repo | carried | carried | context §2.25 |
 | INV:O51 | FI:521 | Playbook by delta, at card boundaries | carried | carried | context §2.24, CX-5 |
 | INV:O52 | FI:522 | Context debt: > 300 tokens and ≥ +3% (both halves) | carried | carried | measurement §2.24, MS-N2-2 |
-| INV:O53 | FI:523 | Prompt optimiser kill switch < 5% | carried | carried | context §7 (Later, "kept only if ≥ 5%") |
+| INV:O53 | FI:523 | Prompt optimiser kill switch < 5% | carried | later | context §7 (offline prompt optimisation, kept only if it gains ≥ 5%) (corrected 2026-09-25) |
 | INV:O54 | FI:524 | Rollback on a moving 10-card window | contradicted | deliberate | measurement rule 18; DEC-24 |
 | INV:O55 | FI:525 | Loop driver, gates, sandbox, permissions excluded from self-modification | carried | carried | measurement §2.23 |
 | INV:O56 | FI:526 | Loop 9 signal: repeated bash chains | later | deliberate | worker-loop §9 (register R6 triaged, not in v1) |
@@ -2438,10 +2469,10 @@ Columns: row key · old location · item (shortened) · status when first traced
 | INV:O64 | FI:534 | `tool_search` loads a schema into the volatile zone | carried | carried | worker-loop §2.11 (A/B); context OQ2 (append as a message) |
 | INV:O65 | FI:535 | Subtask returns summary + evidence ref only | carried | carried | context §2.18 |
 | INV:O66 | FI:536 | Background processes killed at card end; ports | carried | carried | runtime §2.15 (promotion Later) |
-| INV:O67 | FI:537 | Rewind invalidates passes; log never truncated | carried | carried | runtime §2.12; kernel §2.26 |
+| INV:O67 | FI:537 | Rewind invalidates passes; log never truncated | carried | gap | runtime rule 12; kernel rule 32, §4 "Rewind invalidates earlier evidence for Review" not-built, S7 (K-S7-8) (corrected 2026-09-25) |
 | INV:O68 | FI:538 | Replay reproduces deterministic stages exactly | carried | carried | runtime §2.14 |
 | INV:O69 | FI:539 | Reload re-streams from genesis/checkpoint | missing | carried | runtime rule 25a; dashboard §2.4.8 |
-| INV:O70 | FI:540 | Config order includes card overrides | carried | carried | surface §2.21 |
+| INV:O70 | FI:540 | Config order includes card overrides | carried | gap | surface rule 21, §4 "Config layer: card overrides" not-built, NEW-surface-3 (corrected 2026-09-25) |
 | INV:O71 | FI:541 | `[machine] hours`, `power_budget_kwh_day` | carried | carried | surface §2.23 (`reserved_hours`) |
 | INV:O72 | FI:542 | `[context] map_tokens = 1024`, `mask_after_observations = 2` | contradicted | deliberate | surface rule 25; context §9 ([context] keys removed) |
 | INV:O73 | FI:543 | `[loop] default_step_budget = 40`, `stall_window = 3`, `max_rungs = 4` | contradicted | deliberate | surface rule 25 (step budget 40 kept; stall_window and max_rungs removed); worker-loop §9 |
@@ -2450,17 +2481,17 @@ Columns: row key · old location · item (shortened) · status when first traced
 | INV:O76 | FI:546 | Per-gate `parser`; `baseline_approval = "human"` | carried | carried | gates §3 keys; GT-N4-1 |
 | INV:O77 | FI:547 | gates.toml hash every card start | carried | carried | gates §2.2 |
 | INV:O78 | FI:548 | `order_key` fractional index | carried-weaker | carried | kernel rule 15 |
-| INV:O79 | FI:549 | `payload_hash` separate from `hash` | carried | carried | kernel §2.8 |
-| INV:O80 | FI:550 | Blobs under `.sekhemet/` referenced from payload | carried | carried | kernel §2.15 |
+| INV:O79 | FI:549 | `payload_hash` separate from `hash` | carried | carried | kernel rule 9 (corrected 2026-09-25) |
+| INV:O80 | FI:550 | Blobs under `.sekhemet/` referenced from payload | carried | carried | kernel rule 16 (corrected 2026-09-25) |
 | INV:O81 | FI:551 | Process profiles change cadence only | carried | carried | planner §2.7.3 |
 | INV:O82 | FI:552 | Retrospectives are functional | carried | carried | planner §2.7.4 |
 | INV:O83 | FI:553 | Every return reason becomes a candidate rule | contradicted | deliberate | review-git §2.4, §9 |
-| INV:O84 | FI:554 | git-cliff changelog + semver on a release card | later | later | integrations §7 |
+| INV:O84 | FI:554 | git-cliff changelog + semver on a release card | later | gap | review-git §2.6 rule 7, NEW-review-git-4 (RG-N4-1); planner-pm §2.15.8 (P13); integrations §7 (publishing only) (corrected 2026-09-25) |
 | INV:O85 | FI:555 | `act` for GitHub Actions as gates | later | later | integrations §7 |
 | INV:O86 | FI:556 | GraphQL separate budget, webhooks over polling, batching, idempotency keys, secondary backoff | carried-weaker | gap | integrations §2.11, §2.11a, P9 |
 | INV:O87 | FI:557 | Hierarchy depth clamped to the tracker's | carried | carried | integrations §2.7 |
 | INV:O88 | FI:558 | GHES `api_url`/`graphql_url` + CA bundle | carried | carried | integrations §2.10 |
-| INV:O89 | FI:559 | `resolveReviewThread`; auto-merge; merge queue | later | later | integrations §7; merge policy §2.15 (P9) |
+| INV:O89 | FI:559 | `resolveReviewThread`; auto-merge; merge queue | later | carried | integrations rule 15 ("merging follows the repository's policy (auto-merge, merge queue, or a person)"); integrations §7 (`resolveReviewThread`) (corrected 2026-09-25) |
 | INV:O90 | FI:560 | Check Run annotation shape incl. `raw_details` | carried-weaker | carried | integrations §2.14 |
 | INV:O91 | FI:561 | SARIF gzip then base64 | carried | carried | integrations §2.14 |
 | INV:O92 | FI:562 | LWW by timestamp, loser in history | contradicted | deliberate | integrations §2.4 |
@@ -2471,11 +2502,11 @@ Columns: row key · old location · item (shortened) · status when first traced
 | INV:O97 | FI:567 | ast-grep fallback without a language server | later | later | worker-loop §7, context §7 |
 | INV:O98 | FI:568 | Missing parser/LSP/template → parse-only with visible warning | carried | carried | surface §2.30, SUR-33 |
 | INV:O99 | FI:569 | Qwen `min_p = 0.0` mandatory over server default 0.05 | carried-weaker | carried | models rule 3a (min_p 0 mandatory, overrides the server's 0.05) |
-| INV:O100 | FI:570 | MTP off on M4 because measured 21% slower | carried | carried | models §2.13 (off until measured) |
+| INV:O100 | FI:570 | MTP off on M4 because measured 21% slower | carried | carried | models rule 13, §9 (after restoration) (corrected 2026-09-25) |
 | INV:O101 | FI:571 | Bracketed placeholders banned in prompt templates | missing | gap | context rule 21, M1 (CX-M1-12) |
 | INV:O102 | FI:572 | Single-model serialisation on 24 GB | carried | carried | models §2.22 (no co-residence below 32 GB); planner §2.8.6 |
 | INV:O103 | FI:573 | Test immutability is role-scoped | carried | carried | gates §2.7; worker-loop §2.15; planner test-author step |
-| INV:O104 | FI:574 | `suspended-quota`, `relay-finisher` protocol values | missing | deliberate | DEC-25 R29; `suspended-quota` is kept (CLAUDE.md GateStatus); `relay-finisher` is gone with no recorded reason (DEC-25's R28 row records only test infrastructure) — owner: DECISIONS |
+| INV:O104 | FI:574 | `suspended-quota`, `relay-finisher` protocol values | missing | deliberate | DEC-25 R29 (the `relay-finisher` role dropped with the Gemini relay protocol; `suspended-quota` kept) (corrected 2026-09-25) |
 | INV:O105 | FI:575 | DoD §2.A no in-memory SQLite | carried | carried | planner P1 criterion; DoD §2A |
 | INV:O106 | FI:576 | DoD §2.B two negatives per happy path; bit-flip tamper test | carried-weaker | carried | DEFINITION_OF_DONE §2B; kernel K-1; gates §8 Q2 |
 | INV:O107 | FI:577 | DoD §2.C no sole `toBeDefined` assertions | carried | carried | DEFINITION_OF_DONE.md:37 (kept document) |
@@ -2485,10 +2516,10 @@ Columns: row key · old location · item (shortened) · status when first traced
 
 | Row | Old | Item | Traced | Final | Now in |
 | --- | --- | --- | --- | --- | --- |
-| INV:D1 | R1:71 | Held card instead of a crash when Review is full | carried | carried | kernel §2.18, §2.23, NEW-kernel-3 |
+| INV:D1 | R1:71 | Held card instead of a crash when Review is full | carried | carried | kernel rules 24 (holds), 29 (back-pressure), NEW-kernel-3 (corrected 2026-09-25) |
 | INV:D2 | R1:72 | Checkpoints written to the DB | carried-weaker | carried | review-git rule 3 (checkpoint database record) |
 | INV:D3 | R1:73 | Restricted mode confines the Worker's tools | carried | carried | security §2.43, worker-loop §2.13 |
-| INV:D4 | R1:74 | Ask tier asks someone (decision approver) | carried-weaker | carried | security rule 25a, SEC-47–49 (who answers an Ask) |
+| INV:D4 | R1:74 | Ask tier asks someone (decision approver) | carried-weaker | gap | security rule 25a, §4 "Ask answered by a person through a decision request" partial, NEW-security-6 (SEC-47–49) (corrected 2026-09-25) |
 | INV:D5 | R1:75 | `gates.toml` protected globs reach the permission engine | carried | carried | security §2.25 ("test globs the project protects") |
 | INV:D6 | R1:76 | Planned cards keep their contract | carried | carried | planner §2.1.5 |
 | INV:D7 | R1:77 | MCP offers no DB-refused tier | carried | carried | extensibility §2.19-20 (server-side validation) |

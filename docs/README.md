@@ -83,6 +83,9 @@ Every document in `docs/` is listed here, and nowhere else is the source of trut
 | [trace_sources/trace_hd2.md](reference/trace_sources/trace_hd2.md) | Raw trace rows of the old design, lines 1801–end, and the integration review, as first traced on 2026-09-22; the verified status is in DESIGN_TRACE.md. |
 | [trace_sources/trace_pm_fe.md](reference/trace_sources/trace_pm_fe.md) | Raw trace rows of the old PM and frontend designs, as first traced on 2026-09-22; the verified status is in DESIGN_TRACE.md. |
 | [trace_sources/trace_inv.md](reference/trace_sources/trace_inv.md) | Raw trace rows of the three feature inventories, as first traced on 2026-09-22; the verified status is in DESIGN_TRACE.md. |
+| [trace_sources/corrections_later_deliberate.md](reference/trace_sources/corrections_later_deliberate.md) | Corrections from re-verifying every later and deliberate trace row. |
+| [trace_sources/corrections_pmfe.md](reference/trace_sources/corrections_pmfe.md) | Corrections from re-verifying every PM and frontend trace row, and the dashboard details restored. |
+| [trace_sources/corrections_hd_inv.md](reference/trace_sources/corrections_hd_inv.md) | Corrections from re-verifying the harness-design, integration-review and inventory trace rows. |
 | [reviews/integration_review_2026-09-18.md](reference/reviews/integration_review_2026-09-18.md) | A dated review of how the Worker, Seshat, reviewer, Researcher, learning and scheduling fit together; its findings are folded into the specs. |
 | [reviews/domain01_16_surface_docs.md](reference/reviews/domain01_16_surface_docs.md) | Phase A review: product surface and the documents. |
 | [reviews/domain02_09_kernel_review.md](reference/reviews/domain02_09_kernel_review.md) | Phase A review: kernel, lifecycle, review and human decisions. |

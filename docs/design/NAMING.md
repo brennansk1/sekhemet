@@ -33,6 +33,8 @@ If you are unsure whether something "takes a name", it doesn't. Use the plain wo
 
 *Working*, *Checking* and *Closed* are **retired**: they were a third vocabulary for the same states (neither the stored names nor the board's), and a person who read `verify` in an error could not find a column called *Checking*.
 
+*Library* (in the naming list of 2026-09-17: *Workspace, Project, Card, Subtask, Gates, Evidence, Playbook, Worker, Planner, Library*) is **retired**: no v3 surface, view or command names anything *Library*, and the old design used it only in that list, never saying what it named, so keeping it would reserve a word for nothing.
+
 ## Card kind, change and split
 
 One card has three separate stored fields ([DEC-26](DECISIONS.md#dec-26--one-vocabulary-for-the-kind-of-card-and-the-run)). This table is the only label map for them: the dashboard, Seshat, the CLI and the exports read their words from it (through `vocabulary.ts`), and no second map exists ([dashboard](specs/dashboard.md) NEW-dashboard-2). The stored value appears only in mono, where a developer might grep for it.
