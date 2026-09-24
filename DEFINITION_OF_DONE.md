@@ -38,6 +38,12 @@ For every happy path tested, there must be at least **two negative or boundary t
 2. **Exact Equality on State:** Tests must assert exact values (`toEqual`), complete returned schemas, and exact state transition results.
 3. **Test Immutability Law:** An implementer agent is strictly forbidden from editing test fixtures, assertions, or expectations to make a test pass. Only the test author or human may modify test contracts.
 
+### D. Test infrastructure that keeps the loop fast and honest
+1. **Unit and integration are split by what a test touches**, read from the files (`scripts/test_split.mjs`): a spec that uses real git, on-disk SQLite, a listening server or a child process is an integration test. `pnpm test:unit` and `pnpm test:integration` run each; `pnpm test` runs both; `pnpm dev` is the development loop.
+2. **The Worker loop is testable without a model**: a scripted inference adapter replays tool calls, so the loop, stall detection, the repair ladder and condensing are verified offline and deterministically.
+3. **Fixture repositories are cheap to create**: a helper builds a throwaway git repository from `fixtures/` for a test and removes it afterwards.
+4. **Speed is watched, not bought with mocks.** The unit project should stay fast enough to run on every save (the 2026-09-17 target was under 3 seconds); the integration project is allowed to be slower because it is real (§2A). A speed target never justifies replacing real infrastructure with a mock.
+
 ---
 
 ## 3. Anti-Shallow Implementation Invariants

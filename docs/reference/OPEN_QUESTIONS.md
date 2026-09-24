@@ -24,6 +24,7 @@ The reference machine is a 24 GB Apple Silicon Mac running the Worker (Cyber-Tie
 | 14 | Goal-monitoring thresholds that trigger replans without thrashing | The live PM layer | Open |
 | 15 | Each inlet against its frozen baseline | Inlet enablement | Open |
 | 16 | Thinking off / surgical / all for the Worker | The Worker's method | **In progress** — arm "off" 10/14 (SUITE_RUNS, 2026-09-22); remaining arms after M1, M3, M8 |
+| 17 | Scope precision and recall against the files a person would have named, per card class | The scope cap ([context](../design/specs/context.md)) | Open — carried from the 2026-09-17 design's [BENCH] item; CX-P1-3 records each file's provenance, but nothing yet measures precision or recall |
 
 ## Research gaps
 
@@ -31,8 +32,8 @@ The 2026-09-17 design listed these as "finalized resolutions" citing work the Ph
 
 | Gap | Proposed approach | State |
 | --- | --- | --- |
-| Task synthesis from git history | Mine closed PRs with code and test changes; require fail-to-pass; scrub paths from problem statements | Open; sources to verify |
-| Clarify versus assume | Convert a category of assumption into a question when people override it more than a threshold (proposed 15%) | Open; threshold unmeasured |
+| Task synthesis from git history | Mine closed PRs with code and test changes; require fail-to-pass (the pre-change commit fails, the change passes); scrub paths from problem statements; isolate each task's dependencies in an ephemeral worktree | Open; sources to verify |
+| Clarify versus assume | Convert a category of assumption into a question when people override it more than a threshold (proposed 15%). Measure both failure modes: questions a person says the harness "should have known" (asked too much), and send-backs whose reason was knowable before the card started (asked too little) | Open; threshold unmeasured |
 | Prompt-injection defence | Architectural containment, not model filtering — confirmed by 2026 literature (research groups B and D) | **Direction settled**; implementation is COVERAGE S3–S3c |
 | Layout-defect detection | Playwright locator geometry, element screenshots, axe-core | Open; Playwright and axe-core are proposals awaiting the owner |
 | Long-horizon reliability for open-weight Workers | Thin cards, fresh context, capped retries with gate verification | Direction settled; measured by the suite |
@@ -44,7 +45,10 @@ The 2026-09-17 design listed these as "finalized resolutions" citing work the Ph
 | --- | --- | --- |
 | Retention of context packs and trajectories | Decided with `retention.ts` wire-or-cut ([DEC-09](../design/DECISIONS.md#dec-09)) | [runtime](../design/specs/runtime.md) |
 | Gate runner as a separate daemon over mutual TLS, or in process | In process for v1; the separate runner only with company-server mode if the gate host is another machine | [gates](../design/specs/gates.md), [runtime](../design/specs/runtime.md) |
-| A synced external item changes mid-card | Reconcile at the card's end; never pause a card for an external edit | [integrations](../design/specs/integrations.md) |
+| A synced external item changes mid-card | Reconcile at the card's end; never pause a card for an external edit. **Adopted** 2026-09-22 (ruling R6): the edit is recorded, and at the card's end a changed scope or criteria sends the card to Planning with the change named | [integrations](../design/specs/integrations.md) item 5 |
+| The spine's "anything a model saw can be reconstructed" once erasure exists | Add "except content erased by a recorded `ledger/erased` event; replay names each gap" — an owner decision on the spine ([DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md](../research/DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md) decision 8) | [kernel](../design/specs/kernel.md); consumed by [security](../design/specs/security.md) item 34b and [runtime](../design/specs/runtime.md) items 34a–36 |
+| Which install artefacts ship | An npm package for a person and a container image for a team server (inference in its own container); a single executable once Node's feature is stable | [surface](../design/specs/surface.md) open question 4 |
+| macOS confinement if Apple removes `sandbox-exec` | Keep it behind the sandbox interface with loud containment tests; fail closed if it breaks; research a VM per card then | [security](../design/specs/security.md) open question 4 |
 | Whether a local verifier earns its place on the largest tier | Measure before building | [models](../design/specs/models.md) |
 | Plugin isolation and third-party signing | Workspace trust in v1 (COVERAGE S9); signing later | [extensibility](../design/specs/extensibility.md), [security](../design/specs/security.md) |
 | Keyboard bindings and phone layout | Answered by the Phase A UX review: first-letter chords, a phone bottom bar | [dashboard](../design/specs/dashboard.md) |

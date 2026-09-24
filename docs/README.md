@@ -22,13 +22,27 @@ Every document in `docs/` is listed here, and nowhere else is the source of trut
 
 | File | Purpose |
 |---|---|
-| [HARNESS_DESIGN.md](design/HARNESS_DESIGN.md) | The full harness design: kernel, loop, gates, board, planner. |
-| [FRONTEND_DESIGN.md](design/FRONTEND_DESIGN.md) | Dashboard information architecture, voice, tokens and phases. |
-| [PM_DESIGN.md](design/PM_DESIGN.md) | Seshat (the project manager), team practices, Insights, Integrations. |
-| [PM_CONTRACT.md](design/PM_CONTRACT.md) | Backend and dashboard contract for Seshat, integrations and learning. |
-| [INTEGRATION_REVIEW.md](design/INTEGRATION_REVIEW.md) | How the Worker, Seshat, reviewer, Researcher, learning and scheduling fit together; findings, ranked fixes and a target architecture. |
+| [SPINE.md](design/SPINE.md) | Start here: what Sekhemet is, the spine, a project's journey, how the parts fit, what is locked for v1, the claims table and every specification's status. |
+| [DECISIONS.md](design/DECISIONS.md) | Every settled decision — product, engineering, substitutions, rejected techniques — with its reason and what would reopen it. |
+| [specs/README.md](design/specs/README.md) | The specification format, the index of specifications, and where each section of the old design went. |
+| [specs/surface.md](design/specs/surface.md) | The CLI, first run, configuration, onboarding an existing repository. |
+| [specs/kernel.md](design/specs/kernel.md) | Event log, projections, card lifecycle and its state machine. |
+| [specs/worker-loop.md](design/specs/worker-loop.md) | The Worker's loop, tools, stop reasons, repair ladder, working method. |
+| [specs/context.md](design/specs/context.md) | Context assembly, scope, context-rot defence, prompt layout and the playbook. |
+| [specs/gates.md](design/specs/gates.md) | Gate layers, project gates, `gates.toml`, gate economics. |
+| [specs/models.md](design/specs/models.md) | Hardware calibration, the model registry, inference servers, bake-off. |
+| [specs/measurement.md](design/specs/measurement.md) | The frozen suite, the planning measure, statistics, self-improvement. |
+| [specs/planner-pm.md](design/specs/planner-pm.md) | The planner, the PM (Seshat), goals, human collaboration. |
+| [specs/design-stage.md](design/specs/design-stage.md) | The design stage, new projects, research and reuse. |
+| [specs/review-git.md](design/specs/review-git.md) | The Reviewer, Accept, the git workflow. |
+| [specs/dashboard.md](design/specs/dashboard.md) | The web dashboard: board, review, status, Learn layer, visual system. |
+| [specs/security.md](design/specs/security.md) | Sandboxing, permissions, egress, secrets, workspace trust, air-gap. |
+| [specs/integrations.md](design/specs/integrations.md) | GitHub, Jira, Linear, notifications, the company-server mode. |
+| [specs/extensibility.md](design/specs/extensibility.md) | Hooks, skills, plugins, MCP, ACP, the SDK. |
+| [specs/runtime.md](design/specs/runtime.md) | Daemon, runner lease, sessions, the HTTP API, audit, telemetry, retention. |
+| [PM_CONTRACT.md](design/PM_CONTRACT.md) | The HTTP shapes between the dashboard and the PM, integrations and learning. |
 | [NAMING.md](design/NAMING.md) | The naming rule: what keeps its professional name, what is themed. |
-| [mockups/](design/mockups/) | Static HTML mockups of the dashboard surfaces. |
+| [mockups/](design/mockups/) | Static HTML mockups of the dashboard surfaces (historical; the spec wins). |
 
 ## benchmarks/: the test projects the harness must complete
 
@@ -50,19 +64,21 @@ Every document in `docs/` is listed here, and nowhere else is the source of trut
 | [PAPER_REVIEWS_2026-09.md](research/PAPER_REVIEWS_2026-09.md) | Six September 2026 papers and one model release reviewed against the design, with what to integrate. |
 | [PUBLIC_DATA_SURVEY.md](research/PUBLIC_DATA_SURVEY.md) | Which public datasets could seed the learning loops and the playbook, with verified licences and verdicts. |
 | [PROJECT_DONE_AND_DEPTH.md](research/PROJECT_DONE_AND_DEPTH.md) | Why LLMs misjudge when a project is done and how much to build, what works (requirement graphs, appetite, story-map slices, Kano, comparables, quality checklists), and how Sekhemet builds it in. |
+| [DESIGN_RESEARCH_TESTS_BROWNFIELD.md](research/DESIGN_RESEARCH_TESTS_BROWNFIELD.md) | Test strength as the basis of "proven", working in existing codebases, and a source index that can take Python without a rebuild (TypeScript 7 has no programmatic API). |
+| [DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md](research/DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md) | Mixed human and AI teams, erasure in a hash-chained log, backups, change and release, project documents in the repository, and review ergonomics for AI-written code. |
+| [DESIGN_RESEARCH_TEAM_SERVER.md](research/DESIGN_RESEARCH_TEAM_SERVER.md) | Multi-user local inference on a team server, fair scheduling, qualification per engine, packaging and upgrades. |
 
-## reference/: exhaustive inventories
+## reference/: plans, measurements, reviews and registers
 
 | File | Purpose |
 |---|---|
-| [FEATURE_INVENTORY.md](reference/FEATURE_INVENTORY.md) | Every feature in the design and its implementation status. |
-| [FEATURE_INVENTORY_REAUDIT.md](reference/FEATURE_INVENTORY_REAUDIT.md) | The inventory re-audited against the current code: status per unit with its caller, and the remaining gaps ranked. |
-| [FEATURE_INVENTORY_REAUDIT_2.md](reference/FEATURE_INVENTORY_REAUDIT_2.md) | Independent re-audit, pass 1: every unit except X and U scored against the gate (to depth, production caller, real test), with the gaps ranked. |
 | [SUITE_RUNS.md](reference/SUITE_RUNS.md) | Every recorded frozen-suite score with its hash, and why the failures failed. |
 | [PHASE0.md](reference/PHASE0.md) | The go/no-go measurement and its verdict: what was measured, what it does not establish, and how to reproduce it. |
 | [MVP_PATH.md](reference/MVP_PATH.md) | The one sequence that has to work, and what is deliberately sequenced behind it. The gap lists are ordered by unit; this is ordered by what ships. |
 | [MODERNIZATION_PLAN.md](reference/MODERNIZATION_PLAN.md) | The Opus 5.5 pass over the AI brownfield: review every domain, change what the review justifies, measure every change. Supersedes the 2026-09-18 completion plan. |
 | [COVERAGE.md](reference/COVERAGE.md) | Phase A of the modernization: every domain reviewed, the ranked programme, and the decisions that need the owner. |
+| [OPEN_QUESTIONS.md](reference/OPEN_QUESTIONS.md) | Benchmarks still owed, unverified research gaps and open design questions, each with its state and where it is decided. |
+| [reviews/integration_review_2026-09-18.md](reference/reviews/integration_review_2026-09-18.md) | A dated review of how the Worker, Seshat, reviewer, Researcher, learning and scheduling fit together; its findings are folded into the specs. |
 | [reviews/domain01_16_surface_docs.md](reference/reviews/domain01_16_surface_docs.md) | Phase A review: product surface and the documents. |
 | [reviews/domain02_09_kernel_review.md](reference/reviews/domain02_09_kernel_review.md) | Phase A review: kernel, lifecycle, review and human decisions. |
 | [reviews/domain03_worker_loop.md](reference/reviews/domain03_worker_loop.md) | Phase A review: the Worker loop and tools. |

@@ -112,10 +112,20 @@ function indexedSpecs(): string[] {
   return [...table.matchAll(/^\| \[([a-z-]+)\.md\]/gm)].map((m) => m[1] ?? "");
 }
 
-/** Every change ID the programme defines: S1, S3a, M12, P4, T10… */
+/** Every change ID the programme defines: S1, S3a, M12, P4, T10, NEW-kernel-2… */
 function coverageIds(): Set<string> {
   const coverage = readFileSync(join(DOCS, "reference", "COVERAGE.md"), "utf8");
-  return new Set([...coverage.matchAll(/^\| \*{0,2}([SMPT]\d+[a-c]?)\b/gm)].map((m) => m[1] ?? ""));
+  // A row marked "*Process — no subsystem spec*" is work on the documents or
+  // the process itself (the design rebuild, the DoD audit), owned by no spec.
+  const rows = coverage
+    .split("\n")
+    .filter((line) => !line.includes("*Process — no subsystem spec"));
+  return new Set(
+    rows.flatMap((line) => {
+      const m = /^\| \*{0,2}([SMPT]\d+[a-c]?|NEW-[a-z-]+-\d+)\b/.exec(line);
+      return m?.[1] ? [m[1]] : [];
+    }),
+  );
 }
 
 describe("the design: spine and specifications", () => {

@@ -12,6 +12,9 @@ code:
   - packages/loop/src/write_contract.ts
   - packages/loop/src/paths.ts
   - packages/loop/src/budget.ts
+  - packages/loop/src/observation.ts
+  - packages/loop/src/manager.ts
+  - packages/context/src/lsp.ts
   - packages/models/src/reasoning.ts
   - apps/harness/src/execute.ts
 tests:
@@ -26,7 +29,9 @@ tests:
   - packages/loop/tests/pass_at_k.spec.ts
   - packages/loop/tests/restricted.spec.ts
   - packages/loop/tests/budget.spec.ts
-changes: [M1, M2, M3, T3, NEW-worker-loop-1, NEW-worker-loop-2, NEW-worker-loop-3]
+  - packages/context/tests/context_units.spec.ts
+  - apps/harness/tests/runner_wiring.spec.ts
+changes: [M1, M2, M3, T3, NEW-worker-loop-1, NEW-worker-loop-2, NEW-worker-loop-3, NEW-worker-loop-4, NEW-worker-loop-5, NEW-worker-loop-6, NEW-worker-loop-7, NEW-worker-loop-8]
 ---
 
 # The Worker loop
@@ -46,7 +51,8 @@ The Worker loop is how a small local model turns one card into a verified diff: 
 
 ### The turn
 
-5. A card run is: the runner prepares the worktree, stages the card's acceptance tests, checks they fail (red-first, [gates.md](gates.md)), then runs one or more **samples**; each sample is a session of turns. A turn is: assemble the prompt ([context.md](context.md)), decide the reasoning level, call the model, dispatch its tool calls, record observations, and verify when the loop calls for it.
+5. A card run is: the runner prepares the worktree, stages the card's acceptance tests, checks they fail at an assertion (red-first, [gates.md](gates.md)), reads the card's dossier, then runs one or more **samples**; each sample is a session of turns. A turn is: assemble the prompt ([context.md](context.md)), decide the reasoning level, call the model, dispatch its tool calls, record observations, and verify when the loop calls for it. The words *turn*, *step*, *sample* and *attempt* have the meanings in §3 and no others.
+5a. **The dossier reaches every attempt.** Before the first sample the runner reads the card's dossier ([kernel.md](kernel.md) rule 20) and gives its lines to the session: lessons from earlier attempts, the Worker's notes and questions with the answers threaded under them, research findings, the Reviewer's findings and a person's send-back note (`card_runner.ts:896-906`). A dossier read that fails costs context, never the card. During the attempt, every `note`, question and answer is written to the dossier the moment it happens (`card_runner.ts:960-1000`), so an assumption the Worker records ("Assumed: …") reaches the Reviewer and Seshat through the ledger, not through memory.
 6. **Phases.** Every turn is in one phase, computed by a pure function `phaseOf(state)` from the turns taken, the files written, the last check's verdict, whether anything was written since that check, and the last gate failures:
    - **find** — before the first write: reading the test, the scope files and the interfaces they import;
    - **edit** — writing inside the scope;
@@ -60,20 +66,25 @@ The Worker loop is how a small local model turns one card into a verified diff: 
 
 ### Tools
 
-10. The Worker's tools and their argument schemas are declared once, in `TOOL_CATALOG` (`tool_catalog.ts`). A card's class selects its set through `CLASS_TOOLS` ([models.md](models.md) defines `cardClass`); no class falls through to the full catalog.
+10. The Worker's tools and their argument schemas are declared once, in `TOOL_CATALOG` (`tool_catalog.ts`, 28 tools). A card's class selects its set through `CLASS_TOOLS` ([models.md](models.md) defines `cardClass`); no class falls through to the full catalog. The sets follow one rule — the fewer tools a role needs, the fewer it gets: a `review` card gets `read_file`, `grep_search`, `find_files`, `list_dir`, `note`, `recall`, `check` and `finish_card` (read, search, list — no writing); a `research` card gets `read_file`, `grep_search`, `find_files`, `docs`, `note`, `recall`, `browse` and `finish_card` (read and fetch); a `spike` gets the read-only set plus `run_script`; an `implement` card adds the write tools and `run_cmd` to the read set, its exact list decided by M2 (`tool_catalog.ts:430-480`).
+10a. **Schemas are flat.** Every tool's arguments are scalars, enumerations or a flat array of strings — no nested objects and no unions. The set is deliberately small and flat, the shape a small model's tool calls are measured on ([models.md](models.md) tool-arm qualification).
 11. **A fixed tool set per card.** The tools array sent to the model is byte-identical on every turn of an attempt, as native schemas. Tools are never added by editing that array mid-card. Whether the `implement` class uses a fixed set of at most twelve tools or progressive loading through `tool_search` is decided by the M2 A/B; until it is decided, the CLI path uses progressive loading with five core tools (`read_file`, `edit`, `write_file`, `check`, `finish_card`).
+11a. **Many tools without their prefill cost.** A role other than the Worker that is offered more than about ten tools — the Planner or Seshat with a project's MCP servers ([extensibility.md](extensibility.md)) — sees them as a one-line index and loads a tool's schema through `tool_search` on request; a loaded tool is appended to the conversation as a message, never inserted into the tools array, so an unused MCP tool costs no prefill and a loaded one never invalidates the cached prefix (NEW-worker-loop-8).
 12. Tool semantics (the ones a small model depends on):
-    - `read_file` takes 1-based inclusive `start`/`end`. An unranged read of a file over 200 lines returns an outline and the first 40 lines; an outlined file is **not** counted as read.
+    - `read_file` takes 1-based inclusive `start`/`end`. An unranged read of a file over 200 lines returns an outline and the first 40 lines; an outlined file is **not** counted as read. A read is byte-budgeted: a file over 512 KB is refused with its size, and a file with a NUL in its first block is refused as binary (`tools.ts:108`, `:173-176`, `:373-376`); images and PDFs are not passed to a vision path (§7).
     - A file must have been read in this attempt before `edit`, `replace_lines`, `replace_symbol_body`, `insert_after_symbol` or `write_file` (on an existing file) may change it. `edit` is preferred over rewriting an existing file whole: diff-sized edits hallucinate less than regenerated files.
     - `edit` replaces an exact string that must occur exactly once (line endings normalised); `replace_all` is not offered. A not-found reply carries the three closest windows of the file with line numbers; an ambiguous reply gives the count and the line of each match.
     - `write_file` creates or replaces a whole file.
-    - `read_symbol`, `replace_symbol_body`, `insert_after_symbol`, `find_references` and `go_to_definition` work on declarations through the TypeScript language service (`ts_service.ts`); symbol edits cannot match twice.
-    - `grep_search`, `find_files` and `list_dir` are capped and ignore what git ignores.
-    - `run_cmd` runs in the sandbox with a timeout. A leading `cat`, `grep`, `sed` or similar is refused with the structured tool to use instead. A whole command line runs through `/bin/sh` inside the same sandbox.
+    - `read_symbol`, `replace_symbol_body`, `insert_after_symbol`, `find_references` and `go_to_definition` work on declarations through the TypeScript language service (`ts_service.ts`); symbol edits cannot match twice. For a file in a language the TypeScript service does not cover, `find_references` asks that language's server through a shared, per-project pool of language-server clients (`LspPool`: `pyright-langserver` for Python, `rust-analyzer` for Rust; `lsp.ts:20-24`, `tools.ts:1159-1190`, `execute.ts:471`); when no server is installed or it fails, the reply falls back to text search. A language server is a memory tenant beside the Worker, so it is started lazily, its heap is capped, virtual-environment and dependency directories are excluded from its analysis, its memory counts in the memory guard ([models.md](models.md)), and no gate depends on it being up (NEW-worker-loop-7).
+    - `grep_search`, `find_files` and `list_dir` are capped and ignore what git ignores. `grep_search` takes a regular expression and has three output modes — `content` (the default, with `context` lines around each hit), `files_with_matches` and `count` — plus a `glob` filter and case-insensitivity. `find_files` lists files matching a glob **newest first** (by modification time), so what the card just touched comes first (`tool_catalog.ts:241-280`).
+    - `run_cmd` runs in the sandbox with a timeout and takes an optional one-line `description` of what the command is for, recorded with the call. A leading `cat`, `grep`, `sed` or similar is refused with the structured tool to use instead. A whole command line runs through `/bin/sh` inside the same sandbox. Which commands are allowed, asked about or denied is the permission table of [security.md](security.md), not a list in the loop. Background processes (`start_process`, `read_process`, `write_process`, `stop_process`) are [runtime.md](runtime.md)'s.
     - `check` runs the card's gates on the current files and returns typed failures with the source lines at each location and, for an unknown member or export, the real members.
     - `finish_card` ends the sample and asks for verification. It is a claim, not a verdict.
-    - `note` writes to the card's thread; `ask` posts a non-blocking decision request whose answer arrives at a later turn boundary; `recall` returns a masked observation by reference; `subtask` answers one question in a child context and returns only the answer.
-    - `browse` opens a sandboxed browser; it reaches beyond localhost only on research cards. `docs`, `dependencies` and `git_history` read version-pinned documentation, installed dependency source and the repository's history. Web search and fetch are never Worker tools.
+    - `note` writes to the card's dossier; `recall` returns a masked observation by reference; `subtask` answers one question in a child context and returns only the answer.
+    - `ask` answers now, from the card's contract: the spec's sentences, the Done-when list and the rules in force, best matches first (at most four). When nothing in the contract matches and the PM is available, Seshat answers the question now and the answer is recorded under the question in the dossier; when the PM is not loaded, the question is queued for it. With no answer, the reply tells the Worker to take the most conservative reading the acceptance tests allow and record it with `note("Assumed: …")` (`session.ts:450-520`). Every question is recorded in the dossier before it is answered. A non-blocking decision request that a person answers at a later turn boundary is not built (NEW-worker-loop-4).
+    - `tool_search` (while progressive loading exists, rule 11): a query that names files is answered with the files themselves — at most three, only from inside the worktree, each capped at 6,000 characters — because the reply carries what the model would have fetched (`session.ts:636-697`). A query naming code symbols (for example `ChronicleEvent`, `GENESIS_HASH`) loads `read_symbol` and names the calls to make.
+    - `browse` opens a sandboxed browser; it reaches beyond localhost only on research cards. The Worker's research tools are read-only and named as in `tool_catalog.ts`: `docs` (the project's docs and a dependency's README and type declarations at the installed version; the tiered project corpus is [design-stage.md](design-stage.md)'s, Later), `dependencies` (the installed dependency's own source) and `git_history` (the repository's own history). Web search and fetch are never Worker tools; the old `repo` tool's "releases between two versions" is not a Worker ability (§7).
+    - A rename across files is a tool, not a sequence of edits: `rename_symbol` asks the language service for every site and applies them, and those lines are recorded as tool-applied for the bounds gate ([gates.md](gates.md), NEW-worker-loop-6).
     - `run_script` executes a sandboxed script over the tools above, offered only where the registry marks the model script-capable.
 13. **Restricted mode** (`--restricted`, for untrusted repositories and external pull requests) removes `run_cmd` and every writing tool from the catalog and refuses them in the executor whatever the model calls; only static gates run. The trust decision itself is [security.md](security.md).
 14. **The write path.** Every write passes, in order: path confinement (inside the worktree after resolving symlinks; no NUL, no `..` escape, never into `.git`), scope (the declared scope; acceptance tests and `protected` patterns are never writable by the Worker), parse (the result must parse if the file did — TypeScript and JavaScript through the compiler, other languages where a checker exists), secret scan (only secrets this write adds), then an atomic write. A failure at any step returns a typed refusal and leaves the disk untouched.
@@ -99,13 +110,13 @@ The Worker loop is how a small local model turns one card into a verified diff: 
 25. The thinking policy is defined once, in `reasoning.ts`; the session does not hard-code a budget.
 26. `SEKHEMET_WORKER_METHOD=strict` adds two refusals: `finish_card` is refused while the last check failed and nothing has been written since, with the failures and their remedies; and `run_cmd` refuses a command (normalised, so output trimming does not make it new) that already ran with no file written since, returning the earlier output. Running a *different* command does not make a repeated one new. The default is `baseline` until the suite admits `strict`.
 27. Both switches are recorded in every evidence bundle's settings.
-28. **Rejected for the Worker: a planning or todo tool.** Planning stays with the Planner and the design stage; the Worker gets thinking on its first turn instead. The Planner's plan or edit sketch, when one exists, reaches the Worker as guidance ([planner-pm.md](planner-pm.md)).
+28. **Rejected for the Worker: a planning or todo tool.** Planning stays with the Planner and the design stage; the Worker gets thinking on its first turn instead. The Planner's plan or edit sketch, when one exists, reaches the Worker as guidance in the card's section of the prompt ([planner-pm.md](planner-pm.md) defines the sketch; [context.md](context.md) places it); applying a sketch mechanically by symbol replacement is §7.
 29. *A/B candidates, each behind a switch and admitted only by the suite:* after a failed check, the next write carries a required one-line `hypothesis` naming the assertion it addresses (self-repair helps only when grounded in external feedback); `read_file` windows of about 100 lines instead of whole files up to 200 lines (SWE-agent measured 100-line windows best, whole files worst); `grep_search` answering with matching files and counts rather than a stream of matches; a per-step reasoning level chosen by the phase rather than by the turn number.
 
 ### Stop reasons
 
 30. Every sample ends with exactly one stored stop reason from `CardStopReason`; stop reasons are never collapsed in storage, because they are the competence model's signal.
-31. **One stop-reason table** (`STOP_REASONS`) gives every stored reason: its class (one of the classes a person learns, §8 Q1), whether it is resumable, whether it parks, whether the runner may verify after it, and its **next action**. The runner, the session, the evidence bundle and the dashboard read this table; no other list of reasons exists.
+31. **One stop-reason table** (`STOP_REASONS`) gives every stored reason: its class, whether it is resumable, whether it parks, whether the runner may verify after it, and its **next action**. The runner, the session, the evidence bundle and the dashboard read this table; no other list of reasons exists. All eighteen reasons are stored as detail (the competence model needs them) and shown as **seven classes** ([DEC-24](../DECISIONS.md#dec-24--deliberate-reversals-in-design-v3)): the old six — `done_pending_gates`, `budget_exhausted`, `no_progress`, `scope_violation`, `capability_ceiling`, `human_abort` — plus **environment** (`memory_pressure`, `quota_suspended`, `error`, `rebase_conflict`, `integration_failed`), failures of the machine or the repository that must never read as the Worker's fault. `vacuous_tests` is class `no_progress`; the three budget reasons are class `budget_exhausted`; `repair_exhausted` and `replan_requested` are class `capability_ceiling`. A new condition is a new stored reason inside a class, never a new class; v1 adds `gate_suspected` ([gates.md](gates.md) M6) and `tests_not_red_for_reason` ([gates.md](gates.md) NEW-gates-6), each with its class, `parks` and next action in the table.
 32. Every stop names its next action. `vacuous_tests` names the tests that already pass; `scope_violation` names the file and offers to widen the scope; `oscillation_detected` names the repeated call and what to do instead; `capability_ceiling` names what was tried; a hook veto is `hook_veto`, not `human_abort`.
 33. `done_pending_gates` means the Worker claimed completion but the gates could not run; its next action is to run the gates.
 
@@ -114,24 +125,34 @@ The Worker loop is how a small local model turns one card into a verified diff: 
 34. After a failed verification the ladder decides what changes:
     1. **Direct repair** (at most 2 attempts): same context, the typed failures appended.
     2. **Fresh context** (at most 1): the attempt's turn history, read set, "seen" marks and lessons are discarded and the prompt is rebuilt from the card. The directive says so once, on the first turn of the rung.
-    3. **Re-plan** (at most 1, once per card): the Planner receives the standing failures (at most three), the files written and the lessons, and returns a new plan that the Worker follows; with no in-loop Planner the card stops with `replan_requested`.
+    3. **Re-plan** (at most 1, once per card): the Planner receives the standing failures (at most three), the files written, the lessons, the card's dossier and the constraints the Worker is under — the playbook rules in force, the scope and protected paths, and the API facts the failures carried (real exports and members) — and returns a new plan that the Worker follows; a plan may narrow the scope to the part that can pass, but may not prescribe what those rules forbid (NEW-worker-loop-5). The plan is built from exactly: the card's spec, scope files and acceptance criteria; the stop reason; the standing typed failures (at most three); the acceptance tests' and scope files' current contents, each capped by the allocator ([context.md](context.md) CX-N3-8); the files written and the lessons; the dossier; the playbook rules in force; the protected paths; and the API facts the failures carried. Today `planRepair` receives only the card, the stop reason, the failures and the files (`manager.ts:5-11`), so it can prescribe an API a rule forbids. With no in-loop Planner the card stops with `replan_requested`.
     4. **Stop:** `capability_ceiling` after a re-plan, else `repair_exhausted`. The card parks with a decision request naming what was tried, what failed each time, and what is suspected — an ambiguous specification, a wrong gate, or the model's limit.
 35. A rung that does not change the model's inputs is not a rung. The Worker never sees its own earlier reasoning across a rung change.
 36. Three failures on one card with different contexts are evidence about the card, so the third routes to the Planner (rung 3), not to a fourth attempt.
 
 ### Repeated sampling
 
-37. `pass_at_k` in `gates.toml` (1–4) runs k samples from the same starting tree, sequentially, samples 2..k at temperatures cycled through 0.4–0.7; the first sample whose gates pass is taken. Sampling without gate selection is never used.
+37. `pass_at_k` in `gates.toml` (1–4) runs k samples from the same starting tree and context, sequentially, samples 2..k at temperatures cycled through 0.4–0.7 (0.4, 0.55, 0.7); each sample starts from the tree the first started from, so no sample sees another's writes; the first sample whose gates pass is taken (`card_runner.ts:908-920`). Sampling without gate selection is never used.
+
+### Attempts and retries
+
+39. **One attempt record.** Every attempt ends with one record on the ledger (`attempt/finished`): the card, its real attempt number (1 for the first run, counting every later run of the same card), the rung and tool arm it ran at, its role and model, the playbook rules and exemplars in its prompt, turns, tokens, `builtBy` and the stop reason. The capability report, the PM's Worker record, policy tuning and competence rows all read this record and no other store, so Seshat, the Machine view and the stopping policy agree (NEW-worker-loop-5). A retry or an escalated pass is never counted as a first attempt.
+40. **Every card gets the same repair chances.** A card deferred because it waited on another card, and run after that card finished, gets the same repair plans and retries as a card that ran first: the queue alternates a Worker pass, a repair batch (repair plans, answers, research) and a retry pass until a pass changes nothing, at most two repair batches per card (NEW-worker-loop-5). Today the queue loops up to six rounds, running deferred cards after each pass (`apps/harness/src/index.ts:1782-1800`).
 38. With `cross_validate`, two passing samples each run against the other's tests; disagreement sends the card to the Planner as an ambiguous specification.
 
 ## 3. Contract
 
 | Item | Source |
 | --- | --- |
+| **Terms.** A **turn** is one model request and the tool calls it made; the code also stores it as a *step* (a `steps` row with `step_index`, a `card/step` event, the step budget counts turns). A **sample** is one session of turns from the card's starting tree. An **attempt** is one recorded run of the card (`AttemptRecord`), holding one sample, or up to k with `pass_at_k`. The old design used *step* for one request and *turn* for a whole attempt; that meaning is retired ([NAMING.md](../NAMING.md) keeps the pair) | `packages/loop/src/types.ts`, `packages/kernel/src/schema.ts:181` |
 | Session options, turn result, stop reason alias `ExecutionStopReason` | `packages/loop/src/types.ts` |
 | Tool catalog, class sets: `TOOL_CATALOG`, `CLASS_TOOLS`, `toolsForClass`, `cardClassFor` | `packages/loop/src/tool_catalog.ts` |
 | Progressive core set `PROGRESSIVE_CORE_TOOLS` | `packages/loop/src/session.ts:67` |
-| Tool executor, permission check, write contract | `packages/loop/src/tools.ts`, `write_contract.ts`, `parse_gate.ts` |
+| Tool executor, permission check, write contract; read limits `MAX_READ_BYTES` (512 KB), `isBinary` | `packages/loop/src/tools.ts:108`, `:173`, `write_contract.ts`, `parse_gate.ts` |
+| Observation clamp `clampObservation` (first 2,400 and last 1,200 characters of a long observation, with the count omitted), applied after condensing ([context.md](context.md)) | `packages/loop/src/observation.ts:16-34` |
+| Language-server pool `LspPool`, `DEFAULT_LSP_SERVERS`, `languageOf` | `packages/context/src/lsp.ts:20-30` |
+| Dossier read and writes in the runner `getDossier`, `recordDossierEntry` | `packages/loop/src/card_runner.ts:896-1000` |
+| Repair plan `planRepair`, `RepairPlanInput` (card, stop reason, failures, files) | `packages/loop/src/manager.ts:5-32` |
 | Path confinement `resolveInWorktree`, `PathEscapeError` | `packages/loop/src/paths.ts` |
 | Detector (stall, oscillation) | `packages/loop/src/detector.ts` |
 | Repository fingerprint `getRepoStateHash` | `packages/sync/src/git_adapter.ts:352` |
@@ -148,6 +169,23 @@ The Worker loop is how a small local model turns one card into a verified diff: 
 | Capability | State | Evidence | Change |
 | --- | --- | --- | --- |
 | Turn loop, tool dispatch, typed observations | built | `session.ts:1108`; `loop.spec.ts:29` | — |
+| Dossier read before every attempt; notes, questions and answers written as they happen | built | `card_runner.ts:896-1000`; `runner_depth.spec.ts`, `runner_wiring.spec.ts` | — |
+| `ask` answers from the contract, then Seshat; recorded in the dossier | built | `session.ts:450-520` | — |
+| Non-blocking decision request from `ask`, answered at a later turn | not-built | — | NEW-worker-loop-4 |
+| `tool_search` answers file queries with the files (≤ 3, worktree, 6,000 characters) | built | `session.ts:636-697` | — |
+| `tool_search` answers symbol queries by loading `read_symbol` | not-built | only file terms are recognised (`session.ts:645-653`) | M2 |
+| Read byte budget (512 KB) and binary refusal | built | `tools.ts:108`, `:373-376` | — |
+| `grep_search` three modes with context lines; `find_files` newest first | built | `tool_catalog.ts:241-280` | — |
+| Flat tool schemas | built | `tool_catalog.ts` (no object or union argument) | — |
+| Observation clamp 2,400 + 1,200 characters | built | `observation.ts:16-34` | — |
+| `find_references` through a language-server pool for non-TypeScript files | built | `tools.ts:1159-1190`; `execute.ts:471`; `context_units.spec.ts:119` | — |
+| Language servers capped, lazy, venv-excluded, counted by the memory guard | not-built | servers start with default heaps and no exclusions (`lsp.ts:20-24`); the guard counts only model servers | NEW-worker-loop-7 |
+| Symbol tools reach the TypeScript service through LSP (TS 7 server interchangeable) | not-built | `ts_service.ts` calls the `typescript` API in-process | NEW-worker-loop-7 |
+| Rename tool with tool-applied lines | not-built | no rename tool in the 28 (`tool_catalog.ts`) | NEW-worker-loop-6 |
+| MCP tools for non-Worker roles loaded by index, appended as messages | not-built | the Worker's progressive loading edits the tools array (M2); no index path for the Planner or Seshat | NEW-worker-loop-8 |
+| Re-plan sees rules, constraints, API facts and the dossier | not-built | `RepairPlanInput` is card, stop reason, failures and files only (`manager.ts:5-11`) | NEW-worker-loop-5 |
+| One attempt record read by every consumer; real attempt number, rung and arm | not-built | `capabilityReport` reads evidence files (`pm/capability.ts:86-89`), `workerRecord` reads queue reports (`pm/service.ts:152-158`), `tune` rebuilds attempts from turn counters; `startAttempt` never passes the rung or arm, so every row reads rung 1, arm A (`card_runner.ts:1033-1040`) | NEW-worker-loop-5 |
+| Deferred cards get repair plans and retries | partial | round loop re-runs deferred cards (`index.ts:1782-1800`); no bound of two repair batches per card | NEW-worker-loop-5 |
 | Explicit phases recorded per turn | not-built | policy spread over `thinkingFor` and `strictRefusal` (`session.ts:535-589`) | T3 |
 | Verification controller; one "on pass" reset | not-built | reset repeated four times (`session.ts:1287`, `1449`, `1466`, `1515`); three "verify anyway" paths | T3 |
 | Automatic re-check after an edit | built | `session.ts:1436-1489` | — |
@@ -172,7 +210,8 @@ The Worker loop is how a small local model turns one card into a verified diff: 
 | Dead ladder fields `requireSketch`, `park` | partial | read by nothing in production (`ladder.ts:19-26`) | NEW-worker-loop-2 |
 | One stop-reason table with next actions | not-built | six hand-kept sets (`card_runner.ts:191-286`) plus `mayVerify`; `oscillation_detected` text has no remedy (`session.ts:1316`); hook veto reported as `human_abort` (`session.ts:1181`) | T3 |
 | Step budget calibration per class | built | `budget.ts`; `budget_calibration.spec.ts` | — |
-| pass@k with gate selection; cross-validation | built | `card_runner.ts:1239`; `pass_at_k.spec.ts:118`, `:134` | — |
+| pass@k with gate selection, each sample from the same starting tree; cross-validation | built | `card_runner.ts:908-920`, `:1239`; `pass_at_k.spec.ts:118`, `:134` | — |
+| Stop reasons stored as eighteen, shown as seven classes | not-built | no class field; the dashboard maps reasons by hand (`ui/src/vocabulary.ts`) | T3 |
 | One Worker: the benchmark path drives the same session as the product | not-built | `BenchmarkHarness` runs `session.run()` with no sync adapter, thinking, method or progressive tools (`eval/src/benchmark.ts:297`) | M9 ([measurement.md](measurement.md)) |
 | Dead direct-tool API in the session (~140 lines) | not-built (cut) | `session.ts:1757-1895`, test-only | NEW-worker-loop-3 |
 
@@ -219,6 +258,7 @@ The Worker loop is how a small local model turns one card into a verified diff: 
 - **WL-T3-6** WHEN the controller extraction lands THE SYSTEM SHALL replay the frozen suite with the same stop-reason distribution as before it (characterisation), and `executeTurnInner`'s cognitive complexity SHALL be under 40.
 - **WL-T3-7** WHEN the repair-phase switch is on and the phase is `repair` THE SYSTEM SHALL offer only the write tools, `read_file` and `read_symbol`, and think; with the switch off, behaviour SHALL be unchanged.
 - **WL-T3-8** WHEN the find-budget switch is on and the find phase has used its share of the step budget THE SYSTEM SHALL append to the next read's reply a nudge naming the files still to write; with the switch off, behaviour SHALL be unchanged.
+- **WL-T3-9** WHEN the stop-reason table is walked THE SYSTEM SHALL assign every stored reason exactly one of the seven classes of rule 31, with `memory_pressure`, `quota_suspended`, `error`, `rebase_conflict` and `integration_failed` in **environment**, and the dashboard SHALL read the class from the table.
 
 ### NEW-worker-loop-1 — repetition refusals that survive alternation and truncation
 
@@ -240,6 +280,43 @@ The Worker loop is how a small local model turns one card into a verified diff: 
 
 - **WL-N3-1** WHEN the loop package is built THE SYSTEM SHALL expose no session method that executes a tool other than through the dispatcher, and the reachability check over Sekhemet SHALL report none of the listed members.
 
+### NEW-worker-loop-4 — `ask` that can wait for a person without stopping the Worker
+
+*Justification:* the old design's `ask` posted a non-blocking decision request answered at a later turn boundary; today an unanswered question only tells the Worker to assume (ruling R2).
+
+- **WL-N4-1** WHEN `ask`'s question is answered neither by the contract nor by Seshat THE SYSTEM SHALL post a non-blocking decision request carrying the question, the card and the Worker's stated assumption, and the Worker SHALL continue on that assumption.
+- **WL-N4-2** WHEN that request is answered while the card is still running THE SYSTEM SHALL deliver the answer as an observation at the next turn boundary, never mid-turn, and record it under the question in the dossier; WHEN the answer contradicts the assumption, the observation SHALL say so.
+
+### NEW-worker-loop-5 — one attempt record, a grounded re-plan, and equal repair chances
+
+*Justification:* the integration review found three outcome stores that disagree, evidence and readers that count retries as first attempts, a repair plan that can prescribe a forbidden API because it never sees the rules, and deferred cards that missed the only repair batch (integration review A6, B4, C5; suggestions 2 and 9; ruling R20).
+
+- **WL-N5-1** WHEN an attempt ends THE SYSTEM SHALL append one `attempt/finished` record carrying the real attempt number, rung, tool arm, role, model, the ids of the rules and exemplars in its prompt, turns, tokens, `builtBy` and stop reason; the second run of a card SHALL carry attempt number 2.
+- **WL-N5-2** WHEN the capability report, the Worker record, `tune` or a competence row needs outcomes THE SYSTEM SHALL read them from `attempt/finished` records only (a search test finds no other reader of evidence files or queue reports for outcomes).
+- **WL-N5-3** WHEN the re-plan rung asks the Planner for a plan THE SYSTEM SHALL include the playbook rules in force for the card, the scope and protected paths, the API facts carried by the standing failures and the card's dossier; WHEN a returned plan names a file outside the scope or an API a rule in force forbids, the plan SHALL be refused and the card SHALL stop with `replan_requested` naming the conflict.
+- **WL-N5-4** WHEN a card deferred on a dependency runs after that dependency passed THE SYSTEM SHALL give it the same repair batch and retry as a card that ran first; the queue SHALL stop repairing a card after two repair batches.
+
+### NEW-worker-loop-6 — mechanical edits as tools
+
+*Justification:* agents solve 22% of multi-file refactors against a human's 87%, and a rename touching fourteen files cannot fit three files and 200 lines, so it would be split into cards that each leave the build broken ([DESIGN_RESEARCH_TESTS_BROWNFIELD.md](../../research/DESIGN_RESEARCH_TESTS_BROWNFIELD.md) decision 10; RefactorBench arXiv:2503.07832).
+
+- **WL-N6-1** WHEN a card needs a rename across files THE SYSTEM SHALL offer `rename_symbol`, backed by the language service, which applies every site in one call and records those lines as tool-applied for the bounds gate ([gates.md](gates.md) GT-BF-3).
+- **WL-N6-2** WHEN `rename_symbol` would touch a file outside the card's scope THE SYSTEM SHALL refuse it naming the files, unless the card declares the rename as its mechanical change.
+
+### NEW-worker-loop-8 — MCP tools without their prefill cost
+
+*Justification:* the old design promised that MCP servers with many tools stay usable without paying for every schema on every turn; the Worker's fixed set does not cover the other roles (trace hd1 146; §8 Q1).
+
+- **WL-N8-1** WHEN the Planner or Seshat is offered more than ten tools THE SYSTEM SHALL send a one-line index of them and only the schemas already loaded, and a schema loaded by `tool_search` SHALL be appended as a message; the tools array and every earlier message SHALL stay byte-identical.
+
+### NEW-worker-loop-7 — language servers as bounded tenants, reached through LSP
+
+*Justification:* TypeScript 7.0 (2026-07-08) ships no API and 7.1's will differ, so a symbol tool bound to the in-process `typescript` API breaks when projects move; and a language server can exhaust a 2–4 GB heap analysing a virtual environment on a 24 GB host that already holds a 13 GB Worker ([research](../../research/DESIGN_RESEARCH_TESTS_BROWNFIELD.md) decisions 13, §2.3 language servers).
+
+- **WL-N7-1** WHEN the Worker's symbol tools run on a TypeScript file THE SYSTEM SHALL reach the language service through the LSP client, so that `typescript-language-server` and TypeScript 7's native server (`tsc --lsp --stdio`) are interchangeable by configuration, and no module outside the TypeScript adapter SHALL import `typescript` ([gates.md](gates.md) IX-4).
+- **WL-N7-2** WHEN a language server is started THE SYSTEM SHALL start it only on the first symbol request that needs it, cap its heap (`--max-old-space-size`), exclude virtual-environment and dependency directories from its analysis, and count its resident memory in the memory guard ([models.md](models.md)).
+- **WL-N7-3** WHEN a language server is absent, crashes or exceeds its heap THE SYSTEM SHALL fall back to text search for that call, say so in the reply, and SHALL NOT fail any gate because of it.
+
 ## 6. v1 acceptance
 
 This spec is `built` when §5 passes and these behaviours stay under test:
@@ -255,18 +332,27 @@ This spec is `built` when §5 passes and these behaviours stay under test:
 - **WL-9** WHEN `pass_at_k = 2` and the first sample fails THE SYSTEM SHALL take the second sample if its gates pass; WHEN two passing samples disagree on each other's tests under `cross_validate`, send the card to the Planner.
 - **WL-10** WHEN a card class has three passing attempts THE SYSTEM SHALL set its step budget to p80 × 1.25, moved at most 15%, never below 4.
 - **WL-11** WHEN every stop reason is produced in a test THE SYSTEM SHALL show a non-empty next action for it on the card.
+- **WL-12** WHEN `read_file` is called on a file over 512 KB, or on a file with a NUL in its first block THE SYSTEM SHALL refuse it with the size or "binary" and SHALL NOT return its bytes.
+- **WL-13** WHEN `tool_search` names four files THE SYSTEM SHALL return the first three from inside the worktree, each capped at 6,000 characters, and SHALL NOT read a path outside the worktree.
+- **WL-14** WHEN `ask` is called and the card's spec answers the question THE SYSTEM SHALL answer from the spec without calling the PM, and record the question in the dossier.
+- **WL-15** WHEN a card is run a second time THE SYSTEM SHALL give its lessons and the answers from the first run to the second run's prompt through the dossier.
+- **WL-16** WHEN `find_references` is asked about a symbol in a Python file and a language server is configured THE SYSTEM SHALL answer from the server; WHEN none is installed, from text search (`context_units.spec.ts:119` covers the pool).
+- **WL-17** WHEN the tool catalog is walked THE SYSTEM SHALL find no argument whose type is an object or a union.
 
 ## 7. Later
 
-- **Parallel samples.** Samples run one after another; on the reference 24 GB host the server has one slot and MTP supports only one. Parallel pass@k waits for a tier with the memory for it ([models.md](models.md)).
-- **Escalating the model on a failed card.** The old design's rung 3 ("narrow the scope, or escalate one tier") needs a second, stronger Worker that v1's single local Worker does not have. The re-plan rung is the v1 answer; escalation returns with a second qualified Worker or a cloud role after v1.
-- **Symbol tools beyond TypeScript and JavaScript** (Tree-sitter or ast-grep: *proposed, needs the owner's yes*), shared with the source index of [gates.md](gates.md) (T2).
+- **Parallel samples.** Samples run one after another; on the reference 24 GB host the server has one slot and MTP supports only one. Parallel pass@k waits for a tier with the memory for it: the old design's rule — on tiers L and XL, or in overnight batch runs, k ∈ [2, 4] independent samples from the same context pack at T ∈ [0.4, 0.7], each in its own ephemeral worktree, with the cap on k set per tier — returns with it, the per-tier cap read from the engine's qualified parallel capacity ([models.md](models.md)).
+- **Escalating the model on a failed card.** The old design's rung 3 ("narrow the scope, or escalate one tier, whichever the competence model favours") needs a second, stronger Worker that v1's single local Worker does not have. The re-plan rung is the v1 answer, and narrowing the scope survives inside it (rule 34.3); escalation returns with a second qualified Worker or a cloud role after v1.
+- **Applying an edit sketch mechanically** (symbol replacement from the Planner's target symbols, preconditions and diff sketch). The sketch's contents are not yet defined ([planner-pm.md](planner-pm.md)) and the ladder's `requireSketch` field is dead (NEW-worker-loop-2); until the sketch exists it is guidance only.
+- **`read_file` passing images and PDFs to a vision path.** The v1 Worker has no vision capability; card attachments reach a vision-capable model through the adapter ([surface.md](surface.md)).
+- **Release notes between two versions as a Worker tool** (the old `repo` tool). The Worker's history tool reads this repository only; an `upgrade` card receives the changelog entries between the installed and proposed versions from the Researcher when it is planned ([design-stage.md](design-stage.md), [planner-pm.md](planner-pm.md)).
+- **Symbol edits beyond TypeScript and JavaScript** (`read_symbol`, `replace_symbol_body` and `insert_after_symbol` for Python and Rust; ast-grep for structural search and codemods: *proposed, needs the owner's yes* — native binaries and a Python build step), shared with the source index of [gates.md](gates.md) (T2). `find_references` already reaches other languages through the language-server pool (rule 12).
 - **Splitting `tools.ts`** into file, process, browse and docs modules — when a workstream is already inside it.
 
 ## 8. Open questions
 
-1. **How many stop-reason classes a person learns.** The old design fixed six (`done_pending_gates`, `budget_exhausted`, `no_progress`, `scope_violation`, `capability_ceiling`, `human_abort`) with detail carried in the message; the code stores eighteen. *Recommendation:* keep all eighteen as stored detail (the competence model needs them) and show seven classes: the six plus **environment** (`memory_pressure`, `quota_suspended`, `error`, `rebase_conflict`, `integration_failed`) — failures of the machine or the repository, which must never read as the Worker's fault. `vacuous_tests` is class `no_progress`; the three budget reasons are class `budget_exhausted`; `repair_exhausted` and `replan_requested` are class `capability_ceiling`.
-2. **Whether `tool_search` survives for non-Worker roles** (MCP tools for the Planner). *Recommendation:* keep it where tool counts exceed ~10 and the role is not the Worker, appending loaded tools to the conversation rather than editing the tools array ([extensibility.md](extensibility.md)).
+1. **Whether `tool_search` survives for non-Worker roles** (MCP tools for the Planner). *Recommendation:* keep it where tool counts exceed ~10 and the role is not the Worker, appending loaded tools to the conversation rather than editing the tools array ([extensibility.md](extensibility.md)) — adopted as rule 11a and NEW-worker-loop-8 pending the owner's confirmation.
+2. **The rename tool before or after the LSP move.** *Recommendation:* build `rename_symbol` on the LSP client (NEW-worker-loop-7 first), so it works unchanged when a project moves to TypeScript 7.
 
 ## 9. Evidence and rationale
 
@@ -277,4 +363,6 @@ This spec is `built` when §5 passes and these behaviours stay under test:
 - Stuck detection thresholds: [OpenHands stuck detector](https://docs.openhands.dev/sdk/guides/agent-stuck-detector) (same action and result ×4, same error ×3, three messages with no tool call, six-cycle ping-pong); failures happen after localisation (arXiv:2511.00197); agents that gather context before editing and invest in validation succeed more (arXiv:2604.02547); agent-written tests cost 33–49% more input tokens for ~2 points (arXiv:2602.07900); overthinking lowers resolution (arXiv:2502.08235); per-step reasoning routing (ARES, arXiv:2603.07915).
 - Register: [RESEARCH_REGISTER.md](../../research/RESEARCH_REGISTER.md) R9 (self-refine, rejected), R10 (multi-agent debate, rejected), R6 (on-the-fly tool synthesis, triaged — not in v1).
 - *Rejected:* a Worker planning tool (evidence exists only for web tasks with a separate planner, Plan-and-Act arXiv:2503.09572; no ablation of TodoWrite); self-critique loops; multi-agent debate.
+- *Changed on purpose* (each also in [DEC-24](../DECISIONS.md#dec-24--deliberate-reversals-in-design-v3) or its trace): a stall is warned once per episode before it stops the card, where the old design stopped on the first repetition — cards with 32-step budgets were ending on step two having read one file twice; `edit` offers no `replace_all` and normalises line endings — renames are a tool (NEW-worker-loop-6), and a whitespace-exact match failed more often than it protected; the detection thresholds (`stall_window = 3`, `max_rungs = 4`) are no longer configuration — a per-card threshold hid stalls; rung 3 re-plans instead of escalating (§7); six stop reasons became eighteen stored in seven classes (DEC-24); `ask` answers from the contract and Seshat now instead of posting a decision request (ruling R2; NEW-worker-loop-4 restores the request as an addition).
+- Research: [DESIGN_RESEARCH_TESTS_BROWNFIELD.md](../../research/DESIGN_RESEARCH_TESTS_BROWNFIELD.md) — decision 10 (mechanical edits as tools: RefactorBench arXiv:2503.07832, Google migrations arXiv:2504.09691), decision 13 and §2.3 (TypeScript 7.0 ships no API; `typescript-language-server` 6.0.0; pyright heap exhaustion on virtual environments). Integration review ([reviews/integration_review_2026-09-18.md](../../reference/reviews/integration_review_2026-09-18.md)): A6, B4, B5, C5 and suggestions 2, 6 and 9.
 - Decisions: [DEC-02](../DECISIONS.md#dec-02) (the spine), [DEC-04](../DECISIONS.md#dec-04) (the uncensored Worker: the loop's refusals are structural, not trusted to the model), [DEC-22](../DECISIONS.md#dec-22--rejected-techniques) (self-refine, multi-agent debate, persona prompting, unbounded best-of-N, hard schema constraints by default: rejected).

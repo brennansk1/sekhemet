@@ -52,6 +52,7 @@ v1 includes: binding to a non-loopback address safely; an identity for each pers
 ### DEC-09
 **Dead code is cut; three modules are wired in or cut by their workstream.** *Owner, 2026-09-22 (D4).* Cut: `packages/ui/src/canvas.ts`, `container.ts` (kernel and sandbox), `buildFullPromptPack` and the context `engine.ts`, the three `FEATURE_INVENTORY` files. Decided by their workstream, recorded in its spec: `retention.ts`, `apps/harness/src/research/desk.ts`, `adjudicate` and `acceptRevision` in `claims.ts`.
 - **Why:** code reachable only from tests is dead; it misleads the next reader and the reachability gate.
+- **Correction (2026-09-22, platform spec pass):** `container.ts` is not dead — `execute.ts:378-386` builds a `ServiceContainer` and `PluginManager` on every card. The recommendation is still to cut it (plugins add only services and hooks, and run repository code unsandboxed), but cutting reachable code is a new decision: **the owner decides** ([extensibility](specs/extensibility.md) §8). Until then it stays, gated by workspace trust (S9).
 
 ### DEC-10
 **`main` tracks the work.** *Owner, 2026-09-22 (D2).* `main` was fast-forwarded to the working branch at `fb59ba2`, and is fast-forwarded again when each workstream lands with its gate green.
@@ -66,7 +67,23 @@ v1 includes: binding to a non-loopback address safely; an identity for each pers
 
 ### DEC-20
 **Language support is TypeScript first.** *2026-09-20.* The ranked repo map and the parse gate are TypeScript. Python, Rust and Go degrade to a flat file map and an unchecked parse, stated on the card and in the evidence. Their functional gates (`pytest`, `cargo test`, `go test`) stay, because running the tests is most of a gate's value. Symbol-level support through tree-sitter is later work (a proposal in COVERAGE).
+The harness itself stays TypeScript: a Rust or Python component is allowed only where profiling proves a bottleneck — the repo-map builder is the likeliest first candidate, a line pruner the second.
 - **Reopen if:** a non-TypeScript project becomes a v1 target.
+
+### DEC-24 — deliberate reversals in design v3
+*2026-09-22, each forced by a measurement, research or a review finding; the detail is in the owning spec's §9.*
+
+| Was (design of 2026-09-17) | Now | Why |
+| --- | --- | --- |
+| Observation masking keeps the last two observations | The five most recent stay full; masking happens in batches | SWE-agent's ablations; masking every turn breaks the prompt cache (research group A) |
+| Earlier reasoning is stripped between steps | Earlier thinking is preserved (or stripped only at a masking point) | An edited prefix forces a full re-read on hybrid-attention models (research group A) |
+| llama.cpp cache flags 8–16 GiB, 32 checkpoints, min-step 8192, `-sps` | Sized per host (2–8 GiB, 6–16 checkpoints), min-step 512–1,024, `-sps` dropped | Checkpoint placement moved to message boundaries upstream; 16k-window hosts keep only two checkpoints at the old spacing |
+| A spec with more than three questions is refused as under-specified | Never refused: propose defaults and proceed | Proportional design stage (owner, 2026-09-22) |
+| A card parks and frees memory while its question is open | Work proceeds on the stated default; a `default_deny` question parks at its deadline | The Worker is not idled by a question it can proceed past |
+| Self-improvement rolls back when the pass rate drops over the next ten cards | Rollback on a paired comparison | A ten-card window cannot separate noise from effect (research group D) |
+| Six stop reasons | Eighteen stored, shown as seven classes (adding "environment") | Machine failures must never read as the Worker's fault |
+| INVEST pre-flight before In Progress | Before Ready | The Worker must never pick up a card that fails it |
+| Send back returns a card to In Progress | Send back returns it to Ready | A returned card is re-queued, not resumed mid-attempt |
 
 ### DEC-21 — accepted substitutions
 *Accepted 2026-09-20; the design's claims were amended to match what is built.*

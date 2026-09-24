@@ -23,7 +23,7 @@ tests:
   - apps/harness/tests/acp.spec.ts
   - apps/harness/tests/slash.spec.ts
   - apps/harness/tests/sdk.spec.ts
-changes: [S9, S4]
+changes: [S9, S4, NEW-extensibility-1, NEW-extensibility-2, NEW-extensibility-3, NEW-extensibility-4]
 ---
 
 # Extensibility: hooks, skills, MCP, ACP, commands and the SDK
@@ -78,7 +78,7 @@ A team extends Sekhemet without forking it: it runs its own checks at lifecycle 
 
 ### MCP server
 
-18. `sekhemet mcp` serves the board to MCP clients (editors, other agents, CI) over stdio: list, get, create and update cards (team fields only), move a card among `ready`, `backlog` and `parked`, run gates, read the PM thread, the capability report, learning rules, events and `doctor`; plus the evidence bundle and the model registry, read-only (NEW-extensibility-3).
+18. `sekhemet mcp` serves the board to MCP clients (editors, other agents, CI) over stdio: list, get, create and update cards (team fields only), move a card among `ready`, `backlog` and `parked`, run gates, ask Seshat and read the PM thread, the capability report, learning rules, events and `doctor`; plus the evidence bundle and the model registry, read-only (NEW-extensibility-3). Tool names use the product's vocabulary ([NAMING.md](../NAMING.md)): the PM tool is `sekhemet_ask_seshat` (today still `sekhemet_ask_merit`, the persona's name before 2026-09-18).
 19. Every write is recorded with actor `mcp`. Accepting is a person's action: the server validates every argument on the server side, and no argument — including a `reason` beginning `override:` — moves a card to Done, Review or any state outside the tool's list (the kernel enforces it too: [kernel](kernel.md) S4).
 20. A `card_id` is validated against the card-id pattern before it is used in a path.
 21. The server negotiates the protocol version with the client and answers malformed requests with `id: null`, as JSON-RPC requires. It is built on the official `@modelcontextprotocol/sdk` ([DEC-08](../DECISIONS.md#dec-08)).
@@ -100,7 +100,7 @@ A team extends Sekhemet without forking it: it runs its own checks at lifecycle 
 ### Headless use and the SDK
 
 27. Everything the board can do is available headless from the CLI with meaningful exit codes ([surface](surface.md)): run one card unattended, plan without executing, run gates only, bake off models, replay a card against a pinned configuration.
-28. `@sekhemet/sdk` is a typed client for a running server: REST calls and the live event stream. If it ships (open question 1), its types come from the kernel's, not copies, and the event stream is an async iterator.
+28. `@sekhemet/sdk` is a typed client for a running server: REST calls and the live event stream. If it ships (open question 1), its types come from the kernel's, not copies, and the event stream is an async iterator. *Changed from the old design's shipped SDK:* its only consumer today is its own test, so whether it ships is an open decision rather than a promise.
 
 ### Plugins
 
@@ -108,16 +108,16 @@ A team extends Sekhemet without forking it: it runs its own checks at lifecycle 
 
 ### Tools outside the Worker
 
-Decisions on what the Planner and the infrastructure use, adopt or build; the owning spec states each one's behaviour and state. The Worker's tools are in [worker-loop](worker-loop.md); the gates' tools are listed with their gates in [gates](gates.md) (tree-sitter parse; tsc, ruff, clippy, eslint; per-language test runners with a parser to `GateFailure`; Stryker, mutmut, cargo-mutants, PIT; gitleaks; registry existence and typosquat checks; osv-scanner offline; Semgrep CE; Playwright console, network, DOM and layout checks; screenshot diff; axe-core; a local vision checklist at temperature 0; hygiene checks).
+Decisions on what the Planner and the infrastructure use, adopt or build; the owning spec states each one's behaviour and state. The Worker's tools are in [worker-loop](worker-loop.md); the gates' tools are listed with their gates in [gates](gates.md), which owns the per-language gate template table (ruling R14): the parse check through the TypeScript compiler ([DEC-20](../DECISIONS.md#dec-20); tree-sitter for other languages later); tsc, ruff, clippy, eslint; per-language test runners with a parser to `GateFailure`; mutation through each language's own tool (Stryker, mutmut, cargo-mutants, PIT) as an optional subprocess when installed, beside the harness's own diff-scoped TypeScript step; gitleaks; registry existence and typosquat checks; osv-scanner offline; Semgrep CE; the visual gate's console, network, DOM-assertion and layout checks, element screenshot diff and accessibility checks — whose libraries (Playwright, pixelmatch, axe-core) are proposals awaiting the owner (ruling R16); a local vision checklist at temperature 0; hygiene checks.
 
 | Tool | Decision | Owner |
 | --- | --- | --- |
-| Repo map query | Build (tree-sitter, PageRank, binary-search budget fit; reference Aider) | [context](context.md) |
+| Repo map query | Build (TypeScript compiler facts, PageRank, binary-search budget fit; reference Aider; tree-sitter for other languages later, DEC-20) | [context](context.md) |
 | Dependency and impact analysis | Build over language-server references | [planner-pm](planner-pm.md) |
 | Task decomposition | Build; Taskmaster's patterns as reference, no code (Commons Clause) | [planner-pm](planner-pm.md) |
 | Difficulty scoring | Build from scope, symbols, tests and history | [planner-pm](planner-pm.md) |
 | Search and fetch (SearXNG, trafilatura, Crawl4AI) | Wrap; research cards and the Research Desk only, **never the Worker** | [design-stage](design-stage.md) |
-| `plan_research` | Build: a card's open questions, answered before it starts | [design-stage](design-stage.md) |
+| `plan_research` | Owned and decided by design-stage (ruling R5) | [design-stage](design-stage.md) |
 | Board operations (create, split, link, budget) | Build | [planner-pm](planner-pm.md) |
 | Inference | Wrap llama.cpp server; MLX as a later Apple Silicon adapter | [models](models.md) |
 | Model swapping | Build a minimal router rather than llama-swap | [models](models.md) |
@@ -126,7 +126,7 @@ Decisions on what the Planner and the infrastructure use, adopt or build; the ow
 | Notifications | Wrap self-hosted ntfy or Gotify | [integrations](integrations.md) |
 | Structural diff | Wrap difftastic | [review-git](review-git.md) |
 | Event log and hash chain | Build over SQLite WAL | [kernel](kernel.md) |
-| Output condensing | RTK for command output; native condensers for read, grep, glob | [worker-loop](worker-loop.md) |
+| Output condensing | RTK's strategies reimplemented natively for command output (the RTK binary is not called); native condensers for read, grep, glob | [context](context.md) |
 | Goal monitoring | Build: event-log queries with thresholds | [planner-pm](planner-pm.md) |
 
 ## 3. Contract
@@ -161,7 +161,7 @@ Decisions on what the Planner and the infrastructure use, adopt or build; the ow
 | Skill evals run before approval | not-built | candidates written by `distillSkill` (`eval/src/loops.ts:259`, `wave2.ts:908`) reach approval with `evals/` never executed | NEW-extensibility-4 |
 | MCP server tools | built | `mcp.ts`; `mcp.spec.ts` (10 tests, happy paths) | — |
 | MCP `move_card` override to Done | not-built (bypass open) | probed: `mcp.ts:155-180`, `board_service.ts:292-300` | S4 |
-| MCP server: protocol `2024-11-05` fixed, `id: 0` on parse error, unchecked `card_id` path, no evidence/registry tools | partial | `mcp.ts:277, 343, 186-188` | NEW-extensibility-3 |
+| MCP server: protocol `2024-11-05` fixed, `id: 0` on parse error, unchecked `card_id` path, no evidence/registry tools, PM tool still named `sekhemet_ask_merit` | partial | `mcp.ts:277, 343, 186-188, 207` | NEW-extensibility-3 |
 | MCP client: stdio only, full env, Researcher only | partial | `mcp_client.ts:73-77`; `research/cli.ts:66` | NEW-extensibility-3 |
 | ACP as PM chat | built | `acp.ts`; `acp.spec.ts` | — |
 | Slash commands | built | `slash.ts`; `slash.spec.ts` | — |
@@ -204,6 +204,7 @@ Decisions on what the Planner and the infrastructure use, adopt or build; the ow
 - **EXT-19** WHEN `mcp.json` declares a Streamable HTTP server THE SYSTEM SHALL connect to it and list its tools (tested against a local test server).
 - **EXT-20** WHEN the Planner plans a card and an approved MCP server offers tools THE SYSTEM SHALL offer those tools to the Planner, within the prompt budget.
 - **EXT-21** WHEN a server does not list a tool in `worker_tools` THE SYSTEM SHALL not offer that tool to the Worker.
+- **EXT-21a** WHEN an MCP client lists the server's tools THE SYSTEM SHALL offer the PM tool as `sekhemet_ask_seshat` and no tool named after Merit.
 
 ### NEW-extensibility-4 — skills in the Agent Skills format
 *Justification: ecosystem skills fail to load (required inline `triggers`, regex YAML), substring triggers over-match, `budgetTokens` is parsed and never read, and diagnostics run on no data (reviews of domain 15 and the gap sweep).*
@@ -236,7 +237,26 @@ EXT-1 to EXT-28 (including the lettered criteria), plus these built behaviours k
 - **User-defined commands** as Markdown templates expanding into a card template or a planner instruction (`/onboard`, `/retro`, `/split`, `/bake-off`, `/goal`).
 - **An MCP server over Streamable HTTP**, for a company server's remote clients.
 - **An eval card for every shipped skill**, run by `doctor` (v1 runs the evals a skill has, EXT-27a; v1 does not yet require every skill to have one).
-- **The skill catalogue**: pull and adapt Anthropic's official skills and Skill Creator patterns, Superpowers' workflow and test-first skills, gstack's review and QA checklists, and the Codex scope model; build Sekhemet's own for onboarding, research cards, gate authoring, SPIDR splitting, retrospective-to-playbook, bake-off, visual acceptance and repair from a typed failure; security-testing skills are review-only and never auto-remediate.
+- **A skill that declares the gates it adds** (the old design) — v1 skills are procedure only; a gate a skill needs is proposed to `gates.toml` for a person to accept, because a skill may never change gate files (item 15).
+- **Publishing skills back to the Agent Skills ecosystem** — v1 pulls and pins; publishing needs a release and licence process for Sekhemet's own skills, which do not exist yet.
+- **The Codex admin and system skill scopes** — v1 has project and user scopes only (item 13); an admin scope arrives with company-server roles beyond Accept (DEC-06 keeps those out of v1).
+- **Plugin and third-party skill signing** beyond the content-hash approval of item 15 — with the plugin API above; air-gapped skill updates already travel signed ([security](security.md) item 49).
+- **The skill catalogue** — sources: Anthropic's official skills (Skill Creator, document skills, frontend design, the format and template), Superpowers (workflow and test-first discipline), the Codex catalogue (its scope model), gstack (review and QA checklists); aggregators for discovery only (item 17). What each becomes in Sekhemet, kept so the mapping is not re-derived:
+
+| Skill | Decision | What it becomes |
+| --- | --- | --- |
+| Brainstorming and spec refinement | Pull and adapt | Feeds the intake conversation; its questions become decision requests |
+| Write plan, execute plan | Adapt | The planner replaces the execute half; the planning discipline stays |
+| Test-driven implementation | Adapt | Enforced by gates, not instruction; teaches red-green-refactor |
+| Systematic debugging | Pull | Reproduce, isolate, hypothesise, test — inside one card |
+| Code review checklist | Adapt | The Reviewer's procedure and the evidence summary's format |
+| Git worktree workflow | Replace | Built into the harness |
+| Frontend design guidance | Pull | For user projects with a UI |
+| Skill Creator | Adapt | The authoring template for distilled skill candidates |
+| Document skills (docx, pdf, xlsx) | Pull, optional | For projects that produce documents; not core |
+| Language and framework experts | Selective pull | Only where a gate template exists for the language |
+| Security testing procedures | Selective pull | Review-only; never auto-remediate |
+| Repository onboarding, research card procedure, gate authoring, SPIDR splitting, retrospective to playbook, model bake-off, visual acceptance, repair from a typed failure | Build | Sekhemet's own; no existing skill encodes these rules |
 
 ## 8. Open questions
 
@@ -250,6 +270,7 @@ EXT-1 to EXT-28 (including the lettered criteria), plus these built behaviours k
 - [Gap sweep](../../reference/reviews/gap_sweep.md) — `diagnostics.ts` called with no inputs.
 - Research, [PAPER_REVIEWS_2026-09.md](../../research/PAPER_REVIEWS_2026-09.md) batch 1: Repo-To-Skill (arXiv 2609.02749) — adapt only its verify stage as an admission rule (item 17a, EXT-27a/b); reject its AREX-Skill library (CC BY-NC-SA 4.0, frontier-only evidence, no ablations), its taxonomy-plus-router (a second retrieval subsystem) and hosted distillation (not local). SRMA (2609.02750) supplies the general rule that only an environment-grounded signal may admit durable memory.
 - Research, [PM_RESEARCH_SYNTHESIS.md](../../research/PM_RESEARCH_SYNTHESIS.md) finding 6: verify before persisting skills (Voyager, −73% without self-verification); more skills can hurt ("Not All Skills Help") → items 16, 17a.
+- Rulings of 2026-09-22: R5 (`plan_research` is design-stage's), R14 and R16 (the gate-tool list above), R3 (MLX is a later adapter everywhere).
 - Research, [RESEARCH_REGISTER.md](../../research/RESEARCH_REGISTER.md): R6, on-the-fly tool synthesis, is `triaged`, so the Worker gets no self-made tools and MCP tools reach it only through `worker_tools` (item 23).
 - Research: [group B](../../research/WEB_RESEARCH_2026-09.md#group-b-sandbox-and-git-safety) — Gemini CLI GHSA-wpqr-6v78-jr5g (a workspace's agent config trusted automatically in headless runs), the reason trust is never implicit.
 - Decisions: [DEC-08](../DECISIONS.md#dec-08) (`@modelcontextprotocol/sdk`), [DEC-09](../DECISIONS.md#dec-09) (cuts).

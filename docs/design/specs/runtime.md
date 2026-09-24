@@ -28,7 +28,7 @@ tests:
   - apps/harness/tests/tracing.spec.ts
   - packages/kernel/tests/blobs_retention.spec.ts
   - packages/sandbox/tests/containment.spec.ts
-changes: [T5, P9, S3c]
+changes: [T5, P9, S3c, NEW-runtime-1, NEW-runtime-2, NEW-runtime-3, NEW-runtime-4, NEW-runtime-5, NEW-runtime-6, NEW-runtime-7, NEW-runtime-8, NEW-runtime-9, NEW-runtime-10]
 ---
 
 # Runtime: the supervisor, runs, sessions, the HTTP API, audit, telemetry and retention
@@ -46,8 +46,9 @@ Sekhemet runs cards unattended for hours on a machine people also use. The runti
 ### One supervisor, one runner
 
 2. One supervisor per repository owns the queue, card runs, the runner lease and the logs. The dashboard server, `run`, `queue` and `overnight` all go through it.
-3. **The runner lease is atomic.** It is taken by exclusive creation of `.sekhemet/runner.lock`, carries the holder's pid, process start time and a random token, and is refreshed by a heartbeat every 3 s. A lease whose holder is gone — pid absent, or alive with a different start time — is stale and may be taken over. `run <card>`, `queue` and `overnight` all take it; a second runner is refused (CLI exit code 1; HTTP 409 naming the holder).
-4. While a runner holds the lease, it answers PM messages between Worker steps (only it can unload the Worker; a second large model would exhaust memory). Model residency itself is [models](models.md)'.
+3. **The runner lease is atomic.** It is taken by exclusive creation of `.sekhemet/runner.lock`, carries the holder's pid, process start time and a random token, and is refreshed by a heartbeat every 3 s. A lease whose holder is gone — pid absent, or alive with a different start time — is stale and may be taken over. `run <card>`, `queue` and `overnight` all take it; a second runner is refused (CLI exit code 1; HTTP 409 naming the holder). On a single-user machine there is one lease. On a team server the lease is **per slot**: the qualified engine's parallel capacity N ([models](models.md)) gives N slot leases, each card holds one with its own worktree and sandbox, and no two running cards may write the same file (NEW-runtime-6).
+4. While a runner holds the lease, it answers PM messages between Worker steps (only it can unload the Worker; a second large model would exhaust memory). With no lease holder, the server answers PM messages itself, but it loads a model only through the residency scheduler that [models](models.md) owns (one scheduler for every caller; adapters keyed by weights, not role), and refuses with a plain message when a model's memory footprint is unknown, rather than loading a second large model beside the Worker (NEW-runtime-6; the integration review's C3/C4).
+4a. **Fair share across people** (team server). When two or more people have work queued, model time is scheduled by fair share per person; interactive PM replies run ahead of Worker steps; and any request that has waited longer than a configured bound is promoted ahead of both, so a long card is never starved (NEW-runtime-6).
 5. **`daemon start|stop|status`** runs the dashboard server detached, writing `.sekhemet/daemon.json` (pid, port, start time, log path) and logging to `.sekhemet/daemon.log`. `stop` signals only a process whose pid **and** start time match the file; a recycled pid is never signalled.
 6. Every detached run writes its output to a log file under `.sekhemet/logs/`; nothing is launched with its output discarded.
 
@@ -55,6 +56,7 @@ Sekhemet runs cards unattended for hours on a machine people also use. The runti
 
 7. Every command runs with a timeout: SIGTERM, then SIGKILL after 500 ms if it is still alive. Kills reach **the whole process tree** (a new process group per command, signalled as a group), for timeouts, `stop_process`, card end and memory kills alike.
 8. A command's memory is the resident size of its whole tree, sampled every 250 ms; past its cap (default 4096 MB, `SEKHEMET_MAX_COMMAND_MEMORY_MB`) the tree is killed and the result says so, rather than inferring an out-of-memory kill from an unexplained SIGKILL.
+8a. A command's stdout and stderr are each captured up to 10 MB (`maxBufferBytes`); beyond that the capture stops and the result ends with `[output truncated at <n> bytes]`, so a runaway command cannot exhaust the harness's memory. What the model then sees is condensed and clamped by [context](context.md).
 9. The harness's own signal handling releases the lease and kills its children before it exits; no handler calls `process.exit` before cleanup has run.
 
 ### Crash recovery (resume)
@@ -63,10 +65,10 @@ Sekhemet runs cards unattended for hours on a machine people also use. The runti
 
 ### Checkpoints, rewind, fork, replay
 
-11. **Checkpoints.** The Worker commits to the card branch after every gate-passing step and at every masked-observation boundary. Checkpoints are what resume, rewind and fork restore to, and they keep the worktree consistent with the log.
+11. **Checkpoints** are commits on the card branch; their cadence and trailers are [review-git](review-git.md)'s (§2.6, ruling R1). Checkpoints are what resume, rewind and fork restore to, and they keep the worktree consistent with the log.
 12. **Rewind** resets the worktree to step N's checkpoint, truncates nothing in the log, keeps the abandoned state at a preserved ref, records a rewind event, and invalidates any gate pass recorded after step N.
 13. **Fork** creates a new attempt from step N with a parent reference and a different model, prompt version or budget; it never mutates the parent. Forks are how harness changes are A/B tested on real work.
-14. **Replay** rebuilds an attempt's trajectory from the ledger (tool calls with targets and outcomes, gate results, tokens, stop reason), aligns two attempts step by step, and names the first step where they diverged and what changed in their reproducibility records (model, prompt, tool schema, rules, gates, harness). `--as <model>` runs a fresh attempt forked from the start on another model and diffs it. Deterministic stages — context assembly and gates — reproduce exactly; model output may differ.
+14. **Replay** rebuilds an attempt's trajectory from the ledger (tool calls with targets and outcomes, gate results, tokens, stop reason), aligns two attempts step by step, and names the first step where they diverged and what changed in their reproducibility records (model, prompt, tool schema, rules, gates, harness). `--as <model>` runs a fresh attempt forked from the start on another model and diffs it. Replaying against another pinned configuration — a prompt version or a budget rather than a model — is a fork from step 0 (item 13); `--as` names only a model. Deterministic stages — context assembly and gates — reproduce exactly; model output may differ.
 
 ### Background processes and terminals
 
@@ -75,18 +77,22 @@ Sekhemet runs cards unattended for hours on a machine people also use. The runti
 
 ### Unattended hours
 
-17. `overnight` runs queue rounds while the machine is free: outside the person's reserved hours ([surface](surface.md) config), or inside them when the person has been idle for `--idle-min` minutes, until `--until`, until no Ready card remains, or until a breaker trips. Each round has a wall-clock limit; a round that exceeds it is killed (whole tree) and counted as a failure.
-18. **Breakers** (compute governance): the daily energy budget (`power_budget_kwh_day`, 0 = none; energy = estimated machine watts × run time, `SEKHEMET_MACHINE_WATTS` overrides the estimate), `--max-failures` rounds failing in a row, and thermal throttling. A tripped breaker ends the night with its reason.
-19. **Per-card and per-project budgets** in tokens, seconds and kilowatt-hours: a card at its cap is parked, not continued; a project at its cap stops the scheduler. Cost is reported in machine time and energy, not API dollars.
+17. `overnight` runs queue rounds while the machine is free: outside the person's reserved hours ([surface](surface.md) config), or inside them when the person has been idle for `--idle-min` minutes, until `--until`, until no Ready card remains, or until a breaker trips. Each round has a wall-clock limit; a round that exceeds it is killed (whole tree) and counted as a failure. Between rounds the model server stays up, so its weights and prompt cache stay warm; rounds work the backlog in project batches ([models](models.md) orders the swaps).
+17a. **Pause a project.** A person can pause a project from the board (and `sekhemet dev pause|resume <project>`): the queue and `overnight` start no new card for it until it is resumed; a card already running is not interrupted (`abort` is its own action). The pause and the resume are ledger events naming who did them (NEW-runtime-10).
+18. **Breakers** (compute governance): the daily energy budget (`power_budget_kwh_day`, 0 = none; energy = estimated machine watts × run time, `SEKHEMET_MACHINE_WATTS` overrides the estimate), `--max-failures` rounds failing in a row, and thermal throttling. A tripped breaker ends the night with its reason. *Narrowed from the old design's kWh "from hardware TDP and GPU utilisation":* the utilisation term needs a per-host utilisation source, which is Later (§7).
+19. **Per-card and per-project budgets** in tokens, seconds and kilowatt-hours: a card at its cap is parked with a budget diagnosis, not continued into Verify (a breaker that lets the card continue is not a breaker); a project at its cap stops the scheduler. Cost is reported in machine time and energy, not API dollars.
 20. **Nightly jobs** after the rounds: diff-scoped mutation testing, the convention-drift check posted to Seshat's thread, and a full offline vulnerability scan. The morning report — what reached Review, what parked and why — is Seshat's standup, delivered through the notifier ([integrations](integrations.md)).
 21. **Scheduled and recurring cards.** A card becomes a template when it carries a schedule (cron: fields, ranges, steps, lists, names, macros) or a trigger (a file change, a dependency release, a named webhook). Each firing clones the template into a Ready card that inherits its acceptance tests, criteria, scope and budget; at most one open clone at a time. A wake-up inside the reserved hours waits unless the template is marked `urgent`. Schedules live on the card as labels; firings are ledger events.
-22. **Memory pressure.** When the memory watchdog ([models](models.md), thresholds 85–90%) asks to stop new worktrees, the queue starts no new card until it clears; every watchdog action the watchdog can request is either acted on or removed.
+22. **Memory pressure.** The memory watchdog's thresholds and actions are [models](models.md)' (ruling R27). When it asks to stop new worktrees, the queue starts no new card until it clears; every action the watchdog can request is either acted on here or removed there.
 
 ### The HTTP API and the live stream
 
-23. The dashboard server serves the board, the PM and the actions a person can take, on `127.0.0.1:4040` by default. Routes are grouped by domain — board and cards, card actions, runs and evidence, PM (shapes in [PM_CONTRACT.md](../PM_CONTRACT.md)), integrations, machine and models, learning, webhooks — each group in its own module behind one guard (T5).
+23. The dashboard server serves the board, the PM and the actions a person can take, on `127.0.0.1:4040` by default. Because it is a local web app on loopback, it works over an SSH tunnel and on a headless box: nothing needs a local display, and `--yes` prints the address instead of opening a browser ([surface](surface.md) item 7). Routes are grouped by domain — board and cards, card actions, runs and evidence, PM (shapes in [PM_CONTRACT.md](../PM_CONTRACT.md)), integrations, machine and models, learning, webhooks — each group in its own module behind one guard (T5).
+23a. **Static files** under `/app/*` are served only from the web directory: a path with `..` or `.` segments, an encoded traversal, a backslash or a NUL is refused, and so is a symlink whose real path leaves the web root or a file whose extension has no known type. Each file is sent with its correct MIME type (`.js`, `.css`, `.json`, `.svg`, `.woff2`), `X-Content-Type-Options: nosniff` and `Cache-Control: no-cache` (ruling R19).
 24. The guard runs first for every request: the Host check, the mutation token, framing and CSP rules in [security](security.md) item 37, and, in company-server mode, the person's session.
-25. Live updates stream as server-sent events (`GET /api/stream`) and WebSocket (`/api/ws`); both carry ledger appends as JSON and accept only allowed origins. A server started without a card store is read-only and answers mutations 501.
+25. Live updates stream as server-sent events (`GET /api/stream`) and WebSocket (`/api/ws`); both carry ledger appends as JSON and accept only allowed origins. A server started without a card store is read-only and answers mutations 501. *Changed from the old design's single WebSocket at `ws://127.0.0.1:4040/stream`:* SSE is the dashboard's channel (it reconnects on its own and needs no library); the WebSocket remains for clients that want one.
+25a. **Replay on reconnect and reload.** A stream opened with `?since=<seq>`, or reconnecting with `Last-Event-ID`, first replays every append after that sequence number (at most 5,000 per frame, marked with the range replayed); `?since=0` replays from genesis. A reloaded page hydrates from the projections — which the kernel rebuilds from the log — and resumes the stream from the last sequence number it holds, so the state a person sees after a reload equals the log's state at that sequence number. `GET /api/events` pages the log with `since`, `before`, `limit`, `order` and filters by `card`, `type` and `actor` (the subscription itself is [kernel](kernel.md)'s).
+25b. **Token streaming.** While a step is generating, the runner writes the decoded tokens to `.sekhemet/live/<card>.txt`, and the stream sends them as `tokens` events (the last 2,000 characters, when the file changes) for the card view's Steps tab ([dashboard](dashboard.md)). The live file is a view, not a record: the ledger keeps the finished model response.
 
 ### Company-server binding (DEC-06)
 
@@ -100,14 +106,22 @@ Sekhemet runs cards unattended for hours on a machine people also use. The runti
 
 ### Telemetry
 
-30. Spans follow OpenTelemetry's agent conventions: a span per card, per model request (with token counts) and per tool call, stored locally in `.sekhemet/traces.db` and viewable in the dashboard.
+30. Spans follow OpenTelemetry's agent conventions: a span per card, per model request (with token counts) and per tool call, stored locally in `.sekhemet/traces.db` and viewable in the dashboard (today: card, turn and model-request spans, readable through `sekhemet dev traces`; the tool-call span and the dashboard view are NEW-runtime-9).
 31. Nothing leaves the machine unless the person asks: `sekhemet dev traces --otlp <url>` exports spans once, to the address given, and the export is recorded. There is no background telemetry.
-32. **Metrics that matter**, computed from the ledger and traces: pass rate by card class and model (drives routing and budgets); prefix-cache hit rate per step (the binding performance constraint); tokens and seconds per card, estimate against actual; the gate-failure distribution (feeds the playbook); the stop-reason distribution (finds loop and scope problems); human review minutes per card (sets the Review WIP limit).
+32. **Metrics that matter**, computed from the ledger and traces: pass rate by card class and model (drives routing and budgets); prefix-cache hit rate per step (the binding performance constraint); tokens and seconds per card, estimate against actual; the gate-failure distribution (feeds the playbook); the stop-reason distribution (finds loop and scope problems); human review minutes per card (sets the Review WIP limit); and tokens removed by output condensing per card (what condensing saves, the statistic RTK tracks; condensing itself is [context](context.md)'s).
 
 ### Retention and logs
 
 33. **Retention** runs at the start of every queue: context packs, masked observations and transcripts of cards closed (Done or rejected) more than 30 days ago are pruned; a pack shared with an open card stays. Never pruned: the ledger, evidence bundles (which hold the final diff and gate results), and anything of an open card.
 34. `daemon.log` and run logs rotate by size and keep a bounded number of files; `traces.db` keeps 30 days of spans; parked cards' worktrees are removed when the card is closed. Disk growth per 100 cards is bounded.
+34a. **Retention of personal text.** Once the ledger has an erasable `private` part ([kernel](kernel.md) NEW-kernel-1), a project's retention period for `private` fields of closed cards erases them with reason `retention`, keeping structural fields and commitments, so the chain still verifies (NEW-runtime-8).
+
+### Backup, restore, export and upgrades
+
+35. **Backup** (`sekhemet dev backup <path>`; restore with `sekhemet dev restore <path>`) uses SQLite's online backup API (`node:sqlite` `backup()`, built in), so writers continue while it copies; each backup records `ledger/backed_up` with its path and the sequence number it holds. `PRAGMA secure_delete` is on before any erasure, so erased content is overwritten rather than left on free pages.
+36. **Restore re-applies erasures.** An erasure register beside the backups (event ids and reasons only, no personal data) lists every erasure; restoring a backup re-applies every erasure newer than the backup before the server accepts a request, and a restore refuses to start when erasures are known to exist and the register is missing. An old backup never silently brings back erased data or a leaked secret.
+37. **Export with no lock-in.** `sekhemet dev export --ledger` writes NDJSON, one event per line with `seq`, `hash`, `prevHash`, the commitment of its private part, and its fields mapped to CloudEvents 1.0 attributes (`id`, `source`, `type`, `time`, `subject`); `--no-private` omits every private part and the chain still verifies; a standalone verifier checks the file offline. Projections and blobs are exported beside it.
+38. **Upgrades migrate, never lose.** Schema migrations are numbered and forward-only and preserve the hash chain ([kernel](kernel.md)); a database older than the binary is backed up, migrated forward and its chain verified before the server serves; a database newer than the binary is refused with the version needed. A config migration runs in the same step ([surface](surface.md) reports renamed keys).
 
 ## 3. Contract
 
@@ -124,7 +138,12 @@ Sekhemet runs cards unattended for hours on a machine people also use. The runti
 | `pruneRetention`, `RETENTION_DAYS = 30`; `pruneRunData` | `packages/kernel/src/retention.ts`; `apps/harness/src/execute.ts:193` |
 | HTTP routes | `server.ts`, `rest_extra.ts`, `wave2_server.ts`, `pm_api.ts`, `integrations.ts`, `dashboard_api.ts` — listed below |
 | CLI: `serve`, `board`, `daemon start\|stop\|status`, `run [card]`, `queue`, `overnight [--until HH:MM] [--idle-min N] [--max-failures N]`, `abort`, `rewind`, `fork`, `resume`, `replay <card> [--attempt N] [--diff A,B] [--as <model>]`, `log`, `traces [--since-hours N] [--out f] [--otlp url]` | `apps/harness/src/index.ts` |
-| Config (new): `[server] host`, `port` (default 4040), `tls_cert`, `tls_key`, `trusted_proxies`, `session_hours` | this spec |
+| CLI (new): `dev backup <path>`, `dev restore <path>`, `dev export --ledger [--no-private]`, `dev pause\|resume <project>` | this spec |
+| Config (new): `[server] host`, `port` (default 4040), `tls_cert`, `tls_key`, `trusted_proxies`, `session_hours`; `[scheduler] fair_share`, `max_wait_s` (the aging bound) | this spec |
+| `SandboxOptions.maxBufferBytes` (default 10 MB, `DEFAULT_MAX_BUFFER`) | `packages/sandbox/src/types.ts:13`; `executor.ts:11, 196, 289-341` |
+| `resolveStaticPath`, `MIME` | `apps/harness/src/server.ts:127-172` |
+| SSE events: `append` (with `replay: {from, through, complete}`), `tokens` (`{cardId, text}`); live token file `.sekhemet/live/<card>.txt` | `server.ts:563-600, 1145-1170`; `liveTokenWriter` (`execute.ts:683`) |
+| Request bodies: `cards/:id/split` takes `{parts: [{title, …}]}` (at least two; the SPIDR strategy is the planner's, [planner-pm](planner-pm.md)); `cards/:id/run` takes none | `rest_extra.ts:158-200` |
 
 **Routes today** (all under `/api` unless noted; mutations are POST, PUT or DELETE):
 - Board and cards: `board`, `workspace`, `projects`, `projects/:id`, `cards/:id`, `cards/:id/explain`, `cards/:id/attempts`, `cards/:id/transcript`, `cards/:id/diff`, `cards/:id/review`, `cards/:id/attachments`, `cycles`, `goals`, `decisions`, `planner/decisions`, `assumptions`, `recurring`, `wip`, `queue`.
@@ -134,7 +153,7 @@ Sekhemet runs cards unattended for hours on a machine people also use. The runti
 - Integrations: see [integrations](integrations.md) §3; `/webhooks/github` (no `/api`).
 - Machine and models: `machine`, `machine/calibrate`, `models`, `registry`, `doctor`, `meta`, `gates`, `playbook`, `learning`, `visual`.
 
-The design's 2026-09-17 route table (`/workspace`, `/projects/:id/board`, `PATCH /cards/:id`, `/cards/:id/return`, `/decisions/:id/answer`, `WS /stream?card=`) is superseded by the routes above; the code is the contract, and a route change updates this list.
+The design's 2026-09-17 route table (`/workspace`, `/projects/:id/board`, `PATCH /cards/:id`, `/cards/:id/return`, `/decisions/:id/answer`, `WS /stream?card=`) is superseded by the routes above; the code is the contract, and a route change updates this list. The `reroute` and `explain` routes exist in code; the product behaviour behind them (forcing a model for a card; explaining an estimate or route) is [planner-pm](planner-pm.md)'s, where it is Later. A per-run budget override in the `run` body (old design) is not offered: Later (§7).
 
 ## 4. State today
 
@@ -149,6 +168,10 @@ The design's 2026-09-17 route table (`/workspace`, `/projects/:id/board`, `PATCH
 | Crash sweep at start-up | not-built | crashed cards stay In Progress; the queue takes only Ready cards | NEW-runtime-3 |
 | Overnight round time limit | not-built | the queue child has no timeout (`overnight.ts:60-73`) | NEW-runtime-3 |
 | Rewind, fork, resume from checkpoint | built | `control.spec.ts:203, 228` | — |
+| Output capture capped at 10 MB with a truncation marker | built | `executor.ts:11, 289-341` | — |
+| Per-card token and time budgets park the card | built | `PARKING_STOPS`, `BUDGET_STOPS` (`loop/src/card_runner.ts:265-285`); `runner_depth.spec.ts:270` | — |
+| Per-card kWh budget; per-project caps | not-built | energy is counted per night only (`governance.ts:42-68`) | NEW-runtime-7 |
+| Pause and resume a project | not-built | no such control | NEW-runtime-10 |
 | Replay and `--as` | built | `replay.ts`; `replay.spec.ts` | — |
 | Background processes, confined, own port | built | `loop/src/tools.ts:969-1014`; killed at card end without descendants (`:1057`) | NEW-runtime-2 |
 | Overnight, breakers, reserved hours | built | `overnight.spec.ts` | — |
@@ -160,7 +183,14 @@ The design's 2026-09-17 route table (`/workspace`, `/projects/:id/board`, `PATCH
 | Host check, session token, CSP | not-built | [security](security.md) S3c | S3c |
 | Non-loopback bind with identity and TLS | not-built | `server.listen(port, "127.0.0.1")` (`server.ts:1190`) | P9 (DEC-06) |
 | Audit chain verification | built | `log.verifyHashChain`; `/api/integrity` (`server.ts:1046`) | — |
-| Local traces, OTLP export on request | built | `tracing.ts`; `tracing.spec.ts` | — |
+| Static `/app/*` serving: traversal refused, MIME types | built | `resolveStaticPath` (`server.ts:136-172`); `server.spec.ts:191` | — |
+| Stream replay from `?since=` / `Last-Event-ID`, reload from projections | built | `server.ts:563-600`; `packages/ui/web/app.js:183-197` | — |
+| Token streaming to the Steps tab | built | `liveTokenWriter` (`execute.ts:484-486, 683`); SSE `tokens` (`server.ts:1145-1170`) | — |
+| PM with no lease loads through a residency scheduler | not-built | the no-lease path loads the PM model directly, with no footprint check (PM_CONTRACT §4.3; `pm/service.ts:222-320`) | NEW-runtime-6 |
+| Fair share, per-slot leases on a team server | not-built | one global lease file (`pm/service.ts:57-110`) | NEW-runtime-6 |
+| Backup, restore with erasures, ledger export, forward-only migrations | not-built | none | NEW-runtime-8 |
+| Local traces, OTLP export on request | partial (was `built`; ruling R23) | card, turn and model-request spans (`execute.ts:531`, `tracing.ts:144-192`), export by `sekhemet dev traces` (`tracing.spec.ts`); no tool-call span; no dashboard view (nothing under `packages/ui/web` reads traces) | NEW-runtime-9 |
+| Tokens removed by condensing, as a metric | not-built | the condenser computes `tokensSaved` per result (`context/src/condenser.ts:74-77, 414-420`); nothing outside it reads the figure | NEW-runtime-9 |
 | Retention of packs, observations, transcripts | partial | wired at queue start (`index.ts:1243`), tested in the kernel (`blobs_retention.spec.ts`) but not through `queue` | NEW-runtime-4 |
 | Log rotation, trace retention, worktree cleanup | not-built | `daemon.log` appends forever; `traces.db` has no retention (`tracing.ts:39-48`) | NEW-runtime-4 |
 
@@ -200,6 +230,37 @@ The review's runtime items had no programme ID; they are proposed here.
 *Justification: the full vulnerability scan never runs, and two watchdog actions are declared but never acted on.*
 - **RUN-17** WHEN an overnight run finishes its rounds THE SYSTEM SHALL run the offline vulnerability scan and record its result on the ledger.
 - **RUN-18** WHILE the watchdog requests `stopNewWorktrees` THE SYSTEM SHALL start no new card.
+- **RUN-18a** WHEN one overnight round ends and the next begins THE SYSTEM SHALL reuse the running model server without reloading the model.
+
+### NEW-runtime-6 — one scheduler, fair across people, per-slot leases
+*Justification: the dashboard's no-lease path loads a second large model beside the Worker (integration review C3/C4, the 24 GB OOM path); a team server needs fairness and parallel slots keyed in from the start, or every queue and lease must be re-keyed later ([DESIGN_RESEARCH_TEAM_SERVER.md](../../research/DESIGN_RESEARCH_TEAM_SERVER.md)). Residency itself is [models](models.md)' (ruling R20).*
+- **RUN-34** WHEN two or more people have work queued THE SYSTEM SHALL schedule model time by fair share per person, SHALL run interactive PM replies ahead of Worker steps, and SHALL promote any request that has waited longer than `max_wait_s` ahead of both.
+- **RUN-35** WHEN the qualified capacity allows N concurrent cards THE SYSTEM SHALL run at most N, each holding its own slot lease, worktree and sandbox, and SHALL never let two running cards write the same file.
+- **RUN-36** WHEN no runner holds the lease and a PM message needs a model whose memory footprint is unknown THE SYSTEM SHALL load nothing, answer that the model cannot be loaded safely, and record the refusal; with a known footprint it SHALL load only through the residency scheduler.
+
+### NEW-runtime-7 — every budget the spec names is enforced
+*Justification: per-card token and time budgets park the card, but the per-card kWh budget and the per-project caps of item 19 exist only in prose (inventory L22).*
+- **RUN-37** WHEN a card's recorded energy reaches its kWh budget THE SYSTEM SHALL park it with a budget diagnosis naming the kWh cap.
+- **RUN-38** WHEN a project's cumulative tokens, seconds or kWh reach its cap THE SYSTEM SHALL start no further card for that project and name the cap that stopped it.
+
+### NEW-runtime-8 — backup, restore, export and upgrades that lose nothing
+*Justification: an erasable ledger needs backups that do not resurrect erased data, a portable export, and migrations that never strand a ledger ([DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md](../../research/DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md) decisions 9–10, RUN-T1–T5; [DESIGN_RESEARCH_TEAM_SERVER.md](../../research/DESIGN_RESEARCH_TEAM_SERVER.md), upgrades). RUN-40, RUN-41 and RUN-43 depend on [kernel](kernel.md) NEW-kernel-1.*
+- **RUN-39** WHEN `sekhemet dev backup <path>` runs THE SYSTEM SHALL write a consistent copy of the ledger with the SQLite online backup API while writers continue, and record `ledger/backed_up` with the path and the sequence number.
+- **RUN-40** WHEN a backup is restored THE SYSTEM SHALL re-apply every erasure in the erasure register newer than the backup's sequence number before the server accepts requests, and SHALL refuse to start if the register is missing and erasures are known to exist.
+- **RUN-41** WHEN a project's retention period for `private` fields elapses for a closed card THE SYSTEM SHALL erase them with reason `retention`, and SHALL keep structural fields and commitments.
+- **RUN-42** WHEN `sekhemet dev export --ledger` runs THE SYSTEM SHALL write NDJSON with every event's `seq`, `hash`, `prevHash`, commitment and CloudEvents-mapped attributes, and a verifier run on that file alone SHALL reproduce the chain verdict.
+- **RUN-43** WHEN `--no-private` is given THE SYSTEM SHALL omit every `private` part, and the exported chain SHALL still verify.
+- **RUN-44** WHEN the harness starts on a database whose schema is newer than it knows THE SYSTEM SHALL refuse to start and name the version needed; WHEN the schema is older THE SYSTEM SHALL back it up, migrate it forward and verify the hash chain before serving.
+
+### NEW-runtime-9 — telemetry as specified
+*Justification: the state table said `built`, but there is no tool-call span and no dashboard view of traces (inventory H22, ruling R23); the condensing saving is computed and never reported (old design: RTK tracks savings).*
+- **RUN-45** WHEN the Worker makes a tool call THE SYSTEM SHALL record a span for it, child of the turn's span, with the tool's name and outcome.
+- **RUN-46** WHEN a person opens a card's traces in the dashboard THE SYSTEM SHALL show its card, turn, model-request and tool-call spans with their durations.
+- **RUN-47** WHEN a queue run's report is written THE SYSTEM SHALL include, per card, the tokens removed by output condensing.
+
+### NEW-runtime-10 — pause a project
+*Justification: the old design's "Pause project" scheduler control is referenced by [planner-pm](planner-pm.md) and specified nowhere.*
+- **RUN-48** WHEN a person pauses a project THE SYSTEM SHALL start no new card for it in `queue` or `overnight` until it is resumed, SHALL let a running card finish, and SHALL record the pause and the resume with the person who made each.
 
 ### T5 — the server by route group, one guard
 - **RUN-19** WHEN any `/api` route is requested THE SYSTEM SHALL pass it through the single guard before its handler, and a test SHALL enumerate every mutating route and show each refuses a request without the token.
@@ -214,7 +275,7 @@ The review's runtime items had no programme ID; they are proposed here.
 
 ## 6. v1 acceptance
 
-RUN-1 to RUN-25, plus these built behaviours kept under test:
+RUN-1 to RUN-25 and RUN-34 to RUN-48 (with RUN-18a; RUN-40, RUN-41 and RUN-43 once [kernel](kernel.md) NEW-kernel-1 lands), plus these built behaviours kept under test:
 - **RUN-26** WHEN a card is rewound past a step whose gates passed THE SYSTEM SHALL mark that pass invalid and keep the abandoned state at a preserved ref.
 - **RUN-27** WHEN an attempt is forked at step N THE SYSTEM SHALL create a new attempt with a parent reference and leave the parent unchanged.
 - **RUN-28** WHEN `replay --diff A,B` compares two attempts THE SYSTEM SHALL name the first divergent step and the reproducibility fields that differ.
@@ -223,6 +284,11 @@ RUN-1 to RUN-25, plus these built behaviours kept under test:
 - **RUN-31** WHEN a recurring template fires while a clone is still open THE SYSTEM SHALL not create a second clone.
 - **RUN-32** WHEN one ledger event's content is altered THE SYSTEM SHALL report that event's sequence number as the first break.
 - **RUN-33** WHEN no `--otlp` is given THE SYSTEM SHALL make no outbound request for telemetry.
+- **RUN-49** WHEN `/app/..%2fpackage.json`, a path with a backslash or NUL, a symlink out of the web root, or an unknown extension is requested THE SYSTEM SHALL answer 404 and serve nothing; WHEN a `.js` file is served THE SYSTEM SHALL send `text/javascript` with `nosniff`.
+- **RUN-50** WHEN a stream opens with `?since=<seq>` THE SYSTEM SHALL first send every append after that sequence number, marked with the range replayed.
+- **RUN-51** WHEN a command writes more than 10 MB to stdout THE SYSTEM SHALL keep the first 10 MB and end the result with the truncation marker.
+- **RUN-52** WHEN a card reaches its token or time budget THE SYSTEM SHALL park it with a budget diagnosis and not move it to Verify.
+- **RUN-53** WHEN a running step is generating THE SYSTEM SHALL send its decoded tokens as `tokens` events while the ledger keeps only the finished response.
 
 ## 7. Later
 
@@ -230,6 +296,11 @@ RUN-1 to RUN-25, plus these built behaviours kept under test:
 - **A gate host on another machine**: `gate-host` serves gates over mutual TLS on `127.0.0.1:7443` today, with certificates for `localhost` and `127.0.0.1`; `--host`, configurable certificate names and no shared-path assumption come with multi-machine gates.
 - **Promoting a background process to a project service.**
 - **The prompt optimiser overnight** (`improve`), once self-improvement admits only significant paired gains ([measurement](measurement.md), T8).
+- **Energy from TDP × GPU utilisation** (the old design's formula) — needs a utilisation source on each host (on macOS `powermetrics` needs root); v1 estimates watts × run time with a user override (item 18).
+- **A per-run budget override** in `POST /cards/:id/run` (old design `run { budgetOverride }`) — a card's budget is set with the card; a one-off override would make its measured record incomparable. `queue --max-turns` already caps every card's steps for one run, without changing the card.
+- **A compliance pack** (audit exports, external timestamping or signing of the chain head) — the old design's Phase 4; v1 claims no compliance certification (SPINE), and the ledger export (item 37) is the handoff.
+- **A container image for the team server and a single-executable build** — proposals from [DESIGN_RESEARCH_TEAM_SERVER.md](../../research/DESIGN_RESEARCH_TEAM_SERVER.md) for [surface](surface.md) (open question there); **Litestream** for continuous replication on a company server — a proposal (Apache-2.0) needing the owner's yes; single machines use the built-in backup (item 35).
+- **Kubernetes deployment, per-tenant token quotas beyond fair share** — a team server is one machine in v1; fair share with aging is enough for one team.
 - **Multi-machine inference pooling** (SPINE: not in v1).
 
 ## 8. Open questions
@@ -241,6 +312,9 @@ RUN-1 to RUN-25, plus these built behaviours kept under test:
 ## 9. Evidence and rationale
 
 - Review: [domains 11 and 14](../../reference/reviews/domain11_14_security_runtime.md#runtime-rubric-questions-27) — PID reuse, the non-atomic lease, tree kills, the crash sweep, the watchdog's dead actions, rotation.
-- [INTEGRATION_REVIEW.md](../INTEGRATION_REVIEW.md) §C — why one runner and one scheduler own residency (the dashboard's second scheduler, C4).
+- [INTEGRATION_REVIEW.md](../../reference/reviews/integration_review_2026-09-18.md) §C — why one runner and one scheduler own residency (the dashboard's second scheduler, C4; suggestion 10) → item 4, RUN-36.
+- Research, [DESIGN_RESEARCH_TEAM_SERVER.md](../../research/DESIGN_RESEARCH_TEAM_SERVER.md): fair multi-tenant serving (VTC, FairServe, Equinox) and Chimera's starvation counter → item 4a, RUN-34; llama.cpp parallel slots and vLLM continuous batching → item 3, RUN-35; forward-only migrations with a backup and a refusal of a newer database → item 38, RUN-44. Engine choice and qualification are [models](models.md)'.
+- Research, [DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md](../../research/DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md): decisions 9 (online backup, `secure_delete`, an erasure register; the ICO's "beyond use") and 10 (NDJSON export mapped to CloudEvents; GDPR portability) → items 34a, 35–37, NEW-runtime-8. CloudEvents is used as a field mapping only, with no SDK.
+- Deliberate changes from the 2026-09-17 design, each stated where it applies: SSE instead of one WebSocket (item 25); energy without the utilisation term (item 18); checkpoint cadence owned by review-git (item 11, ruling R1); watchdog thresholds owned by models (item 22, ruling R27).
 - Decisions: [DEC-06](../DECISIONS.md#dec-06) (company server), [DEC-09](../DECISIONS.md#dec-09) (retention's wire-or-cut), [DEC-22](../DECISIONS.md#dec-22--rejected-techniques) (no long-running conversational sessions).
 - **Why no sessions:** long conversational sessions rot (context decay, lost-in-the-middle, hallucinated agreements); a fresh deterministic context per attempt, with resume, fork, rewind and replay from the log, gives every session feature without the decay.

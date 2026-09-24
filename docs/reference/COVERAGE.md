@@ -71,8 +71,9 @@ No further model runs start until S1–S2 are fixed; nothing is offered to a use
 
 | M11 | MTP A/B on **seconds per turn**, with two draft tokens, watching Metal's working set | MTP speeds decode only (~1.1–1.3x on this MoE) and slows prefill, which dominates agent turns | S |
 | M12 | Statistics that fit 14–30 tasks: paired arms, exact or Bayesian intervals, repeated runs, pass^k; claim only effects of ≥20 points | At 25 tasks a paired test has ~6–7% power to see a 10-point gain | S |
+| M9 | The benchmark wrapper passes on only `generate`, so every `m0` benchmark attempt ran a different prompt and budget than production (`instrumentation.ts`) — one measurement path (added by the gap sweep) | S |
+| M10 | The mutation step never runs the tests unmutated first, so a checkout whose tests cannot run scores 1.0 (added by the gap sweep) | S |
 
-*Added by the gap sweep:* **M9** — the benchmark wrapper passes on only `generate`, so every `m0` benchmark attempt ran a different prompt and budget than production (`instrumentation.ts`); **M10** — the mutation step never runs the tests unmutated first, so a checkout whose tests cannot run scores 1.0.
 
 ### Tier 2 — the product workstreams (the positioning)
 
@@ -102,11 +103,114 @@ No further model runs start until S1–S2 are fixed; nothing is offered to a use
 | T3 | A verification controller and one stop-reason table shared by the loop, the runner and the evidence bundle | M |
 | T4 | `index.ts` as a command registry, with `queue` in its own module (strangler, between suite runs) | L |
 | T5 | The dashboard server's 1,045-line closure split by route group | M |
-| T6 | The design rebuilt as `SPINE.md`, one specification per subsystem and a decisions log | L |
+| T6 ✅ | The design rebuilt as `SPINE.md`, one specification per subsystem and a decisions log. *Process — no subsystem spec; done in design v3.* | L |
 | T7 | Paired trials with statistics, and the planning measure | M |
 | T8 | Self-improvement admits a change only on a significant paired gain | S |
-| T9 | The DEFINITION_OF_DONE test gaps: missing negative tests, one vanity assertion, skips on Linux | S |
+| T9 | The DEFINITION_OF_DONE test gaps: missing negative tests, one vanity assertion, skips on Linux. *Process — no subsystem spec; carried by DEFINITION_OF_DONE §2 and workstream B5.* | S |
 | T10 | Executable documentation checks: README ↔ the front door, config schema ↔ `config.ts`, the `SEKHEMET_*` inventory, model names ↔ registry, `file:` links, spec front matter ↔ the SPINE status table | M |
+
+
+### Changes added by the specifications (2026-09-22)
+
+The design v3 specifications found gaps the Phase A programme had no ID for. Each keeps the ID its spec gave it; the spec holds its acceptance criteria, and the workstream column says where [MODERNIZATION_PLAN.md](MODERNIZATION_PLAN.md) builds it.
+
+| ID | Change | Spec | Workstream |
+| --- | --- | --- | --- |
+| NEW-context-1 | One token estimator calibrated to the model | [context](../design/specs/context.md) | B2.1 |
+| NEW-context-2 | Budgets asserted on the live path | [context](../design/specs/context.md) | B2.1 |
+| NEW-context-3 | One allocator for every role | [context](../design/specs/context.md) | B2.1 |
+| NEW-context-4 | Rules that are scoped exactly, kept once, and credited fairly | [context](../design/specs/context.md) | B2.1 |
+| NEW-context-5 | The repo map's weighting and cache, and condensing savings | [context](../design/specs/context.md) | B2.1 |
+| NEW-context-6 | The context version gates qualification; prompt changes are measured | [context](../design/specs/context.md) | B2.1 |
+| NEW-dashboard-1 | Evidence that stays readable | [dashboard](../design/specs/dashboard.md) | B4.6 |
+| NEW-dashboard-2 | A web layer under test, with one vocabulary | [dashboard](../design/specs/dashboard.md) | B4.6 |
+| NEW-dashboard-3 | The model's output, live, on the Steps tab | [dashboard](../design/specs/dashboard.md) | B4.6 |
+| NEW-dashboard-4 | Settings | [dashboard](../design/specs/dashboard.md) | B4.2 |
+| NEW-dashboard-5 | Review for a team, and review that forces a look | [dashboard](../design/specs/dashboard.md) | B4.6 |
+| NEW-design-stage-5 | The Researcher asked early, with the card in hand | [design-stage](../design/specs/design-stage.md) | B4.4 |
+| NEW-design-stage-1 | Design-stage judgement | [design-stage](../design/specs/design-stage.md) | B4.4 |
+| NEW-design-stage-2 | Research that can be verified and does not park wrongly | [design-stage](../design/specs/design-stage.md) | B4.4 |
+| NEW-design-stage-3 | Project documents in the repository, generated from the ledger | [design-stage](../design/specs/design-stage.md) | B4.4 |
+| NEW-design-stage-4 | Deep research that says how hard it looked | [design-stage](../design/specs/design-stage.md) | B4.4 |
+| NEW-extensibility-1 | Board-lifecycle hooks | [extensibility](../design/specs/extensibility.md) | B3.3 |
+| NEW-extensibility-2 | Hooks that fail visibly | [extensibility](../design/specs/extensibility.md) | B3.3 |
+| NEW-extensibility-3 | MCP on the official SDK | [extensibility](../design/specs/extensibility.md) | B3.3 |
+| NEW-extensibility-4 | Skills in the Agent Skills format | [extensibility](../design/specs/extensibility.md) | B3.3 |
+| NEW-gates-1 | Unenforced invariants shown to a person | [gates](../design/specs/gates.md) | B2.3 |
+| NEW-gates-2 | Judge only what the card wrote | [gates](../design/specs/gates.md) | B2.3 |
+| NEW-gates-3 | Gate economics and flaky tests | [gates](../design/specs/gates.md) | B2.3 |
+| NEW-gates-4 | The visual layer to its design | [gates](../design/specs/gates.md) | B2.3 |
+| NEW-gates-5 | The gates the old design listed: templates, the claim gate, bundled static-analysis rules | [gates](../design/specs/gates.md) | B2.3 |
+| NEW-gates-6 | Tests that can fail, checked before the build | [gates](../design/specs/gates.md) | B2.3 |
+| NEW-gates-7 | Gates for existing codebases | [gates](../design/specs/gates.md) | B2.3 |
+| NEW-gates-8 | The change kind and the test-strength record on the card | [gates](../design/specs/gates.md) | B2.3 |
+| NEW-integrations-1 | Idempotent import | [integrations](../design/specs/integrations.md) | B4.9 |
+| NEW-integrations-2 | Owner and delegate on every tracker | [integrations](../design/specs/integrations.md) | B4.9 |
+| NEW-integrations-3 | External results name their source | [integrations](../design/specs/integrations.md) | B4.9 |
+| NEW-kernel-1 | Hash chain v3 | [kernel](../design/specs/kernel.md) | B3.1 |
+| NEW-kernel-2 | A `principal` column on events | [kernel](../design/specs/kernel.md) | B3.1 |
+| NEW-kernel-3 | Held as a typed field | [kernel](../design/specs/kernel.md) | B3.1 |
+| NEW-kernel-4 | Numbered migrations and one column table | [kernel](../design/specs/kernel.md) | B3.1 |
+| NEW-kernel-5 | The lifecycle's missing conditions | [kernel](../design/specs/kernel.md) | B3.1 |
+| NEW-kernel-6 | Who is on a card, and who built each attempt | [kernel](../design/specs/kernel.md) | B3.1 |
+| NEW-kernel-7 | An erasable ledger | [kernel](../design/specs/kernel.md) | B3.1 |
+| NEW-kernel-8 | Requirement versions and gate-result sources in the record | [kernel](../design/specs/kernel.md) | B3.1 |
+| NEW-measurement-1 | Self-describing, isolated runs | [measurement](../design/specs/measurement.md) | B2.4 |
+| NEW-measurement-2 | Diagnostics on real inputs | [measurement](../design/specs/measurement.md) | B2.4 |
+| NEW-measurement-3 | Adoptions per phase | [measurement](../design/specs/measurement.md) | B2.4 |
+| NEW-measurement-4 | Test strength and human-built work in the measures | [measurement](../design/specs/measurement.md) | B2.4 |
+| NEW-models-1 | Calibrate the reference host and correct its tier | [models](../design/specs/models.md) | B2.2 |
+| NEW-models-2 | Floors and the watchdog on every path | [models](../design/specs/models.md) | B2.2 |
+| NEW-models-3 | Declared hours and swap batching | [models](../design/specs/models.md) | B2.2 |
+| NEW-models-4 | One profile, one role enum, one construction path, a live registry | [models](../design/specs/models.md) | B2.2 |
+| NEW-models-5 | Tool-arm qualification | [models](../design/specs/models.md) | B2.2 |
+| NEW-models-6 | Competence rows that can improve routing | [models](../design/specs/models.md) | B2.2 |
+| NEW-models-7 | Weights that a new user can obtain | [models](../design/specs/models.md) | B2.2 |
+| NEW-models-8 | Engines as adapters, qualified per combination | [models](../design/specs/models.md) | B2.2 |
+| NEW-models-9 | One scheduler owns residency | [models](../design/specs/models.md) | B2.2 |
+| NEW-models-10 | Adopting a model is a measured decision | [models](../design/specs/models.md) | B2.2 |
+| NEW-planner-pm-1 | Points on the board | [planner-pm](../design/specs/planner-pm.md) | B4.3 |
+| NEW-planner-pm-2 | Signals propose, never mutate | [planner-pm](../design/specs/planner-pm.md) | B4.3 |
+| NEW-planner-pm-3 | Split to the measured horizon | [planner-pm](../design/specs/planner-pm.md) | B4.3 |
+| NEW-planner-pm-4 | The goal loop re-evaluates on the right events | [planner-pm](../design/specs/planner-pm.md) | B4.3 |
+| NEW-planner-pm-5 | Every signal response is carried out, as a proposal where a person owns the field | [planner-pm](../design/specs/planner-pm.md) | B4.3 |
+| NEW-planner-pm-6 | Planning on existing codebases | [planner-pm](../design/specs/planner-pm.md) | B4.3 |
+| NEW-planner-pm-7 | Test approval and strength by depth profile | [planner-pm](../design/specs/planner-pm.md) | B4.3 |
+| NEW-review-git-1 | A rebase conflict goes back to the Worker as typed failures | [review-git](../design/specs/review-git.md) | B3.2 |
+| NEW-review-git-2 | Restacked children re-run their gates | [review-git](../design/specs/review-git.md) | B3.2 |
+| NEW-review-git-3 | Per-package gates in card verification | [review-git](../design/specs/review-git.md) | B3.2 |
+| NEW-review-git-4 | Versions follow SemVer's 0.y.z rule, per slice | [review-git](../design/specs/review-git.md) | B4.3 |
+| NEW-review-git-5 | Review for a team: who may accept, who should look | [review-git](../design/specs/review-git.md) | B3.2 |
+| NEW-runtime-1 | One supervisor, an atomic lease | [runtime](../design/specs/runtime.md) | B3.3 |
+| NEW-runtime-2 | Kills that reach every descendant | [runtime](../design/specs/runtime.md) | B3.3 |
+| NEW-runtime-3 | Crash recovery and bounded rounds | [runtime](../design/specs/runtime.md) | B3.3 |
+| NEW-runtime-4 | Bounded disk | [runtime](../design/specs/runtime.md) | B3.3 |
+| NEW-runtime-5 | The night does what it promises | [runtime](../design/specs/runtime.md) | B3.3 |
+| NEW-runtime-6 | One scheduler, fair across people, per-slot leases | [runtime](../design/specs/runtime.md) | B4.9 |
+| NEW-runtime-7 | Every budget the spec names is enforced | [runtime](../design/specs/runtime.md) | B3.3 |
+| NEW-runtime-8 | Backup, restore, export and upgrades that lose nothing | [runtime](../design/specs/runtime.md) | B3.1 |
+| NEW-runtime-9 | Telemetry as specified | [runtime](../design/specs/runtime.md) | B3.3 |
+| NEW-runtime-10 | Pause a project | [runtime](../design/specs/runtime.md) | B3.3 |
+| NEW-security-1 | Flag files that execute later | [security](../design/specs/security.md) | B1 |
+| NEW-security-2 | The air-gap self-test checks at the proxy | [security](../design/specs/security.md) | B1 |
+| NEW-security-3 | Small hardening items | [security](../design/specs/security.md) | B1 |
+| NEW-security-4 | Injection fixtures run against the real Worker | [security](../design/specs/security.md) | B1 |
+| NEW-security-5 | Documentation and skills that match the air-gapped project | [security](../design/specs/security.md) | B1 |
+| NEW-security-6 | An Ask that a person really answers | [security](../design/specs/security.md) | B1 |
+| NEW-security-7 | Erase a secret the scanner missed | [security](../design/specs/security.md) | B3.1 |
+| NEW-surface-1 | One user directory | [surface](../design/specs/surface.md) | B4.1 |
+| NEW-surface-2 | A terminal board in the board's words | [surface](../design/specs/surface.md) | B3.3 |
+| NEW-surface-3 | The card layer of the configuration is real or removed | [surface](../design/specs/surface.md) | B3.3 |
+| NEW-surface-4 | One install path per audience | [surface](../design/specs/surface.md) | B4.1 |
+| NEW-surface-5 | One recorded run profile | [surface](../design/specs/surface.md) | B3.3 |
+| NEW-worker-loop-1 | Repetition refusals that survive alternation and truncation | [worker-loop](../design/specs/worker-loop.md) | B2.1 |
+| NEW-worker-loop-2 | The ladder's dead fields | [worker-loop](../design/specs/worker-loop.md) | B2.1 |
+| NEW-worker-loop-3 | Remove the session's dead direct-tool API | [worker-loop](../design/specs/worker-loop.md) | B2.1 |
+| NEW-worker-loop-4 | `ask` that can wait for a person without stopping the Worker | [worker-loop](../design/specs/worker-loop.md) | B2.1 |
+| NEW-worker-loop-5 | One attempt record, a grounded re-plan, and equal repair chances | [worker-loop](../design/specs/worker-loop.md) | B2.1 |
+| NEW-worker-loop-6 | Mechanical edits as tools | [worker-loop](../design/specs/worker-loop.md) | B2.1 |
+| NEW-worker-loop-7 | Language servers as bounded tenants, reached through LSP | [worker-loop](../design/specs/worker-loop.md) | B2.1 |
+| NEW-worker-loop-8 | MCP tools without their prefill cost | [worker-loop](../design/specs/worker-loop.md) | B2.1 |
 
 ## Decisions only the owner can make
 

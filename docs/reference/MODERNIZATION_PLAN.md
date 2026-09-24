@@ -123,7 +123,14 @@ Each workstream is one session: specification → numbered plan → failing test
 | B4.9 | GitHub first; then the company-server minimum (bind, identity, Accept role) | P9, D7 | [integrations](../design/specs/integrations.md), [runtime](../design/specs/runtime.md) | L |
 | **B5** | **Structure**, as each workstream above touches it — never on its own | T1–T5, T8–T10 | per spec | — |
 
+The table names each workstream's Phase A changes; the 95 further changes the specifications added (`NEW-<spec>-<n>`) are listed in [COVERAGE.md](COVERAGE.md) with the workstream that builds each, so every change has a place in this sequence.
+
 A large file is split only inside a workstream already working in it, behind tests, and its complexity must go down, not move (rule 6).
+
+Two rules carried from the 2026-09-17 design govern the order and the estimates:
+
+- **Depth before reach.** The core — the Worker loop, gates, context assembly, review and measurement — is held to the full bar and is what the harness is judged on. Supporting surface (the SDK, notifications, the air-gap kit, the integration catalogue) may stay thin, and its spec says so. A thin supporting surface is a decision; a thin core is a defect.
+- **A package is not a card.** Several mechanisms are packages built over many cards behind an interface, never one card: deep research, the GitHub adapter, the language-server pool, the repo map with its ranking and budget fit, the failure-parser set, structural diffs, the virtualised board, the visual gate stack, the source index (T2) and the requirement graph (P13). A plan that shows one of them as a single card is wrong by an order of magnitude.
 
 ## Phase C — measure, then release
 

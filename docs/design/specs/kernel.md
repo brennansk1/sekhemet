@@ -8,23 +8,27 @@ code:
   - packages/kernel/src/records.ts
   - packages/kernel/src/schema.ts
   - packages/kernel/src/types.ts
+  - packages/kernel/src/blobs.ts
+  - packages/kernel/src/order_key.ts
   - packages/board/src/board_service.ts
 tests:
   - packages/kernel/tests/log.spec.ts
   - packages/kernel/tests/card_store.spec.ts
   - packages/kernel/tests/records.spec.ts
   - packages/kernel/tests/pragmas.spec.ts
+  - packages/kernel/tests/dossier.spec.ts
   - packages/board/tests/board.spec.ts
   - packages/board/tests/entry_conditions.spec.ts
   - packages/board/tests/runner_backpressure.spec.ts
-changes: [S4, S7, P3, NEW-kernel-1, NEW-kernel-2, NEW-kernel-3, NEW-kernel-4]
+  - apps/harness/tests/runner_wiring.spec.ts
+changes: [S4, S7, P3, NEW-kernel-1, NEW-kernel-2, NEW-kernel-3, NEW-kernel-4, NEW-kernel-5, NEW-kernel-6, NEW-kernel-7, NEW-kernel-8]
 ---
 
 # Kernel: the event log, projections and the card lifecycle
 
 ## 1. Purpose
 
-The kernel is the system of record. It keeps an append-only, hash-chained event log, derives the board from it, and enforces the one state machine every card moves through. It carries two spine rules directly: **the event log is the only durable channel**, and **a card is the unit of work**. It is also where "the model never certifies its own work" becomes unbypassable, because no writer can move a card past a gate the kernel's transition law refuses.
+The kernel is the system of record. It keeps an append-only, hash-chained event log, derives the board from it, and enforces the one state machine every card moves through. It carries two spine rules directly: **the event log is the only durable channel**, and **a card is the unit of work**. It is also where "the model never certifies its own work" becomes unbypassable, because no writer can move a card past a gate the kernel's transition law refuses. Because every later format (exports, sync, measurement, erasure) reads the event envelope and the card record, both are fixed here now, before teams depend on them.
 
 ## 2. Behaviour
 
@@ -33,50 +37,92 @@ The kernel is the system of record. It keeps an append-only, hash-chained event 
 1. Work nests four levels deep: workspace, project, card, subtask. A card may have a parent card; a subtask may not have children. A deeper nesting is refused at creation with `CardStructureError("hierarchy_depth")` before anything reaches the ledger.
 2. At most three projects are active at once by default (the workspace cap); activating a fourth is refused with `CardStructureError("project_cap")`.
 3. Card dependencies form a directed acyclic graph. Adding an edge that closes a cycle is refused with the cycle's path. A card is eligible to start only when every card it depends on is `done`.
-4. Two running cards whose declared scopes overlap are never run at once; the board reports the overlap and the runner serialises them. A held card (rule 18) does not count as running.
+4. Two running cards whose declared scopes overlap are never run at once; the board reports the overlap and the runner serialises them. A held card (rule 24) does not count as running.
 5. Every card has a human-readable **key** — the project's prefix and a number, such as `CHR-12` — assigned at creation from a per-project counter carried in the `card/created` payload. Keys are monotonic, never reused (not even after a card is rejected), and stable across replay; the dashboard, the CLI and integrations show the key, while the internal id stays the join key.
-6. The shapes are the TypeScript types in `packages/kernel/src/types.ts` (`CardRecord`, `EventRecord`, `AttemptRecord`, `StepRecord`, `GateResultRecord`, `EvidenceBundleRecord`, `DecisionRequestRecord`, `CompetenceEntry`, `ProjectRecord`). The SQL is `packages/kernel/src/schema.ts`. Goals belong to [planner-pm.md](planner-pm.md); evidence bundle contents to [gates.md](gates.md).
+6. The shapes are the TypeScript types in `packages/kernel/src/types.ts` (`CardRecord`, `EventRecord`, `AttemptRecord`, `StepRecord`, `GateResultRecord`, `EvidenceBundleRecord`, `DecisionRequestRecord`, `CompetenceEntry`, `ProjectRecord`). The SQL is `packages/kernel/src/schema.ts`. Goals belong to [planner-pm.md](planner-pm.md); evidence bundle contents to [gates.md](gates.md). What each record holds, so that no field is lost to a later rewrite:
+   - **Project** (`ProjectRecord`): id, name, root path, git branch, status (`active`, `paused`, `archived`) and review minutes per day. The old design's per-project "gate contract, conventions ref, stage, playbook ref" are not columns: the gate contract is `.sekhemet/gates.toml` ([gates.md](gates.md)), conventions and the playbook are guidance on the ledger ([context.md](context.md)), and the stage is the design stage's ([design-stage.md](design-stage.md)).
+   - **Project status** is a rollup of its top-level cards (rule 30); it is never set independently of them except by a person pausing or archiving the project.
+   - **Attempt**: card, attempt number, repair rung (1–4), tool arm (`A`, `B`, `C`), model, status (`running`, `passed`, `failed`, `halted`), stop reason, tokens and seconds used, evidence id, and the fork and resume points it came from (`schema.ts:163-179`); plus `builtBy` (NEW-kernel-6).
+   - **Step**: attempt, step index, the calls, the context pack id, the repository state hash, prompt and completion tokens, duration, stop reason and the checkpoint's `git_ref` (`schema.ts:181-196`). The old step fields `success` and `tokens_condensed` are not stored: a step's verdict is its gate results, and condensing savings are [context.md](context.md)'s measure (rule 29 there).
+   - **Context pack** (`ContextPack`, `blobs.ts:52`): card, attempt, step, model, the exact system prompt, prompt, tool names and reasoning setting of one request, stored as a content-addressed blob. Per-zone token counts and the prefix hash are the per-turn record of [context.md](context.md) (rule 29), not fields of the pack.
+   - **Checkpoint**: a `step/checkpointed` event sets the step's `git_ref` (`records.ts:253`), so `sekhemet replay` and rewind find the commit on the ledger. When checkpoints are committed is [review-git.md](review-git.md)'s (R1).
+7. Every event carries typed, indexed association columns — `card_id`, `attempt_id`, `step_id` — beside its payload (`schema.ts:76`, `:90-91`, `:106`), so a card's history is read by index, never by parsing payloads.
 
 ### The event log
 
-7. Every change to durable state is an event appended to one SQLite table, `events`, in `.sekhemet/events.db`. Events are immutable; a correction is a new event. The database rejects any `UPDATE` or `DELETE` on `events`.
-8. Each event carries a SHA-256 `payloadHash` over the canonical (key-sorted) JSON of its payload, and a chain `hash` over its identity, its association columns, its payload hash and the previous event's hash. There is **one** chain formula per recorded `hash_version`, defined only in `EventLog.computeHash` (`log.ts`); this spec and every other document link to it rather than restating it. The formula covers the event's timestamp (`created_at`) and, for events by a person, the principal.
-9. Verifying the chain names the first corrupt `seq`. Verification is incremental: it starts from the last verified `seq` and re-hashes only newer events.
-10. A row written under an earlier formula verifies under that formula; a row with no recorded version is verified by the legacy rule the code keeps for it.
-11. The chain head is anchored outside SQLite: every accepted card's merge commit carries `Ledger-Head: <seq>:<hash>` (written by the Accept path, [review-git.md](review-git.md)), and `sekhemet log` cross-checks the newest anchor against the ledger, which exposes a truncated tail.
-12. **One validated transaction per event.** A write validates its payload (against the event type's schema and the projection's constraints), then appends the event and applies its projection inside one `BEGIN IMMEDIATE` transaction. If validation or projection fails, nothing is appended. A poison event — one that cannot be projected — can therefore never enter the ledger.
-13. The board, attempts, steps, gate results, evidence records, decisions and competence rows are projections of the log. `rebuildProjections()` replays the log from `seq` 1 and produces byte-identical projections; `verifyProjections()` compares them without writing. `sekhemet log` prints the chain verdict and the projection verdict, exits 1 on drift, and `sekhemet log --rebuild` rebuilds.
-14. Every value a projection needs (ids, order keys, timestamps) is resolved before the event is appended and carried in its payload, so a replay never generates a value.
-15. Nothing durable lives outside the ledger. A file under `.sekhemet/` is either a content-addressed blob that an event references by hash (context packs, evidence bundles, transcripts) or a cache that is safe to delete. A decision, a candidate rule or a pointer to "the latest" anything that exists only in a file is a defect.
-16. Every event names its **actor** from one closed set (`EVENT_ACTORS`, enforced by a `CHECK` and by `append`): *which role or component* wrote it. Separately, a `principal` column names *which person* it acts for — required when the actor is `human`, and on any event a person caused through a machine actor (an MCP client, the dashboard, an auto-accept a person switched on); null for purely machine events. The principal is covered by the chain hash and carried through replay. The identity layer resolves it ([integrations.md](integrations.md) owns identity and who may Accept, [DEC-06](../DECISIONS.md#dec-06)); on a single-user install it is the git `user.email`, else the OS user. The actor set stays fixed; people are never added to it.
+8. Every change to durable state is an event appended to one SQLite table, `events`, in `.sekhemet/events.db`. Events are immutable; a correction is a new event. The database rejects any `UPDATE` or `DELETE` on `events`. The only deletion the kernel ever performs is of an event's **private part** by a recorded erasure (rule 34); the event row itself is never touched.
+9. Each event carries a SHA-256 `payloadHash` over the canonical (key-sorted) JSON of its payload, and a chain `hash` over its identity, its association columns, its payload hash and the previous event's hash. There is **one** chain formula per recorded `hash_version`, defined only in `EventLog.computeHash` (`log.ts`); this spec and every other document link to it rather than restating it. From v3 the formula covers the event's timestamp (`created_at`), the principal, and the salted commitment to the event's private part (rule 33).
+10. Verifying the chain names the first corrupt `seq`. Verification is incremental: it starts from the last verified `seq` and re-hashes only newer events.
+11. A row written under an earlier formula verifies under that formula; a row with no recorded version is verified by the legacy rule the code keeps for it.
+12. The chain head is anchored outside SQLite: every accepted card's merge commit carries `Ledger-Head: <seq>:<hash>` (written by the Accept path, [review-git.md](review-git.md)), and `sekhemet log` cross-checks the newest anchor against the ledger, which exposes a truncated tail. The chain is never rewritten — rewriting would invalidate every anchor already in git.
+13. **One validated transaction per event.** A write validates its payload (against the event type's schema and the projection's constraints), then appends the event and applies its projection inside one `BEGIN IMMEDIATE` transaction. If validation or projection fails, nothing is appended. A poison event — one that cannot be projected — can therefore never enter the ledger.
+14. The board, attempts, steps, gate results, evidence records, decisions, dossiers and competence rows are projections of the log. `rebuildProjections()` replays the log from `seq` 1 and produces byte-identical projections; `verifyProjections()` compares them without writing. `sekhemet log` prints the chain verdict and the projection verdict, exits 1 on drift, and `sekhemet log --rebuild` rebuilds.
+15. Every value a projection needs (ids, order keys, timestamps) is resolved before the event is appended and carried in its payload, so a replay never generates a value. A card's **order key** is a lexicographic fractional index (`order_key.ts`, `keyBetween`): a move between two cards gets a key strictly between theirs without renumbering any other card.
+16. Nothing durable lives outside the ledger. A file under `.sekhemet/` is either a content-addressed blob that an event references by hash (context packs, evidence bundles, transcripts) or a cache that is safe to delete. A decision, a candidate rule or a pointer to "the latest" anything that exists only in a file is a defect.
+17. **Model-visible means logged.** The exact prompt of every model request is stored as a context pack, by hash, *before* the request is sent, and the step records the pack's id; if the pack cannot be stored the request is not sent (`card_runner.ts:536-552`). Anything a model saw can be reconstructed from the ledger and its blobs — except content erased by a recorded `ledger/erased` event, which replay names as a gap (rule 34; the spine wording is §8 Q5).
+18. **Readers.** Consumers read the log through the `EventLog` API: `getEvents(fromSeq, limit)` pages by `seq`; `getEventsByCard`, `getEventsByTypes` and `getEventsByCardAndTypes` read by index; `subscribe(filter, callback)` notifies a subscriber of each matching event only after its transaction commits, so a subscriber never acts on an event that was rolled back (`log.ts:201-251`). The dashboard's stream and the HTTP event routes are [runtime.md](runtime.md)'s.
+19. Every event names its **actor** from one closed set (`EVENT_ACTORS`, enforced by a `CHECK` and by `append`): *which role or component* wrote it. Separately, a `principal` column names *which person* it acts for — required when the actor is `human`, and on any event a person caused through a machine actor (an MCP client, the dashboard, an auto-accept a person switched on); null for purely machine events. The principal is an **opaque, stable subject id** (`p_…`, random at creation), never an email or a name; the person's name, email and avatar live in a `person/*` record whose personal fields are private (rule 33) and erasable. On a single-user install the harness creates one principal and records the git `user.email` (else the OS user) in that person's private record. The principal is covered by the chain hash and carried through replay. The identity layer resolves it ([integrations.md](integrations.md) owns identity and who may Accept, [DEC-06](../DECISIONS.md#dec-06)). The actor set stays fixed; people are never added to it. Git trailers such as `Accepted-by` keep a display name, as git authorship already does ([review-git.md](review-git.md)).
+20. **The card dossier.** Everything the team learns about a card is a typed event on the ledger, one type per kind: `card/lesson`, `card/note`, `card/question` (default actor `worker`), `card/answer` (`manager`), `card/research` (`researcher`), `card/review` (`reviewer`) and `card/send_back` (`human`), each with non-empty text and optional attempt number, `inReplyTo`, sources and verdict (`types.ts:231-275`). One reader, `getDossier(cardId)`, returns them oldest first and threads each answer under the question it names, so an answer written for another card can never attach to this one (`card_store.ts:646`, `:719`). In-memory maps, side files and notes that go nowhere are replaced by it. Which role reads the dossier, and when, is [worker-loop.md](worker-loop.md)'s (the runner), [review-git.md](review-git.md)'s (the Reviewer) and [planner-pm.md](planner-pm.md)'s (Seshat).
+
+### Who is on a card
+
+21. A card names three people-or-agents in typed fields, never in a free string: **`owner`** — the principal responsible for it (the board's Assignee filter reads the owner); **`delegate`** — who builds it, `{kind: "worker" | "person", id}` or none; and **`accepter`** — the principal who accepted it, empty until then. A change of delegate appends `card/delegated {from, to}` and a change of owner appends `card/owner_changed`, each naming the principal who made it. The legacy `assignee` string ("worker", "human" or a name, `types.ts:194`) is migrated into these fields and retired (NEW-kernel-6).
+22. **Who built each attempt.** Every attempt, and every checkpoint, records `builtBy {kind: "worker" | "person", id}`. A person-built card passes exactly the same entry conditions and gates as a Worker-built one; the only bypass is the recorded `override:` of rule 28. Person-built attempts are excluded from the Worker's pass rate, the competence model and every playbook signal, so the measured record of the Worker never mixes in people's work ([models.md](models.md), [measurement.md](measurement.md)).
 
 ### The state machine
 
-17. A card is in exactly one of nine states, stored as `backlog`, `ready`, `planning`, `in_progress`, `verify`, `review`, `done`, `parked`, `rejected`. The stored value, the column heading in the pipeline view, error messages and the documents use the same nine names. **The nine-state machine is the truth.** The board's five familiar columns (Backlog, To Do, In Progress, In Review, Done, plus On Hold when non-empty, [dashboard.md](dashboard.md)) are a read-only projection over these states: no column exists in storage, a move on the board is a transition request in stored states, and no rule in this spec is expressed in board columns.
-18. **Held is not a state.** A card whose move was refused by back-pressure keeps its state and is marked held, with the state it waits for and the reason, as a typed field recorded by `card/held` and cleared by `card/released`. Nothing encodes a state in free text.
-19. The legal edges are one table, `LEGAL_TRANSITIONS`. Every state has at least one exit a person can reach from the command line: `parked → ready` (`sekhemet unpark`) and `rejected → ready` (`sekhemet reopen`, specified in [review-git.md](review-git.md)).
-20. **The transition law is in the kernel.** A status change is a compare-and-set: the caller names the status it expects, and the kernel checks the edge against the **stored** status. A mismatch is refused (`stale_from`), an illegal edge is refused (`illegal_transition`), and a move to the state the card is already in appends nothing. There is no other way to change a card's status: the board, the runner, research cards, external review, decisions, sessions, recurring templates, the PM's slash commands, MCP and the dashboard all go through it.
-21. On top of the law, the board adds entry conditions, per-column WIP limits and back-pressure. When the harness runs, entry conditions are always on:
+23. A card is in exactly one of nine states, stored as `backlog`, `ready`, `planning`, `in_progress`, `verify`, `review`, `done`, `parked`, `rejected`. The stored value, the column heading in the pipeline view, error messages and the documents use the same nine names. **The nine-state machine is the truth.** The board's five familiar columns (Backlog, To Do, In Progress, In Review, Done, plus On Hold when non-empty, [dashboard.md](dashboard.md)) are a read-only projection over these states: no column exists in storage, a move on the board is a transition request in stored states, and no rule in this spec is expressed in board columns.
+24. **Held is not a state.** A card whose move was refused by back-pressure keeps its state and is marked held, with the state it waits for and the reason, as a typed field recorded by `card/held` and cleared by `card/released`. Nothing encodes a state in free text.
+25. The legal edges are one table, `LEGAL_TRANSITIONS` (`board_service.ts:32`):
+
+    | From | To |
+    | --- | --- |
+    | `backlog` | `ready`, `parked`, `rejected` |
+    | `ready` | `planning`, `in_progress`, `backlog`, `parked`, `rejected` |
+    | `planning` | `ready`, `in_progress`, `backlog`, `parked`, `rejected` |
+    | `in_progress` | `verify`, `ready`, `planning`, `parked`, `rejected` |
+    | `verify` | `review`, `planning`, `in_progress`, `ready`, `parked`, `rejected` |
+    | `review` | `done`, `planning`, `ready`, `in_progress`, `parked`, `rejected` |
+    | `done` | `ready` |
+    | `parked` | `ready`, `planning`, `backlog`, `rejected` |
+    | `rejected` | `backlog`, `ready` |
+
+    The flows the edges carry: **Ready → Planning** when the Planner claims a card to decompose it or to re-plan it; **Planning → In Progress** (or back to Ready) once its criteria, tests and scope satisfy the entry conditions; **In Progress → Verify** when an attempt ends; **Verify → Planning** when the gates ran and failed — the card needs a new plan, and Verify is a transition, not a place cards accumulate (`card_runner.ts:1664-1676`); **In Progress → Planning** on `replan_requested` or `rebase_conflict`; **Review → Ready** when a person sends a card back (a returned card is re-queued, not resumed mid-attempt; [DEC-24](../DECISIONS.md#dec-24--deliberate-reversals-in-design-v3), [review-git.md](review-git.md)). Every state has at least one exit a person can reach from the command line: `parked → ready` (`sekhemet unpark`) and `rejected → ready` (`sekhemet reopen`, specified in [review-git.md](review-git.md)).
+26. **The transition law is in the kernel.** A status change is a compare-and-set: the caller names the status it expects, and the kernel checks the edge against the **stored** status. A mismatch is refused (`stale_from`), an illegal edge is refused (`illegal_transition`), and a move to the state the card is already in appends nothing. There is no other way to change a card's status: the board, the runner, research cards, external review, decisions, sessions, recurring templates, the PM's slash commands, MCP and the dashboard all go through it.
+27. On top of the law, the board adds entry conditions, per-column WIP limits and back-pressure. When the harness runs, entry conditions are always on, and they never depend on who built the card (rule 22):
 
     | Target | Entry condition |
     | --- | --- |
     | `ready` (from `backlog`) | Acceptance criteria or acceptance tests present |
     | `ready`, `planning`, `in_progress` | Every dependency is `done` |
+    | `planning` | A difficulty score (1–10) is recorded, or the Planner scores the card on entry; a Planner model is resolvable for the project (NEW-kernel-5) |
     | `in_progress` | A declared scope, unless the card is a parent (a parent never runs itself) |
     | `verify` | The current attempt ended with a recorded stop reason; Review is below its WIP limit (back-pressure) |
     | `review` | The latest evidence bundle ran at least one gate and every blocking gate passed; no gate was unavailable |
     | `done` | An accepting decision ([review-git.md](review-git.md)); or, for a parent, the rollup rule below |
+    | `parked` | A recorded reason: a stop reason whose table entry parks ([worker-loop.md](worker-loop.md)), a person's reason, or a `default_deny` decision past its deadline ([planner-pm.md](planner-pm.md)) (NEW-kernel-5) |
 
-    Red-first — acceptance tests staged and failing before work — is enforced by the runner at the start of `in_progress` and specified in [gates.md](gates.md).
-22. **Overrides.** A person may move a card past an illegal edge or a failed entry condition by giving a reason prefixed `override:`. The override is recorded on the ledger as `card/override`, naming the principal and what was overridden. Only an actor `human` with a principal may override; `mcp`, `harness`, `worker`, `planner` and every other actor may not. No override passes a failing security-layer gate into `review` or `done`.
-23. **Back-pressure.** When Review holds as many cards as its WIP limit, no card may enter `verify`; the runner holds the card instead of failing it. How the Review limit is computed from human review time is specified in [review-git.md](review-git.md) (S6).
-24. **Rollup.** A parent card reaches `done` only when every child is `done` **and** the project's blocking gates pass on the merged result. The rollup records `card/rollup` with the children and the verdict, moves the parent to `done` along legal edges when it passes, and to `planning` with the failures when it does not. Success is never inferred from children alone.
-25. A revised card returns to Review only through the same `review` entry condition, so every revision re-passes every gate. Protection of what `main` already guarantees is the regression gate ([gates.md](gates.md)).
-26. **Rewind and fork** (the commands are [runtime.md](runtime.md)'s) record `card/rewound` or `card/fork_requested` with the checkpoint, keep the abandoned state under a ref, and return the card to `ready`. Evidence recorded before a rewind no longer satisfies the `review` entry condition: rewinding past a gate pass invalidates it.
+    Red-first — acceptance tests staged and failing, at an assertion, before work — is enforced by the runner at the start of `in_progress` and specified in [gates.md](gates.md). A separate "plan exists" condition on `in_progress` (the old design's) is §8 Q6.
+28. **Overrides.** A person may move a card past an illegal edge or a failed entry condition by giving a reason prefixed `override:`. The override is recorded on the ledger as `card/override`, naming the principal and what was overridden. Only an actor `human` with a principal may override; `mcp`, `harness`, `worker`, `planner` and every other actor may not. No override passes a failing security-layer gate into `review` or `done`. The HTTP route and the CLI carry the override; how the dashboard offers it is [dashboard.md](dashboard.md)'s.
+29. **Back-pressure.** When Review holds as many cards as its WIP limit, no card may enter `verify`; the runner holds the card instead of failing it. How the Review limit is computed from human review time is specified in [review-git.md](review-git.md) (S6); Worker-built and person-built cards count alike.
+30. **Rollup.** A parent card reaches `done` only when every child is `done` **and** the project's blocking gates pass on the merged result. The rollup records `card/rollup` with the children and the verdict, moves the parent to `done` along legal edges when it passes, and to `planning` with the failures when it does not. Success is never inferred from children alone. A project's status is likewise derived from its top-level cards (rule 6).
+31. **A revision never loses what Review saw.** A revised card returns to Review only through the same `review` entry condition, so every revision re-passes every gate. When a gate that passed in the card's latest passing evidence (its Review snapshot) fails on a later attempt, the card returns to `planning` with the regression named — "`test` passed at Review (`ev_…`) and fails now" (`card_runner.ts:1397`, `:1672`). Protection of what `main` already guarantees is the regression gate ([gates.md](gates.md)).
+32. **Rewind and fork** (the commands are [runtime.md](runtime.md)'s) record `card/rewound` or `card/fork_requested` with the checkpoint, keep the abandoned state under a ref, and return the card to `ready`. Evidence recorded before a rewind no longer satisfies the `review` entry condition: rewinding past a gate pass invalidates it.
+
+### Privacy and erasure
+
+33. **Each event has a structural part and a private part.** The `payload` holds structural fields only — ids, states, numbers, hashes, enumerations — and is hashed as before. Personal data, free text (Seshat's messages, send-back notes, decision answers, issue bodies, park reasons) and anything the secret scanner may miss go in the event's **`private`** part, stored in a separate table `event_private(event_id, salt, body)`. The chain hash covers `commitment = SHA-256(salt ‖ canonical(private))`, with a fresh 32-byte random salt per event. The payload schema registry (K-S7-4) marks every field `structural`, `personal`, `free_text` or `secret_bearing`, and a write that puts a non-structural field into `payload` is refused. An unsalted hash of a short personal value can be confirmed by guessing, which is why the salt is per event and stored off the chain.
+34. **Erasure.** A person holding the Accept permission may erase the private parts of events — for a data subject, for a leaked secret, or when a retention period ends — by deleting their `event_private` rows with `PRAGMA secure_delete` on and appending, in the same transaction, `ledger/erased {eventIds, blobIds, fields, reason: "erasure" | "secret" | "retention", principal}`; the WAL is then checkpointed (`wal_checkpoint(TRUNCATE)`). The erasure reports that old WAL frames and the operating system's own copies are outside its reach. After an erasure the chain still verifies: an event whose private row is gone is reported "erased at seq N by `ledger/erased` seq M", never as corrupt; a private row that was *altered* rather than deleted makes the chain invalid at that event. Projections read an erased field as a fixed marker, and rebuilt projections equal the live ones. A secret found after the fact is handled in three steps — rotate it, erase the private parts, delete the blobs that contain it — with the order and the evidence case in [security.md](security.md) (NEW-security-7). For it the kernel provides `findPrivate(needle)`, which lists the events whose private part contains a string (searching `event_private` only, never logging the needle), and blob deletion: a content-addressed blob (context pack, transcript) is deleted by id and the deletion is recorded in the same `ledger/erased` event (`blobIds`), so a later replay names the gap instead of reporting a missing blob as corruption.
+35. **Backups respect erasure.** A backup is a consistent copy made with SQLite's online backup API (`node:sqlite` `backup()`) while writers continue, and records `ledger/backed_up {path, seq}`. An **erasure register** — event ids and reasons only, no personal data, a copy of ledger facts rather than a second source of truth — is kept beside the backups, outside the backup set. Restoring a backup re-applies every erasure in the register newer than the backup's `seq` before anything reads the restored ledger, and a restore refuses to proceed when erasures are known to exist and the register is missing. The kernel provides the mechanism and [runtime.md](runtime.md) the commands (NEW-runtime-8: `sekhemet backup`, `restore`, retention periods per data class, the NDJSON export): `EventLog.backup(path)` (a consistent online copy that records `ledger/backed_up`), the erasure register (appended to by every `ledger/erased`, readable without opening the ledger), and `applyErasures(register, afterSeq)`, which re-applies each listed erasure idempotently and reports what it re-applied.
+
+### Requirements and provenance in the record
+
+36. **Requirements are versioned and their links can go suspect.** A requirement id is stable and never reused, like a card key. `requirement/revised {id, version}` bumps its version. Every card→requirement and test→requirement link records the requirement version it was made against; a revision marks every link made against an earlier version **suspect**, and a suspect link stays suspect until a principal re-confirms it (`trace/confirmed`) or the linked card is superseded. Links are written by the machine as a side effect (the planner writes card→requirement; staging acceptance tests writes test→requirement, with the test id as file plus test name), never by a person filling a matrix. What a revision does to open cards, slices and releases is [planner-pm.md](planner-pm.md)'s.
+37. **Gate results name their source.** `GateResultRecord.source` is `local` or `external`; an external result also records `externalRef {system, checkName, runUrl, headSha}`. An external result never satisfies a blocking gate unless the project declares that check blocking ([gates.md](gates.md)), and never counts as evidence for a card whose branch head differs from its `headSha` ([integrations.md](integrations.md)).
 
 ### Storage
 
-27. SQLite in WAL mode, `synchronous = NORMAL`, `foreign_keys = ON`, `busy_timeout = 5000`, one database per repository. Schema changes are numbered migrations recorded in `PRAGMA user_version`; a migration never drops a column that holds data. Each card field is declared once, in one column table from which the DDL, the insert and the replay projection are derived (today one column is declared in nine places).
+38. SQLite in WAL mode, `synchronous = NORMAL`, `foreign_keys = ON`, `busy_timeout = 5000`, one database per repository. Schema changes are numbered, forward-only migrations recorded in `PRAGMA user_version`; a migration never drops a column that holds data, preserves the hash chain, is preceded by a backup (rule 35), and is followed by a chain verification before the harness serves anything. A database newer than the binary is refused. Each card field is declared once, in one column table from which the DDL, the insert and the replay projection are derived (today one column is declared in nine places).
 
 ## 3. Contract
 
@@ -86,20 +132,26 @@ The kernel is the system of record. It keeps an append-only, hash-chained event 
 | Actors: `EVENT_ACTORS` (13 today) | `packages/kernel/src/types.ts:325` |
 | States: `CardStatus`; stop reasons: `CardStopReason`, `CARD_STOP_REASONS` | `packages/kernel/src/types.ts:13`, `:41`, `:72` (the stop-reason table is owned by [worker-loop.md](worker-loop.md), T3) |
 | Chain formula and verification: `EventLog.computeHash`, `verifyHashChain` | `packages/kernel/src/log.ts:84`, `:333` |
+| Readers: `getEvents(fromSeq, limit)`, `getEventsByCard`, `getEventsByTypes`, `getEventsByCardAndTypes`, `subscribe(filter, callback)` | `packages/kernel/src/log.ts:201-330` |
 | Canonical payload hash | `packages/kernel/src/canonical_json.ts` |
 | Schema, pragmas and migrations | `packages/kernel/src/schema.ts` |
-| Card writes, dependencies, projects, replay: `CardStore` | `packages/kernel/src/card_store.ts` |
-| Attempts, steps, gate results, evidence, decisions, competence: `RunLedger`, `RUN_EVENTS` | `packages/kernel/src/records.ts` |
-| Edge table, entry conditions, WIP, back-pressure, hold: `LEGAL_TRANSITIONS`, `BoardServiceImpl` | `packages/board/src/board_service.ts:32`, `:120` |
+| Card writes, dependencies, projects, replay, dossier: `CardStore`, `recordDossierEntry`, `getDossier` | `packages/kernel/src/card_store.ts:646`, `:719` |
+| Dossier kinds and event types: `DossierEntryKind`, `DOSSIER_EVENT_TYPES`, `DOSSIER_DEFAULT_ACTORS` | `packages/kernel/src/types.ts:231-275` |
+| Attempts, steps, gate results, evidence, decisions, competence: `RunLedger`, `RUN_EVENTS` (`attempt/started`, `attempt/finished`, `step/recorded`, `step/checkpointed`, `gate/result`, `evidence/recorded`, `decision/requested`, `decision/answered`, `decision/timed_out`, `competence/recorded`) | `packages/kernel/src/records.ts:29` |
+| Context pack `ContextPack`, `serializeContextPack`, `BlobStore` | `packages/kernel/src/blobs.ts` |
+| Order keys `keyBetween` | `packages/kernel/src/order_key.ts` |
+| Edge table, entry conditions, WIP, back-pressure, hold: `LEGAL_TRANSITIONS`, `BoardServiceImpl` | `packages/board/src/board_service.ts:32`, `:146` |
 | Refusal codes: `TransitionRefusedError` (`card_not_found`, `illegal_transition`, `entry_condition`, `security_gate`, `back_pressure`, `wip_limit`; adds `stale_from`, `override_forbidden`) | `packages/board/src/types.ts` |
 | Default WIP limits: planning 3, in_progress 5, verify 5, review 3 (before calibration) | `packages/board/src/board_service.ts:13` |
 | Hierarchy and project cap: `MAX_CARD_DEPTH = 2`, `DEFAULT_ACTIVE_PROJECT_CAP = 3` | `packages/kernel/src/card_store.ts:32`, `:35` |
-| Events: `card/created`, `card/status_changed`, `card/updated`, `card/override`, `card/rollup`, `card/dependency_*`, `card/held`, `card/released` (new), run events in `RUN_EVENTS` | `card_store.ts`, `records.ts:29` |
-| CLI: `sekhemet log [--rebuild]`, `park`, `unpark`, `send-back`, `accept` | `apps/harness/src/index.ts:647`, `front_door.ts` |
+| Card events: `card/created`, `card/status_changed`, `card/updated`, `card/override`, `card/rollup`, `card/dependency_*`, `card/rewound`, `card/fork_requested`; `card/step` (one per Worker turn — id, turn, calls, gate, usage — the live Steps view's source, written at `apps/harness/src/execute.ts:541`); new: `card/held`, `card/released`, `card/delegated`, `card/owner_changed` | `card_store.ts`, `execute.ts` |
+| Ledger and record events (new): `ledger/erased`, `ledger/backed_up`, `person/*`, `requirement/revised`, `trace/confirmed`; erasure API (new): `EventLog.backup`, `applyErasures`, `findPrivate`, `BlobStore.delete`; the erasure register file beside the backups | this spec, NEW-kernel-6/7/8; commands in [runtime.md](runtime.md) NEW-runtime-8, the secret procedure in [security.md](security.md) NEW-security-7 |
+| New fields (NEW-kernel-6/8): `CardRecord.owner`, `.delegate`, `.accepter`; `AttemptRecord.builtBy`; `GateResultRecord.source`, `.externalRef`; `event_private` table | `types.ts`, `schema.ts` |
+| CLI: `sekhemet log [--rebuild]`, `park`, `unpark`, `send-back`, `accept`, `erase` (new) | `apps/harness/src/index.ts:647`, `front_door.ts` |
 | HTTP: `POST /api/cards/:id/override` (body `toStatus`, `reason`) | `apps/harness/src/server.ts:979`; the API itself is [runtime.md](runtime.md) |
 | MCP: `sekhemet_move_card` (to `ready`, `backlog`, `parked` only) | `apps/harness/src/mcp.ts:156` |
 
-The earlier design's `Card` interface, event interface and SQL listing are retired in favour of the types and `schema.ts` above; where they differed (`filesTouched` vs `scopeFiles`, `column_state` vs `status`, a seven-actor set, a formula without `id`), the code's names stand.
+The earlier design's `Card` interface, event interface and SQL listing are retired in favour of the types and `schema.ts` above; where they differed (`filesTouched` vs `scopeFiles`, `column_state` vs `status`, a seven-actor set, a formula without `id`), the code's names stand. Its turn-flow event names (`card/start`, `step/start`, `context/assembled`, `model/request`, `model/response`, `tool/call`, `tool/result`, `step/end`, `gate/run`, `card/end`) were never the code's: a turn is `card/step` plus `step/recorded` with its context pack, a gate run is `gate/result`, and an attempt's start and end are `attempt/started` and `attempt/finished` (the meanings of *step* and *turn* are defined once in [worker-loop.md](worker-loop.md)'s Contract).
 
 ## 4. State today
 
@@ -108,16 +160,27 @@ The earlier design's `Card` interface, event interface and SQL listing are retir
 | Append-only log with payload hash and chain; tamper detection naming the seq | built | `log.ts:146`; `log.spec.ts:42`, `:92`, `:121`; `sekhemet log` | — |
 | Chain covers the timestamp; `UPDATE`/`DELETE` refused; incremental verification; external anchor | not-built | the hash omits `created_at` (`log.ts:95-105`); no triggers (`schema.ts:100-113`); `verifyHashChain` re-hashes the whole ledger on every SSE frame (`server.ts:471`) | NEW-kernel-1 |
 | Replay: `rebuildProjections`, `verifyProjections`, `log --rebuild` | built | `card_store.ts:1299`, `:1331`; `index.ts:647` | — |
+| Typed association columns, indexed | built | `schema.ts:76`, `:90-91`, `:106` | — |
+| Attempt rung and tool arm; step repository hash; checkpoint `git_ref` | built | `schema.ts:124-125`, `:163-196`; `records.ts:253`; `records.spec.ts` | — |
+| Readers and post-commit subscription | built | `log.ts:201-330`; `log.spec.ts` | — |
+| Model-visible means logged (prompt stored before the request; refusal if it cannot be) | built | `card_runner.ts:536-552`, `:1002`; `runner_wiring.spec.ts:338` | — |
+| Card dossier events and one threaded reader | built | `types.ts:231-275`; `card_store.ts:646`, `:719`; `dossier.spec.ts` | — |
 | One validated transaction per event (no poison events) | not-built | append then project outside the transaction (`card_store.ts:399-407`, `500-514`); one bad write makes rebuild throw forever (probe, kernel review §1) | S7 |
-| Ledger as the only durable channel | partial | `sendBack` writes `.sekhemet/playbook_candidates.jsonl` (`triage.ts:63-68`); Review reads `latest-<card>.json` (`execute.ts:1233-1242`) | S7 |
-| Principal on events (separate from actor, in the chain) | not-built | actors are role names only; `answerDecision` takes any string (`records.ts:537`) | NEW-kernel-2 |
+| Ledger as the only durable channel | partial | `sendBack` now records `card/send_back` (`triage.ts:57`) but still writes `.sekhemet/playbook_candidates.jsonl` (`triage.ts:63-68`); Review reads `latest-<card>.json` (`execute.ts:1233-1242`) | S7 |
+| Principal on events (separate from actor, in the chain), opaque id | not-built | actors are role names only; `answerDecision` takes any string (`records.ts:537`) | NEW-kernel-2 |
+| Owner, delegate, accepter; `builtBy` per attempt | not-built | `assignee?: string` "worker, human, or a person's name" (`types.ts:194`); no `builtBy` column (`schema.ts:163-179`) | NEW-kernel-6 |
+| Private part, salted commitment, erasure, erasure-aware backup | not-built | the payload hash is unsalted SHA-256 over the whole payload (`log.ts:84-106`); no `event_private`, no backup command | NEW-kernel-1, NEW-kernel-7 |
+| Versioned requirements and suspect links | not-built | no `requirement/*` event in the code | NEW-kernel-8 |
+| Gate results record their source | not-built | `GateResultRecord` has no source (`types.ts:432-445`) | NEW-kernel-8 |
 | Card key (`CHR-12`) | not-built | cards carry only `card_<uuid8>` ids (`card_store.ts:337`) | P3 |
 | Board columns as a projection over the nine states | partial | the mapping exists only in the Jira export (`integrations.ts:274-284`) | P3 ([dashboard.md](dashboard.md)) |
 | Nine states with one name each | built | `types.ts:13`; `ui/src/vocabulary.ts:93` | — |
 | Edge table and override record | built | `board_service.ts:32`, `:192`; `entry_conditions.spec.ts:78` | — |
+| Verify → Planning on a gate failure, regression against the Review snapshot named | partial | `card_runner.ts:1397`, `:1664-1676`; no test asserts the named regression | NEW-kernel-5 |
 | Transition law checked against the stored status; single path for all writers | not-built | checked against caller's `fromStatus` (`board_service.ts:272`); same-status bypass (`:267-270`); 11 direct `updateCardStatus` callers (`research/cards.ts:84,128-136`, `external_review.ts:141,244,252`, `planner/decisions.ts:123,209,236`, `planner/sessions.ts:160`, `pm/slash.ts:119`, `recurring.ts:175`) | S4 |
 | No override from MCP or other non-human actors | not-built | `sekhemet_move_card` passes a caller-supplied reason, so `override:` works over MCP (`mcp.ts:175`) | S4 |
-| Entry conditions: criteria, dependencies, scope, passing evidence, accepting actor | built | `board_service.ts:137`; `entry_conditions.spec.ts:43`, `:61` | — |
+| Entry conditions: criteria, dependencies, scope, passing evidence, accepting actor | built | `board_service.ts:146-179`; `entry_conditions.spec.ts:43`, `:61` | — |
+| Entry to Planning (difficulty, Planner) and to Parked (a reason) | not-built | `entryConditionFailure` checks only dependencies for `planning` and nothing for `parked` (`board_service.ts:151-156`) | NEW-kernel-5 |
 | Entry to Verify requires a recorded stop reason | not-built | no check in `entryConditionFailure` | S4 |
 | Security gate never overridden | built | `board_service.ts:282`; `entry_conditions.spec.ts:93` | — |
 | Back-pressure at Verify | built | `board_service.ts:314-324`; `runner_backpressure.spec.ts` | — (limit: S6, [review-git.md](review-git.md)) |
@@ -126,8 +189,10 @@ The earlier design's `Card` interface, event interface and SQL listing are retir
 | Overlapping scopes serialised | built | `board_service.ts:410`; `entry_conditions.spec.ts:145` | — |
 | Hierarchy cap and project cap | built | `card_store.ts:343-356`, `:975` | — |
 | Rollup with integration gate | built | `execute.ts:1039`; `control.spec.ts:173` | — |
+| Project status as a rollup of its top-level cards | not-built | `ProjectStatus` is stored, set only by hand (`types.ts:556`) | NEW-kernel-5 |
+| Order key as a fractional index | built | `order_key.ts`; `schema.ts:52`, `:68` | — |
 | Exits from Parked and Rejected reachable from the CLI | partial | `unpark` exists; no `reopen` or `reject` verb (kernel review §2) | S4 (verbs delivered with S5) |
-| Numbered migrations; one column table | not-built | DDL-text sniffing; `rebuildCardsTableIfStale` drops unknown columns (`schema.ts:333-344`, `:444`); the card column list is declared in nine places (`schema.ts:27-63`, `287-317`; `card_store.ts:65-140`, `152-197`, `259-305`, `1087-1189`) | NEW-kernel-4 |
+| Numbered migrations; one column table; backup and chain check around a migration | not-built | DDL-text sniffing; `rebuildCardsTableIfStale` drops unknown columns (`schema.ts:333-344`, `:444`); the card column list is declared in nine places (`schema.ts:27-63`, `287-317`; `card_store.ts:65-140`, `152-197`, `259-305`, `1087-1189`) | NEW-kernel-4 |
 | Rewind and fork recorded; card returns to Ready | built | `execute.ts:895-921`; `control.spec.ts:203` | — |
 | Rewind invalidates earlier evidence for Review | not-built | Review reads `latest-<card>.json`, which a rewind does not touch | S7 |
 
@@ -145,6 +210,8 @@ The earlier design's `Card` interface, event interface and SQL listing are retir
 - **K-S7-6** WHEN a person sends a card back THE SYSTEM SHALL record the playbook candidate as a ledger event and SHALL NOT write `.sekhemet/playbook_candidates.jsonl`.
 - **K-S7-7** WHEN the Review entry condition reads a card's evidence THE SYSTEM SHALL resolve the bundle from the evidence id recorded on the ledger, and deleting `latest-<card>.json` SHALL NOT change the verdict.
 - **K-S7-8** WHEN a card that has passing evidence is rewound to an earlier step THE SYSTEM SHALL refuse its move into `review` until evidence recorded after the rewind passes.
+- **K-S7-9** WHEN an event type's payload schema marks a field `personal`, `free_text` or `secret_bearing` THE SYSTEM SHALL store that field only in the event's private part, and SHALL refuse a write that places it in `payload`, naming the event type and the field.
+- **K-S7-10** WHEN the payload schema registry is walked THE SYSTEM SHALL find a data class (`structural`, `personal`, `free_text`, `secret_bearing`) on every field of every registered event type.
 
 ### S4 — the transition law in the kernel
 
@@ -160,17 +227,19 @@ The earlier design's `Card` interface, event interface and SQL listing are retir
 
 ### NEW-kernel-1 — hash chain v3
 
-*Justification:* the chain does not cover the timestamps that review time and WIP are measured from, verifies by re-hashing everything, and cannot see a truncated tail.
+*Justification:* the chain does not cover the timestamps that review time and WIP are measured from, verifies by re-hashing everything, cannot see a truncated tail, and — as written before this revision — would have put personal data into an unsalted chain that can never be purged (research: [DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md](../../research/DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md) decision 6). v3 is fixed once; a v4 would leave every v3 row unerasable.
 
 - **K-N1-1** WHEN a row's `created_at` is edited directly in SQLite THE SYSTEM SHALL report the chain invalid at that row's `seq`.
 - **K-N1-2** WHEN any statement tries to `UPDATE` or `DELETE` a row of `events` THE SYSTEM SHALL abort that statement.
 - **K-N1-3** WHEN the chain was verified up to `seq` N and M events are appended THE SYSTEM SHALL verify by hashing exactly M events.
 - **K-N1-4** WHEN a ledger holds rows under two formula versions THE SYSTEM SHALL verify each row by its own version and report `valid: true` when none was altered.
 - **K-N1-5** WHEN the newest `Ledger-Head` trailer on the integration branch names a `seq` greater than the ledger's last `seq` THE SYSTEM SHALL report the ledger truncated and exit 1 from `sekhemet log`.
+- **K-N1-6** WHEN an event with a private part is appended THE SYSTEM SHALL draw a fresh 32-byte random salt, store the salt and the private body in `event_private`, and include `SHA-256(salt ‖ canonical(private))` in the v3 chain hash; two events with identical private bodies SHALL have different commitments.
+- **K-N1-7** WHEN an `event_private` row is altered but not deleted THE SYSTEM SHALL report the chain invalid at that event's `seq`.
 
 ### NEW-kernel-2 — a `principal` column on events
 
-*Justification:* DoD §6.6 and [DEC-06](../DECISIONS.md#dec-06) (company-server mode) require that every event names its person; today "human" is a role, not a person, and actor and person are conflated.
+*Justification:* DoD §6.6 and [DEC-06](../DECISIONS.md#dec-06) (company-server mode) require that every event names its person; today "human" is a role, not a person, and actor and person are conflated. The principal is an opaque id so that erasing a person never requires rewriting the chain or keeping a guessable hash of their email (EDPB Guidelines 02/2025 ¶52, in the research above, decision 5).
 
 - **K-N2-1** WHEN an event with actor `human` is appended without a principal THE SYSTEM SHALL refuse it.
 - **K-N2-2** WHEN a decision request is answered, a card is accepted, or an override is recorded THE SYSTEM SHALL record the acting principal on that event.
@@ -178,6 +247,7 @@ The earlier design's `Card` interface, event interface and SQL listing are retir
 - **K-N2-4** WHEN projections are rebuilt from the ledger THE SYSTEM SHALL reproduce every principal exactly, and `verifyProjections()` SHALL return `identical: true`.
 - **K-N2-5** WHEN an MCP client or the dashboard moves a card on a person's behalf THE SYSTEM SHALL record actor `mcp` or `human` as the component that wrote it and the person as the principal.
 - **K-N2-6** WHEN a purely machine event (a step, a gate result) is appended THE SYSTEM SHALL store a null principal, and the actor set SHALL be unchanged.
+- **K-N2-7** WHEN an event is appended for a principal THE SYSTEM SHALL store an opaque id matching `p_[0-9a-z]+`, and SHALL NOT store an email address or a name in the `principal` column or in any `structural` payload field (a test appends with a git `user.email` configured and searches every structural column for it).
 
 ### P3 — the card key (the kernel's share of the professional board, [dashboard.md](dashboard.md))
 
@@ -194,12 +264,56 @@ The earlier design's `Card` interface, event interface and SQL listing are retir
 
 ### NEW-kernel-4 — numbered migrations and one column table
 
-*Justification:* migrations sniff DDL text, one silently drops unknown columns, and one column declared in nine places is the likeliest source of replay drift.
+*Justification:* migrations sniff DDL text, one silently drops unknown columns, and one column declared in nine places is the likeliest source of replay drift. An upgrade must never strand a user's ledger ([DESIGN_RESEARCH_TEAM_SERVER.md](../../research/DESIGN_RESEARCH_TEAM_SERVER.md), "upgrades migrate data").
 
 - **K-N4-1** WHEN a database at `user_version` N below the current version is opened THE SYSTEM SHALL apply migrations N+1 to current, each in its own transaction, and set `user_version`.
 - **K-N4-2** WHEN a database's `user_version` is above the current version THE SYSTEM SHALL refuse to open it with a message naming both versions.
 - **K-N4-3** WHEN a migration would remove a column that holds a non-null value THE SYSTEM SHALL abort the migration and leave the database unchanged.
 - **K-N4-4** WHEN a column is added to the card column table THE SYSTEM SHALL include it in the `cards` DDL, the insert and the replay projection without any other edit (a test adds a column to a fixture table and checks all three).
+- **K-N4-5** WHEN a migration is about to run THE SYSTEM SHALL first write a backup of the database (rule 35) and name its path; WHEN the migrations have run THE SYSTEM SHALL verify the hash chain and refuse to serve if it is invalid.
+
+### NEW-kernel-5 — the lifecycle's missing conditions
+
+*Justification:* the old design's entry conditions for Planning and Parked, the project rollup and the named-regression return were carried only in code comments or not at all (traces hd1 199, 204, 207, 209; inventory G23).
+
+- **K-N5-1** WHEN a card without a recorded difficulty score is moved into `planning` and no Planner model is resolvable for the project THE SYSTEM SHALL refuse with `entry_condition` naming the missing Planner; WHEN a Planner is resolvable, the card SHALL be scored (1–10) as part of the move.
+- **K-N5-2** WHEN a card is moved into `parked` without a stop reason, a person's reason or an expired `default_deny` decision THE SYSTEM SHALL refuse with `entry_condition`.
+- **K-N5-3** WHEN every top-level card of a project is `done` THE SYSTEM SHALL derive the project's status as complete, and WHEN a top-level card reopens, as active again; a person's `paused` or `archived` SHALL take precedence.
+- **K-N5-4** WHEN an attempt's gates fail on a card whose latest passing evidence recorded those gates as passing THE SYSTEM SHALL move the card to `planning` with a reason naming each regressed gate and the evidence id it passed in.
+
+### NEW-kernel-6 — who is on a card, and who built each attempt
+
+*Justification:* `assignee` is a free string mixing "worker", "human" and names; nothing records whether the Worker or a person built an attempt. Both are cheap now and a migration of every row and export format later ([DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md](../../research/DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md) decisions 1–2; Linear's assignee/delegate split).
+
+- **K-N6-1** WHEN a card is created THE SYSTEM SHALL record an `owner` principal id and a `delegate` of kind `worker`, `person` or none, and SHALL refuse a `delegate.kind` outside that set.
+- **K-N6-2** WHEN a card's delegate or owner changes THE SYSTEM SHALL append `card/delegated {from, to}` or `card/owner_changed {from, to}` naming the principal who made the change.
+- **K-N6-3** WHEN a card is accepted THE SYSTEM SHALL set its `accepter` to the accepting principal, and projections rebuilt from the ledger SHALL reproduce owner, delegate and accepter exactly.
+- **K-N6-4** WHEN an attempt or a checkpoint is recorded THE SYSTEM SHALL record `builtBy {kind, id}`; WHEN `builtBy.kind` is `person` THE SYSTEM SHALL exclude that attempt from `CompetenceEntry` rows and from pass rate by model.
+- **K-N6-5** WHEN a person-built card requests entry to `review` THE SYSTEM SHALL apply the same entry conditions as for a Worker-built card, and a failing blocking gate SHALL refuse the move without an `override:` reason.
+- **K-N6-6** WHEN a database holding cards with the legacy `assignee` string is migrated THE SYSTEM SHALL map `worker` to `delegate: {kind: "worker"}`, a person's name to that person's principal as owner, and `human` to the project's single principal, and the `assignee` column SHALL no longer be written.
+
+### NEW-kernel-7 — an erasable ledger
+
+*Justification:* a scanner false negative or a person's name in a Seshat message is otherwise permanent, and restoring a backup would silently bring erased data back. The design follows the regulator's own recommended pattern (EDPB 02/2025 ¶52–53: salted commitment on the chain, data and salt off it) and event-sourcing's *forgettable payloads* ([research](../../research/DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md) decisions 6, 9). No compliance claim is made (SPINE): the product offers the mechanism; the deploying team decides the basis.
+
+- **K-N7-1** WHEN a person holding the Accept permission erases events for a subject or a secret THE SYSTEM SHALL delete their `event_private` rows with `secure_delete` on, append `ledger/erased {eventIds, blobIds, fields, reason, principal}` in the same transaction, append the event ids and reason to the erasure register, and checkpoint the WAL; a principal without the Accept permission SHALL be refused.
+- **K-N7-2** WHEN the chain is verified after an erasure THE SYSTEM SHALL report `valid: true`, and SHALL list each erased event as "erased at seq N by `ledger/erased` seq M" rather than as corrupt.
+- **K-N7-3** WHEN projections are rebuilt after an erasure THE SYSTEM SHALL produce projections identical to those maintained live, with each erased field shown as the erased marker.
+- **K-N7-4** WHEN a backup is taken THE SYSTEM SHALL write it with the SQLite online backup API while a writer is appending, the copy SHALL verify, and `ledger/backed_up {path, seq}` SHALL be appended.
+- **K-N7-5** WHEN a backup taken at `seq` S is restored and the erasure register lists erasures after S THE SYSTEM SHALL re-apply them before any read of the restored ledger; WHEN erasures are known to exist and the register is missing, the restore SHALL refuse and say why.
+- **K-N7-6** WHEN a model request is replayed and its context pack references erased content THE SYSTEM SHALL name the gap and the `ledger/erased` seq, never substitute or omit silently.
+- **K-N7-7** WHEN `findPrivate(needle)` is called THE SYSTEM SHALL return exactly the events whose private part contains the needle, and SHALL NOT write the needle to the ledger, a log or a blob.
+- **K-N7-8** WHEN an erasure names blob ids THE SYSTEM SHALL delete those blobs, list them in the `ledger/erased` event, and `verifyProjections()` and replay SHALL report them as erased, not missing.
+- **K-N7-9** WHEN `applyErasures(register, afterSeq)` is run twice on the same restored ledger THE SYSTEM SHALL leave it identical after the second run (idempotent) and report the erasures it re-applied the first time.
+
+### NEW-kernel-8 — requirement versions and gate-result sources in the record
+
+*Justification:* without a version on every link, impact analysis after a requirement changes is impossible for every link written before the fix; without a source on every gate result, the day external CI results arrive they are indistinguishable from local runs ([research](../../research/DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md) decisions 11–12; Doorstop's suspect links).
+
+- **K-N8-1** WHEN a requirement is revised THE SYSTEM SHALL append `requirement/revised {id, version}` and SHALL mark every card→requirement and test→requirement link made against an earlier version as suspect.
+- **K-N8-2** WHEN a link is suspect THE SYSTEM SHALL keep it suspect until a principal re-confirms it (`trace/confirmed`) or the linked card is superseded; WHEN a requirement is created, its id SHALL never equal an id used before in the project.
+- **K-N8-3** WHEN a gate result is recorded THE SYSTEM SHALL store `source: "local"` or `source: "external"`, and an external result SHALL carry `externalRef {system, checkName, runUrl, headSha}`; a result without a source SHALL be refused.
+- **K-N8-4** WHEN the `review` entry condition reads evidence containing an external result for a check the project has not declared blocking THE SYSTEM SHALL treat it as advisory, and WHEN its `headSha` differs from the card branch head THE SYSTEM SHALL NOT count it at all.
 
 ## 6. v1 acceptance
 
@@ -208,27 +322,37 @@ This spec is `built` when every criterion in §5 passes and these behaviours, al
 - **K-1** WHEN one payload byte or one stored hash is flipped on disk THE SYSTEM SHALL report the chain invalid at that `seq` (`log.spec.ts:92`, `:121`).
 - **K-2** WHEN projections are rebuilt from the ledger THE SYSTEM SHALL produce byte-identical projections, and `sekhemet log` SHALL exit 1 when they differ.
 - **K-3** WHEN a card is created three levels below a card, or a dependency would close a cycle, or a fourth project is activated THE SYSTEM SHALL refuse with `hierarchy_depth`, `dependency_cycle` or `project_cap` respectively, before appending.
-- **K-4** WHEN any entry condition in §2 rule 21 fails THE SYSTEM SHALL refuse the move with `entry_condition` and a message naming the missing item.
+- **K-4** WHEN any entry condition in §2 rule 27 fails THE SYSTEM SHALL refuse the move with `entry_condition` and a message naming the missing item.
 - **K-5** WHEN a card's latest evidence fails a security-layer gate THE SYSTEM SHALL refuse a move into `review` or `done` even with an `override:` reason.
 - **K-6** WHEN Review is at its WIP limit THE SYSTEM SHALL refuse entry to `verify` with `back_pressure`, and the runner SHALL hold the card rather than fail it.
 - **K-7** WHEN the last child of a parent is accepted and the integration gates pass THE SYSTEM SHALL move the parent to `done` and record `card/rollup`; WHEN they fail, to `planning` with the failures.
 - **K-8** WHEN a card is moved into the scope of a running card THE SYSTEM SHALL report the overlapping files and SHALL NOT run both.
+- **K-9** WHEN a model request's context pack cannot be stored THE SYSTEM SHALL NOT send the request (`runner_wiring.spec.ts:338` covers the stored case; the refusal case is added).
+- **K-10** WHEN a Worker question and Seshat's answer to another card's question are both recorded THE SYSTEM SHALL thread each answer only under the question it names (`dossier.spec.ts`).
+- **K-11** WHEN a subscriber is registered and a write is rolled back THE SYSTEM SHALL NOT notify the subscriber of that event.
 
 ## 7. Later
 
-- **An external timestamping or signing service for the chain.** The git anchor (rule 11) closes truncation for a single repository; notarisation matters only for compliance use, which is not v1.
-- **Splitting `card_store.ts`** (1,351 lines, six concerns) into `CardRepository`, `DependencyGraph`, `DossierStore`, `ProjectStore` and `Projector`. It is done strangler-style inside the S7 workstream, since S7 touches every write, and is accepted by K-S7-1…8 plus K-N4-4; it is listed here only because it is not a behaviour.
-- **Retention of context packs and transcripts** (`retention.ts`, 30 days after close, evidence kept forever) is a runtime job; see [runtime.md](runtime.md).
+- **An external timestamping or signing service for the chain.** The git anchor (rule 12) closes truncation for a single repository; notarisation matters only for compliance use, which is not v1.
+- **Crypto-shredding of backups and exports** (per-subject keys). Deleting private rows plus a declared backup window covers v1; per-subject keys add a key-management system the product does not otherwise need, and ciphertext is still personal data in the regulator's reading. Reopen if a team needs exports revocable after they leave the machine.
+- **Splitting `card_store.ts`** (1,351 lines, six concerns) into `CardRepository`, `DependencyGraph`, `DossierStore`, `ProjectStore` and `Projector`. It is done strangler-style inside the S7 workstream, since S7 touches every write, and is accepted by K-S7-1…10 plus K-N4-4; it is listed here only because it is not a behaviour.
+- **Retention of context packs and transcripts** (`retention.ts`, 30 days after close, evidence kept forever) and retention of private fields per data class are runtime jobs; see [runtime.md](runtime.md).
 
 ## 8. Open questions
 
-1. **The state names in [NAMING.md](../NAMING.md).** Its keep list gives *Working, Checking, Closed*; the code, the UI and this spec use *In Progress, Verify, Rejected*, and the old design retired the former for the reason in rule 17. *Recommendation:* NAMING.md changes to the nine stored names for the pipeline view and adds the five board columns from [dashboard.md](dashboard.md).
+1. **The state names in [NAMING.md](../NAMING.md).** Its keep list gives *Working, Checking, Closed*; the code, the UI and this spec use *In Progress, Verify, Rejected*, and the old design retired the former for the reason in rule 23. *Recommendation:* NAMING.md changes to the nine stored names for the pipeline view and adds the five board columns from [dashboard.md](dashboard.md).
 2. **`worker` and `executor` are both actors.** *Recommendation:* new writes use `worker`; `executor` stays valid for existing rows only (a `CHECK` cannot drop it without rewriting history).
 3. **`harness` as an accepting actor** (`ACCEPTING_ACTORS`, `board_service.ts:110`) lets `queue --auto-accept` and rollup reach `done`. *Recommendation:* keep it only for rollup and for an auto-accept switch that a named person turned on, recorded as that person's standing decision; [review-git.md](review-git.md) owns the rule.
 4. **Validation library.** The payload registry in K-S7-4 could use Zod or Valibot — *proposed, needs the owner's yes*; a hand-written validator per event type is the fallback.
+5. **The spine's wording on reconstruction (owner decision).** The spine says anything a model saw can be reconstructed from the log; once erasure exists that cannot hold for erased content. *Recommendation:* amend SPINE rule 2 to add "except content erased by a recorded `ledger/erased` event; replay names each gap", as rule 17 states. Until the owner decides, erasure (NEW-kernel-7) is built but its command stays behind a confirmation that names this exception.
+6. **A "plan exists" condition on `in_progress`.** The old design required one; the code lets a card go from Ready straight to In Progress. *Recommendation:* no separate plan — a card's criteria, acceptance tests and scope are its plan, and where [planner-pm.md](planner-pm.md) requires an edit sketch (difficulty 4–7) it reaches the Worker as guidance, not as an entry condition.
+7. **Retention default for private fields.** *Recommendation:* kept until a person erases them (the team is the controller), configurable per project (for example 24 months), enforced by `ledger/erased {reason: "retention"}` ([runtime.md](runtime.md)).
 
 ## 9. Evidence and rationale
 
 - Review: [domain02_09_kernel_review.md](../../reference/reviews/domain02_09_kernel_review.md) (probes for poison events, the `fromStatus` bypass, the `created_at` edit and tail truncation).
+- Research: [DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md](../../research/DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md) — decisions 1–2 (owner/delegate/accepter, `builtBy`; Linear, Jira and GitHub Copilot's models), 5–9 (opaque principal, salted commitment, data classes, spine wording, erasure-aware backup; EDPB Guidelines 02/2025 v2.0 ¶50–53, ¶102–104; ICO on backups; Verraes's forgettable payloads; SQLite `secure_delete`; `node:sqlite` `backup()`), 11–12 (versioned requirements, gate-result source). [DESIGN_RESEARCH_TEAM_SERVER.md](../../research/DESIGN_RESEARCH_TEAM_SERVER.md) (forward-only migrations with a backup and a chain check).
+- Integration review: the card dossier (suggestion 6, target architecture) is built as rule 20; its readers are owned by the specs that read it.
 - Programme: [COVERAGE.md](../../reference/COVERAGE.md) S4, S7; DoD §6.2 and §6.6.
-- *Rejected:* XState for the state machine — the edge table is ten lines and correct; the defect was trusting the caller (kernel review, Proposals).
+- *Changed on purpose:* the actor set is the code's thirteen with a separate principal, not the old seven ([DEC-06](../DECISIONS.md#dec-06)); send-back returns a card to Ready, not In Progress ([DEC-24](../DECISIONS.md#dec-24--deliberate-reversals-in-design-v3)): a returned card is re-queued, not resumed mid-attempt.
+- *Rejected:* XState for the state machine — the edge table is ten lines and correct; the defect was trusting the caller (kernel review, Proposals). Rewriting the chain to erase (git filter-repo style) — it changes every later hash and invalidates every `Ledger-Head` anchor already in git.

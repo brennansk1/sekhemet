@@ -25,7 +25,7 @@ tests:
   - packages/loop/tests/restricted.spec.ts
   - packages/loop/tests/untrusted.spec.ts
   - apps/harness/tests/airgap.spec.ts
-changes: [S1, S2, S3, S3a, S3b, S3c, S9]
+changes: [S1, S2, S3, S3a, S3b, S3c, S9, NEW-security-1, NEW-security-2, NEW-security-3, NEW-security-4, NEW-security-5, NEW-security-6, NEW-security-7]
 ---
 
 # Security: sandboxing, permissions, egress, secrets, workspace trust, air-gap
@@ -57,7 +57,7 @@ The harness runs code written by a local model on the owner's machine. The v1 Wo
 10. Reads are allowed broadly except the user's secret-bearing paths: `~/.ssh`, `~/.aws`, `~/.npmrc`, `~/.netrc`, `~/.config/gh`, the Sekhemet user directory, and the project's `.sekhemet/events.db` (S3c).
 11. `mach-lookup` is limited to an allowlist of services toolchains need; AppleEvents and LaunchServices lookups are denied (S3).
 12. Network is denied except to the egress proxy's port, when one runs, and the card's own loopback ports.
-13. `sandbox-exec` is deprecated by Apple. It stays the macOS mechanism behind the sandbox interface, with containment tests that fail loudly if its behaviour changes.
+13. `sandbox-exec` is deprecated by Apple. It stays the macOS mechanism behind the sandbox interface, with containment tests that fail loudly if its behaviour changes. This is a **recorded known liability** (open question 4): if Apple removes it, a Mac has no confinement, item 7 stops every card, and the fallback is a VM per card (§7).
 
 ### Linux profile (bubblewrap)
 
@@ -71,19 +71,21 @@ The harness runs code written by a local model on the owner's machine. The v1 Wo
 18. The harness runs git outside the sandbox, at an absolute path, version ≥ 2.50.1, with `GIT_DIR` and `GIT_WORK_TREE` pinned from its own record of the worktree (`<main>/.git/worktrees/<name>`), so a rewritten `.git` pointer changes nothing.
 19. Pinned for every harness git call: `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_TERMINAL_PROMPT=0`, `GIT_NO_REPLACE_OBJECTS=1`, `GIT_OPTIONAL_LOCKS=0`, `GIT_EDITOR=true`, `GIT_SEQUENCE_EDITOR=true`, `GIT_PAGER=cat`, empty `GIT_ASKPASS`/`SSH_ASKPASS`, `GIT_CEILING_DIRECTORIES`; and through `GIT_CONFIG_*`: `core.fsmonitor=false`, `core.hooksPath=/dev/null`, `core.untrackedCache=false`, `core.sshCommand=false`, `core.symlinks=false`, `credential.helper=`, `gpg.program=false`, `commit.gpgSign=false`, `log.showSignature=false`, `diff.external=`, `protocol.file.allow=never`, `submodule.recurse=false`, `diff.ignoreSubmodules=all`, `safe.bareRepository=explicit`, `include.path=`.
 20. `diff`, `log` and `show` run with `--no-ext-diff --no-textconv`; commits with `--no-verify`; nothing uses `--recurse-submodules`.
+20b. **One named exception today:** the review diff runs `git -c diff.external=difft --ext-diff` (`packages/sync/src/git_adapter.ts:721`), so a harness-chosen parser reads worktree content outside the sandbox. A program the harness runs over worktree content outside the sandbox must be on a fixed allowlist, resolved by absolute path, run with the hardened git environment, no network, and time and memory limits; otherwise it runs confined. Carried by S3a.
 21. **Preflight:** before git runs in a worktree, the harness reads its config with `--no-includes` and refuses on any of `core.fsmonitor|hookspath|sshcommand|pager|editor|askpass|gitproxy`, `filter.*`, `diff.*.(command|textconv)`, `merge.*.driver`, `include*`, `gpg.*`, `credential.*`, `remote.*.(uploadpack|receivepack)`; scans the worktree for embedded bare repositories (a directory holding `HEAD` and `objects`), `.git` files or symlinks below the root, and carriage returns in `.gitmodules` (CVE-2025-48384); and fails the card if the staged diff adds a gitlink (mode 160000) or a nested bare repository.
 22. "Already hardened" is decided by checking the keys are present, never by trusting an environment flag.
 23. Consequence, stated to the user by `doctor` and the README: Sekhemet's own git commands never run git hooks or fsmonitor. The project's pre-commit checks belong in gates, run confined from the base branch's hook files ([review-git](review-git.md) owns Accept and LFS).
 
 ### Dependency trees (S2, G4)
 
-24. The shared dependency tree is never writable from a card. Each worktree gets its own `node_modules` directory whose entries are links into the main checkout; caches (`.vite`, `.vite-temp`, `.cache`, `.tmp`) are created inside the worktree and deleted with it. No write grant reaches outside the worktree.
+24. The shared dependency tree is never writable from a card — `node_modules`, a Python `.venv`, and any other dependency directory the harness links into a worktree. Each worktree gets its own `node_modules` directory whose entries are links into the main checkout; caches (`.vite`, `.vite-temp`, `.cache`, `.tmp`) are created inside the worktree and deleted with it. A `.venv` is linked whole and read-only: an interpreter that cannot write bytecode caches there runs without them, and a card that needs a new Python package adds it through the supply-chain gate (item 44), not by installing into the shared environment. No write grant reaches outside the worktree.
 
 24a. **Per-card worktrees.** Each card works in its own git worktree under `.sekhemet/worktrees/<card>`, the only writable root its sandbox is granted (plain worktrees, not copy-on-write clones: [DEC-21](../DECISIONS.md#dec-21--accepted-substitutions)).
 
 ### Permission engine
 
 25. Three tiers, **Allow**, **Ask**, **Deny**; Deny wins. Allow: reads inside the repo, writes inside the declared scope. Ask: destructive commands (recursive force-remove, `git reset --hard`, `git clean -f`, `sudo`, `kill -9`, `chmod 777`), network commands to allowlisted hosts, external binaries not provided by the toolchain or the project. Deny: writes outside scope, paths that resolve outside the worktree, and protected paths — gate files, test globs the project protects, `.git` at any depth, `.githooks/`, `.sekhemet/` state and extension files (`hooks.toml`, `mcp.json`, `skills/`, `plugins/`), and the harness's own loop, gate runner and sandbox sources. The agent cannot override a Deny.
+25a. **How an Ask is answered.** An Ask-tier call posts a `permission` decision request on the card — "Allow <tool>: <command or path>?", options deny and allow, recommendation deny — answered from the board, the CLI or `/api/decisions`. With no answer within 60 s (`approvalTimeoutMs`) the call is denied; with no approver attached (a headless caller) it is denied at once; either way the model is told why and not to retry. The Worker keeps its slot while it waits. In company-server mode only an accepter may answer ([integrations](integrations.md) item 26).
 26. The engine decides on the **resolved** path (symlinks followed), not the string the model supplied.
 27. The engine is a usability layer; the sandbox is the security boundary. No protection may exist only in the engine.
 
@@ -99,8 +101,10 @@ The harness runs code written by a local model on the owner's machine. The v1 Wo
 
 ### Secrets (S3c)
 
-34. Command lines, observations, context packs, gate excerpts and evidence are redacted with the secret scanner **before** they are persisted or published. The hash-chained ledger cannot be purged, so a secret must never reach it.
-35. Integration tokens live in the OS keychain; where none exists (Linux without a secret service), in a file of mode 0600 inside a directory of mode 0700 in the user directory, which the sandbox cannot read (item 10). Webhook URLs are secrets.
+34. Command lines, observations, context packs, gate excerpts and evidence are redacted with the secret scanner **before** they are persisted or published. Redaction is the plan; erasure is the backstop: once the kernel's erasable `private` part exists ([kernel](kernel.md) NEW-kernel-1, hash chain v3), a secret the scanner missed can be erased without breaking the chain (item 34b). Until then the hash-chained ledger cannot be purged, so a secret must never reach it.
+34a. **Nothing personal or secret is committable by accident.** Evidence bundles, transcripts, artifacts, research pages, observations, live token files, tuning data, traces and the queue report can hold names, prompts and redaction misses; the first run ignores all of them in `.gitignore` ([surface](surface.md) item 5.6, SUR-34). Only `config.toml`, `gates.toml` and documents exported for the team are meant to be tracked. Git history cannot be cleaned without rewriting every later hash, and forks keep the data, so no ledger erasure can reach a committed transcript.
+34b. **A secret found after the fact** is handled in this order: the person is told to rotate it first; then the affected `private` fields are erased with reason `secret` and every blob holding it is deleted; the evidence bundle keeps its identity because its gate excerpts and command lines sit in an erasable part whose commitment the bundle id covers (NEW-security-7; the mechanism is [kernel](kernel.md)'s, the bundle is [gates](gates.md)').
+35. Integration tokens live in the OS keychain; where none exists (Linux without a secret service), in a file of mode 0600 inside a directory of mode 0700 in the user directory, which the sandbox cannot read (item 10). Webhook URLs are secrets. *Changed from the old design's "keychain only, never written to disk":* a Linux host without a secret service has no keychain, and a file the sandbox cannot read is the least-bad fallback.
 36. The gate host's CA key is stored encrypted and certificates are valid for at most one year.
 
 ### Dashboard as an attack surface (S3c)
@@ -123,19 +127,19 @@ The harness runs code written by a local model on the owner's machine. The v1 Wo
 
 ### Restricted mode (`--restricted`)
 
-43. For auditing an untrusted repository: the shell tool and every writing tool are removed from the catalog; the sandbox has no network; and nothing from the repository executes — no dev server, browser, language server, package gate, mutation run or hook. Only static checks run.
+43. For auditing an untrusted repository: the shell tool and every writing tool are removed from the catalog; the sandbox has no network; and nothing from the repository executes — no dev server, browser, language server, package gate, mutation run, hook or repository script. What runs is read-only inspection: the harness's own parse and outline of files (the TypeScript compiler, [DEC-20](../DECISIONS.md#dec-20)) and static checks the harness runs itself, never through a repository script. A structural diff preview joins when difftastic does ([gates](gates.md) §7).
 
 ### Supply chain
 
-44. Before a dependency is added, the harness checks, and fails the card's security gate on: a name that does not exist in the registry (or the air-gap mirror) — hallucinated names are an exploited vector; a package first published fewer than 30 days ago (`MIN_PACKAGE_AGE_DAYS`), which needs a person; and a name within Levenshtein distance 2 (1 for names of four characters or fewer), or equal after removing separators, of an existing dependency or a widely used package (typosquatting). The weekly download count is recorded for the reviewer. Vulnerabilities are scanned offline with `osv-scanner`.
+44. Before a dependency is added, the harness checks, and fails the card's security gate on: a name that does not exist in the registry (or the air-gap mirror) — hallucinated names are an exploited vector; a package first published fewer than 30 days ago (`MIN_PACKAGE_AGE_DAYS`), which needs a person; and a name within Levenshtein distance 2 (1 for names of four characters or fewer), or equal after removing separators, of an existing dependency or a widely used package (typosquatting). Each manifest is checked against **its own registry** — `package.json` against npm, `requirements.txt`/`pyproject.toml` against PyPI, `Cargo.toml` against crates.io, `go.mod` against the Go proxy — because a Python name checked against npm is not a check. The **download profile** is advisory, never blocking (a new or internal library sits below any useful floor): under 100 downloads a week on npm or PyPI, or 1,000 lifetime on crates.io (which reports no weekly figure), the gate reports the number for the reviewer; Go has no floor. Vulnerabilities are scanned offline with `osv-scanner`.
 
 ### Air-gap kit
 
 45. With no network, a machine can install from source ([DEC-21](../DECISIONS.md#dec-21--accepted-substitutions)), work cards, add mirrored dependencies and look up documentation.
-46. **Mirrors:** an allowlist exported from the lockfiles; the supply-chain gate resolves against it, so an unmirrored package cannot be installed.
-47. **Models:** weights are never downloaded by the harness; a manifest lists each model's checksum and quantisation; weights copied in are verified and registered only on a match. A signed manifest is required in air-gap mode.
-48. **Documentation:** docsets are exported from a connected machine and imported with a checksum.
-49. **Updates:** by signed bundle (`ssh-keygen -Y`, namespace `sekhemet-update`), applied by hand, with a compatibility note for the event-log schema; the ledger is backed up before any update.
+46. **Mirrors:** an allowlist exported from the lockfiles (for pnpm, the store is filled from the lockfile with `pnpm fetch`, so `pnpm install --offline` works); the supply-chain gate resolves against it, so an unmirrored package cannot be installed — the correct default when there is no network.
+47. **Models:** the harness never downloads weights on its own. A person may run an explicit download command for a registry model, which verifies the published hash before the weights are used ([models](models.md) NEW-models-7); in air-gap mode weights are copied in by hand. A manifest lists each approved model's checksum, quantisation, chat-template checksum and the tier it qualifies for; weights are registered only when both checksums match, and the qualification suite still runs on this machine, because a model that qualifies on one machine may not on another. A signed manifest is required in air-gap mode.
+48. **Documentation:** a library's docs are prefetched into the research cache on a connected machine, exported as one bundle with its SHA-256, and imported on the air-gapped one — the same route carries the whole research cache. The bundle holds docsets and `llms.txt` snapshots at the versions the lockfiles pin, and is marked stale (and named by the self-test) when a lockfile changes after it was built (NEW-security-5).
+49. **Updates:** by signed bundle (`ssh-keygen -Y`, namespace `sekhemet-update`), applied by hand, with a compatibility note for the event-log schema; the ledger is backed up before any update, and the log is never migrated in place without that backup. Skill updates travel the same signed route in air-gap mode (plugins are cut, [extensibility](extensibility.md)) (NEW-security-5).
 50. **Self-test:** a full card run produces no outbound connection attempt, checked at the proxy; every gate command is runnable; every registered model loads; the docs index answers a known query. The result goes to the audit log.
 
 ## 3. Contract
@@ -152,6 +156,9 @@ The harness runs code written by a local model on the owner's machine. The v1 Wo
 | `HARDENED_GIT_CONFIG`, `hardenedGitEnv`, `hardenGitForProcess` | `packages/sync/src/git_hardening.ts` |
 | `scanSecrets`, `redact` | `packages/gates/src/secrets.ts` |
 | `tagUntrusted` | `packages/sandbox/src/untrusted.ts` |
+| `decisionApprover` (the Ask-tier approver; `approvalTimeoutMs`, default 60,000) | `apps/harness/src/execute.ts:141-165` |
+| `DEPENDENCY_MANIFESTS`, `MIN_PACKAGE_AGE_DAYS`, `MIN_WEEKLY_DOWNLOADS`, `DEFAULT_REGISTRY_ENDPOINTS` | `packages/gates/src/builtin.ts` |
+| `ManifestModel` (`sha256`, `quant`, `tier`, `templateChecksum`) | `apps/harness/src/airgap.ts:165-173` |
 | Events: `card/egress` (payload `EgressRecord`) | `packages/loop/src/card_runner.ts:884-895` |
 | Env: `SEKHEMET_ALLOW_UNCONFINED`, `SEKHEMET_AIRGAP`, `SEKHEMET_MAX_COMMAND_MEMORY_MB` | inventory in [surface](surface.md) |
 | Config: `[network] mode`, `fetch_allow` (user `config.toml`); `[project] network_allow`, `protected` (`gates.toml`) | [surface](surface.md), [gates](gates.md) |
@@ -165,8 +172,9 @@ The harness runs code written by a local model on the owner's machine. The v1 Wo
 | bubblewrap re-binds only the root `.git`, only if it exists | partial | `bubblewrap.ts:43`; argv-shape test only | S1 (G2, G6) |
 | File tools refuse paths resolving into `.git`, including via symlink | built | `paths.ts:80-89`; `paths.spec.ts:93-118` | S1 (G1) |
 | Git hardening: 4 keys via `GIT_CONFIG_*`; flag short-circuit | partial | `git_hardening.ts:15-45`; `git_hardening.spec.ts` | S1 (G3) |
-| Dependency code read-only; caches shared and writable | partial | `seatbelt.ts:38-44` | S2 (G4) |
-| Fail closed | not-built | default is closed (`executor.ts:130-134`) but every product caller passes `requireConfinement: ctx.restrictedMode` (`execute.ts:315,426,1051`; `index.ts:733`) | S3b |
+| Dependency code read-only; caches shared and writable | partial | `seatbelt.ts:38-44`; `node_modules` and `.venv` are linked whole into each worktree (`sync/src/git_adapter.ts:318-330`) and their link targets are made read-only (`seatbelt.ts:57-72`) | S2 (G4) |
+| Fail closed: the Worker's tools | built | `ToolExecutor` builds its sandbox with the closed default unless told otherwise (`loop/src/tools.ts:214-218`; `executor.ts:130-134`) | — |
+| Fail closed: gates | not-built | the gate sandboxes are given `requireConfinement: ctx.restrictedMode`, an explicit `false` outside restricted mode (`execute.ts:315,426,1051`; `index.ts:733`) | S3b |
 | One confined execution path | not-built | visual gate `spawn` with `process.env` (`gates/src/visual.ts:614-618`); LSP (`context/src/lsp.ts:85`); package gates (`sync/src/repo_tools.ts:337`); `--validate-tools` (`wave2.ts:863-876`) | S3a |
 | Environment allowlist in the sandbox | built | `executor.ts:63-98`; `containment.spec.ts:179`. Carries a stray `LOGSEQ_TEST` (`:74`) | S3a |
 | Seatbelt reads and mach services unrestricted | not-built | `seatbelt.ts:150,155` | S3, S3c |
@@ -177,7 +185,10 @@ The harness runs code written by a local model on the owner's machine. The v1 Wo
 | Registry lookups proxied and logged | not-built | `npm view` in the worktree (`gates/src/builtin.ts:539`) | S3 |
 | Offline default honoured everywhere | partial | `airgap.ts:157-161` regex vs `config.ts:44` default | S3 |
 | Permission engine, three tiers, protected paths | built | `permissions.ts`; `permissions.spec.ts` | — |
+| Ask answered by a person through a decision request | partial | `decisionApprover` posts a `permission` request, deny by default, 60 s (`execute.ts:141-165, 434`); denied at once with no approver (`loop/src/tools.ts:453-464`); no test drives it | NEW-security-6 |
 | Redaction before persistence | not-built | `redact` exists (`secrets.ts:100`), no caller outside the scanner | S3c |
+| Erasing a secret found after the fact | not-built | the ledger has no erasable part ([kernel](kernel.md) NEW-kernel-1) | NEW-security-7 |
+| Personal and secret files kept out of git | not-built | `.gitignore` lists only `worktrees/`, `*.db`, `*.db-*`, `daemon.*`, `observations/` (`init.ts:348-354`) | [surface](surface.md) P10 |
 | Tokens outside the sandbox's reach | not-built | plaintext JSON (`integrations.ts:57-67`), readable under item 10's gap | S3c |
 | Dashboard Host check, token, CSP, framing | not-built | constant header, no-Origin trusted (`server.ts:115-126`) | S3c |
 | Workspace trust | not-built | hooks (`user_hooks.ts:56`), `mcp.json` (`mcp_client.ts:29-49`), plugins (`execute.ts:385-386`) load unprompted; skills trust-on-first-use with the lock in the repo (`context/src/skills.ts`) | S9 |
@@ -185,7 +196,10 @@ The harness runs code written by a local model on the owner's machine. The v1 Wo
 | `browse`: loopback-only outside research cards, pages tagged | partial | `loop/src/tools.ts:1072-1106`; its Chrome is spawned unconfined (`sandbox/src/browser.ts:29`) | S3a |
 | Restricted mode strips tools | partial | `restricted.spec.ts`; the visual gate still runs (`loop/src/session.ts:1710` strips only mutation) | S3a |
 | Supply-chain existence/age/typosquat, osv offline | built | `gates/tests/supply_chain.spec.ts` | — |
-| Air-gap mirror, manifest, docs, signed updates, self-test | partial | `airgap.spec.ts`; self-test is one TCP probe to 1.1.1.1:443 (`airgap.ts:418-433`); manifest signature optional (`:539`) | NEW-security-2 |
+| Supply chain per ecosystem (npm, PyPI, crates.io, Go) with an advisory download floor | built | `DEPENDENCY_MANIFESTS`, `MIN_WEEKLY_DOWNLOADS` (`gates/src/builtin.ts:677-699, 780-786`); `supply_chain.spec.ts:24-30, 73` | — |
+| Air-gap mirror, manifest, docs, signed updates, self-test | partial | `airgap.spec.ts`; self-test is one TCP probe to 1.1.1.1:443 (`airgap.ts:418-433`); manifest signature optional (`:539`); the manifest's `tier` and `templateChecksum` are optional and never checked — only the SHA-256 is (`airgap.ts:165-173, 225-240`) | NEW-security-2 |
+| Docs bundle and research-cache export/import | built | `prefetchDocs`, export and import with SHA-256 (`airgap.ts:251-305`) | — |
+| `llms.txt` snapshots, staleness on lockfile change, signed skill updates | not-built | none in `airgap.ts` | NEW-security-5 |
 | Low items: `sh -c` quoting, `python3` without `-I`, non-constant-time token compare | not-built | `airgap.ts:438`, `builtin.ts:92`; `license_gate.ts:120`, `parse_gate.ts:73`; `wave2_server.ts:248` | NEW-security-3 |
 
 ## 5. Changes for v1
@@ -207,6 +221,7 @@ Tests use canary markers — a fixture that would write a marker file outside th
 *Shared cache directories hold code the user's own tools later execute.*
 - **SEC-7** WHEN a sandboxed command writes into `node_modules/.vite/deps` THE SYSTEM SHALL write it inside the card's worktree, and the main checkout's `node_modules` SHALL be byte-identical before and after the card.
 - **SEC-8** WHEN two cards run concurrently THE SYSTEM SHALL give neither write access to the other's dependency caches.
+- **SEC-8a** WHEN a sandboxed command writes into a worktree's linked `.venv` THE SYSTEM SHALL fail the write, and the main checkout's `.venv` SHALL be byte-identical before and after the card.
 
 ### S3 — one egress policy
 - **SEC-9** WHEN a name on the allowlist resolves to a loopback, private, link-local or metadata address THE SYSTEM SHALL refuse the connection at the proxy and record `allowed: false`.
@@ -224,6 +239,8 @@ Tests use canary markers — a fixture that would write a marker file outside th
 - **SEC-17** WHEN a language server, a package gate, an onboarding probe, `--validate-tools` or the `browse` tool's browser runs a fixture that writes a marker outside the worktree THE SYSTEM SHALL leave the marker absent.
 - **SEC-18** WHEN the test suite enumerates the modules that import `node:child_process` THE SYSTEM SHALL find exactly the written allowlist.
 - **SEC-19** WHILE `--restricted` is set THE SYSTEM SHALL start no dev server, browser, language server, package gate or hook.
+
+- WHEN the harness runs a program other than git over worktree content outside the sandbox (today: difftastic for the review diff) THE SYSTEM SHALL resolve it by absolute path from a fixed allowlist, run it with no network and with time and memory limits, and SHALL refuse any program not on the allowlist.
 
 ### S3b — fail closed
 - **SEC-20** WHEN no confinement mechanism is available and `SEKHEMET_ALLOW_UNCONFINED` is unset THE SYSTEM SHALL refuse every Worker command and gate with exit code 126 and a message naming the fix.
@@ -251,6 +268,8 @@ Tests use canary markers — a fixture that would write a marker file outside th
 *Justification: one TCP probe cannot show a full card run made no attempt (N16); an unsigned manifest defeats the manifest.*
 - **SEC-33** WHEN the self-test runs a card end to end THE SYSTEM SHALL fail the check if the proxy or the sandbox recorded any outbound attempt.
 - **SEC-34** WHILE air-gap mode is on, WHEN `verify-models` is given no signature THE SYSTEM SHALL refuse to register the models.
+- **SEC-34a** WHEN `verify-models` finds a model whose weights match the manifest's SHA-256 but whose chat-template checksum does not THE SYSTEM SHALL refuse to register it and name the template.
+- **SEC-34b** WHEN a model is registered from the manifest THE SYSTEM SHALL record the tier the manifest says it qualifies for, and SHALL still require this machine's qualification before the model runs a card.
 
 ### NEW-security-3 — small hardening items
 *Justification: three low findings (N14–N16) with no programme ID.*
@@ -263,21 +282,41 @@ Tests use canary markers — a fixture that would write a marker file outside th
 - **SEC-37a** WHEN the injection fixtures of item 42c run with the configured Worker THE SYSTEM SHALL end every fixture with no canary marker outside the worktree, no outbound request outside the allowlist, and no card moved past Review.
 - **SEC-37b** WHEN the Worker model or its quantisation changes THE SYSTEM SHALL require the injection fixtures to pass again before the new Worker runs unattended (`overnight`).
 
+### NEW-security-5 — documentation and skills that match the air-gapped project
+*Justification: the old kit pinned docs to the locked versions, refreshed them on lockfile changes, and carried skill updates by signed bundle; none of the three survives in code (trace of HARNESS_DESIGN "Air-gap kit").*
+- **SEC-44** WHEN a docs bundle is built on a connected machine THE SYSTEM SHALL include each dependency's docs and any published `llms.txt` at the version its lockfile pins, and record those versions in the bundle.
+- **SEC-45** WHEN a lockfile changes after the imported docs bundle was built THE SYSTEM SHALL mark the bundle stale and the self-test SHALL name the packages whose docs no longer match.
+- **SEC-46** WHILE air-gap mode is on, WHEN a skill update arrives THE SYSTEM SHALL accept it only inside a bundle whose `sekhemet-update` signature verifies, and SHALL still require the skill's approval by content hash ([extensibility](extensibility.md) item 15).
+
+### NEW-security-6 — an Ask that a person really answers
+*Justification: the Ask tier's approval path is wired but no test drives it; the reaudit found exactly this gap (R1 defect 4: nobody said who approves an Ask).*
+- **SEC-47** WHEN the Worker issues an Ask-tier command and a person answers "allow" before the timeout THE SYSTEM SHALL run the command once and record the answer and who gave it.
+- **SEC-48** WHEN an Ask-tier request has no answer after 60 s THE SYSTEM SHALL deny the command and tell the model not to retry it.
+- **SEC-49** WHEN an Ask-tier command is issued with no approver attached THE SYSTEM SHALL deny it at once, without posting a decision request.
+
+### NEW-security-7 — erase a secret the scanner missed
+*Justification: a scanner false negative becomes permanent in a ledger that cannot be purged ([DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md](../../research/DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md) decisions 6 and 15, SEC-T2, SEC-T3). Depends on [kernel](kernel.md) NEW-kernel-1.*
+- **SEC-50** WHEN a secret is found in the ledger after it was written THE SYSTEM SHALL tell the person to rotate it first, then erase the affected `private` fields with reason `secret`, delete every blob that contains it, and leave the hash chain verifying.
+- **SEC-51** WHEN an evidence bundle is stored THE SYSTEM SHALL keep its gate excerpts and command lines in an erasable part whose commitment the bundle id covers, so that erasing a secret in an excerpt leaves the bundle id unchanged.
+
 ## 6. v1 acceptance
 
-SEC-1 to SEC-37b (including the lettered criteria), plus these behaviours already built and to be kept under test:
+SEC-1 to SEC-37b and SEC-44 to SEC-51 (including the lettered criteria; SEC-50 and SEC-51 once [kernel](kernel.md) NEW-kernel-1 lands), the `.gitignore` criterion SUR-34 in [surface](surface.md), plus these behaviours already built and to be kept under test:
 - **SEC-38** WHEN a sandboxed command writes `<root>/.git`, `<root>/sub/.GIT/config` or through a symlink into `.git` on macOS THE SYSTEM SHALL fail the write and leave the target unchanged.
 - **SEC-39** WHEN an allowlist is empty THE SYSTEM SHALL refuse every proxied request.
 - **SEC-40** WHEN a step's context holds untrusted content THE SYSTEM SHALL refuse Ask-tier and network commands in that step without asking.
 - **SEC-41** WHEN a card adds a dependency that is absent from the registry, younger than 30 days, or within the typosquat distance of item 44 THE SYSTEM SHALL fail the supply-chain gate and name the rule.
 - **SEC-42** WHEN a signed update bundle is tampered with THE SYSTEM SHALL refuse it and leave the ledger untouched.
 - **SEC-43** WHEN the containment suite runs in CI THE SYSTEM SHALL run it under a real bubblewrap on Linux as well as Seatbelt on macOS, with no test skipped on either.
+- **SEC-43a** WHEN a card adds a Python dependency THE SYSTEM SHALL look it up on PyPI, not npm, and WHEN its weekly downloads are under 100 THE SYSTEM SHALL report the number as an advisory and not fail the gate for it.
+- **SEC-43b** WHEN the Worker's tool sandbox is built with no explicit confinement setting on a host without a mechanism THE SYSTEM SHALL refuse the command.
 
 ## 7. Later
 
 - **`@anthropic-ai/sandbox-runtime`, Smokescreen, nsjail/landrun, secretlint, `@napi-rs/keyring`** — proposals from the review; each needs the owner's yes. The profile requirements above hold whichever implementation is chosen.
-- **A VM per test gate** (Apple `container`, gVisor, Firecracker) — stronger isolation, not researched for our hosts.
-- **Registry mirrors as services** (verdaccio, devpi, a crates mirror) — v1 ships the lockfile allowlist; a transitive dependency not yet in any lockfile cannot be mirrored in advance, which is the open policy question the design left.
+- **A VM per test gate or per card** (Apple `container`, gVisor, Firecracker) — stronger isolation, not researched for our hosts; also the planned route off `sandbox-exec` if Apple removes it (item 13).
+- **Registry mirrors as services** (verdaccio, devpi, a crates mirror), pre-seeded from the lockfile allowlist **plus a curated set** of common packages — v1 ships the lockfile allowlist alone; a transitive dependency not yet in any lockfile cannot be mirrored in advance, which is the open policy question the design left, and a curated set needs someone to curate it.
+- **Crypto-shredding of backups and exports** — deleting the `private` rows plus a declared backup window covers v1 (runtime's backup and restore re-apply erasures); per-subject keys add key management the product does not otherwise need ([research](../../research/DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md) §5).
 - **Plugin signing** — plugins are cut in v1 ([extensibility](extensibility.md)).
 
 ## 8. Open questions
@@ -285,6 +324,7 @@ SEC-1 to SEC-37b (including the lettered criteria), plus these behaviours alread
 1. **Keep the `--validate-tools` execution path, or cut it?** It runs command strings mined from Worker trajectories — the on-the-fly tool synthesis technique that [RESEARCH_REGISTER.md](../../research/RESEARCH_REGISTER.md) holds at `triaged` (R6). *Recommendation:* cut the execution path now; if R6 is ever shortlisted, validation runs confined in a scratch worktree with no network (SEC-17).
 2. **Which mach services does the allowlist contain?** *Recommendation:* start from sandbox-runtime's published list, then add only what the frozen suite's toolchains fail without, each with a test.
 3. **A repository's pre-commit hooks as gates** — run from the base branch's copy, confined. *Recommendation:* yes, owned by [gates](gates.md); until then `doctor` states that hooks do not run.
+4. **The `sandbox-exec` liability.** Apple deprecated it years ago and offers no supported per-process replacement for arbitrary command lines. *Recommendation:* keep it behind the sandbox interface with loud containment tests (item 13, SEC-38); if a macOS release breaks it, confinement fails closed (item 7) and the VM-per-card route in §7 is researched then, not now.
 
 ## 9. Evidence and rationale
 
@@ -300,5 +340,7 @@ SEC-1 to SEC-37b (including the lettered criteria), plus these behaviours alread
   - Unit 42 on AWS AgentCore (DNS still resolved in "sandbox mode") → item 31;
   - the per-OS sandbox recommendation → items 9–17.
 - Research, [group D §E](../../research/WEB_RESEARCH_2026-09.md#e-abliteration-and-agent-safety): Arditi et al. (refusal is one direction), David & Gervais (unsafe compliance 0.10 → 0.47 after abliteration), Fafuła (untargeted judgement shifts), AgentHarm, BrowserART, OS-Harm, and the 2026 injection literature's case for deterministic enforcement outside the model → items 42b, 42c, NEW-security-4. [MODEL_CANDIDATES.md](../../research/MODEL_CANDIDATES.md) records Cyber-Tiel as an abliterated Ornith-1.5 whose card demands OS sandboxing.
-- Decisions: [DEC-04](../DECISIONS.md#dec-04) (why this is v1-blocking), [DEC-21](../DECISIONS.md#dec-21--accepted-substitutions) (bubblewrap, source installer).
+- Research, [DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md](../../research/DESIGN_RESEARCH_TEAMS_DATA_CHANGE.md): decision 15 (`init` leaves evidence and transcripts committable; git history cannot be cleaned) → item 34a, SUR-34; decision 6 and SEC-T2/SEC-T3 (an erasable `private` part, the EDPB's salted-commitment pattern) → items 34, 34b, NEW-security-7; crypto-shredding kept Later (§7). SEC-T1 is carried as SUR-34, because the first run writes `.gitignore`.
+- Decisions: [DEC-04](../DECISIONS.md#dec-04) (why this is v1-blocking), [DEC-21](../DECISIONS.md#dec-21--accepted-substitutions) (bubblewrap rather than Landlock on Linux, plain worktrees rather than copy-on-write clones, source installer — each a deliberate change from the 2026-09-17 design).
+- **Why the weights rule changed** (ruling R7, 2026-09-22): the old "weights are never downloaded" and the models spec's user-confirmed download disagreed; both hold as "never on its own, always by an explicit command, always hash-verified" (item 47).
 - **Why the permission engine is not the boundary:** G1 showed a string check bypassed by a symlink the sandbox let the Worker create; only the kernel-enforced profile holds against a model with a shell.

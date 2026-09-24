@@ -1,6 +1,6 @@
 # The path to MVP
 
-The gap list in [FEATURE_INVENTORY_REAUDIT_2.md](FEATURE_INVENTORY_REAUDIT_2.md) is organised by unit, which is the right shape for an audit and the wrong shape for shipping. Closing gaps by package builds every layer to the same height and produces a system where nothing works end to end until everything does. This document is the other axis: the one path that has to work, and what is deliberately not on it.
+The gap list in `FEATURE_INVENTORY_REAUDIT_2.md` (deleted 2026-09-22; `git show fb59ba2:docs/reference/FEATURE_INVENTORY_REAUDIT_2.md`) was organised by unit, which is the right shape for an audit and the wrong shape for shipping. Closing gaps by package builds every layer to the same height and produces a system where nothing works end to end until everything does. This document is the other axis: the one path that has to work, and what is deliberately not on it.
 
 **MVP is one sentence, and it is the design's own:** a card goes from Ready to Review unattended, with an evidence bundle, on a real repository. Not a card class. Not every language. One card, one repository, all the way through.
 

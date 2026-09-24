@@ -88,14 +88,15 @@ interface PmProposal {
 ```
 
 - `POST /api/pm/proposals/:id/apply` returns `{ proposal, cards }`. It is
-  written to the ledger with actor `human` and type `pm/proposal_applied`.
+  written to the ledger with actor `human` and type `pm/proposal_state`,
+  payload `{ proposalId, state: "applied", cardIds? }` (a discard writes the same type with `state: "discarded"`).
 - `POST /api/pm/proposals/:id/discard`
 
 ### Board practices
 
 - `GET /api/board` gains per-card `priority`, `estimate`, `labels`, `epicId`,
   `cycleId`, `assignee`, `dueDate` and `externalRef`, plus top-level
-  `epics: { id, title, progress: { done, total, points } }[]` and
+  `epics: { id, title, progress: { done, total, points, pointsDone } }[]` and
   `cycles: Cycle[]`.
 - `PATCH /api/cards/:id` with any of the section 2 fields (inline editing).
 - `GET /api/cycles`, `POST /api/cycles`, `PATCH /api/cycles/:id`.
@@ -115,7 +116,8 @@ interface PmProposal {
 - `GET /api/export?format=jira-csv|linear-csv|github-json|json` downloads the
   board in that tool's native import format, with
   `Content-Disposition: attachment; filename="sekhemet-<project>-<format>.<csv|json>"`.
-- `POST /api/import` with `{ format, content }` returns `{ proposals: PmProposal[] }`,
+- `POST /api/import` with `{ format, content }` returns `{ proposals: PmProposal[], messageId }`
+  (the preview is stored as a PM message, `messageId` its id),
   a preview using the same `PmProposal` flow, so import is never silent. Their
   ids work with `/api/pm/proposals/:id/apply` and `/discard`.
 - `PUT /api/integrations/github-pr` with `{ enabled: boolean }` returns the entry.
