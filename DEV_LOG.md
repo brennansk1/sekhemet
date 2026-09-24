@@ -10,7 +10,7 @@
 
 *Refreshed 2026-09-24. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 25 first.*
 
-1. **Where we are:** design v3 is complete (Phase A.5 done 2026-09-25). Next: frontend mockups with the owner (dashboard spec, Configuration page first), and Phase B spec-driven in the plan's order — **B0** cuts, **B1** Worker containment, **B2** measurement and the baseline. Before a workstream starts, apply its spec's outstanding trace restorations (DoD §5.2.5).
+1. **Where we are:** Phase B under way — B0 done 2026-09-25 (Entry 28); next B1. Design v3 is complete (Phase A.5 done 2026-09-25). Next: frontend mockups with the owner (dashboard spec, Configuration page first), and Phase B spec-driven in the plan's order — **B0** cuts, **B1** Worker containment, **B2** measurement and the baseline. Before a workstream starts, apply its spec's outstanding trace restorations (DoD §5.2.5).
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
 3. **Done means:** `DEFINITION_OF_DONE.md` v3 — §5 for a card, a spec, a workstream and a release; §6 for the product.
 4. **Measurement:** suite `1.0.0`, hash `192b6e95fa3c`; thinking A/B arm "off" 10/14 on `468f67f` (SUITE_RUNS). The remaining arms wait on M1, M3, M8 (workstream B2.1).
@@ -20,6 +20,22 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 28 — 2026-09-25 (Phase B begins: B0 done)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver; one reviewer agent.
+
+- B0, the approved cuts:
+  - the plugin container and loader, and `@sekhemet/sdk` (DEC-29 O4);
+  - `canvas.ts`, the context `engine.ts` and `buildFullPromptPack` (DEC-09);
+  - prompt evolution, the SIFT proposal rubric and the variant archive (DEC-25 R31);
+  - `research/desk.ts`.
+- Kept:
+  - `adjudicate`/`acceptRevision`, for NEW-design-stage-2;
+  - loop 9, which is reachable and confined in B1 under security §8 Q1, a ruling later than R31.
+- `doctor` warns on `.sekhemet/plugins/` and names hooks and MCP instead (EXT-28). `cuts_b0.spec.ts` and an inverted runner test (a plugin that would refuse a tool never loads) keep it all cut (EXT-28a).
+- Review: two stale tests and missing `runDoctor` coverage found; all fixed. Gate: 173 files, 1,147 tests. The drop from 175/1,168 is the tests of cut code.
+- **Where the cards stop:** B0 done; next is B1, Worker containment.
 
 ### Entry 27 — 2026-09-25 (teams, Solo and Team, deeper Status and Start; mockups)
 

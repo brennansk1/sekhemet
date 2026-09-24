@@ -2,7 +2,6 @@ import { fileURLToPath } from "node:url";
 
 export * from "./tokens.js";
 export * from "./types.js";
-export * from "./canvas.js";
 export * from "./vocabulary.js";
 export * from "./icons.js";
 export * from "./pm.js";

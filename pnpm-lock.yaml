@@ -204,12 +204,6 @@ importers:
         specifier: ^22.13.4
         version: 22.20.3
 
-  packages/sdk:
-    devDependencies:
-      '@types/node':
-        specifier: ^22.13.4
-        version: 22.20.3
-
   packages/sync:
     dependencies:
       '@sekhemet/kernel':

@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -8,12 +7,11 @@ import {
   trajectoryFromTurns,
 } from "@sekhemet/context";
 import type { LocalInferenceAdapter } from "@sekhemet/models";
-import { reasoningForStep } from "@sekhemet/models";
 
 /**
- * Self-improvement loops 3, 4, 5, 8 and 9 (E9, E10, E11, E14, E15; design
- * "The ten self-improvement loops"). Every loop produces candidates, never
- * live changes: a candidate goes through the SIFT pre-filter, the frozen
+ * Self-improvement loops 4, 5, 8 and 9 (E10, E11, E14, E15). Loop 3 (prompt
+ * evolution) and loop 8's proposal rubric were cut in B0 (DEC-25 R31).
+ * Every loop produces candidates, never live changes: a candidate goes through the SIFT pre-filter, the frozen
  * regression gate (E5) and human approval, and once live it is watched by
  * the learning guard (E17).
  */
@@ -50,173 +48,6 @@ export function siftSlice(history: readonly TaskHistory[], size: number): TaskHi
     }
   }
   return out;
-}
-
-export interface Proposal {
-  id: string;
-  kind: "rule" | "skill" | "prompt" | "tool" | "budget";
-  rationale: string;
-  /** Files or config keys it changes. */
-  touches: string[];
-  /** Size of the change in tokens (text added to the prompt) or lines. */
-  size: number;
-}
-
-export interface SiftVerdict {
-  proposal: Proposal;
-  passedRubric: boolean;
-  rubricFailures: string[];
-  sliceDelta?: number;
-  keep: boolean;
-}
-
-const PROTECTED = [
-  /loop\/src\/(session|card_runner)/,
-  /gates\/src\/runner/,
-  /sandbox\//,
-  /permissions/,
-];
-
-/**
- * Loop 8, SIFT: a cheap rubric first (has a rationale, bounded size, never
- * touches the loop driver, gates runner or sandbox), then a small-slice
- * evaluation: the proposal is kept only if it does not lose cards on the
- * slice. Only kept proposals go on to the full frozen gate.
- */
-export async function siftProposals(
-  proposals: readonly Proposal[],
-  evaluateOnSlice: (proposal: Proposal) => Promise<{ baseline: number; candidate: number }>,
-  options: { maxSize?: number } = {},
-): Promise<SiftVerdict[]> {
-  const out: SiftVerdict[] = [];
-  for (const proposal of proposals) {
-    const failures: string[] = [];
-    if (proposal.rationale.trim().length < 20) failures.push("no rationale");
-    if (proposal.size > (options.maxSize ?? 300)) failures.push(`too large (${proposal.size})`);
-    for (const t of proposal.touches) {
-      if (PROTECTED.some((re) => re.test(t))) failures.push(`touches protected ${t}`);
-    }
-    if (failures.length > 0) {
-      out.push({ proposal, passedRubric: false, rubricFailures: failures, keep: false });
-      continue;
-    }
-    const r = await evaluateOnSlice(proposal);
-    const delta = r.candidate - r.baseline;
-    out.push({
-      proposal,
-      passedRubric: true,
-      rubricFailures: [],
-      sliceDelta: delta,
-      keep: delta >= 0,
-    });
-  }
-  return out;
-}
-
-// ------------------------------------------------ E9: prompt evolution
-
-export interface PromptVariant {
-  id: string;
-  parentId?: string;
-  /** Section name -> text (only the evolvable sections, e.g. laws, repair). */
-  sections: Record<string, string>;
-}
-
-export interface PromptEvaluation {
-  passRate: number;
-  tokens: number;
-  /** Failure excerpts, the feedback the next mutation reflects on. */
-  failures: string[];
-}
-
-export interface EvolutionResult {
-  front: (PromptVariant & PromptEvaluation)[];
-  evaluated: (PromptVariant & PromptEvaluation)[];
-  generations: number;
-}
-
-export function variantId(sections: Record<string, string>): string {
-  return `pv_${createHash("sha256").update(JSON.stringify(sections)).digest("hex").slice(0, 10)}`;
-}
-
-/** Pareto front: higher pass rate, fewer tokens. */
-export function paretoFront<T extends PromptEvaluation>(items: readonly T[]): T[] {
-  return items.filter(
-    (a) =>
-      !items.some(
-        (b) =>
-          b !== a &&
-          b.passRate >= a.passRate &&
-          b.tokens <= a.tokens &&
-          (b.passRate > a.passRate || b.tokens < a.tokens),
-      ),
-  );
-}
-
-/**
- * Loop 3, reflective prompt evolution (GEPA-style): each generation,
- * members of the Pareto front are mutated by a reflective step that reads
- * their failures, the children are evaluated on the task slice, and the
- * front is recomputed. Bounded by generations and population; the result
- * is candidates only.
- */
-export async function evolvePrompts(options: {
-  seed: PromptVariant;
-  evaluate: (v: PromptVariant) => Promise<PromptEvaluation>;
-  mutate: (v: PromptVariant & PromptEvaluation) => Promise<PromptVariant[]>;
-  generations?: number;
-  population?: number;
-}): Promise<EvolutionResult> {
-  const evaluated: (PromptVariant & PromptEvaluation)[] = [];
-  const seen = new Set<string>();
-  const add = async (v: PromptVariant) => {
-    const id = variantId(v.sections);
-    if (seen.has(id)) return;
-    seen.add(id);
-    evaluated.push({ ...v, id, ...(await options.evaluate(v)) });
-  };
-  await add(options.seed);
-  const generations = options.generations ?? 3;
-  let g = 0;
-  for (; g < generations; g++) {
-    const front = paretoFront(evaluated)
-      .sort((a, b) => b.passRate - a.passRate || a.tokens - b.tokens)
-      .slice(0, options.population ?? 4);
-    const before = evaluated.length;
-    for (const parent of front) {
-      for (const child of await options.mutate(parent))
-        await add({ ...child, parentId: parent.id });
-    }
-    if (evaluated.length === before) break;
-  }
-  return { front: paretoFront(evaluated), evaluated, generations: g };
-}
-
-/** A reflective mutator over a planning model: rewrite one section given the failures. */
-export function reflectiveMutator(adapter: LocalInferenceAdapter, perParent = 2) {
-  return async (v: PromptVariant & PromptEvaluation): Promise<PromptVariant[]> => {
-    const names = Object.keys(v.sections).sort();
-    const out: PromptVariant[] = [];
-    for (let i = 0; i < Math.min(perParent, names.length); i++) {
-      const name = names[(v.failures.length + i) % names.length] as string;
-      const thinking = reasoningForStep({ purpose: "planning" });
-      const res = await adapter.generate({
-        systemPrompt:
-          "You improve one section of a coding agent's system prompt. Keep it short and concrete. Reply with the new section text only.",
-        prompt: `Section "${name}":\n${v.sections[name]}\n\nThe agent failed like this (pass rate ${(v.passRate * 100).toFixed(0)}%):\n${v.failures.slice(0, 5).join("\n---\n")}\n\nRewrite the section so these failures do not recur.`,
-        toolArm: "arm_a_flat",
-        purpose: "planning",
-        reasoning: thinking.reasoning,
-        reasoningBudgetTokens: thinking.reasoningBudgetTokens,
-        maxTokens: 600,
-      });
-      const text = res.text.trim();
-      if (text && text !== v.sections[name]) {
-        out.push({ id: "", sections: { ...v.sections, [name]: text } });
-      }
-    }
-    return out;
-  };
 }
 
 // ------------------------------------------------ E10: skill distillation

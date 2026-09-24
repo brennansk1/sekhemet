@@ -11,4 +11,3 @@ export * from "./blobs.js";
 export * from "./retention.js";
 export * from "./scope.js";
 export * from "./card_class.js";
-export * from "./container.js";

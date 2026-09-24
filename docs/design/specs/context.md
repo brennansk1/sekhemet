@@ -182,7 +182,7 @@ Context assembly decides what the Worker sees on each step (a step is one model 
 | Cache hit alert (< 0.85) | partial | `PrefixCacheMonitor` alerts in the queue report (`telemetry.ts:215-225`, `index.ts:1261`) per step, not on the per-attempt median after the first step; not on `run` | M8 |
 | Cache hit at ≥ 0.85 | not-built | median 0.29 over 100 real steps, all below 0.85 (context review §1) | M8 |
 | Four-zone layout | partial | spec and criteria re-sent in the uncached tail every step (13% of the prompt) | M8 |
-| Zone budgets asserted on the live path | partial | skipped below W = 12,288 (`zones.ts:149`, `:165`); system-zone assert only in dead `buildFullPromptPack` | NEW-context-2 |
+| Zone budgets asserted on the live path | partial | skipped below W = 12,288 (`zones.ts:149`, `:165`); the only system-zone assert was in `buildFullPromptPack`, cut in B0, so the live path has none | NEW-context-2 |
 | Zone 4 held to its budget: 300-token observations, one-line older steps, clipped reasoning, out-of-schedule masking from the projection | not-built | observations are masked every step and clamped only to 2,400 + 1,200 characters (`observation.ts:16-34`); no projection | M8, NEW-context-2 |
 | Card size checked once, as Zone 3's fit at `ready` | not-built | no check at `ready`; the planner's INVEST bound is 4,096 tokens of "pack" ([planner-pm.md](planner-pm.md) §2.4) | NEW-context-2 |
 | Zone 1 in tokens (≤ 2,400 with native schemas); remaining zones as fractions of W′ | not-built | Zone 1 is 0.12W and the sub-caps are 1,000 and 2,000 (`zones.ts:16-19`, `:74-79`) | NEW-context-2 |
@@ -224,7 +224,7 @@ Context assembly decides what the Worker sees on each step (a step is one model 
 | No bracketed placeholders in prompt templates | not-built | no check exists | M1 |
 | Package map, role lines and multi-language map from the source index | not-built | the map reads files, not an index | T2 |
 | Bounded scope declaration (identifiers, lexical, one hop, cap 12, decision request) | not-built | keyword match on file paths (`planner/src/scope.ts:47`) | P1 |
-| Dead code: `buildFullPromptPack`, `engine.ts`, `DefaultContextEngine`, `ContextCondenser`, `condenseOutput`, three `tool_interface` exports, `splitRulesByScope` | not-built (cut) | test-only (context review §3); `buildFullPromptPack` and `engine.ts` cuts approved ([DEC-09](../DECISIONS.md#dec-09)) | M1 |
+| Dead code: `buildFullPromptPack`, `engine.ts`, `DefaultContextEngine` cut in B0 ([DEC-09](../DECISIONS.md#dec-09)); `ContextCondenser`, `condenseOutput`, three `tool_interface` exports, `splitRulesByScope` remain | partial | test-only (context review §3); the rest are M1's | M1 |
 
 ## 5. Changes for v1
 

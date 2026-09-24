@@ -10,7 +10,6 @@ code:
   - packages/eval/src/instrumentation.ts
   - packages/eval/src/mutation.ts
   - packages/eval/src/synthesis.ts
-  - packages/eval/src/archive.ts
   - packages/eval/src/diagnostics.ts
   - packages/eval/src/phase0.ts
   - packages/eval/src/m0.ts
@@ -217,7 +216,7 @@ This section owns the rule ([DEC-28](../DECISIONS.md#dec-28--one-rule-for-admitt
 | Admission and rollback: `runFrozenRegressionGate`, `LearningGuard` | `packages/eval/src/guardrails.ts` |
 | Inlets: `harvestExemplars`, `siftSlice`, `distillSkill` and the rest | `packages/eval/src/loops.ts` |
 | Task synthesis, history mining | `packages/eval/src/synthesis.ts`, `history.ts` |
-| Variant archive (register R5) | `packages/eval/src/archive.ts` |
+| Variant archive (register R5) | cut in B0 (DEC-25 R31) |
 | Mutation campaign | `packages/eval/src/mutation.ts`, `apps/harness/src/mutation_step.ts` |
 | Benchmark harness, adapter wrapper | `packages/eval/src/benchmark.ts`, `instrumentation.ts` |
 | Diagnostics | `packages/eval/src/diagnostics.ts` |
@@ -249,7 +248,7 @@ This section owns the rule ([DEC-28](../DECISIONS.md#dec-28--one-rule-for-admitt
 | Paired comparison, exact/Bayesian tests, repeated runs | not-built | `compareRuns` counts +1 task as "improved" (`suite.ts:186-193`); no interval anywhere in eval; a Wilson function only in `pm/capability.ts:31` | M12, T7 |
 | Planning measure | not-built | — | T7 |
 | Pruner null baseline | not-built | the pruner is dormant (never fired on a real prompt) | T7 |
-| Six inlets exist | partial | `loops.ts` still implements the old "loops 3, 4, 5, 8, 9"; `compareRuns`, `TaskSynthesizer`, `evolvePrompts`, `reflectiveMutator`, `paretoFront`, `siftProposals`, `mineCommitCandidates` unreachable | T8 |
+| Six inlets exist | partial | `loops.ts` implements loops 4, 5, 8 (the slice) and 9; loop 3 and loop 8's rubric were cut in B0; `compareRuns`, `TaskSynthesizer`, `mineCommitCandidates` unreachable | T8 |
 | Admission requires a significant gain | not-built | `runFrozenRegressionGate` accepts a delta of 0 (`guardrails.ts:94-104`; enshrined by `wave2.spec.ts:198`); rule gate uses `run_gate.sh` → `queue` without a hash check (`wave2.ts:1140-1200`) | T8 |
 | Paired rollback guard | not-built | compares against the previous ten *different* cards, or 1.0 on empty history (`guardrails.ts:147-150`); at n = 10 the SD ≈ 0.16 against a 0.1 threshold | T8 |
 | Volume thresholds | partial | rules: one struggle creates a candidate; exemplars: no minimum (`loops.ts:332-360`); arms: `MIN_ARM_TRIALS = 5` built (`registry.ts:81`) | T8 |
@@ -414,7 +413,7 @@ This spec is `built` when §5 passes, the full frozen suite has run on the relea
 ## 8. Open questions
 
 1. **Thinking A/B design.** DoD and the old design said "best pass rate for its wall-clock over at least two runs"; that cannot separate arms on 14–30 cards. *Recommendation:* rule 12 — paired, and when inseparable, the cheaper arm wins; run the surgical and all arms only after M1, M3 and M8, as COVERAGE sequences them.
-2. *Decided* ([DEC-25](../DECISIONS.md#dec-25--the-leads-rulings-during-the-design-v3-fix-pass) R31): **loops 3, 4, 5, 8, 9 in `loops.ts`, and the variant archive (loop 7).** `harvestExemplars` and `siftSlice` map to the exemplar inlet and the re-run rule, `distillSkill` to the skill inlet, and the rest is cut as dead code; the sign-off MS-T8-8 requires is [DEC-09](../DECISIONS.md#dec-09), the owner's rule that unreachable code is cut. The variant archive (`archive.ts`, register R5: sample parents by performance, restore a previous variant pointer) is not one of the six inlets and is cut too, since rollback is by the paired rule and version pins; it returns only if a seventh inlet is justified by its signal size (rule 17).
+2. *Decided* ([DEC-25](../DECISIONS.md#dec-25--the-leads-rulings-during-the-design-v3-fix-pass) R31): **loops 3, 4, 5, 8, 9 in `loops.ts`, and the variant archive (loop 7).** `harvestExemplars` and `siftSlice` map to the exemplar inlet and the re-run rule, `distillSkill` to the skill inlet, and the rest is cut as dead code; the sign-off MS-T8-8 requires is [DEC-09](../DECISIONS.md#dec-09), the owner's rule that unreachable code is cut. The variant archive (`archive.ts`, register R5: sample parents by performance, restore a previous variant pointer) is not one of the six inlets and is cut too, since rollback is by the paired rule and version pins; it returns only if a seventh inlet is justified by its signal size (rule 17). **Done in B0:** loop 3 (prompt evolution), loop 8's proposal rubric (`siftProposals`) and the archive are cut. Loop 9 (tool synthesis) is reached from `sekhemet improve` and stays, confined in B1 under [security](security.md) item 4a — security §8 Q1 (2026-09-24, on the confirmation review) is later than R31 and keeps reachable code unless the owner cuts it.
 3. **Which public data to import.** *Recommendation:* only the SWE-bench Verified difficulty annotations (flag: licence unstated) and, for the pre-filter's form, the four scalar columns of `nebius/SWE-rebench-openhands-trajectories` (CC-BY-4.0); nothing else in v1. The survey's "single best import", `nebius/SWE-rebench-V2`, is not taken: it supplies difficulty *features* without labels (the Verified annotations are the only labels) and instances for anchor pairs, but each instance must be run under this harness — in its own container image and build environment — to become an anchor, which the one reference machine cannot afford in v1, and it carries patch text (59 copyleft rows, 5,038 with an unresolved licence) where rule 22 admits only derived booleans; its language-agnostic pipeline pointed at this project's own dependencies is the §7 item instead ([PUBLIC_DATA_SURVEY.md](../../research/PUBLIC_DATA_SURVEY.md) §1 and "The git-history alternative").
 4. **The M0 pivot rule — [O20](../../reference/OPEN_QUESTIONS.md#owner-decisions), open.** If the Worker cannot run cards unattended (valid tool calls below 70% on the M0 protocol), the old plan narrowed the product to planning and review assistance. *Default until the owner decides, and the recommendation:* keep it as a standing decision, re-checked on every Worker change (rule 28a, MS-M9-6), because it is the product's answer to its riskiest assumption; the harness records and reports the condition, and the owner decides the narrowing.
 

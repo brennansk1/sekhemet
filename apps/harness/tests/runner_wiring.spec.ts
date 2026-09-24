@@ -1,5 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -554,13 +562,15 @@ describe("apps/harness executeCard wiring (wave 2, part 1)", () => {
     expect(events.at(-1)).toBe("card/end");
   });
 
-  it("mounts the project's plugins on the card's container; a plugin hook refuses a tool, and all of it unmounts (K9, K10)", async () => {
+  it("loads nothing from .sekhemet/plugins: a plugin that would refuse a tool never runs (EXT-28)", async () => {
+    const marker = join(repo, ".sekhemet", "plugin-loaded");
     mkdirSync(join(repo, ".sekhemet", "plugins", "guard"), { recursive: true });
     writeFileSync(
       join(repo, ".sekhemet", "plugins", "guard", "index.mjs"),
-      `export default {
+      `import { writeFileSync } from "node:fs";
+      writeFileSync(${JSON.stringify(marker)}, "loaded");
+      export default {
         name: "guard",
-        requires: ["ctx.cards", "ctx.board", "ctx.hooks"],
         apply(ctx) {
           ctx.hook("pre-tool", (c) => c.toolName === "run_cmd" ? { block: true, reason: "the guard plugin forbids commands" } : undefined);
         },
@@ -574,8 +584,9 @@ describe("apps/harness executeCard wiring (wave 2, part 1)", () => {
       scripted([[{ name: "run_cmd", arguments: { command: "ls", description: "x" } }], WRITE_A])
         .adapter,
     );
-    expect(lines.join("\n")).toContain("plugins: guard");
-    expect(result.turns[0]?.observations[0]?.content).toContain(
+    expect(existsSync(marker)).toBe(false);
+    expect(lines.join("\n")).not.toContain("plugins:");
+    expect(result.turns[0]?.observations[0]?.content ?? "").not.toContain(
       "the guard plugin forbids commands",
     );
     expect(result.passed).toBe(true);

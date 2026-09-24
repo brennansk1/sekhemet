@@ -54,6 +54,11 @@ v1 includes: binding to a non-loopback address safely; an identity for each pers
 **Dead code is cut; three modules are wired in or cut by their workstream.** *Owner, 2026-09-22 (D4).* Cut: `packages/ui/src/canvas.ts`, `container.ts` (kernel and sandbox), `buildFullPromptPack` and the context `engine.ts`, the three `FEATURE_INVENTORY` files. Decided by their workstream, recorded in its spec: `retention.ts`, `apps/harness/src/research/desk.ts`, `adjudicate` and `acceptRevision` in `claims.ts`.
 - **Why:** code reachable only from tests is dead; it misleads the next reader and the reachability gate.
 - **Correction (2026-09-22, platform spec pass):** `container.ts` is not dead — `execute.ts:378-386` builds a `ServiceContainer` and `PluginManager` on every card. The recommendation is still to cut it (plugins add only services and hooks, and run repository code unsandboxed), but cutting reachable code is a new decision: **the owner decides** ([extensibility](specs/extensibility.md) §8). **Decided 2026-09-24 (DEC-29 O4): cut, with the SDK package, in B0.**
+- **Done in B0 (2026-09-25):**
+  - cut: `canvas.ts`, the kernel `container.ts` (the sandbox copy no longer existed), the SDK package, `buildFullPromptPack`, the context `engine.ts`, `research/desk.ts`, and the loops and archive R31 names;
+  - kept: `adjudicate`/`acceptRevision`, wired by NEW-design-stage-2;
+  - already gone: the `FEATURE_INVENTORY` files;
+  - `apps/harness/tests/cuts_b0.spec.ts` keeps all of these cut.
 
 ### DEC-10
 **`main` tracks the work.** *Owner, 2026-09-22 (D2).* `main` was fast-forwarded to the working branch at `fb59ba2`, and is fast-forwarded again when each workstream lands with its gate green.

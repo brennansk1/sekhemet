@@ -261,11 +261,11 @@ The design v3 specifications found gaps the Phase A programme had no ID for. Eac
 
 | Code | Why | Proposed |
 | --- | --- | --- |
-| `packages/ui/src/canvas.ts` | Reachable only from a test | Cut |
-| `container.ts` (kernel/sandbox) | Reachable — built on every card (`execute.ts:378`); plugins run repository code unsandboxed | Cut, with the SDK package (DEC-29 O4, B0) |
+| `packages/ui/src/canvas.ts` | Reachable only from a test | **Cut in B0** |
+| `container.ts` (kernel/sandbox) | Reachable — built on every card (`execute.ts:378`); plugins run repository code unsandboxed | **Cut in B0**, with the SDK package (DEC-29 O4) |
 | `retention.ts` | ~~Unused~~ — wired: `queue` prunes on start (`execute.ts:195`); found by the platform spec pass | Keep; retention becomes a recorded erasure after owner decision O1 |
-| `apps/harness/src/research/desk.ts`; `adjudicate` / `acceptRevision` in `claims.ts` | Reachable only from tests | Wire in or cut |
-| `buildFullPromptPack`, `engine.ts` (context) | Dead | Cut |
+| `apps/harness/src/research/desk.ts`; `adjudicate` / `acceptRevision` in `claims.ts` | Reachable only from tests | **B0:** `desk.ts` cut; `adjudicate`/`acceptRevision` kept, wired by NEW-design-stage-2 |
+| `buildFullPromptPack`, `engine.ts` (context) | Dead | **Cut in B0** |
 | The three `FEATURE_INVENTORY*.md` files | Superseded; the docs index forbids keeping versions side by side | Cut (git keeps them) |
 
 ### Library and tool proposals

@@ -7,7 +7,6 @@ import {
   LearningGuard,
   type TaskHistory,
   type Trajectory,
-  VariantArchive,
   distillSkill,
   formatM0Report,
   mineToolProposals,
@@ -811,7 +810,7 @@ export async function runWave2Command(
 }
 
 /**
- * `sekhemet improve` (E10, E11-adjacent, E13, E14, E15, E17): mine the
+ * `sekhemet improve` (E10, E11-adjacent, E14, E15, E17): mine the
  * ledger for candidates. Skills and tools are written as candidates only;
  * nothing becomes live without approval, and the learning guard's state is
  * reported.
@@ -923,26 +922,6 @@ async function improveCommand(k: Kernel, args: string[], io: CommandIO): Promise
   }
   const slice = siftSlice([...hist.values()], 5);
   if (slice.length) print(`SIFT slice: ${slice.map((s) => s.taskId).join(", ")}`);
-
-  // E13: archive the current harness configuration with its measured pass rate.
-  const policy = new BudgetPolicyStore(join(dot, "budget_policy.json")).current();
-  const done = cards.filter((c) => c.status === "done").length;
-  const tried = cards.filter((c) => c.stepsUsed > 0).length;
-  const archive = new VariantArchive(join(dot, "variants.json"));
-  const config = { stepBudget: policy.stepBudget, maxFailedChecks: policy.maxFailedChecks };
-  const existing = archive.all().find((v) => JSON.stringify(v.config) === JSON.stringify(config));
-  if (!existing && tried > 0) {
-    const parent = archive.best();
-    archive.add({
-      ...(parent ? { parentId: parent.id } : {}),
-      description: `steps ${policy.stepBudget}, failed checks ${policy.maxFailedChecks}`,
-      config,
-      scores: { board: tried ? done / tried : 0 },
-    });
-  }
-  print(
-    `variant archive: ${archive.all().length} variant(s); best ${archive.best()?.description ?? "none"}`,
-  );
 
   // E17: what the guard is watching.
   const guard = new LearningGuard(join(dot, "learning_guard.json"));

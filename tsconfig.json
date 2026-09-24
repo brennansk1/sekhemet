@@ -12,7 +12,6 @@
     { "path": "packages/planner" },
     { "path": "packages/eval" },
     { "path": "packages/ui" },
-    { "path": "packages/sdk" },
     { "path": "apps/harness" }
   ]
 }

@@ -197,10 +197,10 @@ How a person who is not an engineer — a Stakeholder in the Team setup, or anyo
 | Researcher tool set (search, fetch, docs, scholar, paper, repo, deps), robots and rate limits | built | `researcher.ts:216-430`, `polite.ts`, `repo.ts`, `deps.ts`; `web_research.spec.ts` | — |
 | Seshat delegates evidence questions to the Researcher | built | `ask_researcher` (`pm/agent.ts:143`) | — |
 | Grounded risk vector on every answer | built | `researcher.ts:55-72` (`badCitations`, `confidence`, `risk`) | — |
-| Gated critique pass; contested claims reported | not-built | `acceptRevision`, `adjudicate`, `renderDisagreements` (`claims.ts:116-200`) reachable only from tests; no revision stage exists | NEW-design-stage-2 |
+| Gated critique pass; contested claims reported | not-built | `acceptRevision`, `adjudicate`, `renderDisagreements` (`claims.ts:116-200`) reachable only from tests; no revision stage exists. B0's wire-or-cut: kept, to be wired by this change | NEW-design-stage-2 |
 | Depth profile, checklist, comparables, walkthrough | not-built | No depth profile in `design_stage.ts` | P14 |
 | A stakeholder's start: MoSCoW candidates with a release line, Review plan, Send for approval (§2.9) | not-built | no start by conversation exists (P2); no approval step | P2; NEW-teams-6 ([teams](teams.md)) |
-| Research Desk (`grade`, `lookup`, inbox) | not-built | `research/desk.ts` reachable only from tests | — (recommend cut; §7) |
+| Research Desk (`grade`, `lookup`, inbox) | not-built | `research/desk.ts` was reachable only from tests and was cut in B0 (DEC-09); it returns from §7 if at all | — |
 
 ## 5. Changes for v1
 

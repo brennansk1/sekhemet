@@ -1,47 +1,7 @@
-import type { CardRecord } from "@sekhemet/kernel";
 import { describe, expect, it } from "vitest";
-import { VirtualCanvasManager } from "../src/canvas.js";
 import { BASALT, SAND, contrastRatio, generateTokenCss } from "../src/tokens.js";
 
 describe("@sekhemet/ui", () => {
-  it("computes virtual card geometry and culls off-screen nodes", () => {
-    const manager = new VirtualCanvasManager({
-      viewportWidth: 800,
-      viewportHeight: 600,
-      totalColumns: 5,
-      columnWidth: 300,
-      rowHeight: 120,
-    });
-
-    const cards: CardRecord[] = [];
-    const now = new Date().toISOString();
-    for (let i = 0; i < 50; i++) {
-      cards.push({
-        id: `card_${i}`,
-        tier: "task",
-        title: `Task ${i}`,
-        status: i % 2 === 0 ? "ready" : "in_progress",
-        scopeFiles: ["index.ts"],
-        stepBudget: 50,
-        stepsUsed: 0,
-        createdAt: now,
-        updatedAt: now,
-      });
-    }
-
-    const nodes = manager.layoutCards(cards, 0, 0); // scrollX = 0, scrollY = 0
-
-    expect(nodes.length).toBe(50);
-    // Nodes at top should be visible
-    const topNode = nodes[0];
-    expect(topNode?.isVisible).toBe(true);
-    expect(topNode?.width).toBe(300);
-
-    // Nodes far down (e.g. y > 600) should be culled
-    const culledNodes = nodes.filter((n) => !n.isVisible);
-    expect(culledNodes.length).toBeGreaterThan(0);
-  });
-
   it("exports the specified Basalt and Sand palettes", () => {
     // The design fixes these values; a generic palette is a different product.
     expect(BASALT.bgBase).toBe("#14120F");
@@ -87,43 +47,5 @@ describe("@sekhemet/ui", () => {
       const varName = `--${key.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`;
       expect(css, `missing ${varName}`).toContain(`${varName}:`);
     }
-  });
-
-  it("windows only the cards intersecting the viewport", () => {
-    const manager = new VirtualCanvasManager({
-      viewportWidth: 800,
-      viewportHeight: 600,
-      totalColumns: 6,
-      columnWidth: 300,
-      rowHeight: 120,
-    });
-
-    const now = new Date().toISOString();
-    const many: CardRecord[] = Array.from({ length: 600 }, (_, i) => ({
-      id: `card_${i}`,
-      tier: "task" as const,
-      title: `Task ${i}`,
-      status: "ready" as const,
-      scopeFiles: [],
-      stepBudget: 40,
-      stepsUsed: 0,
-      createdAt: now,
-      updatedAt: now,
-    }));
-
-    manager.setCards(many);
-    const win = manager.window(0, 0);
-
-    // The whole point: 600 cards must not produce 600 nodes.
-    expect(win.nodes.length).toBeLessThan(20);
-    expect(win.nodes.length).toBeGreaterThan(0);
-    // Content height still reflects all 600 rows so the scrollbar is correct.
-    expect(win.content.height).toBe(600 * (120 + 16));
-
-    // Scrolling far down yields a different, equally small window.
-    const deep = manager.window(0, 20_000);
-    expect(deep.nodes.length).toBeLessThan(20);
-    expect(deep.nodes[0]?.rowIndex).toBeGreaterThan(100);
-    expect(deep.nodes.some((n) => n.card.id === "card_0")).toBe(false);
   });
 });

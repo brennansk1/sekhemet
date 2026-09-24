@@ -1,7 +1,6 @@
 export * from "./types.js";
 export * from "./tokens.js";
 export * from "./repo_map.js";
-export * from "./engine.js";
 export * from "./skills.js";
 export * from "./zones.js";
 export * from "./tool_interface.js";

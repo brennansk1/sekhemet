@@ -10,7 +10,6 @@ export * from "./report.js";
 export * from "./history.js";
 export * from "./m0.js";
 export * from "./guardrails.js";
-export * from "./archive.js";
 export * from "./loops.js";
 export * from "./mutation.js";
 export * from "./diagnostics.js";

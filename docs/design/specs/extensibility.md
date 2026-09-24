@@ -10,8 +10,7 @@ code:
   - apps/harness/src/mcp_client.ts
   - apps/harness/src/acp.ts
   - apps/harness/src/pm/slash.ts
-  - packages/sdk/src/index.ts          # cut in B0 with the plugin container (DEC-29 O4, NEW-extensibility-5)
-  - packages/kernel/src/container.ts    # cut in B0 (DEC-29 O4, NEW-extensibility-5)
+  - apps/harness/src/doctor.ts          # pluginsCheck: EXT-28
   - packages/eval/src/diagnostics.ts
 tests:
   - packages/kernel/tests/hooks.spec.ts
@@ -23,7 +22,7 @@ tests:
   - apps/harness/tests/mcp_client.spec.ts
   - apps/harness/tests/acp.spec.ts
   - apps/harness/tests/slash.spec.ts
-  - apps/harness/tests/sdk.spec.ts      # cut in B0 with the SDK
+  - apps/harness/tests/cuts_b0.spec.ts  # EXT-28, EXT-28a
 changes: [S9, S4, NEW-extensibility-1, NEW-extensibility-2, NEW-extensibility-3, NEW-extensibility-4, NEW-extensibility-5]
 ---
 
@@ -146,7 +145,7 @@ Decisions on what the Planner and the infrastructure use, adopt or build; the ow
 | `McpServerConfig`, `loadMcpConfig`, `McpHub` | `apps/harness/src/mcp_client.ts` |
 | ACP (`ACP_PROTOCOL_VERSION = 1`) | `apps/harness/src/acp.ts` |
 | Slash commands | `apps/harness/src/pm/slash.ts:71-130` |
-| `@sekhemet/sdk`; `ServiceContainer`, `PluginManager` — both **cut in B0** (NEW-extensibility-5) | `packages/sdk/src/index.ts`; `packages/kernel/src/container.ts`, constructed at `apps/harness/src/execute.ts:378-388` |
+| `@sekhemet/sdk`; `ServiceContainer`, `PluginManager` — **cut in B0** (NEW-extensibility-5): no package, no export, nothing loaded from `.sekhemet/plugins/` | `doctor` warns on a plugins directory: `pluginsCheck` in `apps/harness/src/doctor.ts` |
 | CLI: `sekhemet mcp`, `sekhemet acp`, `sekhemet dev skills [list] \| approve \| revoke` | `index.ts`, `wave2.ts:756` |
 
 ## 4. State today
@@ -170,8 +169,8 @@ Decisions on what the Planner and the infrastructure use, adopt or build; the ow
 | MCP client: stdio only, full env, Researcher only | partial | `mcp_client.ts:73-77`; `research/cli.ts:66` | NEW-extensibility-3 |
 | ACP as PM chat | built | `acp.ts`; `acp.spec.ts` | — |
 | Slash commands | built | `slash.ts`; `slash.spec.ts` | — |
-| SDK package present | present, to be cut | `sdk.spec.ts` is its only consumer; types copied (`sdk/src/index.ts:15-35`) | NEW-extensibility-5 (B0) |
-| Plugin container and loader present | present, to be cut | the loader mounts every plugin found, unprompted and unconfined (`execute.ts:385-386`), via the kernel barrel | NEW-extensibility-5 (B0) |
+| SDK package cut | built (B0) | no `@sekhemet/sdk` in the workspace or `tsconfig.json` (`cuts_b0.spec.ts`) | NEW-extensibility-5 |
+| Plugin container and loader cut; `doctor` names hooks and MCP instead | built (B0) | no `ServiceContainer`/`PluginManager` export or import; only `doctor.ts` reads `.sekhemet/plugins/` (`cuts_b0.spec.ts`, EXT-28, EXT-28a) | NEW-extensibility-5 |
 
 ## 5. Changes for v1
 

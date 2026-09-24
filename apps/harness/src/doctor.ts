@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { freemem, platform, totalmem } from "node:os";
 import { join } from "node:path";
 import {
@@ -248,9 +248,28 @@ export async function runDoctor(repoPath: string = process.cwd()): Promise<Docto
     // E19, C12: rule net gain, context bloat, pruning recommendations.
     playbookDoctorCheck(repoPath),
     registersCheck(repoPath),
+    pluginsCheck(repoPath),
   ];
 
   return { ok: checks.every((c) => c.status !== "fail"), checks };
+}
+
+/**
+ * EXT-28: plugins were cut (DEC-29 O4). A repository that still carries
+ * `.sekhemet/plugins/` gets nothing loaded from it, and is told where the
+ * same needs are met now.
+ */
+export function pluginsCheck(repoPath: string): DiagnosticCheck {
+  const dir = join(repoPath, ".sekhemet", "plugins");
+  if (!existsSync(dir)) return check("Plugins", "pass", "no plugins directory");
+  const found = readdirSync(dir, { withFileTypes: true })
+    .filter((d) => d.isDirectory())
+    .map((d) => d.name);
+  return check(
+    "Plugins",
+    "warn",
+    `plugins are not supported and are not loaded${found.length ? ` (${found.join(", ")})` : ""}; use hooks (.sekhemet/hooks.toml) or MCP servers (.sekhemet/mcp.json) instead`,
+  );
 }
 
 /** X17, X18: the provenance and research registers, when the repository keeps them. */

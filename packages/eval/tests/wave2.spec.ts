@@ -8,24 +8,19 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   BudgetPolicyStore,
   LearningGuard,
-  VariantArchive,
   boundPolicyChange,
   commandShape,
   distillSkill,
-  evolvePrompts,
   generateMutants,
   harvestExemplars,
   mineCommitCandidates,
   mineToolProposals,
-  paretoFront,
   playbookDiagnostics,
   qualifyCandidates,
-  reflectiveMutator,
   renderBakeOffMatrix,
   runFrozenRegressionGate,
   runM0Protocol,
   runMutationCampaign,
-  siftProposals,
   siftSlice,
   synthesizeTasksFromHistory,
   validateToolProposal,
@@ -260,44 +255,8 @@ describe("E8: tuned budgets applied within 15%, reversibly", () => {
   });
 });
 
-describe("E13: variant archive", () => {
-  it("keeps lineage and selects parents by score and novelty, reproducibly", () => {
-    const path = join(tmp(), "archive.json");
-    const a = new VariantArchive(path);
-    const root = a.add({
-      description: "base",
-      config: { arm: "a", budget: 50 },
-      scores: { chronicle: 0.5 },
-    });
-    const child = a.add({
-      parentId: root.id,
-      description: "budget 60",
-      config: { arm: "a", budget: 60 },
-      scores: { chronicle: 0.67 },
-    });
-    a.add({
-      parentId: child.id,
-      description: "arm b",
-      config: { arm: "b", budget: 60 },
-      scores: { chronicle: 0.6 },
-    });
-    const b = new VariantArchive(path);
-    expect(b.lineage(b.all()[2]?.id as string).map((v) => v.description)).toEqual([
-      "base",
-      "budget 60",
-      "arm b",
-    ]);
-    expect(b.best()?.description).toBe("budget 60");
-    const p1 = new VariantArchive(join(tmp(), "x.json"));
-    for (const v of b.all()) p1.add({ ...v });
-    const p2 = new VariantArchive(join(tmp(), "y.json"));
-    for (const v of b.all()) p2.add({ ...v });
-    expect(p1.selectParent(42)?.id).toBe(p2.selectParent(42)?.id);
-  });
-});
-
-describe("E14: SIFT pre-filter", () => {
-  it("picks uncertain tasks across classes and filters proposals by rubric then slice", async () => {
+describe("E14: SIFT slice", () => {
+  it("picks uncertain tasks across classes", () => {
     const slice = siftSlice(
       [
         { taskId: "always", cardClass: "a", passes: 10, runs: 10 },
@@ -308,78 +267,6 @@ describe("E14: SIFT pre-filter", () => {
       2,
     );
     expect(slice.map((s) => s.taskId)).toEqual(["coin", "b-coin"]);
-    const verdicts = await siftProposals(
-      [
-        {
-          id: "ok",
-          kind: "rule",
-          rationale: "Cast rows through unknown; three cards failed on TS2352.",
-          touches: [".sekhemet/playbook.toml"],
-          size: 40,
-        },
-        {
-          id: "worse",
-          kind: "rule",
-          rationale: "Always run the whole test suite after every edit.",
-          touches: [".sekhemet/playbook.toml"],
-          size: 30,
-        },
-        {
-          id: "unsafe",
-          kind: "tool",
-          rationale: "Skip the gate runner when the change is small enough.",
-          touches: ["packages/gates/src/runner.ts"],
-          size: 10,
-        },
-      ],
-      async (p) => ({ baseline: 3, candidate: p.id === "worse" ? 2 : 3 }),
-    );
-    expect(verdicts.map((v) => `${v.proposal.id}:${v.keep}`)).toEqual([
-      "ok:true",
-      "worse:false",
-      "unsafe:false",
-    ]);
-    expect(verdicts[2]?.rubricFailures[0]).toMatch(/protected/);
-  });
-});
-
-describe("E9: prompt evolution", () => {
-  it("evolves the Pareto front from failures, bounded by generations", async () => {
-    const adapter = new MockInferenceAdapter("planner", [], {
-      rules: [
-        {
-          match: /Rewrite the section/,
-          response: (req) => ({
-            text: `${/Section "laws":\n([^\n]*)/.exec(req.prompt)?.[1] ?? ""} Always read the failing line first.`,
-            toolCalls: [],
-            usage: { promptTokens: 1, completionTokens: 1, durationMs: 1 },
-          }),
-        },
-      ],
-    });
-    const result = await evolvePrompts({
-      seed: { id: "", sections: { laws: "Edit only scope files." } },
-      evaluate: async (v) => {
-        const good = (v.sections.laws ?? "").includes("failing line");
-        return {
-          passRate: good ? 0.8 : 0.5,
-          tokens: (v.sections.laws ?? "").length,
-          failures: good ? [] : ["edited without reading"],
-        };
-      },
-      mutate: reflectiveMutator(adapter, 1),
-      generations: 3,
-    });
-    expect(result.evaluated.length).toBeGreaterThanOrEqual(2);
-    expect(result.front.some((f) => f.passRate === 0.8)).toBe(true);
-    expect(adapter.callHistory[0]?.purpose).toBe("planning");
-    expect(
-      paretoFront([
-        { passRate: 1, tokens: 10 },
-        { passRate: 0.5, tokens: 20 },
-        { passRate: 0.4, tokens: 5 },
-      ]),
-    ).toHaveLength(2);
   });
 });
 

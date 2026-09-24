@@ -30,8 +30,6 @@ import {
   type CardRecord,
   type CardStatus,
   type CardStore,
-  PluginManager,
-  ServiceContainer,
   cardClassOf,
   pruneRetention,
 } from "@sekhemet/kernel";
@@ -371,21 +369,7 @@ export async function executeCard(
 
   const worktreePath = join(ctx.repoPath, ".sekhemet", "worktrees", card.id);
   const webDocs = await workerWebDocs(ctx.repoPath).catch(() => undefined);
-  // K9/K10: this card's services in one container, and the project's
-  // plugins (.sekhemet/plugins) mounted on it; they may add services and
-  // lifecycle hooks, and everything they register is undone after the card.
   const hookEngine = hookEngineFor(ctx.repoPath).engine;
-  const container = new ServiceContainer();
-  container.register("ctx.cards", ctx.cardStore);
-  container.register("ctx.board", ctx.boardService);
-  container.register("ctx.hooks", hookEngine);
-  container.register("ctx.gates", gateRunner);
-  container.register("ctx.llm", model);
-  container.register("ctx.sandbox", sandbox);
-  const plugins = new PluginManager(container, hookEngine);
-  const loaded = await plugins.loadFromDirectory(join(ctx.repoPath, ".sekhemet", "plugins"));
-  if (loaded.mounted.length > 0) log(`   plugins: ${loaded.mounted.map((p) => p.name).join(", ")}`);
-  for (const e of loaded.errors) log(`   plugin not mounted: ${e}`);
   const baselineSwap = readSwapUsedBytes();
   // A rewind or fork the human asked for (H18, H19) sets where this run starts.
   const start = await pendingStartPoint(ctx.cardStore, card.id).catch(() => undefined);
@@ -566,14 +550,11 @@ export async function executeCard(
     },
   });
 
-  const result = await runner
-    .run()
-    .finally(() => plugins.unmountAll())
-    .catch((err) => {
-      cardSpan?.set({ "error.message": String(err).slice(0, 300) }).end("error");
-      tracer?.close();
-      throw err;
-    });
+  const result = await runner.run().catch((err) => {
+    cardSpan?.set({ "error.message": String(err).slice(0, 300) }).end("error");
+    tracer?.close();
+    throw err;
+  });
   cardSpan
     ?.set({
       "sekhemet.passed": result.passed,

@@ -274,7 +274,7 @@ describe("goal and decide commands (P17, P18, P9, P11)", () => {
   });
 });
 
-describe("skills, release, ci and improve commands (C10, Y17, Y18, E10, E13-E15, E17)", () => {
+describe("skills, release, ci and improve commands (C10, Y17, Y18, E10, E14, E15, E17)", () => {
   it("approves and revokes skills in the lock file", async () => {
     const k = kernel();
     mkdirSync(join(k.repoPath, ".sekhemet", "skills", "db"), { recursive: true });
@@ -308,7 +308,7 @@ describe("skills, release, ci and improve commands (C10, Y17, Y18, E10, E13-E15,
     expect(await runWave2Command("ci", [], k, quiet)).toBe(2);
   });
 
-  it("improve mines the ledger for tool and skill candidates and archives the variant", async () => {
+  it("improve mines the ledger for tool and skill candidates, and keeps no variant archive (DEC-25 R31)", async () => {
     const k = kernel();
     for (const id of ["c1", "c2", "c3"]) {
       await k.cardStore.createCard({
@@ -338,8 +338,8 @@ describe("skills, release, ci and improve commands (C10, Y17, Y18, E10, E13-E15,
     const text = out.join("\n");
     expect(text).toMatch(/tool candidate node: node \{path0\} \{path1\}/);
     expect(text).toMatch(/skill candidate .*ledger/);
-    expect(text).toMatch(/variant archive: 1 variant/);
-    expect(existsSync(join(k.repoPath, ".sekhemet", "variants.json"))).toBe(true);
+    expect(text).not.toMatch(/variant archive/);
+    expect(existsSync(join(k.repoPath, ".sekhemet", "variants.json"))).toBe(false);
   });
 });
 

@@ -44,7 +44,7 @@ describe("@sekhemet/harness Dashboard Server", () => {
       tier: "feature",
       title: "Basalt Theme Virtual Kanban",
       status: "in_progress",
-      scopeFiles: ["packages/ui/src/canvas.ts"],
+      scopeFiles: ["packages/ui/src/tokens.ts"],
     });
 
     await cardStore.createCard({
