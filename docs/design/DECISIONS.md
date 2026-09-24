@@ -110,6 +110,8 @@ v1 includes: binding to a non-loopback address safely; an identity for each pers
 | Worker | *Agent* (as an assignee); *Coding model* (as a model role) |
 | Planner, Reviewer, Researcher (roles) | *Planning model*, *Review model*, *Research model*; *AI review* for the Reviewer's findings |
 | slice, walking skeleton, must-have proven | release, requirements done ("Release 1 · 5 of 11 requirements done"); *walking skeleton* only in Tips |
+| Kano class must-be / performance / attractive; must-have, nice-to-have (`~`) | Must have / Should have / Could have (MoSCoW); *Later* for what is out of the release |
+| depth profile prototype / internal tool / production / regulated | the project's *Type*: Prototype, Internal tool, Production, Regulated |
 | cycle | sprint |
 | step N of budget | "step 14 of 40" in the agent's progress |
 | qualified (model) | verified on this machine |
