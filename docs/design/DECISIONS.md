@@ -98,6 +98,42 @@ v1 includes: binding to a non-loopback address safely; an identity for each pers
 - **Documentation it generates for users** is organised by the Diátaxis framework (tutorials, how-to guides, reference, explanation), so it reads like a professional team's.
 - Every generated document is committed through Accept, so it is reviewed like code.
 
+### DEC-31
+**The interface speaks the language development teams already use.** *Owner, 2026-09-25.* Apart from the names *Sekhemet* and *Seshat*, every word a person reads in the dashboard, the CLI's output and generated documents is the term Jira, Linear, GitHub and Scrum/Kanban practice use; the product's internal names stay in the code and the specifications, and [NAMING](NAMING.md) holds the map. Supersedes DEC-26's display labels (*Contract*, *Storage*, *Flow*, *Rules*), which were invented.
+
+| Internal (code, specs) | On screen |
+| --- | --- |
+| card | issue (key `CHR-7`); *card* only for the tile on a board |
+| `change` feature / fix / refactor, upgrade, characterize / `kind` spike | Story / Bug / Task / Spike (the standard issue types); *Epic* for an epic |
+| gates, gate passed/failed | checks: "All checks passed", "2 checks failed" (GitHub's word) |
+| evidence bundle | the issue's *Checks* and *Activity* tabs |
+| Worker | *Agent* (as an assignee); *Coding model* (as a model role) |
+| Planner, Reviewer, Researcher (roles) | *Planning model*, *Review model*, *Research model*; *AI review* for the Reviewer's findings |
+| slice, walking skeleton, must-have proven | release, requirements done ("Release 1 · 5 of 11 requirements done"); *walking skeleton* only in Tips |
+| cycle | sprint |
+| step N of budget | "step 14 of 40" in the agent's progress |
+| qualified (model) | verified on this machine |
+| indistinguishable (benchmark) | no clear difference |
+| Learn layer | Tips |
+| This browser | Preferences |
+| On hold, Won't do | On hold, Won't do (unchanged: Jira's words) |
+| points (estimate) | **hidden unless the team turns on estimation** (Preferences → Estimation: off / story points), as in Jira; the machine's own estimates stay internal |
+
+What professional boards do not show is left off the card face: the agent's step counter (it is on the issue, not the tile), internal kind labels, and model names.
+
+- **Why:** the owner's condition that professionals recognise the product at once; invented words make a professional tool read as a toy.
+- **Reopen if:** only the owner.
+
+### DEC-32
+**The model library: scan, match, suggest, predict.** *Owner, 2026-09-25; extends DEC-29 O2.* On the Configuration page a person gives Sekhemet one or more folders of models:
+- **Scan**, optionally **including nested folders**, reading only model file headers (GGUF metadata: architecture, parameters, quantisation, context length, `general.name`/`general.basename`) and file sizes — never loading, running or modifying a file.
+- **Protections:** only paths under the chosen folder are read, symbolic links that point outside it are not followed, a depth limit (default 6) and a file-count limit (default 5,000) stop runaway scans, only known model extensions are opened, headers are parsed with size limits so a malformed file cannot exhaust memory, no path or file name ever leaves the machine, and each scan is recorded with its folders and counts.
+- **Match with Hugging Face** for the specs a header lacks (model card, total and active parameters, licence, recommended settings), sending only the model's name or published hash — and only when the person has allowed research ([surface](specs/surface.md) `[network] research`); offline, the header's metadata is used and the page says so.
+- **Suggest** an assignment for each role: the Planning model (Seshat) reads the specs, the machine's memory and bandwidth, and any benchmark results, and proposes one model per role with its reason; the harness then checks every suggestion deterministically (fits in memory, verified on this machine, the Review model from a different family) and a person applies it. The model proposes; the person decides.
+- **Predict speed:** decode tokens per second estimated from the machine's memory bandwidth and the bytes read per token (active parameters × bits per weight), corrected by measured runs on this machine when there are any, shown as "predicted" or "measured", never mixed.
+- **Why:** the owner's request; a folder of models is how people keep them, and choosing well needs specs, speed and a recommendation.
+- **Reopen if:** only the owner.
+
 ## Engineering decisions
 
 ### DEC-25 — the lead's rulings during the design v3 fix pass

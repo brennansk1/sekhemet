@@ -129,6 +129,7 @@ The design v3 specifications found gaps the Phase A programme had no ID for. Eac
 | NEW-dashboard-4 | Settings | [dashboard](../design/specs/dashboard.md) | B4.2 |
 | NEW-dashboard-5 | Review for a team, and review that forces a look | [dashboard](../design/specs/dashboard.md) | B4.6 |
 | NEW-dashboard-6 | The Configuration page: model folders, role recommendations, explicit downloads, the benchmark, every role's model name (DEC-29 O2, O3) | [dashboard](../design/specs/dashboard.md) | B4.1 |
+| NEW-dashboard-7 | Every on-screen word from DEC-31's professional vocabulary; issue types, checks, sprint, release | [dashboard](../design/specs/dashboard.md) | B4.2 |
 | NEW-design-stage-5 | The Researcher asked early, with the card in hand | [design-stage](../design/specs/design-stage.md) | B4.4 |
 | NEW-design-stage-1 | Design-stage judgement | [design-stage](../design/specs/design-stage.md) | B4.4 |
 | NEW-design-stage-2 | Research that can be verified and does not park wrongly | [design-stage](../design/specs/design-stage.md) | B4.4 |
@@ -176,6 +177,7 @@ The design v3 specifications found gaps the Phase A programme had no ID for. Eac
 | NEW-models-10 | Adopting a model is a measured decision | [models](../design/specs/models.md) | B4.0a |
 | NEW-models-11 | The Spark-X2.5-4B Researcher bake-off | [models](../design/specs/models.md) | B4.4 |
 | NEW-models-12 | Scan model folders, identify weights, recommend a model per role with its reason, verified explicit downloads (DEC-29 O2) | [models](../design/specs/models.md) | B4.1 |
+| NEW-models-13 | The model library: nested-folder scan, Hugging Face matching, suggested assignments checked deterministically, predicted and measured speed (DEC-32) | [models](../design/specs/models.md) | B4.1 |
 | NEW-planner-pm-1 | Points on the board | [planner-pm](../design/specs/planner-pm.md) | B4.3 |
 | NEW-planner-pm-2 | Signals propose, never mutate | [planner-pm](../design/specs/planner-pm.md) | B4.3 |
 | NEW-planner-pm-3 | Split to the measured horizon | [planner-pm](../design/specs/planner-pm.md) | B4.3 |
@@ -208,6 +210,7 @@ The design v3 specifications found gaps the Phase A programme had no ID for. Eac
 | NEW-security-7 | Erase a secret the scanner missed | [security](../design/specs/security.md) | B3.1 |
 | NEW-security-8 | Research asks once, on the first new project; a yes never opens a route for the sandbox (O16) | [security](../design/specs/security.md) | B3.3 |
 | NEW-security-9 | Model downloads only by a person's explicit choice, hash-verified, refused offline (DEC-29 O2) | [security](../design/specs/security.md) | B4.1 |
+| NEW-security-10 | Protections for scanning model folders and the Hugging Face lookup (DEC-32) | [security](../design/specs/security.md) | B4.1 |
 | NEW-surface-1 | One user directory | [surface](../design/specs/surface.md) | B3.3 |
 | NEW-surface-2 | A terminal board in the board's words | [surface](../design/specs/surface.md) | B3.3 |
 | NEW-surface-3 | The card layer of the configuration is real or removed | [surface](../design/specs/surface.md) | B3.3 |

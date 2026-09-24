@@ -5,6 +5,8 @@ Related: [SPINE.md](SPINE.md) (voice), [specs/dashboard.md](specs/dashboard.md) 
 
 ## The rule
 
+**Professional language first ([DEC-31](DECISIONS.md#dec-31)).** Apart from *Sekhemet* and *Seshat*, what a person reads uses the words development teams use in Jira, Linear, GitHub and Scrum/Kanban practice; DEC-31's table maps the internal names to them, and it wins over any display label below.
+
 1. **Functional nouns keep their professional names.** If the industry already has a word for a thing (board, review, cycle, epic), or the thing already has a name in Sekhemet, that word stays. A developer from Linear, Jira or GitHub should never have to translate.
 2. **Third-party products keep their own names, exactly as their makers write them.** GitHub, GitHub Actions, Jira, Linear, Slack, Microsoft Teams, Sentry, Datadog, PagerDuty, Notion, Confluence, Ollama.
 3. **A Sekhemet-themed name is allowed only for something that would take a proper name anyway**: a product, a persona or a theme. It must read as an ordinary name, not a costume. It must never replace the word for what the thing does.

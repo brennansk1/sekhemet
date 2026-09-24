@@ -25,7 +25,7 @@ tests:
   - packages/loop/tests/restricted.spec.ts
   - packages/loop/tests/untrusted.spec.ts
   - apps/harness/tests/airgap.spec.ts
-changes: [S1, S2, S3, S3a, S3b, S3c, S9, NEW-security-1, NEW-security-2, NEW-security-3, NEW-security-4, NEW-security-5, NEW-security-6, NEW-security-7, NEW-security-8, NEW-security-9]
+changes: [S1, S2, S3, S3a, S3b, S3c, S9, NEW-security-1, NEW-security-2, NEW-security-3, NEW-security-4, NEW-security-5, NEW-security-6, NEW-security-7, NEW-security-8, NEW-security-9, NEW-security-10]
 ---
 
 # Security: sandboxing, permissions, egress, secrets, workspace trust, air-gap
@@ -314,6 +314,13 @@ Tests use canary markers — a fixture that would write a marker file outside th
 ### NEW-security-9 — model downloads under the one network policy
 *Justification: owner decision O2 ([DEC-29](../DECISIONS.md#dec-29--the-owners-answers-to-the-decision-queue)) adds a download action to the Configuration page; a harness-side request a person starts must still obey `[network] mode` and be logged (items 32, 47). Built with [models](models.md) NEW-models-12.*
 - **SEC-53** WHEN a person downloads a model from the Configuration page THE SYSTEM SHALL send the request through `NetworkPolicy` and record it on the ledger with its source; WHILE `[network] mode = "offline"` THE SYSTEM SHALL refuse the download and say why; and WHEN no person has asked for a download THE SYSTEM SHALL make no request for weights.
+
+### NEW-security-10 — Scanning model folders and the Hugging Face lookup ([DEC-32](../DECISIONS.md#dec-32))
+
+- **SEC-N10-1** WHEN a scan meets a symbolic link whose target lies outside the chosen folder THE SYSTEM SHALL not follow it and SHALL report it as skipped.
+- **SEC-N10-2** WHEN a scan opens a file THE SYSTEM SHALL open it read-only, only for a known model extension, parse its header with a size limit (default 16 MB of metadata), and SHALL skip a malformed or oversized header without loading the file.
+- **SEC-N10-3** WHEN a model is looked up on Hugging Face THE SYSTEM SHALL send only its name or published hash, never a path or a file name from this machine, and only through the research network policy (`[network] research`, `fetch_deny`).
+- **SEC-N10-4** WHEN a scan completes THE SYSTEM SHALL record one event with the folders, the depth, and the counts found and skipped, and no scan SHALL execute, load or modify any file it reads.
 
 ## 6. v1 acceptance
 

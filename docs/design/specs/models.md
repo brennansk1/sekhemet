@@ -39,7 +39,7 @@ tests:
   - packages/models/tests/multi_turn.spec.ts
   - apps/harness/tests/doctor_weights.spec.ts
   - apps/harness/tests/calibrate_cmd.spec.ts
-changes: [M4, M7, M11, NEW-models-1, NEW-models-2, NEW-models-3, NEW-models-4, NEW-models-5, NEW-models-6, NEW-models-7, NEW-models-8, NEW-models-9, NEW-models-10, NEW-models-11, NEW-models-12]
+changes: [M4, M7, M11, NEW-models-1, NEW-models-2, NEW-models-3, NEW-models-4, NEW-models-5, NEW-models-6, NEW-models-7, NEW-models-8, NEW-models-9, NEW-models-10, NEW-models-11, NEW-models-12, NEW-models-13]
 ---
 
 # Models: hardware, the registry and inference
@@ -380,6 +380,13 @@ This subsystem runs the local models: it measures the machine, obtains and verif
 - **MD-N12-6** WHEN a person confirms **Download…** for a recommended model on the Configuration page, or runs `sekhemet models fetch <model>` THE SYSTEM SHALL use one download implementation for both: fetch only from the model's registered source into a folder the person named, verify the published SHA-256 before the file is used, delete a file whose hash differs and report it, and record the download on the ledger with its source and principal; WHEN the model has no registered source and hash, or `[network] mode` does not allow the source host (including `offline`) THE SYSTEM SHALL refuse, naming the reason ([security.md](security.md) item 47).
 - **MD-N12-7** WHEN no person has confirmed a download THE SYSTEM SHALL download no weights on any path — scan, recommendation, first run, `doctor`, `run`, `queue`, the quick or overnight benchmark (a test with every model missing observes no request for weights).
 - **MD-N12-8** WHEN the Configuration page lists suggested folders THE SYSTEM SHALL suggest, among `SEKHEMET_MODELS_DIR`, Ollama's model store, LM Studio's models folder, the Hugging Face hub cache and llama.cpp's cache, exactly those that exist on this machine and are not yet configured, and SHALL scan none of them until a person adds it.
+
+### NEW-models-13 — The model library: scan, match, suggest, predict ([DEC-32](../DECISIONS.md#dec-32))
+
+- **MD-N13-1** WHEN a person adds a folder with *Include subfolders* on THE SYSTEM SHALL list every model file under it to the depth limit (default 6) and the file-count limit (default 5,000), reading only headers and sizes, and SHALL report the folders scanned, the models found and each file skipped with its reason.
+- **MD-N13-2** WHEN research is allowed THE SYSTEM SHALL match each found model to Hugging Face by its header name or published hash and fill the specs its header lacks (total and active parameters, licence, recommended settings), marking each value's source; WHEN research is not allowed THE SYSTEM SHALL show header metadata only and say that no lookup was made.
+- **MD-N13-3** WHEN the specs are known THE SYSTEM SHALL predict decode speed as the machine's memory bandwidth divided by the bytes read per token (active parameters × bits per weight ÷ 8), times the efficiency measured on this machine (0.8 until measured), and SHALL show it as *predicted*; WHEN the model has run here THE SYSTEM SHALL show the measured median instead, as *measured*.
+- **MD-N13-4** WHEN a person asks for a suggestion THE SYSTEM SHALL have the Planning model propose one model per role with a reason from the specs, memory, bandwidth and benchmark results, SHALL check each proposal deterministically (fits, verified on this machine, the Review model from a different family than the Coding model), SHALL show any failed check beside the proposal, and SHALL assign nothing until a person applies it.
 
 ## 6. v1 acceptance
 

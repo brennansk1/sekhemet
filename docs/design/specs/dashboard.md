@@ -4,7 +4,7 @@ status: partial
 audiences: [developer, beginner, non-developer]
 code: [packages/ui/src/vocabulary.ts, packages/ui/src/tokens.ts, packages/ui/src/icons.ts, packages/ui/src/pm.ts, packages/ui/web/app.js, packages/ui/web/shell.js, packages/ui/web/keys.js, packages/ui/web/board.js, packages/ui/web/tile.js, packages/ui/web/review.js, packages/ui/web/decision.js, packages/ui/web/dag.js, packages/ui/web/sparkline.js, packages/ui/web/machine.js, packages/ui/web/pm_thread.js, packages/ui/web/proposals.js, packages/ui/web/insights.js, apps/harness/src/ui_html.ts, apps/harness/src/server.ts]
 tests: [packages/ui/tests/vocabulary.spec.ts, packages/ui/tests/pm.spec.ts, packages/ui/tests/tokens.spec.ts, packages/ui/tests/icons.spec.ts, packages/ui/tests/diff_parse.spec.ts, packages/ui/tests/reorder.spec.ts, apps/harness/tests/server.spec.ts, apps/harness/tests/pm_api.spec.ts, apps/harness/tests/wave2_server.spec.ts]
-changes: [P3, P4, P5, P11, P12, P13, T5, S3c, NEW-dashboard-1, NEW-dashboard-2, NEW-dashboard-3, NEW-dashboard-4, NEW-dashboard-5, NEW-dashboard-6, NEW-models-3]   # NEW-models-3: the Reserve now control only (§2.11)
+changes: [P3, P4, P5, P11, P12, P13, T5, S3c, NEW-dashboard-1, NEW-dashboard-2, NEW-dashboard-3, NEW-dashboard-4, NEW-dashboard-5, NEW-dashboard-6, NEW-models-3, NEW-dashboard-7]   # NEW-models-3: the Reserve now control only (§2.11)
 ---
 
 # The dashboard
@@ -522,6 +522,12 @@ The dashboard is where all three audiences meet Sekhemet. For **developers** it 
 
 - **DB-NM3-1** WHEN a person presses *Reserve now* on Machine, or chooses *Reserve the machine* in the palette, THE SYSTEM SHALL record the reservation with the person's principal, show *Reserved by you since HH:MM* with a *Release* button, start no backlog card unattended unless it is urgent, and start or continue no overnight benchmark until a release.
 - **DB-NM3-2** WHEN a person presses *Release*, or `sekhemet dev release` runs, THE SYSTEM SHALL record the release with the person's principal and show the machine as free, or in its reserved hours, within one machine update (5 s), and SHALL NOT change `[machine] reserved_hours`; WHEN `sekhemet dev reserve` runs THE SYSTEM SHALL show the machine as reserved on Machine within the same interval.
+
+### NEW-dashboard-7 — Professional language on every screen ([DEC-31](../DECISIONS.md#dec-31))
+
+- **DB-N7-1** WHEN any view renders THE SYSTEM SHALL use the on-screen terms of DEC-31's table (issue, Story/Task/Bug/Spike/Epic, checks, sprint, release, Agent, Coding/Planning/Review/Research model, Tips, Preferences), and a test SHALL fail on any retired display label (*Contract*, *Storage*, *Flow*, *Rules* as kinds; *gates*, *must-haves proven*, *walking skeleton* outside Tips) in the page's copy.
+- **DB-N7-2** WHEN estimation is off (the default) THE SYSTEM SHALL show no points on cards, columns or reports; WHEN a team turns on story points THE SYSTEM SHALL show them as Jira does.
+- **DB-N7-3** WHEN a card is drawn on the board THE SYSTEM SHALL show its key, issue type icon, priority, title, one status line, epic and assignee, and no step counter or model name.
 
 ## 6. v1 acceptance
 
