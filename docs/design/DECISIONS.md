@@ -134,6 +134,19 @@ What professional boards do not show is left off the card face: the agent's step
 - **Why:** the owner's request; a folder of models is how people keep them, and choosing well needs specs, speed and a recommendation.
 - **Reopen if:** only the owner.
 
+### DEC-33
+**The owner accepts the recommended defaults for O15–O27.** *Owner, 2026-09-25.* Each open owner decision takes the recommendation in [OPEN_QUESTIONS](../reference/OPEN_QUESTIONS.md#owner-decisions): no in-run probation before approval (O15); research asked once on the first new project (O16); the stand-in check from the *internal tool* profile up (O17); no TypeScript 6 pin yet (O18); `web-tree-sitter` with Python (O19); the M0 pivot rule stands (O20); `llama-bench` approved (O21); the public review datasets approved for evaluation only, credited (O22); `sekhemet ask` replaces `board` in the front door (O23); profile statements used at once, visible and editable (O24); a harmful approved rule retired automatically with a notice and a one-click restore (O25); no import of public benchmark annotations in v1 (O26); axe-core not in the product's gate (O27).
+
+### DEC-34
+**Working with the agent on an issue is a v1 feature.** *Owner, 2026-09-25.* A person and the agent collaborate on the same issue, the way a team does on a ticket:
+- **Guide it while it works:** a message on the issue reaches the agent at its next step boundary (never mid-step), is recorded in the event log, and appears in the issue's Activity; it can add a hint, narrow the approach, or answer a question. Scope and acceptance criteria change only through an edit the person makes to the issue, which re-plans it if they change.
+- **It asks, you answer:** when the agent needs a decision it posts a question with options on the issue (and in Review › Needs you); it continues on the stated default where one is safe, and waits where the default is to stop.
+- **Pause, take over, hand back:** a person can pause the agent, take the issue over in their own editor (the agent's work so far stays on the branch), and hand it back with a note; checks run on the person's work the same way.
+- **Line comments in review:** sending an issue back can carry comments on specific diff lines, which become the agent's next instructions.
+- Reverses the 2026-09-24 product pass's deferral of "steering a running card" to Later ([DESIGN_TRACE](../reference/DESIGN_TRACE.md)).
+- **Why:** the owner calls collaboration with the agent a key feature; it is what a professional team does with a colleague on a ticket, and it keeps the person in charge without taking the work off the machine.
+- **Reopen if:** only the owner.
+
 ## Engineering decisions
 
 ### DEC-25 — the lead's rulings during the design v3 fix pass

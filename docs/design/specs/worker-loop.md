@@ -31,7 +31,7 @@ tests:
   - packages/loop/tests/budget.spec.ts
   - packages/context/tests/context_units.spec.ts
   - apps/harness/tests/runner_wiring.spec.ts
-changes: [M1, M2, M3, T3, NEW-worker-loop-1, NEW-worker-loop-2, NEW-worker-loop-3, NEW-worker-loop-4, NEW-worker-loop-5, NEW-worker-loop-6, NEW-worker-loop-7, NEW-worker-loop-8, NEW-worker-loop-9]
+changes: [M1, M2, M3, T3, NEW-worker-loop-1, NEW-worker-loop-2, NEW-worker-loop-3, NEW-worker-loop-4, NEW-worker-loop-5, NEW-worker-loop-6, NEW-worker-loop-7, NEW-worker-loop-8, NEW-worker-loop-9, NEW-worker-loop-10]
 ---
 
 # The Worker loop
@@ -406,6 +406,13 @@ The Worker loop is how a small local model turns one card into a verified diff: 
 - **WL-N7-1** WHEN the Worker's symbol tools run on a TypeScript file THE SYSTEM SHALL reach the language service through the LSP client, so that `typescript-language-server` and TypeScript 7's native server (`tsc --lsp --stdio`) are interchangeable by configuration, and no module outside the TypeScript adapter SHALL import `typescript` ([gates.md](gates.md) IX-4).
 - **WL-N7-2** WHEN a language server is started THE SYSTEM SHALL start it only on the first symbol request that needs it, cap its heap (`--max-old-space-size`), exclude virtual-environment and dependency directories from its analysis, and count its resident memory in the memory guard ([models.md](models.md)).
 - **WL-N7-3** WHEN a language server is absent, crashes or exceeds its heap THE SYSTEM SHALL fall back to text search for that call, say so in the reply, and SHALL NOT fail any gate because of it.
+
+### NEW-worker-loop-10 — Collaborating on a running issue ([DEC-34](../DECISIONS.md#dec-34))
+
+- **WL-N10-1** WHEN a person posts a message on an issue whose agent is running THE SYSTEM SHALL record it as an event and deliver it into the agent's next step (after the current step's tool calls finish), and SHALL show it in the issue's Activity with the step it reached.
+- **WL-N10-2** WHEN a person pauses the agent THE SYSTEM SHALL stop it at the next step boundary with a resumable stop reason, keep its branch and checkpoint, and resume from that checkpoint when the person hands the issue back, with the person's note in the next step.
+- **WL-N10-3** WHEN a person takes an issue over THE SYSTEM SHALL record the person as the builder of that attempt, run the same checks on their work, and exclude that attempt from the agent's competence records.
+- **WL-N10-4** WHEN an issue is sent back with comments on diff lines THE SYSTEM SHALL put each comment, with its file and line, into the agent's next attempt as an instruction.
 
 ## 6. v1 acceptance
 

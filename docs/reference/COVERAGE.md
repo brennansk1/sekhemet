@@ -130,6 +130,7 @@ The design v3 specifications found gaps the Phase A programme had no ID for. Eac
 | NEW-dashboard-5 | Review for a team, and review that forces a look | [dashboard](../design/specs/dashboard.md) | B4.6 |
 | NEW-dashboard-6 | The Configuration page: model folders, role recommendations, explicit downloads, the benchmark, every role's model name (DEC-29 O2, O3) | [dashboard](../design/specs/dashboard.md) | B4.1 |
 | NEW-dashboard-7 | Every on-screen word from DEC-31's professional vocabulary; issue types, checks, sprint, release | [dashboard](../design/specs/dashboard.md) | B4.2 |
+| NEW-dashboard-8 | The issue page for working with the agent (DEC-34) | [dashboard](../design/specs/dashboard.md) | B4.6 |
 | NEW-design-stage-5 | The Researcher asked early, with the card in hand | [design-stage](../design/specs/design-stage.md) | B4.4 |
 | NEW-design-stage-1 | Design-stage judgement | [design-stage](../design/specs/design-stage.md) | B4.4 |
 | NEW-design-stage-2 | Research that can be verified and does not park wrongly | [design-stage](../design/specs/design-stage.md) | B4.4 |
@@ -226,6 +227,7 @@ The design v3 specifications found gaps the Phase A programme had no ID for. Eac
 | NEW-worker-loop-7 | Language servers as bounded tenants, reached through LSP | [worker-loop](../design/specs/worker-loop.md) | B4.0a |
 | NEW-worker-loop-8 | MCP tools without their prefill cost | [worker-loop](../design/specs/worker-loop.md) | B4.0a |
 | NEW-worker-loop-9 | Evidence-gated commit behind `SEKHEMET_EVIDENCE_GATE` (ECLoop), built for the B2.5 A/B | [worker-loop](../design/specs/worker-loop.md) | B2.1 |
+| NEW-worker-loop-10 | Collaborating on a running issue: messages at step boundaries, pause, take over, hand back, line comments (DEC-34) | [worker-loop](../design/specs/worker-loop.md) | B3.2 |
 
 ## Decisions only the owner can make
 

@@ -8,7 +8,9 @@ Decisions only the owner can make, each with the default the design uses until t
 
 **Decided 2026-09-24** — O1–O14, recorded in [DECISIONS](../design/DECISIONS.md) DEC-29 (and DEC-30 for O12): O1 spine amended for erasure; O2 a Configuration page that scans model folders, recommends roles, downloads explicitly and runs the benchmark; O3 model names on the Configuration page; O4 cut the plugin container and the SDK; O5–O9 approved (Playwright, axe-core, fast-check, Valibot, vLLM, npm package and container image); O10 change kinds in v1; O11 solo developers may self-accept, teams may not; O12 professional documentation layout (DEC-30); O13 light Accept friction; O14 90-day retention.
 
-**Open:**
+**Decided 2026-09-25:** O15–O27 take their recommended defaults ([DEC-33](../design/DECISIONS.md#dec-33)). The table below keeps each question and its answer for the record.
+
+**Answered:**
 
 | # | Decision | Affects | Recommendation (the default until decided) |
 | --- | --- | --- | --- |
