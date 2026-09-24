@@ -4,15 +4,15 @@
 
 ## Owner decisions
 
-Decisions only the owner can make, each with the workstream it blocks and the default the design uses until then. A workstream does not start while an unresolved owner decision sits in its path ([plan](MODERNIZATION_PLAN.md#phase-b--build-to-the-definition-of-done-one-workstream-at-a-time)).
+Decisions only the owner can make, each with the default the design uses until then. **A stated default unblocks a workstream**: the workstream builds the default, and the owner's later answer may change its scope. Only a decision listed in the plan's "Needs first" column, which has no safe default, holds a workstream back ([plan](MODERNIZATION_PLAN.md#phase-b--build-to-the-definition-of-done-one-workstream-at-a-time)); the "Affects" column below is for information.
 
 **Decided 2026-09-24** — O1–O14, recorded in [DECISIONS](../design/DECISIONS.md) DEC-29 (and DEC-30 for O12): O1 spine amended for erasure; O2 a Configuration page that scans model folders, recommends roles, downloads explicitly and runs the benchmark; O3 model names on the Configuration page; O4 cut the plugin container and the SDK; O5–O9 approved (Playwright, axe-core, fast-check, Valibot, vLLM, npm package and container image); O10 change kinds in v1; O11 solo developers may self-accept, teams may not; O12 professional documentation layout (DEC-30); O13 light Accept friction; O14 90-day retention.
 
 **Open:**
 
-| # | Decision | Blocks | Recommendation (the default until decided) |
+| # | Decision | Affects | Recommendation (the default until decided) |
 | --- | --- | --- | --- |
-| O15 | **Learning on probation during a run** (ruling R12): may an execution-verified lesson apply to later cards in the same production run before a person approves it? It reverses the owner's 2026-09-18 rule | B2.4 (NEW-measurement-3), B4.0a (NEW-context-4) | No — approval first, as the owner ruled in 2026-09; revisit when the admission measure exists |
+| O15 | **Learning on probation during a run** (ruling R12): may an execution-verified lesson apply to later cards in the same production run before a person approves it? It reverses the owner's 2026-09-18 rule | B2.4 (T8, MS-T8-15), B4.0a (NEW-context-4) | No — approval first, as the owner ruled in 2026-09; revisit when the admission measure exists |
 | O16 | **Research before building versus offline by default**: the owner wants research before anything is built; the spine says nothing leaves the machine without a yes | B3.3 (S8), B4.4 | Ask once, on the first new project; a yes turns research on for every later project, and nothing leaves the machine before it |
 | O17 | **Stand-in ("stub-kill") check blocking level**: from the *internal tool* depth profile up, or only from *production* | B4.0b (NEW-gates-6) | From *internal tool*: two or three test runs, catches the commonest test that cannot fail |
 | O18 | **Pin `@typescript/typescript6`** (Apache-2.0) for the harness's own parser | B4.0b (T2) | Not now: stay on `typescript` 5.9 behind the adapter; pin only when a project needs 6.0 syntax |
@@ -22,6 +22,9 @@ Decisions only the owner can make, each with the workstream it blocks and the de
 | O22 | **Public review datasets** as Reviewer evaluation sets: c-CRAB and SWE-PRBench (CC BY 4.0), CodeReviewQA (MIT) | B4.8 (T11) | Approve, used for evaluation only and credited |
 | O23 | **`sekhemet ask "<question>"`**: Seshat from the terminal, for non-developers and SSH users; it would replace `board` in the front door (`board --terminal` moves under `dev`) | B4.1 | Approve |
 | O24 | **Profile statements used at once**: may what Seshat learns about a person ("prefers short answers", "reviews in the morning") shape replies before the person approves it? Every statement is shown on their profile, editable and deletable | B4.8 (P6) | Yes, shown and editable at once; nothing about code or the harness is learned this way |
+| O25 | **Automatic retirement of a rule a person approved**: when a project rule's paired credit shows harm at a fixed look (DEC-28), is it retired automatically (with a notice, and restorable), or proposed to the person for retirement? | B2.4 (T8), B4.0a | Retired automatically with a notice and one-click restore — a harmful rule should not stay in force while it waits for someone |
+| O26 | **Importing public benchmark annotations** (SWE-bench Verified difficulty annotations; `nebius` trajectory columns) as priors for the competence model | B2.4 | Do not import in v1; revisit when local data is too thin to calibrate (measurement §8 Q3) |
+| O27 | **axe-core inside the product's visual gate** (it would run on users' projects, not only on Sekhemet's own tests) | B2.3 | Not in v1: the gate keeps its own accessibility subset; axe-core stays a development dependency (O5) |
 
 ## Benchmarks on the reference machine
 
@@ -31,7 +34,7 @@ The reference machine is a 24 GB Apple Silicon Mac running the Worker (Cyber-Tie
 | --- | --- | --- | --- |
 | 1 | Which tool arm wins, and at what pass rate? | The product thesis | Open — superseded in form by COVERAGE M2 (a fixed tool set per card class, as an A/B) |
 | 2 | Step-budget curve per card class | Budget setting, planner | Open |
-| 3 | Engine choice and cross-turn cache retention | Inference configuration | **Answered in part** by research group A: on hybrid-attention models reuse needs an append-only prompt and checkpoint spacing; see COVERAGE M8 |
+| 3 | Engine choice and cache retention across steps | Inference configuration | **Answered in part** by research group A: on hybrid-attention models reuse needs an append-only prompt and checkpoint spacing; see COVERAGE M8 |
 | 4 | Prefix-cache hit rate with a byte-stable prompt | Context layout | Open — measured 0.29 before M8; re-measure after |
 | 5 | Planner swap cost versus co-loading | Tier profiles | Open |
 | 6 | Card size versus pass rate | Decomposition granularity | Open |
@@ -39,7 +42,7 @@ The reference machine is a 24 GB Apple Silicon Mac running the Worker (Cyber-Tie
 | 8 | Line-pruner latency on a 4-core CPU host | Context pipeline | Deferred with the pruner ([DEC-21](../design/DECISIONS.md)) |
 | 9 | Diff-scoped mutation cost per card | The mutation gate | Open — and COVERAGE M10 first (run tests unmutated first) |
 | 10 | Vision checklist false-pass rate on real UI | The visual gate | Open |
-| 11 | Speculative decoding (MTP) net effect on this machine | Throughput | Open — COVERAGE M7/M11: measure seconds per turn, two draft tokens |
+| 11 | Speculative decoding (MTP) net effect on this machine | Throughput | Open — COVERAGE M7/M11: measure seconds per step, two draft tokens |
 | 12 | Prompt optimizer gain over hand-tuned | Whether to build one | Open |
 | 13 | Output condensing reduction on the real command mix, and any dropped string a repair needed | Observation pipeline | Open |
 | 14 | Goal-monitoring thresholds that trigger replans without thrashing | The live PM layer | Open |

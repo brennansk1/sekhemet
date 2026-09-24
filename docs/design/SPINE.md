@@ -45,7 +45,7 @@ flowchart LR
   F -- fail --> E
   F -- pass --> G[Review<br/>evidence, diff, Reviewer findings]
   G -- accept --> H[Done<br/>merged to main]
-  G -- send back --> E
+  G -- send back --> D
 ```
 
 1. **Request.** Anyone describes what they want, in the dashboard, to the PM or on the command line ([surface](specs/surface.md), [planner-pm](specs/planner-pm.md)).
@@ -77,7 +77,7 @@ flowchart LR
 | `models` | Model registry, inference adapters, managed servers | [models](specs/models.md) |
 | `gates` | Gate runners, the evidence bundle | [gates](specs/gates.md) |
 | `context` | Repo map, scope, prompt assembly | [context](specs/context.md) |
-| `loop` | The Worker's turn driver, tools, stop reasons | [worker-loop](specs/worker-loop.md) |
+| `loop` | The Worker's step driver, tools, stop reasons | [worker-loop](specs/worker-loop.md) |
 | `board` | Boards, WIP accounting, dependencies | [kernel](specs/kernel.md), [dashboard](specs/dashboard.md) |
 | `planner` | Decomposition, estimation, replanning | [planner-pm](specs/planner-pm.md) |
 | `eval` | The frozen suite, bake-off, statistics | [measurement](specs/measurement.md) |

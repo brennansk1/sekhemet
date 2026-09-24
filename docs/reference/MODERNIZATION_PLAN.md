@@ -99,31 +99,31 @@ Each workstream is one session: specification → numbered plan → failing test
 
 | # | Workstream | Carries (Phase A IDs; the rest in COVERAGE) | Spec | Needs first | Size |
 | --- | --- | --- | --- | --- | --- |
-| **B0** | Housekeeping: the approved cuts, including the plugin container and the SDK package (DEC-29 O4); wire-or-cut for `research/desk.ts` and `adjudicate`/`acceptRevision` | D4 | several | — | S |
+| **B0** | Housekeeping: the approved cuts, including the plugin container and the SDK package (DEC-29 O4), with extensibility's front matter updated in the same commit; the dead loops and the variant archive (DEC-25 R31); wire-or-cut for `research/desk.ts` and `adjudicate`/`acceptRevision` | D4 | several | — | S |
 | **B1** | **Worker containment**: fail closed; one confined execution path with an allowlisted environment; one egress policy; nested `.git` on Linux, the rest of the git hardening list, a `.git/config` preflight, per-worktree dependency links; injection fixtures run against the real Worker | S2, S3, S3a, S3b | [security](../design/specs/security.md) | B0 | M–L |
 | **B2** | **Measurement validity, then the baseline** | | | | |
-| B2.1 | Prompt coherence; thinking budget and `finish_reason`; data contracts; the append-only prompt; token budgets that fit the window, Zone 4 included (DEC-27); the fixed tool set per card class; the one stop-reason table | M1, M2, M3, M5, M8, T3 | [worker-loop](../design/specs/worker-loop.md), [context](../design/specs/context.md) | B1 | M |
-| B2.2 | Provenance on every card; qualification per engine, model, host and settings; MTP measured in seconds per step | M4, M7, M11 | [models](../design/specs/models.md) | B1, O2 | M |
+| B2.1 | Prompt coherence; thinking budget and `finish_reason`; data contracts; the append-only prompt; token budgets that fit the window, Zone 4 included (DEC-27); the fixed tool set per card class; the one stop-reason table; the evidence-gated-commit switch for B2.5 | M1, M2, M3, M5, M8, T3 | [worker-loop](../design/specs/worker-loop.md), [context](../design/specs/context.md) | B1 | L — three packages (prompt and budgets; tool sets and stop reasons; the switch), each its own cards |
+| B2.2 | Provenance on every card; qualification per engine, model, host and settings; MTP measured in seconds per step | M4, M7, M11 | [models](../design/specs/models.md) | B1 | M |
 | B2.3 | Gate feedback proven on real tool output; built-in gates never vanish | M6 | [gates](../design/specs/gates.md) | B1 | M |
-| B2.4 | One measurement path, mutation pre-check, small-sample statistics, the planning measure, the admission code (T8), and the **evaluation assets the baseline uses** — reference solutions, golden briefs, the held-out acceptance suite (T11, first part) | M9, M10, M12, T7, T8, T11 | [measurement](../design/specs/measurement.md) | B2.1–B2.3 | L |
+| B2.4 | One measurement path, mutation pre-check, small-sample statistics, the planning measure, the admission code (T8 — built and tested on scripted attempt records; it runs live once NEW-worker-loop-5 lands in B4.0a), and the **evaluation assets the baseline uses** — reference solutions, golden briefs, the held-out acceptance suite (T11, first part) | M9, M10, M12, T7, T8, T11 | [measurement](../design/specs/measurement.md) | B2.1–B2.3 | L |
 | B2.5 | **The baseline**: the thinking arms, the strict method, the fixed-tool-set arm (M2), the evidence-gated commit (ECLoop) arm, then the full scored suite and the planning measure. Freezes the **baseline RunProfile** (below) | M2 | [measurement](../design/specs/measurement.md) | B2.4 | machine time |
 | **B3** | **The spine in code** | | | | |
-| B3.1 | Transitions checked in the kernel; one transaction per event; hash chain v3 with a private part; owner, delegate and accepter; versioned requirements; backup and migrations | S4, S7 | [kernel](../design/specs/kernel.md) | B2.5, O1, O7 | L |
-| B3.2 | Safe, reversible Accept; Review WIP from human decisions; accept-awaiting-merge | S5, S6 | [review-git](../design/specs/review-git.md) | B3.1, O11, O13 | M |
-| B3.3 | Offline `plan`; CLI exit codes; dashboard hardening; workspace trust; runner lease and process safety; retention as recorded erasure | S8, S10, S3c, S9 | [surface](../design/specs/surface.md), [runtime](../design/specs/runtime.md), [security](../design/specs/security.md), [extensibility](../design/specs/extensibility.md) | B3.1, O1 | L |
+| B3.1 | Transitions checked in the kernel; one transaction per event; hash chain v3 with a private part; owner, delegate and accepter; versioned requirements; backup and migrations | S4, S7 | [kernel](../design/specs/kernel.md) | B2.5 | L |
+| B3.2 | Safe, reversible Accept; Review WIP from human decisions; accept-awaiting-merge | S5, S6 | [review-git](../design/specs/review-git.md) | B3.1 | M |
+| B3.3 | Offline `plan`; CLI exit codes; dashboard hardening; workspace trust; runner lease and process safety; retention as recorded erasure | S8, S10, S3c, S9 | [surface](../design/specs/surface.md), [runtime](../design/specs/runtime.md), [security](../design/specs/security.md), [extensibility](../design/specs/extensibility.md) | B3.1 | L |
 | **B4** | **Depth in the core, then the product** — each measured against the B2.5 baseline | | | | |
 | B4.0a | The engine after the baseline: one allocator for every role, rule curation, language servers through LSP, the rename tool, MCP without prefill cost, the residency scheduler, the registry the code reads | — | [context](../design/specs/context.md), [worker-loop](../design/specs/worker-loop.md), [models](../design/specs/models.md) | B2.5 | L |
-| B4.0b | One gate pipeline (T1) and the source index (T2), then test strength and work on existing code (change kinds, superseded tests, the error baseline). Until the depth profile (P14) and the test-author step (P1) exist, test strength uses the *internal tool* profile and the planner's current acceptance tests | T1, T2 | [gates](../design/specs/gates.md) | B4.0a, O17, O18 | L |
-| B4.1 | One first run for all three audiences, including an existing team repository; a new user's first card end to end; the **Configuration page** — model folders scanned, roles recommended, explicit downloads, the benchmark run there (DEC-29 O2, O3) | P10 | [surface](../design/specs/surface.md), [models](../design/specs/models.md), [dashboard](../design/specs/dashboard.md) | B3.3, B4.0a, O23 | L |
-| B4.2 | Navigation and colour/contrast roles | P11, P12 | [dashboard](../design/specs/dashboard.md) | B3.3, O3, O5 | S |
-| B4.3 | One planner, model first, with an acceptance-criterion contract; project done computed from a requirement graph, with slices and appetite | P1, P13 | [planner-pm](../design/specs/planner-pm.md) | B4.0b, O6, O10 | L |
-| B4.4 | Start a project by conversation; depth profile, comparables and walkthrough; project documents in the repository | P2, P14 | [planner-pm](../design/specs/planner-pm.md), [design-stage](../design/specs/design-stage.md) | B4.3, O12 | L |
+| B4.0b | One gate pipeline (T1) and the source index (T2), then test strength and work on existing code (change kinds, superseded tests, the error baseline). Until the depth profile (P14) and the test-author step (P1) exist, test strength uses the *internal tool* profile and the planner's current acceptance tests | T1, T2 | [gates](../design/specs/gates.md) | B4.0a | L |
+| B4.1 | One first run for all three audiences, including an existing team repository; a new user's first card end to end; the **Configuration page** — model folders scanned, roles recommended, explicit downloads, and the benchmark: the Worker and Planner screens and the overnight tier's Worker and planning runs here; the Reviewer's and Researcher's screens join with B4.8 and B4.4 (until then they read "Not measured yet") (DEC-29 O2, O3) | P10 | [surface](../design/specs/surface.md), [models](../design/specs/models.md), [dashboard](../design/specs/dashboard.md) | B3.3, B4.0a | L |
+| B4.2 | Navigation and colour/contrast roles | P11, P12 | [dashboard](../design/specs/dashboard.md) | B3.3 | S |
+| B4.3 | One planner, model first, with an acceptance-criterion contract; project done computed from a requirement graph, with slices and appetite | P1, P13 | [planner-pm](../design/specs/planner-pm.md) | B4.0b | L |
+| B4.4 | Start a project by conversation; depth profile, comparables and walkthrough; project documents in the repository | P2, P14 | [planner-pm](../design/specs/planner-pm.md), [design-stage](../design/specs/design-stage.md) | B4.3 | L |
 | B4.5 | Reuse survey by capability, with the SPDX licence classifier | P7 | [design-stage](../design/specs/design-stage.md) | B4.4 | M |
-| B4.6 | A professional board: familiar columns and card anatomy, story map and burn-up | P3 | [dashboard](../design/specs/dashboard.md) | B4.3, O5 | M |
+| B4.6 | A professional board: familiar columns and card anatomy, story map and burn-up | P3 | [dashboard](../design/specs/dashboard.md) | B4.3 | M |
 | B4.7 | The Learn layer; the status view for non-developers | P4, P5 | [dashboard](../design/specs/dashboard.md) | B4.6 | M |
 | B4.8 | The senior-PM skill, scored; the Reviewer rebuilt | P6, P8 | [planner-pm](../design/specs/planner-pm.md), [review-git](../design/specs/review-git.md) | B4.4, B3.2 | M |
 | B4.9 | GitHub first: one adapter, one ID, merge-aware, owner and delegate mapped | P9 | [integrations](../design/specs/integrations.md) | B3.2 | M |
-| B4.10 | The company-server minimum: bind, identity, Accept permission, fair scheduling across people | P9, DEC-06 | [runtime](../design/specs/runtime.md), [integrations](../design/specs/integrations.md) | B4.9, O8, O9, O11 | L |
+| B4.10 | The company-server minimum: bind, identity, Accept permission, fair scheduling across people | P9, DEC-06 | [runtime](../design/specs/runtime.md), [integrations](../design/specs/integrations.md) | B4.9 | L |
 | **B5** | **Structure**, as each workstream above touches it — never on its own | T4, T5, T9, T10 | per spec | — | — |
 
 ### Milestones the owner sees
@@ -143,19 +143,21 @@ B2.5 ends by freezing one recorded `RunProfile` — Worker model, quantisation, 
 
 ### Evaluation assets, each built before its first use (T11)
 
-| Asset | Built in | First used by |
-| --- | --- | --- |
-| Reference solutions per fixture card; golden briefs with annotated implicit requirements; the held-out acceptance suite | B2.4 | B2.5 (the planning measure) |
-| Injection fixtures | B1 | B1 (the Worker that tries to leave) |
-| The quick benchmark's screening sets — about 5 Worker cards, 3 golden briefs, the first 10 seeded defects, the first 5 research questions over a cached corpus | B4.1 | the Configuration page's quick benchmark (NEW-measurement-5) |
-| Labelled UI screens | B4.0b | the visual checklist (GT-N4-2) |
-| The research golden set; scripted non-developer project starts | B4.4 | B4.4 |
-| The labelled reuse set | B4.5 | B4.5 |
-| Seeded defects; public review datasets (O22); scripted PM conversations | B4.8 | B4.8 |
+Every asset needs a person's labels; the estimates are the owner's time, and the plan waits on them where the asset is first used. In total about 30–40 person-hours, most of it in B2.4 (about 12) and B4.8 (about 10).
+
+| Asset | Built in | First used by | Labelling (person-hours, estimate) |
+| --- | --- | --- | --- |
+| Reference solutions per fixture card; golden briefs with annotated implicit requirements; the held-out acceptance suite | B2.4 | B2.5 (the planning measure) | about 12 |
+| Injection fixtures | B1 | B1 (the Worker that tries to leave) | about 3 |
+| The quick benchmark's screening sets — 6 Worker cards and 3 golden briefs in B4.1; the Researcher's 5 questions over a cached corpus with B4.4; the Reviewer's 10 seeded defects with B4.8 | B4.1, B4.4, B4.8 | the Configuration page's quick benchmark (NEW-measurement-5) | about 3 (reused from the sets below) |
+| Labelled UI screens | B2.3 | the visual checklist (GT-N4-2) | about 3 |
+| The research golden set; scripted non-developer project starts | B4.4 | B4.4 | about 6 |
+| The labelled reuse set | B4.5 | B4.5 | about 4 |
+| Seeded defects; public review datasets (O22); scripted PM conversations | B4.8 | B4.8 | about 10 |
 
 ### Machine time
 
-The reference machine is the bottleneck: it cannot build while a suite runs, and one 30-card run takes about two hours (14 cards took 53 minutes). A paired A/B is at least two runs per arm. Budget: **B2.5 about two machine-days** (the three thinking arms, the strict method, the tool arm and the evidence-gated arm, each twice, then the full suite and the planning measure); **every later workstream that touches the loop, context, gates, models, sandbox or runner, one confirmation run** (DEFINITION_OF_DONE §5.3.4) — and **a paired A/B, two runs per arm (about eight machine-hours), for any workstream that changes a prompt, a tool, a budget policy or a skill**, because those are harness changes admitted only by DEC-28. B2.1, B4.0a and B4.0b each carry several; they are batched into as few A/Bs as the changes allow. Runs are scheduled overnight and batched; code work continues on a second checkout that does not rebuild the suite's `dist/`.
+The reference machine is the bottleneck: it cannot build while a suite runs, and one 30-card run takes about two hours (14 cards took 53 minutes). A paired A/B is at least two runs per arm. Budget: **B2.5 about two machine-days** (the three thinking arms, the strict method, the tool arm and the evidence-gated arm, each twice, then the full suite and the planning measure); **every later workstream that touches the loop, context, gates, models, sandbox or runner, one confirmation run** (DEFINITION_OF_DONE §5.3.4) — and **a paired A/B, two runs per arm (about eight machine-hours), for any workstream that changes a prompt, a tool, a budget policy or a skill**, because those are harness changes admitted only by DEC-28. B2.1, B4.0a and B4.0b each carry several; they are batched into as few A/Bs as the changes allow. **In total** about 10–14 machine-days across Phase B — two for B2.5, about eight hours per paired A/B in B2.1, B4.0a and B4.0b (several each, batched), a confirmation run for each other workstream that touches a run, and Phase C's final suite and planning measure — almost all of it overnight. The owner's own overnight benchmarks of model combinations (NEW-measurement-5) use the same window and never overlap a plan run: the plan's runs take the window first. Runs are scheduled overnight and batched; code work continues on a second checkout that does not rebuild the suite's `dist/`.
 
 ### Risks
 
@@ -168,9 +170,9 @@ The reference machine is the bottleneck: it cannot build while a suite runs, and
 | v1 measures below the B2.5 baseline | Phase C paired comparison | A loss the suite can resolve blocks the release; the responsible workstream is reverted or fixed |
 | The suite cannot resolve the improvements | Most A/Bs come back inconclusive | DEC-28: inconclusive changes are adopted only if cheaper or simpler and not worse |
 
-A workstream does not start while an owner decision in its "Needs first" column is open ([OPEN_QUESTIONS](OPEN_QUESTIONS.md#owner-decisions)).
+"Needs first" lists the workstreams that must land before; every owner decision the design depends on is now either decided or has a stated default that unblocks it ([OPEN_QUESTIONS](OPEN_QUESTIONS.md#owner-decisions)), so none appears there.
 
-The table names each workstream's Phase A changes; the 95 further changes the specifications added (`NEW-<spec>-<n>`) are listed in [COVERAGE.md](COVERAGE.md) with the workstream that builds each, so every change has a place in this sequence.
+The table names each workstream's Phase A changes; the 106 further changes the specifications added (`NEW-<spec>-<n>`) are listed in [COVERAGE.md](COVERAGE.md) with the workstream that builds each, so every change has a place in this sequence.
 
 A large file is split only inside a workstream already working in it, behind tests, and its complexity must go down, not move (rule 6).
 

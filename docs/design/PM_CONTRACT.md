@@ -21,8 +21,8 @@ updated in the same commit.
 | PM with no runner (§4) | the server loads the manager model directly | through the residency scheduler only | NEW-models-9 |
 | Slack webhook URL (§5) | `~/.config/sekhemet/…` | the one user directory, `~/.sekhemet/` | NEW-surface-1 |
 | Rule lifecycle (§6) | approval, then helpful/harmful counts on first attempts; proposed for retirement at 3 more harmful than helpful | [DECISIONS](DECISIONS.md) DEC-28: approval, then paired credit on this project's attempt records, with rotation; **retired automatically** only at the fixed looks after 20, 40 and 80 pairs, when a one-sided exact test on the discordant pairs shows harm at 0.05/3 (never below 20 pairs); a person may retire a rule at any time. `LearnedRule` gains the credit and the pairs counted | NEW-context-4 |
-| Lessons learned during a run (§6) | none | **Pending owner decision O15** ([OPEN_QUESTIONS](../reference/OPEN_QUESTIONS.md#owner-decisions)). Default until decided: none applies before a person approves it; each is a `candidate` at the run's end, with its evidence. If the owner allows probation: a `LearnedRule` status `probation`, production runs only, never a measurement run | NEW-measurement-3, NEW-context-4 |
-| Profile statements (§6) | used by Seshat as soon as they are derived; editable and dismissible | Pending the owner ([planner-pm](specs/planner-pm.md) §8 Q1; not yet in the owner queue). Default until decided: the code's behaviour. If the owner requires approval first: a `ProfileEntry` status `proposed`, and `POST /api/learning/profile/:id/approve` | — (decided by the owner) |
+| Lessons learned during a run (§6) | none | **Pending owner decision O15** ([OPEN_QUESTIONS](../reference/OPEN_QUESTIONS.md#owner-decisions)). Default until decided: none applies before a person approves it; each is a `candidate` at the run's end, with its evidence. If the owner allows probation: a `LearnedRule` status `probation`, production runs only, never a measurement run | T8 (MS-T8-15), NEW-context-4 |
+| Profile statements (§6) | used by Seshat as soon as they are derived; editable and dismissible | Pending the owner ([OPEN_QUESTIONS](../reference/OPEN_QUESTIONS.md#owner-decisions) O24). Default until decided: the code's behaviour. If the owner requires approval first: a `ProfileEntry` status `proposed`, and `POST /api/learning/profile/:id/approve` | — (decided by the owner) |
 | Card `key` (§2, `GET /api/board`) | absent; cards carry only `card_<uuid8>` ids | `key: string` (`CHR-12`), the project's prefix and a per-project number, never reused ([kernel](specs/kernel.md) rule 5) | P3 |
 | Card `kind`, `change`, `split` (§2, `GET /api/board`) | `kind` re-derived from labels, title and keywords | three stored fields: `kind` (seven values), `change` (`feature`, `fix`, `characterize`, `refactor`, `upgrade`), `split` on a split child (`spike`, `path`, `interface`, `data`, `rules`) ([DEC-26](DECISIONS.md#dec-26--one-vocabulary-for-the-kind-of-card-and-the-run); labels in [NAMING](NAMING.md#card-kind-change-and-split)) | NEW-kernel-9 |
 | The `awaitingMerge` hold (`GET /api/board`) | none; a card moves to Done when its pull request opens | `hold?: { kind: "awaitingMerge", pr, since }` on a card in `review`, not counted toward ReviewWIP ([kernel](specs/kernel.md) rule 24) | NEW-kernel-3 |
@@ -157,7 +157,7 @@ interface PmProposal {
 The Configuration page's shapes ([dashboard](specs/dashboard.md) §2.16; behaviour of the scan, the recommendations and the download in [models](specs/models.md), of the benchmark in [measurement](specs/measurement.md)). None exists today. Every mutating request here is refused for any actor but a person, needs the Accept permission in company-server mode, and is recorded on the ledger with the principal. Nothing here downloads, loads or benchmarks on its own initiative.
 
 ```ts
-type Role = "worker" | "planner" | "reviewer" | "researcher";   // Seshat runs on "planner"
+type Role = "worker" | "planner" | "reviewer" | "researcher" | "vision";   // Seshat runs on "planner"; "vision" describes images on cards
 interface ModelFolder {
   path: string;
   source: "config" | "flag" | "env";   // config.toml, --models-dir, SEKHEMET_MODELS_DIR
@@ -168,15 +168,15 @@ interface FoundModel {
   name: string; file: string; folder: string;
   family?: string;                     // decides the Reviewer's eligibility
   sizeBytes: number; quantisation: string; contextLength: number;
-  fits: "yes" | "swaps" | "no";        // on this machine, against its usable memory
-  fitReason: string;                   // "13 GB of 16 GB usable; swaps with the Planner"
+  fits: Partial<Record<Role, "yes" | "swaps" | "no">>;   // per role: the KV cache depends on each role's context (models 4b)
+  fitReason: Partial<Record<Role, string>>;               // e.g. worker: "13 GB of 16 GB usable; swaps with the Planner"
   verified?: boolean;                  // matches the registry's published SHA-256
 }
 interface RoleAssignment {
   role: Role;
   model?: string;                      // the name people read, e.g. Seshat's model under "planner"
   state: "resident" | "swapped_out" | "not_configured";
-  qualified: boolean;                  // the adoption rule allows this model in this role on this host (models rule 30a)
+  qualified: boolean;                  // passed qualification for this role on this host (models rule 27a)
   unfilledReason?: string;             // "No model outside the Worker's family is configured"
   recommendation?: {
     model: string; reason: string;     // the reason in plain words, with its evidence
@@ -187,7 +187,7 @@ interface RoleAssignment {
 interface Combination {                // one model per role; a role may be left unfilled
   worker: string; planner: string; reviewer?: string; researcher?: string;
 }
-interface Score { value: number; low: number; high: number; n: number }   // with its interval
+interface Score { value: number; n: number; low?: number; high?: number; kind: "rate" | "graded" }   // a rate carries its exact interval; a graded quick-tier mean carries its item range in low/high
 interface RoleScore {
   role: Role; model: string;
   state: "measured" | "partial" | "not_measured";
@@ -201,7 +201,7 @@ interface CombinationResult {
   endToEnd?: { passed: number; total: number };
   score?: Score;
   current: boolean; recommended: boolean; reason?: string;
-  indistinguishableFrom: string[];     // combinationIds whose intervals overlap this one
+  indistinguishableFrom: string[];     // candidates the paired sign test on the same items cannot separate from this one (measurement rule 10)
   resolvedAgainst?: { combinationId: string; outcome: "better" | "worse" }[];  // overnight only
   versusBaseline?: "better" | "worse" | "not established";   // against the recorded frozen baseline
   date: string;
@@ -221,7 +221,7 @@ interface BenchmarkRun {
 - `POST /api/config/models/folders` with `{ path }` adds a folder and `DELETE /api/config/models/folders` with `{ path }` removes it; each returns the `GET` shape. A folder is only read, never written, and never outside what the person named.
 - `POST /api/config/models/scan` re-scans every configured folder and returns the `GET` shape; progress is streamed as `config` events on `/api/stream`: `{ kind: "scan", folder, found, done }`.
 - `GET /api/config/roles` returns `{ roles: RoleAssignment[] }`, one per role in the order Worker, Planner, Reviewer, Researcher.
-- `PUT /api/config/roles/:role` with `{ model }` assigns a found model to a role and returns `{ role: RoleAssignment }`. It is refused with 409 `{ error, needs: "benchmark" }` when the adoption rule ([models](specs/models.md) rule 30a) does not yet allow that model in that role on this host, and with 409 `{ error, needs: "other-family" }` when the Reviewer would share the Worker's family.
+- `PUT /api/config/roles/:role` with `{ model }` assigns a found model to a role and returns `{ role: RoleAssignment }`. It is refused with 409 `{ error, needs: "qualification" }` when the model has not passed qualification for that role on this host ([models](specs/models.md) rule 27a; any qualified model may be assigned, with or without a benchmark, rule 30a), and with 409 `{ error, needs: "other-family" }` when the Reviewer would share the Worker's family.
 - `POST /api/config/roles/:role/load` and `/unload` return `{ role: RoleAssignment }`; both go through the residency scheduler, never around the memory guard. A load that does not fit is refused with the reason; an unload of a model a running card uses takes effect at the next step boundary, and the response says so.
 - `POST /api/config/downloads` with `{ model }` starts an explicit download of a recommended model from its registered source and returns `{ downloadId, destination, sizeBytes, sha256 }`. Progress is streamed as `config` events: `{ kind: "download", downloadId, bytes, total, state: "running" | "verifying" | "done" | "failed", error? }`. The file is used only after its SHA-256 matches the published one; a mismatched file is deleted and the state is `failed`. Refused when the model has no registered source and hash, or when `[network] mode` does not allow the source host (the refusal names the setting). `DELETE /api/config/downloads/:id` cancels.
 - **Start.** `POST /api/config/benchmark` with `{ tier: "quick" | "overnight", combinations: Combination[], schedule?: "tonight" | "next-window" }` returns `{ run: BenchmarkRun, estimateSeconds }`. `quick` takes one combination, measures only the roles whose `RoleScore` is not cached, and starts now; `estimateSeconds` is 0 when everything is cached. `overnight` takes up to 3 combinations (the page's default is the top ones the quick tier could not separate), is queued for the machine's overnight window, and returns the `schedule` with how many fit tonight; it runs only inside the window, stops at the window's end and resumes the next night, and never starts while a card runs or the machine is reserved. A quick run is refused while another run holds the runner, naming it. A combination with a model that does not fit this machine is refused with 409 `{ error, needsGb }`. An estimate without starting: `GET /api/config/benchmark/estimate?tier=&combination=<combinationId>` returns `{ estimateSeconds, toMeasure: { role, model }[] }` (or, for `overnight`, `{ fitsTonight }`).

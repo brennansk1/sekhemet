@@ -166,7 +166,7 @@ The design v3 specifications found gaps the Phase A programme had no ID for. Eac
 | NEW-measurement-5 | Benchmarking model combinations in two tiers: **quick** (role-by-role screening in minutes, cached, hardware-aware, with intervals) and **overnight** (paired, repeated full comparison in the overnight window, resumable, morning report) (DEC-29 O2a) | [measurement](../design/specs/measurement.md) | B4.1 |
 | NEW-models-1 | Calibrate the reference host and correct its tier | [models](../design/specs/models.md) | B4.0a |
 | NEW-models-2 | Floors and the watchdog on every path | [models](../design/specs/models.md) | B4.0a |
-| NEW-models-3 | Declared hours and swap batching | [models](../design/specs/models.md) | B4.0a |
+| NEW-models-3 | Declared hours and swap batching | [models](../design/specs/models.md), with [surface](../design/specs/surface.md) and [dashboard](../design/specs/dashboard.md) | B4.0a |
 | NEW-models-4 | One profile, one role enum, one construction path, a live registry | [models](../design/specs/models.md) | B4.0a |
 | NEW-models-5 | Tool-arm qualification | [models](../design/specs/models.md) | B4.0a |
 | NEW-models-6 | Competence rows that can improve routing | [models](../design/specs/models.md) | B4.0a |

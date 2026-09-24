@@ -2,7 +2,7 @@
 
 > **Scope:** this repository — every package, the app, the documents.  
 > **Applicability:** All contributing AI models, human engineers, and subagents.  
-> **Version:** 3, 2026-09-22 — adds what done means for a specification, a workstream and the product (§5–§7). Version 2 brought the gates and trailers up to date.  
+> **Version:** 3, 2026-09-22, revised 2026-09-24 (§2B risk-based negative tests, §3 pointing at the specs, §5.1 red rules per change kind) — adds what done means for a specification, a workstream and the product (§5–§7). Version 2 brought the gates and trailers up to date.  
 > **Principle:** *Zero Vanity Testing. Zero Stubbed Code. Zero Hallucinated Completion.*
 
 ---

@@ -14,7 +14,7 @@ The 1,425 rows first traced as `carried` keep the trace's location. They were no
 - `later` — in a spec's §7 Later (or SPINE's "Not in v1", or OPEN_QUESTIONS), with a reason;
 - `still-weaker` / `still-missing` — not resolved; listed in §2.
 
-Some `deliberate` rows rest on a recommendation that still awaits the owner (OPEN_QUESTIONS O1–O14). Their Now-in column names the owner decision.
+Rows that rested on a decided: no "plan exists" condition (DEC-29; kernel K-N5-8) were settled on 2026-09-24 by [DECISIONS](../design/DECISIONS.md) DEC-29 (O1–O14); rows that still depend on an open owner decision (O15–O27) name it and its default.
 
 **Row keys.** `HD1:n` and `HD2:n` are rows *n* of [trace_hd1.md](trace_sources/trace_hd1.md) and [trace_hd2.md](trace_sources/trace_hd2.md), counted in order; HD2 also covers `INTEGRATION_REVIEW.md`. `PMFE:n` is row *n* of [trace_pm_fe.md](trace_sources/trace_pm_fe.md). `INV:<unit>` is the unit id in [trace_inv.md](trace_sources/trace_inv.md): `O` rows are the original inventory's "features most likely to be overlooked", and `D` rows are the re-audit's defects. In the Old column, `HD:`, `IR:`, `PM:`, `FE:` and `FI:` give the line in the old file. A rule number is a §2 item in the named spec. Items are shortened here; the full text is in the trace files.
 
@@ -36,7 +36,7 @@ None. The three rows the verification left open were resolved by the lead on 202
 - **PMFE:221** → `deliberate`: [dashboard](../design/specs/dashboard.md) §2.11 now shows DEC-28's paired-credit retirement; PM_CONTRACT §6 marks the counts as today's behaviour with the target in its §0.
 - **INV:O104** → `deliberate`: [DECISIONS](../design/DECISIONS.md) DEC-25 R29 (the `relay-finisher` role left with the relay protocol; `suspended-quota` stays).
 
-## 3. Moved to Later (for the owner to confirm)
+## 3. Moved to Later (confirmed by the owner, DEC-29, 2026-09-24)
 
 131 items. Each sits in the named document's Later list with its reason, and returns only with the evidence or version that reason names. They are grouped by the document that holds them now.
 
@@ -90,10 +90,10 @@ None. The three rows the verification left open were resolved by the lead on 202
 | HD1:124 | HD:315 | Per-card worktrees with copy-on-write cloning | DEC-21 (plain worktrees) |
 | HD1:125 | HD:315 | Checkpoint commits on every passing step | review-git rule 3, §9 (every step that changed files; R1) |
 | HD1:136 | HD:329 | EvidenceBundle with difftastic enabling "5-second human acceptance" | review-git rule 2, §9 (a decision in under a minute); structural diff rule 6 (partial, S5) |
-| HD1:158 | HD:362 | Every capability is a plugin claiming a service key (Cordis) | extensibility rule 29, §7 (plugin API later), §8 Q2 (container cut pending the owner, O4); SPINE packages |
+| HD1:158 | HD:362 | Every capability is a plugin claiming a service key (Cordis) | extensibility rule 29, §7 (plugin API later), §8 Q2 (container cut in B0 (DEC-29 O4)); SPINE packages |
 | HD1:163 | HD:398 | Turn-flow events: card/start, step/start, context/assembled, model/request, model/response, tool/call, tool/r… | kernel §3 closing note (never the code's; mapped) |
 | HD1:196 | HD:505 | Edge Review→InProgress on human change request | review-git §2.4, §9; DEC-24 (send back to Ready) |
-| HD1:200 | HD:518 | InProgress entry: plan exists; acceptance tests written and failing (types-only card red on typecheck); scope… | kernel rule 27, §8 Q6 (recommendation awaiting the owner) |
+| HD1:200 | HD:518 | InProgress entry: plan exists; acceptance tests written and failing (types-only card red on typecheck); scope… | kernel rule 27, §8 Q6 (decided: no "plan exists" condition (DEC-29; kernel K-N5-8)) |
 | HD1:216 | HD:550 | LSP expansion stage, headless servers pooled per project | context rule 28, §9; pool backs tools (worker-loop 12) |
 | HD1:221 | HD:563 | Zone 4 = card spec, criteria, scope, open TODOs, latest observation, re-injected goal | context rule 8, §9 (M8) |
 | HD1:226 | HD:573 | `run` routes commands through the RTK binary | context rule 17 (native condenser; binary on no v1 path) |
@@ -140,7 +140,7 @@ None. The three rows the verification left open were resolved by the lead on 202
 | HD2:177 | HD:2252 | Checkpoints: the Worker commits after every gate-passing step and every masked-observation boundary | review-git rule 3, §9 (R1); runtime rule 11 links to it |
 | HD2:211 | HD:2344 | Onboarding step 1: build the tree-sitter repo map and cache it | surface rule 9; DEC-20 (map from the TypeScript compiler; tree-sitter later, surface §7) |
 | HD2:274 | HD:2496 | Parse gate wraps tree-sitter | gates §9; DEC-20 |
-| HD2:278 | HD:2504-2507 | Console/network/DOM and layout-bounds checks over Playwright; screenshot diff with Playwright + pixelmatch; a… | gates §9, §8 Q1 (in-house CDP client pending the owner, R16; behaviours kept rule 29) |
+| HD2:278 | HD:2504-2507 | Console/network/DOM and layout-bounds checks over Playwright; screenshot diff with Playwright + pixelmatch; a… | gates §9, §8 Q1 (the in-house client stays the gate; Playwright and axe-core approved for development only, DEC-29 O5; axe-core in the product gate is owner decision O27, default no — was pending the owner, R16; behaviours kept rule 29) |
 | HD2:299 | HD:2578-2579 | mise (pinned toolchain environments) and lefthook (git hooks manager) | PROVENANCE (mise, lefthook: not used, the repository's own `.githooks/` instead) |
 | HD2:300 | HD:2542-2543, 2572 | DevDocs and Kiwix as offline documentation services; Dozzle as a container log viewer | PROVENANCE (DevDocs, Kiwix, Dozzle: not used — the kit's own docs bundle, no containers in v1) |
 | HD2:307 | HD:2615 | kWh computed from hardware TDP and GPU utilisation | runtime rule 18, §7, §9 |
@@ -164,7 +164,7 @@ None. The three rows the verification left open were resolved by the lead on 202
 | HD2:424 | HD:3352 | Synthetic git fixtures across TS, Python and Rust; `createTestWorktree()` clones one in under 10 ms | DEFINITION_OF_DONE §2D.3 (the < 10 ms target assumed in-memory SQLite; real repositories required); multi-language fixtures later, measurement §7 |
 | HD2:425 | HD:3353 | All unit and integration tests on in-memory SQLite (`:memory:`), setup under 5 ms per file | DEFINITION_OF_DONE §2A (real on-disk SQLite) |
 | HD2:426 | HD:3354 | The whole monorepo unit suite runs in under 3 seconds | DEFINITION_OF_DONE §2D.4 (the 3 s target kept as history; speed never bought with mocks) |
-| HD2:428 | HD:3372-3380 | Phase 0 spike: 30 tasks × 3 runs × 3 arms at budgets 50/150; go ≥ 90%, rework 70–90%, pivot < 70% (narrow to… | measurement rule 28, §8 Q4 (pivot rule proposed as a standing decision, owner) |
+| HD2:428 | HD:3372-3380 | Phase 0 spike: 30 tasks × 3 runs × 3 arms at budgets 50/150; go ≥ 90%, rework 70–90%, pivot < 70% (narrow to… | measurement rule 28 (the pivot rule is owner decision O20, default: a standing decision) — was: §8 Q4 (pivot rule proposed as a standing decision, owner) |
 | HD2:436 | HD:3412 | Phase 4 deferred: teams and multi-user | DEC-06 |
 | HD2:439 | HD:3416 | Scoping rule: anything not feeding the gates → failure data → decomposition/routing → reproducibility loop is… | SPINE §Where the edge is; DEC-01 |
 | HD2:473 | IR:114-117 | B1: on the benchmark nothing learned reaches the Worker (fresh `events.db`; approval needed; only playbook.to… | measurement rule 6, §9; ruling R12 (isolation in measurement runs; production probation in context rule 24f) |
@@ -182,7 +182,7 @@ None. The three rows the verification left open were resolved by the lead on 202
 | PMFE:170 | PM:390 | Integrations `#/integrations` on `g s` | dashboard §2.3.1, §9; R17 (`g n`) |
 | PMFE:194 | PM:420 | Integrations 404: sections still render from the catalogue; Now cards Not available on this server yet, no… | dashboard §9 |
 | PMFE:198 | PM:440 | Insights `#/insights` on `g f` | dashboard §2.3.1, §9 |
-| PMFE:217 | PM:485 | Everything learned is context not weights, from gate results and human actions, on the ledger,… | planner-pm §2.13.3, §8.1 (profile statements used at once; rules need approval; awaiting the owner) |
+| PMFE:217 | PM:485 | Everything learned is context not weights, from gate results and human actions, on the ledger,… | planner-pm §2.13.3, §8.1 (profile statements: owner decision O24, default used at once; rules need approval; was awaiting the owner) |
 | PMFE:234 | PM:505-510 | Seshat's review (`card/review`) between Gates and Failures; count title; advice, not a gate line;… | review-git §2.3.5, §9 (the Reviewer, not Seshat; shown first); advisory line and order kept in dashboard §2.5.3 |
 | PMFE:250 | PM:536 | Four roles: Worker; Seshat · PM; Adversarial reviewer (different family); Researcher (Apodex-1.1-mini, cites… | models rule 21; DEC-05 (roles are Worker, Planner, Reviewer, Researcher; Seshat is the persona on the Planner's weights) |
 | PMFE:259 | PM:554 | `#/pm` on `g a` | dashboard §2.3.1, §9 |
@@ -219,13 +219,13 @@ None. The three rows the verification left open were resolved by the lead on 202
 | INV:P8 | FI:316 / R2:299 | Assume/Ask/Spike; batch; > 3 questions rejects | planner-pm §2.10.1, §9; DEC-24 |
 | INV:P11 | FI:319 / R2:302 | Pause & persist, VRAM released, rehydrate | planner-pm §2.10.2–3, §9; DEC-24 |
 | INV:E1 | FI:343 / R2:322 | Pass@1 harness under the real loop; M0 protocol | measurement rule 28 (M0 protocol built, `m0.ts`; the ≥ 90% bar recorded as historical with the reason); pivot rule §8 Q4 |
-| INV:E13 | FI:355 / R2:334 | Loop 7 variant archives | measurement §8 Q2 (variant archive: recommend cut, owner sign-off) |
+| INV:E13 | FI:355 / R2:334 | Loop 7 variant archives | DEC-25 R31 (variant archive cut as dead code under DEC-09) |
 | INV:E15 | FI:357 / R2:336 | Loop 9 tool synthesis | worker-loop §9 (register R6 triaged, not in v1); security §8 Q1 (recommend cutting `--validate-tools`) |
 | INV:E17 | FI:359 / R2:338 | Guardrails; rollback over 10-card window | measurement rule 18, §9; DEC-24 |
 | INV:U3 | FI:373 / R1:369 | Basalt/Sand exact values, light theme | dashboard §2.13.1, §9 |
 | INV:U13 | FI:383 / R1:379 | Card tile components | dashboard §9 |
 | INV:H13 | FI:413 / R2:358 | SDK with async iterator | extensibility rule 28, §8 Q1 (O4) |
-| INV:H25 | FI:425 / R2:370 | Offline installers, first-run wizard | DEC-21 (source installer); surface §8 Q4 (install artefacts, owner O9) |
+| INV:H25 | FI:425 / R2:370 | Offline installers, first-run wizard | DEC-21 (source installer); DEC-29 O9 (npm package and container image approved) |
 | INV:X7 | FI:441 / R1:431 | Research note; embeddings only here | design-stage §2.7.8, §9; DEC-22 |
 | INV:X21 | FI:455 / R1:445 | Fixture generator, `createTestWorktree` < 10 ms | DEFINITION_OF_DONE §2D.3 (the < 10 ms target assumed in-memory SQLite; real repositories required) |
 | INV:X25 | FI:459 / R1:449 | Suite under 3 s | DEFINITION_OF_DONE §2D.4 |
@@ -257,7 +257,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:2 | HD:19 | A card owns one worktree, branch, declared scope, deterministic context, budget, attempt, evidence bundle, measured out… | carried | carried | SPINE spine 3; kernel §2 |
 | HD1:3 | HD:19 | Same card + same repo → byte-identical prompt (prefix cache + honest measurement) | carried | carried | context §2.1 rule 1; CX-1 |
 | HD1:4 | HD:21 | Event log is the only durable channel; model-visible means logged, enforced at runtime | carried | carried | SPINE spine 2; kernel rule 15 |
-| HD1:5 | HD:21 | Board, replay, fork, audit trail, competence model are projections of the one stream | carried | carried | SPINE spine 2; kernel rule 13 |
+| HD1:5 | HD:21 | Board, replay, fork, audit trail, competence model are projections of the one stream | carried | carried | SPINE spine 2; kernel rule 14 |
 | HD1:6 | HD:23 | Every column boundary is an entry condition decided by an executable gate, never the model | carried | carried | SPINE spine 1; kernel rule 21 |
 | HD1:7 | HD:23 | Failure → one typed shape; top few reach the model, rest in evidence by reference | carried | carried | gates rules 19–20 |
 | HD1:8 | HD:25 | Human is the rate limiter: review minutes → Review WIP → back-pressures Verify → Worker | carried | carried | SPINE spine 4; review-git §2.2 |
@@ -410,7 +410,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:155 | HD:358 | Still deferred: plugin marketplace | later | later | extensibility §7 |
 | HD1:156 | HD:358 | Still deferred: remote control from mobile beyond notifications | later | later | integrations §7; dashboard §7 |
 | HD1:157 | HD:358 | Still deferred: team chat entry points | later | later | integrations §7 |
-| HD1:158 | HD:362 | Every capability is a plugin claiming a service key (Cordis) | contradicted | deliberate | extensibility rule 29, §7 (plugin API later), §8 Q2 (container cut pending the owner, O4); SPINE packages |
+| HD1:158 | HD:362 | Every capability is a plugin claiming a service key (Cordis) | contradicted | deliberate | extensibility rule 29, §7 (plugin API later), §8 Q2 (container cut in B0 (DEC-29 O4)); SPINE packages |
 | HD1:159 | HD:366 | Invariant: model-visible means logged, runtime assertion enforces it | carried-weaker | carried | kernel rule 17, §4 (built), K-9 |
 | HD1:160 | HD:370 | Service keys ctx.events … ctx.sync and what each owns | carried | carried | SPINE package table (renamed to packages) |
 | HD1:161 | HD:387 | Processes: board UI, core host, inference host, gate runner (Linux sandbox), SQLite store; same machine on single box | carried | carried | SPINE §How the parts fit |
@@ -452,7 +452,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD1:197 | HD:507 | Edge InProgress→Parked on stall or budget | carried | carried | code table; worker-loop rule 34.4 |
 | HD1:198 | HD:516 | Ready entry: deps done; context pack assembles within budget; criteria present | carried | carried | kernel rule 21; context rule 10, CX-N2-2 |
 | HD1:199 | HD:517 | Planning entry: planner model available; difficulty scored | missing | gap | kernel rule 27, NEW-kernel-5 |
-| HD1:200 | HD:518 | InProgress entry: plan exists; acceptance tests written and failing (types-only card red on typecheck); scope declared | carried-weaker | deliberate | kernel rule 27, §8 Q6 (recommendation awaiting the owner) |
+| HD1:200 | HD:518 | InProgress entry: plan exists; acceptance tests written and failing (types-only card red on typecheck); scope declared | carried-weaker | deliberate | kernel rule 27, §8 Q6 (decided: no "plan exists" condition (DEC-29; kernel K-N5-8)) |
 | HD1:201 | HD:519 | Verify entry: Worker stopped with recorded stop reason | carried | carried | kernel rule 21, K-S4-6 (gap S4) |
 | HD1:202 | HD:520 | Review entry: every required gate passed; evidence complete | carried | carried | kernel rule 21; gates rule 9 |
 | HD1:203 | HD:521 | Done entry: human acceptance recorded | carried | carried | kernel rule 21 |
@@ -1179,7 +1179,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:275 | HD:2497-2498 | Format, lint and typecheck wrap per-language toolchains; tests wrap per-language runners with a parser to `GateFailure` | gap | gap | gates rules 23, 23a, M6 (GT-M6-2) |
 | HD2:276 | HD:2499 | Mutation wraps Stryker, mutmut, cargo-mutants and PIT, with diff scoping built where lacking | contradicted | gap | gates rule 23a (each language's tool when installed, R14), NEW-gates-5 (GT-N5-2) |
 | HD2:277 | HD:2500-2503 | Secret scan (gitleaks), dependency existence/typosquat over registry and mirror, osv-scanner offline, Semgrep CE with c… | carried | carried | gates.md §2.3, §3; security.md §2.44 |
-| HD2:278 | HD:2504-2507 | Console/network/DOM and layout-bounds checks over Playwright; screenshot diff with Playwright + pixelmatch; accessibili… | contradicted | deliberate | gates §9, §8 Q1 (in-house CDP client pending the owner, R16; behaviours kept rule 29) |
+| HD2:278 | HD:2504-2507 | Console/network/DOM and layout-bounds checks over Playwright; screenshot diff with Playwright + pixelmatch; accessibili… | contradicted | deliberate | gates §9, §8 Q1 (the in-house client stays the gate; Playwright and axe-core approved for development only, DEC-29 O5; axe-core in the product gate is owner decision O27, default no — was pending the owner, R16; behaviours kept rule 29) |
 | HD2:279 | HD:2508 | Vision checklist over a local vision model at temperature 0 | gap | gap | gates rule 30, NEW-gates-4 (GT-N4-2) |
 | HD2:280 | HD:2509 | Hygiene: changelog verification and a debug-output scanner | carried | carried | gates.md §2.3, §2.17 |
 | HD2:281 | HD:2515 | Inference wraps the llama.cpp server; MLX as an Apple Silicon adapter | carried | carried | models.md §2.14 (MLX later: context.md §7, extensibility.md tool table) |
@@ -1329,7 +1329,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | HD2:425 | HD:3353 | All unit and integration tests on in-memory SQLite (`:memory:`), setup under 5 ms per file | contradicted | deliberate | DEFINITION_OF_DONE §2A (real on-disk SQLite) |
 | HD2:426 | HD:3354 | The whole monorepo unit suite runs in under 3 seconds | missing | deliberate | DEFINITION_OF_DONE §2D.4 (the 3 s target kept as history; speed never bought with mocks) |
 | HD2:427 | HD:3358-3368 | Build pipeline: pnpm workspaces; composite `tsc -b`; Biome; scripts build, test, test:unit, test:integration, typecheck… | carried-weaker | carried | DEFINITION_OF_DONE §2D.1 (test:unit, test:integration, pnpm dev); CLAUDE.md commands |
-| HD2:428 | HD:3372-3380 | Phase 0 spike: 30 tasks × 3 runs × 3 arms at budgets 50/150; go ≥ 90%, rework 70–90%, pivot < 70% (narrow to planning a… | later | deliberate | measurement rule 28, §8 Q4 (pivot rule proposed as a standing decision, owner) |
+| HD2:428 | HD:3372-3380 | Phase 0 spike: 30 tasks × 3 runs × 3 arms at budgets 50/150; go ≥ 90%, rework 70–90%, pivot < 70% (narrow to planning a… | later | deliberate | measurement rule 28 (the pivot rule is owner decision O20, default: a standing decision) — was: §8 Q4 (pivot rule proposed as a standing decision, owner) |
 | HD2:429 | HD:3384 | The frozen suite is written before the features it judges; a phase is complete only when its result is recorded against… | carried | carried | measurement.md §2.1-4 (the ordering rationale is history) |
 | HD2:430 | HD:3388-3390 | Phase 1 MVP: a card goes Ready → Review unattended with an evidence bundle on the founder's repository | carried | carried | MVP_PATH.md (done) |
 | HD2:431 | HD:3394 | Phase 2 PM-layer list (nested boards, decomposition, DAG, WIP, ladder, masking, RTK, playbook, hooks/skills/commands, r… | carried | carried | Each item carried in the owning spec (see its rows) |
@@ -1663,7 +1663,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | PMFE:214 | PM:479 | Capability states: 404 names the endpoint; `sampleSize` 0 → No finished attempts yet; renders independently of flow m… | carried-weaker | carried | dashboard §2.10.3 |
 | PMFE:215 | PM:481 | Under 3 finished cards: Not enough finished cards… need at least 3; you have 1. | carried | carried | dash §2.10.5 |
 | PMFE:216 | PM:481 | Flow 404 message naming `/api/metrics/flow` | carried | carried | dash §2.12.3 (generic) |
-| PMFE:217 | PM:485 | Everything learned is context not weights, from gate results and human actions, on the ledger,… | contradicted | deliberate | planner-pm §2.13.3, §8.1 (profile statements used at once; rules need approval; awaiting the owner) |
+| PMFE:217 | PM:485 | Everything learned is context not weights, from gate results and human actions, on the ledger,… | contradicted | deliberate | planner-pm §2.13.3, §8.1 (profile statements: owner decision O24, default used at once; rules need approval; was awaiting the owner) |
 | PMFE:218 | PM:485 | Plain names (Playbook, rules, What Seshat has learned about you, Stopping policy) | carried | carried | dash §2.11, §2.10.4; NAMING |
 | PMFE:219 | PM:487 | Playbook lede (learned from gates and your actions, never a model grading itself; on this machine; on the ledger; takes… | missing | carried | dashboard §2.11 |
 | PMFE:220 | PM:489 | Needs your approval: candidates newest first; Approve (primary), Edit, Retire | carried-weaker | carried | dashboard §2.11 |
@@ -2268,7 +2268,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | INV:E10 | FI:352 / R2:331 | Loop 4 skill distillation | carried | carried | measurement §2.17; extensibility §2.17a, EXT-27a/b — agree |
 | INV:E11 | FI:353 / R2:332 | Loop 5 exemplars top-2 | carried | carried | measurement §2.17 (two per class, min 5 cards) — agree |
 | INV:E12 | FI:354 / R2:333 | Loop 6 task synthesis | carried | carried | measurement §2.17 — agree |
-| INV:E13 | FI:355 / R2:334 | Loop 7 variant archives | carried-weaker | deliberate | measurement §8 Q2 (variant archive: recommend cut, owner sign-off) |
+| INV:E13 | FI:355 / R2:334 | Loop 7 variant archives | carried-weaker | deliberate | DEC-25 R31 (variant archive cut as dead code under DEC-09) |
 | INV:E14 | FI:356 / R2:335 | Loop 8 SIFT pre-filter | carried | carried | measurement §2.13, §2.21, MS-T8-7 — agree |
 | INV:E15 | FI:357 / R2:336 | Loop 9 tool synthesis | later | deliberate | worker-loop §9 (register R6 triaged, not in v1); security §8 Q1 (recommend cutting `--validate-tools`) |
 | INV:E16 | FI:358 / R2:337 | Loop 10 mutants → tests | carried-weaker | gap | measurement rule 17 (demoted on rollback), T8 (MS-T8-10) |
@@ -2330,7 +2330,7 @@ Columns: row key · old location · item (shortened) · status when first traced
 | INV:H22 | FI:422 / R2:367 | OTel spans incl. tool spans, in UI | carried-weaker | gap | runtime §4 (corrected, R23), NEW-runtime-9 |
 | INV:H23 | FI:423 / R2:368 | Compute governance kWh, breakers | carried | carried | runtime §2.18-19 (watts × time replaces TDP × GPU utilisation) — agree |
 | INV:H24 | FI:424 / R2:369 | Reproducibility record per card | carried | carried | runtime OQ2 → models M4, gates §2.35 — agree |
-| INV:H25 | FI:425 / R2:370 | Offline installers, first-run wizard | later | deliberate | DEC-21 (source installer); surface §8 Q4 (install artefacts, owner O9) |
+| INV:H25 | FI:425 / R2:370 | Offline installers, first-run wizard | later | deliberate | DEC-21 (source installer); DEC-29 O9 (npm package and container image approved) |
 | INV:H26 | FI:426 / R2:371 | Memory daemon 2 s | carried | carried | models §2.19 — agree |
 | INV:H27 | FI:427 / R2:372 | Restricted-mode wiring | carried | carried | see S12 |
 

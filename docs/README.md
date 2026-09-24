@@ -100,4 +100,6 @@ Every document in `docs/` is listed here, and nowhere else is the source of trut
 | [reviews/domain17_brand_ux.md](reference/reviews/domain17_brand_ux.md) | Phase A review: brand, visual and interaction design, accessibility, and the three audiences' task walks. |
 | [reviews/design_v3_review.md](reference/reviews/design_v3_review.md) | Independent review of design v3: contradictions, readiness for spec-driven development, research coverage, the spine, and depth in the core. |
 | [reviews/design_v3_confirmation.md](reference/reviews/design_v3_confirmation.md) | A second, independent review confirming each finding of the first is resolved, and whether design v3 is ready for spec-driven development. |
+| [reviews/design_v3_final_check.md](reference/reviews/design_v3_final_check.md) | The last independent check of design v3: what changed after the confirmation review, and the verdict on starting Phase B. |
+| [reviews/design_trace_audit.md](reference/reviews/design_trace_audit.md) | An independent audit of 124 sampled trace rows against the old text: the error rate and every error found. |
 | [PROVENANCE.md](reference/PROVENANCE.md) | Every adopted technique's public source and the licence register the `licenses` gate enforces. |
