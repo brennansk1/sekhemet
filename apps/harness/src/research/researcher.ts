@@ -177,9 +177,11 @@ const WEB_TOOLS: ToolDefinition[] = [
  * The model-free tools: the repository, its installed dependencies, the
  * registries, and GitHub through `gh`. One list, shared with the Apodex loop
  * — two lists of the same tools drift, and a tool the dispatcher knows but
- * no model was told about is a tool that is never called.
+ * no model was told about is a tool that is never called. Read when a list is
+ * built, never at module load: apodex_loop.js imports this module, so when it
+ * loads first its export is not yet initialised here.
  */
-const LOCAL_TOOLS: ToolDefinition[] = APODEX_LOCAL_TOOLS;
+const localTools = (): ToolDefinition[] => APODEX_LOCAL_TOOLS;
 
 /** The only clean exit, as in Apodex's own harness (FrontierAgent). */
 export const FINALIZE_TOOL: ToolDefinition = {
@@ -190,7 +192,7 @@ export const FINALIZE_TOOL: ToolDefinition = {
 };
 
 export function researchTools(web: boolean): ToolDefinition[] {
-  return [...(web ? [...LOCAL_TOOLS, ...WEB_TOOLS] : LOCAL_TOOLS), FINALIZE_TOOL];
+  return [...(web ? [...localTools(), ...WEB_TOOLS] : localTools()), FINALIZE_TOOL];
 }
 
 const defaultFetch = async (url: string): Promise<unknown> => {
