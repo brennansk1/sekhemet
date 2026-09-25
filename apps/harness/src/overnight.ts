@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { CardStore, EventLog } from "@sekhemet/kernel";
 import type { QueueReport } from "./execute.js";
 import { type GovernanceLimits, mayRun, recordUsage } from "./governance.js";
+import { INJECTION_RECORD, injectionCurrentFor } from "./injection.js";
 import { sendPush } from "./notify.js";
 import { postConventionDrift } from "./onboard.js";
 import { tickRecurring } from "./recurring.js";
@@ -39,6 +40,10 @@ export interface OvernightOptions {
   say?: (line: string) => void;
   /** Skip the end-of-night mutation step (E16). */
   skipMutation?: boolean;
+  /** The Worker the queue will run; unattended runs need its injection pass (SEC-37b). */
+  worker?: { modelId: string; quant: string };
+  /** Where injection-fixture passes are recorded (default: the user directory). */
+  injectionRecord?: string;
 }
 
 export interface OvernightSummary {
@@ -92,6 +97,15 @@ export async function runOvernight(opts: OvernightOptions): Promise<OvernightSum
   const state = { consecutiveFailures: 0 };
   const summary: OvernightSummary = { rounds: 0, cardsRun: 0, passed: 0, stoppedBecause: "" };
   let idleWaits = 0;
+  // SEC-37b: an unattended run needs this Worker's injection-fixture pass.
+  if (opts.worker) {
+    const gate = injectionCurrentFor(opts.injectionRecord ?? INJECTION_RECORD, opts.worker);
+    if (!gate.ok) {
+      summary.stoppedBecause = gate.reason ?? "injection fixtures not passed";
+      say(summary.stoppedBecause);
+      return summary;
+    }
+  }
   // X2: the nightly convention drift check, posted to Seshat's thread.
   await postConventionDrift(opts.repoPath, opts.log).catch(() => []);
 

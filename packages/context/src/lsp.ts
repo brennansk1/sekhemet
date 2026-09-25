@@ -1,7 +1,8 @@
-import { type ChildProcess, spawn } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { extname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { spawnConfinedSync } from "@sekhemet/sandbox";
 
 /**
  * A headless LSP client pool (C2, design "LSP client pool"). One language
@@ -68,7 +69,9 @@ type Pending = {
 
 /** One language-server process. */
 export class LspClient {
-  private child: ChildProcess;
+  private child: ChildProcess | undefined;
+  /** Why the server is not running, when confinement refused it. */
+  private refused: string | undefined;
   private nextId = 1;
   private pending = new Map<number, Pending>();
   private buffer = Buffer.alloc(0);
@@ -82,10 +85,17 @@ export class LspClient {
     public readonly root: string,
     private readonly timeoutMs = 15_000,
   ) {
-    this.child = spawn(server.command, server.args, {
-      cwd: root,
-      stdio: ["pipe", "pipe", "ignore"],
-    });
+    // A language server executes the project's code (plugins, build
+    // scripts, configs): it runs confined to the worktree with the allowlisted
+    // environment and no network (S3a, SEC-17).
+    const child = spawnConfinedSync(server.command, server.args, { root, timeoutMs: 0 });
+    if (!child) {
+      this.exited = true;
+      this.refused = "no OS confinement on this host";
+      return;
+    }
+    this.child = child;
+    child.stderr.resume();
     this.child.stdout?.on("data", (chunk: Buffer) => this.onData(chunk));
     this.child.on("exit", () => {
       this.exited = true;
@@ -142,11 +152,14 @@ export class LspClient {
 
   private write(message: object): void {
     const body = JSON.stringify({ jsonrpc: "2.0", ...message });
-    this.child.stdin?.write(`Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`);
+    this.child?.stdin?.write(`Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`);
   }
 
   public request<T = unknown>(method: string, params: unknown): Promise<T> {
-    if (this.exited) return Promise.reject(new LspError(`${this.server.command} is not running`));
+    if (this.exited) {
+      const why = this.refused ? ` (${this.refused})` : "";
+      return Promise.reject(new LspError(`${this.server.command} is not running${why}`));
+    }
     this.lastUsed = Date.now();
     const id = this.nextId++;
     return new Promise<T>((resolvePromise, reject) => {
@@ -262,14 +275,14 @@ export class LspClient {
     }
     await new Promise<void>((r) => {
       const t = setTimeout(() => {
-        this.child.kill("SIGKILL");
+        void (this.child as { stop?: () => Promise<void> } | undefined)?.stop?.();
         r();
       }, 2000);
       if (this.exited) {
         clearTimeout(t);
         r();
       } else {
-        this.child.once("exit", () => {
+        this.child?.once("exit", () => {
           clearTimeout(t);
           r();
         });

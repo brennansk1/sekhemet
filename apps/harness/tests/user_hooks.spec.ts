@@ -12,6 +12,42 @@ function project(toml: string): string {
 }
 
 describe("user hooks from .sekhemet/hooks.toml (K12)", () => {
+  it("WL-T3-4: a blocking hook is named by its configured name, else by its command", async () => {
+    const repo = project(
+      [
+        "[[hook]]",
+        'event = "pre-step"',
+        'name = "release freeze"',
+        "command = \"echo 'frozen' >&2; exit 2\"",
+        "",
+        "[[hook]]",
+        'event = "pre-gate"',
+        "command = \"echo 'no gates today' >&2; exit 2\"",
+        "",
+      ].join("\n"),
+    );
+    const { hooks } = loadUserHooks(repo);
+    expect(hooks[0]?.name).toBe("release freeze");
+    const { engine } = hookEngineFor(repo);
+    const step = await engine.emit("pre-step", { cardId: "card_a", step: 1 });
+    expect(step).toMatchObject({ blocked: true, reason: "frozen", blockedBy: "release freeze" });
+    const gate = await engine.emit("pre-gate", { cardId: "card_a" });
+    expect(gate).toMatchObject({
+      blocked: true,
+      blockedBy: "echo 'no gates today' >&2; exit 2",
+    });
+  });
+
+  it("WL-T3-4: an unnamed hook with a long command is named by its first 80 characters and an ellipsis", async () => {
+    const long = `echo 'blocked' >&2; exit 2; # ${"TOKEN=abc123 ".repeat(20)}`;
+    const repo = project(["[[hook]]", 'event = "pre-step"', `command = "${long}"`, ""].join("\n"));
+    const { engine } = hookEngineFor(repo);
+    const step = await engine.emit("pre-step", { cardId: "card_a", step: 1 });
+    expect(step.blocked).toBe(true);
+    expect(step.blockedBy).toBe(`${long.slice(0, 80)}…`);
+    expect(step.blockedBy?.length).toBe(81);
+  });
+
   it("loads hooks and reports bad entries", () => {
     const repo = project(
       '[[hook]]\nevent = "post-tool"\ntool = "write_file"\ncommand = "true"\n\n[[hook]]\nevent = "nope"\ncommand = "x"\n\n[[hook]]\nevent = "pre-gate"\n',

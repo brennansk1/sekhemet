@@ -270,7 +270,9 @@ export async function validateToolProposal(
   const failures: string[] = [];
   for (const ex of proposal.examples) {
     const r = await run(ex);
-    if (r.exitCode !== 0) failures.push(`${ex}: exit ${r.exitCode}`);
+    // The last line of output says why (a refused connection, a denied write).
+    const why = r.output.trim().split("\n").at(-1)?.slice(0, 200);
+    if (r.exitCode !== 0) failures.push(`${ex}: exit ${r.exitCode}${why ? ` (${why})` : ""}`);
   }
   return {
     ...proposal,

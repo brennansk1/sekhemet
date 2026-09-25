@@ -299,6 +299,13 @@ export class RunLedger {
       durationMs: Number(r.duration_ms),
       ...(r.stop_reason ? { stopReason: r.stop_reason as CardStopReason } : {}),
       ...(r.git_ref ? { gitRef: String(r.git_ref) } : {}),
+      ...(r.sample != null ? { sample: Number(r.sample) } : {}),
+      ...(r.phase ? { phase: String(r.phase) } : {}),
+      ...(r.finish_reason ? { finishReason: String(r.finish_reason) } : {}),
+      ...(r.thinking_tokens != null ? { thinkingTokens: Number(r.thinking_tokens) } : {}),
+      ...(r.answer_tokens != null ? { answerTokens: Number(r.answer_tokens) } : {}),
+      ...(r.format_errors != null ? { formatErrors: Number(r.format_errors) } : {}),
+      ...(r.prose_only != null ? { proseOnly: Number(r.prose_only) } : {}),
       createdAt: String(r.created_at),
     };
   }
@@ -307,8 +314,9 @@ export class RunLedger {
     this.db
       .prepare(
         `INSERT OR REPLACE INTO steps (id, attempt_id, card_id, step_index, calls, context_pack_id,
-          repo_state_hash, prompt_tokens, completion_tokens, duration_ms, stop_reason, git_ref, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
+          repo_state_hash, prompt_tokens, completion_tokens, duration_ms, stop_reason, git_ref, created_at,
+          sample, phase, finish_reason, thinking_tokens, answer_tokens, format_errors, prose_only)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         p.id,
@@ -323,6 +331,13 @@ export class RunLedger {
         p.durationMs,
         p.stopReason ?? null,
         p.createdAt,
+        p.sample ?? null,
+        p.phase ?? null,
+        p.finishReason ?? null,
+        p.thinkingTokens ?? null,
+        p.answerTokens ?? null,
+        p.formatErrors ?? null,
+        p.proseOnly ?? null,
       );
   }
 

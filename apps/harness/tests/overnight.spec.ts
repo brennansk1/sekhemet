@@ -133,6 +133,30 @@ describe("sekhemet overnight", () => {
       }),
     );
 
+  it("will not run unattended until this Worker has passed the injection fixtures (SEC-37b)", async () => {
+    const { repo, log, cards } = setup();
+    await cards.createCard({ id: "c0", tier: "task", title: "a", status: "ready" });
+    const record = join(repo, "injection.json");
+    let ran = false;
+    const s = await runOvernight({
+      repoPath: repo,
+      log,
+      cardStore: cards,
+      hours: "none",
+      limits: { kwhPerDay: 0, maxConsecutiveFailures: 3 },
+      queueArgs: [],
+      say: () => {},
+      worker: { modelId: "cyber-tiel", quant: "IQ3_XXS" },
+      injectionRecord: record,
+      runQueue: async () => {
+        ran = true;
+        return 0;
+      },
+    });
+    expect(ran).toBe(false);
+    expect(s.stoppedBecause).toMatch(/injection fixtures have not passed for cyber-tiel IQ3_XXS/);
+  });
+
   it("runs rounds until no Ready cards remain, recording energy per round", async () => {
     const { repo, log, cards } = setup();
     await cards.createCard({ id: "c0", tier: "task", title: "a", status: "ready" });

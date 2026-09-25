@@ -247,11 +247,12 @@ describe("E8: tuned budgets applied within 15%, reversibly", () => {
       "tune: most passes finish by step 28",
       guard,
     );
-    expect(applied.policy.stepBudget).toBe(43);
+    // WL-T3-11: the store starts at the one default of 40; 15% of it lands on 34.
+    expect(applied.policy.stepBudget).toBe(34);
     expect(applied.reason).toMatch(/clamped/);
     expect(guard.watching()?.kind).toBe("budget");
-    expect(new BudgetPolicyStore(join(dir, "budget.json")).current().stepBudget).toBe(43);
-    expect(store.rollback(applied.id)).toEqual({ stepBudget: 50, maxFailedChecks: 3 });
+    expect(new BudgetPolicyStore(join(dir, "budget.json")).current().stepBudget).toBe(34);
+    expect(store.rollback(applied.id)).toEqual({ stepBudget: 40, maxFailedChecks: 3 });
   });
 });
 

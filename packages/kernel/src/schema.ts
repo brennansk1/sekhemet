@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { keyBetween } from "./order_key.js";
+import { DEFAULT_STEP_BUDGET } from "./stop_reasons.js";
 import { EVENT_ACTORS } from "./types.js";
 
 /** The actor CHECK (K5): the design's five plus the documented extensions. */
@@ -31,7 +32,7 @@ const CARDS_TABLE_BODY = `
   title TEXT NOT NULL,
   status TEXT NOT NULL CHECK(${CARD_STATUS_CHECK}),
   scope_files JSON NOT NULL DEFAULT '[]',
-  step_budget INTEGER NOT NULL DEFAULT 50,
+  step_budget INTEGER NOT NULL DEFAULT ${DEFAULT_STEP_BUDGET},
   steps_used INTEGER NOT NULL DEFAULT 0,
   spec TEXT,
   acceptance_criteria JSON NOT NULL DEFAULT '[]',
@@ -321,6 +322,17 @@ const ADDED_ATTEMPT_COLUMNS: ReadonlyArray<[column: string, ddl: string]> = [
   ["tool_arm", "tool_arm TEXT NOT NULL DEFAULT 'A' CHECK(tool_arm IN ('A','B','C'))"],
 ];
 
+/** Per-step phase and generation facts (worker-loop WL-T3-1, WL-M3-4, WL-M2-5, WL-T3-13). */
+const ADDED_STEP_COLUMNS: ReadonlyArray<[column: string, ddl: string]> = [
+  ["sample", "sample INTEGER"],
+  ["phase", "phase TEXT"],
+  ["finish_reason", "finish_reason TEXT"],
+  ["thinking_tokens", "thinking_tokens INTEGER"],
+  ["answer_tokens", "answer_tokens INTEGER"],
+  ["format_errors", "format_errors INTEGER"],
+  ["prose_only", "prose_only INTEGER"],
+];
+
 const ADDED_EVIDENCE_COLUMNS: ReadonlyArray<[column: string, ddl: string]> = [
   ["structural_diff", "structural_diff TEXT"],
   ["gate_results_summary", "gate_results_summary JSON NOT NULL DEFAULT '{}'"],
@@ -507,6 +519,7 @@ export function migrateSchema(db: DatabaseSync): SchemaMigrationReport {
     ...addMissingColumns(db, "events", ADDED_EVENT_COLUMNS),
     ...addMissingColumns(db, "cards", ADDED_CARD_COLUMNS),
     ...addMissingColumns(db, "attempts", ADDED_ATTEMPT_COLUMNS),
+    ...addMissingColumns(db, "steps", ADDED_STEP_COLUMNS),
     ...addMissingColumns(db, "evidence_bundles", ADDED_EVIDENCE_COLUMNS),
   ];
   // Indexes over freshly added columns can only be created once they exist.

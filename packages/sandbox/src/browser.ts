@@ -1,7 +1,7 @@
-import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { runConfined } from "./confined.js";
 
 /**
  * A local Chromium for rendering pages (L20 `browse`, the visual gates):
@@ -49,39 +49,60 @@ export function isHeadlessShell(path: string): boolean {
   return /headless[_-]shell/.test(path);
 }
 
-/** The rendered DOM of `url` (scripts run), through headless Chrome; undefined without Chrome. */
-export function dumpDom(url: string, timeoutMs = 15_000): Promise<string | undefined> {
+export interface DumpDomOptions {
+  timeoutMs?: number;
+  /** Loopback ports the page may reach (the card's own app). */
+  localPorts?: number[];
+  /** The egress proxy (S5): the browser's only way to the web. */
+  egressProxyPort?: number;
+  restricted?: boolean;
+}
+
+/**
+ * The rendered DOM of `url` (scripts run), through headless Chrome confined
+ * (S3a, SEC-17): its profile is the only writable root, the network is the
+ * named loopback ports and the egress proxy, the environment the allowlist.
+ * Undefined without Chrome, or when it cannot start confined.
+ */
+export async function dumpDom(
+  url: string,
+  options: DumpDomOptions = {},
+): Promise<string | undefined> {
   const chrome = findChrome();
-  if (!chrome) return Promise.resolve(undefined);
+  if (!chrome) return undefined;
   const profile = mkdtempSync(join(tmpdir(), "sekhemet-chrome-"));
-  return new Promise((resolve) => {
-    const child = spawn(
+  try {
+    const r = await runConfined(
       chrome,
       [
         ...(isHeadlessShell(chrome) ? [] : ["--headless=new"]),
+        // The Seatbelt profile is the sandbox; Chromium's own cannot nest in it.
+        "--no-sandbox",
         "--disable-gpu",
         "--no-first-run",
         "--no-default-browser-check",
         `--user-data-dir=${profile}`,
+        ...(options.egressProxyPort
+          ? [`--proxy-server=http://127.0.0.1:${options.egressProxyPort}`]
+          : []),
         "--virtual-time-budget=5000",
         "--dump-dom",
         url,
       ],
-      { stdio: ["ignore", "pipe", "ignore"] },
+      {
+        root: profile,
+        browser: true,
+        denyHomeReads: true,
+        timeoutMs: options.timeoutMs ?? 15_000,
+        ...(options.localPorts?.length ? { localPorts: options.localPorts } : {}),
+        ...(options.egressProxyPort ? { egressProxyPort: options.egressProxyPort } : {}),
+        ...(options.restricted ? { restricted: true } : {}),
+      },
     );
-    let out = "";
-    child.stdout.on("data", (c: Buffer) => {
-      out += c.toString("utf8");
-    });
-    const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
-    const done = (ok: boolean) => {
-      clearTimeout(timer);
-      rmSync(profile, { recursive: true, force: true });
-      resolve(ok && out ? out : undefined);
-    };
-    child.on("error", () => done(false));
-    child.on("close", (code) => done(code === 0));
-  });
+    return r.exitCode === 0 && r.stdout ? r.stdout : undefined;
+  } finally {
+    rmSync(profile, { recursive: true, force: true });
+  }
 }
 
 /** Visible text of an HTML document: scripts, styles and tags dropped, whitespace folded. */

@@ -1,3 +1,5 @@
+import { STOP_REASONS } from "./stop_reasons.js";
+
 export type CardTier = "initiative" | "epic" | "feature" | "story" | "task";
 
 /**
@@ -67,31 +69,25 @@ export type CardStopReason =
   | "rebase_conflict"
   /** The gates passed, then failed on the card rebased onto the integration branch (Y6). */
   | "integration_failed"
-  | "git_metadata_tampered";
+  /** SEC-2: the worktree preflight found git metadata the harness did not write. */
+  | "git_metadata_tampered"
+  /** The Worker holds that a gate, not its work, is wrong (gates M6). */
+  | "gate_suspected"
+  /** A staged test fails before any step, but not at an assertion (gates NEW-gates-6). */
+  | "tests_not_red_for_reason"
+  /** A pre-step project hook vetoed the step (worker-loop rule 32, WL-T3-4). */
+  | "hook_veto"
+  /** The process died mid-attempt; found on the next start (runtime RUN-9). */
+  | "crashed";
 
-/** Every stop reason, for validation and exhaustive UI tables. */
-export const CARD_STOP_REASONS: readonly CardStopReason[] = [
-  "gate_passed",
-  "budget_exhausted",
-  "oscillation_detected",
-  "no_progress",
-  "repair_exhausted",
-  "error",
-  "memory_pressure",
-  "quota_suspended",
-  "done_pending_gates",
-  "scope_violation",
-  "capability_ceiling",
-  "human_abort",
-  "token_budget_exhausted",
-  "time_budget_exhausted",
-  "replan_requested",
-  "vacuous_tests",
-  "rebase_conflict",
-  "integration_failed",
-  // SEC-2: the worktree preflight found git metadata the harness did not write.
-  "git_metadata_tampered",
-];
+/**
+ * Every stop reason, for validation and exhaustive UI tables: the keys of the
+ * one stop-reason table (worker-loop rule 31, WL-T3-10), so a reason cannot
+ * exist without its class, parking, resumption and next action.
+ */
+export const CARD_STOP_REASONS: readonly CardStopReason[] = Object.keys(
+  STOP_REASONS,
+) as CardStopReason[];
 
 /** Which model handles each phase of a card (design §320). */
 export interface ModelRoute {
@@ -425,6 +421,19 @@ export interface StepRecord {
   completionTokens: number;
   durationMs: number;
   stopReason?: CardStopReason;
+  /** The pass@k sample the step belongs to, from 1 (worker-loop WL-T3-13). */
+  sample?: number;
+  /** The step's phase: find, edit, verify or repair (worker-loop WL-T3-1). */
+  phase?: string;
+  /** Why the reply ended, as the server said (worker-loop WL-M3-4). */
+  finishReason?: string;
+  /** Of `completionTokens`, thinking and answer (worker-loop WL-M3-4). */
+  thinkingTokens?: number;
+  answerTokens?: number;
+  /** Tool-call format errors in the reply (worker-loop WL-M2-5). */
+  formatErrors?: number;
+  /** 1 when the reply held no tool call and no attempt at one (worker-loop WL-M2-5). */
+  proseOnly?: number;
   /** The checkpoint commit taken at this step, if one was (H18/H19). */
   gitRef?: string;
   createdAt: string;

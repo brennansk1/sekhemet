@@ -95,6 +95,12 @@ export interface HookDispatchResult {
   reason?: string;
   /** Zero-based index of the handler that blocked, in registration order. */
   blockedByIndex?: number;
+  /**
+   * The blocking handler's name, when it was registered with one (a user
+   * hook's configured name or its command), so a veto names the hook rather
+   * than its position (worker-loop WL-T3-4).
+   */
+  blockedBy?: string;
   /** Injected messages, accumulated in registration order. */
   messages: HookMessage[];
   /** Merged `data` from every handler that ran, later keys winning. */
@@ -114,6 +120,7 @@ export interface LifecycleHookEngineOptions {
 /** Registration record, so identity survives duplicate handler functions. */
 interface Registration {
   handler: HookHandler;
+  name?: string;
 }
 
 export class LifecycleHookEngine {
@@ -132,9 +139,10 @@ export class LifecycleHookEngine {
    * The registration is identified by a private record, not by the handler
    * function, so registering the same function twice yields two independent
    * subscriptions and unregistering one does not silently remove the other.
+   * `name` is how a block by this handler is reported (`blockedBy`).
    */
-  public register(event: LifecycleHookEvent, handler: HookHandler): () => void {
-    const registration: Registration = { handler };
+  public register(event: LifecycleHookEvent, handler: HookHandler, name?: string): () => void {
+    const registration: Registration = name ? { handler, name } : { handler };
     const list = this.handlers.get(event) ?? [];
     list.push(registration);
     this.handlers.set(event, list);
@@ -197,6 +205,7 @@ export class LifecycleHookEngine {
           result.blocked = true;
           result.reason = `Hook for '${event}' failed: ${error.message}`;
           result.blockedByIndex = index;
+          if (registration.name) result.blockedBy = registration.name;
           return result;
         }
         continue;
@@ -220,6 +229,7 @@ export class LifecycleHookEngine {
         result.blocked = true;
         result.reason = outcome.reason ?? `Blocked by '${event}' hook`;
         result.blockedByIndex = index;
+        if (registration.name) result.blockedBy = registration.name;
         return result;
       }
     }

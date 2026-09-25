@@ -23,8 +23,10 @@ import {
 } from "@sekhemet/gates";
 import type { CardRecord } from "@sekhemet/kernel";
 import {
+  REASONING_BUDGET_TOKENS,
   type ReasoningDecision,
   checkExecutionHeadroom,
+  looksLikeToolCallAttempt,
   readSwapUsedBytes,
   reasoningForStep,
 } from "@sekhemet/models";
@@ -40,6 +42,7 @@ import {
 } from "./integrity.js";
 import { type LadderState, RepairLadder, type RungPolicy } from "./ladder.js";
 import type { ToolObservation } from "./observation.js";
+import { PHASE_WRITE_TOOLS, phaseOf } from "./phase.js";
 import { buildRepoMap, dataContracts } from "./repo_map.js";
 import {
   TOOL_CATALOG,
@@ -67,13 +70,10 @@ import { WorkingMemory } from "./working_memory.js";
 const PROGRESSIVE_CORE_TOOLS = ["read_file", "edit", "write_file", "check", "finish_card"];
 
 /** Tools whose success means a scope file now has content. */
-const WRITE_TOOLS = new Set([
-  "write_file",
-  "edit",
-  "replace_lines",
-  "replace_symbol_body",
-  "insert_after_symbol",
-]);
+const WRITE_TOOLS = PHASE_WRITE_TOOLS;
+
+/** Tokens kept free of the window for tokenizer disagreement (rule 22). */
+const WINDOW_MARGIN_TOKENS = 256;
 
 function synthesizeCard(options: SessionOptions): CardRecord {
   const now = new Date().toISOString();
@@ -176,8 +176,16 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   private toolLoader: ToolLoader | undefined;
   /** The tools whose contracts are in the pinned system prompt under C19. */
   private coreToolSpecs: ToolInterfaceSpec[] | undefined;
+  /** The prompt budget W, fixed for the attempt (rule 22, WL-M3-5). */
+  private readonly promptBudgetW: number | undefined;
+  /** What the step's response said about itself, attached to the step result. */
+  private stepMeta: Pick<TurnResult, "finishReason" | "truncated" | "formatErrors" | "proseOnly"> =
+    {};
 
   constructor(private options: SessionOptions) {
+    // SEC-19: an audit starts no hook and no language server (both execute
+    // configuration or code); the visual layer is off below.
+    if (options.restricted) this.options = { ...options, hooks: undefined, lspPool: undefined };
     if (options.priorLessons?.length) this.memory.seed(options.priorLessons);
     this.cardId = options.cardId;
     this.stepBudget = options.stepBudget;
@@ -208,10 +216,11 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       readOnly: options.restricted === true,
       allowedDomains: options.allowedDomains,
       egressProxyPort: options.egressProxyPort,
-      lspPool: options.lspPool,
+      lspPool: this.options.lspPool,
       cardClass: cardClassFor(this.card),
       webDocs: options.webDocs,
     });
+    this.promptBudgetW = this.fixPromptBudget();
     if (options.progressiveTools) {
       this.toolLoader = new ToolLoader(this.catalog(), PROGRESSIVE_CORE_TOOLS);
       this.coreToolSpecs = this.toolLoader.visibleSpecs();
@@ -534,7 +543,9 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
    */
   private thinkingFor(base: ReasoningDecision): ReasoningDecision {
     const policy = this.options.thinking ?? "off";
-    if (policy === "all") return { reasoning: "high", reasoningBudgetTokens: 2048 };
+    if (policy === "all") {
+      return { reasoning: "high", reasoningBudgetTokens: REASONING_BUDGET_TOKENS.high };
+    }
     const planning = this.turnsTaken === 0 || this.lastTurnFailed;
     if (policy === "surgical" && planning && base.reasoning === "off") {
       return reasoningForStep({ purpose: "planning" });
@@ -864,12 +875,29 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     return this.repoMapCache;
   }
 
+  /**
+   * The tools offered this session: the card's catalog, plus `tool_search`
+   * under progressive loading (C19), where a catalog tool not yet loaded is
+   * still offered (reachable through tool_search). A call to anything else is
+   * refused, and counted as a format error (WL-M2-5).
+   */
+  private offeredToolNames(): string[] {
+    const names = this.catalog().map((t) => t.name);
+    return this.toolLoader && !names.includes(TOOL_SEARCH_NAME)
+      ? [...names, TOOL_SEARCH_NAME]
+      : names;
+  }
+
   /** Tool schemas sent alongside the prompt; they count against the window too. */
   /** The tools this card may use: the restricted catalog under `--restricted` (S12). */
   private catalog() {
     // L18: the card's class fixes its tool list (explore, plan, review,
     // research, implement), unless the caller chose tools itself.
-    const base = this.options.tools ?? toolsForClass(cardClassFor(this.card), TOOL_CATALOG);
+    const base =
+      this.options.tools ??
+      toolsForClass(cardClassFor(this.card), TOOL_CATALOG, {
+        scriptCapable: this.options.scriptCapable,
+      });
     return this.options.restricted ? restrictedToolCatalog(base) : base;
   }
 
@@ -916,10 +944,37 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
 
   /** The request budget in tokens, if the adapter's window is known. */
   private promptBudget(): number | undefined {
+    return this.promptBudgetW;
+  }
+
+  /** The answer cap each request states (rule 22). */
+  private answerCap(): number | undefined {
+    return this.options.maxTokens ?? this.options.modelAdapter.contextWindow?.maxTokens;
+  }
+
+  /**
+   * W, once per attempt (rule 22, WL-M3-1, WL-M3-5): the window less the
+   * answer cap, the largest thinking cap the policy can request on any step
+   * and a margin for tokenizer disagreement. Every policy can think (`off`
+   * on its escalated rungs), so that is the high budget; a step that does not
+   * think leaves its allowance unused and the prompt never grows into it.
+   */
+  private fixPromptBudget(): number | undefined {
     if (this.options.promptTokenBudget !== undefined) return this.options.promptTokenBudget;
     const window = this.options.modelAdapter.contextWindow;
-    // A margin for tokenizer disagreement with the character estimate.
-    return window ? window.contextTokens - window.maxTokens - 256 : undefined;
+    const answer = this.answerCap();
+    if (!window || answer === undefined) return undefined;
+    return window.contextTokens - answer - REASONING_BUDGET_TOKENS.high - WINDOW_MARGIN_TOKENS;
+  }
+
+  /** The prompt budget W this attempt runs under, for the evidence (WL-M3-5). */
+  public getPromptBudget(): number | undefined {
+    return this.promptBudgetW;
+  }
+
+  /** Which tool arm the Worker runs (WL-M2-5): progressive loading or the fixed set. */
+  public getToolSetArm(): "fixed" | "progressive" {
+    return this.toolLoader ? "progressive" : "fixed";
   }
 
   /** The manager's plan and any in-loop re-plan, newest last. */
@@ -1086,7 +1141,23 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   }
 
   public async executeTurn(): Promise<TurnResult> {
+    const before = {
+      filesWrittenBefore: this.filesWritten.size,
+      failedCheckStanding: this.lastGateFailures.length > 0,
+    };
+    this.stepMeta = {};
     const turn = await this.executeTurnInner();
+    Object.assign(turn, this.stepMeta);
+    // WL-T3-1: the phase, from the one pure function.
+    turn.phase = phaseOf({
+      tools: turn.toolCalls.map((c) => c.name),
+      ...before,
+      verified: turn.gateResult !== undefined,
+    });
+    // Rule 31a: which budget ran out.
+    if (turn.stopReason === "budget_exhausted" && !turn.budget) {
+      turn.budget = { budget: "steps", used: this.stepsUsed, of: this.stepBudget };
+    }
     // K12: the loop has decided to stop; hooks observe it (notifiers, formatters).
     if (turn.stopReason && this.options.hooks) {
       await this.options.hooks
@@ -1118,6 +1189,8 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         toolCalls: [],
         observations: [],
         stopReason: "human_abort",
+        // Rule 31: the next action is to see who stopped it.
+        abortedBy: this.abortReason,
       };
     }
     // Check headroom before spending a turn: stopping here is resumable,
@@ -1157,7 +1230,22 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         action: "context budget",
         result: `Stopped: the prompt needs ${built.usedTokens} tokens of a ${built.budgetTokens}-token budget even after every cut.`,
       });
-      return { turnIndex, toolCalls: [], observations: [], stopReason: "budget_exhausted" };
+      // Rule 31a, WL-T3-12: the context budget, naming the zone that overflowed.
+      const over = built.zoneBudgets.find((z) => z.zone !== 4 && !z.withinBudget);
+      return {
+        turnIndex,
+        toolCalls: [],
+        observations: [],
+        stopReason: "budget_exhausted",
+        budget: over
+          ? { budget: "context", zone: over.name, tokens: over.tokens, cap: over.budget }
+          : {
+              budget: "context",
+              zone: "prompt",
+              tokens: built.usedTokens,
+              cap: built.budgetTokens ?? 0,
+            },
+      };
     }
 
     // Reasoning per step (M6): off for ordinary steps and direct repair, on
@@ -1183,7 +1271,18 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
           action: "project hook",
           result: `Stopped by a pre-step hook: ${pre.reason ?? "blocked"}`,
         });
-        return { turnIndex, toolCalls: [], observations: [], stopReason: "human_abort" };
+        // WL-T3-4: a hook's veto is `hook_veto`, naming the hook, not a person's abort.
+        return {
+          turnIndex,
+          toolCalls: [],
+          observations: [],
+          stopReason: "hook_veto",
+          hookVeto: {
+            // Its configured name or command; an unnamed handler by position.
+            hook: pre.blockedBy ?? `pre-step hook ${(pre.blockedByIndex ?? 0) + 1}`,
+            reason: pre.reason ?? "blocked",
+          },
+        };
       }
     }
 
@@ -1216,11 +1315,45 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     });
 
     const toolCalls = response.toolCalls;
+    // WL-M3-2, WL-M3-4, WL-M2-5: why the reply ended, whether a cap cut it,
+    // how many of its calls were malformed and whether it was prose only,
+    // recorded on the step.
+    // One offered set per step, for the metric and the refusal alike: under
+    // progressive loading it is the class catalog reachable through
+    // tool_search, not only the tools loaded so far.
+    const offeredNames = this.offeredToolNames();
+    const offered = new Set(offeredNames);
+    const truncated =
+      response.finishReason === "length"
+        ? thinking.reasoningBudgetTokens > 0 &&
+          (response.usage.answerTokens === 0 ||
+            (toolCalls.length === 0 && response.text.trim() === ""))
+          ? { cut: "thinking" as const, capTokens: thinking.reasoningBudgetTokens }
+          : { cut: "answer" as const, capTokens: this.answerCap() ?? 0 }
+        : undefined;
+    // A silent reply (no call, not cut off) is a format error only when it
+    // tried to make a call the parser could not read; otherwise it is prose.
+    const silent = toolCalls.length === 0 && !truncated;
+    const attempted = silent && looksLikeToolCallAttempt(response.text, [...offered]);
+    this.stepMeta = {
+      ...(response.finishReason ? { finishReason: response.finishReason } : {}),
+      ...(truncated ? { truncated } : {}),
+      formatErrors:
+        toolCalls.length === 0
+          ? attempted
+            ? 1
+            : 0
+          : toolCalls.filter((c) => !offered.has(c.name)).length,
+      proseOnly: silent && !attempted ? 1 : 0,
+    };
 
     // A turn that produced no actionable call is a stall signal in its own right:
     // tell the model plainly rather than silently burning the step budget.
     if (toolCalls.length === 0) {
-      this.emptyTurns++;
+      // Rule 19, WL-M3-2: a reply cut off by a cap is not a silent step.
+      // TODO(prompt standard): the typed `truncated` observation's wording
+      // for the Worker; until then it sees the existing no-call message.
+      if (!truncated) this.emptyTurns++;
       // Show the model what it actually said. A bare "no tool calls" gives it
       // nothing to correct; quoting its own reply and the expected form does.
       const said = response.text.trim().replace(/\s+/g, " ").slice(0, 240);
@@ -1245,7 +1378,10 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     this.emptyTurns = 0;
 
     const repoStateHash = await this.currentRepoStateHash();
-    const stall = this.oscillationDetector.recordAndCheck(toolCalls, repoStateHash);
+    // WL-M3-2: a truncated step never counts toward a stall or an oscillation.
+    const stall = truncated
+      ? "none"
+      : this.oscillationDetector.recordAndCheck(toolCalls, repoStateHash);
 
     // The first stall is feedback, not a verdict. A Worker that has repeated
     // itself once has not been told so, and the design requires a failure it
@@ -1326,6 +1462,9 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         observations: [],
         usage: response.usage,
         stopReason: "oscillation_detected",
+        // WL-T3-3 (structural half): the repeated call, for the stop's detail.
+        repeatedCall:
+          this.oscillationDetector.repeatedTools || toolCalls.map((c) => c.name).join(", "),
       };
     }
 
@@ -1367,7 +1506,8 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         } as ToolObservation);
         continue;
       }
-      const refused = this.strictRefusal(call);
+      const refused =
+        this.tools.refuseNotOffered(call.name, offeredNames) ?? this.strictRefusal(call);
       if (refused) {
         observations.push(refused);
         continue;
@@ -1718,7 +1858,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         project: result.passed ? project : { ...project, mutation: false },
         // The visual layer only once the declared gates pass: a page that
         // does not build has nothing to look at.
-        visual: result.passed,
+        visual: result.passed && !this.options.restricted,
         ...(this.options.stateDir ? { stateDir: this.options.stateDir } : {}),
         ...(this.options.registry ? { registry: this.options.registry } : {}),
         runTests: async () =>

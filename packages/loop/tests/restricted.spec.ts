@@ -1,7 +1,15 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { type Server, createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { GateResult, GateRung, GateRunner } from "@sekhemet/gates";
+import { LspPool } from "@sekhemet/context";
+import {
+  type GateResult,
+  type GateRung,
+  type GateRunner,
+  parseVisualConfig,
+} from "@sekhemet/gates";
+import { LifecycleHookEngine } from "@sekhemet/kernel";
 import type { InferenceRequest, LocalInferenceAdapter, ToolCall } from "@sekhemet/models";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CardExecutionSessionImpl } from "../src/session.js";
@@ -104,5 +112,90 @@ describe("restricted mode is a read-only audit (S12, H27)", () => {
     expect(turns.at(-1)?.stopReason).toBe("gate_passed");
     expect(rungsRun).toEqual([["typecheck"]]);
     expect(readFileSync(join(root, "src", "a.ts"), "utf8")).toBe("export const a = 1;\n");
+  });
+
+  it("SEC-19: starts no dev server, browser, language server or hook", async () => {
+    writeFileSync(join(root, "src", "b.py"), "def helper():\n  return 1\n\nhelper()\n");
+    const started: string[] = [];
+    const hooks = new LifecycleHookEngine();
+    for (const event of ["pre-step", "pre-tool", "post-tool", "pre-gate", "post-gate"] as const) {
+      hooks.register(event, async () => {
+        started.push(`hook:${event}`);
+        return {};
+      });
+    }
+    const lspMarker = join(root, "lsp-started");
+    const serverMarker = join(root, "dev-server-started");
+    const lspPool = new LspPool({
+      servers: {
+        python: {
+          command: process.execPath,
+          args: ["-e", `require("fs").writeFileSync(${JSON.stringify(lspMarker)}, "x")`],
+        },
+      },
+    });
+    const visual = parseVisualConfig({
+      url: "http://127.0.0.1:{port}/",
+      start: [
+        process.execPath,
+        "-e",
+        `require("fs").writeFileSync(${JSON.stringify(serverMarker)}, "x")`,
+      ],
+      viewports: [1280],
+      ready_timeout_s: 1,
+    });
+    const gate: GateRunner = {
+      runGates: async (): Promise<GateResult> => ({ passed: true, failures: [], durationMs: 1 }),
+    };
+    let requests = 0;
+    const app: Server = createServer((_q, r) => {
+      requests++;
+      r.end("<html><body>app</body></html>");
+    });
+    const port: number = await new Promise((r) =>
+      app.listen(0, "127.0.0.1", () => r((app.address() as { port: number }).port)),
+    );
+    const { adapter } = scripted([
+      [{ name: "find_references", arguments: { symbol: "helper", file: "src/b.py" } }],
+      // Not offered in an audit: refused if the model calls it anyway.
+      [{ name: "browse", arguments: { url: `http://127.0.0.1:${port}/` } }],
+      [{ name: "start_process", arguments: { name: "web", command: "node server.js" } }],
+      [{ name: "finish_card", arguments: {} }],
+    ]);
+    const session = new CardExecutionSessionImpl({
+      cardId: "card_audit",
+      stepBudget: 4,
+      worktreePath: root,
+      modelAdapter: adapter,
+      gateRunner: gate,
+      scopeFiles: ["src/b.py"],
+      restricted: true,
+      gateRungs: ["typecheck"],
+      hooks,
+      lspPool,
+      builtinGates: {
+        protected: [],
+        maxFiles: 3,
+        maxDiffLines: 200,
+        builtin: [],
+        ...(visual ? { visual } : {}),
+      },
+    });
+    let turns: Awaited<ReturnType<typeof session.run>> = [];
+    try {
+      turns = await session.run();
+    } finally {
+      await lspPool.closeAll();
+      app.close();
+    }
+    expect(started).toEqual([]);
+    expect(turns[1]?.observations[0]?.denied).toBe(true);
+    expect(turns[2]?.observations[0]?.denied).toBe(true);
+    expect(requests).toBe(0);
+    expect(existsSync(lspMarker)).toBe(false);
+    expect(existsSync(serverMarker)).toBe(false);
+    // The audit still read the references, by text search, and finished.
+    expect(turns[0]?.observations[0]?.ok).toBe(true);
+    expect(turns.at(-1)?.stopReason).toBe("gate_passed");
   });
 });

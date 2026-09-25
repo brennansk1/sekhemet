@@ -241,6 +241,26 @@ What professional boards do not show is left off the card face: the agent's step
 - **How:** each new library is proposed with its licence, size and what it replaces, and installed only on the owner's yes. Approvals are listed in DEC-08.
 - **Reopen if:** only the owner.
 
+### DEC-41 — one prompt standard before any prompt work
+**Every prompt, tool description and model-facing message is written and changed under [PROMPT_STANDARD.md](PROMPT_STANDARD.md).** *Owner, 2026-09-25: "Before any prompts are written you should have a prompts doc that details how to best write the prompts." The owner also said the research must not use leaked vendor prompts.*
+- **The evidence:** [PROMPT_RESEARCH.md](../research/PROMPT_RESEARCH.md). It uses vendors' published guidance, the literature, and open-source agents under their licences. No leaked or extracted prompt was used, and no prompt text was copied.
+- **The standard fixes:**
+  - one tag style and one section order;
+  - positive, justified rules, at most 12 per template (revised after review: an imperative rule is an item in a template's `<rules>` or `<tool_rules>` section; examples and data do not count);
+  - no emphasis devices;
+  - one copy module per role;
+  - native tool calling with familiar names;
+  - a byte-stable prefix;
+  - a compression ranking;
+  - a four-step change process: lint, golden render tests, a step-replay screen, then the suite A/B, which stays the only admission route (DEC-28).
+- **Rejected for code:** token-dropping compressors (the LLMLingua family) and LLM-written summaries of history. Learned code pruners, which need a second resident model, wait for the owner.
+- **Approved by the owner on 2026-09-25:**
+  - the step-replay screen (new measurement code; it screens and never admits);
+  - the two Worker A/B candidates for B2.5: a tool-call example of at most 150 tokens, and a sentence about persisting until the check passes (a third, the sentence that the acceptance test checks behaviour and the solution must be general, was made an A/B candidate after review and awaits the owner's approval);
+  - rejecting LLMLingua and Promptfoo.
+- **Why:** small quantised models are the most sensitive to prompt form, so the rendering is part of what is measured.
+- **Reopen if:** only the owner.
+
 ## Engineering decisions
 
 ### DEC-25 — the lead's rulings during the design v3 fix pass

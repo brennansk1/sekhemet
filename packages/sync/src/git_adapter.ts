@@ -2,9 +2,11 @@ import { execFileSync } from "node:child_process";
 import {
   appendFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -20,6 +22,7 @@ import {
   stagedGitlinks,
   writeConfigBaseline,
 } from "./git_preflight.js";
+import { difftasticDiff, resolveReviewProgram } from "./review_diff.js";
 import type {
   CheckpointCommitParams,
   DiffStats,
@@ -70,15 +73,6 @@ export function modelCoAuthor(agentModel: string): string {
       .replace(/[^a-z0-9.-]+/g, "-")
       .replace(/^-+|-+$/g, "") || "model";
   return `${agentModel} <${slug}@models.sekhemet.local>`;
-}
-
-function hasBinary(name: string): boolean {
-  try {
-    execFileSync(name, ["--version"], { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 export type IntentGroup = "tests" | "source" | "config" | "docs";
@@ -163,6 +157,19 @@ function slugify(input: string): string {
     .replace(/^-+|-+$/g, "")
     .slice(0, 48);
 }
+
+/** The package managers' dot-entries a worktree's `node_modules` links to (item 24). */
+const LINKED_DOT_ENTRIES = [
+  ".bin",
+  ".pnpm",
+  ".modules.yaml",
+  ".package-lock.json",
+  ".yarn-state.yml",
+  ".pnpm-workspace-state",
+];
+
+/** Caches a toolchain writes under `node_modules`, created in each worktree (item 24). */
+export const WORKTREE_CACHES = [".vite", ".vite-temp", ".cache", ".tmp"] as const;
 
 export class NodeGitSyncAdapter implements GitSyncAdapter {
   private projectName: string;
@@ -360,15 +367,63 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
    * dependency tree per card would cost more than the card itself.
    */
   private linkDependencies(worktreePath: string): void {
-    for (const name of ["node_modules", ".venv"]) {
-      const source = join(this.repoRoot, name);
-      const target = join(worktreePath, name);
-      if (!existsSync(source) || existsSync(target)) continue;
+    // S2 (security item 24): the worktree's own `node_modules` directory,
+    // whose entries link into the main checkout's, and its own caches — so a
+    // bundler's `.vite/deps` lands in the worktree and dies with it, and the
+    // shared tree is never a write target. A whole-tree link from an older
+    // worktree is replaced.
+    const modules = join(this.repoRoot, "node_modules");
+    const target = join(worktreePath, "node_modules");
+    const present = (p: string): boolean => {
       try {
-        symlinkSync(source, target, "dir");
+        lstatSync(p);
+        return true;
       } catch {
-        // A pre-existing entry or an unsupported filesystem: the gate will
-        // report the real consequence rather than failing silently here.
+        return false;
+      }
+    };
+    if (existsSync(modules)) {
+      try {
+        if (present(target) && lstatSync(target).isSymbolicLink()) rmSync(target);
+        mkdirSync(target, { recursive: true });
+      } catch {
+        // An unsupported filesystem: the gate reports the real consequence.
+      }
+      // Package entries and the package managers' own dot-entries are linked;
+      // any other dot-directory is a tool's cache from the user's own runs
+      // (`.vitest`, `.astro`, `.prisma`…) and is not shared (B1 review).
+      for (const entry of readdirSync(modules)) {
+        if (
+          entry.startsWith(".") &&
+          !LINKED_DOT_ENTRIES.includes(entry) &&
+          !entry.startsWith(".pnpm-workspace-state")
+        ) {
+          continue;
+        }
+        const link = join(target, entry);
+        try {
+          if (!present(link)) symlinkSync(join(modules, entry), link);
+        } catch {
+          // One entry that cannot be linked does not stop the others.
+        }
+      }
+      for (const cache of WORKTREE_CACHES) {
+        try {
+          mkdirSync(join(target, cache), { recursive: true });
+        } catch {
+          // As above.
+        }
+      }
+    }
+    // A `.venv` is linked whole; the sandbox grants no write outside the
+    // worktree, so it is read-only to the card (SEC-8a).
+    const venv = join(this.repoRoot, ".venv");
+    const venvTarget = join(worktreePath, ".venv");
+    if (existsSync(venv) && !present(venvTarget)) {
+      try {
+        symlinkSync(venv, venvTarget, "dir");
+      } catch {
+        // As above.
       }
     }
   }
@@ -757,36 +812,37 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
   }
 
   /**
-   * The review diff (Y8): difftastic's syntax-aware diff when `difft` is on
-   * PATH, else git's line diff, with the changed files grouped by intent.
+   * The review diff (Y8): difftastic's syntax-aware diff when `difft` is
+   * installed at an allowlisted absolute path, else git's line diff, with the
+   * changed files grouped by intent. Git (hardened) reads both sides; difft
+   * runs confined over copies of them (item 20b, SEC-19a), never by PATH.
    */
-  public async structuralDiff(cardId: string, baseBranch = "main"): Promise<StructuralDiff> {
-    const { cwd, git } = this.worktreeGit(cardId);
-    const pinned = existsSync(this.getWorktreePath(cardId)) ? this.guard(cwd) : process.env;
+  public async structuralDiff(
+    cardId: string,
+    baseBranch = "main",
+    options: { programs?: Readonly<Record<string, readonly string[]>> } = {},
+  ): Promise<StructuralDiff> {
+    const { git } = this.worktreeGit(cardId);
     git(["add", "-A"]);
     const files = git(["diff", "--staged", "--name-only", "--no-ext-diff", baseBranch], true)
       .split("\n")
       .filter(Boolean);
     const groups = groupByIntent(files);
     let engine: StructuralDiff["engine"] = "git";
-    let text: string;
-    if (hasBinary("difft")) {
-      try {
-        text = execFileSync(
-          "git",
-          ["-c", "diff.external=difft", "diff", "--staged", "--ext-diff", baseBranch],
-          {
-            cwd,
-            encoding: "utf8",
-            env: { ...pinned, DFT_COLOR: "never", DFT_DISPLAY: "inline" },
-            maxBuffer: 32 * 1024 * 1024,
-          },
-        );
-        engine = "difftastic";
-      } catch {
-        text = git(["diff", "--staged", "--no-ext-diff", "--no-textconv", baseBranch], true);
-      }
-    } else {
+    let text: string | undefined;
+    const difft = resolveReviewProgram("difft", options.programs);
+    if (difft) {
+      const sides = files.map((path) => ({
+        path,
+        before: git(["show", `${baseBranch}:${path}`], true),
+        after: git(["show", `:${path}`], true),
+      }));
+      text = await difftasticDiff(difft, sides);
+      if (text !== undefined) engine = "difftastic";
+    }
+    if (text === undefined && difft) {
+      text = git(["diff", "--staged", "--no-ext-diff", "--no-textconv", baseBranch], true);
+    } else if (text === undefined) {
       text = git(
         ["diff", "--staged", "--ignore-all-space", "--no-ext-diff", "--no-textconv", baseBranch],
         true,

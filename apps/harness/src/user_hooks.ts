@@ -15,6 +15,7 @@ import {
  * the way Claude Code and git hooks work. Declared in .sekhemet/hooks.toml:
  *
  *   [[hook]]
+ *   name = "format on write"     # optional: how a block by this hook is named
  *   event = "post-tool"          # any LifecycleHookEvent
  *   tool = "write_file"          # optional: only for this tool (pre/post-tool)
  *   command = "pnpm exec biome format --write $SEKHEMET_TOOL_TARGET"
@@ -47,6 +48,8 @@ const EVENTS = new Set<LifecycleHookEvent>([
 export interface UserHook {
   event: LifecycleHookEvent;
   command: string;
+  /** Its configured name; a veto names the hook by this, else by its command (WL-T3-4). */
+  name?: string;
   tool?: string;
   timeoutMs: number;
 }
@@ -71,9 +74,11 @@ export function loadUserHooks(repoPath: string): { hooks: UserHook[]; errors: st
     const command = typeof h.command === "string" ? h.command.trim() : "";
     if (!EVENTS.has(event)) return errors.push(`hook ${i + 1}: unknown event "${String(h.event)}"`);
     if (!command) return errors.push(`hook ${i + 1}: missing command`);
+    const name = typeof h.name === "string" ? h.name.trim() : "";
     hooks.push({
       event,
       command,
+      ...(name ? { name } : {}),
       ...(typeof h.tool === "string" ? { tool: h.tool } : {}),
       timeoutMs: Math.max(1, Number(h.timeout_s ?? 30)) * 1000,
     });
@@ -145,6 +150,21 @@ export function hookHandler(hook: UserHook, cwd: string): HookHandler {
     });
 }
 
+/** How long an unnamed hook's command may be as its name. */
+const HOOK_NAME_CHARS = 80;
+
+/**
+ * How a hook is named when it blocks (WL-T3-4): its configured name, else its
+ * command cut to 80 characters — the name reaches the evidence and the park
+ * detail, and a long command may carry inline credentials.
+ */
+export function hookName(hook: UserHook): string {
+  if (hook.name) return hook.name;
+  return hook.command.length > HOOK_NAME_CHARS
+    ? `${hook.command.slice(0, HOOK_NAME_CHARS)}…`
+    : hook.command;
+}
+
 /** An engine with the project's user hooks registered (none when there is no hooks.toml). */
 export function hookEngineFor(
   repoPath: string,
@@ -152,6 +172,6 @@ export function hookEngineFor(
 ): { engine: LifecycleHookEngine; errors: string[]; count: number } {
   const engine = new LifecycleHookEngine();
   const { hooks, errors } = loadUserHooks(repoPath);
-  for (const h of hooks) engine.register(h.event, hookHandler(h, cwd));
+  for (const h of hooks) engine.register(h.event, hookHandler(h, cwd), hookName(h));
   return { engine, errors, count: hooks.length };
 }

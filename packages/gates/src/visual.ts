@@ -1,9 +1,15 @@
-import { type ChildProcess, spawn } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { inflateSync } from "node:zlib";
-import { findChrome, isHeadlessShell } from "@sekhemet/sandbox";
+import {
+  findChrome,
+  isHeadlessShell,
+  selectedEngine,
+  spawnConfined,
+  stopProcessTree,
+} from "@sekhemet/sandbox";
 import type { GateFailure, RungOutcome } from "./types.js";
 
 /**
@@ -105,30 +111,78 @@ export class CdpBrowser {
   private child: ChildProcess | undefined;
   private profile: string | undefined;
 
-  public static async launch(chrome = findChrome()): Promise<CdpBrowser | undefined> {
+  /**
+   * Start headless Chromium confined (S3a, SEC-16): its profile directory is
+   * the only writable root, and the only network is its own DevTools port and
+   * the loopback ports the caller names (the app under test).
+   */
+  public static async launch(
+    chrome = findChrome(),
+    options: {
+      localPorts?: number[];
+      restricted?: boolean;
+      /** Why the browser did not start, when Chromium is installed but could not run. */
+      onFailure?: (reason: string) => void;
+    } = {},
+  ): Promise<CdpBrowser | undefined> {
     if (!chrome) return undefined;
+    const failed = async (b: CdpBrowser, reason: string) => {
+      options.onFailure?.(reason);
+      await b.close();
+      return undefined;
+    };
     const b = new CdpBrowser();
     b.profile = mkdtempSync(join(tmpdir(), "sekhemet-cdp-"));
-    b.child = spawn(
+    const cdpPort = await freePort();
+    const child = await spawnConfined(
       chrome,
       [
         ...(isHeadlessShell(chrome) ? [] : ["--headless=new"]),
+        // The Seatbelt profile is the sandbox; Chromium's own cannot nest in it.
+        "--no-sandbox",
         "--disable-gpu",
         "--no-first-run",
         "--no-default-browser-check",
         "--hide-scrollbars",
-        "--remote-debugging-port=0",
+        `--remote-debugging-port=${cdpPort}`,
         `--user-data-dir=${b.profile}`,
         "about:blank",
       ],
-      { stdio: "ignore" },
+      {
+        root: b.profile,
+        browser: true,
+        denyHomeReads: true,
+        localPorts: [cdpPort, ...(options.localPorts ?? [])],
+        timeoutMs: 0,
+        ...(options.restricted ? { restricted: true } : {}),
+      },
     );
+    if (!child) {
+      return failed(b, "no confinement for the browser on this host (the sandbox fails closed)");
+    }
+    child.stdout.resume();
+    let stderr = "";
+    child.stderr.on("data", (d: Buffer) => {
+      stderr = (stderr + d.toString("utf8")).slice(-400);
+    });
+    b.child = child;
     const portFile = join(b.profile, "DevToolsActivePort");
     const deadline = Date.now() + 15_000;
-    while (!existsSync(portFile) && Date.now() < deadline) await sleep(50);
+    // A browser that died (refused, crashed) is not waited for.
+    while (
+      !existsSync(portFile) &&
+      Date.now() < deadline &&
+      child.exitCode === null &&
+      child.signalCode === null
+    ) {
+      await sleep(50);
+    }
     if (!existsSync(portFile)) {
-      await b.close();
-      return undefined;
+      const how =
+        child.exitCode !== null || child.signalCode !== null
+          ? `Chromium exited (${child.exitCode ?? child.signalCode}) before opening its DevTools port`
+          : "Chromium did not open its DevTools port within 15 s";
+      return failed(b, `${how}${stderr.trim() ? `: ${stderr.trim()}` : ""}`);
     }
     const [port, path] = readFileSync(portFile, "utf8").trim().split("\n");
     const ws = new WebSocket(`ws://127.0.0.1:${port}${path}`);
@@ -190,7 +244,7 @@ export class CdpBrowser {
     } catch {
       // Closed.
     }
-    this.child?.kill("SIGKILL");
+    if (this.child) await stopProcessTree(this.child, 0);
     if (this.profile) {
       await sleep(100);
       rmSync(this.profile, { recursive: true, force: true });
@@ -436,6 +490,8 @@ export interface VisualGateContext {
   config: VisualConfig;
   /** Where baselines live (the project's .sekhemet/visual). */
   stateDir: string;
+  /** `--restricted`: confinement has no opt-out (the session does not start this layer at all). */
+  restricted?: boolean;
   /** Serves the app; returns its port and a stop function. Default: run `config.start` with PORT. */
   serve?: () => Promise<{ port: number; stop: () => void } | undefined>;
 }
@@ -466,15 +522,51 @@ export async function runVisualGates(
     ...(skipped ? { skipped: true } : {}),
   });
   const gates = ["visual-console", "visual-layout", "visual-snapshot", "visual-a11y"];
-  const browser = await CdpBrowser.launch();
-  if (!browser) {
+  const skipped = (why: string) => ({
+    failures: [],
+    outcomes: gates.map((g) => outcome(g, true, true)),
+    advisories: [`visual gates skipped: ${why}`],
+  });
+  const chrome = findChrome();
+  if (!chrome) return skipped("no local Chromium (set SEKHEMET_CHROME)");
+  // Chromium is installed but the layer cannot run confined: not a pass.
+  // The card says which engine refused and why (S3a); a person decides.
+  const notRun = (why: string) => {
+    const excerpt = `visual gates not run: ${why} (sandbox engine: ${selectedEngine()})`;
     return {
-      failures: [],
-      outcomes: gates.map((g) => outcome(g, true, true)),
-      advisories: ["visual gates skipped: no local Chromium (set SEKHEMET_CHROME)"],
+      failures: [
+        fail("visual-confinement", excerpt, {
+          suggestedAction:
+            "This host cannot run the page or its browser confined. It is not the card's work: ask a person, or run with SEKHEMET_SANDBOX_ENGINE=native.",
+        }),
+      ],
+      outcomes: gates.map((g) => outcome(g, false)),
+      advisories: [excerpt],
     };
-  }
+  };
   const served = ctx.serve ? await ctx.serve() : await serveApp(ctx);
+  if (served && "refused" in served) return notRun(served.refused);
+  const target = ctx.config.url.replace("{port}", String(served?.port ?? ""));
+  const appPort = (() => {
+    try {
+      const u = new URL(target);
+      return Number(u.port || (u.protocol === "https:" ? 443 : 80));
+    } catch {
+      return undefined;
+    }
+  })();
+  let launchFailure = "Chromium could not start confined";
+  const browser = await CdpBrowser.launch(chrome, {
+    ...(appPort ? { localPorts: [appPort] } : {}),
+    ...(ctx.restricted ? { restricted: true } : {}),
+    onFailure: (reason) => {
+      launchFailure = reason;
+    },
+  });
+  if (!browser) {
+    served?.stop();
+    return notRun(launchFailure);
+  }
   const failures: GateFailure[] = [];
   const advisories: string[] = [];
   const byGate = new Map<string, number>(gates.map((g) => [g, 0]));
@@ -483,7 +575,7 @@ export async function runVisualGates(
     byGate.set(f.gate as string, (byGate.get(f.gate as string) ?? 0) + 1);
   };
   try {
-    const url = ctx.config.url.replace("{port}", String(served?.port ?? ""));
+    const url = target;
     for (const width of ctx.config.viewports) {
       const page = await browser.newPage();
       await page.setViewport(width);
@@ -598,28 +690,43 @@ export async function runVisualGates(
   };
 }
 
-/** Run `config.start` with a free PORT and wait for the URL to answer. */
-async function serveApp(
-  ctx: VisualGateContext,
-): Promise<{ port: number; stop: () => void } | undefined> {
-  if (!ctx.config.start?.length) return undefined;
+/** A free loopback port. */
+async function freePort(): Promise<number> {
   const { createServer } = await import("node:net");
-  const port: number = await new Promise((resolve) => {
+  return new Promise((resolve) => {
     const s = createServer();
     s.listen(0, "127.0.0.1", () => {
       const p = (s.address() as { port: number }).port;
       s.close(() => resolve(p));
     });
   });
+}
+
+/**
+ * Run `config.start` with a free PORT and wait for the URL to answer. The
+ * dev server is the project's code: it runs confined in the worktree with
+ * the allowlisted environment and only its own port (S3a, SEC-16).
+ */
+async function serveApp(
+  ctx: VisualGateContext,
+): Promise<{ port: number; stop: () => void } | { refused: string } | undefined> {
+  if (!ctx.config.start?.length) return undefined;
+  const port = await freePort();
   const [cmd, ...args] = ctx.config.start as [string, ...string[]];
-  const child = spawn(cmd, args, {
-    cwd: ctx.root,
-    env: { ...process.env, PORT: String(port) },
-    stdio: "ignore",
+  const child = await spawnConfined(cmd, args, {
+    root: ctx.root,
+    env: { PORT: String(port) },
+    localPorts: [port],
+    timeoutMs: 0,
+    ...(ctx.restricted ? { restricted: true } : {}),
   });
+  // No confinement here: the page is not served, and the gate reports it.
+  if (!child) return { refused: "no confinement for the dev server on this host" };
+  child.stdout.resume();
+  child.stderr.resume();
   const url = ctx.config.url.replace("{port}", String(port));
   const deadline = Date.now() + ctx.config.readyTimeoutMs;
-  while (Date.now() < deadline) {
+  while (Date.now() < deadline && child.exitCode === null && child.signalCode === null) {
     try {
       const r = await fetch(url, { signal: AbortSignal.timeout(1000) });
       if (r.status < 500) break;
@@ -628,7 +735,8 @@ async function serveApp(
     }
     await sleep(250);
   }
-  return { port, stop: () => child.kill("SIGTERM") };
+  // The whole tree: `npm run dev` leaves the real server as a grandchild.
+  return { port, stop: () => void child.stop() };
 }
 
 function sleep(ms: number): Promise<void> {

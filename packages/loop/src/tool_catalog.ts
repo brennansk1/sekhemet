@@ -450,8 +450,21 @@ const READ_TOOLS = [
   "finish_card",
 ];
 
-export const CLASS_TOOLS: Partial<Record<CardKind, readonly string[]>> = {
+/** Every tool in the catalog: the sets that write code keep the whole catalog until M2's fixed set lands. */
+const ALL_TOOLS: readonly string[] = TOOL_CATALOG.map((t) => t.name);
+
+/**
+ * An explicit tool set for every card class (worker-loop WL-M2-1): a class
+ * with no entry fails to start, naming it, rather than falling open to the
+ * full catalog. `implement`, `interface`, `data` and `rule` keep the whole
+ * catalog until the fixed set of at most twelve (WL-M2-3) is written.
+ */
+export const CLASS_TOOLS: Readonly<Record<CardKind, readonly string[]>> = {
   spike: [...READ_TOOLS, "run_script"],
+  interface: ALL_TOOLS,
+  implement: ALL_TOOLS,
+  data: ALL_TOOLS,
+  rule: ALL_TOOLS,
   review: [
     "read_file",
     "grep_search",
@@ -474,6 +487,14 @@ export const CLASS_TOOLS: Partial<Record<CardKind, readonly string[]>> = {
   ],
 };
 
+/** A card class with no `CLASS_TOOLS` entry (WL-M2-1). */
+export class UnknownCardClassError extends Error {
+  constructor(public readonly cardClass: string) {
+    super(`No tool set for card class "${cardClass}": add it to CLASS_TOOLS.`);
+    this.name = "UnknownCardClassError";
+  }
+}
+
 /**
  * A card's kind, which is what selects its tool set. One definition, in the
  * kernel: a second classifier here is how the build ended up with three
@@ -487,14 +508,18 @@ export function cardClassFor(card: {
   return cardKind(card);
 }
 
-/** The tools a card of this class is given. */
+/**
+ * The tools a card of this class is given. `run_script` only for a Worker the
+ * registry marks script-capable (WL-M2-4).
+ */
 export function toolsForClass(
   cls: CardClass,
   catalog: ToolInterfaceSpec[] = TOOL_CATALOG,
+  options: { scriptCapable?: boolean | undefined } = {},
 ): ToolInterfaceSpec[] {
-  // A kind with no entry gets the full catalog: `implement` by design, and
-  // any kind added later, which fails open to the safe default rather than
-  // silently losing its tools.
-  const allowed = CLASS_TOOLS[cls];
-  return allowed ? catalog.filter((t) => allowed.includes(t.name)) : catalog;
+  const allowed = Object.hasOwn(CLASS_TOOLS, cls) ? CLASS_TOOLS[cls] : undefined;
+  if (!allowed) throw new UnknownCardClassError(String(cls));
+  return catalog.filter(
+    (t) => allowed.includes(t.name) && (t.name !== "run_script" || options.scriptCapable === true),
+  );
 }

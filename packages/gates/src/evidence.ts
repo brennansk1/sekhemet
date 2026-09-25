@@ -17,6 +17,32 @@ export interface RunSettings {
   workerMethod?: string;
   /** The confinement the card ran under (seatbelt | bubblewrap | none), SEC-21. */
   isolation?: string;
+  /** The tool arm: the fixed set per class or progressive loading (worker-loop WL-M2-5). */
+  toolSet?: string;
+  /** The prompt budget W, fixed for the attempt (worker-loop rule 22, WL-M3-5). */
+  promptBudgetTokens?: number;
+}
+
+/**
+ * One step as the evidence records it (worker-loop WL-T3-1, WL-M3-4,
+ * WL-M2-5): enough to compute a run's per-arm pass rate, tokens and format
+ * errors from the evidence alone.
+ */
+export interface StepEvidence {
+  step: number;
+  /** The pass@k sample the step belongs to, from 1. */
+  sample: number;
+  phase?: string;
+  promptTokens: number;
+  thinkingTokens?: number;
+  answerTokens?: number;
+  finishReason?: string;
+  /** Tool-call format errors: an attempted call that did not parse, or an unknown tool. */
+  formatErrors: number;
+  /** 1 when the reply held no tool call and no attempt at one (prose only). */
+  proseOnly: number;
+  /** The reply was cut off by a cap: which part, and the cap. */
+  truncated?: { cut: string; capTokens: number };
 }
 
 export interface TokenTotals {
@@ -64,6 +90,12 @@ export interface EvidenceBundle {
   trajectoryRef?: string;
   /** Touched files that run outside the sandbox later (SEC-32). */
   executesLater?: string[];
+  /** Per-step phase, tokens, finish reason and format errors (WL-T3-1, WL-M3-4, WL-M2-5). */
+  steps?: StepEvidence[];
+  /** Steps each pass@k sample used, in order; each had its own step budget (WL-T3-13). */
+  sampleSteps?: number[];
+  /** Detail stored with the stop reason: which budget ran out, or which hook vetoed (rule 31a). */
+  stopDetail?: Record<string, unknown>;
 }
 
 export interface CompileEvidenceParams {
@@ -83,6 +115,9 @@ export interface CompileEvidenceParams {
   gatesConfigSha256: string;
   advisories?: string[];
   trajectoryRef?: string;
+  steps?: StepEvidence[];
+  sampleSteps?: number[];
+  stopDetail?: Record<string, unknown>;
 }
 
 /** Deterministic evidence id, so the same run always yields the same reference. */
@@ -115,6 +150,9 @@ export function compileEvidence(params: CompileEvidenceParams): EvidenceBundle {
       ? { executesLater: executesLater(params.filesTouched) }
       : {}),
     ...(params.trajectoryRef ? { trajectoryRef: params.trajectoryRef } : {}),
+    ...(params.steps ? { steps: params.steps } : {}),
+    ...(params.sampleSteps ? { sampleSteps: params.sampleSteps } : {}),
+    ...(params.stopDetail ? { stopDetail: params.stopDetail } : {}),
   };
 }
 

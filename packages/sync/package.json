@@ -9,7 +9,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@sekhemet/kernel": "workspace:*"
+    "@sekhemet/kernel": "workspace:*",
+    "@sekhemet/sandbox": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.13.4"

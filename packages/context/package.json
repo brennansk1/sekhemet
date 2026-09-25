@@ -12,6 +12,7 @@
     "@sekhemet/gates": "workspace:*",
     "@sekhemet/kernel": "workspace:*",
     "@sekhemet/models": "workspace:*",
+    "@sekhemet/sandbox": "workspace:*",
     "typescript": "^5.7.3"
   },
   "devDependencies": {

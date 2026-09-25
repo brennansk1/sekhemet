@@ -2,7 +2,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { dirname, join } from "node:path";
 import { SandboxManager, type SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
-import { linkedDependencyCaches, realPath } from "./seatbelt.js";
+import { homeToolchainPaths, realPath } from "./seatbelt.js";
 import type { SandboxOptions } from "./types.js";
 
 /**
@@ -86,7 +86,8 @@ export function srtFilesystem(
 ): SandboxRuntimeConfig["filesystem"] {
   const roots = [...options.allowedPaths, ...(options.scratchDir ? [options.scratchDir] : [])];
   const realRoots = [...new Set(roots.map(realPath))];
-  const allowWrite = [...new Set([...realRoots, ...linkedDependencyCaches(roots)])];
+  // S2: no grant reaches the main checkout's dependency tree (item 24).
+  const allowWrite = [...new Set(realRoots)];
   // `.git` at any depth, in any case (APFS is case-insensitive), as the
   // native profile does. srt's own mandatory denies cover only `.git/hooks`
   // and `.git/config`. The literal covers the root pointer on Linux, where
@@ -95,9 +96,13 @@ export function srtFilesystem(
     ...realRoots.flatMap((r) => [join(r, ".git"), `${globQuote(r)}/**/.[Gg][Ii][Tt]`]),
     ...srtConvenienceWrites(home),
   ];
+  // S3a: `denyHomeReads` makes the whole home unreadable, its toolchains and
+  // the granted roots excepted, as the native profile does.
+  const homeDeny = options.denyHomeReads ? [realPath(home)] : [];
+  const homeAllow = options.denyHomeReads ? homeToolchainPaths(home).map(realPath) : [];
   return {
-    denyRead: [...secretReadDenies(home), ...ledgerReadDenies(roots)],
-    allowRead: realRoots,
+    denyRead: [...homeDeny, ...secretReadDenies(home), ...ledgerReadDenies(roots)],
+    allowRead: [...realRoots, ...homeAllow],
     allowWrite,
     denyWrite,
   };

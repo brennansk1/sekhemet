@@ -25,6 +25,7 @@ import {
   confinedSandbox,
   dumpDom,
   htmlToText,
+  stopProcessTree,
   tagUntrusted,
 } from "@sekhemet/sandbox";
 
@@ -45,6 +46,7 @@ import { type ToolObservation, clampObservation, denied, fail, ok } from "./obse
 import { PathEscapeError, canonicalizeRoot, resolveInWorktree } from "./paths.js";
 import { findSymbol, listSymbolNames } from "./symbols.js";
 import { applyEol, detectEol, joinLines, reindentBlock, splitLines, toLf } from "./text.js";
+import { RESTRICTED_TOOL_NAMES } from "./tool_catalog.js";
 import { type SymbolLocation, TsSymbolService, isTypeScriptLike } from "./ts_service.js";
 import { atomicWrite, validateWrite } from "./write_contract.js";
 
@@ -158,6 +160,19 @@ export interface ToolExecutorOptions {
   /** The card's class (L18/L19): `browse` reaches outside localhost only on research cards. */
   cardClass?: string | undefined;
 }
+
+/**
+ * What the Worker is told when a call is refused because the tool is not
+ * available to it: restricted mode (S12, SEC-19) and a tool this session did
+ * not offer. Model-facing copy lives here, not at the call sites.
+ */
+export const REFUSAL_COPY = {
+  restricted:
+    "restricted mode: this is a read-only audit. Files cannot be written and commands cannot run; inspect with read_file, read_symbol, grep_search and check, and record findings with note().",
+  notOfferedSummary: "not offered on this card",
+  notOffered: (name: string, offered: readonly string[]): string =>
+    `${name} is not available on this card; the tools you can call are: ${offered.join(", ")}.`,
+} as const;
 
 /** Tools that change the worktree or execute code: refused in restricted mode. */
 export const MUTATING_TOOLS: ReadonlySet<string> = new Set([
@@ -400,15 +415,39 @@ export class ToolExecutor {
     atomicWrite(abs, content);
   }
 
+  /** Refused in restricted mode (SEC-19): a writer, or a tool outside the restricted catalog. */
+  private restrictedRefuses(name: string): boolean {
+    return (
+      this.options.readOnly === true &&
+      (MUTATING_TOOLS.has(name) || !RESTRICTED_TOOL_NAMES.includes(name))
+    );
+  }
+
+  /**
+   * A model call to a tool this session did not offer (a class's tool set,
+   * `run_script` for a Worker that is not script-capable, WL-M2-4) is refused,
+   * not run: leaving a tool out of the prompt is not a permission. Restricted
+   * mode's own refusal speaks for the tools it covers.
+   */
+  public refuseNotOffered(name: string, offered: readonly string[]): ToolObservation | undefined {
+    if (offered.includes(name) || this.restrictedRefuses(name)) return undefined;
+    this.deniedByRule.set("not_offered", (this.deniedByRule.get("not_offered") ?? 0) + 1);
+    return {
+      ...denied(name, REFUSAL_COPY.notOfferedSummary),
+      content: REFUSAL_COPY.notOffered(name, offered),
+      deniedRule: "not_offered",
+    };
+  }
+
   /** Run the three-tier permission check, escalating `ask` to the approval handler. */
   private async authorize(call: ToolCall): Promise<ToolObservation | null> {
-    if (this.options.readOnly && MUTATING_TOOLS.has(call.name)) {
+    // SEC-19: an audit runs only the restricted catalog. A tool it was not
+    // offered (browse, start_process, a writer) is refused whatever the model
+    // calls, not merely left out of the prompt.
+    if (this.restrictedRefuses(call.name)) {
       this.deniedByRule.set("restricted", (this.deniedByRule.get("restricted") ?? 0) + 1);
       return {
-        ...denied(
-          call.name,
-          "restricted mode: this is a read-only audit. Files cannot be written and commands cannot run; inspect with read_file, read_symbol, grep_search and check, and record findings with note().",
-        ),
+        ...denied(call.name, REFUSAL_COPY.restricted),
         deniedRule: "restricted",
       };
     }
@@ -1047,7 +1086,8 @@ Promise.resolve(__result).then((v) => { process.stdout.write(typeof v === "strin
   private stopProcess(name: string | undefined): ToolObservation {
     const p = name ? this.processes.get(name) : undefined;
     if (!p) return fail("stop_process", `no process ${name}`);
-    if (p.exit === undefined) p.child.kill("SIGTERM");
+    // The whole tree: `sh -c` is only the parent of the real server (B1 review).
+    void stopProcessTree(p.child).catch(() => undefined);
     this.processes.delete(name as string);
     return ok("stop_process", `stopped ${name}`, `Stopped ${name}.`);
   }
@@ -1055,12 +1095,17 @@ Promise.resolve(__result).then((v) => { process.stdout.write(typeof v === "strin
   /** Stop every background process (card end). */
   public dispose(): void {
     for (const p of this.processes.values()) {
-      if (p.exit === undefined) {
-        try {
-          p.child.kill("SIGKILL");
-        } catch {
-          // Gone.
-        }
+      // Detached into its own group: kill the group even when the shell has
+      // already exited, since its children can outlive it (B1 review).
+      try {
+        if (p.child.pid) process.kill(-p.child.pid, "SIGKILL");
+      } catch {
+        // Gone, or not a group leader.
+      }
+      try {
+        p.child.kill("SIGKILL");
+      } catch {
+        // Gone.
       }
     }
     this.processes.clear();
@@ -1082,8 +1127,22 @@ Promise.resolve(__result).then((v) => { process.stdout.write(typeof v === "strin
         "browse reaches only this card's own app on localhost; web pages are for research cards (L19)",
       );
     }
-    const dom = await dumpDom(target.toString());
+    const port = Number(target.port || (target.protocol === "https:" ? 443 : 80));
+    const dom = await dumpDom(target.toString(), {
+      ...(local ? { localPorts: [port] } : {}),
+      ...(this.options.egressProxyPort ? { egressProxyPort: this.options.egressProxyPort } : {}),
+      ...(this.options.readOnly || this.options.requireConfinement ? { restricted: true } : {}),
+    });
     let html = dom;
+    if (html === undefined && !local) {
+      // A web page is reached only through the confined browser and the
+      // card's egress proxy; the harness never fetches it itself (S3a, S5).
+      return fail(
+        "browse",
+        "could not load",
+        `Could not load ${target}: no confined browser could render it, and web pages are not fetched outside the sandbox.`,
+      );
+    }
     if (html === undefined) {
       try {
         const res = await fetch(target, { signal: AbortSignal.timeout(15_000) });

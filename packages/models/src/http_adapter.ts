@@ -409,6 +409,18 @@ export function usageFromOllama(data: {
   return out;
 }
 
+/** One server reply before parsing: the text, native calls, usage and why it ended. */
+interface GenerationResult {
+  text: string;
+  nativeCalls: ToolCall[];
+  usage: ServerUsage;
+  finishReason?: string;
+  /** Thinking the server returned apart from the answer (dropped after counting). */
+  thinking?: string;
+  /** The server's own count of thinking tokens, when it gives one. */
+  thinkingTokens?: number;
+}
+
 /** Default thinking allowance per level when the request names none. */
 export const REASONING_BUDGET_TOKENS: Record<Exclude<ReasoningLevel, "off">, number> = {
   low: 512,
@@ -840,12 +852,22 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
         : parseToolCallsFromText(visible, req.toolArm, knownTools);
 
     const { promptTokens, completionTokens, ...measured } = data.usage;
+    // WL-M3-4: thinking and answer tokens, from the server's count when it
+    // gives one, else from the thinking text (apart, or inline before strip).
+    const thinkingChars = (data.thinking?.length ?? 0) + (data.text.length - visible.length);
+    const completion = completionTokens ?? Math.round(visible.length / 4);
+    const thinkingTokens = Math.min(
+      completion,
+      data.thinkingTokens ?? Math.round(Math.max(0, thinkingChars) / 4),
+    );
     const usage: TokenUsage = {
       promptTokens:
         promptTokens ?? Math.round(messages.reduce((a, m) => a + m.content.length, 0) / 4),
-      completionTokens: completionTokens ?? Math.round(visible.length / 4),
+      completionTokens: completion,
       durationMs: Math.round(performance.now() - start),
       ...measured,
+      thinkingTokens,
+      answerTokens: Math.max(0, completion - thinkingTokens),
     };
     this.requests++;
     const telemetry = this.options.telemetry ?? modelTelemetry;
@@ -860,14 +882,19 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
         }
       });
     }
-    return { text: visible, toolCalls, usage };
+    return {
+      text: visible,
+      toolCalls,
+      usage,
+      ...(data.finishReason ? { finishReason: data.finishReason } : {}),
+    };
   }
 
   private async generateOllama(
     messages: ChatMessage[],
     req: InferenceRequest,
     maxTokens: number,
-  ): Promise<{ text: string; nativeCalls: ToolCall[]; usage: ServerUsage }> {
+  ): Promise<GenerationResult> {
     const sampling = this.samplingFor(req);
     const stream = req.onToken !== undefined;
     const payload: Record<string, unknown> = {
@@ -914,10 +941,12 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
       prompt_eval_duration?: number;
       eval_count?: number;
       eval_duration?: number;
+      done_reason?: string;
     };
 
     if (stream) {
       let text = "";
+      let thinking = "";
       const calls: NativeToolCall[] = [];
       let final: OllamaChunk = {};
       await this.postStream("/api/chat", payload, (line) => {
@@ -932,10 +961,17 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
           text += delta;
           req.onToken?.(delta);
         }
+        if (chunk.message?.thinking) thinking += chunk.message.thinking;
         if (Array.isArray(chunk.message?.tool_calls)) calls.push(...chunk.message.tool_calls);
         if (chunk.done) final = chunk;
       });
-      return { text, nativeCalls: nativeToToolCalls(calls), usage: usageFromOllama(final) };
+      return {
+        text,
+        nativeCalls: nativeToToolCalls(calls),
+        usage: usageFromOllama(final),
+        ...(final.done_reason ? { finishReason: final.done_reason } : {}),
+        ...(thinking ? { thinking } : {}),
+      };
     }
 
     const data = (await this.post("/api/chat", payload)) as OllamaChunk;
@@ -944,6 +980,8 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
       text: data.message?.content ?? "",
       nativeCalls: nativeToToolCalls(data.message?.tool_calls),
       usage: usageFromOllama(data),
+      ...(data.done_reason ? { finishReason: data.done_reason } : {}),
+      ...(data.message?.thinking ? { thinking: data.message.thinking } : {}),
     };
   }
 
@@ -951,7 +989,7 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
     messages: ChatMessage[],
     req: InferenceRequest,
     maxTokens: number,
-  ): Promise<{ text: string; nativeCalls: ToolCall[]; usage: ServerUsage }> {
+  ): Promise<GenerationResult> {
     const sampling = this.samplingFor(req);
     const stream = req.onToken !== undefined;
     const payload: Record<string, unknown> = {
@@ -1013,11 +1051,13 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
     type Completion = {
       choices?: {
         message?: { content?: string; reasoning_content?: string; tool_calls?: NativeToolCall[] };
+        finish_reason?: string | null;
       }[];
       usage?: {
         prompt_tokens?: number;
         completion_tokens?: number;
         prompt_tokens_details?: { cached_tokens?: number };
+        completion_tokens_details?: { reasoning_tokens?: number };
       };
       timings?: LlamaServerTimings;
     };
@@ -1043,17 +1083,25 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
 
     const message = data.choices?.[0]?.message;
     const usage = usageFromLlamaServer(data.timings, data.usage);
+    const finish = data.choices?.[0]?.finish_reason;
+    const reasoningTokens = data.usage?.completion_tokens_details?.reasoning_tokens;
+    const extra = {
+      ...(finish ? { finishReason: finish } : {}),
+      ...(message?.reasoning_content ? { thinking: message.reasoning_content } : {}),
+      ...(reasoningTokens !== undefined ? { thinkingTokens: reasoningTokens } : {}),
+    };
     if (constrained && req.tools) {
       const parsed = parseConstrainedReply(
         message?.content ?? "",
         new Set(req.tools.map((t) => t.name)),
       );
-      if (parsed) return { text: parsed.message, nativeCalls: parsed.calls, usage };
+      if (parsed) return { text: parsed.message, nativeCalls: parsed.calls, usage, ...extra };
     }
     return {
       text: message?.content ?? "",
       nativeCalls: nativeToToolCalls(message?.tool_calls),
       usage,
+      ...extra,
     };
   }
 
@@ -1065,11 +1113,16 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
     payload: Record<string, unknown>,
     req: InferenceRequest,
   ): Promise<{
-    choices: { message: { content: string; tool_calls: NativeToolCall[] } }[];
+    choices: {
+      message: { content: string; reasoning_content?: string; tool_calls: NativeToolCall[] };
+      finish_reason?: string;
+    }[];
     usage?: { prompt_tokens?: number; completion_tokens?: number };
     timings?: LlamaServerTimings;
   }> {
     let content = "";
+    let reasoning = "";
+    let finishReason: string | undefined;
     const calls: { id?: string; name: string; args: string }[] = [];
     let usage: { prompt_tokens?: number; completion_tokens?: number } | undefined;
     let timings: LlamaServerTimings | undefined;
@@ -1079,8 +1132,10 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
       if (body === "[DONE]") return;
       let chunk: {
         choices?: {
+          finish_reason?: string | null;
           delta?: {
             content?: string | null;
+            reasoning_content?: string | null;
             tool_calls?: {
               index?: number;
               id?: string;
@@ -1097,6 +1152,9 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
         return;
       }
       const delta = chunk.choices?.[0]?.delta;
+      const finish = chunk.choices?.[0]?.finish_reason;
+      if (finish) finishReason = finish;
+      if (delta?.reasoning_content) reasoning += delta.reasoning_content;
       if (delta?.content) {
         content += delta.content;
         // Constrained replies are JSON, not prose: nothing to show token by token.
@@ -1116,8 +1174,10 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
     return {
       choices: [
         {
+          ...(finishReason ? { finish_reason: finishReason } : {}),
           message: {
             content,
+            ...(reasoning ? { reasoning_content: reasoning } : {}),
             tool_calls: calls
               .filter((c) => c?.name)
               .map((c) => ({

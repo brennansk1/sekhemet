@@ -28,6 +28,22 @@ export interface SandboxOptions {
    * background dev server and the commands that talk to it).
    */
   localPorts?: number[];
+  /**
+   * A headless browser runs here (S3a: the visual gate, `browse`). Chromium
+   * cannot start under the native Seatbelt profile without registering its
+   * own `org.chromium.*` Mach services and opening the power-management
+   * IOKit client, so the profile allows exactly those. Chromium's own sandbox
+   * cannot nest inside Seatbelt: the caller passes `--no-sandbox`, and this
+   * profile is the confinement.
+   */
+  browser?: boolean;
+  /**
+   * Nothing under the harness user's home directory is readable (S3a:
+   * `--validate-tools`, browsers), except the toolchains that live there
+   * (`homeToolchainPaths`) and the granted roots. Reads are otherwise broad,
+   * so a private HOME variable alone would leave `~/.ssh` readable by path.
+   */
+  denyHomeReads?: boolean;
 }
 
 export interface ExecutionResult {

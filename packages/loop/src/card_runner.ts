@@ -9,21 +9,25 @@ import {
   type EvidenceBundle,
   type GatesConfig,
   type RunSettings,
+  type StepEvidence,
   compileEvidence,
   loadGatesConfig,
 } from "@sekhemet/gates";
 import {
   type AgentRole,
   BlobStore,
+  type BudgetDetail,
   type CardDossier,
   type CardRecord,
   type CardStatus,
   type CardStore,
   type CheckpointRecord,
   type GateStatus,
+  STOP_REASONS,
   canonicalPayloadHash,
   cardClassOf,
   cardKind,
+  defaultSecondsBudget,
   serializeContextPack,
 } from "@sekhemet/kernel";
 import { candidateSettings, harnessCommit } from "@sekhemet/models";
@@ -190,18 +194,6 @@ export interface CardRunOptions extends Omit<SessionOptions, "cardId"> {
   startFrom?: { step: number; gitRef: string; attemptId?: string } | undefined;
 }
 
-/**
- * Stops a card resumes from rather than restarting (H17): the run was cut
- * short by something other than its own work, so its last checkpoint is
- * still the best state to continue from.
- */
-export const RESUMABLE_STOPS: ReadonlySet<ExecutionStopReason> = new Set<ExecutionStopReason>([
-  "memory_pressure",
-  "human_abort",
-  "quota_suspended",
-  "error",
-]);
-
 export interface CardRunResult {
   cardId: string;
   passed: boolean;
@@ -241,56 +233,17 @@ const AGENT_ROLES: readonly AgentRole[] = [
   "relay-finisher",
 ];
 
-/** Stops a checkpoint must capture, so the card can resume from its last state. */
-const SUSPENDING_STOPS = new Set<ExecutionStopReason>([
-  "memory_pressure",
-  "human_abort",
-  "token_budget_exhausted",
-  "time_budget_exhausted",
-  "budget_exhausted",
-  "replan_requested",
-  "done_pending_gates",
-  "quota_suspended",
-  // An error is resumable (H17), so what it cut short is kept.
-  "error",
-]);
-
-/** Stops after which no further pass@k sample is drawn (G25). */
-const HARD_STOPS = new Set<ExecutionStopReason>([
-  "human_abort",
-  "memory_pressure",
-  "quota_suspended",
-  "time_budget_exhausted",
-  "token_budget_exhausted",
-  "error",
-  "done_pending_gates",
-]);
-
 /** Test files, for cross-validation (G26). */
 const TEST_FILE =
   /(^|\/)(tests?|__tests__)\/|\.(spec|test)\.[cm]?[jt]sx?$|_test\.(py|go)$|^test_.*\.py$/;
 
 /**
- * Stops that park the card for a human with a diagnosis (L15 rung 4, L22).
- *
- * A breaker that stops a card at its cap and then lets it continue into Verify
- * is not a breaker: the card sits in a gate queue nobody asked it to enter,
- * and the person who set the budget is never told it was spent.
+ * Stop classification — resumable, checkpointed, parking, verifiable, halted —
+ * is read from the one stop-reason table, `STOP_REASONS` in the kernel
+ * (worker-loop rule 31, WL-T3-2). A breaker that stops a card at its cap and
+ * then lets it continue into Verify is not a breaker, so budget stops park
+ * unless the gates ran (L22).
  */
-const PARKING_STOPS = new Set<ExecutionStopReason>([
-  "repair_exhausted",
-  "capability_ceiling",
-  "token_budget_exhausted",
-  "time_budget_exhausted",
-  "budget_exhausted",
-]);
-
-/** The parking stops whose diagnosis is the budget, not the repair ladder. */
-const BUDGET_STOPS = new Set<ExecutionStopReason>([
-  "token_budget_exhausted",
-  "time_budget_exhausted",
-  "budget_exhausted",
-]);
 
 /** Longest dossier line shown to the Worker. */
 const DOSSIER_LINE_CHARS = 400;
@@ -466,6 +419,8 @@ export class CardRunner {
   private egressPort: number | undefined;
 
   constructor(private options: CardRunOptions) {
+    // SEC-19: under --restricted no hook or language server starts.
+    if (options.restricted) this.options = { ...options, hooks: undefined, lspPool: undefined };
     // Pin the gate configuration at card start. Every later verification
     // re-checks this hash, so an agent cannot rewrite its own gates mid-card.
     this.config = loadGatesConfig(options.repoRoot);
@@ -591,6 +546,18 @@ export class CardRunner {
         completionTokens: turn.usage?.completionTokens ?? 0,
         durationMs: turn.durationMs ?? 0,
         ...(turn.stopReason ? { stopReason: turn.stopReason } : {}),
+        // WL-M3-4, WL-T3-1, WL-M2-5, WL-T3-13: the step's own facts.
+        ...(turn.sample !== undefined ? { sample: turn.sample } : {}),
+        ...(turn.phase ? { phase: turn.phase } : {}),
+        ...(turn.finishReason ? { finishReason: turn.finishReason } : {}),
+        ...(turn.usage?.thinkingTokens !== undefined
+          ? { thinkingTokens: turn.usage.thinkingTokens }
+          : {}),
+        ...(turn.usage?.answerTokens !== undefined
+          ? { answerTokens: turn.usage.answerTokens }
+          : {}),
+        ...(turn.formatErrors !== undefined ? { formatErrors: turn.formatErrors } : {}),
+        ...(turn.proseOnly !== undefined ? { proseOnly: turn.proseOnly } : {}),
       });
       turn.attemptId = this.attemptId;
       turn.stepId = step.id;
@@ -715,7 +682,7 @@ export class CardRunner {
     if (!store || this.options.resume === false) return undefined;
     const lastAttempt = store.runs?.listAttempts(card.id).at(-1);
     const crashed = lastAttempt?.status === "running";
-    if (!crashed && !(card.stopReason && RESUMABLE_STOPS.has(card.stopReason))) return undefined;
+    if (!crashed && !(card.stopReason && STOP_REASONS[card.stopReason].resumable)) return undefined;
     try {
       const checkpoints = await store.getCheckpoints(card.id);
       const last = checkpoints.at(-1);
@@ -959,6 +926,8 @@ export class CardRunner {
       stopReason: ExecutionStopReason;
       lastGateResult: GateResult | undefined;
       sha?: string;
+      /** Rule 31a: which budget ran out, or which hook vetoed. */
+      stopDetail?: Record<string, unknown>;
     };
     const tried: Sample[] = [];
     const runSample = async (
@@ -1088,7 +1057,11 @@ export class CardRunner {
       let stopReason: ExecutionStopReason = "budget_exhausted";
       let lastGateResult: GateResult | undefined;
       const tokenBudget = this.options.tokenBudget ?? card.tokenBudget;
-      const secondsBudget = this.options.secondsBudget ?? card.secondsBudget;
+      // WL-T3-11: steps × 70 s when the card sets none; per sample (rule 21).
+      const secondsBudget =
+        this.options.secondsBudget ?? card.secondsBudget ?? defaultSecondsBudget(card.stepBudget);
+      const sampleStarted = this.now();
+      let stopDetail: Record<string, unknown> | undefined;
       const every = this.options.checkpointEvery ?? 5;
       let lastCheckpointStep = session.getStepsUsed();
       let lastCheckpointWrites = 0;
@@ -1100,7 +1073,7 @@ export class CardRunner {
         if (
           secondsBudget !== undefined &&
           secondsBudget > 0 &&
-          this.now() - started >= secondsBudget * 1000
+          this.now() - sampleStarted >= secondsBudget * 1000
         ) {
           return "time_budget_exhausted";
         }
@@ -1120,7 +1093,7 @@ export class CardRunner {
             message:
               overBudget === "token_budget_exhausted"
                 ? `token budget spent: ${tokens}/${tokenBudget}`
-                : `time budget spent: ${Math.round((this.now() - started) / 1000)}s/${secondsBudget}s`,
+                : `time budget spent: ${Math.round((this.now() - sampleStarted) / 1000)}s/${secondsBudget}s`,
           });
           break;
         }
@@ -1157,6 +1130,7 @@ export class CardRunner {
           turn.contextPackId = packId;
           this.packIds.push(packId);
         }
+        turn.sample = sampleIndex;
         await this.recordStep(turn);
         turns.push(turn);
         tokens += (turn.usage?.promptTokens ?? 0) + (turn.usage?.completionTokens ?? 0);
@@ -1199,6 +1173,11 @@ export class CardRunner {
 
         if (turn.stopReason) {
           stopReason = turn.stopReason;
+          if (turn.budget) stopDetail = { ...turn.budget };
+          if (turn.hookVeto) stopDetail = { ...turn.hookVeto };
+          if (turn.repeatedCall) stopDetail = { repeated: turn.repeatedCall };
+          // Rule 31: human_abort's next action is to see who stopped it.
+          if (turn.abortedBy !== undefined) stopDetail = { by: turn.abortedBy };
           break;
         }
 
@@ -1222,7 +1201,7 @@ export class CardRunner {
 
       // A stop that suspends the card keeps its partial work in a checkpoint:
       // that is what a memory-pressure resume (H17) restarts from.
-      if (SUSPENDING_STOPS.has(stopReason) && session.getWriteCount() > lastCheckpointWrites) {
+      if (STOP_REASONS[stopReason].checkpoints && session.getWriteCount() > lastCheckpointWrites) {
         await this.checkpoint(session.getStepsUsed(), "partial", checkpointShas);
         lastCheckpointWrites = session.getWriteCount();
       }
@@ -1235,14 +1214,7 @@ export class CardRunner {
       // stops are the point.
       // Nor under memory pressure: a typecheck and a test run are exactly the
       // allocations the halt was protecting the host from.
-      const mayVerify =
-        stopReason !== "human_abort" &&
-        stopReason !== "memory_pressure" &&
-        stopReason !== "quota_suspended" &&
-        stopReason !== "time_budget_exhausted" &&
-        stopReason !== "replan_requested" &&
-        stopReason !== "scope_violation";
-      if (!lastGateResult && session.isScopeComplete() && mayVerify) {
+      if (!lastGateResult && session.isScopeComplete() && STOP_REASONS[stopReason].mayVerify) {
         this.emit({
           type: "status",
           cardId: card.id,
@@ -1282,7 +1254,20 @@ export class CardRunner {
         // The work is written and unverified: say so rather than "out of time".
         stopReason = "done_pending_gates";
       }
-      return { session, turns, stopReason, lastGateResult };
+      // Rule 31a: the loop ran to the step budget.
+      if (stopReason === "budget_exhausted" && !stopDetail) {
+        stopDetail = { budget: "steps", used: session.getStepsUsed(), of: card.stepBudget };
+      }
+      if (stopReason !== "budget_exhausted" && stopDetail?.budget !== undefined) {
+        stopDetail = undefined;
+      }
+      return {
+        session,
+        turns,
+        stopReason,
+        lastGateResult,
+        ...(stopDetail ? { stopDetail } : {}),
+      };
     };
 
     const passing: Sample[] = [];
@@ -1306,7 +1291,7 @@ export class CardRunner {
         if (sha) sample.sha = sha;
         passing.push(sample);
         if (passing.length >= want) break;
-      } else if (HARD_STOPS.has(sample.stopReason)) {
+      } else if (STOP_REASONS[sample.stopReason].endsSampling) {
         break;
       }
     }
@@ -1360,6 +1345,11 @@ export class CardRunner {
       checkpointShas,
       stepsUsed: session.getStepsUsed(),
       session,
+      // WL-T3-13: each sample had its own step budget; the evidence gives each one's steps.
+      sampleSteps: tried.map((t) => t.session.getStepsUsed()),
+      ...(picked.stopDetail && stopReason === picked.stopReason
+        ? { stopDetail: picked.stopDetail }
+        : {}),
       ...(failToPass ? { failToPass } : {}),
       ...(resumedFrom ? { resumedFrom } : {}),
     });
@@ -1381,13 +1371,7 @@ export class CardRunner {
     const runs = this.options.store?.runs;
     const { card } = this.options;
     if (!runs || !this.attemptId) return;
-    const halted = new Set<ExecutionStopReason>([
-      "memory_pressure",
-      "human_abort",
-      "quota_suspended",
-      "replan_requested",
-      "done_pending_gates",
-    ]);
+    const row = STOP_REASONS[p.stopReason];
     try {
       if (p.written) {
         await runs.recordEvidence({
@@ -1406,14 +1390,14 @@ export class CardRunner {
       }
       await runs.finishAttempt({
         attemptId: this.attemptId,
-        status: p.passed ? "passed" : halted.has(p.stopReason) ? "halted" : "failed",
+        status: p.passed ? "passed" : row.halts ? "halted" : "failed",
         stopReason: p.stopReason,
         tokensUsed: p.tokensUsed,
         secondsUsed: p.secondsUsed,
         evidenceId: p.evidence.id,
       });
       // A halt says nothing about what the model can do; only outcomes count.
-      if (!halted.has(p.stopReason) && p.stopReason !== "vacuous_tests") {
+      if (row.measuresModel) {
         await runs.recordCompetence({
           repoId: basename(this.options.repoRoot),
           cardClass: cardClassOf(card),
@@ -1477,8 +1461,14 @@ export class CardRunner {
   private budgetDiagnosis(
     stopReason: ExecutionStopReason,
     spent: { tokens: number; seconds: number; steps: number },
+    detail?: BudgetDetail,
   ): string {
     const { card } = this.options;
+    // Rule 31a, WL-T3-12: context pressure is not a step budget, and raising
+    // the step budget cannot help it.
+    if (detail?.budget === "context") {
+      return `The prompt reached 95% of its budget: ${detail.zone} needed ${detail.tokens} tokens against a cap of ${detail.cap}. Split card ${card.id} or narrow its scope.`;
+    }
     const scope = card.scopeFiles.length > 0 ? card.scopeFiles.join(", ") : "its declared scope";
     const remedy = `Raise the budget on card ${card.id}, or split it: ${spent.steps} steps over ${scope} were not enough.`;
     if (stopReason === "token_budget_exhausted") {
@@ -1490,6 +1480,27 @@ export class CardRunner {
       return `Ran out of wall-clock time (${spent.seconds}s of ${cap}s) after ${spent.steps} steps without reaching the gates. ${remedy}`;
     }
     return `Used every step of its budget (${spent.steps} of ${card.stepBudget}) without declaring the work done. ${remedy}`;
+  }
+
+  /**
+   * The person's next action for a parking stop that is neither a budget nor
+   * the repair ladder (rule 31): the table's next action, with the detail
+   * stored beside the reason. Undefined leaves the ladder's own diagnosis.
+   */
+  private parkDetail(
+    stopReason: ExecutionStopReason,
+    detail: Record<string, unknown> | undefined,
+  ): string | undefined {
+    const row = STOP_REASONS[stopReason];
+    // The repair ladder's own stops keep the session's ladder diagnosis.
+    if (row.class === "capability_ceiling" && row.mayVerify) return undefined;
+    if (stopReason === "hook_veto" && detail) {
+      return `Vetoed by ${String(detail.hook)}: ${String(detail.reason)}. ${row.nextAction}`;
+    }
+    if (stopReason === "git_metadata_tampered" && this.tampered) {
+      return `${this.tampered.slice(0, 300)} ${row.nextAction}`;
+    }
+    return row.nextAction;
   }
 
   /** G12 refused the card: record why, park it, and return without a turn. */
@@ -1543,6 +1554,8 @@ export class CardRunner {
     resumedFrom?: { step: number; gitRef: string };
     heldBeforeStart?: string;
     parkWith?: ParkDiagnosis;
+    sampleSteps?: number[];
+    stopDetail?: Record<string, unknown>;
   }): Promise<CardRunResult> {
     const { card, syncAdapter, lifecycle, store } = this.options;
     const { turns, stopReason, session, attempt } = params;
@@ -1604,7 +1617,26 @@ export class CardRunner {
       thinking: this.options.thinking ?? "off",
       workerMethod: this.options.workerMethod ?? "baseline",
       isolation: (this.options.sandbox ?? new ProcessSandbox()).confinement,
+      // WL-M2-5 and WL-M3-5: the tool arm and the attempt's prompt budget W.
+      ...(session ? { toolSet: session.getToolSetArm() } : {}),
+      ...(session?.getPromptBudget() !== undefined
+        ? { promptBudgetTokens: session.getPromptBudget() }
+        : {}),
     } as RunSettings;
+    // WL-T3-1, WL-M3-4, WL-M2-5: every step's phase, tokens, finish reason,
+    // format errors and prose-only replies.
+    const steps: StepEvidence[] = turns.map((t) => ({
+      step: t.turnIndex,
+      sample: t.sample ?? 1,
+      ...(t.phase ? { phase: t.phase } : {}),
+      promptTokens: t.usage?.promptTokens ?? 0,
+      ...(t.usage?.thinkingTokens !== undefined ? { thinkingTokens: t.usage.thinkingTokens } : {}),
+      ...(t.usage?.answerTokens !== undefined ? { answerTokens: t.usage.answerTokens } : {}),
+      ...(t.finishReason ? { finishReason: t.finishReason } : {}),
+      formatErrors: t.formatErrors ?? 0,
+      proseOnly: t.proseOnly ?? 0,
+      ...(t.truncated ? { truncated: t.truncated } : {}),
+    }));
 
     const evidence = compileEvidence({
       cardId: card.id,
@@ -1625,6 +1657,9 @@ export class CardRunner {
         ? { advisories: session.getAdvisories() }
         : {}),
       ...(this.transcriptPath ? { trajectoryRef: this.transcriptPath } : {}),
+      ...(steps.length > 0 ? { steps } : {}),
+      ...(params.sampleSteps ? { sampleSteps: params.sampleSteps } : {}),
+      ...(params.stopDetail ? { stopDetail: params.stopDetail } : {}),
     });
     const written = this.writeEvidence(evidence);
 
@@ -1670,18 +1705,19 @@ export class CardRunner {
       // A budget stop parks the card (L22) only when it never reached the
       // gates. One that did has a verdict to re-plan against, and a typed
       // failure is worth more to the human than "out of budget".
-      const budgetStop = BUDGET_STOPS.has(stopReason);
-      const parks = PARKING_STOPS.has(stopReason) && !(budgetStop && params.lastGateResult);
+      const row = STOP_REASONS[stopReason];
+      const budgetStop = row.parks === "unless_gates_ran";
+      const parks = row.parks === "yes" || (budgetStop && !params.lastGateResult);
       if (parks && session) {
         parked = session.getParkDiagnosis(
-          stopReason as ParkDiagnosis["stopReason"],
+          stopReason,
           budgetStop
-            ? this.budgetDiagnosis(stopReason, {
-                tokens: tokensUsed,
-                seconds: secondsUsed,
-                steps: params.stepsUsed,
-              })
-            : undefined,
+            ? this.budgetDiagnosis(
+                stopReason,
+                { tokens: tokensUsed, seconds: secondsUsed, steps: params.stepsUsed },
+                params.stopDetail as BudgetDetail | undefined,
+              )
+            : this.parkDetail(stopReason, params.stopDetail),
         );
         const moved = await this.move("parked");
         if (moved.ok) finalStatus = "parked";

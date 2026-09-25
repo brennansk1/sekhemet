@@ -327,6 +327,42 @@ export function parseToolCallsFromText(
   return calls;
 }
 
+/**
+ * Whether a reply with no parsable tool call was trying to make one
+ * (worker-loop WL-M2-5). Outside reasoning blocks, an attempt is:
+ * - a tool-call tag (`<tool_call>`, `<function_call>`), or the Qwen3-Coder
+ *   XML form `<function=name>` / `<parameter=name>`, with or without the
+ *   wrapper — lowercase tags only, so JSX such as `<Tool />` is not one;
+ * - a JSON object with a `"name"`, `"tool"` or `"function"` key;
+ * - a SEARCH/REPLACE marker (Arm C);
+ * - outside fenced code, a known tool's name directly followed by `(`, then
+ *   `)`, `key=`, `{` or a quote — so "check (again)" in prose and
+ *   `function check(x)` in a code block are not attempts.
+ * Such a reply is a format error; one with none of these is prose only, and
+ * the two are counted apart so prose does not inflate an arm's error rate.
+ */
+export function looksLikeToolCallAttempt(
+  text: string,
+  knownTools: readonly string[] = [],
+): boolean {
+  const cleaned = stripReasoning(text);
+  if (cleaned === "") return false;
+  if (/<\/?(?:tool_call|function_call)\b|<(?:function|parameter)=\w/.test(cleaned)) return true;
+  if (/"(?:name|tool|function)"\s*:/.test(cleaned)) return true;
+  if (/^<{7}\s*SEARCH/m.test(cleaned)) return true;
+  const prose = cleaned.replace(/```[\s\S]*?(?:```|$)/g, " ");
+  return knownTools.some((t) => {
+    const name = t.replace(/[^a-z0-9_]/gi, "");
+    return (
+      name !== "" &&
+      new RegExp(
+        `(?:^|[^\\w.])${name}\\((?:\\s*\\)|\\s*[a-z_]\\w*\\s*=|\\s*\\{|\\s*["'])`,
+        "i",
+      ).test(prose)
+    );
+  });
+}
+
 /** Parse Arm C SEARCH/REPLACE blocks, with an optional preceding file path. */
 export function parseArmCTextPatches(text: string): TextPatch[] {
   const patches: TextPatch[] = [];

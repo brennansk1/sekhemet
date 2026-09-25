@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { CARD_STOP_REASONS, type CardRecord } from "@sekhemet/kernel";
+import { CARD_STOP_REASONS, type CardRecord, STOP_REASONS } from "@sekhemet/kernel";
 import { describe, expect, it } from "vitest";
 import {
   BOARD_COLUMN_ORDER,
@@ -160,8 +160,21 @@ describe("stopReasonLabel", () => {
       expect(stopReasonLabel(reason).short, reason).not.toBe(humanize(reason));
       expect(stopReasonLabel(reason).sentence, reason).not.toContain("_");
     }
-    const tables = vocabularyTables() as { stopReasons: Record<string, unknown> };
+    const tables = vocabularyTables(STOP_REASONS) as { stopReasons: Record<string, unknown> };
     expect(Object.keys(tables.stopReasons).sort()).toEqual([...CARD_STOP_REASONS].sort());
+  });
+
+  it("WL-T3-9: reads each reason's class and next action from the kernel's stop-reason table", () => {
+    const tables = vocabularyTables(STOP_REASONS) as {
+      stopClasses: Record<string, string>;
+      stopReasons: Record<string, { class: string; nextAction: string }>;
+    };
+    for (const reason of CARD_STOP_REASONS) {
+      expect(tables.stopClasses[reason], reason).toBe(STOP_REASONS[reason].class);
+      expect(tables.stopReasons[reason]?.nextAction, reason).toBe(STOP_REASONS[reason].nextAction);
+    }
+    expect(tables.stopClasses.memory_pressure).toBe("environment");
+    expect(tables.stopClasses.gate_passed).toBe("success");
   });
 
   it("puts numbers in the sentence when it has them", () => {
@@ -211,7 +224,9 @@ describe("labels and numbers", () => {
   });
 
   it("publishes the tables without raw enums in labels", () => {
-    const tables = vocabularyTables() as { stopReasons: Record<string, { short: string }> };
+    const tables = vocabularyTables(STOP_REASONS) as {
+      stopReasons: Record<string, { short: string }>;
+    };
     expect(tables.stopReasons.oscillation_detected?.short).toBe("Looping");
     expect(JSON.stringify(tables)).not.toMatch(/"(label|short)":"[a-z]+_[a-z_]+"/);
   });

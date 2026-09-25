@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { parseToml } from "@sekhemet/kernel";
+import { allowlistedEnv, resolveProgram } from "@sekhemet/sandbox";
 import ts from "typescript";
 
 export interface SyntaxProblem {
@@ -70,7 +71,16 @@ function parseWith(
   content: string,
   pattern: RegExp,
 ): SyntaxProblem[] | undefined {
-  const r = spawnSync(command, args, { input: content, encoding: "utf8", timeout: 10_000 });
+  // Item 20b: the parser by absolute path from the fixed allowlist, never
+  // PATH, with the allowlisted environment. It only parses the content.
+  const program = resolveProgram(command);
+  if (!program) return undefined;
+  const r = spawnSync(program, args, {
+    input: content,
+    encoding: "utf8",
+    timeout: 10_000,
+    env: allowlistedEnv(),
+  });
   if (r.error) return undefined;
   if (r.status === 0) return [];
   const text = `${r.stderr ?? ""}${r.stdout ?? ""}`.trim();

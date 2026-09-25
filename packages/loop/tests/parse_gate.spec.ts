@@ -1,7 +1,8 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { allowlistedEnv } from "@sekhemet/sandbox";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { checkSyntax } from "../src/parse_gate.js";
 import { ToolExecutor } from "../src/tools.js";
 
@@ -65,5 +66,25 @@ describe("@sekhemet/loop parse gate", () => {
       arguments: { path: "broken.ts", search: "return 1;", replace: "return 2;" },
     });
     expect(obs.ok).toBe(true);
+  });
+
+  it("item 20b: python3 and bash are pinned by absolute path, with the allowlisted environment", () => {
+    const bin = mkdtempSync(join(tmpdir(), "parsegate-bin-"));
+    const marker = join(bin, "hijacked");
+    try {
+      for (const name of ["python3", "bash"]) {
+        writeFileSync(join(bin, name), `#!/bin/sh\necho x > ${JSON.stringify(marker)}\nexit 0\n`);
+        chmodSync(join(bin, name), 0o755);
+      }
+      vi.stubEnv("PATH", `${bin}:${process.env.PATH ?? ""}`);
+      vi.stubEnv("GITHUB_TOKEN", "ghp-canary");
+      checkSyntax("a.py", "def f(:\n");
+      checkSyntax("a.sh", "if then fi\n");
+      expect(existsSync(marker)).toBe(false);
+      expect(Object.keys(allowlistedEnv())).not.toContain("GITHUB_TOKEN");
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(bin, { recursive: true, force: true });
+    }
   });
 });

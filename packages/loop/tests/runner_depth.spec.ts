@@ -623,6 +623,8 @@ describe("human abort, scope violation and done_pending_gates (L14, L25)", () =>
     expect(seen).toHaveLength(2);
     expect(result.stopReason).toBe("human_abort");
     expect((await store.getCard(card.id))?.stopReason).toBe("human_abort");
+    // Rule 31: human_abort's next action is to see who stopped it.
+    expect(result.evidence.stopDetail).toEqual({ by: "operator pressed stop" });
   });
 
   it("stops with scope_violation after repeated out-of-scope writes", async () => {

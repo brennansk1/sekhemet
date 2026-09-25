@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { BoardServiceImpl } from "@sekhemet/board";
-import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
+import { CardStore, DEFAULT_STEP_BUDGET, EventLog, initSchema } from "@sekhemet/kernel";
 import type { InferenceRequest, LocalInferenceAdapter, ToolCall } from "@sekhemet/models";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -117,9 +117,10 @@ describe("apps/harness planning, rollup, explain and runner control (B2, B7, B12
     const stored = await cardStore.getCard(card.id);
     expect(stored?.difficulty).toBeGreaterThanOrEqual(1);
     // Nothing measured and the schema default: set from the difficulty.
-    expect(stored?.stepBudget).not.toBe(50);
+    expect(stored?.stepBudget).not.toBe(DEFAULT_STEP_BUDGET);
     const [set] = await cardStore.cardEvents(card.id, ["card/budget_set"]);
-    expect((set?.payload as { from: number }).from).toBe(50);
+    // WL-T3-11: the one default step budget (was 50 on the card record).
+    expect((set?.payload as { from: number }).from).toBe(DEFAULT_STEP_BUDGET);
 
     // With measured history of this class, the budget moves toward it by at most 15%.
     for (let i = 0; i < 3; i++) {
@@ -155,6 +156,31 @@ describe("apps/harness planning, rollup, explain and runner control (B2, B7, B12
       (e) => (e.payload as { toStatus: string }).toStatus,
     );
     expect(statuses).toEqual(["planning", "in_progress", "verify", "review"]);
+  });
+
+  it("keeps an explicit step budget equal to the default through Planning; only a defaulted one is set from the difficulty (WL-T3-11)", async () => {
+    // Suite cards set 40 explicitly (fixtures/*/cards.json, seed_chronicle):
+    // the value alone must not read as "defaulted".
+    const explicit = await newCard("card_explicit", { stepBudget: DEFAULT_STEP_BUDGET });
+    await pullThroughPlanning(ctx, explicit, "m");
+    expect((await cardStore.getCard("card_explicit"))?.stepBudget).toBe(DEFAULT_STEP_BUDGET);
+    expect(await cardStore.cardEvents("card_explicit", ["card/budget_set"])).toHaveLength(0);
+
+    const defaulted = await newCard("card_defaulted");
+    expect(defaulted.stepBudget).toBe(DEFAULT_STEP_BUDGET);
+    await pullThroughPlanning(ctx, defaulted, "m");
+    const stored = await cardStore.getCard("card_defaulted");
+    expect(stored?.stepBudget).not.toBe(DEFAULT_STEP_BUDGET);
+    expect(await cardStore.cardEvents("card_defaulted", ["card/budget_set"])).toHaveLength(1);
+
+    // The queue caps its copy of the card (--max-turns, a tune policy) before
+    // Planning: the stored budget, not the capped copy, says it was defaulted.
+    const capped = await newCard("card_capped");
+    const run = await pullThroughPlanning(ctx, { ...capped, stepBudget: 12 }, "m");
+    expect((await cardStore.getCard("card_capped"))?.stepBudget).not.toBe(DEFAULT_STEP_BUDGET);
+    // ... and the cap still holds for this run.
+    expect(run.stepBudget).toBeLessThanOrEqual(12);
+    expect(await cardStore.cardEvents("card_capped", ["card/budget_set"])).toHaveLength(1);
   });
 
   it("rolls a parent up through its integration gate when the last child is accepted (B7)", async () => {

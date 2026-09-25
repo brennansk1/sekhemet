@@ -1,7 +1,9 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type TomlTable, parseToml } from "@sekhemet/kernel";
+import { resolveProgram, runConfined } from "@sekhemet/sandbox";
 import ts from "typescript";
 import { scanDiffForSecrets } from "./secrets.js";
 import type { GateFailure, GateLayer, GateProjectConfig, GateRung, RungOutcome } from "./types.js";
@@ -76,8 +78,10 @@ export interface BuiltinGateContext {
    * AWS's documented example key.
    */
   harnessOwned?: readonly string[];
-  /** Is this program on PATH? Injectable for tests. */
+  /** False turns a scanner off (tests). Scanners are otherwise found by `programs`. */
   which?: (program: string) => boolean;
+  /** The scanner allowlist; default the harness's fixed PROGRAM_ALLOWLIST (tests override it). */
+  programs?: Readonly<Record<string, readonly string[]>>;
   now?: () => number;
 }
 
@@ -92,6 +96,50 @@ export interface BuiltinGateResult {
 export function onPath(program: string): boolean {
   const r = spawnSync("sh", ["-c", 'command -v -- "$1"', "_", program], { encoding: "utf8" });
   return r.status === 0 && r.stdout.trim().length > 0;
+}
+
+/**
+ * A scanner over the card's files (security item 20b): resolved by absolute
+ * path from the fixed allowlist, never PATH, and run through runConfined()
+ * with the card's worktree as its root, the allowlisted environment, a
+ * private HOME for its caches and no network.
+ */
+async function runScanner(
+  ctx: BuiltinGateContext,
+  program: string,
+  args: string[],
+  timeoutMs: number,
+  cwd?: string,
+): Promise<{ status: number; stdout: string; stderr: string; refused: boolean }> {
+  const home = mkdtempSync(join(tmpdir(), "sekhemet-scan-home-"));
+  try {
+    const r = await runConfined(program, args, {
+      root: ctx.root,
+      ...(cwd ? { cwd } : {}),
+      writable: [home],
+      env: { HOME: home },
+      timeoutMs,
+    });
+    return {
+      status: r.exitCode,
+      stdout: r.stdout,
+      stderr: r.stderr,
+      refused: r.exitCode === 126 && r.stderr.startsWith("Refusing to execute"),
+    };
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
+/** A scanner that could not run confined: said, never a silent pass. */
+function notRun(gate: string, program: string, stderr: string): GateFailure {
+  return failure(
+    gate,
+    "security",
+    "security",
+    `${program} not run: ${stderr.split("\n")[0] ?? "no confinement"}`,
+    { suggestedAction: "This host cannot run the scanner confined; ask a person." },
+  );
 }
 
 /** Files the diff touches (new paths). */
@@ -172,7 +220,10 @@ function failure(
 
 // --- G14 secrets -------------------------------------------------------------
 
-function secretsGate(ctx: BuiltinGateContext, which: (p: string) => boolean): GateFailure[] {
+async function secretsGate(
+  ctx: BuiltinGateContext,
+  locate: (p: string) => string | undefined,
+): Promise<GateFailure[]> {
   const owned = new Set(ctx.harnessOwned ?? []);
   const found = scanDiffForSecrets(ctx.diff)
     .filter((f) => !owned.has(f.file))
@@ -192,14 +243,16 @@ function secretsGate(ctx: BuiltinGateContext, which: (p: string) => boolean): Ga
       ),
     );
   // gitleaks, when installed, over the changed files (its rule set is larger).
-  if (which("gitleaks")) {
+  const gitleaks = locate("gitleaks");
+  if (gitleaks) {
     for (const file of diffFiles(ctx.diff)
       .filter((f) => !owned.has(f))
       .slice(0, 50)) {
       const abs = join(ctx.root, file);
       if (!existsSync(abs)) continue;
-      const r = spawnSync(
-        "gitleaks",
+      const r = await runScanner(
+        ctx,
+        gitleaks,
         [
           "detect",
           "--no-git",
@@ -212,8 +265,12 @@ function secretsGate(ctx: BuiltinGateContext, which: (p: string) => boolean): Ga
           "--report-path",
           "/dev/stdout",
         ],
-        { encoding: "utf8", timeout: 60_000 },
+        60_000,
       );
+      if (r.refused) {
+        found.push(notRun("secrets", "gitleaks", r.stderr));
+        break;
+      }
       if (r.status !== 1) continue;
       try {
         for (const leak of JSON.parse(r.stdout || "[]") as {
@@ -809,14 +866,16 @@ const LOCKFILES = [
   "go.sum",
 ];
 
-function osvGate(ctx: BuiltinGateContext): GateFailure[] {
+async function osvGate(ctx: BuiltinGateContext, osv: string): Promise<GateFailure[]> {
   const lock = LOCKFILES.find((f) => existsSync(join(ctx.root, f)));
   if (!lock) return [];
-  const r = spawnSync(
-    "osv-scanner",
+  const r = await runScanner(
+    ctx,
+    osv,
     ["--offline", "--format", "json", "--lockfile", join(ctx.root, lock)],
-    { encoding: "utf8", timeout: 120_000 },
+    120_000,
   );
+  if (r.refused) return [notRun("osv", "osv-scanner", r.stderr)];
   if (r.status === 0) return [];
   const out: GateFailure[] = [];
   try {
@@ -828,6 +887,11 @@ function osvGate(ctx: BuiltinGateContext): GateFailure[] {
         }[];
       }[];
     };
+    // A non-zero exit that names no vulnerability is a scanner failure, not a
+    // clean result (B1 review): e.g. no local database under the private HOME.
+    if (!(report.results ?? []).some((x) => (x.packages ?? []).length > 0)) {
+      return [notRun("osv", "osv-scanner", r.stderr || `exited ${r.status} with no report`)];
+    }
     for (const res of report.results ?? []) {
       for (const p of res.packages ?? []) {
         for (const v of p.vulnerabilities ?? []) {
@@ -859,16 +923,21 @@ function osvGate(ctx: BuiltinGateContext): GateFailure[] {
   return out.slice(0, 10);
 }
 
-function semgrepGate(ctx: BuiltinGateContext): GateFailure[] | undefined {
+async function semgrepGate(
+  ctx: BuiltinGateContext,
+  semgrep: string,
+): Promise<GateFailure[] | undefined> {
   const config = join(ctx.root, ".sekhemet", "semgrep.yml");
   if (!existsSync(config)) return undefined;
   const files = diffFiles(ctx.diff).filter((f) => existsSync(join(ctx.root, f)));
   if (files.length === 0) return [];
-  const r = spawnSync(
-    "semgrep",
+  const r = await runScanner(
+    ctx,
+    semgrep,
     ["scan", "--config", config, "--json", "--metrics=off", "--quiet", ...files],
-    { cwd: ctx.root, encoding: "utf8", timeout: 300_000 },
+    300_000,
   );
+  if (r.refused) return [notRun("semgrep", "semgrep", r.stderr)];
   try {
     const report = JSON.parse(r.stdout || "{}") as {
       results?: {
@@ -1083,7 +1152,10 @@ async function mutationGate(
 // --- the runner ------------------------------------------------------------------
 
 export async function runBuiltinGates(ctx: BuiltinGateContext): Promise<BuiltinGateResult> {
-  const which = ctx.which ?? onPath;
+  // Scanners by absolute path from the fixed allowlist, never PATH (20b);
+  // `which` lets a test turn them off.
+  const locate = (p: string) =>
+    ctx.which && !ctx.which(p) ? undefined : resolveProgram(p, ctx.programs);
   const enabled = new Set(ctx.gates ?? ctx.project.builtin ?? DEFAULT_BUILTIN_GATES);
   if (ctx.project.mutation) enabled.add("mutation");
   const failures: GateFailure[] = [];
@@ -1092,7 +1164,7 @@ export async function runBuiltinGates(ctx: BuiltinGateContext): Promise<BuiltinG
 
   if (enabled.has("secrets")) {
     const t = Date.now();
-    const f = secretsGate(ctx, which);
+    const f = await secretsGate(ctx, locate);
     failures.push(...f);
     outcomes.push(outcome("secrets", "security", "security", f.length === 0, t));
   }
@@ -1105,15 +1177,17 @@ export async function runBuiltinGates(ctx: BuiltinGateContext): Promise<BuiltinG
   }
   if (enabled.has("osv")) {
     const t = Date.now();
-    if (which("osv-scanner")) {
-      const f = osvGate(ctx);
+    const osv = locate("osv-scanner");
+    if (osv) {
+      const f = await osvGate(ctx, osv);
       failures.push(...f);
       outcomes.push(outcome("osv", "security", "security", f.length === 0, t));
     } else outcomes.push(outcome("osv", "security", "security", true, t, true));
   }
   if (enabled.has("semgrep")) {
     const t = Date.now();
-    const f = which("semgrep") ? semgrepGate(ctx) : undefined;
+    const semgrep = locate("semgrep");
+    const f = semgrep ? await semgrepGate(ctx, semgrep) : undefined;
     if (f) failures.push(...f);
     outcomes.push(
       outcome("semgrep", "security", "security", (f ?? []).length === 0, t, f === undefined),

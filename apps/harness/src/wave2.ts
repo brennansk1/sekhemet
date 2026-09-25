@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { approveSkill, readSkillLock, revokeSkill } from "@sekhemet/context";
+import { readSkillLock, revokeSkill } from "@sekhemet/context";
 import {
   BudgetPolicyStore,
   LearningGuard,
@@ -19,7 +19,13 @@ import {
   writeToolCandidate,
 } from "@sekhemet/eval";
 import { loadGatesConfig } from "@sekhemet/gates";
-import { type CardRecord, type CardStore, type EventLog, parseToml } from "@sekhemet/kernel";
+import {
+  type CardRecord,
+  type CardStore,
+  type EventLog,
+  defaultSecondsBudget,
+  parseToml,
+} from "@sekhemet/kernel";
 import {
   type LocalInferenceAdapter,
   ModelRegistry,
@@ -52,7 +58,9 @@ import {
   runGoalLoop,
   triggeredResponses,
 } from "@sekhemet/planner";
-import { planRelease, publishRelease, runActGate } from "@sekhemet/sync";
+import { type ProcessSandbox, runConfined, runTrusted } from "@sekhemet/sandbox";
+import { gitEnvFor, planRelease, publishRelease, runActGate } from "@sekhemet/sync";
+import { airgapSkillApproval, approveVerifiedSkill } from "./airgap.js";
 import { searchLibraries } from "./pm/libraries.js";
 import {
   type ReuseDeps,
@@ -758,7 +766,12 @@ export async function runWave2Command(
       const lockPath = join(k.repoPath, ".sekhemet", "skills.lock.json");
       const [sub, name] = args;
       if (sub === "approve" && name) {
-        const e = approveSkill(dir, name, "human", lockPath);
+        // SEC-46: offline, only the content a signed update bundle carried.
+        const gate = airgapSkillApproval(k.repoPath, dir, name);
+        if (!gate.ok) return done(gate.reason ?? "refused", 1);
+        // The approval must pin the very content that was verified (B1 review).
+        const e = approveVerifiedSkill(dir, name, lockPath, gate.sha256);
+        if (!e.ok) return done(`${name} changed while it was being approved; approve it again.`, 1);
         print(`Approved ${name} at ${e.sha256.slice(0, 12)}.`);
         return 0;
       }
@@ -860,20 +873,9 @@ async function improveCommand(k: Kernel, args: string[], io: CommandIO): Promise
   );
   for (const p of mineToolProposals(runs)) {
     const validated = args.includes("--validate-tools")
-      ? await validateToolProposal(p, async (cmd) => {
-          const { execFileSync } = await import("node:child_process");
-          try {
-            const [bin, ...rest] = cmd.split(/\s+/);
-            execFileSync(bin as string, rest, {
-              cwd: k.repoPath,
-              stdio: "ignore",
-              timeout: 60_000,
-            });
-            return { exitCode: 0, output: "" };
-          } catch (e) {
-            return { exitCode: (e as { status?: number }).status ?? 1, output: "" };
-          }
-        })
+      ? await validateToolProposal(p, (cmd) =>
+          validateInScratch(k.repoPath, cmd, { base: flag(args, "--base") ?? "main" }),
+        )
       : p;
     print(
       `tool candidate ${p.name}: ${p.template} (used on ${p.cards.length} cards) [${validated.status}]`,
@@ -1210,7 +1212,10 @@ export function batchBySwaps(cards: CardRecord[], now: Date = new Date()): CardR
       project: c.projectId ?? c.parentId ?? "board",
       role: c.modelRoute?.executor === "escalation" ? ("escalation" as const) : ("worker" as const),
       modelId: c.modelRoute?.executor === "escalation" ? "escalation" : "worker",
-      minutes: Math.max(1, Math.round((c.secondsBudget ?? 600) / 60)),
+      minutes: Math.max(
+        1,
+        Math.round((c.secondsBudget ?? defaultSecondsBudget(c.stepBudget)) / 60),
+      ),
       priority: cards.length - i,
     })),
     { start: now, end: new Date(now.getTime() + 365 * 86_400_000) },
@@ -1248,7 +1253,10 @@ export function overnightPlanLine(
       project: c.projectId ?? c.parentId ?? "board",
       role: c.modelRoute?.executor === "escalation" ? ("escalation" as const) : ("worker" as const),
       modelId: c.modelRoute?.executor === "escalation" ? "escalation" : "worker",
-      minutes: Math.max(1, Math.round((c.secondsBudget ?? 600) / 60)),
+      minutes: Math.max(
+        1,
+        Math.round((c.secondsBudget ?? defaultSecondsBudget(c.stepBudget)) / 60),
+      ),
     })),
     { residentModelId: "worker" },
   );
@@ -1256,6 +1264,52 @@ export function overnightPlanLine(
     return `Declared hours: the machine is yours until ${r.resumesAt?.toISOString() ?? "later"}.`;
   const s = r.schedule;
   return `Plan: ${s.batches.map((b) => `${b.modelId}/${b.project} x${b.items.length}`).join(", ")}; ${s.swaps} model load(s)${s.deferred.length ? `, ${s.deferred.length} card(s) deferred past the window` : ""}.`;
+}
+
+// ---------------------------------------------- --validate-tools (item 4a)
+
+/**
+ * Run one mined command (Worker-written code, R6) for `--validate-tools`
+ * (security item 4a, SEC-17a): in a scratch worktree created from the base
+ * branch and deleted afterwards, through `runConfined()` with no network,
+ * the allowlisted environment, a private HOME and a 60 s limit. Never in
+ * the main checkout.
+ */
+export async function validateInScratch(
+  repoPath: string,
+  command: string,
+  options: { base?: string; timeoutMs?: number; sandbox?: ProcessSandbox } = {},
+): Promise<{ exitCode: number; output: string }> {
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const scratch = mkdtempSync(join(tmpdir(), "sekhemet-validate-"));
+  const worktree = join(scratch, "worktree");
+  const home = join(scratch, "home");
+  mkdirSync(home);
+  const env = gitEnvFor(repoPath);
+  const git = (argv: string[]) => runTrusted("git", argv, { cwd: repoPath, env });
+  try {
+    const added = await git(["worktree", "add", "--detach", worktree, options.base ?? "main"]);
+    if (added.exitCode !== 0) {
+      return { exitCode: 1, output: `no scratch worktree: ${added.stderr.trim()}` };
+    }
+    const [bin, ...rest] = command.trim().split(/\s+/);
+    const r = await runConfined(bin as string, rest, {
+      root: worktree,
+      writable: [home],
+      env: { HOME: home },
+      // The real home is unreadable too, not just renamed (item 4a).
+      denyHomeReads: true,
+      timeoutMs: options.timeoutMs ?? 60_000,
+      ...(options.sandbox ? { sandbox: options.sandbox } : {}),
+    });
+    const output = [r.stdout, r.stderr].filter(Boolean).join("\n").trim();
+    return { exitCode: r.timedOut ? 124 : r.exitCode, output: output.slice(-2000) };
+  } finally {
+    await git(["worktree", "remove", "--force", worktree]);
+    rmSync(scratch, { recursive: true, force: true });
+    await git(["worktree", "prune"]);
+  }
 }
 
 // ---------------------------------------------- per-package gates (Y19)
@@ -1270,26 +1324,25 @@ export async function runPackageGates(
   cwd: string,
   changedFiles: string[],
   print: (line: string) => void = (l) => console.log(l),
+  options: { restricted?: boolean; sandbox?: ProcessSandbox } = {},
 ): Promise<{ package: string; rung: string; passed: boolean; output: string }[]> {
+  // SEC-19: an audit starts no package gate; they execute the project's code.
+  if (options.restricted) return [];
   const { gatesForChange } = await import("@sekhemet/sync");
-  const { execFileSync } = await import("node:child_process");
   const { relative } = await import("node:path");
   const results: { package: string; rung: string; passed: boolean; output: string }[] = [];
   for (const g of gatesForChange(cwd, changedFiles)) {
     const dir = g.cwd;
-    let passed = true;
-    let output = "";
-    try {
-      output = execFileSync(g.command, g.args, {
-        cwd: dir,
-        encoding: "utf8",
-        timeout: 600_000,
-        stdio: "pipe",
-      });
-    } catch (e) {
-      passed = false;
-      output = String((e as { stdout?: string }).stdout ?? e);
-    }
+    // The package's gate is the project's code: confined to the card's
+    // worktree, allowlisted environment, no network (S3a, SEC-17).
+    const r = await runConfined(g.command, g.args, {
+      root: cwd,
+      cwd: dir,
+      timeoutMs: 600_000,
+      ...(options.sandbox ? { sandbox: options.sandbox } : {}),
+    });
+    const passed = r.exitCode === 0 && !r.timedOut;
+    const output = passed ? r.stdout : [r.stdout, r.stderr].filter(Boolean).join("\n");
     print(`  ${passed ? "pass" : "FAIL"} ${g.package}:${g.rung} (${relative(root, dir) || "."})`);
     results.push({ package: g.package, rung: g.rung, passed, output: output.slice(-2000) });
   }

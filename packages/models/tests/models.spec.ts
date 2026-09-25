@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { MockInferenceAdapter } from "../src/mock_adapter.js";
-import { parseArmCTextPatches, parseToolCallsFromText } from "../src/parser.js";
+import {
+  looksLikeToolCallAttempt,
+  parseArmCTextPatches,
+  parseToolCallsFromText,
+} from "../src/parser.js";
 import type { ToolArm } from "../src/types.js";
 
 describe("@sekhemet/models", () => {
@@ -89,6 +93,48 @@ function add(a: number, b: number): number {
     );
     expect(patches[0]?.replace.trim()).toBe(
       "function add(a: number, b: number): number {\n  return a + b;\n}",
+    );
+  });
+});
+
+describe("looksLikeToolCallAttempt (worker-loop WL-M2-5)", () => {
+  const known = ["read_file", "edit", "finish_card"];
+  it("is true for a call the parser could not read", () => {
+    expect(looksLikeToolCallAttempt('read_file(path="a.ts"', known)).toBe(true);
+    expect(looksLikeToolCallAttempt('```json\n{"name": "edit", "arguments": {\n```', known)).toBe(
+      true,
+    );
+    expect(looksLikeToolCallAttempt('<tool_call>{"name": "read_file"', known)).toBe(true);
+    expect(looksLikeToolCallAttempt("<<<<<<< SEARCH\nold\n=======", known)).toBe(true);
+    expect(looksLikeToolCallAttempt("finish_card()", known)).toBe(true);
+    expect(looksLikeToolCallAttempt("edit({path: 'a.ts'", known)).toBe(true);
+    // Cyber-Tiel's native Qwen3-Coder XML, with and without the wrapper.
+    expect(
+      looksLikeToolCallAttempt(
+        "<tool_call>\n<function=read_file>\n<parameter=path>\nsrc/a.ts\n</parameter>\n",
+        known,
+      ),
+    ).toBe(true);
+    expect(
+      looksLikeToolCallAttempt("<function=read_file>\n<parameter=path>\nsrc/a.ts", known),
+    ).toBe(true);
+  });
+  it("is false for prose, an empty reply, or a call inside reasoning only", () => {
+    expect(looksLikeToolCallAttempt("I think I should read the file first.", known)).toBe(false);
+    expect(looksLikeToolCallAttempt("", known)).toBe(false);
+    expect(looksLikeToolCallAttempt('<think>read_file(path="a")</think>Done.', known)).toBe(false);
+    // A tool's name in prose is not a call.
+    expect(looksLikeToolCallAttempt("I will use read_file next.", known)).toBe(false);
+    const more = [...known, "check", "note"];
+    expect(looksLikeToolCallAttempt("Let me check (again) before editing.", more)).toBe(false);
+    expect(looksLikeToolCallAttempt("I'll add a note (for later).", more)).toBe(false);
+    // Code in a fence is code, not a call.
+    expect(
+      looksLikeToolCallAttempt("Here is the fix:\n```ts\nexport function check(x) {}\n```", more),
+    ).toBe(false);
+    // JSX is not a tool-call tag.
+    expect(looksLikeToolCallAttempt("It renders <Tool /> and <Function name='x' />.", more)).toBe(
+      false,
     );
   });
 });

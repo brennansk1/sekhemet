@@ -35,7 +35,7 @@ describe("@sekhemet/sandbox bubblewrap (Linux)", () => {
     expect(argv.slice(-5)).toEqual(["--chdir", work, "--", "pnpm", "test"]);
   });
 
-  it("keeps the network when granted; linked dependencies stay read-only except their caches", () => {
+  it("keeps the network when granted; linked dependencies stay read-only, caches included (item 24)", () => {
     // Phase A security review, 2026-09-22: this test used to assert the whole
     // linked node_modules was writable — which let a card change dependencies
     // the user later runs unconfined. Only the cache directories are.
@@ -53,7 +53,7 @@ describe("@sekhemet/sandbox bubblewrap (Linux)", () => {
     expect(argv).not.toContain("--unshare-net");
     const binds = argv.flatMap((a, i) => (a === "--bind" ? [argv[i + 1]] : []));
     expect(binds.some((b) => b?.endsWith("node_modules"))).toBe(false);
-    expect(binds.some((b) => b?.endsWith(join("node_modules", ".vite-temp")))).toBe(true);
+    expect(binds.some((b) => b?.endsWith(join("node_modules", ".vite-temp")))).toBe(false);
   });
 
   it("re-mounts a granted path's .git read-only after the writable binds", () => {

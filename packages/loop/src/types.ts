@@ -1,10 +1,17 @@
 import type { PlaybookRegistry, SkillsRegistry, ToolInterfaceSpec } from "@sekhemet/context";
 import type { GateFailure, GateResult, GateRung, GateRunner } from "@sekhemet/gates";
-import type { CardRecord, CardStopReason } from "@sekhemet/kernel";
-import type { LocalInferenceAdapter, TokenUsage, ToolArm, ToolCall } from "@sekhemet/models";
+import type { BudgetDetail, CardRecord, CardStopReason } from "@sekhemet/kernel";
+import type {
+  FinishReason,
+  LocalInferenceAdapter,
+  TokenUsage,
+  ToolArm,
+  ToolCall,
+} from "@sekhemet/models";
 import type { ProcessSandbox } from "@sekhemet/sandbox";
 import type { GitSyncAdapter } from "@sekhemet/sync";
 import type { ToolObservation } from "./observation.js";
+import type { StepPhase } from "./phase.js";
 import type { ApprovalHandler } from "./tools.js";
 
 /**
@@ -39,13 +46,8 @@ export interface ReplanRequest {
  */
 export interface ParkDiagnosis {
   cardId: string;
-  stopReason:
-    | "repair_exhausted"
-    | "capability_ceiling"
-    | "vacuous_tests"
-    | "token_budget_exhausted"
-    | "time_budget_exhausted"
-    | "budget_exhausted";
+  /** A reason whose row in `STOP_REASONS` parks the card (rule 31). */
+  stopReason: CardStopReason;
   attempts: number;
   /** True when a re-plan had already been tried on this card. */
   replanned: boolean;
@@ -67,6 +69,32 @@ export interface TurnResult {
   usage?: TokenUsage | undefined;
   gateResult?: GateResult | undefined;
   stopReason?: ExecutionStopReason | undefined;
+  /** The step's phase, from `phaseOf` (WL-T3-1). */
+  phase?: StepPhase | undefined;
+  /** With `budget_exhausted`: which budget ran out (rule 31a, WL-T3-12). */
+  budget?: BudgetDetail | undefined;
+  /** With `oscillation_detected`: the call that was repeated (WL-T3-3). */
+  repeatedCall?: string | undefined;
+  /** With `human_abort`: who stopped it, the abort's reason (rule 31). */
+  abortedBy?: string | undefined;
+  /** With `hook_veto`: the hook and its reason (WL-T3-4). */
+  hookVeto?: { hook: string; reason: string } | undefined;
+  /** Why the reply ended, as the server said (WL-M3-4). */
+  finishReason?: FinishReason | undefined;
+  /**
+   * The reply was cut off by a cap (`finish_reason = "length"`, WL-M3-2):
+   * which part and the cap. Never counted as a silent step or a stall.
+   */
+  truncated?: { cut: "thinking" | "answer"; capTokens: number } | undefined;
+  /**
+   * Tool-call format errors in the reply (WL-M2-5): an attempted call the
+   * parser could not read, or a call to a tool not offered.
+   */
+  formatErrors?: number | undefined;
+  /** 1 when the reply held no tool call and no attempt at one: prose only (WL-M2-5). */
+  proseOnly?: number | undefined;
+  /** The pass@k sample this step belongs to, from 1 (set by the runner, WL-T3-13). */
+  sample?: number | undefined;
   /** The stored context pack this turn's model request carried (K11, K26). */
   contextPackId?: string | undefined;
   /** Set by the runner once the step is recorded (K4, K16, K17). */
@@ -195,6 +223,8 @@ export interface SessionOptions {
   exemplarStore?: import("@sekhemet/context").ExemplarStore | undefined;
   /** Load tools on demand through tool_search instead of sending every contract (C19). */
   progressiveTools?: boolean | undefined;
+  /** The registry marks the Worker model script-capable: only then is `run_script` offered (WL-M2-4). */
+  scriptCapable?: boolean | undefined;
   /**
    * Where the Worker thinks. "off" (the default) is the original policy:
    * thinking only on escalated repair rungs. "surgical" adds it where

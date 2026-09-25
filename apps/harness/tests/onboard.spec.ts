@@ -145,6 +145,28 @@ describe("X1: sekhemet onboard runs the seven steps", () => {
   });
 });
 
+describe("SEC-17: the onboarding language-server probe runs confined", () => {
+  it.runIf(process.platform === "darwin")(
+    "a probed server that writes outside the repository leaves no marker",
+    async () => {
+      const root = repo();
+      const outside = mkdtempSync(join(tmpdir(), "sek-onboard-out-"));
+      dirs.push(outside);
+      const marker = join(outside, "marker");
+      const inside = join(root, "probe-ran");
+      const script = `const fs = require("fs"); fs.writeFileSync(${JSON.stringify(inside)}, "x"); try { fs.writeFileSync(${JSON.stringify(marker)}, "escaped") } catch {}`;
+      const r = await runOnboard(root, {
+        say: () => undefined,
+        lspTimeoutMs: 5_000,
+        lspServers: { typescript: { command: process.execPath, args: ["-e", script] } },
+      });
+      expect(r.languageServers[0]?.ok).toBe(false);
+      expect(existsSync(inside)).toBe(true);
+      expect(existsSync(marker)).toBe(false);
+    },
+  );
+});
+
 describe("X2: convention drift against the onboarding snapshot", () => {
   it("detects a naming change in recent commits and posts it as Seshat's note", async () => {
     const root = repo();

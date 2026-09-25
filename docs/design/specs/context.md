@@ -42,6 +42,8 @@ Context assembly decides what the Worker sees on each step (a step is one model 
 
 ## 2. Behaviour
 
+Every model-facing string this spec renders is written to [PROMPT_STANDARD.md](../PROMPT_STANDARD.md) (DEC-41): tag style, section order, rule count, copy modules, cache stability and the change process.
+
 ### Determinism and the cache
 
 1. **Assemble, never accumulate.** Each attempt starts from a pack built from the card and the repository; nothing from another card's conversation is carried. The same card, repository state and context version produce a byte-identical first prompt.
@@ -193,7 +195,7 @@ Context assembly decides what the Worker sees on each step (a step is one model 
 | Repo map shows only files with something to build on | not-built | 42% of map lines are `(no exports)` (context review §1) | M1 |
 | Data contracts in the prompt | built | `session.ts:852-862` (468f67f); `c_integration.spec.ts:328` | — |
 | Data contracts as their own high-priority section | not-built | appended to the repo map, the lowest-priority section, trimmed first (`pressure.ts:197`) | M5 |
-| Coherent prompt (no contradictions); one copy module | not-built | "No other tool exists" (`tool_interface.ts:44`) in 57/120 prompts; "several calls" vs "exactly one" (`tool_interface.ts:41`, `worker_prompt.ts:315`); double numbering 102/109; pointers without `recall` 67/120; "preserved in WAL" (`condenser.ts:601`); "NON-NEGOTIABLE LAWS" (`prompts.ts:17`) | M1 |
+| Coherent prompt (no contradictions); one copy module | not-built | "No other tool exists" (`tool_interface.ts:44`) in 57/120 prompts; "several calls" vs "exactly one" (`tool_interface.ts:41`, `worker_prompt.ts:315`); double numbering 102/109; pointers without `recall` 67/120; "preserved in WAL" (`condenser.ts:601`); "NON-NEGOTIABLE LAWS" (`prompts.ts:17`); the lint finds four of these mechanically on rendered requests (several vs exactly one, the re-read marker, "WAL", "NON-NEGOTIABLE"), held as an expected failure until the Worker text is rewritten under an A/B (`prompt_lint_baseline.spec.ts`) | M1 |
 | Compaction index kept when masking | not-built | the index is itself masked (`worker_prompt.ts:822`; 50/120 prompts) | M1 |
 | Output condensing, lossless for repair data | built | `condenser.ts:366`, `:509`; `tool_output_evidence.spec.ts` | — |
 | Subtask branch-and-return | built | `subtask.ts`; `c_integration.spec.ts:356` | — |
@@ -221,7 +223,9 @@ Context assembly decides what the Worker sees on each step (a step is one model 
 | Repo map edge weights: imports, shared exporters, reverse scope edges | built | `ranked_repo_map.ts:282-318` | — |
 | Repo map: spec-mentioned identifiers weighted up; content hash in the cache key | not-built | cache key is path, size, mtime (`ranked_repo_map.ts:261-264`) | NEW-context-5 |
 | Condensing savings recorded per run | partial | computed per call (`condenser.ts:73-77`); not aggregated or reported | NEW-context-5 |
-| No bracketed placeholders in prompt templates | not-built | no check exists | M1 |
+| No bracketed placeholders in prompt templates, registered tags allowed | partial | the check and the vocabulary exist (`prompt_lint.ts`, `prompt_tags.ts`; `prompt_lint.spec.ts`); none in the Worker's, Seshat's or the Reviewer's templates; 13 in the Planner's, the Researcher's and the qualification templates, held as an expected failure until rewritten (`prompt_lint_baseline.spec.ts`) | M1 |
+| Prompt lint with a per-template baseline that may only fall | built | 40 templates of every role rendered from representative inputs and linted for capital words, imperative rules, negations and long tool descriptions against `packages/context/prompt_lint_baseline.json` (`prompt_lint_baseline.spec.ts`); rule counts use the legacy directive method until templates have rule sections | M1 |
+| One copy module per role, holding tool descriptions, observations and refusals too | partial | no copy module yet; the 506 model-facing literals across `packages/` and `apps/harness/src` are recorded in `packages/context/prompt_literals_baseline.json`, and a test fails on any addition (`prompt_literals.ts`, `prompt_literals.spec.ts`, CX-M1-13) | M1 |
 | Package map, role lines and multi-language map from the source index | not-built | the map reads files, not an index | T2 |
 | Bounded scope declaration (identifiers, lexical, one hop, cap 12, decision request) | not-built | keyword match on file paths (`planner/src/scope.ts:47`) | P1 |
 | Dead code: `buildFullPromptPack`, `engine.ts`, `DefaultContextEngine` cut in B0 ([DEC-09](../DECISIONS.md#dec-09)); `ContextCondenser`, `condenseOutput`, three `tool_interface` exports, `splitRulesByScope` remain | partial | test-only (context review §3); the rest are M1's | M1 |
@@ -243,7 +247,8 @@ Context assembly decides what the Worker sees on each step (a step is one model 
 - **CX-M1-9** WHEN a failure disappears from a check because the run failed before reaching it (for example, the test file stopped compiling) THE SYSTEM SHALL NOT list it as fixed in the working memory.
 - **CX-M1-10** WHEN a card's prompt is assembled THE SYSTEM SHALL include at most eight playbook rules, all scoped to the card's kind, paths or current error codes.
 - **CX-M1-11** WHEN a passed card's trajectory has an unclosed tool call or events out of order THE SYSTEM SHALL NOT store it as an exemplar.
-- **CX-M1-12** WHEN the prompt templates and the copy module are scanned THE SYSTEM SHALL find no bracketed placeholder (a `[`…`]` or `<`…`>` span of lower-case words meant to be filled in), verified by a test.
+- **CX-M1-12** WHEN the prompt templates and the copy modules are scanned THE SYSTEM SHALL find no placeholder: a `<`…`>` or `[`…`]` span of lower-case words that is not an opening or closing tag, with or without attributes, of the registered tag vocabulary ([PROMPT_STANDARD](../PROMPT_STANDARD.md) rule 5). Verified by a test that passes a template whose only such spans are registered tags (`<card>`, `</observation>`, `<untrusted_content source="…">`) and fails one holding `<file name>`, `<path>` or `[your answer]`.
+- **CX-M1-13** WHEN any role's prompt is rendered — the Worker's, Seshat's, the Reviewer's or the Researcher's — THE SYSTEM SHALL take every non-data sentence from that role's copy module, including tool descriptions (`packages/loop/src/tool_catalog.ts`), observations and refusal messages (`packages/loop/src/tools.ts`); verified by a test that fails when a model-facing literal is added anywhere in `packages/` or `apps/harness/src` outside the copy modules, against a recorded list of the existing literals that may only shrink ([PROMPT_STANDARD](../PROMPT_STANDARD.md) rules 13 and 36).
 
 ### M5 — data contracts as their own section
 

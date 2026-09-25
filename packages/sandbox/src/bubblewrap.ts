@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync } from "node:fs";
-import { linkedDependencyCaches, protectedInsideRoots, realPath } from "./seatbelt.js";
+import { existsSync } from "node:fs";
+import { protectedInsideRoots, realPath } from "./seatbelt.js";
 import type { SandboxOptions } from "./types.js";
 
 /** Where bubblewrap lives on Ubuntu, Debian and Fedora. */
@@ -27,17 +27,8 @@ export function bubblewrapArgv(
   seccompFd?: number,
 ): string[] {
   const roots = [...options.allowedPaths, ...(options.scratchDir ? [options.scratchDir] : [])];
-  // Dependency code stays read-only; only its cache directories are writable,
-  // created first because a bind needs an existing path.
-  const caches = linkedDependencyCaches(roots);
-  for (const c of caches) {
-    try {
-      mkdirSync(c, { recursive: true });
-    } catch {
-      // Unwritable from outside too: the toolchain reports the consequence.
-    }
-  }
-  const writeRoots = [...new Set([...roots.map(realPath), ...caches])];
+  // S2: no grant reaches the main checkout's dependency tree (item 24).
+  const writeRoots = [...new Set(roots.map(realPath))];
   // The git metadata inside a granted path is re-mounted read-only after the
   // writable binds: git runs outside the sandbox in that worktree.
   const protectedGit = protectedInsideRoots(roots).filter((p) => existsSync(p));

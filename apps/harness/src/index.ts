@@ -19,12 +19,19 @@ import {
   summarizeEvidence,
 } from "@sekhemet/gates";
 import { remedyFor } from "@sekhemet/gates";
-import { type CardRecord, CardStore, EventLog, initSchema } from "@sekhemet/kernel";
+import {
+  type CardRecord,
+  CardStore,
+  DEFAULT_STEP_BUDGET,
+  EventLog,
+  initSchema,
+} from "@sekhemet/kernel";
 import { planRepair } from "@sekhemet/loop";
 import {
   HttpInferenceAdapter,
   MANAGED_MODEL_NAMES,
   MemoryWatchdog,
+  ModelRegistry,
   ModelRoster,
   ModelRouter,
   NAIL_WORKER_PROFILE,
@@ -32,6 +39,7 @@ import {
   ThroughputMeter,
   type UnloadableAdapter,
   createNail35BAdapter,
+  defaultRegistryPath,
   measureThroughput,
 } from "@sekhemet/models";
 import { SpidrFeaturePlanner } from "@sekhemet/planner";
@@ -497,7 +505,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       console.log("No recorded Worker steps yet. Run `sekhemet queue` first.");
       return;
     }
-    const report = tune(attempts, { stepBudget: 40, maxFailedChecks: 4 });
+    const report = tune(attempts, { stepBudget: DEFAULT_STEP_BUDGET, maxFailedChecks: 4 });
     const fmt = (s: typeof report.current) =>
       `${s.policy.stepBudget} steps, ${s.policy.maxFailedChecks} failed checks: first try ${s.firstTry}/${s.cards}, eventually ${s.eventually}/${s.cards}, ${s.minutes} min`;
     console.log(`Replayed ${attempts.length} attempts on ${report.current.cards} cards.`);
@@ -599,6 +607,18 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       ...(flag("--until") ? { until: flag("--until") as string } : {}),
       ...(flag("--idle-min") ? { idleMinutes: Number(flag("--idle-min")) } : {}),
       queueArgs,
+      // SEC-37b: the Worker this queue runs, as the model registry records it.
+      worker: (() => {
+        // The queue's own choice (`--worker`, then config, then the default
+        // Worker profile), with an `ollama/` prefix stripped as the queue does.
+        const modelId = (
+          flag("--worker") ??
+          queueDefaults(effectiveConfig(config.repoPath, argv).config, argv).worker ??
+          NAIL_WORKER_PROFILE.modelId
+        ).replace(/^ollama\//, "");
+        const quant = new ModelRegistry(defaultRegistryPath()).get(modelId)?.quant ?? "unknown";
+        return { modelId, quant };
+      })(),
     });
     if (summary.passed < summary.cardsRun) process.exitCode = 1;
     return;
@@ -813,7 +833,9 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     if (cardId && cwd !== config.repoPath) {
       const changed = (await new NodeGitSyncAdapter(config.repoPath).getDiffStats(cardId))
         .filesTouched;
-      const pkg = await runPackageGates(config.repoPath, cwd, changed);
+      const pkg = await runPackageGates(config.repoPath, cwd, changed, undefined, {
+        restricted: config.restrictedMode,
+      });
       if (pkg.some((p) => !p.passed)) res = { ...res, passed: false };
     }
     let boundsOk = true;
@@ -1089,7 +1111,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
             total: new Set(rep.entries.map((e) => e.cardId)).size,
             minutes: rep.totalDurationMs / 60000,
             tokens: rep.entries.reduce((n, e) => n + e.promptTokens + e.completionTokens, 0),
-            stepBudget: appliedStepBudget(config.repoPath) ?? 50,
+            stepBudget: appliedStepBudget(config.repoPath) ?? DEFAULT_STEP_BUDGET,
           };
         }),
       harnessRoot,

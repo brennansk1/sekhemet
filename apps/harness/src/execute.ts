@@ -43,6 +43,7 @@ import {
   type CacheSummary,
   type LocalInferenceAdapter,
   type MemoryWatchdog,
+  ModelRegistry,
   type ThroughputStats,
   checkExecutionHeadroom,
   readSwapUsedBytes,
@@ -73,6 +74,18 @@ function openTracer(repoPath: string): Tracer | undefined {
     return Tracer.forRepo(repoPath);
   } catch {
     return undefined;
+  }
+}
+
+/**
+ * Whether the registry marks the Worker model script-capable (WL-M2-4): only
+ * then is `run_script` offered. An unreadable registry means no.
+ */
+export function workerScriptCapable(modelId: string, registryPath?: string): boolean {
+  try {
+    return new ModelRegistry(registryPath).get(modelId)?.scriptCapable === true;
+  } catch {
+    return false;
   }
 }
 
@@ -481,6 +494,8 @@ export async function executeCard(
     // turn used to carry all thirty schemas, and a card that never leaves
     // read/edit/check paid prefill for the other twenty-five on every step.
     progressiveTools: true,
+    // WL-M2-4: `run_script` only for a Worker the registry marks script-capable.
+    scriptCapable: workerScriptCapable(model.modelId),
     // Where the Worker thinks: off (default), surgical or all. An experiment
     // setting until the frozen suite picks one; recorded in every bundle.
     thinking: thinkingPolicy(),
@@ -971,13 +986,31 @@ async function pendingStartPoint(cardStore: CardStore, cardId: string) {
 const SLICE_KINDS = new Set(["spike", "interface", "data", "path", "rule"]);
 
 /**
+ * Whether the card still carries the step budget it was given for want of one
+ * (WL-T3-11): created without an explicit `stepBudget` (the card/created
+ * event records it) and its stored budget not changed since. Decided from the
+ * record, never from the value — suite cards set the default's value, 40,
+ * explicitly — and against the stored card, not the caller's copy, which the
+ * queue may have capped (--max-turns, a tune policy).
+ */
+async function stepBudgetDefaulted(
+  ctx: ExecutionContext,
+  cardId: string,
+  storedBudget: number | undefined,
+): Promise<boolean> {
+  const [created] = await ctx.cardStore.cardEvents(cardId, ["card/created"]);
+  const p = created?.payload as { stepBudget?: number; stepBudgetDefaulted?: boolean } | undefined;
+  return p?.stepBudgetDefaulted === true && p.stepBudget === storedBudget;
+}
+
+/**
  * Pull a Ready card through Planning (B2, design: "Ready -> Planning:
  * planner claims; Planning -> InProgress: plan + criteria approved"). The
  * Planning entry condition is a scored difficulty, so an unscored card is
  * scored here from its shape and this repo's measured failure rate (K25);
  * its step budget is then moved toward what passing attempts of its class
  * used (L21, at most 15% per calibration), or set from the difficulty when
- * the card still carries the schema default and nothing is measured yet.
+ * the card was created without a step budget and nothing is measured yet.
  */
 export async function pullThroughPlanning(
   ctx: ExecutionContext,
@@ -999,8 +1032,9 @@ export async function pullThroughPlanning(
     patch.difficulty = Math.max(1, Math.min(10, Math.round(scored)));
   }
   const decision = calibratedStepBudget(card.stepBudget, measured);
+  const storedBudget = (await ctx.cardStore.getCard(card.id))?.stepBudget;
   if (decision.changed) patch.stepBudget = decision.budget;
-  else if (measured.attempts === 0 && card.stepBudget === 50) {
+  else if (measured.attempts === 0 && (await stepBudgetDefaulted(ctx, card.id, storedBudget))) {
     patch.stepBudget = stepBudgetForDifficulty(patch.difficulty ?? card.difficulty ?? 4);
   }
   const updated =
@@ -1008,6 +1042,7 @@ export async function pullThroughPlanning(
       ? await ctx.cardStore.updateCard(card.id, patch, "planner")
       : card;
   if (patch.stepBudget !== undefined) {
+    const from = decision.changed ? card.stepBudget : (storedBudget ?? card.stepBudget);
     await ctx.cardStore
       .recordEvent({
         type: "card/budget_set",
@@ -1015,13 +1050,13 @@ export async function pullThroughPlanning(
         actor: "planner",
         payload: {
           id: card.id,
-          from: card.stepBudget,
+          from,
           to: patch.stepBudget,
           reason: decision.changed ? decision.reason : "set from difficulty (nothing measured yet)",
         },
       })
       .catch(() => undefined);
-    log(`   budget ${card.stepBudget} -> ${patch.stepBudget} steps`);
+    log(`   budget ${from} -> ${patch.stepBudget} steps`);
   }
   await ctx.boardService.transitionCard({
     cardId: card.id,
@@ -1030,7 +1065,14 @@ export async function pullThroughPlanning(
     actor: "planner",
     reason: "planner claims the card",
   });
-  return { ...updated, status: "planning" };
+  // A cap the caller put on its copy (the queue's --max-turns) still holds
+  // for this run; the stored budget is the planner's.
+  const capped = storedBudget !== undefined && card.stepBudget < storedBudget;
+  const run =
+    capped && patch.stepBudget !== undefined && card.stepBudget < patch.stepBudget
+      ? { ...updated, stepBudget: card.stepBudget }
+      : updated;
+  return { ...run, status: "planning" };
 }
 
 /**

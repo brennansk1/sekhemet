@@ -7,14 +7,24 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  renameSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
 import { basename, join } from "node:path";
+import { approveSkill } from "@sekhemet/context";
 import { type RegistryLookup, onPath } from "@sekhemet/gates";
-import type { EventLog } from "@sekhemet/kernel";
+import { type EventLog, parseToml } from "@sekhemet/kernel";
 import { type ModelRegistry, readChatTemplate, templateChecksum } from "@sekhemet/models";
-import { ProcessSandbox } from "@sekhemet/sandbox";
+import {
+  EgressProxy,
+  type EgressRecord,
+  ProcessSandbox,
+  mergeNetworkConfigs,
+  policyFetch,
+} from "@sekhemet/sandbox";
+import { networkConfigs } from "./config_apply.js";
 import { type TextFetch, docRoot, sitemapUrls } from "./research/docs.js";
 import { ResearchCache } from "./research/polite.js";
 
@@ -94,6 +104,22 @@ export function allowlistFromLockfiles(repo: string): MirrorAllowlist {
   if (existsSync(req)) {
     for (const m of readFileSync(req, "utf8").matchAll(/^([A-Za-z0-9_.-]+)==([^\s;#]+)/gm)) {
       addVersion(out.pypi, (m[1] as string).toLowerCase(), m[2] as string);
+    }
+  }
+  // poetry.lock and uv.lock: `[[package]]` tables with name and version (B1 review).
+  for (const lock of ["poetry.lock", "uv.lock"]) {
+    const path = join(repo, lock);
+    if (!existsSync(path)) continue;
+    try {
+      const pkgs = (parseToml(readFileSync(path, "utf8")).package ?? []) as unknown;
+      for (const p of Array.isArray(pkgs) ? pkgs : []) {
+        const { name, version } = p as { name?: unknown; version?: unknown };
+        if (typeof name === "string" && typeof version === "string") {
+          addVersion(out.pypi, name.toLowerCase(), version);
+        }
+      }
+    } catch {
+      // An unreadable lockfile pins nothing.
     }
   }
   const cargo = join(repo, "Cargo.lock");
@@ -296,10 +322,151 @@ export interface DocBundle {
   createdAt: string;
   entries: { file: string; json: string }[];
   sha256: string;
+  /** SEC-44: the dependency versions the docs were fetched at (`npm:<name>` → versions). */
+  versions?: Record<string, string[]>;
+  /** SEC-45: the dependencies (same keys) whose docs could not be fetched at these versions. */
+  unavailable?: Record<string, string[]>;
+}
+
+/** Where an imported bundle's versions are kept beside the cache (not a cache entry). */
+const BUNDLE_META = ".bundle-meta";
+
+type BundleMeta = Pick<DocBundle, "versions" | "unavailable">;
+
+function readBundleMeta(cacheDir: string): BundleMeta | undefined {
+  const file = join(cacheDir, BUNDLE_META);
+  if (!existsSync(file)) return undefined;
+  try {
+    return JSON.parse(readFileSync(file, "utf8")) as BundleMeta;
+  } catch {
+    // A corrupt record is treated as no record, never a crash of the self-test.
+    return undefined;
+  }
+}
+
+function writeBundleMeta(cacheDir: string, meta: BundleMeta): void {
+  writeFileSync(join(cacheDir, BUNDLE_META), JSON.stringify(meta));
+}
+
+/**
+ * SEC-44: each direct dependency's docs and any published `llms.txt`, at the
+ * version the lockfile pins, fetched on the connected machine into the
+ * research cache; returns the versions for the bundle to record.
+ */
+export async function prefetchPinnedDocs(
+  repo: string,
+  fetchText: TextFetch,
+  cache: ResearchCache,
+): Promise<{
+  versions: Record<string, string[]>;
+  unavailable: Record<string, string[]>;
+  pages: number;
+  missing: string[];
+}> {
+  const pinned = allowlistFromLockfiles(repo);
+  const versions: Record<string, string[]> = {};
+  const unavailable: Record<string, string[]> = {};
+  const missing: string[] = [];
+  let pages = 0;
+  const store = async (url: string): Promise<string | undefined> => {
+    const body = await fetchText(url).catch(() => undefined);
+    if (body === undefined) return undefined;
+    cache.set(url, 200, "text/plain", body);
+    pages++;
+    return body;
+  };
+  // `llms.txt` lives on a project's docs site, not in its package (B1 review):
+  // try the site's origin as well as the package itself.
+  const siteLlms = async (site: unknown): Promise<number> => {
+    if (typeof site !== "string" || !/^https?:\/\//.test(site)) return 0;
+    return (await store(`${new URL(site).origin}/llms.txt`)) === undefined ? 0 : 1;
+  };
+  for (const name of directNpmDependencies(repo)) {
+    const vs = pinned.npm[name];
+    if (!vs?.length) continue;
+    let got = 0;
+    for (const v of vs) {
+      if ((await store(`https://unpkg.com/${name}@${v}/README.md`)) !== undefined) got++;
+      if ((await store(`https://unpkg.com/${name}@${v}/llms.txt`)) !== undefined) got++;
+      const manifest = await store(`https://unpkg.com/${name}@${v}/package.json`);
+      if (manifest !== undefined) {
+        try {
+          got += await siteLlms((JSON.parse(manifest) as { homepage?: unknown }).homepage);
+        } catch {
+          // A manifest that is not JSON names no site.
+        }
+      }
+    }
+    // SEC-44: a version is recorded only for docs actually stored.
+    if (got > 0) versions[`npm:${name}`] = vs;
+    else {
+      unavailable[`npm:${name}`] = vs;
+      missing.push(name);
+    }
+  }
+  for (const [name, vs] of Object.entries(pinned.pypi).sort()) {
+    let got = 0;
+    for (const v of vs) {
+      const meta = await store(`https://pypi.org/pypi/${name}/${v}/json`);
+      if (meta === undefined) continue;
+      got++;
+      try {
+        const urls = (JSON.parse(meta) as { info?: { project_urls?: Record<string, string> } }).info
+          ?.project_urls;
+        for (const site of Object.values(urls ?? {})) got += await siteLlms(site);
+      } catch {
+        // As above.
+      }
+    }
+    if (got > 0) versions[`pypi:${name}`] = vs;
+    else {
+      unavailable[`pypi:${name}`] = vs;
+      missing.push(name);
+    }
+  }
+  return { versions, unavailable, pages, missing };
+}
+
+/** The project's direct npm dependencies (dependencies and devDependencies). */
+function directNpmDependencies(repo: string): string[] {
+  const pkgPath = join(repo, "package.json");
+  if (!existsSync(pkgPath)) return [];
+  const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as {
+    dependencies?: object;
+    devDependencies?: object;
+  };
+  return Object.keys({ ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) }).sort();
+}
+
+/** SEC-45: the packages whose imported docs no longer match the lockfile. */
+export function docsBundleStaleness(repo: string, cacheDir: string): string[] {
+  const meta = readBundleMeta(cacheDir);
+  if (!meta) return [];
+  // Docs that could not be fetched at a version count as recorded at it, so
+  // they are not flagged on every run; a new version is worth trying again.
+  const recorded = { ...(meta.unavailable ?? {}), ...(meta.versions ?? {}) };
+  const now = allowlistFromLockfiles(repo);
+  const stale: string[] = [];
+  // A dependency added since the bundle was built has no docs in it (B1 review).
+  for (const name of directNpmDependencies(repo)) {
+    if (now.npm[name]?.length && !recorded[`npm:${name}`]) stale.push(name);
+  }
+  for (const [name, vs] of Object.entries(now.pypi)) {
+    if (vs.length && !recorded[`pypi:${name}`]) stale.push(name);
+  }
+  for (const [key, vs] of Object.entries(recorded)) {
+    const [eco, ...rest] = key.split(":");
+    const name = rest.join(":");
+    const current = (eco === "pypi" ? now.pypi : now.npm)[name] ?? [];
+    // A dependency no longer in the lockfile needs no docs.
+    if (current.length === 0) continue;
+    if (JSON.stringify([...current].sort()) !== JSON.stringify([...vs].sort())) stale.push(name);
+  }
+  return stale.sort();
 }
 
 /** Export the research cache as one bundle file (with its checksum). */
-export function exportDocBundle(cacheDir: string, out: string): DocBundle {
+export function exportDocBundle(cacheDir: string, out: string, meta: BundleMeta = {}): DocBundle {
   const entries = existsSync(cacheDir)
     ? readdirSync(cacheDir)
         .filter((f) => f.endsWith(".json"))
@@ -307,7 +474,18 @@ export function exportDocBundle(cacheDir: string, out: string): DocBundle {
         .map((f) => ({ file: f, json: readFileSync(join(cacheDir, f), "utf8") }))
     : [];
   const sha256 = createHash("sha256").update(JSON.stringify(entries)).digest("hex");
-  const bundle: DocBundle = { version: 1, createdAt: new Date().toISOString(), entries, sha256 };
+  // The versions `docs --pinned` recorded beside the cache travel with it.
+  const stored = meta.versions || meta.unavailable ? meta : readBundleMeta(cacheDir);
+  const versions = stored?.versions;
+  const unavailable = stored?.unavailable;
+  const bundle: DocBundle = {
+    version: 1,
+    createdAt: new Date().toISOString(),
+    entries,
+    sha256,
+    ...(versions ? { versions } : {}),
+    ...(unavailable ? { unavailable } : {}),
+  };
   writeFileSync(out, JSON.stringify(bundle));
   return bundle;
 }
@@ -327,6 +505,11 @@ export function importDocBundle(file: string, cacheDir: string): number {
     const entry = JSON.parse(e.json) as { at: number };
     writeFileSync(join(cacheDir, basename(e.file)), JSON.stringify({ ...entry, at: Date.now() }));
   }
+  if (b.versions || b.unavailable)
+    writeBundleMeta(cacheDir, {
+      ...(b.versions ? { versions: b.versions } : {}),
+      ...(b.unavailable ? { unavailable: b.unavailable } : {}),
+    });
   return b.entries.length;
 }
 
@@ -363,6 +546,62 @@ export interface UpdateManifest {
   /** Event-log schema versions this update can run against. */
   compatibleSchema: number[];
   note: string;
+  /** SEC-46: skills this signed bundle carries, name → SHA-256 of its SKILL.md. */
+  skills?: Record<string, string>;
+}
+
+const verifiedSkillsPath = (repo: string) =>
+  join(repo, ".sekhemet", "airgap", "verified-skills.json");
+
+/**
+ * SEC-46: in air-gap mode a skill is accepted only as the content a signed
+ * update bundle carried; approval by content hash is still required after.
+ */
+export function airgapSkillApproval(
+  repo: string,
+  skillsDir: string,
+  name: string,
+): { ok: boolean; reason?: string; sha256?: string } {
+  if (!isAirgapped(repo)) return { ok: true };
+  const file = join(skillsDir, name, "SKILL.md");
+  if (!existsSync(file)) return { ok: false, reason: `no skill ${name}` };
+  const sha = createHash("sha256").update(readFileSync(file, "utf8"), "utf8").digest("hex");
+  let verified: Record<string, string> = {};
+  try {
+    verified = JSON.parse(readFileSync(verifiedSkillsPath(repo), "utf8")) as Record<string, string>;
+  } catch {
+    verified = {};
+  }
+  return verified[name] === sha
+    ? { ok: true, sha256: sha }
+    : {
+        ok: false,
+        reason: `air-gap mode: ${name} is not the content of a signed update bundle; import it with sekhemet airgap update`,
+      };
+}
+
+/**
+ * Approve a skill and check the pin is the content the air-gap check
+ * verified (`expectedSha`, or anything when not air-gapped). On a mismatch
+ * the lock file is restored byte for byte, so an earlier valid pin survives
+ * (SEC-46, B1 re-review).
+ */
+export function approveVerifiedSkill(
+  skillsDir: string,
+  name: string,
+  lockPath: string,
+  expectedSha: string | undefined,
+): { ok: boolean; sha256: string } {
+  const before = existsSync(lockPath) ? readFileSync(lockPath) : undefined;
+  const e = approveSkill(skillsDir, name, "human", lockPath);
+  if (!expectedSha || e.sha256 === expectedSha) return { ok: true, sha256: e.sha256 };
+  if (before) {
+    // Atomic, as `writeSkillLock` writes it.
+    const tmpFile = `${lockPath}.${process.pid}.tmp`;
+    writeFileSync(tmpFile, before);
+    renameSync(tmpFile, lockPath);
+  } else rmSync(lockPath, { force: true });
+  return { ok: false, sha256: e.sha256 };
 }
 
 /**
@@ -401,6 +640,17 @@ export function applyUpdate(
   }
   mkdirSync(opts.target, { recursive: true });
   execFileSync("tar", ["-xzf", bundle, "-C", opts.target]);
+  if (manifest.skills && Object.keys(manifest.skills).length > 0) {
+    const path = verifiedSkillsPath(opts.repo);
+    let verified: Record<string, string> = {};
+    try {
+      verified = JSON.parse(readFileSync(path, "utf8")) as Record<string, string>;
+    } catch {
+      verified = {};
+    }
+    mkdirSync(join(opts.repo, ".sekhemet", "airgap"), { recursive: true });
+    writeFileSync(path, JSON.stringify({ ...verified, ...manifest.skills }, null, 2));
+  }
   return {
     applied: true,
     ...(backup ? { backup } : {}),
@@ -432,10 +682,13 @@ export async function airgapSelfTest(
     cacheDir?: string;
     knownQuery?: string;
     sandbox?: ProcessSandbox;
+    /** The project's gate commands, run as a card runs them (SEC-33). */
+    gateRuns?: { id: string; command: string; args: string[]; timeoutS?: number }[];
   } = {},
 ): Promise<{ ok: boolean; checks: SelfTestCheck[] }> {
   const checks: SelfTestCheck[] = [];
   const sandbox = opts.sandbox ?? new ProcessSandbox();
+  // A direct connection, bypassing any proxy, must fail in the sandbox.
   const probe = await sandbox
     .execute(
       process.execPath,
@@ -454,6 +707,46 @@ export async function airgapSelfTest(
         ? "a connection to 1.1.1.1:443 succeeded from the sandbox"
         : "outbound connection refused in the sandbox",
   });
+  // SEC-33: run the project's gates confined, with a proxy that allows
+  // nothing; any request it records is an attempt to leave the machine.
+  if (opts.gateRuns?.length) {
+    const attempts: EgressRecord[] = [];
+    const notRun: string[] = [];
+    const proxy = new EgressProxy({ allow: [], onRequest: (rec) => attempts.push(rec) });
+    const port = await proxy.start();
+    try {
+      for (const g of opts.gateRuns) {
+        // Each gate's own time limit, and its exit recorded: a gate that never
+        // ran proves nothing about the network (B1 review).
+        const res = await sandbox
+          .execute(g.command, g.args, {
+            allowedPaths: [repo],
+            allowNetwork: false,
+            egressProxyPort: port,
+            timeoutMs: (g.timeoutS ?? 60) * 1000,
+            cwd: repo,
+          })
+          .catch(() => undefined);
+        if (!res || res.exitCode === 126 || res.exitCode === 127 || res.timedOut) {
+          notRun.push(
+            `${g.id} (${res?.timedOut ? "timed out" : `exit ${res?.exitCode ?? "error"}`})`,
+          );
+        }
+      }
+    } finally {
+      await proxy.close();
+    }
+    checks.push({
+      name: "gates make no outbound attempt",
+      ok: attempts.length === 0 && notRun.length === 0,
+      detail:
+        attempts.length > 0
+          ? `outbound attempts: ${[...new Set(attempts.map((a) => a.host))].join(", ")}`
+          : notRun.length > 0
+            ? `not proven, these gates did not run to completion: ${notRun.join(", ")}`
+            : `${opts.gateRuns.length} gate(s) ran with no outbound attempt`,
+    });
+  }
   for (const g of opts.gates ?? []) {
     const found = onPath(g.command);
     checks.push({
@@ -489,6 +782,18 @@ export async function airgapSelfTest(
       detail: hit
         ? `"${opts.knownQuery}" found in the doc cache`
         : "no cached docs answer the query",
+    });
+  }
+  // SEC-45: the imported docs bundle against today's lockfile.
+  if (cacheDir && existsSync(join(cacheDir, BUNDLE_META))) {
+    const stale = docsBundleStaleness(repo, cacheDir);
+    checks.push({
+      name: "docs bundle matches the lockfile",
+      ok: stale.length === 0,
+      detail:
+        stale.length === 0
+          ? "every package's docs match its pinned version"
+          : `stale: ${stale.join(", ")}`,
     });
   }
   const ok = checks.every((c) => c.ok);
@@ -575,16 +880,42 @@ export async function airgapCommand(
       return results.every((r) => r.ok) ? 0 : 1;
     }
     case "docs": {
-      if (!a1) return done("Usage: sekhemet airgap docs <library-or-url>", 1);
-      const { KNOWN_DOCS } = await import("./research/docs.js");
-      const entry = /^https?:/.test(a1) ? a1 : KNOWN_DOCS[a1.toLowerCase()];
-      if (!entry) return done(`No known docs home for ${a1}; pass its URL.`, 1);
+      if (!a1) return done("Usage: sekhemet airgap docs <library-or-url> | --pinned", 1);
+      // Through the one network policy, recorded (security item 32).
+      const nets = networkConfigs(repo);
+      const policied = policyFetch(mergeNetworkConfigs(nets.user, nets.project), {
+        purpose: "docs",
+        ...(deps.log
+          ? {
+              record: (r) => {
+                void deps.log?.append({ actor: "system", type: "harness/egress", payload: r });
+              },
+            }
+          : {}),
+      });
       const fetchText: TextFetch = async (url) => {
-        const res = await fetch(url, { signal: AbortSignal.timeout(20_000) }).catch(
+        const res = await policied(url, { signal: AbortSignal.timeout(20_000) }).catch(
           () => undefined,
         );
         return res?.ok ? await res.text() : undefined;
       };
+      if (a1 === "--pinned") {
+        const r = await prefetchPinnedDocs(repo, fetchText, new ResearchCache(cacheDir));
+        mkdirSync(cacheDir, { recursive: true });
+        writeBundleMeta(cacheDir, { versions: r.versions, unavailable: r.unavailable });
+        print(
+          `Cached ${r.pages} page(s) for ${Object.keys(r.versions).length} pinned dependencies.`,
+        );
+        if (r.missing.length) {
+          print(
+            `No docs fetched for: ${r.missing.join(", ")} (check [network] in your config.toml; offline refuses every request).`,
+          );
+        }
+        return r.pages > 0 ? 0 : 1;
+      }
+      const { KNOWN_DOCS } = await import("./research/docs.js");
+      const entry = /^https?:/.test(a1) ? a1 : KNOWN_DOCS[a1.toLowerCase()];
+      if (!entry) return done(`No known docs home for ${a1}; pass its URL.`, 1);
       const r = await prefetchDocs(
         entry,
         fetchText,
@@ -637,9 +968,14 @@ export async function airgapCommand(
     }
     case "selftest": {
       const { loadGatesConfig } = await import("@sekhemet/gates");
-      let gates: { id: string; command: string }[] = [];
+      let gates: { id: string; command: string; args: string[] }[] = [];
       try {
-        gates = loadGatesConfig(repo).gates.map((g) => ({ id: g.id, command: g.command }));
+        gates = loadGatesConfig(repo).gates.map((g) => ({
+          id: g.id,
+          command: g.command,
+          args: g.args ?? [],
+          ...(g.timeoutMs ? { timeoutS: Math.ceil(g.timeoutMs / 1000) } : {}),
+        }));
       } catch {
         gates = [];
       }
@@ -647,6 +983,8 @@ export async function airgapCommand(
       const r = await airgapSelfTest(repo, {
         ...(deps.log ? { log: deps.log } : {}),
         gates,
+        // SEC-33: the gates run as a card runs them, watched at a deny-all proxy.
+        ...(args.includes("--run-gates") ? { gateRuns: gates } : {}),
         ...(existsSync(manifestPath) && flag("--models-dir")
           ? {
               manifest: JSON.parse(readFileSync(manifestPath, "utf8")) as ModelManifest,

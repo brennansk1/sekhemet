@@ -4,7 +4,12 @@
     "outDir": "./dist",
     "rootDir": "./src"
   },
-  "references": [{ "path": "../kernel" }, { "path": "../models" }, { "path": "../gates" }],
+  "references": [
+    { "path": "../kernel" },
+    { "path": "../models" },
+    { "path": "../gates" },
+    { "path": "../sandbox" }
+  ],
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "tests"]
 }

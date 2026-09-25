@@ -4,6 +4,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { EventLog } from "./log.js";
 import { keyBetween } from "./order_key.js";
 import { RunLedger } from "./records.js";
+import { DEFAULT_STEP_BUDGET } from "./stop_reasons.js";
 import {
   CARD_STOP_REASONS,
   type CardDossier,
@@ -365,7 +366,10 @@ export class CardStore {
       title: input.title,
       status,
       scopeFiles: input.scopeFiles ?? [],
-      stepBudget: input.stepBudget ?? 50,
+      stepBudget: input.stepBudget ?? DEFAULT_STEP_BUDGET,
+      // WL-T3-11: whether the budget was defaulted is recorded, not inferred
+      // from the value — a card may set the default's value explicitly.
+      ...(input.stepBudget === undefined ? { stepBudgetDefaulted: true } : {}),
       stepsUsed: 0,
       spec: input.spec ?? null,
       acceptanceCriteria: input.acceptanceCriteria ?? [],
@@ -1100,7 +1104,7 @@ export class CardStore {
         payload.title as string,
         payload.status as string,
         JSON.stringify(payload.scopeFiles ?? []),
-        (payload.stepBudget as number) ?? 50,
+        (payload.stepBudget as number) ?? DEFAULT_STEP_BUDGET,
         (payload.stepsUsed as number) ?? 0,
         (payload.spec as string) ?? null,
         JSON.stringify(payload.acceptanceCriteria ?? []),

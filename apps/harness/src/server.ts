@@ -13,7 +13,7 @@ import { basename, extname, join, resolve, sep } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import type { BoardService } from "@sekhemet/board";
 import { type EvidenceBundle, type GatesConfig, loadGatesConfig } from "@sekhemet/gates";
-import type { CardRecord, CardStore, EventLog } from "@sekhemet/kernel";
+import { type CardRecord, type CardStore, type EventLog, STOP_REASONS } from "@sekhemet/kernel";
 import type { LocalInferenceAdapter } from "@sekhemet/models";
 import { DecisionStore } from "@sekhemet/planner";
 import {
@@ -537,7 +537,7 @@ export function startDashboardServer(
     }
 
     if (url === "/vocab.json") {
-      json(res, 200, vocabularyTables());
+      json(res, 200, vocabularyTables(STOP_REASONS));
       return;
     }
 

@@ -1,4 +1,5 @@
 import { existsSync, lstatSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import type { SandboxOptions } from "./types.js";
 
@@ -26,23 +27,6 @@ export function realPath(p: string): string {
  * gate fails on EPERM rather than on the card's work. The grant is deliberately
  * narrow: the dependency tree only, never its parent.
  */
-/**
- * The cache directories inside linked dependency trees that toolchains must
- * write (vitest's `.vite-temp`, bundler caches), and nothing else.
- *
- * The first version granted writes to the whole linked tree, which is the
- * user's main checkout's `node_modules`: a card could then change code the
- * user runs unconfined (Phase A security review, 2026-09-22). The dependency
- * code itself stays read-only.
- */
-export const DEPENDENCY_CACHE_DIRS = [".vite-temp", ".vite", ".cache"] as const;
-
-export function linkedDependencyCaches(roots: string[]): string[] {
-  return linkedDependencyTargets(roots)
-    .filter((t) => t.endsWith("node_modules"))
-    .flatMap((t) => DEPENDENCY_CACHE_DIRS.map((d) => join(t, d)));
-}
-
 /**
  * Paths inside a writable root that the sandbox must never write: the git
  * metadata. A worktree's `.git` pointer tells git where its metadata lives,
@@ -72,6 +56,39 @@ export function linkedDependencyTargets(roots: string[]): string[] {
   return targets;
 }
 
+/**
+ * Toolchains that commonly live under the user's home: version managers,
+ * package-manager stores and the Playwright browser cache. Under
+ * `denyHomeReads` they stay readable; nothing else in the home does.
+ */
+export function homeToolchainPaths(home: string = homedir()): string[] {
+  return [
+    ".nvm",
+    ".volta",
+    ".fnm",
+    ".asdf",
+    ".cargo",
+    ".rustup",
+    ".pyenv",
+    ".bun",
+    ".deno",
+    join("Library", "pnpm"),
+    join(".local", "share", "pnpm"),
+    join("Library", "Caches", "ms-playwright"),
+    join(".cache", "ms-playwright"),
+  ].map((p) => join(home, p));
+}
+
+/**
+ * What a headless Chromium needs beyond the base profile to start
+ * (SandboxOptions.browser): its own Mach services and the power-management
+ * IOKit client, nothing wider. Without them it crashes at start.
+ */
+const BROWSER_RULES = `
+;; S3a: a headless browser.
+(allow mach-register (global-name-prefix "org.chromium."))
+(allow iokit-open (iokit-user-client-class "RootDomainUserClient"))`;
+
 /** Escape a path for embedding in a Seatbelt regex literal. */
 function regexQuote(p: string): string {
   return p.replace(/[\\^$.*+?()[\]{}|"#]/g, (c) => `\\${c}`);
@@ -96,7 +113,9 @@ export function generateSeatbeltProfile(options: SandboxOptions): string {
   // into any other card's scratch space — which is still an escape, just a
   // quieter one.
   const roots = [...options.allowedPaths, ...(options.scratchDir ? [options.scratchDir] : [])];
-  const writeRoots = [...new Set([...roots.map(realPath), ...linkedDependencyCaches(roots)])];
+  // S2: no grant reaches the main checkout's dependency tree; each worktree
+  // has its own caches (item 24).
+  const writeRoots = [...new Set(roots.map(realPath))];
 
   const writeRules = writeRoots
     .map((p) => `  (allow file-write* (subpath "${quote(p)}"))`)
@@ -134,6 +153,20 @@ export function generateSeatbeltProfile(options: SandboxOptions): string {
     )
     .join("\n");
 
+  // S3a: the home directory's contents are unreadable, the toolchains in it
+  // and the granted roots excepted (later rules win). Metadata stays
+  // readable so paths still resolve.
+  const home = realPath(homedir());
+  const homeRules = options.denyHomeReads
+    ? [
+        ";; S3a: nothing under the user's home but its toolchains and the granted roots.",
+        `  (deny file-read-data (subpath "${quote(home)}"))`,
+        ...[...homeToolchainPaths(), ...roots]
+          .map(realPath)
+          .map((p) => `  (allow file-read-data (subpath "${quote(p)}"))`),
+      ].join("\n")
+    : "";
+
   return `;; Sekhemet Seatbelt Containment Profile
 (version 1)
 (deny default)
@@ -153,6 +186,7 @@ export function generateSeatbeltProfile(options: SandboxOptions): string {
 
 ;; Reads are broad: compilers and runtimes must load system libraries.
 (allow file-read*)
+${homeRules}
 
 ;; Writes are confined to explicitly granted subpaths.
 ${writeRules}
@@ -163,5 +197,5 @@ ${protectRules}
 
 ;; Network egress.
 ${networkRule}
-${portRules ? `\n;; L23: the card's own loopback ports.\n${portRules}\n` : ""}`;
+${portRules ? `\n;; L23: the card's own loopback ports.\n${portRules}\n` : ""}${options.browser ? BROWSER_RULES : ""}`;
 }

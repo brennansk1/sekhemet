@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { DEFAULT_STEP_BUDGET } from "@sekhemet/kernel";
 
 /**
  * Guardrails for every self-improvement loop (E5, E8, E17; design
@@ -242,7 +243,7 @@ export class BudgetPolicyStore {
 
   constructor(
     private readonly path: string,
-    defaults: BudgetPolicy = { stepBudget: 50, maxFailedChecks: 3 },
+    defaults: BudgetPolicy = { stepBudget: DEFAULT_STEP_BUDGET, maxFailedChecks: 3 },
   ) {
     this.state = readJson(path, { current: defaults, applied: [] as AppliedBudget[] });
   }

@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
+import { CardStore, DEFAULT_STEP_BUDGET, EventLog, initSchema } from "@sekhemet/kernel";
 import { MockInferenceAdapter } from "@sekhemet/models";
 import { DecisionStore } from "@sekhemet/planner";
 import { afterEach, describe, expect, it } from "vitest";
@@ -347,12 +347,14 @@ describe("tune --apply and the learning guard (E8, E17)", () => {
   it("applies within 15% and rolls a budget change back when outcomes drop", () => {
     const k = kernel();
     const applied = applyTunedPolicy(k.repoPath, { stepBudget: 20, maxFailedChecks: 3 }, "tune");
-    expect(applied.stepBudget).toBe(43);
-    expect(appliedStepBudget(k.repoPath)).toBe(43);
+    // WL-T3-11: from the one default of 40, a move of at most 15% lands on 34.
+    expect(DEFAULT_STEP_BUDGET).toBe(40);
+    expect(applied.stepBudget).toBe(34);
+    expect(appliedStepBudget(k.repoPath)).toBe(34);
     let msg: string | undefined;
     for (let i = 0; i < 10; i++) msg = observeOutcome(k.repoPath, `c${i}`, i < 2);
     expect(msg).toMatch(/rolled back/);
-    expect(appliedStepBudget(k.repoPath)).toBe(50);
+    expect(appliedStepBudget(k.repoPath)).toBe(DEFAULT_STEP_BUDGET);
   });
 });
 

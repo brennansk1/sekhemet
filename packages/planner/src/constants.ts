@@ -1,3 +1,4 @@
+import { DEFAULT_STEP_BUDGET } from "@sekhemet/kernel";
 import type { TierBudget } from "./types.js";
 
 /**
@@ -18,7 +19,7 @@ export const MAX_QUESTIONS_PER_SPEC = 3;
 export const INVEST_CONTEXT_FRACTION = 0.25;
 
 /** INVEST-S sizing: and the step budget may be at most this. Both must hold. */
-export const INVEST_MAX_STEPS = 40;
+export const INVEST_MAX_STEPS = DEFAULT_STEP_BUDGET;
 
 /** Above this, a card is re-split. A hard gate, not a warning (design §2485). */
 export const DIFFICULTY_SPLIT_THRESHOLD = 7;

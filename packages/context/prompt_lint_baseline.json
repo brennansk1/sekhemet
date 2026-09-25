@@ -1,0 +1,285 @@
+{
+  "about": "Per-template prompt lint counts (PROMPT_STANDARD rules 35.1 and 36). A count may fall, never rise. Rerun apps/harness/tests/prompt_lint_baseline.spec.ts with SEKHEMET_RECORD_PROMPT_BASELINE=1 to record a new template or a lowered count; recording refuses a rise.",
+  "templates": {
+    "planner.edit_sketch.prompt": {
+      "capitalWords": 1,
+      "imperativeRules": 1,
+      "negations": 0,
+      "longToolDescriptions": 0,
+      "ruleCountMethod": "legacy_directives"
+    },
+    "planner.edit_sketch.system": {
+      "capitalWords": 0,
+      "imperativeRules": 2,
+      "negations": 1,
+      "longToolDescriptions": 0,
+      "ruleCountMethod": "legacy_directives"
+    },
+    "planner.repair_plan.prompt": {
+      "capitalWords": 1,
+      "imperativeRules": 2,
+      "negations": 1,
+      "longToolDescriptions": 0,
+      "ruleCountMethod": "legacy_directives"
+    },
+    "planner.repair_plan.system": {
+      "capitalWords": 0,
+      "imperativeRules": 5,
+      "negations": 5,
+      "longToolDescriptions": 0,
+      "ruleCountMethod": "legacy_directives"
+    },
+    "planner.slices.prompt": {
+      "capitalWords": 0,
+      "imperativeRules": 0,
+      "negations": 1,
+      "longToolDescriptions": 0,
+      "ruleCountMethod": "legacy_directives"
+    },
+    "planner.slices.system": {
+      "capitalWords": 1,
+      "imperativeRules": 1,
+      "negations": 0,
+      "longToolDescriptions": 0,
+      "ruleCountMethod": "legacy_directives"
+    },
+    "qualification.system.arm_a_flat": {
+      "capitalWords": 0,
+      "imperativeRules": 6,
+      "negations": 1,
+      "longToolDescriptions": 0,
+      "ruleCountMethod": "legacy_directives"
+    },
+    "qualification.system.arm_b_json": {
+      "capitalWords": 0,
+      "imperativeRules": 6,
+      "negations": 1,
+      "longToolDescriptions": 0,
+      "ruleCountMethod": "legacy_directives"
+    },
+    "qualification.system.arm_c_sketch": {
+      "capitalWords": 2,
+      "imperativeRules": 5,
+      "negations": 0,
+      "longToolDescriptions": 0,
+      "ruleCountMethod": "legacy_directives"
+    },
+    "qualification.tool_descriptions": {
+      "capitalWords": 0,
+      "imperativeRules": 4,
+      "negations": 0,
+      "longToolDescriptions": 0,
+      "ruleCountMethod": "legacy_directives"
+    },
+    "researcher.agent": {
+      "capitalWords": 5,
+      "imperativeRules": 13,
+      "negations": 13,
+      "longToolDescriptions": 0,
+      "ruleCountMethod": "legacy_directives"
+    },
+    "researcher.apodex.system": {
+      "capitalWords": 4,
+      "imperativeRules": 0,
+      "negations": 0,
+      "longToolDescriptions": 0,
+      "ruleCountMethod": "legacy_directives"
+    },
+    "researcher.coordinator": {
+      "capitalWords": 7,
+      "imperativeRules": 8,
+      "negations": 7,
+      "longToolDescriptions": 0,
+      "ruleCountMethod": "legacy_directives"
+    },
+    "researcher.extract_info": {
+      "capitalWords": 9,
+      "imperativeRules": 2,
+      "negations": 2,
+      "longToolDescriptions": 0,
+      "ruleCountMethod": "legacy_directives"
+    },
+    "researcher.report_format": {
+      "capitalWords": 5,
+      "imperativeRules": 1,
+      "negations": 4,
+      "longToolDescriptions": 0,
+      "ruleCountMethod": "legacy_directives"
+    },
+    "researcher.research.prompt": {
+      "capitalWords": 3,
+      "imperativeRules": 6,
+      "negations": 4,
+      "longToolDescriptions": 0,
+      "ruleCountMethod": "legacy_directives"
+    },
+    "researcher.research.system": {
+      "capitalWords": 0,
+      "imperativeRules": 6,
+      "negations": 7,
+      "longToolDescriptions": 0,
+      "ruleCountMethod": "legacy_directives"
+    },
+    "researcher.subagent": {
+      "capitalWords": 3,
+      "imperativeRules": 2,
+      "negations": 4,
+      "longToolDescriptions": 0,
+      "ruleCountMethod": "legacy_directives"
+    },
+    "researcher.subagent.verifier": {
+      "capitalWords": 10,
+      "imperativeRules": 1,
+      "negations": 2,
+      "longToolDescriptions": 0,
+      "ruleCountMethod": "legacy_directives"
+    },
+    "researcher.tool_descriptions": {
+      "capitalWords": 4,
+      "imperativeRules": 35,
+      "negations": 2,
+      "longToolDescriptions": 4,
+      "ruleCountMethod": "legacy_directives"
+    },
+    "reviewer.review_card.prompt": {
+      "capitalWords": 6,
+      "imperativeRules": 4,
+      "negations": 1,
+      "longToolDescriptions": 0,
+      "ruleCountMethod": "legacy_directives"
+    },
+    "reviewer.review_card.system": {
+      "capitalWords": 0,
+      "imperativeRules": 3,
+      "negations": 1,
+      "longToolDescriptions": 0,
+      "ruleCountMethod": "legacy_directives"
+    },
+    "seshat.answer.prompt": {
+      "capitalWords": 12,
+      "imperativeRules": 2,
+      "negations": 1,
+      "longToolDescriptions": 0,
+      "ruleCountMethod": "legacy_directives"
+    },
+    "seshat.answer.system": {
+      "capitalWords": 2,
+      "imperativeRules": 11,
+      "negations": 9,
+      "longToolDescriptions": 0,
+      "ruleCountMethod": "legacy_directives"
+    },
+    "seshat.reflection.prompt": {
+      "capitalWords": 1,
+      "imperativeRules": 3,
+      "negations": 1,
+      "longToolDescriptions": 0,
+      "ruleCountMethod": "legacy_directives"
+    },
+    "seshat.reflection.system": {
+      "capitalWords": 0,
+      "imperativeRules": 1,
+      "negations": 0,
+      "longToolDescriptions": 0,
+      "ruleCountMethod": "legacy_directives"
+    },
+    "seshat.summarize.prompt": {
+      "capitalWords": 0,
+      "imperativeRules": 1,
+      "negations": 0,
+      "longToolDescriptions": 0,
+      "ruleCountMethod": "legacy_directives"
+    },
+    "seshat.summarize.system": {
+      "capitalWords": 0,
+      "imperativeRules": 2,
+      "negations": 0,
+      "longToolDescriptions": 0,
+      "ruleCountMethod": "legacy_directives"
+    },
+    "seshat.tool_descriptions": {
+      "capitalWords": 0,
+      "imperativeRules": 9,
+      "negations": 1,
+      "longToolDescriptions": 2,
+      "ruleCountMethod": "legacy_directives"
+    },
+    "worker.observation.clamped": {
+      "capitalWords": 0,
+      "imperativeRules": 0,
+      "negations": 0,
+      "longToolDescriptions": 0,
+      "ruleCountMethod": "legacy_directives"
+    },
+    "worker.observation.denied": {
+      "capitalWords": 2,
+      "imperativeRules": 2,
+      "negations": 1,
+      "longToolDescriptions": 0,
+      "ruleCountMethod": "legacy_directives"
+    },
+    "worker.observations.static_tools_ts": {
+      "capitalWords": 19,
+      "imperativeRules": 38,
+      "negations": 56,
+      "longToolDescriptions": 0,
+      "ruleCountMethod": "legacy_directives"
+    },
+    "worker.session_notes.static_session_ts": {
+      "capitalWords": 2,
+      "imperativeRules": 12,
+      "negations": 25,
+      "longToolDescriptions": 0,
+      "ruleCountMethod": "legacy_directives"
+    },
+    "worker.system.native_tools": {
+      "capitalWords": 22,
+      "imperativeRules": 10,
+      "negations": 5,
+      "longToolDescriptions": 0,
+      "ruleCountMethod": "legacy_directives"
+    },
+    "worker.system.text_tools": {
+      "capitalWords": 29,
+      "imperativeRules": 45,
+      "negations": 8,
+      "longToolDescriptions": 0,
+      "ruleCountMethod": "legacy_directives"
+    },
+    "worker.tail.first_step": {
+      "capitalWords": 13,
+      "imperativeRules": 6,
+      "negations": 2,
+      "longToolDescriptions": 0,
+      "ruleCountMethod": "legacy_directives"
+    },
+    "worker.tail.post_masking": {
+      "capitalWords": 18,
+      "imperativeRules": 7,
+      "negations": 2,
+      "longToolDescriptions": 0,
+      "ruleCountMethod": "legacy_directives"
+    },
+    "worker.tail.ready_to_verify": {
+      "capitalWords": 14,
+      "imperativeRules": 6,
+      "negations": 3,
+      "longToolDescriptions": 0,
+      "ruleCountMethod": "legacy_directives"
+    },
+    "worker.tail.repair_step": {
+      "capitalWords": 20,
+      "imperativeRules": 5,
+      "negations": 3,
+      "longToolDescriptions": 0,
+      "ruleCountMethod": "legacy_directives"
+    },
+    "worker.tool_descriptions": {
+      "capitalWords": 5,
+      "imperativeRules": 21,
+      "negations": 4,
+      "longToolDescriptions": 1,
+      "ruleCountMethod": "legacy_directives"
+    }
+  }
+}

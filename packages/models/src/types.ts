@@ -117,12 +117,27 @@ export interface TokenUsage {
   /** Server-measured prefill and decode wall time, ms. */
   prefillMs?: number;
   decodeMs?: number;
+  /**
+   * Of `completionTokens`, those spent thinking and those spent on the answer
+   * (worker-loop WL-M3-4). The server's count when it reports one, else
+   * estimated from the thinking text at four characters a token.
+   */
+  thinkingTokens?: number;
+  answerTokens?: number;
 }
+
+/**
+ * Why generation ended, as the server reports it (`finish_reason`, Ollama's
+ * `done_reason`): `length` means a cap cut the reply off (worker-loop rule 23).
+ */
+export type FinishReason = "stop" | "length" | "tool_calls" | (string & {});
 
 export interface InferenceResponse {
   text: string;
   toolCalls: ToolCall[];
   usage: TokenUsage;
+  /** Why generation ended, when the server says (WL-M3-2, WL-M3-4). */
+  finishReason?: FinishReason;
 }
 
 /**

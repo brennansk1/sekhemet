@@ -346,6 +346,33 @@ export function stopReasonLabel(
         sentence: "Its acceptance tests pass before any work, so they cannot measure it.",
         tone: "parked",
       };
+    case "tests_not_red_for_reason":
+      return {
+        short: "Tests fail wrongly",
+        sentence:
+          "Its acceptance tests fail before any work, but on an error rather than an assertion.",
+        tone: "parked",
+      };
+    case "gate_suspected":
+      return {
+        short: "Gate in question",
+        sentence: "The Worker holds that a gate, not its work, is wrong. A person decides which.",
+        tone: "blocked",
+      };
+    case "hook_veto":
+      return {
+        short: "Stopped by a hook",
+        sentence:
+          "A project hook vetoed the next step. Change the hook or the card, then unpark it.",
+        tone: "blocked",
+      };
+    case "crashed":
+      return {
+        short: "Stopped mid-run",
+        sentence:
+          "Sekhemet stopped mid-attempt. The next run resumes from the last completed step.",
+        tone: "parked",
+      };
     default:
       return reason
         ? { short: humanize(reason), sentence: `Stopped: ${humanize(reason)}.`, tone: "neutral" }
@@ -1140,29 +1167,22 @@ export function checkFixHint(name: string, status: string, detail = ""): string 
 // Published tables
 // ---------------------------------------------------------------------------
 
-/** The label tables, published as `/vocab.json` for plugin panels. */
-export function vocabularyTables(): Record<string, unknown> {
-  const stops = [
-    "gate_passed",
-    "budget_exhausted",
-    "oscillation_detected",
-    "no_progress",
-    "repair_exhausted",
-    "memory_pressure",
-    "quota_suspended",
-    "error",
-    "scope_violation",
-    "capability_ceiling",
-    "human_abort",
-    "done_pending_gates",
-    "token_budget_exhausted",
-    "time_budget_exhausted",
-    "replan_requested",
-    "vacuous_tests",
-    "rebase_conflict",
-    "integration_failed",
-    "git_metadata_tampered",
-  ];
+/** A stop reason's row as the dashboard reads it: its class and next action (worker-loop rule 31). */
+export interface StopReasonTableRow {
+  class: string;
+  nextAction: string;
+}
+
+/**
+ * The label tables, published as `/vocab.json` for plugin panels. The stop
+ * reasons, their classes and next actions come from the kernel's one
+ * stop-reason table (`STOP_REASONS`, WL-T3-9), passed in by the server: this
+ * module has no runtime imports, and keeps no list of reasons of its own.
+ */
+export function vocabularyTables(
+  stopTable: Readonly<Record<string, StopReasonTableRow>>,
+): Record<string, unknown> {
+  const stops = Object.keys(stopTable);
   return {
     kinds: KIND_LABELS,
     columns: Object.fromEntries(
@@ -1171,7 +1191,17 @@ export function vocabularyTables(): Record<string, unknown> {
     columnOrder: BOARD_COLUMN_ORDER,
     gates: GATE_LABELS,
     gateStates: GATE_STATE_LABELS,
-    stopReasons: Object.fromEntries(stops.map((r) => [r, stopReasonLabel(r)])),
+    stopReasons: Object.fromEntries(
+      stops.map((r) => [
+        r,
+        {
+          ...stopReasonLabel(r),
+          class: stopTable[r]?.class,
+          nextAction: stopTable[r]?.nextAction,
+        },
+      ]),
+    ),
+    stopClasses: Object.fromEntries(stops.map((r) => [r, stopTable[r]?.class])),
     actors: ACTOR_LABELS,
   };
 }

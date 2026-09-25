@@ -83,7 +83,6 @@ const ENV_ALLOWLIST = [
   "LC_CTYPE",
   "TMPDIR",
   "TERM",
-  "LOGSEQ_TEST",
   "NODE_ENV",
   "CI",
 ];
@@ -102,6 +101,14 @@ export interface ProcessSandboxOptions {
   engine?: SandboxEngine;
 }
 
+/**
+ * The allowlisted environment (security item 6) for a harness-run program
+ * outside the sandbox that still reads a card's content (a parser).
+ */
+export function allowlistedEnv(overrides?: Record<string, string>): Record<string, string> {
+  return buildEnv(overrides);
+}
+
 function buildEnv(overrides?: Record<string, string>): Record<string, string> {
   const env: Record<string, string> = {};
   for (const key of ENV_ALLOWLIST) {
@@ -109,6 +116,61 @@ function buildEnv(overrides?: Record<string, string>): Record<string, string> {
     if (value !== undefined) env[key] = value;
   }
   return { ...env, ...overrides };
+}
+
+/** The egress proxy variables (S5) when the command's only way out is the proxy. */
+function proxyEnv(options: SandboxOptions): Record<string, string> {
+  if (!options.egressProxyPort || options.allowNetwork) return {};
+  const url = `http://127.0.0.1:${options.egressProxyPort}`;
+  return { HTTP_PROXY: url, HTTPS_PROXY: url, http_proxy: url, https_proxy: url };
+}
+
+/** S3: the seccomp program written to the scratch directory and opened, for fd 3. */
+function openSeccompFd(scratchDir: string): number | undefined {
+  const arch = hostSeccompArch();
+  if (!arch) return undefined;
+  const path = join(scratchDir, ".seccomp.bpf");
+  writeFileSync(path, seccompProgram(arch));
+  return openSync(path, "r");
+}
+
+/**
+ * Stop a background process and everything it started (S3a): its process
+ * group (it was spawned detached, so it leads one) and every descendant
+ * found in the process table, which catches one that left the group. TERM
+ * first, KILL after a grace period.
+ */
+export async function stopProcessTree(
+  child: import("node:child_process").ChildProcess,
+  graceMs = SIGKILL_GRACE_MS,
+): Promise<void> {
+  const pid = child.pid;
+  if (pid === undefined) return;
+  const { pids } = await sampleTreeMemory(pid);
+  const signal = (sig: NodeJS.Signals) => {
+    try {
+      process.kill(-pid, sig);
+    } catch {
+      // No group (not detached) or already gone.
+    }
+    for (const p of [...pids].reverse()) {
+      try {
+        process.kill(p, sig);
+      } catch {
+        // Already gone.
+      }
+    }
+  };
+  signal("SIGTERM");
+  if (child.exitCode !== null || child.signalCode !== null) return signal("SIGKILL");
+  await new Promise<void>((resolve) => {
+    const t = setTimeout(resolve, graceMs);
+    child.once("exit", () => {
+      clearTimeout(t);
+      resolve();
+    });
+  });
+  signal("SIGKILL");
 }
 
 /**
@@ -211,11 +273,7 @@ export class ProcessSandbox implements ExecutionSandbox {
     if (mode === "none" && this.mode === "srt") return null;
     const scratchDir = options.scratchDir ?? mkdtempSync(join(tmpdir(), "sekhemet-bg-"));
     const { file, argv } = this.wrap(command, args, { ...options, scratchDir }, mode);
-    return spawn(file, argv, {
-      cwd: options.cwd,
-      env: buildEnv({ TMPDIR: scratchDir, ...options.env }),
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    return this.startBackground(file, argv, options, scratchDir, mode);
   }
 
   /** `spawnBackground` for either engine: srt must wrap asynchronously. */
@@ -227,12 +285,39 @@ export class ProcessSandbox implements ExecutionSandbox {
     if (this.mode !== "srt") return this.spawnBackground(command, args, options);
     const scratchDir = options.scratchDir ?? mkdtempSync(join(tmpdir(), "sekhemet-bg-"));
     const wrapped = await this.wrapAsync(command, args, { ...options, scratchDir });
-    if ("refusal" in wrapped) return null;
-    return spawn(wrapped.file, wrapped.argv, {
+    if ("refusal" in wrapped) {
+      if (options.scratchDir === undefined) rmSync(scratchDir, { recursive: true, force: true });
+      return null;
+    }
+    return this.startBackground(wrapped.file, wrapped.argv, options, scratchDir, this.mode);
+  }
+
+  /**
+   * Spawn a wrapped background process: its own process group (so
+   * `stopProcessTree` reaches every descendant), the seccomp program on fd 3
+   * under bubblewrap as `execute` hands it over, and its scratch directory
+   * removed when it exits.
+   */
+  private startBackground(
+    file: string,
+    argv: string[],
+    options: SandboxOptions,
+    scratchDir: string,
+    mode: ConfinementMode,
+  ): import("node:child_process").ChildProcessWithoutNullStreams {
+    const seccompFd = mode === "bubblewrap" ? openSeccompFd(scratchDir) : undefined;
+    const child = spawn(file, argv, {
       cwd: options.cwd,
-      env: buildEnv({ TMPDIR: scratchDir, ...options.env }),
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+      env: buildEnv({ TMPDIR: scratchDir, ...proxyEnv(options), ...options.env }),
+      stdio:
+        seccompFd !== undefined ? ["pipe", "pipe", "pipe", seccompFd] : ["pipe", "pipe", "pipe"],
+      detached: true,
+    }) as import("node:child_process").ChildProcessWithoutNullStreams;
+    if (seccompFd !== undefined) closeSync(seccompFd);
+    if (options.scratchDir === undefined) {
+      child.once("exit", () => rmSync(scratchDir, { recursive: true, force: true }));
+    }
+    return child;
   }
 
   /** The refusal when nothing confines and the caller did not opt out (S3b). */
@@ -310,25 +395,12 @@ export class ProcessSandbox implements ExecutionSandbox {
       const memoryCap = options.maxMemoryBytes ?? defaultMemoryCap();
 
       // S3: under bubblewrap, the seccomp filter is handed over on fd 3.
-      const arch = hostSeccompArch();
-      let seccompFd: number | undefined;
-      if (this.mode === "bubblewrap" && arch) {
-        const path = join(scratchDir, ".seccomp.bpf");
-        writeFileSync(path, seccompProgram(arch));
-        seccompFd = openSync(path, "r");
-      }
+      const seccompFd = this.mode === "bubblewrap" ? openSeccompFd(scratchDir) : undefined;
       const child = spawn(file, argv, {
         cwd: options.cwd,
         env: buildEnv({
           TMPDIR: scratchDir,
-          ...(options.egressProxyPort && !options.allowNetwork
-            ? {
-                HTTP_PROXY: `http://127.0.0.1:${options.egressProxyPort}`,
-                HTTPS_PROXY: `http://127.0.0.1:${options.egressProxyPort}`,
-                http_proxy: `http://127.0.0.1:${options.egressProxyPort}`,
-                https_proxy: `http://127.0.0.1:${options.egressProxyPort}`,
-              }
-            : {}),
+          ...proxyEnv(options),
           ...options.env,
         }),
         stdio:
@@ -340,22 +412,38 @@ export class ProcessSandbox implements ExecutionSandbox {
 
       const timer = setTimeout(() => {
         timedOut = true;
-        try {
-          child.kill("SIGTERM");
+        // The tree is read before the parent dies: a grandchild holding the
+        // output pipes (`sh -c "sleep 30"`) is reparented once its parent
+        // exits, and would keep the command open past its budget.
+        const tree =
+          child.pid === undefined
+            ? Promise.resolve([] as number[])
+            : sampleTreeMemory(child.pid).then((t) => t.pids);
+        void tree.then((pids) => {
+          try {
+            child.kill("SIGTERM");
+          } catch {
+            // Process already exited.
+          }
           // SIGTERM is catchable; a process that ignores it is escalated to an
-          // uncatchable SIGKILL so a runaway command cannot outlive its budget.
+          // uncatchable SIGKILL, with its whole tree, so a runaway command
+          // cannot outlive its budget.
           killTimer = setTimeout(() => {
-            if (!finished) {
+            if (finished) return;
+            for (const p of [...pids].reverse()) {
               try {
-                child.kill("SIGKILL");
+                process.kill(p, "SIGKILL");
               } catch {
                 // Already reaped.
               }
             }
+            try {
+              child.kill("SIGKILL");
+            } catch {
+              // Already reaped.
+            }
           }, SIGKILL_GRACE_MS);
-        } catch {
-          // Process already exited.
-        }
+        });
       }, options.timeoutMs);
 
       // S7: a real memory cap. The tree's resident size is sampled; past the

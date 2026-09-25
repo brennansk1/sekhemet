@@ -6,3 +6,4 @@ export * from "./webhook.js";
 export * from "./repo_tools.js";
 export * from "./git_hardening.js";
 export * from "./git_preflight.js";
+export * from "./review_diff.js";

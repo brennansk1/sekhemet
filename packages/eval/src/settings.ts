@@ -13,7 +13,8 @@ export const PASS_AT_K_TEMPERATURE_MAX = 0.7;
 export const DEFAULT_PASS_AT_K_TEMPERATURE = 0.6;
 /** A single sample is drawn near-greedily: variance is not wanted at k = 1. */
 export const DEFAULT_SINGLE_SAMPLE_TEMPERATURE = 0.2;
-export const DEFAULT_STEP_BUDGET = 50;
+/** The one default step budget (worker-loop WL-T3-11), from the kernel. */
+export { DEFAULT_STEP_BUDGET } from "@sekhemet/kernel";
 export const DEFAULT_CONTEXT_TOKENS = 32_768;
 export const DEFAULT_SUITE_VERSION = "sekhemet-eval-v1";
 export const DEFAULT_TOOL_ARM: ToolArm = "arm_a_flat";

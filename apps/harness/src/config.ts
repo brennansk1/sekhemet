@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { type TomlTable, parseToml } from "@sekhemet/kernel";
+import { DEFAULT_STEP_BUDGET, type TomlTable, parseToml } from "@sekhemet/kernel";
 
 export type MachineTier = "auto" | "S" | "M" | "L" | "XL";
 /** Tri-state, not a boolean: "allowlist" is a distinct posture from open or offline. */
@@ -39,7 +39,7 @@ export const DEFAULT_CONFIG: SekhemetConfig = {
   machine: { tier: "auto", hours: "08:00-18:00 Mon-Fri", powerBudgetKwhDay: 0 },
   models: { executor: "auto", planner: "auto", vision: "auto", pruner: "auto" },
   context: { workingBudget: "auto", mapTokens: 1024, maskAfterObservations: 2 },
-  loop: { defaultStepBudget: 40, stallWindow: 3, maxRungs: 4 },
+  loop: { defaultStepBudget: DEFAULT_STEP_BUDGET, stallWindow: 3, maxRungs: 4 },
   review: { wip: "auto", reviewMinutesPerDay: 60 },
   network: { mode: "offline", allow: [] },
   sync: { github: false, forgejo: "" },
