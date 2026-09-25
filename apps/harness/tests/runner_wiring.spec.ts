@@ -24,7 +24,6 @@ import { latestReview } from "../../../packages/ui/web/review_parse.js";
 import {
   QueuedWorkerQuestions,
   executeCard,
-  heldTarget,
   liveTokenPath,
   nextAttemptNumber,
   recordReview,
@@ -163,7 +162,8 @@ describe("apps/harness executeCard wiring (wave 2, part 1)", () => {
 
   it("holds a card on back-pressure and releases it when Review drains", async () => {
     for (const id of ["card_r1", "card_r2", "card_r3"]) {
-      await cardStore.createCard({ id, tier: "story", title: id, status: "review" });
+      await cardStore.createCard({ id, tier: "story", title: id });
+      await cardStore.updateCardStatus(id, "review", "test setup", "harness", { override: true });
     }
     const card = await newCard("card_held");
     const result = await executeCard(ctx, card, scripted([WRITE_A]).adapter);
@@ -171,7 +171,9 @@ describe("apps/harness executeCard wiring (wave 2, part 1)", () => {
     expect(result.held?.wanted).toBe("verify");
     const held = await cardStore.getCard(card.id);
     expect(held?.status).toBe("in_progress");
-    expect(heldTarget(held?.blockedReason)).toBe("verify");
+    // K-N3-1: a typed hold on the ledger, not a reason string.
+    expect(held?.hold).toMatchObject({ kind: "backpressure", awaiting: "verify" });
+    expect(await cardStore.cardEvents(card.id, ["card/held"])).toHaveLength(1);
     expect((await boardService.listHeld()).map((c) => c.id)).toEqual(["card_held"]);
 
     // Still full: nothing moves.
@@ -188,6 +190,9 @@ describe("apps/harness executeCard wiring (wave 2, part 1)", () => {
     // Its gates passed, so it continues to Review as it would have.
     expect(released?.status).toBe("review");
     expect(released?.blockedReason ?? null).toBeNull();
+    // K-N3-2: released once, on the ledger; the hold is gone.
+    expect(released?.hold).toBeUndefined();
+    expect(await cardStore.cardEvents(card.id, ["card/released"])).toHaveLength(1);
   });
 
   it("hands askTeam the question's dossier entry id, and files a queued answer under it", async () => {

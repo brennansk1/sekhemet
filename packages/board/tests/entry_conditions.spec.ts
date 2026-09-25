@@ -38,7 +38,27 @@ describe("@sekhemet/board entry conditions, review time, overlap, projects (B1, 
     toStatus: never,
     actor = "executor",
     reason?: string,
-  ) => board.transitionCard({ cardId, fromStatus, toStatus, actor, ...(reason ? { reason } : {}) });
+  ) =>
+    board.transitionCard({
+      cardId,
+      fromStatus,
+      toStatus,
+      actor,
+      ...(reason ? { reason } : {}),
+      // Rule 28: an override names the person who takes responsibility.
+      ...(reason?.startsWith("override:") ? { principal: "p_owner" } : {}),
+    });
+  // Rule 27, K-S4-6: Verify takes an attempt that ended with a stop reason.
+  const finishAttempt = async (cardId: string) => {
+    const a = await store.runs.startAttempt({ cardId, attemptNumber: 1, modelId: "m" });
+    await store.runs.finishAttempt({
+      attemptId: a.id,
+      status: "passed",
+      stopReason: "done_pending_gates",
+      tokensUsed: 1,
+      secondsUsed: 1,
+    });
+  };
 
   it("refuses Ready without criteria, and any start while a prerequisite is open", async () => {
     await store.createCard({ id: "a", tier: "story", title: "A", status: "backlog" });
@@ -63,6 +83,7 @@ describe("@sekhemet/board entry conditions, review time, overlap, projects (B1, 
     await expect(move("c", "ready" as never, "in_progress" as never)).rejects.toThrow(/scope/);
     await store.updateCard("c", { scopeFiles: ["src/c.ts"] });
     await move("c", "ready" as never, "in_progress" as never);
+    await finishAttempt("c");
     await move("c", "in_progress" as never, "verify" as never);
     await expect(move("c", "verify" as never, "review" as never)).rejects.toThrow(/no evidence/);
     evidence.c = { passed: false, gatesRun: 2 };
@@ -73,6 +94,57 @@ describe("@sekhemet/board entry conditions, review time, overlap, projects (B1, 
       /Only a person/,
     );
     await move("c", "review" as never, "done" as never, "human");
+  });
+
+  it("lets the harness move a card to Done only as a parent's rollup or in a measured repository (rules 24, 30)", async () => {
+    const harnessDone = (b: BoardServiceImpl, cardId: string) =>
+      b.transitionCard({ cardId, fromStatus: "review", toStatus: "done", actor: "harness" });
+    const rollup = (passed: boolean) =>
+      store.recordEvent({
+        type: "card/rollup",
+        cardId: "p",
+        actor: "gate",
+        payload: { id: "p", children: ["k"], passed, failures: [], evidenceId: "e1" },
+      });
+
+    const inReview = async (id: string, over: Record<string, unknown> = {}) => {
+      await store.createCard({ id, tier: "story", title: id, ...over });
+      await store.updateCardStatus(id, "review", "test setup", "harness", { override: true });
+    };
+    // A leaf card in a person's repository: refused, and nothing moves.
+    await inReview("h");
+    await expect(harnessDone(board, "h")).rejects.toMatchObject({ code: "entry_condition" });
+    await expect(harnessDone(board, "h")).rejects.toThrow(/Only a person accepts/);
+    expect((await store.getCard("h"))?.status).toBe("review");
+
+    // A parent: refused without a rollup, with a failing one, while a child is
+    // open, and on a rollup older than a child's last move (never inferred).
+    await inReview("p", { tier: "epic" });
+    await inReview("k", { parentId: "p" });
+    await expect(harnessDone(board, "p")).rejects.toThrow(/Only a person accepts/);
+    await rollup(false);
+    await expect(harnessDone(board, "p")).rejects.toThrow(/Only a person accepts/);
+    await rollup(true);
+    await expect(harnessDone(board, "p")).rejects.toThrow(/Only a person accepts/);
+    await move("k", "review" as never, "done" as never, "human");
+    await expect(harnessDone(board, "p")).rejects.toThrow(/Only a person accepts/);
+    // Every child done, then a passing rollup: the parent rolls up.
+    await rollup(true);
+    await harnessDone(board, "p");
+    expect((await store.getCard("p"))?.status).toBe("done");
+
+    // A repository a measured run prepared (--auto-accept's bound): allowed.
+    const unmarked = new BoardServiceImpl(store, {
+      entryConditions: true,
+      measurementMarker: { purpose: "something else" },
+    });
+    await expect(harnessDone(unmarked, "h")).rejects.toThrow(/Only a person accepts/);
+    const measured = new BoardServiceImpl(store, {
+      entryConditions: true,
+      measurementMarker: { purpose: "frozen suite" },
+    });
+    await harnessDone(measured, "h");
+    expect((await store.getCard("h"))?.status).toBe("done");
   });
 
   it("lets a person override an entry condition, recorded on the ledger", async () => {
@@ -92,17 +164,17 @@ describe("@sekhemet/board entry conditions, review time, overlap, projects (B1, 
 
   it("refuses even an override past a failing security gate, into Review and into Done (B12)", async () => {
     await store.createCard({ id: "s", tier: "story", title: "S", scopeFiles: ["src/s.ts"] });
+    await move("s", "ready" as never, "in_progress" as never);
+    await finishAttempt("s");
+    await move("s", "in_progress" as never, "verify" as never);
     evidence.s = { passed: false, gatesRun: 3, failingSecurityGates: ["secrets"] };
 
     const forced = "override: shipping this now, I checked it by hand";
     await expect(
       move("s", "verify" as never, "review" as never, "human", forced),
     ).rejects.toMatchObject({ code: "security_gate" });
-    await expect(move("s", "review" as never, "done" as never, "human", forced)).rejects.toThrow(
-      /secrets/,
-    );
     // Refused means refused: the card is where it was, not part-moved.
-    expect((await store.getCard("s"))?.status).toBe("ready");
+    expect((await store.getCard("s"))?.status).toBe("verify");
 
     // Nothing else is tightened: a failing gate in another layer still yields
     // to a person who takes responsibility, and is recorded as their decision.
@@ -111,6 +183,13 @@ describe("@sekhemet/board entry conditions, review time, overlap, projects (B1, 
     expect((await store.getCard("s"))?.status).toBe("review");
     const [recorded] = await store.cardEvents("s", ["card/override"]);
     expect(recorded?.actor).toBe("human");
+
+    // Into Done, too, a failing security gate refuses even an override.
+    evidence.s = { passed: false, gatesRun: 3, failingSecurityGates: ["secrets"] };
+    await expect(move("s", "review" as never, "done" as never, "human", forced)).rejects.toThrow(
+      /secrets/,
+    );
+    expect((await store.getCard("s"))?.status).toBe("review");
 
     // And the refusal outlives the failure: once the gate passes, the move goes through.
     evidence.s = { passed: true, gatesRun: 3 };

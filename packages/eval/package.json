@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@sekhemet/kernel": "workspace:*",
+    "@sekhemet/board": "workspace:*",
     "@sekhemet/loop": "workspace:*",
     "@sekhemet/gates": "workspace:*",
     "@sekhemet/models": "workspace:*",

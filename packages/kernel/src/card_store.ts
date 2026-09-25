@@ -1,13 +1,44 @@
 import { createHash, randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
+import { assigneeTarget } from "./assignee.js";
+import {
+  CARD_CHANGES,
+  CARD_SPLITS,
+  type CardChange,
+  type CardKind,
+  type CardSplit,
+  deriveCardKind,
+  isCardKind,
+  spidrSplit,
+} from "./card_class.js";
+import {
+  CARD_COLUMN_TABLE,
+  type CardRow,
+  cardColumnList,
+  cardInsertSql,
+  cardInsertValues,
+  cardPatchAssignments,
+} from "./card_columns.js";
 import type { EventLog } from "./log.js";
 import { keyBetween } from "./order_key.js";
 import { RunLedger } from "./records.js";
+import { RequirementLedger } from "./requirements.js";
 import { DEFAULT_STEP_BUDGET } from "./stop_reasons.js";
 import {
+  CARD_STATUSES,
+  INITIAL_CARD_STATUSES,
+  LEGAL_TRANSITIONS,
+  StatusTransitionError,
+  isCardStatus,
+} from "./transitions.js";
+import {
+  type AppendEventParams,
+  type BuiltBy,
   CARD_STOP_REASONS,
+  type CardDelegate,
   type CardDossier,
+  type CardHold,
   type CardRecord,
   type CardStatus,
   type CardStopReason,
@@ -21,6 +52,7 @@ import {
   type EventRecord,
   type ExternalRef,
   type ModelRoute,
+  PROJECT_STATUSES,
   type ProjectRecord,
   type ProjectStatus,
 } from "./types.js";
@@ -98,6 +130,16 @@ export interface CreateCardInput {
   blockedReason?: string;
   /** The project the card belongs to (K14); the default project when omitted. */
   projectId?: string;
+  /** What kind of work it is; derived once, here, when omitted (K-N9-1). */
+  kind?: CardKind;
+  /** What the change does to behaviour; `feature` when omitted (K-N9-3). */
+  change?: CardChange;
+  /** The SPIDR split; from the title's SPIDR marker when omitted (K-N9-3). */
+  split?: CardSplit | null;
+  /** The principal responsible for the card (K-N6-1). */
+  owner?: string;
+  /** Who builds it: the Worker, a person, or none (K-N6-1). */
+  delegate?: CardDelegate | null;
 }
 
 /**
@@ -138,6 +180,80 @@ export interface CardUpdate {
   /** `null` clears the block. */
   blockedReason?: string | null;
   projectId?: string;
+  /**
+   * The stored kind and change (K-N9-2): changed only by a named principal,
+   * never while the card is In Progress or in Verify.
+   */
+  kind?: CardKind;
+  change?: CardChange;
+}
+
+/**
+ * The fields a card write validates before anything is appended (S7, rule
+ * 13): a value the projection would refuse must never reach the ledger,
+ * where it would make every later replay throw.
+ */
+const CARD_TIERS: readonly CardTier[] = ["initiative", "epic", "feature", "story", "task"];
+
+function validateCardFields(
+  id: string,
+  fields: {
+    difficulty?: number | null | undefined;
+    status?: unknown;
+    tier?: unknown;
+    kind?: unknown;
+    change?: unknown;
+    split?: unknown;
+    delegate?: unknown;
+  },
+): void {
+  const d = fields.difficulty;
+  if (d !== undefined && d !== null && !(Number.isInteger(d) && d >= 1 && d <= 10)) {
+    throw new Error(`Card ${id}: difficulty must be an integer from 1 to 10, got ${d}`);
+  }
+  if (fields.status !== undefined && !isCardStatus(fields.status)) {
+    throw new Error(
+      `Card ${id}: '${String(fields.status)}' is not one of the nine card states (${CARD_STATUSES.join(", ")})`,
+    );
+  }
+  if (fields.kind !== undefined && !isCardKind(fields.kind)) {
+    throw new Error(
+      `Card ${id}: kind must be one of the seven card kinds, got ${String(fields.kind)}`,
+    );
+  }
+  if (
+    fields.change !== undefined &&
+    !(CARD_CHANGES as readonly unknown[]).includes(fields.change)
+  ) {
+    throw new Error(
+      `Card ${id}: change must be one of ${CARD_CHANGES.join(", ")}, got ${String(fields.change)}`,
+    );
+  }
+  if (
+    fields.split !== undefined &&
+    fields.split !== null &&
+    !(CARD_SPLITS as readonly unknown[]).includes(fields.split)
+  ) {
+    throw new Error(
+      `Card ${id}: split must be one of ${CARD_SPLITS.join(", ")} or none, got ${String(fields.split)}`,
+    );
+  }
+  if (fields.delegate !== undefined && fields.delegate !== null) {
+    const d = fields.delegate as { kind?: unknown; id?: unknown };
+    if (typeof d !== "object" || (d.kind !== "worker" && d.kind !== "person")) {
+      throw new Error(
+        `Card ${id}: a delegate is {kind: "worker" | "person"} or none, got ${JSON.stringify(fields.delegate)}`,
+      );
+    }
+    if (d.kind === "person" && (typeof d.id !== "string" || !d.id)) {
+      throw new Error(`Card ${id}: a person delegate names the person's principal`);
+    }
+  }
+  if (fields.tier !== undefined && !(CARD_TIERS as readonly unknown[]).includes(fields.tier)) {
+    throw new Error(
+      `Card ${id}: tier must be one of ${CARD_TIERS.join(", ")}, got ${String(fields.tier)}`,
+    );
+  }
 }
 
 /** Where a dragged card lands, expressed as its new neighbours. */
@@ -150,52 +266,10 @@ export interface CardPosition {
 
 type SqlParam = string | number | null;
 
-const CARD_COLUMNS = `
-  id, tier, parent_id, title, status, scope_files, step_budget, steps_used,
-  spec, acceptance_criteria, acceptance_tests, difficulty, token_budget, seconds_budget,
-  tokens_used, seconds_used, model_route_planner, model_route_executor,
-  depends_on, context_pack_id, evidence_id, external_ref, stop_reason,
-  priority, order_key, blocked_reason, estimate, labels, epic_id, cycle_id,
-  assignee, due_date, project_id, created_at, updated_at
-`;
+/** The column list, row type, insert and update all come from the one table (K-N4-4). */
+const CARD_COLUMNS = cardColumnList();
 
-interface RawCardRow {
-  id: string;
-  tier: CardTier;
-  parent_id: string | null;
-  title: string;
-  status: CardStatus;
-  scope_files: string;
-  step_budget: number;
-  steps_used: number;
-  spec: string | null;
-  acceptance_criteria: string;
-  acceptance_tests: string;
-  difficulty: number | null;
-  token_budget: number | null;
-  seconds_budget: number | null;
-  tokens_used: number;
-  seconds_used: number;
-  model_route_planner: string | null;
-  model_route_executor: string | null;
-  depends_on: string;
-  context_pack_id: string | null;
-  evidence_id: string | null;
-  external_ref: string | null;
-  stop_reason: string | null;
-  priority: number;
-  order_key: string;
-  blocked_reason: string | null;
-  estimate: number | null;
-  labels: string | null;
-  epic_id: string | null;
-  cycle_id: string | null;
-  assignee: string | null;
-  due_date: string | null;
-  project_id: string | null;
-  created_at: string;
-  updated_at: string;
-}
+type RawCardRow = CardRow;
 
 interface RawCheckpointRow {
   card_id: string;
@@ -206,6 +280,7 @@ interface RawCheckpointRow {
   agent_harness: string;
   agent_role: string;
   created_at: string;
+  built_by: string | null;
 }
 
 /** Array/object fields are JSON-encoded; a malformed cell must not crash a read. */
@@ -221,6 +296,8 @@ function parseJsonColumn<T>(raw: string | null, fallback: T): T {
 export class CardStore {
   /** Attempts, steps, gate results, evidence, decisions, competence (K16-K21). */
   public readonly runs: RunLedger;
+  /** Versioned requirements and their suspect links (NEW-kernel-8). */
+  public readonly requirements: RequirementLedger;
   /** Active projects allowed at once (B13). */
   public activeProjectCap = DEFAULT_ACTIVE_PROJECT_CAP;
 
@@ -229,6 +306,7 @@ export class CardStore {
     private eventLog: EventLog,
   ) {
     this.runs = new RunLedger(db, eventLog);
+    this.requirements = new RequirementLedger(db, eventLog);
   }
 
   /** The oldest active project, which cards created without one belong to. */
@@ -257,7 +335,32 @@ export class CardStore {
     return depth;
   }
 
-  private mapCardRow(row: RawCardRow): CardRecord {
+  private mapCardRow(r: RawCardRow): CardRecord {
+    // SQLite returns each column as its stored value; the table types them all
+    // as `CardSqlValue`, and this is where each is read as the field it is.
+    const row = r as unknown as {
+      [K in keyof RawCardRow]: K extends
+        | "step_budget"
+        | "steps_used"
+        | "tokens_used"
+        | "seconds_used"
+        | "priority"
+        ? number
+        : K extends "difficulty" | "token_budget" | "seconds_budget" | "estimate"
+          ? number | null
+          : K extends
+                | "id"
+                | "title"
+                | "scope_files"
+                | "acceptance_criteria"
+                | "acceptance_tests"
+                | "depends_on"
+                | "order_key"
+                | "created_at"
+                | "updated_at"
+            ? string
+            : string | null;
+    };
     const modelRoute: ModelRoute = {
       ...(row.model_route_planner ? { planner: row.model_route_planner } : {}),
       ...(row.model_route_executor ? { executor: row.model_route_executor } : {}),
@@ -268,10 +371,10 @@ export class CardStore {
 
     return {
       id: row.id,
-      tier: row.tier,
+      tier: row.tier as CardTier,
       parentId: row.parent_id,
       title: row.title,
-      status: row.status,
+      status: row.status as CardStatus,
       scopeFiles: parseJsonColumn<string[]>(row.scope_files, []),
       stepBudget: row.step_budget,
       stepsUsed: row.steps_used,
@@ -300,9 +403,18 @@ export class CardStore {
       ...(row.estimate !== null ? { estimate: row.estimate } : {}),
       ...(row.epic_id !== null ? { epicId: row.epic_id } : {}),
       ...(row.cycle_id !== null ? { cycleId: row.cycle_id } : {}),
-      ...(row.assignee !== null ? { assignee: row.assignee } : {}),
+      ...(this.assigneeOf(row) ? { assignee: this.assigneeOf(row) as string } : {}),
       ...(row.due_date !== null ? { dueDate: row.due_date } : {}),
       ...(row.project_id !== null ? { projectId: row.project_id } : {}),
+      kind: row.kind as CardKind,
+      change: row.change as CardChange,
+      ...(row.split !== null ? { split: row.split as CardSplit } : {}),
+      ...(row.owner !== null ? { owner: row.owner } : {}),
+      ...(row.delegate !== null
+        ? { delegate: parseJsonColumn<CardDelegate>(row.delegate, { kind: "worker" }) }
+        : {}),
+      ...(row.accepter !== null ? { accepter: row.accepter } : {}),
+      ...(row.hold !== null ? { hold: parseJsonColumn<CardHold>(row.hold, null as never) } : {}),
     };
   }
 
@@ -316,6 +428,7 @@ export class CardStore {
       agentHarness: row.agent_harness,
       agentRole: row.agent_role as CheckpointRecord["agentRole"],
       createdAt: row.created_at,
+      builtBy: parseJsonColumn<BuiltBy>(row.built_by, { kind: "worker", id: row.agent_model }),
     };
   }
 
@@ -338,6 +451,29 @@ export class CardStore {
     const id = input.id ?? `card_${randomUUID().slice(0, 8)}`;
     const now = new Date().toISOString();
     const status: CardStatus = input.status ?? "ready";
+    // S7: every field the projection checks is checked here, before the append.
+    validateCardFields(id, {
+      difficulty: input.difficulty,
+      status,
+      tier: input.tier,
+      kind: input.kind,
+      change: input.change,
+      split: input.split,
+      delegate: input.delegate,
+    });
+    // K-S4-9: a card starts where no entry condition has been skipped —
+    // parked only with its recorded reason (rule 27).
+    const parkedWithReason = status === "parked" && !!input.blockedReason?.trim();
+    if (!INITIAL_CARD_STATUSES.includes(status) && !parkedWithReason) {
+      throw new StatusTransitionError(
+        "illegal_transition",
+        id,
+        status,
+        status === "parked"
+          ? `Card ${id} cannot be created in 'parked' without a recorded reason (blockedReason)`
+          : `Card ${id} cannot be created in '${status}': a card is created in ${INITIAL_CARD_STATUSES.join(", ")} (or parked with a reason) and reaches '${status}' only by a move under the transition law`,
+      );
+    }
 
     // K13: refused before anything reaches the append-only ledger.
     if (input.parentId) {
@@ -356,6 +492,15 @@ export class CardStore {
       }
     }
 
+    // K-N6-6: `assignee` is never written; it names the delegate or owner.
+    // A person it creates is appended in the card's own transaction (K-S7-3).
+    const persons: AppendEventParams<Record<string, unknown>>[] = [];
+    const assigned: { owner?: string; delegate?: CardDelegate } =
+      (input.assignee
+        ? assigneeTarget(this.db, input.assignee, (p) => {
+            persons.push(p);
+          })
+        : undefined) ?? {};
     // The payload is the record of truth: `rebuildProjections()` replays it, so
     // every generated value (id, order key, timestamps) must be resolved here
     // rather than at projection time, or a replay would not be byte-identical.
@@ -392,23 +537,28 @@ export class CardStore {
       labels: input.labels ?? [],
       epicId: input.epicId ?? null,
       cycleId: input.cycleId ?? null,
-      assignee: input.assignee ?? null,
       dueDate: input.dueDate ?? null,
       projectId: input.projectId ?? this.defaultProjectId(),
+      // K-N9-1, K-N9-3: resolved here, once; replay reads them as recorded.
+      kind: input.kind ?? deriveCardKind(input),
+      change: input.change ?? "feature",
+      split: input.split === undefined ? (spidrSplit(input.title) ?? null) : input.split,
+      // K-N6-1: who is on the card; a legacy `assignee` names one (K-N6-6).
+      owner: input.owner ?? ("owner" in assigned ? assigned.owner : null),
+      delegate: input.delegate ?? ("delegate" in assigned ? assigned.delegate : null),
       createdAt: now,
       updatedAt: now,
     };
 
-    // 1. Append immutable event to hash chain
-    await this.eventLog.append({
-      actor,
-      type: "card/created",
-      cardId: id,
-      payload,
-    });
-
-    // 2. Project into SQLite WAL cards table
-    this.projectCardCreated(payload);
+    // Append to the hash chain and project, in one transaction (K-S7-3),
+    // with any person the assignee named.
+    this.eventLog.appendAllNow([
+      ...persons.map((params) => ({ params })),
+      {
+        params: { actor, type: "card/created", cardId: id, payload },
+        project: () => this.projectCardCreated(payload),
+      },
+    ]);
 
     // Declared dependencies on cards that exist become checked edges (K15).
     // A new card has no dependents yet, so these can never close a cycle.
@@ -476,6 +626,13 @@ export class CardStore {
   }
 
   /**
+   * The one method that writes a card's status: a compare-and-set under the
+   * transition law (rule 26, S4). The edge is checked against the **stored**
+   * status; `expectedFrom`, when given, must equal it (`stale_from`); a move
+   * to the state the card is already in appends nothing. Only the board
+   * passes `override`, after it recorded a person's `card/override` or the
+   * harness's `card/measurement_setup` in a measured run's repository.
+   *
    * `actor` names who moved the card. It defaults to the executor for the
    * runner's own transitions; a human triaging from the dashboard passes
    * "human", so the ledger does not credit the Worker with a person's verdict.
@@ -485,10 +642,36 @@ export class CardStore {
     status: CardStatus,
     reason?: string,
     actor = "executor",
+    options: { expectedFrom?: CardStatus; override?: boolean; principal?: string } = {},
   ): Promise<CardRecord> {
+    if (!isCardStatus(status)) {
+      throw new StatusTransitionError(
+        "invalid_status",
+        id,
+        String(status),
+        `Card ${id}: '${String(status)}' is not one of the nine card states (${CARD_STATUSES.join(", ")})`,
+      );
+    }
     const existing = await this.getCard(id);
     if (!existing) {
-      throw new Error(`Card not found: ${id}`);
+      throw new StatusTransitionError("card_not_found", id, status, `Card not found: ${id}`);
+    }
+    if (options.expectedFrom !== undefined && options.expectedFrom !== existing.status) {
+      throw new StatusTransitionError(
+        "stale_from",
+        id,
+        status,
+        `Card ${id}: the stored status is '${existing.status}', not '${options.expectedFrom}'; nothing was changed`,
+      );
+    }
+    if (status === existing.status) return existing;
+    if (!LEGAL_TRANSITIONS[existing.status].includes(status) && options.override !== true) {
+      throw new StatusTransitionError(
+        "illegal_transition",
+        id,
+        status,
+        `Illegal transition '${existing.status}' -> '${status}' for card ${id}. Legal destinations: ${LEGAL_TRANSITIONS[existing.status].join(", ")}`,
+      );
     }
 
     const now = new Date().toISOString();
@@ -500,22 +683,22 @@ export class CardStore {
       updatedAt: now,
     };
 
-    // Append event
-    await this.eventLog.append({
-      actor,
-      type: "card/status_changed",
-      cardId: id,
-      payload,
-    });
-
-    // Project update
-    this.db
-      .prepare(`
-        UPDATE cards
-        SET status = ?, updated_at = ?
-        WHERE id = ?
-      `)
-      .run(status, now, id);
+    // Append, then project the recorded event exactly as a replay would —
+    // but live, only while the stored status is still the one checked above:
+    // the compare-and-set happens under the write lock (rule 26, K-S4-8).
+    await this.eventLog.append(
+      {
+        actor,
+        type: "card/status_changed",
+        cardId: id,
+        payload,
+        ...(options.principal ? { principal: options.principal } : {}),
+      },
+      {
+        project: (event) =>
+          this.applyEvent(event as EventRecord, { expectedFrom: existing.status }),
+      },
+    );
 
     const updated = await this.getCard(id);
     if (!updated) {
@@ -531,12 +714,36 @@ export class CardStore {
    * same sequence of states rather than a series of full snapshots — that is
    * what makes "why does this card have a 90k token budget" answerable.
    */
-  public async updateCard(id: string, patch: CardUpdate, actor = "planner"): Promise<CardRecord> {
+  public async updateCard(
+    id: string,
+    given: CardUpdate,
+    actor = "planner",
+    options: { principal?: string } = {},
+  ): Promise<CardRecord> {
     const existing = await this.getCard(id);
     if (!existing) {
       throw new Error(`Card not found: ${id}`);
     }
+    // K-N6-6: `assignee` is no longer written; it names the delegate or owner.
+    const { assignee, ...patch } = given;
 
+    validateCardFields(id, {
+      difficulty: patch.difficulty,
+      kind: patch.kind,
+      change: patch.change,
+    });
+    // K-N9-2: the stored kind and change are a person's decision, named, and
+    // never changed under a running attempt or its verification.
+    if (patch.kind !== undefined || patch.change !== undefined) {
+      if (!options.principal) {
+        throw new Error(`Card ${id}: a change of kind or change names the principal who made it`);
+      }
+      if (existing.status === "in_progress" || existing.status === "verify") {
+        throw new Error(
+          `Card ${id}: its kind and change cannot change while it is ${existing.status}`,
+        );
+      }
+    }
     if (patch.stopReason !== undefined && !CARD_STOP_REASONS.includes(patch.stopReason)) {
       throw new Error(`Unknown stop reason: ${String(patch.stopReason)}`);
     }
@@ -564,14 +771,19 @@ export class CardStore {
     const now = new Date().toISOString();
     const payload = { id, patch, updatedAt: now };
 
-    await this.eventLog.append({
-      actor,
-      type: "card/updated",
-      cardId: id,
-      payload,
-    });
-
-    this.projectCardUpdated(id, patch, now);
+    if (assignee === undefined || Object.keys(patch).length > 0) {
+      await this.eventLog.append(
+        {
+          actor,
+          type: "card/updated",
+          cardId: id,
+          payload,
+          ...(options.principal ? { principal: options.principal } : {}),
+        },
+        { project: () => this.projectCardUpdated(id, patch, now) },
+      );
+    }
+    if (assignee !== undefined) await this.applyAssignee(existing, assignee, actor, options);
 
     // A replaced dependency list replaces the checked edges too (K15).
     if (patch.dependsOn !== undefined) {
@@ -613,6 +825,218 @@ export class CardStore {
   }
 
   /**
+   * Append an event this store projects, and project the recorded event
+   * with `applyEvent` — the replay's own code — so the live projection and a
+   * rebuild cannot differ.
+   */
+  private async appendAndApply<T>(params: {
+    actor: string;
+    type: string;
+    cardId: string;
+    payload: T;
+    principal?: string | undefined;
+  }): Promise<EventRecord<T>> {
+    const record = await this.eventLog.append(
+      {
+        actor: params.actor,
+        type: params.type,
+        cardId: params.cardId,
+        payload: params.payload,
+        ...(params.principal ? { principal: params.principal } : {}),
+      },
+      // K-S7-3: projected before COMMIT, so a failure rolls the append back.
+      { project: (event) => this.applyEvent(event as EventRecord) },
+    );
+    return record;
+  }
+
+  /** The install's own person on a solo setup (rule 19), for a person's decision. */
+  public localPrincipal(): string {
+    return this.eventLog.localPrincipal();
+  }
+
+  private async requireCard(id: string): Promise<CardRecord> {
+    const card = await this.getCard(id);
+    if (!card) throw new Error(`Card not found: ${id}`);
+    return card;
+  }
+
+  /**
+   * Hold a card in its state, waiting for `awaiting` (rule 24, K-N3-1): the
+   * typed back-pressure hold, recorded as `card/held`.
+   */
+  public async holdCard(
+    id: string,
+    hold: { awaiting: CardStatus; reason: string },
+    actor = "executor",
+  ): Promise<CardRecord> {
+    const card = await this.requireCard(id);
+    if (!isCardStatus(hold.awaiting)) {
+      throw new Error(
+        `Card ${id}: a hold awaits one of the nine states, got ${String(hold.awaiting)}`,
+      );
+    }
+    const reason = hold.reason.trim();
+    if (!reason) throw new Error("A held card needs a reason");
+    if (card.hold?.kind === "awaitingMerge") {
+      throw new Error(`Card ${id} is accepted and awaits its pull request's merge`);
+    }
+    await this.appendAndApply({
+      actor,
+      type: "card/held",
+      cardId: id,
+      payload: { id, awaiting: hold.awaiting, reason, since: new Date().toISOString() },
+    });
+    return this.requireCard(id);
+  }
+
+  /** Clear a back-pressure hold once its awaited move succeeded (K-N3-2): `card/released`. */
+  public async releaseHold(id: string, actor = "executor"): Promise<CardRecord> {
+    const card = await this.requireCard(id);
+    if (card.hold?.kind !== "backpressure") return card;
+    await this.appendAndApply({
+      actor,
+      type: "card/released",
+      cardId: id,
+      payload: { id, awaited: card.hold.awaiting },
+    });
+    return this.requireCard(id);
+  }
+
+  /**
+   * A person accepted the card and its pull request opened (rule 24, K-N3-3):
+   * `card/pr_opened` sets the `awaitingMerge` hold and records the accepter;
+   * the card stays in Review, outside Review's WIP count.
+   */
+  public async recordPullRequestOpened(
+    id: string,
+    pr: { pr: number; url: string; headSha: string; accepter?: string },
+    actor = "harness",
+  ): Promise<CardRecord> {
+    const card = await this.requireCard(id);
+    if (card.status !== "review") {
+      throw new Error(`Card ${id} is in '${card.status}'; only a card in Review awaits a merge`);
+    }
+    if (!Number.isInteger(pr.pr) || pr.pr < 1)
+      throw new Error(`A pull request number, got ${pr.pr}`);
+    await this.appendAndApply({
+      actor,
+      type: "card/pr_opened",
+      cardId: id,
+      payload: {
+        id,
+        pr: pr.pr,
+        url: pr.url,
+        headSha: pr.headSha,
+        ...(pr.accepter ? { accepter: pr.accepter } : {}),
+      },
+    });
+    return this.requireCard(id);
+  }
+
+  /**
+   * The pull request closed (rule 24, K-N3-4): the hold clears; when it was
+   * not merged, the acceptance did not complete and the accepter clears too.
+   * The move to Done on a merge is the board's (`BoardServiceImpl.closePullRequest`).
+   */
+  public async recordPullRequestClosed(
+    id: string,
+    pr: { pr: number; merged: boolean },
+    actor = "harness",
+  ): Promise<CardRecord> {
+    const card = await this.requireCard(id);
+    if (card.hold?.kind !== "awaitingMerge" || card.hold.pr !== pr.pr) {
+      throw new Error(`Card ${id} does not await pull request #${pr.pr}`);
+    }
+    await this.appendAndApply({
+      actor,
+      type: "card/pr_closed",
+      cardId: id,
+      payload: { id, pr: pr.pr, merged: pr.merged },
+    });
+    return this.requireCard(id);
+  }
+
+  /**
+   * The `assignee` a reader sees (K-N6-6): derived from the delegate and
+   * owner — `worker`, `human` for the install's person, else the owner's
+   * principal — and the legacy column only for a card that has neither.
+   */
+  private assigneeOf(row: {
+    assignee: string | null;
+    owner: string | null;
+    delegate: string | null;
+  }): string | undefined {
+    const delegate = row.delegate ? parseJsonColumn<CardDelegate | null>(row.delegate, null) : null;
+    if (delegate?.kind === "worker") return "worker";
+    if (delegate?.kind === "person" && delegate.id) return delegate.id;
+    if (row.owner) return row.owner === this.localPrincipal() ? "human" : row.owner;
+    return row.assignee ?? undefined;
+  }
+
+  /** A legacy `assignee` value, recorded as the delegate or owner it names (K-N6-6). */
+  private async applyAssignee(
+    card: CardRecord,
+    assignee: string | null,
+    actor: string,
+    options: { principal?: string },
+  ): Promise<void> {
+    const principal = options.principal ?? this.localPrincipal();
+    const target = assignee
+      ? assigneeTarget(this.db, assignee, (p) => {
+          this.eventLog.appendNow(p);
+        })
+      : undefined;
+    if (!target) {
+      if (card.delegate) await this.delegateCard(card.id, null, principal, actor);
+      return;
+    }
+    if ("delegate" in target) {
+      if (card.delegate?.kind !== target.delegate.kind)
+        await this.delegateCard(card.id, target.delegate, principal, actor);
+    } else if (card.owner !== target.owner) {
+      await this.changeOwner(card.id, target.owner, principal, actor);
+    }
+  }
+
+  /** Change who builds the card (K-N6-2): `card/delegated {from, to}`, naming the principal. */
+  public async delegateCard(
+    id: string,
+    to: CardDelegate | null,
+    principal: string,
+    actor = "human",
+  ): Promise<CardRecord> {
+    const card = await this.requireCard(id);
+    validateCardFields(id, { delegate: to });
+    await this.appendAndApply({
+      actor,
+      type: "card/delegated",
+      cardId: id,
+      payload: { id, from: card.delegate ?? null, to },
+      principal,
+    });
+    return this.requireCard(id);
+  }
+
+  /** Change who is responsible for the card (K-N6-2): `card/owner_changed {from, to}`. */
+  public async changeOwner(
+    id: string,
+    to: string | null,
+    principal: string,
+    actor = "human",
+  ): Promise<CardRecord> {
+    const card = await this.requireCard(id);
+    await this.appendAndApply({
+      actor,
+      type: "card/owner_changed",
+      cardId: id,
+      payload: { id, from: card.owner ?? null, to },
+      principal,
+    });
+    return this.requireCard(id);
+  }
+
+  /**
    * Append a card-scoped fact to the ledger without changing the projection:
    * a step the Worker took, the sha an accept merged as, the Planner's repair
    * plan. The dashboard reads these back; the hash chain covers them.
@@ -625,6 +1049,12 @@ export class CardStore {
     /** The attempt and step the fact belongs to, as typed columns (K4). */
     attemptId?: string | undefined;
     stepId?: string | undefined;
+    /** The person the event acts for (rule 19); a person's override names them (rule 28). */
+    principal?: string | undefined;
+    /** Free text and personal data, off the chain and erasable (rule 33, K-S7-9). */
+    private?: Record<string, unknown> | undefined;
+    /** Only on the Worker's own events (NEW-kernel-10). */
+    onBehalfOf?: string | undefined;
   }): Promise<void> {
     await this.eventLog.append({
       actor: params.actor,
@@ -633,6 +1063,9 @@ export class CardStore {
       payload: params.payload,
       ...(params.attemptId ? { attemptId: params.attemptId } : {}),
       ...(params.stepId ? { stepId: params.stepId } : {}),
+      ...(params.principal ? { principal: params.principal } : {}),
+      ...(params.private ? { private: params.private } : {}),
+      ...(params.onBehalfOf ? { onBehalfOf: params.onBehalfOf } : {}),
     });
   }
 
@@ -815,8 +1248,10 @@ export class CardStore {
       );
     }
     const payload = { cardId, dependsOnId, source, createdAt: new Date().toISOString() };
-    await this.eventLog.append({ actor, type: "card/dependency_added", cardId, payload });
-    this.projectDependencyAdded(payload);
+    await this.eventLog.append(
+      { actor, type: "card/dependency_added", cardId, payload },
+      { project: () => this.projectDependencyAdded(payload) },
+    );
   }
 
   public async removeDependency(
@@ -825,8 +1260,10 @@ export class CardStore {
     actor = "human",
   ): Promise<void> {
     const payload = { cardId, dependsOnId, removedAt: new Date().toISOString() };
-    await this.eventLog.append({ actor, type: "card/dependency_removed", cardId, payload });
-    this.projectDependencyRemoved(payload);
+    await this.eventLog.append(
+      { actor, type: "card/dependency_removed", cardId, payload },
+      { project: () => this.projectDependencyRemoved(payload) },
+    );
   }
 
   /** Cards `cardId` waits on. */
@@ -967,8 +1404,10 @@ export class CardStore {
       createdAt: now,
       updatedAt: now,
     };
-    await this.eventLog.append({ actor: "system", type: "project/created", payload });
-    this.projectProjectCreated(payload);
+    await this.eventLog.append(
+      { actor: "system", type: "project/created", payload },
+      { project: () => this.projectProjectCreated(payload) },
+    );
     return this.getProject(payload.id) as ProjectRecord;
   }
 
@@ -983,6 +1422,13 @@ export class CardStore {
   ): Promise<ProjectRecord> {
     const project = this.getProject(id);
     if (!project) throw new CardStructureError("unknown_card", `Project not found: ${id}`);
+    // K-N5-5: a project is done only by a person's acceptance of the slice
+    // that completes it (`recordSliceAccepted`), never by a status write.
+    if (!(PROJECT_STATUSES as readonly string[]).includes(status)) {
+      throw new Error(
+        `A project's stored status is ${PROJECT_STATUSES.join(", ")}; '${String(status)}' is derived — done only from a person's slice/accepted (kernel rule 30)`,
+      );
+    }
     if (status === "active" && project.status !== "active") {
       const active = this.listProjects().filter((p) => p.status === "active").length;
       if (active >= this.activeProjectCap) {
@@ -993,9 +1439,76 @@ export class CardStore {
       }
     }
     const payload = { id, status, updatedAt: new Date().toISOString() };
-    await this.eventLog.append({ actor, type: "project/updated", payload });
-    this.projectProjectUpdated(payload);
+    await this.eventLog.append(
+      { actor, type: "project/updated", payload },
+      { project: () => this.projectProjectUpdated(payload) },
+    );
     return this.getProject(id) as ProjectRecord;
+  }
+
+  /**
+   * A person accepted a slice (rule 30, K-N5-5): `slice/accepted`, naming
+   * the principal. When `completesProject` — the slice planner-pm computed
+   * as completing the project — the rollup reports the project `done`.
+   */
+  public async recordSliceAccepted(
+    input: { projectId: string; sliceId: string; completesProject: boolean },
+    actor: string,
+    options: { principal?: string } = {},
+  ): Promise<void> {
+    if (actor !== "human") {
+      throw new Error(
+        `Only a person accepts a slice (the actor was ${actor}); nothing was recorded`,
+      );
+    }
+    if (!this.getProject(input.projectId)) {
+      throw new CardStructureError("unknown_card", `Project not found: ${input.projectId}`);
+    }
+    await this.eventLog.append({
+      actor,
+      type: "slice/accepted",
+      payload: {
+        projectId: input.projectId,
+        sliceId: input.sliceId,
+        completesProject: input.completesProject,
+      },
+      ...(options.principal ? { principal: options.principal } : {}),
+    });
+  }
+
+  /**
+   * The project's status as the rollup derives it (rule 30, K-N5-3, K-N5-5):
+   * a person's `paused` or `archived` first; `active` while a top-level card
+   * is open (neither done nor rejected); `done` only when a person's
+   * `slice/accepted` completing the project is newer than every top-level
+   * card's opening; `idle` otherwise — never done from the cards alone.
+   */
+  public async projectRollup(
+    projectId: string,
+  ): Promise<"active" | "idle" | "done" | "paused" | "archived"> {
+    const project = this.getProject(projectId);
+    if (!project) throw new CardStructureError("unknown_card", `Project not found: ${projectId}`);
+    if (project.status === "paused" || project.status === "archived") return project.status;
+    const top = (await this.listCards({ parentId: null })).filter((c) => c.projectId === projectId);
+    if (top.some((c) => c.status !== "done" && c.status !== "rejected")) return "active";
+    const completing = this.db
+      .prepare(
+        `SELECT MAX(seq) AS seq FROM events WHERE type = 'slice/accepted' AND actor = 'human'
+           AND json_extract(payload, '$.projectId') = ? AND json_extract(payload, '$.completesProject') = 1`,
+      )
+      .get(projectId) as { seq: number | null };
+    if (completing.seq === null) return "idle";
+    const ids = top.map((c) => c.id);
+    if (ids.length === 0) return "done";
+    // The latest opening of a top-level card: its creation or a move out of done/rejected.
+    const opened = this.db
+      .prepare(
+        `SELECT MAX(seq) AS seq FROM events WHERE card_id IN (${ids.map(() => "?").join(",")})
+           AND (type = 'card/created' OR (type = 'card/status_changed'
+             AND json_extract(payload, '$.fromStatus') IN ('done', 'rejected')))`,
+      )
+      .get(...ids) as { seq: number | null };
+    return (opened.seq ?? 0) < completing.seq ? "done" : "idle";
   }
 
   /** The review time a person has per day (B12 "set hours"; ReviewWIP, B3). */
@@ -1014,8 +1527,10 @@ export class CardStore {
       reviewMinutesPerDay: Math.round(reviewMinutesPerDay),
       updatedAt: new Date().toISOString(),
     };
-    await this.eventLog.append({ actor, type: "project/review_hours", payload });
-    this.projectReviewMinutes(payload);
+    await this.eventLog.append(
+      { actor, type: "project/review_hours", payload },
+      { project: () => this.projectReviewMinutes(payload) },
+    );
     return this.getProject(id) as ProjectRecord;
   }
 
@@ -1065,20 +1580,32 @@ export class CardStore {
     // Checked before the append: the projection's foreign key would refuse
     // the row, but only after the ledger had already recorded it.
     if (!(await this.getCard(cp.cardId))) throw new Error(`Card not found: ${cp.cardId}`);
-    await this.eventLog.append({
-      actor: "sync",
-      type: "checkpoint/recorded",
-      cardId: cp.cardId,
-      payload: cp,
-    });
-
-    this.projectCheckpoint(cp);
+    // K-N6-4: who built the step, the Worker running the model unless a person did.
+    const recorded: CheckpointRecord = {
+      ...cp,
+      builtBy: cp.builtBy ?? { kind: "worker", id: cp.agentModel },
+    };
+    if (recorded.builtBy?.kind !== "worker" && recorded.builtBy?.kind !== "person") {
+      throw new Error(
+        `builtBy is {kind: "worker" | "person", id}, got ${JSON.stringify(cp.builtBy)}`,
+      );
+    }
+    await this.eventLog.append(
+      {
+        actor: "sync",
+        type: "checkpoint/recorded",
+        cardId: cp.cardId,
+        payload: recorded,
+      },
+      { project: () => this.projectCheckpoint(recorded) },
+    );
   }
 
   public async getCheckpoints(cardId: string): Promise<CheckpointRecord[]> {
     const rows = this.db
       .prepare(`
-        SELECT card_id, step, git_ref, gate_status, agent_model, agent_harness, agent_role, created_at
+        SELECT card_id, step, git_ref, gate_status, agent_model, agent_harness, agent_role, created_at,
+          built_by
         FROM checkpoints
         WHERE card_id = ?
         ORDER BY step ASC
@@ -1089,114 +1616,27 @@ export class CardStore {
   }
 
   private projectCardCreated(payload: Record<string, unknown>): void {
-    const route = (payload.modelRoute ?? null) as ModelRoute | null;
-    const externalRef = (payload.externalRef ?? null) as ExternalRef | null;
-
     this.db
-      .prepare(`
-        INSERT OR REPLACE INTO cards (${CARD_COLUMNS})
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `)
+      .prepare(cardInsertSql())
       .run(
-        payload.id as string,
-        payload.tier as string,
-        (payload.parentId as string) ?? null,
-        payload.title as string,
-        payload.status as string,
-        JSON.stringify(payload.scopeFiles ?? []),
-        (payload.stepBudget as number) ?? DEFAULT_STEP_BUDGET,
-        (payload.stepsUsed as number) ?? 0,
-        (payload.spec as string) ?? null,
-        JSON.stringify(payload.acceptanceCriteria ?? []),
-        JSON.stringify(payload.acceptanceTests ?? []),
-        (payload.difficulty as number) ?? null,
-        (payload.tokenBudget as number) ?? null,
-        (payload.secondsBudget as number) ?? null,
-        (payload.tokensUsed as number) ?? 0,
-        (payload.secondsUsed as number) ?? 0,
-        route?.planner ?? null,
-        route?.executor ?? null,
-        JSON.stringify(payload.dependsOn ?? []),
-        (payload.contextPackId as string) ?? null,
-        (payload.evidenceId as string) ?? null,
-        externalRef ? JSON.stringify(externalRef) : null,
-        (payload.stopReason as string) ?? null,
-        (payload.priority as number) ?? 0,
-        // Events written before `order_key` existed carry no key; give those a
-        // generated one so replaying an old log still yields an ordered board.
-        (payload.orderKey as string) ?? this.nextOrderKey(),
-        (payload.blockedReason as string) ?? null,
-        // Events written before these fields existed simply lack them.
-        (payload.estimate as number) ?? null,
-        JSON.stringify(payload.labels ?? []),
-        (payload.epicId as string) ?? null,
-        (payload.cycleId as string) ?? null,
-        (payload.assignee as string) ?? null,
-        (payload.dueDate as string) ?? null,
-        (payload.projectId as string) ?? null,
-        payload.createdAt as string,
-        payload.updatedAt as string,
+        ...cardInsertValues(CARD_COLUMN_TABLE, payload, { orderKey: () => this.nextOrderKey() }),
       );
   }
 
   /** Translate a patch into a single UPDATE over exactly the touched columns. */
   private projectCardUpdated(id: string, patch: CardUpdate, updatedAt: string): void {
-    const sets: string[] = [];
-    const params: SqlParam[] = [];
-
-    const set = (column: string, value: SqlParam): void => {
-      sets.push(`${column} = ?`);
-      params.push(value);
-    };
-
-    if (patch.title !== undefined) set("title", patch.title);
-    if (patch.scopeFiles !== undefined) set("scope_files", JSON.stringify(patch.scopeFiles));
-    if (patch.stepBudget !== undefined) set("step_budget", patch.stepBudget);
-    if (patch.stepsUsed !== undefined) set("steps_used", patch.stepsUsed);
-    if (patch.spec !== undefined) set("spec", patch.spec);
-    if (patch.acceptanceTests !== undefined) {
-      set("acceptance_tests", JSON.stringify(patch.acceptanceTests));
-    }
-    if (patch.acceptanceCriteria !== undefined) {
-      set("acceptance_criteria", JSON.stringify(patch.acceptanceCriteria));
-    }
-    if (patch.difficulty !== undefined) set("difficulty", patch.difficulty);
-    if (patch.tokenBudget !== undefined) set("token_budget", patch.tokenBudget);
-    if (patch.secondsBudget !== undefined) set("seconds_budget", patch.secondsBudget);
-    if (patch.tokensUsed !== undefined) set("tokens_used", patch.tokensUsed);
-    if (patch.secondsUsed !== undefined) set("seconds_used", patch.secondsUsed);
-    if (patch.modelRoute !== undefined) {
-      set("model_route_planner", patch.modelRoute.planner ?? null);
-      set("model_route_executor", patch.modelRoute.executor ?? null);
-    }
-    if (patch.dependsOn !== undefined) set("depends_on", JSON.stringify(patch.dependsOn));
-    if (patch.contextPackId !== undefined) set("context_pack_id", patch.contextPackId);
-    if (patch.evidenceId !== undefined) set("evidence_id", patch.evidenceId);
-    if (patch.externalRef !== undefined) set("external_ref", JSON.stringify(patch.externalRef));
-    if (patch.stopReason !== undefined) set("stop_reason", patch.stopReason);
-    if (patch.priority !== undefined) set("priority", patch.priority);
-    if (patch.orderKey !== undefined) set("order_key", patch.orderKey);
-    if (patch.blockedReason !== undefined) set("blocked_reason", patch.blockedReason);
-    if (patch.estimate !== undefined) set("estimate", patch.estimate);
-    if (patch.labels !== undefined) set("labels", JSON.stringify(patch.labels));
-    if (patch.epicId !== undefined) set("epic_id", patch.epicId);
-    if (patch.cycleId !== undefined) set("cycle_id", patch.cycleId);
-    if (patch.assignee !== undefined) set("assignee", patch.assignee);
-    if (patch.dueDate !== undefined) set("due_date", patch.dueDate);
-    if (patch.projectId !== undefined) set("project_id", patch.projectId);
-
-    if (sets.length === 0) return;
-
-    set("updated_at", updatedAt);
-    params.push(id);
+    const assignments = cardPatchAssignments(patch as Record<string, unknown>);
+    if (assignments.length === 0) return;
+    const sets = [...assignments.map(([column]) => `${column} = ?`), "updated_at = ?"];
+    const params: SqlParam[] = [...assignments.map(([, value]) => value), updatedAt, id];
     this.db.prepare(`UPDATE cards SET ${sets.join(", ")} WHERE id = ?`).run(...params);
   }
 
   private projectCheckpoint(cp: CheckpointRecord): void {
     this.db
       .prepare(`
-        INSERT OR REPLACE INTO checkpoints (card_id, step, git_ref, gate_status, agent_model, agent_harness, agent_role, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT OR REPLACE INTO checkpoints (card_id, step, git_ref, gate_status, agent_model, agent_harness, agent_role, created_at, built_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         cp.cardId,
@@ -1207,6 +1647,7 @@ export class CardStore {
         cp.agentHarness,
         cp.agentRole,
         cp.createdAt,
+        cp.builtBy ? JSON.stringify(cp.builtBy) : null,
       );
   }
 
@@ -1224,17 +1665,93 @@ export class CardStore {
     "projects",
   ] as const;
 
-  /** Apply one ledger event to the projections this store owns. True when it did. */
-  public applyEvent(event: EventRecord): boolean {
+  /**
+   * Apply one ledger event to the projections this store owns. True when it did.
+   * `live.expectedFrom` is the live status write's compare-and-set: its
+   * projection applies only while the stored status still equals it, and
+   * throws `stale_from` otherwise, rolling the append back (rule 26, K-S4-8).
+   * Replay passes nothing and applies unconditionally.
+   */
+  public applyEvent(event: EventRecord, live?: { expectedFrom: CardStatus }): boolean {
     switch (event.type) {
       case "card/created":
         this.projectCardCreated(event.payload as Record<string, unknown>);
         return true;
       case "card/status_changed": {
-        const p = event.payload as { id: string; toStatus: CardStatus; updatedAt: string };
+        if (!this.projectStatusChanged(event, live?.expectedFrom)) {
+          const p = event.payload as { id: string; toStatus: string };
+          throw new StatusTransitionError(
+            "stale_from",
+            p.id,
+            p.toStatus,
+            `Card ${p.id}: another writer moved it from '${live?.expectedFrom}' first; nothing was changed`,
+          );
+        }
+        return true;
+      }
+      case "card/held": {
+        const p = event.payload as {
+          id: string;
+          awaiting: CardStatus;
+          reason: string;
+          since: string;
+        };
+        const hold: CardHold = {
+          kind: "backpressure",
+          awaiting: p.awaiting,
+          reason: p.reason,
+          since: p.since,
+        };
+        this.db.prepare("UPDATE cards SET hold = ? WHERE id = ?").run(JSON.stringify(hold), p.id);
+        return true;
+      }
+      case "card/released": {
+        const p = event.payload as { id: string };
+        this.db.prepare("UPDATE cards SET hold = NULL WHERE id = ?").run(p.id);
+        return true;
+      }
+      case "card/pr_opened": {
+        const p = event.payload as {
+          id: string;
+          pr: number;
+          url: string;
+          headSha: string;
+          accepter?: string;
+        };
+        const hold: CardHold = {
+          kind: "awaitingMerge",
+          pr: p.pr,
+          url: p.url,
+          headSha: p.headSha,
+          since: event.createdAt,
+        };
+        this.db.prepare("UPDATE cards SET hold = ? WHERE id = ?").run(JSON.stringify(hold), p.id);
+        if (p.accepter) {
+          this.db.prepare("UPDATE cards SET accepter = ? WHERE id = ?").run(p.accepter, p.id);
+        }
+        return true;
+      }
+      case "card/pr_closed": {
+        const p = event.payload as { id: string; merged: boolean };
         this.db
-          .prepare("UPDATE cards SET status = ?, updated_at = ? WHERE id = ?")
-          .run(p.toStatus, p.updatedAt, p.id);
+          .prepare(
+            p.merged
+              ? "UPDATE cards SET hold = NULL WHERE id = ?"
+              : "UPDATE cards SET hold = NULL, accepter = NULL WHERE id = ?",
+          )
+          .run(p.id);
+        return true;
+      }
+      case "card/delegated": {
+        const p = event.payload as { id: string; to: CardDelegate | null };
+        this.db
+          .prepare("UPDATE cards SET delegate = ? WHERE id = ?")
+          .run(p.to ? JSON.stringify(p.to) : null, p.id);
+        return true;
+      }
+      case "card/owner_changed": {
+        const p = event.payload as { id: string; to: string | null };
+        this.db.prepare("UPDATE cards SET owner = ? WHERE id = ?").run(p.to, p.id);
         return true;
       }
       case "card/updated": {
@@ -1274,6 +1791,47 @@ export class CardStore {
       default:
         return this.runs.applyEvent(event);
     }
+  }
+
+  /**
+   * Project a `card/status_changed`. Replay writes it unconditionally; the
+   * live write passes `expectedFrom` and projects only while the stored
+   * status still equals it, returning false otherwise (rule 26, K-S4-8).
+   */
+  private projectStatusChanged(event: EventRecord, expectedFrom?: CardStatus): boolean {
+    const p = event.payload as {
+      id: string;
+      fromStatus?: CardStatus;
+      toStatus: CardStatus;
+      updatedAt: string;
+    };
+    const changed =
+      expectedFrom === undefined
+        ? this.db
+            .prepare("UPDATE cards SET status = ?, updated_at = ? WHERE id = ?")
+            .run(p.toStatus, p.updatedAt, p.id)
+        : this.db
+            .prepare("UPDATE cards SET status = ?, updated_at = ? WHERE id = ? AND status = ?")
+            .run(p.toStatus, p.updatedAt, p.id, expectedFrom);
+    if (expectedFrom !== undefined && Number(changed.changes) === 0) return false;
+    if (p.toStatus === "done" && event.principal) {
+      // K-N6-3: the person whose move accepted the card is its accepter.
+      this.db.prepare("UPDATE cards SET accepter = ? WHERE id = ?").run(event.principal, p.id);
+    } else if (p.fromStatus === "done" && p.toStatus !== "done") {
+      // A card leaving Done is no longer accepted: the next Done needs a new
+      // accepting decision (spine: the human is the rate limiter).
+      this.db.prepare("UPDATE cards SET accepter = NULL WHERE id = ?").run(p.id);
+    } else if (p.fromStatus === "review" && p.toStatus !== "done") {
+      // K-N3-6: a card leaving Review (the merge's own move to Done aside)
+      // leaves its acceptance behind: an `awaitingMerge` hold and its
+      // accepter clear, so the old pull request's merge cannot take it to Done.
+      this.db
+        .prepare(
+          "UPDATE cards SET accepter = NULL, hold = CASE WHEN json_extract(hold, '$.kind') = 'awaitingMerge' THEN NULL ELSE hold END WHERE id = ?",
+        )
+        .run(p.id);
+    }
+    return true;
   }
 
   /** Clear every projection and replay the whole ledger into it (no transaction). */

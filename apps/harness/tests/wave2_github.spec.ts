@@ -126,9 +126,9 @@ describe("Y14/Y15/Y16: the PR through the App", () => {
       id: "c1",
       tier: "task",
       title: "Fix a",
-      status: "review",
       spec: "S",
     });
+    await cardStore.updateCardStatus("c1", "review", "test setup", "harness", { override: true });
     const card = await cardStore.getCard("c1");
     const pr = await openPullRequestViaApp(
       client,
@@ -200,6 +200,7 @@ describe("Y10/Y11/Y20: syncGithub goes through the tracker adapter when configur
     expect(pulled?.title).toBe("Fix A");
     expect((await cardStore.getCard("local"))?.externalRef?.id).toBe("9");
     // The card starts running; then the issue's scope changes.
+    await cardStore.updateCardStatus(pulled?.id as string, "ready");
     await cardStore.updateCardStatus(pulled?.id as string, "in_progress");
     body = "Touch src/a.ts and src/b.ts";
     updated = "2026-09-20T00:00:00Z";

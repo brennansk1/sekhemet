@@ -1,4 +1,5 @@
-import type { CardStore, EventLog, EventRecord } from "@sekhemet/kernel";
+import { type BoardService, BoardServiceImpl } from "@sekhemet/board";
+import type { CardStatus, CardStore, EventLog, EventRecord } from "@sekhemet/kernel";
 
 /**
  * The planner's durable state lives in the kernel's hash-chained ledger,
@@ -9,6 +10,31 @@ import type { CardStore, EventLog, EventRecord } from "@sekhemet/kernel";
 export interface PlannerLedger {
   store: CardStore;
   log: EventLog;
+  /**
+   * The board every status change goes through (kernel rule 26, K-S4-3).
+   * The harness passes its own; without one, a board over the same store
+   * with entry conditions on is used.
+   */
+  board?: Pick<BoardService, "transitionCard">;
+}
+
+/**
+ * Move a card through the board: a compare-and-set against the status the
+ * planner read (`from`), under the transition law, the entry conditions and
+ * the WIP limits. The planner never writes a status itself.
+ */
+export async function moveCard(
+  ledger: PlannerLedger,
+  move: { cardId: string; from: CardStatus; to: CardStatus; reason: string; actor?: string },
+): Promise<void> {
+  const board = ledger.board ?? new BoardServiceImpl(ledger.store, { entryConditions: true });
+  await board.transitionCard({
+    cardId: move.cardId,
+    fromStatus: move.from,
+    toStatus: move.to,
+    actor: move.actor ?? "planner",
+    reason: move.reason,
+  });
 }
 
 export async function appendPlannerEvent<T>(

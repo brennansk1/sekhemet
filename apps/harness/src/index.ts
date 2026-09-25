@@ -5,7 +5,7 @@ import { freemem, tmpdir, totalmem } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
-import { BoardServiceImpl, evidenceSummaryOf } from "@sekhemet/board";
+import { BoardServiceImpl } from "@sekhemet/board";
 import { type RunProfile, type SuiteRunResult, runScore } from "@sekhemet/eval";
 import {
   DeterministicGateRunner,
@@ -70,6 +70,7 @@ import {
   forkCard,
   inferDependencies,
   nextAttemptNumber,
+  plannerDifficulty,
   pruneRunData,
   recordQueueProgress,
   recordReview,
@@ -86,6 +87,13 @@ import { applyExploration, exploreProject } from "./learning/explore.js";
 import { consolidateWithManager, reflectWithManager } from "./learning/reflect.js";
 import { reviewCard } from "./learning/review.js";
 import { LearningStore } from "./learning/store.js";
+import {
+  LEDGER_COMMANDS,
+  checkLedgerAnchor,
+  ledgerCommand,
+  openLocalLedger,
+} from "./ledger_cmds.js";
+import { cardBranchHead, ledgerEvidenceSummary } from "./ledger_evidence.js";
 import { licenseGate } from "./license_gate.js";
 import { runMcpStdioServer } from "./mcp.js";
 import {
@@ -110,7 +118,7 @@ import { DEFAULT_DASHBOARD_PORT, startDashboardServer } from "./server.js";
 import { bakeOffOnSuitePath } from "./suite_path.js";
 import { tracesCommand } from "./tracing.js";
 import { trailerGate } from "./trailer_gate.js";
-import { nextForReview, park, sendBack, unpark } from "./triage.js";
+import { nextForReview, park, reopen, sendBack, unpark } from "./triage.js";
 import {
   describeTuning,
   globalTuningPath,
@@ -137,6 +145,10 @@ import {
 
 export interface CliConfig {
   command:
+    | "backup"
+    | "restore"
+    | "export"
+    | "erase"
     | "doctor"
     | "board"
     | "log"
@@ -279,6 +291,12 @@ export function parseCliArgs(argv: string[] = process.argv.slice(2)): CliConfig 
   };
 }
 
+/** The repository's measurement marker, as the board's option (rule 24). */
+function measurementOption(repoPath: string): { measurementMarker?: { purpose: string } } {
+  const marker = readMeasurementMarker(repoPath);
+  return marker ? { measurementMarker: marker } : {};
+}
+
 export function initLocalKernel(repoPath: string): {
   db: DatabaseSync;
   log: EventLog;
@@ -293,28 +311,29 @@ export function initLocalKernel(repoPath: string): {
   // The design and the permission engine's protected-path list both name
   // .sekhemet/events.db; opening a differently-named file meant the deny rule
   // guarded a database nothing used.
-  const dbPath = join(dotSekhemet, "events.db");
-  const db = new DatabaseSync(dbPath);
-  initSchema(db);
-  const log = new EventLog(db);
+  // The install's person, the erasure register and the schema check (RUN-44).
+  const { db, log } = openLocalLedger(repoPath);
   const cardStore = new CardStore(db, log);
   // Production boards check every column's entry condition (B1); Review
-  // reads the card's latest evidence bundle.
-  const evidenceDir = join(dotSekhemet, "evidence");
+  // reads the evidence bundle the ledger records for the card (K-S7-7),
+  // never a `latest-<card>.json` pointer, and none recorded before a rewind
+  // (K-S7-8).
   // H15: [review] wip from config.toml sets the Review limit.
   const review = reviewLimit(effectiveConfig(repoPath).config);
   const boardService = new BoardServiceImpl(cardStore, {
     ...(review ? { customLimits: { review } } : {}),
     entryConditions: true,
-    evidenceFor: (cardId) => {
-      try {
-        return evidenceSummaryOf(
-          JSON.parse(readFileSync(join(evidenceDir, `latest-${cardId}.json`), "utf8")),
-        );
-      } catch {
-        return undefined;
-      }
-    },
+    // K-N8-4: external CI results count only when declared blocking, at the branch head.
+    evidenceFor: (cardId) =>
+      ledgerEvidenceSummary(cardStore, repoPath, cardId, {
+        blockingChecks: effectiveConfig(repoPath).config.review.blockingChecks,
+        branchHead: (id) => cardBranchHead(repoPath, id),
+      }),
+    // K-N5-1: the Planner scores an unscored card as it enters Planning.
+    planner: { scoreDifficulty: (card) => plannerDifficulty(card) },
+    // Rule 24: the harness accepts a leaf card only where a measured run
+    // prepared the repository (--auto-accept's bound); elsewhere a person does.
+    ...measurementOption(repoPath),
   });
 
   return { db, log, cardStore, boardService };
@@ -359,9 +378,9 @@ export async function printTerminalBoard(boardService: BoardServiceImpl): Promis
   );
 }
 
-export async function printEventLog(log: EventLog): Promise<void> {
+export async function printEventLog(log: EventLog): Promise<boolean> {
   const events = await log.getEvents(1, 20);
-  const verification = await log.verifyHashChain();
+  const verification = await log.verifyHashChain({ full: true });
 
   console.log(
     "\n=========================================================================================",
@@ -385,9 +404,12 @@ export async function printEventLog(log: EventLog): Promise<void> {
       );
     }
   }
+  // K-N7-2: an erasure is a named gap, never a corruption.
+  for (const gap of verification.erased ?? []) console.log(`  ${gap.message}`);
   console.log(
     "=========================================================================================\n",
   );
+  return verification.valid;
 }
 
 export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<void> {
@@ -418,7 +440,8 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     route.kind === "review" ||
     route.kind === "send-back" ||
     route.kind === "park" ||
-    route.kind === "unpark"
+    route.kind === "unpark" ||
+    route.kind === "reopen"
   ) {
     return runTriage(route, parseCliArgs(route.flags).repoPath);
   }
@@ -428,6 +451,17 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
   if (config.command === "traces") {
     // `sekhemet traces [--since-hours N] [--out f.json] [--otlp http://host:4318]` (H22).
     process.exitCode = await tracesCommand(config.repoPath, argv.slice(argv.indexOf("traces") + 1));
+    return;
+  }
+
+  if ((LEDGER_COMMANDS as readonly string[]).includes(config.command)) {
+    // `sekhemet dev backup|restore|export`, `sekhemet erase` (kernel NEW-kernel-7,
+    // runtime NEW-runtime-8, security NEW-security-7).
+    process.exitCode = await ledgerCommand(
+      config.command as (typeof LEDGER_COMMANDS)[number],
+      argv,
+      config.repoPath,
+    );
     return;
   }
 
@@ -652,7 +686,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       argv
         .slice(argv.indexOf(cmd) + 1)
         .filter((a, i, all) => a !== "--repo" && all[i - 1] !== "--repo"),
-      { repoPath: config.repoPath, cardStore, log },
+      { repoPath: config.repoPath, cardStore, log, boardService },
       { print: (l) => console.log(l), model: (name) => roster.resolve(name, "worker") },
     );
     return;
@@ -751,7 +785,23 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
   }
 
   if (config.command === "log") {
-    await printEventLog(log);
+    const chainValid = await printEventLog(log);
+    if (!chainValid) process.exitCode = 1;
+    // K-N1-5: the newest Ledger-Head anchor in git exposes a truncated tail.
+    const anchor = checkLedgerAnchor(config.repoPath, db);
+    if (anchor.status === "truncated") {
+      console.log(
+        ` Ledger TRUNCATED: git's newest Ledger-Head names seq ${anchor.seq}, and the ledger ends at seq ${anchor.lastSeq}.`,
+      );
+      process.exitCode = 1;
+    } else if (anchor.status === "mismatch") {
+      console.log(
+        ` Ledger REWRITTEN: seq ${anchor.seq} no longer has the hash git's Ledger-Head recorded.`,
+      );
+      process.exitCode = 1;
+    } else if (anchor.status === "ok") {
+      console.log(` Ledger-Head anchor at seq ${anchor.seq} matches.`);
+    }
     // K8: the projections must be exactly what the ledger derives.
     const verdict = await cardStore.verifyProjections();
     console.log(
@@ -1736,6 +1786,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     // procedure on a checkout (never an edit) and do not reach the Worker.
     ready = await runExternalReviews(config.repoPath, ready, {
       store: cardStore,
+      board: boardService,
       learning: ctx.learning,
       reviewer: () => router.use(reviewerModel ? "reviewer" : "manager"),
       ...(reviewPosterFromEnv() ? { github: reviewPosterFromEnv() } : {}),
@@ -1969,6 +2020,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
             (q, cardId) => service.ask(q, { deep: true, cardId }),
             cardStore,
             config.repoPath,
+            boardService,
           ).catch((err) => {
             console.log(`   research failed: ${err instanceof Error ? err.message : String(err)}`);
             return undefined;
@@ -2132,7 +2184,10 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       // questions too when Seshat is already resident (no extra swap).
       await answerPm(undefined, router.isResident("manager")).catch(() => undefined);
       const held = await boardService.listHeld();
-      for (const h of held) console.log(`\n--- ${h.id} is held: ${h.blockedReason} ---`);
+      for (const h of held)
+        console.log(
+          `\n--- ${h.id} is held: ${h.hold?.kind === "backpressure" ? `${h.hold.awaiting} refused: ${h.hold.reason}` : ""} ---`,
+        );
     } finally {
       process.off("SIGINT", onSigint);
       watchdog.stop();
@@ -2214,6 +2269,9 @@ function printDevHelp(): void {
     ["abort <card>", "Stop a running card before its next turn"],
     ["rewind <card> <n> / fork <card> <n>", "Back to, or branch from, step n"],
     ["log", "The event log and its hash chain"],
+    ["backup <path> / restore <path>", "Back the ledger up; restore it, re-applying erasures"],
+    ["export --ledger [--no-private]", "The ledger as NDJSON a verifier checks alone"],
+    ["erase --secret --rotated", "Erase a secret found after the fact (stdin or --secret-file)"],
     ['research "<q>" [--deep]', "Ask the Researcher directly"],
     ["overnight [--until 07:00]", "Queue rounds while the machine is free"],
     ["bake-off --workers a,b", "Compare workers on a release gate"],
@@ -2253,7 +2311,7 @@ async function openHome(flags: string[]): Promise<void> {
 
 type TriageRoute = Extract<
   ReturnType<typeof routeFrontDoor>,
-  { kind: "review" | "send-back" | "park" | "unpark" }
+  { kind: "review" | "send-back" | "park" | "unpark" | "reopen" }
 >;
 
 /** The board's decisions, from the command line (triage.ts is shared with it). */
@@ -2306,9 +2364,14 @@ async function runTriage(route: TriageRoute, repoPath: string): Promise<void> {
     } else if (route.kind === "park") {
       await park(ctx, card, route.reason);
       console.log(`${card.id} is parked. Undo: sekhemet unpark ${card.id}`);
-    } else {
-      await unpark(ctx, card);
+    } else if (route.kind === "reopen") {
+      await reopen(ctx, card, route.reason);
       console.log(`${card.id} is back in Ready.`);
+    } else {
+      const to = await unpark(ctx, card);
+      console.log(
+        `${card.id} is back in ${to === "ready" ? "Ready" : to === "backlog" ? "Backlog" : "Planning"}.`,
+      );
     }
   } finally {
     db.close();

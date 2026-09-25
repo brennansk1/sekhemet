@@ -1,7 +1,7 @@
 import type { CardRecord, EventRecord } from "@sekhemet/kernel";
 import { DecisionStore } from "./decisions.js";
 import { EstimationModel } from "./estimation.js";
-import { type PlannerLedger, appendPlannerEvent, plannerEvents } from "./ledger.js";
+import { type PlannerLedger, appendPlannerEvent, moveCard, plannerEvents } from "./ledger.js";
 import { type PersistPlanResult, persistPlan } from "./persist.js";
 import type { SpidrFeaturePlanner } from "./planner.js";
 
@@ -116,6 +116,7 @@ export interface ReplanResult {
   diff: PlanDiff;
   reason: string;
   applied?: PersistPlanResult;
+  /** Stories the new plan removed, returned to Backlog (the name is kept for callers). */
   parkedRemoved: string[];
 }
 
@@ -157,12 +158,17 @@ export async function replanSession(
     for (const r of diff.removed) {
       const card = await ledger.store.getCard(r.id);
       if (!card || !["backlog", "ready", "planning"].includes(card.status)) continue;
-      await ledger.store.updateCardStatus(
-        r.id,
-        "parked",
-        `removed by replan v${version}`,
-        "planner",
-      );
+      // A story the new plan removed is no longer planned: it returns to
+      // Backlog. Parked needs a stop reason, a person's reason or an open
+      // decision (kernel rule 27, K-N5-2); a replan is none of those.
+      if (card.status !== "backlog") {
+        await moveCard(ledger, {
+          cardId: r.id,
+          from: card.status,
+          to: "backlog",
+          reason: `removed by replan v${version}`,
+        });
+      }
       await ledger.store.updateCard(
         r.id,
         { blockedReason: `Removed by replan v${version}: ${input.reason}` },

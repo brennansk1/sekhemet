@@ -1,7 +1,8 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { routeFrontDoor } from "../src/front_door.js";
 import { initLocalKernel, main } from "../src/index.js";
 
 /**
@@ -46,8 +47,47 @@ describe("triage from the command line", () => {
     await main(["park", "card_t", "--repo", repo]);
     await main(["send-back", "card_t", "use", "the", "shared", "parser", "--repo", repo]);
     expect(await status(repo)).toBe("ready");
-    const candidates = readFileSync(join(repo, ".sekhemet", "playbook_candidates.jsonl"), "utf8");
-    expect(candidates).toContain("use the shared parser");
+    // K-S7-6: the candidate is a ledger event, and no side file is written.
+    expect(existsSync(join(repo, ".sekhemet", "playbook_candidates.jsonl"))).toBe(false);
+    const { db, log } = initLocalKernel(repo);
+    const candidates = await log.getEventsByTypes(["playbook/candidate"]);
+    db.close();
+    // The note is free text: the private part, not the hashed payload (K-S7-9).
+    expect(candidates.map((e) => e.payload)).toEqual([{ cardId: "card_t" }]);
+    expect(candidates.map((e) => e.private)).toEqual([{ reason: "use the shared parser" }]);
+  });
+
+  it("K-S4-7: every state has a command-line exit to Ready — unpark for Parked, reopen for Rejected", async () => {
+    expect(routeFrontDoor(["unpark", "card_t"])).toMatchObject({ kind: "unpark" });
+    expect(routeFrontDoor(["reopen", "card_t"])).toMatchObject({ kind: "reopen" });
+    const repo = await withCard();
+    const { db, boardService } = initLocalKernel(repo);
+    await boardService.transitionCard({
+      cardId: "card_t",
+      fromStatus: "ready",
+      toStatus: "rejected",
+      actor: "human",
+      reason: "not now",
+    });
+    db.close();
+    await main(["reopen", "card_t", "--repo", repo]);
+    expect(await status(repo)).toBe("ready");
+  });
+
+  it("K-N5-6: unpark returns a card to Backlog or Planning when it was parked from there, else Ready", async () => {
+    const repo = await withCard();
+    const { db, boardService } = initLocalKernel(repo);
+    await boardService.transitionCard({
+      cardId: "card_t",
+      fromStatus: "ready",
+      toStatus: "backlog",
+      actor: "human",
+      reason: "later",
+    });
+    db.close();
+    await main(["park", "card_t", "--repo", repo]);
+    await main(["unpark", "card_t", "--repo", repo]);
+    expect(await status(repo)).toBe("backlog");
   });
 
   it("refuses a send-back without a reason", async () => {

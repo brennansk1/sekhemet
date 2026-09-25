@@ -173,7 +173,8 @@ describe("sekhemet overnight", () => {
         expect(args).toEqual(["--profile", "full"]);
         rounds++;
         report(repo, `r${rounds}`, [true]);
-        await cards.updateCardStatus("c0", "review", "passed");
+        for (const to of ["in_progress", "verify", "review"] as const)
+          await cards.updateCardStatus("c0", to, "passed");
         return 0;
       },
     });
@@ -229,7 +230,8 @@ describe("sekhemet overnight", () => {
       },
       runQueue: async () => {
         report(repo, "r1", [true]);
-        await cards.updateCardStatus("c0", "review", "x");
+        for (const to of ["in_progress", "verify", "review"] as const)
+          await cards.updateCardStatus("c0", to, "x");
         return 0;
       },
     });

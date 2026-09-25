@@ -246,6 +246,32 @@ describe("recorded context packs", () => {
     expect(report.asStored).toBe(1);
   });
 
+  it("K-N7-6: names an erased pack as a gap with its ledger/erased seq, never as missing", async () => {
+    const repo = await ledger();
+    const db = new DatabaseSync(join(repo, ".sekhemet", "events.db"));
+    const log = new EventLog(db);
+    const owner = log.ensureLocalPerson({});
+    const packs = (
+      db.prepare("SELECT context_pack_id AS id FROM steps ORDER BY step_index").all() as {
+        id: string;
+      }[]
+    ).map((r) => r.id);
+    const blobs = new BlobStore(repo);
+    const { erasedBySeq } = await log.erase({
+      eventIds: [],
+      blobIds: [packs[0] as string],
+      blobs,
+      reason: "secret",
+      principal: owner,
+    });
+    db.close();
+    const r = recordedReplayCases([repo], { modelId: "worker" });
+    expect(r.cases).toHaveLength(0);
+    expect(r.gaps).toEqual([{ contextPackId: packs[0], erasedBySeq }]);
+    expect(r.skipped[`context pack erased by ledger/erased seq ${erasedBySeq}`]).toBe(1);
+    expect(r.skipped["context pack missing"]).toBeUndefined();
+  });
+
   it("offers a progressive pack's whole class catalog, which tool_search reaches", async () => {
     const repo = await ledger(["tool_search", "read_file"]);
     const r = recordedReplayCases([repo], {

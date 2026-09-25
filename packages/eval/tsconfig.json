@@ -6,6 +6,7 @@
   },
   "references": [
     { "path": "../kernel" },
+    { "path": "../board" },
     { "path": "../loop" },
     { "path": "../gates" },
     { "path": "../models" },

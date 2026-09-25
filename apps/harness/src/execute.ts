@@ -59,6 +59,8 @@ import { networkConfigs } from "./config_apply.js";
 import { readSettings } from "./integrations.js";
 import { RULE_SIGNAL_MINIMUM, learnFromAttempt } from "./learning/reflect.js";
 import type { LearningStore } from "./learning/store.js";
+import { ledgerHeadTrailer } from "./ledger_cmds.js";
+import { recordLedgerRun } from "./ledger_evidence.js";
 import { withLicenseGate } from "./license_gate.js";
 import { withReachabilityGate } from "./reachability_gate.js";
 import { withRegressionGate } from "./regression_gate.js";
@@ -549,7 +551,7 @@ export async function executeCard(
       recordSteps: async (id, stepsUsed) => {
         await ctx.cardStore.updateCard(id, { stepsUsed });
       },
-      transition: async (id, to) => {
+      transition: async (id, to, reason) => {
         const current = await ctx.cardStore.getCard(id);
         if (!current || current.status === to) return;
         await ctx.boardService.transitionCard({
@@ -557,13 +559,13 @@ export async function executeCard(
           fromStatus: current.status,
           toStatus: to,
           actor: "executor",
-          reason: `card runner advanced card to ${to}`,
+          reason: reason ?? `card runner advanced card to ${to}`,
         });
       },
       // A move the board refuses (back-pressure, WIP) holds the card with its
       // reason; `releaseHeldCards` retries it when Review drains (defect 1).
-      hold: async (id, reason) => {
-        await ctx.boardService.holdCard(id, reason, "executor");
+      hold: async (id, reason, awaiting) => {
+        await ctx.boardService.holdCard(id, reason, "executor", awaiting);
       },
     },
     onWorktreeReady: async (path) => {
@@ -1050,6 +1052,22 @@ async function pendingStartPoint(cardStore: CardStore, cardId: string) {
 const SLICE_KINDS = new Set(["spike", "interface", "data", "path", "rule"]);
 
 /**
+ * The Planner's difficulty score for a card, 1–10, from its measurable shape
+ * (planner `scoreDifficulty`): what `pullThroughPlanning` records, and what
+ * the board asks for when an unscored card enters Planning (kernel rule 27,
+ * K-N5-1).
+ */
+export function plannerDifficulty(card: CardRecord, historicalFailureRate?: number): number {
+  const slice = cardClassOf(card).toLowerCase();
+  const scored = scoreDifficulty({
+    slice: (SLICE_KINDS.has(slice) ? slice : "path") as SpidrSliceKind,
+    fileCount: Math.max(1, card.scopeFiles.length),
+    ...(historicalFailureRate !== undefined ? { historicalFailureRate } : {}),
+  }).value;
+  return Math.max(1, Math.min(10, Math.round(scored)));
+}
+
+/**
  * Whether the card still carries the step budget it was given for want of one
  * (WL-T3-11): created without an explicit `stepBudget` (the card/created
  * event records it) and its stored budget not changed since. Decided from the
@@ -1087,13 +1105,10 @@ export async function pullThroughPlanning(
   const measured = ctx.cardStore.runs.competence(cardClass, modelId);
   const patch: { difficulty?: number; stepBudget?: number } = {};
   if (card.difficulty === undefined) {
-    const slice = cardClass.toLowerCase();
-    const scored = scoreDifficulty({
-      slice: (SLICE_KINDS.has(slice) ? slice : "path") as SpidrSliceKind,
-      fileCount: Math.max(1, card.scopeFiles.length),
-      ...(measured.attempts >= 3 ? { historicalFailureRate: 1 - measured.passRate } : {}),
-    }).value;
-    patch.difficulty = Math.max(1, Math.min(10, Math.round(scored)));
+    patch.difficulty = plannerDifficulty(
+      card,
+      measured.attempts >= 3 ? 1 - measured.passRate : undefined,
+    );
   }
   const decision = calibratedStepBudget(card.stepBudget, measured);
   const storedBudget = (await ctx.cardStore.getCard(card.id))?.stepBudget;
@@ -1189,6 +1204,18 @@ export async function rollupParent(
   const body = `${JSON.stringify(evidence, null, 2)}\n`;
   writeFileSync(join(dir, `${evidence.id}.json`), body);
   writeFileSync(join(dir, `latest-${parentId}.json`), body);
+  // The integration run is the parent's attempt, on the ledger with its
+  // stop reason and evidence: Verify and Review read them there (K-S4-6, K-S7-7).
+  await recordLedgerRun(ctx.cardStore, {
+    cardId: parentId,
+    modelId: "integration-gate",
+    passed: result.passed,
+    stopReason: result.passed ? "gate_passed" : "repair_exhausted",
+    evidenceId: evidence.id,
+    path: join(".sekhemet", "evidence", `${evidence.id}.json`),
+    body,
+    secondsUsed: Math.round(result.durationMs / 1000),
+  });
   await ctx.cardStore.recordEvent({
     type: "card/rollup",
     cardId: parentId,
@@ -1242,7 +1269,12 @@ export async function explainCard(ctx: ExecutionContext, cardId: string): Promis
   const lines = [`${card.id} is in ${card.status}.`];
   const waiting = ctx.cardStore.waitingOn(card.id);
   if (waiting.length > 0) lines.push(`It waits on ${waiting.join(", ")}, not done yet.`);
-  if (card.blockedReason) lines.push(`Held or blocked: ${card.blockedReason}.`);
+  if (card.hold?.kind === "backpressure") {
+    lines.push(`Held, waiting for ${card.hold.awaiting}: ${card.hold.reason}.`);
+  } else if (card.hold?.kind === "awaitingMerge") {
+    lines.push(`Accepted; waits for pull request #${card.hold.pr} to merge.`);
+  }
+  if (card.blockedReason) lines.push(`Blocked: ${card.blockedReason}.`);
   if (card.stopReason) lines.push(`Its last attempt stopped with ${card.stopReason}.`);
   const attempts = ctx.cardStore.runs.listAttempts(card.id);
   if (attempts.length > 0) {
@@ -1284,21 +1316,13 @@ export async function explainCard(ctx: ExecutionContext, cardId: string): Promis
         ? "Accept it or return it with a reason."
         : card.status === "parked"
           ? "Unblock it (answer, split or re-plan), then move it to Ready."
-          : card.blockedReason?.startsWith("held:")
+          : card.hold?.kind === "backpressure"
             ? "It moves on its own when Review has room."
             : card.status === "ready"
               ? "Run the queue."
               : undefined;
   if (next) lines.push(`Next: ${next}`);
   return lines;
-}
-
-/** The column a held card was waiting for, from its `held: <column> refused (...)` reason. */
-export function heldTarget(blockedReason: string | undefined | null): CardStatus | undefined {
-  const m = /^held:\s*(in_progress|verify|review|parked|planning|ready|done)\b/.exec(
-    blockedReason ?? "",
-  );
-  return m?.[1] as CardStatus | undefined;
 }
 
 /**
@@ -1311,7 +1335,8 @@ export function heldTarget(blockedReason: string | undefined | null): CardStatus
 export async function releaseHeldCards(ctx: ExecutionContext): Promise<string[]> {
   const released: string[] = [];
   for (const card of await ctx.boardService.listHeld()) {
-    const wanted = heldTarget(card.blockedReason);
+    // The typed hold names the state it awaits (kernel rule 24, K-N3-1).
+    const wanted = card.hold?.kind === "backpressure" ? card.hold.awaiting : undefined;
     if (!wanted) continue;
     let ok = false;
     try {
@@ -1332,7 +1357,12 @@ export async function releaseHeldCards(ctx: ExecutionContext): Promise<string[]>
         });
       } catch (err) {
         await ctx.boardService
-          .holdCard(card.id, `review refused (${err instanceof Error ? err.message : String(err)})`)
+          .holdCard(
+            card.id,
+            `review refused (${err instanceof Error ? err.message : String(err)})`,
+            "executor",
+            "review",
+          )
           .catch(() => undefined);
       }
     }
@@ -1429,14 +1459,17 @@ export async function acceptCard(
   // The queue's --auto-accept (actor "harness") always merges locally: the
   // benchmark needs later cards to build on earlier ones.
   if (actor !== "harness" && readSettings(ctx.repoPath).githubPrOnAccept) {
-    const url = await openPullRequest(ctx, card, gitAdapter.branchNameFor(card.id, card.title));
-    await ctx.boardService.transitionCard({
-      cardId: card.id,
-      fromStatus: card.status,
-      toStatus: "done",
-      actor,
-      reason: `accepted: pull request ${url}`,
-    });
+    const opened = await openPullRequest(ctx, card, gitAdapter.branchNameFor(card.id, card.title));
+    const url = opened.url;
+    // Kernel rule 24 (K-N3-3): accepted, the card waits in Review for its
+    // pull request to merge — an `awaitingMerge` hold outside Review's WIP
+    // count — and reaches Done on the merge (`card/pr_closed`).
+    await ctx.boardService.acceptWithPullRequest(
+      card.id,
+      opened,
+      ctx.cardStore.localPrincipal(),
+      "harness",
+    );
     await ctx.cardStore
       .recordEvent({
         type: "card/accepted",
@@ -1451,6 +1484,7 @@ export async function acceptCard(
     return url;
   }
 
+  const ledgerHead = ledgerHeadTrailer(ctx.repoPath);
   const sha = await gitAdapter.squashAndMerge(
     card.id,
     "main",
@@ -1460,6 +1494,8 @@ export async function acceptCard(
       "Agent-Harness": "sekhemet",
       "Agent-Role": "implementer",
       GateStatus: "pass",
+      // Kernel rule 12 (K-N1-5): the chain head, anchored outside SQLite.
+      ...(ledgerHead ? { "Ledger-Head": ledgerHead } : {}),
     },
     card.title,
   );
@@ -1684,7 +1720,7 @@ async function openPullRequest(
   ctx: ExecutionContext,
   card: CardRecord,
   branch: string,
-): Promise<string> {
+): Promise<{ pr: number; url: string; headSha: string }> {
   const run = promisify(execFile);
   await run("git", ["push", "-u", "origin", `${branch}:${branch}`], {
     cwd: ctx.repoPath,
@@ -1714,7 +1750,7 @@ async function openPullRequest(
         payload: { ...pr, repo: { owner: appRepo[1], repo: appRepo[2] } },
       })
       .catch(() => undefined);
-    return pr.url;
+    return { pr: pr.number, url: pr.url, headSha: pr.headSha };
   }
   const title = card.title.replace(/\s*\(SPIDR:[^)]*\)\s*$/, "");
   let gates = "";
@@ -1745,5 +1781,9 @@ async function openPullRequest(
     ["pr", "create", "--head", branch, "--base", "main", "--title", title, "--body", body],
     { cwd: ctx.repoPath, timeout: 60_000 },
   );
-  return stdout.trim().split("\n").at(-1) ?? "";
+  const url = stdout.trim().split("\n").at(-1) ?? "";
+  const headSha = (
+    await run("git", ["rev-parse", branch], { cwd: ctx.repoPath, timeout: 10_000 })
+  ).stdout.trim();
+  return { pr: Number(/\/pull\/(\d+)/.exec(url)?.[1] ?? 0), url, headSha };
 }

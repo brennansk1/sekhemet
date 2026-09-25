@@ -141,11 +141,21 @@ function request(
 }
 
 describe("P9/P10/P11/P25: durable decision requests", () => {
-  it("parks the card, survives a new store instance, and an answer resumes it", async () => {
+  it("a safe_default request leaves its card where it is: work proceeds on the default", async () => {
+    const l = ledger();
+    await l.store.createCard({ id: "c0", tier: "task", title: "store", status: "ready" });
+    const id = await new DecisionStore(l).request(
+      request("c0", "safe_default", "2099-01-01T00:00:00Z"),
+    );
+    expect((await l.store.getCard("c0"))?.status).toBe("ready");
+    expect(l.store.runs.getDecision(id)?.status).toBe("pending");
+  });
+
+  it("a default_deny request parks the card, survives a new store instance, and an answer resumes it", async () => {
     const l = ledger();
     await l.store.createCard({ id: "c1", tier: "task", title: "store", status: "ready" });
     const id = await new DecisionStore(l).request(
-      request("c1", "safe_default", "2099-01-01T00:00:00Z"),
+      request("c1", "default_deny", "2099-01-01T00:00:00Z"),
     );
     expect((await l.store.getCard("c1"))?.status).toBe("parked");
     // A fresh store over the same ledger sees the pending decision (restart).
@@ -190,17 +200,17 @@ describe("P9/P10/P11/P25: durable decision requests", () => {
       parentTier: "epic",
       spec,
     });
-    if (!plan.ambiguity.askUser) {
-      // Force the ask path with a decision built the planner's way.
-      plan.ambiguity.askUser = true;
-      plan.ambiguity.decision = buildDecisionRequest({
-        cardId: "epic_auth",
-        category: "storage",
-        question: "Cloud or local backend?",
-        optionLabels: ["cloud", "local"],
-        sourceExcerpt: "Support cloud or local backends",
-      });
-    }
+    // The ask path with a default_deny decision built the planner's way:
+    // only such a request parks its card from the request (kernel rule 27).
+    plan.ambiguity.askUser = true;
+    plan.ambiguity.decision = buildDecisionRequest({
+      cardId: "epic_auth",
+      category: "authorization",
+      question: "Who may sync?",
+      optionLabels: ["the owner only", "any member"],
+      sourceExcerpt: "Support cloud or local backends",
+    });
+    expect(plan.ambiguity.decision.policy).toBe("default_deny");
     const result = await persistPlan(l, plan, { epicId: "epic_auth" });
     expect(result.decisionId).toBeDefined();
     expect((await l.store.getCard("epic_auth"))?.status).toBe("parked");
@@ -208,7 +218,9 @@ describe("P9/P10/P11/P25: durable decision requests", () => {
     expect(first?.status).toBe("planning");
     await new DecisionStore(l).answer(result.decisionId as string, 0);
     expect((await l.store.getCard(first?.id as string))?.status).not.toBe("planning");
-    expect((await l.store.getCard("epic_auth"))?.status).toBe("in_progress");
+    // Parked has no edge back into the middle of a state (kernel rule 25,
+    // K-N5-6): an epic parked from In Progress is re-queued at Ready.
+    expect((await l.store.getCard("epic_auth"))?.status).toBe("ready");
   });
 });
 
@@ -321,7 +333,7 @@ describe("P15: calibration persists across processes", () => {
 });
 
 describe("P12/P13/P14: replan with diffs, review, standup, escalation", () => {
-  it("records a new plan version with a diff; apply parks removed stories", async () => {
+  it("records a new plan version with a diff; apply returns removed stories to Backlog", async () => {
     const l = ledger();
     await planned(l);
     const r = await replanSession(l, new SpidrFeaturePlanner(), {
@@ -335,6 +347,7 @@ describe("P12/P13/P14: replan with diffs, review, standup, escalation", () => {
     expect(r.diff.removed.length + r.diff.changed.length + r.diff.added.length).toBeGreaterThan(0);
     expect((await latestPlan(l, "epic_auth"))?.version).toBe(2);
     for (const id of r.parkedRemoved) {
+      expect((await l.store.getCard(id))?.status).toBe("backlog");
       expect((await l.store.getCard(id))?.blockedReason).toMatch(/Removed by replan v2/);
     }
     const d = diffPlans(
@@ -366,7 +379,8 @@ describe("P12/P13/P14: replan with diffs, review, standup, escalation", () => {
 
   it("review recommends return on a failing gate; standup lists decisions with wait times", async () => {
     const l = ledger();
-    await l.store.createCard({ id: "r1", tier: "task", title: "review me", status: "review" });
+    await l.store.createCard({ id: "r1", tier: "task", title: "review me" });
+    await l.store.updateCardStatus("r1", "review", "test setup", "harness", { override: true });
     await l.log.append({
       actor: "executor",
       type: "gate/result",
@@ -375,7 +389,7 @@ describe("P12/P13/P14: replan with diffs, review, standup, escalation", () => {
     });
     expect((await reviewSession(l, "r1")).recommendation).toBe("return");
     await l.store.createCard({ id: "p1", tier: "task", title: "parked one", status: "ready" });
-    await new DecisionStore(l).request(request("p1", "safe_default", "2099-01-01T00:00:00Z"));
+    await new DecisionStore(l).request(request("p1", "default_deny", "2099-01-01T00:00:00Z"));
     const s = await standupReport(l, { now: new Date(Date.now() + 3 * 3_600_000) });
     expect(s.text).toContain("Waiting on you:");
     expect(s.decisionsWaiting[0]?.waitingHours).toBeGreaterThanOrEqual(2.9);

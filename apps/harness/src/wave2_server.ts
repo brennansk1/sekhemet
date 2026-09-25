@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { BoardServiceImpl } from "@sekhemet/board";
 import type { CardStore, EventLog } from "@sekhemet/kernel";
 import {
   DecisionStore,
@@ -133,6 +134,20 @@ export async function applyWebhookIntent(
         "github",
       );
       return id;
+    }
+    case "pull_request_closed": {
+      // Kernel rule 24 (K-N3-4): the accepted card awaiting this pull request
+      // moves to Done on a merge, or waits in Review again when it closed unmerged.
+      const card = (await store.listCards({ status: "review" })).find(
+        (c) => c.hold?.kind === "awaitingMerge" && c.hold.pr === intent.pr,
+      );
+      if (!card) return undefined;
+      await new BoardServiceImpl(store, { entryConditions: true }).closePullRequest(
+        card.id,
+        { pr: intent.pr, merged: intent.merged },
+        "github",
+      );
+      return card.id;
     }
     case "enqueue_run":
       await store

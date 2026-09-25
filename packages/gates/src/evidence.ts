@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { canonicalJson } from "@sekhemet/kernel";
 import type { GateFailure, GateResult, RungOutcome } from "./types.js";
 
 /** Model and sampling settings a result was produced under. */
@@ -132,14 +133,43 @@ export interface CompileEvidenceParams {
   stopDetail?: Record<string, unknown>;
 }
 
-/** Deterministic evidence id, so the same run always yields the same reference. */
-function evidenceId(cardId: string, attempt: number, diff: string): string {
-  return `ev_${createHash("sha256").update(`${cardId}:${attempt}:${diff}`).digest("hex").slice(0, 10)}`;
+/**
+ * Deterministic evidence id, so the same record always yields the same
+ * reference. It covers the bundle's structural record (SEC-51): card,
+ * attempt and diff, each gate's outcome, the stop reason, the files and
+ * line counts, the checkpoints, the settings and the `gates.toml` hash — so
+ * two bundles with different verdicts never share an id. Excerpts (failure
+ * messages, a skipped gate's reason, command lines) are left out: they are
+ * the erasable part, and erasing a secret in one leaves the id unchanged.
+ */
+function evidenceId(params: CompileEvidenceParams): string {
+  const structural = {
+    cardId: params.cardId,
+    attempt: params.attempt,
+    diff: params.diff,
+    passed: params.gateResult.passed,
+    gates: (params.gateResult.rungResults ?? []).map((r) => ({
+      gate: r.gate,
+      rung: r.rung,
+      layer: r.layer,
+      passed: r.passed,
+      exitCode: r.exitCode,
+      skipped: r.skipped === true,
+    })),
+    stopReason: params.stopReason,
+    filesTouched: params.filesTouched,
+    linesAdded: params.linesAdded,
+    linesRemoved: params.linesRemoved,
+    checkpointShas: params.checkpointShas,
+    settings: params.settings,
+    gatesConfigSha256: params.gatesConfigSha256,
+  };
+  return `ev_${createHash("sha256").update(canonicalJson(structural)).digest("hex").slice(0, 10)}`;
 }
 
 export function compileEvidence(params: CompileEvidenceParams): EvidenceBundle {
   return {
-    id: evidenceId(params.cardId, params.attempt, params.diff),
+    id: evidenceId(params),
     cardId: params.cardId,
     attempt: params.attempt,
     createdAt: new Date().toISOString(),

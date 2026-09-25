@@ -13,7 +13,14 @@ import { basename, extname, join, resolve, sep } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import type { BoardService } from "@sekhemet/board";
 import { type EvidenceBundle, type GatesConfig, loadGatesConfig } from "@sekhemet/gates";
-import { type CardRecord, type CardStore, type EventLog, STOP_REASONS } from "@sekhemet/kernel";
+import {
+  CARD_STATUSES,
+  type CardRecord,
+  type CardStore,
+  type EventLog,
+  STOP_REASONS,
+  isCardStatus,
+} from "@sekhemet/kernel";
 import type { LocalInferenceAdapter } from "@sekhemet/models";
 import { DecisionStore } from "@sekhemet/planner";
 import {
@@ -608,10 +615,16 @@ export function startDashboardServer(
     }
 
     if (url === "/api/projects" && req.method !== "POST") {
-      json(res, 200, {
-        projects: options.cardStore?.listProjects() ?? [],
-        activeCap: options.cardStore?.activeProjectCap,
-      });
+      const store = options.cardStore;
+      // K-N5-3: each project with its derived rollup (active, idle, done, paused, archived).
+      const projects = store
+        ? await Promise.all(
+            store
+              .listProjects()
+              .map(async (p) => ({ ...p, rollup: await store.projectRollup(p.id) })),
+          )
+        : [];
+      json(res, 200, { projects, activeCap: store?.activeProjectCap });
       return;
     }
 
@@ -743,7 +756,7 @@ export function startDashboardServer(
     }
 
     if (url === "/api/playbook") {
-      json(res, 200, playbookSnapshot(repoPath));
+      json(res, 200, await playbookSnapshot(repoPath, log));
       return;
     }
 
@@ -989,13 +1002,27 @@ export function startDashboardServer(
             json(res, 400, { error: "An override needs toStatus and a reason" });
             return;
           }
+          // K-S7-5: a value outside the nine states is refused before anything is appended.
+          if (!isCardStatus(to)) {
+            json(res, 400, {
+              error: `'${to}' is not a card state; use one of ${CARD_STATUSES.join(", ")}`,
+            });
+            return;
+          }
+          // Rule 28: an override names the person who takes responsibility —
+          // the one given, or the install's own person on a solo setup (rule 19).
+          const principal =
+            typeof body.principal === "string" && body.principal.trim()
+              ? body.principal.trim()
+              : log.localPrincipal();
           try {
             await boardService.transitionCard({
               cardId,
               fromStatus: card.status,
-              toStatus: to as never,
+              toStatus: to,
               actor: "human",
               reason: `override: ${reason}`,
+              ...(principal ? { principal } : {}),
             });
           } catch (err) {
             // B12: a security-layer failure is the one refusal an override

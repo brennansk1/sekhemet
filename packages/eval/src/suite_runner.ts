@@ -10,7 +10,9 @@ import {
 } from "node:fs";
 import { dirname, join, posix } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { BoardServiceImpl } from "@sekhemet/board";
 import { CardStore, EventLog } from "@sekhemet/kernel";
+import { readMeasurementMarker } from "./measurement_marker.js";
 import type { SuiteTask, TaskOutcome } from "./suite.js";
 
 /**
@@ -218,6 +220,14 @@ export async function prepareIndependentCard(
 ): Promise<{ predecessors: string[] }> {
   const at = o.cardOrder.indexOf(o.cardId);
   if (at === -1) throw new Error(`${o.fixture}/${o.cardId} is not on the board`);
+  // Independent mode is measurement setup: only in a repository a measured
+  // run prepared, which carries the marker — refused before anything changes.
+  const marker = readMeasurementMarker(repo);
+  if (!marker) {
+    throw new Error(
+      `${repo} carries no .sekhemet/measurement.json: independent mode marks cards done without running them, so it runs only in a repository a measured run prepared`,
+    );
+  }
   const predecessors = o.cardOrder.slice(0, at);
   for (const p of predecessors) {
     const dir = join(o.referencesDir, o.fixture, p);
@@ -259,17 +269,36 @@ export async function prepareIndependentCard(
   }
   const db = new DatabaseSync(join(repo, ".sekhemet", "events.db"));
   try {
-    const store = new CardStore(db, new EventLog(db));
+    const log = new EventLog(db);
+    const store = new CardStore(db, log);
+    // Every move goes through the board (kernel rule 26, K-S4-3). Marking a
+    // predecessor done without running it is measurement setup, recorded as
+    // the harness's, never as a person's override (rule 28): no person
+    // decided it. The marker was checked above.
+    // No entryConditions: measurement only, bounded by the marker checked above (.sekhemet/measurement.json).
+    const board = new BoardServiceImpl(store);
     for (const [i, id] of o.cardOrder.entries()) {
       if (i === at) continue;
-      await store.updateCardStatus(
-        id,
-        i < at ? "done" : "backlog",
-        i < at
-          ? "independent mode: its reference solution is on main"
-          : "independent mode: a later card",
-        "harness",
-      );
+      const card = await store.getCard(id);
+      if (!card) continue;
+      if (i < at) {
+        await board.setUpForMeasurement(
+          {
+            cardId: id,
+            toStatus: "done",
+            reason: "independent mode: its reference solution is on main",
+          },
+          marker,
+        );
+      } else {
+        await board.transitionCard({
+          cardId: id,
+          fromStatus: card.status,
+          toStatus: "backlog",
+          actor: "harness",
+          reason: "independent mode: a later card",
+        });
+      }
     }
   } finally {
     db.close();

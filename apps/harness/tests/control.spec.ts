@@ -17,6 +17,7 @@ import {
   rewindCard,
   rollupParent,
 } from "../src/execute.js";
+import { ledgerEvidenceSummary } from "../src/ledger_evidence.js";
 import { startDashboardServer } from "../src/server.js";
 
 function scripted(turn: (n: number) => Omit<ToolCall, "id">[]) {
@@ -73,16 +74,8 @@ describe("apps/harness planning, rollup, explain and runner control (B2, B7, B12
     // The production board: entry conditions on, Review reading evidence.
     boardService = new BoardServiceImpl(cardStore, {
       entryConditions: true,
-      evidenceFor: (id) => {
-        try {
-          const ev = JSON.parse(
-            readFileSync(join(repo, ".sekhemet", "evidence", `latest-${id}.json`), "utf8"),
-          );
-          return { passed: ev.passed === true, gatesRun: ev.rungResults?.length ?? 0 };
-        } catch {
-          return undefined;
-        }
-      },
+      // As production resolves it: from the ledger (K-S7-7).
+      evidenceFor: (id) => ledgerEvidenceSummary(cardStore, repo, id),
     });
     ctx = {
       repoPath: repo,
@@ -199,6 +192,12 @@ describe("apps/harness planning, rollup, explain and runner control (B2, B7, B12
     expect((await rollupParent(ctx, "epic_p")).status).toBe("not_ready");
     const reviewed = await cardStore.getCard("card_child");
     await acceptCard(ctx, reviewed as NonNullable<typeof reviewed>);
+    // Kernel rule 12 (K-N1-5): the merge commit anchors the ledger head.
+    const body = execFileSync("git", ["log", "-1", "--format=%B", "main"], {
+      cwd: repo,
+    }).toString();
+    const [, seq, hash] = body.match(/^Ledger-Head: (\d+):([0-9a-f]{64})$/m) ?? [];
+    expect((await log.getEvents(Number(seq), 1))[0]?.hash).toBe(hash);
     expect((await cardStore.getCard("epic_p"))?.status).toBe("done");
     const [rollup] = await cardStore.cardEvents("epic_p", ["card/rollup"]);
     expect(rollup?.payload).toMatchObject({ passed: true, children: ["card_child"] });
@@ -305,6 +304,13 @@ describe("apps/harness planning, rollup, explain and runner control (B2, B7, B12
     expect(again.finalStatus).toBe("planning");
     const stored = await cardStore.getCard(card.id);
     expect(stored?.status).toBe("planning");
+    // K-N5-4: the move into Planning records the regression as its reason.
+    const [intoPlanning] = (await cardStore.cardEvents(card.id, ["card/status_changed"]))
+      .filter((e) => (e.payload as { toStatus?: string }).toStatus === "planning")
+      .slice(-1);
+    expect((intoPlanning?.payload as { reason?: string }).reason).toMatch(
+      /^regression: unit passed at Review \(ev_[0-9a-f]+\) and fails now/,
+    );
     expect(stored?.blockedReason).toMatch(
       /^regression: unit passed at Review \(ev_[0-9a-f]+\) and fails now/,
     );
@@ -349,9 +355,19 @@ describe("apps/harness planning, rollup, explain and runner control (B2, B7, B12
         reason: "",
       });
       expect(refused.status).toBe(400);
+      // K-S7-5: a toStatus outside the nine states is refused, appending nothing.
+      const before = (await log.getEvents(1, 1_000_000)).length;
+      const unknown = await post("/api/cards/card_3/override", {
+        toStatus: "shipped",
+        reason: "spike without scope",
+        principal: "p_owner",
+      });
+      expect(unknown.status).toBe(400);
+      expect((await log.getEvents(1, 1_000_000)).length).toBe(before);
       const forced = await post("/api/cards/card_3/override", {
         toStatus: "in_progress",
         reason: "spike without scope",
+        principal: "p_owner",
       });
       expect(forced.status).toBe(200);
       expect(await cardStore.cardEvents("card_3", ["card/override"])).toHaveLength(1);
@@ -359,6 +375,13 @@ describe("apps/harness planning, rollup, explain and runner control (B2, B7, B12
       expect(await cardStore.cardEvents("card_1", ["card/abort_requested"])).toHaveLength(1);
       const paused = await (await post(`/api/projects/${project.id}`, { status: "paused" })).json();
       expect(paused.project.status).toBe("paused");
+      // K-N5-3: the projects route reports the derived rollup; a person's pause wins.
+      const listed = await (await fetch(`http://127.0.0.1:${server.port}/api/projects`)).json();
+      expect(listed.projects.find((p: { id: string }) => p.id === project.id)?.rollup).toBe(
+        "paused",
+      );
+      // `done` is never a status write (K-N5-5).
+      expect((await post(`/api/projects/${project.id}`, { status: "done" })).status).not.toBe(200);
       const hours = await (
         await post(`/api/projects/${project.id}`, { reviewMinutesPerDay: 90 })
       ).json();

@@ -2,10 +2,17 @@ import type { CardRecord, CardStatus } from "@sekhemet/kernel";
 
 export interface CardTransition {
   cardId: string;
+  /** The status the caller expects the card to be in: checked against the stored one (rule 26). */
   fromStatus: CardStatus;
   toStatus: CardStatus;
   actor: string;
   reason?: string;
+  /**
+   * The person moving the card (rule 19). An `override:` reason is refused
+   * without one (rule 28, K-S4-5); until principals are opaque ids on every
+   * event (NEW-kernel-2) it is recorded in the `card/override` payload.
+   */
+  principal?: string;
 }
 
 export interface WipLimitStatus {
@@ -46,7 +53,11 @@ export type TransitionRefusalCode =
   /** A column's entry condition does not hold (B1). */
   | "entry_condition"
   /** The card's latest evidence fails a security-layer gate (B12). */
-  | "security_gate";
+  | "security_gate"
+  /** The caller's `fromStatus` is not the stored status (rule 26, K-S4-1). */
+  | "stale_from"
+  /** An `override:` from anyone but a person with a principal (rule 28, K-S4-5). */
+  | "override_forbidden";
 
 /**
  * A refused column move, typed so a caller can tell back-pressure (hold the

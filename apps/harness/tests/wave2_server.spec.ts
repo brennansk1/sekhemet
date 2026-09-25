@@ -143,7 +143,8 @@ describe("dashboard routes for the planner and sync (P9, P11, P13, P17, P20, Y8,
   });
 
   it("the review route and explain carry the escalation diagnosis for a parked card (P12, P14)", async () => {
-    await cardStore.createCard({ id: "p1", tier: "task", title: "stuck", status: "parked" });
+    await cardStore.createCard({ id: "p1", tier: "task", title: "stuck" });
+    await cardStore.updateCardStatus("p1", "parked", "test setup", "harness", { override: true });
     await cardStore.updateCard("p1", { stopReason: "scope_violation", scopeFiles: ["a.ts"] });
     const r = await call("GET", "/api/cards/p1/review");
     expect((r.json.escalation as { category: string }).category).toBe("scope");

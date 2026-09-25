@@ -1,3 +1,4 @@
+import { type BoardService, BoardServiceImpl } from "@sekhemet/board";
 import type { CardStore } from "@sekhemet/kernel";
 import type { ResearchAnswer } from "../research/researcher.js";
 import { capabilityReport, capabilitySummary } from "./capability.js";
@@ -47,6 +48,8 @@ export function parseSlash(text: string): SlashCommand | undefined {
 
 export interface SlashDeps {
   cardStore: CardStore;
+  /** The board every move goes through (kernel K-S4-3); the harness passes its own. */
+  board?: Pick<BoardService, "transitionCard">;
   pmStore: PmStore;
   repoPath: string;
   researcher?: ((q: string, o?: { deep?: boolean }) => Promise<ResearchAnswer>) | undefined;
@@ -116,12 +119,16 @@ export async function runSlash(cmd: SlashCommand, deps: SlashDeps): Promise<Slas
       const id = await resolveCard(deps.cardStore, cmd.args);
       if (!id) return { reply: `No card matches "${cmd.args.split(/\s+/)[0] ?? ""}".` };
       const reason = cmd.args.split(/\s+/).slice(1).join(" ") || `/${cmd.name} from the chat`;
-      await deps.cardStore.updateCardStatus(
-        id,
-        cmd.name === "park" ? "parked" : cmd.name === "ready" ? "ready" : "backlog",
+      const card = await deps.cardStore.getCard(id);
+      if (!card) return { reply: `No card ${id}.` };
+      const board = deps.board ?? new BoardServiceImpl(deps.cardStore, { entryConditions: true });
+      await board.transitionCard({
+        cardId: id,
+        fromStatus: card.status,
+        toStatus: cmd.name === "park" ? "parked" : cmd.name === "ready" ? "ready" : "backlog",
+        actor: "human",
         reason,
-        "human",
-      );
+      });
       return {
         reply: `Moved ${id} to ${cmd.name === "park" ? "Parked" : cmd.name === "ready" ? "Ready" : "Backlog"}.`,
       };

@@ -36,7 +36,8 @@ async function acceptedRepo() {
   initSchema(db);
   const log = new EventLog(db);
   const store = new CardStore(db, log);
-  await store.createCard({ id: "c1", tier: "task", title: "Add max", status: "done" });
+  await store.createCard({ id: "c1", tier: "task", title: "Add max" });
+  await store.updateCardStatus("c1", "done", "test setup", "harness", { override: true });
   await store.recordEvent({
     type: "card/accepted",
     cardId: "c1",
@@ -99,7 +100,8 @@ async function acceptedWith(files: Record<string, string>) {
   initSchema(db);
   const log = new EventLog(db);
   const store = new CardStore(db, log);
-  await store.createCard({ id: "c1", tier: "task", title: "Change", status: "done" });
+  await store.createCard({ id: "c1", tier: "task", title: "Change" });
+  await store.updateCardStatus("c1", "done", "test setup", "harness", { override: true });
   await store.recordEvent({
     type: "card/accepted",
     cardId: "c1",

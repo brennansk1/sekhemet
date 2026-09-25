@@ -41,6 +41,8 @@ export type WebhookIntent =
     }
   | { kind: "external_review"; pr: number; headSha: string; url: string }
   | { kind: "verify_dependency_pr"; pr: number; author: string; headSha: string }
+  /** A pull request closed: merged or not (kernel rule 24's `card/pr_closed`). */
+  | { kind: "pull_request_closed"; pr: number; merged: boolean }
   | { kind: "enqueue_run"; ref: string; inputs: Record<string, string> }
   | { kind: "ignored"; reason: string };
 
@@ -65,6 +67,7 @@ export function intentFor(event: string, payload: Record<string, unknown>): Webh
       html_url: string;
       head: { sha: string };
       user?: { login: string };
+      merged?: boolean;
     };
     ref?: string;
     inputs?: Record<string, string>;
@@ -115,6 +118,13 @@ export function intentFor(event: string, payload: Record<string, unknown>): Webh
         pr: p.pull_request.number,
         headSha: p.pull_request.head.sha,
         url: p.pull_request.html_url,
+      };
+    }
+    if (p.action === "closed") {
+      return {
+        kind: "pull_request_closed",
+        pr: p.pull_request.number,
+        merged: p.pull_request.merged === true,
       };
     }
     if (p.action === "opened" && BOTS.test(p.pull_request.user?.login ?? "")) {

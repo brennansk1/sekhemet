@@ -4,6 +4,7 @@ status: partial
 audiences: [developer]
 code:
   - packages/sandbox/src/executor.ts
+  - apps/harness/src/ledger_cmds.ts
   - packages/sandbox/src/seatbelt.ts
   - packages/sandbox/src/bubblewrap.ts
   - packages/sandbox/src/seccomp.ts
@@ -24,6 +25,7 @@ code:
   - apps/harness/src/injection.ts
 tests:
   - packages/sandbox/tests/containment.spec.ts
+  - apps/harness/tests/ledger_cmds.spec.ts
   - packages/sandbox/tests/bubblewrap.spec.ts
   - packages/sandbox/tests/egress.spec.ts
   - packages/sandbox/tests/permissions.spec.ts
@@ -34,6 +36,7 @@ tests:
   - apps/harness/tests/security_small.spec.ts
   - apps/harness/tests/ask_tier.spec.ts
   - packages/gates/tests/executes_later.spec.ts
+  - packages/gates/tests/evidence_id.spec.ts
   - packages/loop/tests/paths.spec.ts
   - packages/loop/tests/restricted.spec.ts
   - packages/loop/tests/untrusted.spec.ts
@@ -219,7 +222,7 @@ The harness runs code written by a local model on the owner's machine. The v1 Wo
 | Permission engine, three tiers, protected paths | built | `permissions.ts`; `permissions.spec.ts` | — |
 | Ask answered by a person through a decision request | built (B1) | `decisionApprover` posts a `permission` request, deny by default, 60 s (`execute.ts`); denied at once with no approver (`loop/src/tools.ts`); `ask_tier.spec.ts` drives allow (answer and answerer recorded on `decision/answered`), time-out and no-approver against a real SQLite store. The answerer is today's `answeredBy` string; principals arrive with kernel rule 19 (B3.1) | NEW-security-6 |
 | Redaction before persistence | not-built | `redact` exists (`secrets.ts:100`), no caller outside the scanner | S3c |
-| Erasing a secret found after the fact | not-built | the ledger has no erasable part ([kernel](kernel.md) NEW-kernel-1) | NEW-security-7 |
+| Erasing a secret found after the fact | partial | `sekhemet erase --secret --rotated` reads the secret from stdin or `--secret-file` (never the command line), tells the person to rotate it first and erases nothing until `--rotated`, then erases every private field holding it (`findPrivate`) and every blob in `.sekhemet/blobs` holding it (`BlobStore.findContaining`) with reason `secret`, verifies the chain and never prints the secret; a secret in an event's structural `payload`, which the chain covers, cannot be erased — the command names each such seq as not erasable, says rotation is the remedy and exits 1 (`findInPayload`) (SEC-50; `ledger_cmds.spec.ts`). SEC-51 in part: the evidence bundle id covers the bundle's structural record — card, attempt, diff, each gate's outcome, the stop reason, files and line counts, checkpoints, settings and the `gates.toml` hash — and leaves the excerpts out, so erasing a secret in an excerpt leaves the id unchanged (`evidenceId`, `gates/src/evidence.ts`; `evidence_id.spec.ts`). Not yet: the excerpts and command lines still sit in the bundle file, not an erasable part with a commitment the id covers; evidence files and transcripts outside the blob store are not scanned; git history is outside the ledger (the command says so) | NEW-security-7 |
 | Personal and secret files kept out of git | not-built | `.gitignore` lists only `worktrees/`, `*.db`, `*.db-*`, `daemon.*`, `observations/` (`init.ts:348-354`) | [surface](surface.md) P10 |
 | Tokens outside the sandbox's reach | not-built | plaintext JSON (`integrations.ts:57-67`), readable under item 10's gap | S3c |
 | Dashboard Host check, token, CSP, framing | not-built | constant header, no-Origin trusted (`server.ts:115-126`) | S3c |

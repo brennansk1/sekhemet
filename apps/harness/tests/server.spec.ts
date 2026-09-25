@@ -305,8 +305,10 @@ describe("@sekhemet/harness Dashboard Server", () => {
       id: "card_triage",
       tier: "task",
       title: "Card awaiting review",
-      status: "review",
       scopeFiles: ["src/a.ts"],
+    });
+    await cardStore.updateCardStatus("card_triage", "review", "test setup", "harness", {
+      override: true,
     });
     const res = await post("/api/cards/card_triage/park", undefined, false);
     expect(res.status).toBe(403);
@@ -327,11 +329,21 @@ describe("@sekhemet/harness Dashboard Server", () => {
     expect(await res.json()).toEqual({ ok: true, status: "ready" });
     expect((await cardStore.getCard("card_triage"))?.status).toBe("ready");
 
-    const candidates = join(repo, ".sekhemet", "playbook_candidates.jsonl");
-    expect(existsSync(candidates)).toBe(true);
-    const line = JSON.parse(readFileSync(candidates, "utf8").trim().split("\n").at(-1) ?? "{}");
-    expect(line.cardId).toBe("card_triage");
-    expect(line.reason).toBe("Handle the empty-chain case explicitly");
+    // K-S7-6: the candidate is on the ledger; no side file is written.
+    expect(existsSync(join(repo, ".sekhemet", "playbook_candidates.jsonl"))).toBe(false);
+    const [candidate] = await log.getEventsByTypes(["playbook/candidate"]);
+    // The note is free text: in the private part, not the hashed payload (K-S7-9).
+    expect(candidate?.payload).toEqual({ cardId: "card_triage" });
+    expect(candidate?.private).toEqual({ reason: "Handle the empty-chain case explicitly" });
+    const playbook = await (
+      await fetch(`http://127.0.0.1:${serverInstance.port}/api/playbook`)
+    ).json();
+    expect(playbook.candidates).toEqual([
+      expect.objectContaining({
+        cardId: "card_triage",
+        reason: "Handle the empty-chain case explicitly",
+      }),
+    ]);
     // The reason is the next attempt's directive: it is in the card's dossier.
     const dossier = await cardStore.getDossier("card_triage");
     expect(dossier.sendBacks.map((e) => e.text)).toEqual([
@@ -362,9 +374,11 @@ describe("@sekhemet/harness Dashboard Server", () => {
       id: "card_chron_hasher",
       tier: "story",
       title: "Implement canonical JSON and SHA-256 hash chaining (SPIDR: Rule)",
-      status: "verify",
       scopeFiles: ["src/hasher.ts"],
       acceptanceTests: ["hasher.spec.ts"],
+    });
+    await cardStore.updateCardStatus("card_chron_hasher", "verify", "test setup", "harness", {
+      override: true,
     });
     const failure = (line: number) => ({
       rung: "typecheck",
@@ -502,8 +516,8 @@ describe("@sekhemet/harness Dashboard Server", () => {
     const events = (await log.getEventsByCard("card_triage")).filter(
       (e) => e.type === "card/status_changed",
     );
-    // Created in review, then returned and parked from the dashboard.
-    expect(events.map((e) => e.actor)).toEqual(["human", "human"]);
+    // Put in review as the test's setup, then returned and parked from the dashboard.
+    expect(events.map((e) => e.actor)).toEqual(["harness", "human", "human"]);
   });
 
   it("serves a card's transcript per attempt, with the loop's stop on the last step", async () => {
@@ -737,8 +751,10 @@ describe("@sekhemet/harness Dashboard Server", () => {
       id: "card_done",
       tier: "task",
       title: "Done (SPIDR: Path)",
-      status: "done",
       scopeFiles: [],
+    });
+    await cardStore.updateCardStatus("card_done", "done", "test setup", "harness", {
+      override: true,
     });
     await cardStore.recordEvent({
       type: "card/accepted",

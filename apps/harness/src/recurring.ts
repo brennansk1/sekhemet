@@ -1,5 +1,6 @@
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
+import { type BoardService, BoardServiceImpl } from "@sekhemet/board";
 import type { CardRecord, CardStore, EventLog } from "@sekhemet/kernel";
 import { isAirgapped } from "./airgap.js";
 import { isReserved, parseHours } from "./scheduler.js";
@@ -149,10 +150,10 @@ const TRIGGER = /^(file:.+|release:npm:[@\w./-]+|webhook:[\w.-]+)$/;
 
 /** Make a card a recurring template (`sekhemet schedule`). */
 export async function scheduleCard(
-  store: Pick<CardStore, "getCard" | "updateCard" | "updateCardStatus" | "recordEvent">,
+  store: CardStore,
   cardId: string,
   spec: { cron?: string; trigger?: string; urgent?: boolean },
-  opts: { now?: Date } = {},
+  opts: { now?: Date; board?: Pick<BoardService, "transitionCard"> } = {},
 ): Promise<CardRecord> {
   const card = await store.getCard(cardId);
   if (!card) throw new Error(`No card ${cardId}`);
@@ -171,8 +172,17 @@ export async function scheduleCard(
   ];
   await store.updateCard(cardId, { labels }, "human");
   // A template is not work itself: it waits in the backlog.
-  if (card.status !== "backlog")
-    await store.updateCardStatus(cardId, "backlog", "recurring template", "human");
+  // Through the board, under the transition law (kernel K-S4-3).
+  if (card.status !== "backlog") {
+    const board = opts.board ?? new BoardServiceImpl(store, { entryConditions: true });
+    await board.transitionCard({
+      cardId,
+      fromStatus: card.status,
+      toStatus: "backlog",
+      actor: "human",
+      reason: "recurring template",
+    });
+  }
   await store.recordEvent({
     type: "recurring/scheduled",
     cardId,
@@ -399,7 +409,13 @@ async function baselineEvent(log: EventLog, cardId: string, mark: Mark): Promise
 export async function recurringCommand(
   repo: string,
   args: string[],
-  deps: { store: CardStore; log: EventLog; hours?: string; print: (l: string) => void },
+  deps: {
+    store: CardStore;
+    log: EventLog;
+    board?: Pick<BoardService, "transitionCard">;
+    hours?: string;
+    print: (l: string) => void;
+  },
 ): Promise<number> {
   const flag = (n: string) => {
     const i = args.indexOf(n);
@@ -409,11 +425,16 @@ export async function recurringCommand(
   if (sub === "add" && id) {
     const cron = flag("--cron");
     const trigger = flag("--on");
-    const card = await scheduleCard(deps.store, id, {
-      ...(cron ? { cron } : {}),
-      ...(trigger ? { trigger } : {}),
-      urgent: args.includes("--urgent"),
-    });
+    const card = await scheduleCard(
+      deps.store,
+      id,
+      {
+        ...(cron ? { cron } : {}),
+        ...(trigger ? { trigger } : {}),
+        urgent: args.includes("--urgent"),
+      },
+      deps.board ? { board: deps.board } : {},
+    );
     const s = scheduleOf(card);
     deps.print(
       `${id} is a recurring template: ${s?.cron ? `cron ${s.cron}` : `on ${s?.trigger}`}${s?.urgent ? " (urgent)" : ""}.`,

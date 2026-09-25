@@ -14,7 +14,7 @@ export const FRONT_DOOR: readonly { usage: string; what: string }[] = [
   { usage: "sekhemet review", what: "Show the next card waiting on you" },
   {
     usage: "sekhemet accept <card>",
-    what: 'Accept and merge. Also: send-back <card> "<reason>", park / unpark <card>',
+    what: 'Accept and merge. Also: send-back <card> "<reason>", park / unpark <card>, reopen <card>',
   },
   { usage: "sekhemet board", what: "The board (--terminal for text)" },
   { usage: "sekhemet doctor", what: "Check the install, including the model weights" },
@@ -56,10 +56,14 @@ export const COMMANDS = [
   "traces",
   "acp",
   "init",
+  "backup",
+  "restore",
+  "export",
+  "erase",
   ...WAVE2_COMMANDS,
 ] as const;
 
-const TRIAGE = ["review", "send-back", "park", "unpark"] as const;
+const TRIAGE = ["review", "send-back", "park", "unpark", "reopen"] as const;
 
 /** Flags that take a value, so the value is not mistaken for a command or spec. */
 const VALUED = new Set([
@@ -86,6 +90,7 @@ export type FrontDoorRoute =
   | { kind: "send-back"; cardId: string; reason: string; flags: string[] }
   | { kind: "park"; cardId: string; reason: string; flags: string[] }
   | { kind: "unpark"; cardId: string; flags: string[] }
+  | { kind: "reopen"; cardId: string; reason: string; flags: string[] }
   | { kind: "argv"; argv: string[] };
 
 /** Positional arguments and flags, with each valued flag kept beside its value. */
@@ -143,12 +148,16 @@ export function routeFrontDoor(argv: readonly string[]): FrontDoorRoute {
 
   const [cardId = "", ...words] = rest;
   if (first === "review") return { kind: "review", flags };
-  if ((first === "send-back" || first === "park" || first === "unpark") && !cardId) {
+  if (
+    (first === "send-back" || first === "park" || first === "unpark" || first === "reopen") &&
+    !cardId
+  ) {
     return { kind: "unknown", word: `${first} needs a card id` };
   }
   if (first === "send-back") return { kind: "send-back", cardId, reason: words.join(" "), flags };
   if (first === "park") return { kind: "park", cardId, reason: words.join(" "), flags };
   if (first === "unpark") return { kind: "unpark", cardId, flags };
+  if (first === "reopen") return { kind: "reopen", cardId, reason: words.join(" "), flags };
 
   if ((COMMANDS as readonly string[]).includes(first)) return { kind: "argv", argv: [...argv] };
 

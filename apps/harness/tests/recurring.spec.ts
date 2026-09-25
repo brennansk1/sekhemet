@@ -100,7 +100,8 @@ describe("X16: scheduled and recurring cards", () => {
     const busy = await tickRecurring(root, store, log, { now: at("2026-09-28T03:05:00") });
     expect(busy.fired).toEqual([]);
     expect(busy.skipped[0]?.why).toMatch(/still open/);
-    await store.updateCardStatus(clone?.id as string, "done");
+    for (const to of ["in_progress", "verify", "review", "done"] as const)
+      await store.updateCardStatus(clone?.id as string, to);
     const again = await tickRecurring(root, store, log, { now: at("2026-09-28T03:06:00") });
     expect(again.fired).toHaveLength(1);
   });
@@ -156,7 +157,9 @@ describe("X16: scheduled and recurring cards", () => {
       ].sort(),
     );
     // Consumed: nothing fires twice.
-    for (const f of r.fired) await store.updateCardStatus(f.cloneId, "done");
+    for (const f of r.fired)
+      for (const to of ["in_progress", "verify", "review", "done"] as const)
+        await store.updateCardStatus(f.cloneId, to);
     const after = await tickRecurring(root, store, log, {
       ...opts,
       now: at("2026-09-21T20:03:00"),

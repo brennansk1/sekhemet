@@ -62,7 +62,8 @@ describe("@sekhemet/board back-pressure through the card runner (defect 1)", () 
   });
 
   it("holds a passing card when Review is full, then releases it once Review drains", async () => {
-    await store.createCard({ id: "waiting", tier: "task", title: "In review", status: "review" });
+    await store.createCard({ id: "waiting", tier: "task", title: "In review" });
+    await store.updateCardStatus("waiting", "review", "test setup", "harness", { override: true });
     const card = await store.createCard({
       id: "c_run",
       tier: "task",
@@ -114,7 +115,11 @@ describe("@sekhemet/board back-pressure through the card runner (defect 1)", () 
 
     const held = await store.getCard(card.id);
     expect(held?.status).toBe("in_progress");
-    expect(held?.blockedReason).toBe(`held: ${result.held?.reason}`);
+    expect(held?.hold).toMatchObject({
+      kind: "backpressure",
+      awaiting: "verify",
+      reason: result.held?.reason,
+    });
     expect(held?.stopReason).toBe("gate_passed");
     expect((await board.listHeld()).map((c) => c.id)).toEqual([card.id]);
 
@@ -127,6 +132,6 @@ describe("@sekhemet/board back-pressure through the card runner (defect 1)", () 
     });
     expect(await board.releaseHeld(card.id, "verify")).toBe(true);
     expect((await store.getCard(card.id))?.status).toBe("verify");
-    expect((await store.getCard(card.id))?.blockedReason).toBeUndefined();
+    expect((await store.getCard(card.id))?.hold).toBeUndefined();
   });
 });

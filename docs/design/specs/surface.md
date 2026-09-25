@@ -134,6 +134,7 @@ default_step_budget = 40   # max steps (model requests) per sample, when no flag
 
 [review]
 review_minutes_per_day = 60   # human review capacity; derives the Review WIP limit; must be > 0 (0 or less is refused)
+blocking_checks = []          # external CI checks that count at Review, at the card branch's head; the rest are advisory (kernel rule 37, K-N8-4)
 
 [network]
 mode = "offline"           # "offline" | "allowlist" | "open" — card commands and harness requests other than research

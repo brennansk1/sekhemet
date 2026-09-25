@@ -145,8 +145,10 @@ describe("a human override past a failing security gate (B12)", () => {
       id: "card_leaky",
       tier: "story",
       title: "Leaks a key",
-      status: "verify",
       scopeFiles: ["src/a.ts"],
+    });
+    await cards.updateCardStatus("card_leaky", "verify", "test setup", "harness", {
+      override: true,
     });
     const board = new BoardServiceImpl(cards, {
       entryConditions: true,
@@ -171,7 +173,11 @@ describe("a human override past a failing security gate (B12)", () => {
     fetch(`${base}/api/cards/card_leaky/override`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Sekhemet-Action": "1" },
-      body: JSON.stringify({ toStatus, reason: "I read the diff, it is a test fixture" }),
+      body: JSON.stringify({
+        toStatus,
+        reason: "I read the diff, it is a test fixture",
+        principal: "p_owner",
+      }),
     });
 
   it("refuses the move and names the gate, while other layers stay overridable", async () => {

@@ -220,3 +220,16 @@ node scripts/run_suite.mjs --worker nail-35b-a3b-ctx-16k:latest --out run.json
 ```
 
 Check `ollama ps` and free memory first. The Worker is 13 GB on a 24 GB host, and this run needed six containers stopped and Docker quit. One card was stopped by the harness's own `memory_pressure` guard, which is the guard working.
+
+## B2.5 baseline schedule (started 2026-09-25 13:24)
+
+- **Build:** the frozen snapshot of commit `5937e83` (its own `dist/`) at `~/.sekhemet/baseline/snap`, so work committed on main meanwhile can't change what is measured. Suite hash `d70f689d` (frozen suite v1.0.0 plus `reference-solutions` v3).
+- **Worker:** Cyber-Tiel IQ3_XXS on llama.cpp b10809 (5266f24da), 16,384 tokens, KV q8_0, one slot, prefix caching on, MTP off (no decision recorded), sampling 0.6 / 0.95 / 20 / 0. It runs under the owner's recorded override: qualification q1.2 failed on multi_step, 40%, 4/10, 95% CI 12–74%.
+- **Design:** one factor at a time against the shipped default profile (thinking off, baseline method, progressive tools, evidence gate off). Each arm differs in exactly one switch and runs twice. Rounds are interleaved (ref, thinking-surgical, thinking-all, strict, fixed-tools, evidence-gate; then again), so each arm's pairs are ordered in time (MS-T7-4).
+- **Cost measure:** named before any run as median tokens per card, one A/B entry per arm (rule 16c).
+- **Admission:** DEC-28 via `sekhemet measure admit`. The winners form the baseline RunProfile, frozen here when the schedule completes.
+- **Where things are:**
+  - driver: `~/.sekhemet/baseline/run_baseline.sh` (resumable), log `driver.log`;
+  - results: `results/<arm>-r<round>.json`;
+  - run repositories with every step's context pack: `work/`, the input to the MTP A/B (`sekhemet calibrate --mtp-ab --from …`).
+- **Not in this baseline:** the planning measure, which waits for the owner to confirm the golden briefs and held-out drafts.

@@ -1,5 +1,13 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 
 /**
@@ -46,6 +54,46 @@ export class BlobStore {
 
   public has(id: string): boolean {
     return /^[0-9a-f]{64}$/.test(id) && existsSync(this.path(id));
+  }
+
+  /**
+   * Delete a blob by id (kernel rule 34). Only `EventLog.erase` and its
+   * `retryBlobErasures` call this, so every deletion is named by a
+   * `ledger/erased` event. Idempotent: true
+   * when a file was removed.
+   */
+  public delete(id: string): boolean {
+    if (!/^[0-9a-f]{64}$/.test(id)) throw new Error(`Not a blob id: ${id}`);
+    const target = this.path(id);
+    if (!existsSync(target)) return false;
+    rmSync(target, { force: true });
+    return true;
+  }
+
+  /**
+   * The ids of the blobs whose content contains `needle`, raw or as a JSON
+   * string would escape it (a context pack is JSON) — for erasing a secret
+   * found after the fact (security.md NEW-security-7). Reads only.
+   */
+  public findContaining(needle: string): string[] {
+    if (needle === "" || !existsSync(this.dir)) return [];
+    const escaped = JSON.stringify(needle).slice(1, -1);
+    const found: string[] = [];
+    for (const shard of readdirSync(this.dir)) {
+      const shardDir = join(this.dir, shard);
+      let names: string[];
+      try {
+        names = readdirSync(shardDir);
+      } catch {
+        continue;
+      }
+      for (const name of names) {
+        if (!/^[0-9a-f]{64}\.json$/.test(name)) continue;
+        const content = readFileSync(join(shardDir, name), "utf8");
+        if (content.includes(needle) || content.includes(escaped)) found.push(name.slice(0, 64));
+      }
+    }
+    return found.sort();
   }
 }
 

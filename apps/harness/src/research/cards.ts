@@ -1,6 +1,8 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { CardRecord, CardStore } from "@sekhemet/kernel";
+import { type BoardService, TransitionRefusedError } from "@sekhemet/board";
+import type { CardRecord, CardStatus, CardStore } from "@sekhemet/kernel";
+import { recordLedgerRun } from "../ledger_evidence.js";
 import { type Claim, reviewEligible } from "./claims.js";
 import type { ResearchAnswer } from "./researcher.js";
 
@@ -16,7 +18,22 @@ import type { ResearchAnswer } from "./researcher.js";
  * - an evidence bundle, so Review shows it like any other card;
  * - the card moves to Review when the answer is grounded, and is parked with
  *   the reason when it is not. A person accepts the note; nothing merges.
+ *
+ * Every move goes through the board (kernel K-S4-4): the note's run is an
+ * attempt on the ledger with its stop reason and evidence, so Verify's and
+ * Review's entry conditions and back-pressure apply as they do to the
+ * Worker's cards. A move the board refuses holds the card with its reason.
  */
+
+/** The board a research card moves through; `holdCard` records a refused move. */
+export type ResearchBoard = Pick<BoardService, "transitionCard"> & {
+  holdCard?: (
+    cardId: string,
+    reason: string,
+    actor?: string,
+    awaiting?: CardStatus,
+  ) => Promise<void>;
+};
 
 export function isResearchCard(card: Pick<CardRecord, "labels">): boolean {
   return (card.labels ?? []).some((l) => l.toLowerCase() === "research");
@@ -78,15 +95,26 @@ export async function runResearchCard(
   ask: (question: string, cardId: string) => Promise<ResearchAnswer>,
   cardStore: CardStore,
   repoPath: string,
-): Promise<{ passed: boolean; notePath: string; answer: ResearchAnswer }> {
+  board: ResearchBoard,
+): Promise<{ passed: boolean; notePath: string; answer: ResearchAnswer; held?: string }> {
   const started = Date.now();
+  const noteRel = join(".sekhemet", "research", `${card.id}.md`);
+  const move = async (to: CardStatus, reason: string) => {
+    const now = await cardStore.getCard(card.id);
+    await board.transitionCard({
+      cardId: card.id,
+      fromStatus: now?.status ?? card.status,
+      toStatus: to,
+      actor: "researcher",
+      reason,
+    });
+  };
   if (card.status !== "in_progress") {
-    await cardStore.updateCardStatus(
-      card.id,
-      "in_progress",
-      "research: the Researcher started",
-      "researcher",
-    );
+    // A research card writes one file, its note: that is its declared scope.
+    if (card.scopeFiles.length === 0) {
+      await cardStore.updateCard(card.id, { scopeFiles: [noteRel] }, "researcher");
+    }
+    await move("in_progress", "research: the Researcher started");
   }
   const answer = await ask(researchQuestion(card), card.id);
   const dir = join(repoPath, ".sekhemet", "research");
@@ -123,18 +151,34 @@ export async function runResearchCard(
     linesAdded: 0,
     linesRemoved: 0,
   };
-  writeFileSync(join(evDir, `latest-${card.id}.json`), `${JSON.stringify(evidence, null, 2)}\n`);
+  const body = `${JSON.stringify(evidence, null, 2)}\n`;
+  writeFileSync(join(evDir, `${evidence.id}.json`), body);
+  writeFileSync(join(evDir, `latest-${card.id}.json`), body);
+  // The run on the ledger. A note is not repaired in place, so an unsettled
+  // answer exhausts its ladder at once and parks for a person (rule 31).
+  await recordLedgerRun(cardStore, {
+    cardId: card.id,
+    modelId: "researcher",
+    passed,
+    stopReason: passed ? "gate_passed" : "repair_exhausted",
+    evidenceId: evidence.id,
+    path: join(".sekhemet", "evidence", `${evidence.id}.json`),
+    body,
+    filesTouched: [noteRel],
+    secondsUsed: Math.round((Date.now() - started) / 1000),
+  });
   if (passed) {
-    await cardStore.updateCardStatus(card.id, "verify", "research: note written", "researcher");
-    await cardStore.updateCardStatus(
-      card.id,
-      "review",
-      "research: cited note ready for review",
-      "researcher",
-    );
+    try {
+      await move("verify", "research: note written");
+      await move("review", "research: cited note ready for review");
+    } catch (err) {
+      if (!(err instanceof TransitionRefusedError)) throw err;
+      const reason = `${err.toStatus} refused (${err.message})`;
+      await board.holdCard?.(card.id, reason, "researcher", err.toStatus);
+      return { passed, notePath, answer, held: reason };
+    }
   } else {
-    await cardStore.updateCardStatus(
-      card.id,
+    await move(
       "parked",
       `parked: research not settled (${
         !answer.grounded
@@ -143,7 +187,6 @@ export async function runResearchCard(
             ? `unverified citations ${answer.badCitations.join(", ")}`
             : eligible.reason
       })`,
-      "researcher",
     );
   }
   return { passed, notePath, answer };

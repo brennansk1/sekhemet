@@ -1,6 +1,6 @@
 import type { CardStatus, DecisionRequestRecord } from "@sekhemet/kernel";
 import { resolveDecisionAtDeadline } from "./decision.js";
-import { type PlannerLedger, appendPlannerEvent, plannerEvents } from "./ledger.js";
+import { type PlannerLedger, appendPlannerEvent, moveCard, plannerEvents } from "./ledger.js";
 import type { DecisionRequest } from "./types.js";
 
 /**
@@ -11,8 +11,9 @@ import type { DecisionRequest } from "./types.js";
  * The full planner request (options with consequences and previews, the
  * policy, the deadline) travels in the record's `context` as JSON, so the
  * dashboard and the CLI answer through the same K20 table the ask-tier
- * approver uses. Requesting parks the card: it releases the machine rather
- * than holding a turn open. An answer returns it to Ready with the answer in
+ * approver uses. A `default_deny` request parks the card: it releases the
+ * machine rather than holding a turn open; under `safe_default` the card
+ * keeps its state and work proceeds on the default. An answer returns it to Ready with the answer in
  * its dossier; cards planned under the decision leave Planning. At the
  * deadline `safe_default` answers with the default (and records
  * `decision/default_applied`), `default_deny` times the request out and the
@@ -106,7 +107,13 @@ export class DecisionStore {
     if (existing) return existing.id;
     const { store } = this.ledger;
     const card = await store.getCard(req.cardId);
-    const park = options.park !== false && card !== null && card.status !== "done";
+    // Only `default_deny` parks from the request (planner-pm §2.10.3, kernel
+    // rule 27): under `safe_default` work proceeds on the default.
+    const park =
+      options.park !== false &&
+      req.policy === "default_deny" &&
+      card !== null &&
+      card.status !== "done";
     const ctx: StoredContext = {
       planner: req,
       ...(park && card ? { resumeStatus: card.status } : {}),
@@ -120,12 +127,12 @@ export class DecisionStore {
       recommendationIndex: req.recommendation.optionIndex,
     });
     if (park && card && card.status !== "parked") {
-      await store.updateCardStatus(
-        req.cardId,
-        "parked",
-        `awaiting decision ${record.id}`,
-        "planner",
-      );
+      await moveCard(this.ledger, {
+        cardId: req.cardId,
+        from: card.status,
+        to: "parked",
+        reason: `awaiting decision ${record.id}`,
+      });
       await store.updateCard(
         req.cardId,
         { blockedReason: `Decision needed: ${req.question}` },
@@ -206,12 +213,12 @@ export class DecisionStore {
         text: note,
         actor: "planner",
       });
-      await store.updateCardStatus(
-        child.id,
-        (child.dependsOn ?? []).length === 0 ? "ready" : "backlog",
-        `decision ${d.id} resolved`,
-        "planner",
-      );
+      await moveCard(this.ledger, {
+        cardId: child.id,
+        from: child.status,
+        to: (child.dependsOn ?? []).length === 0 ? "ready" : "backlog",
+        reason: `decision ${d.id} resolved`,
+      });
       await store.updateCard(child.id, { blockedReason: null }, "planner");
     }
     const card = d.record.cardId ? await store.getCard(d.record.cardId) : null;
@@ -226,14 +233,17 @@ export class DecisionStore {
       (x) => x.record.cardId === card.id && x.id !== d.id,
     );
     if (card.status === "parked" && others.length === 0) {
-      // Parent cards go back to where they were; work cards to Ready (or where
-      // planning left them), so the next queue pass resumes them.
-      const parent = card.tier === "epic" || card.tier === "feature" || card.tier === "initiative";
+      // Unpark returns a card to Backlog or Planning when it was parked from
+      // there, and re-queues it at Ready otherwise: parked has no edge back
+      // into the middle of a state (kernel rule 25, K-N5-6).
       const back: CardStatus =
-        d.resumeStatus && (parent || d.resumeStatus === "backlog" || d.resumeStatus === "planning")
-          ? d.resumeStatus
-          : "ready";
-      await store.updateCardStatus(card.id, back, `decision ${d.id} resolved`, "planner");
+        d.resumeStatus === "backlog" || d.resumeStatus === "planning" ? d.resumeStatus : "ready";
+      await moveCard(this.ledger, {
+        cardId: card.id,
+        from: card.status,
+        to: back,
+        reason: `decision ${d.id} resolved`,
+      });
       await store.updateCard(card.id, { blockedReason: null }, "planner");
     }
   }

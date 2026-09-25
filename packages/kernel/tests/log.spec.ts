@@ -44,7 +44,9 @@ describe("@sekhemet/kernel EventLog", () => {
     await log.append({ actor: "human", type: "msg/2", payload: { text: "world" } });
     await log.append({ actor: "human", type: "msg/3", payload: { text: "end" } });
 
-    // Directly tamper with seq 2 payload behind the event log's back
+    // Directly tamper with seq 2 payload behind the event log's back — past
+    // the append-only triggers, as anyone with the file can (K-N1-2).
+    db.exec("DROP TRIGGER events_no_update");
     db.prepare("UPDATE events SET payload = ? WHERE seq = 2").run(
       JSON.stringify({ text: "tampered" }),
     );
@@ -83,16 +85,17 @@ describe("@sekhemet/kernel EventLog", () => {
         [1, "step/1"],
         [2, "step/2"],
       ]);
-      expect(await again.verifyHashChain()).toEqual({ valid: true, totalEvents: 2 });
+      expect(await again.verifyHashChain()).toMatchObject({ valid: true, totalEvents: 2 });
     } finally {
       reopened.close();
     }
   });
 
   it("detects a single flipped bit in a payload byte on disk, naming the exact seq", async () => {
-    await log.append({ actor: "human", type: "msg/1", payload: { text: "alpha" } });
-    await log.append({ actor: "human", type: "msg/2", payload: { text: "bravo-target" } });
-    await log.append({ actor: "human", type: "msg/3", payload: { text: "charlie" } });
+    // Machine events: a person's would record the install's person first (rule 19).
+    await log.append({ actor: "system", type: "msg/1", payload: { text: "alpha" } });
+    await log.append({ actor: "system", type: "msg/2", payload: { text: "bravo-target" } });
+    await log.append({ actor: "system", type: "msg/3", payload: { text: "charlie" } });
     // Move every page out of the WAL into the main file, then close.
     db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
     disk.close();
@@ -119,9 +122,9 @@ describe("@sekhemet/kernel EventLog", () => {
   });
 
   it("detects a flipped bit in a stored hash on disk", async () => {
-    await log.append({ actor: "human", type: "msg/1", payload: { n: 1 } });
-    const second = await log.append({ actor: "human", type: "msg/2", payload: { n: 2 } });
-    await log.append({ actor: "human", type: "msg/3", payload: { n: 3 } });
+    await log.append({ actor: "system", type: "msg/1", payload: { n: 1 } });
+    const second = await log.append({ actor: "system", type: "msg/2", payload: { n: 2 } });
+    await log.append({ actor: "system", type: "msg/3", payload: { n: 3 } });
     db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
     disk.close();
 

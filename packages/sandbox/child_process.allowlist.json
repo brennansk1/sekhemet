@@ -10,6 +10,8 @@
     "apps/harness/src/index.ts": "The CLI: its own git and the OS URL opener for the dashboard.",
     "apps/harness/src/init.ts": "Toolchain checks: git, pnpm, llama-server, docker, gh --version.",
     "apps/harness/src/integrations.ts": "The gh CLI for GitHub integrations the owner configured.",
+    "apps/harness/src/ledger_cmds.ts": "The harness's own git on the project repository: `config user.email` to name the solo install's person, and `log` to read the newest Ledger-Head trailer (kernel rules 12, 19).",
+    "apps/harness/src/ledger_evidence.ts": "The harness's own git (`for-each-ref refs/heads/sekhemet/`) to read a card branch's head sha, so an external result counts only at that head (K-N8-4).",
     "apps/harness/src/license_gate.ts": "The harness's own git and `python3 -I -m pip show` to read a dependency's licence metadata.",
     "apps/harness/src/m0_path.ts": "M0 on the product path: the harness's own git on M0's cloned workspace (checkout, commit of the task's test patch from history) and the harness's own `queue` command, which confines the Worker's commands itself.",
     "apps/harness/src/mcp_client.ts": "MCP servers the owner configured in their own config (trusted configuration).",

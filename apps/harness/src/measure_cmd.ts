@@ -9,17 +9,20 @@ import {
   type AttemptFinished,
   BudgetPolicyStore,
   type ChangeFootprint,
+  type MeasurementMarker,
   type RunProfile,
   RunProfileRefusal,
   type SuiteRunResult,
   compareRuns,
   evaluateHarnessChange,
   profileSwitchCount,
+  readMeasurementMarker,
   resolveRunProfile,
   ruleCredit,
   runProfileHash,
   watchAdmittedChange,
   watchPooled,
+  writeMeasurementMarker,
 } from "@sekhemet/eval";
 import type { CardRecord } from "@sekhemet/kernel";
 import { TOOL_CATALOG, cardClassFor, toolsForClass } from "@sekhemet/loop";
@@ -120,43 +123,9 @@ export function profileForQueue(
   });
 }
 
-/**
- * The mark a measured run leaves in the repository it prepared (review M5):
- * the suite runner's fixture copies and M0's workspaces. `--auto-accept`
- * stands in for the person who accepts each card only there; in a
- * person's own repository a person accepts (the human is the rate limiter).
- */
-export interface MeasurementMarker {
-  purpose: "frozen suite" | "m0";
-  by: string;
-  createdAt: string;
-}
-
-const MARKER = [".sekhemet", "measurement.json"] as const;
-
-export function writeMeasurementMarker(
-  repoPath: string,
-  purpose: MeasurementMarker["purpose"],
-  by: string,
-): MeasurementMarker {
-  const marker: MeasurementMarker = { purpose, by, createdAt: new Date().toISOString() };
-  mkdirSync(join(repoPath, MARKER[0]), { recursive: true });
-  writeFileSync(join(repoPath, ...MARKER), `${JSON.stringify(marker, null, 2)}\n`);
-  return marker;
-}
-
-export function readMeasurementMarker(repoPath: string): MeasurementMarker | undefined {
-  try {
-    const m = JSON.parse(
-      readFileSync(join(repoPath, ...MARKER), "utf8"),
-    ) as Partial<MeasurementMarker>;
-    return m.purpose === "frozen suite" || m.purpose === "m0"
-      ? (m as MeasurementMarker)
-      : undefined;
-  } catch {
-    return undefined;
-  }
-}
+// The marker's one definition is in @sekhemet/eval (measurement_marker.ts),
+// shared with independent mode's measurement setup.
+export { type MeasurementMarker, readMeasurementMarker, writeMeasurementMarker };
 
 /** Why the queue refuses `--auto-accept` here, or undefined when it may run. */
 export function autoAcceptRefusal(argv: string[], repoPath: string): string | undefined {

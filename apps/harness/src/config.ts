@@ -22,7 +22,12 @@ export interface SekhemetConfig {
     maskAfterObservations: number;
   };
   loop: { defaultStepBudget: number; stallWindow: number; maxRungs: number };
-  review: { wip: number | "auto"; reviewMinutesPerDay: number };
+  review: {
+    wip: number | "auto";
+    reviewMinutesPerDay: number;
+    /** External CI checks the project declares blocking (kernel rule 37, K-N8-4). */
+    blockingChecks: string[];
+  };
   network: { mode: NetworkMode; allow: string[] };
   sync: { github: boolean; forgejo: string };
   telemetry: { store: string };
@@ -40,7 +45,7 @@ export const DEFAULT_CONFIG: SekhemetConfig = {
   models: { executor: "auto", planner: "auto", vision: "auto", pruner: "auto" },
   context: { workingBudget: "auto", mapTokens: 1024, maskAfterObservations: 2 },
   loop: { defaultStepBudget: DEFAULT_STEP_BUDGET, stallWindow: 3, maxRungs: 4 },
-  review: { wip: "auto", reviewMinutesPerDay: 60 },
+  review: { wip: "auto", reviewMinutesPerDay: 60, blockingChecks: [] },
   network: { mode: "offline", allow: [] },
   sync: { github: false, forgejo: "" },
   telemetry: { store: "local" },
@@ -156,6 +161,7 @@ function project(merged: TomlTable): SekhemetConfig {
     review: {
       wip: review.wip === "auto" || review.wip === undefined ? "auto" : num(review.wip, 3),
       reviewMinutesPerDay: num(review.review_minutes_per_day, d.review.reviewMinutesPerDay),
+      blockingChecks: strArray(review.blocking_checks, d.review.blockingChecks),
     },
     network: { mode, allow: strArray(network.allow, d.network.allow) },
     sync: {

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -351,6 +351,12 @@ describe("independent mode: one card from a main holding its predecessors' refer
     git("init", "-q", "-b", "main");
     git("add", "-A");
     git("commit", "-q", "-m", "seed");
+    // A measured run's copy carries the marker (as --auto-accept is bounded).
+    mkdirSync(join(repo, ".sekhemet"), { recursive: true });
+    writeFileSync(
+      join(repo, ".sekhemet", "measurement.json"),
+      `${JSON.stringify({ purpose: "frozen suite", by: "test", createdAt: "2026-09-25T00:00:00Z" })}\n`,
+    );
     return { repo, git };
   };
   const references = () => {
@@ -381,6 +387,41 @@ describe("independent mode: one card from a main holding its predecessors' refer
     );
     expect(git("status", "--porcelain")).toBe("");
     expect(statusOf(repo)).toEqual({ card_a: "done", card_b: "done", card_c: "ready" });
+    // Through the board (kernel K-S4-3): a predecessor marked done is the
+    // harness's recorded measurement setup — never a person's override, nor
+    // a move credited to the Worker.
+    const ledger = new DatabaseSync(join(repo, ".sekhemet", "events.db"), { readOnly: true });
+    const rows = (type: string) =>
+      ledger
+        .prepare(
+          "select actor, card_id, principal from events where type = ? and card_id in ('card_a','card_b') order by seq",
+        )
+        .all(type) as { actor: string; card_id: string; principal: string | null }[];
+    const overrides = rows("card/override");
+    const setups = rows("card/measurement_setup");
+    const moves = rows("card/status_changed");
+    ledger.close();
+    expect(overrides).toEqual([]);
+    expect(setups).toEqual([
+      { actor: "harness", card_id: "card_a", principal: null },
+      { actor: "harness", card_id: "card_b", principal: null },
+    ]);
+    expect(moves.every((m) => m.actor === "harness" && m.principal === null)).toBe(true);
+  });
+
+  it("refuses measurement setup in a repository without the measurement marker", async () => {
+    const { repo } = gitRepo();
+    rmSync(join(repo, ".sekhemet", "measurement.json"));
+    await board(repo, ["card_a", "card_b", "card_c"]);
+    await expect(
+      prepareIndependentCard(repo, {
+        fixture: "alpha",
+        cardId: "card_c",
+        cardOrder: ["card_a", "card_b", "card_c"],
+        referencesDir: references(),
+      }),
+    ).rejects.toThrow(/measurement\.json/);
+    expect(statusOf(repo)).toEqual({ card_a: "ready", card_b: "ready", card_c: "ready" });
   });
 
   it("carries the earlier cards' acceptance tests onto main, as acceptance does, and nothing of later cards (review M2)", async () => {

@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import type { BoardService } from "@sekhemet/board";
 import { readSkillLock, revokeSkill } from "@sekhemet/context";
 import {
   BudgetPolicyStore,
@@ -96,9 +97,15 @@ export interface Kernel {
   repoPath: string;
   cardStore: CardStore;
   log: EventLog;
+  /** The harness's board; every status change goes through it (kernel K-S4-3). */
+  boardService?: Pick<BoardService, "transitionCard">;
 }
 
-const ledgerOf = (k: Kernel): PlannerLedger => ({ store: k.cardStore, log: k.log });
+const ledgerOf = (k: Kernel): PlannerLedger => ({
+  store: k.cardStore,
+  log: k.log,
+  ...(k.boardService ? { board: k.boardService } : {}),
+});
 
 function readConfigToml(repoPath: string) {
   const p = join(repoPath, ".sekhemet", "config.toml");
@@ -557,6 +564,7 @@ export async function runWave2Command(
       const { resolveConfig } = await import("./config.js");
       return recurringCommand(k.repoPath, args, {
         store: k.cardStore,
+        ...(k.boardService ? { board: k.boardService } : {}),
         log: k.log,
         hours: resolveConfig({ repoPath: k.repoPath }).config.machine.hours,
         print,

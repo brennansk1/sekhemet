@@ -70,24 +70,12 @@ describe("@sekhemet/board", () => {
 
   it("enforces Review WIP limits and applies backpressure", async () => {
     // Fill up review column to limit (2 cards)
-    const c1 = await cardStore.createCard({
-      id: "c1",
-      tier: "task",
-      title: "C1",
-      status: "review",
-    });
-    const c2 = await cardStore.createCard({
-      id: "c2",
-      tier: "task",
-      title: "C2",
-      status: "review",
-    });
-    const c3 = await cardStore.createCard({
-      id: "c3",
-      tier: "task",
-      title: "C3",
-      status: "verify",
-    });
+    const c1 = await cardStore.createCard({ id: "c1", tier: "task", title: "C1" });
+    await cardStore.updateCardStatus("c1", "review", "test setup", "harness", { override: true });
+    const c2 = await cardStore.createCard({ id: "c2", tier: "task", title: "C2" });
+    await cardStore.updateCardStatus("c2", "review", "test setup", "harness", { override: true });
+    const c3 = await cardStore.createCard({ id: "c3", tier: "task", title: "C3" });
+    await cardStore.updateCardStatus("c3", "verify", "test setup", "harness", { override: true });
 
     const state = await board.getBoardState();
     expect(state.wipLimits.review).toBe(2);
@@ -129,8 +117,10 @@ describe("@sekhemet/board", () => {
   });
 
   it("refuses entry to Verify under back-pressure with a typed, recognisable error", async () => {
-    await cardStore.createCard({ id: "r1", tier: "task", title: "R1", status: "review" });
-    await cardStore.createCard({ id: "r2", tier: "task", title: "R2", status: "review" });
+    await cardStore.createCard({ id: "r1", tier: "task", title: "R1" });
+    await cardStore.updateCardStatus("r1", "review", "test setup", "harness", { override: true });
+    await cardStore.createCard({ id: "r2", tier: "task", title: "R2" });
+    await cardStore.updateCardStatus("r2", "review", "test setup", "harness", { override: true });
     await cardStore.createCard({ id: "w", tier: "task", title: "W", status: "in_progress" });
 
     const refusal = await board
@@ -166,21 +156,32 @@ describe("@sekhemet/board", () => {
   });
 
   it("holds a refused card with a reason, lists it, and releases it once Review drains", async () => {
-    await cardStore.createCard({ id: "r1", tier: "task", title: "R1", status: "review" });
-    await cardStore.createCard({ id: "r2", tier: "task", title: "R2", status: "review" });
+    await cardStore.createCard({ id: "r1", tier: "task", title: "R1" });
+    await cardStore.updateCardStatus("r1", "review", "test setup", "harness", { override: true });
+    await cardStore.createCard({ id: "r2", tier: "task", title: "R2" });
+    await cardStore.updateCardStatus("r2", "review", "test setup", "harness", { override: true });
     await cardStore.createCard({ id: "w", tier: "task", title: "W", status: "in_progress" });
 
     await board.holdCard("w", "Review is full; verify deferred");
     const held = await cardStore.getCard("w");
     expect(held?.status).toBe("in_progress");
-    expect(held?.blockedReason).toBe("held: Review is full; verify deferred");
+    // K-N3-1: a typed hold recorded as card/held, listed without any free text.
+    expect(held?.hold).toMatchObject({
+      kind: "backpressure",
+      awaiting: "verify",
+      reason: "Review is full; verify deferred",
+    });
+    expect(held?.blockedReason).toBeUndefined();
+    expect(await cardStore.cardEvents("w", ["card/held"])).toHaveLength(1);
     expect((await board.listHeld()).map((c) => c.id)).toEqual(["w"]);
 
-    // Still full: the release is refused and the hold stays.
+    // K-N3-2: still full — the release is refused, the hold stays, nothing is appended.
+    const events = async () =>
+      (await cardStore.cardEvents("w", ["card/released", "card/held"])).length;
+    const before = await events();
     expect(await board.releaseHeld("w", "verify")).toBe(false);
-    expect((await cardStore.getCard("w"))?.blockedReason).toBe(
-      "held: Review is full; verify deferred",
-    );
+    expect((await cardStore.getCard("w"))?.hold?.kind).toBe("backpressure");
+    expect(await events()).toBe(before);
 
     await board.transitionCard({
       cardId: "r1",
@@ -191,8 +192,11 @@ describe("@sekhemet/board", () => {
     expect(await board.releaseHeld("w", "verify")).toBe(true);
     const released = await cardStore.getCard("w");
     expect(released?.status).toBe("verify");
-    expect(released?.blockedReason).toBeUndefined();
+    expect(released?.hold).toBeUndefined();
+    expect(await cardStore.cardEvents("w", ["card/released"])).toHaveLength(1);
     expect(await board.listHeld()).toEqual([]);
+    // K-N3-5: the projections rebuilt from the ledger reproduce every hold.
+    expect((await cardStore.verifyProjections()).identical).toBe(true);
   });
 
   it("rejects an empty hold reason and a hold on a missing card; ignores unheld releases", async () => {

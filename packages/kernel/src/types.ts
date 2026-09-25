@@ -1,3 +1,4 @@
+import type { CardChange, CardKind, CardSplit } from "./card_class.js";
 import { STOP_REASONS } from "./stop_reasons.js";
 
 export type CardTier = "initiative" | "epic" | "feature" | "story" | "task";
@@ -117,6 +118,20 @@ export interface EventRecord<T = unknown> {
   cardId?: string;
   attemptId?: string;
   stepId?: string;
+  /** The chain formula this row was written under (3 from v3; absent for earlier rows). */
+  hashVersion?: number;
+  /** The person the event acts for: an opaque `p_…` id (kernel rule 19, NEW-kernel-2). */
+  principal?: string;
+  /** The person whose work the Worker carried out (NEW-kernel-10). */
+  onBehalfOf?: string;
+  /** SHA-256(salt ‖ canonical(private)), in the chain (rule 33). */
+  commitment?: string;
+  /**
+   * The private part (rule 33). After an erasure every erased field reads as
+   * `ERASED_MARKER` and `erasedBySeq` names the `ledger/erased` event.
+   */
+  private?: Record<string, unknown>;
+  erasedBySeq?: number;
 }
 
 export interface AppendEventParams<T = unknown> {
@@ -127,6 +142,23 @@ export interface AppendEventParams<T = unknown> {
   cardId?: string;
   attemptId?: string;
   stepId?: string;
+  /** Required for actor `human` (and `mcp`); resolved to the install's person on a solo install. */
+  principal?: string;
+  /** Only on an event the Worker writes (NEW-kernel-10). */
+  onBehalfOf?: string;
+  /** Personal data, free text, secret-bearing fields: stored off the chain, erasable (rule 33). */
+  private?: Record<string, unknown>;
+}
+
+/** What a read shows in place of an erased private field (rule 34, K-N7-3). */
+export const ERASED_MARKER = "[erased]";
+
+/** One event whose private part a recorded erasure removed (K-N7-2). */
+export interface ErasedEventReport {
+  seq: number;
+  erasedBySeq: number;
+  /** "erased at seq N by `ledger/erased` seq M". */
+  message: string;
 }
 
 /** Narrowing filter for `EventLog.subscribe` / range queries. */
@@ -199,7 +231,44 @@ export interface CardRecord {
   blockedReason?: string;
   /** The project the card belongs to (K14). */
   projectId?: string;
+  /** What kind of work it is, stored once at creation and never re-derived (NEW-kernel-9). */
+  kind?: CardKind;
+  /** What the change does to behaviour; `feature` by default (NEW-kernel-9). */
+  change?: CardChange;
+  /** The SPIDR split that produced it; for display and export only (K-N9-4). */
+  split?: CardSplit;
+  /** The principal responsible for the card; the board's Assignee filter (rule 21, NEW-kernel-6). */
+  owner?: string;
+  /** Who builds it: the Worker, a person, or no one yet (rule 21). */
+  delegate?: CardDelegate;
+  /** The principal who accepted it; empty until then (rule 21, K-N6-3). */
+  accepter?: string;
+  /** A typed hold that keeps the card in its state (rule 24, NEW-kernel-3). */
+  hold?: CardHold;
 }
+
+/** Who builds a card (rule 21): the Worker, or a person named by principal. */
+export interface CardDelegate {
+  kind: "worker" | "person";
+  /** The person's principal; absent for the Worker. */
+  id?: string;
+}
+
+/** Who built an attempt (K-N6-4): a person's attempt never counts toward a model's record. */
+export interface BuiltBy {
+  kind: "worker" | "person";
+  /** The model id for the Worker, the principal for a person. */
+  id: string;
+}
+
+/**
+ * A hold (rule 24): not a state — the card keeps its state and waits.
+ * `backpressure` waits for the named state; `awaitingMerge` is a card a person
+ * accepted whose pull request is still open.
+ */
+export type CardHold =
+  | { kind: "backpressure"; awaiting: CardStatus; reason: string; since: string }
+  | { kind: "awaitingMerge"; pr: number; url?: string; headSha?: string; since: string };
 
 export interface CheckpointRecord {
   cardId: string;
@@ -210,6 +279,8 @@ export interface CheckpointRecord {
   agentHarness: string;
   agentRole: AgentRole;
   createdAt: string;
+  /** Who built the step (K-N6-4); the Worker running `agentModel` when omitted. */
+  builtBy?: BuiltBy;
 }
 
 export interface HashChainVerificationResult {
@@ -217,6 +288,10 @@ export interface HashChainVerificationResult {
   totalEvents: number;
   corruptedSeq?: number;
   reason?: string;
+  /** How many rows this pass re-hashed (incremental verification, K-N1-3). */
+  hashedEvents?: number;
+  /** Events whose private part a recorded erasure removed, never reported as corrupt (K-N7-2). */
+  erased?: ErasedEventReport[];
 }
 
 /**
@@ -373,6 +448,8 @@ export interface AttemptRecord {
   forkedFrom?: { attemptId: string; step: number };
   /** The step a resumed attempt restarted at (H17). */
   resumedFromStep?: number;
+  /** Who built it (K-N6-4): the Worker unless a person did. */
+  builtBy?: BuiltBy;
   startedAt: string;
   completedAt?: string;
 }
@@ -387,6 +464,8 @@ export interface StartAttemptInput {
   toolArm?: ToolArm;
   forkedFrom?: { attemptId: string; step: number };
   resumedFromStep?: number;
+  /** Who builds it (K-N6-4); the Worker running `modelId` when omitted. */
+  builtBy?: BuiltBy;
 }
 
 export interface FinishAttemptInput {
@@ -459,7 +538,19 @@ export interface GateResultRecord {
   durationMs: number;
   /** Typed failures (GateFailure[]), as JSON. */
   failures: unknown[];
+  /** Where the result came from (K-N8-3): a local run, or an external CI system. */
+  source: "local" | "external";
+  /** An external result's origin (K-N8-3). */
+  externalRef?: GateResultExternalRef;
   createdAt: string;
+}
+
+/** Where an external gate result came from (K-N8-3). */
+export interface GateResultExternalRef {
+  system: string;
+  checkName: string;
+  runUrl: string;
+  headSha: string;
 }
 
 export interface RecordGateResultInput extends Omit<GateResultRecord, "id" | "createdAt"> {}
@@ -572,6 +663,9 @@ export interface CompetenceSummary {
 // ---------------------------------------------------------------------------
 
 export type ProjectStatus = "active" | "paused" | "archived";
+
+/** The stored statuses a person sets; `idle` and `done` are derived (rule 30). */
+export const PROJECT_STATUSES: readonly ProjectStatus[] = ["active", "paused", "archived"];
 
 export interface ProjectRecord {
   id: string;

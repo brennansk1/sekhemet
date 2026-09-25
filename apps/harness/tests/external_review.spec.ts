@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { BoardServiceImpl } from "@sekhemet/board";
 import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { MockInferenceAdapter } from "@sekhemet/models";
 import { intentFor } from "@sekhemet/sync";
@@ -13,6 +14,7 @@ import {
   runExternalReview,
   runExternalReviews,
 } from "../src/external_review.js";
+import { ledgerEvidenceSummary } from "../src/ledger_evidence.js";
 import { applyWebhookIntent } from "../src/wave2_server.js";
 
 const dirs: string[] = [];
@@ -40,11 +42,17 @@ function repoWithPr(): { root: string; head: string } {
   return { root, head };
 }
 
-function ledger() {
+function ledger(root: string) {
   const db = new DatabaseSync(":memory:");
   initSchema(db);
   const log = new EventLog(db);
-  return { log, store: new CardStore(db, log) };
+  const store = new CardStore(db, log);
+  // The production board: entry conditions on, Review's evidence from the ledger.
+  const board = new BoardServiceImpl(store, {
+    entryConditions: true,
+    evidenceFor: (id) => ledgerEvidenceSummary(store, root, id),
+  });
+  return { log, store, board };
 }
 
 describe("X15: external review cards", () => {
@@ -70,7 +78,7 @@ describe("X15: external review cards", () => {
 
   it("checks out the PR, gates and reviews it, writes evidence, posts a review, never edits", async () => {
     const { root, head } = repoWithPr();
-    const { store, log } = ledger();
+    const { store, log, board } = ledger(root);
     const id = await applyWebhookIntent(
       store,
       { kind: "external_review", pr: 7, headSha: head, url: "https://github.com/o/r/pull/7" },
@@ -96,6 +104,7 @@ describe("X15: external review cards", () => {
     ]);
     const r = await runExternalReview(root, card, {
       store,
+      board,
       runGates: async (cwd) => {
         seenCwd.push(cwd);
         expect(readFileSync(join(cwd, "b.ts"), "utf8")).toContain("as any");
@@ -151,16 +160,25 @@ describe("X15: external review cards", () => {
     expect(body.commit_id).toBe(head);
     expect(body.event).toBe("COMMENT");
     expect(body.comments).toEqual([expect.objectContaining({ path: "b.ts", line: 2 })]);
+    // K-S4-4: through the board, and a review whose gates failed never
+    // enters Review; its run is an attempt on the ledger with its evidence.
     const after = await store.getCard(card.id);
-    expect(after?.status).toBe("review");
+    expect(after?.status).toBe("parked");
+    const moves = (await store.cardEvents(card.id, ["card/status_changed"])).map(
+      (e) => (e.payload as { toStatus: string }).toStatus,
+    );
+    expect(moves).toEqual(["in_progress", "verify", "parked"]);
+    expect(store.runs.listAttempts(card.id)).toEqual([
+      expect.objectContaining({ status: "failed", stopReason: "repair_exhausted" }),
+    ]);
     const dossier = await store.getDossier(card.id);
     expect(dossier.reviews.some((e) => /as any/.test(e.text))).toBe(true);
     expect(await log.getEventsByTypes(["review/external"])).toHaveLength(1);
   });
 
-  it("a PR head that cannot be resolved parks the card with the reason", async () => {
+  it("a PR head that cannot be resolved leaves the card where it is, with the reason", async () => {
     const { root } = repoWithPr();
-    const { store } = ledger();
+    const { store, board } = ledger(root);
     const id = await applyWebhookIntent(
       store,
       { kind: "external_review", pr: 9, headSha: "", url: "u" },
@@ -170,17 +188,20 @@ describe("X15: external review cards", () => {
     if (!card) throw new Error("no card");
     const r = await runExternalReview(root, card, {
       store,
+      board,
       runGates: async () => {
         throw new Error("must not run");
       },
     });
     expect(r.error).toMatch(/could not fetch PR #9/);
-    expect((await store.getCard(card.id))?.status).toBe("parked");
+    // An environment failure parks nothing (kernel rule 27, K-N5-2); the reason is shown.
+    expect((await store.getCard(card.id))?.status).toBe(card.status);
+    expect((await store.getCard(card.id))?.blockedReason).toMatch(/could not fetch PR #9/);
   });
 
   it("the queue hook reviews external cards and hands only the rest to the Worker", async () => {
     const { root, head } = repoWithPr();
-    const { store } = ledger();
+    const { store, board } = ledger(root);
     const id = await applyWebhookIntent(
       store,
       { kind: "external_review", pr: 3, headSha: head, url: "u" },
@@ -192,8 +213,59 @@ describe("X15: external review cards", () => {
       worker,
     ];
     const lines: string[] = [];
-    const left = await runExternalReviews(root, ready, { store, say: (l) => lines.push(l) });
+    const left = await runExternalReviews(root, ready, { store, board, say: (l) => lines.push(l) });
     expect(left.map((c) => c.id)).toEqual([worker.id]);
     expect(lines[0]).toMatch(/External review card_review3 \(PR #3\)/);
+  });
+
+  it("K-S4-4: a review whose gates pass enters Review through Verify, on its ledger evidence", async () => {
+    const { root, head } = repoWithPr();
+    const { store, board } = ledger(root);
+    const id = await applyWebhookIntent(
+      store,
+      { kind: "external_review", pr: 5, headSha: head, url: "u" },
+      "d5",
+    );
+    const card = await store.getCard(id as string);
+    if (!card) throw new Error("no card");
+    const r = await runExternalReview(root, card, {
+      store,
+      board,
+      runGates: async () => ({
+        passed: true,
+        failures: [],
+        durationMs: 1,
+        rungResults: [{ gate: "test", rung: "test", passed: true, durationMs: 1 }],
+      }),
+    });
+    expect(r.gatesPassed).toBe(true);
+    expect((await store.getCard(card.id))?.status).toBe("review");
+    const [ev] = store.runs.listEvidence(card.id);
+    expect(ev).toMatchObject({ passed: true, path: r.evidencePath });
+  });
+
+  it("K-N3-4: a pull_request closed webhook merges an accepted card to Done, or returns it to Review", async () => {
+    const { store, board } = ledger(mkdtempSync(join(tmpdir(), "sek-prclosed-")));
+    for (const [id, pr] of [
+      ["card_m", 31],
+      ["card_c", 32],
+    ] as const) {
+      await store.createCard({ id, tier: "task", title: id });
+      await store.updateCardStatus(id, "review", "test setup", "harness", { override: true });
+      await board.acceptWithPullRequest(id, { pr, url: `u/${pr}`, headSha: "abc" }, "p_owner");
+    }
+    const closed = (pr: number, merged: boolean) =>
+      intentFor("pull_request", {
+        action: "closed",
+        pull_request: { number: pr, html_url: `u/${pr}`, head: { sha: "abc" }, merged },
+      });
+    expect(closed(31, true)).toEqual({ kind: "pull_request_closed", pr: 31, merged: true });
+    expect(await applyWebhookIntent(store, closed(31, true), "d31")).toBe("card_m");
+    expect(await store.getCard("card_m")).toMatchObject({ status: "done", accepter: "p_owner" });
+    expect(await applyWebhookIntent(store, closed(32, false), "d32")).toBe("card_c");
+    const back = await store.getCard("card_c");
+    expect(back?.status).toBe("review");
+    expect(back?.hold).toBeUndefined();
+    expect(back?.accepter).toBeUndefined();
   });
 });

@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { type GateFailure, gateCopy } from "@sekhemet/gates";
-import { BlobStore, type CardRecord, type ContextPack } from "@sekhemet/kernel";
+import { BlobStore, type CardRecord, type ContextPack, ledgerErasures } from "@sekhemet/kernel";
 import {
   type InferenceRequest,
   type InferenceResponse,
@@ -267,9 +267,15 @@ export function recordedReplayCases(
      */
     progressiveCatalog?: readonly string[];
   } = {},
-): { cases: ReplayCase[]; skipped: Record<string, number> } {
+): {
+  cases: ReplayCase[];
+  skipped: Record<string, number>;
+  /** Packs a recorded erasure deleted: named with the `ledger/erased` seq (K-N7-6). */
+  gaps: { contextPackId: string; erasedBySeq: number }[];
+} {
   const cases: ReplayCase[] = [];
   const skipped: Record<string, number> = {};
+  const gaps: { contextPackId: string; erasedBySeq: number }[] = [];
   const skip = (why: string) => {
     skipped[why] = (skipped[why] ?? 0) + 1;
   };
@@ -283,13 +289,21 @@ export function recordedReplayCases(
          WHERE s.context_pack_id IS NOT NULL ORDER BY s.card_id, s.attempt_id, s.step_index`,
       )
       .all() as unknown as { id: string }[];
+    const erasures = ledgerErasures(db);
     db.close();
     const blobs = new BlobStore(repo);
     for (const row of rows) {
       if (opts.limit !== undefined && cases.length >= opts.limit) break;
       const raw = blobs.get(row.id);
       if (raw === undefined) {
-        skip("context pack missing");
+        // Spine rule 2 as amended (DEC-29 O1): an erased pack is a named gap.
+        const erasedBySeq = erasures.byBlob.get(row.id);
+        if (erasedBySeq !== undefined) {
+          gaps.push({ contextPackId: row.id, erasedBySeq });
+          skip(`context pack erased by ledger/erased seq ${erasedBySeq}`);
+        } else {
+          skip("context pack missing");
+        }
         continue;
       }
       const pack = JSON.parse(raw) as ContextPack;
@@ -328,7 +342,7 @@ export function recordedReplayCases(
       });
     }
   }
-  return { cases, skipped };
+  return { cases, skipped, gaps };
 }
 
 // --- the screen --------------------------------------------------------------

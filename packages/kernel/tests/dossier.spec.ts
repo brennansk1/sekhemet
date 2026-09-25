@@ -243,6 +243,9 @@ describe("@sekhemet/kernel card actuals and checkpoints", () => {
     );
     expect((await events.getEvents()).length).toBe(before);
     await store.recordCheckpoint(base);
-    expect(await store.getCheckpoints("c_x")).toEqual([base]);
+    // K-N6-4: a checkpoint records who built it, the Worker by default.
+    expect(await store.getCheckpoints("c_x")).toEqual([
+      { ...base, builtBy: { kind: "worker", id: base.agentModel } },
+    ]);
   });
 });

@@ -1,6 +1,10 @@
+import { dirname, join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
+import { assigneeTarget } from "./assignee.js";
+import { CARD_COLUMN_TABLE, type CardColumn, cardsTableDdl } from "./card_columns.js";
+import { EventLog } from "./log.js";
 import { keyBetween } from "./order_key.js";
-import { DEFAULT_STEP_BUDGET } from "./stop_reasons.js";
+import { copyDatabase, databaseFile } from "./sqlite_file.js";
 import { EVENT_ACTORS } from "./types.js";
 
 /** The actor CHECK (K5): the design's five plus the documented extensions. */
@@ -21,46 +25,9 @@ PRAGMA foreign_keys = ON;
 PRAGMA busy_timeout = 5000;
 `;
 
-const CARD_STATUS_CHECK =
-  "status IN ('backlog','ready','planning','in_progress','verify','review','done','rejected','parked')";
-
-/** Full `cards` shape, shared by first-time creation and legacy-table rebuild. */
+/** The `cards` shape, derived from the one card column table (rule 38, K-N4-4). */
 const CARDS_TABLE_BODY = `
-  id TEXT PRIMARY KEY,
-  tier TEXT NOT NULL CHECK(tier IN ('initiative','epic','feature','story','task')),
-  parent_id TEXT REFERENCES cards(id),
-  title TEXT NOT NULL,
-  status TEXT NOT NULL CHECK(${CARD_STATUS_CHECK}),
-  scope_files JSON NOT NULL DEFAULT '[]',
-  step_budget INTEGER NOT NULL DEFAULT ${DEFAULT_STEP_BUDGET},
-  steps_used INTEGER NOT NULL DEFAULT 0,
-  spec TEXT,
-  acceptance_criteria JSON NOT NULL DEFAULT '[]',
-  acceptance_tests JSON NOT NULL DEFAULT '[]',
-  difficulty INTEGER CHECK(difficulty IS NULL OR (difficulty >= 1 AND difficulty <= 10)),
-  token_budget INTEGER,
-  seconds_budget INTEGER,
-  tokens_used INTEGER NOT NULL DEFAULT 0,
-  seconds_used INTEGER NOT NULL DEFAULT 0,
-  model_route_planner TEXT,
-  model_route_executor TEXT,
-  depends_on JSON NOT NULL DEFAULT '[]',
-  context_pack_id TEXT,
-  evidence_id TEXT,
-  external_ref JSON,
-  stop_reason TEXT,
-  priority REAL NOT NULL DEFAULT 0.0,
-  order_key TEXT NOT NULL DEFAULT '',
-  blocked_reason TEXT,
-  estimate REAL,
-  labels JSON NOT NULL DEFAULT '[]',
-  epic_id TEXT,
-  cycle_id TEXT,
-  assignee TEXT,
-  due_date TEXT,
-  project_id TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+${cardsTableDdl()}
 `;
 
 const CARD_INDEX_SQL = `
@@ -125,6 +92,14 @@ const EVENTS_TABLE_BODY = `
 const ATTEMPT_LADDER_COLUMNS = `rung INTEGER NOT NULL DEFAULT 1 CHECK(rung BETWEEN 1 AND 4),
   tool_arm TEXT NOT NULL DEFAULT 'A' CHECK(tool_arm IN ('A','B','C'))`;
 
+/** Who built an attempt or a checkpoint (K-N6-4), as `{kind, id}` JSON. */
+const ATTEMPT_BUILT_BY_COLUMN = "built_by JSON";
+const CHECKPOINT_BUILT_BY_COLUMN = "built_by JSON";
+/** Where a gate result came from (K-N8-3); every result before it was a local run. */
+const GATE_SOURCE_COLUMN =
+  "source TEXT NOT NULL DEFAULT 'local' CHECK(source IN ('local','external'))";
+const GATE_EXTERNAL_REF_COLUMN = "external_ref JSON";
+
 /**
  * The review surface the design puts in the bundle's row (K19, design
  * §2720-2731), so Review can be listed and filtered without opening every
@@ -176,7 +151,8 @@ CREATE TABLE IF NOT EXISTS attempts (
   forked_from_step INTEGER,
   resumed_from_step INTEGER,
   started_at TEXT NOT NULL,
-  completed_at TEXT
+  completed_at TEXT,
+  ${ATTEMPT_BUILT_BY_COLUMN}
 );
 
 CREATE TABLE IF NOT EXISTS steps (
@@ -207,7 +183,9 @@ CREATE TABLE IF NOT EXISTS gate_results (
   exit_code INTEGER NOT NULL DEFAULT 0,
   failures JSON NOT NULL DEFAULT '[]',
   duration_ms INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  ${GATE_SOURCE_COLUMN},
+  ${GATE_EXTERNAL_REF_COLUMN}
 );
 
 CREATE TABLE IF NOT EXISTS evidence_bundles (
@@ -273,6 +251,7 @@ CREATE TABLE IF NOT EXISTS checkpoints (
   agent_harness TEXT NOT NULL,
   agent_role TEXT NOT NULL,
   created_at TEXT NOT NULL,
+  ${CHECKPOINT_BUILT_BY_COLUMN},
   PRIMARY KEY (card_id, step)
 );
 ${RUN_TABLES_SQL}`;
@@ -285,37 +264,10 @@ const ADDED_EVENT_COLUMNS: ReadonlyArray<[column: string, ddl: string]> = [
   ["payload_hash", "payload_hash TEXT NOT NULL DEFAULT ''"],
 ];
 
-const ADDED_CARD_COLUMNS: ReadonlyArray<[column: string, ddl: string]> = [
-  ["spec", "spec TEXT"],
-  ["acceptance_criteria", "acceptance_criteria JSON NOT NULL DEFAULT '[]'"],
-  ["acceptance_tests", "acceptance_tests JSON NOT NULL DEFAULT '[]'"],
-  [
-    "difficulty",
-    "difficulty INTEGER CHECK(difficulty IS NULL OR (difficulty >= 1 AND difficulty <= 10))",
-  ],
-  ["token_budget", "token_budget INTEGER"],
-  ["seconds_budget", "seconds_budget INTEGER"],
-  ["tokens_used", "tokens_used INTEGER NOT NULL DEFAULT 0"],
-  ["seconds_used", "seconds_used INTEGER NOT NULL DEFAULT 0"],
-  ["model_route_planner", "model_route_planner TEXT"],
-  ["model_route_executor", "model_route_executor TEXT"],
-  ["depends_on", "depends_on JSON NOT NULL DEFAULT '[]'"],
-  ["context_pack_id", "context_pack_id TEXT"],
-  ["evidence_id", "evidence_id TEXT"],
-  ["external_ref", "external_ref JSON"],
-  ["stop_reason", "stop_reason TEXT"],
-  ["priority", "priority REAL NOT NULL DEFAULT 0.0"],
-  ["order_key", "order_key TEXT NOT NULL DEFAULT ''"],
-  ["blocked_reason", "blocked_reason TEXT"],
-  // Team practice fields (PM_CONTRACT §2): Linear/Jira/GitHub vocabulary.
-  ["estimate", "estimate REAL"],
-  ["labels", "labels JSON NOT NULL DEFAULT '[]'"],
-  ["epic_id", "epic_id TEXT"],
-  ["cycle_id", "cycle_id TEXT"],
-  ["assignee", "assignee TEXT"],
-  ["due_date", "due_date TEXT"],
-  ["project_id", "project_id TEXT"],
-];
+/** Every declared card column, added where an older database lacks it (from the column table). */
+const ADDED_CARD_COLUMNS: ReadonlyArray<[column: string, ddl: string]> = CARD_COLUMN_TABLE.map(
+  (c) => [c.column, c.ddl] as [string, string],
+);
 
 const ADDED_ATTEMPT_COLUMNS: ReadonlyArray<[column: string, ddl: string]> = [
   ["rung", "rung INTEGER NOT NULL DEFAULT 1 CHECK(rung BETWEEN 1 AND 4)"],
@@ -345,20 +297,6 @@ const ADDED_EVIDENCE_COLUMNS: ReadonlyArray<[column: string, ddl: string]> = [
   ["abandoned_hypotheses", "abandoned_hypotheses JSON NOT NULL DEFAULT '[]'"],
 ];
 
-/** Columns copied when the `cards` table is rebuilt to widen its CHECK. */
-const LEGACY_CARD_COLUMNS = [
-  "id",
-  "tier",
-  "parent_id",
-  "title",
-  "status",
-  "scope_files",
-  "step_budget",
-  "steps_used",
-  "created_at",
-  "updated_at",
-];
-
 export interface SchemaMigrationReport {
   /** Columns added to existing tables, as `table.column`. */
   addedColumns: string[];
@@ -368,40 +306,45 @@ export interface SchemaMigrationReport {
   backfilledOrderKeys: number;
   /** True when `events` was rebuilt to add the actor CHECK (K5). */
   rebuiltEventsTable: boolean;
+  /** The numbered migrations applied by this open (K-N4-1). */
+  applied: number[];
+  /** The backup written before them, when any ran (K-N4-5). */
+  backupPath?: string;
 }
 
-/**
- * Add the actor CHECK (K5) to an `events` table created before it. A CHECK
- * is part of the DDL, so this is copy-and-swap; the rows (and so the hash
- * chain, which never covered the DDL) are copied verbatim. Skipped, leaving
- * the table as it is, when an existing row carries an actor outside the
- * enum: the ledger is append-only and is never rewritten to fit.
- */
-function rebuildEventsTableIfUnchecked(db: DatabaseSync): boolean {
-  if (!tableExists(db, "events")) return false;
-  const row = db
-    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'events'")
-    .get() as { sql?: string } | undefined;
-  if ((row?.sql ?? "").includes("CHECK(actor IN")) return false;
-  const bad = db
-    .prepare(`SELECT COUNT(*) AS n FROM events WHERE NOT (${EVENT_ACTOR_CHECK})`)
-    .get() as {
-    n: number;
-  };
-  if (bad.n > 0) return false;
-  const cols = [...columnNames(db, "events")].join(", ");
-  db.exec("BEGIN IMMEDIATE");
-  try {
-    db.exec(`CREATE TABLE events_checked (${EVENTS_TABLE_BODY})`);
-    db.exec(`INSERT INTO events_checked (${cols}) SELECT ${cols} FROM events`);
-    db.exec("DROP TABLE events");
-    db.exec("ALTER TABLE events_checked RENAME TO events");
-    db.exec("COMMIT");
-  } catch (err) {
-    db.exec("ROLLBACK");
-    throw err;
+/** A migration refused rather than lose data or open a ledger it cannot serve. */
+export class MigrationRefused extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "MigrationRefused";
   }
-  return true;
+}
+
+/** What a migration may do beyond plain SQL, safely. */
+export interface MigrationTools {
+  /**
+   * Copy-and-swap `table` to `body`, copying every column the two share.
+   * Refused (MigrationRefused) when a column it would drop holds a non-null
+   * value (K-N4-3): the transaction rolls back and the database is unchanged.
+   */
+  rebuildTable(table: string, body: string): void;
+  /** The legacy catch-up's findings, for the report. */
+  report: Omit<SchemaMigrationReport, "applied" | "backupPath">;
+  /**
+   * The install's person, as the harness knows them (git's `user.email`, or
+   * the OS user): kept in the private part of a local person a migration
+   * creates (rule 19, K-N6-6).
+   */
+  localPerson?: { email?: string; name?: string };
+}
+
+/** One numbered, forward-only schema change (kernel rule 38). */
+export interface Migration {
+  version: number;
+  name: string;
+  /** Foreign keys off across it (a rebuild of a referenced table); toggled outside the transaction. */
+  foreignKeysOff?: boolean;
+  up(db: DatabaseSync, tools: MigrationTools): void;
 }
 
 function tableExists(db: DatabaseSync, table: string): boolean {
@@ -414,6 +357,26 @@ function tableExists(db: DatabaseSync, table: string): boolean {
 function columnNames(db: DatabaseSync, table: string): Set<string> {
   const rows = db.prepare(`PRAGMA table_info(${table})`).all() as unknown as { name: string }[];
   return new Set(rows.map((r) => r.name));
+}
+
+function rebuildTable(db: DatabaseSync, table: string, body: string): void {
+  const before = columnNames(db, table);
+  db.exec(`CREATE TABLE ${table}__migrated (${body})`);
+  const after = columnNames(db, `${table}__migrated`);
+  for (const dropped of [...before].filter((c) => !after.has(c))) {
+    const held = db
+      .prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE ${dropped} IS NOT NULL`)
+      .get() as { n: number };
+    if (held.n > 0) {
+      throw new MigrationRefused(
+        `refusing to remove ${table}.${dropped}: ${held.n} row(s) hold a value (kernel rule 38)`,
+      );
+    }
+  }
+  const shared = [...before].filter((c) => after.has(c)).join(", ");
+  db.exec(`INSERT INTO ${table}__migrated (${shared}) SELECT ${shared} FROM ${table}`);
+  db.exec(`DROP TABLE ${table}`);
+  db.exec(`ALTER TABLE ${table}__migrated RENAME TO ${table}`);
 }
 
 /**
@@ -441,44 +404,23 @@ function addMissingColumns(
 }
 
 /**
- * Rebuild `cards` when its stored CHECK predates the `planning` column.
- *
- * A CHECK constraint is baked into the table's DDL, so unlike a column it
- * cannot be widened in place — the only options are copy-and-swap or leaving
- * existing databases unable to store a status the state machine now produces.
- * Guarded on the recorded DDL text so this runs at most once per database.
+ * A numbered migration that adds one column to a table on disk; the column
+ * is declared where its table is (for `cards`, the column table), so a fresh
+ * database has it already and this is a no-op there.
  */
-function rebuildCardsTableIfStale(db: DatabaseSync): boolean {
-  if (!tableExists(db, "cards")) return false;
-
-  const row = db
-    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'cards'")
-    .get() as { sql?: string } | undefined;
-  const ddl = row?.sql ?? "";
-  if (ddl.includes("'planning'")) return false;
-
-  const preserved = LEGACY_CARD_COLUMNS.filter((c) => columnNames(db, "cards").has(c));
-  const columnList = preserved.join(", ");
-
-  // Foreign keys must be off across the swap: `checkpoints` references
-  // `cards(id)`, and the drop would otherwise be refused. The pragma is a no-op
-  // inside a transaction, so it is toggled outside one.
-  db.exec("PRAGMA foreign_keys = OFF");
-  db.exec("BEGIN IMMEDIATE");
-  try {
-    db.exec(`CREATE TABLE cards_migrated (${CARDS_TABLE_BODY})`);
-    db.exec(`INSERT INTO cards_migrated (${columnList}) SELECT ${columnList} FROM cards`);
-    db.exec("DROP TABLE cards");
-    db.exec("ALTER TABLE cards_migrated RENAME TO cards");
-    db.exec(CARD_INDEX_SQL);
-    db.exec("COMMIT");
-  } catch (err) {
-    db.exec("ROLLBACK");
-    db.exec("PRAGMA foreign_keys = ON");
-    throw err;
-  }
-  db.exec("PRAGMA foreign_keys = ON");
-  return true;
+export function addColumnMigration(
+  version: number,
+  table: string,
+  column: string,
+  ddl: string,
+): Migration {
+  return {
+    version,
+    name: `add ${table}.${column}`,
+    up: (db, tools) => {
+      tools.report.addedColumns.push(...addMissingColumns(db, table, [[column, ddl]]));
+    },
+  };
 }
 
 /**
@@ -512,31 +454,367 @@ function backfillOrderKeys(db: DatabaseSync): number {
 }
 
 /**
- * Bring an existing database up to the current schema without losing rows.
- *
- * Idempotent: safe to run on a fresh database, on one written by an older
- * build, and twice in a row.
+ * Migration 1: bring a database written before numbered migrations to this
+ * schema without losing a row. Its tables are created if missing; a `cards`
+ * table whose CHECK predates `planning` is rebuilt keeping every column (it
+ * used to keep ten and drop the rest); missing columns are added; old rows
+ * get order keys; an `events` table without the actor CHECK (K5) is rebuilt,
+ * its rows (and so the chain, which never covered the DDL) copied verbatim —
+ * unless a row carries an actor outside the enum: the ledger is never
+ * rewritten to fit.
  */
-export function migrateSchema(db: DatabaseSync): SchemaMigrationReport {
-  const rebuiltCardsTable = rebuildCardsTableIfStale(db);
-  const addedColumns = [
+function legacyCatchUp(db: DatabaseSync, tools: MigrationTools): void {
+  const cardsDdl = (
+    db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'cards'").get() as
+      | { sql?: string }
+      | undefined
+  )?.sql;
+  const eventsDdl = (
+    db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'events'").get() as
+      | { sql?: string }
+      | undefined
+  )?.sql;
+  db.exec(KERNEL_SCHEMA_SQL);
+  if (cardsDdl !== undefined && !cardsDdl.includes("'planning'")) {
+    tools.rebuildTable("cards", CARDS_TABLE_BODY);
+    tools.report.rebuiltCardsTable = true;
+  }
+  tools.report.addedColumns.push(
     ...addMissingColumns(db, "events", ADDED_EVENT_COLUMNS),
     ...addMissingColumns(db, "cards", ADDED_CARD_COLUMNS),
     ...addMissingColumns(db, "attempts", ADDED_ATTEMPT_COLUMNS),
     ...addMissingColumns(db, "steps", ADDED_STEP_COLUMNS),
     ...addMissingColumns(db, "evidence_bundles", ADDED_EVIDENCE_COLUMNS),
-  ];
-  // Indexes over freshly added columns can only be created once they exist.
-  db.exec(KERNEL_INDEX_SQL);
-  const backfilledOrderKeys = backfillOrderKeys(db);
-  const rebuiltEventsTable = rebuildEventsTableIfUnchecked(db);
-  if (rebuiltEventsTable) db.exec(EVENT_INDEX_SQL);
-
-  return { addedColumns, rebuiltCardsTable, backfilledOrderKeys, rebuiltEventsTable };
+  );
+  tools.report.backfilledOrderKeys = backfillOrderKeys(db);
+  if (eventsDdl !== undefined && !eventsDdl.includes("CHECK(actor IN")) {
+    const bad = db
+      .prepare(`SELECT COUNT(*) AS n FROM events WHERE NOT (${EVENT_ACTOR_CHECK})`)
+      .get() as { n: number };
+    if (bad.n === 0) {
+      tools.rebuildTable("events", EVENTS_TABLE_BODY);
+      tools.report.rebuiltEventsTable = true;
+    }
+  }
 }
 
-export function initSchema(db: DatabaseSync): SchemaMigrationReport {
-  db.exec(KERNEL_PRAGMA_SQL);
+/**
+ * Hash chain v3 (NEW-kernel-1, NEW-kernel-2): the formula version per row,
+ * the principal, `on_behalf_of` and the commitment to the private part. All
+ * nullable: a row written before v3 has none and verifies by its own formula
+ * (rule 11).
+ */
+const LEDGER_V3_EVENT_COLUMNS: ReadonlyArray<[column: string, ddl: string]> = [
+  ["hash_version", "hash_version INTEGER"],
+  ["principal", "principal TEXT"],
+  ["on_behalf_of", "on_behalf_of TEXT"],
+  ["commitment", "commitment TEXT"],
+];
+
+/**
+ * The private part of an event (rule 33) and the append-only guard (rule 8,
+ * K-N1-2). A private row may be deleted — only by a recorded erasure (rule
+ * 34) — but never altered. The triggers are created here, never in
+ * `KERNEL_SCHEMA_SQL`, because migration 1 may rebuild `events`, and a
+ * rebuild drops the old table's triggers.
+ */
+const LEDGER_V3_SQL = `
+CREATE TABLE IF NOT EXISTS event_private (
+  event_id TEXT PRIMARY KEY REFERENCES events(id),
+  salt TEXT NOT NULL,
+  body TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_events_principal ON events(principal);
+CREATE TRIGGER IF NOT EXISTS events_no_update BEFORE UPDATE ON events
+BEGIN SELECT RAISE(ABORT, 'events are append-only (kernel rule 8)'); END;
+CREATE TRIGGER IF NOT EXISTS events_no_delete BEFORE DELETE ON events
+BEGIN SELECT RAISE(ABORT, 'events are append-only (kernel rule 8)'); END;
+CREATE TRIGGER IF NOT EXISTS event_private_no_update BEFORE UPDATE ON event_private
+BEGIN SELECT RAISE(ABORT, 'a private part is never altered, only removed by a recorded erasure (kernel rule 34)'); END;
+`;
+
+function ledgerV3(db: DatabaseSync, tools?: MigrationTools): void {
+  const added = addMissingColumns(db, "events", LEDGER_V3_EVENT_COLUMNS);
+  tools?.report.addedColumns.push(...added);
+  db.exec(LEDGER_V3_SQL);
+}
+
+/** Every table and column of the current schema, on an empty database. */
+function createCurrentSchema(db: DatabaseSync): void {
   db.exec(KERNEL_SCHEMA_SQL);
-  return migrateSchema(db);
+  addMissingColumns(db, "events", ADDED_EVENT_COLUMNS);
+  addMissingColumns(db, "attempts", ADDED_ATTEMPT_COLUMNS);
+  addMissingColumns(db, "steps", ADDED_STEP_COLUMNS);
+  addMissingColumns(db, "evidence_bundles", ADDED_EVIDENCE_COLUMNS);
+  ledgerV3(db);
+}
+
+/** A numbered migration adding one `cards` column, its DDL read from the column table. */
+function cardColumnMigration(version: number, column: string): Migration {
+  const entry = (CARD_COLUMN_TABLE as readonly CardColumn[]).find((c) => c.column === column);
+  if (!entry) throw new Error(`No card column ${column} in the column table`);
+  return addColumnMigration(version, "cards", column, entry.ddl);
+}
+
+/**
+ * K-N9-5: every card that predates the stored kind is given, once, the kind,
+ * change and split its own `card/created` payload yields — the same values
+ * the replay projection gives that event (the column table's `fromPayload`),
+ * so the migrated rows and a rebuild agree, and nothing re-derives it later.
+ */
+function backfillCardKinds(db: DatabaseSync): void {
+  if (!tableExists(db, "cards")) return;
+  const columns = new Map(
+    (CARD_COLUMN_TABLE as readonly CardColumn[]).map((c) => [c.column, c] as const),
+  );
+  const created = db.prepare(
+    "SELECT payload FROM events WHERE type = 'card/created' AND card_id = ? ORDER BY seq LIMIT 1",
+  );
+  const update = db.prepare("UPDATE cards SET kind = ?, change = ?, split = ? WHERE id = ?");
+  const rows = db.prepare("SELECT id, title, labels, scope_files FROM cards").all() as {
+    id: string;
+    title: string;
+    labels: string | null;
+    scope_files: string | null;
+  }[];
+  const parse = (raw: string | null): unknown[] => {
+    try {
+      return raw ? (JSON.parse(raw) as unknown[]) : [];
+    } catch {
+      return [];
+    }
+  };
+  for (const row of rows) {
+    const recorded = created.get(row.id) as { payload: string } | undefined;
+    const payload: Record<string, unknown> = recorded
+      ? (JSON.parse(recorded.payload) as Record<string, unknown>)
+      : { title: row.title, labels: parse(row.labels), scopeFiles: parse(row.scope_files) };
+    const value = (column: string) =>
+      columns.get(column)?.fromPayload(payload, { orderKey: () => "" }) ?? null;
+    update.run(value("kind"), value("change"), value("split"), row.id);
+  }
+}
+
+/**
+ * K-N6-6: every card holding the legacy `assignee` string gets the owner or
+ * delegate it names, recorded as `card/delegated` or `card/owner_changed`
+ * (and `person/created` for a name no person carries yet), so replay agrees.
+ * The column keeps its history; nothing writes it any more.
+ */
+function mapLegacyAssignee(db: DatabaseSync, tools: MigrationTools): void {
+  if (!tableExists(db, "cards")) return;
+  const rows = db
+    .prepare(
+      "SELECT id, assignee, owner, delegate FROM cards WHERE assignee IS NOT NULL AND TRIM(assignee) <> '' ORDER BY rowid",
+    )
+    .all() as { id: string; assignee: string; owner: string | null; delegate: string | null }[];
+  if (rows.length === 0) return;
+  const log = new EventLog(db);
+  const append = (params: Parameters<EventLog["appendWithinTransaction"]>[0]) => {
+    log.appendWithinTransaction(params);
+  };
+  for (const row of rows) {
+    const target = assigneeTarget(db, row.assignee, append, tools.localPerson);
+    if (!target) continue;
+    if ("delegate" in target) {
+      if (row.delegate !== null) continue;
+      append({
+        actor: "system",
+        type: "card/delegated",
+        cardId: row.id,
+        payload: { id: row.id, from: null, to: target.delegate },
+      });
+      db.prepare("UPDATE cards SET delegate = ? WHERE id = ?").run(
+        JSON.stringify(target.delegate),
+        row.id,
+      );
+    } else {
+      if (row.owner !== null) continue;
+      append({
+        actor: "system",
+        type: "card/owner_changed",
+        cardId: row.id,
+        payload: { id: row.id, from: null, to: target.owner },
+      });
+      db.prepare("UPDATE cards SET owner = ? WHERE id = ?").run(target.owner, row.id);
+    }
+  }
+}
+
+/**
+ * The numbered, forward-only migrations (kernel rule 38, K-N4-1), each run
+ * in its own transaction and recorded in `PRAGMA user_version`. Append only:
+ * a released migration is never edited. A column is added by declaring it
+ * (for `cards`, in the column table) and appending `addColumnMigration(...)`.
+ */
+export const MIGRATIONS: readonly Migration[] = [
+  {
+    version: 1,
+    name: "catch up a database written before numbered migrations",
+    foreignKeysOff: true,
+    up: legacyCatchUp,
+  },
+  {
+    version: 2,
+    name: "hash chain v3: principal, on_behalf_of, commitment, event_private, append-only triggers",
+    up: ledgerV3,
+  },
+  // NEW-kernel-9: the card's kind, change and split, stored.
+  cardColumnMigration(3, "kind"),
+  cardColumnMigration(4, "change"),
+  cardColumnMigration(5, "split"),
+  { version: 6, name: "store each card's kind, change and split once", up: backfillCardKinds },
+  // NEW-kernel-6: who is on a card.
+  cardColumnMigration(7, "owner"),
+  cardColumnMigration(8, "delegate"),
+  cardColumnMigration(9, "accepter"),
+  // NEW-kernel-3: the typed hold.
+  cardColumnMigration(10, "hold"),
+  // NEW-kernel-6: who built each attempt and checkpoint.
+  addColumnMigration(11, "attempts", "built_by", ATTEMPT_BUILT_BY_COLUMN),
+  addColumnMigration(12, "checkpoints", "built_by", CHECKPOINT_BUILT_BY_COLUMN),
+  // NEW-kernel-8: where each gate result came from.
+  addColumnMigration(13, "gate_results", "source", GATE_SOURCE_COLUMN),
+  addColumnMigration(14, "gate_results", "external_ref", GATE_EXTERNAL_REF_COLUMN),
+  // NEW-kernel-6, K-N6-6: the legacy assignee string, mapped.
+  { version: 15, name: "map the legacy assignee to owner and delegate", up: mapLegacyAssignee },
+];
+
+/** The schema version this build writes. */
+export const SCHEMA_VERSION = MIGRATIONS.reduce((n, m) => Math.max(n, m.version), 0);
+
+function userVersion(db: DatabaseSync): number {
+  return (db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version;
+}
+
+/** The backup before a migration (K-N4-5); undefined for an in-memory database. */
+function backupBeforeMigrating(
+  db: DatabaseSync,
+  from: number,
+  to: number,
+  backupDir: string | undefined,
+): string | undefined {
+  const location = databaseFile(db);
+  if (!location) return undefined;
+  const dir = backupDir ?? join(dirname(location), "backups");
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const path = join(dir, `pre-migration-v${from}-to-v${to}-${stamp}.db`);
+  copyDatabase(db, path);
+  return path;
+}
+
+/**
+ * Apply every migration above the database's `user_version`, each in its own
+ * transaction (K-N4-1), after writing a backup (K-N4-5). A database newer
+ * than these migrations is refused, naming both versions (K-N4-2).
+ */
+export function runMigrations(
+  db: DatabaseSync,
+  migrations: readonly Migration[] = MIGRATIONS,
+  options: { backupDir?: string; localPerson?: { email?: string; name?: string } } = {},
+): SchemaMigrationReport {
+  const current = migrations.reduce((n, m) => Math.max(n, m.version), 0);
+  const stored = userVersion(db);
+  const report: SchemaMigrationReport = {
+    addedColumns: [],
+    rebuiltCardsTable: false,
+    backfilledOrderKeys: 0,
+    rebuiltEventsTable: false,
+    applied: [],
+  };
+  if (stored > current) {
+    throw new MigrationRefused(
+      `this database is at schema version ${stored}, newer than this build's version ${current}: upgrade Sekhemet to open it`,
+    );
+  }
+  const pending = [...migrations]
+    .filter((m) => m.version > stored)
+    .sort((a, b) => a.version - b.version);
+  if (pending.length === 0) return report;
+  const backupPath = backupBeforeMigrating(db, stored, current, options.backupDir);
+  if (backupPath) report.backupPath = backupPath;
+  const tools: MigrationTools = {
+    rebuildTable: (table, body) => rebuildTable(db, table, body),
+    report,
+    ...(options.localPerson ? { localPerson: options.localPerson } : {}),
+  };
+  for (const m of pending) {
+    // The pragma is a no-op inside a transaction, so it is toggled outside one.
+    if (m.foreignKeysOff) db.exec("PRAGMA foreign_keys = OFF");
+    db.exec("BEGIN IMMEDIATE");
+    let applied = false;
+    try {
+      // Re-read under the write lock: another connection may have applied
+      // this migration since the version was first read (K-N4-1).
+      if (userVersion(db) < m.version) {
+        m.up(db, tools);
+        db.exec(`PRAGMA user_version = ${m.version}`);
+        applied = true;
+      }
+      db.exec("COMMIT");
+    } catch (err) {
+      db.exec("ROLLBACK");
+      throw err;
+    } finally {
+      if (m.foreignKeysOff) db.exec("PRAGMA foreign_keys = ON");
+    }
+    if (applied) report.applied.push(m.version);
+  }
+  return report;
+}
+
+/**
+ * Open the kernel's schema. A fresh database is created at the current
+ * version; an older one is migrated (after a backup) and its hash chain is
+ * verified before anything is served — a ledger whose chain fails is refused
+ * (rule 38, K-N4-5); a newer one is refused.
+ */
+export function initSchema(
+  db: DatabaseSync,
+  options: { backupDir?: string; localPerson?: { email?: string; name?: string } } = {},
+): SchemaMigrationReport {
+  db.exec(KERNEL_PRAGMA_SQL);
+  const fresh =
+    userVersion(db) === 0 &&
+    !(
+      db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table'").get() as {
+        n: number;
+      }
+    ).n;
+  if (fresh) {
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      createCurrentSchema(db);
+      db.exec("COMMIT");
+    } catch (err) {
+      db.exec("ROLLBACK");
+      throw err;
+    }
+    db.exec(KERNEL_INDEX_SQL);
+    db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+    return {
+      addedColumns: [],
+      rebuiltCardsTable: false,
+      backfilledOrderKeys: 0,
+      rebuiltEventsTable: false,
+      applied: [],
+    };
+  }
+  const report = runMigrations(db, MIGRATIONS, options);
+  // Indexes over freshly added columns can only be created once they exist.
+  db.exec(KERNEL_INDEX_SQL);
+  if (report.applied.length > 0) {
+    const chain = new EventLog(db).verifyHashChainSync();
+    if (!chain.valid) {
+      throw new MigrationRefused(
+        `refusing to serve this ledger: its hash chain is invalid after migrating (${chain.reason ?? `at seq ${chain.corruptedSeq}`}); the backup before the migration is ${report.backupPath ?? "not written (in-memory database)"}`,
+      );
+    }
+  }
+  return report;
+}
+
+/** Bring an existing database up to the current schema (the migrations of `initSchema`). */
+export function migrateSchema(db: DatabaseSync): SchemaMigrationReport {
+  return runMigrations(db);
 }

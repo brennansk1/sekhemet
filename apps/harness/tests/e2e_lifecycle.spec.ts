@@ -68,7 +68,8 @@ describe("@sekhemet/harness E2E Lifecycle", () => {
     // Verify hash chain is unbroken
     const verification = await log.verifyHashChain();
     expect(verification.valid).toBe(true);
-    expect(verification.totalEvents).toBe(1 + decomp.stories.length);
+    // The install's person record (kernel rule 19), the epic, then the stories.
+    expect(verification.totalEvents).toBe(2 + decomp.stories.length);
   });
 
   it("executes worktree checkout, writes checkpoint, and verifies gates", async () => {

@@ -189,9 +189,10 @@ export async function persistPlan(
       modelRoute: modelRouteFor(story.routing),
       labels: [story.slice, `route:${story.routing}`],
       ...(deps.length > 0 ? { dependsOn: deps } : {}),
+      // A card created parked carries its reason (kernel rule 27, K-S4-9).
+      ...(blockedReason ? { blockedReason } : {}),
     };
     await store.createCard(input, actor);
-    if (blockedReason) await store.updateCard(id, { blockedReason }, actor);
     createdIds.add(id);
     result.created.push({
       id,

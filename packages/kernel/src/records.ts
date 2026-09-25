@@ -4,6 +4,7 @@ import type { EventLog } from "./log.js";
 import type {
   AttemptRecord,
   AttemptStatus,
+  BuiltBy,
   CardStopReason,
   CompetenceEntry,
   CompetenceSummary,
@@ -14,6 +15,7 @@ import type {
   EvidenceBundleRecord,
   EvidenceChecks,
   FinishAttemptInput,
+  GateResultExternalRef,
   GateResultRecord,
   RecordCompetenceInput,
   RecordGateResultInput,
@@ -92,6 +94,11 @@ export class RunLedger {
     if (!RUNGS.has(rung)) throw new Error(`Rung must be 1..4, got ${rung}`);
     const toolArm = input.toolArm ?? "A";
     if (!TOOL_ARMS.has(toolArm)) throw new Error(`Tool arm must be A, B or C, got ${toolArm}`);
+    // K-N6-4: who builds it — the Worker running the model unless a person does.
+    const builtBy = input.builtBy ?? { kind: "worker" as const, id: input.modelId };
+    if ((builtBy.kind !== "worker" && builtBy.kind !== "person") || !builtBy.id) {
+      throw new Error(`builtBy is {kind: "worker" | "person", id}, got ${JSON.stringify(builtBy)}`);
+    }
     const payload: AttemptRecord = {
       id: `att_${randomUUID().slice(0, 12)}`,
       cardId: input.cardId,
@@ -104,16 +111,19 @@ export class RunLedger {
       secondsUsed: 0,
       ...(input.forkedFrom ? { forkedFrom: input.forkedFrom } : {}),
       ...(input.resumedFromStep !== undefined ? { resumedFromStep: input.resumedFromStep } : {}),
+      builtBy,
       startedAt: new Date().toISOString(),
     };
-    await this.log.append({
-      actor: "executor",
-      type: RUN_EVENTS.attemptStarted,
-      cardId: input.cardId,
-      attemptId: payload.id,
-      payload,
-    });
-    this.projectAttemptStarted(payload);
+    await this.log.append(
+      {
+        actor: "executor",
+        type: RUN_EVENTS.attemptStarted,
+        cardId: input.cardId,
+        attemptId: payload.id,
+        payload,
+      },
+      { project: () => this.projectAttemptStarted(payload) },
+    );
     return payload;
   }
 
@@ -121,14 +131,16 @@ export class RunLedger {
     const attempt = this.getAttempt(input.attemptId);
     if (!attempt) throw new Error(`Attempt not found: ${input.attemptId}`);
     const payload = { ...input, completedAt: new Date().toISOString() };
-    await this.log.append({
-      actor: "executor",
-      type: RUN_EVENTS.attemptFinished,
-      cardId: attempt.cardId,
-      attemptId: attempt.id,
-      payload,
-    });
-    this.projectAttemptFinished(payload);
+    await this.log.append(
+      {
+        actor: "executor",
+        type: RUN_EVENTS.attemptFinished,
+        cardId: attempt.cardId,
+        attemptId: attempt.id,
+        payload,
+      },
+      { project: () => this.projectAttemptFinished(payload) },
+    );
     return this.getAttempt(input.attemptId) as AttemptRecord;
   }
 
@@ -179,6 +191,7 @@ export class RunLedger {
       ...(r.resumed_from_step !== null && r.resumed_from_step !== undefined
         ? { resumedFromStep: Number(r.resumed_from_step) }
         : {}),
+      builtBy: json<BuiltBy>(r.built_by, { kind: "worker", id: String(r.model_id) }),
       startedAt: String(r.started_at),
       ...(r.completed_at ? { completedAt: String(r.completed_at) } : {}),
     };
@@ -189,8 +202,8 @@ export class RunLedger {
       .prepare(
         `INSERT OR REPLACE INTO attempts (id, card_id, attempt_number, rung, model_id, tool_arm,
           status, stop_reason, tokens_used, seconds_used, evidence_id, forked_from_attempt,
-          forked_from_step, resumed_from_step, started_at, completed_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'running', NULL, 0, 0, NULL, ?, ?, ?, ?, NULL)`,
+          forked_from_step, resumed_from_step, started_at, completed_at, built_by)
+         VALUES (?, ?, ?, ?, ?, ?, 'running', NULL, 0, 0, NULL, ?, ?, ?, ?, NULL, ?)`,
       )
       .run(
         p.id,
@@ -203,6 +216,7 @@ export class RunLedger {
         p.forkedFrom?.step ?? null,
         p.resumedFromStep ?? null,
         p.startedAt,
+        p.builtBy ? JSON.stringify(p.builtBy) : null,
       );
   }
 
@@ -231,15 +245,17 @@ export class RunLedger {
       id: `stp_${randomUUID().slice(0, 12)}`,
       createdAt: new Date().toISOString(),
     };
-    await this.log.append({
-      actor: "executor",
-      type: RUN_EVENTS.stepRecorded,
-      cardId: input.cardId,
-      attemptId: input.attemptId,
-      stepId: payload.id,
-      payload,
-    });
-    this.projectStep(payload);
+    await this.log.append(
+      {
+        actor: "executor",
+        type: RUN_EVENTS.stepRecorded,
+        cardId: input.cardId,
+        attemptId: input.attemptId,
+        stepId: payload.id,
+        payload,
+      },
+      { project: () => this.projectStep(payload) },
+    );
     return payload;
   }
 
@@ -248,15 +264,18 @@ export class RunLedger {
     const step = this.getStep(stepId);
     if (!step) throw new Error(`Step not found: ${stepId}`);
     const payload = { stepId, gitRef };
-    await this.log.append({
-      actor: "sync",
-      type: RUN_EVENTS.stepCheckpointed,
-      cardId: step.cardId,
-      attemptId: step.attemptId,
-      stepId,
-      payload,
-    });
-    this.db.prepare("UPDATE steps SET git_ref = ? WHERE id = ?").run(gitRef, stepId);
+    // Projected by the replay's own code, before COMMIT (K-S7-3).
+    await this.log.append(
+      {
+        actor: "sync",
+        type: RUN_EVENTS.stepCheckpointed,
+        cardId: step.cardId,
+        attemptId: step.attemptId,
+        stepId,
+        payload,
+      },
+      { project: (event) => this.applyEvent(event as EventRecord) },
+    );
   }
 
   public getStep(id: string): StepRecord | undefined {
@@ -359,6 +378,20 @@ export class RunLedger {
   // --- Gate results (K18) -----------------------------------------------------
 
   public async recordGateResult(input: RecordGateResultInput): Promise<GateResultRecord> {
+    // K-N8-3: every result says where it came from; an external one says which run.
+    if (input.source !== "local" && input.source !== "external") {
+      throw new Error(
+        `A gate result names its source, "local" or "external"; got ${String(input.source)}`,
+      );
+    }
+    if (input.source === "external") {
+      const ref = input.externalRef;
+      if (!ref?.system || !ref.checkName || !ref.runUrl || !ref.headSha) {
+        throw new Error(
+          "An external gate result carries externalRef {system, checkName, runUrl, headSha}",
+        );
+      }
+    }
     const layer = GATE_LAYERS.has(input.layer) ? input.layer : "functional";
     const payload: GateResultRecord = {
       ...input,
@@ -366,15 +399,17 @@ export class RunLedger {
       id: `gr_${randomUUID().slice(0, 12)}`,
       createdAt: new Date().toISOString(),
     };
-    await this.log.append({
-      actor: "gate",
-      type: RUN_EVENTS.gateResult,
-      cardId: input.cardId,
-      attemptId: input.attemptId,
-      ...(input.stepId ? { stepId: input.stepId } : {}),
-      payload,
-    });
-    this.projectGateResult(payload);
+    await this.log.append(
+      {
+        actor: "gate",
+        type: RUN_EVENTS.gateResult,
+        cardId: input.cardId,
+        attemptId: input.attemptId,
+        ...(input.stepId ? { stepId: input.stepId } : {}),
+        payload,
+      },
+      { project: () => this.projectGateResult(payload) },
+    );
     return payload;
   }
 
@@ -394,6 +429,10 @@ export class RunLedger {
       exitCode: Number(r.exit_code),
       durationMs: Number(r.duration_ms),
       failures: json<unknown[]>(r.failures, []),
+      source: (r.source === "external" ? "external" : "local") as "local" | "external",
+      ...(r.external_ref
+        ? { externalRef: json<GateResultExternalRef>(r.external_ref, null as never) }
+        : {}),
       createdAt: String(r.created_at),
     }));
   }
@@ -402,7 +441,8 @@ export class RunLedger {
     this.db
       .prepare(
         `INSERT OR REPLACE INTO gate_results (id, attempt_id, card_id, step_id, gate, layer, status,
-          exit_code, failures, duration_ms, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          exit_code, failures, duration_ms, created_at, source, external_ref)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         p.id,
@@ -416,6 +456,9 @@ export class RunLedger {
         JSON.stringify(p.failures),
         p.durationMs,
         p.createdAt,
+        // A result recorded before sources existed was a local run.
+        p.source ?? "local",
+        p.externalRef ? JSON.stringify(p.externalRef) : null,
       );
   }
 
@@ -450,14 +493,16 @@ export class RunLedger {
       trajectoryRef,
       createdAt: new Date().toISOString(),
     };
-    await this.log.append({
-      actor: "gate",
-      type: RUN_EVENTS.evidenceRecorded,
-      cardId: input.cardId,
-      attemptId: input.attemptId,
-      payload,
-    });
-    this.projectEvidence(payload);
+    await this.log.append(
+      {
+        actor: "gate",
+        type: RUN_EVENTS.evidenceRecorded,
+        cardId: input.cardId,
+        attemptId: input.attemptId,
+        payload,
+      },
+      { project: () => this.projectEvidence(payload) },
+    );
     return payload;
   }
 
@@ -554,13 +599,15 @@ export class RunLedger {
       status: "pending",
       createdAt: new Date().toISOString(),
     };
-    await this.log.append({
-      actor: "executor",
-      type: RUN_EVENTS.decisionRequested,
-      ...(input.cardId ? { cardId: input.cardId } : {}),
-      payload,
-    });
-    this.projectDecisionRequested(payload);
+    await this.log.append(
+      {
+        actor: "executor",
+        type: RUN_EVENTS.decisionRequested,
+        ...(input.cardId ? { cardId: input.cardId } : {}),
+        payload,
+      },
+      { project: () => this.projectDecisionRequested(payload) },
+    );
     return payload;
   }
 
@@ -568,6 +615,8 @@ export class RunLedger {
     id: string,
     optionIndex: number,
     answeredBy = "human",
+    /** The acting person's opaque id (K-N2-2); a solo install's person when omitted. */
+    principal?: string,
   ): Promise<DecisionRequestRecord> {
     const d = this.getDecision(id);
     if (!d) throw new Error(`Decision not found: ${id}`);
@@ -576,13 +625,16 @@ export class RunLedger {
       throw new Error(`Option ${optionIndex} is not one of ${d.options.length}`);
     }
     const payload = { id, optionIndex, answeredBy, answeredAt: new Date().toISOString() };
-    await this.log.append({
-      actor: answeredBy === "human" ? "human" : "system",
-      type: RUN_EVENTS.decisionAnswered,
-      ...(d.cardId ? { cardId: d.cardId } : {}),
-      payload,
-    });
-    this.projectDecisionAnswered(payload);
+    await this.log.append(
+      {
+        actor: answeredBy === "human" ? "human" : "system",
+        type: RUN_EVENTS.decisionAnswered,
+        ...(d.cardId ? { cardId: d.cardId } : {}),
+        ...(principal ? { principal } : {}),
+        payload,
+      },
+      { project: () => this.projectDecisionAnswered(payload) },
+    );
     return this.getDecision(id) as DecisionRequestRecord;
   }
 
@@ -590,15 +642,16 @@ export class RunLedger {
     const d = this.getDecision(id);
     if (!d || d.status !== "pending") return;
     const payload = { id, at: new Date().toISOString() };
-    await this.log.append({
-      actor: "system",
-      type: RUN_EVENTS.decisionTimedOut,
-      ...(d.cardId ? { cardId: d.cardId } : {}),
-      payload,
-    });
-    this.db
-      .prepare("UPDATE decision_requests SET status = 'timed_out', answered_at = ? WHERE id = ?")
-      .run(payload.at, id);
+    // Projected by the replay's own code, before COMMIT (K-S7-3).
+    await this.log.append(
+      {
+        actor: "system",
+        type: RUN_EVENTS.decisionTimedOut,
+        ...(d.cardId ? { cardId: d.cardId } : {}),
+        payload,
+      },
+      { project: (event) => this.applyEvent(event as EventRecord) },
+    );
   }
 
   public getDecision(id: string): DecisionRequestRecord | undefined {
@@ -694,14 +747,27 @@ export class RunLedger {
 
   // --- Competence model (K21) -------------------------------------------------
 
-  public async recordCompetence(input: RecordCompetenceInput): Promise<CompetenceEntry> {
+  /**
+   * Add an outcome to the competence model. K-N6-4: an attempt a person built
+   * says nothing about a model, so naming it (`attemptId`) excludes it — no
+   * row, no event — from `CompetenceEntry` and from pass rate by model.
+   */
+  public async recordCompetence(
+    input: RecordCompetenceInput,
+    options: { attemptId?: string } = {},
+  ): Promise<CompetenceEntry | undefined> {
+    if (options.attemptId && this.getAttempt(options.attemptId)?.builtBy?.kind === "person") {
+      return undefined;
+    }
     const payload: CompetenceEntry = {
       ...input,
       id: `cmp_${randomUUID().slice(0, 12)}`,
       recordedAt: new Date().toISOString(),
     };
-    await this.log.append({ actor: "system", type: RUN_EVENTS.competenceRecorded, payload });
-    this.projectCompetence(payload);
+    await this.log.append(
+      { actor: "system", type: RUN_EVENTS.competenceRecorded, payload },
+      { project: () => this.projectCompetence(payload) },
+    );
     return payload;
   }
 

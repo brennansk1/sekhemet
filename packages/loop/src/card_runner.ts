@@ -65,13 +65,14 @@ export interface CardLifecycle {
    * Move the card. May throw when the board refuses the move (back-pressure,
    * a WIP limit): the runner catches that and holds the card instead.
    */
-  transition(cardId: string, to: CardStatus): Promise<void>;
+  transition(cardId: string, to: CardStatus, reason?: string): Promise<void>;
   recordSteps?(cardId: string, stepsUsed: number): Promise<void>;
   /**
-   * Hold the card where it stands with a reason (the board's `holdCard`).
-   * Without it the runner writes `blockedReason` through `store`.
+   * Hold the card where it stands with a reason, awaiting `awaiting` (the
+   * board's typed `holdCard`, kernel rule 24). Without it the runner writes
+   * `blockedReason` through `store`.
    */
-  hold?(cardId: string, reason: string): Promise<void>;
+  hold?(cardId: string, reason: string, awaiting: CardStatus): Promise<void>;
 }
 
 /**
@@ -608,6 +609,8 @@ export class CardRunner {
           exitCode: r.exitCode,
           durationMs: r.durationMs,
           failures: (turn.gateResult?.failures ?? []).filter((f) => (f.gate ?? f.rung) === r.gate),
+          // K-N8-3: the Worker's gates run here, on this machine.
+          source: "local",
         });
       }
     } catch (err) {
@@ -824,16 +827,19 @@ export class CardRunner {
   }
 
   /** Move the card, holding it with a recorded reason when the board refuses. */
-  private async move(to: CardStatus): Promise<{ ok: true } | { ok: false; reason: string }> {
+  private async move(
+    to: CardStatus,
+    why?: string,
+  ): Promise<{ ok: true } | { ok: false; reason: string }> {
     const { card, lifecycle, store } = this.options;
     if (!lifecycle) return { ok: true };
     try {
-      await lifecycle.transition(card.id, to);
+      await lifecycle.transition(card.id, to, why);
       return { ok: true };
     } catch (err) {
       const reason = `${to} refused (${refusalReason(err)})`;
       try {
-        if (lifecycle.hold) await lifecycle.hold(card.id, reason);
+        if (lifecycle.hold) await lifecycle.hold(card.id, reason, to);
         else await store?.updateCard(card.id, { blockedReason: `held: ${reason}` }, "executor");
       } catch {
         // The hold is best effort; the result still carries the reason.
@@ -1449,24 +1455,28 @@ export class CardRunner {
       });
       // A halt says nothing about what the model can do; only outcomes count.
       if (row.measuresModel) {
-        await runs.recordCompetence({
-          repoId: basename(this.options.repoRoot),
-          cardClass: cardClassOf(card),
-          filesTouchedCount: p.evidence.filesTouched.length,
-          difficulty: difficultyLabel(card.difficulty),
-          modelId: this.options.modelAdapter.modelId,
-          // M9: the arm the card actually ran on, which is the registry's
-          // measured one unless the caller chose. Recording a hardcoded
-          // `arm_a_flat` made every competence row say the same thing.
-          toolArm:
-            this.options.toolArm ?? this.options.modelAdapter.preferredToolArm ?? "arm_a_flat",
-          stepBudget: card.stepBudget,
-          stepsUsed: p.stepsUsed,
-          stopReason: p.stopReason,
-          passed: p.passed,
-          tokensUsed: p.tokensUsed,
-          wallClockSeconds: p.secondsUsed,
-        });
+        await runs.recordCompetence(
+          {
+            repoId: basename(this.options.repoRoot),
+            cardClass: cardClassOf(card),
+            filesTouchedCount: p.evidence.filesTouched.length,
+            difficulty: difficultyLabel(card.difficulty),
+            modelId: this.options.modelAdapter.modelId,
+            // M9: the arm the card actually ran on, which is the registry's
+            // measured one unless the caller chose. Recording a hardcoded
+            // `arm_a_flat` made every competence row say the same thing.
+            toolArm:
+              this.options.toolArm ?? this.options.modelAdapter.preferredToolArm ?? "arm_a_flat",
+            stepBudget: card.stepBudget,
+            stepsUsed: p.stepsUsed,
+            stopReason: p.stopReason,
+            passed: p.passed,
+            tokensUsed: p.tokensUsed,
+            wallClockSeconds: p.secondsUsed,
+          },
+          // K-N6-4: a person-built attempt never counts toward a model.
+          { attemptId: this.attemptId },
+        );
       }
     } catch (err) {
       this.emit({
@@ -1786,6 +1796,18 @@ export class CardRunner {
       await Promise.allSettled(writes);
     }
 
+    // The attempt is closed, with its stop reason on the ledger, before the
+    // card moves: Verify takes a finished attempt (kernel rule 27, K-S4-6).
+    await this.closeAttempt({
+      passed,
+      stopReason,
+      tokensUsed,
+      secondsUsed,
+      evidence,
+      written,
+      stepsUsed: params.stepsUsed,
+    });
+
     // The final column. Every finished card enters Verify first: that is the
     // column the state machine routes through, and it is where back-pressure
     // is applied. Only then does a passing card move to Review for a human.
@@ -1864,7 +1886,12 @@ export class CardRunner {
             // cards accumulate rather than a transition they pass through.
             // G23 names the regression when one of them passed at Review.
             regression = this.regressionAgainstReview(gateResult);
-            const moved = await this.move("planning");
+            // K-N5-4: the move's recorded reason names each regressed gate
+            // and the evidence it passed in.
+            const moved = await this.move(
+              "planning",
+              regression ? `regression: ${regression}` : undefined,
+            );
             if (moved.ok) finalStatus = "planning";
             else held = { reason: moved.reason, wanted: "planning" };
           }
@@ -1923,16 +1950,6 @@ export class CardRunner {
         });
       }
     }
-
-    await this.closeAttempt({
-      passed,
-      stopReason,
-      tokensUsed,
-      secondsUsed,
-      evidence,
-      written,
-      stepsUsed: params.stepsUsed,
-    });
 
     return {
       cardId: card.id,

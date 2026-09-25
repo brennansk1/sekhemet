@@ -55,6 +55,8 @@ describe("slash commands in Seshat's chat (H16)", () => {
       tier: "task",
       title: "Hasher",
       status: "backlog",
+      // Ready's entry condition (kernel rule 27): the move goes through the board.
+      acceptanceCriteria: ["hashes a chain"],
     });
   });
 

@@ -3,12 +3,14 @@ import { freemem, totalmem } from "node:os";
 import { basename, join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { PlaybookRegistry } from "@sekhemet/context";
+import type { EventLog } from "@sekhemet/kernel";
 import {
   type MemoryPressureStatus,
   classifyMemoryPressure,
   readKernelPressureLevel,
   readSwapUsedBytes,
 } from "@sekhemet/models";
+import { PLAYBOOK_CANDIDATE_EVENT } from "./triage.js";
 
 /**
  * Read models behind the dashboard's Phase 3 and 4 endpoints: transcripts,
@@ -410,21 +412,15 @@ export function worktrees(repoPath: string): string[] {
 
 /* ---------- Playbook ---------- */
 
-export function playbookSnapshot(repoPath: string) {
+export async function playbookSnapshot(repoPath: string, log: EventLog) {
   const rules = new PlaybookRegistry(repoPath).getAllRules();
+  // Candidates are ledger events (K-S7-6), never a side file.
   const candidates: { cardId: string; reason: string; at: string }[] = [];
-  const file = join(repoPath, ".sekhemet", "playbook_candidates.jsonl");
-  if (existsSync(file)) {
-    for (const line of readFileSync(file, "utf8").split("\n")) {
-      if (!line.trim()) continue;
-      try {
-        const c = JSON.parse(line) as { cardId?: string; reason?: string; at?: string };
-        if (c.cardId && c.reason)
-          candidates.push({ cardId: c.cardId, reason: c.reason, at: c.at ?? "" });
-      } catch {
-        // Skip a torn line.
-      }
-    }
+  for (const e of await log.getEventsByTypes([PLAYBOOK_CANDIDATE_EVENT])) {
+    const c = e.payload as { cardId?: string };
+    // The note is in the private part (rule 33); an erased note reads as the marker.
+    const reason = (e.private as { reason?: string } | undefined)?.reason;
+    if (c.cardId && reason) candidates.push({ cardId: c.cardId, reason, at: e.createdAt });
   }
   candidates.sort((a, b) => b.at.localeCompare(a.at));
   return { rules, candidates };

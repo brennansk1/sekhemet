@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { canonicalPayloadHash } from "../src/canonical_json.js";
 import {
   CardStore,
   CardStructureError,
@@ -58,6 +59,7 @@ describe("@sekhemet/kernel run records, structure and projections (K4-K21, B5, B
       exitCode: 2,
       durationMs: 9,
       failures: [{ errorExcerpt: "TS2304" }],
+      source: "local",
     });
     await store.runs.markStepCheckpoint(step.id, "abc1234");
     await store.runs.recordEvidence({
@@ -114,7 +116,10 @@ describe("@sekhemet/kernel run records, structure and projections (K4-K21, B5, B
       options: ["deny", "allow"],
     });
     // A second connection (the dashboard) answers while the runner waits.
-    const other = new CardStore(new DatabaseSync(join(dir, "events.db")), log);
+    // Its own connection and its own log: the append and the projection share
+    // one transaction on one connection (K-S7-3).
+    const otherDb = new DatabaseSync(join(dir, "events.db"));
+    const other = new CardStore(otherDb, new EventLog(otherDb));
     let polls = 0;
     const answer = await store.runs.awaitDecision(d.id, {
       timeoutMs: 5000,
@@ -400,9 +405,29 @@ describe("@sekhemet/kernel run records, structure and projections (K4-K21, B5, B
     raw.exec(
       "CREATE TABLE events (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, actor TEXT NOT NULL, type TEXT NOT NULL, card_id TEXT, attempt_id TEXT, step_id TEXT, payload JSON NOT NULL, payload_hash TEXT NOT NULL DEFAULT '', hash TEXT NOT NULL, prev_hash TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))",
     );
-    const rawLog = new EventLog(raw);
-    await rawLog.append({ actor: "planner", type: "a", payload: { n: 1 } });
-    await rawLog.append({ actor: "executor", type: "b", payload: { n: 2 } });
+    // Rows as a v2 build wrote them (the v3 EventLog needs the v3 columns).
+    let prev = "0".repeat(64);
+    for (const [seq, actor, type] of [
+      [1, "planner", "a"],
+      [2, "executor", "b"],
+    ] as const) {
+      const payload = { n: seq };
+      const payloadHash = canonicalPayloadHash(payload);
+      const hash = EventLog.computeHash({
+        prevHash: prev,
+        seq,
+        actor,
+        type,
+        payloadHash,
+        id: `e${seq}`,
+      });
+      raw
+        .prepare(
+          "INSERT INTO events (id, actor, type, payload, payload_hash, hash, prev_hash) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run(`e${seq}`, actor, type, JSON.stringify(payload), payloadHash, hash, prev);
+      prev = hash;
+    }
     const report = initSchema(raw);
     expect(report.rebuiltEventsTable).toBe(true);
     const verified = await new EventLog(raw).verifyHashChain();

@@ -205,7 +205,9 @@ describe("queue prelude (P3, P10, P11, P16, P19-P22, P20)", () => {
       category: "storage",
       createdAt: "2026-01-01T00:00:00Z",
     });
-    expect((await k.cardStore.getCard("waits"))?.status).toBe("parked");
+    // Under safe_default work proceeds on the default: the card is not parked
+    // (planner-pm §2.10.3, kernel rule 27).
+    expect((await k.cardStore.getCard("waits"))?.status).toBe("ready");
     const ready = (await k.cardStore.listCards({ status: "ready" })).filter(
       (c) => c.id !== "waits",
     );
@@ -347,9 +349,9 @@ describe("skills, release, ci and improve commands (C10, Y17, Y18, E10, E14, E15
         id,
         tier: "task",
         title: `Add ledger migration ${id}`,
-        status: "done",
         scopeFiles: ["src/db.ts"],
       });
+      await k.cardStore.updateCardStatus(id, "done", "test setup", "harness", { override: true });
       await k.cardStore.updateCard(id, { stepsUsed: 3 });
       await k.log.append({
         actor: "executor",

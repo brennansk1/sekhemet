@@ -4,6 +4,8 @@ status: partial
 audiences: [developer]
 code:
   - apps/harness/src/daemon.ts
+  - apps/harness/src/ledger_cmds.ts
+  - packages/kernel/src/ledger_backup.ts
   - apps/harness/src/pm/service.ts
   - apps/harness/src/server.ts
   - apps/harness/src/rest_extra.ts
@@ -19,6 +21,8 @@ code:
   - packages/sandbox/src/executor.ts
 tests:
   - apps/harness/tests/daemon_ws.spec.ts
+  - apps/harness/tests/ledger_cmds.spec.ts
+  - packages/kernel/tests/backup.spec.ts
   - apps/harness/tests/server.spec.ts
   - apps/harness/tests/rest_extra.spec.ts
   - apps/harness/tests/control.spec.ts
@@ -122,7 +126,7 @@ Sekhemet runs cards unattended for hours on a machine people also use. The runti
 
 ### Backup, restore, export and upgrades
 
-35. **Backup** (`sekhemet dev backup <path>`; restore with `sekhemet dev restore <path>`) uses SQLite's online backup API (`node:sqlite` `backup()`, built in), so writers continue while it copies; each backup records `ledger/backed_up` with its path and the sequence number it holds. `PRAGMA secure_delete` is on before any erasure, so erased content is overwritten rather than left on free pages.
+35. **Backup** (`sekhemet dev backup <path>`; restore with `sekhemet dev restore <path>`) makes a consistent copy while writers continue — with `VACUUM INTO`, because `node:sqlite`'s online `backup()` exists only from Node 22.16, above the 22.13 floor (verified in B3.1; [kernel](kernel.md) rule 35) — and verifies the copy's chain; each backup records `ledger/backed_up` with its path and the sequence number it holds. `PRAGMA secure_delete` is on before any erasure, so erased content is overwritten rather than left on free pages.
 36. **Restore re-applies erasures.** An erasure register beside the backups (event ids and reasons only, no personal data) lists every erasure; restoring a backup re-applies every erasure newer than the backup before the server accepts a request, and a restore refuses to start when erasures are known to exist and the register is missing. An old backup never silently brings back erased data or a leaked secret.
 37. **Export with no lock-in.** `sekhemet dev export --ledger` writes NDJSON, one event per line with `seq`, `hash`, `prevHash`, the commitment of its private part, and its fields mapped to CloudEvents 1.0 attributes (`id`, `source`, `type`, `time`, `subject`); `--no-private` omits every private part and the chain still verifies; a standalone verifier checks the file offline. Projections and blobs are exported beside it.
 38. **Upgrades migrate, never lose.** Schema migrations are numbered and forward-only and preserve the hash chain ([kernel](kernel.md)); a database older than the binary is backed up, migrated forward and its chain verified before the server serves; a database newer than the binary is refused with the version needed. A config migration runs in the same step ([surface](surface.md) reports renamed keys).
@@ -195,11 +199,11 @@ The design's 2026-09-17 route table (`/workspace`, `/projects/:id/board`, `PATCH
 | Token streaming to the Steps tab | built | `liveTokenWriter` (`execute.ts:484-486, 683`); SSE `tokens` (`server.ts:1145-1170`) | — |
 | PM with no lease loads through a residency scheduler | not-built | the no-lease path loads the PM model directly, with no footprint check (PM_CONTRACT §4.3; `pm/service.ts:222-320`) | NEW-runtime-6 |
 | Fair share, per-slot leases on a team server | not-built | one global lease file (`pm/service.ts:57-110`) | NEW-runtime-6 |
-| Backup, restore with erasures, ledger export, forward-only migrations | not-built | none | NEW-runtime-8 |
+| Backup, restore with erasures, ledger export, forward-only migrations | built | `sekhemet dev backup <path>` copies with `VACUUM INTO` while another process writes, verifies the copy and records `ledger/backed_up {path, seq}` (RUN-39); `dev restore <path>` re-applies every register erasure newer than the backup before the restored ledger is moved into place, keeps the replaced ledger beside it, and refuses without the register when erasures are known (RUN-40); `dev export --ledger [--no-private]` writes CloudEvents-mapped NDJSON that `verifyLedgerExport` checks alone, reaching the ledger's verdict on a tampered ledger too (RUN-42, RUN-43); a newer schema is refused naming both versions, an older one is backed up, migrated and chain-checked before anything is served (RUN-44) — `ledger_cmds.spec.ts`, `backup.spec.ts`, `migrations.spec.ts`. Restore is run with the server stopped: it replaces the database file | — |
 | Local traces, OTLP export on request | partial (was `built`; DEC-25 R23) | card, step (the code's `turn`) and model-request spans (`execute.ts:531`, `tracing.ts:144-192`), export by `sekhemet dev traces` (`tracing.spec.ts`); no tool-call span; no dashboard view (nothing under `packages/ui/web` reads traces) | NEW-runtime-9 |
 | Tokens removed by condensing, as a metric | not-built | the condenser computes `tokensSaved` per result (`context/src/condenser.ts:74-77, 414-420`); nothing outside it reads the figure | NEW-runtime-9 |
 | Retention of packs, observations, transcripts | partial | wired at queue start (`index.ts:1243`), tested in the kernel (`blobs_retention.spec.ts`) but not through `queue`; it deletes with no `ledger/erased` record (`retention.ts:54-58`) | NEW-runtime-4 |
-| Retention of `private` fields, 90 days by default on a team server, none by default on a single-user install | not-built | the ledger has no `private` part ([kernel](kernel.md) NEW-kernel-1) | NEW-runtime-8 |
+| Retention of `private` fields, 90 days by default on a team server, none by default on a single-user install | not-built | the private part and `EventLog.erase` with reason `retention` exist ([kernel](kernel.md) NEW-kernel-1, NEW-kernel-7); no retention period is stored and no job runs it — B3.3 (RUN-41, RUN-41a) | NEW-runtime-8 |
 | Run reports as a ledger event, files as a rebuildable cache | not-built | files only: `queue_report.json` and `runs/<startedAt>.json` (`execute.ts:1468-1482`); the Runs view reads the directory (`dashboard_api.ts:311-343`) | NEW-runtime-9 |
 | Log rotation, trace retention, worktree cleanup | not-built | `daemon.log` appends forever; `traces.db` has no retention (`tracing.ts:39-48`) | NEW-runtime-4 |
 

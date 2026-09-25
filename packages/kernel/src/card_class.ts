@@ -50,6 +50,53 @@ export const CARD_KINDS: readonly CardKind[] = [
   "research",
 ];
 
+/**
+ * What the change does to behaviour (DEC-26; gates.md NEW-gates-8 owns what
+ * each requires). Stored on the card, closed; `feature` when none is given.
+ */
+export type CardChange = "feature" | "fix" | "characterize" | "refactor" | "upgrade";
+
+export const CARD_CHANGES: readonly CardChange[] = [
+  "feature",
+  "fix",
+  "characterize",
+  "refactor",
+  "upgrade",
+];
+
+/**
+ * The SPIDR split that produced the card, or none (DEC-26). Stored for
+ * display and export only: nothing that decides tools, gates or rules reads
+ * it (K-N9-4) — the stored `kind` does that.
+ */
+export type CardSplit = "spike" | "path" | "interface" | "data" | "rules";
+
+export const CARD_SPLITS: readonly CardSplit[] = ["spike", "path", "interface", "data", "rules"];
+
+const SPIDR_SPLIT: Record<string, CardSplit> = {
+  s: "spike",
+  spike: "spike",
+  p: "path",
+  path: "path",
+  i: "interface",
+  interface: "interface",
+  d: "data",
+  data: "data",
+  r: "rules",
+  rule: "rules",
+  rules: "rules",
+};
+
+/** The split a title's SPIDR marker names (`(SPIDR: P)`), or undefined. */
+export function spidrSplit(title: string): CardSplit | undefined {
+  const marker = /\(SPIDR:\s*([A-Za-z]+)/i.exec(title)?.[1];
+  return marker ? SPIDR_SPLIT[marker.toLowerCase()] : undefined;
+}
+
+export function isCardKind(value: unknown): value is CardKind {
+  return typeof value === "string" && (CARD_KINDS as readonly string[]).includes(value);
+}
+
 /** SPIDR letters and words as the planner writes them into a card title. */
 const SPIDR: Record<string, CardKind> = {
   s: "spike",
@@ -81,16 +128,28 @@ export interface CardClassInput {
   title: string;
   labels?: string[] | undefined;
   scopeFiles?: string[] | undefined;
+  /** The kind stored on the card (NEW-kernel-9); read as it is, never re-derived. */
+  kind?: CardKind | undefined;
 }
 
 /**
- * The card's kind. A label is authoritative because a person set it; a SPIDR
- * marker is next because the planner set it deliberately; the keyword pass
- * is a guess and says so by defaulting to `implement`, which is both the
- * most common kind and the one whose tool set is the least surprising if the
- * guess is wrong.
+ * The card's kind: the stored one (K-N9-1, K-N9-4), so renaming a card never
+ * changes its tools. Only a card that has none — an input not yet created —
+ * is derived, by `deriveCardKind`.
  */
 export function cardKind(card: CardClassInput): CardKind {
+  return isCardKind(card.kind) ? card.kind : deriveCardKind(card);
+}
+
+/**
+ * The kind a new card is given when its creator names none, derived once, at
+ * creation (K-N9-1). A label is authoritative because a person set it; a
+ * SPIDR marker is next because the planner set it deliberately; the keyword
+ * pass is a guess and says so by defaulting to `implement`, which is both
+ * the most common kind and the one whose tool set is the least surprising if
+ * the guess is wrong.
+ */
+export function deriveCardKind(card: Omit<CardClassInput, "kind">): CardKind {
   for (const label of card.labels ?? []) {
     const l = label.toLowerCase();
     if ((CARD_KINDS as readonly string[]).includes(l)) return l as CardKind;

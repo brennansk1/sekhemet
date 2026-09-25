@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { BlobStore, type ContextPack } from "@sekhemet/kernel";
+import { BlobStore, type ContextPack, ledgerErasures } from "@sekhemet/kernel";
 import {
   type EngineCandidate,
   type InferenceRequest,
@@ -315,13 +315,20 @@ export function recordedStepRequests(
          WHERE s.context_pack_id IS NOT NULL ORDER BY s.card_id, s.attempt_id, s.step_index`,
       )
       .all() as { context_pack_id: string; tool_arm: string }[];
+    const erasures = ledgerErasures(db);
     db.close();
     const blobs = new BlobStore(repo);
     for (const row of rows) {
       if (enough()) break;
       const raw = blobs.get(row.context_pack_id);
       if (raw === undefined) {
-        skip("context pack missing");
+        // K-N7-6: an erased pack is a named gap, not a missing one.
+        const erasedBySeq = erasures.byBlob.get(row.context_pack_id);
+        skip(
+          erasedBySeq !== undefined
+            ? `context pack erased by ledger/erased seq ${erasedBySeq}`
+            : "context pack missing",
+        );
         continue;
       }
       const pack = JSON.parse(raw) as ContextPack;

@@ -1,13 +1,16 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { TransitionRefusedError } from "@sekhemet/board";
 import { DeterministicGateRunner, type GateResult, loadGatesConfig } from "@sekhemet/gates";
-import type { CardRecord, CardStore } from "@sekhemet/kernel";
+import type { CardRecord, CardStatus, CardStore } from "@sekhemet/kernel";
 import type { LocalInferenceAdapter } from "@sekhemet/models";
 import { ProcessSandbox } from "@sekhemet/sandbox";
 import { annotationsFromFailures } from "@sekhemet/sync";
 import { recordReview } from "./execute.js";
 import { reviewCard } from "./learning/review.js";
+import { recordLedgerRun } from "./ledger_evidence.js";
+import type { ResearchBoard } from "./research/cards.js";
 import { ownerRepo } from "./wave2_github.js";
 import { githubAppFromEnv } from "./wave2_server.js";
 
@@ -66,7 +69,13 @@ export interface ExternalReviewResult {
 }
 
 export interface ExternalReviewOptions {
-  store: Pick<CardStore, "recordDossierEntry" | "recordEvent" | "updateCardStatus">;
+  store: CardStore;
+  /**
+   * The board every move goes through (kernel K-S4-4): the review's run is
+   * an attempt on the ledger, so Verify's and Review's entry conditions and
+   * back-pressure apply, and a review whose gates failed never enters Review.
+   */
+  board: ResearchBoard;
   /** The gates in a checkout; default: the repository's gates.toml rungs. */
   runGates?: (cwd: string) => Promise<GateResult>;
   /** Seshat's model, loaded only when there is something to review against. */
@@ -135,13 +144,35 @@ export async function runExternalReview(
     discardedEdits: false,
     posted: false,
   };
+  const move = async (to: CardStatus, reason: string) => {
+    const now = await options.store.getCard(card.id);
+    await options.board.transitionCard({
+      cardId: card.id,
+      fromStatus: now?.status ?? card.status,
+      toStatus: to,
+      actor: "harness",
+      reason,
+    });
+  };
   const head = target.pr ? resolveHead(repo, target) : undefined;
   if (!head) {
     result.error = `could not fetch PR #${target.pr} (no origin, or the head is gone)`;
-    await options.store.updateCardStatus(card.id, "parked", result.error, "harness");
+    // An environment failure, not a verdict: the card stays where it is with
+    // the reason, and the next pass retries (the stop-reason table's `error`).
+    // Parked needs a stop reason that parks, a person's reason or an open
+    // decision (kernel rule 27, K-N5-2).
+    await options.store.updateCard(card.id, { blockedReason: result.error }, "harness");
     return result;
   }
   result.headSha = head;
+  // An external review writes one file, its evidence; that is its scope.
+  if (card.scopeFiles.length === 0) {
+    await options.store.updateCard(card.id, { scopeFiles: [evidenceRel] }, "harness");
+  }
+  if (card.status !== "in_progress")
+    await move("in_progress", `external review of PR #${target.pr}`);
+  const started = Date.now();
+  const evidenceId = `ev_review_${card.id}_${started.toString(36)}`;
   const base = options.base ?? "main";
   const checkout = join(repo, ".sekhemet", "review", card.id);
   rmSync(checkout, { recursive: true, force: true });
@@ -185,28 +216,41 @@ export async function runExternalReview(
       for (const n of notes) result.findings.push({ source: "reviewer", ...n });
     }
     mkdirSync(join(repo, ".sekhemet", "evidence"), { recursive: true });
-    writeFileSync(
-      join(repo, evidenceRel),
-      JSON.stringify(
-        {
-          kind: "external-review",
-          cardId: card.id,
-          pr: target.pr,
-          url: target.url,
-          headSha: head,
-          base: mergeBase,
-          files,
-          gatesPassed: gates.passed,
-          rungResults: gates.rungResults ?? [],
-          failures: gates.failures,
-          findings: result.findings,
-          discardedEdits: result.discardedEdits,
-          at: new Date().toISOString(),
-        },
-        null,
-        2,
-      ),
+    const body = JSON.stringify(
+      {
+        id: evidenceId,
+        kind: "external-review",
+        cardId: card.id,
+        pr: target.pr,
+        url: target.url,
+        headSha: head,
+        base: mergeBase,
+        files,
+        passed: gates.passed,
+        gatesPassed: gates.passed,
+        rungResults: gates.rungResults ?? [],
+        failures: gates.failures,
+        findings: result.findings,
+        discardedEdits: result.discardedEdits,
+        at: new Date().toISOString(),
+      },
+      null,
+      2,
     );
+    writeFileSync(join(repo, evidenceRel), body);
+    // The review's run on the ledger (K-S4-6, K-S7-7). It never edits, so
+    // there is no repair to try: failing gates exhaust its ladder at once.
+    await recordLedgerRun(options.store, {
+      cardId: card.id,
+      modelId: "external-review",
+      passed: gates.passed,
+      stopReason: gates.passed ? "gate_passed" : "repair_exhausted",
+      evidenceId,
+      path: evidenceRel,
+      body,
+      filesTouched: files,
+      secondsUsed: Math.round((Date.now() - started) / 1000),
+    });
     if (options.github) {
       const { owner, repo: name } = options.github.repo;
       const inline = result.findings.filter((f) => f.path && f.line && files.includes(f.path));
@@ -241,15 +285,25 @@ export async function runExternalReview(
         discardedEdits: result.discardedEdits,
       },
     });
-    await options.store.updateCardStatus(
-      card.id,
-      "review",
-      `external review of PR #${target.pr}: ${gates.passed ? "gates pass" : "gates fail"}, ${result.findings.length} finding(s)`,
-      "harness",
-    );
+    const verdict = `external review of PR #${target.pr}: ${gates.passed ? "gates pass" : "gates fail"}, ${result.findings.length} finding(s)`;
+    try {
+      await move("verify", verdict);
+      // A review whose gates failed never enters Review (K-S4-4): a person
+      // reads its findings from Parked.
+      if (gates.passed) await move("review", verdict);
+      else await move("parked", verdict);
+    } catch (err) {
+      if (!(err instanceof TransitionRefusedError)) throw err;
+      await options.board.holdCard?.(
+        card.id,
+        `${err.toStatus} refused (${err.message})`,
+        "harness",
+        err.toStatus,
+      );
+    }
   } catch (err) {
     result.error = err instanceof Error ? err.message : String(err);
-    await options.store.updateCardStatus(card.id, "parked", result.error, "harness");
+    await move("parked", result.error).catch(() => undefined);
   } finally {
     try {
       git(repo, "worktree", "remove", "--force", checkout);
@@ -283,6 +337,7 @@ export async function runExternalReviews(
   ready: CardRecord[],
   deps: {
     store: ExternalReviewOptions["store"];
+    board: ExternalReviewOptions["board"];
     learning?: {
       profile: () => Promise<{ status: string; category: string; statement: string }[]>;
       rules: () => Promise<{ status: string; role: string; text: string }[]>;
@@ -307,6 +362,7 @@ export async function runExternalReviews(
   for (const card of reviews) {
     const r = await runExternalReview(repo, card, {
       store: deps.store,
+      board: deps.board,
       preferences,
       rules,
       ...(deps.reviewer ? { reviewer: deps.reviewer } : {}),

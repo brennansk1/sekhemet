@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 32 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 33 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,37 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 33 — 2026-09-25 (B3.1 the spine in code; B2.5 baseline running)
+
+- **B2.5:** the baseline schedule started 13:24 from the frozen snapshot of `5937e83` (`~/.sekhemet/baseline`). 12 interleaved suite runs: the reference and five one-switch arms, twice each. About 5.5 h per run. It is resumable, detached and memory-guarded (SUITE_RUNS.md).
+- **B3.1 built** by fresh helpers per track (the new cost discipline):
+  - the transition law in the kernel (S4) with an atomic compare-and-set;
+  - one transaction per event, the projection inside the append (S7), and the Valibot payload registry (DEC-29 O7) for most event types;
+  - numbered migrations 1–15 and one card-column table (NEW-kernel-4);
+  - hash chain v3 with a private part, triggers refusing UPDATE and DELETE, and a Ledger-Head trailer (NEW-kernel-1);
+  - principals (NEW-kernel-2): the install's one person only on a solo setup, refused in a team setup;
+  - typed holds and awaiting merge (NEW-kernel-3); the lifecycle conditions (NEW-kernel-5);
+  - owner, delegate, accepter (NEW-kernel-6); requirement versions (NEW-kernel-8); kind, change, split (NEW-kernel-9);
+  - on_behalf_of (NEW-kernel-10);
+  - the erasable ledger (NEW-kernel-7); `erase --secret` (SEC-50, which names payload seqs it cannot erase); a SEC-51 id stable under excerpt erasure;
+  - backup, restore and export via VACUUM INTO, since `backup()` needs Node 22.16 (RUN-39/40/42/43/44).
+- **Review:** 3 blockers fixed, all spine-relevant:
+  - a stale accepter let the executor accept;
+  - the compare-and-set race;
+  - SEC-18 allowlist entries.
+
+  Also 3 majors (a dropped principal, merged identities, secrets in payloads). A narrow re-check then closed two older gaps: the harness may accept only a gate-verified parent rollup (rule 30) or in a measurement repository, and a stale merge hold is cleared when a card leaves Review.
+- **Lead's rulings:**
+  - new cards may start in backlog, ready, planning, in progress, or parked with a reason (K-S4-9);
+  - only a default_deny decision parks a card;
+  - independent measurement setup is recorded as the harness (under the marker), never as a person.
+- **Partial, owned later:**
+  - the Zone 3 size check (CX-N2-2, B4.0a);
+  - the slice and requirement callers (B4.3/B4.4);
+  - `card/status_changed` still outside the payload registry;
+  - retention (RUN-41, B3.3).
+- **Where the cards stop:** gate 266 files, 2,051 tests (1 skipped), tsc and Biome clean. Next: B3.2 (safe Accept, Review WIP, accept-awaiting-merge) and B3.3, which need B3.1. The baseline is still running; freeze the RunProfile when it completes.
 
 ### Entry 32 — 2026-09-25 (B1 injection milestone passed; the Worker qualified by override at q1.2; handoff)
 

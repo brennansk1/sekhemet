@@ -86,7 +86,14 @@ describe("Agent Client Protocol surface (H14)", () => {
 
   it("answers slash commands without a model and rejects unknown sessions", async () => {
     const { agent, sent, cardStore } = setup();
-    await cardStore.createCard({ id: "card_x", tier: "task", title: "X", status: "backlog" });
+    // Criteria: Ready's entry condition applies to a person's move too (kernel rule 27).
+    await cardStore.createCard({
+      id: "card_x",
+      tier: "task",
+      title: "X",
+      status: "backlog",
+      acceptanceCriteria: ["x"],
+    });
     await agent.handle({ jsonrpc: "2.0", id: 1, method: "session/new", params: {} });
     await agent.handle({
       jsonrpc: "2.0",

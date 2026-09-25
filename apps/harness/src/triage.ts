@@ -1,7 +1,5 @@
-import { appendFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
 import type { BoardServiceImpl } from "@sekhemet/board";
-import type { CardRecord, CardStore, EventLog } from "@sekhemet/kernel";
+import type { CardRecord, CardStatus, CardStore, EventLog } from "@sekhemet/kernel";
 import { releaseHeldCards } from "./execute.js";
 import { learnFromSendBack } from "./learning/reflect.js";
 import { LearningStore } from "./learning/store.js";
@@ -33,6 +31,9 @@ async function drainReview(ctx: TriageContext, card: CardRecord): Promise<void> 
   }).catch(() => []);
 }
 
+/** A send-back's reason, recorded as a candidate playbook rule (K-S7-6). */
+export const PLAYBOOK_CANDIDATE_EVENT = "playbook/candidate";
+
 /**
  * Send a card back to Ready with a reason. The reason is what the Worker is
  * told next: it goes into the card's dossier, which the runner puts in the
@@ -60,12 +61,16 @@ export async function sendBack(
     .engine.emit("review/return", { cardId: card.id, data: { reason: why } })
     .catch(() => undefined);
   await learnFromSendBack(new LearningStore(ctx.log), card, why).catch(() => undefined);
-  const dir = join(ctx.repoPath, ".sekhemet");
-  mkdirSync(dir, { recursive: true });
-  appendFileSync(
-    join(dir, "playbook_candidates.jsonl"),
-    `${JSON.stringify({ cardId: card.id, reason: why, at: new Date().toISOString() })}\n`,
-  );
+  // The playbook candidate is a ledger event, not a side file (kernel rule
+  // 12, K-S7-6): the ledger is the only durable channel.
+  await ctx.cardStore.recordEvent({
+    type: PLAYBOOK_CANDIDATE_EVENT,
+    cardId: card.id,
+    actor: "human",
+    payload: { cardId: card.id },
+    // A person's note is free text: the private part, erasable (rule 33, K-S7-9).
+    private: { reason: why },
+  });
   await drainReview(ctx, card);
 }
 
@@ -82,15 +87,46 @@ export async function park(ctx: TriageContext, card: CardRecord, reason = ""): P
   await drainReview(ctx, card);
 }
 
-/** Put a parked card back in Ready. */
-export async function unpark(ctx: TriageContext, card: CardRecord): Promise<void> {
+/**
+ * Where an unparked card goes (kernel rule 25, K-N5-6): back to Backlog or
+ * Planning when it was parked from there, and re-queued at Ready otherwise,
+ * never into the middle of a state. The parked-from state is read from the
+ * ledger's `card/status_changed` into `parked`.
+ */
+export async function unparkTarget(cardStore: CardStore, cardId: string): Promise<CardStatus> {
+  const into = (await cardStore.cardEvents(cardId, ["card/status_changed"]))
+    .filter((e) => (e.payload as { toStatus?: string }).toStatus === "parked")
+    .at(-1);
+  const from = (into?.payload as { fromStatus?: CardStatus } | undefined)?.fromStatus;
+  return from === "backlog" || from === "planning" ? from : "ready";
+}
+
+/** Put a parked card back where it was parked from, or in Ready. */
+export async function unpark(ctx: TriageContext, card: CardRecord): Promise<CardStatus> {
   if (card.status !== "parked") throw new Error(`${card.id} is not parked (it is ${card.status})`);
+  const to = await unparkTarget(ctx.cardStore, card.id);
   await ctx.boardService.transitionCard({
     cardId: card.id,
     fromStatus: "parked",
-    toStatus: "ready",
+    toStatus: to,
     actor: "human",
     reason: "unparked",
+  });
+  return to;
+}
+
+/** Put a rejected card back in Ready (`sekhemet reopen`; kernel rule 25, K-S4-7). */
+export async function reopen(ctx: TriageContext, card: CardRecord, reason = ""): Promise<void> {
+  if (card.status !== "rejected") {
+    throw new Error(`${card.id} is not rejected (it is ${card.status})`);
+  }
+  const why = reason.trim().slice(0, 2000);
+  await ctx.boardService.transitionCard({
+    cardId: card.id,
+    fromStatus: "rejected",
+    toStatus: "ready",
+    actor: "human",
+    reason: `reopened${why ? `: ${why}` : ""}`,
   });
 }
 

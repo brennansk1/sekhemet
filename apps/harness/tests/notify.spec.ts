@@ -122,7 +122,8 @@ describe("push notifications (H20)", () => {
     initSchema(db);
     const log = new EventLog(db);
     const cards = new CardStore(db, log);
-    await cards.createCard({ id: "card_old", tier: "task", title: "Old", status: "in_progress" });
+    await cards.createCard({ id: "card_old", tier: "task", title: "Old" });
+    await cards.updateCardStatus("card_old", "verify", "test setup", "harness", { override: true });
     await cards.updateCardStatus("card_old", "review", "old news");
     writePush(repo, { kind: "ntfy", url: "https://ntfy.sh", topic: "t" });
     const bodies: string[] = [];
@@ -131,12 +132,14 @@ describe("push notifications (H20)", () => {
       return new Response("ok");
     }) as typeof globalThis.fetch;
     const n = await startNotifier(log, repo, { intervalMs: 60_000, fetch });
-    await cards.createCard({ id: "card_new", tier: "task", title: "New", status: "in_progress" });
+    await cards.createCard({ id: "card_new", tier: "task", title: "New" });
+    await cards.updateCardStatus("card_new", "verify", "test setup", "harness", { override: true });
     await cards.updateCardStatus("card_new", "review", "gates passed");
     expect(await n.tick()).toBe(1);
     expect(bodies).toEqual(["card_new passed its gates and waits for you."]);
     // The same card reaching review again within ten minutes is not re-pushed.
     await cards.updateCardStatus("card_new", "in_progress", "sent back");
+    await cards.updateCardStatus("card_new", "verify", "attempt ended");
     await cards.updateCardStatus("card_new", "review", "again");
     expect(await n.tick()).toBe(0);
     n.stop();
