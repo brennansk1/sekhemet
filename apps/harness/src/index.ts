@@ -41,6 +41,7 @@ import {
   createNail35BAdapter,
   defaultRegistryPath,
   measureThroughput,
+  resolveWorkerModelId,
 } from "@sekhemet/models";
 import { SpidrFeaturePlanner } from "@sekhemet/planner";
 import {
@@ -611,11 +612,12 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       worker: (() => {
         // The queue's own choice (`--worker`, then config, then the default
         // Worker profile), with an `ollama/` prefix stripped as the queue does.
-        const modelId = (
+        // A managed name resolves to the model it serves (B1 Tier 3 run).
+        const modelId = resolveWorkerModelId(
           flag("--worker") ??
-          queueDefaults(effectiveConfig(config.repoPath, argv).config, argv).worker ??
-          NAIL_WORKER_PROFILE.modelId
-        ).replace(/^ollama\//, "");
+            queueDefaults(effectiveConfig(config.repoPath, argv).config, argv).worker ??
+            NAIL_WORKER_PROFILE.modelId,
+        );
         const quant = new ModelRegistry(defaultRegistryPath()).get(modelId)?.quant ?? "unknown";
         return { modelId, quant };
       })(),

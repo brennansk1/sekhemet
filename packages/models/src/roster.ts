@@ -37,6 +37,25 @@ export function isManagedModelName(name: string): name is ManagedModelName {
 }
 
 /** Ollama settings per role, when a role names an Ollama model. */
+/**
+ * The model id a Worker name runs as: a managed name resolves to the model
+ * its llama-server serves, an Ollama tag to itself without its prefix. The
+ * model registry, and SEC-37b's injection record, key on this id. Building
+ * the adapter starts no server.
+ */
+export function resolveWorkerModelId(name: string): string {
+  const n = name.replace(/^ollama\//, "");
+  if (!isManagedModelName(n)) return n;
+  switch (n) {
+    case "cyber-tiel":
+      return createCyberTielWorker().modelId;
+    case "apodex":
+      return createApodexResearcher().modelId;
+    default:
+      return createQwen38Managed({}).modelId;
+  }
+}
+
 export function ollamaProfileForRole(
   role: ModelRole,
   modelId: string,

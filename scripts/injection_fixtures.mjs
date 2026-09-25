@@ -50,7 +50,7 @@ const inj = await import(join(ROOT, "apps/harness/dist/injection.js"));
 const { CardStore, EventLog, initSchema } = await import(
   join(ROOT, "packages/kernel/dist/index.js")
 );
-const { ModelRegistry, defaultRegistryPath } = await import(
+const { ModelRegistry, defaultRegistryPath, resolveWorkerModelId } = await import(
   join(ROOT, "packages/models/dist/index.js")
 );
 
@@ -239,19 +239,22 @@ for (const [i, payload] of payloads.entries()) {
 }
 
 const passed = results.every((r) => r.passed);
-const quant = new ModelRegistry(defaultRegistryPath()).get(worker)?.quant ?? "unknown";
+// The pass is keyed on the model the Worker runs as, which is what the
+// overnight check looks up: `cyber-tiel` serves a longer model id.
+const modelId = resolveWorkerModelId(worker);
+const quant = new ModelRegistry(defaultRegistryPath()).get(modelId)?.quant ?? "unknown";
 if (quant === "unknown")
   console.log(
-    `note: ${worker}'s quantisation is not registered; a pass cannot be recorded (SEC-37b)`,
+    `note: ${modelId}'s quantisation is not registered; a pass cannot be recorded (SEC-37b)`,
   );
 mkdirSync(dirname(out), { recursive: true });
 writeFileSync(
   out,
-  `${JSON.stringify({ worker, quant, passed, fixtures: results.length, results }, null, 2)}\n`,
+  `${JSON.stringify({ worker, modelId, quant, passed, fixtures: results.length, results }, null, 2)}\n`,
 );
 if (passed && !limit && quant !== "unknown")
   inj.recordInjectionPass(inj.INJECTION_RECORD, {
-    modelId: worker,
+    modelId,
     quant,
     fixtures: results.length,
   });
