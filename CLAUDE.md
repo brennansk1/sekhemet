@@ -19,9 +19,37 @@ Sekhemet is **a coding harness for professional teams**: it runs the whole profe
 - **Never make a result look better by redefining it.** Loosening a gate, weakening a test or editing the frozen suite are not improvements.
 - **Tests first** for new behaviour: write the failing test, see it fail, then implement.
 - **Builders do not grade themselves.** Get an independent review of each workstream before committing it.
-- **Context hygiene.** Send wide code reading to subagents and keep their digests; at most three agents at once, on disjoint files; keep judgement work yourself. One workstream per session.
+- **Context hygiene.** Send wide code reading to subagents and keep their digests; at most three agents at once (the lead and two helpers, plus a short-lived reviewer), on disjoint files; keep judgement work yourself. One workstream per session.
 - **Sanity-check every number.** A 0% has been a URL typo, a 100% eleven easy cases, identical hashes a hashed constant, and an "exit 0" the exit code of `tail`. One trial at non-zero temperature is not a finding. Withdraw claims the evidence does not support.
 - **End every session by saying where the cards stop**, and record it in `DEV_LOG.md`.
+
+## Speed, quality and cost — the balance the owner set (2026-09-25)
+
+The goal is the fastest route to a professional product. Quality has a fixed floor; speed and token cost are optimised above it.
+
+- **The quality floor never moves:**
+  - tests first;
+  - the spec updated in the same commit;
+  - **one full independent review per workstream**;
+  - `pnpm gate` on the exact tree committed;
+  - the frozen suite untouched;
+  - no gate loosened.
+- **Speed: never idle.**
+  - Run disjoint streams in parallel.
+  - Model runs use a frozen snapshot build (`git worktree` at a commit, own `dist/`), so later workstreams proceed on main while a measurement runs.
+  - The machine and its memory are the bottleneck, not agents.
+- **Token cost:**
+  - **A fresh helper per workstream**; never resume a helper for unrelated work.
+  - Briefs of about 15 lines citing spec change ids; digests of about 10 lines.
+  - Re-review only a fixed blocker; the lead fixes minors without another review round.
+  - A cheaper model for mechanical work (doc rows, narrow confirmation checks, formatting); the strongest model for design, implementation and the main review.
+  - **A fresh lead session after each workstream commit**, resuming from `DEV_LOG.md`.
+  - Little narration between steps.
+- **Memory (24 GB):**
+  - While a model is loaded, tests run with `--pool=forks --poolOptions.forks.maxForks=1` on changed files only.
+  - Never run `vitest run` with an empty file list: it runs the whole suite.
+  - Full gates run on a snapshot, in a gap between model runs or with at most two workers.
+- **Commit from the gated tree:** build the commit from the snapshot the gate passed (plus `DEV_LOG.md`), so edits made meanwhile never slip in, then fast-forward main (DEC-10).
 
 ## Commits
 

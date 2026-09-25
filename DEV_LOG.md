@@ -8,9 +8,9 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 31 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 32 first.*
 
-1. **Where we are:** Phase B: B0 done; B1 built, its Tier 3 injection run owed; B2.1–B2.3 done; B2.2 and B2.4 done except their model runs; B2.5's arms built, the baseline not run (Entry 30). **Next is model-bound:** qualify the Worker, the injection run, the MTP A/B, the prompt screen, then B2.5 overnight. Loads are allowed under DEC-42's memory conditions; the owner's own Hermes server on port 8080 must be stopped first. Waiting on a person: confirming the golden briefs and held-out drafts.
+1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
 3. **Done means:** `DEFINITION_OF_DONE.md` v3 — §5 for a card, a spec, a workstream and a release; §6 for the product.
 4. **Measurement:** suite `1.0.0`, hash `192b6e95fa3c`; thinking A/B arm "off" 10/14 on `468f67f` (SUITE_RUNS). The remaining arms wait on M1, M3, M8 (workstream B2.1).
@@ -20,6 +20,20 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 32 — 2026-09-25 (B1 injection milestone passed; the Worker qualified by override at q1.2; handoff)
+
+- **B1 Tier 3, macOS: 14/14 injection fixtures held** with real Worker exposure: 7–12 steps each, Worker-class stops (budget, replan), every page payload fetched, no memory stops (`evidence/injection_2026-09-25.json`). The pass is recorded for cyber-tiel IQ3_XXS (SEC-37b). Linux containment goes to a CI runner (DEC-42).
+- **q1.2 at the card's sampling (0.6 / 0.95 / 20 / 0), 5 samples:** multi_step **40% (4/10, 95% CI 12–74%)**, refusal 90%, all else 100%. The greedy result is confirmed, not an artefact. The owner's override is re-recorded on this combination (person: Brennan Kelley).
+- **Step-replay screen:** prompts clean (parses, offered-only, no placeholders 3/3). The `ready_to_verify` first call was wrong in 1 single sample: a signal, not a finding. The model is unloaded.
+- **CLAUDE.md:** new section "Speed, quality and cost": a fixed quality floor; never idle; fresh helper per workstream; short briefs; cheaper model for mechanical work; fresh lead session per workstream; memory rules; commit from the gated tree.
+- **B3.1 in progress, uncommitted, saved as `refs/wip/b31-partial`** (the helpers stopped at a usage limit):
+  - Track B: NEW-kernel-4 (numbered migrations, the card column table) built and tested.
+  - Track A: S4 (the transition law) in progress; `transitions.ts` and `transition_law.spec.ts` in kernel and board; some board tests still to update; card_store must move onto CARD_COLUMN_TABLE.
+  - Kernel `tsc` is clean.
+- **Where the cards stop:** next session:
+  1. restore B3.1 from the working tree (or `refs/wip/b31-partial`), and brief two FRESH helpers: Track A (S4, S7, NEW-kernel-3/5/6/8/9) and Track B (NEW-kernel-1/2/7, NEW-security-7, NEW-runtime-8);
+  2. plan B2.5's baseline run (arms: thinking off/surgical/all, the strict method, fixed vs progressive tools, the evidence gate; the full suite on a frozen snapshot, overnight) and start it in a model window.
 
 ### Entry 31 — 2026-09-25 (the Worker qualified by override; qualification at the Worker's own sampling)
 
