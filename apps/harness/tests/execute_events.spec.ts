@@ -75,7 +75,15 @@ describe("@sekhemet/harness execution ledger events", () => {
       stepBudget: 6,
       spec: "Write src/a.ts",
     });
-    const ctx = { repoPath: repo, restrictedMode: false, cardStore, boardService, log: () => {} };
+    const ctx = {
+      repoPath: repo,
+      restrictedMode: false,
+      cardStore,
+      boardService,
+      log: () => {},
+      // The host's swap moves with whatever else runs; the watchdog tests cover memory.
+      headroomCheck: false,
+    };
     const model = new MockInferenceAdapter("scripted", [
       {
         text: "",

@@ -92,6 +92,8 @@ async function runOnce(): Promise<{ passed: boolean; prompts: string[]; root: st
     cardStore,
     boardService: board,
     log: () => {},
+    // The host's swap moves with whatever else runs; the watchdog tests cover memory.
+    headroomCheck: false,
   };
   const result = await executeCard(ctx, card, model, "1. Export a, equal to b.");
   db.close();
