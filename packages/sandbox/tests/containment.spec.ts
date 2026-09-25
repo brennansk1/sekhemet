@@ -1,9 +1,22 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { type AddressInfo, type Server, createServer } from "node:net";
 import { homedir, platform, tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ProcessSandbox } from "../src/executor.js";
+import { dirname, join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ProcessSandbox, type SandboxEngine } from "../src/executor.js";
+import { srtUnavailableReason } from "../src/srt_engine.js";
+
+/**
+ * DEC-39: every behavioural case runs against both engines. srt is skipped
+ * only where srt itself does not support the platform (it supports macOS and
+ * Linux); on macOS a broken srt fails here rather than being skipped.
+ */
+const srtRuns = platform() === "darwin" || srtUnavailableReason() === undefined;
+if (!srtRuns) {
+  console.warn(`containment: srt engine skipped on ${platform()}: ${srtUnavailableReason()}`);
+}
+const ENGINES: SandboxEngine[] = srtRuns ? ["native", "srt"] : ["native"];
 
 /**
  * Containment is asserted by attempting to escape, not by inspecting a profile.
@@ -12,10 +25,10 @@ import { ProcessSandbox } from "../src/executor.js";
  * well-formed while the executor never applied it — so every assertion passed
  * against a sandbox that confined nothing.
  */
-describe("@sekhemet/sandbox containment", () => {
+describe.each(ENGINES)("@sekhemet/sandbox containment (%s engine)", (engine) => {
   let work: string;
   let outside: string;
-  const sandbox = new ProcessSandbox();
+  const sandbox = new ProcessSandbox({ engine });
   const darwin = platform() === "darwin";
 
   const opts = (): Parameters<ProcessSandbox["execute"]>[2] => ({
@@ -35,8 +48,13 @@ describe("@sekhemet/sandbox containment", () => {
   });
 
   it("reports which confinement mechanism is actually in force", () => {
-    expect(["seatbelt", "none"]).toContain(sandbox.confinement);
-    if (darwin) expect(sandbox.confinement).toBe("seatbelt");
+    if (engine === "native") {
+      expect(["seatbelt", "none"]).toContain(sandbox.confinement);
+      if (darwin) expect(sandbox.confinement).toBe("seatbelt");
+    } else {
+      expect(sandbox.engine).toBe("srt");
+      expect(sandbox.confinement).toBe("srt");
+    }
   });
 
   it("permits writes inside the allowed path", async () => {
@@ -219,6 +237,18 @@ describe("@sekhemet/sandbox containment", () => {
     expect(Date.now() - started).toBeLessThan(6000);
   });
 
+  // S7 under confinement: the sampled tree is the confined command's.
+  it("kills a confined command tree past its memory cap", async () => {
+    const result = await sandbox.execute(
+      process.execPath,
+      ["-e", "const a=[]; for(;;){ a.push(Buffer.alloc(8*1024*1024, 1)); }"],
+      { ...opts(), maxMemoryBytes: 200 * 1024 * 1024 },
+    );
+    expect(result.oomKilled).toBe(true);
+    expect(result.timedOut).toBe(false);
+    expect(result.stderr).toMatch(/over its 200 MB memory cap/);
+  });
+
   it("reports a non-zero exit code and captures stderr", async () => {
     const result = await sandbox.execute(
       process.execPath,
@@ -236,7 +266,11 @@ describe("@sekhemet/sandbox containment", () => {
   });
 
   it("refuses to run unconfined when requireConfinement is set and none is available", async () => {
-    const strict = new ProcessSandbox({ requireConfinement: true, disableConfinement: true });
+    const strict = new ProcessSandbox({
+      engine,
+      requireConfinement: true,
+      disableConfinement: true,
+    });
     const result = await strict.execute(process.execPath, ["-e", "console.log('ran')"], opts());
 
     // Failing closed matters: degrading silently to an unconfined run is how a
@@ -270,5 +304,139 @@ describe("@sekhemet/sandbox containment", () => {
       opts(),
     );
     expect(result.stdout.trim()).toBe("true");
+  });
+
+  it("gives the command its private scratch directory as TMPDIR", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "contain-scratch-"));
+    try {
+      const result = await sandbox.execute(
+        process.execPath,
+        [
+          "-e",
+          "const f=require('fs');f.writeFileSync(require('path').join(process.env.TMPDIR,'t'),'x');console.log(process.env.TMPDIR)",
+        ],
+        { ...opts(), scratchDir: scratch },
+      );
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toBe(scratch);
+      expect(readFileSync(join(scratch, "t"), "utf8")).toBe("x");
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
+  // srt grants writes to ~/.npm/_logs, ~/.claude/debug and /tmp/claude on its
+  // own; the native engine grants none of them, so neither may the srt one.
+  it.runIf(darwin)("refuses writes to srt's convenience directories", async () => {
+    const home = mkdtempSync(join(tmpdir(), "contain-home-"));
+    vi.stubEnv("HOME", home);
+    try {
+      for (const rel of [".npm/_logs", ".claude/debug"]) {
+        mkdirSync(join(home, rel), { recursive: true });
+        const target = join(home, rel, "canary");
+        const result = await sandbox.execute(
+          process.execPath,
+          ["-e", `require('fs').writeFileSync(${JSON.stringify(target)}, 'x')`],
+          opts(),
+        );
+        expect(result.exitCode, rel).not.toBe(0);
+        expect(existsSync(target), rel).toBe(false);
+      }
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  // security.md item 10, SEC-23. The native engine allows every read today;
+  // srt closes it.
+  it.runIf(darwin && engine === "srt")(
+    "refuses reads of the user's secrets and the project ledger",
+    async () => {
+      const home = mkdtempSync(join(tmpdir(), "contain-home-"));
+      vi.stubEnv("HOME", home);
+      const project = join(outside, "project");
+      const tree = join(project, ".sekhemet", "worktrees", "card-1");
+      mkdirSync(tree, { recursive: true });
+      writeFileSync(join(project, ".sekhemet", "events.db"), "LEDGER-CANARY");
+      const secrets = [
+        ".ssh/id_ed25519",
+        ".aws/credentials",
+        ".npmrc",
+        ".netrc",
+        ".config/gh/hosts.yml",
+        ".sekhemet/config.toml",
+      ];
+      for (const rel of secrets) {
+        mkdirSync(dirname(join(home, rel)), { recursive: true });
+        writeFileSync(join(home, rel), "SECRET-CANARY");
+      }
+      try {
+        for (const target of [
+          ...secrets.map((rel) => join(home, rel)),
+          join(project, ".sekhemet", "events.db"),
+        ]) {
+          const result = await sandbox.execute(
+            process.execPath,
+            ["-e", `console.log(require('fs').readFileSync(${JSON.stringify(target)}, 'utf8'))`],
+            { ...opts(), allowedPaths: [tree], cwd: tree },
+          );
+          expect(result.exitCode, target).not.toBe(0);
+          expect(result.stdout, target).not.toContain("CANARY");
+        }
+        // The worktree itself stays readable and writable.
+        const own = await sandbox.execute(
+          process.execPath,
+          [
+            "-e",
+            "require('fs').writeFileSync('own.txt','ok');console.log(require('fs').readFileSync('own.txt','utf8'))",
+          ],
+          { ...opts(), allowedPaths: [tree], cwd: tree },
+        );
+        expect(own.stdout.trim()).toBe("ok");
+      } finally {
+        vi.unstubAllEnvs();
+        rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
+
+  // S5: with an egress proxy, its loopback port is the only way out; L23: a
+  // card's own ports are reachable.
+  it.runIf(darwin)("reaches the egress proxy port and the card's own ports only", async () => {
+    const listen = async (): Promise<{ server: Server; port: number }> => {
+      const server = createServer((c) => c.end("PONG"));
+      const port = await new Promise<number>((r) =>
+        server.listen(0, "127.0.0.1", () => r((server.address() as AddressInfo).port)),
+      );
+      return { server, port };
+    };
+    const proxy = await listen();
+    const other = await listen();
+    const own = await listen();
+    const probe = (port: number): string[] => [
+      "-e",
+      `const s=require('net').connect(${port},'127.0.0.1');s.on('data',d=>{console.log(String(d));process.exit(0)});s.on('error',e=>{console.log('REFUSED '+e.code);process.exit(3)})`,
+    ];
+    try {
+      const o = { ...opts(), egressProxyPort: proxy.port, localPorts: [own.port] };
+      const viaProxy = await sandbox.execute(process.execPath, probe(proxy.port), o);
+      expect(viaProxy.stdout).toContain("PONG");
+      const ownPort = await sandbox.execute(process.execPath, probe(own.port), o);
+      expect(ownPort.stdout).toContain("PONG");
+      const noLocal = await sandbox.execute(process.execPath, probe(other.port), {
+        ...opts(),
+        egressProxyPort: proxy.port,
+      });
+      expect(noLocal.stdout).toContain("REFUSED");
+      if (engine === "native") {
+        // srt cannot scope local binding to ports: with any localPorts, every
+        // loopback port is reachable (reported gap, DEC-39).
+        const otherPort = await sandbox.execute(process.execPath, probe(other.port), o);
+        expect(otherPort.stdout).toContain("REFUSED");
+      }
+    } finally {
+      for (const s of [proxy, other, own]) s.server.close();
+    }
   });
 });

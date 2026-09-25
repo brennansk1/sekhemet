@@ -115,7 +115,8 @@ function checkOtherLanguage(path: string, content: string): SyntaxProblem[] | un
   if (lower.endsWith(".py")) {
     return parseWith(
       "python3",
-      ["-c", "import ast,sys; ast.parse(sys.stdin.read())"],
+      // -I (SEC-36): no PYTHONPATH, user site or working directory on the path.
+      ["-I", "-c", "import ast,sys; ast.parse(sys.stdin.read())"],
       content,
       /line (?<line>\d+)/,
     );

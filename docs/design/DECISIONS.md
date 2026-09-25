@@ -46,7 +46,7 @@ v1 includes: binding to a non-loopback address safely; an identity for each pers
 - **Reopen if:** v1 meets its Definition of Done.
 
 ### DEC-08
-**Libraries approved to add, when their workstream arrives.** *Owner, 2026-09-22 (D5).* SPDX parsing (`spdx-expression-parse`, `spdx-satisfies`, `spdx-correct`), and the official clients `@octokit/*`, `@modelcontextprotocol/sdk`, `jira.js`, `@linear/sdk` and Slack Bolt. Every other proposal in COVERAGE still needs the owner's yes, one by one. **Added 2026-09-24 (DEC-29):** Playwright and axe-core (development only), fast-check, Valibot, vLLM (a separate process). **Added 2026-09-25 (DEC-38):** SimpleWebAuthn and `openid-client`, and a bundled common-password list with a permissive licence.
+**Libraries approved to add, when their workstream arrives.** *Owner, 2026-09-22 (D5).* SPDX parsing (`spdx-expression-parse`, `spdx-satisfies`, `spdx-correct`), and the official clients `@octokit/*`, `@modelcontextprotocol/sdk`, `jira.js`, `@linear/sdk` and Slack Bolt. Every other proposal in COVERAGE still needs the owner's yes, one by one. **Added 2026-09-24 (DEC-29):** Playwright and axe-core (development only), fast-check, Valibot, vLLM (a separate process). **Added 2026-09-25 (DEC-38):** SimpleWebAuthn and `openid-client`, and a bundled common-password list with a permissive licence. **Added 2026-09-25 (DEC-39):** `@anthropic-ai/sandbox-runtime`, `ipaddr.js`, `request-filtering-agent`.
 - **Why:** they replace hand-rolled code the reviews found wrong (the licence check rejects MIT-0 and "MIT AND …"; three GitHub paths with three ID formats).
 - **Reopen if:** a licence or maintenance check at the time of adding fails.
 
@@ -211,6 +211,26 @@ What professional boards do not show is left off the card face: the agent's step
   - the account menu at the bottom of the sidebar.
 - **Why:** the owner's answer to the decision list presented with the mockups.
 - **Reopen if:** only the owner.
+
+### DEC-39 — reuse an existing sandbox engine instead of extending our own
+**The confinement engine becomes Anthropic's `sandbox-runtime` (srt), behind our `ProcessSandbox`.** *Owner, 2026-09-25: "if there is a repo or something that exists that is usable use it don't reinvent the wheel for the sandbox and isolation"; then approved installing `@anthropic-ai/sandbox-runtime` 0.0.77 (Apache-2.0), `ipaddr.js` 2.5.0 (MIT) and `request-filtering-agent` 3.2.1 (MIT).*
+- **What srt replaces:** our Seatbelt, bubblewrap and seccomp profile code (`seatbelt.ts`, `bubblewrap.ts`, `seccomp.ts`).
+- **What we keep:**
+  - the `ProcessSandbox` chokepoint and its environment allowlist;
+  - fail closed (S3b) and `isolation` recording;
+  - the harness-side git hardening and preflight (S1);
+  - the per-card egress proxy with its ledger records;
+  - the policy merge and `NetworkPolicy`.
+- `ipaddr.js` and `request-filtering-agent` make our proxy and the harness's own lookups refuse loopback, private, link-local and metadata addresses after resolution (SEC-9).
+- **Strangler fig:**
+  1. `SEKHEMET_SANDBOX_ENGINE=native|srt`, `native` by default.
+  2. The containment tests run against both engines.
+  3. The engine is recorded in `settings.isolation`.
+  4. srt becomes the default once both platforms pass and a frozen-suite run shows no clear difference.
+  5. Our engine code is then deleted, and `security.md` updated in the same commit.
+- **System requirements:** ripgrep on both platforms, socat on Linux.
+- **Why:** research in [SANDBOX_REUSE.md](../research/SANDBOX_REUSE.md). srt closes gaps ours has: mach-lookup and LaunchServices on macOS, Unix sockets and io_uring on Linux, and resolved-address checks. It is maintained, and it is the sandbox Claude Code uses.
+- **Reopen if:** srt fails the containment suite on either platform, or an srt release breaks confinement (we fail closed, so every card would stop).
 
 ## Engineering decisions
 

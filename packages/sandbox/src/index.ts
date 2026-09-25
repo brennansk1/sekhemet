@@ -8,3 +8,4 @@ export * from "./untrusted.js";
 export * from "./egress.js";
 export * from "./seccomp.js";
 export * from "./browser.js";
+export { SRT_VERSION, srtUnavailableReason } from "./srt_engine.js";

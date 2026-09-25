@@ -6,6 +6,7 @@ import { performance } from "node:perf_hooks";
 import { BWRAP_CANDIDATES, bubblewrapArgv } from "./bubblewrap.js";
 import { generateSeatbeltProfile } from "./seatbelt.js";
 import { hostSeccompArch, seccompProgram } from "./seccomp.js";
+import { srtCleanup, srtFix, srtUnavailableReason, srtWrap } from "./srt_engine.js";
 import type { ExecutionResult, ExecutionSandbox, SandboxOptions } from "./types.js";
 
 const DEFAULT_MAX_BUFFER = 10 * 1024 * 1024; // 10MB
@@ -50,8 +51,19 @@ export function sampleTreeMemory(pid: number): Promise<{ bytes: number; pids: nu
 const SIGKILL_GRACE_MS = 500;
 const SANDBOX_EXEC = "/usr/bin/sandbox-exec";
 
-/** How a subprocess is confined. `none` means the OS offers no supported mechanism. */
-export type ConfinementMode = "seatbelt" | "bubblewrap" | "none";
+/**
+ * How a subprocess is confined. `none` means the OS offers no supported
+ * mechanism; `srt` is Anthropic's sandbox-runtime (DEC-39).
+ */
+export type ConfinementMode = "seatbelt" | "bubblewrap" | "srt" | "none";
+
+/** Which confinement engine generates the policy (DEC-39 strangler fig). */
+export type SandboxEngine = "native" | "srt";
+
+/** The engine SEKHEMET_SANDBOX_ENGINE selects; `native` unless it says `srt`. */
+export function selectedEngine(): SandboxEngine {
+  return process.env.SEKHEMET_SANDBOX_ENGINE === "srt" ? "srt" : "native";
+}
 
 /**
  * Environment variables passed through to sandboxed subprocesses.
@@ -86,6 +98,8 @@ export interface ProcessSandboxOptions {
   requireConfinement?: boolean;
   /** Force confinement off. Intended for trusted internal commands only (an explicit opt-out). */
   disableConfinement?: boolean;
+  /** The confinement engine. Default SEKHEMET_SANDBOX_ENGINE, else `native`. */
+  engine?: SandboxEngine;
 }
 
 function buildEnv(overrides?: Record<string, string>): Record<string, string> {
@@ -98,6 +112,15 @@ function buildEnv(overrides?: Record<string, string>): Record<string, string> {
 }
 
 /**
+ * The sandbox for Worker commands and gates (S3b): fail closed. Outside
+ * restricted mode SEKHEMET_ALLOW_UNCONFINED=1 is the only opt-out; under
+ * `--restricted` there is none.
+ */
+export function confinedSandbox(restricted: boolean): ProcessSandbox {
+  return new ProcessSandbox(restricted ? { requireConfinement: true } : {});
+}
+
+/**
  * Runs subprocesses under OS-level confinement with hard timeout enforcement.
  *
  * On macOS the command is wrapped in `sandbox-exec` with a generated Seatbelt
@@ -107,19 +130,34 @@ function buildEnv(overrides?: Record<string, string>): Record<string, string> {
 export class ProcessSandbox implements ExecutionSandbox {
   private readonly mode: ConfinementMode;
   private readonly bwrap: string | undefined;
+  /** The engine asked for, even when it cannot run here. */
+  public readonly engine: SandboxEngine;
+  /** Why the srt engine cannot confine on this host, when it was asked for. */
+  private readonly srtUnavailable: string | undefined;
+  /** What the native engine would use here (background processes under srt). */
+  private readonly nativeMode: ConfinementMode;
 
   constructor(private readonly config: ProcessSandboxOptions = {}) {
+    this.engine = config.engine ?? selectedEngine();
     // macOS: Seatbelt. Linux (the Ubuntu AI node): bubblewrap. Anything else,
     // or a host without the tool, runs unconfined and `requireConfinement`
     // refuses to execute there.
     this.bwrap = BWRAP_CANDIDATES.find((p) => existsSync(p));
-    this.mode = config.disableConfinement
+    this.srtUnavailable =
+      this.engine === "srt" && !config.disableConfinement ? srtUnavailableReason() : undefined;
+    this.nativeMode = config.disableConfinement
       ? "none"
       : platform() === "darwin" && existsSync(SANDBOX_EXEC)
         ? "seatbelt"
         : platform() === "linux" && this.bwrap
           ? "bubblewrap"
           : "none";
+    this.mode =
+      this.engine === "srt" && !config.disableConfinement
+        ? this.srtUnavailable === undefined
+          ? "srt"
+          : "none"
+        : this.nativeMode;
   }
 
   /**
@@ -143,13 +181,14 @@ export class ProcessSandbox implements ExecutionSandbox {
     command: string,
     args: string[],
     options: SandboxOptions,
+    mode: ConfinementMode = this.mode,
   ): { file: string; argv: string[] } {
-    if (this.mode === "bubblewrap" && this.bwrap) {
+    if (mode === "bubblewrap" && this.bwrap) {
       // The seccomp program travels on fd 3 (see `execute`).
       const seccomp = hostSeccompArch() !== undefined ? 3 : undefined;
       return { file: this.bwrap, argv: bubblewrapArgv(options, command, args, seccomp) };
     }
-    if (this.mode !== "seatbelt") return { file: command, argv: args };
+    if (mode !== "seatbelt") return { file: command, argv: args };
     const profile = generateSeatbeltProfile(options);
     return { file: SANDBOX_EXEC, argv: ["-p", profile, command, ...args] };
   }
@@ -165,13 +204,71 @@ export class ProcessSandbox implements ExecutionSandbox {
     options: SandboxOptions,
   ): import("node:child_process").ChildProcessWithoutNullStreams | null {
     if (this.mode === "none" && this.requiresConfinement) return null;
+    // srt wraps asynchronously, so this synchronous path confines a
+    // background process with the native engine; `spawnBackgroundAsync`
+    // uses srt. Never unconfined: no native engine here means `null`.
+    const mode = this.mode === "srt" ? this.nativeMode : this.mode;
+    if (mode === "none" && this.mode === "srt") return null;
     const scratchDir = options.scratchDir ?? mkdtempSync(join(tmpdir(), "sekhemet-bg-"));
-    const { file, argv } = this.wrap(command, args, { ...options, scratchDir });
+    const { file, argv } = this.wrap(command, args, { ...options, scratchDir }, mode);
     return spawn(file, argv, {
       cwd: options.cwd,
       env: buildEnv({ TMPDIR: scratchDir, ...options.env }),
       stdio: ["pipe", "pipe", "pipe"],
     });
+  }
+
+  /** `spawnBackground` for either engine: srt must wrap asynchronously. */
+  public async spawnBackgroundAsync(
+    command: string,
+    args: string[],
+    options: SandboxOptions,
+  ): Promise<import("node:child_process").ChildProcessWithoutNullStreams | null> {
+    if (this.mode !== "srt") return this.spawnBackground(command, args, options);
+    const scratchDir = options.scratchDir ?? mkdtempSync(join(tmpdir(), "sekhemet-bg-"));
+    const wrapped = await this.wrapAsync(command, args, { ...options, scratchDir });
+    if ("refusal" in wrapped) return null;
+    return spawn(wrapped.file, wrapped.argv, {
+      cwd: options.cwd,
+      env: buildEnv({ TMPDIR: scratchDir, ...options.env }),
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+  }
+
+  /** The refusal when nothing confines and the caller did not opt out (S3b). */
+  private refusal(detail?: string): ExecutionResult {
+    const stderr =
+      this.engine === "srt" && !this.config.disableConfinement
+        ? `Refusing to execute: the srt sandbox engine cannot confine on this host (${detail ?? this.srtUnavailable ?? "unknown"}), and the sandbox fails closed. ${srtFix()}, set SEKHEMET_SANDBOX_ENGINE=native, or set SEKHEMET_ALLOW_UNCONFINED=1 to run unconfined deliberately.`
+        : "Refusing to execute: no OS-level confinement (Seatbelt or bubblewrap) is available on this host, and the sandbox fails closed. Install bubblewrap, or set SEKHEMET_ALLOW_UNCONFINED=1 to run unconfined deliberately.";
+    return {
+      exitCode: 126,
+      stdout: "",
+      stderr,
+      durationMs: 0,
+      oomKilled: false,
+      timedOut: false,
+    };
+  }
+
+  /**
+   * The argv for either engine. srt failing to initialise or wrap is the
+   * same as no confinement: refuse, unless the caller opted out.
+   */
+  private async wrapAsync(
+    command: string,
+    args: string[],
+    options: SandboxOptions,
+  ): Promise<{ file: string; argv: string[] } | { refusal: ExecutionResult }> {
+    if (this.mode !== "srt") return this.wrap(command, args, options);
+    try {
+      return await srtWrap(command, args, options);
+    } catch (err) {
+      if (this.requiresConfinement) {
+        return { refusal: this.refusal(`srt failed: ${(err as Error).message}`) };
+      }
+      return { file: command, argv: args };
+    }
   }
 
   public async execute(
@@ -181,17 +278,7 @@ export class ProcessSandbox implements ExecutionSandbox {
   ): Promise<ExecutionResult> {
     const startTime = performance.now();
 
-    if (this.mode === "none" && this.requiresConfinement) {
-      return {
-        exitCode: 126,
-        stdout: "",
-        stderr:
-          "Refusing to execute: no OS-level confinement (Seatbelt or bubblewrap) is available on this host, and the sandbox fails closed. Install bubblewrap, or set SEKHEMET_ALLOW_UNCONFINED=1 to run unconfined deliberately.",
-        durationMs: 0,
-        oomKilled: false,
-        timedOut: false,
-      };
-    }
+    if (this.mode === "none" && this.requiresConfinement) return this.refusal();
 
     const maxBuffer = options.maxBufferBytes ?? DEFAULT_MAX_BUFFER;
 
@@ -201,7 +288,13 @@ export class ProcessSandbox implements ExecutionSandbox {
     const scratchDir = options.scratchDir ?? mkdtempSync(join(tmpdir(), "sekhemet-box-"));
     const ownsScratch = options.scratchDir === undefined;
     const effective: SandboxOptions = { ...options, scratchDir };
-    const { file, argv } = this.wrap(command, args, effective);
+    const wrapped = await this.wrapAsync(command, args, effective);
+    if ("refusal" in wrapped) {
+      if (ownsScratch) rmSync(scratchDir, { recursive: true, force: true });
+      return wrapped.refusal;
+    }
+    const { file, argv } = wrapped;
+    const srt = this.mode === "srt";
 
     return new Promise<ExecutionResult>((resolve) => {
       let stdout = "";
@@ -301,6 +394,7 @@ export class ProcessSandbox implements ExecutionSandbox {
         clearTimeout(timer);
         clearInterval(memoryTimer);
         if (killTimer) clearTimeout(killTimer);
+        if (srt) srtCleanup();
         if (ownsScratch) {
           try {
             rmSync(scratchDir, { recursive: true, force: true });

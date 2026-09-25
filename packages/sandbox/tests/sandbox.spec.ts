@@ -3,8 +3,9 @@ import { describe, expect, it } from "vitest";
 import { ProcessSandbox } from "../src/executor.js";
 import { generateSeatbeltProfile } from "../src/seatbelt.js";
 
-describe("@sekhemet/sandbox", () => {
-  const sandbox = new ProcessSandbox();
+// DEC-39: the behavioural cases run under both engines.
+describe.each(["native", "srt"] as const)("@sekhemet/sandbox (%s engine)", (engine) => {
+  const sandbox = new ProcessSandbox({ engine });
 
   it("executes a safe command and returns exitCode 0 with stdout", async () => {
     const res = await sandbox.execute("node", ["-e", "console.log('sandboxed-output')"], {
@@ -51,7 +52,9 @@ describe("@sekhemet/sandbox", () => {
     expect(res.exitCode).not.toBe(0);
     expect(elapsed).toBeLessThan(2500);
   });
+});
 
+describe("@sekhemet/sandbox profiles", () => {
   it("generates a valid macOS Seatbelt profile with path and network restrictions", () => {
     const profile = generateSeatbeltProfile({
       allowedPaths: ["/Users/test/workspace", "/tmp"],

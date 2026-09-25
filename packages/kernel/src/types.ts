@@ -66,7 +66,8 @@ export type CardStopReason =
   /** Rebasing onto the integration branch before Verify conflicted (Y6). */
   | "rebase_conflict"
   /** The gates passed, then failed on the card rebased onto the integration branch (Y6). */
-  | "integration_failed";
+  | "integration_failed"
+  | "git_metadata_tampered";
 
 /** Every stop reason, for validation and exhaustive UI tables. */
 export const CARD_STOP_REASONS: readonly CardStopReason[] = [
@@ -88,6 +89,8 @@ export const CARD_STOP_REASONS: readonly CardStopReason[] = [
   "vacuous_tests",
   "rebase_conflict",
   "integration_failed",
+  // SEC-2: the worktree preflight found git metadata the harness did not write.
+  "git_metadata_tampered",
 ];
 
 /** Which model handles each phase of a card (design §320). */

@@ -7,6 +7,7 @@ import { EventLog, initSchema } from "@sekhemet/kernel";
 import { ModelRegistry } from "@sekhemet/models";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  airgapCommand,
   airgapSelfTest,
   allowlistFromLockfiles,
   applyUpdate,
@@ -85,6 +86,37 @@ describe("X11: model manifest", () => {
     expect(r.map((x) => `${x.id}:${x.ok}`)).toEqual(["other-IQ3_S:false", "tiny-Q4_K_M:true"]);
     expect(reg.get("tiny-Q4_K_M")?.quant).toBe("Q4_K_M");
     expect(reg.get("other-IQ3_S")).toBeUndefined();
+  });
+});
+
+describe("NEW-security-2: the manifest in air-gap mode", () => {
+  it("refuses to register models from an unsigned manifest in air-gap mode (SEC-34)", async () => {
+    const src = tmp();
+    writeFileSync(join(src, "tiny-Q4_K_M.gguf"), "weights-a");
+    const manifest = join(src, "manifest.json");
+    writeFileSync(manifest, JSON.stringify(await buildModelManifest(src)));
+    const reg = new ModelRegistry(join(src, "models.json"));
+    process.env.SEKHEMET_AIRGAP = "1";
+    const out: string[] = [];
+    const code = await airgapCommand(tmp(), ["verify-models", manifest, src], {
+      registry: reg,
+      print: (l) => out.push(l),
+    });
+    expect(code).toBe(1);
+    expect(out.join("\n")).toMatch(/signature/i);
+    expect(reg.get("tiny-Q4_K_M")).toBeUndefined();
+  });
+
+  it("records the manifest's tier but still requires this machine's qualification (SEC-34b)", async () => {
+    const src = tmp();
+    writeFileSync(join(src, "tiny-Q4_K_M.gguf"), "weights-a");
+    const m = await buildModelManifest(src);
+    const model = m.models[0];
+    if (model) model.tier = "worker";
+    const reg = new ModelRegistry(join(src, "models.json"));
+    await verifyModels(m, src, reg);
+    expect(reg.get("tiny-Q4_K_M")?.manifestTier).toBe("worker");
+    expect(reg.get("tiny-Q4_K_M")?.qualification).toBeUndefined();
   });
 });
 

@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { CardStore, EventLog } from "@sekhemet/kernel";
 import {
@@ -245,7 +246,7 @@ export async function handleWave2Route(
   const trigger = /^\/api\/recurring\/trigger\/([\w.-]+)$/.exec(url);
   if (trigger && req.method === "POST") {
     const token = process.env.SEKHEMET_TRIGGER_TOKEN;
-    const bearer = req.headers.authorization === `Bearer ${token}`;
+    const bearer = tokenMatches(req.headers.authorization, token);
     if (!ctx.isTrustedMutation(req) && !(token && bearer)) {
       json(res, 403, { error: "Triggers need the dashboard or SEKHEMET_TRIGGER_TOKEN" });
       return true;
@@ -416,4 +417,14 @@ export function startRecurringTicker(
   timer.unref?.();
   void tick();
   return () => clearInterval(timer);
+}
+
+/**
+ * SEC-37: a `Bearer` header against the trigger token, in constant time.
+ * Both sides are hashed first so their lengths never leak through timing.
+ */
+export function tokenMatches(header: string | undefined, token: string | undefined): boolean {
+  if (!token || !header) return false;
+  const digest = (v: string) => createHash("sha256").update(v).digest();
+  return timingSafeEqual(digest(header), digest(`Bearer ${token}`));
 }

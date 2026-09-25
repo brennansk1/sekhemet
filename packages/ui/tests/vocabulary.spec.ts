@@ -602,3 +602,22 @@ describe("ledger sentences for Seshat, research, reproducibility and compute", (
     expect(actorLabel("researcher")).toBe("Researcher");
   });
 });
+
+describe("isolationLabel (SEC-21)", () => {
+  it("marks a card that ran unconfined as a warning", async () => {
+    const { isolationLabel } = await import("../src/vocabulary.js");
+    expect(isolationLabel("none")).toMatchObject({ short: "Unconfined", tone: "parked" });
+    expect(isolationLabel("none").sentence).toMatch(/SEKHEMET_ALLOW_UNCONFINED/);
+  });
+
+  it("names the mechanism a card ran under", async () => {
+    const { isolationLabel } = await import("../src/vocabulary.js");
+    expect(isolationLabel("seatbelt").short).toBe("Seatbelt");
+    expect(isolationLabel("bubblewrap").short).toBe("bubblewrap");
+  });
+
+  it("is what the card's Run facts show", () => {
+    const facts = readFileSync(join(import.meta.dirname, "..", "web", "facts.js"), "utf8");
+    expect(facts).toMatch(/isolationLabel\(evidence\.settings\?\.isolation\)/);
+  });
+});

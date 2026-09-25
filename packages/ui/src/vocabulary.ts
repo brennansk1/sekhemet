@@ -195,6 +195,39 @@ export interface StopReasonContext {
 }
 
 /** Why an attempt stopped: a short label, a sentence, and the tone it carries. */
+/** SEC-21: the confinement a card ran under, as the card's Run facts show it. */
+export function isolationLabel(isolation: string | undefined): {
+  short: string;
+  sentence: string;
+  tone: Tone;
+} {
+  switch (isolation) {
+    case "seatbelt":
+      return { short: "Seatbelt", sentence: "Ran under the macOS sandbox.", tone: "neutral" };
+    case "bubblewrap":
+      return { short: "bubblewrap", sentence: "Ran under the Linux sandbox.", tone: "neutral" };
+    case "srt":
+      return {
+        short: "sandbox-runtime",
+        sentence: "Ran under Anthropic's sandbox-runtime (DEC-39).",
+        tone: "neutral",
+      };
+    case "none":
+      return {
+        short: "Unconfined",
+        sentence:
+          "Ran with no sandbox because SEKHEMET_ALLOW_UNCONFINED=1 was set. Its commands could reach the whole machine.",
+        tone: "parked",
+      };
+    default:
+      return {
+        short: "Not recorded",
+        sentence: "This run did not record its sandbox.",
+        tone: "neutral",
+      };
+  }
+}
+
 export function stopReasonLabel(
   reason: string | undefined,
   ctx: StopReasonContext = {},
@@ -292,6 +325,13 @@ export function stopReasonLabel(
       return {
         short: "Conflicts with main",
         sentence: "Its changes conflict with work merged since it started; it needs a re-plan.",
+        tone: "blocked",
+      };
+    case "git_metadata_tampered":
+      return {
+        short: "Git files changed",
+        sentence:
+          "Stopped because the worktree's git files were changed in a way that could run a program. Nothing was committed; look at the named files before running it again.",
         tone: "blocked",
       };
     case "integration_failed":
@@ -1121,6 +1161,7 @@ export function vocabularyTables(): Record<string, unknown> {
     "vacuous_tests",
     "rebase_conflict",
     "integration_failed",
+    "git_metadata_tampered",
   ];
   return {
     kinds: KIND_LABELS,

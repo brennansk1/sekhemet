@@ -61,6 +61,8 @@ export interface ModelEntry {
   /** Tokens/s per context bucket (e.g. "2k", "8k", "16k"). */
   throughput?: Record<string, { prefill: number; decode: number }>;
   qualification?: QualificationRecord;
+  /** The tier an air-gap manifest claims (SEC-34b): information, not a qualification. */
+  manifestTier?: string;
   /** Earlier qualification records, newest last. */
   qualificationHistory?: QualificationRecord[];
   speculative?: SpeculativeDecision;

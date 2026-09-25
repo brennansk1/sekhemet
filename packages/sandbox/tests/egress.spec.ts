@@ -64,13 +64,14 @@ describe("allowlisting egress proxy with a request log (S5)", () => {
     expect(profile).toContain('(allow network-outbound (remote tcp "localhost:40123"))');
   });
 
-  it.runIf(platform() === "darwin")(
-    "lets curl inside Seatbelt reach an allowlisted host only through the proxy",
-    async () => {
+  // DEC-39: under both engines.
+  it.runIf(platform() === "darwin").each(["native", "srt"] as const)(
+    "lets curl inside the %s engine reach an allowlisted host only through the proxy",
+    async (engine) => {
       const proxy = new EgressProxy({ allow: ["127.0.0.1"] });
       const port = await proxy.start();
       try {
-        const box = new ProcessSandbox();
+        const box = new ProcessSandbox({ engine });
         const opts = { allowedPaths: [dir], allowNetwork: false, timeoutMs: 15_000, cwd: dir };
         const via = await box.execute(
           "curl",

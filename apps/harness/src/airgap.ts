@@ -11,7 +11,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, join } from "node:path";
-import type { RegistryLookup } from "@sekhemet/gates";
+import { type RegistryLookup, onPath } from "@sekhemet/gates";
 import type { EventLog } from "@sekhemet/kernel";
 import type { ModelRegistry } from "@sekhemet/models";
 import { ProcessSandbox } from "@sekhemet/sandbox";
@@ -236,8 +236,11 @@ export async function verifyModels(
       });
       continue;
     }
+    // SEC-34b: the manifest's tier is recorded, never trusted as this
+    // machine's qualification; the model still qualifies here before a card.
     registry?.upsert(m.id, {
       ...(m.quant ? { quant: m.quant } : {}),
+      ...(m.tier ? { manifestTier: m.tier } : {}),
       sizeBytes: statSync(path).size,
     });
     out.push({ id: m.id, ok: true, detail: "verified" });
@@ -434,9 +437,7 @@ export async function airgapSelfTest(
         : "outbound connection refused in the sandbox",
   });
   for (const g of opts.gates ?? []) {
-    const found =
-      spawnSync("sh", ["-c", `command -v ${JSON.stringify(g.command)}`], { cwd: repo }).status ===
-      0;
+    const found = onPath(g.command);
     checks.push({
       name: `gate ${g.id} runnable`,
       ok: found,
@@ -535,6 +536,14 @@ export async function airgapCommand(
     case "verify-models": {
       if (!a1 || !a2) return done("Usage: sekhemet airgap verify-models <manifest> <dir>", 1);
       const sig = flag("--sig");
+      // SEC-34: offline, the signature is the only proof the manifest is the
+      // one the connected machine built; without it nothing is registered.
+      if (!sig && isAirgapped(repo)) {
+        return done(
+          "Air-gap mode needs a signed manifest: pass --sig <signature> --signers <file> --identity <id>.",
+          1,
+        );
+      }
       if (sig) {
         const v = verifyBundle(a1, sig, flag("--signers") ?? "", flag("--identity") ?? "");
         if (!v.ok) return done(`Manifest signature rejected: ${v.detail}`, 1);

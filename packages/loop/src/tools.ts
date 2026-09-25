@@ -20,8 +20,9 @@ import type { ToolCall } from "@sekhemet/models";
 import {
   type ExecutionResult,
   PermissionEngine,
-  ProcessSandbox,
+  type ProcessSandbox,
   commandHosts,
+  confinedSandbox,
   dumpDom,
   htmlToText,
   tagUntrusted,
@@ -213,9 +214,7 @@ export class ToolExecutor {
 
   constructor(private options: ToolExecutorOptions) {
     this.root = canonicalizeRoot(options.worktreePath);
-    this.sandbox =
-      options.sandbox ??
-      new ProcessSandbox(options.requireConfinement ? { requireConfinement: true } : {});
+    this.sandbox = options.sandbox ?? confinedSandbox(options.requireConfinement === true);
     this.permissions =
       options.permissionEngine ??
       new PermissionEngine({

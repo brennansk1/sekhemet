@@ -35,8 +35,8 @@ import {
   measureThroughput,
 } from "@sekhemet/models";
 import { SpidrFeaturePlanner } from "@sekhemet/planner";
-import { ProcessSandbox } from "@sekhemet/sandbox";
-import { NodeGitSyncAdapter, hardenGitForProcess } from "@sekhemet/sync";
+import { ProcessSandbox, confinedSandbox } from "@sekhemet/sandbox";
+import { NodeGitSyncAdapter, gitEnvFor, hardenGitForProcess } from "@sekhemet/sync";
 import { runAcpStdio } from "./acp.js";
 import { isAirgapped, mirrorRegistry } from "./airgap.js";
 import { resolveVisionModel, visionPrePass } from "./attachments.js";
@@ -729,25 +729,28 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
           .map((g) => g.rung),
       ),
     ];
-    const gateRunner = new DeterministicGateRunner(
-      new ProcessSandbox({ requireConfinement: config.restrictedMode }),
-      {
-        repoRoot: config.repoPath,
-        expectedConfigSha256: gatesConfig.sha256,
-      },
-    );
+    const gateRunner = new DeterministicGateRunner(confinedSandbox(config.restrictedMode), {
+      repoRoot: config.repoPath,
+      expectedConfigSha256: gatesConfig.sha256,
+    });
     console.log(`\nRunning ${rungs.join(", ")} in ${cwd}`);
     let res = await gateRunner.runGates(rungs, cwd);
     // The built-in security, hygiene and robustness layers, on the card's diff (G3).
     if (cardId && cwd !== config.repoPath) {
       const diff = (() => {
         try {
-          execFileSync("git", ["add", "-A"], { cwd, stdio: "ignore" });
-          return execFileSync("git", ["diff", "--cached", "--unified=0", "main"], {
-            cwd,
-            encoding: "utf8",
-            maxBuffer: 16 * 1024 * 1024,
-          });
+          const env = gitEnvFor(cwd);
+          execFileSync("git", ["add", "-A"], { cwd, env, stdio: "ignore" });
+          return execFileSync(
+            "git",
+            ["diff", "--cached", "--unified=0", "--no-ext-diff", "--no-textconv", "main"],
+            {
+              cwd,
+              env,
+              encoding: "utf8",
+              maxBuffer: 16 * 1024 * 1024,
+            },
+          );
         } catch {
           return "";
         }

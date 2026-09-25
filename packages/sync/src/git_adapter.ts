@@ -13,6 +13,13 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { matchesScope } from "@sekhemet/kernel";
 import { hardenGitForProcess } from "./git_hardening.js";
+import {
+  GitMetadataError,
+  gitEnvFor,
+  guardedGitEnv,
+  stagedGitlinks,
+  writeConfigBaseline,
+} from "./git_preflight.js";
 import type {
   CheckpointCommitParams,
   DiffStats,
@@ -177,16 +184,51 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
   }
 
   /**
+   * The worktree preflight (security item 21) and the pinned environment for
+   * git in a card's worktree (item 18): `GIT_DIR` and `GIT_WORK_TREE` come
+   * from the harness's own record, so a rewritten `.git` pointer changes
+   * nothing. Throws `GitMetadataError` (stop reason `git_metadata_tampered`).
+   */
+  private guard(worktreePath: string): NodeJS.ProcessEnv {
+    return guardedGitEnv(this.repoRoot, worktreePath);
+  }
+
+  /** Git in a card's worktree, preflighted and pinned; the main checkout otherwise. */
+  private worktreeGit(cardId: string): {
+    cwd: string;
+    git: (args: string[], tolerant?: boolean) => string;
+  } {
+    const worktreePath = this.getWorktreePath(cardId);
+    if (!existsSync(worktreePath)) {
+      return {
+        cwd: this.repoRoot,
+        git: (args, tolerant) => this.runGit(args, this.repoRoot, tolerant),
+      };
+    }
+    const env = this.guard(worktreePath);
+    return {
+      cwd: worktreePath,
+      git: (args, tolerant) => this.runGit(args, worktreePath, tolerant, env),
+    };
+  }
+
+  /**
    * Run git with an argument vector.
    *
    * `execFileSync` is required rather than preferred: commit messages and branch
    * names originate from model output, and passing them through a shell string
    * makes backticks or $(...) in generated text arbitrary code execution.
    */
-  private runGit(args: string[], cwd = this.repoRoot, tolerant = false): string {
+  private runGit(
+    args: string[],
+    cwd = this.repoRoot,
+    tolerant = false,
+    env: NodeJS.ProcessEnv = process.env,
+  ): string {
     try {
       return execFileSync("git", args, {
         cwd,
+        env,
         encoding: "utf8",
         stdio: ["pipe", "pipe", "pipe"],
         maxBuffer: 32 * 1024 * 1024,
@@ -268,6 +310,8 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
 
     this.ensureHarnessExcludes();
     this.runGit(["worktree", "add", "-B", branchName, worktreePath, baseBranch]);
+    // Security §8 Q5: the repository's own program-running keys, before the Worker runs.
+    writeConfigBaseline(this.repoRoot, worktreePath);
     // Remember what the branch was cut from, so it can be restacked (Y7).
     this.runGit(["config", `branch.${branchName}.sekhemetBase`, baseBranch]);
     this.runGit([
@@ -330,7 +374,7 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
   }
 
   public async getHeadSha(cwd = this.repoRoot): Promise<string> {
-    return this.runGit(["rev-parse", "HEAD"], cwd);
+    return this.runGit(["rev-parse", "HEAD"], cwd, false, gitEnvFor(cwd));
   }
 
   /**
@@ -350,12 +394,12 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
    * as a tree; the real index — and so the Worker's staging — is untouched.
    */
   public async getRepoStateHash(cardId: string): Promise<string> {
-    const worktreePath = this.getWorktreePath(cardId);
-    const cwd = existsSync(worktreePath) ? worktreePath : this.repoRoot;
-    const head = this.runGit(["rev-parse", "HEAD"], cwd, true);
+    const { cwd, git: guarded } = this.worktreeGit(cardId);
+    const pinned = cwd === this.repoRoot ? process.env : this.guard(cwd);
+    const head = guarded(["rev-parse", "HEAD"], true);
     const scratch = join(mkdtempSync(join(tmpdir(), "sek-fp-")), "index");
     try {
-      const env = { ...process.env, GIT_INDEX_FILE: scratch };
+      const env = { ...pinned, GIT_INDEX_FILE: scratch };
       const git = (args: string[]) =>
         execFileSync("git", args, {
           cwd,
@@ -368,7 +412,7 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
       return `${head}:${git(["write-tree"])}`;
     } catch {
       // Not a repository, or no HEAD yet: fall back to what status can say.
-      return `${head}:${Buffer.from(this.runGit(["status", "--porcelain=v1", "-z"], cwd, true)).toString("base64")}`;
+      return `${head}:${Buffer.from(guarded(["status", "--porcelain=v1", "-z"], true)).toString("base64")}`;
     } finally {
       rmSync(dirname(scratch), { recursive: true, force: true });
     }
@@ -376,17 +420,16 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
 
   /** Unified diff for the card's worktree against its merge base. */
   public async generateDiff(cardId: string, baseBranch = "main"): Promise<string> {
-    const worktreePath = this.getWorktreePath(cardId);
-    const cwd = existsSync(worktreePath) ? worktreePath : this.repoRoot;
-    this.runGit(["add", "-A"], cwd);
+    const { git } = this.worktreeGit(cardId);
+    git(["add", "-A"]);
     // `--staged <ref>` compares the index against that ref. Combining it with a
     // `a...b` range is not valid git and aborts the whole run at evidence time,
     // after all the work is done.
     try {
-      return this.runGit(["diff", "--staged", baseBranch], cwd);
+      return git(["diff", "--staged", "--no-ext-diff", "--no-textconv", baseBranch]);
     } catch {
       // A worktree with no merge base to compare against still has a diff.
-      return this.runGit(["diff", "--staged"], cwd);
+      return git(["diff", "--staged", "--no-ext-diff", "--no-textconv"]);
     }
   }
 
@@ -397,15 +440,21 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
    * previously nothing computed a diff, so the check could never run.
    */
   public async getDiffStats(cardId: string, baseBranch = "main"): Promise<DiffStats> {
-    const worktreePath = this.getWorktreePath(cardId);
-    const cwd = existsSync(worktreePath) ? worktreePath : this.repoRoot;
-    this.runGit(["add", "-A"], cwd);
+    const { git } = this.worktreeGit(cardId);
+    git(["add", "-A"]);
 
     let numstat: string;
     try {
-      numstat = this.runGit(["diff", "--numstat", "--staged", baseBranch], cwd);
+      numstat = git([
+        "diff",
+        "--numstat",
+        "--staged",
+        "--no-ext-diff",
+        "--no-textconv",
+        baseBranch,
+      ]);
     } catch {
-      numstat = this.runGit(["diff", "--numstat", "--staged"], cwd);
+      numstat = git(["diff", "--numstat", "--staged", "--no-ext-diff", "--no-textconv"]);
     }
 
     const filesTouched: string[] = [];
@@ -434,15 +483,19 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
     if (!existsSync(worktreePath)) {
       throw new Error(`Worktree for card ${params.cardId} not found at ${worktreePath}`);
     }
+    const { git } = this.worktreeGit(params.cardId);
 
-    this.runGit(["add", "-A"], worktreePath);
+    git(["add", "-A"]);
+    // SEC-6: a gitlink in the staged diff is a nested repository; the card fails.
+    const gitlinks = stagedGitlinks((args) => git(args));
+    if (gitlinks.length > 0) throw new GitMetadataError(gitlinks);
     // Y3: a checkpoint with no change since the last checkpoint is free. It
     // re-points the refs at the existing commit instead of stacking empty
     // commits, so checkpointing on every passing check costs nothing.
-    const nothingStaged = this.runGit(["diff", "--cached", "--name-only"], worktreePath) === "";
-    const lastMessage = this.runGit(["log", "-1", "--format=%B"], worktreePath);
+    const nothingStaged = git(["diff", "--cached", "--name-only", "--no-ext-diff"]) === "";
+    const lastMessage = git(["log", "-1", "--format=%B", "--no-show-signature"]);
     if (nothingStaged && lastMessage.includes(`Card: ${params.cardId}`)) {
-      const head = this.runGit(["rev-parse", "HEAD"], worktreePath);
+      const head = git(["rev-parse", "HEAD"]);
       this.runGit(["update-ref", `refs/sekhemet/steps/${params.cardId}/step_${params.step}`, head]);
       this.runGit(["update-ref", `refs/sekhemet/checkpoints/${params.cardId}`, head]);
       return head;
@@ -468,9 +521,9 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
 
     const fullMessage = `${header}\n\n${trailers.join("\n")}`;
     // Passed as a single argv element: no quoting, no shell, no injection.
-    this.runGit(["commit", "--allow-empty", "-m", fullMessage], worktreePath);
+    git(["commit", "--no-verify", "--allow-empty", "-m", fullMessage]);
 
-    const sha = this.runGit(["rev-parse", "HEAD"], worktreePath);
+    const sha = git(["rev-parse", "HEAD"]);
 
     // Step history lives under its own namespace: git refuses a ref that is both
     // a file and a directory, and the relay protocol (AGENTS.md) reads the singular
@@ -535,7 +588,7 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
 
     this.runGit(["checkout", targetBranch]);
     this.runGit(["merge", "--squash", branch]);
-    this.runGit(["commit", "-m", full]);
+    this.runGit(["commit", "--no-verify", "-m", full]);
     return this.runGit(["rev-parse", "HEAD"]);
   }
 
@@ -556,11 +609,13 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
   ): Promise<RebaseResult> {
     const cwd = this.getWorktreePath(cardId);
     if (!existsSync(cwd)) throw new Error(`Worktree for card ${cardId} not found at ${cwd}`);
-    this.runGit(["add", "-A"], cwd);
-    if (this.runGit(["diff", "--cached", "--name-only"], cwd) !== "") {
+    const env = this.guard(cwd);
+    const run = (args: string[], tolerant = false) => this.runGit(args, cwd, tolerant, env);
+    run(["add", "-A"]);
+    if (run(["diff", "--cached", "--name-only", "--no-ext-diff"]) !== "") {
       // Attributed like any checkpoint (X26): model, role and co-authors
       // carry over from the branch's last commit.
-      const last = parseTrailers(this.runGit(["log", "-1", "--format=%B"], cwd));
+      const last = parseTrailers(run(["log", "-1", "--format=%B"]));
       const get = (k: string) => last.find((t) => t.key.toLowerCase() === k)?.value;
       const model = get("agent-model") ?? "unknown";
       const coAuthors = last.filter((t) => t.key.toLowerCase() === "co-authored-by");
@@ -575,22 +630,22 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
           ? coAuthors.map((t) => `Co-authored-by: ${t.value}`)
           : [`Co-authored-by: ${modelCoAuthor(model)}`]),
       ];
-      this.runGit(
-        ["commit", "-m", `checkpoint: before rebase onto ${targetBranch}\n\n${lines.join("\n")}`],
-        cwd,
-      );
+      run([
+        "commit",
+        "--no-verify",
+        "-m",
+        `checkpoint: before rebase onto ${targetBranch}\n\n${lines.join("\n")}`,
+      ]);
     }
-    const before = this.runGit(["rev-parse", "HEAD"], cwd);
-    const onto = this.runGit(["rev-parse", targetBranch], cwd);
-    if (this.runGit(["merge-base", "HEAD", targetBranch], cwd) === onto) {
+    const before = run(["rev-parse", "HEAD"]);
+    const onto = run(["rev-parse", targetBranch]);
+    if (run(["merge-base", "HEAD", targetBranch]) === onto) {
       return { ok: true, rebased: false, before, after: before };
     }
     try {
-      this.runGit(["rebase", targetBranch], cwd);
+      run(["rebase", targetBranch]);
     } catch {
-      const files = this.runGit(["diff", "--name-only", "--diff-filter=U"], cwd)
-        .split("\n")
-        .filter(Boolean);
+      const files = run(["diff", "--name-only", "--diff-filter=U"]).split("\n").filter(Boolean);
       const hunks: string[] = [];
       const failures: RebaseConflictFailure[] = [];
       // Read before the abort: aborting restores the pre-rebase tree and the
@@ -619,7 +674,7 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
         });
       }
       try {
-        this.runGit(["rebase", "--abort"], cwd);
+        run(["rebase", "--abort"]);
       } catch {
         // Already aborted.
       }
@@ -643,7 +698,7 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
         },
       };
     }
-    return { ok: true, rebased: true, before, after: this.runGit(["rev-parse", "HEAD"], cwd) };
+    return { ok: true, rebased: true, before, after: run(["rev-parse", "HEAD"]) };
   }
 
   /**
@@ -678,8 +733,9 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
         (w) => w.branch === `refs/heads/${child}`,
       )?.path;
       const cwd = worktree ?? this.repoRoot;
+      const env = worktree ? this.guard(worktree) : process.env;
       try {
-        if (worktree) this.runGit(["rebase", "--onto", target, oldBase], cwd);
+        if (worktree) this.runGit(["rebase", "--onto", target, oldBase], cwd, false, env);
         else this.runGit(["rebase", "--onto", target, oldBase, child], cwd);
         this.runGit(["config", `branch.${child}.sekhemetBase`, target]);
         this.runGit([
@@ -689,10 +745,10 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
         ]);
         results.push({ cardBranch: child, ok: true });
       } catch {
-        const files = this.runGit(["diff", "--name-only", "--diff-filter=U"], cwd, true)
+        const files = this.runGit(["diff", "--name-only", "--diff-filter=U"], cwd, true, env)
           .split("\n")
           .filter(Boolean);
-        this.runGit(["rebase", "--abort"], cwd, true);
+        this.runGit(["rebase", "--abort"], cwd, true, env);
         results.push({ cardBranch: child, ok: false, files });
       }
       if (!worktree) this.runGit(["checkout", target], this.repoRoot, true);
@@ -705,10 +761,10 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
    * PATH, else git's line diff, with the changed files grouped by intent.
    */
   public async structuralDiff(cardId: string, baseBranch = "main"): Promise<StructuralDiff> {
-    const worktreePath = this.getWorktreePath(cardId);
-    const cwd = existsSync(worktreePath) ? worktreePath : this.repoRoot;
-    this.runGit(["add", "-A"], cwd);
-    const files = this.runGit(["diff", "--staged", "--name-only", baseBranch], cwd, true)
+    const { cwd, git } = this.worktreeGit(cardId);
+    const pinned = existsSync(this.getWorktreePath(cardId)) ? this.guard(cwd) : process.env;
+    git(["add", "-A"]);
+    const files = git(["diff", "--staged", "--name-only", "--no-ext-diff", baseBranch], true)
       .split("\n")
       .filter(Boolean);
     const groups = groupByIntent(files);
@@ -722,16 +778,19 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
           {
             cwd,
             encoding: "utf8",
-            env: { ...process.env, DFT_COLOR: "never", DFT_DISPLAY: "inline" },
+            env: { ...pinned, DFT_COLOR: "never", DFT_DISPLAY: "inline" },
             maxBuffer: 32 * 1024 * 1024,
           },
         );
         engine = "difftastic";
       } catch {
-        text = this.runGit(["diff", "--staged", baseBranch], cwd, true);
+        text = git(["diff", "--staged", "--no-ext-diff", "--no-textconv", baseBranch], true);
       }
     } else {
-      text = this.runGit(["diff", "--staged", "--ignore-all-space", baseBranch], cwd, true);
+      text = git(
+        ["diff", "--staged", "--ignore-all-space", "--no-ext-diff", "--no-textconv", baseBranch],
+        true,
+      );
     }
     return { engine, groups, text };
   }

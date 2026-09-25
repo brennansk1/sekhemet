@@ -11,6 +11,7 @@ code:
   - packages/sandbox/src/permissions.ts
   - packages/sandbox/src/untrusted.ts
   - packages/sync/src/git_hardening.ts
+  - packages/sync/src/git_preflight.ts
   - packages/loop/src/paths.ts
   - packages/gates/src/secrets.ts
   - apps/harness/src/airgap.ts
@@ -21,6 +22,11 @@ tests:
   - packages/sandbox/tests/permissions.spec.ts
   - packages/sandbox/tests/sandbox_wave2.spec.ts
   - packages/sync/tests/git_hardening.spec.ts
+  - packages/sync/tests/git_preflight.spec.ts
+  - packages/sandbox/tests/fail_closed.spec.ts
+  - apps/harness/tests/security_small.spec.ts
+  - apps/harness/tests/ask_tier.spec.ts
+  - packages/gates/tests/executes_later.spec.ts
   - packages/loop/tests/paths.spec.ts
   - packages/loop/tests/restricted.spec.ts
   - packages/loop/tests/untrusted.spec.ts
@@ -70,7 +76,9 @@ The harness runs code written by a local model on the owner's machine. The v1 Wo
 ### Git run by the harness (S1, G3)
 
 18. The harness runs git outside the sandbox, at an absolute path, version ≥ 2.50.1, with `GIT_DIR` and `GIT_WORK_TREE` pinned from its own record of the worktree (`<main>/.git/worktrees/<name>`), so a rewritten `.git` pointer changes nothing.
-19. Pinned for every harness git call: `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_TERMINAL_PROMPT=0`, `GIT_NO_REPLACE_OBJECTS=1`, `GIT_OPTIONAL_LOCKS=0`, `GIT_EDITOR=true`, `GIT_SEQUENCE_EDITOR=true`, `GIT_PAGER=cat`, empty `GIT_ASKPASS`/`SSH_ASKPASS`, `GIT_CEILING_DIRECTORIES`; and through `GIT_CONFIG_*`: `core.fsmonitor=false`, `core.hooksPath=/dev/null`, `core.untrackedCache=false`, `core.sshCommand=false`, `core.symlinks=false`, `credential.helper=`, `gpg.program=false`, `commit.gpgSign=false`, `log.showSignature=false`, `diff.external=`, `protocol.file.allow=never`, `submodule.recurse=false`, `diff.ignoreSubmodules=all`, `safe.bareRepository=explicit`, `include.path=`.
+19. Pinned for every harness git call: `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_TERMINAL_PROMPT=0`, `GIT_NO_REPLACE_OBJECTS=1`, `GIT_OPTIONAL_LOCKS=0`, `GIT_EDITOR=true`, `GIT_SEQUENCE_EDITOR=true`, `GIT_PAGER=cat`, empty `GIT_ASKPASS`/`SSH_ASKPASS`, `GIT_CEILING_DIRECTORIES`; and through `GIT_CONFIG_*`: `core.fsmonitor=false`, `core.hooksPath=/dev/null`, `core.untrackedCache=false`, `core.sshCommand=false`, `core.symlinks=false`, `credential.helper=`, `gpg.program=false`, `commit.gpgSign=false`, `log.showSignature=false`, `diff.external=`, `protocol.file.allow=never`, `submodule.recurse=false`, `diff.ignoreSubmodules=all`, `safe.bareRepository=explicit`. Found in B1:
+    - `include.path=` and `diff.external=` are not pinned. Git refuses an empty include given on the command line, and an empty external diff makes git try to run "" on every diff that prints a patch. The item 21 preflight refuses both in repository config instead, and every harness diff passes `--no-ext-diff --no-textconv`.
+    - `core.symlinks=false`, `protocol.file.allow=never` and `GIT_CEILING_DIRECTORIES` are pinned only for git in a card's worktree (`guardedGitEnv`), never process-wide. In the user's own checkout they would write symlinks as text files and refuse local-path clones. `GIT_CONFIG_GLOBAL` points at a harness-written file holding only the user's `[user]` name and email, so commits keep the user's identity and a repository's own identity still wins.
 20. `diff`, `log` and `show` run with `--no-ext-diff --no-textconv`; commits with `--no-verify`; nothing uses `--recurse-submodules`.
 20b. **One named exception today:** the review diff runs `git -c diff.external=difft --ext-diff` (`packages/sync/src/git_adapter.ts:721`), so a harness-chosen parser reads worktree content outside the sandbox. A program the harness runs over worktree content outside the sandbox must be on a fixed allowlist, resolved by absolute path, run with the hardened git environment, no network, and time and memory limits; otherwise it runs confined. Carried by S3a.
 21. **Preflight:** before git runs in a worktree, the harness reads its config with `--no-includes` and refuses on any of `core.fsmonitor|hookspath|sshcommand|pager|editor|askpass|gitproxy`, `filter.*`, `diff.*.(command|textconv)`, `merge.*.driver`, `include*`, `gpg.*`, `credential.*`, `remote.*.(uploadpack|receivepack)`; scans the worktree for embedded bare repositories (a directory holding `HEAD` and `objects`), `.git` files or symlinks below the root, and carriage returns in `.gitmodules` (CVE-2025-48384); and fails the card if the staged diff adds a gitlink (mode 160000) or a nested bare repository.
@@ -119,7 +127,7 @@ The harness runs code written by a local model on the owner's machine. The v1 Wo
 38. Repository-supplied configuration that makes the harness run code outside the sandbox — `.sekhemet/hooks.toml`, `.sekhemet/mcp.json`, skill `scripts/` — is inert until the user trusts it. Plugins are not in this list because they are cut in B0, before workspace trust is built: nothing is loaded from `.sekhemet/plugins/` in any workspace ([DEC-29](../DECISIONS.md#dec-29--the-owners-answers-to-the-decision-queue) O4; [extensibility](extensibility.md) item 29, EXT-28). [Extensibility](extensibility.md) lists what each gates.
 39. Trust is recorded in the user directory, never in the repository, keyed by the repository's real path and the SHA-256 of each trusted file. A changed hash is untrusted again, including after an Accept merges a Worker's edit to one of these files.
 40. The trust prompt shows exactly what would run. Headless and non-TTY runs never trust implicitly; `--trust` must be given per invocation.
-41. The Review evidence flags any diff to files that execute later outside the sandbox: the paths in item 38, `.githooks/`, `.husky/`, `.pre-commit-config.yaml`, `.gitattributes`, `.gitmodules`, and editor task configuration (`.vscode/`, `.idea/`) (NEW-security-1).
+41. The Review evidence flags any diff to files that execute later outside the sandbox: the paths in item 38, `.githooks/`, `.husky/`, `.pre-commit-config.yaml`, `.gitattributes`, `.gitmodules`, editor and container task configuration (`.vscode/`, `.idea/`, `.devcontainer/`), `.envrc` (direnv) and CI workflows (`.github/workflows/`), matched without regard to case (NEW-security-1; the last three and case-insensitivity added in the B1 review).
 
 ### Untrusted content
 
@@ -151,6 +159,7 @@ The harness runs code written by a local model on the owner's machine. The v1 Wo
 | --- | --- |
 | `ExecutionSandbox`, `SandboxOptions` (`allowedPaths`, `scratchDir`, `allowNetwork`, `egressProxyPort`, `localPorts`, `env`, `timeoutMs`, `maxMemoryBytes`) | `packages/sandbox/src/types.ts` |
 | `ProcessSandbox` (`confinement`, `requiresConfinement`, `execute`, `spawnBackground`) | `packages/sandbox/src/executor.ts` |
+| `confinedSandbox(restricted)`, the one constructor for Worker and gate sandboxes (S3b); `RunSettings.isolation` (SEC-21) | `packages/sandbox/src/executor.ts`; `packages/gates/src/evidence.ts` |
 | `generateSeatbeltProfile`, `DEPENDENCY_CACHE_DIRS` | `packages/sandbox/src/seatbelt.ts` |
 | `bubblewrapArgv`, `seccompProgram` | `packages/sandbox/src/bubblewrap.ts`, `seccomp.ts` |
 | `PermissionEngine`, `PermissionTier`, `PermissionRule`, `KNOWN_TOOLCHAIN` | `packages/sandbox/src/permissions.ts` |
@@ -174,10 +183,11 @@ The harness runs code written by a local model on the owner's machine. The v1 Wo
 | Seatbelt denies `.git` writes at any depth and case | built | `seatbelt.ts:105-109`; `containment.spec.ts` | S1 |
 | bubblewrap re-binds only the root `.git`, only if it exists | partial | `bubblewrap.ts:43`; argv-shape test only | S1 (G2, G6) |
 | File tools refuse paths resolving into `.git`, including via symlink | built | `paths.ts:80-89`; `paths.spec.ts:93-118` | S1 (G1) |
-| Git hardening: 4 keys via `GIT_CONFIG_*`; flag short-circuit | partial | `git_hardening.ts:15-45`; `git_hardening.spec.ts` | S1 (G3) |
+| Git hardening: item 19's keys and pins; an identity-only global config; "hardened" decided by the keys (SEC-5) | built (B1) | `HARDENED_GIT_CONFIG`, `HARDENED_GIT_PINS`, `identityConfig`, `isHardened` (`git_hardening.ts`); `git_preflight.spec.ts`, `git_hardening.spec.ts`. `include.path` is not pinned: git refuses an empty include on the command line, so includes are refused by the preflight instead | S1 (G3) |
+| Worktree preflight and pinned gitdir (items 18, 21) | built (B1) | `preflightWorktree`, `recordedGitDir`, `stagedGitlinks` (`git_preflight.ts`); `guardedGitEnv`/`gitEnvFor` pin `GIT_DIR`/`GIT_WORK_TREE` from the harness's record, `GIT_CEILING_DIRECTORIES` and the worktree-only keys for every git call in a card's worktree (the adapter's diff, checkpoint, fingerprint, head, rebase and restack; `integrity.ts`; the CLI's layer diff); the repository's own program-running keys are recorded when the worktree is created (`writeConfigBaseline`) and only changes are refused (Q5); diffs and logs run `--no-ext-diff --no-textconv`, commits `--no-verify`; the card stops with `git_metadata_tampered` (`card_runner.ts`); `git_preflight.spec.ts` SEC-2, SEC-3, SEC-4, SEC-6, SEC-6a; `c_integration.spec.ts` SEC-2 | S1 |
 | Dependency code read-only; caches shared and writable | partial | `seatbelt.ts:38-44`; `node_modules` and `.venv` are linked whole into each worktree (`sync/src/git_adapter.ts:318-330`) and their link targets are made read-only (`seatbelt.ts:57-72`) | S2 (G4) |
 | Fail closed: the Worker's tools | built | `ToolExecutor` builds its sandbox with the closed default unless told otherwise (`loop/src/tools.ts:214-218`; `executor.ts:130-134`) | — |
-| Fail closed: gates | not-built | the gate sandboxes are given `requireConfinement: ctx.restrictedMode`, an explicit `false` outside restricted mode (`execute.ts:315,426,1051`; `index.ts:733`) | S3b |
+| Fail closed: gates and the Worker; `isolation` in every bundle and on the card | built (B1) | every gate and Worker sandbox comes from `confinedSandbox()` (`executor.ts`), which only `SEKHEMET_ALLOW_UNCONFINED=1` opts out of, never under `--restricted`; `settings.isolation` (`card_runner.ts`), the Run facts' *Isolation* row (`isolationLabel`); `fail_closed.spec.ts`, `c_integration.spec.ts` E3, `vocabulary.spec.ts` | S3b |
 | One confined execution path | not-built | visual gate `spawn` with `process.env` (`gates/src/visual.ts:614-618`); LSP (`context/src/lsp.ts:85`); package gates (`sync/src/repo_tools.ts:337`); `--validate-tools` (`wave2.ts:863-876`) | S3a |
 | Environment allowlist in the sandbox | built | `executor.ts:63-98`; `containment.spec.ts:179`. Carries a stray `LOGSEQ_TEST` (`:74`) | S3a |
 | Seatbelt reads and mach services unrestricted | not-built | `seatbelt.ts:150,155` | S3, S3c |
@@ -191,7 +201,7 @@ The harness runs code written by a local model on the owner's machine. The v1 Wo
 | Model downloads through `NetworkPolicy`, refused offline | not-built | no download path exists ([models](models.md) NEW-models-7) | NEW-security-9 |
 | `--validate-tools` confined in a scratch worktree | not-built | `execFileSync` in the repository root with the full environment (`wave2.ts:863-876`) | S3a |
 | Permission engine, three tiers, protected paths | built | `permissions.ts`; `permissions.spec.ts` | — |
-| Ask answered by a person through a decision request | partial | `decisionApprover` posts a `permission` request, deny by default, 60 s (`execute.ts:141-165, 434`); denied at once with no approver (`loop/src/tools.ts:453-464`); no test drives it | NEW-security-6 |
+| Ask answered by a person through a decision request | built (B1) | `decisionApprover` posts a `permission` request, deny by default, 60 s (`execute.ts`); denied at once with no approver (`loop/src/tools.ts`); `ask_tier.spec.ts` drives allow (answer and answerer recorded on `decision/answered`), time-out and no-approver against a real SQLite store. The answerer is today's `answeredBy` string; principals arrive with kernel rule 19 (B3.1) | NEW-security-6 |
 | Redaction before persistence | not-built | `redact` exists (`secrets.ts:100`), no caller outside the scanner | S3c |
 | Erasing a secret found after the fact | not-built | the ledger has no erasable part ([kernel](kernel.md) NEW-kernel-1) | NEW-security-7 |
 | Personal and secret files kept out of git | not-built | `.gitignore` lists only `worktrees/`, `*.db`, `*.db-*`, `daemon.*`, `observations/` (`init.ts:348-354`) | [surface](surface.md) P10 |
@@ -203,11 +213,12 @@ The harness runs code written by a local model on the owner's machine. The v1 Wo
 | Restricted mode strips tools | partial | `restricted.spec.ts`; the visual gate still runs (`loop/src/session.ts:1710` strips only mutation) | S3a |
 | Supply-chain existence/age/typosquat, osv offline | built | `gates/tests/supply_chain.spec.ts` | — |
 | Supply chain per ecosystem (npm, PyPI, crates.io, Go) with an advisory download floor | built | `DEPENDENCY_MANIFESTS`, `MIN_WEEKLY_DOWNLOADS` (`gates/src/builtin.ts:677-699, 780-786`); `supply_chain.spec.ts:24-30, 73` | — |
-| Air-gap mirror, manifest, docs, signed updates, self-test | partial | `airgap.spec.ts`; self-test is one TCP probe to 1.1.1.1:443 (`airgap.ts:418-433`); manifest signature optional (`:539`); the manifest's `tier` and `templateChecksum` are optional and never checked — only the SHA-256 is (`airgap.ts:165-173, 225-240`) | NEW-security-2 |
+| Air-gap mirror, manifest, docs, signed updates, self-test | partial | `airgap.spec.ts`. Built in B1: offline, `verify-models` refuses an unsigned manifest (SEC-34), and a registered model records the manifest's tier as `manifestTier` with no qualification (SEC-34b). Still open: the self-test is one TCP probe to 1.1.1.1:443 (SEC-33, which needs the engine's violation reports, DEC-39); `templateChecksum` is not checked, because checking it offline means reading the GGUF header's chat template (SEC-34a; the GGUF reader is NEW-models-13's) | NEW-security-2 |
 | Docs bundle and research-cache export/import | built | `prefetchDocs`, export and import with SHA-256 (`airgap.ts:251-305`) | — |
 | `llms.txt` snapshots, staleness on lockfile change, signed skill updates | not-built | none in `airgap.ts` | NEW-security-5 |
+| Files that run outside the sandbox later flagged in Review | built (B1) | `executesLater` (`gates/src/evidence.ts`) sets `executesLater` on the bundle; the Review evidence shows *Runs outside the sandbox later* (`ui/web/evidence.js`); `executes_later.spec.ts` | NEW-security-1 |
 | Credential store for the Team setup (item 35a) | not-built | no accounts exist | NEW-teams-3 ([teams](teams.md)) |
-| Low items: `sh -c` quoting, `python3` without `-I`, non-constant-time token compare | not-built | `airgap.ts:438`, `builtin.ts:92`; `license_gate.ts:120`, `parse_gate.ts:73`; `wave2_server.ts:248` | NEW-security-3 |
+| Low items: `sh -c` quoting, `python3 -I`, constant-time token compare | built (B1) | `onPath` passes the name as `$1` (`builtin.ts`), and the air-gap self-test uses it; `python3 -I` in `parse_gate.ts` and `license_gate.ts`; `tokenMatches` with `timingSafeEqual` over SHA-256 digests (`wave2_server.ts`); `security_small.spec.ts` | NEW-security-3 |
 
 ## 5. Changes for v1
 
@@ -350,6 +361,8 @@ SEC-1 to SEC-37b and SEC-44 to SEC-53 (including the lettered criteria; SEC-17a 
 2. **Which mach services does the allowlist contain?** *Recommendation:* start from sandbox-runtime's published list, then add only what the frozen suite's toolchains fail without, each with a test.
 3. **A repository's pre-commit hooks as gates** — run from the base branch's copy, confined. *Recommendation:* yes, owned by [gates](gates.md); until then `doctor` states that hooks do not run.
 4. **The `sandbox-exec` liability.** Apple deprecated it years ago and offers no supported per-process replacement for arbitrary command lines. *Recommendation:* keep it behind the sandbox interface with loud containment tests (item 13, SEC-38); if a macOS release breaks it, confinement fails closed (item 7) and the VM-per-card route in §7 is researched then, not now.
+
+5. **Husky's `core.hooksPath` and Git LFS's `filter.lfs.*` in the repository's own config.** *Decided in B1 (lead, on the B1 review; this spec's own recommendation):* the harness records the program-running keys the repository sets when a card's worktree is created, in its gitdir entry under the main `.git` where the Worker cannot write (`writeConfigBaseline`). The preflight refuses only keys that differ from that record. The pinned config already neutralises hooks, so the user's own setup is not the attack, and a key added or changed during the card still stops it.
 
 ## 9. Evidence and rationale
 

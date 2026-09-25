@@ -15,6 +15,8 @@ export interface RunSettings {
   thinking?: string;
   /** The Worker's working method (baseline | strict). */
   workerMethod?: string;
+  /** The confinement the card ran under (seatbelt | bubblewrap | none), SEC-21. */
+  isolation?: string;
 }
 
 export interface TokenTotals {
@@ -60,6 +62,8 @@ export interface EvidenceBundle {
   advisories?: string[];
   /** The transcript of this attempt (G11's trajectory reference). */
   trajectoryRef?: string;
+  /** Touched files that run outside the sandbox later (SEC-32). */
+  executesLater?: string[];
 }
 
 export interface CompileEvidenceParams {
@@ -107,8 +111,36 @@ export function compileEvidence(params: CompileEvidenceParams): EvidenceBundle {
     settings: params.settings,
     gatesConfigSha256: params.gatesConfigSha256,
     ...(params.advisories?.length ? { advisories: params.advisories } : {}),
+    ...(executesLater(params.filesTouched).length
+      ? { executesLater: executesLater(params.filesTouched) }
+      : {}),
     ...(params.trajectoryRef ? { trajectoryRef: params.trajectoryRef } : {}),
   };
+}
+
+/**
+ * Files that run outside the sandbox later — on the user's next commit, in
+ * their editor, or when a trusted hook or MCP server loads (security item 41,
+ * SEC-32). A diff touching one is flagged for the person reviewing it.
+ */
+const EXECUTES_LATER: readonly RegExp[] = [
+  /^\.githooks\//i,
+  /^\.husky\//i,
+  /^\.pre-commit-config\.ya?ml$/i,
+  /(^|\/)\.gitattributes$/i,
+  /^\.gitmodules$/i,
+  /^\.vscode\//i,
+  /^\.idea\//i,
+  /^\.devcontainer\//i,
+  /(^|\/)\.envrc$/i,
+  /^\.github\/workflows\//i,
+  /^\.sekhemet\/hooks\.toml$/i,
+  /^\.sekhemet\/mcp\.json$/i,
+  /^\.sekhemet\/skills\/[^/]+\/scripts\//i,
+];
+
+export function executesLater(files: readonly string[]): string[] {
+  return files.filter((f) => EXECUTES_LATER.some((p) => p.test(f)));
 }
 
 /** Render a bundle as the compact summary shown in a terminal or review pane. */

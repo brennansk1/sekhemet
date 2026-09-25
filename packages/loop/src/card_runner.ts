@@ -27,7 +27,7 @@ import {
   serializeContextPack,
 } from "@sekhemet/kernel";
 import { candidateSettings, harnessCommit } from "@sekhemet/models";
-import { EgressProxy, tagUntrusted } from "@sekhemet/sandbox";
+import { EgressProxy, ProcessSandbox, tagUntrusted } from "@sekhemet/sandbox";
 import type { GitSyncAdapter } from "@sekhemet/sync";
 import { CardExecutionSessionImpl } from "./session.js";
 import type {
@@ -344,7 +344,14 @@ function refusalReason(err: unknown): string {
  * executed a single turn and exited, so no amount of loop-internal correctness
  * could produce a finished card.
  */
+/** A git-metadata refusal from the worktree preflight (SEC-2, SEC-3, SEC-6a). */
+function isTampered(err: unknown): boolean {
+  return (err as { reason?: string } | undefined)?.reason === "git_metadata_tampered";
+}
+
 export class CardRunner {
+  /** Set when the worktree preflight refused git: the card stops (SEC-2). */
+  private tampered: string | undefined;
   private config: GatesConfig;
   private session: CardExecutionSessionImpl | undefined;
   private pendingAbort: string | undefined;
@@ -638,6 +645,13 @@ export class CardRunner {
         ...(this.options.coAuthors ? { coAuthors: this.options.coAuthors } : {}),
       });
     } catch (err) {
+      // SEC-2: git metadata the harness did not write stops the card; no
+      // further git runs in this worktree.
+      if (isTampered(err)) {
+        this.tampered = refusalReason(err);
+        this.emit({ type: "status", cardId: card.id, message: `stopped: ${this.tampered}` });
+        return undefined;
+      }
       if (strict) throw err;
       this.emit({
         type: "status",
@@ -1103,7 +1117,13 @@ export class CardRunner {
             cardId: card.id,
             message: `stopped on error: ${message.slice(0, 300)}`,
           });
-          stopReason = "error";
+          // SEC-2: the per-turn fingerprint runs git in the worktree too.
+          if (isTampered(err)) {
+            this.tampered = message;
+            stopReason = "git_metadata_tampered";
+          } else {
+            stopReason = "error";
+          }
           break;
         }
         turn.durationMs = Math.max(0, this.now() - turnStarted);
@@ -1150,6 +1170,10 @@ export class CardRunner {
             lastCheckpointWrites = session.getWriteCount();
           }
         }
+        if (this.tampered) {
+          stopReason = "git_metadata_tampered";
+          break;
+        }
 
         if (turn.stopReason) {
           stopReason = turn.stopReason;
@@ -1167,6 +1191,10 @@ export class CardRunner {
           await this.checkpoint(session.getStepsUsed(), status, checkpointShas);
           lastCheckpointStep = session.getStepsUsed();
           lastCheckpointWrites = session.getWriteCount();
+          if (this.tampered) {
+            stopReason = "git_metadata_tampered";
+            break;
+          }
         }
       }
 
@@ -1214,6 +1242,7 @@ export class CardRunner {
           if (lastGateResult.passed) {
             stopReason = "gate_passed";
             await this.checkpoint(session.getStepsUsed(), "pass", checkpointShas, true);
+            if (this.tampered) stopReason = "git_metadata_tampered";
           }
         } catch (err) {
           stopReason = "done_pending_gates";
@@ -1263,6 +1292,7 @@ export class CardRunner {
     const session = picked.session;
     const turns = tried.flatMap((t) => t.turns);
     let stopReason = picked.stopReason;
+    if (this.tampered) stopReason = "git_metadata_tampered";
     let lastGateResult = picked.lastGateResult;
     if (tried.length > 1 && picked.sha) this.restore(worktreePath, picked.sha);
     if (passing.length >= 2) {
@@ -1521,8 +1551,9 @@ export class CardRunner {
           }
         : rawStats;
       diff = await syncAdapter.generateDiff(card.id, this.options.baseBranch ?? "main");
-    } catch {
+    } catch (err) {
       // No measurable diff (no worktree yet): the evidence says so by being empty.
+      if (isTampered(err)) this.tampered = refusalReason(err);
     }
 
     const gateResult = params.lastGateResult ?? {
@@ -1550,6 +1581,7 @@ export class CardRunner {
       ...(this.options.temperature !== undefined ? { temperature: this.options.temperature } : {}),
       thinking: this.options.thinking ?? "off",
       workerMethod: this.options.workerMethod ?? "baseline",
+      isolation: (this.options.sandbox ?? new ProcessSandbox()).confinement,
     } as RunSettings;
 
     const evidence = compileEvidence({

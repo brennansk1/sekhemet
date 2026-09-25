@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { type GateFailure, parseNumstat } from "@sekhemet/gates";
+import { gitEnvFor } from "@sekhemet/sync";
 
 /**
  * The integrity gate: did the gates pass honestly?
@@ -91,13 +92,20 @@ export function scanDiffIntegrity(
 /** The card's diff against its base, including files not yet committed. */
 export function worktreeDiff(root: string, base = "main"): string {
   try {
-    execFileSync("git", ["add", "-A"], { cwd: root, stdio: "ignore", timeout: 15_000 });
-    return execFileSync("git", ["diff", "--cached", "--unified=0", base], {
-      cwd: root,
-      encoding: "utf8",
-      timeout: 15_000,
-      maxBuffer: 16 * 1024 * 1024,
-    });
+    // A card worktree is preflighted and pinned (security items 18–21).
+    const env = gitEnvFor(root);
+    execFileSync("git", ["add", "-A"], { cwd: root, env, stdio: "ignore", timeout: 15_000 });
+    return execFileSync(
+      "git",
+      ["diff", "--cached", "--unified=0", "--no-ext-diff", "--no-textconv", base],
+      {
+        cwd: root,
+        env,
+        encoding: "utf8",
+        timeout: 15_000,
+        maxBuffer: 16 * 1024 * 1024,
+      },
+    );
   } catch {
     return "";
   }

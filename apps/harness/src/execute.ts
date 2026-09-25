@@ -48,7 +48,7 @@ import {
   readSwapUsedBytes,
 } from "@sekhemet/models";
 import { type SpidrSliceKind, scoreDifficulty, stepBudgetForDifficulty } from "@sekhemet/planner";
-import { ProcessSandbox } from "@sekhemet/sandbox";
+import { confinedSandbox } from "@sekhemet/sandbox";
 import { NodeGitSyncAdapter } from "@sekhemet/sync";
 import { isAirgapped, mirrorRegistry } from "./airgap.js";
 import { withArchitectureGate } from "./architecture_gate.js";
@@ -310,7 +310,7 @@ export async function executeCard(
   const gatesConfig = loadGatesConfig(ctx.repoPath);
   // Restricted mode refuses to execute where the OS cannot confine the
   // subprocess, rather than quietly running the agent unsandboxed.
-  const sandbox = new ProcessSandbox({ requireConfinement: ctx.restrictedMode });
+  const sandbox = confinedSandbox(ctx.restrictedMode);
   // X20, X26: every verification also runs the licence register gate and
   // the commit-trailer contract on the card's branch — and refuses exports
   // the card added that nothing uses and nothing requires, which is how a
@@ -1028,10 +1028,10 @@ export async function rollupParent(
     return { status: "not_ready", children: children.length };
   }
   const gatesConfig = loadGatesConfig(ctx.repoPath);
-  const gateRunner = new DeterministicGateRunner(
-    new ProcessSandbox({ requireConfinement: ctx.restrictedMode }),
-    { repoRoot: ctx.repoPath, expectedConfigSha256: gatesConfig.sha256 },
-  );
+  const gateRunner = new DeterministicGateRunner(confinedSandbox(ctx.restrictedMode), {
+    repoRoot: ctx.repoPath,
+    expectedConfigSha256: gatesConfig.sha256,
+  });
   const rungs = [...new Set(gatesConfig.gates.filter((g) => g.blocking).map((g) => g.rung))];
   const result = await gateRunner.runGates(rungs, ctx.repoPath);
   const failures = result.failures.map(

@@ -115,6 +115,12 @@ export class EvidencePane {
     parts.push(
       `<section aria-label="Gates"><h3 class="sh">Gates <span class="sec">${esc(gatesHeadline(gates))}</span></h3>${gatesStripHtml(gates, { failures: ev.failures, config, emptyContract: ev.gatesConfigSha256 === EMPTY_SHA256, sha: ev.gatesConfigSha256 })}</section>`,
     );
+    // SEC-32: files that run outside the sandbox on the next commit or in an editor.
+    if (ev.executesLater?.length) {
+      parts.push(
+        `<section aria-label="Runs outside the sandbox later"><h3 class="sh">${icon("alert", 14, "ic s14 i-park")} Runs outside the sandbox later <span class="sec">${esc(ev.executesLater.length)}</span></h3><ul class="plain">${ev.executesLater.map((f) => `<li class="mono">${esc(f)}</li>`).join("")}</ul></section>`,
+      );
+    }
     if (detail.review) parts.push(reviewHtml(detail.review));
     if (ev.failures?.length) {
       parts.push(

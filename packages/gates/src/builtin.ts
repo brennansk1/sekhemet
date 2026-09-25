@@ -88,8 +88,9 @@ export interface BuiltinGateResult {
   advisories: string[];
 }
 
+/** SEC-35: the name travels as `$1`, never spliced into the script. */
 export function onPath(program: string): boolean {
-  const r = spawnSync("sh", ["-c", `command -v ${program}`], { encoding: "utf8" });
+  const r = spawnSync("sh", ["-c", 'command -v -- "$1"', "_", program], { encoding: "utf8" });
   return r.status === 0 && r.stdout.trim().length > 0;
 }
 

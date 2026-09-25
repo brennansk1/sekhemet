@@ -154,8 +154,8 @@ export async function runExternalReview(
     } catch {
       // No common base: review the head against the base tip.
     }
-    const diff = git(repo, "diff", `${mergeBase}..${head}`);
-    const files = git(repo, "diff", "--name-only", `${mergeBase}..${head}`)
+    const diff = git(repo, "diff", "--no-ext-diff", "--no-textconv", `${mergeBase}..${head}`);
+    const files = git(repo, "diff", "--name-only", "--no-ext-diff", `${mergeBase}..${head}`)
       .split("\n")
       .filter(Boolean);
     const gates = await (options.runGates ?? defaultGates(repo))(checkout);

@@ -9,7 +9,10 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@sekhemet/kernel": "workspace:*"
+    "@anthropic-ai/sandbox-runtime": "0.0.77",
+    "@sekhemet/kernel": "workspace:*",
+    "ipaddr.js": "2.5.0",
+    "request-filtering-agent": "3.2.1"
   },
   "devDependencies": {
     "@types/node": "^22.13.4"

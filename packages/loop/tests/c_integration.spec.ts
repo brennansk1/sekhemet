@@ -7,6 +7,7 @@ import { ExemplarStore, cardClassOf as contextCardClass } from "@sekhemet/contex
 import type { GateRunner } from "@sekhemet/gates";
 import { type CardRecord, CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import type { InferenceRequest, LocalInferenceAdapter, ToolCall } from "@sekhemet/models";
+import { ProcessSandbox } from "@sekhemet/sandbox";
 import { NodeGitSyncAdapter } from "@sekhemet/sync";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CardRunner } from "../src/card_runner.js";
@@ -442,6 +443,22 @@ describe("the runner's sync and evidence callers (Y1, Y6, E3)", () => {
     expect(r.evidence.settings).toMatchObject({ modelId: "m", toolArm: "arm_a_flat" });
     expect(r.evidence.settings.harnessCommit).toMatch(/^[0-9a-f]{12}$|^unknown$/);
     expect((r.evidence.settings as unknown as { quant: string }).quant).toBeDefined();
+    // SEC-21: the confinement the card ran under is recorded with its settings.
+    expect(r.evidence.settings.isolation).toBe(new ProcessSandbox().confinement);
+  });
+
+  it("stops with git_metadata_tampered when the worktree's .git pointer is rewritten (SEC-2)", async () => {
+    const other = mkdtempSync(join(tmpdir(), "sek-evil-"));
+    execFileSync("git", ["init", "-q"], { cwd: other });
+    const r = await run("card_sec2", "export const a = 3;\n", () => {
+      writeFileSync(
+        join(repo, ".sekhemet", "worktrees", "card_sec2", ".git"),
+        `gitdir: ${join(other, ".git")}\n`,
+      );
+    });
+    expect(r.stopReason).toBe("git_metadata_tampered");
+    expect(r.passed).toBe(false);
+    rmSync(other, { recursive: true, force: true });
   });
 
   it("rebases a passing card onto main before Verify, and stops on a conflict (Y6)", async () => {

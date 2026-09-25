@@ -117,7 +117,8 @@ export function localLicense(
     }
   }
   if (ecosystem === "pypi") {
-    const r = spawnSync("python3", ["-m", "pip", "show", dep], {
+    // -I (SEC-36): a repository's PYTHONPATH or ./pip cannot stand in for pip.
+    const r = spawnSync("python3", ["-I", "-m", "pip", "show", dep], {
       encoding: "utf8",
       timeout: 15_000,
     });
