@@ -48,16 +48,48 @@ export interface CombinationQualification extends QualificationRecord {
   combination: QualificationCombination;
   toolCallChecks?: boolean;
   speed?: { decodeTokensPerSecond: number; medianCaseMs: number };
+  /** Each check's exact (Clopper–Pearson) 95% interval over its samples (suite q1.2). */
+  intervals?: Record<string, { low: number; high: number }>;
+  /** The samples each case ran (k, suite q1.2). */
+  samples?: number;
+}
+
+/**
+ * A person's recorded decision to run a Worker whose combination failed
+ * qualification (rule 27, MD-N4-4): who, why, when, and the checks that
+ * failed. What every measurement made under it records.
+ */
+export interface WorkerOverride {
+  by: string;
+  reason: string;
+  date: string;
+  failedChecks: string[];
+}
+
+/** An override as the registry holds it: for one exact combination (rule 27a). */
+export interface QualificationOverride extends WorkerOverride {
+  key: string;
+  combination: QualificationCombination;
+  /** The date of the failed qualification it overrides. */
+  failedAt: string;
 }
 
 /** What a lookup found for a model and combination (MD-N8-1, MD-N8-4). */
 export interface QualificationLookup {
-  status: "qualified" | "failed" | "invalidated" | "missing";
+  /** `overridden`: the combination failed and a person recorded an override (MD-N4-4). */
+  status: "qualified" | "overridden" | "failed" | "invalidated" | "missing";
   /** One sentence: why the combination may or may not be used. */
   reason: string;
   /** For `invalidated`: the elements that differ from the nearest qualified combination. */
   changed?: string[];
   record?: CombinationQualification;
+  /** For `overridden`: the override that lets the failed combination run. */
+  override?: WorkerOverride;
+}
+
+/** The override's one line, as a refusal check prints it. */
+export function describeOverride(o: WorkerOverride): string {
+  return `qualified by override: ${o.by}, ${o.date.slice(0, 10)}: failed ${o.failedChecks.join(", ")}`;
 }
 
 export type ThinkingPolicy = "off" | "surgical" | "all";
@@ -115,6 +147,8 @@ export interface ModelEntry {
   speculativeByDraft?: Record<string, Partial<Record<ThinkingPolicy, SpeculativeDecision>>>;
   /** Qualifications per combination (rule 27a), newest last. */
   qualifications?: CombinationQualification[];
+  /** Persons' overrides of failed combinations (rule 27, MD-N4-4), newest last. */
+  overrides?: QualificationOverride[];
   roles?: RegistryRole[];
 }
 
@@ -267,11 +301,66 @@ export class ModelRegistry {
     if (entry.qualification) {
       entry.qualificationHistory = [...(entry.qualificationHistory ?? []), entry.qualification];
     }
-    const { key: _k, combination: _c, toolCallChecks: _t, speed: _s, ...plain } = full;
+    const {
+      key: _k,
+      combination: _c,
+      toolCallChecks: _t,
+      speed: _s,
+      intervals: _i,
+      samples: _n,
+      ...plain
+    } = full;
     entry.qualification = plain;
     this.entries.set(id, entry);
     this.save();
     return full;
+  }
+
+  /**
+   * Record a person's override of this combination's latest qualification,
+   * which must have failed (rule 27, MD-N4-4): what was not measured, or
+   * passed, cannot be overridden. The failure and the bar are left as they
+   * are; the checks under `bar` are named.
+   */
+  public recordQualificationOverride(
+    id: string,
+    combination: QualificationCombination,
+    decision: { by: string; reason: string },
+    bar: number,
+  ): WorkerOverride {
+    const entry = this.entries.get(id);
+    const key = combinationKey(combination);
+    const exact = [...(entry?.qualifications ?? [])].reverse().find((q) => q.key === key);
+    if (!entry || !exact) {
+      throw new Error(
+        `no failed qualification of ${id} for this combination (${describeCombination(combination)}): qualify it first, then override the failure`,
+      );
+    }
+    if (exact.status !== "failed") {
+      throw new Error(
+        exact.status === "qualified"
+          ? `${id} is qualified for this combination: nothing to override`
+          : `${id}'s qualification for this combination was invalidated: qualify it again first`,
+      );
+    }
+    const scores = Object.entries(exact.byCategory ?? {}).filter(([, v]) => v < bar);
+    const failedChecks =
+      scores.length > 0
+        ? scores.map(([c, v]) => `${c} ${Math.round(v * 100)}%`)
+        : [exact.reason ?? `pass rate ${Math.round(exact.passRate * 100)}%`];
+    const override: QualificationOverride = {
+      by: decision.by,
+      reason: decision.reason,
+      date: this.now().toISOString(),
+      failedChecks,
+      key,
+      combination,
+      failedAt: exact.date,
+    };
+    entry.overrides = [...(entry.overrides ?? []), override];
+    this.save();
+    const { key: _k, combination: _c, failedAt: _f, ...plain } = override;
+    return plain;
   }
 
   /**
@@ -295,6 +384,24 @@ export class ModelRegistry {
           record: exact,
         };
       }
+      // A person's override of this exact failure (MD-N4-4): the record stays
+      // failed. Only the newest failure is overridden: a later run of the same
+      // combination, passed or failed, supersedes it (review major 1).
+      const override =
+        exact.status === "failed"
+          ? [...(entry?.overrides ?? [])]
+              .reverse()
+              .find((o) => o.key === key && o.failedAt === exact.date)
+          : undefined;
+      if (override) {
+        const { key: _k, combination: _c, failedAt: _f, ...plain } = override;
+        return {
+          status: "overridden",
+          reason: describeOverride(plain),
+          record: exact,
+          override: plain,
+        };
+      }
       const invalidated = exact.status === "invalidated";
       return {
         status: invalidated ? "invalidated" : "failed",
@@ -306,6 +413,18 @@ export class ModelRegistry {
       .filter((q) => q.status === "qualified")
       .map((q) => ({ q, changed: changedCombinationElements(q.combination, combination) }))
       .sort((a, b) => a.changed.length - b.changed.length)[0];
+    // An override is invalidated by a change exactly as a qualification is (MD-N8-4).
+    const nearestOverride = (entry?.overrides ?? [])
+      .map((o) => ({ o, changed: changedCombinationElements(o.combination, combination) }))
+      .sort((a, b) => a.changed.length - b.changed.length)[0];
+    if (nearestOverride && (!nearest || nearestOverride.changed.length < nearest.changed.length)) {
+      const { o, changed } = nearestOverride;
+      return {
+        status: "invalidated",
+        reason: `${changed.join(", ")} changed since the override by ${o.by} (${describeCombination(o.combination)})`,
+        changed,
+      };
+    }
     if (nearest) {
       return {
         status: "invalidated",

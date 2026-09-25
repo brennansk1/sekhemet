@@ -1,10 +1,17 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveRunProfile, runProfileHash } from "@sekhemet/eval";
 import { ManagedLlamaServerAdapter, ModelRegistry } from "@sekhemet/models";
 import { describe, expect, it } from "vitest";
-import { buildReproRecord, quantFromFile, reproDiff, sampledDigest } from "../src/repro.js";
+import {
+  buildReproRecord,
+  llamaRuntime,
+  parseLlamaBuild,
+  quantFromFile,
+  reproDiff,
+  sampledDigest,
+} from "../src/repro.js";
 
 describe("per-attempt reproducibility record (H24)", () => {
   it("reads the quantization from a GGUF file name", () => {
@@ -142,5 +149,78 @@ describe("per-attempt reproducibility record (H24)", () => {
       runProfile: other,
     });
     expect(reproDiff(a, { ...b, recordedAt: a.recordedAt, attempt: 1 })).toContain("run profile");
+  });
+});
+
+// The live finding of 2026-09-25: qualification recorded "llama.cpp unknown
+// build" because `llama-server --version` prints to stderr, and b10809's
+// format is new. One form for every source, so a combination recorded from
+// /props matches one read later from --version.
+const B10809_VERSION = [
+  "version: 0.4.0 (build 10809, commit 5266f24da)",
+  "built with AppleClang 17.0.0.17000013 for Darwin arm64",
+].join("\n");
+
+describe("the llama.cpp build, one form from every source", () => {
+  it("parses b10809's --version, the older form and /props build_info alike", () => {
+    expect(parseLlamaBuild(B10809_VERSION)).toBe("b10809 (5266f24da)");
+    expect(parseLlamaBuild("version: 0.4.0 (build 10809, commit 5266f24da)")).toBe(
+      "b10809 (5266f24da)",
+    );
+    expect(parseLlamaBuild("version: 5266 (abc1234)\nbuilt with clang")).toBe("b5266 (abc1234)");
+    expect(parseLlamaBuild("b10809-5266f24da")).toBe("b10809 (5266f24da)");
+    expect(parseLlamaBuild("b10809 (5266f24da)")).toBe("b10809 (5266f24da)");
+    expect(parseLlamaBuild("")).toBeUndefined();
+    expect(parseLlamaBuild("error: unknown argument --version")).toBeUndefined();
+  });
+
+  it("reads a --version printed on stderr, as b10809 prints it", () => {
+    const dir = mkdtempSync(join(tmpdir(), "llama-version-"));
+    const bin = join(dir, "llama-server");
+    writeFileSync(bin, `#!/bin/sh\ncat >&2 <<'EOF'\n${B10809_VERSION}\nEOF\nexit 0\n`);
+    chmodSync(bin, 0o755);
+    expect(llamaRuntime(bin)).toBe("b10809 (5266f24da)");
+  });
+
+  it("prefers the running server's build_info in the record", () => {
+    const repo = mkdtempSync(join(tmpdir(), "repro-repo-"));
+    const model = new ManagedLlamaServerAdapter({
+      modelId: "worker",
+      modelPath: join(repo, "Worker-UD-IQ3_XXS.gguf"),
+      contextTokens: 16384,
+      registry: new ModelRegistry(join(repo, "models.json")),
+      binary: join(repo, "no-such-llama-server"),
+    });
+    const r = buildReproRecord({
+      cardId: "c",
+      attempt: 1,
+      model,
+      repoPath: repo,
+      gatesSha: "g",
+      server: { build: "b10809-5266f24da" },
+    });
+    expect(r.model.runtime).toBe("b10809 (5266f24da)");
+  });
+});
+
+describe("a Worker under a recorded override (rule 27, MD-N4-4)", () => {
+  it("says so in card/repro", () => {
+    const repo = mkdtempSync(join(tmpdir(), "repro-repo-"));
+    const model = new ManagedLlamaServerAdapter({
+      modelId: "worker",
+      modelPath: join(repo, "Worker-UD-IQ3_XXS.gguf"),
+      contextTokens: 16384,
+      registry: new ModelRegistry(join(repo, "models.json")),
+    });
+    const base = { cardId: "c", attempt: 1, model, repoPath: repo, gatesSha: "g" };
+    expect(buildReproRecord(base)).not.toHaveProperty("workerOverride");
+    const o = {
+      by: "person: Brennan Kelley",
+      reason: "accepted",
+      date: "2026-09-25T12:00:00.000Z",
+      failedChecks: ["multi_step 50%"],
+    };
+    Object.defineProperty(model, "workerOverride", { value: o, enumerable: false });
+    expect(buildReproRecord(base).workerOverride).toEqual(o);
   });
 });

@@ -201,7 +201,7 @@ const scripted = (id: string, wrong: string[] = []) => {
 
 describe("the qualification suite includes tool calls, a multi-step conversation and recall (rule 27a)", () => {
   it("has the categories rule 27a names, deterministically scored", async () => {
-    expect(QUALIFICATION_SUITE_VERSION).toBe("q1.1");
+    expect(QUALIFICATION_SUITE_VERSION).toBe("q1.2");
     const categories = new Set(QUALIFICATION_CASES.map((c) => c.category));
     expect(categories).toContain("multi_step");
     expect(categories).toContain("recall");
@@ -241,6 +241,20 @@ describe("qualifyModel records the combination (MD-N8-1) and disables speculatio
     expect(look.status).toBe("qualified");
     expect(look.record?.speed?.decodeTokensPerSecond).toBe(100);
     expect(look.record?.toolCallChecks).toBe(true);
+  });
+
+  it("keeps each check's exact interval and the samples it ran (q1.2)", async () => {
+    const path = join(tmp(), "models.json");
+    const reg = new ModelRegistry(path);
+    const { best } = await qualifyModel(scripted("w"), {
+      registry: reg,
+      arms: ["arm_a_flat"],
+      combination: combo(),
+    });
+    const record = new ModelRegistry(path).lookupQualification("w", combo()).record;
+    expect(record?.samples).toBe(best.samples);
+    expect(record?.intervals).toEqual(best.intervals);
+    expect(record?.intervals?.multi_step?.high).toBeLessThanOrEqual(1);
   });
 
   it("with speculation on, a failed tool-call check fails the combination and turns speculation off, saying why", async () => {

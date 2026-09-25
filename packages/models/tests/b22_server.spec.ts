@@ -137,7 +137,7 @@ describe("MD-M7: MTP is off until measured on this host, per thinking policy", (
     expect(a.launchArgs()).not.toContain("--spec-type");
   });
 
-  it("launches with MTP and two draft tokens when this host and policy measured a gain", () => {
+  it("launches with MTP and the model card's draft settings when this host and policy measured a gain", () => {
     const reg = new ModelRegistry(join(tmp(), "models.json"));
     reg.recordSpeculative("w", decision(true, "off"));
     const a = new ManagedLlamaServerAdapter({
@@ -148,7 +148,9 @@ describe("MD-M7: MTP is off until measured on this host, per thinking policy", (
     });
     qualifyMtp(reg, a);
     expect(flag(a.launchArgs(), "--spec-type")).toBe("draft-mtp");
-    expect(flag(a.launchArgs(), "--spec-draft-n-max")).toBe("2");
+    // The model card's own sweep: one draft token at p-min 0.0 is its peak (DEC-42 addendum).
+    expect(flag(a.launchArgs(), "--spec-draft-n-max")).toBe("1");
+    expect(flag(a.launchArgs(), "--spec-draft-p-min")).toBe("0.0");
   });
 
   it("keeps MTP off on a speed decision alone, without a qualification with MTP and prefix caching on (MD-N8-2)", () => {

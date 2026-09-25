@@ -8,6 +8,7 @@ import {
   MockInferenceAdapter,
   ModelRegistry,
   QUALIFICATION_CASES,
+  QUALIFICATION_SAMPLES,
   appendBakeOffRecord,
   bakeOffRecord,
   candidateSettings,
@@ -110,7 +111,8 @@ function idealModel(): MockInferenceAdapter {
 describe("M22: qualification suite with deterministic scoring", () => {
   it("scores a perfect model 1.0 across every category", async () => {
     const r = await runQualification(idealModel());
-    expect(r.cases).toHaveLength(QUALIFICATION_CASES.length);
+    // q1.2: every case runs QUALIFICATION_SAMPLES times.
+    expect(r.cases).toHaveLength(QUALIFICATION_CASES.length * QUALIFICATION_SAMPLES);
     expect(r.cases.filter((c) => !c.passed)).toEqual([]);
     expect(r.passRate).toBe(1);
     expect(r.byCategory).toEqual({

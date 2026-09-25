@@ -1,5 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -13,16 +15,21 @@ import {
   MockInferenceAdapter,
   ModelRegistry,
   QUALIFICATION_SUITE_VERSION,
+  candidateSettings,
+  createCyberTielWorker,
 } from "@sekhemet/models";
 import { afterEach, describe, expect, it } from "vitest";
 import { speculativeProbes } from "../src/calibrate_cmd.js";
 import {
   type CombinationDeps,
+  applyWorkerOverride,
   copyText,
+  gateWorker,
   qualificationCombination,
   qualificationRefusal,
   speculativeProbe,
   workerContextVersion,
+  workerOverrideFor,
 } from "../src/qualify.js";
 import { type Kernel, queuePrelude, runWave2Command } from "../src/wave2.js";
 
@@ -249,5 +256,274 @@ describe("sekhemet qualify records the combination (MD-N8-1)", () => {
     expect(look.record?.suiteVersion).toBe(QUALIFICATION_SUITE_VERSION);
     expect(await runWave2Command("qualify", ["--check", "--models", "silent"], k, io)).toBe(1);
     expect(out.at(-1)).toMatch(/failed/);
+  });
+});
+
+// The live finding of 2026-09-25: the engine build comes from the running
+// server's own report when the adapter has read it, in the same form as
+// `llama-server --version` gives, so the two sources key one combination.
+describe("the engine build in the combination", () => {
+  it("prefers the build the running server reported on /props, in --version's form", async () => {
+    const server = createServer((req, res) => {
+      res.writeHead(req.url === "/props" ? 200 : 404, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          model_path: "/models/cyber.gguf",
+          build_info: "b10809-5266f24da",
+          default_generation_settings: { n_ctx: 16_384 },
+        }),
+      );
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    try {
+      const port = (server.address() as AddressInfo).port;
+      const reg = new ModelRegistry(join(tmp(), "models.json"));
+      const a = managed(reg, { port });
+      expect(qualificationCombination(a, deps).engine).toBe("llama.cpp b7000 (abc1234)");
+      expect((await a.serverProps())?.build).toBe("b10809-5266f24da");
+      expect(qualificationCombination(a, deps).engine).toBe("llama.cpp b10809 (5266f24da)");
+    } finally {
+      await new Promise<void>((r) => server.close(() => r()));
+    }
+  });
+});
+
+// The owner's decision of 2026-09-25 (models rule 27, MD-N4-4): Cyber-Tiel
+// failed one check (multi_step 50%) and a person records an override for the
+// exact combination that failed. The failure and the bar stay as they are.
+describe("sekhemet qualify --override (rule 27, MD-N4-4)", () => {
+  function kernel(): Kernel {
+    const repoPath = tmp();
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repoPath });
+    const db = new DatabaseSync(":memory:");
+    initSchema(db);
+    const log = new EventLog(db);
+    return { repoPath, log, cardStore: new CardStore(db, log) };
+  }
+  const setup = () => {
+    const k = kernel();
+    process.env.SEKHEMET_MODEL_REGISTRY = join(k.repoPath, "models.json");
+    const out: string[] = [];
+    const io = {
+      print: (l: string) => out.push(l),
+      model: (n: string) => new MockInferenceAdapter(n, [], { exhaustion: "default" as const }),
+      combinationDeps: deps,
+    };
+    return { k, out, io };
+  };
+  const override = (by: string) => [
+    "--override",
+    "silent",
+    "--by",
+    by,
+    "--reason",
+    "re-reads the file instead of editing; accepted for the frozen suite",
+  ];
+
+  it("refuses to override what was not measured on this combination", async () => {
+    const { k, out, io } = setup();
+    expect(await runWave2Command("qualify", override("person: Brennan Kelley"), k, io)).toBe(1);
+    expect(out.at(-1)).toMatch(/no failed qualification of silent for this combination/);
+    expect(await k.log.getEventsByTypes(["models/override"])).toHaveLength(0);
+  });
+
+  it("refuses a labeller that is a model, or none", async () => {
+    const { k, out, io } = setup();
+    await runWave2Command("qualify", ["--models", "silent"], k, io);
+    for (const by of ["claude-opus-5-5", "person: cyber-tiel", "silent"]) {
+      expect(await runWave2Command("qualify", override(by), k, io)).toBe(1);
+      expect(out.at(-1)).toMatch(/names a model, not a person/);
+    }
+    expect(await runWave2Command("qualify", ["--override", "silent", "--reason", "x"], k, io)).toBe(
+      1,
+    );
+    expect(out.at(-1)).toMatch(/Usage: sekhemet qualify --override/);
+    expect(await k.log.getEventsByTypes(["models/override"])).toHaveLength(0);
+  });
+
+  it("records the override for the exact failed combination; the check then accepts it and still shows the failure", async () => {
+    const { k, out, io } = setup();
+    await runWave2Command("qualify", ["--models", "silent"], k, io);
+    expect(await runWave2Command("qualify", override("person: Brennan Kelley"), k, io)).toBe(0);
+    const [event] = await k.log.getEventsByTypes(["models/override"]);
+    const combination = qualificationCombination(io.model("silent"), deps);
+    expect(event?.payload).toMatchObject({
+      worker: "silent",
+      by: "person: Brennan Kelley",
+      reason: "re-reads the file instead of editing; accepted for the frozen suite",
+      combination,
+    });
+    const failedChecks = (event?.payload as { failedChecks: string[] }).failedChecks;
+    expect(failedChecks.length).toBeGreaterThan(0);
+
+    const reg = new ModelRegistry(process.env.SEKHEMET_MODEL_REGISTRY);
+    const a = io.model("silent");
+    expect(qualificationRefusal(reg, a, combination, "silent")).toBeUndefined();
+    expect(reg.lookupQualification("silent", combination).record?.status).toBe("failed");
+    const o = workerOverrideFor(reg, a, combination);
+    expect(o).toMatchObject({ by: "person: Brennan Kelley", failedChecks });
+
+    expect(await runWave2Command("qualify", ["--check", "--models", "silent"], k, io)).toBe(0);
+    const line = out.at(-1) as string;
+    expect(line).toContain(
+      `qualified by override: person: Brennan Kelley, ${o?.date.slice(0, 10)}: failed ${failedChecks.join(", ")}`,
+    );
+    expect(line).toMatch(/the qualification itself failed/);
+
+    // Any change to the combination invalidates it, naming the element.
+    // (A scripted adapter has no engine build, so the host stands in for it.)
+    const changed = { ...deps, host: () => "host-b" };
+    const why = qualificationRefusal(reg, a, qualificationCombination(a, changed), "silent");
+    expect(why).toMatch(/invalidated .*host changed since the override by person: Brennan Kelley/);
+  });
+
+  it("stores a bare name as a person, as asset labels are (review low 6)", async () => {
+    const { k, io } = setup();
+    await runWave2Command("qualify", ["--models", "silent"], k, io);
+    expect(await runWave2Command("qualify", override("Brennan Kelley"), k, io)).toBe(0);
+    const [event] = await k.log.getEventsByTypes(["models/override"]);
+    expect((event?.payload as { by: string }).by).toBe("person: Brennan Kelley");
+    const reg = new ModelRegistry(process.env.SEKHEMET_MODEL_REGISTRY);
+    const a = io.model("silent");
+    expect(workerOverrideFor(reg, a, qualificationCombination(a, deps))?.by).toBe(
+      "person: Brennan Kelley",
+    );
+  });
+
+  it("--check --json reports each model's state and override in one structured shape (review medium 3)", async () => {
+    const { k, out, io } = setup();
+    const json = async () => {
+      const code = await runWave2Command(
+        "qualify",
+        ["--check", "--json", "--models", "silent"],
+        k,
+        io,
+      );
+      return { code, rows: JSON.parse(out.at(-1) as string) as Record<string, unknown>[] };
+    };
+    let r = await json();
+    expect(r.code).toBe(1);
+    expect(r.rows).toEqual([
+      expect.objectContaining({
+        model: "silent",
+        modelId: "silent",
+        status: "missing",
+        runnable: false,
+      }),
+    ]);
+    await runWave2Command("qualify", ["--models", "silent"], k, io);
+    await runWave2Command("qualify", override("person: Brennan Kelley"), k, io);
+    r = await json();
+    expect(r.code).toBe(0);
+    const reg = new ModelRegistry(process.env.SEKHEMET_MODEL_REGISTRY);
+    const a = io.model("silent");
+    const o = workerOverrideFor(reg, a, qualificationCombination(a, deps));
+    expect(r.rows).toEqual([
+      expect.objectContaining({
+        model: "silent",
+        status: "overridden",
+        runnable: true,
+        workerOverride: o,
+        failure: expect.any(String),
+      }),
+    ]);
+    // Exactly the WorkerOverride shape the evidence and card/repro carry.
+    expect(Object.keys(r.rows[0]?.workerOverride as object).sort()).toEqual([
+      "by",
+      "date",
+      "failedChecks",
+      "reason",
+    ]);
+  });
+});
+
+describe("one gate for every path that runs the Worker (review medium 2)", () => {
+  const o = {
+    by: "person: Brennan Kelley",
+    reason: "accepted",
+    failedChecks: ["multi_step 50%"],
+  };
+  const failedRecord = {
+    suiteVersion: "v1",
+    passRate: 0.967,
+    status: "failed" as const,
+    byCategory: { multi_step: 0.5 },
+  };
+
+  it("refuses an unqualified Worker and marks nothing", () => {
+    const reg = new ModelRegistry(join(tmp(), "models.json"));
+    const a = managed(reg);
+    const g = gateWorker(reg, a, "cyber-tiel", deps);
+    expect(g.refusal).toMatch(/Refusing cyber-tiel-mtp as the Worker: not qualified/);
+    expect(g.override).toBeUndefined();
+    expect(candidateSettings(a)).not.toHaveProperty("workerOverride");
+  });
+
+  it("lets an overridden Worker run, marked, so its evidence says so", () => {
+    const reg = new ModelRegistry(join(tmp(), "models.json"));
+    const a = managed(reg);
+    const combination = qualificationCombination(a, deps);
+    reg.recordCombinationQualification(a.modelId, combination, failedRecord);
+    reg.recordQualificationOverride(a.modelId, combination, o, 0.9);
+    const g = gateWorker(reg, a, "cyber-tiel", deps);
+    expect(g.refusal).toBeUndefined();
+    expect(g.override).toMatchObject(o);
+    expect(candidateSettings(a).workerOverride).toEqual(g.override);
+    // The queue marks the adapter its router builds with the probe's override.
+    const worker = managed(reg);
+    applyWorkerOverride(worker, g.override as NonNullable<typeof g.override>);
+    expect(candidateSettings(worker).workerOverride).toEqual(g.override);
+  });
+
+  it("passes a qualified Worker unmarked", () => {
+    const reg = new ModelRegistry(join(tmp(), "models.json"));
+    const a = managed(reg);
+    const combination = qualificationCombination(a, deps);
+    reg.recordCombinationQualification(a.modelId, combination, {
+      ...failedRecord,
+      status: "qualified",
+    });
+    const g = gateWorker(reg, a, "cyber-tiel", deps);
+    expect(g.refusal).toBeUndefined();
+    expect(g.override).toBeUndefined();
+    expect(candidateSettings(a)).not.toHaveProperty("workerOverride");
+  });
+});
+
+describe("the adapter mark", () => {
+  it("marks the Worker adapter, so every evidence bundle's settings carry it", () => {
+    const reg = new ModelRegistry(join(tmp(), "models.json"));
+    const a = managed(reg);
+    const o = {
+      by: "person: Brennan Kelley",
+      reason: "accepted",
+      date: "2026-09-25T12:00:00.000Z",
+      failedChecks: ["multi_step 50%"],
+    };
+    applyWorkerOverride(a, o);
+    expect(a).toBeInstanceOf(ManagedLlamaServerAdapter);
+    expect(candidateSettings(a).workerOverride).toEqual(o);
+    // Not part of the adapter's serialised form or its launch.
+    expect(Object.keys(a)).not.toContain("workerOverride");
+  });
+});
+
+// Suite q1.2: the Worker qualifies at the sampling it runs cards at, and the
+// sampling is part of the combination, so run, queue and the override
+// compute the combination a q1.2 run records.
+describe("the combination carries the role's sampling (q1.2)", () => {
+  it("includes the Worker's card-model sampling", () => {
+    const worker = createCyberTielWorker("/models/cyber.gguf");
+    expect(qualificationCombination(worker, deps).settings.sampling).toEqual({
+      temperature: 0.6,
+      topP: 0.95,
+      topK: 20,
+      minP: 0,
+    });
+  });
+
+  it("leaves it out for an adapter that does not say", () => {
+    const a = new MockInferenceAdapter("m", []);
+    expect(qualificationCombination(a, deps).settings).not.toHaveProperty("sampling");
   });
 });

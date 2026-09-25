@@ -67,15 +67,25 @@ const workerName = worker.replace(/^ollama\//, "");
 function requireQualified(name) {
   const r = spawnSync(
     process.execPath,
-    [join(ROOT, "apps/harness/dist/index.js"), "qualify", "--check", "--models", name],
+    [join(ROOT, "apps/harness/dist/index.js"), "qualify", "--check", "--json", "--models", name],
     { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
   );
-  if (r.status !== 0) {
-    console.error(`${(r.stdout || r.stderr || "").trim()}\nNo card was run.`);
+  let row;
+  try {
+    row = JSON.parse(r.stdout ?? "")[0];
+  } catch {
+    row = undefined;
+  }
+  if (r.status !== 0 || !row?.runnable) {
+    console.error(`${row?.reason ?? (r.stdout || r.stderr || "").trim()}\nNo card was run.`);
     process.exit(1);
   }
+  // Models rule 27, MD-N4-4: a Worker running under a person's override says
+  // so, in the same WorkerOverride shape the evidence and card/repro carry.
+  if (row.workerOverride) console.log(`Worker ${name}: ${row.reason} (failed: ${row.failure})`);
+  return row.workerOverride;
 }
-requireQualified(worker);
+const checkedOverride = requireQualified(worker);
 
 const out = arg("out", join(ROOT, ".sekhemet", "suite-runs", `run-${Date.now()}.json`));
 // The run's repositories hold each step's recorded prompt (kernel rule 17),
@@ -316,11 +326,16 @@ result.modelLoads = runner.modelLoads();
  */
 const expected = runProfileHash({ ...runProfile, settingsFile: undefined });
 const mismatched = [];
+/** The person's override each card's Worker ran under, from its card/repro (MD-N4-4). */
+const overrides = new Map();
 for (const [fixture, repo] of repos) {
   for (const { id } of cardsFor(fixture, perFixture.get(fixture))) {
     const file = join(repo, ".sekhemet", "evidence", `latest-${id}.json`);
     if (!existsSync(file)) continue;
-    const recorded = JSON.parse(readFileSync(file, "utf8")).reproducibility?.runProfile;
+    const repro = JSON.parse(readFileSync(file, "utf8")).reproducibility;
+    if (repro?.workerOverride)
+      overrides.set(JSON.stringify(repro.workerOverride), repro.workerOverride);
+    const recorded = repro?.runProfile;
     if (recorded && runProfileHash({ ...recorded, settingsFile: undefined }) !== expected) {
       mismatched.push(`${fixture}/${id}`);
     }
@@ -332,10 +347,22 @@ if (mismatched.length) {
   );
 }
 
+/**
+ * Every measurement made under a person's override says so (models rule 27,
+ * MD-N4-4): the override the cards' evidence recorded, else the one the
+ * qualification check reported, in the same shape.
+ */
+function workerOverrideField() {
+  const recorded = [...overrides.values()];
+  if (recorded.length === 1) return { workerOverride: recorded[0] };
+  if (recorded.length > 1) return { workerOverride: recorded[0], workerOverrides: recorded };
+  return checkedOverride ? { workerOverride: checkedOverride } : {};
+}
+
 mkdirSync(dirname(out), { recursive: true });
 writeFileSync(
   out,
-  `${JSON.stringify({ ...result, worker, tasksRun: tasks.length, runProfile: { ...runProfile, hash: runProfileHash(runProfile) }, mode: independent ? "independent" : "sequential", ...(abEntry ? { abEntry } : {}), ...(mismatched.length ? { profileMismatch: mismatched } : {}) }, null, 2)}\n`,
+  `${JSON.stringify({ ...result, worker, tasksRun: tasks.length, runProfile: { ...runProfile, hash: runProfileHash(runProfile) }, mode: independent ? "independent" : "sequential", ...(abEntry ? { abEntry } : {}), ...(mismatched.length ? { profileMismatch: mismatched } : {}), ...workerOverrideField() }, null, 2)}\n`,
 );
 console.log(`\n${summarise(result)}`);
 /**

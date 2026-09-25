@@ -448,8 +448,10 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
       ...(p.metrics ? ["--metrics"] : []),
       ...(p.webui === false ? ["--no-webui"] : []),
       ...(p.reasoning ? ["--reasoning", p.reasoning] : []),
-      // Two draft tokens: the measured sweet spot for a grafted head (MD-M7-2).
-      ...(this.mtpEnabled() ? ["--spec-type", "draft-mtp", "--spec-draft-n-max", "2"] : []),
+      // One draft token at p-min 0.0: the model card's own sweep puts its peak there (MD-M7-2, DEC-42).
+      ...(this.mtpEnabled()
+        ? ["--spec-type", "draft-mtp", "--spec-draft-n-max", "1", "--spec-draft-p-min", "0.0"]
+        : []),
       // A draft model (MD-N8-5), all its layers on the GPU like the main model's.
       ...(this.draftEnabled() && p.draftModelPath
         ? [
@@ -537,6 +539,23 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
    * and the build. Undefined fields are ones the server did not report.
    */
   public async serverProps(): Promise<ServerProps | undefined> {
+    const props = await this.readServerProps();
+    if (props?.build !== undefined) this.lastReportedBuild = props.build;
+    return props;
+  }
+
+  /**
+   * The build the running server last reported on `/props` (`build_info`),
+   * for a record that prefers the engine's own word to `llama-server
+   * --version`; undefined until `serverProps()` has read one.
+   */
+  public get reportedBuild(): string | undefined {
+    return this.lastReportedBuild;
+  }
+
+  private lastReportedBuild: string | undefined;
+
+  private async readServerProps(): Promise<ServerProps | undefined> {
     try {
       const res = await fetch(`${this.url}/props`, { signal: AbortSignal.timeout(5000) });
       if (!res.ok) return undefined;

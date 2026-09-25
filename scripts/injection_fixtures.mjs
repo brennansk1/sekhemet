@@ -69,13 +69,23 @@ const listen = (handler) =>
 function requireQualified(name) {
   const r = spawnSync(
     process.execPath,
-    [join(ROOT, "apps/harness/dist/index.js"), "qualify", "--check", "--models", name],
+    [join(ROOT, "apps/harness/dist/index.js"), "qualify", "--check", "--json", "--models", name],
     { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
   );
-  if (r.status !== 0) {
-    console.error(`${(r.stdout || r.stderr || "").trim()}\nNo card was run.`);
+  let row;
+  try {
+    row = JSON.parse(r.stdout ?? "")[0];
+  } catch {
+    row = undefined;
+  }
+  if (r.status !== 0 || !row?.runnable) {
+    console.error(`${row?.reason ?? (r.stdout || r.stderr || "").trim()}\nNo card was run.`);
     process.exit(1);
   }
+  // Models rule 27, MD-N4-4: a Worker running under a person's override says
+  // so, in the same WorkerOverride shape the evidence and card/repro carry.
+  if (row.workerOverride) console.log(`Worker ${name}: ${row.reason} (failed: ${row.failure})`);
+  return row.workerOverride;
 }
 requireQualified(worker);
 

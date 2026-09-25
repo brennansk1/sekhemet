@@ -37,7 +37,9 @@ import {
   PrefixCacheMonitor,
   ThroughputMeter,
   type UnloadableAdapter,
+  type WorkerOverride,
   defaultRegistryPath,
+  describeOverride,
   measureThroughput,
   resolveWorkerModelId,
 } from "@sekhemet/models";
@@ -98,7 +100,7 @@ import { runOvernight } from "./overnight.js";
 import { DEFAULT_PM_MODEL, answerQueued, createPmAdapter, holdRunnerLease } from "./pm/service.js";
 import { PmStore } from "./pm/store.js";
 import { runPromptScreen } from "./prompt_screen_cmd.js";
-import { qualificationCombination, qualificationRefusal } from "./qualify.js";
+import { applyWorkerOverride, gateWorker } from "./qualify.js";
 import { diffTrajectories, formatDiff, formatTrajectory, trajectories } from "./replay.js";
 import { isResearchCard, runResearchCard } from "./research/cards.js";
 import { CRAWL4AI_CREDIT, runResearchCommand } from "./research/cli.js";
@@ -1082,8 +1084,18 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         cardStore,
         boardService,
       };
+      // The same gate as run and queue (review medium 2): refused unless its
+      // combination qualified, marked when it runs under a person's override.
+      const registry = modelRegistry();
+      const adapter = new ModelRoster({ registry }).resolve(as, "worker");
+      const gate = gateWorker(registry, adapter, as);
+      if (gate.refusal) {
+        console.error(gate.refusal);
+        process.exit(1);
+      }
+      if (gate.override)
+        console.log(`Worker ${adapter.modelId}: ${describeOverride(gate.override)}`);
       await forkCard(replayCtx, cardId, 0);
-      const adapter = new ModelRoster().resolve(as, "worker");
       console.log(`Replaying ${cardId} from the start on ${as}...`);
       try {
         await executeCard(replayCtx, (await cardStore.getCard(cardId)) ?? card, adapter);
@@ -1158,7 +1170,16 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     writeFileSync(out, `${JSON.stringify({ fixture, manager, rows }, null, 2)}\n`);
     console.log(`\nReport: ${out}`);
     // Full-settings records and MODEL_MATRIX.md (M23, E4).
-    const bakeRoster = new ModelRoster({ registry: modelRegistry() });
+    const bakeRegistry = modelRegistry();
+    const bakeRoster = new ModelRoster({ registry: bakeRegistry });
+    // Each record's settings as the run had them: a Worker under a person's
+    // override is marked, so its record says so (review medium 2). The suite
+    // runner already refused an unqualified one.
+    const bakeAdapter = (worker: string) => {
+      const adapter = bakeRoster.resolve(worker, "worker");
+      gateWorker(bakeRegistry, adapter, worker);
+      return adapter;
+    };
     const recorded = await recordBakeOff(
       config.repoPath,
       fixture,
@@ -1167,7 +1188,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         .map((r) => {
           const res = r.result as SuiteRunResult;
           return {
-            adapter: bakeRoster.resolve(r.worker, "worker"),
+            adapter: bakeAdapter(r.worker),
             passed: res.firstTry,
             total: runScore(res).measured,
             minutes: res.cost.wallClockSeconds / 60,
@@ -1261,17 +1282,15 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     console.log(`Worker: ${model.modelId}`);
     // MD-N8-1: the Worker runs cards only once its exact combination (engine,
     // model build, host, settings) has qualified on this host. Nothing loads.
-    const refusal = qualificationRefusal(
-      registry,
-      model,
-      qualificationCombination(model, { registry }),
-      workerName ?? model.modelId,
-    );
-    if (refusal) {
-      console.error(refusal);
+    // Rule 27, MD-N4-4: a person's override runs the failed combination, and
+    // every bundle and card/repro of this run says so (the adapter is marked).
+    const gate = gateWorker(registry, model, workerName ?? model.modelId);
+    if (gate.refusal) {
+      console.error(gate.refusal);
       process.exitCode = 1;
       return;
     }
+    if (gate.override) console.log(`Worker ${model.modelId}: ${describeOverride(gate.override)}`);
     const ctx = {
       repoPath: config.repoPath,
       restrictedMode: config.restrictedMode,
@@ -1397,22 +1416,21 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     // Planning before the pass (wave2.ts): decision deadlines, the seven
     // signals, ceremonies, goals, the throughput floor, and WSJF/RICE order.
     let ready: CardRecord[];
+    // Rule 27, MD-N4-4: the person's override the Worker runs under, if any.
+    let workerOverride: WorkerOverride | undefined;
     try {
       // MD-N8-1: the Worker's combination must have qualified on this host;
       // resolving it builds the adapter without starting a server.
       const workerName = workerModel ?? NAIL_WORKER_PROFILE.modelId;
       const registry = modelRegistry();
       const workerProbe = new ModelRoster({ registry }).resolve(workerName, "worker");
+      const gate = gateWorker(registry, workerProbe, workerName);
+      workerOverride = gate.override;
       ({ ordered: ready } = await queuePrelude(
         { repoPath: config.repoPath, cardStore, log },
         readyRaw,
         {
-          workerRefusal: qualificationRefusal(
-            registry,
-            workerProbe,
-            qualificationCombination(workerProbe, { registry }),
-            workerName,
-          ),
+          workerRefusal: gate.refusal,
           workerModelId: workerModel ?? NAIL_WORKER_PROFILE.modelId,
           reviewWip: (await boardService.getBoardState()).wipLimits.review,
         },
@@ -1423,6 +1441,11 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       console.error(err instanceof Error ? err.message : String(err));
       process.exitCode = 1;
       return;
+    }
+    if (workerOverride) {
+      console.log(
+        `Worker ${workerModel ?? NAIL_WORKER_PROFILE.modelId}: ${describeOverride(workerOverride)}`,
+      );
     }
     // Retention (K27): packs and transcripts of cards closed 30+ days ago.
     const pruned = await pruneRunData(cardStore, config.repoPath).catch(() => undefined);
@@ -1456,9 +1479,14 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         }
         return adapter;
       };
+    const workerFactory = roster.factory(workerModel ?? NAIL_WORKER_PROFILE.modelId, "worker");
     const router = new ModelRouter(
       {
-        worker: track(roster.factory(workerModel ?? NAIL_WORKER_PROFILE.modelId, "worker"), true),
+        worker: track(() => {
+          const worker = workerFactory();
+          // Every bundle and card/repro made under a person's override says so.
+          return workerOverride ? applyWorkerOverride(worker, workerOverride) : worker;
+        }, true),
         // The manager doubles as the PM you chat with during the run; without
         // --manager it is still available for chat, just not for repair plans.
         manager: track(roster.factory(pmModelName, "manager")),

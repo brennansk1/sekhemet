@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 30 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 31 first.*
 
 1. **Where we are:** Phase B: B0 done; B1 built, its Tier 3 injection run owed; B2.1–B2.3 done; B2.2 and B2.4 done except their model runs; B2.5's arms built, the baseline not run (Entry 30). **Next is model-bound:** qualify the Worker, the injection run, the MTP A/B, the prompt screen, then B2.5 overnight. Loads are allowed under DEC-42's memory conditions; the owner's own Hermes server on port 8080 must be stopped first. Waiting on a person: confirming the golden briefs and held-out drafts.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,23 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 31 — 2026-09-25 (the Worker qualified by override; qualification at the Worker's own sampling)
+
+- **First live model window (DEC-42 conditions met):**
+  - `/props` verified against b10809. `speculative` is absent, so the MTP state can't be read from it.
+  - Cyber-Tiel **failed qualification** (q1.1, greedy): multi_step 50%. It re-reads a just-shown file instead of editing it; repeatable, and a probe confirmed it sees the tool result. The six other checks passed at 100%.
+- **Owner decision:** record an override. It is built (rule 27a / NEW-models-10): exact combination and newest failure only, `person:` labeller, and every evidence bundle and suite result carries `workerOverride`.
+- **Owner asked to check the model card:**
+  - The Worker's sampling already matched it (0.6 / 0.95 / 20 / 0).
+  - Qualification had run greedy, so it now runs at the role's own sampling, 5 samples per case, with exact intervals and sampling in the key (q1.2).
+  - MTP drafts now use the card's `--spec-draft-n-max 1 --spec-draft-p-min 0.0` (DEC-42 addendum).
+- **Engine build:** now read from `--version` on stderr and `/props`.
+- **Consequence:** the recorded override (keyed without sampling) no longer matches. The Worker is refused until re-qualified at q1.2; if the same check fails, the owner's override is re-recorded on the new combination.
+- **Owner direction:** proceed with B3 in parallel. The baseline runs from a frozen snapshot, and B3.1 has started on two tracks.
+- **Owner direction:** cut token cost: fresh helpers per workstream, one review, short briefs, a fresh lead session per workstream.
+- **Review:** one narrow review; ready.
+- **Where the cards stop:** gate 247 files, 1,910 tests (1 skipped), tsc and Biome clean. Next: the injection run finishes; re-qualify at q1.2; the prompt screen; then the B2.5 suite overnight. B3.1 is in progress (not in this commit).
 
 ### Entry 30 — 2026-09-25 (B2.4 done except its model runs; B2.5's arms built; DEC-42)
 

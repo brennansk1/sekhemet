@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { arch, platform, totalmem } from "node:os";
@@ -10,6 +10,7 @@ import {
   type LocalInferenceAdapter,
   ManagedLlamaServerAdapter,
   type ServerProps,
+  type WorkerOverride,
   harnessProvenance,
 } from "@sekhemet/models";
 
@@ -64,6 +65,8 @@ export interface ReproRecord {
   runProfile?: RunProfile & { hash: string };
   /** The measured run that prepared the repository, whose `--auto-accept` merged the card (review M5). */
   measurement?: { purpose: string; by: string; createdAt: string };
+  /** The person's override the Worker ran under (models rule 27, MD-N4-4). */
+  workerOverride?: WorkerOverride;
 }
 
 export interface EngineSettings {
@@ -126,24 +129,42 @@ export function sampledDigest(file: string): string | undefined {
   }
 }
 
-let runtimeCache: string | undefined;
-/** The llama.cpp build (`llama-server --version`, which loads no model); cached. */
+/**
+ * A llama.cpp build in one form, `b<build> (<commit>)`, from any source:
+ * `llama-server --version` as b10809 prints it ("version: 0.4.0 (build
+ * 10809, commit 5266f24da)"), the older "version: 5266 (abc1234)", or
+ * `/props` `build_info` ("b10809-5266f24da"). One form, so a combination
+ * recorded from the server matches one read later from the binary.
+ */
+export function parseLlamaBuild(text: string): string | undefined {
+  const modern = /\(build (\d+), commit ([0-9a-f]+)\)/i.exec(text);
+  if (modern) return `b${modern[1]} (${modern[2]})`;
+  const older = /version:\s*(\d+) \(([0-9a-f]+)\)/i.exec(text);
+  if (older) return `b${older[1]} (${older[2]})`;
+  const info = /^\s*b(\d+)(?:-| \()([0-9a-f]+)\)?\s*$/i.exec(text);
+  if (info) return `b${info[1]} (${info[2]})`;
+  // A version line in a form not seen yet: kept as the binary gave it.
+  return /version:\s*(.+)/.exec(text)?.[1]?.trim() || undefined;
+}
+
+const runtimeCache = new Map<string, string>();
+/**
+ * The llama.cpp build (`llama-server --version`, which loads no model),
+ * cached per binary. b10809 prints it on stderr, so both streams are read.
+ */
 export function llamaRuntime(
   binary = process.env.SEKHEMET_LLAMA_SERVER ?? "llama-server",
 ): string | undefined {
-  if (runtimeCache !== undefined) return runtimeCache || undefined;
-  try {
-    const out = execFileSync(binary, ["--version"], {
-      encoding: "utf8",
-      timeout: 5000,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    runtimeCache = /version:\s*(\S+ \([^)]+\))/.exec(out)?.[1] ?? out.split("\n")[0]?.trim() ?? "";
-  } catch (err) {
-    const text = String((err as { stderr?: string }).stderr ?? "");
-    runtimeCache = /version:\s*(\S+ \([^)]+\))/.exec(text)?.[1] ?? "";
-  }
-  return runtimeCache || undefined;
+  const cached = runtimeCache.get(binary);
+  if (cached !== undefined) return cached || undefined;
+  const r = spawnSync(binary, ["--version"], {
+    encoding: "utf8",
+    timeout: 5000,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const build = r.error ? undefined : parseLlamaBuild(`${r.stdout ?? ""}\n${r.stderr ?? ""}`);
+  runtimeCache.set(binary, build ?? "");
+  return build;
 }
 
 function harnessCommit(): {
@@ -169,6 +190,12 @@ function harnessCommit(): {
     version,
     distSha: p.distSha,
   };
+}
+
+/** The llama-server binary a managed adapter launches, when it names one. */
+function binaryOf(model: LocalInferenceAdapter): string | undefined {
+  const p = (model as { profile?: { binary?: unknown } }).profile?.binary;
+  return typeof p === "string" ? p : undefined;
 }
 
 /** The model file behind an adapter, when it is a managed llama-server model. */
@@ -205,7 +232,10 @@ export function buildReproRecord(input: {
   ) as { quant?: string; template?: { checksum?: string } } | undefined;
   // The header's quantisation (recorded at launch), else the file name's.
   const quant = entry?.quant ?? (file ? quantFromFile(file) : undefined);
-  const runtime = file ? llamaRuntime() : undefined;
+  // The running server's own report first (its build_info), else the binary's.
+  const reported = input.server?.build ? parseLlamaBuild(input.server.build) : undefined;
+  const runtime = file ? (reported ?? llamaRuntime(binaryOf(input.model))) : undefined;
+  const workerOverride = (input.model as { workerOverride?: WorkerOverride }).workerOverride;
   return {
     schema: 1,
     cardId: input.cardId,
@@ -238,6 +268,8 @@ export function buildReproRecord(input: {
       ? { runProfile: { ...input.runProfile, hash: runProfileHash(input.runProfile) } }
       : {}),
     ...(input.measurement ? { measurement: input.measurement } : {}),
+    // Rule 27, MD-N4-4: a Worker running under a person's override says so.
+    ...(workerOverride ? { workerOverride } : {}),
   };
 }
 

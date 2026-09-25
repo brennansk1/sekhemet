@@ -1,5 +1,9 @@
 import { qualificationCopy } from "./qualification_copy.js";
-import { type QualificationCombination, describeSpeculative } from "./qualification_key.js";
+import {
+  type QualificationCombination,
+  type SamplingSettings,
+  describeSpeculative,
+} from "./qualification_key.js";
 import { type ModelRegistry, type ThinkingPolicy, thinkingPolicyFromEnv } from "./registry.js";
 import type {
   ChatTurn,
@@ -20,9 +24,18 @@ import type {
  * requests. Running it once per arm is the arm measurement (M9).
  *
  * q1.1 added the multi-step conversation and recall cases and the speed
- * measurement (NEW-models-8).
+ * measurement (NEW-models-8). q1.2 runs the suite at the role's own
+ * sampling instead of greedy (temperature 0), k samples a case, and keys the
+ * combination on the sampling (MD-N8-1): the combination qualified is the one
+ * that runs. A q1.1 result was measured greedy.
  */
-export const QUALIFICATION_SUITE_VERSION = "q1.1";
+export const QUALIFICATION_SUITE_VERSION = "q1.2";
+
+/**
+ * Samples a case at the role's sampling, fixed before any result (q1.2): a
+ * check's score is its pass rate over every sample of its cases.
+ */
+export const QUALIFICATION_SAMPLES = 5;
 
 /** The executor bar on this internal suite (not comparable to public leaderboards). */
 export const QUALIFICATION_BAR = 0.8;
@@ -308,6 +321,8 @@ export function schemaViolations(call: ToolCall, tools = QUALIFICATION_TOOLS): s
 
 export interface CaseResult {
   id: string;
+  /** Which of the case's samples, from 1. */
+  sample?: number;
   category: QualificationCase["category"];
   passed: boolean;
   schemaValid: boolean;
@@ -321,6 +336,15 @@ export interface QualificationResult {
   /** Mean of the case pass rate and the schema-validity rate. */
   passRate: number;
   byCategory: Record<QualificationCategory, number>;
+  /**
+   * Each check's exact (Clopper–Pearson) 95% interval over its samples,
+   * beside the point rate the bar is applied to.
+   */
+  intervals: Record<QualificationCategory, { low: number; high: number }>;
+  /** Samples per case. */
+  samples: number;
+  /** The sampling the run used: the adapter's own, or a measurement arm's. */
+  sampling?: SamplingSettings;
   cases: CaseResult[];
   /** The pass rate is at the bar and every tool-call check is too (rule 27a). */
   qualified: boolean;
@@ -343,59 +367,137 @@ export function failedToolCallChecks(
   );
 }
 
+/** The sampling an adapter runs at, when it says (the managed and HTTP adapters do). */
+export function samplingSettingsOf(adapter: LocalInferenceAdapter): SamplingSettings | undefined {
+  const read = (adapter as { samplingFor?: (req: object) => SamplingSettings }).samplingFor;
+  if (typeof read !== "function") return undefined;
+  const s = read.call(adapter, {});
+  const out: SamplingSettings = {
+    ...(s.temperature !== undefined ? { temperature: s.temperature } : {}),
+    ...(s.topP !== undefined ? { topP: s.topP } : {}),
+    ...(s.topK !== undefined ? { topK: s.topK } : {}),
+    ...(s.minP !== undefined ? { minP: s.minP } : {}),
+  };
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** ln(n!) for the exact binomial below. */
+function lnFactorial(n: number): number {
+  let sum = 0;
+  for (let i = 2; i <= n; i++) sum += Math.log(i);
+  return sum;
+}
+
+/** P(X ≥ k) for X ~ Binomial(n, p), summed in log space. */
+function tailAtLeast(k: number, n: number, p: number): number {
+  if (k <= 0) return 1;
+  if (p <= 0) return 0;
+  if (p >= 1) return 1;
+  const lnN = lnFactorial(n);
+  let sum = 0;
+  for (let i = k; i <= n; i++) {
+    sum += Math.exp(
+      lnN - lnFactorial(i) - lnFactorial(n - i) + i * Math.log(p) + (n - i) * Math.log(1 - p),
+    );
+  }
+  return Math.min(1, sum);
+}
+
 /**
- * Run the suite against one adapter and arm. Deterministic scoring; the
- * model runs at temperature 0 with reasoning off.
+ * The exact (Clopper–Pearson) interval for k successes in n trials. A small
+ * copy of `clopperPearson` in packages/eval/src/stats.ts: eval depends on
+ * models, so models cannot import it without a cycle.
+ */
+export function exactInterval(k: number, n: number, alpha = 0.05): { low: number; high: number } {
+  if (n <= 0) return { low: 0, high: 1 };
+  const bisect = (f: (p: number) => number, target: number, rising: boolean) => {
+    let lo = 0;
+    let hi = 1;
+    for (let i = 0; i < 100; i++) {
+      const mid = (lo + hi) / 2;
+      if (f(mid) < target === rising) lo = mid;
+      else hi = mid;
+    }
+    return (lo + hi) / 2;
+  };
+  const low = k === 0 ? 0 : bisect((p) => tailAtLeast(k, n, p), alpha / 2, true);
+  const high = k === n ? 1 : bisect((p) => 1 - tailAtLeast(k + 1, n, p), alpha / 2, false);
+  return { low, high };
+}
+
+/**
+ * Run the suite against one adapter and arm. Deterministic scoring, reasoning
+ * off, at the adapter's own sampling — the sampling the role runs at
+ * (MD-N8-1) — unless a measurement arm passes one, and each case
+ * `QUALIFICATION_SAMPLES` times, since sampling is stochastic.
  */
 export async function runQualification(
   adapter: LocalInferenceAdapter,
-  options: { arm?: ToolArm; cases?: QualificationCase[]; bar?: number } = {},
+  options: {
+    arm?: ToolArm;
+    cases?: QualificationCase[];
+    bar?: number;
+    /** A measurement arm's sampling; unset, the adapter's own. Only temperature is per request. */
+    sampling?: { temperature: number };
+    /** Samples a case; default QUALIFICATION_SAMPLES. */
+    samples?: number;
+  } = {},
 ): Promise<QualificationResult> {
   const arm = options.arm ?? "arm_a_flat";
   const cases = options.cases ?? QUALIFICATION_CASES;
+  const samples = options.samples ?? QUALIFICATION_SAMPLES;
   const results: CaseResult[] = [];
   const timings: { tokens: number; ms: number }[] = [];
   for (const c of cases) {
-    let res: InferenceResponse;
-    try {
-      res = await adapter.generate({
-        systemPrompt: qualificationSystemPrompt(arm),
-        prompt: c.prompt ?? "",
-        ...(c.messages ? { messages: c.messages } : {}),
-        tools: QUALIFICATION_TOOLS,
-        toolArm: arm,
-        temperature: 0,
-        reasoning: "off",
-        maxTokens: 512,
-      });
-    } catch (err) {
+    for (let sample = 1; sample <= samples; sample++) {
+      let res: InferenceResponse;
+      try {
+        res = await adapter.generate({
+          systemPrompt: qualificationSystemPrompt(arm),
+          prompt: c.prompt ?? "",
+          ...(c.messages ? { messages: c.messages } : {}),
+          tools: QUALIFICATION_TOOLS,
+          toolArm: arm,
+          ...(options.sampling ? { temperature: options.sampling.temperature } : {}),
+          reasoning: "off",
+          maxTokens: 512,
+        });
+      } catch (err) {
+        results.push({
+          id: c.id,
+          sample,
+          category: c.category,
+          passed: false,
+          schemaValid: false,
+          detail: `request failed: ${err instanceof Error ? err.message : String(err)}`,
+        });
+        continue;
+      }
+      timings.push({ tokens: res.usage.completionTokens, ms: res.usage.durationMs });
+      const violations = res.toolCalls.flatMap((call) => schemaViolations(call));
+      const failure = c.score(res.toolCalls, res.text);
       results.push({
         id: c.id,
+        sample,
         category: c.category,
-        passed: false,
-        schemaValid: false,
-        detail: `request failed: ${err instanceof Error ? err.message : String(err)}`,
+        passed: failure === undefined,
+        schemaValid: violations.length === 0,
+        ...(failure || violations.length
+          ? { detail: [failure, ...violations].filter(Boolean).join("; ") }
+          : {}),
       });
-      continue;
     }
-    timings.push({ tokens: res.usage.completionTokens, ms: res.usage.durationMs });
-    const violations = res.toolCalls.flatMap((call) => schemaViolations(call));
-    const failure = c.score(res.toolCalls, res.text);
-    results.push({
-      id: c.id,
-      category: c.category,
-      passed: failure === undefined,
-      schemaValid: violations.length === 0,
-      ...(failure || violations.length
-        ? { detail: [failure, ...violations].filter(Boolean).join("; ") }
-        : {}),
-    });
   }
   const rate = (rs: CaseResult[], f: (r: CaseResult) => boolean) =>
     rs.length === 0 ? 0 : rs.filter(f).length / rs.length;
+  const interval = (rs: CaseResult[], f: (r: CaseResult) => boolean) =>
+    exactInterval(rs.filter(f).length, rs.length);
   const byCategory = {
     schema_validity: rate(results, (r) => r.schemaValid),
   } as Record<QualificationCategory, number>;
+  const intervals = {
+    schema_validity: interval(results, (r) => r.schemaValid),
+  } as Record<QualificationCategory, { low: number; high: number }>;
   for (const cat of [
     "tool_selection",
     "arguments",
@@ -404,10 +506,9 @@ export async function runQualification(
     "multi_step",
     "recall",
   ] as const) {
-    byCategory[cat] = rate(
-      results.filter((r) => r.category === cat),
-      (r) => r.passed,
-    );
+    const own = results.filter((r) => r.category === cat);
+    byCategory[cat] = rate(own, (r) => r.passed);
+    intervals[cat] = interval(own, (r) => r.passed);
   }
   const passRate =
     Math.round(((rate(results, (r) => r.passed) + byCategory.schema_validity) / 2) * 1000) / 1000;
@@ -419,12 +520,17 @@ export async function runQualification(
     medianCaseMs: sortedMs.length ? (sortedMs[Math.floor(sortedMs.length / 2)] as number) : 0,
   };
   const bar = options.bar ?? QUALIFICATION_BAR;
+  const own = samplingSettingsOf(adapter);
+  const sampling = options.sampling ? { ...own, temperature: options.sampling.temperature } : own;
   const result: QualificationResult = {
     modelId: adapter.modelId,
     arm,
     suiteVersion: QUALIFICATION_SUITE_VERSION,
     passRate,
     byCategory,
+    intervals,
+    samples,
+    ...(sampling ? { sampling } : {}),
     cases: results,
     qualified: false,
     speed,
@@ -469,8 +575,13 @@ export async function qualifyModel(
   }
   const best = [...results].sort((a, b) => b.passRate - a.passRate)[0] as QualificationResult;
   if (options.combination) {
-    const combination =
+    const given =
       typeof options.combination === "function" ? options.combination() : options.combination;
+    // The sampling the run used is part of what qualified (q1.2, MD-N8-1).
+    const combination =
+      given.settings.sampling === undefined && best.sampling
+        ? { ...given, settings: { ...given.settings, sampling: best.sampling } }
+        : given;
     recordCombination(adapter.modelId, best, combination, options);
     return { results, best };
   }
@@ -513,6 +624,8 @@ function recordCombination(
     byCategory: best.byCategory,
     toolCallChecks: checks,
     speed: best.speed,
+    intervals: best.intervals,
+    samples: best.samples,
     ...(reason ? { reason } : {}),
     ...(options.kvType ? { kvType: options.kvType } : {}),
   });

@@ -10,9 +10,11 @@ import {
   ManagedLlamaServerAdapter,
   type ModelRegistry,
   type QualificationCombination,
+  type WorkerOverride,
   hostFingerprintHash,
+  samplingSettingsOf,
 } from "@sekhemet/models";
-import { llamaRuntime, sampledDigest } from "./repro.js";
+import { llamaRuntime, parseLlamaBuild, sampledDigest } from "./repro.js";
 
 /**
  * Qualification per combination on the harness side (models rule 27a,
@@ -24,7 +26,10 @@ import { llamaRuntime, sampledDigest } from "./repro.js";
 export interface CombinationDeps {
   /** The weights' digest: `sampledDigest` (repro.ts). */
   digest?: (file: string) => string | undefined;
-  /** The engine's build: `llama-server --version` (repro.ts), which loads no model. */
+  /**
+   * The engine's build when the adapter has not read the running server's
+   * `/props`: `llama-server --version` (repro.ts), which loads no model.
+   */
   engineBuild?: () => string | undefined;
   /** `hostFingerprintHash()`. */
   host?: () => string;
@@ -88,9 +93,17 @@ export function qualificationCombination(
   const host = (deps.host ?? hostFingerprintHash)();
   const contextVersion = (deps.contextVersion ?? workerContextVersion)();
   const chatTemplate = templateOf(adapter, deps.registry);
+  // Suite q1.2: the role qualifies at the sampling it runs at, so the
+  // sampling is keyed; an adapter that does not say leaves it out.
+  const sampling = samplingSettingsOf(adapter);
   if (adapter instanceof ManagedLlamaServerAdapter) {
     const file = adapter.launchProfile.modelPath;
-    const build = (deps.engineBuild ?? llamaRuntime)();
+    // The running server's own build_info when the adapter has read it, else
+    // `llama-server --version`; one form either way (parseLlamaBuild).
+    const reported = adapter.reportedBuild;
+    const build =
+      (reported ? parseLlamaBuild(reported) : undefined) ??
+      (deps.engineBuild ?? (() => llamaRuntime(adapter.launchProfile.binary)))();
     const digest = deps.digest ?? sampledDigest;
     const settings = adapter.launchSettings();
     // A draft model is keyed by its weights' sampled digest, not only its id.
@@ -105,7 +118,13 @@ export function qualificationCombination(
       engine: `llama.cpp ${build ?? "unknown build"}`,
       modelBuild: digest(file) ?? `missing file ${file}`,
       host,
-      settings: { ...settings, speculative, chatTemplate, contextVersion },
+      settings: {
+        ...settings,
+        speculative,
+        chatTemplate,
+        contextVersion,
+        ...(sampling ? { sampling } : {}),
+      },
     };
   }
   const engine =
@@ -126,6 +145,7 @@ export function qualificationCombination(
       parallelSlots: 1,
       chatTemplate,
       contextVersion,
+      ...(sampling ? { sampling } : {}),
     },
   };
 }
@@ -157,7 +177,64 @@ export function qualificationRefusal(
   name: string,
 ): string | undefined {
   const look = registry.lookupQualification(adapter.modelId, combination);
-  if (look.status === "qualified") return undefined;
+  // A person's recorded override lets the failed combination run (rule 27, MD-N4-4).
+  if (look.status === "qualified" || look.status === "overridden") return undefined;
   const state = look.status === "missing" ? "not qualified" : look.status;
   return `Refusing ${adapter.modelId} as the Worker: ${state} for this combination on this host (${look.reason}). Qualify it with: sekhemet qualify --models ${name}`;
+}
+
+/** The override the Worker's exact combination runs under, if a person recorded one (MD-N4-4). */
+export function workerOverrideFor(
+  registry: ModelRegistry,
+  adapter: LocalInferenceAdapter,
+  combination: QualificationCombination,
+): WorkerOverride | undefined {
+  const look = registry.lookupQualification(adapter.modelId, combination);
+  return look.status === "overridden" ? look.override : undefined;
+}
+
+/**
+ * Mark the Worker's adapter as running under a person's override, so every
+ * evidence bundle's settings (`candidateSettings`) and every `card/repro`
+ * record carry it (rule 27, MD-N4-4). Not enumerable: it is not part of the
+ * adapter's launch.
+ */
+export function applyWorkerOverride<A extends object>(adapter: A, override: WorkerOverride): A {
+  Object.defineProperty(adapter, "workerOverride", {
+    value: override,
+    enumerable: false,
+    configurable: true,
+    writable: true,
+  });
+  return adapter;
+}
+
+/** What `gateWorker` decided for a Worker adapter. */
+export interface WorkerGate {
+  /** One line refusing the Worker; undefined when it may run. */
+  refusal?: string;
+  /** The person's override it runs under, when its combination failed and one was recorded. */
+  override?: WorkerOverride;
+  combination: QualificationCombination;
+}
+
+/**
+ * The one gate every path that runs the Worker passes (run, queue, `replay
+ * --as`, the bake-off's records; review medium 2): refuse a combination that
+ * has not qualified (MD-N8-1), look up a person's override of its failure
+ * (rule 27, MD-N4-4), and mark the adapter with it so every evidence bundle
+ * and `card/repro` made with it says so.
+ */
+export function gateWorker(
+  registry: ModelRegistry,
+  adapter: LocalInferenceAdapter,
+  name: string,
+  deps: CombinationDeps = {},
+): WorkerGate {
+  const combination = qualificationCombination(adapter, { ...deps, registry });
+  const refusal = qualificationRefusal(registry, adapter, combination, name);
+  if (refusal) return { refusal, combination };
+  const override = workerOverrideFor(registry, adapter, combination);
+  if (override) applyWorkerOverride(adapter, override);
+  return { combination, ...(override ? { override } : {}) };
 }

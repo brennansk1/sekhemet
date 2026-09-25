@@ -10,6 +10,7 @@ import {
   checkSkillCandidate,
   distillSkill,
   mineToolProposals,
+  namesAModel,
   playbookDiagnostics,
   siftSlice,
   validateToolProposal,
@@ -32,6 +33,7 @@ import {
   type QualificationCombination,
   assertModelRunnable,
   describeCombination,
+  describeOverride,
   loadMachineProfile,
   planWorkWindow,
   qualifyModel,
@@ -767,6 +769,57 @@ export async function runWave2Command(
       // --speculative on qualifies a managed model with its speculative method
       // forced on, with prefix caching on (MD-N8-2). --check only reports
       // whether each model's combination has qualified; it loads nothing.
+      // `--override <model> --by "<person>" --reason "<text>"` (models rule 27,
+      // MD-N4-4): a person's decision to run the Worker whose exact current
+      // combination failed qualification. The failure and the bar stay.
+      if (args.includes("--override")) {
+        const name = flag(args, "--override");
+        // A bare name is a person, stored as asset labels are (review low 6).
+        const given = flag(args, "--by")?.trim();
+        const by = given && !/^person:/i.test(given) ? `person: ${given}` : given;
+        const why = flag(args, "--reason")?.trim();
+        if (!name || name.startsWith("--") || !by || !why || !io.model)
+          return done(
+            'Usage: sekhemet qualify --override <model> --by "<person>" --reason "<text>"',
+            1,
+          );
+        const registry = modelRegistry();
+        if (
+          namesAModel(
+            by,
+            registry.list().map((e) => e.id),
+          )
+        )
+          return done(
+            `Refusing the override: "${by}" names a model, not a person. A person records an override (models rule 27).`,
+            1,
+          );
+        const a = (io.model as (n: string) => LocalInferenceAdapter)(name);
+        const combination = qualificationCombination(a, { ...io.combinationDeps, registry });
+        let recorded: ReturnType<ModelRegistry["recordQualificationOverride"]>;
+        try {
+          recorded = registry.recordQualificationOverride(
+            a.modelId,
+            combination,
+            { by, reason: why },
+            QUALIFICATION_BAR,
+          );
+        } catch (err) {
+          return done(
+            `Refusing the override: ${err instanceof Error ? err.message : String(err)}`,
+            1,
+          );
+        }
+        await k.log.append({
+          actor: "human",
+          type: "models/override",
+          payload: { worker: name, modelId: a.modelId, ...recorded, combination },
+        });
+        return done(
+          `${a.modelId}: ${describeOverride(recorded)}. Recorded for ${describeCombination(combination)}; any change to it ends the override.`,
+          0,
+        );
+      }
       const names = (flag(args, "--models") ?? "").split(",").filter(Boolean);
       if (names.length === 0 || !io.model)
         return done("Usage: sekhemet qualify --models <a,b> [--speculative on] [--check]", 1);
@@ -779,24 +832,50 @@ export async function runWave2Command(
           : a;
       };
       if (args.includes("--check")) {
+        // --json: one structured line for scripts (run_suite, injection
+        // fixtures), with the same WorkerOverride shape the evidence carries.
+        const json = args.includes("--json");
         let refused = false;
+        const rows: Record<string, unknown>[] = [];
         for (const n of names) {
           const a = adapterFor(n);
-          const why = qualificationRefusal(
-            registry,
-            a,
-            qualificationCombination(a, { ...io.combinationDeps, registry }),
-            n,
-          );
+          const combination = qualificationCombination(a, { ...io.combinationDeps, registry });
+          const why = qualificationRefusal(registry, a, combination, n);
           refused ||= why !== undefined;
-          print(why ?? `${a.modelId}: qualified for this combination on this host.`);
-          // MS-M9-6: the M0 protocol this Worker still owes.
+          // An override runs, and says so; the failure it overrides is still shown.
+          const look = registry.lookupQualification(a.modelId, combination);
+          const failure =
+            look.status === "overridden"
+              ? (look.record?.reason ??
+                `pass rate ${Math.round((look.record?.passRate ?? 0) * 100)}%`)
+              : undefined;
           const owed = (await pendingM0(k.log)).find((p) => p.worker === n);
+          if (json) {
+            rows.push({
+              model: n,
+              modelId: a.modelId,
+              status: look.status,
+              runnable: why === undefined,
+              reason: why ?? look.reason,
+              ...(look.override ? { workerOverride: look.override } : {}),
+              ...(failure ? { failure } : {}),
+              ...(owed ? { m0Pending: owed.combination } : {}),
+            });
+            continue;
+          }
+          print(
+            why ??
+              (failure
+                ? `${a.modelId}: ${look.reason} (the qualification itself failed: ${failure})`
+                : `${a.modelId}: qualified for this combination on this host.`),
+          );
+          // MS-M9-6: the M0 protocol this Worker still owes.
           if (owed)
             print(
               `M0 pending for ${n} (${owed.combination}): sekhemet overnight runs it, or run sekhemet m0 --worker ${n}`,
             );
         }
+        if (json) print(JSON.stringify(rows));
         return refused ? 1 : 0;
       }
       let anyQualified = false;

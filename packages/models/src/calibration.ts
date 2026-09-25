@@ -535,6 +535,10 @@ export async function calibrateModel(
       prompt: calibrationPrompt(tokens, nonce()),
       toolArm: "arm_a_flat",
       maxTokens: options.decodeTokens ?? 64,
+      // Greedy on purpose: this measures prefill and decode speed, which the
+      // sampling settings do not change, and greedy keeps the reply length
+      // steady across buckets. Qualification, which judges behaviour, runs at
+      // the role's own sampling instead (models rule 27a, suite q1.2).
       temperature: 0,
       reasoning: "off",
     });

@@ -5,6 +5,7 @@ import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { HttpInferenceAdapter } from "./http_adapter.js";
 import { ManagedLlamaServerAdapter } from "./llama_server.js";
+import type { WorkerOverride } from "./registry.js";
 import type { LocalInferenceAdapter, ToolArm } from "./types.js";
 
 /**
@@ -22,6 +23,8 @@ export interface CandidateSettings {
   kvType?: string;
   sampling?: Record<string, number>;
   mtp?: boolean;
+  /** A person's override the Worker runs under (rule 27, MD-N4-4). */
+  workerOverride?: WorkerOverride;
 }
 
 export interface BakeOffRecord {
@@ -60,6 +63,7 @@ export function candidateSettings(
   let kvType: string | undefined;
   let mtp: boolean | undefined;
   let sampling: Record<string, number> | undefined;
+  const workerOverride = (adapter as { workerOverride?: WorkerOverride }).workerOverride;
   if (adapter instanceof ManagedLlamaServerAdapter) {
     const p = adapter.launchProfile;
     quant = quantFromName(p.modelPath);
@@ -80,6 +84,8 @@ export function candidateSettings(
     ...(kvType ? { kvType } : {}),
     ...(mtp !== undefined ? { mtp } : {}),
     ...(sampling ? { sampling } : {}),
+    // Rule 27, MD-N4-4: a Worker running under a person's override says so.
+    ...(workerOverride ? { workerOverride } : {}),
     ...overrides,
   };
 }

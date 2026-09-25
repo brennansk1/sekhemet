@@ -272,6 +272,12 @@ What professional boards do not show is left off the card face: the agent's step
 - **`--auto-accept` (measurement rule 9):** confirmed. It runs only in a repository carrying the measurement marker, so outside measurement a person always accepts.
 - **The E5 rule-approval block (measurement §8 item 5):** its removal is confirmed. DEC-28 is the later ruling.
 - **Model loads:** permitted, on the lead's judgement of the host: only with swap under 4 GB and at least 60% of memory free, checked before each load, and unloaded after each run.
+- **Addendum, 2026-09-25 (the owner asked that the model card's settings be checked):**
+  - The Worker's sampling already matched the Hugging Face card's agentic-coding values (temperature 0.6, top_p 0.95, top_k 20, min_p 0).
+  - Qualification had measured at temperature 0, settings the Worker never uses. It now qualifies at the role's own sampling, with 5 samples per case (q1.2), and sampling is part of the combination key.
+  - MTP launches with the card's measured draft settings, `--spec-draft-n-max 1 --spec-draft-p-min 0.0`: the author's own sweep supersedes the two-token figure.
+  - The card's 262,144-token context is not used: the host sets 16,384 (DEC-27).
+  - Its default of thinking on with an unlimited budget is left to B2.5's thinking arms to measure.
 - **Reopen if:** only the owner.
 
 ## Engineering decisions

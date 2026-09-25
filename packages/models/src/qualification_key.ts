@@ -10,6 +10,18 @@ import { createHash } from "node:crypto";
 /** Speculative decoding in a combination: off, the model's MTP head, or a draft model (by its id). */
 export type SpeculativeSetting = "off" | "mtp" | { draft: string };
 
+/**
+ * The role's sampling, as the combination records it (MD-N8-1): the Worker
+ * is qualified at the sampling it runs at, so a change of sampling is a
+ * change of combination. Only the fields that shape the draw are keyed.
+ */
+export interface SamplingSettings {
+  temperature?: number;
+  topP?: number;
+  topK?: number;
+  minP?: number;
+}
+
 export interface QualificationSettings {
   /** The window one request gets. */
   contextTokens: number;
@@ -24,6 +36,12 @@ export interface QualificationSettings {
   chatTemplate: string;
   /** The Worker's context version: its prompt templates and tool catalog (context.md rule 27). */
   contextVersion: string;
+  /**
+   * The sampling the role runs at (suite q1.2). Absent in a record made
+   * before sampling was keyed (q1.1, greedy), which then differs from any
+   * sampled combination by "sampling".
+   */
+  sampling?: SamplingSettings;
 }
 
 export interface QualificationCombination {
@@ -48,11 +66,26 @@ const ELEMENTS: [name: string, read: (c: QualificationCombination) => unknown][]
   ["parallel slots", (c) => c.settings.parallelSlots],
   ["chat template", (c) => c.settings.chatTemplate],
   ["context version", (c) => c.settings.contextVersion],
+  ["sampling", (c) => canonicalSampling(c.settings.sampling)],
 ];
 
-/** The canonical form: every element in a fixed order, so key order never matters. */
+/** The keyed sampling fields in a fixed order; undefined when none is recorded. */
+function canonicalSampling(s: SamplingSettings | undefined): unknown {
+  if (!s) return undefined;
+  return [s.temperature ?? null, s.topP ?? null, s.topK ?? null, s.minP ?? null];
+}
+
+/**
+ * The canonical form: every element in a fixed order, so key order never
+ * matters. A combination without sampling keys as it did before sampling
+ * was an element, so records made then keep their keys.
+ */
 function canonical(c: QualificationCombination): string {
-  return JSON.stringify(ELEMENTS.map(([name, read]) => [name, read(c)]));
+  return JSON.stringify(
+    ELEMENTS.filter(([name, read]) => name !== "sampling" || read(c) !== undefined).map(
+      ([name, read]) => [name, read(c)],
+    ),
+  );
 }
 
 /** A stable key for a combination, 16 hex characters. */
@@ -78,5 +111,8 @@ export function describeSpeculative(s: SpeculativeSetting): string {
 /** The combination on one line, for a refusal or a report. */
 export function describeCombination(c: QualificationCombination): string {
   const s = c.settings;
-  return `${c.engine}, ${s.contextTokens} tokens, KV ${s.kvType}, speculative ${describeSpeculative(s.speculative)}, prefix caching ${s.prefixCaching ? "on" : "off"}, ${s.parallelSlots} slot${s.parallelSlots === 1 ? "" : "s"}`;
+  const sampling = s.sampling
+    ? `, temperature ${s.sampling.temperature ?? "default"}, top_p ${s.sampling.topP ?? "default"}, top_k ${s.sampling.topK ?? "default"}, min_p ${s.sampling.minP ?? "default"}`
+    : "";
+  return `${c.engine}, ${s.contextTokens} tokens, KV ${s.kvType}, speculative ${describeSpeculative(s.speculative)}, prefix caching ${s.prefixCaching ? "on" : "off"}, ${s.parallelSlots} slot${s.parallelSlots === 1 ? "" : "s"}${sampling}`;
 }
