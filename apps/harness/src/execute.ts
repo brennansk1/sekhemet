@@ -30,12 +30,14 @@ import {
   type CardRecord,
   type CardStatus,
   type CardStore,
+  type EventLog,
+  type RetentionReport,
   cardClassOf,
-  pruneRetention,
 } from "@sekhemet/kernel";
 import {
   type CardRunResult,
   CardRunner,
+  type ToolCallEvent,
   type TurnResult,
   calibratedStepBudget,
 } from "@sekhemet/loop";
@@ -53,24 +55,33 @@ import {
 import { type SpidrSliceKind, scoreDifficulty, stepBudgetForDifficulty } from "@sekhemet/planner";
 import { confinedSandbox, mergeNetworkConfigs, policyFetch } from "@sekhemet/sandbox";
 import { NodeGitSyncAdapter } from "@sekhemet/sync";
+import { integrationBranch } from "./accept.js";
 import { isAirgapped, mirrorRegistry } from "./airgap.js";
 import { withArchitectureGate } from "./architecture_gate.js";
-import { networkConfigs } from "./config_apply.js";
+import {
+  lastPauseSeq,
+  messageLabel,
+  pendingPause,
+  recordDelivered,
+  undeliveredMessages,
+} from "./collaborate.js";
+import { configOverrideLines, networkConfigs } from "./config_apply.js";
+import { evidenceSummary } from "./evidence_summary.js";
 import { readSettings } from "./integrations.js";
 import { RULE_SIGNAL_MINIMUM, learnFromAttempt } from "./learning/reflect.js";
 import type { LearningStore } from "./learning/store.js";
-import { ledgerHeadTrailer } from "./ledger_cmds.js";
 import { recordLedgerRun } from "./ledger_evidence.js";
 import { withLicenseGate } from "./license_gate.js";
 import { withReachabilityGate } from "./reachability_gate.js";
 import { withRegressionGate } from "./regression_gate.js";
 import { buildReproRecord } from "./repro.js";
 import { workerWebDocs } from "./research/service.js";
-import { Tracer, traced } from "./tracing.js";
+import { Tracer, toolCallSpan, traced } from "./tracing.js";
 import { withTrailerGate } from "./trailer_gate.js";
 import { hookEngineFor } from "./user_hooks.js";
 import { PR_EVENT, openPullRequestViaApp } from "./wave2_github.js";
 import { githubAppFromEnv } from "./wave2_server.js";
+import { loadRepoSkills, untrustedFiles } from "./workspace_trust.js";
 
 /** The repo's trace store, or none when it cannot be opened (tracing never blocks a card). */
 function openTracer(repoPath: string): Tracer | undefined {
@@ -208,24 +219,6 @@ export interface ExecuteCardOptions {
  */
 export async function ensureRepoProject(cardStore: CardStore, repoPath: string) {
   return cardStore.ensureProject({ rootPath: repoPath, name: basename(repoPath) || repoPath });
-}
-
-/**
- * Retention (K27): prune context packs, observations and transcripts of
- * cards closed more than 30 days ago. Evidence is never pruned.
- */
-export async function pruneRunData(cardStore: CardStore, repoPath: string, now = Date.now()) {
-  const cards = await cardStore.listCards();
-  return pruneRetention(
-    repoPath,
-    cards.map((c) => ({
-      id: c.id,
-      status: c.status,
-      updatedAt: c.updatedAt,
-      packIds: cardStore.runs.contextPackIds(c.id),
-    })),
-    { now },
-  );
 }
 
 /** The attempt after the one in the card's latest evidence bundle (1 when none). */
@@ -392,8 +385,9 @@ export async function executeCard(
     ),
     { briefPath: join(ctx.repoPath, ".sekhemet", "brief.md") },
   );
-  const skills = new SkillsRegistry();
-  skills.loadFromDirectory(join(ctx.repoPath, ".sekhemet", "skills"));
+  // C10 with S9: skills pinned in the user directory's lock, never one the
+  // repository ships (SEC-31).
+  const skills = loadRepoSkills(ctx.repoPath);
   const playbook = new PlaybookRegistry(ctx.repoPath);
   // Learned rules the human approved join the seeded playbook for this card,
   // in memory only (never written to playbook.toml). Their pattern is the
@@ -410,7 +404,13 @@ export async function executeCard(
 
   const worktreePath = join(ctx.repoPath, ".sekhemet", "worktrees", card.id);
   const webDocs = await workerWebDocs(ctx.repoPath).catch(() => undefined);
-  const hookEngine = hookEngineFor(ctx.repoPath).engine;
+  const hooks = hookEngineFor(ctx.repoPath);
+  const hookEngine = hooks.engine;
+  // S9: the repository's configuration that is not trusted does not run; say so.
+  const untrustedConfig = untrustedFiles(ctx.repoPath);
+  if (untrustedConfig.length > 0) {
+    log(`   not trusted, so not run: ${untrustedConfig.join(", ")} (see \`sekhemet dev trust\`)`);
+  }
   const baselineSwap = readSwapUsedBytes();
   // A rewind or fork the human asked for (H18, H19) sets where this run starts.
   const start = await pendingStartPoint(ctx.cardStore, card.id).catch(() => undefined);
@@ -422,6 +422,20 @@ export async function executeCard(
   });
   const startedAtSeq =
     (await ctx.cardStore.cardEvents(card.id, [CONTROL_EVENTS.abortRequested])).at(-1)?.seq ?? 0;
+  // WL-N10-1, -2: a person's messages, notes and pause reach the run through
+  // the ledger too; messages no step has carried yet reach the first one.
+  const pauseSinceSeq = await lastPauseSeq(ctx.cardStore, card.id).catch(() => 0);
+  const handedIds = new Set<string>();
+  /** Handed to the runner, recorded as delivered once a step's prompt has carried them. */
+  let carried: string[] = [];
+  const handMessages = async () => {
+    const waiting = await undeliveredMessages(ctx.cardStore, card.id).catch(() => []);
+    for (const m of waiting.filter((w) => !handedIds.has(w.id))) {
+      runner.deliverMessage(m.text, messageLabel(m));
+      handedIds.add(m.id);
+      carried.push(m.id);
+    }
+  };
   // H22: spans for the card, each turn and each model call (.sekhemet/traces.db).
   const tracer = openTracer(ctx.repoPath);
   const cardSpan = tracer?.start("card.run", {
@@ -430,11 +444,21 @@ export async function executeCard(
   });
   let turnStartedMs = Date.now();
   const tracedModel = tracer && cardSpan ? traced(model, tracer, () => cardSpan.context) : model;
+  // RUN-45: each tool call becomes a span under its step's span, written when
+  // the step's span is (the step ends after its calls).
+  const toolCallsByStep = new Map<number, ToolCallEvent[]>();
   const nets = networkConfigs(ctx.repoPath);
   const networkPolicy = mergeNetworkConfigs(nets.user, nets.project);
   const runner = new CardRunner({
+    onToolCall: (event) => {
+      const list = toolCallsByStep.get(event.turnIndex) ?? [];
+      list.push(event);
+      toolCallsByStep.set(event.turnIndex, list);
+    },
     card,
     repoRoot: ctx.repoPath,
+    // RG-S5-14: cut from, rebased onto and diffed against the integration branch.
+    baseBranch: integrationBranch(ctx.repoPath),
     worktreePath,
     stepBudget: card.stepBudget,
     modelAdapter: tracedModel,
@@ -510,6 +534,12 @@ export async function executeCard(
         }
       : {}),
     skillsRegistry: skills,
+    // SUR-40: the card's own configuration layer, listed in its evidence.
+    ...(configOverrideLines(card.configOverrides).length > 0
+      ? { configOverrides: configOverrideLines(card.configOverrides) }
+      : {}),
+    // EXT-10: a hooks file that failed to load is named on the card's evidence.
+    ...(hooks.errors.length > 0 ? { hookErrors: hooks.errors } : {}),
     // K12: the project's lifecycle hooks (.sekhemet/hooks.toml).
     hooks: hookEngine,
     // L10 tier 3: the library's official web docs, when web access is on.
@@ -595,6 +625,10 @@ export async function executeCard(
           "sekhemet.turn.tools": turn.toolCalls?.map((c) => c.name).join(",") ?? "",
           ...(turn.stopReason ? { "sekhemet.stop_reason": turn.stopReason } : {}),
         }).end("ok");
+        for (const call of toolCallsByStep.get(turn.turnIndex) ?? []) {
+          toolCallSpan(tracer, t.context, call);
+        }
+        toolCallsByStep.delete(turn.turnIndex);
         turnStartedMs = Date.now();
       }
       await ctx.cardStore.recordEvent({
@@ -607,10 +641,24 @@ export async function executeCard(
         stepId: turn.stepId,
       });
       await ctx.afterTurn?.(cardId, turn);
+      // WL-N10-1: the messages this step's prompt carried, shown with the step.
+      if (carried.length > 0) {
+        const reached = carried;
+        carried = [];
+        await recordDelivered(ctx.cardStore, cardId, reached, turn.turnIndex).catch(
+          () => undefined,
+        );
+      }
+      await handMessages();
       const stop = await pendingAbort(ctx.cardStore, cardId, startedAtSeq).catch(() => undefined);
       if (stop !== undefined && !abort.signal.aborted) {
         log(`   stop requested: ${stop}`);
         abort.abort(stop);
+      }
+      const pause = await pendingPause(ctx.cardStore, cardId, pauseSinceSeq).catch(() => undefined);
+      if (pause !== undefined) {
+        log(`   pause requested by ${pause}`);
+        runner.pause(pause);
       }
       // Between steps is where a card can wait out memory pressure without
       // losing work; if it does not fall, the next turn stops resumably.
@@ -626,6 +674,7 @@ export async function executeCard(
     },
   });
 
+  await handMessages();
   const result = await runner.run().catch((err) => {
     cardSpan?.set({ "error.message": String(err).slice(0, 300) }).end("error");
     tracer?.close();
@@ -1172,12 +1221,19 @@ export async function rollupParent(
     return { status: "not_ready", children: children.length };
   }
   const gatesConfig = loadGatesConfig(ctx.repoPath);
-  const gateRunner = new DeterministicGateRunner(confinedSandbox(ctx.restrictedMode), {
-    repoRoot: ctx.repoPath,
-    expectedConfigSha256: gatesConfig.sha256,
-  });
   const rungs = [...new Set(gatesConfig.gates.filter((g) => g.blocking).map((g) => g.rung))];
-  const result = await gateRunner.runGates(rungs, ctx.repoPath);
+  // The integration gate runs on the integration branch as Accept left it,
+  // in a scratch checkout: Accept never writes the person's (review-git §2.5.2).
+  const result = await new NodeGitSyncAdapter(ctx.repoPath).withScratchCheckout(
+    integrationBranch(ctx.repoPath),
+    (cwd) =>
+      // The pinned gates.toml is the project's (read from the repository
+      // root, as the runner reads it); the gates run in the scratch checkout.
+      new DeterministicGateRunner(confinedSandbox(ctx.restrictedMode), {
+        repoRoot: ctx.repoPath,
+        expectedConfigSha256: gatesConfig.sha256,
+      }).runGates(rungs, cwd),
+  );
   const failures = result.failures.map(
     (f) => `[${f.gate ?? f.rung}] ${f.errorExcerpt.split("\n")[0]}`,
   );
@@ -1436,108 +1492,135 @@ export class QueuedWorkerQuestions {
   }
 }
 
+/** Accept lives in `accept.ts` (review-git §2.5); re-exported for existing callers. */
+export { acceptCard } from "./accept.js";
+
 /**
- * Squash a reviewed card onto main and mark it done.
- *
- * Only a card in Review can be accepted: the harness verifies, a person accepts.
+ * After a parent is accepted (review-git §2.5.5, NEW-review-git-2): each
+ * stacked child rebases onto the integration branch and re-runs its gates on
+ * the rebased branch, in a scratch checkout; the result is the child's
+ * evidence. A child in Review whose gates now fail goes back to the Worker
+ * (Ready) with the failures; one that conflicts is reported, never forced.
  */
-export async function acceptCard(
+export async function restackAfterAccept(
   ctx: ExecutionContext,
-  card: CardRecord,
-  actor = "human",
-): Promise<string> {
-  if (card.status !== "review") {
-    throw new Error(
-      `Card ${card.id} is in '${card.status}'. Only a card in Review can be accepted.`,
-    );
-  }
-
+  parent: CardRecord,
+  target: string,
+): Promise<void> {
   const gitAdapter = new NodeGitSyncAdapter(ctx.repoPath);
-
-  // With "GitHub PR on accept" on, a person's Accept opens a pull request
-  // instead of merging locally, so the team's normal review and CI apply.
-  // The queue's --auto-accept (actor "harness") always merges locally: the
-  // benchmark needs later cards to build on earlier ones.
-  if (actor !== "harness" && readSettings(ctx.repoPath).githubPrOnAccept) {
-    const opened = await openPullRequest(ctx, card, gitAdapter.branchNameFor(card.id, card.title));
-    const url = opened.url;
-    // Kernel rule 24 (K-N3-3): accepted, the card waits in Review for its
-    // pull request to merge — an `awaitingMerge` hold outside Review's WIP
-    // count — and reaches Done on the merge (`card/pr_closed`).
-    await ctx.boardService.acceptWithPullRequest(
-      card.id,
-      opened,
-      ctx.cardStore.localPrincipal(),
-      "harness",
-    );
-    await ctx.cardStore
-      .recordEvent({
-        type: "card/accepted",
-        cardId: card.id,
-        actor,
-        payload: { id: card.id, pr: url },
-      })
-      .catch(() => undefined);
-    await gitAdapter.removeWorktree(card.id);
-    // Review has room again: cards held on back-pressure move now.
-    await releaseHeldCards(ctx).catch(() => []);
-    return url;
-  }
-
-  const ledgerHead = ledgerHeadTrailer(ctx.repoPath);
-  const sha = await gitAdapter.squashAndMerge(
-    card.id,
-    "main",
-    `feat(${card.id}): ${card.title}`,
-    {
-      "Agent-Model": card.modelRoute?.executor ?? "local",
-      "Agent-Harness": "sekhemet",
-      "Agent-Role": "implementer",
-      GateStatus: "pass",
-      // Kernel rule 12 (K-N1-5): the chain head, anchored outside SQLite.
-      ...(ledgerHead ? { "Ledger-Head": ledgerHead } : {}),
-    },
-    card.title,
-  );
-
-  await ctx.boardService.transitionCard({
-    cardId: card.id,
-    fromStatus: card.status,
-    toStatus: "done",
-    actor,
-    reason: "accepted by operator",
-  });
-  // The merge commit, on the ledger: Done tiles and the card's Thread show it.
-  try {
-    await ctx.cardStore.recordEvent({
-      type: "card/accepted",
-      cardId: card.id,
-      actor,
-      payload: { id: card.id, sha },
-    });
-  } catch {
-    // The merge already happened; a missing ledger line must not undo it.
-  }
-  await gitAdapter.removeWorktree(card.id);
-  // Stacked cards built on this one rebase onto main now it has landed (Y7);
-  // a child that conflicts is reported, never forced.
-  const restacked = await gitAdapter.restackChildren(card.id, "main").catch(() => []);
+  const restacked = await gitAdapter.restackChildren(parent.id, target).catch(() => []);
   for (const r of restacked) {
+    const childId = /\/([^/]+?)(?:-[^/]*)?$/.exec(r.cardBranch)?.[1];
+    const child = (await ctx.cardStore.listCards({ parentId: parent.id })).find(
+      (c) =>
+        c.id === childId || r.cardBranch.endsWith(`/${c.id}`) || r.cardBranch.includes(`/${c.id}-`),
+    );
     await ctx.cardStore
       .recordEvent({
         type: "card/restacked",
-        cardId: card.id,
-        actor,
-        payload: { branch: r.cardBranch, ok: r.ok, ...(r.files ? { conflicts: r.files } : {}) },
+        cardId: parent.id,
+        actor: "harness",
+        payload: {
+          branch: r.cardBranch,
+          ok: r.ok,
+          ...(child ? { child: child.id } : {}),
+          ...(r.files ? { conflicts: r.files } : {}),
+        },
       })
       .catch(() => undefined);
+    if (!r.ok || !child) continue;
+    await regateRestackedChild(ctx, child, r.cardBranch).catch(() => undefined);
   }
-  // Review has room again: cards held on back-pressure move now.
-  await releaseHeldCards(ctx).catch(() => []);
-  // The last child accepted: roll the parent up through its integration gate (B7).
-  if (card.parentId) await rollupParent(ctx, card.parentId).catch(() => undefined);
-  return sha;
 }
+
+/** Re-run a restacked child's blocking gates on its rebased branch (RG-N2-1, RG-N2-2). */
+export async function regateRestackedChild(
+  ctx: ExecutionContext,
+  child: CardRecord,
+  branch: string,
+): Promise<{ passed: boolean; failures: string[] }> {
+  const gitAdapter = new NodeGitSyncAdapter(ctx.repoPath);
+  const gatesConfig = loadGatesConfig(ctx.repoPath);
+  const rungs = [...new Set(gatesConfig.gates.filter((g) => g.blocking).map((g) => g.rung))];
+  const worktree = join(ctx.repoPath, ".sekhemet", "worktrees", child.id);
+  const run = async (cwd: string) =>
+    new DeterministicGateRunner(confinedSandbox(ctx.restrictedMode), {
+      repoRoot: ctx.repoPath,
+      expectedConfigSha256: gatesConfig.sha256,
+    }).runGates(rungs, cwd);
+  const result = existsSync(worktree)
+    ? await run(worktree)
+    : await gitAdapter.withScratchCheckout(branch, run);
+  const failures = result.failures.map(
+    (f) => `[${f.gate ?? f.rung}] ${f.errorExcerpt.split("\n")[0]}`,
+  );
+  const attempt = nextAttemptNumber(ctx.repoPath, child.id);
+  const evidence = {
+    ...compileEvidence({
+      cardId: child.id,
+      attempt,
+      diff: "",
+      filesTouched: [],
+      linesAdded: 0,
+      linesRemoved: 0,
+      gateResult: result,
+      turnsUsed: 0,
+      stopReason: result.passed ? "gate_passed" : "integration_failed",
+      checkpointShas: [],
+      tokens: { promptTokens: 0, completionTokens: 0 },
+      durationMs: result.durationMs,
+      settings: { modelId: "restack-gate", toolArm: "none" },
+      gatesConfigSha256: gatesConfig.sha256,
+    }),
+    // What the gates ran on: the rebased branch (RG-S5-6 reads it at accept).
+    repoState: `${gitAdapter.revParse(`refs/heads/${branch}`)}:${gitAdapter.revParse(`refs/heads/${branch}^{tree}`)}`,
+  };
+  const dir = join(ctx.repoPath, ".sekhemet", "evidence");
+  mkdirSync(dir, { recursive: true });
+  const body = `${JSON.stringify(evidence, null, 2)}\n`;
+  writeFileSync(join(dir, `${evidence.id}.json`), body);
+  writeFileSync(join(dir, `latest-${child.id}.json`), body);
+  await recordLedgerRun(ctx.cardStore, {
+    cardId: child.id,
+    modelId: "restack-gate",
+    passed: result.passed,
+    stopReason: result.passed ? "gate_passed" : "integration_failed",
+    evidenceId: evidence.id,
+    path: join(".sekhemet", "evidence", `${evidence.id}.json`),
+    body,
+    secondsUsed: Math.round(result.durationMs / 1000),
+  });
+  if (!result.passed) {
+    await ctx.cardStore
+      .recordDossierEntry({
+        cardId: child.id,
+        kind: "lesson",
+        actor: "gate",
+        text: `After its parent was accepted and it was rebased, these gates failed: ${failures.join("; ")}`.slice(
+          0,
+          2000,
+        ),
+      })
+      .catch(() => undefined);
+    const now = await ctx.cardStore.getCard(child.id);
+    // RG-N2-2: never left in Review with failing gates.
+    if (now?.status === "review") {
+      await ctx.boardService.transitionCard({
+        cardId: child.id,
+        fromStatus: "review",
+        toStatus: "ready",
+        actor: "harness",
+        reason: `restacked onto the integration branch; gates failed: ${failures.join("; ")}`.slice(
+          0,
+          1000,
+        ),
+      });
+    }
+  }
+  return { passed: result.passed, failures };
+}
+
+export { evidenceSummary } from "./evidence_summary.js";
 
 export interface QueueEntry {
   cardId: string;
@@ -1560,6 +1643,8 @@ export interface QueueEntry {
   resumedFromStep?: number;
   /** The card stopped at repair rung 3 for a new plan (L15). */
   replanRequested?: boolean;
+  /** Tokens output condensing removed from what the Worker saw (runtime item 32, RUN-47). */
+  condensedTokensSaved?: number;
 }
 
 export interface QueueReport {
@@ -1578,6 +1663,8 @@ export interface QueueReport {
   cache?: CacheSummary;
   /** The memory watchdog's level at the end of the run (M20). */
   memory?: { level: string; reason: string };
+  /** Retention at the run's start: every blob pruned, with its card (RUN-57). */
+  retention?: RetentionReport;
   /** Written part-way through the run; the final report has no such mark. */
   partial?: boolean;
   /** Each model's load time, apart from the cards' time (MS-T7-1): `ThroughputMeter.loads()`. */
@@ -1650,6 +1737,82 @@ export function recordQueueProgress(
   });
 }
 
+/** The ledger event a queue run's report is (runtime item 34b, RUN-56). */
+export const QUEUE_REPORTED = "queue/reported";
+
+/**
+ * Record a finished run's report (RUN-56): one `queue/reported {report}`
+ * event — the record — then the files, a cache written from the event.
+ */
+export async function recordQueueReport(
+  log: EventLog,
+  repoPath: string,
+  report: QueueReport,
+): Promise<string> {
+  await log.append({ actor: "harness", type: QUEUE_REPORTED, payload: { report } });
+  return writeQueueReport(repoPath, report);
+}
+
+/** Every recorded run report, oldest first, from the ledger. */
+export async function queueReportsFromLedger(log: EventLog): Promise<QueueReport[]> {
+  return (await log.getEventsByTypes([QUEUE_REPORTED])).map(
+    (e) => (e.payload as { report: QueueReport }).report,
+  );
+}
+
+/**
+ * Rebuild `runs/<startedAt>.json` and `queue_report.json` from the ledger
+ * where they are missing (kernel rule 16: a cache is safe to delete).
+ * Returns how many files it wrote.
+ */
+export async function rebuildRunCaches(repoPath: string, log: EventLog): Promise<number> {
+  const reports = await queueReportsFromLedger(log);
+  const dir = join(repoPath, ".sekhemet");
+  let written = 0;
+  for (const report of reports) {
+    const file = join(dir, "runs", `${report.startedAt.replace(/[:.]/g, "-")}.json`);
+    if (existsSync(file)) continue;
+    mkdirSync(join(dir, "runs"), { recursive: true });
+    writeFileSync(file, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+    written++;
+  }
+  const latest = reports.at(-1);
+  if (latest && !existsSync(join(dir, "queue_report.json"))) {
+    writeFileSync(join(dir, "queue_report.json"), `${JSON.stringify(latest, null, 2)}\n`, "utf8");
+    written++;
+  }
+  return written;
+}
+
+/** One card's line in a queue run's report. */
+export function queueEntryOf(
+  cardId: string,
+  attempt: number,
+  result: CardRunResult,
+  accepted: boolean,
+): QueueEntry {
+  return {
+    cardId,
+    attempt,
+    passed: result.passed,
+    accepted,
+    stopReason: result.stopReason,
+    turns: result.evidence.turnsUsed,
+    durationMs: result.evidence.durationMs,
+    promptTokens: result.evidence.tokens.promptTokens,
+    completionTokens: result.evidence.tokens.completionTokens,
+    // RUN-47: what output condensing removed from what the Worker saw.
+    ...(result.condensedTokensSaved !== undefined
+      ? { condensedTokensSaved: result.condensedTokensSaved }
+      : {}),
+    ...(result.held ? { held: `${result.held.wanted}: ${result.held.reason}` } : {}),
+    ...(result.parked ? { parked: result.parked.suggestion } : {}),
+    ...(result.failToPass ? { failToPass: result.failToPass.status } : {}),
+    ...(result.resumedFrom ? { resumedFromStep: result.resumedFrom.step } : {}),
+    ...(result.replan ? { replanRequested: true } : {}),
+  };
+}
+
 export function writeQueueReport(repoPath: string, report: QueueReport): string {
   const dir = join(repoPath, ".sekhemet");
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
@@ -1712,14 +1875,27 @@ export function inferDependencies(cards: CardRecord[]): Map<string, string[]> {
   return deps;
 }
 
+/** Earlier attempts of the card that did not pass: what was tried and abandoned (RG-S5-18). */
+export function abandonedAttempts(
+  store: CardStore,
+  cardId: string,
+): { attempt: number; stopReason: string }[] {
+  const attempts = store.runs.listAttempts(cardId);
+  return attempts
+    .slice(0, -1)
+    .filter((a) => a.stopReason && a.stopReason !== "gate_passed")
+    .map((a) => ({ attempt: a.attemptNumber, stopReason: String(a.stopReason) }));
+}
+
 /**
  * Push the card's branch and open a pull request whose body is the evidence.
  * Uses the user's own git remote and `gh` login; Sekhemet holds no token.
  */
-async function openPullRequest(
+export async function openPullRequest(
   ctx: ExecutionContext,
   card: CardRecord,
   branch: string,
+  base = "main",
 ): Promise<{ pr: number; url: string; headSha: string }> {
   const run = promisify(execFile);
   await run("git", ["push", "-u", "origin", `${branch}:${branch}`], {
@@ -1753,32 +1929,18 @@ async function openPullRequest(
     return { pr: pr.number, url: pr.url, headSha: pr.headSha };
   }
   const title = card.title.replace(/\s*\(SPIDR:[^)]*\)\s*$/, "");
-  let gates = "";
+  let ev: Parameters<typeof evidenceSummary>[1] = {};
   try {
-    const ev = JSON.parse(
+    ev = JSON.parse(
       readFileSync(join(ctx.repoPath, ".sekhemet", "evidence", `latest-${card.id}.json`), "utf8"),
-    ) as { rungResults?: { gate: string; passed: boolean; durationMs?: number }[] };
-    gates = (ev.rungResults ?? [])
-      .map(
-        (r) => `- ${r.passed ? "✓" : "✗"} ${r.gate}${r.durationMs ? ` (${r.durationMs} ms)` : ""}`,
-      )
-      .join("\n");
+    ) as typeof ev;
   } catch {
     // No evidence file: the body says so rather than inventing results.
   }
-  const body = [
-    card.spec ?? "",
-    card.acceptanceCriteria?.length
-      ? `### Done when\n${card.acceptanceCriteria.map((c) => `- ${c}`).join("\n")}`
-      : "",
-    `### Gates\n${gates || "_No evidence file was found for this card._"}`,
-    `_Implemented by the Sekhemet Worker and accepted in the dashboard. Card \`${card.id}\`._`,
-  ]
-    .filter(Boolean)
-    .join("\n\n");
+  const body = `${evidenceSummary(card, ev, abandonedAttempts(ctx.cardStore, card.id))}\n\n_Implemented by the Sekhemet Worker and accepted in the dashboard. Card \`${card.id}\`._`;
   const { stdout } = await run(
     "gh",
-    ["pr", "create", "--head", branch, "--base", "main", "--title", title, "--body", body],
+    ["pr", "create", "--head", branch, "--base", base, "--title", title, "--body", body],
     { cwd: ctx.repoPath, timeout: 60_000 },
   );
   const url = stdout.trim().split("\n").at(-1) ?? "";

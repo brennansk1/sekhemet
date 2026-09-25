@@ -4,6 +4,7 @@ import {
   annotationsByLine,
   errorCode,
   fileRole,
+  groupCollapsed,
   parseUnifiedDiff,
   stripLocation,
 } from "./diff_parse.js";
@@ -181,8 +182,11 @@ export function changesHtml(
     );
     // A protected test that failures point into opens on excerpts around them.
     const excerpt = role === "acceptance" && fileFails.length > 0 && !full.has(f.path);
-    const def = (role === "acceptance" && !excerpt) || role === "other";
-    const collapsed = !(open.get(f.path) ?? !def);
+    const collapsed = groupCollapsed(f.path, role, {
+      failures: evidence.failures ?? [],
+      open,
+      full,
+    });
     const limit = full.has(f.path) ? Number.POSITIVE_INFINITY : MAX_LINES;
     const body = f.binary
       ? '<div class="note-row">Binary file.</div>'

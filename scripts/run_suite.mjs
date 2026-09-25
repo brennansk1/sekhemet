@@ -37,6 +37,7 @@ const {
   runFrozenSuite,
   runProfileHash,
   prepareIndependentCard,
+  scoreCardProfiles,
   seededCards,
   suiteQueueRunner,
   summarise,
@@ -142,6 +143,8 @@ console.log(`Frozen suite ${suite.version} ${suite.hash.slice(0, 12)} — ${task
 const { reachabilityGate } = await import(join(ROOT, "apps/harness/dist/reachability_gate.js"));
 const { regressionFailures } = await import(join(ROOT, "apps/harness/dist/regression_gate.js"));
 const { architectureGate } = await import(join(ROOT, "apps/harness/dist/architecture_gate.js"));
+const { expectedQueueProfile } = await import(join(ROOT, "apps/harness/dist/rescore.js"));
+const { appliedStepBudget } = await import(join(ROOT, "apps/harness/dist/wave2.js"));
 
 /**
  * Every project gate must pass an untouched repository. Run 3 was stopped
@@ -163,6 +166,8 @@ function preflight(fixture, dir) {
 
 /** One prepared repository per fixture, seeded once and reused by its cards. */
 const repos = new Map();
+/** Each prepared repository's expected card profile. */
+const expectedByRepo = new Map();
 function repoFor(fixture) {
   const existing = repos.get(fixture);
   if (existing) return existing;
@@ -188,6 +193,11 @@ function prepareRepo(fixture, dir) {
     : ["scripts/seed_chronicle.mjs", dir];
   execFileSync("node", [join(ROOT, seeder[0]), ...seeder.slice(1)], { stdio: "ignore" });
   preflight(fixture, dir);
+  // The profile this repository's queue should resolve, fixed before any
+  // card runs: the run's settings plus the repository's configuration layer
+  // (the default step budget), resolved as the queue resolves it. A budget
+  // tuned during the run is then a divergence, and named (SUITE_RUNS, ref-r1).
+  expectedByRepo.set(dir, expectedQueueProfile(dir, runProfile, appliedStepBudget(dir)));
   // The mark that lets this copy's queue take --auto-accept (review M5): a
   // fixture copy made for measurement, not a person's repository.
   writeFileSync(
@@ -320,12 +330,15 @@ const result = await runFrozenSuite({ ...suite, tasks }, runner);
 result.modelLoads = runner.modelLoads();
 
 /**
- * The profile each card actually ran with, from its evidence. A card whose
- * recorded profile differs from the run's (a configuration layer on this
- * host, a tuned step budget) is named, never silently pooled.
+ * The profile each card actually ran with, from its evidence, against the one
+ * its repository's queue was expected to resolve: the run's settings plus that
+ * repository's configuration layer. Comparing against the run's profile alone
+ * named every card (ref-r1: the config's step budget of 40 against the run's
+ * null), so admission refused every run. A card that differs (a tuned budget,
+ * a different switch) is still named, never silently pooled; each card's
+ * profile is kept for admission to compare across arms.
  */
-const expected = runProfileHash({ ...runProfile, settingsFile: undefined });
-const mismatched = [];
+const scoredCards = [];
 /** The person's override each card's Worker ran under, from its card/repro (MD-N4-4). */
 const overrides = new Map();
 for (const [fixture, repo] of repos) {
@@ -335,15 +348,17 @@ for (const [fixture, repo] of repos) {
     const repro = JSON.parse(readFileSync(file, "utf8")).reproducibility;
     if (repro?.workerOverride)
       overrides.set(JSON.stringify(repro.workerOverride), repro.workerOverride);
-    const recorded = repro?.runProfile;
-    if (recorded && runProfileHash({ ...recorded, settingsFile: undefined }) !== expected) {
-      mismatched.push(`${fixture}/${id}`);
-    }
+    scoredCards.push({
+      card: `${fixture}/${id}`,
+      expected: expectedByRepo.get(repo),
+      recorded: repro?.runProfile,
+    });
   }
 }
+const { profileMismatch: mismatched, differences, cardProfiles } = scoreCardProfiles(scoredCards);
 if (mismatched.length) {
   console.log(
-    `WARNING: ${mismatched.length} card(s) ran with a different profile: ${mismatched.join(", ")}`,
+    `WARNING: ${mismatched.length} card(s) ran with a different profile: ${mismatched.map((c) => `${c} (${differences[c].join(", ")})`).join(", ")}`,
   );
 }
 
@@ -362,7 +377,7 @@ function workerOverrideField() {
 mkdirSync(dirname(out), { recursive: true });
 writeFileSync(
   out,
-  `${JSON.stringify({ ...result, worker, tasksRun: tasks.length, runProfile: { ...runProfile, hash: runProfileHash(runProfile) }, mode: independent ? "independent" : "sequential", ...(abEntry ? { abEntry } : {}), ...(mismatched.length ? { profileMismatch: mismatched } : {}), ...workerOverrideField() }, null, 2)}\n`,
+  `${JSON.stringify({ ...result, worker, tasksRun: tasks.length, runProfile: { ...runProfile, hash: runProfileHash(runProfile) }, mode: independent ? "independent" : "sequential", ...(abEntry ? { abEntry } : {}), ...(mismatched.length ? { profileMismatch: mismatched } : {}), cardProfiles, ...workerOverrideField() }, null, 2)}\n`,
 );
 console.log(`\n${summarise(result)}`);
 /**

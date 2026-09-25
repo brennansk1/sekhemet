@@ -13,6 +13,17 @@ export interface CardTransition {
    * event (NEW-kernel-2) it is recorded in the `card/override` payload.
    */
   principal?: string;
+  /**
+   * Card events committed in the same transaction as the move (kernel S7):
+   * Accept's `card/accepted` with the move to Done (review-git §2.5.3).
+   */
+  with?: readonly {
+    type: string;
+    actor: string;
+    payload: unknown;
+    principal?: string;
+    private?: Record<string, unknown>;
+  }[];
 }
 
 export interface WipLimitStatus {

@@ -5,9 +5,11 @@ import {
   RUN_PROFILE_FLAGS,
   RunProfileRefusal,
   profileArgs,
+  profileDifferences,
   profileSwitchCount,
   resolveRunProfile,
   runProfileHash,
+  scoreCardProfiles,
 } from "../src/run_profile.js";
 
 describe("one recorded RunProfile (MS-M9-4, MS-M9-5)", () => {
@@ -38,12 +40,13 @@ describe("one recorded RunProfile (MS-M9-4, MS-M9-5)", () => {
     });
   });
 
-  it("records the settings file's path and content hash", () => {
+  it("records the settings file's path, content hash and contents (SUR-45)", () => {
     const text = '{ "switches": { "thinking": "all" } }';
     const p = resolveRunProfile({ settingsFile: { path: "/x/s.json", text }, env: {}, argv: [] });
     expect(p.settingsFile).toEqual({
       path: "/x/s.json",
       sha256: createHash("sha256").update(text).digest("hex"),
+      contents: text,
     });
   });
 
@@ -173,5 +176,64 @@ describe("one recorded RunProfile (MS-M9-4, MS-M9-5)", () => {
     expect(() => resolveRunProfile({ env: {}, argv: ["--tool-arm", "some"] })).toThrow(
       /--tool-arm is progressive or fixed/,
     );
+  });
+});
+
+describe("each card's recorded profile against its repository's expected one (SUITE_RUNS, ref-r1)", () => {
+  const run = resolveRunProfile({ env: {}, argv: ["--worker", "cyber-tiel", "--auto-accept"] });
+  // The queue in a fixture copy adds its configuration layer: the default step budget.
+  const withConfig = resolveRunProfile({
+    config: { policies: { stepCap: 40 } },
+    env: {},
+    argv: ["--worker", "cyber-tiel", "--auto-accept"],
+  });
+
+  it("names the settings two profiles differ in, not where each came from or the settings file", () => {
+    expect(profileDifferences(run, withConfig)).toEqual(["policies.stepCap"]);
+    const named = resolveRunProfile({
+      settingsFile: { path: "/a.json", text: "{}" },
+      env: { SEKHEMET_THINKING: "off" },
+      argv: ["--worker", "cyber-tiel", "--auto-accept"],
+    });
+    expect(profileDifferences(run, named)).toEqual([]);
+    const arm = resolveRunProfile({
+      env: { SEKHEMET_THINKING: "surgical" },
+      argv: ["--worker", "cyber-tiel", "--auto-accept", "--arm", "thinking-surgical"],
+    });
+    expect(profileDifferences(run, arm)).toEqual(["armUnderTest", "switches.thinking"]);
+  });
+
+  it("matches a card that ran with the run's settings plus its repository's configuration", () => {
+    const s = scoreCardProfiles([
+      { card: "chronicle/card_a", expected: withConfig, recorded: withConfig },
+      { card: "chronicle/card_b", expected: withConfig, recorded: undefined },
+    ]);
+    expect(s.profileMismatch).toEqual([]);
+    expect(Object.keys(s.cardProfiles)).toEqual(["chronicle/card_a"]);
+    expect(s.cardProfiles["chronicle/card_a"]?.hash).toBe(runProfileHash(withConfig));
+    expect(s.cardProfiles["chronicle/card_a"]).not.toHaveProperty("sources");
+  });
+
+  it("still names a real divergence: a tuned budget or a different switch", () => {
+    const tuned = resolveRunProfile({
+      config: { policies: { stepCap: 30 } },
+      env: {},
+      argv: ["--worker", "cyber-tiel", "--auto-accept"],
+    });
+    const strict = resolveRunProfile({
+      config: { policies: { stepCap: 40 } },
+      env: { SEKHEMET_WORKER_METHOD: "strict" },
+      argv: ["--worker", "cyber-tiel", "--auto-accept"],
+    });
+    const s = scoreCardProfiles([
+      { card: "onyx/card_1", expected: withConfig, recorded: tuned },
+      { card: "onyx/card_2", expected: withConfig, recorded: strict },
+      { card: "onyx/card_3", expected: withConfig, recorded: withConfig },
+    ]);
+    expect(s.profileMismatch).toEqual(["onyx/card_1", "onyx/card_2"]);
+    expect(s.differences).toEqual({
+      "onyx/card_1": ["policies.stepCap"],
+      "onyx/card_2": ["switches.workerMethod"],
+    });
   });
 });

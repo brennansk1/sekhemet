@@ -22,6 +22,7 @@ import {
   profileForRun,
   readMeasurementMarker,
   runMeasureCommand,
+  withoutProfileFlags,
   writeMeasurementMarker,
 } from "../src/measure_cmd.js";
 
@@ -131,11 +132,46 @@ describe("the queue's profile, the suite's path (MS-M9-1, MS-M9-4)", () => {
     });
   });
 
-  it("refuses --profile and --settings, which the queue does not resolve into one profile", () => {
+  it("refuses --profile, which would set four other flags (SUR-45)", () => {
     expect(() => profileForQueue(["queue", "--profile", "full"], {}, {})).toThrow(/--profile/);
-    expect(() => profileForQueue(["queue", "--settings", "x.json"], {}, {})).toThrow(
-      /the queue does not read --settings/,
+  });
+
+  it("SUR-45: applies --settings as one layer and records its path, SHA-256 and contents", () => {
+    const dir = temp();
+    const text = '{ "roles": { "manager": "dirk" }, "policies": { "review": true } }';
+    write(dir, "arm.json", text);
+    const p = profileForQueue(
+      ["queue", "--settings", join(dir, "arm.json"), "--worker", "cyber-tiel"],
+      {},
+      { worker: "nail" },
     );
+    expect(p.roles).toMatchObject({ worker: "cyber-tiel", manager: "dirk" });
+    expect(p.policies.review).toBe(true);
+    expect(p.sources).toMatchObject({ "roles.manager": "settings", "roles.worker": "flag" });
+    expect(p.settingsFile).toEqual({
+      path: join(dir, "arm.json"),
+      sha256: createHash("sha256").update(text).digest("hex"),
+      contents: text,
+    });
+    expect(() => profileForQueue(["queue", "--settings", join(dir, "none.json")], {}, {})).toThrow(
+      /no settings file/,
+    );
+    // The queue then reads the profile's flags in place of the ones given.
+    expect(
+      withoutProfileFlags([
+        "queue",
+        "--repo",
+        "/r",
+        "--worker",
+        "x",
+        "--review",
+        "--settings",
+        "f.json",
+        "--max-turns",
+        "9",
+        "--auto-accept",
+      ]),
+    ).toEqual(["queue", "--repo", "/r"]);
   });
 });
 

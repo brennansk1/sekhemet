@@ -12,6 +12,9 @@ code:
   - apps/harness/src/config_apply.ts
   - apps/harness/src/triage.ts
   - apps/harness/src/attachments.ts
+  - apps/harness/src/terminal_board.ts
+  - apps/harness/src/user_dir.ts
+  - apps/harness/src/measure_cmd.ts
   - packages/gates/src/templates.ts
 tests:
   - apps/harness/tests/front_door.spec.ts
@@ -24,6 +27,9 @@ tests:
   - apps/harness/tests/cli_gate.spec.ts
   - apps/harness/tests/cli_kernel.spec.ts
   - apps/harness/tests/docs.spec.ts
+  - apps/harness/tests/cli_exit.spec.ts
+  - apps/harness/tests/terminal_board.spec.ts
+  - apps/harness/tests/user_dir.spec.ts
 changes: [P10, S10, T4, T10, NEW-surface-1, NEW-surface-2, NEW-surface-3, NEW-surface-4, NEW-surface-5, NEW-surface-6, NEW-models-3]   # NEW-models-3: the reserve and release commands only (item 20a)
 ---
 
@@ -198,17 +204,19 @@ power_budget_kwh_day = 0                 # 0 = unlimited
 | Capability | State | Evidence | Change |
 | --- | --- | --- | --- |
 | Eight front-door commands, `dev` namespace, typo guard | built | `front_door.ts`; `front_door.spec.ts` (routing only; never runs `main`) | — |
-| Triage verbs share the board's code; send-back needs a reason | built | `index.ts:2023-2080`; `triage_cli.spec.ts` | — |
+| Triage verbs share the board's code; send-back needs a reason | built | `index.ts:2023-2080`; `triage_cli.spec.ts`; `accept` spawned by `cli_exit.spec.ts`: the one Accept-holder accepts their own delegated card, exit 0, `independent: false` (SUR-53, solo half). The team half is not reachable from the command line: the CLI opens its ledger with no Accept-holder source but the local person (`openLocalLedger`; `acceptHolders` is only injectable), so it stays tested in `accept_safe.spec.ts` (RG-N5-8) | — |
 | One first run | not-built | bare `sekhemet` runs `gates init` then `board` (`index.ts:1995-2014`): no models, no confirmation, no `.gitignore`, opens a browser; `init` is a separate path (`init.ts`) ending "Next: `sekhemet calibrate`" (`:386`) | P10 |
 | One gate deriver | not-built | four: `init.ts:170-270`, `templates.ts:79-90` (pnpm fallback, no typecheck, no `protected`), `onboard.ts:413-415`, bare `sekhemet` | P10 |
 | Onboarding | partial | seven steps, drafts under `.sekhemet/onboard/` (`onboard.spec.ts`); CI ignored for gates, `run: \|` missed (`:172`), `--apply` overwrites `gates.toml` (`:506-508`), `AGENTS.md` not idempotent (`:470`), drift fires every run (`:593-599`), language servers before trust (`:388-406`) | P10, S3a, S9 |
-| `--version` has no side effects | not-built | routed as home: writes files, opens a browser | S10 |
-| Uncaught error exits non-zero | not-built | `main().catch(console.error)` (`index.ts:2084`) | S10 |
+| `--version` has no side effects | built | `-v`/`--version` routed before anything is read or written (`front_door.ts` `routeFrontDoor`, `index.ts` `harnessVersion`); the one-time user-directory move is skipped for it; `cli_exit.spec.ts` spawns the built binary in an empty directory and home (SUR-13) | S10 |
+| Uncaught error exits non-zero | built | the entry prints the error and exits 1, forcing the exit if a server or timer would hold the process (`index.ts`); `cli_exit.spec.ts` (SUR-14) | S10 |
+| Unknown flag named, exit 2 | built | `KNOWN_FLAGS` and `unknownFlag` (`front_door.ts`), checked before routing; `front_door.spec.ts` fails when the source reads a flag the list lacks; `cli_exit.spec.ts` (SUR-15) | S10 |
+| `run <card>` exit status from the card's state | built | `runExitCode` (`front_door.ts`): 0 in Review or Done, else 1; `cli_exit.spec.ts` spawns `run` with a scripted Worker answering at the HTTP boundary (`node --import`, the machine's Ollama never reached) and its combination recorded as qualified: a finished card exits 0 in Review, a Worker that does nothing exits 1 (SUR-16). Seen there: a card stopped `no_progress` is left in Verify, not parked | S10 |
 | One command registry and parser | not-built | three parsers (`parseCliArgs`, `front_door.split`, per-command `argv.indexOf`); `board` reads `process.argv` (`index.ts:620`); `CliConfig.command` duplicates `COMMANDS` (`:113-150`); `main` is ~1,600 lines, `queue` ~790 | T4 |
-| Terminal board vocabulary | not-built | "SEKHEMET DUAL-AXIS KANBAN BOARD", `IN_PROGRESS`, `BACKLOG (0/500)` (`index.ts:291-328`) | NEW-surface-2 |
+| Terminal board vocabulary | built | NAMING.md's columns (Backlog, To do, In progress, In review, Done, On hold when non-empty), each card's state named where a column holds two, a WIP limit only where one is set (the dashboard's `LIMIT_SHOWN`) (`terminal_board.ts`); `terminal_board.spec.ts` (SUR-27) | NEW-surface-2 |
 | Config layers and `--set`: defaults, user, project, command line | built | `config.ts:192`; `config_apply.spec.ts` | — |
-| Config layer: card overrides | not-built (was counted in `built`) | `effectiveConfig` accepts `card.configOverrides` (`config_apply.ts:44-55`), but no card record has the field and no caller passes one | NEW-surface-3 |
-| One recorded `RunProfile`; `--settings <file>` | not-built | `queue --profile full` pushes `--explore`, `--escalate-retries`, `--review` and a `--max-turns` cap into `argv` and prints them (`index.ts:1181-1197`); the evidence records no single settings object | NEW-surface-5 |
+| Config layer: card overrides | partial | the kernel card field `configOverrides` (column `config_overrides`, migration 16; written by `card/created` and `card/updated`, replayed; its shape checked before any append: `config_overrides.spec.ts`); set with a card over REST and shown in the card's JSON (`rest_extra.spec.ts`); `effectiveConfig` layers it between the project and the command line, `run` prints it, and `run` and `queue` cap a card's steps by a `--max-turns` flag, else its `[loop] default_step_budget`, else the run's (`cardStepCap`, `configOverrideLines`; `config_apply.spec.ts`) (SUR-40); `executeCard` lists them in the card's evidence bundle as `configOverrides`, one `section.key = value` line each (`evidence_fields.spec.ts`). Not yet: no other key is read per card | NEW-surface-3 |
+| One recorded `RunProfile`; `--settings <file>` | built | `run` and `queue` resolve one profile or do not start (exit 2): `--profile full` is refused, never rewritten; `--settings` is one layer, its path, SHA-256 and contents recorded (`measure_cmd.ts` `profileForQueue`, `withoutProfileFlags`; eval `resolveRunProfile`); the queue then reads its settings from the profile, which every card's evidence records; `measure_cmd.spec.ts`, `run_profile.spec.ts`, `cli_exit.spec.ts` (SUR-44, SUR-45) | NEW-surface-5 |
 | `.gitignore` keeps personal and secret state out of git | not-built | five lines only (`init.ts:348-354`); `.sekhemet/evidence/`, `transcripts/`, `artifacts/`, `research/`, `live/`, `tuning/`, `traces.db`, `runs/`, `blobs/`, `gate-host/` and `queue_report.json` are committable | P10 |
 | Onboarding: team linter/formatter as gates, CI coverage list, diagnostic baseline, workspace graph | not-built | `detectCommands` classifies scripts and CI commands (`onboard.ts:108-190`) but records no step-by-step coverage, no baseline and no flaky run; workspaces are read only for per-package gates (`sync/src/repo_tools.ts:269-290`; pnpm, npm workspaces, Cargo), not recorded at onboarding, and TypeScript project references are not read | P10 |
 | One install path per audience: npm package, server container image | not-built | source install only ([DEC-21](../DECISIONS.md#dec-21--accepted-substitutions)) | NEW-surface-4 |
@@ -217,9 +225,9 @@ power_budget_kwh_day = 0                 # 0 = unlimited
 | `sekhemet dev reserve` and `release` | not-built | no such commands; the machine is reserved only by `[machine] hours` | NEW-models-3 |
 | Config schema matches its readers | not-built | unread: `machine.tier`, `[context]`, `loop.stall_window`, `loop.max_rungs`, `models.pruner`, `[sync]`, `telemetry.store`; the design's names (`worker`, `fetch_allow`, `[overnight] hours`) differ from the code's (`executor`, `allow`, `[machine] hours`), and the hours mean the opposite; `fetch_deny` has no reader and a project layer can widen `network.allow` (`config.ts:26, 160`) | P10, T10 |
 | Node.js floor matches `node:sqlite` | not-built | the check accepts any 22.x (`init.ts:61-64`) | P10 |
-| One user directory | not-built | `~/.sekhemet` (`config.ts:195`, `models_dir.ts:25`, `mcp_client.ts:33`) vs `~/.config/sekhemet` (`integrations.ts:44`, `learning/store.ts:91`, `research/service.ts:53`); `config.ts` ignores `SEKHEMET_CONFIG_DIR` | NEW-surface-1 |
+| One user directory | built (trust records: partial) | `user_dir.ts` `userDir`/`userPaths` (`SEKHEMET_CONFIG_DIR`, else `~/.sekhemet`) read by config, `config_apply`, integrations, learning, research memory, SearXNG, the MCP client, hooks, skills, the registry and machine profile (models `sekhemetConfigDir`) and git identities; `~/.config/sekhemet` moved once at start-up (`migrateLegacyUserDir`), reported by `doctor` (`userDirCheck`), a name already taken kept and warned; `user_dir.spec.ts` (SUR-25, SUR-26). Still their own defaults: `workspace_trust.ts` `trustDir` and `research_consent.ts` (`SEKHEMET_TRUST_DIR`, `~/.sekhemet`) | NEW-surface-1 |
 | Environment inventory | not-built | 45 `SEKHEMET_*` names read; the design allowed two | T10 |
-| Offline first run and `plan` | not-built | `plan` goes online unless `--offline` or `SEKHEMET_OFFLINE` (`index.ts:703`) | S8 ([design-stage](design-stage.md)) |
+| Offline first run and `plan` | built | `plan` looks only when research is allowed, asking once on a new project (`research/plan_research.ts`); otherwise no request and it says so; `plan_research.spec.ts` | S8 ([design-stage](design-stage.md)) |
 | Multimodal input | built | `attachments.ts`; `attachments.spec.ts:44-115` | — |
 | `doctor`: install, weights, confinement | built | `doctor.ts`; `doctor_weights.spec.ts`, `doctor_probe.spec.ts` | — |
 | Docs checks | partial | `docs.spec.ts`: root allowlist, index coverage, relative links; skips `file:` links (`:54`) | T10 |

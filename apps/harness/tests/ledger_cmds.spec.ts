@@ -303,6 +303,27 @@ describe("K-N7-8: an erased blob left behind by a crash", () => {
     expect(blobs.has(pack)).toBe(false);
     again.db.close();
   });
+
+  it("RUN-57: an erased run file a crash left on disk is deleted when the ledger is next opened", async () => {
+    const r = repo();
+    const { db, log } = initLocalKernel(r);
+    const root = join(r, ".sekhemet");
+    const file = join(root, "transcripts", "card_x-2026-01-01T00-00-00-000Z.jsonl");
+    mkdirSync(join(root, "transcripts"), { recursive: true });
+    writeFileSync(file, "{}");
+    await log.erase({
+      eventIds: [],
+      files: ["transcripts/card_x-2026-01-01T00-00-00-000Z.jsonl"],
+      fileRoot: root,
+      reason: "retention",
+      principal: log.localPrincipal(),
+    });
+    writeFileSync(file, "{}"); // the unlink never happened
+    db.close();
+    const again = initLocalKernel(r);
+    expect(existsSync(file)).toBe(false);
+    again.db.close();
+  });
 });
 
 describe("RUN-42, RUN-43: `sekhemet dev export --ledger`", () => {

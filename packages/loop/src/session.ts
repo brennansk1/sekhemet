@@ -221,6 +221,15 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   private activeRung: RungPolicy | undefined;
   /** Set by `abort`; the next turn stops with `human_abort` without calling the model. */
   private abortReason: string | undefined;
+  /** EXT-22a: skills left out of a prompt for missing tools, by name. */
+  private skillsOmitted = new Map<string, { name: string; missingTools: string[] }>();
+  /** EXT-25: skill bodies cut to their budget, by name. */
+  private skillsTruncated = new Map<
+    string,
+    { name: string; budgetTokens: number; keptTokens: number; originalTokens: number }
+  >();
+  /** WL-N10-2: who paused the card; the next step boundary stops it resumably. */
+  private pausedBy: string | undefined;
   /** A re-plan has been applied to this card (from the start, or in-loop). */
   private replanned: boolean;
   /** The plan an in-loop re-plan produced, shown with the manager's guidance. */
@@ -506,15 +515,14 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       summary: `gates failing: ${[...new Set(result.failures.map((f) => f.gate ?? f.rung))].join(", ")}`,
       // Long gate output goes through the same condenser as run_cmd (C8):
       // error lines are protected, and the raw text stays recallable.
-      content: condenseToolOutput(
-        `Gates failing (not submitted — keep working):\n${lines.join("\n")}`,
-        {
+      content: this.tools.countCondensed(
+        condenseToolOutput(`Gates failing (not submitted — keep working):\n${lines.join("\n")}`, {
           command: "check",
           exitCode: 1,
           cardId: this.cardId,
           turn: this.stepsUsed,
           recallOffered: this.recallOffered(),
-        },
+        }),
       ).text,
     };
   }
@@ -1044,6 +1052,11 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   }
 
   /** Playbook rules that were in this card's prompt, for helpful/harmful counting. */
+  /** Tokens output condensing removed from this session's observations (RUN-47). */
+  public getCondensedTokensSaved(): number {
+    return this.tools.condensedTokensSaved;
+  }
+
   public getRulesUsed(): string[] {
     return [...this.rulesUsed];
   }
@@ -1302,12 +1315,19 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
    * scope files and the standing failure longest.
    */
   private buildPrompt(): WorkerPromptResult {
-    // C9: every skill as a manifest line, the matched ones in full.
+    // C9: every skill as a manifest line, the matched ones in full; a skill
+    // needing a tool this card is not offered is left out (EXT-22a).
     const skills =
-      this.options.skillsRegistry?.skillsForPrompt(
-        this.card.title,
-        this.options.scopeFiles ?? [],
-      ) ?? [];
+      this.options.skillsRegistry?.skillsForPrompt(this.card.title, this.options.scopeFiles ?? [], {
+        tools: this.offeredToolNames(),
+      }) ?? [];
+    // EXT-22a, EXT-25: what the prompt left out or cut, for the evidence.
+    for (const o of this.options.skillsRegistry?.omitted() ?? []) {
+      this.skillsOmitted.set(o.name, o);
+    }
+    for (const s of skills) {
+      if (s.truncated) this.skillsTruncated.set(s.name, { name: s.name, ...s.truncated });
+    }
     // C22: the project's own conventions (AGENTS.md, CLAUDE.md), once per card.
     this.conventions ??= (() => {
       try {
@@ -1518,6 +1538,15 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         stopReason: "human_abort",
         // Rule 31: the next action is to see who stopped it.
         abortedBy: this.abortReason,
+      };
+    }
+    if (this.pausedBy !== undefined) {
+      return {
+        turnIndex: this.stepsUsed,
+        toolCalls: [],
+        observations: [],
+        stopReason: "paused",
+        abortedBy: this.pausedBy,
       };
     }
     // Check headroom before spending a turn: stopping here is resumable,
@@ -1859,6 +1888,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         observations.push(postponed);
         continue;
       }
+      const toolStarted = Date.now();
       const observation =
         call.name === "check"
           ? await this.checkObservation()
@@ -1872,6 +1902,15 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
                   ? await this.subtaskObservation(call.arguments.question, call.arguments.context)
                   : await this.tools.execute(call);
       observations.push(observation);
+      this.options.onToolCall?.({
+        turnIndex,
+        callId: call.id,
+        name: call.name,
+        ok: observation.ok,
+        denied: observation.denied === true,
+        startedAtMs: toolStarted,
+        endedAtMs: Date.now(),
+      });
       this.recordEvidence(call, observation);
       if (call.name === "run_cmd") this.recordCommand(call, turnIndex, observation);
       if (this.options.hooks) {
@@ -2353,6 +2392,56 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   /** Release what the card holds: its background processes (L23). */
   public dispose(): void {
     this.tools.dispose();
+  }
+
+  /**
+   * Hand the Worker typed failures the harness found after its loop ended — a
+   * rebase conflict's hunks (review-git RG-N1-1) — so it continues within its
+   * remaining budget: the failures stand as the last check's, and a finish
+   * needs a fresh check.
+   */
+  public returnToWorker(failures: GateFailure[], note: string): void {
+    this.isFinished = false;
+    this.tools.resetFinish();
+    this.lastGateFailure = failures[0];
+    this.lastGateFailures = failures;
+    this.lastCheck = undefined;
+    this.writtenSinceCheck = true;
+    this.history.push({
+      turn: this.stepsUsed,
+      action: "returned by the harness",
+      result: `${note}\n${failures
+        .map(
+          (f, i) =>
+            `${i + 1}. [${f.gate ?? f.rung}] ${f.location?.file ?? ""}\n${f.errorExcerpt}${f.suggestedAction ? `\n   fix: ${f.suggestedAction}` : ""}`,
+        )
+        .join("\n")}`,
+    });
+  }
+
+  /**
+   * A person's message, delivered into the Worker's next step (WL-N10-1): it
+   * joins the history the next prompt carries, after the current step's tool
+   * calls have finished.
+   */
+  public deliverMessage(text: string, from = "a person's message"): void {
+    this.history.push({ turn: this.stepsUsed, action: from, result: text });
+  }
+
+  /** The skills this session's prompts left out or cut (EXT-22a, EXT-25). */
+  public getSkillReport(): {
+    omitted: { name: string; missingTools: string[] }[];
+    truncated: { name: string; budgetTokens: number; keptTokens: number; originalTokens: number }[];
+  } {
+    return {
+      omitted: [...this.skillsOmitted.values()],
+      truncated: [...this.skillsTruncated.values()],
+    };
+  }
+
+  /** WL-N10-2: stop at the next step boundary with the resumable `paused`. */
+  public pause(by: string): void {
+    this.pausedBy = by;
   }
 
   public async abort(reason: string): Promise<void> {

@@ -1,5 +1,6 @@
 import type { CardChange, CardKind, CardSplit } from "./card_class.js";
 import { STOP_REASONS } from "./stop_reasons.js";
+import type { TomlTable } from "./toml.js";
 
 export type CardTier = "initiative" | "epic" | "feature" | "story" | "task";
 
@@ -58,6 +59,8 @@ export type CardStopReason =
   | "capability_ceiling"
   /** A person stopped the card. */
   | "human_abort"
+  /** A person paused the card to steer it; it resumes when they hand it back (WL-N10-2). */
+  | "paused"
   /** The card's token budget (`tokenBudget`) was spent. */
   | "token_budget_exhausted"
   /** The card's wall-clock budget (`secondsBudget`) was spent. */
@@ -245,7 +248,16 @@ export interface CardRecord {
   accepter?: string;
   /** A typed hold that keeps the card in its state (rule 24, NEW-kernel-3). */
   hold?: CardHold;
+  /**
+   * The card's layer of the configuration (surface item 21, SUR-40): sections
+   * of `config.toml`, applied to this card's run between the project layer
+   * and the command line.
+   */
+  configOverrides?: CardConfigOverrides;
 }
+
+/** A card's configuration overrides: `config.toml` sections, each a table (SUR-40). */
+export type CardConfigOverrides = { [section: string]: TomlTable };
 
 /** Who builds a card (rule 21): the Worker, or a person named by principal. */
 export interface CardDelegate {

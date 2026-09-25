@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_STEP_BUDGET, type TomlTable, parseToml } from "@sekhemet/kernel";
+import { userDir } from "./user_dir.js";
 
 export type MachineTier = "auto" | "S" | "M" | "L" | "XL";
 /** Tri-state, not a boolean: "allowlist" is a distinct posture from open or offline. */
@@ -27,7 +27,14 @@ export interface SekhemetConfig {
     reviewMinutesPerDay: number;
     /** External CI checks the project declares blocking (kernel rule 37, K-N8-4). */
     blockingChecks: string[];
+    /** The branch cards are cut from and accepted into (review-git §2.6.2, RG-S5-14). */
+    integrationBranch: string;
   };
+  /**
+   * Solo or the Team setup ([teams](teams.md) §3): read from the user
+   * config only — a repository cannot switch its reader into solo (INT-26).
+   */
+  team: { mode: "solo" | "team" };
   network: { mode: NetworkMode; allow: string[] };
   sync: { github: boolean; forgejo: string };
   telemetry: { store: string };
@@ -45,7 +52,8 @@ export const DEFAULT_CONFIG: SekhemetConfig = {
   models: { executor: "auto", planner: "auto", vision: "auto", pruner: "auto" },
   context: { workingBudget: "auto", mapTokens: 1024, maskAfterObservations: 2 },
   loop: { defaultStepBudget: DEFAULT_STEP_BUDGET, stallWindow: 3, maxRungs: 4 },
-  review: { wip: "auto", reviewMinutesPerDay: 60, blockingChecks: [] },
+  review: { wip: "auto", reviewMinutesPerDay: 60, blockingChecks: [], integrationBranch: "main" },
+  team: { mode: "solo" },
   network: { mode: "offline", allow: [] },
   sync: { github: false, forgejo: "" },
   telemetry: { store: "local" },
@@ -111,7 +119,30 @@ function readLayer(name: string, path: string): ConfigLayer | undefined {
   }
 }
 
-function project(merged: TomlTable): SekhemetConfig {
+/**
+ * `review_minutes_per_day` (review-git §2.2.3, RG-S6-8): greater than 0. A
+ * value of 0 or less is refused — named in `problems` and not applied — so
+ * ReviewWIP is never derived from it nor from a static limit.
+ */
+function positiveReviewMinutes(value: unknown, problems: string[]): number {
+  if (value === undefined) return DEFAULT_CONFIG.review.reviewMinutesPerDay;
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    problems.push(
+      `review.review_minutes_per_day must be greater than 0 (got ${String(value)}); the value was refused and ${DEFAULT_CONFIG.review.reviewMinutesPerDay} applies`,
+    );
+    return DEFAULT_CONFIG.review.reviewMinutesPerDay;
+  }
+  return value;
+}
+
+/** A plausible git branch name, else the fallback. */
+function branchName(value: unknown, fallback: string): string {
+  return typeof value === "string" && /^[\w./-]+$/.test(value) && !value.includes("..")
+    ? value
+    : fallback;
+}
+
+function project(merged: TomlTable, problems: string[] = [], user?: TomlTable): SekhemetConfig {
   const d = DEFAULT_CONFIG;
   const machine = table(merged, "machine");
   const models = table(merged, "models");
@@ -160,9 +191,11 @@ function project(merged: TomlTable): SekhemetConfig {
     },
     review: {
       wip: review.wip === "auto" || review.wip === undefined ? "auto" : num(review.wip, 3),
-      reviewMinutesPerDay: num(review.review_minutes_per_day, d.review.reviewMinutesPerDay),
+      reviewMinutesPerDay: positiveReviewMinutes(review.review_minutes_per_day, problems),
       blockingChecks: strArray(review.blocking_checks, d.review.blockingChecks),
+      integrationBranch: branchName(review.integration_branch, d.review.integrationBranch),
     },
+    team: { mode: user?.team && table(user, "team").mode === "team" ? "team" : "solo" },
     network: { mode, allow: strArray(network.allow, d.network.allow) },
     sync: {
       github: bool(sync.github, d.sync.github),
@@ -186,6 +219,8 @@ export interface ResolvedConfig {
   config: SekhemetConfig;
   /** Layers actually applied, in precedence order, for `doctor` to report. */
   layers: string[];
+  /** Values refused, each naming its key (RG-S6-8). */
+  problems: string[];
 }
 
 /**
@@ -198,7 +233,8 @@ export interface ResolvedConfig {
 export function resolveConfig(options: ResolveConfigOptions): ResolvedConfig {
   const layers: ConfigLayer[] = [{ name: "defaults", values: {} }];
 
-  const userPath = options.userConfigPath ?? join(homedir(), ".sekhemet", "config.toml");
+  const userPath =
+    options.userConfigPath ?? process.env.SEKHEMET_USER_CONFIG ?? join(userDir(), "config.toml");
   const user = readLayer("user", userPath);
   if (user) layers.push(user);
 
@@ -210,5 +246,7 @@ export function resolveConfig(options: ResolveConfigOptions): ResolvedConfig {
 
   const merged = layers.reduce<TomlTable>((acc, layer) => mergeTables(acc, layer.values), {});
 
-  return { config: project(merged), layers: layers.map((l) => l.name) };
+  const problems: string[] = [];
+  const config = project(merged, problems, user?.values);
+  return { config, layers: layers.map((l) => l.name), problems };
 }

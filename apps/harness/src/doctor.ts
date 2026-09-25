@@ -10,8 +10,11 @@ import {
   readKernelPressureLevel,
 } from "@sekhemet/models";
 import { ProcessSandbox } from "@sekhemet/sandbox";
+import { networkConfigs } from "./config_apply.js";
 import { pendingM0InRepo } from "./m0_path.js";
 import { checkRegisters } from "./registers.js";
+import { readMoveRecord, userDir } from "./user_dir.js";
+import { hookEngineFor } from "./user_hooks.js";
 import { playbookDoctorCheck } from "./wave2.js";
 
 export type CheckStatus = "pass" | "warn" | "fail";
@@ -251,9 +254,44 @@ export async function runDoctor(repoPath: string = process.cwd()): Promise<Docto
     registersCheck(repoPath),
     pluginsCheck(repoPath),
     m0PendingCheck(repoPath),
+    userDirCheck(),
+    hooksCheck(repoPath),
+    researchConsentCheck(repoPath),
   ];
 
   return { ok: checks.every((c) => c.status !== "fail"), checks };
+}
+
+/**
+ * EXT-10: a hooks.toml that does not load — invalid TOML, an unknown event, an
+ * entry with no command — is named with its file and error, not discarded.
+ */
+export function hooksCheck(repoPath: string): DiagnosticCheck {
+  const { errors, count } = hookEngineFor(repoPath);
+  if (errors.length) return check("Hooks", "warn", errors.join("; "));
+  return check("Hooks", "pass", count ? `${count} hook(s) loaded` : "none declared");
+}
+
+/**
+ * NEW-surface-1 (SUR-26): the one user directory, and what the one-time move
+ * from `~/.config/sekhemet` did — a file left behind because its name was
+ * taken is a warning naming it, never silently dropped.
+ */
+export function userDirCheck(): DiagnosticCheck {
+  const dir = userDir();
+  const move = readMoveRecord();
+  if (!move) return check("User directory", "pass", dir);
+  const moved = move.moved.length
+    ? `moved ${move.moved.length} item(s) from ${move.from} on ${(move.at ?? "").slice(0, 10)}`
+    : `nothing moved from ${move.from}`;
+  if (move.kept.length) {
+    return check(
+      "User directory",
+      "warn",
+      `${dir}: ${moved}; left in ${move.from} because ${dir} already has them: ${move.kept.join(", ")} — merge or delete them by hand`,
+    );
+  }
+  return check("User directory", "pass", `${dir}: ${moved}`);
 }
 
 /**
@@ -271,6 +309,30 @@ export function pluginsCheck(repoPath: string): DiagnosticCheck {
     "Plugins",
     "warn",
     `plugins are not supported and are not loaded${found.length ? ` (${found.join(", ")})` : ""}; use hooks (.sekhemet/hooks.toml) or MCP servers (.sekhemet/mcp.json) instead`,
+  );
+}
+
+/**
+ * SEC-52b (security item 29a): a project may turn research off for itself,
+ * never on — its `research = "yes"` under the person's no (or no answer) is
+ * ignored, and said here.
+ */
+export function researchConsentCheck(repoPath: string): DiagnosticCheck {
+  const n = networkConfigs(repoPath);
+  if (n.project.research === "yes" && n.user.research !== "yes") {
+    return check(
+      "Research",
+      "warn",
+      `this project's config.toml research = "yes" is ignored: your config.toml says ${n.user.research ? `research = "${n.user.research}"` : "nothing yet (research stays offline until you answer)"}, and only you can allow research`,
+    );
+  }
+  const effective = n.user.research === "yes" && n.project.research !== "no" ? "yes" : "no";
+  return check(
+    "Research",
+    "pass",
+    effective === "yes"
+      ? "research may use the network, through the network policy"
+      : "research stays offline",
   );
 }
 

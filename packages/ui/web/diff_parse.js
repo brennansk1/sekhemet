@@ -138,6 +138,43 @@ export function fileRole(
   return "outside";
 }
 
+/**
+ * Whether a changed file's diff renders collapsed (§2.5.5): a person's toggle
+ * wins; otherwise generated files and protected tests nobody failed in start
+ * closed, and a protected test that failures point into opens on excerpts.
+ */
+export function groupCollapsed(
+  path,
+  role,
+  { failures = [], open = new Map(), full = new Set() } = {},
+) {
+  const fileFails = failures.filter((x) => x.location?.file === path && x.location.line);
+  const excerpt = role === "acceptance" && fileFails.length > 0 && !full.has(path);
+  const def = (role === "acceptance" && !excerpt) || role === "other";
+  return !(open.get(path) ?? !def);
+}
+
+/**
+ * The changed files whose diff the page is showing (RG-N5-5, RG-S6-6): each
+ * expanded file in the unified or split reading. The structural reading shows
+ * declarations, not the diff, so it shows no file.
+ */
+export function shownFiles(
+  evidence,
+  { card, gatesConfig, mode = "unified", open = new Map(), full = new Set() } = {},
+) {
+  if (!evidence?.diff || mode === "structural") return [];
+  const ctx = {
+    scopeFiles: card?.scopeFiles ?? [],
+    acceptanceTests: card?.acceptanceTests ?? [],
+    protectedGlobs: gatesConfig?.protected ?? [],
+  };
+  const failures = evidence.failures ?? [];
+  return parseUnifiedDiff(evidence.diff)
+    .map((f) => f.path)
+    .filter((path) => !groupCollapsed(path, fileRole(path, ctx), { failures, open, full }));
+}
+
 /** Failures keyed by the file and line they point at, for inline annotations. */
 export function annotationsByLine(failures = []) {
   const map = new Map();

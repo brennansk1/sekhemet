@@ -1,14 +1,23 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
 import type { CardRecord, CardStore, EventLog } from "@sekhemet/kernel";
+import { keychainStore } from "./keychain.js";
 import type { ProposalDraft } from "./pm/agent.js";
 import type { PmStore } from "./pm/store.js";
 import { PM_EVENTS } from "./pm/types.js";
+import { userDir } from "./user_dir.js";
 import { syncViaAdapter, trackerFromEnv } from "./wave2_github.js";
 import { githubAppFromEnv } from "./wave2_server.js";
 
@@ -41,13 +50,101 @@ function settingsPath(repoPath: string): string {
     // Use the path as given.
   }
   const key = createHash("sha256").update(real).digest("hex").slice(0, 16);
-  const base = process.env.SEKHEMET_CONFIG_DIR ?? join(homedir(), ".config", "sekhemet");
+  const base = userDir();
   return join(base, "repos", `${basename(real)}-${key}.json`);
+}
+
+/**
+ * The token file's protection (security item 35, SEC-27): the file is 0600
+ * and every directory from the Sekhemet user directory down to it is 0700,
+ * wider modes on existing ones corrected. The sandbox cannot read the
+ * directory either (item 10, SEC-23).
+ */
+function secureSettingsPath(path: string): void {
+  const base = userDir();
+  for (const dir of [base, dirname(path)]) {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    if ((statSync(dir).mode & 0o777) !== 0o700) chmodSync(dir, 0o700);
+  }
+  if (existsSync(path) && (statSync(path).mode & 0o777) !== 0o600) chmodSync(path, 0o600);
+}
+
+/**
+ * The settings that are secrets (security item 35): a Slack webhook URL can
+ * post to the channel, a push token to the phone. Where the host has a
+ * keychain they live there (SEC-27a); the file keeps only their account names.
+ */
+const SECRET_FIELDS = ["slackWebhookUrl", "push.token"] as const;
+
+/** The file as stored: the settings, less secrets kept in the keychain, which it names. */
+type StoredSettings = IntegrationSettings & { keychain?: string[] };
+
+function getField(o: object, field: string): unknown {
+  return field.split(".").reduce<unknown>((v, k) => (v as Record<string, unknown>)?.[k], o);
+}
+function setField(o: object, field: string, value: unknown): void {
+  const keys = field.split(".");
+  let at = o as Record<string, unknown>;
+  for (const k of keys.slice(0, -1)) {
+    if (typeof at[k] !== "object" || at[k] === null) return;
+    at = at[k] as Record<string, unknown>;
+  }
+  const last = keys.at(-1) as string;
+  if (value === undefined) delete at[last];
+  else at[last] = value;
+}
+
+/**
+ * Write the settings file: each secret into the keychain when there is one
+ * (a failed keychain write keeps that secret in the 0600 file, SEC-27), the
+ * secrets it no longer holds removed from the keychain.
+ */
+function persistSettings(path: string, settings: IntegrationSettings, previous: string[]): void {
+  const store = keychainStore();
+  const out = structuredClone(settings) as StoredSettings;
+  const accounts: string[] = [];
+  if (store) {
+    for (const field of SECRET_FIELDS) {
+      const value = getField(settings, field);
+      if (typeof value !== "string" || !value) continue;
+      const account = `${basename(path, ".json")}:${field}`;
+      try {
+        store.set(account, value);
+        setField(out, field, undefined);
+        accounts.push(account);
+      } catch {
+        // The keychain refused: the 0600 file keeps this one.
+      }
+    }
+    for (const account of previous) if (!accounts.includes(account)) store.delete(account);
+  }
+  if (accounts.length > 0) out.keychain = accounts;
+  secureSettingsPath(path);
+  writeFileSync(path, `${JSON.stringify(out, null, 2)}\n`, { mode: 0o600 });
+  // `mode` applies only when the file is created: an existing one is corrected.
+  secureSettingsPath(path);
+}
+
+function readStored(path: string): StoredSettings {
+  return JSON.parse(readFileSync(path, "utf8")) as StoredSettings;
 }
 
 export function readSettings(repoPath: string): IntegrationSettings {
   try {
-    return JSON.parse(readFileSync(settingsPath(repoPath), "utf8")) as IntegrationSettings;
+    const path = settingsPath(repoPath);
+    const { keychain: accounts = [], ...settings } = readStored(path);
+    secureSettingsPath(path);
+    const store = keychainStore();
+    if (!store) return settings;
+    // SEC-27a: an older file's tokens move into the keychain on this read.
+    const plaintext = SECRET_FIELDS.some((f) => typeof getField(settings, f) === "string");
+    for (const account of accounts) {
+      const value = store.get(account);
+      if (value !== undefined)
+        setField(settings, account.slice(account.lastIndexOf(":") + 1), value);
+    }
+    if (plaintext) persistSettings(path, settings, accounts);
+    return settings;
   } catch {
     return {};
   }
@@ -58,12 +155,17 @@ export function writeSettings(
   patch: { [K in keyof IntegrationSettings]?: IntegrationSettings[K] | undefined },
 ): IntegrationSettings {
   const path = settingsPath(repoPath);
+  let previous: string[] = [];
+  try {
+    previous = readStored(path).keychain ?? [];
+  } catch {
+    // No file yet.
+  }
   // An undefined value in the patch removes that setting.
   const merged: Record<string, unknown> = { ...readSettings(repoPath), ...patch };
   for (const [k, v] of Object.entries(merged)) if (v === undefined) delete merged[k];
   const next = merged as IntegrationSettings;
-  mkdirSync(join(path, ".."), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
+  persistSettings(path, next, previous);
   return next;
 }
 

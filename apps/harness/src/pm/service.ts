@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { CardStore } from "@sekhemet/kernel";
 import { HttpInferenceAdapter, type LocalInferenceAdapter } from "@sekhemet/models";
@@ -36,82 +36,13 @@ export function createPmAdapter(modelId = DEFAULT_PM_MODEL): HttpInferenceAdapte
 
 // --- Runner lease ------------------------------------------------------------
 
-export interface RosterEntry {
-  role: "worker" | "manager" | "reviewer" | "researcher";
-  model?: string;
-}
-
-interface Lease {
-  pid: number;
-  startedAt: string;
-  heartbeatAt: string;
-  pmModel?: string;
-  roster?: RosterEntry[];
-  /** The role whose model is resident right now. */
-  active?: string;
-  /** Every role whose model is resident right now. */
-  resident?: string[];
-  coResident?: boolean;
-}
-
-const leasePath = (repoPath: string) => join(repoPath, ".sekhemet", "runner.lock");
-
-/**
- * Claim the runner lease for a `sekhemet queue` process.
- *
- * While a queue holds it, the queue answers PM messages between Worker steps,
- * because only it can unload the Worker; the dashboard answering at the same
- * time would load a second large model and exhaust memory.
- */
-export function holdRunnerLease(
-  repoPath: string,
-  pmModel?: string,
-  live?: () => { roster: RosterEntry[]; active?: string; resident?: string[]; coResident: boolean },
-): () => void {
-  mkdirSync(join(repoPath, ".sekhemet"), { recursive: true });
-  const now = new Date().toISOString();
-  const lease: Lease = {
-    pid: process.pid,
-    startedAt: now,
-    heartbeatAt: now,
-    ...(pmModel ? { pmModel } : {}),
-  };
-  writeFileSync(leasePath(repoPath), JSON.stringify({ ...lease, ...(live?.() ?? {}) }));
-  const beat = setInterval(() => {
-    try {
-      writeFileSync(
-        leasePath(repoPath),
-        JSON.stringify({ ...lease, ...(live?.() ?? {}), heartbeatAt: new Date().toISOString() }),
-      );
-    } catch {
-      // A missed heartbeat only matters if the process is also gone.
-    }
-  }, 3_000);
-  beat.unref();
-  const release = () => {
-    clearInterval(beat);
-    try {
-      const current = JSON.parse(readFileSync(leasePath(repoPath), "utf8")) as Lease;
-      if (current.pid === process.pid) rmSync(leasePath(repoPath), { force: true });
-    } catch {
-      // Already gone.
-    }
-  };
-  process.once("exit", release);
-  return release;
-}
-
-/** The live lease holder, or undefined when no queue is running. */
-export function runnerLease(repoPath: string): Lease | undefined {
-  try {
-    const lease = JSON.parse(readFileSync(leasePath(repoPath), "utf8")) as Lease;
-    // A lease whose process is gone (a crash, a kill -9) is not a lease.
-    process.kill(lease.pid, 0);
-    return lease;
-  } catch {
-    return undefined;
-  }
-}
+// The lease lives in its own module (NEW-runtime-1); re-exported for callers.
+export {
+  type Lease,
+  type RosterEntry,
+  holdRunnerLease,
+  runnerLease,
+} from "../runner_lease.js";
 
 // --- Snapshot ----------------------------------------------------------------
 

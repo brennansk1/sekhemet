@@ -1,15 +1,19 @@
 import { execFileSync } from "node:child_process";
 import {
   appendFileSync,
+  closeSync,
   existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   readdirSync,
   realpathSync,
   rmSync,
+  statSync,
   symlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
@@ -63,6 +67,20 @@ export function missingTrailers(message: string, opts: { checkpoint?: boolean } 
   const have = new Set(parseTrailers(message).map((t) => t.key.toLowerCase()));
   const need = [...REQUIRED_TRAILERS, ...(opts.checkpoint ? CHECKPOINT_TRAILERS : [])];
   return need.filter((k) => !have.has(k.toLowerCase()));
+}
+
+/** A squash or revert that conflicts: nothing was written (RG-S5-4). */
+export class MergeConflictError extends Error {
+  constructor(
+    public readonly cardId: string,
+    public readonly onto: string,
+    public readonly files: string[],
+  ) {
+    super(
+      `${cardId} conflicts with ${onto} in ${files.join(", ") || "unknown files"}; nothing was written and the card stays in Review`,
+    );
+    this.name = "MergeConflictError";
+  }
 }
 
 /** Default co-author for a model's work (Y2). */
@@ -595,6 +613,12 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
     commitMsg: string,
     trailers: Record<string, string> = {},
     title?: string,
+    options: {
+      /** The integration branch's head the preview saw; a moved branch refuses (RG-S5-5). */
+      expectedOld?: string;
+      /** The squash body (the evidence summary, review-git §2.5.7). */
+      body?: string;
+    } = {},
   ): Promise<string> {
     const branch = this.branchNameFor(cardId, title);
     const files = this.runGit(["diff", "--name-only", `${targetBranch}...${branch}`])
@@ -635,16 +659,233 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
     for (const a of [...coAuthors].sort()) trailerLines.push(`Co-authored-by: ${a}`);
 
     const message = conventionalSquashMessage(cardId, commitMsg, files, title);
-    const full = `${message}\n\n${trailerLines.join("\n")}`;
+    const body = options.body?.trim();
+    const full = `${message}${body ? `\n\n${body}` : ""}\n\n${trailerLines.join("\n")}`;
     // Refused before anything moves: main never receives an unattributed commit.
     const missing = missingTrailers(full);
     if (missing.length > 0)
       throw new Error(`squash of ${cardId} refused: missing trailer(s): ${missing.join(", ")}`);
 
-    this.runGit(["checkout", targetBranch]);
-    this.runGit(["merge", "--squash", branch]);
-    this.runGit(["commit", "--no-verify", "-m", full]);
-    return this.runGit(["rev-parse", "HEAD"]);
+    // review-git §2.5.2 (RG-S5-1, -2, -4, -5): plumbing, never the person's
+    // working copy — the merged tree is computed from the two refs, the
+    // squash is a commit object on the integration branch's head, and the
+    // ref moves only by compare-and-set from the head the preview saw.
+    const old = this.runGit(["rev-parse", "--verify", `refs/heads/${targetBranch}^{commit}`]);
+    if (options.expectedOld && options.expectedOld !== old) {
+      throw new Error(
+        `${targetBranch} moved since the preview (${options.expectedOld.slice(0, 10)} → ${old.slice(0, 10)}); nothing was written. Review the card against the new ${targetBranch}.`,
+      );
+    }
+    const tree = this.mergeTree(old, branch, cardId, targetBranch);
+    const sha = this.runGit(["commit-tree", tree, "-p", old, "-m", full]);
+    this.casRef(targetBranch, sha, old, `sekhemet accept ${cardId}`);
+    return sha;
+  }
+
+  /**
+   * `git merge-tree --write-tree` of two commits (git ≥ 2.38): the merged
+   * tree's id, or a `MergeConflictError` naming the conflicting files. Writes
+   * objects only — no ref, no index, no working-tree file.
+   */
+  private mergeTree(
+    ours: string,
+    theirs: string,
+    cardId: string,
+    onto: string,
+    base?: string,
+  ): string {
+    const args = [
+      "merge-tree",
+      "--write-tree",
+      "--name-only",
+      "--no-messages",
+      ...(base ? [`--merge-base=${base}`] : []),
+      ours,
+      theirs,
+    ];
+    try {
+      return this.runGit(args).split("\n")[0]?.trim() ?? "";
+    } catch (err) {
+      const e = err as { status?: number; stdout?: string | Buffer };
+      if (e.status !== 1) throw err;
+      const lines = String(e.stdout ?? "")
+        .split("\n")
+        .map((l) => l.trim())
+        .filter(Boolean);
+      const files = [...new Set(lines.slice(1))].sort();
+      throw new MergeConflictError(cardId, onto, files);
+    }
+  }
+
+  /** `update-ref` with the expected old value: another writer's move is never overwritten. */
+  private casRef(branch: string, next: string, expected: string, why: string): void {
+    try {
+      this.runGit(["update-ref", "-m", why, `refs/heads/${branch}`, next, expected]);
+    } catch {
+      throw new Error(
+        `${branch} moved while this accept ran (expected ${expected.slice(0, 10)}); nothing was written`,
+      );
+    }
+  }
+
+  /**
+   * Put the integration branch back where it was (RG-S5-3), only while it
+   * still holds `current` — the squash this accept wrote. Never touches the
+   * person's checkout.
+   */
+  public async restoreRef(branch: string, previous: string, current: string): Promise<void> {
+    this.casRef(branch, previous, current, "sekhemet accept refused: restore");
+  }
+
+  /**
+   * Revert an accepted squash on the integration branch (RG-S5-10): the
+   * inverse change as a commit of its own on the branch's head, merged with
+   * plumbing (`merge-tree --merge-base=<sha> <head> <sha>^`), the ref moved
+   * by compare-and-set. Returns the revert commit.
+   */
+  public async revertSquash(
+    branch: string,
+    sha: string,
+    trailers: Record<string, string>,
+  ): Promise<string> {
+    const head = this.runGit(["rev-parse", "--verify", `refs/heads/${branch}^{commit}`]);
+    const subject = this.runGit(["log", "-1", "--format=%s", sha]);
+    const tree = this.mergeTree(head, `${sha}^`, trailers.Card ?? sha, branch, sha);
+    const lines = Object.entries(trailers).map(([k, v]) => `${k}: ${v}`);
+    const message = `Revert "${subject}"\n\nThis reverts commit ${sha}.${lines.length ? `\n\n${lines.join("\n")}` : ""}`;
+    const revert = this.runGit(["commit-tree", tree, "-p", head, "-m", message]);
+    this.casRef(branch, revert, head, `sekhemet revert ${sha.slice(0, 10)}`);
+    return revert;
+  }
+
+  /**
+   * One accept at a time per repository (review-git §2.5.1, RG-S5-5): an
+   * exclusive lock file in the shared git directory, taken over only from a
+   * process that no longer exists. The compare-and-set on the ref is the
+   * second line: even without the lock, no update is lost.
+   */
+  public async withAcceptLock<T>(fn: () => Promise<T>): Promise<T> {
+    const gitDir = this.runGit(["rev-parse", "--git-common-dir"]);
+    const lock = join(
+      isAbsolute(gitDir) ? gitDir : join(this.repoRoot, gitDir),
+      "sekhemet-accept.lock",
+    );
+    const take = (): boolean => {
+      try {
+        writeFileSync(lock, JSON.stringify({ pid: process.pid, at: new Date().toISOString() }), {
+          flag: "wx",
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const busy = () =>
+      new Error("Another accept for this project is in progress; try again when it finishes");
+    // A lock whose holder no longer exists is taken over — under a short
+    // takeover lock (itself exclusive), and only if it is still the stale lock
+    // read, so two processes that both find it stale cannot both remove it
+    // (the runner lease's pattern, runtime item 3).
+    for (let tries = 0; !take(); tries++) {
+      let stale: string;
+      try {
+        stale = readFileSync(lock, "utf8");
+      } catch {
+        if (tries < 3) continue; // released meanwhile
+        throw busy();
+      }
+      const holder = lockHolder(stale);
+      if (holder === undefined || holder === process.pid || pidAlive(holder) || tries >= 3) {
+        throw busy();
+      }
+      const takeover = `${lock}.takeover`;
+      let fd: number;
+      try {
+        fd = openSync(takeover, "wx");
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+        // A takeover lock left by a process killed mid-takeover is stale after 10 s.
+        let age = 0;
+        try {
+          age = Date.now() - statSync(takeover).mtimeMs;
+        } catch {
+          continue; // its holder finished meanwhile
+        }
+        if (age <= 10_000) throw busy();
+        rmSync(takeover, { force: true });
+        continue;
+      }
+      try {
+        let current: string | undefined;
+        try {
+          current = readFileSync(lock, "utf8");
+        } catch {
+          current = undefined;
+        }
+        if (current === stale) rmSync(lock, { force: true });
+      } finally {
+        closeSync(fd);
+        rmSync(takeover, { force: true });
+      }
+    }
+    try {
+      return await fn();
+    } finally {
+      rmSync(lock, { force: true });
+    }
+  }
+
+  /** `git rev-parse --verify <ref>` in the repository (read only). */
+  public revParse(ref: string): string {
+    return this.runGit(["rev-parse", "--verify", ref]);
+  }
+
+  /** A git config value of the repository, or "" (read only). */
+  public gitConfig(key: string): string {
+    return this.runGit(["config", key], this.repoRoot, true);
+  }
+
+  /** The card's branch, found by its card id (any slug), or undefined. */
+  public cardBranch(cardId: string): string | undefined {
+    return this.runGit(
+      [
+        "for-each-ref",
+        "--format=%(refname:short)",
+        `refs/heads/sekhemet/${this.projectName}/${cardId}`,
+        `refs/heads/sekhemet/${this.projectName}/${cardId}-*`,
+      ],
+      this.repoRoot,
+      true,
+    )
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean)[0];
+  }
+
+  /**
+   * Run `fn` in a scratch, detached checkout of `ref` under
+   * `.sekhemet/worktrees/`, removed afterwards: gates and rebases that need
+   * a working tree never use the person's (review-git §2.5.2, NEW-review-git-2).
+   */
+  public async withScratchCheckout<T>(
+    ref: string,
+    fn: (path: string) => Promise<T>,
+    options: { linkDependencies?: boolean } = {},
+  ): Promise<T> {
+    const parentDir = join(this.repoRoot, ".sekhemet", "worktrees");
+    mkdirSync(parentDir, { recursive: true });
+    this.ensureHarnessExcludes();
+    const path = mkdtempSync(join(parentDir, "_scratch-"));
+    rmSync(path, { recursive: true, force: true });
+    this.runGit(["worktree", "add", "--detach", path, ref]);
+    try {
+      if (options.linkDependencies !== false) this.linkDependencies(path);
+      return await fn(path);
+    } finally {
+      this.runGit(["worktree", "remove", "--force", path], this.repoRoot, true);
+      rmSync(path, { recursive: true, force: true });
+      this.runGit(["worktree", "prune"], this.repoRoot, true);
+    }
   }
 
   /**
@@ -737,6 +978,27 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
         scopeFiles.length === 0
           ? []
           : files.filter((f) => !scopeFiles.some((pattern) => matchesScope(f, pattern)));
+      // RG-N1-3: the cards whose accepted changes the conflict is against,
+      // from the `Card:` trailers of the integration commits touching the files.
+      const otherCards = files.length
+        ? [
+            ...new Set(
+              run(
+                [
+                  "log",
+                  "--format=%(trailers:key=Card,valueonly)",
+                  `${before}..${onto}`,
+                  "--",
+                  ...files,
+                ],
+                true,
+              )
+                .split("\n")
+                .map((l) => l.trim())
+                .filter((l) => /^[\w.:-]+$/.test(l) && l !== cardId),
+            ),
+          ]
+        : [];
       return {
         ok: false,
         before,
@@ -747,6 +1009,7 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
           excerpt: hunks.join("\n\n"),
           failures,
           outOfScope,
+          otherCards,
           message: outOfScope.length
             ? `Rebasing ${cardId} onto ${targetBranch} conflicts in ${outOfScope.join(", ")}, outside this card's declared scope.`
             : `Rebasing ${cardId} onto ${targetBranch} conflicts in ${files.join(", ") || "unknown files"}.`,
@@ -754,6 +1017,33 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
       };
     }
     return { ok: true, rebased: true, before, after: run(["rev-parse", "HEAD"]) };
+  }
+
+  /**
+   * Put an in-scope rebase conflict in front of the Worker (RG-N1-1): the
+   * card's branch is kept under `refs/sekhemet/rebase/<card>/<ms>`, moved to
+   * the integration branch's tip, and the card's whole change is applied on
+   * it as one squash merge — clean files staged, conflicting files left with
+   * their markers for the Worker to resolve. Its next checkpoint is then a
+   * commit on top of the integration branch, so the next rebase is a no-op.
+   */
+  public stageRebaseConflict(
+    cardId: string,
+    targetBranch = "main",
+  ): { preservedRef: string; files: string[] } {
+    const cwd = this.getWorktreePath(cardId);
+    if (!existsSync(cwd)) throw new Error(`Worktree for card ${cardId} not found at ${cwd}`);
+    const env = this.guard(cwd);
+    const run = (args: string[], tolerant = false) => this.runGit(args, cwd, tolerant, env);
+    const before = run(["rev-parse", "HEAD"]);
+    const onto = run(["rev-parse", targetBranch]);
+    const preservedRef = `refs/sekhemet/rebase/${cardId}/${Date.now()}`;
+    run(["update-ref", preservedRef, before]);
+    run(["reset", "-q", "--hard", onto]);
+    // Exits non-zero on the conflicts it leaves; that is the point.
+    run(["merge", "--squash", "--no-commit", before], true);
+    const files = run(["diff", "--name-only", "--diff-filter=U"], true).split("\n").filter(Boolean);
+    return { preservedRef, files };
   }
 
   /**
@@ -787,26 +1077,51 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
       const worktree = (await this.listWorktrees()).find(
         (w) => w.branch === `refs/heads/${child}`,
       )?.path;
-      const cwd = worktree ?? this.repoRoot;
-      const env = worktree ? this.guard(worktree) : process.env;
-      try {
-        if (worktree) this.runGit(["rebase", "--onto", target, oldBase], cwd, false, env);
-        else this.runGit(["rebase", "--onto", target, oldBase, child], cwd);
-        this.runGit(["config", `branch.${child}.sekhemetBase`, target]);
-        this.runGit([
-          "config",
-          `branch.${child}.sekhemetBaseSha`,
-          this.runGit(["rev-parse", target]),
-        ]);
-        results.push({ cardBranch: child, ok: true });
-      } catch {
-        const files = this.runGit(["diff", "--name-only", "--diff-filter=U"], cwd, true, env)
-          .split("\n")
-          .filter(Boolean);
-        this.runGit(["rebase", "--abort"], cwd, true, env);
-        results.push({ cardBranch: child, ok: false, files });
+      // A child with no worktree is rebased in a scratch checkout, never in
+      // the person's (review-git §2.5.2): the branch moves by compare-and-set.
+      const rebaseIn = (cwd: string, env: NodeJS.ProcessEnv): string[] | undefined => {
+        try {
+          this.runGit(["rebase", "--onto", target, oldBase], cwd, false, env);
+          return undefined;
+        } catch {
+          const files = this.runGit(["diff", "--name-only", "--diff-filter=U"], cwd, true, env)
+            .split("\n")
+            .filter(Boolean);
+          this.runGit(["rebase", "--abort"], cwd, true, env);
+          return files;
+        }
+      };
+      let conflicts: string[] | undefined;
+      if (worktree) conflicts = rebaseIn(worktree, this.guard(worktree));
+      else {
+        const before = this.runGit(["rev-parse", `refs/heads/${child}`]);
+        conflicts = await this.withScratchCheckout(
+          before,
+          async (path) => {
+            const files = rebaseIn(path, process.env);
+            if (!files)
+              this.casRef(
+                child,
+                this.runGit(["rev-parse", "HEAD"], path),
+                before,
+                "sekhemet restack",
+              );
+            return files;
+          },
+          { linkDependencies: false },
+        );
       }
-      if (!worktree) this.runGit(["checkout", target], this.repoRoot, true);
+      if (conflicts) {
+        results.push({ cardBranch: child, ok: false, files: conflicts });
+        continue;
+      }
+      this.runGit(["config", `branch.${child}.sekhemetBase`, target]);
+      this.runGit([
+        "config",
+        `branch.${child}.sekhemetBaseSha`,
+        this.runGit(["rev-parse", target]),
+      ]);
+      results.push({ cardBranch: child, ok: true });
     }
     return results;
   }
@@ -822,9 +1137,18 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
     baseBranch = "main",
     options: { programs?: Readonly<Record<string, readonly string[]>> } = {},
   ): Promise<StructuralDiff> {
-    const { git } = this.worktreeGit(cardId);
-    git(["add", "-A"]);
-    const files = git(["diff", "--staged", "--name-only", "--no-ext-diff", baseBranch], true)
+    // RG-S5-19: with the worktree gone, both sides come from refs — the
+    // merge base and the card's branch — and nothing is staged or checked
+    // out in the person's repository.
+    const live = existsSync(this.getWorktreePath(cardId));
+    const branch = live ? undefined : this.cardBranch(cardId);
+    if (!live && !branch) return { engine: "git", groups: groupByIntent([]), text: "" };
+    const { git } = live
+      ? this.worktreeGit(cardId)
+      : { git: (args: string[], tolerant?: boolean) => this.runGit(args, this.repoRoot, tolerant) };
+    const range = live ? ["--staged", baseBranch] : [`${baseBranch}...${branch}`];
+    if (live) git(["add", "-A"]);
+    const files = git(["diff", "--name-only", "--no-ext-diff", ...range], true)
       .split("\n")
       .filter(Boolean);
     const groups = groupByIntent(files);
@@ -832,21 +1156,19 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
     let text: string | undefined;
     const difft = resolveReviewProgram("difft", options.programs);
     if (difft) {
+      const base = live ? baseBranch : git(["merge-base", baseBranch, branch as string], true);
       const sides = files.map((path) => ({
         path,
-        before: git(["show", `${baseBranch}:${path}`], true),
-        after: git(["show", `:${path}`], true),
+        before: git(["show", `${base}:${path}`], true),
+        after: git(["show", live ? `:${path}` : `${branch}:${path}`], true),
       }));
       text = await difftasticDiff(difft, sides);
       if (text !== undefined) engine = "difftastic";
     }
     if (text === undefined && difft) {
-      text = git(["diff", "--staged", "--no-ext-diff", "--no-textconv", baseBranch], true);
+      text = git(["diff", "--no-ext-diff", "--no-textconv", ...range], true);
     } else if (text === undefined) {
-      text = git(
-        ["diff", "--staged", "--ignore-all-space", "--no-ext-diff", "--no-textconv", baseBranch],
-        true,
-      );
+      text = git(["diff", "--ignore-all-space", "--no-ext-diff", "--no-textconv", ...range], true);
     }
     return { engine, groups, text };
   }
@@ -883,5 +1205,24 @@ export class NodeGitSyncAdapter implements GitSyncAdapter {
     }
 
     return results;
+  }
+}
+
+/** The pid recorded in an accept lock, or undefined when it names none. */
+function lockHolder(content: string): number | undefined {
+  try {
+    const pid = (JSON.parse(content) as { pid?: unknown }).pid;
+    return typeof pid === "number" && Number.isInteger(pid) && pid > 0 ? pid : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "EPERM";
   }
 }

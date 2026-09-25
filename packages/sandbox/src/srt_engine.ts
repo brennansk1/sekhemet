@@ -2,7 +2,10 @@ import { existsSync, readdirSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { dirname, join } from "node:path";
 import { SandboxManager, type SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
-import { homeToolchainPaths, realPath } from "./seatbelt.js";
+import { homeToolchainPaths, ledgerReadDenies, realPath, secretReadDenies } from "./seatbelt.js";
+
+// SEC-23's path lists live beside the native profile, which denies them too.
+export { ledgerReadDenies, secretReadDenies };
 import type { SandboxOptions } from "./types.js";
 
 /**
@@ -36,42 +39,6 @@ function srtConvenienceWrites(home: string): string[] {
     join(home, ".npm", "_logs"),
     join(home, ".claude", "debug"),
   ];
-}
-
-/** The user's secret-bearing paths (security.md item 10, SEC-23). */
-export function secretReadDenies(home: string): string[] {
-  return [".ssh", ".aws", ".npmrc", ".netrc", join(".config", "gh"), ".sekhemet"].map((p) =>
-    join(home, p),
-  );
-}
-
-/**
- * The project ledgers above each root: `<ancestor>/.sekhemet/*.db` (and their
- * WAL/SHM files). Listed as literal paths so Linux needs no ripgrep scan.
- */
-export function ledgerReadDenies(roots: string[]): string[] {
-  const out = new Set<string>();
-  for (const root of roots) {
-    let dir = realPath(root);
-    for (;;) {
-      const state = join(dir, ".sekhemet");
-      if (existsSync(state)) {
-        try {
-          for (const f of readdirSync(state)) {
-            if (/\.db(-wal|-shm|-journal)?$/i.test(f)) out.add(join(state, f));
-          }
-        } catch {
-          // Unreadable: nothing to list, nothing to leak through us.
-        }
-        // New ledgers created after the wrap are still covered on macOS.
-        if (platform() === "darwin") out.add(join(state, "*.db*"));
-      }
-      const up = dirname(dir);
-      if (up === dir) break;
-      dir = up;
-    }
-  }
-  return [...out];
 }
 
 /** Escape glob syntax in a literal path prefix. */

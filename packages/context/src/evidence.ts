@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { redactSecrets } from "@sekhemet/gates";
 import { estimateTokens } from "./tokens.js";
 
 /**
@@ -79,7 +80,9 @@ function buildRecord(ref: string, text: string, meta: EvidenceMeta): EvidenceRec
 export class InMemoryEvidenceStore implements EvidenceStore {
   private records: Map<string, EvidenceRecord> = new Map();
 
-  public put(text: string, meta: EvidenceMeta = {}): string {
+  public put(raw: string, meta: EvidenceMeta = {}): string {
+    // SEC-22: a raw output is kept for recall only once its secrets are redacted.
+    const text = redactSecrets(raw);
     const ref = computeEvidenceRef(text);
     if (!this.records.has(ref)) {
       this.records.set(ref, buildRecord(ref, text, meta));
@@ -133,7 +136,9 @@ export class FileEvidenceStore implements EvidenceStore {
     return this.dir;
   }
 
-  public put(text: string, meta: EvidenceMeta = {}): string {
+  public put(raw: string, meta: EvidenceMeta = {}): string {
+    // SEC-22: a raw output is kept for recall only once its secrets are redacted.
+    const text = redactSecrets(raw);
     const ref = computeEvidenceRef(text);
     const record = buildRecord(ref, text, meta);
     if (!existsSync(this.dir)) {

@@ -3,7 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  cardStepCap,
   cliOverrides,
+  configOverrideLines,
   effectiveConfig,
   explicitNetworkMode,
   queueDefaults,
@@ -93,5 +95,33 @@ describe("config.toml applied (H15)", () => {
     expect(await (await pf.fetch("https://nodejs.org/api/")).text()).toBe("ok");
     await expect(pf.fetch("https://example.com/")).rejects.toThrow(/not on the network allowlist/);
     expect(await pf.permit("https://evil.example/")).toMatch(/not on the network allowlist/);
+  });
+});
+
+describe("NEW-surface-3: the card layer of the configuration (SUR-40)", () => {
+  it("resolves a card's overrides between the project layer and the command line", () => {
+    const repo = project("[loop]\ndefault_step_budget = 30\n[review]\nwip = 4\n");
+    const card = { configOverrides: { loop: { default_step_budget: 12 } } };
+    const r = effectiveConfig(repo, [], card);
+    expect(r.layers).toEqual(["defaults", "project", "card"]);
+    expect(r.config.loop.defaultStepBudget).toBe(12);
+    expect(r.config.review.wip).toBe(4);
+    const cli = effectiveConfig(repo, ["--set", "loop.default_step_budget=8"], card);
+    expect(cli.config.loop.defaultStepBudget).toBe(8);
+  });
+
+  it("names the overrides for the card and the run's output", () => {
+    expect(
+      configOverrideLines({ loop: { default_step_budget: 12 }, models: { executor: "x" } }),
+    ).toEqual(["loop.default_step_budget = 12", 'models.executor = "x"']);
+    expect(configOverrideLines(undefined)).toEqual([]);
+  });
+
+  it("caps a card's steps: a --max-turns flag, else the card's own budget, else the run's", () => {
+    const card = { configOverrides: { loop: { default_step_budget: 12 } } };
+    expect(cardStepCap(card, { flag: 5, otherwise: 40 })).toBe(5);
+    expect(cardStepCap(card, { otherwise: 40 })).toBe(12);
+    expect(cardStepCap({}, { otherwise: 40 })).toBe(40);
+    expect(cardStepCap({}, {})).toBeUndefined();
   });
 });

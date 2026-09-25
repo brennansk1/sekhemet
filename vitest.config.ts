@@ -1,3 +1,5 @@
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { defineConfig } from "vitest/config";
 // @ts-expect-error: a plain ESM script shared with the test that checks it.
 import { splitSpecs } from "./scripts/test_split.mjs";
@@ -16,8 +18,15 @@ export default defineConfig({
     // RED until an agent implements them; running them here would report the
     // harness as broken for doing exactly what it is supposed to do.
     exclude: EXCLUDE,
-    // Tests never read the owner's real ~/.sekhemet/config.toml (B1 review).
-    env: { SEKHEMET_USER_CONFIG: "/nonexistent/sekhemet-test-user-config.toml" },
+    // Tests never read the owner's real ~/.sekhemet/config.toml (B1 review),
+    // nor read or write the owner's workspace trust store (S9).
+    env: {
+      SEKHEMET_USER_CONFIG: "/nonexistent/sekhemet-test-user-config.toml",
+      SEKHEMET_TRUST_DIR: join(tmpdir(), "sekhemet-test-trust"),
+      // Nor the owner's login keychain (SEC-27a): keychain.spec.ts turns it on
+      // against a throwaway keychain of its own.
+      SEKHEMET_KEYCHAIN: "off",
+    },
     projects: [
       { extends: true, test: { name: "unit", include: split.unit } },
       // A card run with real git and SQLite takes 4.3-4.5 s alone on the 24 GB

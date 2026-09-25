@@ -1,6 +1,7 @@
 {
   "$comment": "SEC-18 (security item 5): the only modules that may import node:child_process, with a one-line reason each. Worktree code runs through runConfined() (packages/sandbox/src/confined.ts); a module that runs it may not appear here. Shrink this list; never grow it without a reason a reviewer accepts. `runTrusted` lists the modules that call runTrusted(), the same way.",
   "modules": {
+    "apps/harness/src/accept.ts": "Accept's notice for checkouts on the integration branch: the harness's own read-only git (worktree list --porcelain, rev-parse) on the project repository (RG-S5-2).",
     "apps/harness/src/airgap.ts": "Air-gap bundles: tar and ssh-keygen over harness-built archives; the airgap probe itself runs through the sandbox.",
     "apps/harness/src/daemon.ts": "Starts the harness's own CLI as a background daemon.",
     "apps/harness/src/doctor.ts": "Doctor probes: git worktree list and the installed tools' --version.",
@@ -10,11 +11,11 @@
     "apps/harness/src/index.ts": "The CLI: its own git and the OS URL opener for the dashboard.",
     "apps/harness/src/init.ts": "Toolchain checks: git, pnpm, llama-server, docker, gh --version.",
     "apps/harness/src/integrations.ts": "The gh CLI for GitHub integrations the owner configured.",
+    "apps/harness/src/keychain.ts": "The macOS `security` tool for integration tokens in the OS keychain (security item 35, SEC-27a); secrets go through its stdin, never argv.",
     "apps/harness/src/ledger_cmds.ts": "The harness's own git on the project repository: `config user.email` to name the solo install's person, and `log` to read the newest Ledger-Head trailer (kernel rules 12, 19).",
     "apps/harness/src/ledger_evidence.ts": "The harness's own git (`for-each-ref refs/heads/sekhemet/`) to read a card branch's head sha, so an external result counts only at that head (K-N8-4).",
     "apps/harness/src/license_gate.ts": "The harness's own git and `python3 -I -m pip show` to read a dependency's licence metadata.",
     "apps/harness/src/m0_path.ts": "M0 on the product path: the harness's own git on M0's cloned workspace (checkout, commit of the task's test patch from history) and the harness's own `queue` command, which confines the Worker's commands itself.",
-    "apps/harness/src/mcp_client.ts": "MCP servers the owner configured in their own config (trusted configuration).",
     "apps/harness/src/measure_cmd.ts": "The harness's own git (rev-parse, status) on the harness checkout, to stamp a footprint with its commit.",
     "apps/harness/src/mutation_step.ts": "The harness's own git for mutation checkouts; tests run through the sandbox's gate runner.",
     "apps/harness/src/onboard.ts": "The harness's own git (rev-parse, log); its language-server probe runs confined through LspClient.",
@@ -50,6 +51,7 @@
     "packages/models/src/llama_server.ts": "The local model server (llama-server) the harness manages.",
     "packages/models/src/memory.ts": "sysctl: the host's memory and swap.",
     "packages/sandbox/src/executor.ts": "The sandbox itself: sandbox-exec, bubblewrap or srt around every confined process, and ps for its memory cap.",
+    "packages/sandbox/src/process_registry.ts": "ps -o lstart: a process's start time, so a recorded pid is never taken for a recycled one (runtime RUN-1, RUN-12).",
     "packages/sandbox/src/trusted.ts": "runTrusted(): the harness's trusted processes.",
     "packages/sync/src/git_adapter.ts": "The harness's own git (hardened); difftastic runs confined through runConfined.",
     "packages/sync/src/git_hardening.ts": "The harness's own git to write its identity configuration.",
@@ -58,6 +60,7 @@
     "packages/sync/src/repo_tools.ts": "The harness's own git, git-cliff for release notes and `act` for the CI gate."
   },
   "runTrusted": {
+    "apps/harness/src/supervisor.ts": "The harness's own git (reset, clean) to restore a crashed card's worktree to its last checkpoint, with the guarded worktree environment (runtime RUN-9).",
     "apps/harness/src/wave2.ts": "The harness's own git to add and remove --validate-tools' scratch worktree."
   }
 }

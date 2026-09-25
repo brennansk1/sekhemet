@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { sekhemetConfigDir } from "./models_dir.js";
 import {
   type QualificationCombination,
   type SpeculativeSetting,
@@ -159,7 +159,7 @@ export function templateChecksum(template: string): string {
 
 /** Where the registry lives unless configured: `SEKHEMET_MODEL_REGISTRY` or ~/.sekhemet/models.json. */
 export function defaultRegistryPath(): string {
-  return process.env.SEKHEMET_MODEL_REGISTRY ?? join(homedir(), ".sekhemet", "models.json");
+  return process.env.SEKHEMET_MODEL_REGISTRY ?? join(sekhemetConfigDir(), "models.json");
 }
 
 /** Minimum trials before an arm measurement may decide the arm. */

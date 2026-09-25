@@ -21,6 +21,7 @@ import {
   languageOf as lspLanguageOf,
   workerCopy,
 } from "@sekhemet/context";
+import { redactSecrets } from "@sekhemet/gates";
 import type { ToolCall } from "@sekhemet/models";
 import {
   type ExecutionResult,
@@ -226,8 +227,17 @@ function outlineOf(lines: string[]): string {
   return out.slice(0, 80).join("\n");
 }
 
+/** An observation with every secret the scanner finds redacted (security item 34, SEC-22). */
+export function redactObservation(o: ToolObservation): ToolObservation {
+  const content = redactSecrets(o.content);
+  const summary = redactSecrets(o.summary);
+  return content === o.content && summary === o.summary ? o : { ...o, content, summary };
+}
+
 export class ToolExecutor {
   public readonly root: string;
+  /** Tokens output condensing removed from what the model saw (runtime RUN-47). */
+  private condensedSaved = 0;
   private sandbox: ProcessSandbox;
   private permissions: PermissionEngine;
   private notes: string[] = [];
@@ -539,6 +549,12 @@ export class ToolExecutor {
   }
 
   public async execute(call: ToolCall): Promise<ToolObservation> {
+    // SEC-22: what a tool returns is redacted before anything keeps it — the
+    // prompt (a stored context pack), the step records, the transcript.
+    return redactObservation(await this.executeUnredacted(call));
+  }
+
+  private async executeUnredacted(call: ToolCall): Promise<ToolObservation> {
     const gate = await this.authorize(call);
     if (gate) return gate;
 
@@ -1138,6 +1154,17 @@ Promise.resolve(__result).then((v) => { process.stdout.write(typeof v === "strin
     return ok("stop_process", `stopped ${name}`, `Stopped ${name}.`);
   }
 
+  /** Count what one condensing removed (runtime item 32, RUN-47); returns it unchanged. */
+  public countCondensed<T extends { result: { tokensSaved: number } }>(condensed: T): T {
+    this.condensedSaved += condensed.result.tokensSaved;
+    return condensed;
+  }
+
+  /** Tokens output condensing removed in this executor's calls so far (RUN-47). */
+  public get condensedTokensSaved(): number {
+    return this.condensedSaved;
+  }
+
   /** Stop every background process (card end). */
   public dispose(): void {
     for (const p of this.processes.values()) {
@@ -1543,12 +1570,14 @@ Promise.resolve(__result).then((v) => { process.stdout.write(typeof v === "strin
     // Condense rather than clamp (C8): error lines are protected from
     // truncation, repeats are grouped, and whenever anything is condensed away
     // the raw text stays recallable by the ref in the footer.
-    const detail = condenseToolOutput(stream, {
-      exitCode: result.exitCode,
-      command: label,
-      maxLines: RUN_CMD_MAX_LINES,
-      ...(this.options.recallOffered === false ? { recallOffered: false } : {}),
-    }).text;
+    const detail = this.countCondensed(
+      condenseToolOutput(stream, {
+        exitCode: result.exitCode,
+        command: label,
+        maxLines: RUN_CMD_MAX_LINES,
+        ...(this.options.recallOffered === false ? { recallOffered: false } : {}),
+      }),
+    ).text;
 
     if (result.timedOut) {
       return fail(

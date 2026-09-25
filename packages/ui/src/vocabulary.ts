@@ -297,6 +297,12 @@ export function stopReasonLabel(
       };
     case "human_abort":
       return { short: "Stopped by you", sentence: "You stopped this attempt.", tone: "neutral" };
+    case "paused":
+      return {
+        short: "Paused by you",
+        sentence: "Paused at a step boundary; hand it back with a note to resume, or take it over.",
+        tone: "parked",
+      };
     case "done_pending_gates":
       return {
         short: "Done, gates not run",
@@ -324,7 +330,8 @@ export function stopReasonLabel(
     case "rebase_conflict":
       return {
         short: "Conflicts with main",
-        sentence: "Its changes conflict with work merged since it started; it needs a re-plan.",
+        sentence:
+          "Its changes conflict with work merged since it started, outside its scope or beyond its budget; a person decides.",
         tone: "blocked",
       };
     case "git_metadata_tampered":

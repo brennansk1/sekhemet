@@ -1,7 +1,9 @@
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { loadGatesConfig, runBuiltinGates } from "@sekhemet/gates";
 import type { CardStore, EventLog } from "@sekhemet/kernel";
+import { signalGroup, trackGroup, untrackGroup } from "@sekhemet/sandbox";
 import type { QueueReport } from "./execute.js";
 import { type GovernanceLimits, mayRun, recordUsage } from "./governance.js";
 import { INJECTION_RECORD, injectionCurrentFor } from "./injection.js";
@@ -9,6 +11,7 @@ import { pendingM0 } from "./m0_path.js";
 import { sendPush } from "./notify.js";
 import { postConventionDrift } from "./onboard.js";
 import { tickRecurring } from "./recurring.js";
+import { reservationNow } from "./reservation.js";
 import { type Window, mayUseMachine, parseHours } from "./scheduler.js";
 import { overnightPlanLine } from "./wave2.js";
 
@@ -33,8 +36,12 @@ export interface OvernightOptions {
   idleMinutes?: number;
   /** Flags passed to each `sekhemet queue` round. */
   queueArgs: string[];
-  /** Injectable for tests. */
+  /** Injectable for tests. Exit code 124: the round exceeded its wall-clock limit. */
   runQueue?: (args: string[]) => Promise<number>;
+  /** Each round's wall-clock limit (runtime item 17, RUN-11); default 3 hours. */
+  roundLimitMs?: number;
+  /** The nightly offline vulnerability scan (item 20, RUN-17); injectable for tests. */
+  vulnScan?: (repoPath: string) => Promise<VulnScanResult>;
   sleep?: (ms: number) => Promise<void>;
   now?: () => Date;
   maxRounds?: number;
@@ -51,7 +58,40 @@ export interface OvernightOptions {
    * one measurement path, the Worker resolved through the roster.
    */
   runM0?: (worker: string, shouldStop: () => boolean) => Promise<"done" | "stopped" | "no tasks">;
+  /**
+   * The Worker's model server, owned by the night (item 17, RUN-18a): made
+   * sure of before each round — started once, attached to afterwards — so a
+   * round's queue adopts the running server instead of loading the weights
+   * again; released when the rounds end. Absent for a Worker with no managed
+   * server (an Ollama model keeps itself warm).
+   */
+  modelServer?: { ensureRunning(): Promise<void>; unload?(): Promise<void> };
 }
+
+/**
+ * The night's hold on a Worker adapter that runs its own server (a managed
+ * llama-server, RUN-18a); undefined for one that does not.
+ */
+export function nightModelServer(adapter: unknown): OvernightOptions["modelServer"] {
+  const a = adapter as { ensureRunning?: () => Promise<void>; unload?: () => Promise<void> };
+  if (typeof a?.ensureRunning !== "function") return undefined;
+  return {
+    ensureRunning: () => (a.ensureRunning as () => Promise<void>).call(a),
+    unload: () => (typeof a.unload === "function" ? a.unload.call(a) : Promise.resolve()),
+  };
+}
+
+export interface VulnScanResult {
+  passed: boolean;
+  /** Why nothing was scanned (no lockfile, no scanner): never reported as a pass. */
+  skipped?: string;
+  findings?: string[];
+}
+
+/** A round's default wall-clock limit (RUN-11). */
+export const ROUND_LIMIT_MS = 3 * 60 * 60 * 1000;
+/** Exit code of a round killed at its limit, as `timeout(1)` reports it. */
+export const ROUND_TIMED_OUT = 124;
 
 export interface OvernightSummary {
   rounds: number;
@@ -69,19 +109,76 @@ function untilTime(spec: string | undefined, from: Date): Date | undefined {
   return t;
 }
 
-function defaultRunQueue(repoPath: string): (args: string[]) => Promise<number> {
+/**
+ * One round: `sekhemet queue` as a child in its own process group, killed —
+ * the whole tree, the model server it started included — when it passes its
+ * wall-clock limit (RUN-11): SIGTERM, then SIGKILL after a grace period.
+ */
+function defaultRunQueue(repoPath: string, limitMs: number): (args: string[]) => Promise<number> {
+  // SEKHEMET_CLI names the CLI entry when this process was not started by it.
+  const cli = process.env.SEKHEMET_CLI ?? process.argv[1] ?? "";
   return (args) =>
     new Promise((resolve) => {
-      const child = spawn(
-        process.execPath,
-        [process.argv[1] ?? "", "queue", "--repo", repoPath, ...args],
-        {
-          stdio: "inherit",
-        },
-      );
-      child.on("exit", (code) => resolve(code ?? 1));
-      child.on("error", () => resolve(1));
+      const child = spawn(process.execPath, [cli, "queue", "--repo", repoPath, ...args], {
+        stdio: "inherit",
+        detached: true,
+        env: { ...process.env, SEKHEMET_OVERNIGHT_ROUND: "1" },
+      });
+      trackGroup(child.pid);
+      let timedOut = false;
+      let kill: NodeJS.Timeout | undefined;
+      const limit = setTimeout(() => {
+        timedOut = true;
+        if (child.pid === undefined) return;
+        signalGroup(child.pid, "SIGTERM");
+        kill = setTimeout(() => {
+          if (child.pid !== undefined) signalGroup(child.pid, "SIGKILL");
+        }, 5_000);
+      }, limitMs);
+      const done = (code: number) => {
+        clearTimeout(limit);
+        if (kill) clearTimeout(kill);
+        // The group may outlive its leader: take the rest with it.
+        if (child.pid !== undefined) signalGroup(child.pid, "SIGKILL");
+        untrackGroup(child.pid);
+        resolve(timedOut ? ROUND_TIMED_OUT : code);
+      };
+      child.on("exit", (code) => done(code ?? 1));
+      child.on("error", () => done(1));
     });
+}
+
+/**
+ * The nightly full offline vulnerability scan (item 20, RUN-17): osv-scanner
+ * over the repository's lockfiles, through the gates' own confined runner. A
+ * repository with nothing to scan, or a host without the scanner, is recorded
+ * as skipped, never as a pass.
+ */
+async function defaultVulnScan(repoPath: string): Promise<VulnScanResult> {
+  const cfg = loadGatesConfig(repoPath);
+  const r = await runBuiltinGates({
+    root: repoPath,
+    base: "HEAD",
+    diff: "",
+    project: cfg.project,
+    gates: ["osv"],
+  });
+  const outcome = r.outcomes.find((o) => o.gate === "osv");
+  const failures = r.failures.filter((f) => f.gate === "osv");
+  const notRun = failures.find((f) => f.notRun);
+  const findings = failures.filter((f) => !f.notRun).map((f) => f.actual || f.errorExcerpt);
+  const skipped = outcome?.skipped
+    ? (outcome.reason ?? "not run")
+    : notRun
+      ? notRun.actual || notRun.errorExcerpt || "not run"
+      : outcome
+        ? undefined
+        : "the scan did not run";
+  return {
+    passed: skipped === undefined && outcome?.passed === true && findings.length === 0,
+    ...(skipped ? { skipped } : {}),
+    ...(findings.length > 0 ? { findings } : {}),
+  };
 }
 
 function defaultRunM0(
@@ -117,7 +214,8 @@ export async function runOvernight(opts: OvernightOptions): Promise<OvernightSum
   const say = opts.say ?? ((l: string) => console.log(l));
   const now = opts.now ?? (() => new Date());
   const sleep = opts.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
-  const runQueue = opts.runQueue ?? defaultRunQueue(opts.repoPath);
+  const roundLimitMs = opts.roundLimitMs ?? ROUND_LIMIT_MS;
+  const runQueue = opts.runQueue ?? defaultRunQueue(opts.repoPath, roundLimitMs);
   const windows: Window[] = parseHours(opts.hours);
   const stopAt = untilTime(opts.until, now());
   const state = { consecutiveFailures: 0 };
@@ -138,7 +236,11 @@ export async function runOvernight(opts: OvernightOptions): Promise<OvernightSum
   // MS-M9-6: a Worker adopted or re-qualified owes the M0 protocol. It takes
   // hours, so it runs here, first, inside the window; at the window's end it
   // stops at a clean point and resumes next overnight.
+  // RUN-58: a person's reservation, read from the ledger, stops the
+  // benchmark as the reserved hours do — even when the person is idle.
+  let reservedNow = (await reservationNow(opts.log, now())).reserved;
   const windowOver = (): boolean =>
+    reservedNow ||
     (stopAt !== undefined && now() >= stopAt) ||
     !mayUseMachine(windows, {
       now: now(),
@@ -172,10 +274,20 @@ export async function runOvernight(opts: OvernightOptions): Promise<OvernightSum
       summary.stoppedBecause = "no Ready cards left";
       break;
     }
-    const slot = mayUseMachine(windows, {
-      now: now(),
-      ...(opts.idleMinutes !== undefined ? { idleMinutes: opts.idleMinutes } : {}),
-    });
+    // RUN-58: reserved from the dashboard or `sekhemet dev reserve`, read
+    // from the ledger each round: nothing starts until it is released.
+    const reservation = await reservationNow(opts.log, now());
+    reservedNow = reservation.reserved;
+    const slot = reservation.reserved
+      ? {
+          run: false,
+          why: `the machine is reserved${reservation.until ? ` until ${reservation.until}` : " until released"}`,
+          waitMinutes: 10,
+        }
+      : mayUseMachine(windows, {
+          now: now(),
+          ...(opts.idleMinutes !== undefined ? { idleMinutes: opts.idleMinutes } : {}),
+        });
     if (!slot.run) {
       if (++idleWaits > 144) {
         summary.stoppedBecause = "the machine stayed in use";
@@ -200,11 +312,30 @@ export async function runOvernight(opts: OvernightOptions): Promise<OvernightSum
         now(),
       ),
     );
+    // RUN-18a: the night's server, started on the first round and attached
+    // to on every later one; the round's queue adopts it.
+    if (opts.modelServer) {
+      try {
+        await opts.modelServer.ensureRunning();
+      } catch (err) {
+        say(
+          `Model server: ${err instanceof Error ? err.message : String(err)}; the round starts its own.`,
+        );
+      }
+    }
     const started = Date.now();
     const before = readReport(opts.repoPath)?.startedAt;
-    await runQueue(opts.queueArgs);
+    const code = await runQueue(opts.queueArgs);
     const report = readReport(opts.repoPath);
     await recordUsage(opts.log, Date.now() - started, { round: summary.rounds });
+    if (code === ROUND_TIMED_OUT) {
+      // RUN-11: killed at its limit — one failure, and the night goes on.
+      say(
+        `Round ${summary.rounds} exceeded its wall-clock limit of ${Math.round(roundLimitMs / 60_000)} min: its process tree was killed; counted as one failure.`,
+      );
+      state.consecutiveFailures++;
+      continue;
+    }
     if (!report || report.startedAt === before) {
       // The round produced no report: count it as one failure, so a crash loop trips.
       state.consecutiveFailures++;
@@ -221,6 +352,8 @@ export async function runOvernight(opts: OvernightOptions): Promise<OvernightSum
     }
   }
   if (!summary.stoppedBecause) summary.stoppedBecause = "round limit";
+  // RUN-18a: the rounds are over; the weights leave memory now, not at exit.
+  await opts.modelServer?.unload?.().catch(() => undefined);
   // E16: loop 10 on what the night accepted: mutants of accepted diffs
   // become advisory test proposals, while the machine is still free.
   if (summary.passed > 0 && !opts.skipMutation) {
@@ -231,6 +364,21 @@ export async function runOvernight(opts: OvernightOptions): Promise<OvernightSum
         `Mutation ${r.cardId}: ${r.killed}/${r.total} killed${r.proposalCardId ? `, proposals on ${r.proposalCardId}` : ""}.`,
       );
   }
+  // RUN-17: the full offline vulnerability scan, its result on the ledger.
+  const scan = await (opts.vulnScan ?? defaultVulnScan)(opts.repoPath).catch(
+    (err): VulnScanResult => ({
+      passed: false,
+      skipped: `the scan failed to run: ${err instanceof Error ? err.message : String(err)}`,
+    }),
+  );
+  await opts.log.append({
+    actor: "harness",
+    type: "security/vulnerability_scan",
+    payload: { scanner: "osv-scanner", offline: true, ...scan },
+  });
+  say(
+    `Vulnerability scan: ${scan.skipped ? `skipped (${scan.skipped})` : scan.passed ? "no known vulnerabilities" : `${scan.findings?.length ?? 0} finding(s)`}.`,
+  );
   say(
     `Overnight done: ${summary.rounds} round(s), ${summary.passed}/${summary.cardsRun} card(s) passed; stopped: ${summary.stoppedBecause}.`,
   );

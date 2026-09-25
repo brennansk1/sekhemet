@@ -31,6 +31,7 @@ import {
   unlessPlaybookCovers,
 } from "../src/execute.js";
 import { LearningStore } from "../src/learning/store.js";
+import { trustFiles } from "../src/workspace_trust.js";
 
 /** Replies with each scripted turn in order, then `finish_card`; records every request. */
 function scripted(turns: Omit<ToolCall, "id">[][]) {
@@ -161,7 +162,9 @@ describe("apps/harness executeCard wiring (wave 2, part 1)", () => {
   });
 
   it("holds a card on back-pressure and releases it when Review drains", async () => {
-    for (const id of ["card_r1", "card_r2", "card_r3"]) {
+    // review-git S6 (RG-S6-2): with no human review yet, ReviewWIP is the
+    // 15-minute prior at 60 minutes a day — 4, not the static 3.
+    for (const id of ["card_r1", "card_r2", "card_r3", "card_r4"]) {
       await cardStore.createCard({ id, tier: "story", title: id });
       await cardStore.updateCardStatus(id, "review", "test setup", "harness", { override: true });
     }
@@ -615,6 +618,8 @@ describe("apps/harness executeCard wiring (wave 2, part 1)", () => {
         `[[hook]]\nevent = "post-tool"\ntool = "write_file"\ncommand = "echo '{\\"message\\": \\"remember the changelog\\"}'"\n`,
       ].join("\n"),
     );
+    // The person trusts this hooks file as it is (S9, SEC-28).
+    trustFiles(repo, [join(".sekhemet", "hooks.toml")], "p_owner");
     const card = await newCard("card_hooks");
     const { adapter, seen } = scripted([
       [{ name: "run_cmd", arguments: { command: "ls", description: "list" } }],

@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 33 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 34 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,34 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 34 — 2026-09-25 (B3.2 safe Accept; B3.3 surface, runtime, security, extensibility; baseline rescoring)
+
+- **B3.2 (review-git S5, S6, NEW-review-git-1/2/5; worker-loop NEW-worker-loop-10):**
+  - Accept is plumbing: `merge-tree` plus a compare-and-set `update-ref`. It never touches the person's checkout (a notice says how to fast-forward), a conflict writes nothing, and it holds a repo lock.
+  - Accept refuses a branch that changed after review; real trailers; Done and `card/accepted` in one transaction; revert and reject.
+  - Review WIP comes from human decisions; dashboard Accept records the files it showed.
+  - Rebase conflicts go back to the Worker inside scope and park outside it.
+  - Message, pause, hand back and take over a running agent, as CLI verbs and REST routes; a person who took over can't accept their own work.
+- **B3.3:**
+  - **Surface:** offline `plan` with the research question asked once; CLI exit codes spawn-tested; the terminal board; the user directory; `--settings` as a layer; per-card config overrides; hooks and skills.
+  - **Extensibility:** the MCP client and server on the official SDK (DEC-08), the server wrapped to keep its JSON-RPC parse errors.
+  - **Runtime:** the runner lease with stale takeover; tracked process groups and a supervisor sweeping crashed attempts for queue, run and overnight; retention as recorded erasure; reserve and pause; telemetry.
+  - **Security:**
+    - redaction before persistence;
+    - Seatbelt denies secret paths and the config dir;
+    - workspace trust by SHA-256, recorded on the ledger;
+    - research, `gh` and Crawl4AI through the network policy;
+    - keychain tokens with no new library.
+- **Reviews:**
+  - B3.2+B3.3: one full review, no blockers. Two majors fixed: take-over self-acceptance, and a relative config dir escaping the sandbox deny.
+  - The gate caught three Worker-facing refusal reasons outside a copy module; they moved to a new sandbox copy module.
+- **Found on the way:**
+  - The K-N1-3 flake: a tamper that did nothing 1 in 16 times.
+  - The suite's profile-mismatch bug: the expected profile lacked the fixture config's step budget, so admission would have refused every run. The runs are rescored with `sekhemet measure rescore`.
+- **Known gap for the Linux milestone:** bubblewrap has no secret-path denies.
+- **Left for later:** the dashboard buttons for collaboration, and the CODEOWNERS mapping (B4.9).
+- **Where the cards stop:** gate 309 files, 2,261 tests, tsc and Biome clean. B3 is built; its Tier 3 frozen-suite run follows the baseline. The B2.5 baseline is running (ref r1 20/30 = 20/27 measured, 3.1 h). Next: B4.0a and B4.2 (both need B2.5 or B3.3), then the product workstreams.
 
 ### Entry 33 — 2026-09-25 (B3.1 the spine in code; B2.5 baseline running)
 

@@ -17,6 +17,7 @@ import {
   roleForCard,
   runWave2Command,
 } from "../src/wave2.js";
+import { skillsLockPath } from "../src/workspace_trust.js";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -285,15 +286,12 @@ describe("skills, release, ci and improve commands (C10, Y17, Y18, E10, E14, E15
       "---\ntriggers: [db]\n---\nUse WAL.",
     );
     expect(await runWave2Command("skills", ["approve", "db"], k, quiet)).toBe(0);
-    const lock = JSON.parse(
-      readFileSync(join(k.repoPath, ".sekhemet", "skills.lock.json"), "utf8"),
-    );
+    // S9, SEC-31: the lock is in the user directory, never the repository.
+    const lock = JSON.parse(readFileSync(skillsLockPath(k.repoPath), "utf8"));
     expect(Object.keys(lock.skills)).toEqual(["db"]);
     await runWave2Command("skills", ["revoke", "db"], k, quiet);
     expect(
-      Object.keys(
-        JSON.parse(readFileSync(join(k.repoPath, ".sekhemet", "skills.lock.json"), "utf8")).skills,
-      ),
+      Object.keys(JSON.parse(readFileSync(skillsLockPath(k.repoPath), "utf8")).skills),
     ).toEqual([]);
   });
 

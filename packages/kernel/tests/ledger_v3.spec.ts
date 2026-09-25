@@ -72,7 +72,16 @@ describe("K-N1-3: incremental verification", () => {
   it("falls back to a full pass when the last verified row no longer matches", async () => {
     for (let i = 0; i < 3; i++) await log.append({ actor: "system", type: "a", payload: { i } });
     await log.verifyHashChain();
-    tamper("UPDATE events SET hash = 'f' || substr(hash, 2) WHERE seq = 3");
+    const before = (db.prepare("SELECT hash FROM events WHERE seq = 3").get() as { hash: string })
+      .hash;
+    // Flip the first hex digit to a different one: a fixed 'f' left the row
+    // unchanged whenever its hash already began with 'f' (1 run in 16).
+    tamper(
+      "UPDATE events SET hash = (CASE WHEN substr(hash, 1, 1) = 'f' THEN '0' ELSE 'f' END) || substr(hash, 2) WHERE seq = 3",
+    );
+    const after = (db.prepare("SELECT hash FROM events WHERE seq = 3").get() as { hash: string })
+      .hash;
+    expect(after).not.toBe(before);
     const v = await log.verifyHashChain();
     expect(v.valid).toBe(false);
     expect(v.corruptedSeq).toBe(3);

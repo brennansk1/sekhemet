@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { InferenceRequest, LocalInferenceAdapter } from "@sekhemet/models";
@@ -109,8 +109,124 @@ export class Tracer {
     }));
   }
 
+  /** Delete spans that started before `beforeMs` (retention, RUN-15); returns how many. */
+  prune(beforeMs: number): number {
+    const r = this.db
+      .prepare("DELETE FROM spans WHERE CAST(start_ns AS INTEGER) < CAST(? AS INTEGER)")
+      .run(String(BigInt(Math.floor(beforeMs)) * 1_000_000n));
+    return Number(r.changes);
+  }
+
   close(): void {
     this.db.close();
+  }
+}
+
+/** A span for one tool call, child of its step's span (RUN-45), with its real timing. */
+export function toolCallSpan(
+  tracer: Tracer,
+  step: { traceId: string; spanId: string },
+  call: {
+    callId: string;
+    name: string;
+    ok: boolean;
+    denied: boolean;
+    startedAtMs: number;
+    endedAtMs: number;
+  },
+): void {
+  const outcome = call.denied ? "denied" : call.ok ? "ok" : "failed";
+  try {
+    tracer.write({
+      traceId: step.traceId,
+      spanId: randomBytes(8).toString("hex"),
+      parentSpanId: step.spanId,
+      // OpenTelemetry's GenAI convention for a tool execution.
+      name: `execute_tool ${call.name}`,
+      startNs: BigInt(call.startedAtMs) * 1_000_000n,
+      endNs: BigInt(call.endedAtMs) * 1_000_000n,
+      attributes: {
+        "gen_ai.operation.name": "execute_tool",
+        "gen_ai.tool.name": call.name,
+        "gen_ai.tool.call.id": call.callId,
+        "sekhemet.tool.outcome": outcome,
+      },
+      status: call.ok ? "ok" : "error",
+    });
+  } catch {
+    // Tracing must never fail the work it observes.
+  }
+}
+
+export type TraceKind = "Card" | "Step" | "Model request" | "Tool call" | "Other";
+
+export interface TraceRow {
+  kind: TraceKind;
+  label: string;
+  spanId: string;
+  parentSpanId?: string;
+  startMs: number;
+  durationMs: number;
+  status: SpanRecord["status"];
+  attributes: SpanRecord["attributes"];
+}
+
+/**
+ * A card's trace as the dashboard shows it (RUN-46): its card, step,
+ * model-request and tool-call spans with durations, the step span labelled
+ * *Step* (the code's `card.turn`, DEC-26).
+ */
+export function cardTrace(repoPath: string, cardId: string): TraceRow[] {
+  const path = join(repoPath, ".sekhemet", "traces.db");
+  if (!existsSync(path)) return [];
+  const tracer = new Tracer(path);
+  try {
+    const all = tracer.spans();
+    const traces = new Set(
+      all
+        .filter((s) => s.name === "card.run" && s.attributes["sekhemet.card.id"] === cardId)
+        .map((s) => s.traceId),
+    );
+    let step = 0;
+    return all
+      .filter((s) => traces.has(s.traceId))
+      .map((s) => {
+        const kind: TraceKind =
+          s.name === "card.run"
+            ? "Card"
+            : s.name === "card.turn"
+              ? "Step"
+              : s.name === "gen_ai.chat"
+                ? "Model request"
+                : s.name.startsWith("execute_tool ")
+                  ? "Tool call"
+                  : "Other";
+        const label =
+          kind === "Card"
+            ? cardId
+            : kind === "Step"
+              ? `Step ${++step}`
+              : kind === "Model request"
+                ? String(s.attributes["gen_ai.request.model"] ?? "model")
+                : kind === "Tool call"
+                  ? String(s.attributes["gen_ai.tool.name"] ?? s.name)
+                  : s.name;
+        const startMs = Number(s.startNs / 1_000_000n);
+        const durationMs =
+          s.endNs !== undefined ? Math.max(0, Number((s.endNs - s.startNs) / 1_000_000n)) : 0;
+        return {
+          kind,
+          label,
+          spanId: s.spanId,
+          ...(s.parentSpanId ? { parentSpanId: s.parentSpanId } : {}),
+          startMs,
+          durationMs,
+          status: s.status,
+          attributes: s.attributes,
+        };
+      });
+  } finally {
+    tracer.close();
   }
 }
 

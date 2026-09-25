@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { outlineFile } from "@sekhemet/context";
-import type { LocalInferenceAdapter } from "@sekhemet/models";
+import { estimatePromptTokens, outlineFile } from "@sekhemet/context";
+import type { ChatTurn, LocalInferenceAdapter, ToolDefinition } from "@sekhemet/models";
 import { reasoningForStep } from "@sekhemet/models";
 import { extractJsonObject } from "./spidr.js";
 import type { EditSketch, PlannedStory } from "./types.js";
@@ -19,6 +19,47 @@ export interface SketchResult {
   sketch: EditSketch;
   source: "model" | "template";
   rejected?: string;
+}
+
+/**
+ * Tools the Planner may call while it sketches a card (extensibility item 23,
+ * EXT-20): an approved MCP server's tools, and how to call one.
+ */
+export interface PlannerTools {
+  definitions: readonly ToolDefinition[];
+  call: (name: string, args: Record<string, unknown>) => Promise<string>;
+  /** The share of the prompt budget tool descriptions may take (default {@link PLANNER_TOOL_BUDGET_TOKENS}). */
+  budgetTokens?: number;
+}
+
+/** Tokens the Planner's offered tools may take, descriptions and schemas together. */
+export const PLANNER_TOOL_BUDGET_TOKENS = 1_500;
+/** Tool rounds before the Planner must answer; calls per round. */
+const PLANNER_TOOL_ROUNDS = 3;
+const PLANNER_TOOL_CALLS_PER_ROUND = 4;
+/** A tool result is cut to this many characters before the Planner reads it. */
+const PLANNER_TOOL_RESULT_CHARS = 4_000;
+
+/**
+ * The tools that fit the budget, in the order offered: each is counted by its
+ * name, description and parameter schema, and one that would overflow is
+ * left out while later, smaller ones may still fit.
+ */
+export function plannerToolsWithinBudget(
+  tools: readonly ToolDefinition[],
+  budgetTokens: number = PLANNER_TOOL_BUDGET_TOKENS,
+): ToolDefinition[] {
+  const kept: ToolDefinition[] = [];
+  let used = 0;
+  for (const t of tools) {
+    const cost = estimatePromptTokens(
+      `${t.name} ${t.description ?? ""} ${JSON.stringify(t.parameters ?? {})}`,
+    );
+    if (used + cost > budgetTokens) continue;
+    used += cost;
+    kept.push(t);
+  }
+  return kept;
 }
 
 function outlineText(root: string | undefined, files: readonly string[]): string {
@@ -46,7 +87,7 @@ function knownSymbols(root: string | undefined, files: readonly string[]): Set<s
 export async function sketchWithModel(
   adapter: LocalInferenceAdapter,
   story: PlannedStory,
-  options: { repoRoot?: string; blastRadius?: string[] } = {},
+  options: { repoRoot?: string; blastRadius?: string[]; tools?: PlannerTools } = {},
 ): Promise<SketchResult> {
   const fallback = story.editSketch;
   const scope = story.card.scopeFiles;
@@ -76,19 +117,54 @@ export async function sketchWithModel(
     .filter(Boolean)
     .join("\n\n");
   const thinking = reasoningForStep({ purpose: "planning" });
+  const request = {
+    systemPrompt:
+      "You are the planner. Write an edit sketch for a small coding model: what to change, where, and what must stay true. Do not write the code.",
+    prompt,
+    toolArm: "arm_b_json" as const,
+    purpose: "planning" as const,
+    reasoning: thinking.reasoning,
+    reasoningBudgetTokens: thinking.reasoningBudgetTokens,
+    maxTokens: 700,
+  };
+  // EXT-20: an approved MCP server's tools, within the prompt budget. With
+  // none, the request is the single call it always was.
+  const offered = options.tools
+    ? plannerToolsWithinBudget(options.tools.definitions, options.tools.budgetTokens)
+    : [];
   let text: string;
   try {
-    const res = await adapter.generate({
-      systemPrompt:
-        "You are the planner. Write an edit sketch for a small coding model: what to change, where, and what must stay true. Do not write the code.",
-      prompt,
-      toolArm: "arm_b_json",
-      purpose: "planning",
-      reasoning: thinking.reasoning,
-      reasoningBudgetTokens: thinking.reasoningBudgetTokens,
-      maxTokens: 700,
-    });
-    text = res.text;
+    if (offered.length === 0 || !options.tools) {
+      text = (await adapter.generate(request)).text;
+    } else {
+      const turns: ChatTurn[] = [{ role: "user", content: prompt }];
+      text = "";
+      for (let round = 0; round <= PLANNER_TOOL_ROUNDS; round++) {
+        const last = round === PLANNER_TOOL_ROUNDS;
+        const res = await adapter.generate({
+          ...request,
+          messages: turns,
+          ...(last ? {} : { tools: offered }),
+        });
+        text = res.text;
+        if (last || res.toolCalls.length === 0) break;
+        const calls = res.toolCalls.slice(0, PLANNER_TOOL_CALLS_PER_ROUND);
+        turns.push({ role: "assistant", content: res.text, toolCalls: calls });
+        for (const c of calls) {
+          const known = offered.some((t) => t.name === c.name);
+          const out = known
+            ? await options.tools
+                .call(c.name, c.arguments as Record<string, unknown>)
+                .catch((err: unknown) => `[ERROR]: ${String(err)}`)
+            : `[ERROR]: ${c.name} is not offered to the Planner.`;
+          turns.push({
+            role: "tool",
+            toolCallId: c.id,
+            content: out.slice(0, PLANNER_TOOL_RESULT_CHARS),
+          });
+        }
+      }
+    }
   } catch (err) {
     return { sketch: template, source: "template", rejected: `model error: ${String(err)}` };
   }

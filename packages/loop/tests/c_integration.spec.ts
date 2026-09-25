@@ -473,16 +473,23 @@ describe("the runner's sync and evidence callers (Y1, Y6, E3)", () => {
     rmSync(other, { recursive: true, force: true });
   });
 
-  it("rebases a passing card onto main before Verify, and stops on a conflict (Y6)", async () => {
-    // main moves under the card while it works, touching the same line.
+  it("rebases a passing card onto main before Verify, and returns an in-scope conflict to the Worker (Y6, RG-N1-1)", async () => {
+    // main moves under the card while it works, touching the same line; the
+    // Worker's next step rewrites the file, which resolves it (rebase_conflict.spec.ts
+    // covers the hunks, the park and the decision request).
     const r = await run("card_y6", "export const a = 2;\n", () => {
       writeFileSync(join(repo, "src", "a.ts"), "export const a = 99;\n");
       git("commit", "-qam", "main moved");
     });
-    expect(r.stopReason).toBe("rebase_conflict");
-    expect(r.passed).toBe(false);
-    const stored = await store.getCard("card_y6");
-    expect(stored?.blockedReason).toMatch(/^rebase conflict: .*src\/a\.ts/);
+    const [conflict] = await store.cardEvents("card_y6", ["card/rebase_conflict"]);
+    expect(conflict?.payload).toMatchObject({ files: ["src/a.ts"], returnedToWorker: true });
+    expect(r.stopReason).toBe("gate_passed");
+    expect(
+      execFileSync("git", ["merge-base", "HEAD", "main"], {
+        cwd: r.worktreePath,
+        encoding: "utf8",
+      }),
+    ).toBe(git("rev-parse", "main"));
 
     // A non-conflicting move of main: rebased, re-verified, passes.
     writeFileSync(join(repo, "src", "b.ts"), "export const b = 1;\n");

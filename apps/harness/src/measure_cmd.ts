@@ -10,6 +10,7 @@ import {
   BudgetPolicyStore,
   type ChangeFootprint,
   type MeasurementMarker,
+  RUN_PROFILE_FLAGS,
   type RunProfile,
   RunProfileRefusal,
   type SuiteRunResult,
@@ -26,6 +27,7 @@ import {
 } from "@sekhemet/eval";
 import type { CardRecord } from "@sekhemet/kernel";
 import { TOOL_CATALOG, cardClassFor, toolsForClass } from "@sekhemet/loop";
+import { effectiveConfig } from "./config_apply.js";
 import type { Kernel } from "./wave2.js";
 
 /**
@@ -37,6 +39,7 @@ import type { Kernel } from "./wave2.js";
  *   sekhemet measure compare <baseline.json> <candidate.json>
  *   sekhemet measure watch <change-id> --kind budget|harness --with a,b --without c,d
  *   sekhemet measure watch-adopted --with <run.json>   (after every suite run)
+ *   sekhemet measure rescore <result.json> --work <dir> [--out <file>]
  *   sekhemet measure promote <generated-test card> [--because <change>]
  *   sekhemet measure rule-credit <rule-id>
  *
@@ -70,16 +73,17 @@ const RUN_HONOURS = new Set([
  * setting `run` would not honour is refused rather than recorded, so the
  * evidence never names a policy the card did not run with.
  */
-export function profileForRun(argv: string[], env: Record<string, string | undefined>): RunProfile {
+/** The `--settings <file>` layer, read whole (SUR-45); refused when the file is missing. */
+function settingsLayer(argv: string[]): { settingsFile?: { path: string; text: string } } {
   const i = argv.indexOf("--settings");
   const path = i === -1 ? undefined : argv[i + 1];
   if (i !== -1 && (!path || !existsSync(path)))
     throw new RunProfileRefusal(`--settings: no settings file ${path ?? "(missing)"}`);
-  const profile = resolveRunProfile({
-    ...(path ? { settingsFile: { path, text: readFileSync(path, "utf8") } } : {}),
-    env,
-    argv,
-  });
+  return path ? { settingsFile: { path, text: readFileSync(path, "utf8") } } : {};
+}
+
+export function profileForRun(argv: string[], env: Record<string, string | undefined>): RunProfile {
+  const profile = resolveRunProfile({ ...settingsLayer(argv), env, argv });
   for (const [key, source] of Object.entries(profile.sources)) {
     if (!RUN_HONOURS.has(key) && source !== "default")
       throw new RunProfileRefusal(
@@ -90,13 +94,36 @@ export function profileForRun(argv: string[], env: Record<string, string | undef
 }
 
 /**
+ * The command line with every setting the profile owns taken out — its flags
+ * and `--settings <file>` — so the profile's own flags can stand in for them
+ * (SUR-45): what the queue reads is what the evidence records.
+ */
+export function withoutProfileFlags(argv: readonly string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i] as string;
+    const path = RUN_PROFILE_FLAGS[a];
+    if (a === "--settings") {
+      i++;
+      continue;
+    }
+    if (path === undefined) {
+      out.push(a);
+      continue;
+    }
+    const boolean = path.startsWith("policies.") && path !== "policies.stepCap";
+    if (!boolean) i++;
+  }
+  return out;
+}
+
+/**
  * Resolve the one `RunProfile` for `sekhemet queue`, the path every measured
- * run takes (MS-M9-1, MS-M9-4): configuration (`[models] executor` and
- * `planner`, `[loop] default_step_budget`, else the step budget `tune
- * --apply` set), the experiment switches, the Researcher a person set in
- * the environment, then flags. The queue does not read a settings file yet —
- * the command line's share is SUR-44/45 (B3.3) — so `--settings` is refused
- * here rather than recorded without being applied.
+ * run takes (MS-M9-1, MS-M9-4; SUR-44, SUR-45): configuration (`[models]
+ * executor` and `planner`, `[loop] default_step_budget`, else the step budget
+ * `tune --apply` set), a `--settings` file as one layer (its path, SHA-256
+ * and contents recorded), the experiment switches, the Researcher a person
+ * set in the environment, then flags.
  */
 export function profileForQueue(
   argv: string[],
@@ -104,12 +131,9 @@ export function profileForQueue(
   configured: { worker?: string; manager?: string; maxTurns?: number },
   tunedStepBudget?: number,
 ): RunProfile {
-  if (argv.includes("--settings"))
-    throw new RunProfileRefusal(
-      "the queue does not read --settings yet (surface SUR-45); pass the settings as their own flags",
-    );
   const stepCap = configured.maxTurns ?? tunedStepBudget;
   return resolveRunProfile({
+    ...settingsLayer(argv),
     config: {
       roles: {
         ...(configured.worker ? { worker: configured.worker } : {}),
@@ -128,8 +152,18 @@ export function profileForQueue(
 export { type MeasurementMarker, readMeasurementMarker, writeMeasurementMarker };
 
 /** Why the queue refuses `--auto-accept` here, or undefined when it may run. */
-export function autoAcceptRefusal(argv: string[], repoPath: string): string | undefined {
-  if (!argv.includes("--auto-accept") || readMeasurementMarker(repoPath)) return undefined;
+export function autoAcceptRefusal(
+  argv: string[],
+  repoPath: string,
+  teamMode: "solo" | "team" = effectiveConfig(repoPath).config.team.mode,
+): string | undefined {
+  if (!argv.includes("--auto-accept")) return undefined;
+  // review-git §2.5.6, RG-S5-9 (DEC-35): never in the Team setup — no marker
+  // or setting enables it there.
+  if (teamMode === "team") {
+    return "--auto-accept is not available in the Team setup: on a team every card is accepted by a person (DEC-35).";
+  }
+  if (readMeasurementMarker(repoPath)) return undefined;
   return "--auto-accept merges cards no person accepted, so it runs only in a repository a measured run prepared (the frozen suite, m0), which carries .sekhemet/measurement.json. Here a person accepts each card: the human is the rate limiter.";
 }
 
@@ -524,6 +558,26 @@ export async function runMeasureCommand(
       print(await actOnWatch(k, v, kind));
       return 0;
     }
+    if (sub === "rescore") {
+      // `sekhemet measure rescore <result.json> --work <dir> [--out <file>]`
+      // (SUITE_RUNS, ref-r1): read only; the rescored result goes next to the original.
+      const [, resultPath] = args;
+      const work = flag(args, "--work");
+      if (!resultPath || !work)
+        throw new Error(
+          "Usage: sekhemet measure rescore <result.json> --work <dir> [--out <file>]",
+        );
+      const { rescoreSuiteResult } = await import("./rescore.js");
+      const outFlag = flag(args, "--out");
+      const r = rescoreSuiteResult(resultPath, work, ...(outFlag ? [outFlag] : []));
+      print(
+        r.profileMismatch.length
+          ? `${r.profileMismatch.length} of ${r.cards} card(s) ran with a different profile: ${r.profileMismatch.map((c) => `${c} (${(r.differences[c] ?? []).join(", ")})`).join("; ")}`
+          : `all ${r.cards} card(s) ran with the run's settings plus their repository's configuration`,
+      );
+      print(`was ${r.previous.length} named; rescored result in ${r.out}`);
+      return 0;
+    }
     if (sub === "watch-adopted") {
       // `sekhemet measure watch-adopted --with <run.json>`: run by the suite
       // runner after every run (MS-T8-3, review B1). Each adopted harness
@@ -646,7 +700,7 @@ export async function runMeasureCommand(
       return 0;
     }
     print(
-      "Usage: sekhemet measure footprint [--out <file>] | compare <baseline> <candidate> | watch <change> --kind budget|harness --with a,b --without c,d | watch-adopted --with <run> | promote <card> [--because <change>] | admit --baseline a,b --candidate c,d --entry <file> --before <fp> --after <fp> | rule-credit <rule-id>",
+      "Usage: sekhemet measure footprint [--out <file>] | compare <baseline> <candidate> | watch <change> --kind budget|harness --with a,b --without c,d | watch-adopted --with <run> | rescore <result.json> --work <dir> [--out <file>] | promote <card> [--because <change>] | admit --baseline a,b --candidate c,d --entry <file> --before <fp> --after <fp> | rule-credit <rule-id>",
     );
     return 1;
   } catch (err) {

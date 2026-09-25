@@ -283,7 +283,7 @@ export interface RunListItem {
   totalDurationMs: number;
 }
 
-interface QueueReportLike {
+export interface QueueReportLike {
   startedAt: string;
   model: string;
   managerModel?: string;
@@ -307,21 +307,35 @@ function runItem(id: string, r: QueueReportLike): RunListItem {
 }
 
 /**
- * Every recorded run, newest first. Runs written before history was kept
- * survive only as the latest `queue_report.json`; that one is listed too.
+ * Every recorded run, newest first (RUN-56): the projection of the ledger's
+ * `queue/reported` events, which are the record; the files under
+ * `.sekhemet/runs/` are a cache of them. Runs from before the event existed
+ * survive only as files, and are listed from there.
  */
-export function listRuns(repoPath: string): { runs: RunListItem[]; reports: Map<string, string> } {
+export async function listRuns(
+  repoPath: string,
+  log?: EventLog,
+): Promise<{ runs: RunListItem[]; reports: Map<string, QueueReportLike> }> {
   const dir = join(repoPath, ".sekhemet", "runs");
-  const reports = new Map<string, string>();
+  const reports = new Map<string, QueueReportLike>();
   const runs: RunListItem[] = [];
   const seen = new Set<string>();
+  for (const e of log ? await log.getEventsByTypes(["queue/reported"]) : []) {
+    const r = (e.payload as { report: QueueReportLike }).report;
+    if (!r || seen.has(r.startedAt)) continue;
+    const id = r.startedAt.replace(/[:.]/g, "-");
+    runs.push(runItem(id, r));
+    reports.set(id, r);
+    seen.add(r.startedAt);
+  }
   if (existsSync(dir)) {
     for (const f of readdirSync(dir).filter((n) => /^[\w.-]+\.json$/.test(n))) {
       try {
         const r = JSON.parse(readFileSync(join(dir, f), "utf8")) as QueueReportLike;
+        if (seen.has(r.startedAt)) continue;
         const id = basename(f, ".json");
         runs.push(runItem(id, r));
-        reports.set(id, join(dir, f));
+        reports.set(id, r);
         seen.add(r.startedAt);
       } catch {
         // A half-written report is skipped.
@@ -334,7 +348,7 @@ export function listRuns(repoPath: string): { runs: RunListItem[]; reports: Map<
       const r = JSON.parse(readFileSync(latest, "utf8")) as QueueReportLike;
       if (!seen.has(r.startedAt)) {
         runs.push(runItem("latest", r));
-        reports.set("latest", latest);
+        reports.set("latest", r);
       }
     } catch {
       // Unreadable latest report: nothing to list.

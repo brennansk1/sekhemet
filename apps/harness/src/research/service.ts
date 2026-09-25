@@ -1,15 +1,17 @@
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import type { CardStore } from "@sekhemet/kernel";
+import type { CardStore, EventLog } from "@sekhemet/kernel";
 import {
   HttpInferenceAdapter,
   type LocalInferenceAdapter,
   createApodexResearcher,
 } from "@sekhemet/models";
-import { effectiveConfig, explicitNetworkMode } from "../config_apply.js";
+import { mergeNetworkConfigs, policyAllowsEveryHost } from "@sekhemet/sandbox";
+import { effectiveConfig, explicitNetworkMode, networkConfigs } from "../config_apply.js";
 import { readSettings } from "../integrations.js";
 import { similarity } from "../learning/store.js";
+import { researchFetch, researchGate } from "../research_consent.js";
+import { userPaths } from "../user_dir.js";
 import { crawl4aiInstalled } from "./crawl4ai.js";
 import {
   type ResearchAnswer,
@@ -48,13 +50,7 @@ export interface MemoryEntry {
 }
 
 export class ResearchMemory {
-  constructor(
-    private readonly path = join(
-      process.env.SEKHEMET_CONFIG_DIR ?? join(homedir(), ".config", "sekhemet"),
-      "research",
-      "memory.jsonl",
-    ),
-  ) {}
+  constructor(private readonly path = userPaths().researchMemory) {}
 
   all(): MemoryEntry[] {
     try {
@@ -106,8 +102,47 @@ export interface SourceStatus {
 /** Sources for this project, starting the private SearXNG when web access is on. */
 export async function researchSources(
   repoPath: string,
-  opts: { forceWeb?: boolean; ensure?: typeof ensureSearxng } = {},
+  opts: { forceWeb?: boolean; ensure?: typeof ensureSearxng; log?: EventLog } = {},
 ): Promise<{ web: WebConfig | undefined; status: SourceStatus }> {
+  // NEW-security-8 (security item 29a): `[network] research` in config.toml.
+  const nets = networkConfigs(repoPath);
+  const policy = mergeNetworkConfigs(nets.user, nets.project);
+  // SEC-52b: a project's `research = "no"` means no research request for it.
+  if (nets.project.research === "no" && opts.forceWeb !== true) {
+    return {
+      web: undefined,
+      status: {
+        web: false,
+        search: 'off (this project\'s config.toml: research = "no")',
+        pages: "off",
+      },
+    };
+  }
+  // SEC-52a: the person's yes is research's one exception to `mode`; every
+  // request goes through the one network policy and onto the ledger.
+  if (policy.research === "yes" && opts.log) {
+    // NEW-security-8: `gh` and Crawl4AI pass the same policy, logged; a
+    // browser's own sub-requests are beyond it, so Crawl4AI runs only where
+    // the policy refuses no public host.
+    const browser = policyAllowsEveryHost(policy, { research: true });
+    const web = webConfigFromEnv({
+      fetch: researchFetch(repoPath, opts.log),
+      gate: researchGate(repoPath, opts.log),
+      browser,
+    });
+    return {
+      web,
+      status: {
+        web: true,
+        search: process.env.SEKHEMET_SEARXNG_URL
+          ? `SearXNG (${process.env.SEKHEMET_SEARXNG_URL})`
+          : "none configured",
+        pages: web.crawler
+          ? 'Crawl4AI (rendered), each page through the network policy (config.toml: research = "yes")'
+          : `plain HTML reader, through the network policy (config.toml: research = "yes")${browser ? "" : "; Crawl4AI off while fetch_allow or fetch_deny limits research"}`,
+      },
+    };
+  }
   // H15: config.toml [network] mode, when the user set it, outranks the
   // Integrations switch: "offline" means no web, "allowlist" limits reads.
   const mode = explicitNetworkMode(repoPath);
@@ -275,7 +310,7 @@ export function oneShotResearcher(
   log?: import("@sekhemet/kernel").EventLog,
 ): (question: string, opts?: AskOptions) => Promise<AskResult> {
   return async (question, opts = {}) => {
-    const { web } = await researchSources(repoPath);
+    const { web } = await researchSources(repoPath, log ? { log } : {});
     let adapter: LocalInferenceAdapter | undefined;
     const service = new ResearchService({
       repoPath,

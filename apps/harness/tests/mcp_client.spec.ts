@@ -2,8 +2,14 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { InferenceRequest, LocalInferenceAdapter } from "@sekhemet/models";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { McpHub, loadMcpConfig } from "../src/mcp_client.js";
+import { setInvocationTrust } from "../src/workspace_trust.js";
+
+// These servers are the person's own: trusted for this run, as `--trust` does
+// (S9; an untrusted project's servers are workspace_trust.spec.ts's).
+beforeAll(() => setInvocationTrust(true));
+afterAll(() => setInvocationTrust(false));
 import { research } from "../src/research/researcher.js";
 
 /** A real stdio MCP server: two tools, one of which the config hides. */

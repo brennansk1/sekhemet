@@ -353,58 +353,57 @@ describe.each(ENGINES)("@sekhemet/sandbox containment (%s engine)", (engine) => 
     }
   });
 
-  // security.md item 10, SEC-23. The native engine allows every read today;
-  // srt closes it.
-  it.runIf(darwin && engine === "srt")(
-    "refuses reads of the user's secrets and the project ledger",
-    async () => {
-      const home = mkdtempSync(join(tmpdir(), "contain-home-"));
-      vi.stubEnv("HOME", home);
-      const project = join(outside, "project");
-      const tree = join(project, ".sekhemet", "worktrees", "card-1");
-      mkdirSync(tree, { recursive: true });
-      writeFileSync(join(project, ".sekhemet", "events.db"), "LEDGER-CANARY");
-      const secrets = [
-        ".ssh/id_ed25519",
-        ".aws/credentials",
-        ".npmrc",
-        ".netrc",
-        ".config/gh/hosts.yml",
-        ".sekhemet/config.toml",
-      ];
-      for (const rel of secrets) {
-        mkdirSync(dirname(join(home, rel)), { recursive: true });
-        writeFileSync(join(home, rel), "SECRET-CANARY");
-      }
-      try {
-        for (const target of [
-          ...secrets.map((rel) => join(home, rel)),
-          join(project, ".sekhemet", "events.db"),
-        ]) {
-          const result = await sandbox.execute(
-            process.execPath,
-            ["-e", `console.log(require('fs').readFileSync(${JSON.stringify(target)}, 'utf8'))`],
-            { ...opts(), allowedPaths: [tree], cwd: tree },
-          );
-          expect(result.exitCode, target).not.toBe(0);
-          expect(result.stdout, target).not.toContain("CANARY");
-        }
-        // The worktree itself stays readable and writable.
-        const own = await sandbox.execute(
+  // security.md item 10, SEC-23: both engines deny these reads (the native
+  // Seatbelt profile since B3.3; srt through its denyRead list).
+  it.runIf(darwin)("refuses reads of the user's secrets and the project ledger", async () => {
+    const home = mkdtempSync(join(tmpdir(), "contain-home-"));
+    vi.stubEnv("HOME", home);
+    const project = join(outside, "project");
+    const tree = join(project, ".sekhemet", "worktrees", "card-1");
+    mkdirSync(tree, { recursive: true });
+    writeFileSync(join(project, ".sekhemet", "events.db"), "LEDGER-CANARY");
+    const secrets = [
+      ".ssh/id_ed25519",
+      ".aws/credentials",
+      ".npmrc",
+      ".netrc",
+      ".config/gh/hosts.yml",
+      ".sekhemet/config.toml",
+      // The integration tokens' file (SEC-27).
+      ".config/sekhemet/repos/project-0123.json",
+    ];
+    for (const rel of secrets) {
+      mkdirSync(dirname(join(home, rel)), { recursive: true });
+      writeFileSync(join(home, rel), "SECRET-CANARY");
+    }
+    try {
+      for (const target of [
+        ...secrets.map((rel) => join(home, rel)),
+        join(project, ".sekhemet", "events.db"),
+      ]) {
+        const result = await sandbox.execute(
           process.execPath,
-          [
-            "-e",
-            "require('fs').writeFileSync('own.txt','ok');console.log(require('fs').readFileSync('own.txt','utf8'))",
-          ],
+          ["-e", `console.log(require('fs').readFileSync(${JSON.stringify(target)}, 'utf8'))`],
           { ...opts(), allowedPaths: [tree], cwd: tree },
         );
-        expect(own.stdout.trim()).toBe("ok");
-      } finally {
-        vi.unstubAllEnvs();
-        rmSync(home, { recursive: true, force: true });
+        expect(result.exitCode, target).not.toBe(0);
+        expect(result.stdout, target).not.toContain("CANARY");
       }
-    },
-  );
+      // The worktree itself stays readable and writable.
+      const own = await sandbox.execute(
+        process.execPath,
+        [
+          "-e",
+          "require('fs').writeFileSync('own.txt','ok');console.log(require('fs').readFileSync('own.txt','utf8'))",
+        ],
+        { ...opts(), allowedPaths: [tree], cwd: tree },
+      );
+      expect(own.stdout.trim()).toBe("ok");
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
 
   // S5: with an egress proxy, its loopback port is the only way out; L23: a
   // card's own ports are reachable.

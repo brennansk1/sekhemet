@@ -1,8 +1,9 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import type { BoardService } from "@sekhemet/board";
-import { readSkillLock, revokeSkill } from "@sekhemet/context";
+import { readSkillLock, revokeSkill, skillProtectedWrites } from "@sekhemet/context";
 import {
   BudgetPolicyStore,
   LearningGuard,
@@ -45,6 +46,7 @@ import {
   DecisionStore,
   GoalStore,
   type PlannerLedger,
+  type PlannerTools,
   SpidrFeaturePlanner,
   approveGoal,
   ceremoniesDue,
@@ -69,7 +71,6 @@ import { type ProcessSandbox, runConfined, runTrusted } from "@sekhemet/sandbox"
 import { gitEnvFor, planRelease, publishRelease, runActGate } from "@sekhemet/sync";
 import { airgapSkillApproval, approveVerifiedSkill } from "./airgap.js";
 import { pendingM0, recordM0Pending } from "./m0_path.js";
-import { searchLibraries } from "./pm/libraries.js";
 import {
   type CombinationDeps,
   qualificationCombination,
@@ -82,10 +83,9 @@ import {
   dossierNote,
   priorArtLines,
   reuseSurvey,
-  searchRepos,
   withPriorArt,
 } from "./research/reuse.js";
-import { searchPapers } from "./research/web.js";
+import { loadRepoSkills, skillsLockPath } from "./workspace_trust.js";
 
 /**
  * Production wiring for the planner, eval and sync APIs (wave 2, Builder C):
@@ -180,32 +180,8 @@ function reuseSummary(findings: readonly ReuseFinding[]): string[] {
   return out;
 }
 
-/** The public sources the reuse survey reads: registries, GitHub, papers. */
-export function liveReuseDeps(): ReuseDeps {
-  const githubJson = async (url: string): Promise<unknown> => {
-    const res = await fetch(url, {
-      // An unauthenticated search allows ten queries a minute; a token from
-      // the environment raises that. It is read, never stored.
-      headers: {
-        "User-Agent": "sekhemet",
-        Accept: "application/vnd.github+json",
-        ...(process.env.GITHUB_TOKEN
-          ? { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` }
-          : {}),
-      },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!res.ok) throw new Error(`${res.status} from GitHub`);
-    return res.json();
-  };
-  return {
-    libraries: (q) => searchLibraries(q, "npm"),
-    repos: (q) => searchRepos(q, githubJson),
-    papers: (q) => searchPapers(q),
-  };
-}
-
-function isGreenfield(repoPath: string): boolean {
+/** No source file in git yet: a new project (design-stage S8 asks there). */
+export function isGreenfield(repoPath: string): boolean {
   try {
     const files = execFileSync("git", ["ls-files"], {
       cwd: repoPath,
@@ -236,6 +212,8 @@ export async function planCommand(
   spec: string,
   options: {
     sketcher?: LocalInferenceAdapter;
+    /** An approved MCP server's tools for the Planner (EXT-20). */
+    plannerTools?: PlannerTools;
     print?: (line: string) => void;
     /** Where to look for what already exists; omitted, nothing is searched. */
     research?: ReuseDeps;
@@ -301,6 +279,7 @@ export async function planCommand(
     epicId,
     repoRoot: k.repoPath,
     ...(options.sketcher ? { sketcher: options.sketcher } : {}),
+    ...(options.plannerTools ? { plannerTools: options.plannerTools } : {}),
   });
   print(formatPlanReport(result));
   // Each card is told what already exists for the part it builds.
@@ -927,9 +906,31 @@ export async function runWave2Command(
     case "skills": {
       // `sekhemet skills [list] | approve <name> | revoke <name>` (C10).
       const dir = join(k.repoPath, ".sekhemet", "skills");
-      const lockPath = join(k.repoPath, ".sekhemet", "skills.lock.json");
+      // S9, SEC-31: the lock lives in the user directory, never the repository.
+      const lockPath = skillsLockPath(k.repoPath);
       const [sub, name] = args;
       if (sub === "approve" && name) {
+        // EXT-27: a skill whose scripts would write a gate file, the loop
+        // driver or sandbox configuration is rejected before anything runs.
+        const writes = skillProtectedWrites(join(dir, name));
+        if (writes.length)
+          return done(
+            `${name} is rejected: ${writes.map((w) => `${w.script} names ${w.target} (${w.what})`).join("; ")} — a skill never changes gates, the loop driver or the sandbox`,
+            1,
+          );
+        // EXT-27a: a skill with evals runs them confined, with no network,
+        // before a person's approval is taken; a failing one is refused.
+        if (existsSync(join(dir, name, "evals"))) {
+          const checked = await checkSkillCandidate(join(dir, name), { discard: false });
+          await k.log.append({
+            actor: "harness",
+            type: "learning/skill_checked",
+            payload: { name, ...checked },
+          });
+          if (checked.status !== "checked")
+            return done(`${name} is not approved: ${checked.reason}`, 1);
+          print(`${name}: ${checked.reason}.`);
+        }
         // MS-T8-5: a skill whose own checks were run is approved only when
         // they passed; a hand-written skill with no such record stays approvable.
         const last = (await k.log.getEventsByTypes(["learning/skill_checked"]))
@@ -1268,10 +1269,52 @@ export async function replanOnRung3(
 
 // ------------------------------------------------ doctor diagnostics (E19, C12)
 
+/** Cards that ran and finished, newest first, as the ledger's projection recorded them. */
+const OUTCOME_CARDS = 50;
+
+/**
+ * The recorded outcomes skill diagnostics are measured on (EXT-26): recent
+ * cards that ran (steps used) and finished — passed in Review or Done,
+ * failed when parked or rejected. Read-only; no board, no outcomes.
+ */
+export function recentCardOutcomes(
+  repoPath: string,
+): { title: string; scopeFiles: string[]; passed: boolean }[] {
+  const path = join(repoPath, ".sekhemet", "events.db");
+  if (!existsSync(path)) return [];
+  let db: DatabaseSync | undefined;
+  try {
+    db = new DatabaseSync(path, { readOnly: true });
+    const rows = db
+      .prepare(
+        `SELECT title, scope_files, status FROM cards
+         WHERE steps_used > 0 AND status IN ('review','done','parked','rejected')
+         ORDER BY updated_at DESC LIMIT ?`,
+      )
+      .all(OUTCOME_CARDS) as { title: string; scope_files: string; status: string }[];
+    return rows.map((r) => ({
+      title: r.title,
+      scopeFiles: (() => {
+        try {
+          return JSON.parse(r.scope_files) as string[];
+        } catch {
+          return [];
+        }
+      })(),
+      passed: r.status === "review" || r.status === "done",
+    }));
+  } catch {
+    return [];
+  } finally {
+    db?.close();
+  }
+}
+
 /**
  * The doctor's playbook check (E19, C12): net gain per rule, context bloat
- * against the system-prompt budget, skills that never trigger on recent
- * cards, and pruning recommendations. Warns when anything should be
+ * against the system-prompt budget, per skill its token cost, trigger count
+ * and net gain over the recorded outcomes of recent cards (EXT-26), skills
+ * that never trigger, and pruning recommendations. Warns when anything should be
  * retired or measured, or when rules and skills overflow the budget.
  */
 export function playbookDoctorCheck(repoPath: string): {
@@ -1279,7 +1322,11 @@ export function playbookDoctorCheck(repoPath: string): {
   status: "pass" | "warn" | "fail";
   detail: string;
 } {
-  const d = playbookDiagnostics({ repoPath });
+  const d = playbookDiagnostics({
+    repoPath,
+    skills: loadRepoSkills(repoPath).getAllSkills(),
+    cardOutcomes: recentCardOutcomes(repoPath),
+  });
   const actionable = d.recommendations.filter(
     (r) => r.action === "retire" || r.action === "measure",
   );

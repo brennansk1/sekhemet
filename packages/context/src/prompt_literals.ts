@@ -106,6 +106,9 @@ const PERSON_FACING_REFUSALS: ReadonlySet<string> = new Set([
   "qualificationRefusal",
   // apps/harness/src/measure_cmd.ts: "--auto-accept merges cards no person accepted…", on the CLI.
   "autoAcceptRefusal",
+  // apps/harness/src/runner_lease.ts: "Another runner holds the lease here…", on the CLI (exit 1)
+  // and in the dashboard's 409 (runtime RUN-3, RUN-4).
+  "leaseRefusal",
 ]);
 
 function nameOf(node: ts.Node | undefined): string | undefined {

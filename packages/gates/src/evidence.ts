@@ -109,6 +109,31 @@ export interface EvidenceBundle {
   sampleSteps?: number[];
   /** Detail stored with the stop reason: which budget ran out, or which hook vetoed (rule 31a). */
   stopDetail?: Record<string, unknown>;
+  /**
+   * The card worktree's `<head>:<tree>` when the gates ran: what was
+   * reviewed, which Accept compares with the branch it merges (review-git
+   * §2.5.1, RG-S5-6).
+   */
+  repoState?: string;
+  /** Extension facts for this card: hooks that failed to load, skills left out or cut (EXT-10, EXT-22a, EXT-25). */
+  extensions?: ExtensionEvidence;
+  /** The card's own configuration layer, `section.key = value` per line (surface SUR-40). */
+  configOverrides?: string[];
+}
+
+/** What the card's extensions did not do as written (extensibility EXT-10, EXT-22a, EXT-25). */
+export interface ExtensionEvidence {
+  /** Each hooks file that failed to load, with its error. */
+  hookErrors?: string[];
+  /** Skills left out of the prompt because the card lacks a tool they need. */
+  skillsOmitted?: { name: string; missingTools: string[] }[];
+  /** Skill bodies cut to their `budget_tokens` at a section boundary. */
+  skillsTruncated?: {
+    name: string;
+    budgetTokens: number;
+    keptTokens: number;
+    originalTokens: number;
+  }[];
 }
 
 export interface CompileEvidenceParams {
@@ -131,6 +156,9 @@ export interface CompileEvidenceParams {
   steps?: StepEvidence[];
   sampleSteps?: number[];
   stopDetail?: Record<string, unknown>;
+  repoState?: string;
+  extensions?: ExtensionEvidence;
+  configOverrides?: string[];
 }
 
 /**
@@ -195,6 +223,11 @@ export function compileEvidence(params: CompileEvidenceParams): EvidenceBundle {
     ...(params.steps ? { steps: params.steps } : {}),
     ...(params.sampleSteps ? { sampleSteps: params.sampleSteps } : {}),
     ...(params.stopDetail ? { stopDetail: params.stopDetail } : {}),
+    ...(params.repoState ? { repoState: params.repoState } : {}),
+    ...(params.extensions && Object.values(params.extensions).some((v) => v && v.length > 0)
+      ? { extensions: params.extensions }
+      : {}),
+    ...(params.configOverrides?.length ? { configOverrides: params.configOverrides } : {}),
   };
 }
 

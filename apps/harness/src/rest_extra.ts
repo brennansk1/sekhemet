@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { basename, join } from "node:path";
 import type { BoardService } from "@sekhemet/board";
@@ -12,9 +12,10 @@ import {
   recordAssumptionOutcome,
 } from "@sekhemet/planner";
 import { ProcessSandbox } from "@sekhemet/sandbox";
+import { pruneLogDir } from "./daemon.js";
 import { applyProposal } from "./pm/apply.js";
-import { runnerLease } from "./pm/service.js";
 import { PmStore } from "./pm/store.js";
+import { leaseRefusal, runnerLease } from "./runner_lease.js";
 
 /**
  * The rest of the REST API the design specifies (H12), so the dashboard, the
@@ -52,15 +53,34 @@ export interface RestExtraContext {
 const CARD = "card_[A-Za-z0-9_-]+";
 const TIERS = new Set(["initiative", "epic", "feature", "story", "task"]);
 
-function defaultLaunch(args: string[]): number {
+/**
+ * Start `sekhemet <args>` detached, its output in a log file under
+ * `.sekhemet/logs/` (runtime item 6, RUN-4): nothing is launched with its
+ * output discarded. The run itself takes the runner lease (RUN-3).
+ */
+export function launchDetached(repoPath: string, args: string[]): number {
   // SEKHEMET_CLI names the CLI entry when this server was not started by it.
   const cli = process.env.SEKHEMET_CLI ?? process.argv[1] ?? "";
-  const child = spawn(process.execPath, [cli, ...args], {
-    detached: true,
-    stdio: "ignore",
-  });
-  child.unref();
-  return child.pid ?? 0;
+  const logs = join(repoPath, ".sekhemet", "logs");
+  mkdirSync(logs, { recursive: true });
+  const name = `${args
+    .filter((a) => !a.startsWith("-") && a !== repoPath)
+    .slice(0, 2)
+    .join("-")
+    .replace(/[^A-Za-z0-9_-]/g, "_")}-${new Date().toISOString().replace(/[:.]/g, "-")}.log`;
+  // Bounded: the newest 50 run logs are kept (runtime item 34).
+  pruneLogDir(logs, 49);
+  const out = openSync(join(logs, name), "a");
+  try {
+    const child = spawn(process.execPath, [cli, ...args], {
+      detached: true,
+      stdio: ["ignore", out, out],
+    });
+    child.unref();
+    return child.pid ?? 0;
+  } finally {
+    closeSync(out);
+  }
 }
 
 function cardFields(b: Record<string, unknown>): Record<string, unknown> {
@@ -76,6 +96,8 @@ function cardFields(b: Record<string, unknown>): Record<string, unknown> {
     "epicId",
     "cycleId",
     "dueDate",
+    // SUR-40: the card's layer of the configuration (the kernel checks its shape).
+    "configOverrides",
   ]) {
     if (b[k] !== undefined) out[k] = b[k];
   }
@@ -193,12 +215,12 @@ export async function handleRestExtras(
       const lease = runnerLease(ctx.repoPath);
       if (lease) {
         json(res, 409, {
-          error: `A queue is already running here (pid ${(lease as { pid?: number }).pid ?? "?"}); the card will be picked up if it is Ready.`,
+          error: `${leaseRefusal(lease)} The card will be picked up if it is Ready.`,
         });
         return true;
       }
       const args = ["run", cardId, "--repo", ctx.repoPath];
-      const pid = (ctx.launch ?? defaultLaunch)(args);
+      const pid = (ctx.launch ?? ((a: string[]) => launchDetached(ctx.repoPath, a)))(args);
       json(res, 202, { started: true, pid, cardId });
       return true;
     }
@@ -277,7 +299,11 @@ export async function handleRestExtras(
     }
     const b = await ctx.readJsonBody(req);
     const models = typeof b.models === "string" ? ["--models", b.models] : [];
-    const pid = (ctx.launch ?? defaultLaunch)(["calibrate", "--force", ...models]);
+    const pid = (ctx.launch ?? ((a: string[]) => launchDetached(ctx.repoPath, a)))([
+      "calibrate",
+      "--force",
+      ...models,
+    ]);
     json(res, 202, { started: true, pid });
     return true;
   }

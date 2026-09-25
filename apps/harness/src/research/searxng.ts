@@ -1,9 +1,9 @@
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { userPaths } from "../user_dir.js";
 
 /**
  * A private SearXNG (AGPL-3.0, run as a separate service, not linked) for the
@@ -87,7 +87,7 @@ export async function ensureSearxng(
   if (running.trim() === "") {
     const images = await exec("docker", ["images", "-q", IMAGE]).catch(() => "");
     if (!images.trim()) return undefined; // never pull implicitly: a download needs consent
-    const dir = opts.configDir ?? join(homedir(), ".config", "sekhemet", "searxng");
+    const dir = opts.configDir ?? userPaths().searxng;
     mkdirSync(dir, { recursive: true });
     const settings = join(dir, "settings.yml");
     if (!existsSync(settings)) {

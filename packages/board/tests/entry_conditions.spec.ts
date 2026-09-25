@@ -197,7 +197,7 @@ describe("@sekhemet/board entry conditions, review time, overlap, projects (B1, 
     expect((await store.getCard("s"))?.status).toBe("done");
   });
 
-  it("measures review minutes from status changes and derives ReviewWIP (B3)", async () => {
+  it("S6: status changes alone are not reviews — ReviewWIP comes from the 15-minute prior (B3, RG-S6-1)", async () => {
     await store.createCard({ id: "r", tier: "story", title: "R", scopeFiles: ["x"] });
     // Two reviews of 30 and 90 minutes, recorded as the ledger would.
     const at = (m: number) => new Date(Date.UTC(2026, 0, 1, 0, m)).toISOString();
@@ -215,10 +215,11 @@ describe("@sekhemet/board entry conditions, review time, overlap, projects (B1, 
         payload: { id: "r", fromStatus: from, toStatus: to, updatedAt: at(m) },
       });
     }
-    expect((await board.measuredReviewMinutes()).sort()).toEqual([30, 90]);
-    // median 60 min; 240 minutes a day -> 4 cards.
-    expect(await board.calibrateReviewWip(240)).toBe(4);
-    expect((await board.getBoardState()).wipLimits.review).toBe(4);
+    // Only a person's recorded decision (`review/decided`) is a review (review-git S6).
+    expect(await board.measuredReviewMinutes()).toEqual([]);
+    // No human review yet: the 15-minute prior; 240 minutes a day -> 16 cards.
+    expect(await board.calibrateReviewWip(240)).toBe(16);
+    expect((await board.getBoardState()).wipLimits.review).toBe(16);
   });
 
   it("finds running cards editing the same files, ignoring held ones (B6)", async () => {

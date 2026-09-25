@@ -2,6 +2,7 @@ import {
   type ContextDebtRecommendation,
   PlaybookRegistry,
   type SkillManifest,
+  SkillsRegistry,
   contextDebtRecommendations,
   estimatePromptTokens,
 } from "@sekhemet/context";
@@ -23,6 +24,63 @@ export interface RuleOutcome {
   withoutRule: { cards: number; passed: number };
 }
 
+/** A finished card, as the ledger recorded it: what the skills are matched against, and whether it passed. */
+export interface SkillCardOutcome {
+  title: string;
+  scopeFiles: string[];
+  passed: boolean;
+}
+
+/** One skill's line in `doctor` (EXT-26, extensibility item 16). */
+export interface SkillDiagnostic {
+  name: string;
+  /** The body's prompt tokens when it is selected. */
+  tokens: number;
+  /** Recent finished cards the skill is selected for, of `recentCards`. */
+  triggered: number;
+  recentCards: number;
+  withSkill: { cards: number; passed: number };
+  withoutSkill: { cards: number; passed: number };
+  /** Pass rate with it minus without; undefined until both sides have a card. */
+  netGain: number | undefined;
+}
+
+/**
+ * Per skill (EXT-26): its token cost, how many recent finished cards it is
+ * selected for — by the same deterministic selection the card's prompt uses
+ * (rule 12) — and its net gain over those cards' recorded outcomes.
+ */
+export function skillDiagnostics(
+  skills: readonly SkillManifest[],
+  cards: readonly SkillCardOutcome[],
+): SkillDiagnostic[] {
+  return skills
+    .map((s) => {
+      const one = new SkillsRegistry();
+      one.registerSkill(s);
+      const on = cards.filter((c) => one.resolveActiveSkills(c.title, c.scopeFiles).length > 0);
+      const off = cards.filter((c) => !on.includes(c));
+      const rate = (xs: readonly SkillCardOutcome[]) => xs.filter((c) => c.passed).length;
+      const withSkill = { cards: on.length, passed: rate(on) };
+      const withoutSkill = { cards: off.length, passed: rate(off) };
+      const netGain =
+        on.length > 0 && off.length > 0
+          ? Math.round((withSkill.passed / on.length - withoutSkill.passed / off.length) * 1000) /
+            1000
+          : undefined;
+      return {
+        name: s.name,
+        tokens: estimatePromptTokens(s.content),
+        triggered: on.length,
+        recentCards: cards.length,
+        withSkill,
+        withoutSkill,
+        netGain,
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export interface PlaybookDiagnostics {
   netGain: { ruleId: string; gain: number | undefined; samples: number }[];
   bloat: {
@@ -33,6 +91,8 @@ export interface PlaybookDiagnostics {
     over: boolean;
   };
   neverTriggered: string[];
+  /** Per skill, when recorded card outcomes were given (EXT-26). */
+  skills: SkillDiagnostic[];
   recommendations: ContextDebtRecommendation[];
   lines: string[];
 }
@@ -43,6 +103,8 @@ export function playbookDiagnostics(input: {
   skills?: SkillManifest[];
   /** Card titles and files the skills are matched against (recent cards). */
   recentCards?: { title: string; scopeFiles: string[] }[];
+  /** Recent finished cards with their recorded outcome (EXT-26); they count as recent cards too. */
+  cardOutcomes?: SkillCardOutcome[];
   systemBudget?: number;
 }): PlaybookDiagnostics {
   const registry = new PlaybookRegistry(input.repoPath);
@@ -74,16 +136,16 @@ export function playbookDiagnostics(input: {
   const skillTokens = (input.skills ?? []).reduce((a, s) => a + estimatePromptTokens(s.content), 0);
   const systemBudget = input.systemBudget ?? 1000;
   const share = Math.round(((ruleTokens + skillTokens) / systemBudget) * 1000) / 1000;
-  const neverTriggered = (input.skills ?? [])
-    .filter(
-      (s) =>
-        !(input.recentCards ?? []).some((c) => {
-          const text = `${c.title} ${c.scopeFiles.join(" ")}`.toLowerCase();
-          return s.triggers.some((t) => text.includes(t.toLowerCase()));
-        }),
-    )
-    .map((s) => s.name)
-    .sort();
+  // One selection rule for the prompt and the report (rule 12): whole-word
+  // triggers, or the description when a skill has none.
+  const recent = [...(input.recentCards ?? []), ...(input.cardOutcomes ?? [])];
+  const neverTriggered = skillDiagnostics(
+    input.skills ?? [],
+    recent.map((c) => ({ ...c, passed: false })),
+  )
+    .filter((s) => s.triggered === 0)
+    .map((s) => s.name);
+  const skills = input.cardOutcomes ? skillDiagnostics(input.skills ?? [], input.cardOutcomes) : [];
   const recommendations = contextDebtRecommendations(audit);
   const lines = [
     `Playbook: ${rules.length} rules (${ruleTokens} tokens), skills ${skillTokens} tokens: ${(share * 100).toFixed(0)}% of the ${systemBudget}-token system budget${share > 1 ? " (OVER)" : ""}.`,
@@ -93,6 +155,14 @@ export function playbookDiagnostics(input: {
         (g) =>
           `  ${g.ruleId}: net gain ${((g.gain as number) * 100).toFixed(1)} points over ${g.samples} cards`,
       ),
+    ...skills.map(
+      (k) =>
+        `  Skill ${k.name}: ${k.tokens} tokens, triggered on ${k.triggered} of ${k.recentCards} recent cards, net gain ${
+          k.netGain === undefined
+            ? "unmeasured"
+            : `${k.netGain >= 0 ? "+" : ""}${(k.netGain * 100).toFixed(1)} points (${k.withSkill.passed}/${k.withSkill.cards} with, ${k.withoutSkill.passed}/${k.withoutSkill.cards} without)`
+        }`,
+    ),
     ...(neverTriggered.length
       ? [`  Skills that never triggered on recent cards: ${neverTriggered.join(", ")}`]
       : []),
@@ -104,6 +174,7 @@ export function playbookDiagnostics(input: {
     netGain,
     bloat: { ruleTokens, skillTokens, systemBudget, share, over: share > 1 },
     neverTriggered,
+    skills,
     recommendations,
     lines,
   };

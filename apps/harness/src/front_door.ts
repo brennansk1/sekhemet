@@ -14,7 +14,7 @@ export const FRONT_DOOR: readonly { usage: string; what: string }[] = [
   { usage: "sekhemet review", what: "Show the next card waiting on you" },
   {
     usage: "sekhemet accept <card>",
-    what: 'Accept and merge. Also: send-back <card> "<reason>", park / unpark <card>, reopen <card>',
+    what: 'Accept and merge. Also: send-back <card> "<reason>", park / unpark <card>, reject <card> "<reason>", reopen <card>, revert <card>; card message|pause|hand-back|take-over <card> for a running one',
   },
   { usage: "sekhemet board", what: "The board (--terminal for text)" },
   { usage: "sekhemet doctor", what: "Check the install, including the model weights" },
@@ -58,12 +58,15 @@ export const COMMANDS = [
   "init",
   "backup",
   "restore",
+  "reserve",
+  "pause",
+  "trust",
   "export",
   "erase",
   ...WAVE2_COMMANDS,
 ] as const;
 
-const TRIAGE = ["review", "send-back", "park", "unpark", "reopen"] as const;
+const TRIAGE = ["review", "send-back", "park", "unpark", "reopen", "reject", "revert"] as const;
 
 /** Flags that take a value, so the value is not mistaken for a command or spec. */
 const VALUED = new Set([
@@ -80,18 +83,190 @@ const VALUED = new Set([
   "--sketcher",
 ]);
 
+/**
+ * Every flag the command line reads (S10, SUR-15): a flag outside this list is
+ * named and refused with exit 2, never ignored. `front_door.spec` fails when
+ * the source reads a flag this list lacks, so it cannot fall behind.
+ */
+export const KNOWN_FLAGS: ReadonlySet<string> = new Set([
+  "--ab-entry",
+  "--activate",
+  "--after",
+  "--airgap",
+  "--answer",
+  "--apply",
+  "--arm",
+  "--as",
+  "--attempt",
+  "--auto-accept",
+  "--base",
+  "--baseline",
+  "--batch",
+  "--because",
+  "--before",
+  "--branch",
+  "--buckets",
+  "--budgets",
+  "--bug",
+  "--by",
+  "--candidate",
+  "--card",
+  "--check",
+  "--confirm",
+  "--cron",
+  "--date",
+  "--days",
+  "--deep",
+  "--depth",
+  "--diff",
+  "--dry-run",
+  "--entry",
+  "--escalate-retries",
+  "--events",
+  "--evidence",
+  "--explore",
+  "--filter",
+  "--fixture",
+  "--fixtures",
+  "--force",
+  "--fresh",
+  "--from",
+  "--gate-rule",
+  "--help",
+  "--identity",
+  "--idle-min",
+  "--independent",
+  "--job",
+  "--json",
+  "--key",
+  "--kind",
+  "--ledger",
+  "--limit",
+  "--manager",
+  "--max-commits",
+  "--max-failures",
+  "--max-mutants",
+  "--max-steps",
+  "--max-turns",
+  "--memory",
+  "--model",
+  "--models",
+  "--models-dir",
+  "--mtp-ab",
+  "--mutants",
+  "--name",
+  "--no",
+  "--no-private",
+  "--offline",
+  "--on",
+  "--otlp",
+  "--out",
+  "--output",
+  "--override",
+  "--pages",
+  "--pinned",
+  "--planner",
+  "--port",
+  "--preserve",
+  "--profile",
+  "--prune",
+  "--query",
+  "--reason",
+  "--rebuild",
+  "--record",
+  "--release",
+  "--repo",
+  "--researcher",
+  "--restart",
+  "--restricted",
+  "--review",
+  "--reviewer",
+  "--root",
+  "--rotated",
+  "--round-limit-min",
+  "--rounds",
+  "--run-gates",
+  "--runs",
+  "--schema",
+  "--secret",
+  "--secret-file",
+  "--seed",
+  "--set",
+  "--settings",
+  "--sig",
+  "--signers",
+  "--since",
+  "--since-hours",
+  "--sketcher",
+  "--skip-gate",
+  "--speculative",
+  "--status",
+  "--store-dir",
+  "--target",
+  "--terminal",
+  "--thinking",
+  "--threshold",
+  "--tool-arm",
+  "--trust",
+  "--until",
+  "--urgent",
+  "--validate-tools",
+  "--verbose",
+  "--verify",
+  "--version",
+  "--web",
+  "--with",
+  "--without",
+  "--work",
+  "--worker",
+  "--workers",
+  "--workflow",
+  "--write",
+  "--yes",
+  "-v",
+  "-h",
+]);
+
+/** The first flag not in {@link KNOWN_FLAGS}; `--name=value` is judged by its name. */
+export function unknownFlag(argv: readonly string[]): string | undefined {
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i] as string;
+    if (a === "--") return undefined;
+    if (!a.startsWith("-") || /^-\d/.test(a) || a === "-") continue;
+    const name = a.split("=")[0] as string;
+    if (!KNOWN_FLAGS.has(name)) return name;
+    // A valued flag's value is not a flag, even when it starts with a dash.
+    if (VALUED.has(name) && !a.includes("=")) i++;
+  }
+  return undefined;
+}
+
+/** `sekhemet run <card>`'s exit status (SUR-16): 0 in Review or Done, else 1. */
+export function runExitCode(finalStatus: string): 0 | 1 {
+  return finalStatus === "review" || finalStatus === "done" ? 0 : 1;
+}
+
 export type FrontDoorRoute =
   | { kind: "home"; flags: string[] }
   | { kind: "help" }
+  | { kind: "version" }
+  | { kind: "unknown-flag"; flag: string }
   | { kind: "dev-help" }
   | { kind: "spec"; spec: string; flags: string[] }
   | { kind: "unknown"; word: string; suggest?: string }
-  | { kind: "review"; flags: string[] }
+  | { kind: "review"; cardId?: string; flags: string[] }
   | { kind: "send-back"; cardId: string; reason: string; flags: string[] }
   | { kind: "park"; cardId: string; reason: string; flags: string[] }
   | { kind: "unpark"; cardId: string; flags: string[] }
   | { kind: "reopen"; cardId: string; reason: string; flags: string[] }
+  | { kind: "reject"; cardId: string; reason: string; flags: string[] }
+  | { kind: "revert"; cardId: string; reason: string; flags: string[] }
+  | { kind: "card"; verb: CardVerb; cardId: string; text: string; flags: string[] }
   | { kind: "argv"; argv: string[] };
+
+/** `sekhemet card <verb> <card> …`: collaborating on a running issue (WL-N10-1..3). */
+export const CARD_VERBS = ["message", "pause", "hand-back", "take-over"] as const;
+export type CardVerb = (typeof CARD_VERBS)[number];
 
 /** Positional arguments and flags, with each valued flag kept beside its value. */
 function split(argv: readonly string[]): { positional: string[]; flags: string[] } {
@@ -130,7 +305,12 @@ function distance(a: string, b: string): number {
 }
 
 export function routeFrontDoor(argv: readonly string[]): FrontDoorRoute {
-  if (argv.includes("--help") && argv[0] !== "dev") return { kind: "help" };
+  // SUR-13: the version is printed before anything else is read or written.
+  if (argv[0] === "--version" || argv[0] === "-v") return { kind: "version" };
+  const bad = unknownFlag(argv);
+  if (bad) return { kind: "unknown-flag", flag: bad };
+  if ((argv.includes("--help") || argv.includes("-h")) && argv[0] !== "dev")
+    return { kind: "help" };
   const { positional, flags } = split(argv);
   const [first, ...rest] = positional;
   if (first === undefined) return { kind: "home", flags };
@@ -147,9 +327,24 @@ export function routeFrontDoor(argv: readonly string[]): FrontDoorRoute {
   }
 
   const [cardId = "", ...words] = rest;
-  if (first === "review") return { kind: "review", flags };
+  if (first === "card") {
+    const [verb = "", id = "", ...text] = rest;
+    if (!(CARD_VERBS as readonly string[]).includes(verb) || !id) {
+      return {
+        kind: "unknown",
+        word: `card needs a verb and a card id: sekhemet card ${CARD_VERBS.join("|")} <card> …`,
+      };
+    }
+    return { kind: "card", verb: verb as CardVerb, cardId: id, text: text.join(" "), flags };
+  }
+  if (first === "review") return { kind: "review", ...(cardId ? { cardId } : {}), flags };
   if (
-    (first === "send-back" || first === "park" || first === "unpark" || first === "reopen") &&
+    (first === "send-back" ||
+      first === "park" ||
+      first === "unpark" ||
+      first === "reopen" ||
+      first === "reject" ||
+      first === "revert") &&
     !cardId
   ) {
     return { kind: "unknown", word: `${first} needs a card id` };
@@ -158,6 +353,8 @@ export function routeFrontDoor(argv: readonly string[]): FrontDoorRoute {
   if (first === "park") return { kind: "park", cardId, reason: words.join(" "), flags };
   if (first === "unpark") return { kind: "unpark", cardId, flags };
   if (first === "reopen") return { kind: "reopen", cardId, reason: words.join(" "), flags };
+  if (first === "reject") return { kind: "reject", cardId, reason: words.join(" "), flags };
+  if (first === "revert") return { kind: "revert", cardId, reason: words.join(" "), flags };
 
   if ((COMMANDS as readonly string[]).includes(first)) return { kind: "argv", argv: [...argv] };
 

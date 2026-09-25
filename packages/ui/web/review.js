@@ -2,9 +2,11 @@ import { loadDetail } from "./data.js";
 // Review (FRONTEND_DESIGN §2.4.1): the queue on the left, the evidence in the
 // middle, the facts on the right, and the triage bar under the evidence.
 import { nextDiffMode } from "./diff.js";
-import { $, announce, esc, icon } from "./dom.js";
+import { shownFiles } from "./diff_parse.js";
+import { $, announce, esc, icon, postJSON } from "./dom.js";
 import { EvidencePane } from "./evidence.js";
 import { KIND_LABELS, formatWait } from "./lib/vocabulary.js";
+import { reportOpened } from "./opened.js";
 import { setTopbar } from "./shell.js";
 import { store } from "./store.js";
 import { toast } from "./toast.js";
@@ -140,6 +142,22 @@ function renderEvidence({ keepScroll = false } = {}) {
   if (keepScroll) scroll.scrollTop = top;
   else scroll.scrollTop = 0;
   renderTriage();
+  recordShown();
+}
+
+/** RG-S6-6, RG-N5-5: record the diffs on screen, so Accept knows what was shown. */
+function recordShown() {
+  const card = selectedCard();
+  const ev = ui.detail?.evidence;
+  if (!card || !ev || card.status !== "review" || mutationsBlocked()) return;
+  const files = shownFiles(ev, {
+    card: ui.detail.card ?? card,
+    gatesConfig: store.state.gates,
+    mode: ui.pane.mode,
+    open: ui.pane.open,
+    full: ui.pane.full,
+  });
+  reportOpened(card.id, ev.id, files, postJSON);
 }
 
 async function load(id, { keepScroll = false } = {}) {
@@ -353,7 +371,8 @@ export function mount(view, route) {
     if (!t) return;
     const row = t.closest(".q-row");
     if (row) return select(row.dataset.id);
-    if (t.closest("[data-accept]")) runAction("a");
+    if (t.closest("[data-toggle]")) recordShown();
+    else if (t.closest("[data-accept]")) runAction("a");
     else if (t.closest("[data-back]")) runAction("r");
     else if (t.closest("[data-park]")) runAction("p");
   });

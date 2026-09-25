@@ -36,6 +36,7 @@ import {
   type AppendEventParams,
   type BuiltBy,
   CARD_STOP_REASONS,
+  type CardConfigOverrides,
   type CardDelegate,
   type CardDossier,
   type CardHold,
@@ -140,6 +141,8 @@ export interface CreateCardInput {
   owner?: string;
   /** Who builds it: the Worker, a person, or none (K-N6-1). */
   delegate?: CardDelegate | null;
+  /** The card's layer of the configuration (SUR-40). */
+  configOverrides?: CardConfigOverrides;
 }
 
 /**
@@ -186,6 +189,8 @@ export interface CardUpdate {
    */
   kind?: CardKind;
   change?: CardChange;
+  /** The card's layer of the configuration (SUR-40); `null` clears it. */
+  configOverrides?: CardConfigOverrides | null;
 }
 
 /**
@@ -205,8 +210,18 @@ function validateCardFields(
     change?: unknown;
     split?: unknown;
     delegate?: unknown;
+    configOverrides?: unknown;
   },
 ): void {
+  const o = fields.configOverrides;
+  if (o !== undefined && o !== null) {
+    const table = (v: unknown) => typeof v === "object" && v !== null && !Array.isArray(v);
+    if (!table(o) || !Object.values(o as object).every(table)) {
+      throw new Error(
+        `Card ${id}: configOverrides is a table of config.toml sections, each a table, got ${JSON.stringify(o)}`,
+      );
+    }
+  }
   const d = fields.difficulty;
   if (d !== undefined && d !== null && !(Number.isInteger(d) && d >= 1 && d <= 10)) {
     throw new Error(`Card ${id}: difficulty must be an integer from 1 to 10, got ${d}`);
@@ -415,6 +430,14 @@ export class CardStore {
         : {}),
       ...(row.accepter !== null ? { accepter: row.accepter } : {}),
       ...(row.hold !== null ? { hold: parseJsonColumn<CardHold>(row.hold, null as never) } : {}),
+      ...(row.config_overrides !== null
+        ? {
+            configOverrides: parseJsonColumn<CardConfigOverrides>(
+              row.config_overrides,
+              null as never,
+            ),
+          }
+        : {}),
     };
   }
 
@@ -460,6 +483,7 @@ export class CardStore {
       change: input.change,
       split: input.split,
       delegate: input.delegate,
+      configOverrides: input.configOverrides,
     });
     // K-S4-9: a card starts where no entry condition has been skipped —
     // parked only with its recorded reason (rule 27).
@@ -546,6 +570,7 @@ export class CardStore {
       // K-N6-1: who is on the card; a legacy `assignee` names one (K-N6-6).
       owner: input.owner ?? ("owner" in assigned ? assigned.owner : null),
       delegate: input.delegate ?? ("delegate" in assigned ? assigned.delegate : null),
+      configOverrides: input.configOverrides ?? null,
       createdAt: now,
       updatedAt: now,
     };
@@ -642,7 +667,22 @@ export class CardStore {
     status: CardStatus,
     reason?: string,
     actor = "executor",
-    options: { expectedFrom?: CardStatus; override?: boolean; principal?: string } = {},
+    options: {
+      expectedFrom?: CardStatus;
+      override?: boolean;
+      principal?: string;
+      /**
+       * Card events committed in the same transaction as the move (kernel
+       * S7; review-git §2.5.3: the move to Done and `card/accepted` together).
+       */
+      with?: readonly {
+        type: string;
+        actor: string;
+        payload: unknown;
+        principal?: string;
+        private?: Record<string, unknown>;
+      }[];
+    } = {},
   ): Promise<CardRecord> {
     if (!isCardStatus(status)) {
       throw new StatusTransitionError(
@@ -686,19 +726,35 @@ export class CardStore {
     // Append, then project the recorded event exactly as a replay would —
     // but live, only while the stored status is still the one checked above:
     // the compare-and-set happens under the write lock (rule 26, K-S4-8).
-    await this.eventLog.append(
-      {
-        actor,
-        type: "card/status_changed",
-        cardId: id,
-        payload,
-        ...(options.principal ? { principal: options.principal } : {}),
-      },
-      {
-        project: (event) =>
-          this.applyEvent(event as EventRecord, { expectedFrom: existing.status }),
-      },
-    );
+    const move = {
+      actor,
+      type: "card/status_changed",
+      cardId: id,
+      payload,
+      ...(options.principal ? { principal: options.principal } : {}),
+    };
+    const project = (event: EventRecord) =>
+      this.applyEvent(event, { expectedFrom: existing.status });
+    if (options.with?.length) {
+      this.eventLog.appendAllNow([
+        { params: move, project },
+        ...options.with.map((e) => ({
+          params: {
+            actor: e.actor,
+            type: e.type,
+            cardId: id,
+            payload: e.payload,
+            ...(e.principal ? { principal: e.principal } : {}),
+            ...(e.private ? { private: e.private } : {}),
+          },
+          project: (event: EventRecord) => {
+            this.applyEvent(event);
+          },
+        })),
+      ]);
+    } else {
+      await this.eventLog.append(move, { project: (event) => project(event as EventRecord) });
+    }
 
     const updated = await this.getCard(id);
     if (!updated) {
@@ -731,6 +787,7 @@ export class CardStore {
       difficulty: patch.difficulty,
       kind: patch.kind,
       change: patch.change,
+      configOverrides: patch.configOverrides,
     });
     // K-N9-2: the stored kind and change are a person's decision, named, and
     // never changed under a running attempt or its verification.
@@ -855,6 +912,82 @@ export class CardStore {
     return this.eventLog.localPrincipal();
   }
 
+  /** Whether `principal` holds the Accept permission (K-N7-1, review-git §2.4.1). */
+  public mayAccept(principal: string): boolean {
+    return this.eventLog.mayAccept(principal);
+  }
+
+  /** Every Accept-holder now: one is a solo project, two or more a team (review-git §2.4.1). */
+  public acceptHolders(): string[] {
+    return this.eventLog.acceptHolders();
+  }
+
+  /**
+   * The principal who recorded the latest `card/delegated` of the card to the
+   * Worker — never its current owner (review-git §2.4.1, RG-N5-8).
+   */
+  public delegatorOf(cardId: string): string | undefined {
+    return this.eventLog.delegatorOf(cardId);
+  }
+
+  /**
+   * The people who built the card (review-git §2.4.1): a person it is
+   * delegated to, every person named as `builtBy` on a checkpoint or an
+   * attempt, and every person who took it over (`card/taken_over`, WL-N10-3).
+   */
+  public async buildersOf(cardId: string): Promise<string[]> {
+    const card = await this.getCard(cardId);
+    const out = new Set<string>();
+    if (card?.delegate?.kind === "person" && card.delegate.id) out.add(card.delegate.id);
+    for (const cp of await this.getCheckpoints(cardId)) {
+      if (cp.builtBy?.kind === "person") out.add(cp.builtBy.id);
+    }
+    for (const attempt of this.runs.listAttempts(cardId)) {
+      if (attempt.builtBy?.kind === "person" && attempt.builtBy.id) out.add(attempt.builtBy.id);
+    }
+    for (const e of await this.cardEvents(cardId, ["card/taken_over"])) {
+      const who = (e.payload as { principal?: string }).principal ?? e.principal;
+      if (who) out.add(who);
+    }
+    return [...out];
+  }
+
+  /** Ledger events of the given types, oldest first — project-wide, not one card's. */
+  public async eventsOfType(types: string[], fromSeq = 1): Promise<EventRecord[]> {
+    return this.eventLog.getEventsByTypes(types, fromSeq);
+  }
+
+  /** A project-wide fact on the ledger, with no card (e.g. `review/auto_accept_enabled`). */
+  public async recordLedgerEvent<T>(params: {
+    type: string;
+    actor: string;
+    payload: T;
+    principal?: string | undefined;
+    private?: Record<string, unknown> | undefined;
+  }): Promise<EventRecord<T>> {
+    return this.eventLog.append({
+      actor: params.actor,
+      type: params.type,
+      payload: params.payload,
+      ...(params.principal ? { principal: params.principal } : {}),
+      ...(params.private ? { private: params.private } : {}),
+    });
+  }
+
+  /** The chain verifies (review-git §2.5.1: Accept checks the ledger before anything moves). */
+  public verifyLedger(): { valid: boolean; reason?: string } {
+    const r = this.eventLog.verifyHashChainSync();
+    return { valid: r.valid, ...(r.reason ? { reason: r.reason } : {}) };
+  }
+
+  /** `<seq>:<hash>` of the ledger's last event, for the squash's `Ledger-Head` trailer. */
+  public ledgerHead(): string | undefined {
+    const row = this.db.prepare("SELECT seq, hash FROM events ORDER BY seq DESC LIMIT 1").get() as
+      | { seq: number; hash: string }
+      | undefined;
+    return row ? `${row.seq}:${row.hash}` : undefined;
+  }
+
   private async requireCard(id: string): Promise<CardRecord> {
     const card = await this.getCard(id);
     if (!card) throw new Error(`Card not found: ${id}`);
@@ -912,6 +1045,16 @@ export class CardStore {
     id: string,
     pr: { pr: number; url: string; headSha: string; accepter?: string },
     actor = "harness",
+    /**
+     * Card events committed in the same transaction (kernel S7): Accept's
+     * `card/accepted` with the pull request it opened (review-git §2.5.7).
+     */
+    withEvents: readonly {
+      type: string;
+      actor: string;
+      payload: unknown;
+      principal?: string;
+    }[] = [],
   ): Promise<CardRecord> {
     const card = await this.requireCard(id);
     if (card.status !== "review") {
@@ -919,18 +1062,36 @@ export class CardStore {
     }
     if (!Number.isInteger(pr.pr) || pr.pr < 1)
       throw new Error(`A pull request number, got ${pr.pr}`);
-    await this.appendAndApply({
-      actor,
-      type: "card/pr_opened",
-      cardId: id,
-      payload: {
-        id,
-        pr: pr.pr,
-        url: pr.url,
-        headSha: pr.headSha,
-        ...(pr.accepter ? { accepter: pr.accepter } : {}),
+    const project = (event: EventRecord) => {
+      this.applyEvent(event);
+    };
+    this.eventLog.appendAllNow([
+      {
+        params: {
+          actor,
+          type: "card/pr_opened",
+          cardId: id,
+          payload: {
+            id,
+            pr: pr.pr,
+            url: pr.url,
+            headSha: pr.headSha,
+            ...(pr.accepter ? { accepter: pr.accepter } : {}),
+          },
+        },
+        project,
       },
-    });
+      ...withEvents.map((e) => ({
+        params: {
+          actor: e.actor,
+          type: e.type,
+          cardId: id,
+          payload: e.payload,
+          ...(e.principal ? { principal: e.principal } : {}),
+        },
+        project,
+      })),
+    ]);
     return this.requireCard(id);
   }
 
@@ -1520,7 +1681,9 @@ export class CardStore {
     if (!this.getProject(id))
       throw new CardStructureError("unknown_card", `Project not found: ${id}`);
     if (!Number.isFinite(reviewMinutesPerDay) || reviewMinutesPerDay <= 0) {
-      throw new Error("Review minutes per day must be a positive number");
+      throw new Error(
+        `review_minutes_per_day must be greater than 0 (got ${reviewMinutesPerDay}); ReviewWIP is derived from it`,
+      );
     }
     const payload = {
       id,

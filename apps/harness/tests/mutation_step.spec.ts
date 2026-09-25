@@ -42,7 +42,8 @@ async function acceptedRepo() {
     type: "card/accepted",
     cardId: "c1",
     actor: "human",
-    payload: { sha },
+    // The payload Accept writes (review-git §3; the schema requires the id).
+    payload: { id: "c1", sha },
   });
   return { wt, sha, log, store };
 }
@@ -106,7 +107,8 @@ async function acceptedWith(files: Record<string, string>) {
     type: "card/accepted",
     cardId: "c1",
     actor: "human",
-    payload: { sha },
+    // The payload Accept writes (review-git §3; the schema requires the id).
+    payload: { id: "c1", sha },
   });
   return { wt, log, store };
 }

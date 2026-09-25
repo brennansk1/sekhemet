@@ -8,6 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
+import { estimateTokens } from "./tokens.js";
 
 export interface SkillManifest {
   name: string;
@@ -22,6 +23,150 @@ export interface SkillManifest {
   disclosure?: "full" | "manifest";
   /** sha256 of the SKILL.md bytes (C10). */
   sha256?: string;
+  /** Tools the skill needs; a card without them gets neither its line nor its body (rule 12). */
+  tools?: string[];
+  /** The body's budget (`budget_tokens`, rule 14). */
+  budgetTokens?: number;
+  /** Where it was loaded from; a project skill overrides the person's by name (rule 13). */
+  scope?: "user" | "project";
+  /** Set when the body was cut to `budget_tokens` at a section boundary (EXT-25). */
+  truncated?: { budgetTokens: number; keptTokens: number; originalTokens: number };
+}
+
+/** A skill left out of a card's prompt because the card lacks tools it needs (EXT-22a). */
+export interface SkillOmission {
+  name: string;
+  missingTools: string[];
+}
+
+/**
+ * The YAML front matter of a SKILL.md (Agent Skills format, rule 10): the
+ * subset skills use — scalars, quoted strings, `>` and `|` block scalars,
+ * flow lists `[a, b]`, block lists `- a`, and nested maps (kept as objects).
+ * Not a general YAML parser: anchors, tags and multi-document streams are not
+ * read. Returns the body after the closing `---`.
+ */
+export function parseFrontMatter(raw: string): { data: Record<string, unknown>; body: string } {
+  const m = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(raw);
+  if (!m) return { data: {}, body: raw };
+  const lines = (m[1] ?? "").split(/\r?\n/);
+  return { data: parseBlock(lines, 0, lines.length, 0), body: raw.slice(m[0].length) };
+}
+
+const indentOf = (l: string) => l.length - l.trimStart().length;
+const unquote = (v: string) => {
+  const t = v.trim();
+  if ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'")))
+    return t.slice(1, -1);
+  return t;
+};
+function scalar(v: string): unknown {
+  const t = v.replace(/\s+#.*$/, "").trim();
+  if (/^\[.*\]$/.test(t))
+    return t
+      .slice(1, -1)
+      .split(",")
+      .map((x) => unquote(x))
+      .filter((x) => x.length > 0);
+  if (/^-?\d+(\.\d+)?$/.test(t)) return Number(t);
+  if (t === "true" || t === "false") return t === "true";
+  return unquote(t);
+}
+
+function parseBlock(
+  lines: string[],
+  from: number,
+  to: number,
+  indent: number,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  let i = from;
+  while (i < to) {
+    const line = lines[i] as string;
+    if (!line.trim() || line.trimStart().startsWith("#") || indentOf(line) < indent) {
+      i++;
+      continue;
+    }
+    const kv = /^(\s*)([A-Za-z0-9_-]+):(.*)$/.exec(line);
+    if (!kv) {
+      i++;
+      continue;
+    }
+    const key = kv[2] as string;
+    const rest = (kv[3] ?? "").trim();
+    // The lines that belong to this key: more indented than it, or blank.
+    let end = i + 1;
+    while (
+      end < to &&
+      (!(lines[end] as string).trim() || indentOf(lines[end] as string) > indentOf(line))
+    )
+      end++;
+    const child = lines.slice(i + 1, end);
+    if (rest === ">" || rest === "|" || rest === ">-" || rest === "|-") {
+      const text = child.map((l) => l.trim());
+      out[key] = (rest.startsWith(">") ? text.filter(Boolean).join(" ") : text.join("\n")).trim();
+    } else if (rest === "" && child.some((l) => l.trim().startsWith("- "))) {
+      out[key] = child
+        .filter((l) => l.trim().startsWith("- "))
+        .map((l) => scalar(l.trim().slice(2)));
+    } else if (rest === "" && child.some((l) => l.trim())) {
+      const inner = Math.min(...child.filter((l) => l.trim()).map(indentOf));
+      out[key] = parseBlock(lines, i + 1, end, inner);
+    } else {
+      // A plain scalar may continue on more-indented lines (folded).
+      const more = child.map((l) => l.trim()).filter(Boolean);
+      out[key] = more.length ? [rest, ...more].join(" ") : scalar(rest);
+    }
+    i = end;
+  }
+  return out;
+}
+
+/** Words a description shares with a card, for selection by description (rule 12). */
+const DESCRIPTION_STOP = new Set(
+  "the and for with from that this into when then than your their them they its are was were been being have has had not but any all each every before after about over under use using used make makes made more most other some such only also very can will would should".split(
+    " ",
+  ),
+);
+const wordsOf = (text: string): string[] =>
+  text
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+const stemsOf = (text: string): Set<string> =>
+  new Set(
+    wordsOf(text)
+      .filter((w) => w.length >= 3 && !DESCRIPTION_STOP.has(w))
+      .map((w) => w.slice(0, 5)),
+  );
+
+/**
+ * Cut a body to its budget at a section boundary (rule 14): whole sections,
+ * each starting at a Markdown heading, while they fit; a first section that
+ * alone is too long is cut at its last paragraph break that fits.
+ */
+export function truncateAtSection(
+  body: string,
+  budgetTokens: number,
+): { text: string; keptTokens: number; originalTokens: number } | undefined {
+  const originalTokens = estimateTokens(body);
+  if (originalTokens <= budgetTokens) return undefined;
+  const sections = body.split(/\n(?=#{1,6} )/);
+  let kept = "";
+  for (const section of sections) {
+    const next = kept ? `${kept}\n${section}` : section;
+    if (estimateTokens(next) > budgetTokens) break;
+    kept = next;
+  }
+  if (!kept) {
+    for (const para of (sections[0] ?? "").split(/\n\s*\n/)) {
+      const next = kept ? `${kept}\n\n${para}` : para;
+      if (estimateTokens(next) > budgetTokens) break;
+      kept = next;
+    }
+  }
+  const text = `${kept.trimEnd()}\n`;
+  return { text, keptTokens: estimateTokens(text), originalTokens };
 }
 
 /**
@@ -56,9 +201,58 @@ export interface SkillAuditEntry {
 export interface SkillTrustOptions {
   /** Lock file. Default `<skills dir>/../skills.lock.json`. `false` disables trust. */
   lockPath?: string | false;
+  /** The directory's scope (rule 13); loaded after the person's, a project skill overrides by name. */
+  scope?: "user" | "project";
   /** Pin every skill when no lock exists yet. Default true. */
   trustOnFirstUse?: boolean;
   now?: () => Date;
+}
+
+/**
+ * What a skill's scripts may never touch (rule 15, EXT-27): the gate files,
+ * the loop driver and the sandbox's configuration, and the harness's own
+ * extension and ledger files. A static read of `scripts/`: naming one of
+ * these is enough to reject the skill at import, before it could run.
+ */
+const PROTECTED_SKILL_TARGETS: readonly { pattern: RegExp; what: string }[] = [
+  { pattern: /(?:^|[^\w-])((?:\.sekhemet\/)?gates\.toml)\b/, what: "gate file" },
+  {
+    pattern: /(\.sekhemet\/(?:config\.toml|hooks\.toml|mcp\.json|events\.db|skills\.lock\.json))/,
+    what: "harness configuration",
+  },
+  { pattern: /(packages\/loop\/[\w./-]*|\bcard_runner(?:\.[jt]s)?\b)/, what: "loop driver" },
+  {
+    pattern:
+      /(packages\/sandbox\/[\w./-]*|\bseatbelt(?:\.[jt]s)?\b|child_process\.allowlist\.json)/,
+    what: "sandbox configuration",
+  },
+];
+
+/** Each script in a skill's `scripts/` that names a protected file, with the file. */
+export function skillProtectedWrites(
+  skillDir: string,
+): { script: string; target: string; what: string }[] {
+  const root = join(skillDir, "scripts");
+  if (!existsSync(root)) return [];
+  const found: { script: string; target: string; what: string }[] = [];
+  const walk = (dir: string, rel: string) => {
+    for (const e of readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
+      a.name < b.name ? -1 : 1,
+    )) {
+      const path = join(dir, e.name);
+      const r = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isDirectory()) walk(path, r);
+      else if (e.isFile()) {
+        const text = readFileSync(path, "utf8");
+        for (const t of PROTECTED_SKILL_TARGETS) {
+          const m = t.pattern.exec(text);
+          if (m) found.push({ script: `scripts/${r}`, target: m[1] ?? m[0], what: t.what });
+        }
+      }
+    }
+  };
+  walk(root, "");
+  return found;
 }
 
 export function skillSha256(raw: string): string {
@@ -158,33 +352,87 @@ export class SkillsRegistry {
     return lines.join("\n");
   }
 
+  /**
+   * The skills selected for a card (rule 12), deterministically: a declared
+   * trigger matches as a whole word of the title or a file path (`ast` does
+   * not fire on "last", EXT-23); a skill with no triggers is selected by its
+   * description — two of its content words, by stem, in the card (one, when
+   * the description has only one).
+   */
   public resolveActiveSkills(cardTitle: string, filesTouched: string[] = []): SkillManifest[] {
-    const textToMatch = `${cardTitle} ${filesTouched.join(" ")}`.toLowerCase();
-    const matched: SkillManifest[] = [];
-
-    for (const skill of this.getAllSkills()) {
-      const matchesTrigger = skill.triggers.some((trig) =>
-        textToMatch.includes(trig.toLowerCase()),
-      );
-      if (matchesTrigger) {
-        matched.push(skill);
+    const text = `${cardTitle} ${filesTouched.join(" ")}`;
+    const words = new Set(wordsOf(text));
+    const have = stemsOf(text);
+    return this.getAllSkills().filter((skill) => {
+      if (skill.triggers.length > 0) {
+        return skill.triggers.some((trig) => {
+          const parts = wordsOf(trig);
+          if (parts.length === 0) return false;
+          if (parts.length === 1) return words.has(parts[0] as string);
+          // A multi-word trigger matches as a phrase of whole words.
+          return new RegExp(`(^|[^a-z0-9])${parts.join("[^a-z0-9]+")}($|[^a-z0-9])`).test(
+            text.toLowerCase(),
+          );
+        });
       }
-    }
+      const wanted = [...stemsOf(skill.description)];
+      if (wanted.length === 0) return false;
+      const overlap = wanted.filter((w) => have.has(w)).length;
+      return overlap >= Math.min(2, wanted.length);
+    });
+  }
 
-    return matched;
+  private omittedSkills: SkillOmission[] = [];
+
+  /** Skills the last `skillsForPrompt` left out for missing tools (EXT-22a). */
+  public omitted(): SkillOmission[] {
+    return [...this.omittedSkills];
   }
 
   /**
-   * Every skill for the prompt (C9): the ones whose triggers match the card
-   * carry their body (`full`); the rest are one manifest line, so the model
-   * knows they exist without paying their prefill.
+   * Every skill for the prompt (C9): the ones selected for the card carry
+   * their body (`full`, cut to `budget_tokens` at a section boundary and
+   * marked `truncated`); the rest are one manifest line, so the model knows
+   * they exist without paying their prefill. With the card's `tools`, a skill
+   * that needs a tool the card lacks is left out entirely and listed by
+   * `omitted()` — a skill never widens the card's tool set (rule 12).
    */
-  public skillsForPrompt(cardTitle: string, filesTouched: string[] = []): SkillManifest[] {
+  public skillsForPrompt(
+    cardTitle: string,
+    filesTouched: string[] = [],
+    options: { tools?: readonly string[] } = {},
+  ): SkillManifest[] {
     const matched = new Set(this.resolveActiveSkills(cardTitle, filesTouched).map((s) => s.name));
-    return this.getAllSkills().map((s) => ({
-      ...s,
-      disclosure: matched.has(s.name) ? ("full" as const) : ("manifest" as const),
-    }));
+    const available = options.tools ? new Set(options.tools) : undefined;
+    this.omittedSkills = [];
+    const out: SkillManifest[] = [];
+    for (const s of this.getAllSkills()) {
+      const missing = available ? (s.tools ?? []).filter((t) => !available.has(t)) : [];
+      if (missing.length > 0) {
+        this.omittedSkills.push({ name: s.name, missingTools: missing });
+        continue;
+      }
+      if (!matched.has(s.name)) {
+        out.push({ ...s, disclosure: "manifest" });
+        continue;
+      }
+      const cut = s.budgetTokens ? truncateAtSection(s.content, s.budgetTokens) : undefined;
+      out.push({
+        ...s,
+        disclosure: "full",
+        ...(cut && s.budgetTokens
+          ? {
+              content: cut.text,
+              truncated: {
+                budgetTokens: s.budgetTokens,
+                keptTokens: cut.keptTokens,
+                originalTokens: cut.originalTokens,
+              },
+            }
+          : {}),
+      });
+    }
+    return out;
   }
 
   public loadFromDirectory(dirPath: string, trust: SkillTrustOptions = {}): void {
@@ -242,43 +490,40 @@ export class SkillsRegistry {
             }
           }
           const skill = this.parseSkillMarkdown(entry.name, content, skillMdPath);
-          this.registerSkill({ ...skill, sha256 });
+          this.registerSkill({ ...skill, sha256, ...(trust.scope ? { scope: trust.scope } : {}) });
         }
       }
     }
     if (lockPath && lock && lockChanged) writeSkillLock(lockPath, lock);
   }
 
+  /**
+   * One SKILL.md in the Agent Skills format (rule 10): YAML front matter with
+   * `description` and optional `triggers`, `tools`, `budget_tokens`; the
+   * body after it. The directory's name is the skill's name.
+   */
   private parseSkillMarkdown(dirName: string, raw: string, filePath: string): SkillManifest {
-    let description = "Custom skill";
-    let triggers: string[] = [dirName];
-    let body = raw;
-
-    // Check for YAML frontmatter
-    if (raw.startsWith("---")) {
-      const parts = raw.split("---");
-      if (parts.length >= 3) {
-        const frontmatter = parts[1] ?? "";
-        body = parts.slice(2).join("---").trim();
-
-        const descMatch = frontmatter.match(/description:\s*(.+)/);
-        if (descMatch?.[1]) {
-          description = descMatch[1].trim().replace(/^["']|["']$/g, "");
-        }
-
-        const trigMatch = frontmatter.match(/triggers:\s*\[(.*)\]/);
-        if (trigMatch?.[1]) {
-          triggers = trigMatch[1].split(",").map((t) => t.trim().replace(/^["']|["']$/g, ""));
-        }
-      }
-    }
-
+    const { data, body } = parseFrontMatter(raw);
+    const list = (v: unknown): string[] | undefined =>
+      Array.isArray(v)
+        ? v.map(String).filter(Boolean)
+        : typeof v === "string" && v.trim()
+          ? [v.trim()]
+          : undefined;
+    const description =
+      typeof data.description === "string" && data.description.trim()
+        ? data.description.trim()
+        : "Custom skill";
+    const tools = list(data.tools);
+    const budget = Number(data.budget_tokens ?? data.budgetTokens);
     return {
       name: dirName,
       description,
-      triggers,
-      content: body,
+      triggers: list(data.triggers) ?? [],
+      content: body.trim(),
       path: filePath,
+      ...(tools ? { tools } : {}),
+      ...(Number.isFinite(budget) && budget > 0 ? { budgetTokens: budget } : {}),
     };
   }
 }

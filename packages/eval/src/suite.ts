@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { loadAssetManifest, verifyAsset } from "./eval_assets.js";
-import type { RunProfile } from "./run_profile.js";
+import type { CardProfile, RunProfile } from "./run_profile.js";
 import {
   PLANNING_DISCORDANCE,
   clopperPearson,
@@ -94,8 +94,16 @@ export interface SuiteRunResult {
   mode?: "sequential" | "independent";
   /** The Worker the run was started with. */
   worker?: string;
-  /** Cards whose evidence records a different profile from the run's. */
+  /**
+   * Cards whose evidence records a different profile from the one their
+   * repository's queue was expected to resolve: the run's settings plus
+   * that repository's configuration layer.
+   */
   profileMismatch?: string[];
+  /** Each card's recorded profile, by `fixture/card` (admission compares them across arms). */
+  cardProfiles?: Record<string, CardProfile>;
+  /** Set when the profiles were re-scored from the run's evidence after the run. */
+  rescored?: { from: string; sha256: string; at: string; previousProfileMismatch: string[] };
   /** Each fixture's model load, apart from the cards' wall clock (MS-T7-1). */
   modelLoads?: {
     fixture: string;

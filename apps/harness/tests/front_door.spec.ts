@@ -1,5 +1,8 @@
+import { readFileSync, readdirSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { RUN_PROFILE_FLAGS } from "@sekhemet/eval";
 import { describe, expect, it } from "vitest";
-import { FRONT_DOOR, routeFrontDoor } from "../src/front_door.js";
+import { FRONT_DOOR, KNOWN_FLAGS, routeFrontDoor, unknownFlag } from "../src/front_door.js";
 
 describe("the front door", () => {
   it("lists eight commands, and nothing else, in user-facing help", () => {
@@ -78,5 +81,43 @@ describe("the front door", () => {
   it("shows the front door for help", () => {
     expect(routeFrontDoor(["--help"])).toEqual({ kind: "help" });
     expect(routeFrontDoor(["help"])).toEqual({ kind: "help" });
+  });
+});
+
+describe("S10, SUR-15: the list of known flags cannot fall behind the source", () => {
+  /** Flags the harness passes to other programs (git, gh, rg, docker), not its own. */
+  const TOOL_FLAGS = new Set(
+    "--porcelain --no-ext-diff --no-textconv --name-only --oneline --max-count --line-number --no-heading --unified --cached --short --hard --detach --grep --jq --no-verify --body --head --title --state --format".split(
+      " ",
+    ),
+  );
+  it("knows every flag the command line's source reads", () => {
+    const src = resolve(import.meta.dirname, "../src");
+    const files = readdirSync(src, { recursive: true, encoding: "utf8" }).filter((f) =>
+      f.endsWith(".ts"),
+    );
+    const missing = new Set<string>();
+    for (const f of files) {
+      for (const m of readFileSync(join(src, f), "utf8").matchAll(/["'`](--[a-z][a-z0-9-]*)/g)) {
+        const flag = m[1] as string;
+        if (!KNOWN_FLAGS.has(flag) && !TOOL_FLAGS.has(flag)) missing.add(`${flag} (${f})`);
+      }
+    }
+    for (const flag of Object.keys(RUN_PROFILE_FLAGS)) {
+      if (!KNOWN_FLAGS.has(flag)) missing.add(`${flag} (RUN_PROFILE_FLAGS)`);
+    }
+    expect([...missing]).toEqual([]);
+  });
+
+  it("names the first unknown flag, judging --name=value by its name and skipping values", () => {
+    expect(unknownFlag(["doctor", "--repo", "/r"])).toBeUndefined();
+    expect(unknownFlag(["doctor", "--bogus"])).toBe("--bogus");
+    expect(unknownFlag(["--set=review.x=1", "--terminl=1"])).toBe("--terminl");
+    expect(unknownFlag(["run", "c1", "--", "--anything"])).toBeUndefined();
+    expect(routeFrontDoor(["doctor", "--bogus"])).toEqual({
+      kind: "unknown-flag",
+      flag: "--bogus",
+    });
+    expect(routeFrontDoor(["-v"])).toEqual({ kind: "version" });
   });
 });

@@ -248,6 +248,13 @@ export const CARD_COLUMN_TABLE = [
   { column: "accepter", ddl: "accepter TEXT", fromPayload: text("accepter") },
   // NEW-kernel-3: a typed hold, set and cleared by its own events.
   { column: "hold", ddl: "hold JSON", fromPayload: jsonOrNull("hold") },
+  // NEW-surface-3 (SUR-40): the card's layer of the configuration.
+  {
+    column: "config_overrides",
+    ddl: "config_overrides JSON",
+    fromPayload: jsonOrNull("configOverrides"),
+    patchKey: "configOverrides",
+  },
   {
     column: "created_at",
     ddl: "created_at TEXT NOT NULL",

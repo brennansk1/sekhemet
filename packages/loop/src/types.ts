@@ -130,6 +130,17 @@ export interface PromptRecord {
   purpose?: string | undefined;
 }
 
+/** One dispatched tool call, for its telemetry span (runtime RUN-45). */
+export interface ToolCallEvent {
+  turnIndex: number;
+  callId: string;
+  name: string;
+  ok: boolean;
+  denied: boolean;
+  startedAtMs: number;
+  endedAtMs: number;
+}
+
 export interface SessionOptions {
   cardId: string;
   stepBudget: number;
@@ -269,6 +280,11 @@ export interface SessionOptions {
   lspPool?: import("@sekhemet/context").LspPool | undefined;
   /** Called with every note the Worker writes, as it writes it (L11). */
   onNote?: ((text: string) => Promise<void>) | undefined;
+  /**
+   * Called after every tool call the session dispatched, with its timing and
+   * outcome: the tool-call span under its step (runtime RUN-45).
+   */
+  onToolCall?: ((event: ToolCallEvent) => void) | undefined;
   /** Domains network commands may reach, through the egress proxy (S5, S8). */
   allowedDomains?: string[] | undefined;
   egressProxyPort?: number | undefined;

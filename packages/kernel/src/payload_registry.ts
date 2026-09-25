@@ -84,6 +84,64 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     pr: s(v.pipe(v.number(), v.integer(), v.minValue(1))),
     merged: s(v.boolean()),
   },
+  // review-git §3: Accept, its undo, and the review records (S5, S6, NEW-review-git-5).
+  "card/accepted": {
+    id: s(ID),
+    sha: s(v.pipe(v.string(), v.regex(/^[0-9a-f]{7,40}$/)), true),
+    pr: s(TEXT, true),
+    // Accept always writes both (RG-S5-7, RG-N5-1); ledgers from before B3.2 lack them.
+    principal: s(PRINCIPAL, true),
+    independent: s(v.boolean(), true),
+    auto: s(v.literal(true), true),
+    gateStatus: s(v.picklist(["pass", "fail", "partial"]), true),
+    integration: s(ID, true),
+  },
+  // worker-loop NEW-worker-loop-10: collaborating on a running issue (DEC-34).
+  "card/message": { id: s(ID), principal: s(PRINCIPAL), message: priv("free_text", TEXT) },
+  "card/pause_requested": { id: s(ID), principal: s(PRINCIPAL) },
+  "card/handed_back": { id: s(ID), principal: s(PRINCIPAL), note: priv("free_text", TEXT) },
+  "card/message_delivered": {
+    id: s(ID),
+    message: s(ID),
+    step: s(v.pipe(v.number(), v.integer(), v.minValue(1))),
+  },
+  "card/taken_over": { id: s(ID), principal: s(PRINCIPAL) },
+  // security item 39 (S9): a person trusted the repository's configuration
+  // as it is now — who, and each file by its repository-relative path and SHA-256.
+  "workspace/trusted": {
+    principal: s(PRINCIPAL),
+    files: s(
+      v.array(
+        v.strictObject({
+          path: ID,
+          sha256: v.pipe(v.string(), v.regex(/^[0-9a-f]{64}$/)),
+        }),
+      ),
+    ),
+  },
+  "card/reverted": {
+    id: s(ID),
+    sha: s(v.pipe(v.string(), v.regex(/^[0-9a-f]{40}$/))),
+    revertSha: s(v.pipe(v.string(), v.regex(/^[0-9a-f]{40}$/))),
+    principal: s(PRINCIPAL),
+    reason: priv("free_text", TEXT),
+  },
+  "review/auto_accept_enabled": { principal: s(PRINCIPAL), run: s(ID) },
+  "review/opened": {
+    id: s(ID),
+    principal: s(PRINCIPAL),
+    evidence: s(ID, true),
+    filesShown: s(v.array(TEXT)),
+  },
+  "review/decided": {
+    id: s(ID),
+    principal: s(PRINCIPAL),
+    decision: s(v.picklist(["accept", "send_back", "park", "reject"])),
+    linesReviewed: s(v.pipe(v.number(), v.integer(), v.minValue(0))),
+    minutes: s(v.pipe(v.number(), v.minValue(0))),
+    acknowledgedFindings: s(v.array(TEXT)),
+    project: s(ID, true),
+  },
   // NEW-kernel-8: requirement versions and suspect links.
   "requirement/created": {
     id: s(ID),

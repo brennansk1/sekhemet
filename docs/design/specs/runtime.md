@@ -4,6 +4,9 @@ status: partial
 audiences: [developer]
 code:
   - apps/harness/src/daemon.ts
+  - apps/harness/src/runner_lease.ts
+  - apps/harness/src/supervisor.ts
+  - apps/harness/src/reservation.ts
   - apps/harness/src/ledger_cmds.ts
   - packages/kernel/src/ledger_backup.ts
   - apps/harness/src/pm/service.ts
@@ -19,6 +22,7 @@ code:
   - apps/harness/src/replay.ts
   - packages/kernel/src/retention.ts
   - packages/sandbox/src/executor.ts
+  - packages/sandbox/src/process_registry.ts
 tests:
   - apps/harness/tests/daemon_ws.spec.ts
   - apps/harness/tests/ledger_cmds.spec.ts
@@ -32,6 +36,11 @@ tests:
   - apps/harness/tests/tracing.spec.ts
   - packages/kernel/tests/blobs_retention.spec.ts
   - packages/sandbox/tests/containment.spec.ts
+  - apps/harness/tests/runner_lease.spec.ts
+  - apps/harness/tests/supervisor.spec.ts
+  - apps/harness/tests/night.spec.ts
+  - apps/harness/tests/run_reports.spec.ts
+  - packages/sandbox/tests/process_tree.spec.ts
 changes: [T5, P9, S3c, NEW-runtime-1, NEW-runtime-2, NEW-runtime-3, NEW-runtime-4, NEW-runtime-5, NEW-runtime-6, NEW-runtime-7, NEW-runtime-8, NEW-runtime-9, NEW-runtime-10]
 ---
 
@@ -116,13 +125,13 @@ Sekhemet runs cards unattended for hours on a machine people also use. The runti
 
 ### Retention and logs
 
-33. **Retention** runs at the start of every queue and selects the context packs, masked observations and transcripts of cards closed (Done or rejected) more than 30 days ago; a pack shared with an open card stays. Never pruned: the ledger, evidence bundles (which hold the final diff and gate results), and anything of an open card. **Pruning is a recorded erasure** ([kernel](kernel.md) rule 34): the selected blobs are deleted and, in the same transaction, one `ledger/erased {blobIds, reason: "retention", principal}` event lists every one of them, so a replay of a step whose pack was pruned names the gap and the `ledger/erased` seq instead of reporting a missing blob (K-N7-6, K-N7-8). The event's actor is the harness and its `principal` is the person who set the project's retention period — an event a person caused through a machine actor ([kernel](kernel.md) rule 19) — so that person must hold the Accept permission (K-N7-1); a retention period set by no one with that permission prunes nothing. A default period counts as set by the person who confirmed the project's first run ([surface](surface.md) item 5), who holds Accept on a solo project. Spine rule 2 allows exactly this: the owner amended it so that anything a model saw can be reconstructed *except content erased by a recorded `ledger/erased` event, which replay names as a gap* (O1, decided 2026-09-24, [DEC-29](../DECISIONS.md#dec-29--the-owners-answers-to-the-decision-queue)). The report-only interim that held while O1 was open has ended: retention prunes, always as a recorded erasure, and each run's report still lists what it pruned, with card ids. It is built in B3.3, after the erasure event exists (kernel NEW-kernel-7, B3.1); a build without `ledger/erased` prunes nothing. *Changed from the code:* `queue` prunes today with no ledger record (`index.ts:1242-1247`, `retention.ts:54-58`), which breaks spine rule 2 silently.
+33. **Retention** runs at the start of every queue and selects the context packs, masked observations and transcripts of cards closed (Done or rejected) more than 30 days ago; a pack shared with an open card stays. Never pruned: the ledger, evidence bundles (which hold the final diff and gate results), and anything of an open card. **Pruning is a recorded erasure** ([kernel](kernel.md) rule 34): the selected blobs are deleted and, in the same transaction, one `ledger/erased {blobIds, reason: "retention", principal}` event lists every one of them, so a replay of a step whose pack was pruned names the gap and the `ledger/erased` seq instead of reporting a missing blob (K-N7-6, K-N7-8). The event's actor is the harness and its `principal` is the person who set the project's retention period — an event a person caused through a machine actor ([kernel](kernel.md) rule 19) — so that person must hold the Accept permission (K-N7-1); a retention period set by no one with that permission prunes nothing. A default period counts as set by the person who confirmed the project's first run ([surface](surface.md) item 5), who holds Accept on a solo project. Spine rule 2 allows exactly this: the owner amended it so that anything a model saw can be reconstructed *except content erased by a recorded `ledger/erased` event, which replay names as a gap* (O1, decided 2026-09-24, [DEC-29](../DECISIONS.md#dec-29--the-owners-answers-to-the-decision-queue)). The report-only interim that held while O1 was open has ended: retention prunes, always as a recorded erasure, and each run's report still lists what it pruned, with card ids. Built in B3.3 on the erasure event of kernel NEW-kernel-7 (B3.1): the masked observations and transcripts, which are files rather than content-addressed blobs, are named in the same event's `files`. (Before B3.3, `queue` pruned with no ledger record, which broke spine rule 2 silently.)
 34. `daemon.log` and run logs rotate by size and keep a bounded number of files; `traces.db` keeps 30 days of spans; parked cards' worktrees are removed when the card is closed. Disk growth per 100 cards is bounded.
 34a. **Retention of personal text.** Once the ledger has an erasable `private` part ([kernel](kernel.md) NEW-kernel-1), a project's retention period for `private` fields of closed cards erases them with reason `retention`, keeping structural fields and commitments, so the chain still verifies (NEW-runtime-8). **In the Team setup (DEC-35) the default period is 90 days after a card closes** (owner decision O14, decided 2026-09-24, [DEC-29](../DECISIONS.md#dec-29--the-owners-answers-to-the-decision-queue)). **On a single-user install there is no default period: nothing is erased by retention unless a person sets a period** ([kernel](kernel.md) rule 34). Either way a person holding Accept may set another period for the project, and the change is a recorded config event. This is separate from item 33's 30 days for packs, observations and transcripts, which are blobs, not ledger fields.
 
 ### Run reports
 
-34b. **A queue run's report is a ledger event.** When `queue` or an overnight round ends, its report (`QueueReport`: per-card entries with attempt, stop reason, steps, tokens and duration; pass@1, pass after escalation, model swaps, throughput, prefix-cache summary, the watchdog level at the end, and retention's report) is appended as one `queue/reported {report}` event. `.sekhemet/queue_report.json` and `.sekhemet/runs/<startedAt>.json` are **derived caches** of those events (kernel rule 16: a cache that is safe to delete): they are written from the event, and when missing they are rebuilt from the ledger. The Runs view (`GET /api/runs`, `/api/runs/:id`) reads the projection of `queue/reported` events, not the directory. *Changed from the code:* the report exists only as files today, and the code calls the latest file "the record" (`execute.ts:1468-1482`, `dashboard_api.ts:311-343`) — a durable fact outside the ledger, which kernel rule 16 names a defect (NEW-runtime-9).
+34b. **A queue run's report is a ledger event.** When `queue` or an overnight round ends, its report (`QueueReport`: per-card entries with attempt, stop reason, steps, tokens and duration; pass@1, pass after escalation, model swaps, throughput, prefix-cache summary, the watchdog level at the end, and retention's report) is appended as one `queue/reported {report}` event. `.sekhemet/queue_report.json` and `.sekhemet/runs/<startedAt>.json` are **derived caches** of those events (kernel rule 16: a cache that is safe to delete): they are written from the event, and when missing they are rebuilt from the ledger. The Runs view (`GET /api/runs`, `/api/runs/:id`) reads the projection of `queue/reported` events, not the directory (NEW-runtime-9, built in B3.3; before it the report existed only as files, a durable fact outside the ledger, which kernel rule 16 names a defect).
 
 ### Backup, restore, export and upgrades
 
@@ -136,19 +145,27 @@ Sekhemet runs cards unattended for hours on a machine people also use. The runti
 | Item | Source |
 | --- | --- |
 | `DaemonInfo`, `daemonStart`, `daemonStop`, `daemonStatus` | `apps/harness/src/daemon.ts` |
-| `holdRunnerLease`, `runnerLease`, `Lease` | `apps/harness/src/pm/service.ts:57-120` |
-| `ProcessSandbox.execute` (timeout, memory cap), `sampleTreeMemory` | `packages/sandbox/src/executor.ts` |
+| `DaemonInfo.processStart`; `rotateLog` (`LOG_MAX_BYTES` 10 MB, `LOG_KEEP` 5), `pruneLogDir` (the newest 50 run logs) | `apps/harness/src/daemon.ts` |
+| `acquireRunnerLease` (`{release, lease}` or `{holder}`), `holdRunnerLease`, `runnerLease`, `leaseRefusal`, `Lease` (`pid`, `processStart`, `token`, `kind`, `cardId`, `borrower`), `LEASE_HEARTBEAT_MS` (3 s), `LEASE_TOKEN_ENV` (an overnight round runs under its parent's lease) | `apps/harness/src/runner_lease.ts` (re-exported by `pm/service.ts`) |
+| `launchDetached` (output to `.sekhemet/logs/`) | `apps/harness/src/rest_extra.ts` |
+| `ProcessSandbox.execute` (timeout, memory cap; its own process group), `sampleTreeMemory` | `packages/sandbox/src/executor.ts` |
+| `processStartTime`, `sameProcess`, `trackGroup`, `untrackGroup`, `killTrackedGroups`, `signalGroup`, `reapOrphanedGroups`; `SEKHEMET_PROCESS_REGISTRY` (`.sekhemet/processes/`, set when a runner takes the lease) | `packages/sandbox/src/process_registry.ts` |
+| `supervisorStart`, `describeSupervisorStart`, `sweepCrashedAttempts`, `runRetention`, `pruneTraces`, `removeWorktreesOnClose`, `processRegistryDir` | `apps/harness/src/supervisor.ts` |
+| `MACHINE_EVENTS`, `reserveMachine`, `releaseMachine`, `reservationNow`, `parseUntil`, `mayStartCard` | `apps/harness/src/reservation.ts` |
+| `OvernightOptions.roundLimitMs` (`ROUND_LIMIT_MS`, 3 h; exit `ROUND_TIMED_OUT` 124), `OvernightOptions.vulnScan` | `apps/harness/src/overnight.ts` |
 | `runOvernight`, `mayRun`, `recordUsage`, `GOVERNANCE_EVENTS`, `thermalState` | `apps/harness/src/overnight.ts`, `governance.ts` |
 | `parseHours`, `isReserved` | `apps/harness/src/scheduler.ts` |
 | Recurring labels: `template`, `schedule:<cron>`, `trigger:file:<glob>`, `trigger:release:npm:<pkg>`, `trigger:webhook:<name>`, `urgent` | `apps/harness/src/recurring.ts` |
 | `trajectories`, replay diff | `apps/harness/src/replay.ts` |
-| `Tracer`, `tracesCommand` | `apps/harness/src/tracing.ts` |
-| `pruneRetention`, `RETENTION_DAYS = 30`, `RetentionReport`; `pruneRunData` | `packages/kernel/src/retention.ts`; `apps/harness/src/execute.ts:193` |
-| `QueueReport`, `QueueEntry`, `writeQueueReport`; `listRuns` (the Runs view's source) | `apps/harness/src/execute.ts:1395-1482`; `apps/harness/src/dashboard_api.ts:311` |
-| Events (new): `queue/reported {report}`; `machine/reserved {principal, until?}` and `machine/released {principal}` (item 17); retention appends [kernel](kernel.md)'s `ledger/erased` with `reason: "retention"` | this spec; the event catalogue is kernel's |
+| `Tracer` (`prune`), `tracesCommand`, `toolCallSpan` (`execute_tool <name>`, child of the step's `card.turn` span), `cardTrace` (kinds *Card*, *Step*, *Model request*, *Tool call*) | `apps/harness/src/tracing.ts` |
+| `selectRetention`, `pruneRetention(repoRoot, log, cards)` (one recorded erasure), `retentionPrincipal`, `RETENTION_DAYS = 30`, `RetentionReport` (`pruned: {kind, id, cardId}[]`, `erasedBySeq`, `skipped`) | `packages/kernel/src/retention.ts` |
+| `EraseInput.files`, `LedgerErasedPayload.files` (observations and transcripts, relative to `.sekhemet/`), `retryFileErasures`, `isRunFilePath` | `packages/kernel/src/log.ts` |
+| `QueueReport` (`retention`), `QueueEntry` (`condensedTokensSaved`), `queueEntryOf`, `QUEUE_REPORTED`, `recordQueueReport`, `queueReportsFromLedger`, `rebuildRunCaches`, `writeQueueReport` (the cache); `listRuns(repoPath, log)` (the Runs view's source) | `apps/harness/src/execute.ts`; `apps/harness/src/dashboard_api.ts` |
+| `SessionOptions.onToolCall` (`ToolCallEvent`), `CardRunResult.condensedTokensSaved`, `ToolExecutor.countCondensed` | `packages/loop/src/types.ts`, `card_runner.ts`, `tools.ts` |
+| Events (new): `queue/reported {report}`; `machine/reserved {principal, until?}` and `machine/released {principal}` (item 17); `security/vulnerability_scan {scanner, offline, passed, skipped?, findings?}` (item 20); retention appends [kernel](kernel.md)'s `ledger/erased` with `reason: "retention"` and `files` | this spec; the event catalogue is kernel's |
 | HTTP routes | `server.ts`, `rest_extra.ts`, `wave2_server.ts`, `pm_api.ts`, `integrations.ts`, `dashboard_api.ts` — listed below |
 | CLI: `serve`, `board`, `daemon start\|stop\|status`, `run [card]`, `queue`, `overnight [--until HH:MM] [--idle-min N] [--max-failures N]`, `abort`, `rewind`, `fork`, `resume`, `replay <card> [--attempt N] [--diff A,B] [--as <model>]`, `log`, `traces [--since-hours N] [--out f] [--otlp url]` | `apps/harness/src/index.ts` |
-| CLI (new): `dev backup <path>`, `dev restore <path>`, `dev export --ledger [--no-private]`, `dev pause\|resume <project>` | this spec |
+| CLI (new): `dev backup <path>`, `dev restore <path>`, `dev export --ledger [--no-private]`, `dev pause\|resume <project>` (a project named by id or name; `resume <card>` still resumes a card), `dev reserve [--until HH:MM\|ISO]`, `dev reserve --release`, `overnight --round-limit-min N` | this spec; `apps/harness/src/index.ts` |
 | Config (new): `[server] host`, `port` (default 4040), `tls_cert`, `tls_key`, `trusted_proxies`, `session_hours`; `[scheduler] fair_share`, `max_wait_s` (the aging bound) | this spec |
 | `SandboxOptions.maxBufferBytes` (default 10 MB, `DEFAULT_MAX_BUFFER`) | `packages/sandbox/src/types.ts:13`; `executor.ts:11, 196, 289-341` |
 | `resolveStaticPath`, `MIME` | `apps/harness/src/server.ts:127-172` |
@@ -158,7 +175,7 @@ Sekhemet runs cards unattended for hours on a machine people also use. The runti
 **Routes today** (all under `/api` unless noted; mutations are POST, PUT or DELETE):
 - Board and cards: `board`, `workspace`, `projects`, `projects/:id`, `cards/:id`, `cards/:id/explain`, `cards/:id/attempts`, `cards/:id/transcript`, `cards/:id/diff`, `cards/:id/review`, `cards/:id/attachments`, `cycles`, `goals`, `decisions`, `planner/decisions`, `assumptions`, `recurring`, `wip`, `queue`.
 - Card actions: `cards/:id/(accept|return|park)`, `cards/:id/(split|run|gate)`, `cards/:id/(abort|rewind|fork|override|reroute|reorder)`.
-- Runs and evidence: `runs`, `evidence/:id`, `cards/:id/evidence`, `events?since=`, `stream` (SSE), `ws` (WebSocket), `integrity`, `metrics/flow`, `metrics/pm`, `signals`, `standup`, `capability`, `telemetry`.
+- Runs and evidence: `runs`, `cards/:id/traces` (RUN-46), `evidence/:id`, `cards/:id/evidence`, `events?since=`, `stream` (SSE), `ws` (WebSocket), `integrity`, `metrics/flow`, `metrics/pm`, `signals`, `standup`, `capability`, `telemetry`.
 - PM: `pm/messages`, `pm/thread`, `pm/proposals/:id/(apply|discard)` ([PM_CONTRACT.md](../PM_CONTRACT.md)).
 - Integrations: see [integrations](integrations.md) §3; `/webhooks/github` (no `/api`).
 - Machine and models: `machine`, `machine/calibrate`, `models`, `registry`, `doctor`, `meta`, `gates`, `playbook`, `learning`, `visual`.
@@ -169,43 +186,44 @@ The design's 2026-09-17 route table (`/workspace`, `/projects/:id/board`, `PATCH
 
 | Capability | State | Evidence | Change |
 | --- | --- | --- | --- |
-| Daemon start/stop/status | partial | `daemon.ts`; `stop` trusts a bare pid (`:26-33, 109-118`); the test mocks kill and asserts "Stopped" while the process lives (`daemon_ws.spec.ts:128-153`) | NEW-runtime-1 |
-| Runner lease | partial | written with `writeFileSync`, not exclusive (`pm/service.ts:66-104`); taken only by `queue` (`index.ts:1355`); the REST `run` checks it but its child never takes it (`rest_extra.ts:192-202`) | NEW-runtime-1 |
-| Detached runs leave no log | not-built | `stdio: "ignore"` (`rest_extra.ts:55-64`) | NEW-runtime-1 |
+| Daemon start/stop/status | built (B3.3) | `daemon.json` records the process's start time (`ps -o lstart`); `stop` signals only a process whose pid **and** start time match, and removes a stale file ("Not running") — a live bystander with the recorded pid is never signalled (`runner_lease.spec.ts` RUN-1, a real process). The older `daemon_ws.spec.ts` start/stop test still injects its kill | NEW-runtime-1 |
+| Runner lease | built (B3.3) | `runner_lease.ts`: taken by `open(…, "wx")`, carrying pid, start time and a random token, refreshed every 3 s; a holder gone or with another start time is stale and taken over under an exclusive takeover lock; `run <card>`, `queue` and `overnight` take it (each overnight round runs under its parent's lease, the token handed down to the child only); a second runner is refused naming the holder — CLI exit 1, HTTP 409 (`runner_lease.spec.ts` RUN-2 with six racing processes, RUN-3, RUN-4, RUN-5 after a SIGKILL). One lease per repository; per-slot leases are NEW-runtime-6 | NEW-runtime-1 |
+| Detached runs leave no log | built (B3.3) | the dashboard's `run` and `calibrate` start through `launchDetached`, output to `.sekhemet/logs/<verb>-<card>-<time>.log`, the newest 50 kept (`runner_lease.spec.ts` RUN-4) | NEW-runtime-1 |
 | Timeout SIGTERM → 500 ms → SIGKILL | built | `executor.ts:248-266`; `containment.spec.ts:204` | — |
-| Kills reach the whole tree | partial | memory kill walks the tree (`executor.ts:271-285`); timeouts and `dispose` signal one pid (`executor.ts:251`, `loop/src/tools.ts:1057-1067`) | NEW-runtime-2 |
-| Signal handlers exit before cleanup | not-built | `models/src/llama_server.ts:448-452` | NEW-runtime-2 |
-| Crash sweep at start-up | not-built | crashed cards stay In Progress; the queue takes only Ready cards | NEW-runtime-3 |
-| Overnight round time limit | not-built | the queue child has no timeout (`overnight.ts:60-73`) | NEW-runtime-3 |
+| Kills reach the whole tree | built (B3.3) | every command and background process leads its own process group (`detached`), tracked while it lives; timeouts and memory kills signal the group, then every descendant the process table shows; `stop_process` and card end kill the group (`process_tree.spec.ts` RUN-6: an orphaned grandchild is gone 1 s after the kill). RUN-7's card-end kill is the group kill `ToolExecutor.dispose` already made in B1 (`tools_wave2b.spec.ts`) | NEW-runtime-2 |
+| Signal handlers exit before cleanup | built (B3.3) | a lease holder handles SIGTERM and SIGHUP with `process.exit`, so the synchronous exit handlers run first: the lease is released and every tracked process group killed (`night.spec.ts` RUN-8, a real process). The model server's own handler (`llama_server.ts` `bindToParentLifetime`) also exits through `process.exit`, so the same handlers run | NEW-runtime-2 |
+| Crash sweep at start-up | built (B3.3) | `queue`, `run` and `overnight` take the lease, then `supervisorStart` (`cli_exit.spec.ts` RUN-9 for `run`): reaps the process groups a killed runner left (`.sekhemet/processes/`) — including a group whose leader has exited while its members live (`process_tree.spec.ts`) — finishes a running attempt of an In Progress card with `crashed`, resets its worktree to the last checkpoint (guarded git) and returns it to Ready through the board; the next run resumes from that step (`supervisor.spec.ts` RUN-9, RUN-10, RUN-12: a runner killed with SIGKILL mid-command) | NEW-runtime-3 |
+| Overnight round time limit | built (B3.3) | each round is a `queue` child in its own group with a wall-clock limit (3 h, `--round-limit-min`): SIGTERM to the group, SIGKILL after 5 s, one failure counted, the night goes on (`night.spec.ts` RUN-11) | NEW-runtime-3 |
 | Rewind, fork, resume from checkpoint | built | `control.spec.ts:203, 228` | — |
 | Output capture capped at 10 MB with a truncation marker | built | `executor.ts:11, 289-341` | — |
 | Per-card token and time budgets park the card | built | `PARKING_STOPS`, `BUDGET_STOPS` (`loop/src/card_runner.ts:265-285`); `runner_depth.spec.ts:270` | — |
 | Per-card kWh budget; per-project caps | not-built | energy is counted per night only (`governance.ts:42-68`) | NEW-runtime-7 |
-| Pause and resume a project | not-built | no such control | NEW-runtime-10 |
+| Pause and resume a project | built (B3.3) | `sekhemet dev pause\|resume <project>` and the dashboard's project route record `project/updated` with the person's principal; `queue` starts no card of a paused project (checked before each card, `mayStartCard`), and a running card finishes (`night.spec.ts` RUN-48) | NEW-runtime-10 |
 | Replay and `--as` | built | `replay.ts`; `replay.spec.ts` | — |
-| Background processes, confined, own port | built | `loop/src/tools.ts:969-1014`; killed at card end without descendants (`:1057`) | NEW-runtime-2 |
+| Background processes, confined, own port | built | `loop/src/tools.ts` `startProcess`; each leads its own tracked process group, killed with the group at card end and at the harness's exit (B3.3) | NEW-runtime-2 |
 | Overnight, breakers, reserved hours | built | `overnight.spec.ts` | — |
-| Reserve now recorded on the ledger (`machine/reserved`, `machine/released`) and read from it | not-built | no reserve-now control or command exists | NEW-runtime-5 |
+| One model server for the night | built (B3.3) | `overnight` holds the Worker's managed llama-server itself (`nightModelServer`, `OvernightOptions.modelServer`): it makes sure of the server before each round — started on the first, attached to on every later one — so each round's `queue` adopts the running server instead of loading the weights again, and releases it when the rounds end; a Worker with no managed server (Ollama) is left to keep itself warm (`overnight_server.spec.ts` RUN-18a) | — |
+| Reserve now recorded on the ledger (`machine/reserved`, `machine/released`) and read from it | partial (B3.3) | `sekhemet dev reserve [--until]` and `--release` append the events (nothing when already in that state); `overnight` reads the latest before its benchmark step and before each round, after a restart too (`night.spec.ts` RUN-58). Not yet: the dashboard's *Reserve now* control ([dashboard](dashboard.md) DB-NM3-1/2) | NEW-runtime-5 |
 | Recurring and scheduled cards | built | `recurring.spec.ts` | — |
 | Nightly mutation and drift check | built | `overnight.ts:40, 95` | — |
-| Nightly full vulnerability scan | not-built | — | NEW-runtime-5 |
-| Watchdog `stopNewWorktrees`, `shortenKeepAlive` | not-built | declared (`models/src/watchdog.ts:27-49`); `isActive` never called | NEW-runtime-5 |
+| Nightly full vulnerability scan | built (B3.3) | after its rounds `overnight` runs osv-scanner through the gates' confined runner and appends `security/vulnerability_scan`; nothing to scan or no scanner is recorded as skipped, never a pass (`night.spec.ts` RUN-17) | NEW-runtime-5 |
+| Watchdog `stopNewWorktrees`, `shortenKeepAlive` | partial (B3.3) | `stopNewWorktrees`: the queue starts no card while it is active, waits up to 5 min for it to clear, then halts (`mayStartCard`; `night.spec.ts` RUN-18). `shortenKeepAlive` has no handler: the Ollama adapter shortens its own keep-alive under memory pressure (`http_adapter.ts` `resolveKeepAlive`), which is the action's effect, not the watchdog acting | NEW-runtime-5 |
 | Server: one 1,261-line closure, guards copied into five modules | partial | `server.ts:490-1190`; `isTrustedMutation` (`:115-126`) vs `originAllowed` (`ws.ts:32`) disagree | T5 |
 | Host check, session token, CSP | not-built | [security](security.md) S3c | S3c |
 | Non-loopback bind with identity and TLS | not-built | `server.listen(port, "127.0.0.1")` (`server.ts:1190`) | P9 (DEC-06) |
 | Audit chain verification | built | `log.verifyHashChain`; `/api/integrity` (`server.ts:1046`) | — |
 | Static `/app/*` serving: traversal refused, MIME types | built | `resolveStaticPath` (`server.ts:136-172`); `server.spec.ts:191` | — |
 | Stream replay from `?since=` / `Last-Event-ID`, reload from projections | built | `server.ts:563-600`; `packages/ui/web/app.js:183-197` | — |
-| Token streaming to the Steps tab | built | `liveTokenWriter` (`execute.ts:484-486, 683`); SSE `tokens` (`server.ts:1145-1170`) | — |
+| Token streaming to the stream (`tokens` events) | built | `liveTokenWriter` (`execute.ts:484-486, 683`); SSE `tokens` (`server.ts:1145-1170`); the Steps tab has no listener yet ([dashboard](dashboard.md) §4, NEW-dashboard-3) | — |
 | PM with no lease loads through a residency scheduler | not-built | the no-lease path loads the PM model directly, with no footprint check (PM_CONTRACT §4.3; `pm/service.ts:222-320`) | NEW-runtime-6 |
 | Fair share, per-slot leases on a team server | not-built | one global lease file (`pm/service.ts:57-110`) | NEW-runtime-6 |
 | Backup, restore with erasures, ledger export, forward-only migrations | built | `sekhemet dev backup <path>` copies with `VACUUM INTO` while another process writes, verifies the copy and records `ledger/backed_up {path, seq}` (RUN-39); `dev restore <path>` re-applies every register erasure newer than the backup before the restored ledger is moved into place, keeps the replaced ledger beside it, and refuses without the register when erasures are known (RUN-40); `dev export --ledger [--no-private]` writes CloudEvents-mapped NDJSON that `verifyLedgerExport` checks alone, reaching the ledger's verdict on a tampered ledger too (RUN-42, RUN-43); a newer schema is refused naming both versions, an older one is backed up, migrated and chain-checked before anything is served (RUN-44) — `ledger_cmds.spec.ts`, `backup.spec.ts`, `migrations.spec.ts`. Restore is run with the server stopped: it replaces the database file | — |
-| Local traces, OTLP export on request | partial (was `built`; DEC-25 R23) | card, step (the code's `turn`) and model-request spans (`execute.ts:531`, `tracing.ts:144-192`), export by `sekhemet dev traces` (`tracing.spec.ts`); no tool-call span; no dashboard view (nothing under `packages/ui/web` reads traces) | NEW-runtime-9 |
-| Tokens removed by condensing, as a metric | not-built | the condenser computes `tokensSaved` per result (`context/src/condenser.ts:74-77, 414-420`); nothing outside it reads the figure | NEW-runtime-9 |
-| Retention of packs, observations, transcripts | partial | wired at queue start (`index.ts:1243`), tested in the kernel (`blobs_retention.spec.ts`) but not through `queue`; it deletes with no `ledger/erased` record (`retention.ts:54-58`) | NEW-runtime-4 |
+| Local traces, OTLP export on request | partial (was `built`; DEC-25 R23) | card, step (the code's `turn`), model-request and — since B3.3 — tool-call spans (`execute_tool <name>` under the step's span, with the call's real timing and outcome, from `SessionOptions.onToolCall`; `run_reports.spec.ts` RUN-45); export by `sekhemet dev traces` (`tracing.spec.ts`); `GET /api/cards/:id/traces` serves a card's spans with durations and the step span labelled *Step* (`cardTrace`, RUN-46). Not yet: the dashboard view that renders it (nothing under `packages/ui/web` reads it) | NEW-runtime-9 |
+| Tokens removed by condensing, as a metric | built (B3.3) | the Worker's tools and the `check` observation count each condensing's `tokensSaved` (`ToolExecutor.countCondensed`); the card's total is `CardRunResult.condensedTokensSaved` and each queue entry's `condensedTokensSaved` (`run_reports.spec.ts` RUN-47) | NEW-runtime-9 |
+| Retention of packs, observations, transcripts | built (B3.3) | at every `queue` start (`supervisorStart`, before the Ready cards are read): packs, observations and transcripts of cards closed 30+ days ago deleted in **one** `ledger/erased {blobIds, files, reason: "retention"}` whose principal is the solo install's person (who holds Accept); nothing is pruned when no such person set the period; the report lists every item with its card and goes into the run report; replay names the gap and the seq (`supervisor.spec.ts` RUN-13, RUN-54, RUN-57 through `queue`; `blobs_retention.spec.ts`); a named run file a crash left on disk is deleted when the ledger is next opened (`retryFileErasures` in `openLocalLedger`; `ledger_cmds.spec.ts`) | NEW-runtime-4 |
 | Retention of `private` fields, 90 days by default on a team server, none by default on a single-user install | not-built | the private part and `EventLog.erase` with reason `retention` exist ([kernel](kernel.md) NEW-kernel-1, NEW-kernel-7); no retention period is stored and no job runs it — B3.3 (RUN-41, RUN-41a) | NEW-runtime-8 |
-| Run reports as a ledger event, files as a rebuildable cache | not-built | files only: `queue_report.json` and `runs/<startedAt>.json` (`execute.ts:1468-1482`); the Runs view reads the directory (`dashboard_api.ts:311-343`) | NEW-runtime-9 |
-| Log rotation, trace retention, worktree cleanup | not-built | `daemon.log` appends forever; `traces.db` has no retention (`tracing.ts:39-48`) | NEW-runtime-4 |
+| Run reports as a ledger event, files as a rebuildable cache | built (B3.3) | `queue` ends with `recordQueueReport`: one `queue/reported {report}`, then the files written from it; `GET /api/runs` and `/api/runs/:id` read the events (files only for runs from before the event); `rebuildRunCaches` restores deleted files (`run_reports.spec.ts` RUN-56). The per-card progress file a running queue rewrites stays a file | NEW-runtime-9 |
+| Log rotation, trace retention, worktree cleanup | built (B3.3) | `daemon.log` rotates by size (10 MB, 5 kept; at start and every minute while the daemon runs, copy-then-truncate); run logs keep the newest 50; spans older than 30 days are deleted at the retention pass; a card moved to Rejected has its worktree removed and its branch kept, through a ledger subscription in every process that opens the kernel (`supervisor.spec.ts` RUN-14, RUN-15, RUN-16) | NEW-runtime-4 |
 
 ## 5. Changes for v1
 

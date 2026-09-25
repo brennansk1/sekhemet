@@ -1,8 +1,14 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { hookEngineFor, loadUserHooks } from "../src/user_hooks.js";
+import { setInvocationTrust } from "../src/workspace_trust.js";
+
+// These hooks are the person's own: trusted for this run, as `--trust` does
+// (S9; untrusted hooks are workspace_trust.spec.ts's).
+beforeAll(() => setInvocationTrust(true));
+afterAll(() => setInvocationTrust(false));
 
 function project(toml: string): string {
   const repo = mkdtempSync(join(tmpdir(), "hooks-"));

@@ -117,12 +117,15 @@ export async function recordLedgerRun(
     body: string;
     filesTouched?: string[];
     secondsUsed?: number;
+    /** Who built it (K-N6-4): a person's take-over (WL-N10-3); the Worker otherwise. */
+    builtBy?: { kind: "worker" | "person"; id: string };
   },
 ): Promise<void> {
   const attempt = await store.runs.startAttempt({
     cardId: run.cardId,
     attemptNumber: store.runs.nextAttemptNumber(run.cardId),
     modelId: run.modelId,
+    ...(run.builtBy ? { builtBy: run.builtBy } : {}),
   });
   await store.runs.recordEvidence({
     id: run.evidenceId,

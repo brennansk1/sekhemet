@@ -1,9 +1,10 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { arch, cpus, homedir, platform, totalmem } from "node:os";
+import { arch, cpus, platform, totalmem } from "node:os";
 import { dirname, join } from "node:path";
 import { performance } from "node:perf_hooks";
+import { sekhemetConfigDir } from "./models_dir.js";
 import type { ModelRegistry, ThinkingPolicy } from "./registry.js";
 import type { InferenceRequest, LocalInferenceAdapter, TokenUsage } from "./types.js";
 
@@ -560,7 +561,7 @@ export async function calibrateModel(
 }
 
 export function defaultMachineProfilePath(): string {
-  return process.env.SEKHEMET_MACHINE_PROFILE ?? join(homedir(), ".sekhemet", "machine.json");
+  return process.env.SEKHEMET_MACHINE_PROFILE ?? join(sekhemetConfigDir(), "machine.json");
 }
 
 export interface CalibrateHardwareOptions {

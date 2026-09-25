@@ -293,6 +293,18 @@ export async function runResearchTool(call: ToolCall, deps: ResearchDeps): Promi
       const slugArg = s("repo", 140);
       const slug = slugArg ? parseSlug(slugArg) : undefined;
       if (slugArg && !slug) return { text: `"${slugArg}" is not an owner/repo.` };
+      // NEW-security-8: these run `gh`, which reaches api.github.com; the
+      // network policy decides first, and the request is logged.
+      try {
+        await web.gate?.(
+          slug
+            ? `https://api.github.com/repos/${slug.owner}/${slug.repo}`
+            : "https://api.github.com/search",
+          "gh",
+        );
+      } catch (err) {
+        return { text: err instanceof Error ? err.message : String(err) };
+      }
       if (call.name === "code_search") {
         const q = s("query");
         const text = codeSearch(q, slug);

@@ -9,6 +9,8 @@ import {
   type TomlTable,
   parseToml,
 } from "@sekhemet/kernel";
+import { userPaths } from "./user_dir.js";
+import { isTrusted } from "./workspace_trust.js";
 
 /**
  * User hooks (K12): shell commands the user attaches to lifecycle events,
@@ -32,6 +34,19 @@ import {
  * protected: agents may not edit .sekhemet/ (the gates' protected globs).
  */
 
+/**
+ * Board-lifecycle events (NEW-extensibility-1): a hook on one observes a
+ * transition that has happened; it cannot block or reverse it (rule 7).
+ */
+export const BOARD_EVENTS: readonly LifecycleHookEvent[] = [
+  "card/status_changed",
+  "card/accepted",
+  "pr/opened",
+];
+
+/** The gating events, where a hook that does not answer blocks (kernel hooks.ts). */
+const FAIL_CLOSED = new Set<LifecycleHookEvent>(["pre-step", "pre-tool", "pre-gate"]);
+
 const EVENTS = new Set<LifecycleHookEvent>([
   "card/start",
   "pre-step",
@@ -43,6 +58,7 @@ const EVENTS = new Set<LifecycleHookEvent>([
   "review/return",
   "playbook/propose",
   "turn-stopping",
+  ...BOARD_EVENTS,
 ]);
 
 export interface UserHook {
@@ -54,9 +70,33 @@ export interface UserHook {
   timeoutMs: number;
 }
 
-export function loadUserHooks(repoPath: string): { hooks: UserHook[]; errors: string[] } {
+export function loadUserHooks(repoPath: string): {
+  hooks: UserHook[];
+  errors: string[];
+  /** The file exists but the person has not trusted it as it is (S9, SEC-28). */
+  untrusted?: boolean;
+} {
   const path = join(repoPath, ".sekhemet", "hooks.toml");
   if (!existsSync(path)) return { hooks: [], errors: [] };
+  // S9: a repository's hooks run outside the sandbox, so they are inert
+  // until the person trusts this exact file (security items 38–40).
+  if (!isTrusted(repoPath, join(".sekhemet", "hooks.toml"))) {
+    return { hooks: [], errors: [], untrusted: true };
+  }
+  return parseHooksFile(path);
+}
+
+/**
+ * The person's own hooks, `hooks.toml` in the user directory (EXT-13): their
+ * configuration, trusted as theirs, and run before a project's.
+ */
+export function loadPersonHooks(): { hooks: UserHook[]; errors: string[]; path: string } {
+  const path = userPaths().hooks;
+  return { ...(existsSync(path) ? parseHooksFile(path) : { hooks: [], errors: [] }), path };
+}
+
+/** One hooks.toml: its hooks, and each entry that could not load (EXT-10). */
+export function parseHooksFile(path: string): { hooks: UserHook[]; errors: string[] } {
   const errors: string[] = [];
   let parsed: TomlTable;
   try {
@@ -113,8 +153,15 @@ export function hookHandler(hook: UserHook, cwd: string): HookHandler {
       let err = "";
       const timer = setTimeout(() => {
         child.kill("SIGKILL");
+        // EXT-12: a guard that does not answer in time blocks, and says why;
+        // on any other event a timeout fails open and is recorded.
+        if (FAIL_CLOSED.has(hook.event))
+          return resolve({ block: true, reason: `hook timed out after ${hook.timeoutMs / 1000}s` });
         reject(new Error(`hook timed out after ${hook.timeoutMs / 1000}s: ${hook.command}`));
       }, hook.timeoutMs);
+      // EXT-11: a hook that exits without reading its stdin closes the pipe;
+      // the write's EPIPE is expected, and the exit code decides as usual.
+      child.stdin.on("error", () => undefined);
       child.stdout.on("data", (d: Buffer) => {
         out += d.toString();
       });
@@ -165,13 +212,24 @@ export function hookName(hook: UserHook): string {
     : hook.command;
 }
 
-/** An engine with the project's user hooks registered (none when there is no hooks.toml). */
+/**
+ * An engine with the person's hooks, then the project's, registered — so for
+ * one event the person's run first (EXT-13). `errors` names each file with
+ * what could not load (EXT-10), for `doctor` and the card's evidence.
+ */
 export function hookEngineFor(
   repoPath: string,
   cwd = repoPath,
 ): { engine: LifecycleHookEngine; errors: string[]; count: number } {
   const engine = new LifecycleHookEngine();
-  const { hooks, errors } = loadUserHooks(repoPath);
+  const person = loadPersonHooks();
+  const project = loadUserHooks(repoPath);
+  const projectPath = join(repoPath, ".sekhemet", "hooks.toml");
+  const hooks = [...person.hooks, ...project.hooks];
   for (const h of hooks) engine.register(h.event, hookHandler(h, cwd), hookName(h));
+  const errors = [
+    ...person.errors.map((e) => `${person.path}: ${e}`),
+    ...project.errors.map((e) => `${projectPath}: ${e}`),
+  ];
   return { engine, errors, count: hooks.length };
 }

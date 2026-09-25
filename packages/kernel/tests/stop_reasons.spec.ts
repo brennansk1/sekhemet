@@ -42,7 +42,7 @@ describe("the stop-reason table (worker-loop rule 31)", () => {
 
   it("WL-T3-10: holds the five v1 reasons with rule 31's values; CARD_STOP_REASONS is the table's keys", () => {
     expect([...CARD_STOP_REASONS].sort()).toEqual(Object.keys(STOP_REASONS).sort());
-    expect(CARD_STOP_REASONS).toHaveLength(23);
+    expect(CARD_STOP_REASONS).toHaveLength(24);
     const want = {
       gate_suspected: ["capability_ceiling", "yes", false],
       tests_not_red_for_reason: ["no_progress", "yes", false],
@@ -64,7 +64,16 @@ describe("the stop-reason table (worker-loop rule 31)", () => {
   it("matches rule 31 for the eighteen the runner kept in hand-kept sets", () => {
     const resumable = CARD_STOP_REASONS.filter((r) => STOP_REASONS[r].resumable).sort();
     expect(resumable).toEqual(
-      ["crashed", "error", "hook_veto", "human_abort", "memory_pressure", "quota_suspended"].sort(),
+      [
+        "crashed",
+        "error",
+        "hook_veto",
+        "human_abort",
+        "memory_pressure",
+        // WL-N10-2: a person's pause resumes from its checkpoint when handed back.
+        "paused",
+        "quota_suspended",
+      ].sort(),
     );
     const budget = CARD_STOP_REASONS.filter((r) => STOP_REASONS[r].parks === "unless_gates_ran");
     expect(budget.sort()).toEqual(

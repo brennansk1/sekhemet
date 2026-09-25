@@ -1,9 +1,9 @@
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { type TomlTable, parseToml } from "@sekhemet/kernel";
 import type { NetworkConfig } from "@sekhemet/sandbox";
 import { type ResolvedConfig, resolveConfig } from "./config.js";
+import { userDir } from "./user_dir.js";
 
 /**
  * config.toml, applied (H15). `resolveConfig` layers defaults, the user's
@@ -55,13 +55,42 @@ export function effectiveConfig(
   });
 }
 
+/**
+ * A card's configuration overrides as `section.key = value` lines (SUR-40):
+ * what the card shows and what its run prints.
+ */
+export function configOverrideLines(overrides: TomlTable | undefined): string[] {
+  const out: string[] = [];
+  for (const [section, table] of Object.entries(overrides ?? {})) {
+    if (typeof table !== "object" || table === null || Array.isArray(table)) continue;
+    for (const [key, value] of Object.entries(table))
+      out.push(`${section}.${key} = ${JSON.stringify(value)}`);
+  }
+  return out;
+}
+
+/**
+ * The step cap a card runs under (SUR-40): a `--max-turns` flag, else the
+ * card's own `[loop] default_step_budget`, else the run's cap. The card's
+ * layer sits between the project's and the command line's.
+ */
+export function cardStepCap(
+  card: { configOverrides?: TomlTable },
+  cap: { flag?: number | undefined; otherwise?: number | undefined },
+): number | undefined {
+  if (cap.flag !== undefined && cap.flag > 0) return cap.flag;
+  const own = (card.configOverrides?.loop as TomlTable | undefined)?.default_step_budget;
+  if (typeof own === "number" && own > 0) return own;
+  return cap.otherwise !== undefined && cap.otherwise > 0 ? cap.otherwise : undefined;
+}
+
 /** Whether the user (not the built-in default) chose network.mode, and what. */
 export function explicitNetworkMode(repoPath: string, argv: string[] = []): string | undefined {
   const cli = cliOverrides(argv).network as TomlTable | undefined;
   if (typeof cli?.mode === "string") return cli.mode;
   for (const path of [
     join(repoPath, ".sekhemet", "config.toml"),
-    join(homedir(), ".sekhemet", "config.toml"),
+    process.env.SEKHEMET_USER_CONFIG ?? join(userDir(), "config.toml"),
   ]) {
     if (!existsSync(path)) continue;
     try {
@@ -102,7 +131,7 @@ export function reviewLimit(cfg: ResolvedConfig["config"]): number | undefined {
  */
 export function networkConfigs(
   repoPath: string,
-  userConfigPath = process.env.SEKHEMET_USER_CONFIG ?? join(homedir(), ".sekhemet", "config.toml"),
+  userConfigPath = process.env.SEKHEMET_USER_CONFIG ?? join(userDir(), "config.toml"),
 ): { user: NetworkConfig; project: NetworkConfig } {
   const read = (path: string): NetworkConfig => {
     if (!existsSync(path)) return {};

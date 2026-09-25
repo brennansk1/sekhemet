@@ -177,9 +177,16 @@ const MEASUREMENT_PURPOSES = new Set(["frozen suite", "m0"]);
  */
 const GATED_COLUMNS = new Set<CardStatus>(["review", "done"]);
 
+/** Minutes a human review is assumed to take before any is recorded (S6, RG-S6-1). */
+export const REVIEW_MINUTES_PRIOR = 15;
+/** Above this, a decision is reported as fast (RG-S6-7; SmartBear's ceiling). */
+export const FAST_REVIEW_LINES_PER_HOUR = 500;
+
 export class BoardServiceImpl implements BoardService {
   private wipLimits: Record<CardStatus, number>;
   private options: BoardServiceOptions;
+  /** A person fixed Review's limit (`[review] wip`); otherwise it is derived (S6). */
+  private reviewWipFixed: boolean;
 
   constructor(
     private cardStore: CardStore,
@@ -200,6 +207,7 @@ export class BoardServiceImpl implements BoardService {
 
     this.options = options;
     this.wipLimits = { ...DEFAULT_WIP_LIMITS, ...(options.customLimits ?? {}) };
+    this.reviewWipFixed = options.customLimits?.review !== undefined;
   }
 
   /**
@@ -347,59 +355,90 @@ export class BoardServiceImpl implements BoardService {
   }
 
   /**
-   * ReviewWIP = floor(reviewMinutesPerDay / medianReviewMinutesPerCard), min 1.
-   *
-   * Derived from the project's own accepted-card history rather than fixed at a
-   * constant, because the bottleneck being modelled is a specific human's
-   * available review time.
+   * ReviewWIP = floor(review minutes per day / median minutes per human
+   * review), at least 1 (review-git §2.2, S6). Only a person's recorded
+   * decision (`review/decided`) is a review: an automated exit from Review
+   * says nothing about a person's reading time (the 7,708 probe). With no
+   * human review yet, the 15-minute prior (60 minutes a day → 4). Per
+   * project: its own review minutes, its own reviews. Computed at each use,
+   * so a decision counts before the next card leaves Verify (RG-S6-4). A
+   * limit a person fixed (`[review] wip`) is kept.
    */
-  public async computeReviewWip(reviewMinutesPerDay?: number): Promise<number> {
-    const budget = reviewMinutesPerDay ?? this.options.reviewMinutesPerDay;
-    if (!budget || budget <= 0) return this.wipLimits.review;
-
-    const durations = (await this.measuredReviewMinutes()).sort((a, b) => a - b);
-
-    if (durations.length === 0) return this.wipLimits.review;
-
-    const mid = Math.floor(durations.length / 2);
-    const median =
-      durations.length % 2 === 0
-        ? ((durations[mid - 1] as number) + (durations[mid] as number)) / 2
-        : (durations[mid] as number);
-
-    return Math.max(1, Math.floor(budget / median));
+  public async computeReviewWip(reviewMinutesPerDay?: number, projectId?: string): Promise<number> {
+    if (this.reviewWipFixed) return this.wipLimits.review;
+    const budget = reviewMinutesPerDay ?? this.reviewMinutesFor(projectId);
+    if (!Number.isFinite(budget) || budget <= 0) {
+      throw new Error(
+        `review_minutes_per_day must be greater than 0 (got ${budget}); ReviewWIP is derived from it, never from a static limit`,
+      );
+    }
+    const durations = (await this.measuredReviewMinutes(projectId)).sort((a, b) => a - b);
+    let median = REVIEW_MINUTES_PRIOR;
+    if (durations.length > 0) {
+      const mid = Math.floor(durations.length / 2);
+      median =
+        durations.length % 2 === 0
+          ? ((durations[mid - 1] as number) + (durations[mid] as number)) / 2
+          : (durations[mid] as number);
+    }
+    return Math.max(1, Math.floor(budget / Math.max(median, 1 / 60)));
   }
 
-  /**
-   * Minutes each review took (B3): from a card entering Review to the
-   * person's verdict (accept, return, park), read from the ledger's status
-   * changes. Every review counts, not only accepted ones: a return costs the
-   * reviewer the same reading time.
-   */
-  public async measuredReviewMinutes(): Promise<number[]> {
-    const out: number[] = [];
-    for (const card of await this.cardStore.listCards()) {
-      const changes = await this.cardStore.cardEvents(card.id, ["card/status_changed"]);
-      let enteredAt: number | undefined;
-      for (const e of changes) {
-        const p = e.payload as { toStatus?: string; fromStatus?: string; updatedAt?: string };
-        const at = Date.parse(p.updatedAt ?? e.createdAt);
-        if (p.toStatus === "review") enteredAt = at;
-        else if (p.fromStatus === "review" && enteredAt !== undefined) {
-          const minutes = (at - enteredAt) / 60_000;
-          if (minutes > 0) out.push(minutes);
-          enteredAt = undefined;
-        }
-      }
+  /** The review minutes a day for a project: its own setting, else the board's, else 60. */
+  private reviewMinutesFor(projectId?: string): number {
+    const project = projectId ? this.cardStore.getProject(projectId) : undefined;
+    return project?.reviewMinutesPerDay ?? this.options.reviewMinutesPerDay ?? 60;
+  }
+
+  /** A person's recorded review decisions, with the card's project (S6). */
+  private async humanDecisions(
+    projectId?: string,
+  ): Promise<{ cardId: string; minutes: number; lines: number }[]> {
+    const out: { cardId: string; minutes: number; lines: number }[] = [];
+    const cards = new Map((await this.cardStore.listCards()).map((c) => [c.id, c]));
+    for (const e of await this.cardStore.eventsOfType(["review/decided"])) {
+      if (e.actor !== "human" || !e.cardId) continue;
+      const p = e.payload as { minutes?: number; linesReviewed?: number };
+      if (typeof p.minutes !== "number" || !(p.minutes > 0)) continue;
+      if (projectId !== undefined && cards.get(e.cardId)?.projectId !== projectId) continue;
+      out.push({ cardId: e.cardId, minutes: p.minutes, lines: p.linesReviewed ?? 0 });
     }
     return out;
   }
 
-  /** Apply a history-derived ReviewWIP, replacing the static default. */
+  /**
+   * Minutes each human review took (S6, RG-S6-6): the `minutes` a person's
+   * `review/decided` records — accept, send back, park or reject alike, and
+   * for Worker- and person-built cards alike (RG-S6-7).
+   */
+  public async measuredReviewMinutes(projectId?: string): Promise<number[]> {
+    return (await this.humanDecisions(projectId)).map((d) => d.minutes);
+  }
+
+  /**
+   * The review rate (RG-S6-7): decisions faster than 500 changed lines an
+   * hour are reported beside the rest, never refused (research RG-T5).
+   */
+  public async reviewRate(
+    projectId?: string,
+  ): Promise<{ decisions: number; fast: { cardId: string; linesPerHour: number }[] }> {
+    const decisions = await this.humanDecisions(projectId);
+    const fast = decisions
+      .map((d) => ({ cardId: d.cardId, linesPerHour: Math.round(d.lines / (d.minutes / 60)) }))
+      .filter((d) => d.linesPerHour > FAST_REVIEW_LINES_PER_HOUR);
+    return { decisions: decisions.length, fast };
+  }
+
+  /** Set the board's review minutes a day; returns the ReviewWIP it now gives. */
   public async calibrateReviewWip(reviewMinutesPerDay: number): Promise<number> {
     const limit = await this.computeReviewWip(reviewMinutesPerDay);
-    this.wipLimits = { ...this.wipLimits, review: limit };
+    this.options = { ...this.options, reviewMinutesPerDay };
     return limit;
+  }
+
+  /** Review's limit for a project now (S6): fixed by a person, or derived. */
+  private async reviewLimit(projectId?: string): Promise<number> {
+    return this.computeReviewWip(undefined, projectId);
   }
 
   public async transitionCard(t: CardTransition): Promise<void> {
@@ -499,23 +538,28 @@ export class BoardServiceImpl implements BoardService {
     // Back-pressure blocks entry to VERIFY, not Review (design §392). Holding
     // cards one column upstream is what stops work piling into a queue the
     // human cannot drain; blocking at Review would let Verify fill instead.
+    // S6: the card's own project's Review count against its own ReviewWIP.
+    const reviewLimit =
+      t.toStatus === "verify" || t.toStatus === "review"
+        ? await this.reviewLimit(card.projectId)
+        : undefined;
     if (t.toStatus === "verify") {
-      const reviewCards = await this.reviewCount();
-      if (reviewCards.length >= this.wipLimits.review) {
+      const reviewCards = await this.reviewCount(card.projectId);
+      if (reviewCards.length >= (reviewLimit as number)) {
         throw new TransitionRefusedError(
           "back_pressure",
           t.cardId,
           t.toStatus,
-          `Back-pressure: Review is at capacity (${reviewCards.length}/${this.wipLimits.review}). No card may enter Verify until a review is accepted or returned.`,
+          `Back-pressure: Review is at capacity (${reviewCards.length}/${reviewLimit}). No card may enter Verify until a review is accepted or returned.`,
         );
       }
     }
 
     const inTarget =
       t.toStatus === "review"
-        ? (await this.reviewCount()).length
+        ? (await this.reviewCount(card.projectId)).length
         : (await this.cardStore.listCards({ status: t.toStatus })).length;
-    const limit = this.wipLimits[t.toStatus];
+    const limit = t.toStatus === "review" ? (reviewLimit as number) : this.wipLimits[t.toStatus];
     if (inTarget >= limit) {
       throw new TransitionRefusedError(
         "wip_limit",
@@ -551,6 +595,7 @@ export class BoardServiceImpl implements BoardService {
         override: edgeOverridden,
         // Rule 19, K-N2-2: the person who moved the card, as named.
         ...(t.principal ? { principal: t.principal } : {}),
+        ...(t.with?.length ? { with: t.with } : {}),
       });
     } catch (err) {
       // Another writer moved the card between the read and the write.
@@ -688,8 +733,10 @@ export class BoardServiceImpl implements BoardService {
     pr: { pr: number; url: string; headSha: string },
     accepter: string,
     actor = "harness",
+    /** Committed with `card/pr_opened` in one transaction: Accept's `card/accepted`. */
+    withEvents: NonNullable<CardTransition["with"]> = [],
   ): Promise<void> {
-    await this.cardStore.recordPullRequestOpened(cardId, { ...pr, accepter }, actor);
+    await this.cardStore.recordPullRequestOpened(cardId, { ...pr, accepter }, actor, withEvents);
   }
 
   /**
@@ -719,15 +766,16 @@ export class BoardServiceImpl implements BoardService {
 
   public async checkWipLimits(): Promise<WipLimitStatus[]> {
     const cards = await this.cardStore.listCards();
+    const limits = { ...this.wipLimits, review: await this.reviewLimit() };
     const counts = {} as Record<CardStatus, number>;
-    for (const column of Object.keys(this.wipLimits) as CardStatus[]) counts[column] = 0;
+    for (const column of Object.keys(limits) as CardStatus[]) counts[column] = 0;
     for (const c of cards) {
       // An accepted card awaiting its merge is not counted (rule 24).
       if (c.hold?.kind === "awaitingMerge") continue;
       counts[c.status] = (counts[c.status] ?? 0) + 1;
     }
 
-    return (Object.entries(this.wipLimits) as [CardStatus, number][]).map(([col, limit]) => ({
+    return (Object.entries(limits) as [CardStatus, number][]).map(([col, limit]) => ({
       column: col,
       currentCount: counts[col] ?? 0,
       maxLimit: limit,
@@ -763,9 +811,9 @@ export class BoardServiceImpl implements BoardService {
    * awaiting its pull request's merge is a person's decided work, not a
    * review waiting for one.
    */
-  private async reviewCount(): Promise<CardRecord[]> {
+  private async reviewCount(projectId?: string): Promise<CardRecord[]> {
     return (await this.cardStore.listCards({ status: "review" })).filter(
-      (c) => c.hold?.kind !== "awaitingMerge",
+      (c) => c.hold?.kind !== "awaitingMerge" && c.projectId === projectId,
     );
   }
 
@@ -777,13 +825,17 @@ export class BoardServiceImpl implements BoardService {
       ? all.filter((c) => !c.projectId || c.projectId === filter.projectId)
       : all;
     const reviewCount = cards.filter(
-      (c) => c.status === "review" && c.hold?.kind !== "awaitingMerge",
+      (c) =>
+        c.status === "review" &&
+        c.hold?.kind !== "awaitingMerge" &&
+        (!filter.projectId || c.projectId === filter.projectId),
     ).length;
+    const review = await this.reviewLimit(filter.projectId);
 
     return {
       cards,
-      wipLimits: this.wipLimits,
-      backpressureActive: reviewCount >= this.wipLimits.review,
+      wipLimits: { ...this.wipLimits, review },
+      backpressureActive: reviewCount >= review,
     };
   }
 }

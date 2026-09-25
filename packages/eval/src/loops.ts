@@ -206,7 +206,8 @@ const confinedCheck: SkillCheckRunner = async (command, args, root) => {
  */
 export async function checkSkillCandidate(
   dir: string,
-  options: { run?: SkillCheckRunner } = {},
+  /** `discard: false` keeps a failing skill's files (a person's own skill, EXT-27a). */
+  options: { run?: SkillCheckRunner; discard?: boolean } = {},
 ): Promise<SkillCheckResult> {
   const file = join(dir, "evals", "checks.json");
   let checks: { command: string; args?: string[] }[] = [];
@@ -229,7 +230,7 @@ export async function checkSkillCandidate(
     const args = c.args ?? [];
     const r = await run(c.command, args, dir);
     if (r.exitCode !== 0) {
-      rmSync(dir, { recursive: true, force: true });
+      if (options.discard !== false) rmSync(dir, { recursive: true, force: true });
       return {
         status: "discarded",
         passed,

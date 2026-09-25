@@ -94,6 +94,19 @@ describe("REST API completeness (H12)", () => {
     expect((await cards.getCard(card.id))?.priority).toBe(2);
   });
 
+  it("SUR-40: a card's config overrides are set with the card and shown on it", async () => {
+    const res = await post(`/api/projects/${projectId}/cards`, {
+      title: "Tune the loop",
+      configOverrides: { loop: { default_step_budget: 12 } },
+    });
+    expect(res.status).toBe(201);
+    const { card } = (await res.json()) as { card: { id: string } };
+    const shown = (await (await fetch(`${base}/api/cards/${card.id}`)).json()) as {
+      card: { configOverrides?: unknown };
+    };
+    expect(shown.card.configOverrides).toEqual({ loop: { default_step_budget: 12 } });
+  });
+
   it("splits a card into ordered parts and parks the original", async () => {
     expect(
       (await post("/api/cards/card_big/split", { parts: [{ title: "only one" }] })).status,

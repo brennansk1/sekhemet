@@ -2,6 +2,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, normalize } from "node:path";
 import ts from "typescript";
 import { RERUN_GATES, gateCopy } from "./copy.js";
+import { redactSecrets } from "./secrets.js";
 import type { CompleteGateFailure, GateFailure } from "./types.js";
 
 /**
@@ -250,9 +251,17 @@ export function finalizeFailures(
   failures: GateFailure[],
   options: { limit?: number; cwd?: string; onIncomplete?: (defect: string) => void } = {},
 ): CompleteGateFailure[] {
+  // SEC-22: a secret in a gate's output is redacted before anyone stores,
+  // shows or posts the failure (evidence, check-run annotations, the model).
   return rankFailures(
     completeFailures(failures, options.onIncomplete),
     options.limit ?? FAILURES_SHOWN,
     options.cwd,
-  );
+  ).map((f) => ({
+    ...f,
+    errorExcerpt: redactSecrets(f.errorExcerpt),
+    expected: redactSecrets(f.expected),
+    actual: redactSecrets(f.actual),
+    minimalRepro: redactSecrets(f.minimalRepro),
+  }));
 }

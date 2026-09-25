@@ -1,11 +1,31 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { createInterface } from "node:readline";
+import process from "node:process";
 import type { DatabaseSync } from "node:sqlite";
+import type { Readable, Writable } from "node:stream";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import type {
+  Transport,
+  TransportSendOptions,
+} from "@modelcontextprotocol/sdk/shared/transport.js";
+import {
+  CallToolRequestSchema,
+  ErrorCode,
+  InitializeRequestSchema,
+  type JSONRPCMessage,
+  ListToolsRequestSchema,
+  McpError,
+  type MessageExtraInfo,
+  type Tool,
+} from "@modelcontextprotocol/sdk/types.js";
 import type { BoardService } from "@sekhemet/board";
 import { DeterministicGateRunner, loadGatesConfig } from "@sekhemet/gates";
 import type { CardStore, CardTier, EventLog } from "@sekhemet/kernel";
+import { defaultRegistryPath } from "@sekhemet/models";
 import { ProcessSandbox } from "@sekhemet/sandbox";
+import { ledgerBundle } from "./accept.js";
 import { runDoctor } from "./doctor.js";
 import { LearningStore } from "./learning/store.js";
 import { capabilityReport } from "./pm/capability.js";
@@ -28,7 +48,8 @@ export interface McpRpcRequest {
 
 export interface McpRpcResponse {
   jsonrpc: "2.0";
-  id: number | string;
+  /** `null` only on a request that could not be read (JSON-RPC, EXT-15). */
+  id: number | string | null;
   result?: unknown;
   error?: { code: number; message: string };
 }
@@ -43,6 +64,20 @@ interface McpTool {
 }
 
 const str = { type: "string" } as const;
+
+/** The card-id pattern the dashboard's routes use; an id is checked before any path (EXT-16). */
+const CARD_ID = /^[A-Za-z0-9_.-]+$/;
+function cardIdArg(a: Record<string, unknown>): string | undefined {
+  if (a.card_id === undefined) return undefined;
+  const id = typeof a.card_id === "string" ? a.card_id : "";
+  if (!CARD_ID.test(id) || id === "." || id === "..") {
+    throw new Error(`${JSON.stringify(a.card_id)} is not a card id`);
+  }
+  return id;
+}
+
+/** Protocol versions this server speaks, newest first (EXT-14). */
+export const MCP_PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"] as const;
 const TIERS = ["initiative", "epic", "feature", "story", "task"];
 const TEAM_FIELDS = [
   "priority",
@@ -183,7 +218,7 @@ const MCP_TOOLS: McpTool[] = [
     description: "Run the project's declared gates, in a card's worktree when given.",
     inputSchema: { type: "object", properties: { card_id: str } },
     handler: async (a, ctx) => {
-      const id = typeof a.card_id === "string" ? a.card_id : undefined;
+      const id = cardIdArg(a);
       const wt = id ? join(ctx.repoPath, ".sekhemet", "worktrees", id) : undefined;
       const cwd = wt && existsSync(wt) ? wt : ctx.repoPath;
       const cfg = loadGatesConfig(ctx.repoPath);
@@ -204,7 +239,36 @@ const MCP_TOOLS: McpTool[] = [
     },
   },
   {
-    name: "sekhemet_ask_merit",
+    name: "sekhemet_get_evidence",
+    description:
+      "A card's latest evidence bundle, as the ledger names it and checked against its hash. Read-only.",
+    inputSchema: { type: "object", properties: { card_id: str }, required: ["card_id"] },
+    handler: async (a, ctx) => {
+      const id = cardIdArg(a);
+      if (!id) throw new Error("card_id is required");
+      const ev = await ledgerBundle(
+        {
+          repoPath: ctx.repoPath,
+          cardStore: ctx.cardStore,
+          boardService: ctx.boardService as never,
+        },
+        id,
+      );
+      if (!ev) throw new Error(`${id} has no evidence bundle the ledger vouches for`);
+      return ev;
+    },
+  },
+  {
+    name: "sekhemet_model_registry",
+    description: "The model registry: each model's engine, qualification and settings. Read-only.",
+    inputSchema: { type: "object", properties: {} },
+    handler: async () => {
+      const path = defaultRegistryPath();
+      return existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : { models: {} };
+    },
+  },
+  {
+    name: "sekhemet_ask_seshat",
     description:
       "Send a message to Seshat, the project manager. Its reply appears in the PM thread.",
     inputSchema: { type: "object", properties: { text: str, card_id: str }, required: ["text"] },
@@ -260,93 +324,158 @@ const MCP_TOOLS: McpTool[] = [
   },
 ];
 
-/** Handle one JSON-RPC message. Notifications (no id) get no response. */
-export async function handleMcpRequest(
-  req: McpRpcRequest,
-  ctx: McpContext,
-): Promise<McpRpcResponse | undefined> {
-  const { id, method } = req;
-  const params = req.params ?? {};
-  if (id === undefined || id === null) return undefined;
+const SERVER_INFO = { name: "sekhemet-mcp-server", version: "0.2.0" };
+const CAPABILITIES = { tools: {} };
 
-  if (method === "initialize") {
-    return {
-      jsonrpc: "2.0",
-      id,
-      result: {
-        protocolVersion: "2024-11-05",
-        capabilities: { tools: {} },
-        serverInfo: { name: "sekhemet-mcp-server", version: "0.2.0" },
-      },
-    };
-  }
-  if (method === "ping") return { jsonrpc: "2.0", id, result: {} };
-  if (method === "tools/list") {
-    return {
-      jsonrpc: "2.0",
-      id,
-      result: { tools: MCP_TOOLS.map(({ handler: _h, ...t }) => t) },
-    };
-  }
-  if (method === "tools/call") {
-    const tool = MCP_TOOLS.find((t) => t.name === params.name);
-    if (!tool)
-      return {
-        jsonrpc: "2.0",
-        id,
-        error: { code: -32601, message: `Tool not found: ${String(params.name)}` },
-      };
+/**
+ * The harness's MCP server: the official SDK's `Server` (extensibility item
+ * 21, DEC-08) with Sekhemet's tools. The SDK frames, validates and answers
+ * `ping`; this server supplies the tools and one override, the initialize
+ * handler, so a client offering a version outside `MCP_PROTOCOL_VERSIONS` is
+ * answered with this server's newest (EXT-14) rather than the SDK's.
+ */
+export function createMcpServer(ctx: McpContext): Server {
+  const server = new Server(SERVER_INFO, { capabilities: CAPABILITIES });
+  server.setRequestHandler(InitializeRequestSchema, async (request) => {
+    const asked = request.params.protocolVersion;
+    const protocolVersion = (MCP_PROTOCOL_VERSIONS as readonly string[]).includes(asked)
+      ? asked
+      : MCP_PROTOCOL_VERSIONS[0];
+    return { protocolVersion, capabilities: CAPABILITIES, serverInfo: SERVER_INFO };
+  });
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: MCP_TOOLS.map(({ handler: _h, ...t }) => ({
+      ...t,
+      inputSchema: t.inputSchema as Tool["inputSchema"],
+    })),
+  }));
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const { name } = request.params;
+    const tool = MCP_TOOLS.find((t) => t.name === name);
+    if (!tool) throw new McpError(ErrorCode.MethodNotFound, `Tool not found: ${name}`);
     try {
-      const out = await tool.handler((params.arguments ?? {}) as Record<string, unknown>, ctx);
+      const out = await tool.handler(request.params.arguments ?? {}, ctx);
       return {
-        jsonrpc: "2.0",
-        id,
-        result: {
-          content: [
-            { type: "text", text: typeof out === "string" ? out : JSON.stringify(out, null, 2) },
-          ],
-        },
+        content: [
+          { type: "text", text: typeof out === "string" ? out : JSON.stringify(out, null, 2) },
+        ],
       };
     } catch (err) {
       // Tool errors are results with isError, so the calling agent can react.
       return {
-        jsonrpc: "2.0",
-        id,
-        result: {
-          isError: true,
-          content: [{ type: "text", text: err instanceof Error ? err.message : String(err) }],
-        },
+        isError: true,
+        content: [{ type: "text", text: err instanceof Error ? err.message : String(err) }],
       };
     }
-  }
-  return { jsonrpc: "2.0", id, error: { code: -32601, message: `Method not found: ${method}` } };
+  });
+  return server;
 }
 
-export function runMcpStdioServer(ctx: McpContext): void {
-  const rl = createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    terminal: false,
-  });
+/**
+ * Handle one JSON-RPC message in process, through the SDK server over an
+ * in-memory transport. Notifications (no id) get no response. An `initialize`
+ * missing the client's capabilities or info is given empty ones, so a probe
+ * that sends only a protocol version is still answered.
+ */
+export async function handleMcpRequest(
+  req: McpRpcRequest,
+  ctx: McpContext,
+): Promise<McpRpcResponse | undefined> {
+  const { id } = req;
+  if (id === undefined || id === null) return undefined;
+  const params =
+    req.method === "initialize"
+      ? {
+          protocolVersion: "",
+          capabilities: {},
+          clientInfo: { name: "unknown", version: "0" },
+          ...req.params,
+        }
+      : req.params;
+  const message = { ...req, id, ...(params ? { params } : {}) } as JSONRPCMessage;
 
-  rl.on("line", async (line) => {
-    const trimmed = line.trim();
-    if (!trimmed) return;
-
-    try {
-      const parsed = JSON.parse(trimmed) as McpRpcRequest;
-      const response = await handleMcpRequest(parsed, ctx);
-      if (response) process.stdout.write(`${JSON.stringify(response)}\n`);
-    } catch (err) {
-      const errResponse: McpRpcResponse = {
-        jsonrpc: "2.0",
-        id: 0,
-        error: {
-          code: -32700,
-          message: `Parse error: ${(err as Error).message}`,
-        },
-      };
-      process.stdout.write(`${JSON.stringify(errResponse)}\n`);
-    }
+  const server = createMcpServer(ctx);
+  const [near, far] = InMemoryTransport.createLinkedPair();
+  const reply = new Promise<McpRpcResponse>((resolve) => {
+    near.onmessage = (m) => {
+      if ("id" in m && m.id === id) resolve(m as McpRpcResponse);
+    };
   });
+  await server.connect(far);
+  await near.start();
+  try {
+    await near.send(message);
+    return await reply;
+  } finally {
+    await server.close();
+  }
+}
+
+/**
+ * One line, in process: a request's response, nothing for a notification,
+ * and a parse error with `id: null` for a line that is not JSON (JSON-RPC
+ * 2.0, EXT-15).
+ */
+export async function handleMcpLine(
+  line: string,
+  ctx: McpContext,
+): Promise<McpRpcResponse | undefined> {
+  let parsed: McpRpcRequest;
+  try {
+    parsed = JSON.parse(line) as McpRpcRequest;
+  } catch (err) {
+    return {
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32700, message: `Parse error: ${(err as Error).message}` },
+    };
+  }
+  return handleMcpRequest(parsed, ctx);
+}
+
+/**
+ * The SDK's stdio server transport with one addition. The SDK reads lines
+ * with its own framing and reports a line it cannot read to `onerror` with no
+ * reply; this wrapper answers it as JSON-RPC 2.0 requires, with `id: null`:
+ * -32700 for a line that is not JSON (EXT-15), -32600 for JSON that is not a
+ * JSON-RPC message. Everything else is the SDK's.
+ */
+export class ParseErrorStdioServerTransport implements Transport {
+  onclose?: () => void;
+  onerror?: (error: Error) => void;
+  onmessage?: <T extends JSONRPCMessage>(message: T, extra?: MessageExtraInfo) => void;
+  private readonly inner: StdioServerTransport;
+
+  constructor(stdin: Readable = process.stdin, stdout: Writable = process.stdout) {
+    this.inner = new StdioServerTransport(stdin, stdout);
+    this.inner.onmessage = (m: JSONRPCMessage) => this.onmessage?.(m);
+    this.inner.onclose = () => this.onclose?.();
+    this.inner.onerror = (err) => {
+      const code =
+        err instanceof SyntaxError ? -32700 : err.name === "ZodError" ? -32600 : undefined;
+      if (code === undefined) {
+        this.onerror?.(err);
+        return;
+      }
+      const message = code === -32700 ? `Parse error: ${err.message}` : "Invalid Request";
+      const reply = { jsonrpc: "2.0", id: null, error: { code, message } };
+      void this.inner.send(reply as unknown as JSONRPCMessage);
+    };
+  }
+
+  start(): Promise<void> {
+    return this.inner.start();
+  }
+
+  close(): Promise<void> {
+    return this.inner.close();
+  }
+
+  send(message: JSONRPCMessage): Promise<void> {
+    return this.inner.send(message);
+  }
+}
+
+export async function runMcpStdioServer(ctx: McpContext): Promise<void> {
+  await createMcpServer(ctx).connect(new ParseErrorStdioServerTransport());
 }

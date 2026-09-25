@@ -37,6 +37,15 @@ import {
   parseTitle,
   vocabularyTables,
 } from "@sekhemet/ui";
+import { checkoutNotice, integrationBranch } from "./accept.js";
+import {
+  cardMessages,
+  handBack,
+  postCardMessage,
+  requestPause,
+  submitTakenOver,
+  takeOver,
+} from "./collaborate.js";
 import { resolveConfig } from "./config.js";
 import {
   type MemorySample,
@@ -64,7 +73,8 @@ import { startNotifier } from "./notify.js";
 import { createPmApi } from "./pm_api.js";
 import { modelRoster } from "./pm_api.js";
 import { handleRestExtras } from "./rest_extra.js";
-import { park, sendBack } from "./triage.js";
+import { cardTrace } from "./tracing.js";
+import { park, recordReviewOpened, reject, revertAccept, sendBack } from "./triage.js";
 import { generateDashboardHtml } from "./ui_html.js";
 import { hookEngineFor } from "./user_hooks.js";
 import { handleWave2Route, startRecurringTicker } from "./wave2_server.js";
@@ -710,17 +720,23 @@ export function startDashboardServer(
 
     // Run history: every queue scorecard, newest first.
     if (url === "/api/runs") {
-      json(res, 200, { runs: listRuns(repoPath).runs });
+      json(res, 200, { runs: (await listRuns(repoPath, options.log)).runs });
       return;
     }
     const runMatch = /^\/api\/runs\/([\w.-]+)$/.exec(url);
     if (runMatch) {
-      const path = listRuns(repoPath).reports.get(runMatch[1] as string);
-      if (!path) {
+      const report = (await listRuns(repoPath, options.log)).reports.get(runMatch[1] as string);
+      if (!report) {
         json(res, 404, { error: `No run ${runMatch[1]}` });
         return;
       }
-      json(res, 200, { id: runMatch[1], ...JSON.parse(readFileSync(path, "utf8")) });
+      json(res, 200, { id: runMatch[1], ...report });
+      return;
+    }
+    // RUN-46: a card's trace — card, step, model-request and tool-call spans.
+    const traceMatch = new RegExp(`^/api/cards/(${CARD_ID})/traces$`).exec(url);
+    if (traceMatch && req.method === "GET") {
+      json(res, 200, { spans: cardTrace(repoPath, traceMatch[1] as string) });
       return;
     }
 
@@ -835,7 +851,9 @@ export function startDashboardServer(
       return;
     }
 
-    const action = new RegExp(`^/api/cards/(${CARD_ID})/(accept|return|park)$`).exec(url);
+    const action = new RegExp(
+      `^/api/cards/(${CARD_ID})/(accept|return|park|reject|revert|opened)$`,
+    ).exec(url);
     if (action && req.method === "POST") {
       if (!isTrustedMutation(req)) {
         json(res, 403, { error: "Triage actions must come from the dashboard itself" });
@@ -853,21 +871,47 @@ export function startDashboardServer(
         return;
       }
       try {
+        const body = await readJsonBody(req);
+        const ctx = {
+          repoPath,
+          restrictedMode: false,
+          cardStore: store,
+          boardService: boardService as never,
+        };
+        const strings = (v: unknown): string[] =>
+          Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+        // review-git §2.4.3 (RG-S6-6): the files the dashboard showed, recorded.
+        if (verb === "opened") {
+          await recordReviewOpened(ctx, card, strings(body.filesShown));
+          json(res, 200, { ok: true });
+          return;
+        }
         if (verb === "accept") {
-          const sha = await acceptCard(
-            {
-              repoPath,
-              restrictedMode: false,
-              cardStore: store,
-              boardService: boardService as never,
-            },
+          const sha = await acceptCard(ctx, card, "human", {
+            acknowledgedFindings: strings(body.acknowledgedFindings),
+          });
+          // A checkout on the integration branch is told how to catch up (RG-S5-2).
+          const notice = sha.startsWith("http")
+            ? undefined
+            : checkoutNotice(repoPath, integrationBranch(repoPath), sha);
+          json(res, 200, {
+            ok: true,
+            status: sha.startsWith("http") ? "review" : "done",
+            sha,
+            ...(notice ? { notice } : {}),
+          });
+          return;
+        }
+        if (verb === "revert") {
+          const sha = await revertAccept(
+            ctx,
             card,
+            typeof body.reason === "string" ? body.reason : "",
           );
-          json(res, 200, { ok: true, status: "done", sha });
+          json(res, 200, { ok: true, status: "ready", sha });
           return;
         }
 
-        const body = await readJsonBody(req);
         const reason = typeof body.reason === "string" ? body.reason : "";
         if (verb === "return" && !reason.trim()) {
           json(res, 400, { error: "A return needs a reason: it is what the agent is told next" });
@@ -880,8 +924,17 @@ export function startDashboardServer(
           boardService: boardService as never,
           log,
         };
-        const to = verb === "return" ? "ready" : "parked";
-        if (verb === "return") await sendBack(triage, card, reason);
+        const to = verb === "return" ? "ready" : verb === "reject" ? "rejected" : "parked";
+        if (verb === "return") {
+          const comments = Array.isArray(body.comments)
+            ? (body.comments as { file?: unknown; line?: unknown; text?: unknown }[]).map((c) => ({
+                file: String(c.file ?? ""),
+                line: Number(c.line),
+                text: String(c.text ?? ""),
+              }))
+            : [];
+          await sendBack(triage, card, reason, { comments });
+        } else if (verb === "reject") await reject(triage, card, reason);
         else await park(triage, card, reason);
         json(res, 200, { ok: true, status: to });
       } catch (err) {
@@ -923,8 +976,17 @@ export function startDashboardServer(
       return;
     }
 
+    // WL-N10-1: a card's messages and hand-back notes, each with the step it reached.
+    const messagesMatch = new RegExp(`^/api/cards/(${CARD_ID})/messages$`).exec(url);
+    if (messagesMatch && req.method === "GET" && options.cardStore) {
+      json(res, 200, {
+        messages: await cardMessages(options.cardStore, messagesMatch[1] as string),
+      });
+      return;
+    }
+
     const command = new RegExp(
-      `^/api/cards/(${CARD_ID})/(abort|rewind|fork|override|reroute|reorder)$`,
+      `^/api/cards/(${CARD_ID})/(abort|rewind|fork|override|reroute|reorder|message|pause|hand-back|take-over|submit-take-over)$`,
     ).exec(url);
     const projectMatch = /^\/api\/projects\/(proj_[A-Za-z0-9_-]+)$/.exec(url);
     if ((command || projectMatch) && req.method === "POST") {
@@ -974,6 +1036,37 @@ export function startDashboardServer(
           const reason = typeof body.reason === "string" ? body.reason : "";
           await requestAbort(store, cardId, reason || "stopped from the dashboard");
           json(res, 200, { ok: true, requested: "abort" });
+          return;
+        }
+        // WL-N10-1..3: collaborate on a running issue (DEC-34).
+        if (verb === "message") {
+          const text = typeof body.text === "string" ? body.text.trim() : "";
+          if (!text) {
+            json(res, 400, { error: "A message needs text" });
+            return;
+          }
+          await postCardMessage(store, cardId, text);
+          json(res, 200, { ok: true });
+          return;
+        }
+        if (verb === "pause") {
+          await requestPause(store, cardId);
+          json(res, 200, { ok: true, requested: "pause" });
+          return;
+        }
+        if (verb === "hand-back" || verb === "take-over" || verb === "submit-take-over") {
+          try {
+            if (verb === "hand-back") {
+              await handBack(ctx, cardId, typeof body.note === "string" ? body.note : "");
+              json(res, 200, { ok: true });
+            } else if (verb === "take-over") {
+              json(res, 200, { ok: true, ...(await takeOver(ctx, cardId)) });
+            } else {
+              json(res, 200, { ok: true, ...(await submitTakenOver(ctx, cardId)) });
+            }
+          } catch (err) {
+            json(res, 409, { error: err instanceof Error ? err.message : String(err) });
+          }
           return;
         }
         if (verb === "rewind" || verb === "fork") {

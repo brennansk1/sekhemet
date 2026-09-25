@@ -3,6 +3,7 @@ import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { useAgent } from "request-filtering-agent";
+import { sandboxCopy } from "./copy.js";
 import { canonicalHost, domainAllowed } from "./egress.js";
 
 /**
@@ -131,6 +132,45 @@ const loopbackUrl = (url: URL, host: string): URL => {
  * public requests run through `request-filtering-agent`, which refuses a
  * private, loopback or metadata address after resolution.
  */
+/**
+ * Why the policy refuses a request to `host`, or undefined when it allows it:
+ * the one decision `policyFetch` applies, for a request the harness cannot
+ * send itself — a `gh` call or a page a browser reads (NEW-security-8).
+ */
+export function policyRefusal(
+  policy: EffectiveNetworkPolicy,
+  host: string,
+  options: { research?: boolean } = {},
+): string | undefined {
+  if (isLoopback(host)) return undefined;
+  const researchOk = options.research === true && policy.research === "yes";
+  if (denied(host, policy)) return sandboxCopy.policyReason.denied;
+  if (policy.mode === "offline" && !researchOk) return sandboxCopy.policyReason.offline;
+  if (policy.mode === "allowlist" && !researchOk && !domainAllowed(host, policy.fetchAllow)) {
+    return sandboxCopy.policyReason.notAllowed;
+  }
+  // Item 29a: research is the one exception to `mode`, still bounded by a
+  // non-empty `fetch_allow`.
+  if (researchOk && policy.fetchAllow.length > 0 && !domainAllowed(host, policy.fetchAllow)) {
+    return sandboxCopy.policyReason.researchOutside;
+  }
+  return undefined;
+}
+
+/**
+ * Whether the policy refuses no public host for this purpose — the only case
+ * in which a reader whose own requests the policy cannot see (a browser's
+ * sub-requests) may run (NEW-security-8).
+ */
+export function policyAllowsEveryHost(
+  policy: EffectiveNetworkPolicy,
+  options: { research?: boolean } = {},
+): boolean {
+  if (policy.fetchDeny.length > 0) return false;
+  if (options.research === true && policy.research === "yes") return policy.fetchAllow.length === 0;
+  return policy.mode === "open";
+}
+
 export function policyFetch(
   policy: EffectiveNetworkPolicy,
   options: { purpose: string; record?: (r: NetworkRequestRecord) => void; research?: boolean },
@@ -153,19 +193,8 @@ export function policyFetch(
       options.record?.({ ...base, allowed: false, reason });
       throw new Error(`network policy refused ${host}: ${reason}`);
     };
-    if (!isLoopback(host)) {
-      const researchOk = options.research === true && policy.research === "yes";
-      if (denied(host, policy)) refuse("in fetch_deny");
-      if (policy.mode === "offline" && !researchOk) refuse("offline");
-      if (policy.mode === "allowlist" && !researchOk && !domainAllowed(host, policy.fetchAllow)) {
-        refuse("not in fetch_allow");
-      }
-      // Item 29a: research is the one exception to `mode`, still bounded by a
-      // non-empty `fetch_allow`.
-      if (researchOk && policy.fetchAllow.length > 0 && !domainAllowed(host, policy.fetchAllow)) {
-        refuse("research outside fetch_allow");
-      }
-    }
+    const refusal = policyRefusal(policy, host, options);
+    if (refusal) refuse(refusal);
     try {
       const res = await send(
         isLoopback(host) ? loopbackUrl(url, host) : url,

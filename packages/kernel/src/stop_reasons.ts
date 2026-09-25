@@ -258,6 +258,18 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     goesTo: "Stays; resumes from its last checkpoint",
     nextAction: "See who stopped it; resume or reject.",
   },
+  paused: {
+    class: "human_abort",
+    parks: "no",
+    resumable: true,
+    mayVerify: false,
+    checkpoints: true,
+    endsSampling: true,
+    halts: true,
+    measuresModel: false,
+    goesTo: "Stays in progress until a person hands it back; resumes from its checkpoint",
+    nextAction: "Hand it back with a note, or take it over.",
+  },
   hook_veto: {
     class: "human_abort",
     parks: "yes",
@@ -327,7 +339,9 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     endsSampling: false,
     halts: false,
     measuresModel: false, // rule 31: never the Worker's fault (DEC-42)
-    goesTo: "Back to the Worker with the conflict hunks as typed failures",
+    // RG-N1: the Worker gets the hunks first; the reason is stored only when it parks.
+    goesTo:
+      "Parked: the conflict lies outside the card's scope, or the Worker's budget ended with it unresolved (one decision request names both cards)",
     nextAction: "See the conflicting hunks.",
   },
   integration_failed: {

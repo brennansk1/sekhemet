@@ -19,7 +19,11 @@ export type LifecycleHookEvent =
   | "card/end"
   | "review/return"
   | "playbook/propose"
-  | "turn-stopping";
+  | "turn-stopping"
+  // Board lifecycle (extensibility NEW-extensibility-1): observers only.
+  | "card/status_changed"
+  | "card/accepted"
+  | "pr/opened";
 
 /**
  * Events where a handler that throws blocks by default.

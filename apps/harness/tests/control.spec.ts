@@ -7,6 +7,7 @@ import { BoardServiceImpl } from "@sekhemet/board";
 import { CardStore, DEFAULT_STEP_BUDGET, EventLog, initSchema } from "@sekhemet/kernel";
 import type { InferenceRequest, LocalInferenceAdapter, ToolCall } from "@sekhemet/models";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { recordReviewOpened } from "../src/accept.js";
 import {
   acceptCard,
   executeCard,
@@ -191,6 +192,8 @@ describe("apps/harness planning, rollup, explain and runner control (B2, B7, B12
     );
     expect((await rollupParent(ctx, "epic_p")).status).toBe("not_ready");
     const reviewed = await cardStore.getCard("card_child");
+    // review-git §2.4.3: the person looks at the Implementation files first.
+    await recordReviewOpened(ctx, reviewed as NonNullable<typeof reviewed>, ["src/a.ts"]);
     await acceptCard(ctx, reviewed as NonNullable<typeof reviewed>);
     // Kernel rule 12 (K-N1-5): the merge commit anchors the ledger head.
     const body = execFileSync("git", ["log", "-1", "--format=%B", "main"], {

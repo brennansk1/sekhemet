@@ -12,16 +12,17 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.1",
+    "@sekhemet/board": "workspace:*",
+    "@sekhemet/context": "workspace:*",
+    "@sekhemet/eval": "workspace:*",
+    "@sekhemet/gates": "workspace:*",
     "@sekhemet/kernel": "workspace:*",
+    "@sekhemet/loop": "workspace:*",
+    "@sekhemet/models": "workspace:*",
+    "@sekhemet/planner": "workspace:*",
     "@sekhemet/sandbox": "workspace:*",
     "@sekhemet/sync": "workspace:*",
-    "@sekhemet/models": "workspace:*",
-    "@sekhemet/gates": "workspace:*",
-    "@sekhemet/context": "workspace:*",
-    "@sekhemet/loop": "workspace:*",
-    "@sekhemet/board": "workspace:*",
-    "@sekhemet/planner": "workspace:*",
-    "@sekhemet/eval": "workspace:*",
     "@sekhemet/ui": "workspace:*"
   },
   "devDependencies": {

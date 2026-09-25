@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { BoardServiceImpl } from "@sekhemet/board";
-import { type RunProfile, type SuiteRunResult, runScore } from "@sekhemet/eval";
+import { type RunProfile, type SuiteRunResult, profileArgs, runScore } from "@sekhemet/eval";
 import {
   DeterministicGateRunner,
   detectGateTemplate,
@@ -51,13 +51,30 @@ import {
   policyFetch,
 } from "@sekhemet/sandbox";
 import { NodeGitSyncAdapter, gitEnvFor, hardenGitForProcess } from "@sekhemet/sync";
+import {
+  checkoutNotice,
+  enableAutoAccept,
+  implementationFiles,
+  integrationBranch,
+  ledgerBundle,
+  recordReviewOpened,
+} from "./accept.js";
 import { runAcpStdio } from "./acp.js";
 import { isAirgapped, mirrorRegistry } from "./airgap.js";
 import { resolveVisionModel, visionPrePass } from "./attachments.js";
+import { watchBoardHooks } from "./board_hooks.js";
 import { parseModelList, runCalibrate, runMtpAb } from "./calibrate_cmd.js";
+import { handBack, postCardMessage, requestPause, takeOver } from "./collaborate.js";
 import { resolveConfig } from "./config.js";
-import { effectiveConfig, networkConfigs, queueDefaults, reviewLimit } from "./config_apply.js";
-import { daemonStart, daemonStatus, daemonStop } from "./daemon.js";
+import {
+  cardStepCap,
+  configOverrideLines,
+  effectiveConfig,
+  networkConfigs,
+  queueDefaults,
+  reviewLimit,
+} from "./config_apply.js";
+import { daemonStart, daemonStatus, daemonStop, rotateLog } from "./daemon.js";
 import { type DoctorReport, runDoctor } from "./doctor.js";
 import {
   type QueueEntry,
@@ -71,15 +88,21 @@ import {
   inferDependencies,
   nextAttemptNumber,
   plannerDifficulty,
-  pruneRunData,
+  queueEntryOf,
   recordQueueProgress,
+  recordQueueReport,
   recordReview,
   requestAbort,
   rewindCard,
-  writeQueueReport,
 } from "./execute.js";
 import { reviewPosterFromEnv, runExternalReviews } from "./external_review.js";
-import { COMMANDS, FRONT_DOOR, routeFrontDoor } from "./front_door.js";
+import {
+  COMMANDS,
+  FRONT_DOOR,
+  type FrontDoorRoute,
+  routeFrontDoor,
+  runExitCode,
+} from "./front_door.js";
 import { runInit } from "./init.js";
 import { notifySlack } from "./integrations.js";
 import { readSettings } from "./integrations.js";
@@ -96,29 +119,41 @@ import {
 import { cardBranchHead, ledgerEvidenceSummary } from "./ledger_evidence.js";
 import { licenseGate } from "./license_gate.js";
 import { runMcpStdioServer } from "./mcp.js";
+import { McpHub, loadMcpConfig, plannerToolsOf } from "./mcp_client.js";
 import {
   applyProfileSwitches,
   autoAcceptRefusal,
   profileForQueue,
   profileForRun,
   readMeasurementMarker,
+  withoutProfileFlags,
 } from "./measure_cmd.js";
 import { sendPush, startNotifier } from "./notify.js";
-import { runOvernight } from "./overnight.js";
-import { DEFAULT_PM_MODEL, answerQueued, createPmAdapter, holdRunnerLease } from "./pm/service.js";
+import { nightModelServer, runOvernight } from "./overnight.js";
+import { DEFAULT_PM_MODEL, answerQueued, createPmAdapter } from "./pm/service.js";
 import { PmStore } from "./pm/store.js";
 import { runPromptScreen } from "./prompt_screen_cmd.js";
 import { applyWorkerOverride, gateWorker } from "./qualify.js";
 import { diffTrajectories, formatDiff, formatTrajectory, trajectories } from "./replay.js";
 import { isResearchCard, runResearchCard } from "./research/cards.js";
 import { CRAWL4AI_CREDIT, runResearchCommand } from "./research/cli.js";
+import { planResearch } from "./research/plan_research.js";
 import { ResearchService, researchSources } from "./research/service.js";
 import { oneShotResearcher } from "./research/service.js";
+import { mayStartCard, parseUntil, releaseMachine, reserveMachine } from "./reservation.js";
+import {
+  LEASE_TOKEN_ENV,
+  type LiveLeaseInfo,
+  acquireRunnerLease,
+  leaseRefusal,
+} from "./runner_lease.js";
 import { DEFAULT_DASHBOARD_PORT, startDashboardServer } from "./server.js";
 import { bakeOffOnSuitePath } from "./suite_path.js";
+import { describeSupervisorStart, removeWorktreesOnClose, supervisorStart } from "./supervisor.js";
+import { terminalBoardLines } from "./terminal_board.js";
 import { tracesCommand } from "./tracing.js";
 import { trailerGate } from "./trailer_gate.js";
-import { nextForReview, park, reopen, sendBack, unpark } from "./triage.js";
+import { nextForReview, park, reject, reopen, revertAccept, sendBack, unpark } from "./triage.js";
 import {
   describeTuning,
   globalTuningPath,
@@ -126,13 +161,14 @@ import {
   tuneForRepo,
   writeTuningReport,
 } from "./tune.js";
+import { migrateLegacyUserDir } from "./user_dir.js";
 import { hookEngineFor } from "./user_hooks.js";
 import {
   WAVE2_COMMANDS,
   type Wave2Command,
   appliedStepBudget,
   applyTunedPolicy,
-  liveReuseDeps,
+  isGreenfield,
   modelRegistry,
   planCommand,
   queuePrelude,
@@ -142,11 +178,20 @@ import {
   runPackageGates,
   runWave2Command,
 } from "./wave2.js";
+import {
+  describeUntrusted,
+  setInvocationTrust,
+  trustFiles,
+  untrustedFiles,
+} from "./workspace_trust.js";
 
 export interface CliConfig {
   command:
     | "backup"
     | "restore"
+    | "reserve"
+    | "pause"
+    | "trust"
     | "export"
     | "erase"
     | "doctor"
@@ -297,6 +342,17 @@ function measurementOption(repoPath: string): { measurementMarker?: { purpose: s
   return marker ? { measurementMarker: marker } : {};
 }
 
+/** A project named by id or by name (`dev pause|resume <project>`). */
+function findProject(cardStore: CardStore, ref: string | undefined) {
+  if (!ref) return undefined;
+  return cardStore.listProjects().find((p) => p.id === ref || p.name === ref);
+}
+
+/** Whether `resume <ref>` names a project rather than a card (RUN-48). */
+function isProjectRef(cardStore: CardStore, ref: string | undefined): boolean {
+  return findProject(cardStore, ref) !== undefined;
+}
+
 export function initLocalKernel(repoPath: string): {
   db: DatabaseSync;
   log: EventLog;
@@ -336,46 +392,19 @@ export function initLocalKernel(repoPath: string): {
     ...measurementOption(repoPath),
   });
 
+  // NEW-extensibility-1: the team's board-lifecycle hooks (a card moved, was
+  // accepted, had a pull request opened) run after each such ledger event.
+  watchBoardHooks(log, cardStore, repoPath);
+
+  // RUN-16: a closed card's worktree goes, its branch stays — on every path
+  // that closes a card through this kernel.
+  removeWorktreesOnClose(repoPath, log);
   return { db, log, cardStore, boardService };
 }
 
 export async function printTerminalBoard(boardService: BoardServiceImpl): Promise<void> {
-  const state = await boardService.getBoardState();
-  console.log(
-    "\n=========================================================================================",
-  );
-  console.log(
-    "                           SEKHEMET DUAL-AXIS KANBAN BOARD                                ",
-  );
-  if (state.backpressureActive) {
-    console.log(
-      " [!] WARNING: REVIEW WIP BACKPRESSURE ACTIVE — Verify-to-Review transitions throttled!    ",
-    );
-  }
-  console.log(
-    "=========================================================================================",
-  );
-
-  const columns = ["backlog", "ready", "in_progress", "verify", "review", "done"] as const;
-
-  for (const col of columns) {
-    const colCards = state.cards.filter((c) => c.status === col);
-    const limit = state.wipLimits[col];
-    const header = `${col.toUpperCase()} (${colCards.length}${limit < 1000 ? `/${limit}` : ""})`;
-    console.log(`\n--- ${header} ---`);
-    if (colCards.length === 0) {
-      console.log("  (empty)");
-    } else {
-      for (const card of colCards) {
-        console.log(
-          `  [${card.tier.toUpperCase()}] ${card.id} — ${card.title} (steps: ${card.stepsUsed}/${card.stepBudget})`,
-        );
-      }
-    }
-  }
-  console.log(
-    "=========================================================================================\n",
-  );
+  // NEW-surface-2 (SUR-27): the board's columns and state names, not internal ids.
+  console.log(`\n${terminalBoardLines(await boardService.getBoardState()).join("\n")}`);
 }
 
 export async function printEventLog(log: EventLog): Promise<boolean> {
@@ -416,8 +445,19 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
   // Every git call this process makes ignores repository config that runs
   // programs (core.fsmonitor, hooks): git runs outside the sandbox in
   // worktrees the Worker has written to (Phase A security finding S1).
-  hardenGitForProcess();
   const route = routeFrontDoor(rawArgv);
+  // SUR-13: the version reads one file and writes nothing.
+  if (route.kind === "version") {
+    console.log(harnessVersion());
+    return;
+  }
+  // SUR-15: an unknown flag is named, never ignored.
+  if (route.kind === "unknown-flag") {
+    console.error(`sekhemet: unknown flag ${route.flag}. \`sekhemet --help\` lists the commands.`);
+    process.exitCode = 2;
+    return;
+  }
+  hardenGitForProcess();
   if (route.kind === "help") return printFrontDoorHelp();
   if (route.kind === "dev-help") return printDevHelp();
   if (route.kind === "unknown") {
@@ -441,12 +481,18 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     route.kind === "send-back" ||
     route.kind === "park" ||
     route.kind === "unpark" ||
-    route.kind === "reopen"
+    route.kind === "reopen" ||
+    route.kind === "reject" ||
+    route.kind === "revert"
   ) {
     return runTriage(route, parseCliArgs(route.flags).repoPath);
   }
+  if (route.kind === "card") return runCardVerb(route, parseCliArgs(route.flags).repoPath);
   const argv = route.argv;
   const config = parseCliArgs(argv);
+  // S9, item 40: `--trust` trusts the repository's configuration for this
+  // invocation only; nothing is ever trusted implicitly.
+  setInvocationTrust(argv.includes("--trust"));
 
   if (config.command === "traces") {
     // `sekhemet traces [--since-hours N] [--out f.json] [--otlp http://host:4318]` (H22).
@@ -693,7 +739,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
   }
 
   if (config.command === "mcp") {
-    runMcpStdioServer({ db, log, cardStore, boardService, repoPath: config.repoPath });
+    await runMcpStdioServer({ db, log, cardStore, boardService, repoPath: config.repoPath });
     return;
   }
 
@@ -701,7 +747,24 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     // `sekhemet overnight [--until 07:00] [--idle-min 20] [--max-failures 3] [queue flags...]`:
     // queue rounds while the machine is free and every breaker holds (H21, H23).
     const { config: cfg } = resolveConfig({ repoPath: config.repoPath });
-    const own = new Set(["--until", "--idle-min", "--max-failures", "--repo"]);
+    // One runner (item 3): the night holds the lease, and each round's queue
+    // runs under it (its token handed down), so no other runner slips in
+    // between rounds.
+    const nightLease = acquireRunnerLease(config.repoPath, { kind: "overnight" });
+    if ("holder" in nightLease) {
+      console.error(leaseRefusal(nightLease.holder));
+      process.exitCode = 1;
+      return;
+    }
+    process.env[LEASE_TOKEN_ENV] = nightLease.lease.token;
+    // The supervisor's start-up pass under the night's lease, before M0 and
+    // the first round (items 10, 33, 34); each round's queue makes its own.
+    for (const line of describeSupervisorStart(
+      await supervisorStart({ repoPath: config.repoPath, cardStore, log, boardService }),
+    )) {
+      console.log(line);
+    }
+    const own = new Set(["--until", "--idle-min", "--max-failures", "--round-limit-min", "--repo"]);
     const rest = argv.slice(argv.indexOf("overnight") + 1);
     const queueArgs = rest.filter((a, i) => !own.has(a) && !own.has(rest[i - 1] ?? ""));
     const flag = (name: string) => {
@@ -719,6 +782,9 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       },
       ...(flag("--until") ? { until: flag("--until") as string } : {}),
       ...(flag("--idle-min") ? { idleMinutes: Number(flag("--idle-min")) } : {}),
+      ...(Number(flag("--round-limit-min")) > 0
+        ? { roundLimitMs: Number(flag("--round-limit-min")) * 60_000 }
+        : {}),
       queueArgs,
       // SEC-37b: the Worker this queue runs, as the model registry records it.
       worker: (() => {
@@ -733,8 +799,121 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         const quant = new ModelRegistry(defaultRegistryPath()).get(modelId)?.quant ?? "unknown";
         return { modelId, quant };
       })(),
+      // RUN-18a: the night owns the Worker's server; every round attaches to it.
+      ...(() => {
+        try {
+          const name =
+            flag("--worker") ??
+            queueDefaults(effectiveConfig(config.repoPath, argv).config, argv).worker ??
+            NAIL_WORKER_PROFILE.modelId;
+          const held = nightModelServer(
+            new ModelRoster({ registry: modelRegistry() }).resolve(name, "worker"),
+          );
+          return held ? { modelServer: held } : {};
+        } catch {
+          return {};
+        }
+      })(),
     });
+    nightLease.release();
     if (summary.passed < summary.cardsRun) process.exitCode = 1;
+    return;
+  }
+
+  if (config.command === "trust") {
+    // `sekhemet dev trust [--yes]` (S9, items 38–40): exactly what the
+    // repository's configuration would run outside the sandbox, then the
+    // person's yes, recorded in the user directory by each file's SHA-256.
+    const files = untrustedFiles(config.repoPath);
+    if (files.length === 0) {
+      console.log("Nothing in this repository waits for your trust.");
+      return;
+    }
+    console.log("This repository's configuration would run code outside the sandbox:");
+    for (const line of describeUntrusted(config.repoPath, files)) console.log(line);
+    let yes = argv.includes("--yes");
+    if (!yes && process.stdin.isTTY && process.stdout.isTTY) {
+      const { createInterface } = await import("node:readline/promises");
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      yes = /^y(es)?$/i.test((await rl.question("Trust exactly this? [y/N] ")).trim());
+      rl.close();
+    }
+    if (!yes) {
+      console.error(
+        "Not trusted: nothing of it runs. Trust it with `sekhemet dev trust --yes`, or for one run with --trust.",
+      );
+      process.exitCode = 1;
+      return;
+    }
+    const principal = cardStore.localPrincipal();
+    const trusted = trustFiles(config.repoPath, files, principal);
+    // The decision on the ledger too: who trusted what, by SHA-256 (item 39).
+    await cardStore.recordLedgerEvent({
+      type: "workspace/trusted",
+      actor: "human",
+      principal,
+      payload: { principal, files: trusted },
+    });
+    console.log(
+      `Trusted ${files.length} file(s) as they are now; any change to one untrusts it again.`,
+    );
+    return;
+  }
+
+  if (config.command === "reserve") {
+    // `sekhemet dev reserve [--until HH:MM|ISO]` and `--release` (item 17,
+    // RUN-58): the same ledger events the dashboard's Reserve now appends.
+    const principal = cardStore.localPrincipal();
+    if (argv.includes("--release")) {
+      const released = await releaseMachine(log, { principal });
+      console.log(
+        released
+          ? "Released: unattended work may use the machine again."
+          : "The machine was not reserved.",
+      );
+      return;
+    }
+    const untilSpec = argv[argv.indexOf("--until") + 1];
+    const until = argv.includes("--until") && untilSpec ? parseUntil(untilSpec) : undefined;
+    if (argv.includes("--until") && !until) {
+      console.error(`--until takes HH:MM or an ISO time, not "${untilSpec ?? ""}".`);
+      process.exitCode = 2;
+      return;
+    }
+    const reserved = await reserveMachine(log, { principal, ...(until ? { until } : {}) });
+    console.log(
+      reserved
+        ? `Reserved${until ? ` until ${until.toISOString()}` : " until you run `sekhemet dev reserve --release`"}: no unattended card or benchmark starts meanwhile.`
+        : "The machine is already reserved.",
+    );
+    return;
+  }
+
+  if (
+    config.command === "pause" ||
+    (config.command === "resume" && isProjectRef(cardStore, config.targetArg))
+  ) {
+    // `sekhemet dev pause|resume <project>` (item 17a, RUN-48): no new card of
+    // a paused project starts; a running one finishes. Recorded, with the person.
+    const project = findProject(cardStore, config.targetArg);
+    if (!project) {
+      console.error(`Usage: sekhemet dev ${config.command} <project id or name>`);
+      process.exitCode = 2;
+      return;
+    }
+    const status = config.command === "pause" ? "paused" : "active";
+    try {
+      await cardStore.setProjectStatus(project.id, status, "human");
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exitCode = 1;
+      return;
+    }
+    console.log(
+      status === "paused"
+        ? `Project ${project.name} is paused: no new card of it starts until you resume it; a running card finishes.`
+        : `Project ${project.name} is active again.`,
+    );
     return;
   }
 
@@ -826,6 +1005,9 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       repoPath: config.repoPath,
       port: config.port,
     });
+    // Started by `daemon start`: rotate its log by size while it runs (RUN-14).
+    const daemonLog = process.env.SEKHEMET_DAEMON_LOG;
+    if (daemonLog) setInterval(() => rotateLog(daemonLog), 60_000).unref();
     console.log("\n=================================================");
     console.log(" Sekhemet Visual Dashboard running at:");
     console.log(`   http://127.0.0.1:${server.port}`);
@@ -853,13 +1035,37 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     const sketcher = plannerName
       ? new ModelRoster({ registry: modelRegistry() }).resolve(plannerName, "manager")
       : undefined;
-    // The reuse survey reads public registries, GitHub and paper indexes with
-    // short keyword queries; --offline plans without looking.
-    const offline = argv.includes("--offline") || process.env.SEKHEMET_OFFLINE === "1";
-    await planCommand({ repoPath: config.repoPath, cardStore, log }, spec, {
-      ...(sketcher ? { sketcher } : {}),
-      ...(offline ? {} : { research: liveReuseDeps() }),
+    // design-stage S8: the reuse survey reads public registries, GitHub and
+    // paper indexes with short keyword queries only when a person allowed
+    // research — asked once, on a new project's first plan, before any
+    // request (DS-S8-2) — through the network policy, each query logged.
+    // Otherwise, and under --offline, it makes no request and says so.
+    const research = await planResearch({
+      repoPath: config.repoPath,
+      log,
+      offline: argv.includes("--offline") || process.env.SEKHEMET_OFFLINE === "1",
+      newProject: isGreenfield(config.repoPath),
+      print: (l) => console.log(l),
+      ...(process.stdin.isTTY ? { ask: askYesNo } : {}),
     });
+    // EXT-20: the servers the person approved offer their tools to the
+    // Planner while it sketches, within the prompt budget.
+    const mcpConfig = sketcher ? loadMcpConfig(config.repoPath) : {};
+    const hub =
+      Object.keys(mcpConfig).length > 0
+        ? await McpHub.connect(config.repoPath, mcpConfig)
+        : undefined;
+    for (const e of hub?.errors ?? []) console.log(`MCP server not connected: ${e}`);
+    const plannerTools = hub ? plannerToolsOf(hub) : undefined;
+    try {
+      await planCommand({ repoPath: config.repoPath, cardStore, log }, spec, {
+        ...(sketcher ? { sketcher } : {}),
+        ...(plannerTools ? { plannerTools } : {}),
+        ...(research ? { research } : {}),
+      });
+    } finally {
+      await hub?.close();
+    }
     await (sketcher as { unload?: () => Promise<void> } | undefined)?.unload?.();
     console.log("View the cards with 'sekhemet board'.\n");
     return;
@@ -1274,9 +1480,16 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         },
         card,
       );
+      const target = integrationBranch(config.repoPath);
+      const notice = sha.startsWith("http")
+        ? undefined
+        : checkoutNotice(config.repoPath, target, sha);
       console.log(
-        `\nAccepted ${cardId} — squashed to main as ${sha.slice(0, 10)}, card moved to Done.`,
+        sha.startsWith("http")
+          ? `\nAccepted ${cardId} — pull request ${sha} opened; the card reaches Done when it merges.`
+          : `\nAccepted ${cardId} — squashed onto ${target} as ${sha.slice(0, 10)}, card moved to Done. Your files were not touched.`,
       );
+      if (notice) console.log(notice);
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
       process.exit(1);
@@ -1311,9 +1524,38 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       return;
     }
 
+    // One runner at a time (runtime item 3, RUN-3): a second is refused
+    // naming the holder, and runs nothing.
+    const leased = acquireRunnerLease(config.repoPath, { kind: "run", cardId });
+    if ("holder" in leased) {
+      console.error(leaseRefusal(leased.holder));
+      process.exitCode = 1;
+      return;
+    }
+    const releaseRunLease = leased.release;
+    // The supervisor's start-up pass (items 10, 33, 34), as `queue` makes it:
+    // under the lease, before the card is read again to run.
+    for (const line of describeSupervisorStart(
+      await supervisorStart({ repoPath: config.repoPath, cardStore, log, boardService }),
+    )) {
+      console.log(line);
+    }
+    const swept = await cardStore.getCard(cardId);
+    if (swept) Object.assign(card, swept);
     console.log(`\nExecuting card ${cardId}: "${card.title}"`);
     console.log(`Scope: [${card.scopeFiles.join(", ") || "unrestricted"}]`);
     console.log(`Budget: ${card.stepBudget} steps\n`);
+    // SUR-40: the card's layer of the configuration, between the project's
+    // and the command line's, shown and applied.
+    const overrideLines = configOverrideLines(card.configOverrides);
+    if (overrideLines.length) console.log(`Card config overrides: ${overrideLines.join(", ")}`);
+    const profileCap = runProfile.policies.stepCap ?? undefined;
+    const runCap = cardStepCap(
+      card,
+      runProfile.sources["policies.stepCap"] === "flag"
+        ? { flag: profileCap }
+        : { otherwise: profileCap },
+    );
 
     // --worker was parsed by the suite runner and the queue but ignored here:
     // every `run` used the Nail adapter, whatever it was asked for. A managed
@@ -1338,6 +1580,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     if (gate.refusal) {
       console.error(gate.refusal);
       process.exitCode = 1;
+      releaseRunLease();
       return;
     }
     if (gate.override) console.log(`Worker ${model.modelId}: ${describeOverride(gate.override)}`);
@@ -1360,7 +1603,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     try {
       result = await executeCard(ctx, card, model, undefined, {
         signal: stop.signal,
-        ...(runProfile.policies.stepCap ? { maxSteps: runProfile.policies.stepCap } : {}),
+        ...(runCap ? { maxSteps: runCap } : {}),
       });
     } finally {
       process.off("SIGINT", onSigint);
@@ -1368,6 +1611,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       // a resident 13GB checkpoint left behind by a failed run is how the host
       // ran out of memory overnight.
       await model.unload?.();
+      releaseRunLease();
     }
 
     console.log(`\n${summarizeEvidence(result.evidence)}\n`);
@@ -1377,7 +1621,8 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         : `Card ${cardId} stopped: ${result.stopReason}. Left in ${result.finalStatus} for inspection.`,
     );
 
-    if (!result.passed) process.exitCode = 1;
+    // SUR-16: scripts read the card's outcome from the exit status.
+    if (runExitCode(result.finalStatus) !== 0) process.exitCode = 1;
     return;
   }
 
@@ -1389,26 +1634,16 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     // alternated because only one model fits in memory and every swap
     // reloads weights. --auto-accept merges passing cards so later cards build
     // on them: a benchmarking convenience, since acceptance is a human call.
-    // One run profile, so a run exercises what was built (integration review):
-    // --profile full = exploration, escalated retries, review, and the step
-    // cap the replay tuner recommended (16 until a tuning report exists).
     // One recorded RunProfile (measurement MS-M9-1, MS-M9-4): the queue is the
     // path every measured run takes, so it resolves its settings once and
-    // records them in every attempt's evidence. Flags that cannot resolve to
-    // one profile (`--profile full` rewrites four others) run as before and
-    // record none; refusing them on the command line is surface's (SUR-45).
+    // records them in every attempt's evidence.
     // --auto-accept stands in for the person only in a repository a measured
     // run prepared (review M5): the human is the rate limiter.
-    const acceptRefusal = autoAcceptRefusal(argv, config.repoPath);
-    if (acceptRefusal) {
-      console.error(acceptRefusal);
-      process.exitCode = 2;
-      return;
-    }
-    const measurement = argv.includes("--auto-accept")
-      ? readMeasurementMarker(config.repoPath)
-      : undefined;
-    let queueProfile: RunProfile | undefined;
+    // SUR-44, SUR-45: one RunProfile from defaults, config, a `--settings`
+    // file and flags, or no run: a flag that would set others (`--profile
+    // full`) is refused, never rewritten. The queue then reads its settings
+    // from the profile, so a settings file applies and is what is recorded.
+    let queueProfile: RunProfile;
     try {
       queueProfile = profileForQueue(
         argv,
@@ -1416,27 +1651,51 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         queueDefaults(effectiveConfig(config.repoPath, argv).config, []),
         appliedStepBudget(config.repoPath),
       );
-      applyProfileSwitches(queueProfile);
     } catch (err) {
-      console.log(`Run profile not recorded: ${err instanceof Error ? err.message : String(err)}`);
+      console.error(`sekhemet: ${err instanceof Error ? err.message : String(err)}`);
+      process.exitCode = 2;
+      return;
     }
-    if (argv[argv.indexOf("--profile") + 1] === "full") {
-      let cap = 16;
-      try {
-        const t = JSON.parse(
-          readFileSync(join(config.repoPath, ".sekhemet", "tuning", "latest.json"), "utf8"),
-        ) as { best?: { policy?: { stepBudget?: number } } };
-        cap = t.best?.policy?.stepBudget ?? cap;
-      } catch {
-        // No tuning yet: the default cap.
-      }
-      for (const flag of ["--explore", "--escalate-retries", "--review"]) {
-        if (!argv.includes(flag)) argv.push(flag);
-      }
-      if (!argv.includes("--max-turns")) argv.push("--max-turns", String(cap));
-      console.log(
-        `Profile full: ${argv.filter((a) => a.startsWith("--") && a !== "--profile").join(" ")}`,
-      );
+    argv.splice(0, argv.length, ...withoutProfileFlags(argv), ...profileArgs(queueProfile).argv);
+    applyProfileSwitches(queueProfile);
+    const acceptRefusal = autoAcceptRefusal(argv, config.repoPath);
+    if (acceptRefusal) {
+      console.error(acceptRefusal);
+      process.exitCode = 2;
+      return;
+    }
+    // One runner at a time (runtime item 3): the lease first, so the
+    // start-up pass below runs with no other runner live. Its roster and
+    // residency are published once the router exists.
+    const queueLive: { current?: LiveLeaseInfo } = {};
+    const queueLease = acquireRunnerLease(config.repoPath, {
+      kind: process.env.SEKHEMET_OVERNIGHT_ROUND === "1" ? "overnight" : "queue",
+      live: () => queueLive.current?.() ?? {},
+    });
+    if ("holder" in queueLease) {
+      console.error(leaseRefusal(queueLease.holder));
+      process.exitCode = 1;
+      return;
+    }
+    const releaseLease = queueLease.release;
+    // The supervisor's start (items 10, 33, 34): reap what a killed runner
+    // left, sweep crashed attempts back to Ready, and prune by retention as a
+    // recorded erasure — before the Ready cards are read.
+    const startPass = await supervisorStart({
+      repoPath: config.repoPath,
+      cardStore,
+      log,
+      boardService,
+    });
+    for (const line of describeSupervisorStart(startPass)) console.log(line);
+    const measurement = argv.includes("--auto-accept")
+      ? readMeasurementMarker(config.repoPath)
+      : undefined;
+    // review-git §2.5.6 (RG-S5-8): auto-accept is the person's recorded
+    // standing decision for this run, named on every acceptance it writes.
+    const autoRun = argv.includes("--auto-accept") ? await enableAutoAccept(cardStore) : undefined;
+    for (const problem of effectiveConfig(config.repoPath, argv).problems) {
+      console.error(`config: ${problem}`);
     }
     const autoAccept = argv.includes("--auto-accept");
     // H15: config.toml supplies the models and step cap the flags leave open.
@@ -1456,11 +1715,13 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       console.log(
         `Project ${project.name} is ${project.status}; resume it on the dashboard (or pause another: at most ${cardStore.activeProjectCap} run at once).`,
       );
+      releaseLease();
       return;
     }
     const readyRaw = (await cardStore.listCards({ status: "ready" })) as CardRecord[];
     if (readyRaw.length === 0) {
       console.log("No Ready cards.");
+      releaseLease();
       return;
     }
     // Planning before the pass (wave2.ts): decision deadlines, the seven
@@ -1490,18 +1751,12 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       // MD-N8-1: so it does with a Worker whose combination has not qualified.
       console.error(err instanceof Error ? err.message : String(err));
       process.exitCode = 1;
+      releaseLease();
       return;
     }
     if (workerOverride) {
       console.log(
         `Worker ${workerModel ?? NAIL_WORKER_PROFILE.modelId}: ${describeOverride(workerOverride)}`,
-      );
-    }
-    // Retention (K27): packs and transcripts of cards closed 30+ days ago.
-    const pruned = await pruneRunData(cardStore, config.repoPath).catch(() => undefined);
-    if (pruned && pruned.closedCards.length > 0) {
-      console.log(
-        `Retention: pruned ${pruned.removed.packs} pack(s), ${pruned.removed.observations} observation(s), ${pruned.removed.transcripts} transcript(s) of ${pruned.closedCards.length} closed card(s).`,
       );
     }
 
@@ -1594,7 +1849,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     /** Run a question past the Researcher, then hand the manager back. */
     const askResearcher = researcherModel
       ? async (question: string, opts: { deep?: boolean } = {}) => {
-          const { web } = await researchSources(config.repoPath);
+          const { web } = await researchSources(config.repoPath, { log });
           const r = await new ResearchService({
             repoPath: config.repoPath,
             web,
@@ -1615,7 +1870,8 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     // answered here, between steps, instead of loading a second large model.
     // The lease also publishes the model roster and which role is resident,
     // for the dashboard's Machine view.
-    const releaseLease = holdRunnerLease(config.repoPath, pmModel, () => ({
+    queueLive.current = () => ({
+      pmModel,
       roster: [
         { role: "worker", model: workerModel ?? NAIL_WORKER_PROFILE.modelId },
         { role: "manager", model: pmModel },
@@ -1627,7 +1883,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         : {}),
       resident: router.residentRoles().map((r) => (r === "escalation" ? "manager" : r)),
       coResident: plan.swapped.length === 0,
-    }));
+    });
 
     /**
      * Preemption (PM_CONTRACT §4): after any Worker step, if the human has
@@ -1774,7 +2030,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       askTeam: (cardId: string, question: string, meta: { questionEntryId?: string }) =>
         askTeam(cardId, question, meta),
       watchdog,
-      ...(queueProfile ? { runProfile: queueProfile } : {}),
+      runProfile: queueProfile,
       ...(measurement ? { measurement } : {}),
       afterTurn: async (_cardId: string, turn: { turnIndex: number }) => {
         await answerPm(turn.turnIndex).catch((err) =>
@@ -1870,10 +2126,12 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       }
     };
     const attempt = async (rawCard: CardRecord, n: number, guidance?: string) => {
-      const card =
-        maxTurns && maxTurns > 0 && rawCard.stepBudget > maxTurns
-          ? { ...rawCard, stepBudget: maxTurns }
-          : rawCard;
+      // SUR-40: a --max-turns flag, else the card's own step budget override, else the run's.
+      const cap = cardStepCap(
+        rawCard,
+        maxTurnsIdx !== -1 ? { flag: maxTurns } : { otherwise: maxTurns },
+      );
+      const card = cap && rawCard.stepBudget > cap ? { ...rawCard, stepBudget: cap } : rawCard;
       // A retry of a card the worker could not do runs on the stronger model
       // when asked: capability-based routing, not the same model again.
       // The planner's route (P6) sends hard cards to the escalation model up front.
@@ -1892,7 +2150,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       const result = await executeCard(ctx, rawCard, worker, guidance, {
         attempt: attemptNo,
         signal: queueStop.signal,
-        ...(maxTurns && maxTurns > 0 ? { maxSteps: maxTurns } : {}),
+        ...(cap ? { maxSteps: cap } : {}),
       });
       if (result.passed) passedResults.push({ card, diff: result.evidence.diff ?? "" });
       for (const st of result.lessons.struggles) {
@@ -1907,28 +2165,13 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         if (reviewed?.status === "review") {
           // --auto-accept is the harness's verdict, not a person's: the ledger
           // must not credit a human with a merge nobody reviewed.
-          const sha = await acceptCard(ctx, reviewed, "harness");
+          const sha = await acceptCard(ctx, reviewed, "harness", autoRun ? { autoRun } : {});
           accepted = true;
           console.log(`   accepted -> main ${sha.slice(0, 10)}`);
         }
       }
 
-      entries.push({
-        cardId: card.id,
-        attempt: attemptNo,
-        passed: result.passed,
-        accepted,
-        stopReason: result.stopReason,
-        turns: result.evidence.turnsUsed,
-        durationMs: result.evidence.durationMs,
-        promptTokens: result.evidence.tokens.promptTokens,
-        completionTokens: result.evidence.tokens.completionTokens,
-        ...(result.held ? { held: `${result.held.wanted}: ${result.held.reason}` } : {}),
-        ...(result.parked ? { parked: result.parked.suggestion } : {}),
-        ...(result.failToPass ? { failToPass: result.failToPass.status } : {}),
-        ...(result.resumedFrom ? { resumedFromStep: result.resumedFrom.step } : {}),
-        ...(result.replan ? { replanRequested: true } : {}),
-      });
+      entries.push(queueEntryOf(card.id, attemptNo, result, accepted));
       // The report so far, after every entry: a run stopped part-way (the
       // suite runner's timeout) keeps the record of every card it finished.
       recordQueueProgress(config.repoPath, {
@@ -1985,6 +2228,20 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       for (const queued of cards) {
         if (halted) break;
         const card = (await cardStore.getCard(queued.id)) ?? queued;
+        // RUN-18, RUN-48: no new card while the memory watchdog asks to stop
+        // new worktrees (the queue waits for it to clear, then halts), nor
+        // one of a paused project. A running card is never interrupted.
+        let refusal = await mayStartCard({ cardStore, watchdog }, card);
+        if (refusal && watchdog.isActive("stopNewWorktrees")) {
+          console.log(`   waiting: ${refusal}`);
+          await watchdog.waitUntilBelow("elevated", 5 * 60_000);
+          refusal = await mayStartCard({ cardStore, watchdog }, card);
+        }
+        if (refusal) {
+          console.log(`\n--- ${card.id} not started: ${refusal} ---`);
+          if (watchdog.isActive("stopNewWorktrees")) halted = true;
+          continue;
+        }
         // B6: a card whose files another running card is editing waits.
         const overlap = await boardService.overlappingRunning(card);
         const waiting = [
@@ -2007,7 +2264,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
             continue;
           }
           console.log(`\n=== ${card.id} (research): ${card.title} ===`);
-          const { web } = await researchSources(config.repoPath);
+          const { web } = await researchSources(config.repoPath, { log });
           const service = new ResearchService({
             repoPath: config.repoPath,
             web,
@@ -2074,7 +2331,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
 
         // Researcher batch: one load, every unexplained struggle.
         if (askResearcher && unexplained.length > 0) {
-          const { web } = await researchSources(config.repoPath);
+          const { web } = await researchSources(config.repoPath, { log });
           const service = new ResearchService({
             repoPath: config.repoPath,
             web,
@@ -2215,8 +2472,11 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       modelLoads: meter.loads(),
       cache: cache.summary(),
       memory: { level: watchdog.state.level, reason: watchdog.state.reason },
+      // RUN-57: every blob retention pruned at this run's start, with its card.
+      ...(startPass.retention ? { retention: startPass.retention } : {}),
     };
-    const path = writeQueueReport(config.repoPath, report);
+    // RUN-56: the report is a ledger event; the files are its cache.
+    const path = await recordQueueReport(log, config.repoPath, report);
 
     console.log(
       `\nScorecard: Pass@1 ${firstTry}/${cardIds.length} (${(report.passAt1 * 100).toFixed(0)}%), after escalation ${eventually}/${cardIds.length}, ${router.swapCount} model swap(s), ${(report.totalDurationMs / 60000).toFixed(1)} min`,
@@ -2311,7 +2571,7 @@ async function openHome(flags: string[]): Promise<void> {
 
 type TriageRoute = Extract<
   ReturnType<typeof routeFrontDoor>,
-  { kind: "review" | "send-back" | "park" | "unpark" | "reopen" }
+  { kind: "review" | "send-back" | "park" | "unpark" | "reopen" | "reject" | "revert" }
 >;
 
 /** The board's decisions, from the command line (triage.ts is shared with it). */
@@ -2320,25 +2580,34 @@ async function runTriage(route: TriageRoute, repoPath: string): Promise<void> {
   const ctx = { repoPath, cardStore, boardService, log };
   try {
     if (route.kind === "review") {
-      const card = await nextForReview(ctx);
+      const card = route.cardId
+        ? ((await cardStore.getCard(route.cardId)) ?? undefined)
+        : await nextForReview(ctx);
       if (!card) {
-        console.log("Nothing is waiting on you.");
+        console.log(
+          route.cardId ? `sekhemet: no card ${route.cardId}` : "Nothing is waiting on you.",
+        );
         return;
       }
       console.log(`${card.id} — ${card.title}`);
-      const evidence = join(repoPath, ".sekhemet", "evidence", `latest-${card.id}.json`);
-      if (existsSync(evidence)) {
-        const e = JSON.parse(readFileSync(evidence, "utf8")) as {
-          rungResults?: { gate: string; passed: boolean }[];
-          filesTouched?: string[];
-          linesAdded?: number;
-          linesRemoved?: number;
-        };
+      // The evidence the ledger names (K-S7-7), and each Implementation file's
+      // diff, shown once and recorded as shown (review-git §2.4.3, RG-S6-6).
+      const e = await ledgerBundle(ctx, card.id);
+      if (e) {
         const gates = (e.rungResults ?? []).map((r) => `${r.passed ? "✓" : "✗"} ${r.gate}`);
         console.log(`  gates: ${gates.join("  ") || "none recorded"}`);
         console.log(
           `  changed: ${(e.filesTouched ?? []).join(", ") || "nothing"} (+${e.linesAdded ?? 0} −${e.linesRemoved ?? 0})`,
         );
+        const files = implementationFiles(e);
+        if (files.length > 0 && card.status === "review") {
+          const diff = await new NodeGitSyncAdapter(repoPath).structuralDiff(
+            card.id,
+            integrationBranch(repoPath),
+          );
+          console.log(`\n${diff.text}`);
+          await recordReviewOpened(ctx, card, files);
+        }
       }
       console.log(
         `\n  sekhemet accept ${card.id}\n  sekhemet send-back ${card.id} "<what to change>"\n  sekhemet park ${card.id}`,
@@ -2367,6 +2636,21 @@ async function runTriage(route: TriageRoute, repoPath: string): Promise<void> {
     } else if (route.kind === "reopen") {
       await reopen(ctx, card, route.reason);
       console.log(`${card.id} is back in Ready.`);
+    } else if (route.kind === "reject") {
+      if (!route.reason.trim()) {
+        console.error(
+          `sekhemet: a rejection needs a reason.\n  sekhemet reject ${card.id} "<why>"`,
+        );
+        process.exitCode = 2;
+        return;
+      }
+      await reject(ctx, card, route.reason);
+      console.log(`${card.id} is rejected. Undo: sekhemet reopen ${card.id}`);
+    } else if (route.kind === "revert") {
+      const sha = await revertAccept(ctx, card, route.reason);
+      console.log(
+        `${card.id}'s accept is reverted (${sha.slice(0, 10)} on ${integrationBranch(repoPath)}); the card is back in Ready.`,
+      );
     } else {
       const to = await unpark(ctx, card);
       console.log(
@@ -2378,6 +2662,99 @@ async function runTriage(route: TriageRoute, repoPath: string): Promise<void> {
   }
 }
 
+/**
+ * `sekhemet card message|pause|hand-back|take-over <card> …` (worker-loop
+ * NEW-worker-loop-10): the dashboard's four actions over the same functions.
+ * Exit 0 done, 1 refused (no such card, not paused, its agent running), 2 a
+ * usage error (a message with no text) — surface S10.
+ */
+async function runCardVerb(
+  route: Extract<FrontDoorRoute, { kind: "card" }>,
+  repoPath: string,
+): Promise<void> {
+  const { db, cardStore, boardService } = initLocalKernel(repoPath);
+  const ctx = { repoPath, restrictedMode: false, cardStore, boardService };
+  try {
+    const card = await cardStore.getCard(route.cardId);
+    if (!card) {
+      console.error(`sekhemet: no card ${route.cardId}`);
+      process.exitCode = 1;
+      return;
+    }
+    if (route.verb === "message") {
+      if (!route.text.trim()) {
+        console.error(
+          `sekhemet: a message needs text.\n  sekhemet card message ${card.id} "<what to tell the agent>"`,
+        );
+        process.exitCode = 2;
+        return;
+      }
+      await postCardMessage(cardStore, card.id, route.text);
+      console.log(`Posted to ${card.id}: its agent reads it at its next step.`);
+    } else if (route.verb === "pause") {
+      await requestPause(cardStore, card.id);
+      console.log(
+        `${card.id} pauses at its agent's next step. Then: sekhemet card hand-back ${card.id} "<note>", or sekhemet card take-over ${card.id}`,
+      );
+    } else if (route.verb === "hand-back") {
+      await handBack(ctx, card.id, route.text);
+      console.log(`${card.id} is back in Ready; its next run resumes from its checkpoint.`);
+    } else {
+      const { worktreePath } = await takeOver(ctx, card.id);
+      console.log(`${card.id} is yours, In Progress. Work in: ${worktreePath}`);
+    }
+  } catch (err) {
+    // A refusal the collaborate functions give (not paused, agent running, closed).
+    console.error(`sekhemet: ${err instanceof Error ? err.message : String(err)}`);
+    process.exitCode = 1;
+  } finally {
+    db.close();
+  }
+}
+
+/** A yes/no question on the terminal; anything but y or yes is no. */
+async function askYesNo(question: string): Promise<boolean> {
+  const { createInterface } = await import("node:readline/promises");
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    return /^\s*y(es)?\s*$/i.test(await rl.question(question));
+  } finally {
+    rl.close();
+  }
+}
+
+/** The harness's own version, from its package.json (SUR-13). */
+export function harnessVersion(): string {
+  try {
+    return (
+      (
+        JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+          version?: string;
+        }
+      ).version ?? "0.0.0"
+    );
+  } catch {
+    return "0.0.0";
+  }
+}
+
 if (process.argv[1]?.endsWith("index.js") || process.argv[1]?.endsWith("sekhemet")) {
-  main().catch(console.error);
+  // SUR-26: an older install's ~/.config/sekhemet moves into the one user
+  // directory, once; `doctor` reports it. `--version` writes nothing (SUR-13).
+  if (routeFrontDoor(process.argv.slice(2)).kind !== "version") {
+    try {
+      migrateLegacyUserDir();
+    } catch (err) {
+      console.error(
+        `sekhemet: could not move ~/.config/sekhemet: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+  }
+  // SUR-14: an uncaught error is printed and exits 1 — once the event loop
+  // drains, or shortly after if a server or timer would hold it open.
+  main().catch((err: unknown) => {
+    console.error(err);
+    process.exitCode = 1;
+    setTimeout(() => process.exit(1), 200).unref();
+  });
 }

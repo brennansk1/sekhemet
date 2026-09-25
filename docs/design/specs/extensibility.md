@@ -10,7 +10,8 @@ code:
   - apps/harness/src/mcp_client.ts
   - apps/harness/src/acp.ts
   - apps/harness/src/pm/slash.ts
-  - apps/harness/src/doctor.ts          # pluginsCheck: EXT-28
+  - apps/harness/src/doctor.ts          # pluginsCheck: EXT-28; hooksCheck: EXT-10
+  - apps/harness/src/board_hooks.ts
   - packages/eval/src/diagnostics.ts
 tests:
   - packages/kernel/tests/hooks.spec.ts
@@ -23,6 +24,12 @@ tests:
   - apps/harness/tests/acp.spec.ts
   - apps/harness/tests/slash.spec.ts
   - apps/harness/tests/cuts_b0.spec.ts  # EXT-28, EXT-28a
+  - apps/harness/tests/hooks_visible.spec.ts
+  - apps/harness/tests/board_hooks.spec.ts
+  - packages/context/tests/skills_format.spec.ts
+  - apps/harness/tests/skills_scopes.spec.ts
+  - apps/harness/tests/skill_admission.spec.ts
+  - apps/harness/tests/mcp_hardening.spec.ts
 changes: [S9, S4, NEW-extensibility-1, NEW-extensibility-2, NEW-extensibility-3, NEW-extensibility-4, NEW-extensibility-5]
 ---
 
@@ -82,7 +89,7 @@ Workspace trust therefore gates exactly three things a repository can supply: pr
 
 ### MCP server
 
-18. `sekhemet mcp` serves the board to MCP clients (editors, other agents, CI) over stdio: list, get, create and update cards (team fields only), move a card among `ready`, `backlog` and `parked`, run gates, ask Seshat and read the PM thread, the capability report, learning rules, events and `doctor`; plus the evidence bundle and the model registry, read-only (NEW-extensibility-3). Tool names use the product's vocabulary ([NAMING.md](../NAMING.md)): the PM tool is `sekhemet_ask_seshat` (today still `sekhemet_ask_merit`, the persona's name before 2026-09-18).
+18. `sekhemet mcp` serves the board to MCP clients (editors, other agents, CI) over stdio: list, get, create and update cards (team fields only), move a card among `ready`, `backlog` and `parked`, run gates, ask Seshat and read the PM thread, the capability report, learning rules, events and `doctor`; plus the evidence bundle and the model registry, read-only (NEW-extensibility-3). Tool names use the product's vocabulary ([NAMING.md](../NAMING.md)): the PM tool is `sekhemet_ask_seshat` (`sekhemet_ask_merit` until B3.3, the persona's name before 2026-09-18).
 19. Every write is recorded with actor `mcp`. Accepting is a person's action: the server validates every argument on the server side, and no argument — including a `reason` beginning `override:` — moves a card to Done, Review or any state outside the tool's list (the kernel enforces it too: [kernel](kernel.md) S4).
 20. A `card_id` is validated against the card-id pattern before it is used in a path.
 21. The server negotiates the protocol version with the client and answers malformed requests with `id: null`, as JSON-RPC requires. It is built on the official `@modelcontextprotocol/sdk` ([DEC-08](../DECISIONS.md#dec-08)).
@@ -154,19 +161,19 @@ Decisions on what the Planner and the infrastructure use, adopt or build; the ow
 | --- | --- | --- | --- |
 | Hook engine, ten events, fail-closed `pre-*` | built | `hooks.ts:12-38`; `hooks.spec.ts`; emitted at `session.ts` 1093/1175/1351/1390/1596/1622, `card_runner.ts` 845/1501 | — |
 | `hooks.toml`: block, inject, env, stdin | built | `user_hooks.spec.ts` (3 tests) | — |
-| Hook load errors, stdin EPIPE, timeout | partial | errors dropped (`execute.ts:377` keeps only `.engine`); no stdin error handler (`user_hooks.ts:144`); no timeout test | NEW-extensibility-2 |
-| User-level hooks | not-built | project path only (`user_hooks.ts:56`) | NEW-extensibility-2 |
-| Board-lifecycle hook events | not-built | — | NEW-extensibility-1 |
+| Hook load errors, stdin EPIPE, timeout | partial | `doctor` names each file and error (`hooksCheck`, from `hookEngineFor().errors`, EXT-10); an early-exiting hook's EPIPE is absorbed (EXT-11); a gating hook past `timeout_s` is killed and blocks with "hook timed out" (EXT-12); `hooks_visible.spec.ts`. and on the next card's evidence: `execute.ts` passes `hookEngineFor().errors` to the runner, which records them as `extensions.hookErrors` (`extension_evidence.spec.ts` EXT-10) | — |
+| User-level hooks | built | the person's `hooks.toml` in the user directory, registered before the project's (`loadPersonHooks`, `hookEngineFor`); `hooks_visible.spec.ts` (EXT-13) | NEW-extensibility-2 |
+| Board-lifecycle hook events | built | `card/status_changed`, `card/accepted`, `pr/opened` (kernel `LifecycleHookEvent`); `watchBoardHooks` (`board_hooks.ts`) runs each hook once per committed ledger event, from every kernel the CLI and server open (`initLocalKernel`); observe only, an exit 2 or failure recorded as a dossier note; `board_hooks.spec.ts` (EXT-8, EXT-9) | NEW-extensibility-1 |
 | Repo hooks, `mcp.json` load without trust | not-built (trust) | `user_hooks.ts:56`, `mcp_client.ts:29-49` | S9 |
 | Extension files protected from the Worker | not-built | `PROTECTED_SYSTEM_PATTERNS` covers `gates.toml`, `config.toml`, `.sekhemet/(events.db\|checkpoints\|artifacts)` only (`sandbox/src/permissions.ts:43-54`) | S9 |
 | Skills: SHA-256 pin, approve/revoke, audit | partial | `skills.ts`; trust-on-first-use by default and lock in the repo (`skills.ts` `loadFromDirectory`) | S9 |
-| Skills format: regex front matter, required inline `triggers`, substring match, project scope only, `budgetTokens` unread, `scripts/`, `references/`, `evals/` ignored | partial | `skills.ts:162-178, 251-283`; `execute.ts:356-357` | NEW-extensibility-4 |
-| Skill diagnostics | partial | `diagnostics.ts`; called with no outcomes, skills or cards (`wave2.ts:1111`), so gain and "never triggered" never appear | NEW-extensibility-4 |
-| Skill evals run before approval | not-built | candidates written by `distillSkill` (`eval/src/loops.ts:259`, `wave2.ts:908`) reach approval with `evals/` never executed | NEW-extensibility-4 |
+| Skills format: regex front matter, required inline `triggers`, substring match, project scope only, `budgetTokens` unread, required `tools` unread, `scripts/`, `references/`, `evals/` ignored | partial | built: front matter in the Agent Skills subset (`parseFrontMatter`: block scalars, lists, maps), selection by description when no triggers, whole-word triggers, `tools` checked against the tools the card is offered (the skill left out, `omitted()`), `budget_tokens` cut at a section boundary (`truncated`), user then project scope (`loadRepoSkills`); `skills_format.spec.ts`, `skills_scopes.spec.ts` (EXT-22, -22a, -23, -24, -25). The omission and the truncation are on the card's evidence as `extensions.skillsOmitted` and `extensions.skillsTruncated` (the session collects them from each prompt, the runner writes them; `extension_evidence.spec.ts`). Not yet: `references/` on demand. The front-matter reader is a subset, not a YAML library (a `yaml` package would need the owner's yes) | NEW-extensibility-4 |
+| Skill diagnostics | built (skills); partial (rules) | `doctor`'s "Playbook and skills" check reports, per skill, its token cost, the recent finished cards it triggers on and its net gain (`skillDiagnostics` in eval `diagnostics.ts`; outcomes from the ledger's cards that ran and finished, `recentCardOutcomes` in `wave2.ts`; `skill_doctor.spec.ts`, EXT-26); triggers use the prompt's own selection (whole words), so "never triggered" agrees with it. The ledger does not record which skills a card's prompt carried, so the gain is over the cards today's skills would select. Rules' net gain still gets no outcomes | NEW-extensibility-4 |
+| Skill evals run before approval | built | `sekhemet dev skills approve` runs a skill's `evals/checks.json` confined (`checkSkillCandidate`, a person's skill kept on failure) and refuses while one fails (EXT-27a); a distilled candidate's checks run confined when distilled and one with none stays "unchecked" and cannot be approved (MS-T8-5, EXT-27b); a skill whose `scripts/` name a gate file, the loop driver or sandbox configuration is rejected before anything runs (`skillProtectedWrites`, EXT-27); `skill_admission.spec.ts` | NEW-extensibility-4 |
 | MCP server tools | built | `mcp.ts`; `mcp.spec.ts` (10 tests, happy paths) | — |
 | MCP `move_card` override to Done | not-built (bypass open) | probed: `mcp.ts:155-180`, `board_service.ts:292-300` | S4 |
-| MCP server: protocol `2024-11-05` fixed, `id: 0` on parse error, unchecked `card_id` path, no evidence/registry tools, PM tool still named `sekhemet_ask_merit` | partial | `mcp.ts:277, 343, 186-188, 207` | NEW-extensibility-3 |
-| MCP client: stdio only, full env, Researcher only | partial | `mcp_client.ts:73-77`; `research/cli.ts:66` | NEW-extensibility-3 |
+| MCP server: protocol `2024-11-05` fixed, `id: 0` on parse error, unchecked `card_id` path, no evidence/registry tools, PM tool still named `sekhemet_ask_merit`, hand-rolled JSON-RPC | built | on the official SDK's `Server` (`createMcpServer` in `mcp.ts`, item 21): the SDK frames, validates and answers `ping`; the harness supplies the tools and one override, the initialize handler, so a version outside `MCP_PROTOCOL_VERSIONS` gets this server's newest (EXT-14). stdio is the SDK's `StdioServerTransport` inside `ParseErrorStdioServerTransport`, which answers a line the SDK drops with `id: null` — -32700 for non-JSON (EXT-15), -32600 for JSON that is not JSON-RPC — and otherwise delegates; `handleMcpRequest` runs one message through the same server over the SDK's in-memory transport (an `initialize` missing client capabilities or info gets empty ones). `card_id` checked before any path, `sekhemet_get_evidence` (ledger-verified) and `sekhemet_model_registry` read-only, `sekhemet_ask_seshat`; `mcp_hardening.spec.ts` (EXT-14 to -17, -21a), `mcp_sdk_server.spec.ts` (an SDK client's handshake and tool call; the wrapper's parse errors) | NEW-extensibility-3 |
+| MCP client: stdio only, full env, Researcher only | partial | on the official SDK's `Client` (`mcp_client.ts`): stdio with the sandbox's allowlist plus the server's declared `env` (`allowlistedEnv`; `mcp_hardening.spec.ts`, EXT-18), and Streamable HTTP for a server declared with `url` (`mcp_transports.spec.ts`, against a local SDK server, EXT-19); tools per role, the Worker only a server's `worker_tools` and a call outside them refused (`toolDefinitions(role)`, `call(..., role)`, EXT-21); the Planner offered them while it sketches a card, within `PLANNER_TOOL_BUDGET_TOKENS` (`plannerToolsOf`, `sketchWithModel` `tools`, `plannerToolsWithinBudget`; `planner_tools.spec.ts`, `mcp_transports.spec.ts`; `sekhemet plan` connects the servers, EXT-20). Not yet: the OAuth transport, Seshat's tools, the registry's permission for Worker tools and a Worker that is offered any (item 23), per-call ledger records (item 24) | NEW-extensibility-3 |
 | ACP as PM chat | built | `acp.ts`; `acp.spec.ts` | — |
 | Slash commands | built | `slash.ts`; `slash.spec.ts` | — |
 | SDK package cut | built (B0) | no `@sekhemet/sdk` in the workspace or `tsconfig.json` (`cuts_b0.spec.ts`) | NEW-extensibility-5 |
@@ -219,6 +226,7 @@ Decisions on what the Planner and the infrastructure use, adopt or build; the ow
 ### NEW-extensibility-4 — skills in the Agent Skills format
 *Justification: ecosystem skills fail to load (required inline `triggers`, regex YAML), substring triggers over-match, `budgetTokens` is parsed and never read, and diagnostics run on no data (reviews of domain 15 and the gap sweep).*
 - **EXT-22** WHEN a skill has multi-line YAML front matter and no `triggers` THE SYSTEM SHALL load it and select it by its description.
+- **EXT-22a** WHEN a skill declares `tools` that the card's class set does not include THE SYSTEM SHALL leave the skill's manifest line and body out of that card's prompt, and record the omission in the card's evidence.
 - **EXT-23** WHEN a trigger is `ast` and the card title contains "last" but not the word "ast" THE SYSTEM SHALL not select the skill.
 - **EXT-24** WHEN a user-level skill exists and no project skill has its name THE SYSTEM SHALL offer it on that project's cards.
 - **EXT-25** WHEN a selected skill's body exceeds `budget_tokens` THE SYSTEM SHALL truncate it at a section boundary and record the truncation.

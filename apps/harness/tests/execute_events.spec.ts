@@ -16,6 +16,7 @@ import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import type { TurnResult } from "@sekhemet/loop";
 import { MockInferenceAdapter } from "@sekhemet/models";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { recordReviewOpened } from "../src/accept.js";
 import {
   type QueueReport,
   acceptCard,
@@ -140,6 +141,8 @@ describe("@sekhemet/harness execution ledger events", () => {
 
     const reviewed = await cardStore.getCard("card_exec");
     expect(reviewed?.status).toBe("review");
+    // review-git §2.4.3: the person looks at the Implementation files first.
+    await recordReviewOpened(ctx, reviewed as NonNullable<typeof reviewed>, ["src/a.ts"]);
     const sha = await acceptCard(ctx, reviewed as NonNullable<typeof reviewed>);
     const accepted = (await log.getEventsByCard("card_exec")).find(
       (e) => e.type === "card/accepted",

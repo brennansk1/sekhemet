@@ -4,6 +4,7 @@ import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { BWRAP_CANDIDATES, bubblewrapArgv } from "./bubblewrap.js";
+import { signalGroup, trackGroup, untrackGroup } from "./process_registry.js";
 import { generateSeatbeltProfile } from "./seatbelt.js";
 import { hostSeccompArch, seccompProgram } from "./seccomp.js";
 import { srtCleanup, srtFix, srtUnavailableReason, srtWrap } from "./srt_engine.js";
@@ -322,6 +323,9 @@ export class ProcessSandbox implements ExecutionSandbox {
       detached: true,
     }) as import("node:child_process").ChildProcessWithoutNullStreams;
     if (seccompFd !== undefined) closeSync(seccompFd);
+    // A live group the harness's exit and the next start's reap reach (RUN-7, RUN-12).
+    trackGroup(child.pid);
+    child.once("exit", () => untrackGroup(child.pid));
     if (options.scratchDir === undefined) {
       child.once("exit", () => rmSync(scratchDir, { recursive: true, force: true }));
     }
@@ -415,8 +419,12 @@ export class ProcessSandbox implements ExecutionSandbox {
           seccompFd !== undefined
             ? ["ignore", "pipe", "pipe", seccompFd]
             : ["ignore", "pipe", "pipe"],
+        // Its own process group (item 7): a kill reaches every descendant,
+        // including one whose parent has already exited (RUN-6).
+        detached: true,
       });
       if (seccompFd !== undefined) closeSync(seccompFd);
+      trackGroup(child.pid);
 
       const timer = setTimeout(() => {
         timedOut = true;
@@ -428,6 +436,7 @@ export class ProcessSandbox implements ExecutionSandbox {
             ? Promise.resolve([] as number[])
             : sampleTreeMemory(child.pid).then((t) => t.pids);
         void tree.then((pids) => {
+          if (child.pid !== undefined) signalGroup(child.pid, "SIGTERM");
           try {
             child.kill("SIGTERM");
           } catch {
@@ -437,6 +446,9 @@ export class ProcessSandbox implements ExecutionSandbox {
           // uncatchable SIGKILL, with its whole tree, so a runaway command
           // cannot outlive its budget.
           killTimer = setTimeout(() => {
+            // The group first: it holds a grandchild reparented after its
+            // parent exited, which is in no tree and may hold the pipes.
+            if (child.pid !== undefined) signalGroup(child.pid, "SIGKILL");
             if (finished) return;
             for (const p of [...pids].reverse()) {
               try {
@@ -463,6 +475,7 @@ export class ProcessSandbox implements ExecutionSandbox {
           memoryPeak = Math.max(memoryPeak, bytes);
           if (finished || bytes <= memoryCap || memoryKilled) return;
           memoryKilled = true;
+          if (child.pid !== undefined) signalGroup(child.pid, "SIGKILL");
           for (const p of pids.reverse()) {
             try {
               process.kill(p, "SIGKILL");
@@ -487,6 +500,7 @@ export class ProcessSandbox implements ExecutionSandbox {
       const settle = (result: ExecutionResult): void => {
         if (finished) return;
         finished = true;
+        untrackGroup(child.pid);
         clearTimeout(timer);
         clearInterval(memoryTimer);
         if (killTimer) clearTimeout(killTimer);

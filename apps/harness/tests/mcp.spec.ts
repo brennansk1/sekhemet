@@ -201,7 +201,7 @@ describe("MCP tools beyond the basics (H10)", () => {
   });
 
   it("queues a message for Seshat and shows it in the thread", async () => {
-    await call("sekhemet_ask_merit", { text: "What is blocking the ledger?" });
+    await call("sekhemet_ask_seshat", { text: "What is blocking the ledger?" });
     const thread = await call("sekhemet_pm_thread");
     expect(thread.text).toContain("What is blocking the ledger?");
   });

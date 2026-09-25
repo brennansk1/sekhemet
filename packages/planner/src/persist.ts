@@ -2,7 +2,7 @@ import type { CardRecord, CardStatus, CreateCardInput } from "@sekhemet/kernel";
 import type { LocalInferenceAdapter } from "@sekhemet/models";
 import { ASSUMPTION_EVENTS } from "./calibration_store.js";
 import { DecisionStore, waitingReason } from "./decisions.js";
-import { sketchWithModel } from "./edit_sketch.js";
+import { type PlannerTools, sketchWithModel } from "./edit_sketch.js";
 import { type CardEstimate, EstimationModel } from "./estimation.js";
 import { analyzeImpact } from "./impact.js";
 import { validateInvest } from "./invest.js";
@@ -43,6 +43,8 @@ export interface PersistPlanOptions {
    * the template sketch.
    */
   sketcher?: LocalInferenceAdapter;
+  /** An approved MCP server's tools, offered to the sketcher within the prompt budget (EXT-20). */
+  plannerTools?: PlannerTools;
   /** Repository root: grounds sketches in real outlines and adds impact (P24). */
   repoRoot?: string;
   estimator?: EstimationModel;
@@ -211,6 +213,7 @@ export async function persistPlan(
       const r = await sketchWithModel(options.sketcher, story, {
         ...(options.repoRoot ? { repoRoot: options.repoRoot } : {}),
         ...(impact ? { blastRadius: impact.blastRadius } : {}),
+        ...(options.plannerTools ? { tools: options.plannerTools } : {}),
       });
       result.sketches.push({
         id,

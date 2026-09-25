@@ -101,6 +101,30 @@ export function redact(secret: string): string {
   return secret.length <= 8 ? "****" : `${secret.slice(0, 4)}…${secret.slice(-2)}`;
 }
 
+/**
+ * `text` with every secret the rules find replaced by its redacted form
+ * (security item 34, SEC-22): applied to what the harness persists or
+ * publishes — observations, context packs, gate excerpts, evidence — before
+ * it is written. An allow marker does not exempt a line here: a fixture's
+ * fake is still not written out whole.
+ */
+export function redactSecrets(text: string): string {
+  if (!text) return text;
+  let out = text;
+  for (const rule of SECRET_RULES) {
+    const global = new RegExp(
+      rule.pattern.source,
+      rule.pattern.flags.includes("g") ? rule.pattern.flags : `${rule.pattern.flags}g`,
+    );
+    out = out.replace(global, (match: string, secret: string | undefined) => {
+      if (!secret) return match;
+      if (rule.minEntropy !== undefined && shannonEntropy(secret) < rule.minEntropy) return match;
+      return match.replace(secret, redact(secret));
+    });
+  }
+  return out;
+}
+
 /** Lines a test fixture may use to mark an intentional fake. */
 const ALLOW_MARKER = /gitleaks:allow|sekhemet:allow-secret/;
 

@@ -99,6 +99,7 @@ export function accept(card, evidence, { onMerged, onChange } = {}) {
         const sha = String(res.data?.sha ?? "");
         t.update({
           text: `Merged to main as ${sha.slice(0, 7)}`,
+          ...(res.data?.notice ? { detail: String(res.data.notice) } : {}),
           tone: "pass",
           iconName: "merge",
           action: sha ? { label: "Copy", run: () => copyText(sha) } : undefined,

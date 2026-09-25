@@ -1,4 +1,4 @@
-import { runProfileHash } from "./run_profile.js";
+import { type CardProfile, profileDifferences, runProfileHash } from "./run_profile.js";
 import {
   PLANNING_DISCORDANCE,
   binomialTailAtLeast,
@@ -128,14 +128,59 @@ function checkProfiles(
   }
   const b = hashOf("baseline", baseline);
   const c = hashOf("candidate", candidate);
-  if (!b || !c || runProfileHash(b) === runProfileHash(c)) return;
-  const named =
-    (b.armUnderTest ?? null) !== (c.armUnderTest ?? null) ||
-    (b.settingsFile?.sha256 ?? null) !== (c.settingsFile?.sha256 ?? null);
-  if (!named) {
-    throw new Error(
-      "the arms' RunProfiles differ in more than the arm under test: name the arm with --arm or a settings file",
-    );
+  if (b && c && runProfileHash(b) !== runProfileHash(c)) {
+    const named =
+      (b.armUnderTest ?? null) !== (c.armUnderTest ?? null) ||
+      (b.settingsFile?.sha256 ?? null) !== (c.settingsFile?.sha256 ?? null);
+    if (!named) {
+      throw new Error(
+        "the arms' RunProfiles differ in more than the arm under test: name the arm with --arm or a settings file",
+      );
+    }
+  }
+  if (b && c) checkCardProfiles(baseline, candidate, profileDifferences(b, c));
+}
+
+/**
+ * The cards' own recorded profiles (SUITE_RUNS, ref-r1): each card ran one
+ * profile within an arm, and across the arms it differs only in the
+ * settings the arms' profiles themselves differ in — the arm under test. A
+ * card's profile includes its repository's configuration layer, which the
+ * run's profile does not, so this is where a divergence there is caught.
+ * Runs that record no card profiles are compared by their run profile alone.
+ */
+function checkCardProfiles(
+  baseline: readonly SuiteRunResult[],
+  candidate: readonly SuiteRunResult[],
+  armDiff: readonly string[],
+): void {
+  const perCard = (arm: string, runs: readonly SuiteRunResult[]) => {
+    const cards = new Map<string, CardProfile>();
+    for (const r of runs) {
+      for (const [card, p] of Object.entries(r.cardProfiles ?? {})) {
+        const seen = cards.get(card);
+        if (seen && runProfileHash(seen) !== runProfileHash(p)) {
+          throw new Error(
+            `${card} ran with more than one profile within the ${arm} arm (${profileDifferences(seen, p).join(", ")}); an arm runs one profile`,
+          );
+        }
+        cards.set(card, p);
+      }
+    }
+    return cards;
+  };
+  const b = perCard("baseline", baseline);
+  const c = perCard("candidate", candidate);
+  const allowed = new Set(armDiff);
+  for (const [card, pb] of b) {
+    const pc = c.get(card);
+    if (!pc) continue;
+    const beyond = profileDifferences(pb, pc).filter((k) => !allowed.has(k));
+    if (beyond.length) {
+      throw new Error(
+        `${card} ran with a different profile in the two arms beyond the arm under test (${beyond.join(", ")}); the arms are not comparable`,
+      );
+    }
   }
 }
 

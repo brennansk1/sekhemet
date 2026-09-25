@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { appendFileSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { appendFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { DatabaseSync, StatementSync } from "node:sqlite";
 import type { BlobStore } from "./blobs.js";
 import { canonicalJson, canonicalPayloadHash } from "./canonical_json.js";
@@ -65,12 +65,20 @@ export interface ErasureIndex {
   byEvent: Map<string, { erasedBySeq: number; fields: string[] }>;
   /** Deleted blob id → the erasing event's seq (K-N7-8). */
   byBlob: Map<string, number>;
+  /** Deleted run file (relative to `.sekhemet/`) → the erasing event's seq (RUN-57). */
+  byFile: Map<string, number>;
 }
 
 /** The `ledger/erased` payload (rule 34). */
 export interface LedgerErasedPayload {
   eventIds: string[];
   blobIds: string[];
+  /**
+   * Run files that are not content-addressed blobs — masked observations and
+   * transcripts — as paths relative to `.sekhemet/` (runtime item 33,
+   * RUN-57). Present only when non-empty.
+   */
+  files?: string[];
   /** Per erased event, the names of the private fields removed (names only). */
   fields: Record<string, string[]>;
   reason: ErasureReason;
@@ -98,6 +106,12 @@ export interface EraseInput {
   principal: string;
   /** Where the named blobs live; required when `blobIds` is non-empty. */
   blobs?: BlobStore;
+  /**
+   * Run files to delete in the same erasure (observations, transcripts),
+   * relative to `fileRoot` — the repository's `.sekhemet/` directory.
+   */
+  files?: string[];
+  fileRoot?: string;
   /** Internal to `applyErasures`: the register entry being re-applied. */
   reapplies?: string;
 }
@@ -106,6 +120,7 @@ export interface ErasureReport {
   erasedBySeq: number;
   eventIds: string[];
   blobIds: string[];
+  files: string[];
   fields: Record<string, string[]>;
   /** Rule 34: what an erasure cannot reach. */
   outsideReach: string;
@@ -125,6 +140,12 @@ export interface EventLogOptions {
    * default: the install's one person; team default: no one.
    */
   mayAccept?: (principal: string) => boolean;
+  /**
+   * Every principal holding the Accept permission, read when an accept is
+   * attempted (review-git §2.4.1): one is a solo project, two or more a team.
+   * Default: the install's one person on a solo setup; no one on a team.
+   */
+  acceptHolders?: () => readonly string[];
   /** The erasure register every erasure appends to (rule 35), beside the backups. */
   erasureRegister?: string;
 }
@@ -386,8 +407,21 @@ export class EventLog {
   /** Whether `principal` holds the Accept permission (K-N7-1). */
   public mayAccept(principal: string): boolean {
     if (this.options.mayAccept) return this.options.mayAccept(principal);
+    if (this.options.acceptHolders) return this.options.acceptHolders().includes(principal);
     if ((this.options.setup ?? "solo") === "team") return false;
     return principal === this.localPrincipal();
+  }
+
+  /** Every Accept-holder now (review-git §2.4.1), counted when an accept is attempted. */
+  public acceptHolders(): string[] {
+    if (this.options.acceptHolders) return [...new Set(this.options.acceptHolders())];
+    if ((this.options.setup ?? "solo") === "team") return [];
+    return [this.localPrincipal()];
+  }
+
+  /** The principal who recorded the card's latest delegation to the Worker (review-git §2.4.1). */
+  public delegatorOf(cardId: string): string | undefined {
+    return this.delegatingPrincipal(cardId) ?? undefined;
   }
 
   public async append<T = unknown>(
@@ -839,6 +873,18 @@ export class EventLog {
   }
 
   /**
+   * Delete every run file a recorded erasure named that a crash left on disk
+   * (RUN-57), as `retryBlobErasures` does for blobs. `root` is `.sekhemet/`.
+   */
+  public retryFileErasures(root: string): string[] {
+    const deleted: string[] = [];
+    for (const f of this.erasureIndex().byFile.keys()) {
+      if (isRunFilePath(f) && deleteRunFile(root, f)) deleted.push(f);
+    }
+    return deleted;
+  }
+
+  /**
    * Erase the private parts of events, and blobs, as one recorded erasure
    * (kernel rule 34, K-N7-1): only a person holding the Accept permission;
    * `secure_delete` on; the rows deleted and `ledger/erased` appended in one
@@ -862,6 +908,11 @@ export class EventLog {
     }
     const blobIds = [...new Set(input.blobIds ?? [])];
     if (blobIds.length > 0 && !input.blobs) throw new Error("Erasing blobs needs the blob store");
+    const files = [...new Set(input.files ?? [])];
+    if (files.length > 0 && !input.fileRoot) throw new Error("Erasing files needs their root");
+    for (const f of files) {
+      if (!isRunFilePath(f)) throw new Error(`Not a run file path under .sekhemet/: ${f}`);
+    }
     const eventIds = [...new Set(input.eventIds)];
 
     this.db.exec("PRAGMA secure_delete = ON");
@@ -881,14 +932,15 @@ export class EventLog {
         remove.run(id);
         erasedIds.push(id);
       }
-      if (erasedIds.length === 0 && blobIds.length === 0) {
+      if (erasedIds.length === 0 && blobIds.length === 0 && files.length === 0) {
         throw new Error(
-          "Nothing to erase: no named event has a private part, and no blob is named",
+          "Nothing to erase: no named event has a private part, and no blob or file is named",
         );
       }
       const payload: LedgerErasedPayload = {
         eventIds: erasedIds,
         blobIds,
+        ...(files.length > 0 ? { files } : {}),
         fields,
         reason: input.reason,
         principal: input.principal,
@@ -908,6 +960,7 @@ export class EventLog {
     }
     this.erasures = undefined;
     for (const id of blobIds) input.blobs?.delete(id);
+    if (input.fileRoot) for (const f of files) deleteRunFile(input.fileRoot, f);
     if (input.reapplies === undefined && this.options.erasureRegister) {
       appendErasureRegister(this.options.erasureRegister, {
         erasureId: erased.id,
@@ -925,6 +978,7 @@ export class EventLog {
       erasedBySeq: erased.seq,
       eventIds: erased.payload.eventIds,
       blobIds,
+      files,
       fields: erased.payload.fields,
       outsideReach: ERASURE_OUTSIDE_REACH,
     };
@@ -988,14 +1042,16 @@ export function ledgerErasures(db: DatabaseSync): ErasureIndex {
 export function erasureIndexOf(rows: readonly { seq: number; payload: string }[]): ErasureIndex {
   const byEvent = new Map<string, { erasedBySeq: number; fields: string[] }>();
   const byBlob = new Map<string, number>();
+  const byFile = new Map<string, number>();
   for (const r of rows) {
     const p = JSON.parse(r.payload) as Partial<LedgerErasedPayload>;
     for (const id of p.eventIds ?? []) {
       if (!byEvent.has(id)) byEvent.set(id, { erasedBySeq: r.seq, fields: p.fields?.[id] ?? [] });
     }
     for (const id of p.blobIds ?? []) if (!byBlob.has(id)) byBlob.set(id, r.seq);
+    for (const f of p.files ?? []) if (!byFile.has(f)) byFile.set(f, r.seq);
   }
-  return { byEvent, byBlob };
+  return { byEvent, byBlob, byFile };
 }
 
 /**
@@ -1151,4 +1207,20 @@ function legacyHash(row: ChainRow): string {
 export function appendErasureRegister(path: string, entry: ErasureRegisterEntry): void {
   mkdirSync(dirname(path), { recursive: true });
   appendFileSync(path, `${JSON.stringify(entry)}\n`, "utf8");
+}
+
+/**
+ * A run file an erasure may name (RUN-57): a relative path under
+ * `.sekhemet/observations/` or `.sekhemet/transcripts/`, one level deep, no
+ * `..`, never the ledger or an evidence bundle.
+ */
+export function isRunFilePath(path: string): boolean {
+  return /^(observations|transcripts)\/[A-Za-z0-9._:-]+$/.test(path) && !path.includes("..");
+}
+
+function deleteRunFile(root: string, path: string): boolean {
+  const target = join(root, path);
+  if (!existsSync(target)) return false;
+  rmSync(target, { force: true });
+  return true;
 }

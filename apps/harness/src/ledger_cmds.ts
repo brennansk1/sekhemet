@@ -53,7 +53,8 @@ export function localPersonDetails(repoPath: string): { email?: string; name?: s
  * one backed up, migrated and chain-checked — RUN-44; a local person a
  * migration creates carries git's email), the erasure register wired, the
  * install's one person recorded, and any blob a recorded erasure named but a
- * crash left on disk deleted (kernel rule 34, K-N7-8).
+ * crash left on disk deleted (kernel rule 34, K-N7-8), and any run file too
+ * (RUN-57).
  */
 export function openLocalLedger(repoPath: string): { db: DatabaseSync; log: EventLog } {
   mkdirSync(join(repoPath, ".sekhemet"), { recursive: true });
@@ -68,6 +69,8 @@ export function openLocalLedger(repoPath: string): { db: DatabaseSync; log: Even
   const log = new EventLog(db, { erasureRegister: erasureRegisterPath(repoPath) });
   log.ensureLocalPerson(person);
   log.retryBlobErasures(new BlobStore(repoPath));
+  // RUN-57: likewise any run file (transcript, observation) an erasure named.
+  log.retryFileErasures(join(repoPath, ".sekhemet"));
   return { db, log };
 }
 

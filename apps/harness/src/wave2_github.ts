@@ -16,6 +16,7 @@ import {
   staticToken,
   uploadSarif,
 } from "@sekhemet/sync";
+import { evidenceSummary } from "./evidence_summary.js";
 
 /**
  * The GitHub App and tracker paths (Y10-Y12, Y14-Y16, Y20), used when the
@@ -36,7 +37,11 @@ export function ownerRepo(spec: string | undefined): { owner: string; repo: stri
 
 interface Evidence {
   passed?: boolean;
-  rungResults?: { gate: string; passed: boolean; durationMs?: number }[];
+  rungResults?: { gate: string; passed: boolean; skipped?: boolean; durationMs?: number }[];
+  filesTouched?: string[];
+  linesAdded?: number;
+  linesRemoved?: number;
+  screenshots?: string[];
   failures?: { gate?: string; rung?: string; errorExcerpt?: string }[];
   diff?: string;
 }
@@ -51,28 +56,13 @@ function readEvidence(repoPath: string, cardId: string): Evidence | undefined {
   }
 }
 
-/** The evidence summary a draft PR carries (design "Pull request lifecycle"). */
-export function prBody(card: CardRecord, ev: Evidence | undefined): string {
-  const gates = (ev?.rungResults ?? [])
-    .map(
-      (r) =>
-        `- ${r.passed ? "pass" : "FAIL"} ${r.gate}${r.durationMs ? ` (${r.durationMs} ms)` : ""}`,
-    )
-    .join("\n");
-  const files = [...new Set((ev?.diff ?? "").match(/^\+\+\+ b\/(.+)$/gm) ?? [])].map((l) =>
-    l.slice(6),
-  );
-  return [
-    card.spec ?? "",
-    card.acceptanceCriteria?.length
-      ? `### Done when\n${card.acceptanceCriteria.map((c) => `- ${c}`).join("\n")}`
-      : "",
-    `### Gates\n${gates || "_No evidence file was found for this card._"}`,
-    files.length ? `### Files\n${files.map((f) => `- ${f}`).join("\n")}` : "",
-    `_Implemented by the Sekhemet Worker. Card \`${card.id}\`._`,
-  ]
-    .filter(Boolean)
-    .join("\n\n");
+/** The evidence summary a draft PR carries (review-git §2.5.7, RG-S5-18). */
+export function prBody(
+  card: CardRecord,
+  ev: Evidence | undefined,
+  abandoned: readonly { attempt: number; stopReason: string }[] = [],
+): string {
+  return `${evidenceSummary(card, ev ?? {}, abandoned)}\n\n_Implemented by the Sekhemet Worker. Card \`${card.id}\`._`;
 }
 
 /**

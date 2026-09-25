@@ -1,10 +1,10 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { TurnHistoryItem } from "@sekhemet/context";
 import { PrefixStabilityGuard } from "@sekhemet/context";
-import type { GateResult, GateRung } from "@sekhemet/gates";
+import type { GateFailure, GateResult, GateRung } from "@sekhemet/gates";
 import {
   DEFAULT_GATES,
   type EvidenceBundle,
@@ -41,7 +41,7 @@ import {
   mergeNetworkConfigs,
   tagUntrusted,
 } from "@sekhemet/sandbox";
-import type { GitSyncAdapter } from "@sekhemet/sync";
+import type { GitSyncAdapter, RebaseResult } from "@sekhemet/sync";
 import { CardExecutionSessionImpl } from "./session.js";
 import type {
   ExecutionStopReason,
@@ -122,6 +122,10 @@ export interface FailToPassReport {
 
 export interface CardRunOptions extends Omit<SessionOptions, "cardId"> {
   card: CardRecord;
+  /** Hooks files that failed to load, each with its error, for the evidence (EXT-10). */
+  hookErrors?: string[] | undefined;
+  /** The card's configuration layer as `section.key = value` lines, for the evidence (SUR-40). */
+  configOverrides?: string[] | undefined;
   repoRoot: string;
   syncAdapter: GitSyncAdapter;
   lifecycle?: CardLifecycle | undefined;
@@ -231,7 +235,12 @@ export interface CardRunResult {
   failToPass?: FailToPassReport;
   /** The checkpoint this run resumed from (H17). */
   resumedFrom?: { step: number; gitRef: string };
+  /** Tokens output condensing removed from what the Worker saw (runtime RUN-47). */
+  condensedTokensSaved?: number;
 }
+
+/** A rebase conflict as the git adapter reports it (Y6, RG-N1). */
+type RebaseConflict = Extract<RebaseResult, { ok: false }>["failure"];
 
 /** Checkpoint statuses by why the checkpoint was taken. */
 const AGENT_ROLES: readonly AgentRole[] = [
@@ -343,6 +352,14 @@ export class CardRunner {
   private transcriptPath: string | undefined;
   private egress: EgressProxy | undefined;
   private rebaseFailure: string | undefined;
+  /** WL-N10-1: messages that arrived before the session existed. */
+  private pendingMessages: { text: string; from?: string }[] = [];
+  /** WL-N10-2: a pause that arrived before the session existed. */
+  private pendingPause: string | undefined;
+  /** The step this run resumed from (0 for a fresh one), for `nextStep`. */
+  private startStep = 0;
+  /** RG-N1-2, RG-N1-3: a conflict that parks the card, and why. */
+  private rebaseConflict: { conflict: RebaseConflict; route: "parked" | "unresolved" } | undefined;
   private crossValidation: string | undefined;
   private samplesTried = 1;
 
@@ -411,31 +428,116 @@ export class CardRunner {
   /** One per runner: the system prompt must not drift within the card (C4). */
   private prefixGuard = new PrefixStabilityGuard();
 
-  /** Y6 through the git adapter, when it supports it. */
-  private async rebaseOntoIntegration(): Promise<
-    | { ok: true; rebased: boolean }
-    | { ok: false; failure: { message: string; files: string[] } }
-    | undefined
-  > {
+  /** Y6 through the git adapter, when it supports it; the card's scope decides a conflict's route (RG-N1). */
+  private async rebaseOntoIntegration(): Promise<RebaseResult | undefined> {
     const adapter = this.options.syncAdapter as GitSyncAdapter & {
       rebaseOntoIntegration?: (
         cardId: string,
         target?: string,
-      ) => Promise<
-        | { ok: true; rebased: boolean }
-        | { ok: false; failure: { message: string; files: string[] } }
-      >;
+        scopeFiles?: string[],
+      ) => Promise<RebaseResult>;
     };
     if (typeof adapter.rebaseOntoIntegration !== "function") return undefined;
     try {
       return await adapter.rebaseOntoIntegration(
         this.options.card.id,
         this.options.baseBranch ?? "main",
+        this.options.scopeFiles ?? this.options.card.scopeFiles ?? [],
       );
     } catch {
       return undefined;
     }
   }
+
+  /** RG-N1-1: leave an in-scope conflict in the worktree for the Worker, when the adapter can. */
+  private stageRebaseConflict(): { preservedRef: string; files: string[] } | undefined {
+    const adapter = this.options.syncAdapter as GitSyncAdapter & {
+      stageRebaseConflict?: (
+        cardId: string,
+        target?: string,
+      ) => { preservedRef: string; files: string[] };
+    };
+    if (typeof adapter.stageRebaseConflict !== "function") return undefined;
+    try {
+      return adapter.stageRebaseConflict(this.options.card.id, this.options.baseBranch ?? "main");
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** The files among `files` that still hold conflict markers. */
+  private conflictMarked(worktreePath: string, files: string[]): string[] {
+    return files.filter((f) => {
+      const p = join(worktreePath, f);
+      if (!existsSync(p)) return false;
+      try {
+        return /^(<{7}|>{7})( |$)/m.test(readFileSync(p, "utf8"));
+      } catch {
+        return false;
+      }
+    });
+  }
+
+  /** The conflict on the ledger, with its files and route (RG-N1). */
+  private async recordRebaseConflict(
+    conflict: RebaseConflict,
+    staged: { preservedRef: string } | undefined,
+  ): Promise<void> {
+    const { card, store } = this.options;
+    this.emit({ type: "status", cardId: card.id, message: `rebase conflict: ${conflict.message}` });
+    await store
+      ?.recordEvent({
+        type: "card/rebase_conflict",
+        cardId: card.id,
+        actor: "executor",
+        payload: {
+          id: card.id,
+          onto: conflict.onto,
+          files: conflict.files,
+          outOfScope: conflict.outOfScope,
+          otherCards: conflict.otherCards ?? [],
+          returnedToWorker: staged !== undefined,
+          ...(staged ? { preservedRef: staged.preservedRef } : {}),
+        },
+      })
+      .catch(() => undefined);
+  }
+
+  /**
+   * RG-N1-3: the Worker's budget ended with the conflict unresolved — one
+   * decision request naming both cards (never a side picked by the harness).
+   */
+  private async requestRebaseDecision(conflict: RebaseConflict): Promise<string | undefined> {
+    const { card, store } = this.options;
+    const runs = store?.runs;
+    if (!runs) return undefined;
+    const others = conflict.otherCards?.length ? conflict.otherCards : [];
+    const against = others.length
+      ? others.join(", ")
+      : `the changes on ${conflict.onto} since this card started`;
+    try {
+      const open = runs
+        .listDecisions("pending")
+        .find((d) => d.cardId === card.id && d.kind === "rebase_conflict");
+      if (open) return open.id;
+      const d = await runs.requestDecision({
+        cardId: card.id,
+        kind: "rebase_conflict",
+        question: `${card.id} and ${against} conflict in ${conflict.files.join(", ")}, and the Worker could not resolve it within its budget. Which change should give way?`,
+        context: `${conflict.message}\n\n${conflict.excerpt}`.slice(0, 4000),
+        options: [
+          `Re-plan ${card.id} on top of ${conflict.onto}`,
+          `Resolve the conflict by hand in ${card.id}'s worktree`,
+          `Reject ${card.id}`,
+        ],
+        recommendationIndex: 0,
+      });
+      return d.id;
+    } catch {
+      return undefined;
+    }
+  }
+
   private egressPort: number | undefined;
 
   constructor(private options: CardRunOptions) {
@@ -448,6 +550,26 @@ export class CardRunner {
 
   public get gatesConfigSha256(): string {
     return this.config.sha256;
+  }
+
+  /**
+   * A person's message for the Worker's next step (WL-N10-1). Before the
+   * session exists it waits and reaches the first step.
+   */
+  public deliverMessage(text: string, from?: string): void {
+    if (this.session) this.session.deliverMessage(text, from);
+    else this.pendingMessages.push({ text, ...(from ? { from } : {}) });
+  }
+
+  /** The step the next prompt belongs to: where a delivered message lands (WL-N10-1). */
+  public nextStep(): number {
+    return (this.session?.getStepsUsed() ?? this.startStep) + 1;
+  }
+
+  /** WL-N10-2: stop at the next step boundary with the resumable `paused`. */
+  public pause(by: string): void {
+    this.pendingPause = by;
+    this.session?.pause(by);
   }
 
   /** Stop the card before its next turn with `human_abort` (L25). */
@@ -869,6 +991,7 @@ export class CardRunner {
     let resumedFrom: { step: number; gitRef: string } | undefined;
     if (resumeFrom && this.restore(worktreePath, resumeFrom.gitRef)) {
       resumedFrom = { step: resumeFrom.step, gitRef: resumeFrom.gitRef };
+      this.startStep = resumeFrom.step;
       this.emit({
         type: "status",
         cardId: card.id,
@@ -977,107 +1100,115 @@ export class CardRunner {
       sha?: string;
       /** Rule 31a: which budget ran out, or which hook vetoed. */
       stopDetail?: Record<string, unknown>;
+      /** When the sample started: its time budget runs from here (rule 21). */
+      startedAt: number;
     };
     const tried: Sample[] = [];
     const runSample = async (
       sampleIndex: number,
       sampleTemperature: number | undefined,
+      /** RG-N1-1: continue this session, within its remaining budgets. */
+      continued?: { session: CardExecutionSessionImpl; tokens: number; startedAt: number },
     ): Promise<Sample> => {
-      const session = new CardExecutionSessionImpl({
-        // Verify against every blocking gate the project declares (lint included,
-        // as the spec requires), unless the caller chose specific rungs.
-        // Under --restricted only the static layer runs: executing the repo's
-        // tests would execute its code (S12).
-        gateRungs: this.verifiedRungs(),
-        ...(this.config.project.autofix ? { autofixCommand: this.config.project.autofix } : {}),
-        ...(this.config.project.styleFix && this.config.project.styleFixRules
-          ? {
-              styleFixCommands: this.config.project.styleFixRules.map((rule) => [
-                ...(this.config.project.styleFix as string[]),
-                `--only=${rule}`,
-              ]),
-            }
-          : {}),
-        // The project's declared protection and size limits (defect 5, G10).
-        protectedGlobs: this.config.project.protected,
-        bounds: {
-          maxFiles: this.config.project.maxFiles,
-          maxLines: this.config.project.maxDiffLines,
-        },
-        // The built-in security, hygiene and robustness layers (G3).
-        builtinGates: this.config.project,
-        // GT-M6-5: the gates `note` may name as wrong, fixed for the attempt.
-        suspectableGates: this.suspectableGates(),
-        stateDir: join(this.options.repoRoot, ".sekhemet"),
-        ...(this.egressPort ? { allowedDomains: allow, egressProxyPort: this.egressPort } : {}),
-        ...(store
-          ? {
-              recordQuestion: async (q: string) =>
-                (
+      const session =
+        continued?.session ??
+        new CardExecutionSessionImpl({
+          // Verify against every blocking gate the project declares (lint included,
+          // as the spec requires), unless the caller chose specific rungs.
+          // Under --restricted only the static layer runs: executing the repo's
+          // tests would execute its code (S12).
+          gateRungs: this.verifiedRungs(),
+          ...(this.config.project.autofix ? { autofixCommand: this.config.project.autofix } : {}),
+          ...(this.config.project.styleFix && this.config.project.styleFixRules
+            ? {
+                styleFixCommands: this.config.project.styleFixRules.map((rule) => [
+                  ...(this.config.project.styleFix as string[]),
+                  `--only=${rule}`,
+                ]),
+              }
+            : {}),
+          // The project's declared protection and size limits (defect 5, G10).
+          protectedGlobs: this.config.project.protected,
+          bounds: {
+            maxFiles: this.config.project.maxFiles,
+            maxLines: this.config.project.maxDiffLines,
+          },
+          // The built-in security, hygiene and robustness layers (G3).
+          builtinGates: this.config.project,
+          // GT-M6-5: the gates `note` may name as wrong, fixed for the attempt.
+          suspectableGates: this.suspectableGates(),
+          stateDir: join(this.options.repoRoot, ".sekhemet"),
+          ...(this.egressPort ? { allowedDomains: allow, egressProxyPort: this.egressPort } : {}),
+          ...(store
+            ? {
+                recordQuestion: async (q: string) =>
+                  (
+                    await store.recordDossierEntry({
+                      cardId: card.id,
+                      kind: "question",
+                      text: q,
+                      attempt,
+                    })
+                  ).entryId,
+                recordAnswer: async (a: string, questionEntryId: string | undefined) => {
                   await store.recordDossierEntry({
                     cardId: card.id,
-                    kind: "question",
-                    text: q,
+                    kind: "answer",
+                    text: a,
                     attempt,
-                  })
-                ).entryId,
-              recordAnswer: async (a: string, questionEntryId: string | undefined) => {
-                await store.recordDossierEntry({
-                  cardId: card.id,
-                  kind: "answer",
-                  text: a,
-                  attempt,
-                  ...(questionEntryId ? { inReplyTo: questionEntryId } : {}),
-                });
-              },
-            }
-          : {}),
-        ...(dossierLines.length > 0 ? { dossierLines } : {}),
-        // L11: a note reaches the card's thread (its dossier, on the ledger)
-        // the moment the Worker writes it, not at the end of the attempt.
-        ...(store
-          ? {
-              onNote: async (text: string) => {
-                if (text.startsWith("Asked: ")) return; // recorded as a question already
-                await store.recordDossierEntry({ cardId: card.id, kind: "note", text, attempt });
-                this.emit({
-                  type: "status",
-                  cardId: card.id,
-                  message: `note: ${text.slice(0, 160)}`,
-                });
-              },
-            }
-          : {}),
-        prefixGuard: this.prefixGuard,
-        // K11: every prompt is stored by hash before it is sent.
-        onPrompt: (record: PromptRecord) => this.logPrompt(record),
-        ...this.options,
-        // G25: each further sample draws at its own temperature.
-        ...(sampleTemperature !== undefined ? { temperature: sampleTemperature } : {}),
-        ...(resumedFrom && sampleIndex === 1
-          ? {
-              startStep: resumedFrom.step,
-              priorHistory: this.replayHistory(resumeFrom?.attemptId, resumedFrom.step),
-              priorLessons: [
-                ...(this.options.priorLessons ?? []),
-                this.options.forkedFrom
-                  ? `forked from attempt ${this.options.forkedFrom.attemptId} at step ${resumedFrom.step}`
-                  : this.options.startFrom
-                    ? `rewound to the checkpoint at step ${resumedFrom.step}`
-                    : `resumed after ${card.stopReason ?? "an interrupted run"} at step ${resumedFrom.step}`,
-              ],
-            }
-          : {}),
-        cardId: card.id,
-        card,
-        worktreePath,
-        syncAdapter,
-      });
+                    ...(questionEntryId ? { inReplyTo: questionEntryId } : {}),
+                  });
+                },
+              }
+            : {}),
+          ...(dossierLines.length > 0 ? { dossierLines } : {}),
+          // L11: a note reaches the card's thread (its dossier, on the ledger)
+          // the moment the Worker writes it, not at the end of the attempt.
+          ...(store
+            ? {
+                onNote: async (text: string) => {
+                  if (text.startsWith("Asked: ")) return; // recorded as a question already
+                  await store.recordDossierEntry({ cardId: card.id, kind: "note", text, attempt });
+                  this.emit({
+                    type: "status",
+                    cardId: card.id,
+                    message: `note: ${text.slice(0, 160)}`,
+                  });
+                },
+              }
+            : {}),
+          prefixGuard: this.prefixGuard,
+          // K11: every prompt is stored by hash before it is sent.
+          onPrompt: (record: PromptRecord) => this.logPrompt(record),
+          ...this.options,
+          // G25: each further sample draws at its own temperature.
+          ...(sampleTemperature !== undefined ? { temperature: sampleTemperature } : {}),
+          ...(resumedFrom && sampleIndex === 1
+            ? {
+                startStep: resumedFrom.step,
+                priorHistory: this.replayHistory(resumeFrom?.attemptId, resumedFrom.step),
+                priorLessons: [
+                  ...(this.options.priorLessons ?? []),
+                  this.options.forkedFrom
+                    ? `forked from attempt ${this.options.forkedFrom.attemptId} at step ${resumedFrom.step}`
+                    : this.options.startFrom
+                      ? `rewound to the checkpoint at step ${resumedFrom.step}`
+                      : `resumed after ${card.stopReason ?? "an interrupted run"} at step ${resumedFrom.step}`,
+                ],
+              }
+            : {}),
+          cardId: card.id,
+          card,
+          worktreePath,
+          syncAdapter,
+        });
       this.session = session;
       if (this.pendingAbort !== undefined) await session.abort(this.pendingAbort);
+      if (this.pendingPause !== undefined) session.pause(this.pendingPause);
+      for (const m of this.pendingMessages.splice(0)) session.deliverMessage(m.text, m.from);
 
       // The attempt as a row (K16): steps, gate results and evidence hang off it.
-      if (store?.runs && sampleIndex === 1) {
+      if (store?.runs && sampleIndex === 1 && !continued) {
         try {
           this.attemptId = (
             await store.runs.startAttempt({
@@ -1103,14 +1234,14 @@ export class CardRunner {
       }
 
       const turns: TurnResult[] = [];
-      let tokens = 0;
+      let tokens = continued?.tokens ?? 0;
       let stopReason: ExecutionStopReason = "budget_exhausted";
       let lastGateResult: GateResult | undefined;
       const tokenBudget = this.options.tokenBudget ?? card.tokenBudget;
       // WL-T3-11: steps × 70 s when the card sets none; per sample (rule 21).
       const secondsBudget =
         this.options.secondsBudget ?? card.secondsBudget ?? defaultSecondsBudget(card.stepBudget);
-      const sampleStarted = this.now();
+      const sampleStarted = continued?.startedAt ?? this.now();
       let stopDetail: Record<string, unknown> | undefined;
       const every = this.options.checkpointEvery ?? 5;
       let lastCheckpointStep = session.getStepsUsed();
@@ -1320,6 +1451,7 @@ export class CardRunner {
         turns,
         stopReason,
         lastGateResult,
+        startedAt: sampleStarted,
         ...(stopDetail ? { stopDetail } : {}),
       };
     };
@@ -1366,14 +1498,82 @@ export class CardRunner {
     this.samplesTried = tried.length;
 
     // Y6: a passing card is rebased onto the integration branch before it
-    // enters Verify; a conflict stops it, and the gates run again on the
-    // rebased tree.
+    // enters Verify, and the gates run again on the rebased tree. A conflict
+    // inside the card's scope goes back to the Worker as typed failures,
+    // within its remaining budget (RG-N1-1); outside it, the card parks
+    // (RG-N1-2); unresolved at the end of the budget, it is one decision
+    // request naming both cards (RG-N1-3).
     if (stopReason === "gate_passed" && !this.options.useExistingWorktree) {
-      const rebase = await this.rebaseOntoIntegration();
-      if (rebase && !rebase.ok) {
+      let rebase = await this.rebaseOntoIntegration();
+      for (let round = 0; rebase && !rebase.ok && round < 3; round++) {
+        const conflict = rebase.failure;
+        this.rebaseFailure = conflict.message;
+        this.rebaseConflict = { conflict, route: "parked" };
         stopReason = "rebase_conflict";
-        this.rebaseFailure = rebase.failure.message;
-      } else if (rebase?.ok && rebase.rebased) {
+        const inScope = conflict.outOfScope.length === 0;
+        const staged =
+          inScope && session.getStepsUsed() < card.stepBudget
+            ? this.stageRebaseConflict()
+            : undefined;
+        await this.recordRebaseConflict(conflict, staged);
+        if (!staged) {
+          if (inScope) this.rebaseConflict = { conflict, route: "unresolved" };
+          break;
+        }
+        const typed: GateFailure[] = conflict.failures.map((f) => ({
+          ...f,
+          expected: `${conflict.onto}'s change and this card's change combined, with no conflict markers`,
+          actual: `conflict markers in ${f.location.file}`,
+        }));
+        let failures = typed;
+        let resolved = false;
+        let otherStop = false;
+        while (session.getStepsUsed() < card.stepBudget) {
+          session.returnToWorker(
+            failures,
+            `Rebasing onto ${conflict.onto} conflicts in ${failures.map((f) => f.location?.file).join(", ")}. The files now hold ${conflict.onto}'s version with your change applied and conflict markers where the two clash: resolve each marked hunk, keeping what ${conflict.onto} added, then finish.`,
+          );
+          const tokensSoFar = turns.reduce(
+            (n, t) => n + (t.usage?.promptTokens ?? 0) + (t.usage?.completionTokens ?? 0),
+            0,
+          );
+          const cont = await runSample(1, undefined, {
+            session,
+            tokens: tokensSoFar,
+            startedAt: picked.startedAt,
+          });
+          turns.push(...cont.turns);
+          if (cont.lastGateResult) lastGateResult = cont.lastGateResult;
+          const marked = this.conflictMarked(worktreePath, staged.files);
+          if (marked.length === 0) {
+            resolved = true;
+            stopReason = cont.stopReason;
+            break;
+          }
+          if (
+            cont.stopReason !== "gate_passed" &&
+            STOP_REASONS[cont.stopReason].class !== "budget_exhausted"
+          ) {
+            // Stopped for its own reason (a person, the host): that stop stands.
+            stopReason = cont.stopReason;
+            otherStop = true;
+            break;
+          }
+          if (cont.stopReason !== "gate_passed") break;
+          failures = typed.filter((f) => marked.includes(f.location?.file ?? ""));
+        }
+        if (!resolved) {
+          if (!otherStop) this.rebaseConflict = { conflict, route: "unresolved" };
+          else this.rebaseConflict = undefined;
+          break;
+        }
+        this.rebaseConflict = undefined;
+        this.rebaseFailure = undefined;
+        if (stopReason !== "gate_passed") break;
+        // The resolution sits on the integration branch; it may have moved again.
+        rebase = await this.rebaseOntoIntegration();
+      }
+      if (stopReason === "gate_passed" && rebase?.ok && rebase.rebased) {
         this.emit({
           type: "status",
           cardId: card.id,
@@ -1752,6 +1952,8 @@ export class CardRunner {
       ...stepUsage(t.usage),
     }));
 
+    // RG-S5-6: the state the gates ran on, which Accept compares with the branch.
+    const repoState = await syncAdapter.getRepoStateHash(card.id).catch(() => undefined);
     const evidence = compileEvidence({
       cardId: card.id,
       attempt,
@@ -1774,6 +1976,20 @@ export class CardRunner {
       ...(steps.length > 0 ? { steps } : {}),
       ...(params.sampleSteps ? { sampleSteps: params.sampleSteps } : {}),
       ...(params.stopDetail ? { stopDetail: params.stopDetail } : {}),
+      ...(repoState ? { repoState } : {}),
+      ...(this.options.configOverrides?.length
+        ? { configOverrides: this.options.configOverrides }
+        : {}),
+      // EXT-10, EXT-22a, EXT-25: extension facts, left out when there are none.
+      extensions: {
+        ...(this.options.hookErrors?.length ? { hookErrors: this.options.hookErrors } : {}),
+        ...(session && session.getSkillReport().omitted.length > 0
+          ? { skillsOmitted: session.getSkillReport().omitted }
+          : {}),
+        ...(session && session.getSkillReport().truncated.length > 0
+          ? { skillsTruncated: session.getSkillReport().truncated }
+          : {}),
+      },
     });
     const written = this.writeEvidence(evidence);
 
@@ -1844,6 +2060,23 @@ export class CardRunner {
                 params.stopDetail as BudgetDetail | undefined,
               )
             : this.parkDetail(stopReason, params.stopDetail),
+        );
+        const moved = await this.move("parked");
+        if (moved.ok) finalStatus = "parked";
+        else held = { reason: moved.reason, wanted: "parked" };
+      } else if (stopReason === "paused") {
+        // WL-N10-2: it keeps In Progress, its branch and its checkpoint until
+        // a person hands it back or takes it over.
+      } else if (stopReason === "rebase_conflict" && this.rebaseConflict && session) {
+        // RG-N1-2 (outside the scope) and RG-N1-3 (unresolved): parked for a person.
+        const { conflict, route } = this.rebaseConflict;
+        const decision =
+          route === "unresolved" ? await this.requestRebaseDecision(conflict) : undefined;
+        parked = session.getParkDiagnosis(
+          stopReason,
+          route === "parked"
+            ? `Rebasing onto ${conflict.onto} conflicts in ${conflict.outOfScope.join(", ")}, outside this card's scope (${conflict.files.join(", ")} in all); a person decides how the two changes combine.`
+            : `The Worker's budget ended with the conflict in ${conflict.files.join(", ")} unresolved${decision ? `; decision ${decision} asks which change gives way` : ""}.`,
         );
         const moved = await this.move("parked");
         if (moved.ok) finalStatus = "parked";
@@ -1965,6 +2198,7 @@ export class CardRunner {
       attempt,
       tokensUsed,
       secondsUsed,
+      ...(session ? { condensedTokensSaved: session.getCondensedTokensSaved() } : {}),
       ...(held ? { held } : {}),
       ...(parked ? { parked } : {}),
       ...(replan ? { replan } : {}),

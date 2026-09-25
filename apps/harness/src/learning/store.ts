@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { EventLog, LifecycleHookEngine } from "@sekhemet/kernel";
+import { userPaths } from "../user_dir.js";
 
 /**
  * What Sekhemet has learned: playbook rules for the Worker and Seshat, and a
@@ -102,8 +102,7 @@ const EVENTS = {
 } as const;
 
 function globalPath(): string {
-  const base = process.env.SEKHEMET_CONFIG_DIR ?? join(homedir(), ".config", "sekhemet");
-  return join(base, "global_playbook.json");
+  return userPaths().learning;
 }
 
 function readGlobal(): LearnedRule[] {

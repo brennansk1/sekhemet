@@ -489,6 +489,93 @@ describe("admission refuses what cannot show the A/B was set up before it ran (r
       ),
     ).toThrow(/ran with a different profile.*alpha\/card_3/);
   });
+
+  describe("admission compares the cards' recorded profiles across arms (SUITE_RUNS, ref-r1)", () => {
+    /** A card's recorded profile: the run's settings plus its repository's configuration layer. */
+    const card = (argv: string[] = [], env: Record<string, string> = {}, stepCap = 40) => {
+      const p = resolveRunProfile({
+        config: { policies: { stepCap } },
+        env,
+        argv: ["--worker", "cyber-tiel", "--auto-accept", ...argv],
+      });
+      const { sources: _s, ...rest } = p;
+      return { ...rest, hash: runProfileHash(p) };
+    };
+    const armed = (r: SuiteRunResult, profiles: Record<string, ReturnType<typeof card>>) => ({
+      ...r,
+      cardProfiles: profiles,
+    });
+    const surgical = () => {
+      const p = resolveRunProfile({
+        settingsFile: {
+          path: "/arms/thinking-surgical.json",
+          text: '{"armUnderTest":"thinking-surgical","switches":{"thinking":"surgical"}}',
+        },
+        env: {},
+        argv: ["--worker", "cyber-tiel", "--auto-accept"],
+      });
+      return { ...p, hash: runProfileHash(p) };
+    };
+    const armCard = () => card(["--arm", "thinking-surgical"], { SEKHEMET_THINKING: "surgical" });
+
+    it("admits arms whose cards differ only in the arm's own switch", () => {
+      const base = armed(
+        run(30, (i) => i < 15),
+        { "alpha/card_0": card() },
+      );
+      const cand = armed(
+        { ...run(30, (i) => i < 15), runProfile: surgical() },
+        { "alpha/card_0": armCard() },
+      );
+      expect(
+        evaluateHarnessChange(
+          args({
+            baseline: interleaved("baseline", [base, { ...base }]),
+            candidate: interleaved("candidate", [cand, { ...cand }]),
+          }),
+        ).verdict,
+      ).toBe("not established — simpler");
+    });
+
+    it("refuses a card whose profile differs across arms in a setting the arms do not", () => {
+      const base = armed(
+        run(30, (i) => i < 15),
+        { "alpha/card_0": card() },
+      );
+      const cand = armed(
+        { ...run(30, (i) => i < 15), runProfile: surgical() },
+        {
+          "alpha/card_0": card(
+            ["--arm", "thinking-surgical"],
+            { SEKHEMET_THINKING: "surgical" },
+            30,
+          ),
+        },
+      );
+      expect(() =>
+        evaluateHarnessChange(
+          args({
+            baseline: interleaved("baseline", [base, { ...base }]),
+            candidate: interleaved("candidate", [cand, { ...cand }]),
+          }),
+        ),
+      ).toThrow(/alpha\/card_0 ran with a different profile in the two arms.*policies\.stepCap/);
+    });
+
+    it("refuses a card that ran with different profiles within one arm", () => {
+      const a = armed(
+        run(30, (i) => i < 15),
+        { "alpha/card_0": card() },
+      );
+      const b = armed(
+        run(30, (i) => i < 15),
+        { "alpha/card_0": card([], {}, 30) },
+      );
+      expect(() =>
+        evaluateHarnessChange(args({ baseline: interleaved("baseline", [a, b]) })),
+      ).toThrow(/alpha\/card_0 ran with more than one profile within the baseline arm/);
+    });
+  });
 });
 
 describe("the arms are interleaved, and a sequential test may stop early at a stated error rate (MS-T7-4)", () => {

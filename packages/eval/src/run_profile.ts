@@ -49,7 +49,8 @@ export interface RunProfile {
   };
   /** The arm an A/B varies, when this run is one arm of one. */
   armUnderTest?: string;
-  settingsFile?: { path: string; sha256: string };
+  /** The `--settings` file applied as one layer: its path, SHA-256 and contents (SUR-45). */
+  settingsFile?: { path: string; sha256: string; contents?: string };
   /** Where each resolved value came from, for the record; not part of the hash. */
   sources: Record<string, ProfileSource>;
 }
@@ -303,6 +304,7 @@ export function resolveRunProfile(input: {
     p.settingsFile = {
       path: input.settingsFile.path,
       sha256: createHash("sha256").update(input.settingsFile.text).digest("hex"),
+      contents: input.settingsFile.text,
     };
   }
   applyLayer(p, envLayer(input.env), "env", "environment");
@@ -330,6 +332,72 @@ export function runProfileHash(
     settingsFile: settingsFile?.sha256 ?? null,
   });
   return createHash("sha256").update(canonical).digest("hex");
+}
+
+/** A profile's settings, without where each came from. */
+type ProfileSettings = Pick<RunProfile, "schema" | "roles" | "policies" | "switches"> & {
+  armUnderTest?: string;
+};
+
+/**
+ * The settings two profiles differ in, by path (`policies.stepCap`,
+ * `switches.thinking`, `armUnderTest`), sorted. Where a value came from and
+ * the settings file that named it are not settings.
+ */
+export function profileDifferences(a: ProfileSettings, b: ProfileSettings): string[] {
+  const out = new Set<string>();
+  if (a.schema !== b.schema) out.add("schema");
+  if ((a.armUnderTest ?? null) !== (b.armUnderTest ?? null)) out.add("armUnderTest");
+  for (const group of ["roles", "policies", "switches"] as const) {
+    const x = (a[group] ?? {}) as Record<string, unknown>;
+    const y = (b[group] ?? {}) as Record<string, unknown>;
+    for (const k of new Set([...Object.keys(x), ...Object.keys(y)])) {
+      if ((x[k] ?? null) !== (y[k] ?? null)) out.add(`${group}.${k}`);
+    }
+  }
+  return [...out].sort();
+}
+
+/** A card's recorded profile as a suite result keeps it: its settings and their hash. */
+export type CardProfile = ProfileSettings & { hash: string };
+
+/**
+ * Each card's recorded profile against the one its repository's queue was
+ * expected to resolve: the run's settings plus that repository's
+ * configuration layer (SUITE_RUNS, ref-r1). A card with no evidence is
+ * skipped; one that differs is named with the settings it differs in.
+ */
+export function scoreCardProfiles(
+  cards: readonly {
+    card: string;
+    expected: ProfileSettings;
+    recorded?: ProfileSettings | undefined;
+  }[],
+): {
+  profileMismatch: string[];
+  differences: Record<string, string[]>;
+  cardProfiles: Record<string, CardProfile>;
+} {
+  const profileMismatch: string[] = [];
+  const differences: Record<string, string[]> = {};
+  const cardProfiles: Record<string, CardProfile> = {};
+  for (const { card, expected, recorded } of cards) {
+    if (!recorded) continue;
+    const settings: ProfileSettings = {
+      schema: recorded.schema,
+      roles: recorded.roles,
+      policies: recorded.policies,
+      switches: recorded.switches,
+      ...(recorded.armUnderTest !== undefined ? { armUnderTest: recorded.armUnderTest } : {}),
+    };
+    cardProfiles[card] = { ...settings, hash: runProfileHash(settings) };
+    const diff = profileDifferences(expected, recorded);
+    if (diff.length) {
+      profileMismatch.push(card);
+      differences[card] = diff;
+    }
+  }
+  return { profileMismatch, differences, cardProfiles };
 }
 
 /**

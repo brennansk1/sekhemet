@@ -1,6 +1,6 @@
-import { existsSync, lstatSync, realpathSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { existsSync, lstatSync, readdirSync, realpathSync } from "node:fs";
+import { homedir, platform } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import type { SandboxOptions } from "./types.js";
 
 /**
@@ -99,6 +99,75 @@ function quote(p: string): string {
   return p.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
+/** The user's secret-bearing paths (security.md item 10, SEC-23). */
+export function secretReadDenies(home: string): string[] {
+  // `.config/sekhemet` holds the integration tokens' file (item 35, SEC-27).
+  return [
+    ".ssh",
+    ".aws",
+    ".npmrc",
+    ".netrc",
+    join(".config", "gh"),
+    ".sekhemet",
+    join(".config", "sekhemet"),
+  ]
+    .map((p) => join(home, p))
+    .concat(configDirDeny());
+}
+
+/**
+ * The user directory moved by `SEKHEMET_CONFIG_DIR` (surface NEW-surface-1):
+ * it holds what `~/.sekhemet` would, so it is denied the same way (SEC-23).
+ */
+function configDirDeny(): string[] {
+  const dir = process.env.SEKHEMET_CONFIG_DIR?.trim();
+  // Resolved as the harness resolves it (sekhemetConfigDir): a relative one is still denied.
+  return dir ? [resolve(dir)] : [];
+}
+
+/**
+ * The project ledgers above each root: `<ancestor>/.sekhemet/*.db` (and their
+ * WAL/SHM files). Listed as literal paths so Linux needs no ripgrep scan.
+ */
+export function ledgerReadDenies(roots: string[]): string[] {
+  const out = new Set<string>();
+  for (const root of roots) {
+    let dir = realPath(root);
+    for (;;) {
+      const state = join(dir, ".sekhemet");
+      if (existsSync(state)) {
+        try {
+          for (const f of readdirSync(state)) {
+            if (/\.db(-wal|-shm|-journal)?$/i.test(f)) out.add(join(state, f));
+          }
+        } catch {
+          // Unreadable: nothing to list, nothing to leak through us.
+        }
+        // New ledgers created after the wrap are still covered on macOS.
+        if (platform() === "darwin") out.add(join(state, "*.db*"));
+      }
+      const up = dirname(dir);
+      if (up === dir) break;
+      dir = up;
+    }
+  }
+  return [...out];
+}
+
+/** Every `.sekhemet` directory at or above `root` (real paths), for the ledger denies. */
+function ledgerDirsAbove(root: string): string[] {
+  const out: string[] = [];
+  let dir = realPath(root);
+  for (;;) {
+    const state = join(dir, ".sekhemet");
+    if (existsSync(state)) out.push(state);
+    const up = dirname(dir);
+    if (up === dir) break;
+    dir = up;
+  }
+  return out;
+}
+
 /**
  * Generate a macOS Seatbelt profile confining a subprocess to `allowedPaths`.
  *
@@ -167,6 +236,18 @@ export function generateSeatbeltProfile(options: SandboxOptions): string {
       ].join("\n")
     : "";
 
+  // S3c, security item 10 (SEC-23): the user's secret-bearing paths and the
+  // project ledgers above each root are never readable, whatever else is.
+  const secretRules = [
+    ";; S3c: the user's secrets and the project ledgers (SEC-23).",
+    ...secretReadDenies(homedir())
+      .map(realPath)
+      .map((p) => `  (deny file-read-data (subpath "${quote(p)}"))`),
+    ...[...new Set(roots.flatMap(ledgerDirsAbove))].map(
+      (state) => `  (deny file-read-data (regex #"^${regexQuote(state)}/[^/]*[.][Dd][Bb]"))`,
+    ),
+  ].join("\n");
+
   return `;; Sekhemet Seatbelt Containment Profile
 (version 1)
 (deny default)
@@ -187,6 +268,7 @@ export function generateSeatbeltProfile(options: SandboxOptions): string {
 ;; Reads are broad: compilers and runtimes must load system libraries.
 (allow file-read*)
 ${homeRules}
+${secretRules}
 
 ;; Writes are confined to explicitly granted subpaths.
 ${writeRules}

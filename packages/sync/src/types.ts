@@ -106,6 +106,8 @@ export type RebaseResult =
          * to a Worker that would have to violate its scope to succeed.
          */
         outOfScope: string[];
+        /** The cards whose integration commits touch the conflicting files (RG-N1-3). */
+        otherCards?: string[];
       };
     };
 

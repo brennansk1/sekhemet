@@ -32,6 +32,11 @@ export interface WebConfig {
   contact?: string;
   /** A browser-backed reader (Crawl4AI) for pages; the plain reader is the fallback. */
   crawler?: PageCrawler;
+  /**
+   * The network policy for requests not sent through `fetch` — a `gh` call,
+   * a page the crawler reads: throws the refusal, logs either way (NEW-security-8).
+   */
+  gate?: (url: string, via: string) => Promise<void>;
 }
 
 let crawlerSingleton: Crawl4AiSidecar | undefined;
@@ -41,7 +46,15 @@ export function sharedCrawler(): Crawl4AiSidecar {
   return crawlerSingleton;
 }
 
-export function webConfigFromEnv(opts: { allowOnly?: string[] } = {}): WebConfig {
+export function webConfigFromEnv(
+  opts: {
+    allowOnly?: string[];
+    fetch?: (u: string, i?: RequestInit) => Promise<Response>;
+    gate?: (url: string, via: string) => Promise<void>;
+    /** False: no browser reader, since the policy could not see its own requests. */
+    browser?: boolean;
+  } = {},
+): WebConfig {
   const env = process.env;
   const searx = env.SEKHEMET_SEARXNG_URL;
   let searxHost: string | undefined;
@@ -53,12 +66,17 @@ export function webConfigFromEnv(opts: { allowOnly?: string[] } = {}): WebConfig
   return {
     // The user's own SearXNG may live on the LAN; it is the one private host allowed.
     polite: new PoliteFetcher({
+      // Research through the one network policy, when the caller hands it (SEC-52a).
+      ...(opts.fetch ? { fetch: opts.fetch } : {}),
       ...(opts.allowOnly ? { allowOnly: opts.allowOnly } : {}),
       cache: new ResearchCache(),
       ...(searxHost ? { allowHosts: [searxHost] } : {}),
     }),
     ...(env.SEKHEMET_CONTACT ? { contact: env.SEKHEMET_CONTACT } : {}),
-    ...(crawl4aiInstalled() && env.SEKHEMET_CRAWL4AI !== "off" ? { crawler: sharedCrawler() } : {}),
+    ...(opts.browser !== false && crawl4aiInstalled() && env.SEKHEMET_CRAWL4AI !== "off"
+      ? { crawler: sharedCrawler() }
+      : {}),
+    ...(opts.gate ? { gate: opts.gate } : {}),
     ...(env.SEKHEMET_SEARXNG_URL ? { searxngUrl: env.SEKHEMET_SEARXNG_URL } : {}),
     ...(env.BRAVE_SEARCH_API_KEY ? { braveKey: env.BRAVE_SEARCH_API_KEY } : {}),
     ...(env.TAVILY_API_KEY ? { tavilyKey: env.TAVILY_API_KEY } : {}),
@@ -91,8 +109,18 @@ export function formatWebHits(hits: Hit[]): string {
 }
 
 /** Papers from Hugging Face Papers and arXiv (and Semantic Scholar with a key). */
-export async function searchPapers(query: string, cfg: WebConfig = {}): Promise<Hit[]> {
-  const f = get(cfg);
+export async function searchPapers(query: string, given: WebConfig = {}): Promise<Hit[]> {
+  // DS-S8-5: an outage of every index is "not searched (unreachable)", so it
+  // throws; an index that answers with nothing is "nothing found".
+  let reached = false;
+  const base = get(given);
+  const f = async (u: string, i?: RequestInit) => {
+    const res = await base(u, i);
+    if (res.ok) reached = true;
+    return res;
+  };
+  const { polite: _polite, ...rest } = given;
+  const cfg: WebConfig = { ...rest, fetch: f };
   const hits: Hit[] = [];
   const seen = new Set<string>();
   try {
@@ -193,6 +221,7 @@ export async function searchPapers(query: string, cfg: WebConfig = {}): Promise<
       // Optional source.
     }
   }
+  if (!reached) throw new Error("literature unreachable: no paper index answered");
   return hits.slice(0, 10);
 }
 
@@ -242,6 +271,12 @@ export async function fetchPage(
     if (hit) return fit(hit);
     const refused = cfg.polite ? await cfg.polite.permit(u.toString()) : undefined;
     if (refused) return refused;
+    // NEW-security-8: the page passes the network policy, and is logged, first.
+    try {
+      await cfg.gate?.(u.toString(), "crawl4ai");
+    } catch (err) {
+      return err instanceof Error ? err.message : String(err);
+    }
     const r = await cfg.crawler.crawl(u.toString());
     if (r.ok && r.markdown && r.markdown.length > 200) {
       const text = `${r.title ? `# ${r.title}\n\n` : ""}${r.markdown}`;
@@ -530,6 +565,11 @@ export async function githubSearch(
 ): Promise<Hit[] | string> {
   const run = cfg.gh ?? execGh;
   try {
+    // NEW-security-8: `gh` reaches api.github.com; the policy decides first.
+    await cfg.gate?.(
+      `https://api.github.com/search/${kind === "code" ? "code" : "repositories"}`,
+      "gh",
+    );
     if (kind === "code") {
       const out = await run([
         "search",

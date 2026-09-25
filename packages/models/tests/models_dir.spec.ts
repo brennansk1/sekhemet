@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   MANAGED_MODEL_FILES,
@@ -11,6 +11,7 @@ import {
   probeModelWeights,
   resolveModelPath,
   resolveModelsDir,
+  sekhemetConfigDir,
 } from "../src/index.js";
 
 const dirs: string[] = [];
@@ -29,6 +30,26 @@ describe("the models directory is the one override (design: Getting the weights)
     expect(resolveModelsDir({ modelsDir: "/flag/models", env })).toBe("/flag/models");
     expect(resolveModelsDir({ env })).toBe("/env/models");
     expect(resolveModelsDir({ env: { SEKHEMET_CONFIG_DIR: "/cfg" } })).toBe("/cfg/models");
+  });
+
+  it("resolves a relative SEKHEMET_CONFIG_DIR, and refuses one inside a repository or worktree", () => {
+    const outside = tmp();
+    expect(sekhemetConfigDir({ SEKHEMET_CONFIG_DIR: outside })).toBe(outside);
+    const repo = tmp();
+    mkdirSync(join(repo, ".git"));
+    expect(() => sekhemetConfigDir({ SEKHEMET_CONFIG_DIR: join(repo, "user") })).toThrow(
+      /inside the repository/,
+    );
+    // A linked worktree's `.git` is a file.
+    const worktree = tmp();
+    writeFileSync(join(worktree, ".git"), "gitdir: /elsewhere\n");
+    expect(() => sekhemetConfigDir({ SEKHEMET_CONFIG_DIR: join(worktree, "a", "b") })).toThrow(
+      /inside the repository/,
+    );
+    // Relative: resolved against the working directory — this checkout, a repository.
+    expect(() => sekhemetConfigDir({ SEKHEMET_CONFIG_DIR: "user-dir" })).toThrow(
+      new RegExp(`${resolve("user-dir")}.*inside the repository`),
+    );
   });
 
   it("resolves a catalogue file name inside it and leaves an absolute path alone", () => {

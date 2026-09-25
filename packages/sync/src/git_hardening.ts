@@ -133,7 +133,9 @@ export function hardenedGitEnv(
   env: NodeJS.ProcessEnv = process.env,
   options: { identityDir?: string } = {},
 ): NodeJS.ProcessEnv {
-  const identityDir = options.identityDir ?? join(homedir(), ".sekhemet", "git");
+  const identityDir =
+    options.identityDir ??
+    join(process.env.SEKHEMET_CONFIG_DIR || join(homedir(), ".sekhemet"), "git");
   const out: NodeJS.ProcessEnv = { ...env, ...HARDENED_GIT_PINS };
   const identityFile = join(identityDir, IDENTITY_FILE);
   out.GIT_CONFIG_GLOBAL =

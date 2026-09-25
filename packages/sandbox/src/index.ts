@@ -1,6 +1,7 @@
 export * from "./types.js";
 export * from "./seatbelt.js";
 export * from "./executor.js";
+export * from "./process_registry.js";
 export * from "./confined.js";
 export * from "./trusted.js";
 export * from "./programs.js";

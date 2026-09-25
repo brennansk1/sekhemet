@@ -678,6 +678,8 @@ export const MIGRATIONS: readonly Migration[] = [
   addColumnMigration(14, "gate_results", "external_ref", GATE_EXTERNAL_REF_COLUMN),
   // NEW-kernel-6, K-N6-6: the legacy assignee string, mapped.
   { version: 15, name: "map the legacy assignee to owner and delegate", up: mapLegacyAssignee },
+  // NEW-surface-3 (SUR-40): a card's configuration overrides.
+  cardColumnMigration(16, "config_overrides"),
 ];
 
 /** The schema version this build writes. */

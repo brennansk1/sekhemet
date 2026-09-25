@@ -42,6 +42,16 @@ export interface ReuseDeps {
   libraries: (query: string) => Promise<LibraryHit[]>;
   repos: (query: string) => Promise<RepoHit[]>;
   papers?: (query: string) => Promise<Hit[]>;
+  /** Each query sent, for the ledger's `research/query` (design-stage DS-S8-3). */
+  record?: (q: ResearchQuery) => void | Promise<void>;
+}
+
+/** One query the survey sent: its source, the keywords, the names it found. */
+export interface ResearchQuery {
+  source: string;
+  query: string;
+  results: string[];
+  ok: boolean;
 }
 
 type Fetcher = (url: string) => Promise<unknown>;
@@ -154,22 +164,44 @@ export async function reuseSurvey(
   const keep = options.perNeed ?? 3;
   const findings: ReuseFinding[] = [];
   for (const need of needs) {
-    const q = queryFor(need) || need;
+    // DS-S8-4: only the need's keywords leave the machine; a need with none
+    // left sends no query at all.
+    const q = queryFor(need);
+    if (!q) continue;
     const unsearched: string[] = [];
-    const attempt = async <T>(label: string, run: () => Promise<T[]>): Promise<T[]> => {
+    const attempt = async <T>(
+      label: string,
+      run: () => Promise<T[]>,
+      name: (hit: T) => string,
+    ): Promise<T[]> => {
       try {
-        return await run();
+        const hits = await run();
+        await deps.record?.({ source: label, query: q, results: hits.map(name), ok: true });
+        return hits;
       } catch {
         unsearched.push(label);
+        await deps.record?.({ source: label, query: q, results: [], ok: false });
         return [];
       }
     };
-    const libs = await attempt("registries", () => deps.libraries(q));
-    const repos = await attempt("GitHub", () => deps.repos(q));
+    const libs = await attempt(
+      "registries",
+      () => deps.libraries(q),
+      (l) => l.name,
+    );
+    const repos = await attempt(
+      "GitHub",
+      () => deps.repos(q),
+      (r) => r.fullName,
+    );
     const searchPapers = deps.papers;
     const papers =
       searchPapers && needsLiterature(need)
-        ? await attempt("literature", () => searchPapers(q))
+        ? await attempt(
+            "literature",
+            () => searchPapers(q),
+            (p) => p.title,
+          )
         : [];
 
     // Relevance first: an unrelated result is not a candidate, so it is

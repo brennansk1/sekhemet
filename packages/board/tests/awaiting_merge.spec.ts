@@ -35,6 +35,38 @@ describe("the awaiting-merge hold (K-N3-3, K-N3-4, K-N3-5)", () => {
     await board.acceptWithPullRequest(id, { pr, url: `u/${pr}`, headSha: `sha${pr}` }, person);
   };
 
+  it("RG-S5-2: card/pr_opened and the accepting card/accepted commit together, or neither does", async () => {
+    await store.createCard({ id: "t1", tier: "task", title: "t1" });
+    await store.updateCardStatus("t1", "review", "test setup", "harness", { override: true });
+    const acceptedEvent = (gateStatus: string) => ({
+      type: "card/accepted",
+      actor: "human",
+      principal: person,
+      payload: { id: "t1", pr: "u/21", principal: person, independent: false, gateStatus },
+    });
+    await expect(
+      board.acceptWithPullRequest(
+        "t1",
+        { pr: 21, url: "u/21", headSha: "sha21" },
+        person,
+        "harness",
+        [acceptedEvent("bogus")],
+      ),
+    ).rejects.toThrow();
+    expect(await store.cardEvents("t1", ["card/pr_opened", "card/accepted"])).toEqual([]);
+    expect((await store.getCard("t1"))?.hold).toBeFalsy();
+    await board.acceptWithPullRequest(
+      "t1",
+      { pr: 21, url: "u/21", headSha: "sha21" },
+      person,
+      "harness",
+      [acceptedEvent("pass")],
+    );
+    const events = await store.cardEvents("t1", ["card/pr_opened", "card/accepted"]);
+    expect(events.map((e) => e.type)).toEqual(["card/pr_opened", "card/accepted"]);
+    expect((events[1]?.seq ?? 0) - (events[0]?.seq ?? 0)).toBe(1);
+  });
+
   it("K-N3-3: records card/pr_opened, keeps the card in Review, and leaves it out of Review's WIP", async () => {
     await accepted("a1", 11);
     await accepted("a2", 12);
