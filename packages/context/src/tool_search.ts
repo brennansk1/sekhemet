@@ -1,6 +1,7 @@
 import type { ToolDefinition } from "@sekhemet/models";
 import { queryTerms } from "./pruner.js";
 import type { ToolInterfaceSpec } from "./tool_interface.js";
+import { workerCopy } from "./worker_copy.js";
 
 /**
  * Dynamic tool loading (C19). Instead of every schema in every prompt, the
@@ -110,12 +111,23 @@ function symbolLikeTerms(query: string): string[] {
   );
 }
 
-/** Suite run 4 lost two turns of card_chron_ledger to "No tool matches" for symbols. */
-function symbolsReply(symbols: readonly string[]): string {
-  return [
-    "tool_search finds tools, not code. read_symbol is now loaded; to see these definitions, call:",
-    ...symbols.map((s) => `read_symbol(name: "${s}")`),
-  ].join("\n");
+/**
+ * Suite run 4 lost two turns of card_chron_ledger to "No tool matches" for
+ * symbols. Each call is read_symbol's own signature, with the file that
+ * declares the symbol (WL-M2-7), so it can be made as written.
+ */
+function symbolsReply(
+  symbols: readonly string[],
+  declaringFile: (symbol: string) => string | undefined,
+): string {
+  return workerCopy.toolSearchSymbols(
+    symbols
+      .map((s) => {
+        const path = declaringFile(s);
+        return path ? workerCopy.readSymbolCall(path, s) : workerCopy.symbolNotDeclared(s);
+      })
+      .join("\n"),
+  );
 }
 
 /**
@@ -137,19 +149,31 @@ export class ToolLoader {
     return this.loaded.has(name);
   }
 
-  public handle(query: string): { loaded: string[]; text: string } {
+  /**
+   * `declaringFile` finds the file that declares a code symbol, for the
+   * read_symbol calls a query naming symbols is answered with (WL-M2-7).
+   */
+  public handle(
+    query: string,
+    declaringFile: (symbol: string) => string | undefined = () => undefined,
+  ): { loaded: string[]; text: string } {
     const found = searchTools(query, this.all);
     for (const t of found) this.loaded.add(t.name);
+    const symbols = symbolLikeTerms(query);
+    const reader = symbols.length > 0 ? this.all.find((t) => t.name === "read_symbol") : undefined;
     if (found.length === 0) {
       const files = fileLikeTerms(query);
       if (files.length > 0) return { loaded: [], text: filesReply(files) };
-      const symbols = symbolLikeTerms(query);
-      const reader = this.all.find((t) => t.name === "read_symbol");
-      if (symbols.length > 0 && reader) {
+      if (reader) {
         this.loaded.add(reader.name);
-        return { loaded: [reader.name], text: symbolsReply(symbols) };
+        return { loaded: [reader.name], text: symbolsReply(symbols, declaringFile) };
       }
       return { loaded: [], text: `No tool matches "${query}". The index lists every tool.` };
+    }
+    // A query that names tools and symbols keeps its symbols (WL-M2-7).
+    if (reader && !found.some((t) => t.name === reader.name)) {
+      this.loaded.add(reader.name);
+      found.push(reader);
     }
     const text = found
       .map(
@@ -159,7 +183,10 @@ export class ToolLoader {
             .join(", ")}): ${t.summary}${t.returns ? ` Returns: ${t.returns}` : ""}`,
       )
       .join("\n");
-    return { loaded: found.map((t) => t.name), text };
+    return {
+      loaded: found.map((t) => t.name),
+      text: reader ? `${text}\n${symbolsReply(symbols, declaringFile)}` : text,
+    };
   }
 
   /** Specs whose full contract the prompt should carry now. */

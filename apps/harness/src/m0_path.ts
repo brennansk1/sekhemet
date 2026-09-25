@@ -5,14 +5,26 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
-import type { M0Report, ProductCardRun, ProductCardRunner } from "@sekhemet/eval";
+import {
+  type EvalBenchmarkResult,
+  type M0Report,
+  type ProductCardRun,
+  type ProductCardRunner,
+  formatM0Report,
+  queueInvocation,
+  resolveRunProfile,
+  runM0Protocol,
+  synthesizeTasksFromHistory,
+} from "@sekhemet/eval";
 import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
+import type { LocalInferenceAdapter } from "@sekhemet/models";
 import { writeMeasurementMarker } from "./measure_cmd.js";
 
 /**
@@ -30,6 +42,7 @@ export type M0QueueRun = (
   repo: string,
   argv: string[],
   timeoutMs: number,
+  env?: Record<string, string>,
 ) => Promise<{ timedOut: boolean }>;
 
 const HARNESS_CLI = join(dirname(fileURLToPath(import.meta.url)), "index.js");
@@ -67,11 +80,12 @@ export function runWithTimeout(
   });
 }
 
-const realQueue: M0QueueRun = async (repo, argv, timeoutMs) => {
+const realQueue: M0QueueRun = async (repo, argv, timeoutMs, env) => {
   const r = await runWithTimeout(
     process.execPath,
     [HARNESS_CLI, "queue", "--repo", repo, ...argv],
     timeoutMs,
+    { env: { ...process.env, ...env } },
   );
   return { timedOut: r.timedOut };
 };
@@ -148,10 +162,19 @@ export function productCardRunner(o: {
       db.close();
     }
 
+    // The same invocation the suite runner builds from a RunProfile (MS-M9-1):
+    // the Worker, the budget arm, acceptance in place of the person.
+    const profile = resolveRunProfile({
+      env: process.env,
+      argv: ["--worker", o.worker, "--max-turns", String(stepBudget), "--auto-accept"],
+      envRoles: true,
+    });
+    const invocation = queueInvocation(profile, ws);
     const { timedOut } = await (o.runQueue ?? realQueue)(
       ws,
-      ["--worker", o.worker, "--max-turns", String(stepBudget), "--auto-accept"],
+      invocation.args.slice(3),
       timeoutMs,
+      invocation.env,
     );
     const steps = stepsFromEvidence(ws, cardId);
     const reportFile = join(ws, ".sekhemet", "queue_report.json");
@@ -263,4 +286,151 @@ export async function recordM0Result(
     );
   }
   await o.notify?.(`M0 pivot condition: ${o.worker}`, `${line} ${decision}`);
+}
+
+// ------------------------------------------ MS-M9-6: M0 pending, run overnight
+
+/** A Worker adopted or re-qualified, whose M0 protocol has not run since. */
+export const M0_PENDING = "m0/pending";
+
+export interface PendingM0 {
+  worker: string;
+  combination: string;
+  reason: string;
+  at: string;
+}
+
+/**
+ * Record that a Worker needs the M0 protocol (the lead's ruling on MS-M9-6):
+ * it takes hours, so the overnight run does it rather than blocking the day.
+ */
+export async function recordM0Pending(
+  log: EventLog,
+  p: { worker: string; combination: string; reason: string },
+): Promise<void> {
+  await log.append({ actor: "harness", type: M0_PENDING, payload: p });
+}
+
+/** Pending M0 per Worker: the latest pending event not followed by an M0 result for it. */
+export function pendingFromEvents(
+  events: readonly { type: string; payload: unknown; createdAt?: string }[],
+): PendingM0[] {
+  const pending = new Map<string, PendingM0>();
+  for (const e of events) {
+    const p = e.payload as { worker?: string; combination?: string; reason?: string };
+    if (!p?.worker) continue;
+    if (e.type === M0_PENDING) {
+      pending.delete(p.worker);
+      pending.set(p.worker, {
+        worker: p.worker,
+        combination: p.combination ?? "",
+        reason: p.reason ?? "",
+        at: e.createdAt ?? "",
+      });
+    } else if (e.type === "measure/m0") {
+      pending.delete(p.worker);
+    }
+  }
+  return [...pending.values()];
+}
+
+export async function pendingM0(log: EventLog): Promise<PendingM0[]> {
+  return pendingFromEvents(await log.getEventsByTypes([M0_PENDING, "measure/m0"]));
+}
+
+/** The same, read straight from a repository's ledger (for `doctor`, which opens no kernel). */
+export function pendingM0InRepo(repoPath: string): PendingM0[] {
+  const file = join(repoPath, ".sekhemet", "events.db");
+  if (!existsSync(file)) return [];
+  const db = new DatabaseSync(file, { readOnly: true });
+  try {
+    const rows = db
+      .prepare("SELECT type, payload FROM events WHERE type IN (?, ?) ORDER BY seq")
+      .all(M0_PENDING, "measure/m0") as { type: string; payload: string }[];
+    return pendingFromEvents(rows.map((r) => ({ type: r.type, payload: JSON.parse(r.payload) })));
+  } catch {
+    return [];
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Run the M0 protocol for one Worker on the one measurement path, shared by
+ * `sekhemet m0` and the overnight run. Progress is kept after every run in
+ * `.sekhemet/m0/progress-<worker>.json`, so a protocol stopped at the
+ * window's end resumes where it stopped; only a complete protocol is
+ * recorded (and clears the pending event).
+ */
+export async function runM0(
+  k: { repoPath: string; log: EventLog },
+  o: {
+    worker: string;
+    adapter: LocalInferenceAdapter;
+    runs?: number;
+    budgets?: number[];
+    maxCommits?: number;
+    shouldStop?: () => boolean;
+    print?: (line: string) => void;
+    notify?: (title: string, message: string) => Promise<void>;
+  },
+): Promise<"done" | "stopped" | "no tasks"> {
+  const print = o.print ?? ((l: string) => console.log(l));
+  const synth = await synthesizeTasksFromHistory(k.repoPath, { maxCommits: o.maxCommits ?? 200 });
+  print(
+    `Synthesized ${synth.tasks.length} fail-to-pass task(s) from ${synth.scanned} candidate commit(s); ${synth.rejected.length} rejected.`,
+  );
+  if (synth.tasks.length === 0) return "no tasks";
+  const dir = join(k.repoPath, ".sekhemet", "m0");
+  mkdirSync(dir, { recursive: true });
+  const progressFile = join(dir, `progress-${o.worker.replace(/[^A-Za-z0-9._-]/g, "_")}.json`);
+  const taskKey = synth.tasks.map((t) => t.id).join(",");
+  type Done = { budget: number; run: number; result: EvalBenchmarkResult };
+  let resume: Done[] = [];
+  try {
+    const saved = JSON.parse(readFileSync(progressFile, "utf8")) as {
+      taskKey: string;
+      done: Done[];
+    };
+    // A different task set is a different protocol: start again.
+    if (saved.taskKey === taskKey) resume = saved.done;
+  } catch {
+    resume = [];
+  }
+  if (resume.length) print(`Resuming M0 for ${o.worker}: ${resume.length} run(s) already done.`);
+  const done = [...resume];
+  const report = await runM0Protocol({
+    tasks: synth.tasks,
+    adapter: o.adapter,
+    runs: o.runs ?? 3,
+    budgets: o.budgets ?? [50, 150],
+    resume,
+    ...(o.shouldStop ? { shouldStop: o.shouldStop } : {}),
+    onRun: (budget, run, result) => {
+      done.push({ budget, run, result });
+      writeFileSync(progressFile, `${JSON.stringify({ taskKey, done })}\n`);
+    },
+    benchmark: {
+      harnessRepoPath: k.repoPath,
+      defaultRepoPath: k.repoPath,
+      workspaceMode: "clone",
+      runCard: productCardRunner({ worker: o.worker }),
+    },
+  });
+  if (report.partial) {
+    print(`M0 for ${o.worker} paused after ${done.length} run(s); it resumes where it stopped.`);
+    return "stopped";
+  }
+  print(formatM0Report(report));
+  await recordM0Result(report, {
+    log: k.log,
+    worker: o.worker,
+    harnessRoot: join(dirname(fileURLToPath(import.meta.url)), "..", "..", ".."),
+    ...(o.notify ? { notify: o.notify } : {}),
+  });
+  const out = join(dir, "latest.json");
+  writeFileSync(out, `${JSON.stringify(report, null, 2)}\n`);
+  rmSync(progressFile, { force: true });
+  print(`Report: ${out}`);
+  return "done";
 }

@@ -19,6 +19,13 @@ export interface M0Options {
   harness?: EvalHarness;
   benchmark?: Omit<BenchmarkOptions, "stepBudget" | "passAtK">;
   onRun?: (budget: number, run: number, result: EvalBenchmarkResult) => void;
+  /**
+   * Asked before each run: true stops the protocol at that clean point, and
+   * the report is marked partial (MS-M9-6: M0 runs in the overnight window).
+   */
+  shouldStop?: () => boolean;
+  /** Runs already done by an earlier, stopped protocol: they are not run again. */
+  resume?: { budget: number; run: number; result: EvalBenchmarkResult }[];
 }
 
 export interface M0BudgetSummary {
@@ -42,6 +49,8 @@ export interface M0Report {
   results: EvalBenchmarkResult[];
   /** Tasks that pass at 150 but never at 50: step-starved, not incapable. */
   stepStarved: string[];
+  /** Stopped before every run was done; resume it with the runs it holds. */
+  partial?: true;
   /**
    * Steps whose reply was a well-formed call to an offered tool, over every
    * step of every attempt, with a Clopper–Pearson 95% interval (MS-M9-6).
@@ -101,9 +110,20 @@ export async function runM0Protocol(options: M0Options): Promise<M0Report> {
   const settings = candidateSettings(options.adapter);
   const results: EvalBenchmarkResult[] = [];
   const summaries: M0BudgetSummary[] = [];
+  let stopped = false;
   for (const budget of budgets) {
     const perBudget: EvalBenchmarkResult[] = [];
     for (let run = 1; run <= runs; run++) {
+      const earlier = options.resume?.find((r) => r.budget === budget && r.run === run);
+      if (earlier) {
+        perBudget.push(earlier.result);
+        results.push(earlier.result);
+        continue;
+      }
+      if (stopped || options.shouldStop?.()) {
+        stopped = true;
+        continue;
+      }
       const result = await harness.runBenchmark(tasks, options.adapter, {
         quant: settings.quant,
         engine: settings.engine,
@@ -117,7 +137,7 @@ export async function runM0Protocol(options: M0Options): Promise<M0Report> {
       results.push(result);
       options.onRun?.(budget, run, result);
     }
-    summaries.push(summarize(budget, perBudget));
+    if (perBudget.length) summaries.push(summarize(budget, perBudget));
   }
   const low = summaries.find((s) => s.stepBudget === Math.min(...budgets));
   const high = summaries.find((s) => s.stepBudget === Math.max(...budgets));
@@ -144,6 +164,7 @@ export async function runM0Protocol(options: M0Options): Promise<M0Report> {
     results,
     stepStarved,
     ...(validToolCalls ? { validToolCalls } : {}),
+    ...(stopped ? { partial: true as const } : {}),
   };
 }
 

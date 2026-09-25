@@ -256,9 +256,22 @@ What professional boards do not show is left off the card face: the agent's step
 - **Rejected for code:** token-dropping compressors (the LLMLingua family) and LLM-written summaries of history. Learned code pruners, which need a second resident model, wait for the owner.
 - **Approved by the owner on 2026-09-25:**
   - the step-replay screen (new measurement code; it screens and never admits);
-  - the two Worker A/B candidates for B2.5: a tool-call example of at most 150 tokens, and a sentence about persisting until the check passes (a third, the sentence that the acceptance test checks behaviour and the solution must be general, was made an A/B candidate after review and awaits the owner's approval);
+  - the two Worker A/B candidates for B2.5: a tool-call example of at most 150 tokens, and a sentence about persisting until the check passes (a third, the sentence that the acceptance test checks behaviour and the solution must be general, was made an A/B candidate after review and approved under DEC-42);
   - rejecting LLMLingua and Promptfoo.
 - **Why:** small quantised models are the most sensitive to prompt form, so the rendering is part of what is measured.
+- **Reopen if:** only the owner.
+
+### DEC-42 — the owner delegates the outstanding decisions to the lead
+**The lead decided every question then open, under the owner's delegation.** *Owner, 2026-09-25: "you have my permission to make all outstanding decisons".* The lead's rulings, each safe by default and reversible:
+- **Docker (security SEC-1, DEC-39):** not installed on the owner's machine. Docker Desktop is a heavy install with licence terms of its own. Linux containment is proven on a CI Linux runner instead, the first time the repository runs CI (a push, which stays a per-action approval). Anthropic's `sandbox-runtime` stays behind `SEKHEMET_SANDBOX_ENGINE=srt` until that evidence exists.
+- **Statistics (measurement M12):** keep the harness's own exact tests (`packages/eval/src/stats.ts`), checked against scipy by an independent review, rather than add `@stdlib`. It is one dependency fewer, and DEC-40's reuse test is met by the published reference values the tests pin.
+- **pytest and go (gates GT-M6-2):** not installed on the owner's machine. Those parsers stay partial until a CI runner records their real output.
+- **Golden briefs and held-out acceptance labels (measurement T11):** the lead drafts them. They stay drafts, unregistered, until a person confirms each, because a label from a model alone is refused (MS-T11).
+- **Stops the Worker did not cause (worker-loop rule 31):** `error`, `rebase_conflict` and `integration_failed` no longer count in the competence model (`measuresModel: false`), as rule 31 says. The earlier table kept the old behaviour.
+- **The third Worker A/B candidate (DEC-41):** approved as a candidate: one positive sentence that the acceptance test checks behaviour, so the solution must be general. It is admitted only by the suite A/B.
+- **`--auto-accept` (measurement rule 9):** confirmed. It runs only in a repository carrying the measurement marker, so outside measurement a person always accepts.
+- **The E5 rule-approval block (measurement §8 item 5):** its removal is confirmed. DEC-28 is the later ruling.
+- **Model loads:** permitted, on the lead's judgement of the host: only with swap under 4 GB and at least 60% of memory free, checked before each load, and unloaded after each run.
 - **Reopen if:** only the owner.
 
 ## Engineering decisions
@@ -279,7 +292,7 @@ What professional boards do not show is left off the card face: the agent's step
 | R9 | SPIDR's *Interface* is the user interface; a type contract is a Contract card (see DEC-26) | planner-pm |
 | R10 | Roles have no avatars; the assignee is a text chip | dashboard, NAMING |
 | R11 | A blocked card shows the fail tone, an icon and the word "Blocked" | dashboard |
-| R12 **owner** | Execution-verified lessons may apply in production on probation; never in a measurement run. It reverses the owner's 2026-09-18 rule that nothing learned applies before a person approves it, so it waits for O15; until then approval comes first | measurement, context |
+| R12 **owner** | Execution-verified lessons may apply in production on probation; never in a measurement run. It reverses the owner's 2026-09-18 rule that nothing learned applies before a person approves it, and O15 was decided against it (DEC-33): approval comes first | measurement, context |
 | R13 | A run's settings are one recorded `RunProfile`; a named settings file is allowed, a flag that rewrites other flags is not | surface, measurement |
 | R14 | Per-language gate templates in gates.md; a language's mutation tool runs when installed, as a subprocess | gates |
 | R15 | *Superseded by DEC-29 O3:* every role's model name, Seshat's included, is on the Configuration page, not in the chat panel | dashboard |
@@ -319,7 +332,7 @@ What professional boards do not show is left off the card face: the agent's step
 | What is learned | Admitted by | Kept or retired by |
 | --- | --- | --- |
 | A **project playbook rule** (this repository's paths, kinds, error codes) | A person's approval | Paired credit on this project's own attempt records, with rotation. Tested only at fixed looks — after 20, 40 and 80 pairs — and retired automatically when a one-sided exact test on the discordant pairs shows harm at 0.05/3 at a look; never retired below 20 pairs. A person may retire a rule at any time |
-| An **execution-verified lesson** during a run | **Pending the owner (O15).** Default until decided: nothing learned is applied before a person approves it (the owner's rule of 2026-09-18). If the owner allows probation: production only, never in a measurement run | At the run's end, a candidate for a person's approval with its evidence |
+| An **execution-verified lesson** during a run | **Decided (O15, DEC-33): no probation.** Nothing learned is applied before a person approves it (the owner's rule of 2026-09-18, kept) | At the run's end, a candidate for a person's approval with its evidence |
 | A **harness change** (prompt, tool, budget policy, harness skill, context version) | A paired frozen-suite A/B that shows a gain at the suite's resolution (at least 20 points on 30 cards, exact test at 0.05) | **Inconclusive** (the usual case): adopted only if it is **simpler** — deterministically: it removes prompt tokens from the stable zone, a tool, a switch or code, and adds none — or **cheaper** on the one cost measure named before the run (median tokens per card), shown by a one-sided paired Wilcoxon signed-rank test at 0.05; and the paired pass-rate result is not a loss the suite can resolve. Recorded as "not established"; the suite cannot see losses under about 20 points, so an adopted change is watched and rolled back on the first paired loss a later run resolves |
 
 No admission rule relies on an effect the measurement cannot resolve. The context version covers the **harness** only — prompt templates, the copy module, the tool catalog and descriptions, budget policies; a project's approved rules and skills are project data, listed on each pack but outside the context version, so approving or retiring one never invalidates a model's qualification (confirmation review N1).

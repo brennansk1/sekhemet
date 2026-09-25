@@ -5,6 +5,7 @@ import type { CardStore, EventLog } from "@sekhemet/kernel";
 import type { QueueReport } from "./execute.js";
 import { type GovernanceLimits, mayRun, recordUsage } from "./governance.js";
 import { INJECTION_RECORD, injectionCurrentFor } from "./injection.js";
+import { pendingM0 } from "./m0_path.js";
 import { sendPush } from "./notify.js";
 import { postConventionDrift } from "./onboard.js";
 import { tickRecurring } from "./recurring.js";
@@ -44,6 +45,12 @@ export interface OvernightOptions {
   worker?: { modelId: string; quant: string };
   /** Where injection-fixture passes are recorded (default: the user directory). */
   injectionRecord?: string;
+  /**
+   * Run one Worker's pending M0 protocol (MS-M9-6), stopping at a clean point
+   * when `shouldStop` says so; injectable for tests. Default: `runM0` on the
+   * one measurement path, the Worker resolved through the roster.
+   */
+  runM0?: (worker: string, shouldStop: () => boolean) => Promise<"done" | "stopped" | "no tasks">;
 }
 
 export interface OvernightSummary {
@@ -75,6 +82,25 @@ function defaultRunQueue(repoPath: string): (args: string[]) => Promise<number> 
       child.on("exit", (code) => resolve(code ?? 1));
       child.on("error", () => resolve(1));
     });
+}
+
+function defaultRunM0(
+  opts: OvernightOptions,
+): (worker: string, shouldStop: () => boolean) => Promise<"done" | "stopped" | "no tasks"> {
+  return async (worker, shouldStop) => {
+    const { ModelRoster } = await import("@sekhemet/models");
+    const { modelRegistry } = await import("./wave2.js");
+    const { runM0 } = await import("./m0_path.js");
+    return runM0(
+      { repoPath: opts.repoPath, log: opts.log },
+      {
+        worker,
+        adapter: new ModelRoster({ registry: modelRegistry() }).resolve(worker, "worker"),
+        shouldStop,
+        ...(opts.say ? { print: opts.say } : {}),
+      },
+    );
+  };
 }
 
 function readReport(repoPath: string): QueueReport | undefined {
@@ -109,7 +135,27 @@ export async function runOvernight(opts: OvernightOptions): Promise<OvernightSum
   // X2: the nightly convention drift check, posted to Seshat's thread.
   await postConventionDrift(opts.repoPath, opts.log).catch(() => []);
 
-  while (summary.rounds < (opts.maxRounds ?? 100)) {
+  // MS-M9-6: a Worker adopted or re-qualified owes the M0 protocol. It takes
+  // hours, so it runs here, first, inside the window; at the window's end it
+  // stops at a clean point and resumes next overnight.
+  const windowOver = (): boolean =>
+    (stopAt !== undefined && now() >= stopAt) ||
+    !mayUseMachine(windows, {
+      now: now(),
+      ...(opts.idleMinutes !== undefined ? { idleMinutes: opts.idleMinutes } : {}),
+    }).run;
+  const runM0 = opts.runM0 ?? defaultRunM0(opts);
+  for (const p of await pendingM0(opts.log)) {
+    if (windowOver()) break;
+    say(`M0 pending for ${p.worker} (${p.combination}): running it before the queue.`);
+    const r = await runM0(p.worker, windowOver);
+    if (r === "stopped") {
+      summary.stoppedBecause = `M0 for ${p.worker} paused at the window's end; it resumes next overnight`;
+      break;
+    }
+  }
+
+  while (!summary.stoppedBecause && summary.rounds < (opts.maxRounds ?? 100)) {
     if (stopAt && now() >= stopAt) {
       summary.stoppedBecause = `reached ${opts.until}`;
       break;

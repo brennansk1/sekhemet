@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import {
   type Exemplar,
   type ExemplarStore,
@@ -7,6 +7,7 @@ import {
   trajectoryFromTurns,
 } from "@sekhemet/context";
 import type { LocalInferenceAdapter } from "@sekhemet/models";
+import { runConfined } from "@sekhemet/sandbox";
 
 /**
  * Self-improvement loops 4, 5, 8 and 9 (E10, E11, E14, E15). Loop 3 (prompt
@@ -176,6 +177,70 @@ export async function distillSkill(
   return candidate;
 }
 
+// ------------------------------------------------ MS-T8-5: a skill's own checks
+
+export interface SkillCheckResult {
+  status: "checked" | "discarded" | "unchecked";
+  passed: number;
+  reason: string;
+}
+
+/** Runs one check confined to `root`; tests pass a scripted one. */
+export type SkillCheckRunner = (
+  command: string,
+  args: string[],
+  root: string,
+) => Promise<{ exitCode: number; output: string }>;
+
+const confinedCheck: SkillCheckRunner = async (command, args, root) => {
+  const r = await runConfined(command, args, { root, timeoutMs: 120_000 });
+  return { exitCode: r.exitCode, output: `${r.stdout ?? ""}${r.stderr ?? ""}`.slice(-400) };
+};
+
+/**
+ * A skill candidate's own checks, `evals/checks.json` (a list of
+ * `{command, args}`), run confined in the candidate's directory before the
+ * suite or a person sees it (measurement rule 18(4), MS-T8-5). One failing
+ * check discards the candidate; with no checks it stays "unchecked" —
+ * nothing measured grounds it, so it cannot be approved.
+ */
+export async function checkSkillCandidate(
+  dir: string,
+  options: { run?: SkillCheckRunner } = {},
+): Promise<SkillCheckResult> {
+  const file = join(dir, "evals", "checks.json");
+  let checks: { command: string; args?: string[] }[] = [];
+  try {
+    checks = JSON.parse(readFileSync(file, "utf8")) as typeof checks;
+  } catch {
+    checks = [];
+  }
+  if (!Array.isArray(checks) || checks.length === 0) {
+    return {
+      status: "unchecked",
+      passed: 0,
+      reason:
+        "no checks in evals/checks.json: a skill is admitted by its own checks passing (rule 18), so this candidate cannot be approved until it has some",
+    };
+  }
+  const run = options.run ?? confinedCheck;
+  let passed = 0;
+  for (const c of checks) {
+    const args = c.args ?? [];
+    const r = await run(c.command, args, dir);
+    if (r.exitCode !== 0) {
+      rmSync(dir, { recursive: true, force: true });
+      return {
+        status: "discarded",
+        passed,
+        reason: `discarded: its check ${[c.command, ...args].join(" ")} exited ${r.exitCode}${r.output ? ` (${r.output.trim().split("\n").at(-1)})` : ""}`,
+      };
+    }
+    passed++;
+  }
+  return { status: "checked", passed, reason: `its ${passed} check(s) pass, confined` };
+}
+
 // ------------------------------------------------ E11: exemplar harvesting
 
 /**
@@ -201,7 +266,17 @@ export function harvestExemplars(
     }[];
     date?: string;
   }[],
+  options: {
+    /** Where candidates wait until their class has enough (rule 20). */
+    poolPath?: string;
+    /** Complete passing cards a class needs before any is offered; 5 (rule 20). */
+    minPerClass?: number;
+  } = {},
 ): Exemplar[] {
+  const min = options.minPerClass ?? EXEMPLAR_MINIMUM;
+  const pool: ExemplarPool = options.poolPath
+    ? readPool(options.poolPath)
+    : { waiting: {}, open: [] };
   const out: Exemplar[] = [];
   for (const c of cards) {
     if (!c.passed || c.turns.length === 0) continue;
@@ -216,10 +291,49 @@ export function harvestExemplars(
       tokens: c.tokens,
       date: c.date ?? new Date().toISOString(),
     };
-    store.record(ex);
-    out.push(ex);
+    const cls = ex.cardClass;
+    if (pool.open.includes(cls)) {
+      store.record(ex);
+      out.push(ex);
+      continue;
+    }
+    // Below the volume threshold the inlet waits (rule 20): the class's
+    // candidates are held until it has `min` of them, then all are offered.
+    const waiting = [...(pool.waiting[cls] ?? []).filter((w) => w.cardId !== ex.cardId), ex];
+    if (waiting.length >= min) {
+      for (const w of waiting) {
+        store.record(w);
+        out.push(w);
+      }
+      pool.open.push(cls);
+      delete pool.waiting[cls];
+    } else {
+      pool.waiting[cls] = waiting;
+    }
+  }
+  if (options.poolPath) {
+    mkdirSync(dirname(options.poolPath), { recursive: true });
+    writeFileSync(options.poolPath, `${JSON.stringify(pool, null, 2)}\n`);
   }
   return out;
+}
+
+/** The exemplar inlet's volume threshold (measurement rule 20). */
+export const EXEMPLAR_MINIMUM = 5;
+
+interface ExemplarPool {
+  waiting: Record<string, Exemplar[]>;
+  /** Classes that reached the threshold: new cards go straight to the store. */
+  open: string[];
+}
+
+function readPool(path: string): ExemplarPool {
+  try {
+    const p = JSON.parse(readFileSync(path, "utf8")) as Partial<ExemplarPool>;
+    return { waiting: p.waiting ?? {}, open: p.open ?? [] };
+  } catch {
+    return { waiting: {}, open: [] };
+  }
 }
 
 // ------------------------------------------------ E15: tool synthesis

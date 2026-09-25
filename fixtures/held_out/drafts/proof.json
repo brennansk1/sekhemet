@@ -1,0 +1,89 @@
+{
+  "about": "Each held-out fixture draft failed on the seed and passed on the final main the registered reference solutions build (scripts/verify_held_out.mjs).",
+  "proof": [
+    {
+      "fixture": "chronicle",
+      "file": "fixtures/held_out/drafts/chronicle.spec.ts",
+      "fileSha256": "63782adf92fe408e7a25cb8a161d6159ed62fc60e85262f23245ded840e19dc5",
+      "referenceSolutions": {
+        "version": "3",
+        "hash": "163347f8d5fee2f12ae2cf793fa117792b97f91b95ad469c4154b46023c3f5a2"
+      },
+      "atSeed": {
+        "exitCode": 1,
+        "passed": 0,
+        "total": 3,
+        "outputSha256": "c4879ace93263adae7d0cbdee6ccf94740fb1d1c79abba8a0159f7099313e0e8"
+      },
+      "onReferenceMain": {
+        "exitCode": 0,
+        "passed": 3,
+        "total": 3,
+        "outputSha256": "c068b80efcaddedcc37f75d037886b15ca7760c08c052729c828eb3cec289e9a"
+      }
+    },
+    {
+      "fixture": "onyx",
+      "file": "fixtures/held_out/drafts/onyx.spec.ts",
+      "fileSha256": "3f6d1ed089dedeee63a27bc8338fd3ae2e31cee45abaaa071648a206469cf901",
+      "referenceSolutions": {
+        "version": "3",
+        "hash": "163347f8d5fee2f12ae2cf793fa117792b97f91b95ad469c4154b46023c3f5a2"
+      },
+      "atSeed": {
+        "exitCode": 1,
+        "passed": 0,
+        "total": 3,
+        "outputSha256": "31427d29f44e011018c67174d025486a8d0a4deba5cc0dde6487e4eabd22d71b"
+      },
+      "onReferenceMain": {
+        "exitCode": 0,
+        "passed": 3,
+        "total": 3,
+        "outputSha256": "84a9b183bc662555f659a4b886f52c93cc63067ea904d469327b29d25b551be9"
+      }
+    },
+    {
+      "fixture": "vanguard",
+      "file": "fixtures/held_out/drafts/vanguard.spec.ts",
+      "fileSha256": "af4b650c08ae9ae83624a4740b8d6ce8489cdffc2a08f382dd21950d1043c077",
+      "referenceSolutions": {
+        "version": "3",
+        "hash": "163347f8d5fee2f12ae2cf793fa117792b97f91b95ad469c4154b46023c3f5a2"
+      },
+      "atSeed": {
+        "exitCode": 1,
+        "passed": 0,
+        "total": 3,
+        "outputSha256": "828a70194db86a98c091405d30f223abdedede39940efc31e0db60c7d7972f7b"
+      },
+      "onReferenceMain": {
+        "exitCode": 0,
+        "passed": 3,
+        "total": 3,
+        "outputSha256": "cea78c84506af61384954430964a5a09ec19fc9f81788615c515be9c067192f7"
+      }
+    },
+    {
+      "fixture": "basalt-canvas",
+      "file": "fixtures/held_out/drafts/basalt-canvas.spec.ts",
+      "fileSha256": "9d31125a20273694e0f07412fef44e8afc08c9e3d4a1327256e992183aa898ae",
+      "referenceSolutions": {
+        "version": "3",
+        "hash": "163347f8d5fee2f12ae2cf793fa117792b97f91b95ad469c4154b46023c3f5a2"
+      },
+      "atSeed": {
+        "exitCode": 1,
+        "passed": 0,
+        "total": 4,
+        "outputSha256": "57c1cd2ca757e5782fa82156eba26daaf1eb8f6e411245b5e5fc27a94940e95e"
+      },
+      "onReferenceMain": {
+        "exitCode": 0,
+        "passed": 4,
+        "total": 4,
+        "outputSha256": "f840b8f45b4522e548b4772abe14834ad72ea05ba32e8b3f1a57b530ae2295eb"
+      }
+    }
+  ]
+}

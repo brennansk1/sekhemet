@@ -445,25 +445,57 @@ const READ_TOOLS = [
   "note",
   "ask",
   "subtask",
-  "tool_search",
   "finish_card",
 ];
 
-/** Every tool in the catalog: the sets that write code keep the whole catalog until M2's fixed set lands. */
+/**
+ * The fixed set for the classes that write code (worker-loop WL-M2-3):
+ * twelve tools, `recall` always, since any step after masking can carry an
+ * observation pointer. For a script-capable Worker `run_script` takes
+ * `read_symbol`'s place (its `read` helper reads any file), so the set stays
+ * at twelve (WL-M2-4) and `grep_search`, which the gate remedies name, stays
+ * in every arm (review item 3). `read_file` and `find_references` supply
+ * the evidence the evidence-gated commit asks for and `check` runs the tests
+ * (rule 29a); `run_cmd` stays so the strict working method's refusal (rule
+ * 26) has something to act on in this arm too; `ask` keeps the card's
+ * contract and the project manager one call away. What is left out is
+ * reachable another way: a line range or a symbol body is an `edit` or
+ * `write_file`, and `grep_search` with `files_with_matches` finds files. The
+ * progressive arm keeps the whole catalog.
+ */
+export const FIXED_WRITING_TOOLS: readonly string[] = [
+  "read_file",
+  "read_symbol",
+  "write_file",
+  "edit",
+  "find_references",
+  "grep_search",
+  "check",
+  "run_cmd",
+  "ask",
+  "recall",
+  "note",
+  "finish_card",
+  "run_script",
+];
+
+/** Every tool in the catalog: what the progressive arm's writing classes can load. */
 const ALL_TOOLS: readonly string[] = TOOL_CATALOG.map((t) => t.name);
 
 /**
  * An explicit tool set for every card class (worker-loop WL-M2-1): a class
  * with no entry fails to start, naming it, rather than falling open to the
- * full catalog. `implement`, `interface`, `data` and `rule` keep the whole
- * catalog until the fixed set of at most twelve (WL-M2-3) is written.
+ * full catalog. These are the fixed-set arm's sets; none holds `tool_search`
+ * (WL-M2-2).
  */
 export const CLASS_TOOLS: Readonly<Record<CardKind, readonly string[]>> = {
-  spike: [...READ_TOOLS, "run_script"],
-  interface: ALL_TOOLS,
-  implement: ALL_TOOLS,
-  data: ALL_TOOLS,
-  rule: ALL_TOOLS,
+  // Without subtask and dependencies, so its schemas fit 1,700 tokens with a
+  // 23-gate enum (WL-M2-6); the progressive arm keeps them.
+  spike: [...READ_TOOLS.filter((t) => t !== "subtask" && t !== "dependencies"), "run_script"],
+  interface: FIXED_WRITING_TOOLS,
+  implement: FIXED_WRITING_TOOLS,
+  data: FIXED_WRITING_TOOLS,
+  rule: FIXED_WRITING_TOOLS,
   review: [
     "read_file",
     "grep_search",
@@ -485,6 +517,24 @@ export const CLASS_TOOLS: Readonly<Record<CardKind, readonly string[]>> = {
     "finish_card",
   ],
 };
+
+/**
+ * The progressive-loading arm's catalogs (C19): the writing classes keep the
+ * whole catalog behind `tool_search`, the others their fixed set plus
+ * `tool_search`. B2.5's A/B compares this arm with `CLASS_TOOLS`.
+ */
+export const PROGRESSIVE_CLASS_TOOLS: Readonly<Record<CardKind, readonly string[]>> = {
+  spike: [...READ_TOOLS, "run_script", "tool_search"],
+  interface: ALL_TOOLS,
+  implement: ALL_TOOLS,
+  data: ALL_TOOLS,
+  rule: ALL_TOOLS,
+  review: [...CLASS_TOOLS.review, "tool_search"],
+  research: [...CLASS_TOOLS.research, "tool_search"],
+};
+
+/** Which tool arm a card runs: the fixed set per class, or progressive loading. */
+export type ToolSetArm = "fixed" | "progressive";
 
 /** A card class with no `CLASS_TOOLS` entry (WL-M2-1). */
 export class UnknownCardClassError extends Error {
@@ -508,17 +558,26 @@ export function cardClassFor(card: {
 }
 
 /**
- * The tools a card of this class is given. `run_script` only for a Worker the
- * registry marks script-capable (WL-M2-4).
+ * The tools a card of this class is given under an arm. `run_script` only for
+ * a Worker the registry marks script-capable (WL-M2-4); `tool_search` never in
+ * the fixed-set arm (WL-M2-2).
  */
 export function toolsForClass(
   cls: CardClass,
   catalog: ToolInterfaceSpec[] = TOOL_CATALOG,
-  options: { scriptCapable?: boolean | undefined } = {},
+  options: { scriptCapable?: boolean | undefined; arm?: ToolSetArm | undefined } = {},
 ): ToolInterfaceSpec[] {
-  const allowed = Object.hasOwn(CLASS_TOOLS, cls) ? CLASS_TOOLS[cls] : undefined;
+  const sets = options.arm === "progressive" ? PROGRESSIVE_CLASS_TOOLS : CLASS_TOOLS;
+  const allowed = Object.hasOwn(sets, cls) ? sets[cls] : undefined;
   if (!allowed) throw new UnknownCardClassError(String(cls));
+  // In the fixed writing set, run_script replaces read_symbol (WL-M2-3, WL-M2-4).
+  const replaced =
+    allowed === FIXED_WRITING_TOOLS && options.scriptCapable === true ? "read_symbol" : undefined;
   return catalog.filter(
-    (t) => allowed.includes(t.name) && (t.name !== "run_script" || options.scriptCapable === true),
+    (t) =>
+      allowed.includes(t.name) &&
+      t.name !== replaced &&
+      (t.name !== "run_script" || options.scriptCapable === true) &&
+      (t.name !== TOOL_SEARCH_SPEC.name || options.arm === "progressive"),
   );
 }

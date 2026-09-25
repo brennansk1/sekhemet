@@ -2,7 +2,7 @@
 // Run the frozen suite and record its score against its hash.
 //
 //   node scripts/run_suite.mjs --worker <model> [--fixtures chronicle,onyx] [--out <file>]
-//                              [--settings <file>] [--ab-entry <file>]
+//                              [--settings <file>] [--ab-entry <file>] [--independent]
 //
 // Each fixture is copied into a fresh git repository and seeded once, and the
 // product's own `sekhemet queue` then runs all of its cards with the roles and
@@ -30,11 +30,13 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const {
+  loadAssetManifest,
   loadFrozenSuite,
-  profileArgs,
+  queueInvocation,
   resolveRunProfile,
   runFrozenSuite,
   runProfileHash,
+  prepareIndependentCard,
   seededCards,
   suiteQueueRunner,
   summarise,
@@ -98,7 +100,6 @@ const runProfile = resolveRunProfile({
   argv: ["--worker", workerName, "--auto-accept"],
   envRoles: true,
 });
-const queueArgs = profileArgs(runProfile);
 
 /**
  * An A/B's entry (measurement rule 16c): its one cost measure, written
@@ -155,7 +156,13 @@ const repos = new Map();
 function repoFor(fixture) {
   const existing = repos.get(fixture);
   if (existing) return existing;
-  const dir = join(workDir, fixture);
+  const dir = prepareRepo(fixture, join(workDir, fixture));
+  repos.set(fixture, dir);
+  return dir;
+}
+
+/** A fresh copy of a fixture, committed, seeded, preflighted and marked for measurement. */
+function prepareRepo(fixture, dir) {
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   execFileSync("cp", ["-R", `${join(ROOT, "fixtures", fixture)}/.`, dir]);
@@ -179,8 +186,44 @@ function repoFor(fixture) {
   );
   // Kept out of the fixture's history like the rest of the harness's state.
   appendFileSync(join(dir, ".git", "info", "exclude"), "\n.sekhemet/measurement.json\n");
-  repos.set(fixture, dir);
   return dir;
+}
+
+/**
+ * Independent mode (MS-T7-3, `--independent`): each card runs alone, in its
+ * own copy of its fixture, from a main that holds every earlier card's
+ * registered reference solution, so its result depends on no earlier card's
+ * outcome. It needs the registered, verified set (MS-T7-2).
+ */
+const independent = process.argv.includes("--independent");
+if (independent && !suite.referenceSolutions) {
+  console.error(
+    "--independent needs the registered reference solutions (fixtures/eval_assets.json). No card was run.",
+  );
+  process.exit(2);
+}
+/** Independent repositories: repo -> the fixture and its board. */
+const cardRepos = new Map();
+async function prepareCard(task) {
+  const dir = prepareRepo(task.suite, join(workDir, `${task.suite}__${task.cardId}`));
+  const cards = seededCards(dir, perFixture.get(task.suite));
+  const cardId = task.cardId.startsWith(`${task.suite}_`)
+    ? (cards[Number(task.cardId.slice(task.suite.length + 1)) - 1]?.id ?? task.cardId)
+    : task.cardId;
+  await prepareIndependentCard(dir, {
+    fixture: task.suite,
+    cardId,
+    cardOrder: cards.map((c) => c.id),
+    // Review M2: earlier cards' acceptance tests are on main, as acceptance leaves them.
+    acceptanceTests: Object.fromEntries(cards.map((c) => [c.id, c.info.tests])),
+    // The registered asset's own path (review minor 9).
+    referencesDir: join(
+      ROOT,
+      loadAssetManifest(ROOT).assets.find((a) => a.name === "reference-solutions").path,
+    ),
+  });
+  cardRepos.set(dir, cards);
+  return { repo: dir, cardId };
 }
 
 /**
@@ -216,6 +259,8 @@ const driver = {
   // facts only for synthesised ids, so a fixture with cards.json never had a
   // card blocked on an unbuilt dependency.
   cardInfo: (repo, cardId) => {
+    const own = cardRepos.get(repo);
+    if (own) return own.find((c) => c.id === cardId)?.info;
     const fixture = [...repos].find(([, dir]) => dir === repo)?.[0];
     if (!fixture) return undefined;
     return cardsFor(fixture, perFixture.get(fixture)).find((c) => c.id === cardId)?.info;
@@ -224,12 +269,14 @@ const driver = {
     // Resolve the card ids before the queue moves the board.
     const fixture = [...repos].find(([, dir]) => dir === repo)?.[0];
     if (fixture) cardsFor(fixture, perFixture.get(fixture));
+    // The one invocation every measured path uses (MS-M9-1).
+    const { args, env } = queueInvocation(runProfile, repo);
     try {
-      execFileSync(
-        "node",
-        [join(ROOT, "apps/harness/dist/index.js"), "queue", "--repo", repo, ...queueArgs.argv],
-        { stdio: "inherit", timeout: timeoutMs, env: { ...process.env, ...queueArgs.env } },
-      );
+      execFileSync("node", [join(ROOT, "apps/harness/dist/index.js"), ...args], {
+        stdio: "inherit",
+        timeout: timeoutMs,
+        env: { ...process.env, ...env },
+      });
     } catch (err) {
       // A non-zero exit is a run with failures, not a failed run: the report decides.
       if (err?.code === "ETIMEDOUT" || err?.signal === "SIGTERM") return { timedOut: true };
@@ -254,10 +301,13 @@ const driver = {
   log: (line) => console.log(line),
 };
 
-const result = await runFrozenSuite(
-  { ...suite, tasks },
-  suiteQueueRunner(driver, { tasks, cardTimeoutMs: CARD_TIMEOUT_MS }),
+const runner = suiteQueueRunner(
+  { ...driver, prepareCard },
+  { tasks, cardTimeoutMs: CARD_TIMEOUT_MS, independent },
 );
+const result = await runFrozenSuite({ ...suite, tasks }, runner);
+// MS-T7-1: the model's load time, reported apart from the cards' wall clock.
+result.modelLoads = runner.modelLoads();
 
 /**
  * The profile each card actually ran with, from its evidence. A card whose
@@ -285,9 +335,34 @@ if (mismatched.length) {
 mkdirSync(dirname(out), { recursive: true });
 writeFileSync(
   out,
-  `${JSON.stringify({ ...result, worker, tasksRun: tasks.length, runProfile: { ...runProfile, hash: runProfileHash(runProfile) }, ...(abEntry ? { abEntry } : {}), ...(mismatched.length ? { profileMismatch: mismatched } : {}) }, null, 2)}\n`,
+  `${JSON.stringify({ ...result, worker, tasksRun: tasks.length, runProfile: { ...runProfile, hash: runProfileHash(runProfile) }, mode: independent ? "independent" : "sequential", ...(abEntry ? { abEntry } : {}), ...(mismatched.length ? { profileMismatch: mismatched } : {}) }, null, 2)}\n`,
 );
 console.log(`\n${summarise(result)}`);
+/**
+ * Every adopted harness change is watched after every run (measurement rule
+ * 18, MS-T8-3): paired against the runs it was admitted over, and rolled
+ * back, flagged, when this run resolves a loss. The harness's own ledger
+ * holds the admissions.
+ */
+try {
+  execFileSync(
+    "node",
+    [
+      join(ROOT, "apps/harness/dist/index.js"),
+      "measure",
+      "watch-adopted",
+      "--repo",
+      ROOT,
+      "--with",
+      out,
+    ],
+    { stdio: "inherit" },
+  );
+} catch {
+  console.log(
+    "watch-adopted did not run; run it with: sekhemet measure watch-adopted --with <run>",
+  );
+}
 console.log(`wall clock ${Math.round((Date.now() - started) / 60000)} min · recorded in ${out}`);
 for (const o of result.outcomes.filter((x) => !x.passed)) {
   console.log(`  FAIL ${o.task.suite}/${o.task.cardId}: ${o.stopReason ?? "gates did not pass"}`);

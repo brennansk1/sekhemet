@@ -5,7 +5,7 @@ import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 import { findChrome } from "@sekhemet/sandbox";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { cardClassFor, toolsForClass } from "../src/tool_catalog.js";
+import { TOOL_CATALOG, cardClassFor, toolsForClass } from "../src/tool_catalog.js";
 import { ToolExecutor } from "../src/tools.js";
 
 describe("loop tools, wave 2b (L12, L18, L19, L20, L23, L24)", () => {
@@ -66,7 +66,12 @@ describe("loop tools, wave 2b (L12, L18, L19, L20, L23, L24)", () => {
     const research = toolsForClass("research").map((t) => t.name);
     expect(research).toContain("browse");
     expect(research).not.toContain("edit");
-    expect(toolsForClass("implement").map((t) => t.name)).toContain("start_process");
+    // L19: a card that writes code can start its own app. The progressive arm
+    // (the CLI's until B2.5 decides, worker-loop rule 11) keeps the whole
+    // catalog; the fixed set of twelve (WL-M2-3) is the other arm.
+    expect(
+      toolsForClass("implement", TOOL_CATALOG, { arm: "progressive" }).map((t) => t.name),
+    ).toContain("start_process");
   });
 
   it("refuses web pages outside research cards but loads the card's own app (L19, L20)", async () => {

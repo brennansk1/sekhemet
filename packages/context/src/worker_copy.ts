@@ -147,4 +147,49 @@ export const workerCopy = {
   /** `note` naming a gate this attempt does not run: one line. */
   unknownGate: (gate: string, gates: string): string =>
     `There is no gate named ${gate} on this card. The gates are: ${gates}.`,
+
+  // --- the evidence-gated commit (worker-loop rule 29a) ------------------------
+  // A postponed write or finish names the missing evidence and the call that
+  // supplies it; the evidence is what the harness observed, never a claim.
+  evidencePostponed: "postponed until the evidence it depends on is observed",
+  evidenceUnread: (files: string, calls: string): string =>
+    `Not written yet: the acceptance test imports ${files}, and this attempt has not read all of ${files.includes(", ") ? "them" : "it"}. Call ${calls}${calls.includes("), ") ? " (they can go in one reply)" : ""}, then make this write again.`,
+  evidenceImporters: (symbol: string, importers: string, call: string): string =>
+    `Not written yet: this changes the signature of ${symbol}, which ${importers} import, and neither they nor its references have been looked at since the file last changed. Call ${call} to see every use, then make this write again.`,
+  evidenceFinish:
+    "Not finished yet: the tests had not run on the current files, so the check ran now instead, and it fails. Fix what it reports:",
+  readFileCall: (path: string): string => `read_file(path="${path}")`,
+  readFileRangeCall: (path: string, start: string, end: string): string =>
+    `read_file(path="${path}", start=${start}, end=${end})`,
+  findReferencesCall: (symbol: string, file: string): string =>
+    `find_references(symbol="${symbol}", file="${file}")`,
+
+  // --- read_file's own replies, naming only offered tools (review item 3) -----
+  /** read_file on a directory: the offered tool that lists it, when there is one. */
+  readFileDirectory: (path: string, lister?: string): string =>
+    lister === "list_dir"
+      ? `${path} is a directory; use list_dir`
+      : lister === "grep_search"
+        ? `${path} is a directory; grep_search(query=".", path="${path}", output_mode="files_with_matches") lists its files`
+        : `${path} is a directory; read_file takes a file`,
+  /** read_file's outline of a long file: read_symbol is named only when it is offered. */
+  readFileOutline: (
+    path: string,
+    lines: string,
+    outline: string,
+    head: string,
+    symbolTool?: string,
+  ): string =>
+    `${path} has ${lines} lines, so here is its outline instead of the whole file. Read a range with read_file(path, start, end)${symbolTool === "read_symbol" ? " or a declaration with read_symbol(path, symbol)" : ""}.\n\nOUTLINE\n${outline || "(no top-level declarations found)"}\n\nFIRST 40 LINES\n${head}`,
+
+  // --- tool_search asked for code (worker-loop WL-M2-7) -----------------------
+  /** tool_search's reply when the query names code symbols; read_symbol is loaded. */
+  toolSearchSymbols: (calls: string): string =>
+    `tool_search finds tools, not code. read_symbol is now loaded; to see these definitions, call:\n${calls}`,
+  /** A read_symbol call as the tool takes it: the declaring file and the name. */
+  readSymbolCall: (path: string, symbol: string): string =>
+    `read_symbol(path="${path}", symbol="${symbol}")`,
+  /** A symbol whose declaring file the symbol index did not find. */
+  symbolNotDeclared: (symbol: string): string =>
+    `${symbol}: grep_search(query="${symbol}") finds where it is declared or used.`,
 } as const;

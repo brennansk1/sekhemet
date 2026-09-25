@@ -15,6 +15,8 @@ export interface ToolObservation {
 
 const HEAD_CHARS = 2400;
 const TAIL_CHARS = 1200;
+/** The longest output `clampObservation` returns whole. */
+export const OBSERVATION_CHAR_LIMIT = HEAD_CHARS + TAIL_CHARS;
 
 /**
  * Clamp a large tool output, keeping the head and tail.

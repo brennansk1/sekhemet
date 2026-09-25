@@ -295,6 +295,38 @@ describe("skills, release, ci and improve commands (C10, Y17, Y18, E10, E14, E15
     ).toEqual([]);
   });
 
+  it("refuses to approve a skill whose own checks did not pass, and still approves a hand-written one (MS-T8-5)", async () => {
+    const k = kernel();
+    for (const name of ["distilled", "failing", "checked"]) {
+      mkdirSync(join(k.repoPath, ".sekhemet", "skills", name), { recursive: true });
+      writeFileSync(
+        join(k.repoPath, ".sekhemet", "skills", name, "SKILL.md"),
+        "---\ntriggers: [x]\n---\nDo x.",
+      );
+    }
+    const checked = (name: string, status: string) =>
+      k.log.append({ actor: "harness", type: "learning/skill_checked", payload: { name, status } });
+    await checked("distilled", "unchecked");
+    await checked("failing", "checked");
+    await checked("failing", "discarded");
+    await checked("checked", "unchecked");
+    await checked("checked", "checked");
+    const out: string[] = [];
+    expect(
+      await runWave2Command("skills", ["approve", "distilled"], k, { print: (l) => out.push(l) }),
+    ).toBe(1);
+    expect(out.join("\n")).toMatch(/distilled is not approved: its own checks are unchecked/);
+    expect(await runWave2Command("skills", ["approve", "failing"], k, quiet)).toBe(1);
+    expect(await runWave2Command("skills", ["approve", "checked"], k, quiet)).toBe(0);
+    // A hand-written project skill has no such record: a person may approve it.
+    mkdirSync(join(k.repoPath, ".sekhemet", "skills", "handwritten"), { recursive: true });
+    writeFileSync(
+      join(k.repoPath, ".sekhemet", "skills", "handwritten", "SKILL.md"),
+      "---\ntriggers: [y]\n---\nDo y.",
+    );
+    expect(await runWave2Command("skills", ["approve", "handwritten"], k, quiet)).toBe(0);
+  });
+
   it("proposes a release and tags only with --confirm; ci is typed-unavailable without act", async () => {
     const k = kernel();
     const out: string[] = [];
@@ -338,6 +370,10 @@ describe("skills, release, ci and improve commands (C10, Y17, Y18, E10, E14, E15
     const text = out.join("\n");
     expect(text).toMatch(/tool candidate node: node \{path0\} \{path1\}/);
     expect(text).toMatch(/skill candidate .*ledger/);
+    // MS-T8-5: a distilled candidate has no checks of its own, so it stays unchecked.
+    expect(text).toMatch(/skill candidate .*: unchecked — no checks/);
+    const [checked] = await k.log.getEventsByTypes(["learning/skill_checked"]);
+    expect(checked?.payload).toMatchObject({ status: "unchecked" });
     expect(text).not.toMatch(/variant archive/);
     expect(existsSync(join(k.repoPath, ".sekhemet", "variants.json"))).toBe(false);
   });

@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildWorkerPrompt } from "@sekhemet/context";
 import {
@@ -12,11 +12,14 @@ import {
   type RunProfile,
   RunProfileRefusal,
   type SuiteRunResult,
+  compareRuns,
   evaluateHarnessChange,
   profileSwitchCount,
   resolveRunProfile,
   ruleCredit,
+  runProfileHash,
   watchAdmittedChange,
+  watchPooled,
 } from "@sekhemet/eval";
 import type { CardRecord } from "@sekhemet/kernel";
 import { TOOL_CATALOG, cardClassFor, toolsForClass } from "@sekhemet/loop";
@@ -28,7 +31,10 @@ import type { Kernel } from "./wave2.js";
  *   sekhemet measure footprint [--out <file>] [--root <harness checkout>]
  *   sekhemet measure admit --baseline a.json,b.json --candidate c.json,d.json
  *                          --entry <ab-entry.json> --before <fp.json> --after <fp.json>
+ *   sekhemet measure compare <baseline.json> <candidate.json>
  *   sekhemet measure watch <change-id> --kind budget|harness --with a,b --without c,d
+ *   sekhemet measure watch-adopted --with <run.json>   (after every suite run)
+ *   sekhemet measure promote <generated-test card> [--because <change>]
  *   sekhemet measure rule-credit <rule-id>
  *
  * A harness change's footprint is computed from the build, never entered:
@@ -51,6 +57,8 @@ const RUN_HONOURS = new Set([
   "policies.stepCap",
   "switches.thinking",
   "switches.workerMethod",
+  "switches.seed",
+  "switches.prune",
   "armUnderTest",
 ]);
 
@@ -156,6 +164,19 @@ export function autoAcceptRefusal(argv: string[], repoPath: string): string | un
   return "--auto-accept merges cards no person accepted, so it runs only in a repository a measured run prepared (the frozen suite, m0), which carries .sekhemet/measurement.json. Here a person accepts each card: the human is the rate limiter.";
 }
 
+/**
+ * Hand the profile's switches to the code that reads them as experiment
+ * switches: the prune arm is read by the prompt assembly from
+ * `SEKHEMET_PRUNE` (MS-T7-6), so a flag or settings file that named it sets
+ * it for this process. The seed is applied to the model by the card runner.
+ */
+export function applyProfileSwitches(
+  profile: RunProfile,
+  env: Record<string, string | undefined> = process.env,
+): void {
+  if (profile.switches.prune !== undefined) env.SEKHEMET_PRUNE = profile.switches.prune;
+}
+
 /** Non-test TypeScript lines under packages/*\/src and apps/*\/src (the footprint's lines of code). */
 function sourceLines(root: string): number {
   let lines = 0;
@@ -258,11 +279,10 @@ function readFootprint(path: string): RecordedFootprint {
   return f as RecordedFootprint;
 }
 
+const listOf = (list: string | undefined): string[] => (list ?? "").split(",").filter(Boolean);
+
 const readRuns = (list: string | undefined): SuiteRunResult[] =>
-  (list ?? "")
-    .split(",")
-    .filter(Boolean)
-    .map((p) => JSON.parse(readFileSync(p, "utf8")) as SuiteRunResult);
+  listOf(list).map((p) => JSON.parse(readFileSync(p, "utf8")) as SuiteRunResult);
 
 /**
  * Demote every generated test promoted because of a change that was rolled
@@ -290,6 +310,141 @@ export async function demoteGeneratedTests(
     demoted.push(card.id);
   }
   return demoted;
+}
+
+interface RecordedRun {
+  path: string;
+  sha256?: string;
+}
+
+interface AdoptedChange {
+  version: string;
+  baselineRuns: RecordedRun[];
+  baselineProfileHash?: string;
+  baselineMode: string;
+  baselineWorker?: string;
+  /** Later comparable runs already pooled, and the looks already tested. */
+  laterRuns: RecordedRun[];
+  testedLooks: number[];
+}
+
+/** Adopted harness changes still being watched (not rolled back, not kept at the last look). */
+async function adoptedChanges(k: Kernel): Promise<AdoptedChange[]> {
+  const rolled = new Set(
+    (await k.log.getEventsByTypes(["measure/rolled_back"])).map(
+      (e) => (e.payload as { changeId: string }).changeId,
+    ),
+  );
+  const watched = new Map<string, { runs: RecordedRun[]; testedLooks: number[]; status: string }>();
+  for (const e of await k.log.getEventsByTypes(["measure/watched"])) {
+    const p = e.payload as {
+      changeId: string;
+      runs?: RecordedRun[];
+      testedLooks?: number[];
+      status: string;
+    };
+    // Only the pooled watch's records carry its runs; a person's one-off
+    // `measure watch` does not end the pooled watch.
+    if (!Array.isArray(p.runs)) continue;
+    watched.set(p.changeId, {
+      runs: p.runs ?? [],
+      testedLooks: p.testedLooks ?? [],
+      status: p.status,
+    });
+  }
+  return (await k.log.getEventsByTypes(["measure/admission"]))
+    .map(
+      (e) =>
+        e.payload as {
+          adopted?: boolean;
+          version: string;
+          baselineRuns?: (string | RecordedRun)[];
+          baselineProfileHash?: string;
+          baselineMode?: string;
+          baselineWorker?: string;
+        },
+    )
+    .filter(
+      (p) =>
+        p.adopted === true && !rolled.has(p.version) && watched.get(p.version)?.status !== "kept",
+    )
+    .map((p) => ({
+      version: p.version,
+      baselineRuns: (p.baselineRuns ?? []).map((b) => (typeof b === "string" ? { path: b } : b)),
+      ...(p.baselineProfileHash ? { baselineProfileHash: p.baselineProfileHash } : {}),
+      baselineMode: p.baselineMode ?? "sequential",
+      ...(p.baselineWorker ? { baselineWorker: p.baselineWorker } : {}),
+      laterRuns: watched.get(p.version)?.runs ?? [],
+      testedLooks: watched.get(p.version)?.testedLooks ?? [],
+    }));
+}
+
+/** Why a later run cannot be pooled with an adopted change's baseline, or undefined (review B1). */
+function notComparable(r: SuiteRunResult, c: AdoptedChange): string | undefined {
+  if (r.abEntry) return "it is an arm of an A/B (it carries an A/B entry)";
+  if (r.runProfile?.armUnderTest)
+    return `it names an arm under test (${r.runProfile.armUnderTest})`;
+  if ((r.mode ?? "sequential") !== c.baselineMode)
+    return `it ran ${r.mode ?? "sequential"}, the baseline ${c.baselineMode}`;
+  if (c.baselineWorker !== r.worker)
+    return `its Worker is ${r.worker ?? "unrecorded"}, the baseline's ${c.baselineWorker ?? "unrecorded"}`;
+  const hash = r.runProfile ? runProfileHash(r.runProfile) : undefined;
+  if (hash !== c.baselineProfileHash) return "its RunProfile differs from the baseline's";
+  return undefined;
+}
+
+/** A recorded run, checked against the hash it was recorded with. */
+function readRecordedRun(b: RecordedRun, since: string): SuiteRunResult {
+  if (b.sha256 && sha256File(b.path) !== b.sha256)
+    throw new Error(`${b.path} changed since it ${since}; its record no longer matches`);
+  return JSON.parse(readFileSync(b.path, "utf8")) as SuiteRunResult;
+}
+
+const sha256File = (p: string): string =>
+  createHash("sha256").update(readFileSync(p)).digest("hex");
+
+/**
+ * Act on a watch verdict (rule 18, MS-T8-3, MS-T8-10): record it; on a
+ * resolved loss roll back a budget change itself, flag a harness change
+ * for a person to revert, and demote the generated tests it promoted.
+ */
+async function actOnWatch(
+  k: Kernel,
+  v: ReturnType<typeof watchAdmittedChange>,
+  kind: "budget" | "harness",
+): Promise<string> {
+  if (v.status !== "rolled back") {
+    await k.log.append({ actor: "harness", type: "measure/watched", payload: { ...v, kind } });
+    return v.reason;
+  }
+  return rollBack(k, v.changeId, v.reason, kind, v);
+}
+
+async function rollBack(
+  k: Kernel,
+  changeId: string,
+  reason: string,
+  kind: "budget" | "harness",
+  verdict: object = {},
+): Promise<string> {
+  let action: string;
+  if (kind === "budget") {
+    const restored = new BudgetPolicyStore(
+      join(k.repoPath, ".sekhemet", "budget_policy.json"),
+    ).rollback(changeId);
+    action = `restored the step budget to ${restored.stepBudget}`;
+  } else {
+    // A harness change is code: the harness flags it for its revert and
+    // pins nothing itself.
+    action = `revert ${changeId}: a harness change is code, and a person reverts it`;
+  }
+  const demoted = await demoteGeneratedTests(k, changeId, reason);
+  await k.log.append({
+    actor: "harness",
+    type: "measure/rolled_back",
+    payload: { ...verdict, changeId, reason, kind, action, demoted },
+  });
+  return `${reason}; ${action}${demoted.length ? `; ${demoted.length} generated test(s) demoted to advisory` : ""}`;
 }
 
 /** `sekhemet measure …`; returns the exit code. */
@@ -323,6 +478,14 @@ export async function runMeasureCommand(
       if (!entryPath)
         throw new Error("admit needs --entry, the A/B's entry naming its cost measure");
       const entryText = readFileSync(entryPath, "utf8");
+      const baselineFirst = readRuns(flag(args, "--baseline"))[0];
+      const baselineMeta = {
+        profileHash: baselineFirst?.runProfile
+          ? runProfileHash(baselineFirst.runProfile)
+          : undefined,
+        mode: baselineFirst?.mode ?? "sequential",
+        worker: baselineFirst?.worker,
+      };
       const entry = JSON.parse(entryText) as AbEntry;
       const result = evaluateHarnessChange({
         // Every run must carry this hash: the entry existed before it ran (review M2).
@@ -336,10 +499,41 @@ export async function runMeasureCommand(
       await k.log.append({
         actor: "harness",
         type: "measure/admission",
-        payload: { ...result, before: before.commit, after: after.commit },
+        payload: {
+          ...result,
+          before: before.commit,
+          after: after.commit,
+          // An adopted change is watched after later suite runs, against
+          // the runs it was compared with (MS-T8-3): recorded by resolved
+          // path and hash, with what a later run must match to be compared.
+          adopted: result.verdict !== "not adopted",
+          baselineRuns: listOf(flag(args, "--baseline")).map((p) => ({
+            path: resolve(p),
+            sha256: sha256File(p),
+          })),
+          baselineProfileHash: baselineMeta.profileHash,
+          baselineMode: baselineMeta.mode,
+          ...(baselineMeta.worker ? { baselineWorker: baselineMeta.worker } : {}),
+        },
       });
       print(result.reason);
       return 0;
+    }
+    if (sub === "compare") {
+      // `sekhemet measure compare <baseline.json> <candidate.json>` (MS-M12-2..4).
+      const [, a, b] = args;
+      if (!a || !b)
+        throw new Error("Usage: sekhemet measure compare <baseline.json> <candidate.json>");
+      const [baseline] = readRuns(a);
+      const [candidate] = readRuns(b);
+      const v = compareRuns(baseline as SuiteRunResult, candidate as SuiteRunResult);
+      await k.log.append({
+        actor: "harness",
+        type: "measure/compared",
+        payload: { ...v, baseline: a, candidate: b },
+      });
+      print(v.reason);
+      return v.comparable ? 0 : 1;
     }
     if (sub === "watch") {
       // `sekhemet measure watch <change> --kind budget|harness --with a,b --without c,d`
@@ -358,30 +552,114 @@ export async function runMeasureCommand(
         withChange: readRuns(flag(args, "--with")),
         without: readRuns(flag(args, "--without")),
       });
-      if (v.status !== "rolled back") {
-        await k.log.append({ actor: "harness", type: "measure/watched", payload: { ...v, kind } });
-        print(v.reason);
+      print(await actOnWatch(k, v, kind));
+      return 0;
+    }
+    if (sub === "watch-adopted") {
+      // `sekhemet measure watch-adopted --with <run.json>`: run by the suite
+      // runner after every run (MS-T8-3, review B1). Each adopted harness
+      // change not yet decided pools its later comparable runs and is tested
+      // only at its planned looks; a run that is not comparable is named and
+      // skipped, and one change's problem never stops the others.
+      const newRuns = listOf(flag(args, "--with"));
+      const changes = await adoptedChanges(k);
+      if (changes.length === 0) {
+        print("no adopted change to watch");
         return 0;
       }
-      let action: string;
-      if (kind === "budget") {
-        const restored = new BudgetPolicyStore(
-          join(k.repoPath, ".sekhemet", "budget_policy.json"),
-        ).rollback(changeId);
-        action = `restored the step budget to ${restored.stepBudget}`;
-      } else {
-        // A harness change is code: the harness flags it for its revert and
-        // pins nothing itself.
-        action = `revert ${changeId}: a harness change is code, and a person reverts it`;
+      const toldNotWatchable = new Set(
+        (await k.log.getEventsByTypes(["measure/not_watchable"])).map(
+          (e) => (e.payload as { changeId: string }).changeId,
+        ),
+      );
+      for (const c of changes) {
+        // An admission from before the baseline's profile was recorded
+        // cannot be matched with later runs: said once, then left.
+        if (!c.baselineProfileHash) {
+          if (!toldNotWatchable.has(c.version)) {
+            const why = "admitted before B2.4's profile record; re-admit to watch";
+            await k.log.append({
+              actor: "harness",
+              type: "measure/not_watchable",
+              payload: { changeId: c.version, why },
+            });
+            print(`${c.version}: not watchable: ${why}`);
+          }
+          continue;
+        }
+        try {
+          const without = c.baselineRuns.map((b) => readRecordedRun(b, "was admitted"));
+          const pooled = [...c.laterRuns];
+          for (const path of newRuns) {
+            const r = JSON.parse(readFileSync(path, "utf8")) as SuiteRunResult;
+            const why = notComparable(r, c);
+            if (why) {
+              await k.log.append({
+                actor: "harness",
+                type: "measure/not_comparable",
+                payload: { changeId: c.version, run: resolve(path), why },
+              });
+              print(`${c.version}: ${path} is not comparable (${why}); not watched with it`);
+              continue;
+            }
+            pooled.push({ path: resolve(path), sha256: sha256File(path) });
+          }
+          const withRuns = pooled.map((b) => readRecordedRun(b, "was watched"));
+          const v = watchPooled({
+            changeId: c.version,
+            without,
+            withRuns,
+            testedLooks: c.testedLooks,
+          });
+          await k.log.append({
+            actor: "harness",
+            type: "measure/watched",
+            payload: { ...v, kind: "harness", runs: pooled },
+          });
+          if (v.status === "rolled back") {
+            print(await rollBack(k, v.changeId, v.reason, "harness"));
+          } else print(v.reason);
+        } catch (err) {
+          print(
+            `${c.version}: not watched this time: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
       }
-      const demoted = await demoteGeneratedTests(k, changeId, v.reason);
+      return 0;
+    }
+    if (sub === "promote") {
+      // `sekhemet measure promote <card> [--because <change>]`: a person
+      // promotes a generated test from advisory (MS-T8-10's other half).
+      const cardId = args[1];
+      const card = cardId ? await k.cardStore.getCard(cardId) : undefined;
+      if (!card)
+        throw new Error(
+          "Usage: sekhemet measure promote <generated-test card> [--because <change>]",
+        );
+      const labels = card.labels ?? [];
+      if (!labels.some((l) => l === "mutation-hardening" || l === "generated-test"))
+        throw new Error(
+          `${cardId} is not a generated test; only a generated test is promoted from advisory`,
+        );
+      const adopted = (await adoptedChanges(k)).map((c) => c.version);
+      if (!flag(args, "--because") && adopted.length > 1)
+        throw new Error(
+          `${adopted.length} changes are adopted (${adopted.join(", ")}): name one with --because <change>`,
+        );
+      const because = flag(args, "--because") ?? adopted.at(-1);
+      const next = [
+        ...labels.filter((l) => l !== "advisory" && !l.startsWith("promoted")),
+        "promoted",
+        ...(because ? [`promoted-by:${because}`] : []),
+      ];
+      await k.cardStore.updateCard(card.id, { labels: next }, "human");
       await k.log.append({
-        actor: "harness",
-        type: "measure/rolled_back",
-        payload: { ...v, kind, action, demoted },
+        actor: "human",
+        type: "measure/promoted",
+        payload: { cardId: card.id, ...(because ? { because } : {}) },
       });
       print(
-        `${v.reason}; ${action}${demoted.length ? `; ${demoted.length} generated test(s) demoted to advisory` : ""}`,
+        `promoted ${card.id} from advisory${because ? `, labelled with the change in force, ${because}: a rollback of it demotes this test again` : ""}`,
       );
       return 0;
     }
@@ -399,7 +677,7 @@ export async function runMeasureCommand(
       return 0;
     }
     print(
-      "Usage: sekhemet measure footprint [--out <file>] | watch <change> --kind budget|harness --with a,b --without c,d | admit --baseline a,b --candidate c,d --entry <file> --before <fp> --after <fp> | rule-credit <rule-id>",
+      "Usage: sekhemet measure footprint [--out <file>] | compare <baseline> <candidate> | watch <change> --kind budget|harness --with a,b --without c,d | watch-adopted --with <run> | promote <card> [--because <change>] | admit --baseline a,b --candidate c,d --entry <file> --before <fp> --after <fp> | rule-credit <rule-id>",
     );
     return 1;
   } catch (err) {

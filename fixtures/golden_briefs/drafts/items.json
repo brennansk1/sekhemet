@@ -1,0 +1,354 @@
+[
+  {
+    "id": "b01",
+    "title": "Pre-orders for a small bakery",
+    "audience": "non-developer",
+    "brief": "I run a bakery with two staff. Customers keep phoning in orders for weekend cakes and we lose track. I'd like a simple page where people can pick what they want for Saturday or Sunday, say when they'll collect it, and leave a name and phone number. Each evening I want to see what we need to bake tomorrow.",
+    "implicitRequirements": [
+      {
+        "id": "b01-r1",
+        "text": "Orders for a day close at a cut-off the day before (the baker needs time to bake), and the page says so."
+      },
+      {
+        "id": "b01-r2",
+        "text": "An item that has sold out for that day cannot be ordered any more."
+      },
+      {
+        "id": "b01-r3",
+        "text": "The customer is told clearly that the order went through, with what they ordered and the collection time."
+      },
+      {
+        "id": "b01-r4",
+        "text": "The baker's daily list adds up quantities per item, not just a list of orders."
+      },
+      {
+        "id": "b01-r5",
+        "text": "A phone number that is obviously wrong is caught before the order is taken."
+      },
+      {
+        "id": "b01-r6",
+        "text": "Nobody pays online; the page must not ask for card details."
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "b02",
+    "title": "A volunteer rota for a food bank",
+    "audience": "non-developer",
+    "brief": "Our food bank has about forty volunteers. Right now the rota is a spreadsheet that three people edit and it's always wrong. Volunteers should be able to see open shifts and sign up, and the coordinator should see who is on each shift.",
+    "implicitRequirements": [
+      {
+        "id": "b02-r1",
+        "text": "A shift has a maximum number of volunteers and cannot be over-filled."
+      },
+      {
+        "id": "b02-r2",
+        "text": "A volunteer cannot be booked on two shifts at the same time."
+      },
+      {
+        "id": "b02-r3",
+        "text": "Volunteers can cancel, and the freed place becomes available again."
+      },
+      {
+        "id": "b02-r4",
+        "text": "The coordinator is warned about shifts that are short of people close to the day."
+      },
+      {
+        "id": "b02-r5",
+        "text": "Volunteers only see first names of others, not phone numbers."
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "b03",
+    "title": "A reading log for a primary class",
+    "audience": "non-developer",
+    "brief": "I teach a class of 28 eight-year-olds. I want them to log the books they read at home, how many pages, and a star rating, and I want to see who is reading and who isn't. Parents sometimes fill it in for younger ones.",
+    "implicitRequirements": [
+      {
+        "id": "b03-r1",
+        "text": "Children's full names and details are not visible to other children."
+      },
+      {
+        "id": "b03-r2",
+        "text": "Page counts that are impossible (negative, or thousands in a day) are refused or flagged."
+      },
+      {
+        "id": "b03-r3",
+        "text": "The teacher's view highlights children who have logged nothing for a while."
+      },
+      {
+        "id": "b03-r4",
+        "text": "Entering a log is simple enough for an eight-year-old: few fields, forgiving input."
+      },
+      {
+        "id": "b03-r5",
+        "text": "Data from last school year can be archived without deleting it."
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "b04",
+    "title": "A donor list and thank-you letters for a charity",
+    "audience": "non-developer",
+    "brief": "We're a small charity. When someone donates we want to record it and send a thank-you letter. At the end of the year we'd like a total per donor for their records.",
+    "implicitRequirements": [
+      {
+        "id": "b04-r1",
+        "text": "A donor who asked not to be contacted never gets a letter."
+      },
+      {
+        "id": "b04-r2",
+        "text": "Amounts are stored exactly (no rounding errors) and totals per year add up to the donations."
+      },
+      {
+        "id": "b04-r3",
+        "text": "The same person giving twice is recognised as one donor, not two."
+      },
+      {
+        "id": "b04-r4",
+        "text": "Letters can be printed or emailed, and it is recorded which was sent."
+      },
+      {
+        "id": "b04-r5",
+        "text": "Personal data can be exported or removed for a donor who asks."
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "b05",
+    "title": "Expense approvals for a team",
+    "audience": "developer team",
+    "brief": "Our team of twelve submits expenses by email to the manager. Build an internal tool where people submit an expense with a receipt, a manager approves or rejects with a reason, and finance can export approved expenses monthly.",
+    "implicitRequirements": [
+      {
+        "id": "b05-r1",
+        "text": "Someone cannot approve their own expense."
+      },
+      {
+        "id": "b05-r2",
+        "text": "A rejected expense can be corrected and resubmitted, keeping its history."
+      },
+      {
+        "id": "b05-r3",
+        "text": "Amounts carry a currency, and the monthly export does not mix currencies silently."
+      },
+      {
+        "id": "b05-r4",
+        "text": "Every approval and rejection is recorded with who did it and when."
+      },
+      {
+        "id": "b05-r5",
+        "text": "An expense already exported cannot be edited afterwards."
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "b06",
+    "title": "An internal status page",
+    "audience": "developer team",
+    "brief": "We run about ten internal services. We want a page that shows whether each is up, with a short history, so people stop asking in chat.",
+    "implicitRequirements": [
+      {
+        "id": "b06-r1",
+        "text": "A service that has not reported for a while is shown as unknown, not as up."
+      },
+      {
+        "id": "b06-r2",
+        "text": "A single failed check does not flip a service to down; a few in a row do."
+      },
+      {
+        "id": "b06-r3",
+        "text": "Times are shown in the viewer's time zone, not the server's."
+      },
+      {
+        "id": "b06-r4",
+        "text": "The page itself keeps working when one of the services it checks is slow."
+      },
+      {
+        "id": "b06-r5",
+        "text": "History is kept for a bounded period and does not grow forever."
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "b07",
+    "title": "A command-line tool to rename photos by date",
+    "audience": "developer",
+    "brief": "I have thousands of photos named IMG_1234.JPG. Write a small command-line tool that renames them to the date they were taken, like 2024-06-01_14-03-22.jpg.",
+    "implicitRequirements": [
+      {
+        "id": "b07-r1",
+        "text": "Two photos taken in the same second do not overwrite each other."
+      },
+      {
+        "id": "b07-r2",
+        "text": "Nothing is renamed without a way to preview what would happen first."
+      },
+      {
+        "id": "b07-r3",
+        "text": "Photos without a date in their metadata are left alone and reported."
+      },
+      {
+        "id": "b07-r4",
+        "text": "Running it twice does not rename already-renamed photos again."
+      },
+      {
+        "id": "b07-r5",
+        "text": "It never deletes a file."
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "b08",
+    "title": "Feature flags for our web app",
+    "audience": "developer team",
+    "brief": "We want to turn features on and off in production without deploying, and roll a feature out to a percentage of users.",
+    "implicitRequirements": [
+      {
+        "id": "b08-r1",
+        "text": "The same user keeps seeing the same side of a percentage rollout across visits."
+      },
+      {
+        "id": "b08-r2",
+        "text": "If the flag service is unreachable, the app falls back to a safe default instead of failing."
+      },
+      {
+        "id": "b08-r3",
+        "text": "Changing a flag is recorded with who changed it."
+      },
+      {
+        "id": "b08-r4",
+        "text": "A flag can be turned off instantly for everyone as a kill switch."
+      },
+      {
+        "id": "b08-r5",
+        "text": "Unknown flag names are reported rather than silently treated as on."
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "b09",
+    "title": "Forward webhooks to our team chat",
+    "audience": "developer",
+    "brief": "When our payment provider sends us a webhook about a failed payment, post a short message in our team chat channel.",
+    "implicitRequirements": [
+      {
+        "id": "b09-r1",
+        "text": "Webhooks with a bad signature are ignored, not posted."
+      },
+      {
+        "id": "b09-r2",
+        "text": "The same webhook delivered twice produces one message."
+      },
+      {
+        "id": "b09-r3",
+        "text": "Customer card numbers or full emails never appear in the chat message."
+      },
+      {
+        "id": "b09-r4",
+        "text": "If the chat service is down, messages are retried later rather than lost."
+      },
+      {
+        "id": "b09-r5",
+        "text": "Only the event types we care about are posted."
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "b10",
+    "title": "A notes app that works offline",
+    "audience": "developer",
+    "brief": "A simple markdown notes app for myself: write notes, tag them, search them. It should work on the train without internet.",
+    "implicitRequirements": [
+      {
+        "id": "b10-r1",
+        "text": "Notes written offline are not lost when the app closes."
+      },
+      {
+        "id": "b10-r2",
+        "text": "Search finds words inside notes, not just titles, and is fast with thousands of notes."
+      },
+      {
+        "id": "b10-r3",
+        "text": "Editing the same note on two devices does not silently drop one version."
+      },
+      {
+        "id": "b10-r4",
+        "text": "Deleted notes can be recovered for a while."
+      },
+      {
+        "id": "b10-r5",
+        "text": "Notes can be exported as plain markdown files."
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "b11",
+    "title": "Appointment reminders for a physiotherapy clinic",
+    "audience": "non-developer",
+    "brief": "We're a clinic with three physios. Patients forget appointments. We'd like reminders sent the day before by text message, and patients able to reply to cancel.",
+    "implicitRequirements": [
+      {
+        "id": "b11-r1",
+        "text": "Reminders are sent at a sensible local time, not in the middle of the night."
+      },
+      {
+        "id": "b11-r2",
+        "text": "A patient who has opted out never receives a reminder."
+      },
+      {
+        "id": "b11-r3",
+        "text": "A cancellation by reply frees the slot and tells the clinic."
+      },
+      {
+        "id": "b11-r4",
+        "text": "Reminder texts do not include medical details."
+      },
+      {
+        "id": "b11-r5",
+        "text": "An appointment moved after the reminder was sent gets a corrected reminder."
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "b12",
+    "title": "Invoices for a freelance illustrator",
+    "audience": "non-developer",
+    "brief": "I'm a freelance illustrator. I want to make invoices for clients from a template, number them, and see which ones are still unpaid.",
+    "implicitRequirements": [
+      {
+        "id": "b12-r1",
+        "text": "Invoice numbers are sequential and never reused, even if an invoice is cancelled."
+      },
+      {
+        "id": "b12-r2",
+        "text": "Totals, tax and discounts add up exactly on the invoice."
+      },
+      {
+        "id": "b12-r3",
+        "text": "Once sent, an invoice is not edited; a correction is a credit note or a new invoice."
+      },
+      {
+        "id": "b12-r4",
+        "text": "Unpaid invoices past their due date are clearly marked."
+      },
+      {
+        "id": "b12-r5",
+        "text": "The illustrator's bank details appear on the invoice exactly as entered."
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  }
+]

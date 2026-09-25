@@ -157,6 +157,11 @@ describe("@sekhemet/loop", () => {
     const warned = await session.executeTurn();
     expect(warned.stopReason).toBeUndefined();
     const warning = warned.observations.find((o) => o.tool === "stall");
+    // Each call's observation stays at its call's index (review item 11): the
+    // warning never shifts them, so the step records pair them right.
+    for (const [i, c] of warned.toolCalls.entries()) {
+      expect(warned.observations[i]?.tool).toBe(c.name);
+    }
     expect(warning?.content).toMatch(/made no progress/);
     expect(warning?.content).toMatch(/finish_card/);
     expect(warning?.content).toMatch(/end the card/);

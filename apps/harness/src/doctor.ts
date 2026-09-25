@@ -10,6 +10,7 @@ import {
   readKernelPressureLevel,
 } from "@sekhemet/models";
 import { ProcessSandbox } from "@sekhemet/sandbox";
+import { pendingM0InRepo } from "./m0_path.js";
 import { checkRegisters } from "./registers.js";
 import { playbookDoctorCheck } from "./wave2.js";
 
@@ -249,6 +250,7 @@ export async function runDoctor(repoPath: string = process.cwd()): Promise<Docto
     playbookDoctorCheck(repoPath),
     registersCheck(repoPath),
     pluginsCheck(repoPath),
+    m0PendingCheck(repoPath),
   ];
 
   return { ok: checks.every((c) => c.status !== "fail"), checks };
@@ -270,6 +272,21 @@ export function pluginsCheck(repoPath: string): DiagnosticCheck {
     "warn",
     `plugins are not supported and are not loaded${found.length ? ` (${found.join(", ")})` : ""}; use hooks (.sekhemet/hooks.toml) or MCP servers (.sekhemet/mcp.json) instead`,
   );
+}
+
+/**
+ * MS-M9-6: a Worker adopted or re-qualified owes the M0 protocol; the
+ * overnight run does it first, or a person runs `sekhemet m0`.
+ */
+export function m0PendingCheck(repoPath: string): DiagnosticCheck {
+  const pending = pendingM0InRepo(repoPath);
+  return pending.length === 0
+    ? check("M0", "pass", "no Worker owes the M0 protocol")
+    : check(
+        "M0",
+        "warn",
+        `M0 pending: ${pending.map((p) => `${p.worker} (${p.combination})`).join(", ")}; sekhemet overnight runs it first, or run sekhemet m0 --worker <name>`,
+      );
 }
 
 /** X17, X18: the provenance and research registers, when the repository keeps them. */

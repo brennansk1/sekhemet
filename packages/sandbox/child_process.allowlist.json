@@ -36,6 +36,7 @@
     "apps/harness/src/wave2.ts": "The harness's own git and `act` for the CI gate; package gates and --validate-tools run confined.",
     "packages/eval/src/fixture_repo.ts": "The harness's own git to build evaluation fixtures.",
     "packages/eval/src/git.ts": "The harness's own git for evaluation.",
+    "packages/eval/src/suite_runner.ts": "The harness's own git to commit earlier cards' registered reference solutions in independent mode (MS-T7-3).",
     "packages/gates/src/builtin.ts": "The harness's own git and `command -v` (onPath, for airgap); gitleaks, osv-scanner and semgrep run confined through runConfined.",
     "packages/gates/src/gate_host.ts": "openssl to make the gate host's local TLS certificate.",
     "packages/loop/src/card_runner.ts": "The harness's own git (checkpoints, reset, clean) on the card's worktree.",

@@ -26,7 +26,7 @@ export const gateCopy = {
   unknownNameSearch: (name: string) =>
     `${name} is not in scope. Call grep_search with the query \`${name}\` to find the module that exports it, or define ${name} in this file.`,
   unresolvedImport:
-    "The import path does not resolve. Use a relative path with a .js extension (`./types.js`) and check the file exists with list_dir.",
+    "The import path does not resolve. Use a relative path with a .js extension (`./types.js`) to a file that exists; read_file on the path shows whether it does.",
   unknownPropertyGeneric:
     "That property is not part of the target type. Remove it, and use only the fields the type declares.",
   unknownPropertyNotFound: (property: string, type: string) =>

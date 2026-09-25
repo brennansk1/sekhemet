@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import { loadAssetManifest, verifyAsset } from "./eval_assets.js";
 import type { RunProfile } from "./run_profile.js";
 import {
   PLANNING_DISCORDANCE,
@@ -44,8 +45,10 @@ export interface FrozenSuite {
   /** Bumped by hand when a task is added or removed, never when one changes. */
   version: string;
   tasks: SuiteTask[];
-  /** Covers the manifest and the fixtures' contents. */
+  /** Covers the manifest, the fixtures' contents and the registered reference solutions. */
   hash: string;
+  /** The registered reference solutions the hash covers (MS-T7-2), when registered. */
+  referenceSolutions?: { version: string; hash: string; items: number };
 }
 
 export interface TaskOutcome {
@@ -87,8 +90,19 @@ export interface SuiteRunResult {
   at: string;
   /** The run's one RunProfile, as the suite runner recorded it (rule 9a). */
   runProfile?: RunProfile & { hash?: string };
+  /** How the cards ran: all of a fixture in one queue, or each alone (MS-T7-3). */
+  mode?: "sequential" | "independent";
+  /** The Worker the run was started with. */
+  worker?: string;
   /** Cards whose evidence records a different profile from the run's. */
   profileMismatch?: string[];
+  /** Each fixture's model load, apart from the cards' wall clock (MS-T7-1). */
+  modelLoads?: {
+    fixture: string;
+    modelId: string;
+    loadMs?: { count: number; totalMs: number; firstMs: number };
+    spawnToHealthyMs?: { count: number; totalMs: number; firstMs: number };
+  }[];
   /** The A/B entry the run was started under (`--ab-entry`), by hash (rule 16c). */
   abEntry?: { sha256: string; costMeasure: string; recordedAt: string };
 }
@@ -152,7 +166,31 @@ export function loadFrozenSuite(repoRoot: string): FrozenSuite {
     tasks.push(...found);
   }
 
-  return { version: manifest.version, tasks, hash: hash.digest("hex") };
+  // MS-T7-2: the registered, verified reference solutions are part of what
+  // "the suite" is. A set changed without a new registered version is an
+  // error (verifyAsset throws), and an unregistered set is not included.
+  const references = loadAssetManifest(repoRoot).assets.find(
+    (a) => a.name === "reference-solutions",
+  );
+  if (references) {
+    const verified = verifyAsset(repoRoot, "reference-solutions");
+    hash.update(`reference-solutions\0${references.version}\0${verified.hash}\0`);
+  }
+
+  return {
+    version: manifest.version,
+    tasks,
+    hash: hash.digest("hex"),
+    ...(references
+      ? {
+          referenceSolutions: {
+            version: references.version,
+            hash: references.hash,
+            items: references.items,
+          },
+        }
+      : {}),
+  };
 }
 
 /**
@@ -285,6 +323,23 @@ export function pairOutcomes(
  * suite hash is refused: two runs of different tasks are not comparable.
  */
 export function compareRuns(baseline: SuiteRunResult, candidate: SuiteRunResult): RunComparison {
+  const bMode = baseline.mode ?? "sequential";
+  const cMode = candidate.mode ?? "sequential";
+  if (bMode !== cMode) {
+    return {
+      comparable: false,
+      improved: false,
+      delta: 0,
+      paired: 0,
+      baselineOnly: 0,
+      candidateOnly: 0,
+      p: 1,
+      minDetectable: null,
+      droppedBlocked: 0,
+      verdict: "incomparable",
+      reason: `${bMode} against ${cMode}: a card run alone and a card run after its predecessors are different measurements (MS-T7-3)`,
+    };
+  }
   if (baseline.suiteHash !== candidate.suiteHash) {
     return {
       comparable: false,
@@ -418,5 +473,10 @@ export function summarise(r: SuiteRunResult): string {
     `${hours >= 1 ? `${hours.toFixed(1)} h` : `${Math.round(r.cost.wallClockSeconds / 60)} min`}`,
     `${Math.round(r.cost.tokens / 1000)}k tokens`,
     `${r.cost.rungs} repair rung(s)`,
+    ...(r.modelLoads?.length
+      ? [
+          `model load ${Math.round(r.modelLoads.reduce((n, l) => n + (l.spawnToHealthyMs?.totalMs ?? 0) + (l.loadMs?.totalMs ?? 0), 0) / 1000)} s over ${r.modelLoads.reduce((n, l) => n + (l.spawnToHealthyMs?.count ?? 0) + (l.loadMs?.count ?? 0), 0)} load(s), reported apart`,
+        ]
+      : []),
   ].join(" · ");
 }

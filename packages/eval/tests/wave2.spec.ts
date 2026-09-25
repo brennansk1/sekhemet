@@ -9,6 +9,7 @@ import {
   BudgetPolicyStore,
   LearningGuard,
   boundPolicyChange,
+  checkSkillCandidate,
   commandShape,
   defaultSetupCommands,
   distillSkill,
@@ -187,6 +188,52 @@ describe("E1/E3: the M0 protocol", () => {
     expect(report.budgets[1]?.alwaysPassed).toEqual(["a", "c"]);
     expect(report.stepStarved).toEqual(["c"]);
     expect((report.results[0]?.settings as { quant?: string }).quant).toBe("IQ3_S");
+  });
+});
+
+describe("MS-M9-6: M0 stops at a clean point and resumes where it stopped", () => {
+  const tasks = ["a", "b"].map((id) => ({
+    id,
+    repoCommit: "HEAD",
+    issueDescription: id,
+    failToPassTests: ["x"],
+    passToPassTests: [],
+  }));
+  const adapter = new ManagedLlamaServerAdapter({ modelId: "w", modelPath: "/m/W-IQ3_S.gguf" });
+
+  it("stops between runs when asked, marking the report partial, and a resumed run skips what was done", async () => {
+    const harness = fakeHarness({ 50: [["a"], ["a"], ["a"]], 150: [["a", "b"], ["a"], ["b"]] });
+    const done: { budget: number; run: number }[] = [];
+    let n = 0;
+    const partial = await runM0Protocol({
+      tasks,
+      adapter,
+      harness,
+      shouldStop: () => n >= 2,
+      onRun: (budget, run) => {
+        n++;
+        done.push({ budget, run });
+      },
+    });
+    expect(partial.partial).toBe(true);
+    expect(harness.calls).toEqual([50, 50]);
+    expect(done).toEqual([
+      { budget: 50, run: 1 },
+      { budget: 50, run: 2 },
+    ]);
+    const resumed = await runM0Protocol({
+      tasks,
+      adapter,
+      harness,
+      resume: partial.results.map((result, i) => ({
+        ...(done[i] as { budget: number; run: number }),
+        result,
+      })),
+    });
+    expect(resumed.partial).toBeUndefined();
+    // Only the four runs not done before were run now.
+    expect(harness.calls).toEqual([50, 50, 50, 150, 150, 150]);
+    expect(resumed.budgets.map((b) => b.runs)).toEqual([3, 3]);
   });
 });
 
@@ -437,31 +484,82 @@ describe("E10: skill distillation to a candidate needing approval", () => {
   });
 });
 
-describe("E11: exemplar harvesting", () => {
-  it("records passing cards' trajectories into the exemplar store", () => {
-    const store = new ExemplarStore(join(tmp(), "ex"));
-    const got = harvestExemplars(store, [
-      {
-        id: "c1",
-        tier: "task",
-        title: "Fix rounding",
-        scopeFiles: ["src/a.ts"],
-        passed: true,
-        tokens: 900,
-        turns: [{ turn: 1, action: "edit src/a.ts", result: "ok" }],
+describe("MS-T8-5: a skill candidate is checked by its own checks, confined, before anything else", () => {
+  const candidate = (checks?: unknown) => {
+    const dir = join(tmp(), "cand");
+    mkdirSync(join(dir, "evals"), { recursive: true });
+    writeFileSync(join(dir, "SKILL.md"), "---\ndescription: x\n---\n1. read\n");
+    if (checks !== undefined)
+      writeFileSync(join(dir, "evals", "checks.json"), JSON.stringify(checks));
+    return dir;
+  };
+
+  it("runs each check confined in the candidate's directory and keeps it when all pass", async () => {
+    const dir = candidate([{ command: "node", args: ["check.js"] }]);
+    const ran: { command: string; root: string }[] = [];
+    const r = await checkSkillCandidate(dir, {
+      run: async (command, _args, root) => {
+        ran.push({ command, root });
+        return { exitCode: 0, output: "ok" };
       },
-      {
-        id: "c2",
-        tier: "task",
-        title: "Fix rounding again",
-        scopeFiles: ["src/a.ts"],
-        passed: false,
-        tokens: 9,
-        turns: [{ turn: 1, action: "x", result: "y" }],
-      },
+    });
+    expect(r).toMatchObject({ status: "checked", passed: 1 });
+    expect(ran).toEqual([{ command: "node", root: dir }]);
+    expect(existsSync(dir)).toBe(true);
+  });
+
+  it("discards a candidate whose check fails, and says which", async () => {
+    const dir = candidate([
+      { command: "node", args: ["ok.js"] },
+      { command: "node", args: ["bad.js"] },
     ]);
-    expect(got.map((e) => e.cardId)).toEqual(["c1"]);
-    expect(store.topFor("implement:ts").map((e) => e.cardId)).toEqual(["c1"]);
+    const r = await checkSkillCandidate(dir, {
+      run: async (_c, args) => ({ exitCode: args[0] === "bad.js" ? 1 : 0, output: "boom" }),
+    });
+    expect(r).toMatchObject({ status: "discarded" });
+    expect(r.reason).toMatch(/node bad\.js exited 1/);
+    expect(existsSync(dir)).toBe(false);
+  });
+
+  it("marks a candidate with no checks unchecked: nothing grounds it, so it cannot be approved", async () => {
+    const r = await checkSkillCandidate(candidate(), {
+      run: async () => ({ exitCode: 0, output: "" }),
+    });
+    expect(r).toMatchObject({ status: "unchecked" });
+    expect(r.reason).toMatch(/no checks/);
+  });
+});
+
+describe("E11: exemplar harvesting, from five complete cards per class (rule 20)", () => {
+  const passing = (id: string) => ({
+    id,
+    tier: "task",
+    title: `Fix rounding ${id}`,
+    scopeFiles: ["src/a.ts"],
+    passed: true,
+    tokens: 900,
+    turns: [{ turn: 1, action: "edit src/a.ts", result: "ok" }],
+  });
+
+  it("offers nothing until a class has five structurally complete passing cards, then all of them", () => {
+    const dir = tmp();
+    const store = new ExemplarStore(join(dir, "ex"));
+    const pool = join(dir, "exemplar_pool.json");
+    for (const id of ["c1", "c2", "c3", "c4"]) {
+      expect(harvestExemplars(store, [passing(id)], { poolPath: pool })).toEqual([]);
+    }
+    // A failing card never counts.
+    expect(
+      harvestExemplars(store, [{ ...passing("x"), passed: false }], { poolPath: pool }),
+    ).toEqual([]);
+    expect(store.topFor("implement:ts")).toEqual([]);
+    const fifth = harvestExemplars(store, [passing("c5")], { poolPath: pool });
+    expect(fifth.map((e) => e.cardId)).toEqual(["c1", "c2", "c3", "c4", "c5"]);
+    expect(store.topFor("implement:ts").length).toBeGreaterThan(0);
+    // Once the class is open, a new card goes straight in.
+    expect(
+      harvestExemplars(store, [passing("c6")], { poolPath: pool }).map((e) => e.cardId),
+    ).toEqual(["c6"]);
   });
 });
 
@@ -490,14 +588,19 @@ describe("MS-T8-6: only structurally complete trajectories become exemplars or s
     expect(structurallyComplete([{ turn: 1, calls: 2, observations: 1 }])).toBe(false);
     expect(structurallyComplete([{ turn: 2 }, { turn: 1 }])).toBe(false);
     const store = new ExemplarStore(join(tmp(), "ex"));
-    const got = harvestExemplars(store, [
-      card("ok", [{ turn: 1, action: "edit src/a.ts", result: "ok", calls: 1, observations: 1 }]),
-      card("open", [{ turn: 1, action: "edit src/a.ts", result: "", calls: 1, observations: 0 }]),
-      card("jumbled", [
-        { turn: 2, action: "check", result: "pass" },
-        { turn: 1, action: "edit", result: "ok" },
-      ]),
-    ]);
+    const got = harvestExemplars(
+      store,
+      [
+        card("ok", [{ turn: 1, action: "edit src/a.ts", result: "ok", calls: 1, observations: 1 }]),
+        card("open", [{ turn: 1, action: "edit src/a.ts", result: "", calls: 1, observations: 0 }]),
+        card("jumbled", [
+          { turn: 2, action: "check", result: "pass" },
+          { turn: 1, action: "edit", result: "ok" },
+        ]),
+      ],
+      // The volume threshold is tested above; this one isolates the structural filter.
+      { minPerClass: 1 },
+    );
     expect(got.map((e) => e.cardId)).toEqual(["ok"]);
   });
 

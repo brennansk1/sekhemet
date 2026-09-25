@@ -6,6 +6,12 @@ The number to watch is not the pass count alone. It is **why the failures failed
 
 ---
 
+## The suite hash changes (B2.4, MS-T7-2): the reference solutions are part of the suite
+
+From this build the suite hash also covers the registered, verified reference solutions (`fixtures/reference_solutions`, `reference-solutions` in `fixtures/eval_assets.json`): one per card, each of which failed its card's frozen test at the seed and passes it. They are what independent mode builds a card's `main` from (MS-T7-3), so a changed solution changes what a card is measured against, and the hash must say so; a solution changed without a new registered version stops the suite from loading. The hash moves from `192b6e95` to `d70f689d` (reference solutions version 3; the verifier moved out of the asset, so it no longer changes the hash) with no fixture or task edited. **No run below is comparable with a run on the new hash**, and **B2.5's baseline is the first run on it**.
+
+---
+
 ## The runner changed (B2.4): later runs are not directly comparable to earlier ones
 
 From the build that moves the suite runner into `packages/eval` (`suite_runner.ts`, measurement MS-M9-3), the suite runs each fixture through the product's `sekhemet queue` with its shipped defaults and `--auto-accept`, not card by card through `sekhemet run` (MS-M9-1, MS-M9-4): the queue's planning prelude, dependency deferral, learned rules and team note are now part of what is measured. Three things are also counted differently. The suite hash does not change, because it covers the manifest and the fixtures, not the runner. But a run on this build is **not directly comparable** to any run below, including the 10/14 on `468f67f`:

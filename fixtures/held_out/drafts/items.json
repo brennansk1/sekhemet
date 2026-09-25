@@ -1,0 +1,451 @@
+[
+  {
+    "id": "brief/b01",
+    "kind": "brief",
+    "briefId": "b01",
+    "title": "Held-out acceptance for: Pre-orders for a small bakery",
+    "checks": [
+      {
+        "id": "b01-c1",
+        "covers": "b01-r1",
+        "check": "On the final build, show that: Orders for a day close at a cut-off the day before (the baker needs time to bake), and the page says so."
+      },
+      {
+        "id": "b01-c2",
+        "covers": "b01-r2",
+        "check": "On the final build, show that: An item that has sold out for that day cannot be ordered any more."
+      },
+      {
+        "id": "b01-c3",
+        "covers": "b01-r3",
+        "check": "On the final build, show that: The customer is told clearly that the order went through, with what they ordered and the collection time."
+      },
+      {
+        "id": "b01-c4",
+        "covers": "b01-r4",
+        "check": "On the final build, show that: The baker's daily list adds up quantities per item, not just a list of orders."
+      },
+      {
+        "id": "b01-c5",
+        "covers": "b01-r5",
+        "check": "On the final build, show that: A phone number that is obviously wrong is caught before the order is taken."
+      },
+      {
+        "id": "b01-c6",
+        "covers": "b01-r6",
+        "check": "On the final build, show that: Nobody pays online; the page must not ask for card details."
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "brief/b02",
+    "kind": "brief",
+    "briefId": "b02",
+    "title": "Held-out acceptance for: A volunteer rota for a food bank",
+    "checks": [
+      {
+        "id": "b02-c1",
+        "covers": "b02-r1",
+        "check": "On the final build, show that: A shift has a maximum number of volunteers and cannot be over-filled."
+      },
+      {
+        "id": "b02-c2",
+        "covers": "b02-r2",
+        "check": "On the final build, show that: A volunteer cannot be booked on two shifts at the same time."
+      },
+      {
+        "id": "b02-c3",
+        "covers": "b02-r3",
+        "check": "On the final build, show that: Volunteers can cancel, and the freed place becomes available again."
+      },
+      {
+        "id": "b02-c4",
+        "covers": "b02-r4",
+        "check": "On the final build, show that: The coordinator is warned about shifts that are short of people close to the day."
+      },
+      {
+        "id": "b02-c5",
+        "covers": "b02-r5",
+        "check": "On the final build, show that: Volunteers only see first names of others, not phone numbers."
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "brief/b03",
+    "kind": "brief",
+    "briefId": "b03",
+    "title": "Held-out acceptance for: A reading log for a primary class",
+    "checks": [
+      {
+        "id": "b03-c1",
+        "covers": "b03-r1",
+        "check": "On the final build, show that: Children's full names and details are not visible to other children."
+      },
+      {
+        "id": "b03-c2",
+        "covers": "b03-r2",
+        "check": "On the final build, show that: Page counts that are impossible (negative, or thousands in a day) are refused or flagged."
+      },
+      {
+        "id": "b03-c3",
+        "covers": "b03-r3",
+        "check": "On the final build, show that: The teacher's view highlights children who have logged nothing for a while."
+      },
+      {
+        "id": "b03-c4",
+        "covers": "b03-r4",
+        "check": "On the final build, show that: Entering a log is simple enough for an eight-year-old: few fields, forgiving input."
+      },
+      {
+        "id": "b03-c5",
+        "covers": "b03-r5",
+        "check": "On the final build, show that: Data from last school year can be archived without deleting it."
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "brief/b04",
+    "kind": "brief",
+    "briefId": "b04",
+    "title": "Held-out acceptance for: A donor list and thank-you letters for a charity",
+    "checks": [
+      {
+        "id": "b04-c1",
+        "covers": "b04-r1",
+        "check": "On the final build, show that: A donor who asked not to be contacted never gets a letter."
+      },
+      {
+        "id": "b04-c2",
+        "covers": "b04-r2",
+        "check": "On the final build, show that: Amounts are stored exactly (no rounding errors) and totals per year add up to the donations."
+      },
+      {
+        "id": "b04-c3",
+        "covers": "b04-r3",
+        "check": "On the final build, show that: The same person giving twice is recognised as one donor, not two."
+      },
+      {
+        "id": "b04-c4",
+        "covers": "b04-r4",
+        "check": "On the final build, show that: Letters can be printed or emailed, and it is recorded which was sent."
+      },
+      {
+        "id": "b04-c5",
+        "covers": "b04-r5",
+        "check": "On the final build, show that: Personal data can be exported or removed for a donor who asks."
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "brief/b05",
+    "kind": "brief",
+    "briefId": "b05",
+    "title": "Held-out acceptance for: Expense approvals for a team",
+    "checks": [
+      {
+        "id": "b05-c1",
+        "covers": "b05-r1",
+        "check": "On the final build, show that: Someone cannot approve their own expense."
+      },
+      {
+        "id": "b05-c2",
+        "covers": "b05-r2",
+        "check": "On the final build, show that: A rejected expense can be corrected and resubmitted, keeping its history."
+      },
+      {
+        "id": "b05-c3",
+        "covers": "b05-r3",
+        "check": "On the final build, show that: Amounts carry a currency, and the monthly export does not mix currencies silently."
+      },
+      {
+        "id": "b05-c4",
+        "covers": "b05-r4",
+        "check": "On the final build, show that: Every approval and rejection is recorded with who did it and when."
+      },
+      {
+        "id": "b05-c5",
+        "covers": "b05-r5",
+        "check": "On the final build, show that: An expense already exported cannot be edited afterwards."
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "brief/b06",
+    "kind": "brief",
+    "briefId": "b06",
+    "title": "Held-out acceptance for: An internal status page",
+    "checks": [
+      {
+        "id": "b06-c1",
+        "covers": "b06-r1",
+        "check": "On the final build, show that: A service that has not reported for a while is shown as unknown, not as up."
+      },
+      {
+        "id": "b06-c2",
+        "covers": "b06-r2",
+        "check": "On the final build, show that: A single failed check does not flip a service to down; a few in a row do."
+      },
+      {
+        "id": "b06-c3",
+        "covers": "b06-r3",
+        "check": "On the final build, show that: Times are shown in the viewer's time zone, not the server's."
+      },
+      {
+        "id": "b06-c4",
+        "covers": "b06-r4",
+        "check": "On the final build, show that: The page itself keeps working when one of the services it checks is slow."
+      },
+      {
+        "id": "b06-c5",
+        "covers": "b06-r5",
+        "check": "On the final build, show that: History is kept for a bounded period and does not grow forever."
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "brief/b07",
+    "kind": "brief",
+    "briefId": "b07",
+    "title": "Held-out acceptance for: A command-line tool to rename photos by date",
+    "checks": [
+      {
+        "id": "b07-c1",
+        "covers": "b07-r1",
+        "check": "On the final build, show that: Two photos taken in the same second do not overwrite each other."
+      },
+      {
+        "id": "b07-c2",
+        "covers": "b07-r2",
+        "check": "On the final build, show that: Nothing is renamed without a way to preview what would happen first."
+      },
+      {
+        "id": "b07-c3",
+        "covers": "b07-r3",
+        "check": "On the final build, show that: Photos without a date in their metadata are left alone and reported."
+      },
+      {
+        "id": "b07-c4",
+        "covers": "b07-r4",
+        "check": "On the final build, show that: Running it twice does not rename already-renamed photos again."
+      },
+      {
+        "id": "b07-c5",
+        "covers": "b07-r5",
+        "check": "On the final build, show that: It never deletes a file."
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "brief/b08",
+    "kind": "brief",
+    "briefId": "b08",
+    "title": "Held-out acceptance for: Feature flags for our web app",
+    "checks": [
+      {
+        "id": "b08-c1",
+        "covers": "b08-r1",
+        "check": "On the final build, show that: The same user keeps seeing the same side of a percentage rollout across visits."
+      },
+      {
+        "id": "b08-c2",
+        "covers": "b08-r2",
+        "check": "On the final build, show that: If the flag service is unreachable, the app falls back to a safe default instead of failing."
+      },
+      {
+        "id": "b08-c3",
+        "covers": "b08-r3",
+        "check": "On the final build, show that: Changing a flag is recorded with who changed it."
+      },
+      {
+        "id": "b08-c4",
+        "covers": "b08-r4",
+        "check": "On the final build, show that: A flag can be turned off instantly for everyone as a kill switch."
+      },
+      {
+        "id": "b08-c5",
+        "covers": "b08-r5",
+        "check": "On the final build, show that: Unknown flag names are reported rather than silently treated as on."
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "brief/b09",
+    "kind": "brief",
+    "briefId": "b09",
+    "title": "Held-out acceptance for: Forward webhooks to our team chat",
+    "checks": [
+      {
+        "id": "b09-c1",
+        "covers": "b09-r1",
+        "check": "On the final build, show that: Webhooks with a bad signature are ignored, not posted."
+      },
+      {
+        "id": "b09-c2",
+        "covers": "b09-r2",
+        "check": "On the final build, show that: The same webhook delivered twice produces one message."
+      },
+      {
+        "id": "b09-c3",
+        "covers": "b09-r3",
+        "check": "On the final build, show that: Customer card numbers or full emails never appear in the chat message."
+      },
+      {
+        "id": "b09-c4",
+        "covers": "b09-r4",
+        "check": "On the final build, show that: If the chat service is down, messages are retried later rather than lost."
+      },
+      {
+        "id": "b09-c5",
+        "covers": "b09-r5",
+        "check": "On the final build, show that: Only the event types we care about are posted."
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "brief/b10",
+    "kind": "brief",
+    "briefId": "b10",
+    "title": "Held-out acceptance for: A notes app that works offline",
+    "checks": [
+      {
+        "id": "b10-c1",
+        "covers": "b10-r1",
+        "check": "On the final build, show that: Notes written offline are not lost when the app closes."
+      },
+      {
+        "id": "b10-c2",
+        "covers": "b10-r2",
+        "check": "On the final build, show that: Search finds words inside notes, not just titles, and is fast with thousands of notes."
+      },
+      {
+        "id": "b10-c3",
+        "covers": "b10-r3",
+        "check": "On the final build, show that: Editing the same note on two devices does not silently drop one version."
+      },
+      {
+        "id": "b10-c4",
+        "covers": "b10-r4",
+        "check": "On the final build, show that: Deleted notes can be recovered for a while."
+      },
+      {
+        "id": "b10-c5",
+        "covers": "b10-r5",
+        "check": "On the final build, show that: Notes can be exported as plain markdown files."
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "brief/b11",
+    "kind": "brief",
+    "briefId": "b11",
+    "title": "Held-out acceptance for: Appointment reminders for a physiotherapy clinic",
+    "checks": [
+      {
+        "id": "b11-c1",
+        "covers": "b11-r1",
+        "check": "On the final build, show that: Reminders are sent at a sensible local time, not in the middle of the night."
+      },
+      {
+        "id": "b11-c2",
+        "covers": "b11-r2",
+        "check": "On the final build, show that: A patient who has opted out never receives a reminder."
+      },
+      {
+        "id": "b11-c3",
+        "covers": "b11-r3",
+        "check": "On the final build, show that: A cancellation by reply frees the slot and tells the clinic."
+      },
+      {
+        "id": "b11-c4",
+        "covers": "b11-r4",
+        "check": "On the final build, show that: Reminder texts do not include medical details."
+      },
+      {
+        "id": "b11-c5",
+        "covers": "b11-r5",
+        "check": "On the final build, show that: An appointment moved after the reminder was sent gets a corrected reminder."
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "brief/b12",
+    "kind": "brief",
+    "briefId": "b12",
+    "title": "Held-out acceptance for: Invoices for a freelance illustrator",
+    "checks": [
+      {
+        "id": "b12-c1",
+        "covers": "b12-r1",
+        "check": "On the final build, show that: Invoice numbers are sequential and never reused, even if an invoice is cancelled."
+      },
+      {
+        "id": "b12-c2",
+        "covers": "b12-r2",
+        "check": "On the final build, show that: Totals, tax and discounts add up exactly on the invoice."
+      },
+      {
+        "id": "b12-c3",
+        "covers": "b12-r3",
+        "check": "On the final build, show that: Once sent, an invoice is not edited; a correction is a credit note or a new invoice."
+      },
+      {
+        "id": "b12-c4",
+        "covers": "b12-r4",
+        "check": "On the final build, show that: Unpaid invoices past their due date are clearly marked."
+      },
+      {
+        "id": "b12-c5",
+        "covers": "b12-r5",
+        "check": "On the final build, show that: The illustrator's bank details appear on the invoice exactly as entered."
+      }
+    ],
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "fixture/chronicle",
+    "kind": "fixture",
+    "fixture": "chronicle",
+    "file": "chronicle.spec.ts",
+    "title": "Held-out acceptance for the chronicle fixture",
+    "proof": "proof.json",
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "fixture/onyx",
+    "kind": "fixture",
+    "fixture": "onyx",
+    "file": "onyx.spec.ts",
+    "title": "Held-out acceptance for the onyx fixture",
+    "proof": "proof.json",
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "fixture/vanguard",
+    "kind": "fixture",
+    "fixture": "vanguard",
+    "file": "vanguard.spec.ts",
+    "title": "Held-out acceptance for the vanguard fixture",
+    "proof": "proof.json",
+    "status": "draft — awaiting a person's confirmation"
+  },
+  {
+    "id": "fixture/basalt-canvas",
+    "kind": "fixture",
+    "fixture": "basalt-canvas",
+    "file": "basalt-canvas.spec.ts",
+    "title": "Held-out acceptance for the basalt-canvas fixture",
+    "proof": "proof.json",
+    "status": "draft — awaiting a person's confirmation"
+  }
+]

@@ -261,6 +261,17 @@ export class ToolExecutor {
     this.shownInFull = new Set(paths);
   }
 
+  /** The tools this step offers: a reply names only these (review item 3). Unset: all. */
+  private offeredTools: ReadonlySet<string> | undefined;
+
+  public setOfferedTools(names: readonly string[]): void {
+    this.offeredTools = new Set(names);
+  }
+
+  private offers(name: string): boolean {
+    return this.offeredTools === undefined || this.offeredTools.has(name);
+  }
+
   public markSeen(relPath: string): void {
     try {
       this.seen.add(this.rel(resolveInWorktree(this.root, relPath)));
@@ -625,7 +636,17 @@ export class ToolExecutor {
     const abs = resolveInWorktree(this.root, path);
     if (!existsSync(abs)) return fail("read_file", `file not found: ${path}`);
     if (statSync(abs).isDirectory())
-      return fail("read_file", `${path} is a directory; use list_dir`);
+      return fail(
+        "read_file",
+        workerCopy.readFileDirectory(
+          path,
+          this.offers("list_dir")
+            ? "list_dir"
+            : this.offers("grep_search")
+              ? "grep_search"
+              : undefined,
+        ),
+      );
 
     const source = this.readText(abs);
     const { lines } = splitLines(source);
@@ -650,7 +671,13 @@ export class ToolExecutor {
       return ok(
         "read_file",
         `outlined ${path} (${lines.length} lines)`,
-        `${path} has ${lines.length} lines, so here is its outline instead of the whole file. Read a range with read_file(path, start, end) or a declaration with read_symbol(path, symbol).\n\nOUTLINE\n${outline || "(no top-level declarations found)"}\n\nFIRST 40 LINES\n${head}`,
+        workerCopy.readFileOutline(
+          path,
+          String(lines.length),
+          outline,
+          head,
+          this.offers("read_symbol") ? "read_symbol" : undefined,
+        ),
       );
     }
 
@@ -1264,6 +1291,15 @@ Promise.resolve(__result).then((v) => { process.stdout.write(typeof v === "strin
       );
     } catch {
       return undefined; // No server installed or it failed: text fallback.
+    }
+  }
+
+  /** The file that declares a TypeScript/JavaScript symbol, for tool_search's read_symbol calls (WL-M2-7). */
+  public declaringFile(symbol: string): string | undefined {
+    try {
+      return this.symbolService().definition(symbol, undefined)[0]?.path;
+    } catch {
+      return undefined;
     }
   }
 

@@ -85,8 +85,8 @@ const REMEASURE = process.env.SEKHEMET_PROMPT_BASELINE_REMEASURE;
  */
 const RECORDED_TOTALS = {
   templates: 122,
-  capitalWords: 646,
-  negations: 444,
+  capitalWords: 635,
+  negations: 443,
   longToolDescriptions: 7,
 };
 const TODAY = "2026-09-24";
@@ -186,7 +186,7 @@ const GATES = [
  * Every tool a card of this class can call, as a session gives it: the class
  * set with note's gate enum (GT-M6-5). The lint sees what a session sends.
  */
-function sessionTools(scriptCapable = false): ToolInterfaceSpec[] {
+function sessionTools(scriptCapable = false, progressiveTools = false): ToolInterfaceSpec[] {
   const worktreePath = mkdtempSync(join(tmpdir(), "sekhemet-lint-session-"));
   try {
     return new CardExecutionSessionImpl({
@@ -199,6 +199,7 @@ function sessionTools(scriptCapable = false): ToolInterfaceSpec[] {
       gateRunner: new DeterministicGateRunner(new ProcessSandbox()),
       suspectableGates: GATES,
       scriptCapable,
+      progressiveTools,
     }).getToolSpecs();
   } finally {
     rmSync(worktreePath, { recursive: true, force: true });
@@ -449,18 +450,22 @@ async function renderTemplates(): Promise<Template[]> {
   workerRequest("worker.request.numbered_criteria", numbered);
 
   // Progressive loading (C19): the loaded subset is shown, the class catalog
-  // stays callable through tool_search.
-  const loader = new ToolLoader(workerTools, PROGRESSIVE_CORE);
+  // stays callable through tool_search. The catalog is the progressive arm's,
+  // as a session with progressiveTools builds it (worker-loop WL-M2-3).
+  const progressiveTools = sessionTools(false, true);
+  const loader = new ToolLoader(progressiveTools, PROGRESSIVE_CORE);
   const coreSpecs = loader.visibleSpecs();
   loader.handle("grep_search");
   const loadedSince = loader
     .visibleSpecs()
     .filter((s) => !coreSpecs.some((c) => c.name === s.name));
-  const progressiveCtx = { callableTools: [...workerTools.map((x) => x.name), "tool_search"] };
+  const progressiveCtx = {
+    callableTools: [...new Set([...progressiveTools.map((x) => x.name), "tool_search"])],
+  };
   const progressive = buildWorkerPrompt(
     workerInput(3, {
       tools: coreSpecs,
-      toolIndex: workerTools,
+      toolIndex: progressiveTools,
       loadedTools: loadedSince,
       turns: turns(2),
     }),
@@ -475,10 +480,10 @@ async function renderTemplates(): Promise<Template[]> {
   const progressiveNative = buildWorkerPrompt(
     workerInput(3, {
       tools: coreSpecs,
-      toolIndex: workerTools,
+      toolIndex: progressiveTools,
       loadedTools: loadedSince,
       nativeToolSchemas: loader.visibleSchemas(
-        workerTools.map((x) => ({
+        progressiveTools.map((x) => ({
           name: x.name,
           description: x.summary,
           parameters: { type: "object" },
@@ -503,8 +508,9 @@ async function renderTemplates(): Promise<Template[]> {
 
   // Every catalog tool's description as a session sends it: the one builder
   // (tool_schema.ts), note's gate enum included; script-capable, so
-  // run_script is described too.
-  const described = sessionTools(true);
+  // run_script is described too, and under progressive loading, whose
+  // catalog holds every tool (the fixed set holds twelve, worker-loop WL-M2-3).
+  const described = sessionTools(true, true);
   expect(described.map((x) => x.name).sort()).toEqual(TOOL_CATALOG.map((x) => x.name).sort());
   t.push({ name: "worker.tool_descriptions", ...definitions(described.map(toolDefinition)) });
   t.push({

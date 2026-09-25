@@ -102,14 +102,44 @@ export interface ThroughputStats {
   decodeTokensPerSecond: number | undefined;
 }
 
+/** A model's loads of one kind: how many, their total and the first (MS-T7-1). */
+export interface LoadStat {
+  count: number;
+  totalMs: number;
+  firstMs: number;
+}
+
 export class ThroughputMeter {
   private stats = new Map<
     string,
     { requests: number; pT: number; pMs: number; dT: number; dMs: number }
   >();
 
+  private loadTimes = new Map<string, { loadMs?: LoadStat; spawnToHealthyMs?: LoadStat }>();
+
+  /**
+   * Every load of each model, kept apart from its requests (MS-T7-1): the
+   * server-reported load (Ollama) and, for a server the harness started, the
+   * time from spawn to healthy — counted and totalled, so a reload after a
+   * swap or a memory-guard unload is reported too (review M3).
+   */
+  public loads(): { modelId: string; loadMs?: LoadStat; spawnToHealthyMs?: LoadStat }[] {
+    return [...this.loadTimes].map(([modelId, l]) => ({ modelId, ...l }));
+  }
+
   /** Fold one request's usage in. Requests without server timings count only as requests. */
   public record(modelId: string, usage: TokenUsage): void {
+    if (usage.loadMs !== undefined || usage.spawnToHealthyMs !== undefined) {
+      const l = this.loadTimes.get(modelId) ?? {};
+      const add = (stat: LoadStat | undefined, ms: number): LoadStat =>
+        stat
+          ? { count: stat.count + 1, totalMs: stat.totalMs + ms, firstMs: stat.firstMs }
+          : { count: 1, totalMs: ms, firstMs: ms };
+      if (usage.loadMs !== undefined) l.loadMs = add(l.loadMs, usage.loadMs);
+      if (usage.spawnToHealthyMs !== undefined)
+        l.spawnToHealthyMs = add(l.spawnToHealthyMs, usage.spawnToHealthyMs);
+      this.loadTimes.set(modelId, l);
+    }
     const s = this.stats.get(modelId) ?? { requests: 0, pT: 0, pMs: 0, dT: 0, dMs: 0 };
     s.requests++;
     const evaluated = usage.evaluatedPromptTokens ?? usage.promptTokens;

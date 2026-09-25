@@ -701,9 +701,9 @@
       "ruleCountMethod": "legacy_directives"
     },
     "worker.observations.static_tools_ts": {
-      "capitalWords": 19,
+      "capitalWords": 16,
       "imperativeRules": null,
-      "negations": 55,
+      "negations": 54,
       "longToolDescriptions": 0,
       "ruleCountMethod": "legacy_directives"
     },
@@ -743,7 +743,7 @@
       "ruleCountMethod": "legacy_directives"
     },
     "worker.system.all_blocks": {
-      "capitalWords": 32,
+      "capitalWords": 28,
       "imperativeRules": null,
       "negations": 7,
       "longToolDescriptions": 0,
@@ -771,7 +771,7 @@
       "ruleCountMethod": "legacy_directives"
     },
     "worker.system.text_tools": {
-      "capitalWords": 26,
+      "capitalWords": 22,
       "imperativeRules": null,
       "negations": 7,
       "longToolDescriptions": 0,

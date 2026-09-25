@@ -25,6 +25,7 @@ import {
 } from "./pressure.js";
 import { PROMPT_ZONE_1_SYSTEM, type SkillDisclosure, type TurnHistoryItem } from "./prompts.js";
 import { linesNamedFor, pruneLines } from "./pruner.js";
+import { type PruneArm, pruneArmFromEnv, pruneSeed, randomLinePrune } from "./random_prune.js";
 import type { SkillManifest } from "./skills.js";
 import {
   type ToolInterfaceSpec,
@@ -70,6 +71,16 @@ export interface PinnedFile {
 
 export interface WorkerPromptInput {
   card: CardRecord;
+  /**
+   * How an oversized file is cut (MS-T7-6): the pruner (`query`, default)
+   * or its null baseline (`random`); unset reads `SEKHEMET_PRUNE`.
+   */
+  pruneArm?: PruneArm;
+  /**
+   * The run's fixed sampling seed (measurement rule 10), when the RunProfile
+   * sets one: mixed into the null arm's seed so repeated runs draw anew.
+   */
+  seed?: number;
   /** Tool specs for the text interface. */
   tools: ToolInterfaceSpec[];
   /**
@@ -265,7 +276,12 @@ function shrinkFile(text: string, maxTokens: number): string | undefined {
  * to the goal and the failure, the lines the failure names, and their
  * enclosing declarations. Head-and-tail cutting is the fallback.
  */
-function pruningShrink(path: string, query: string, failure: string) {
+function pruningShrink(
+  path: string,
+  query: string,
+  failure: string,
+  arm: { kind: PruneArm; seed: number } = { kind: "query", seed: 0 },
+) {
   const pinned = linesNamedFor(path, failure);
   return (text: string, maxTokens: number): string | undefined => {
     const nl = text.indexOf("\n");
@@ -273,10 +289,27 @@ function pruningShrink(path: string, query: string, failure: string) {
     const body = nl >= 0 ? text.slice(nl + 1) : text;
     const room = maxTokens - estimatePromptTokens(header) - 1;
     if (room > 40 && query.trim()) {
-      const pruned = pruneLines(body, query, { maxTokens: room, pinnedLines: pinned });
+      // MS-T7-6: the null arm keeps the same structure but chooses lines at random.
+      const pruned =
+        arm.kind === "random"
+          ? randomLinePrune(body, { maxTokens: room, pinnedLines: pinned, seed: arm.seed })
+          : pruneLines(body, query, { maxTokens: room, pinnedLines: pinned });
       if (pruned.fits) return `${header}\n${pruned.text}`;
     }
     return shrinkFile(text, maxTokens);
+  };
+}
+
+/**
+ * The prune arm for a file (MS-T7-6), resolved once per build (the input's,
+ * else the experiment switch); seeded by card and file, and by the run's seed
+ * when it has one.
+ */
+function pruneArmFor(input: WorkerPromptInput, path: string): { kind: PruneArm; seed: number } {
+  const key = `${input.card.id}:${path}`;
+  return {
+    kind: input.pruneArm ?? pruneArmFromEnv(),
+    seed: pruneSeed(input.seed === undefined ? key : `${input.seed}:${key}`),
   };
 }
 
@@ -532,7 +565,12 @@ function buildSections(
       placement: "static",
       order: 20 + i,
       priority: 30,
-      shrink: pruningShrink(f.path, pruneQuery(input), failureBlob(input)),
+      shrink: pruningShrink(
+        f.path,
+        pruneQuery(input),
+        failureBlob(input),
+        pruneArmFor(input, f.path),
+      ),
       minTokens: 200,
       text: `=== REFERENCE FILE: ${f.path} ===\n${f.content || "(empty file)"}`,
     }),
@@ -605,7 +643,12 @@ function buildSections(
       order: 100 + i,
       priority: 90,
       minTokens: 400,
-      shrink: pruningShrink(f.path, pruneQuery(input), failureBlob(input)),
+      shrink: pruningShrink(
+        f.path,
+        pruneQuery(input),
+        failureBlob(input),
+        pruneArmFor(input, f.path),
+      ),
       text: `${workerCopy.scopeFileHeader(f.path, true)}\n${f.content || "(empty file)"}`,
     }),
   );
@@ -814,7 +857,9 @@ function offersRecall(input: WorkerPromptInput): boolean {
   ].some((t) => t.name === "recall");
 }
 
-export function buildWorkerPrompt(input: WorkerPromptInput): WorkerPromptResult {
+export function buildWorkerPrompt(given: WorkerPromptInput): WorkerPromptResult {
+  // The prune arm is resolved once, so the determinism key covers it (C15).
+  const input: WorkerPromptInput = { ...given, pruneArm: given.pruneArm ?? pruneArmFromEnv() };
   const thresholds = input.thresholds ?? DEFAULT_PRESSURE_THRESHOLDS;
   const overhead =
     input.nativeToolSchemas !== undefined

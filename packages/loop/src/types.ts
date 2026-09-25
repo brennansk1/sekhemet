@@ -250,6 +250,13 @@ export interface SessionOptions {
    * changed. Default "baseline" until the frozen suite admits it.
    */
   workerMethod?: "baseline" | "strict" | undefined;
+  /**
+   * The evidence-gated commit (worker-loop rule 29a, `SEKHEMET_EVIDENCE_GATE`):
+   * "on" postpones a write or a finish until the evidence it depends on is
+   * observed in the attempt's step records. Default "off", byte-identical to
+   * a build without it (WL-N9-4), until B2.5's A/B admits it.
+   */
+  evidenceGate?: "off" | "on" | undefined;
   /** The model a `subtask` child context runs on (C16); default the Worker's own. */
   subtaskAdapter?: LocalInferenceAdapter | undefined;
   /** Decoded tokens as they stream, for the dashboard's live step view (M2). */

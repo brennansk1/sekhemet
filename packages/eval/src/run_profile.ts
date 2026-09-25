@@ -14,6 +14,7 @@ import { createHash } from "node:crypto";
 
 export type ThinkingPolicy = "off" | "surgical" | "all";
 export type WorkerMethod = "baseline" | "strict";
+export type PruneArm = "query" | "random";
 
 export interface RunProfile {
   schema: 1;
@@ -28,7 +29,24 @@ export interface RunProfile {
     autoAccept: boolean;
   };
   /** The experiment switches (CLAUDE.md), recorded in every evidence bundle. */
-  switches: { thinking: ThinkingPolicy; workerMethod: WorkerMethod };
+  switches: {
+    thinking: ThinkingPolicy;
+    workerMethod: WorkerMethod;
+    /** The evidence-gated commit (worker-loop rule 29a, `SEKHEMET_EVIDENCE_GATE`); "off" by default. */
+    evidenceGate: "off" | "on";
+    /**
+     * The Worker's tool set (M2, worker-loop rule 11): `progressive` (the
+     * default) loads tools on demand; `fixed` offers the class's set at once.
+     */
+    toolArm: "progressive" | "fixed";
+    /** A fixed sampling seed for the card's model (rule 10); unset is the server's own. */
+    seed?: number;
+    /**
+     * How an oversized file is cut for the prompt (MS-T7-6): the context
+     * pruner (`query`, the default) or its null arm (`random`).
+     */
+    prune?: PruneArm;
+  };
   /** The arm an A/B varies, when this run is one arm of one. */
   armUnderTest?: string;
   settingsFile?: { path: string; sha256: string };
@@ -40,12 +58,21 @@ export type ProfileSource = "default" | "config" | "settings" | "env" | "flag";
 
 /**
  * The experiment switches: environment variables that choose an arm of the
- * Worker's behaviour. `SEKHEMET_EVIDENCE_GATE` joins when worker-loop rule
- * 29a is built.
+ * Worker's behaviour (CLAUDE.md), each recorded in the RunProfile.
  */
-export const EXPERIMENT_SWITCHES = ["SEKHEMET_THINKING", "SEKHEMET_WORKER_METHOD"] as const;
+export const EXPERIMENT_SWITCHES = [
+  "SEKHEMET_THINKING",
+  "SEKHEMET_WORKER_METHOD",
+  "SEKHEMET_PRUNE",
+  "SEKHEMET_EVIDENCE_GATE",
+] as const;
 
-type Path = `roles.${keyof RunProfile["roles"]}` | `policies.${keyof RunProfile["policies"]}`;
+type Path =
+  | `roles.${keyof RunProfile["roles"]}`
+  | `policies.${keyof RunProfile["policies"]}`
+  | "switches.seed"
+  | "switches.prune"
+  | "switches.toolArm";
 
 /** Each flag sets exactly one setting. */
 export const RUN_PROFILE_FLAGS: Readonly<Record<string, Path | "armUnderTest">> = {
@@ -59,6 +86,9 @@ export const RUN_PROFILE_FLAGS: Readonly<Record<string, Path | "armUnderTest">> 
   "--max-turns": "policies.stepCap",
   "--auto-accept": "policies.autoAccept",
   "--arm": "armUnderTest",
+  "--seed": "switches.seed",
+  "--prune": "switches.prune",
+  "--tool-arm": "switches.toolArm",
 };
 
 /** Flags that would set other settings, refused with what they would have set. */
@@ -99,7 +129,12 @@ function defaults(): RunProfile {
       stepCap: null,
       autoAccept: false,
     },
-    switches: { thinking: "off", workerMethod: "baseline" },
+    switches: {
+      thinking: "off",
+      workerMethod: "baseline",
+      evidenceGate: "off",
+      toolArm: "progressive",
+    },
     sources: {},
   };
 }
@@ -146,7 +181,22 @@ function applyLayer(
       p.switches.thinking = v as ThinkingPolicy;
     } else if (k === "workerMethod" && typeof v === "string" && METHOD.has(v)) {
       p.switches.workerMethod = v as WorkerMethod;
-    } else if (k === "thinking" || k === "workerMethod") {
+    } else if (k === "seed" && Number.isInteger(v) && (v as number) >= 0) {
+      p.switches.seed = v as number;
+    } else if (k === "prune" && (v === "query" || v === "random")) {
+      p.switches.prune = v;
+    } else if (k === "evidenceGate" && (v === "off" || v === "on")) {
+      p.switches.evidenceGate = v;
+    } else if (k === "toolArm" && (v === "progressive" || v === "fixed")) {
+      p.switches.toolArm = v;
+    } else if (
+      k === "thinking" ||
+      k === "workerMethod" ||
+      k === "seed" ||
+      k === "prune" ||
+      k === "evidenceGate" ||
+      k === "toolArm"
+    ) {
       throw new RunProfileRefusal(`${where}: switches.${k} cannot be ${JSON.stringify(v)}`);
     } else {
       throw unknown(`switches.${k}`);
@@ -185,7 +235,20 @@ function flagLayer(argv: string[]): ProfileLayer {
     seen.set(f, value);
     if (takesValue) i++;
     if (path === "armUnderTest") layer.armUnderTest = value;
-    else if (group === "roles") layer.roles = { ...layer.roles, [key as string]: value };
+    else if (path === "switches.seed") {
+      const n = Number(value);
+      if (!Number.isInteger(n) || n < 0)
+        throw new RunProfileRefusal(`--seed must be a non-negative integer, not ${value}`);
+      layer.switches = { ...layer.switches, seed: n };
+    } else if (path === "switches.toolArm") {
+      if (value !== "progressive" && value !== "fixed")
+        throw new RunProfileRefusal(`--tool-arm is progressive or fixed, not ${value}`);
+      layer.switches = { ...layer.switches, toolArm: value };
+    } else if (path === "switches.prune") {
+      if (value !== "query" && value !== "random")
+        throw new RunProfileRefusal(`--prune is query or random, not ${value}`);
+      layer.switches = { ...layer.switches, prune: value };
+    } else if (group === "roles") layer.roles = { ...layer.roles, [key as string]: value };
     else if (key === "stepCap") {
       const n = Number(value);
       if (!(n > 0))
@@ -203,6 +266,8 @@ function envLayer(env: Record<string, string | undefined>): ProfileLayer {
   // (models `thinkingPolicyFromEnv`); only a recognised one is a layer.
   if (thinking && THINKING.has(thinking)) switches.thinking = thinking as ThinkingPolicy;
   if (env.SEKHEMET_WORKER_METHOD === "strict") switches.workerMethod = "strict";
+  if (env.SEKHEMET_PRUNE === "random") switches.prune = "random";
+  if (env.SEKHEMET_EVIDENCE_GATE === "on") switches.evidenceGate = "on";
   return Object.keys(switches).length ? { switches } : {};
 }
 
@@ -289,11 +354,29 @@ export function profileArgs(p: RunProfile): { argv: string[]; env: Record<string
     } else if (value === true) argv.push(f);
   }
   if (p.armUnderTest !== undefined) argv.push("--arm", p.armUnderTest);
+  if (p.switches.seed !== undefined) argv.push("--seed", String(p.switches.seed));
+  if (p.switches.prune !== undefined) argv.push("--prune", p.switches.prune);
+  if (p.switches.toolArm !== "progressive") argv.push("--tool-arm", p.switches.toolArm);
   return {
     argv,
     env: {
       SEKHEMET_THINKING: p.switches.thinking,
       SEKHEMET_WORKER_METHOD: p.switches.workerMethod,
+      SEKHEMET_PRUNE: p.switches.prune ?? "query",
+      SEKHEMET_EVIDENCE_GATE: p.switches.evidenceGate,
     },
   };
+}
+
+/**
+ * The one way every measured path starts the product's queue (MS-M9-1): the
+ * suite runner, and through it the bake-off and the rule gate, and m0. Same
+ * profile, same invocation, so the same card gets the same first prompt.
+ */
+export function queueInvocation(
+  profile: RunProfile,
+  repo: string,
+): { args: string[]; env: Record<string, string> } {
+  const { argv, env } = profileArgs(profile);
+  return { args: ["queue", "--repo", repo, ...argv], env };
 }

@@ -8,9 +8,9 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 29 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 30 first.*
 
-1. **Where we are:** Phase B — B0 done (Entry 28); B1 built, its Tier 3 injection run owed; B2.1–B2.3 done; B2.2 done except the model-needing checks; B2.4 part 1 done, part 2 next (Entry 29). **No model loads until the owner says so.** Owner answers pending: Docker, @stdlib, pytest/go, golden briefs and held-out labels, measuresModel for environment stops, the third A/B candidate, `--auto-accept`'s bound, the E5 removal.
+1. **Where we are:** Phase B: B0 done; B1 built, its Tier 3 injection run owed; B2.1–B2.3 done; B2.2 and B2.4 done except their model runs; B2.5's arms built, the baseline not run (Entry 30). **Next is model-bound:** qualify the Worker, the injection run, the MTP A/B, the prompt screen, then B2.5 overnight. Loads are allowed under DEC-42's memory conditions; the owner's own Hermes server on port 8080 must be stopped first. Waiting on a person: confirming the golden briefs and held-out drafts.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
 3. **Done means:** `DEFINITION_OF_DONE.md` v3 — §5 for a card, a spec, a workstream and a release; §6 for the product.
 4. **Measurement:** suite `1.0.0`, hash `192b6e95fa3c`; thinking A/B arm "off" 10/14 on `468f67f` (SUITE_RUNS). The remaining arms wait on M1, M3, M8 (workstream B2.1).
@@ -20,6 +20,40 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 30 — 2026-09-25 (B2.4 done except its model runs; B2.5's arms built; DEC-42)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver; two implementer helpers, fresh independent reviewers.
+
+- **Owner:**
+  - Delegated every open decision (DEC-42): no Docker (Linux containment goes to a CI runner), keep our own statistics, no pytest or go installs, the lead drafts the person-labelled assets, `error`, `rebase_conflict` and `integration_failed` no longer count against the Worker, the third A/B candidate is approved, `--auto-accept` is bounded, the E5 removal is confirmed, and model loads are allowed under memory conditions.
+  - Asked to trim repeat reviews and keep memory low: one full review per workstream, then narrow confirmation checks, one test worker, never an empty vitest file list. A stray full-suite run nearly OOM'd the host.
+  - The owner's own Hermes-4-14B server (port 8080, ~10 GB) blocks loading the Worker while it runs.
+- **B2.4 part 2:**
+  - Load time and reloads reported apart from cards; seeds recorded and sent only when set.
+  - The random-pruning null arm (off by default, seeded, linear).
+  - The suite hash covers the verified reference solutions (`reference-solutions` v3; suite hash `d70f689d`); independent mode.
+  - The planning measure's scoring (item-level intervals; refuses partial or duplicate sets).
+  - `measure compare`, `watch-adopted` (comparable runs only, three fixed looks at α/3), `promote`.
+  - Admission checks interleaving; tune inherits the machine policy; exemplars wait for five per class; skill candidates run their own checks and unchecked ones can't be approved.
+  - M0 pending after qualification, run first by `overnight`.
+- **T11 assets:**
+  - 30 reference solutions, agent-written and each verified by its frozen tests, registered.
+  - Drafts, unregistered and awaiting a person: 12 golden briefs (6 for non-developers, 61 implicit requirements) and 16 held-out items (13 fixture tests, proven to fail at the seed and pass on the reference main).
+- **B2.5 arms:**
+  - The evidence-gated commit (`SEKHEMET_EVIDENCE_GATE`, WL-N9): read credit only from lines shown; never stalls a finish when gates can't run; gates run once on fallback.
+  - The fixed tool set of twelve (WL-M2-2/3/6/7): the implement interface fell from 2,012 to 1,024 tokens, now under DEC-27's 1,700. `read_symbol` suggestions are fixed; remedies name only offered tools.
+  - Both are selectable through the RunProfile (`--tool-arm`).
+- **Prompt stream:** the step-replay screen (`sekhemet prompt-screen`) screens and never admits; its run needs a model. The stall-warning index bug is fixed.
+- **Reviews:** one full independent review each (B2.4 part 2; the B2.5 arms and context work) and narrow confirmation checks; every blocker and major fixed.
+- **Where the cards stop:** B2.1–B2.3 done; B2.2 and B2.4 done except their model runs; B2.5 arms built, the baseline run not started. Gate: 245 files, 1,878 tests (1 skipped), tsc and Biome clean. Next, all model-bound, when memory allows and the owner's Hermes server is stopped:
+  1. `sekhemet qualify --models cyber-tiel`;
+  2. the B1 injection run;
+  3. the MTP A/B;
+  4. `sekhemet prompt-screen`;
+  5. B2.5, the baseline, about two machine-days overnight.
+
+  Waiting on a person: confirming the golden briefs and held-out drafts.
 
 ### Entry 29 — 2026-09-24 → 2026-09-25 (B1 built; B2.1–B2.3 done; B2.2 and B2.4 part 1)
 

@@ -111,7 +111,12 @@ export interface AllocateOptions {
  * estimate uses the same ratio).
  */
 export function estimatePromptTokens(text: string): number {
-  return Math.ceil(text.length / 3.2);
+  return tokensForChars(text.length);
+}
+
+/** The estimator on a length alone: it counts characters. */
+export function tokensForChars(length: number): number {
+  return Math.ceil(length / 3.2);
 }
 
 const PLACEMENT_RANK: Record<SectionPlacement, number> = { system: 0, static: 1, volatile: 2 };

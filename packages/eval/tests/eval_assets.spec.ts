@@ -11,6 +11,7 @@ import {
   hashAssetDir,
   loadAssetManifest,
   recordAssetVersion,
+  registerAsset,
   validateAssetEntry,
   validateAssetLabels,
   verifyAsset,
@@ -176,5 +177,107 @@ describe("sizes against rule 29's table (MS-T11-6)", () => {
       { name: "golden-briefs", required: 10, registered: 7, status: "short" },
       { name: "held-out-acceptance-suite", required: 14, registered: 0, status: "missing" },
     ]);
+  });
+});
+
+describe("registering an asset through the API, not hand-written JSON", () => {
+  const root = () => {
+    const r = mkdtempSync(join(tmpdir(), "assets-reg-"));
+    mkdirSync(join(r, "fixtures", "ref"), { recursive: true });
+    writeFileSync(
+      join(r, "fixtures", "eval_assets.json"),
+      JSON.stringify({ about: "the manifest's own words", assets: [] }),
+    );
+    writeFileSync(join(r, "fixtures", "ref", "items.json"), JSON.stringify([item("a"), item("b")]));
+    return r;
+  };
+  const item = (id: string) => ({
+    id,
+    labelledBy: { principal: "frozen tests", kind: "executed", passedFrozenTests: true },
+  });
+  const spec = {
+    name: "reference-solutions",
+    path: "fixtures/ref",
+    labelledBy: "frozen tests",
+    provenance: "written by an agent, verified by the frozen tests",
+  };
+
+  it("validates and writes a new entry with its hash, item count, provenance and plan, keeping the manifest's other keys", () => {
+    const r = root();
+    const out = registerAsset(r, spec);
+    expect(out.changed).toBe("registered");
+    const raw = JSON.parse(readFileSync(join(r, "fixtures", "eval_assets.json"), "utf8"));
+    expect(raw.about).toBe("the manifest's own words");
+    expect(raw.assets[0]).toMatchObject({
+      name: "reference-solutions",
+      version: "1",
+      items: 2,
+      hash: hashAssetDir(join(r, "fixtures", "ref")),
+      provenance: spec.provenance,
+      usedBy: ["MS-T7-2", "MS-T7-3", "CX-P1-5"],
+      builtIn: "B2.4",
+      versions: [],
+    });
+    expect(verifyAsset(r, "reference-solutions").items).toBe(2);
+  });
+
+  it("writes a new version when the content changes, keeps the earlier hash, and does nothing when it does not", () => {
+    const r = root();
+    const first = registerAsset(r, spec).entry;
+    expect(registerAsset(r, spec).changed).toBe("unchanged");
+    writeFileSync(join(r, "fixtures", "ref", "items.json"), JSON.stringify([item("a")]));
+    const next = registerAsset(r, spec);
+    expect(next.changed).toBe("new version");
+    expect(next.entry).toMatchObject({ version: "2", items: 1 });
+    expect(next.entry.versions).toEqual([{ version: "1", hash: first.hash, items: 2 }]);
+  });
+
+  it("refuses an entry that would be incomplete, or labelled by a model", () => {
+    const r = root();
+    expect(() => registerAsset(r, { ...spec, labelledBy: "" })).toThrow(/missing labelledBy/);
+    expect(() => registerAsset(r, { ...spec, name: "not-in-the-plan" })).toThrow(
+      /not in rule 29's plan/,
+    );
+    expect(() => registerAsset(r, { ...spec, labelledBy: "a model" })).toThrow(/never a model's/);
+    // Only an allowed principal form is accepted, not merely one without the word "model" (review M6).
+    expect(() => registerAsset(r, { ...spec, labelledBy: "claude-opus-5-5" })).toThrow(
+      /never a model's/,
+    );
+    // A model's name dressed as a person is still a model's label (review M6 loophole).
+    for (const name of [
+      "person: claude-opus-5-5",
+      "person: GPT-5",
+      "publisher: qwen3-coder",
+      "person: cyber-tiel",
+    ])
+      expect(() => registerAsset(r, { ...spec, labelledBy: name })).toThrow(/names a model/);
+    expect(registerAsset(r, { ...spec, labelledBy: "person: Brennan" }).changed).toBe("registered");
+  });
+
+  it("refuses items labelled only by a model, or not labelled at all (review M6)", () => {
+    const r = root();
+    writeFileSync(
+      join(r, "fixtures", "ref", "items.json"),
+      JSON.stringify([
+        item("a"),
+        { id: "b", labelledBy: { principal: "claude-opus-5-5", kind: "model" } },
+      ]),
+    );
+    expect(() => registerAsset(r, spec)).toThrow(/b: labelled only by a model/);
+    writeFileSync(join(r, "fixtures", "ref", "items.json"), JSON.stringify([{ id: "c" }]));
+    expect(() => registerAsset(r, spec)).toThrow(/c: no labelling principal/);
+    writeFileSync(
+      join(r, "fixtures", "ref", "items.json"),
+      JSON.stringify([{ id: "d", labelledBy: { principal: "claude-opus-5-5", kind: "person" } }]),
+    );
+    expect(() => registerAsset(r, spec)).toThrow(/d: .*names a model/);
+    // So does a name the model registry knows.
+    writeFileSync(
+      join(r, "fixtures", "ref", "items.json"),
+      JSON.stringify([{ id: "e", labelledBy: { principal: "house-worker-9", kind: "person" } }]),
+    );
+    expect(() => registerAsset(r, spec, { modelIds: ["house-worker-9"] })).toThrow(
+      /e: .*names a model/,
+    );
   });
 });

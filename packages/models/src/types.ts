@@ -128,6 +128,18 @@ export interface TokenUsage {
    */
   thinkingTokens?: number;
   answerTokens?: number;
+  /**
+   * Time the server spent loading the model for this request, when it says
+   * (Ollama's `load_duration`); the measurement reports it apart from the
+   * card's own time (measurement MS-T7-1).
+   */
+  loadMs?: number;
+  /**
+   * For a server the harness started: from spawning it to its first healthy
+   * `/health`, reported once, on the first reply after the start (MS-T7-1).
+   * It includes the health polling's granularity (one second).
+   */
+  spawnToHealthyMs?: number;
 }
 
 /**

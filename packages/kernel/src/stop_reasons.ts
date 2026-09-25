@@ -278,7 +278,7 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     checkpoints: true,
     endsSampling: true,
     halts: false,
-    measuresModel: true,
+    measuresModel: false, // rule 31: never the Worker's fault (DEC-42)
     goesTo: "Resumes from its last checkpoint",
     nextAction: "See the error; the next run resumes.",
   },
@@ -326,7 +326,7 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     checkpoints: false,
     endsSampling: false,
     halts: false,
-    measuresModel: true,
+    measuresModel: false, // rule 31: never the Worker's fault (DEC-42)
     goesTo: "Back to the Worker with the conflict hunks as typed failures",
     nextAction: "See the conflicting hunks.",
   },
@@ -338,7 +338,7 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     checkpoints: false,
     endsSampling: false,
     halts: false,
-    measuresModel: true,
+    measuresModel: false, // rule 31: never the Worker's fault (DEC-42)
     goesTo: "Planning",
     nextAction: "See the gates that passed on the card branch and failed after the rebase.",
   },

@@ -5,6 +5,7 @@ import {
   describeDetectable,
   median,
   minDetectableDifference,
+  seededRandom,
   wilcoxonSignedRankLess,
 } from "./stats.js";
 import { type SuiteRunResult, pairOutcomes } from "./suite.js";
@@ -119,6 +120,12 @@ function checkProfiles(
     }
     return runs[0]?.runProfile;
   };
+  const modes = new Set([...baseline, ...candidate].map((r) => r.mode ?? "sequential"));
+  if (modes.size > 1) {
+    throw new Error(
+      "sequential and independent runs are not comparable: every run of an A/B uses one mode (MS-T7-3)",
+    );
+  }
   const b = hashOf("baseline", baseline);
   const c = hashOf("candidate", candidate);
   if (!b || !c || runProfileHash(b) === runProfileHash(c)) return;
@@ -130,6 +137,136 @@ function checkProfiles(
       "the arms' RunProfiles differ in more than the arm under test: name the arm with --arm or a settings file",
     );
   }
+}
+
+/**
+ * The arms were interleaved in time (rule 10, MS-T7-4): each paired run of
+ * the baseline and the candidate started before either run of the next pair,
+ * so time — a warmer cache, a busier host, a later build — cannot pass for
+ * the arm. Two runs that started at the same moment, or a run without its
+ * start, cannot be ordered and are refused.
+ */
+function checkInterleaved(
+  baseline: readonly SuiteRunResult[],
+  candidate: readonly SuiteRunResult[],
+  runs: number,
+): void {
+  const pairs: [number, number][] = [];
+  for (let i = 0; i < runs; i++) {
+    const b = Date.parse(baseline[i]?.startedAt ?? "");
+    const c = Date.parse(candidate[i]?.startedAt ?? "");
+    if (Number.isNaN(b) || Number.isNaN(c) || b === c) {
+      throw new Error(
+        `the arms are not interleaved: paired run ${i + 1} cannot be ordered (the two runs record no distinct start)`,
+      );
+    }
+    pairs.push([Math.min(b, c), Math.max(b, c)]);
+  }
+  for (let i = 1; i < pairs.length; i++) {
+    if ((pairs[i - 1] as [number, number])[1] >= (pairs[i] as [number, number])[0]) {
+      throw new Error(
+        `the arms are not interleaved: paired run ${i + 1} began before both arms of paired run ${i} had started (run them A, B, A, B, rule 10)`,
+      );
+    }
+  }
+}
+
+/**
+ * Each card's two arms, adjacent, in an order drawn from a fixed seed (rule
+ * 10, MS-T7-4): the schedule for running a comparison card by card in
+ * independent mode (MS-T7-3).
+ */
+export function interleaveArms<T>(
+  tasks: readonly T[],
+  seed: number,
+): { task: T; arm: "baseline" | "candidate" }[] {
+  const next = seededRandom(seed);
+  return tasks.flatMap((task) => {
+    const first = next() < 0.5 ? "baseline" : "candidate";
+    const second = first === "baseline" ? "candidate" : "baseline";
+    return [
+      { task, arm: first },
+      { task, arm: second },
+    ];
+  });
+}
+
+/**
+ * A sequential test with a stated error rate (rule 10, MS-T7-4): a
+ * comparison may stop early only at one of its planned looks. Each look is
+ * tested once, at the first count of pairs at or past it, with a one-sided
+ * exact test per direction at `alpha / (looks × directions)`, so the chance
+ * of a false stop in a direction, over all looks, is at most `alpha / 2`
+ * when both are tested and `alpha` when one is (Bonferroni).
+ */
+export function sequentialLook(o: {
+  plannedPairs: number;
+  looks: readonly number[];
+  alpha: number;
+  pairs: number;
+  gained: number;
+  lost: number;
+  /** Looks already tested, which are never tested again. */
+  testedLooks?: readonly number[];
+  /** Which way a stop may go: both (a comparison), or loss only (a watch). */
+  directions?: "both" | "loss" | "gain";
+  /** How the counts read in the reason, when the looks are not counted in pairs. */
+  describe?: (look: number) => string;
+}): {
+  stop: boolean;
+  verdict?: "gain" | "loss" | "no difference resolved";
+  look?: number;
+  alphaPerLook: number;
+  reason: string;
+} {
+  const looks = o.looks;
+  if (looks.some((l, i) => i > 0 && l <= (looks[i - 1] as number)) || looks.some((l) => l <= 0))
+    throw new Error(`looks must rise strictly from above zero (${looks.join(", ")})`);
+  if (looks.at(-1) !== o.plannedPairs)
+    throw new Error(`looks must end at the planned ${o.plannedPairs} pairs (${looks.join(", ")})`);
+  const directions = o.directions ?? "both";
+  const sides = directions === "both" ? 2 : 1;
+  const alphaPerLook = o.alpha / (looks.length * sides);
+  const perDirection = sides === 2 ? o.alpha / 2 : o.alpha;
+  const stated = `error rate in each direction at most ${perDirection} over ${looks.length} looks (${alphaPerLook.toFixed(4)} each)`;
+  const tested = new Set(o.testedLooks ?? []);
+  const look = [...looks].reverse().find((l) => l <= o.pairs);
+  if (look === undefined || tested.has(look)) {
+    return {
+      stop: false,
+      alphaPerLook,
+      reason: `no look yet at ${o.pairs} pairs (looks at ${looks.join(", ")}); ${stated}`,
+    };
+  }
+  const n = o.gained + o.lost;
+  const gainP = n ? binomialTailAtLeast(o.gained, n) : 1;
+  const lossP = n ? binomialTailAtLeast(o.lost, n) : 1;
+  const counts =
+    o.describe?.(look) ?? `${o.gained} gained, ${o.lost} lost at ${o.pairs} pairs (look ${look})`;
+  if (directions !== "loss" && gainP <= alphaPerLook)
+    return {
+      stop: true,
+      verdict: "gain",
+      look,
+      alphaPerLook,
+      reason: `stopped: ${counts}, p = ${gainP.toFixed(4)}; ${stated}`,
+    };
+  if (directions !== "gain" && lossP <= alphaPerLook)
+    return {
+      stop: true,
+      verdict: "loss",
+      look,
+      alphaPerLook,
+      reason: `stopped: ${counts}, p = ${lossP.toFixed(4)}; ${stated}`,
+    };
+  const last = look === looks.at(-1);
+  return {
+    stop: last,
+    ...(last ? { verdict: "no difference resolved" as const } : {}),
+    look,
+    alphaPerLook,
+    reason: `${last ? "ended" : "continues"}: ${counts}; ${stated}`,
+  };
 }
 
 /** Simpler, deterministically: nothing added, and at least one of the four removed (MS-T8-13). */
@@ -190,6 +327,7 @@ export function evaluateHarnessChange(options: {
     }
   }
   checkProfiles(baseline, candidate);
+  checkInterleaved(baseline, candidate, runs);
   const firstCard = [...baseline, ...candidate]
     .map((r) => r.startedAt)
     .filter((t): t is string => typeof t === "string")
@@ -481,5 +619,114 @@ export function watchAdmittedChange(options: {
     minDetectableLoss,
     droppedBlocked,
     reason: `kept: ${counts}; no loss resolved (one-sided exact p = ${lossP.toFixed(4)}); ${describeDetectable(minDetectableLoss, pairedCards, "paired loss")}`,
+  };
+}
+
+/**
+ * A watch's planned looks, counted in later comparable suite runs: after the
+ * 1st, 2nd and 4th (rule 18). Fixed by run count, never by pairs, so a look
+ * cannot shift past one already tested as runs bring different numbers of
+ * paired cards (confirmation check, B1).
+ */
+export const WATCH_LOOKS_RUNS = [1, 2, 4] as const;
+
+/**
+ * Watch an adopted change over every later comparable suite run, pooled
+ * (rule 18, MS-T8-3, review B1): later run i is paired with baseline run
+ * (i mod baselines), and a loss is tested only at the planned looks — after
+ * the 1st, 2nd and 4th later run — each once, one-sided at `alpha / looks`
+ * over every pair pooled so far. It is rolled back on a resolved loss, kept
+ * when the last look resolves none, and otherwise watched further.
+ */
+export function watchPooled(o: {
+  changeId: string;
+  without: readonly SuiteRunResult[];
+  withRuns: readonly SuiteRunResult[];
+  testedLooks: readonly number[];
+  alpha?: number;
+}): {
+  changeId: string;
+  status: "rolled back" | "kept" | "watching" | "insufficient data";
+  look?: number;
+  /** The looks, in later runs, fixed for the whole watch. */
+  looks: number[];
+  testedLooks: number[];
+  pairedCards: number;
+  gained: number;
+  lost: number;
+  droppedBlocked: number;
+  reason: string;
+} {
+  const looks = [...WATCH_LOOKS_RUNS];
+  const base = {
+    changeId: o.changeId,
+    looks,
+    pairedCards: 0,
+    gained: 0,
+    lost: 0,
+    droppedBlocked: 0,
+    testedLooks: [...o.testedLooks],
+  };
+  if (o.withRuns.length === 0 || o.without.length === 0) {
+    return {
+      ...base,
+      status: "insufficient data",
+      reason: `insufficient data: no later run of ${o.changeId} to pair with its baseline`,
+    };
+  }
+  const hashes = new Set([...o.withRuns, ...o.without].map((r) => r.suiteHash));
+  if (hashes.size > 1) {
+    throw new Error(
+      `the runs are on different suite hashes (${[...hashes].join(", ")}); they are not comparable`,
+    );
+  }
+  let pairedCards = 0;
+  let gained = 0;
+  let lost = 0;
+  let droppedBlocked = 0;
+  for (const [i, later] of o.withRuns.entries()) {
+    const pair = pairOutcomes(
+      (o.without[i % o.without.length] as SuiteRunResult).outcomes,
+      later.outcomes,
+    );
+    pairedCards += pair.paired;
+    lost += pair.baselineOnly;
+    gained += pair.candidateOnly;
+    droppedBlocked += pair.droppedBlocked;
+  }
+  const runs = o.withRuns.length;
+  const seq = sequentialLook({
+    plannedPairs: looks.at(-1) as number,
+    looks,
+    alpha: o.alpha ?? ALPHA,
+    pairs: runs,
+    gained,
+    lost,
+    testedLooks: o.testedLooks,
+    directions: "loss",
+    describe: (look) =>
+      `${gained} gained, ${lost} lost over ${pairedCards} paired cards after ${runs} later run${runs === 1 ? "" : "s"} (look ${look})`,
+  });
+  const counts = { pairedCards, gained, lost, droppedBlocked };
+  if (seq.look === undefined) {
+    return {
+      ...base,
+      ...counts,
+      status: "watching",
+      reason: `watching ${o.changeId}: ${seq.reason}`,
+    };
+  }
+  // Every look at or below this one is spent.
+  const testedLooks = [
+    ...new Set([...o.testedLooks, ...looks.filter((l) => l <= (seq.look as number))]),
+  ];
+  const status = seq.verdict === "loss" ? "rolled back" : seq.stop ? "kept" : "watching";
+  return {
+    ...base,
+    ...counts,
+    testedLooks,
+    look: seq.look,
+    status,
+    reason: `${status === "rolled back" ? `rolled back: ${o.changeId}` : status === "kept" ? `kept: ${o.changeId}` : `watching ${o.changeId}`}: ${seq.reason}`,
   };
 }

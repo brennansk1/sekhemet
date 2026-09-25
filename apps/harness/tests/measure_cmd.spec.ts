@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -15,6 +15,7 @@ import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { TOOL_CATALOG } from "@sekhemet/loop";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  applyProfileSwitches,
   autoAcceptRefusal,
   computeFootprint,
   profileForQueue,
@@ -138,6 +139,17 @@ describe("the queue's profile, the suite's path (MS-M9-1, MS-M9-4)", () => {
   });
 });
 
+describe("the profile's switches reach the code that reads them (MS-T7-6)", () => {
+  it("sets the prune switch for this process when a flag or settings file named it", () => {
+    const env: Record<string, string | undefined> = {};
+    applyProfileSwitches(profileForRun(["run", "c1", "--prune", "random"], {}), env);
+    expect(env.SEKHEMET_PRUNE).toBe("random");
+    const none: Record<string, string | undefined> = {};
+    applyProfileSwitches(profileForRun(["run", "c1"], {}), none);
+    expect(none.SEKHEMET_PRUNE).toBeUndefined();
+  });
+});
+
 describe("--auto-accept is bounded to measured runs (review M5)", () => {
   it("refuses --auto-accept in a repository no measured run prepared", () => {
     const repo = temp();
@@ -188,10 +200,12 @@ describe("sekhemet measure (MS-T8-13, MS-T8-14 wired)", () => {
     const k = kernel();
     const d = temp();
     const same = Array(10).fill(true).concat(Array(10).fill(false));
-    write(d, "b1.json", JSON.stringify(underEntry(run(same, Array(20).fill(100)))));
-    write(d, "b2.json", JSON.stringify(underEntry(run(same, Array(20).fill(100)))));
-    write(d, "c1.json", JSON.stringify(underEntry(run(same, Array(20).fill(90)))));
-    write(d, "c2.json", JSON.stringify(run(same, Array(20).fill(90))));
+    // Interleaved A, B, A, B (MS-T7-4).
+    const t = (m: number) => `2026-09-20T10:0${m}:00.000Z`;
+    write(d, "b1.json", JSON.stringify(underEntry(run(same, Array(20).fill(100), t(0)))));
+    write(d, "b2.json", JSON.stringify(underEntry(run(same, Array(20).fill(100), t(2)))));
+    write(d, "c1.json", JSON.stringify(underEntry(run(same, Array(20).fill(90), t(1)))));
+    write(d, "c2.json", JSON.stringify(run(same, Array(20).fill(90), t(3))));
     write(d, "entry.json", ENTRY);
     const fp = { stablePromptTokens: 900, tools: 20, switches: 12, linesOfCode: 1000 };
     write(d, "before.json", JSON.stringify({ ...fp, commit: "aaaaaaaaaaaa", dirty: false }));
@@ -221,7 +235,7 @@ describe("sekhemet measure (MS-T8-13, MS-T8-14 wired)", () => {
     // One candidate run was not started under the entry: refused (review M2).
     expect(code).toBe(1);
     expect(lines.join("\n")).toMatch(/does not carry the A\/B entry/);
-    write(d, "c2.json", JSON.stringify(underEntry(run(same, Array(20).fill(90)))));
+    write(d, "c2.json", JSON.stringify(underEntry(run(same, Array(20).fill(90), t(3)))));
     lines.length = 0;
     // A dirty footprint names a commit it does not match (review minor).
     write(d, "dirty.json", JSON.stringify({ ...fp, commit: "cccccccccccc", dirty: true }));
@@ -246,7 +260,166 @@ describe("sekhemet measure (MS-T8-13, MS-T8-14 wired)", () => {
     expect(lines.join("\n")).toMatch(/not established — cheaper \(bbbbbbbbbbbb\)/);
     const events = await k.log.getEventsByTypes(["measure/admission"]);
     expect(events).toHaveLength(1);
-    expect(events[0]?.payload).toMatchObject({ verdict: "not established — cheaper" });
+    const sha = (f: string) => createHash("sha256").update(readFileSync(f)).digest("hex");
+    expect(events[0]?.payload).toMatchObject({
+      verdict: "not established — cheaper",
+      adopted: true,
+      // Resolved paths with their hashes, and what a later run must match (review B1, minor 6).
+      baselineRuns: [
+        { path: join(d, "b1.json"), sha256: sha(join(d, "b1.json")) },
+        { path: join(d, "b2.json"), sha256: sha(join(d, "b2.json")) },
+      ],
+      baselineProfileHash: PROFILE.hash,
+      baselineMode: "sequential",
+    });
+
+    // After a later suite run, every adopted change is watched against the
+    // runs it was compared with (MS-T8-3: watch started after a suite run).
+    const lossy = run(Array(20).fill(false), Array(20).fill(90), "2026-09-21T10:00:00.000Z");
+    // Runs that are not comparable are skipped and named, never tested.
+    write(d, "other-worker.json", JSON.stringify({ ...lossy, worker: "nail" }));
+    write(d, "an-ab.json", JSON.stringify(underEntry(lossy)));
+    for (const f of ["other-worker.json", "an-ab.json"]) {
+      lines.length = 0;
+      expect(
+        await runMeasureCommand(["watch-adopted", "--with", join(d, f)], k, (l) => lines.push(l)),
+      ).toBe(0);
+      expect(lines.join("\n")).toMatch(/not comparable/);
+    }
+    expect(await k.log.getEventsByTypes(["measure/rolled_back"])).toEqual([]);
+    write(d, "later.json", JSON.stringify(lossy));
+    lines.length = 0;
+    expect(
+      await runMeasureCommand(["watch-adopted", "--with", join(d, "later.json")], k, (l) =>
+        lines.push(l),
+      ),
+    ).toBe(0);
+    // The first look (after one later run): 10 losses resolve at 0.05 / 3.
+    expect(lines.join("\n")).toMatch(
+      /rolled back: bbbbbbbbbbbb: stopped: 0 gained, 10 lost over 20 paired cards after 1 later run \(look 1\)/,
+    );
+    const rolled = await k.log.getEventsByTypes(["measure/rolled_back"]);
+    expect(rolled[0]?.payload).toMatchObject({ changeId: "bbbbbbbbbbbb", kind: "harness" });
+    // A change already rolled back is not watched again.
+    lines.length = 0;
+    await runMeasureCommand(["watch-adopted", "--with", join(d, "later.json")], k, (l) =>
+      lines.push(l),
+    );
+    expect(lines.join("\n")).toMatch(/no adopted change to watch/);
+  });
+
+  it("watch-adopted: an admission recorded before the profile record is named not watchable, once", async () => {
+    const k = kernel();
+    const d = temp();
+    write(d, "b.json", JSON.stringify(run([true, true], [1, 1])));
+    await k.log.append({
+      actor: "harness",
+      type: "measure/admission",
+      payload: {
+        verdict: "admitted",
+        adopted: true,
+        version: "ctx-old",
+        baselineRuns: [join(d, "b.json")],
+      },
+    });
+    write(d, "later.json", JSON.stringify(run([true, true], [1, 1], "2026-09-21T10:00:00.000Z")));
+    const lines: string[] = [];
+    await runMeasureCommand(["watch-adopted", "--with", join(d, "later.json")], k, (l) =>
+      lines.push(l),
+    );
+    await runMeasureCommand(["watch-adopted", "--with", join(d, "later.json")], k, (l) =>
+      lines.push(l),
+    );
+    expect(
+      lines.filter((l) =>
+        /ctx-old: not watchable: admitted before B2\.4's profile record; re-admit to watch/.test(l),
+      ),
+    ).toHaveLength(1);
+    expect(await k.log.getEventsByTypes(["measure/not_watchable"])).toHaveLength(1);
+  });
+
+  it("watch-adopted: a baseline run that changed since admission is named, and the other changes are still watched", async () => {
+    const k = kernel();
+    const d = temp();
+    write(d, "b.json", JSON.stringify(run([true, true], [1, 1])));
+    const sha = createHash("sha256")
+      .update(readFileSync(join(d, "b.json")))
+      .digest("hex");
+    const admitted = (version: string, path: string, sha256: string) =>
+      k.log.append({
+        actor: "harness",
+        type: "measure/admission",
+        payload: {
+          verdict: "admitted",
+          adopted: true,
+          version,
+          baselineRuns: [{ path, sha256 }],
+          baselineProfileHash: PROFILE.hash,
+          baselineMode: "sequential",
+        },
+      });
+    await admitted("ctx-a", join(d, "b.json"), "0".repeat(64));
+    await admitted("ctx-b", join(d, "b.json"), sha);
+    write(d, "later.json", JSON.stringify(run([true, true], [1, 1], "2026-09-21T10:00:00.000Z")));
+    const lines: string[] = [];
+    expect(
+      await runMeasureCommand(["watch-adopted", "--with", join(d, "later.json")], k, (l) =>
+        lines.push(l),
+      ),
+    ).toBe(0);
+    const text = lines.join("\n");
+    expect(text).toMatch(/ctx-a: .*changed since it was admitted/);
+    expect(text).toMatch(/watching ctx-b/);
+  });
+
+  it("promote: a person promotes a generated test, labelled with the adopted change in force (MS-T8-10)", async () => {
+    const k = kernel();
+    await k.cardStore.createCard({
+      id: "gen_9",
+      tier: "task",
+      title: "Pin add()",
+      status: "backlog",
+      labels: ["mutation-hardening", "advisory"],
+    });
+    await k.log.append({
+      actor: "harness",
+      type: "measure/admission",
+      payload: { verdict: "admitted", adopted: true, version: "ctx-12", baselineRuns: [] },
+    });
+    const lines: string[] = [];
+    const promoted = await runMeasureCommand(["promote", "gen_9"], k, (l) => lines.push(l));
+    expect(lines.join("\n")).toMatch(/promoted gen_9/);
+    expect(promoted).toBe(0);
+    expect((await k.cardStore.getCard("gen_9"))?.labels).toEqual([
+      "mutation-hardening",
+      "promoted",
+      "promoted-by:ctx-12",
+    ]);
+    expect(lines.join("\n")).toMatch(/promoted gen_9.*ctx-12/);
+    // With more than one change in force, the person names which (review minor 8).
+    await k.log.append({
+      actor: "harness",
+      type: "measure/admission",
+      payload: { verdict: "admitted", adopted: true, version: "ctx-13", baselineRuns: [] },
+    });
+    await k.cardStore.createCard({
+      id: "gen_10",
+      tier: "task",
+      title: "Pin sub()",
+      status: "backlog",
+      labels: ["mutation-hardening", "advisory"],
+    });
+    const more: string[] = [];
+    expect(await runMeasureCommand(["promote", "gen_10"], k, (l) => more.push(l))).toBe(1);
+    expect(more.join("\n")).toMatch(
+      /2 changes are adopted \(ctx-12, ctx-13\): name one with --because/,
+    );
+    expect(await runMeasureCommand(["promote", "gen_10", "--because", "ctx-13"], k, () => {})).toBe(
+      0,
+    );
+    // Only a generated test can be promoted.
+    await k.cardStore.createCard({ id: "plain", tier: "task", title: "x", status: "backlog" });
+    expect(await runMeasureCommand(["promote", "plain"], k, () => {})).toBe(1);
   });
 
   it("admit: refuses a footprint that is not stamped with its commit", async () => {
@@ -301,6 +474,29 @@ describe("sekhemet measure (MS-T8-13, MS-T8-14 wired)", () => {
     expect(lines.join("\n")).toMatch(/rule_x: .*insufficient data/);
     const events = await k.log.getEventsByTypes(["learning/credit"]);
     expect(events[0]?.payload).toMatchObject({ ruleId: "rule_x", status: "insufficient data" });
+  });
+});
+
+describe("sekhemet measure compare: two recorded runs, paired (MS-M12-2, compareRuns wired)", () => {
+  it("prints the paired verdict and pass@k over repeated runs, and records it", async () => {
+    const k = kernel();
+    const d = temp();
+    write(d, "a.json", JSON.stringify(run(Array(30).fill(true), Array(30).fill(1))));
+    write(
+      d,
+      "b.json",
+      JSON.stringify(run(Array(30).fill(true).fill(false, 0, 22), Array(30).fill(1))),
+    );
+    const lines: string[] = [];
+    expect(
+      await runMeasureCommand(["compare", join(d, "a.json"), join(d, "b.json")], k, (l) =>
+        lines.push(l),
+      ),
+    ).toBe(0);
+    expect(lines.join("\n")).toMatch(/-22 on 30 paired card\(s\).*worse/);
+    const [event] = await k.log.getEventsByTypes(["measure/compared"]);
+    expect(event?.payload).toMatchObject({ verdict: "worse", baselineOnly: 22 });
+    expect(await runMeasureCommand(["compare", join(d, "a.json")], k, () => {})).toBe(1);
   });
 });
 

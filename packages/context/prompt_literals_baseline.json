@@ -1453,11 +1453,6 @@
     },
     {
       "file": "packages/loop/src/tools.ts",
-      "hash": "03a4cd874eec619d",
-      "text": "${} has ${} lines, so here is its outline instead of the whole file. Read a range with read_file(pat"
-    },
-    {
-      "file": "packages/loop/src/tools.ts",
       "hash": "05957e2025840c48",
       "text": "Commits that added or removed \"${}\" in code:\n${}"
     },
@@ -1595,11 +1590,6 @@
       "file": "packages/loop/src/tools.ts",
       "hash": "36f3c62a93864cc0",
       "text": "documentation matches for \"${}\""
-    },
-    {
-      "file": "packages/loop/src/tools.ts",
-      "hash": "37d14fd4bd1bc04f",
-      "text": "(no top-level declarations found)"
     },
     {
       "file": "packages/loop/src/tools.ts",
@@ -2050,11 +2040,6 @@
       "file": "packages/loop/src/tools.ts",
       "hash": "e6923782a76d275a",
       "text": "script timed out"
-    },
-    {
-      "file": "packages/loop/src/tools.ts",
-      "hash": "e8b2164c6a2725d8",
-      "text": "${} is a directory; use list_dir"
     },
     {
       "file": "packages/loop/src/tools.ts",

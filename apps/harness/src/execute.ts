@@ -300,6 +300,16 @@ export async function executeCard(
   options: ExecuteCardOptions = {},
 ): Promise<CardRunResult> {
   const log = ctx.log ?? ((line: string) => console.log(line));
+  // Rule 10: a measured run's fixed sampling seed, on the card's model; set
+  // on every card, so a seed never carries over to one that names none, and
+  // refused when the model cannot take one (review minor 2).
+  const seed = ctx.runProfile?.switches.seed;
+  const setSeed = (model as { setSeed?: (n: number | undefined) => void }).setSeed;
+  if (seed !== undefined && typeof setSeed !== "function")
+    throw new Error(
+      `the RunProfile fixes the sampling seed at ${seed}, but ${model.modelId} cannot take one`,
+    );
+  setSeed?.call(model, seed);
   // Pulled through Planning (B2): difficulty scored (K25), budget set from
   // this repo's measured history (L21), then the runner moves it on.
   let card = await pullThroughPlanning(ctx, inputCard, model.modelId, log).catch(() => inputCard);
@@ -511,7 +521,9 @@ export async function executeCard(
     // one-line index of the rest, which `tool_search` loads on demand. Every
     // turn used to carry all thirty schemas, and a card that never leaves
     // read/edit/check paid prefill for the other twenty-five on every step.
-    progressiveTools: true,
+    // M2 (worker-loop rule 11): progressive by default; the RunProfile's
+    // `fixed` arm offers the class's tool set at once.
+    progressiveTools: (ctx.runProfile?.switches.toolArm ?? "progressive") === "progressive",
     // WL-M2-4: `run_script` only for a Worker the registry marks script-capable.
     scriptCapable: workerScriptCapable(model.modelId),
     // Where the Worker thinks: off (default), surgical or all. An experiment
@@ -521,6 +533,10 @@ export async function executeCard(
     workerMethod:
       ctx.runProfile?.switches.workerMethod ??
       (process.env.SEKHEMET_WORKER_METHOD === "strict" ? "strict" : "baseline"),
+    // Worker-loop rule 29a: the evidence-gated commit, off unless named.
+    evidenceGate:
+      ctx.runProfile?.switches.evidenceGate ??
+      (process.env.SEKHEMET_EVIDENCE_GATE === "on" ? "on" : "off"),
     // M2: decoded tokens go to the card's live file, which the dashboard
     // streams while the step is still generating.
     onToken: ctx.onToken
@@ -779,23 +795,28 @@ export function learnFromOutcome(
 ): void {
   const dot = join(ctx.repoPath, ".sekhemet");
   try {
-    harvestExemplars(new ExemplarStore(join(dot, "exemplars")), [
-      {
-        id: card.id,
-        tier: card.tier,
-        title: card.title,
-        scopeFiles: card.scopeFiles,
-        passed: result.passed,
-        tokens: result.tokensUsed,
-        turns: result.turns.map((t) => ({
-          turn: t.turnIndex,
-          action: t.toolCalls.map((c) => c.name).join(", ") || "(no tool calls)",
-          result: t.observations.map((o) => o.summary).join(" | "),
-          calls: t.toolCalls.length,
-          observations: t.observations.length,
-        })),
-      },
-    ]);
+    harvestExemplars(
+      new ExemplarStore(join(dot, "exemplars")),
+      [
+        {
+          id: card.id,
+          tier: card.tier,
+          title: card.title,
+          scopeFiles: card.scopeFiles,
+          passed: result.passed,
+          tokens: result.tokensUsed,
+          turns: result.turns.map((t) => ({
+            turn: t.turnIndex,
+            action: t.toolCalls.map((c) => c.name).join(", ") || "(no tool calls)",
+            result: t.observations.map((o) => o.summary).join(" | "),
+            calls: t.toolCalls.length,
+            observations: t.observations.length,
+          })),
+        },
+      ],
+      // Rule 20: five complete passing cards in a class before any is offered.
+      { poolPath: join(dot, "exemplar_pool.json") },
+    );
   } catch {
     // An exemplar is a convenience; never a reason to fail a card.
   }
@@ -1523,6 +1544,12 @@ export interface QueueReport {
   memory?: { level: string; reason: string };
   /** Written part-way through the run; the final report has no such mark. */
   partial?: boolean;
+  /** Each model's load time, apart from the cards' time (MS-T7-1): `ThroughputMeter.loads()`. */
+  modelLoads?: {
+    modelId: string;
+    loadMs?: { count: number; totalMs: number; firstMs: number };
+    spawnToHealthyMs?: { count: number; totalMs: number; firstMs: number };
+  }[];
 }
 
 /** A review finding (Seshat's or the Reviewer's), as `learning/review.ts` returns it. */
@@ -1565,6 +1592,7 @@ export function recordQueueProgress(
   repoPath: string,
   so: Pick<QueueReport, "startedAt" | "model" | "entries" | "modelSwaps" | "totalDurationMs"> & {
     managerModel?: string | undefined;
+    modelLoads?: QueueReport["modelLoads"];
   },
 ): string {
   const cards = [...new Set(so.entries.map((e) => e.cardId))];
@@ -1581,6 +1609,7 @@ export function recordQueueProgress(
     passAfterEscalation: cards.length ? eventually / cards.length : 0,
     modelSwaps: so.modelSwaps,
     totalDurationMs: so.totalDurationMs,
+    ...(so.modelLoads?.length ? { modelLoads: so.modelLoads } : {}),
     partial: true,
   });
 }

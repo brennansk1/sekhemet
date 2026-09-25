@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { registerAsset } from "../src/eval_assets.js";
 import {
   type SuiteRunResult,
   type SuiteTask,
@@ -229,6 +230,15 @@ describe("comparing two runs (M12: paired and exact)", () => {
     expect(v).toMatchObject({ improved: false, verdict: "worse", baselineOnly: 22 });
   });
 
+  it("refuses to compare a sequential run with an independent one (review M1)", () => {
+    const v = compareRuns(
+      run(10, () => true),
+      { ...run(10, () => true), mode: "independent" },
+    );
+    expect(v).toMatchObject({ comparable: false, verdict: "incomparable" });
+    expect(v.reason).toMatch(/sequential against independent/);
+  });
+
   it("refuses to compare runs of different suites", () => {
     const v = compareRuns(
       run(10, () => true),
@@ -272,5 +282,64 @@ describe("comparing two runs (M12: paired and exact)", () => {
         passHatK: 0,
       },
     ]);
+  });
+});
+
+describe("the suite hash covers the registered reference solutions (MS-T7-2)", () => {
+  const withReferences = (root: string, register: boolean) => {
+    mkdirSync(join(root, "fixtures", "reference_solutions", "alpha", "card_a", "src"), {
+      recursive: true,
+    });
+    writeFileSync(
+      join(root, "fixtures", "reference_solutions", "alpha", "card_a", "src", "a.ts"),
+      "export const a = 2;\n",
+    );
+    writeFileSync(
+      join(root, "fixtures", "reference_solutions", "items.json"),
+      JSON.stringify([
+        {
+          id: "alpha/card_a",
+          labelledBy: { principal: "frozen tests", kind: "executed", passedFrozenTests: true },
+        },
+      ]),
+    );
+    writeFileSync(
+      join(root, "fixtures", "eval_assets.json"),
+      JSON.stringify({ about: "", assets: [] }),
+    );
+    if (register)
+      registerAsset(root, {
+        name: "reference-solutions",
+        path: "fixtures/reference_solutions",
+        labelledBy: "frozen tests",
+      });
+  };
+
+  it("changes the hash when a verified set is registered, and records its version", () => {
+    const root = repo();
+    const bare = loadFrozenSuite(root);
+    withReferences(root, false);
+    // Present but not registered: not part of the suite.
+    expect(loadFrozenSuite(root).hash).toBe(bare.hash);
+    registerAsset(root, {
+      name: "reference-solutions",
+      path: "fixtures/reference_solutions",
+      labelledBy: "frozen tests",
+    });
+    const s = loadFrozenSuite(root);
+    expect(s.hash).not.toBe(bare.hash);
+    expect(s.referenceSolutions).toMatchObject({ version: "1", items: 1 });
+  });
+
+  it("refuses a reference set changed without a new registered version", () => {
+    const root = repo();
+    withReferences(root, true);
+    writeFileSync(
+      join(root, "fixtures", "reference_solutions", "alpha", "card_a", "src", "a.ts"),
+      "export const a = 3;\n",
+    );
+    expect(() => loadFrozenSuite(root)).toThrow(
+      /reference-solutions: its content hash .* does not match/,
+    );
   });
 });

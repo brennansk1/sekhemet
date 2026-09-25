@@ -87,6 +87,7 @@ import { LearningStore } from "./learning/store.js";
 import { licenseGate } from "./license_gate.js";
 import { runMcpStdioServer } from "./mcp.js";
 import {
+  applyProfileSwitches,
   autoAcceptRefusal,
   profileForQueue,
   profileForRun,
@@ -96,6 +97,7 @@ import { sendPush, startNotifier } from "./notify.js";
 import { runOvernight } from "./overnight.js";
 import { DEFAULT_PM_MODEL, answerQueued, createPmAdapter, holdRunnerLease } from "./pm/service.js";
 import { PmStore } from "./pm/store.js";
+import { runPromptScreen } from "./prompt_screen_cmd.js";
 import { qualificationCombination, qualificationRefusal } from "./qualify.js";
 import { diffTrajectories, formatDiff, formatTrajectory, trajectories } from "./replay.js";
 import { isResearchCard, runResearchCard } from "./research/cards.js";
@@ -107,7 +109,13 @@ import { bakeOffOnSuitePath } from "./suite_path.js";
 import { tracesCommand } from "./tracing.js";
 import { trailerGate } from "./trailer_gate.js";
 import { nextForReview, park, sendBack, unpark } from "./triage.js";
-import { loadAttempts, tune, writeTuningReport } from "./tune.js";
+import {
+  describeTuning,
+  globalTuningPath,
+  loadAttempts,
+  tuneForRepo,
+  writeTuningReport,
+} from "./tune.js";
 import { hookEngineFor } from "./user_hooks.js";
 import {
   WAVE2_COMMANDS,
@@ -143,6 +151,7 @@ export interface CliConfig {
     | "research"
     | "overnight"
     | "calibrate"
+    | "prompt-screen"
     | "daemon"
     | "traces"
     | "acp"
@@ -435,6 +444,29 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     return;
   }
 
+  if (config.command === "prompt-screen") {
+    // `sekhemet prompt-screen [--from <repo,...>] [--limit N] [--worker cyber-tiel]`:
+    // the step-replay screen (PROMPT_STANDARD rule 35.3). It screens, never admits.
+    const rest = argv.slice(argv.indexOf("prompt-screen") + 1);
+    const flag = (name: string) => {
+      const i = rest.indexOf(name);
+      return i === -1 ? undefined : rest[i + 1];
+    };
+    const limit = Number(flag("--limit")) || undefined;
+    const model = new ModelRoster({ registry: modelRegistry() }).resolve(
+      flag("--worker") ?? "cyber-tiel",
+      "worker",
+    );
+    const report = await runPromptScreen({
+      model,
+      repos: (flag("--from") ?? "").split(",").filter(Boolean),
+      ...(limit ? { limit } : {}),
+    });
+    await model.unload?.();
+    process.exitCode = report.passed ? 0 : 1;
+    return;
+  }
+
   if (config.command === "calibrate") {
     // `sekhemet calibrate [--models cyber-tiel=worker,apodex=researcher] [--buckets 2048,8192] [--force]` (H3).
     const rest = argv.slice(argv.indexOf("calibrate") + 1);
@@ -535,27 +567,38 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     const argv = process.argv.slice(2);
     const sources = argv.flatMap((a, i) => (argv[i - 1] === "--from" ? [a] : []));
     const attempts = loadAttempts(sources.length > 0 ? sources : [config.repoPath]);
-    if (attempts.length === 0) {
-      console.log("No recorded Worker steps yet. Run `sekhemet queue` first.");
-      return;
+    // MS-T8-11: tuned here only on classes with MIN_ARM_TRIALS attempts;
+    // otherwise the machine's report is proposed, labelled inherited.
+    const tuning = tuneForRepo(attempts, {
+      current: { stepBudget: DEFAULT_STEP_BUDGET, maxFailedChecks: 4 },
+      globalPath: globalTuningPath(),
+      repo: config.repoPath,
+    });
+    console.log(describeTuning(tuning));
+    if (tuning.kind === "insufficient data") return;
+    let proposed = tuning.kind === "inherited" ? tuning.policy : tuning.report.best.policy;
+    if (tuning.kind === "local") {
+      const report = tuning.report;
+      const fmt = (s: typeof report.current) =>
+        `${s.policy.stepBudget} steps, ${s.policy.maxFailedChecks} failed checks: first try ${s.firstTry}/${s.cards}, eventually ${s.eventually}/${s.cards}, ${s.minutes} min`;
+      console.log(`Replayed ${attempts.length} attempts on ${report.current.cards} cards.`);
+      console.log(`Current:     ${fmt(report.current)}`);
+      console.log(`Recommended: ${fmt(report.best)}`);
+      console.log(
+        `Replay can only stop a recorded attempt earlier, so the recommendation never overstates. Apply it with: sekhemet queue --max-turns ${report.best.policy.stepBudget}`,
+      );
+      console.log(`Report: ${writeTuningReport(config.repoPath, report)}`);
+      proposed = report.best.policy;
     }
-    const report = tune(attempts, { stepBudget: DEFAULT_STEP_BUDGET, maxFailedChecks: 4 });
-    const fmt = (s: typeof report.current) =>
-      `${s.policy.stepBudget} steps, ${s.policy.maxFailedChecks} failed checks: first try ${s.firstTry}/${s.cards}, eventually ${s.eventually}/${s.cards}, ${s.minutes} min`;
-    console.log(`Replayed ${attempts.length} attempts on ${report.current.cards} cards.`);
-    console.log(`Current:     ${fmt(report.current)}`);
-    console.log(`Recommended: ${fmt(report.best)}`);
-    console.log(
-      `Replay can only stop a recorded attempt earlier, so the recommendation never overstates. Apply it with: sekhemet queue --max-turns ${report.best.policy.stepBudget}`,
-    );
-    console.log(`Report: ${writeTuningReport(config.repoPath, report)}`);
     if (argv.includes("--apply")) {
       // E8: applied within +-15% of the current policy, watched by the
       // learning guard and rolled back if the next 10 cards do worse.
       const applied = applyTunedPolicy(
         config.repoPath,
-        report.best.policy,
-        `tune: ${report.best.firstTry}/${report.best.cards} first try at ${report.best.policy.stepBudget} steps`,
+        proposed,
+        tuning.kind === "inherited"
+          ? `tune: inherited from ${tuning.from} (${tuning.at.slice(0, 10)})`
+          : `tune: ${tuning.report.best.firstTry}/${tuning.report.best.cards} first try at ${proposed.stepBudget} steps`,
       );
       console.log(
         `Applied ${applied.id}: ${applied.stepBudget} steps, ${applied.maxFailedChecks} failed checks${applied.clamped ? " (clamped to +-15%)" : ""}. The queue uses it when --max-turns is not given.`,
@@ -1190,6 +1233,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     let runProfile: RunProfile;
     try {
       runProfile = profileForRun(argv, process.env);
+      applyProfileSwitches(runProfile);
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
       process.exitCode = 2;
@@ -1303,6 +1347,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         queueDefaults(effectiveConfig(config.repoPath, argv).config, []),
         appliedStepBudget(config.repoPath),
       );
+      applyProfileSwitches(queueProfile);
     } catch (err) {
       console.log(`Run profile not recorded: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -1814,6 +1859,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         entries,
         modelSwaps: router.swapCount,
         totalDurationMs: Date.now() - started,
+        modelLoads: meter.loads(),
       });
       console.log(
         `   ${result.passed ? "PASSED" : "FAILED"} (${result.stopReason}) in ${result.evidence.turnsUsed} turns, ${(result.evidence.durationMs / 1000).toFixed(1)}s`,
@@ -2082,6 +2128,8 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       totalDurationMs: Date.now() - started,
       // Measured speed per model and the Worker's prefix-cache reuse (M3, M18).
       throughput: meter.all(),
+      // MS-T7-1: each model's load time, apart from the cards' time.
+      modelLoads: meter.loads(),
       cache: cache.summary(),
       memory: { level: watchdog.state.level, reason: watchdog.state.reason },
     };

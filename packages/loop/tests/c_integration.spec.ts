@@ -386,6 +386,8 @@ describe("loop callers of Builder C's APIs (C1, C2, C4, C9, C13, C14, C16, C19, 
       subtaskAdapter: child,
       gateRunner: passing,
       scopeFiles: ["src/a.ts"],
+      // subtask is in the progressive arm's catalog, not the fixed set (WL-M2-3).
+      progressiveTools: true,
     });
     const turn = await session.executeTurn();
     expect(turn.observations[0]).toMatchObject({ tool: "subtask", ok: true });

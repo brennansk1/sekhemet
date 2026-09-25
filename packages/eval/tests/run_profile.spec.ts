@@ -24,7 +24,12 @@ describe("one recorded RunProfile (MS-M9-4, MS-M9-5)", () => {
     expect(p.roles).toEqual({ worker: "cyber-tiel", reviewer: "dirk" });
     expect(p.policies.stepCap).toBe(20);
     expect(p.policies.review).toBe(true);
-    expect(p.switches).toEqual({ thinking: "surgical", workerMethod: "strict" });
+    expect(p.switches).toEqual({
+      thinking: "surgical",
+      workerMethod: "strict",
+      evidenceGate: "off",
+      toolArm: "progressive",
+    });
     expect(p.sources).toMatchObject({
       "roles.worker": "config",
       "policies.stepCap": "flag",
@@ -78,7 +83,12 @@ describe("one recorded RunProfile (MS-M9-4, MS-M9-5)", () => {
   });
 
   it("counts the switches a footprint compares: the experiment switches plus the profile's flags", () => {
-    expect(EXPERIMENT_SWITCHES).toEqual(["SEKHEMET_THINKING", "SEKHEMET_WORKER_METHOD"]);
+    expect(EXPERIMENT_SWITCHES).toEqual([
+      "SEKHEMET_THINKING",
+      "SEKHEMET_WORKER_METHOD",
+      "SEKHEMET_PRUNE",
+      "SEKHEMET_EVIDENCE_GATE",
+    ]);
     expect(profileSwitchCount()).toBe(
       EXPERIMENT_SWITCHES.length + Object.keys(RUN_PROFILE_FLAGS).length,
     );
@@ -115,6 +125,53 @@ describe("one recorded RunProfile (MS-M9-4, MS-M9-5)", () => {
     expect(p.sources["roles.researcher"]).toBe("env");
     expect(resolveRunProfile({ env: { SEKHEMET_RESEARCHER: "apodex" }, argv: [] }).roles).toEqual(
       {},
+    );
+  });
+
+  it("records a fixed sampling seed only when one is given, and hands it on (rule 10)", () => {
+    expect(resolveRunProfile({ env: {}, argv: [] }).switches.seed).toBeUndefined();
+    const p = resolveRunProfile({ env: {}, argv: ["--seed", "42"] });
+    expect(p.switches.seed).toBe(42);
+    expect(p.sources["switches.seed"]).toBe("flag");
+    expect(profileArgs(p).argv).toEqual(["--seed", "42"]);
+    expect(runProfileHash(p)).not.toBe(runProfileHash(resolveRunProfile({ env: {}, argv: [] })));
+    expect(() => resolveRunProfile({ env: {}, argv: ["--seed", "x"] })).toThrow(
+      /--seed must be a non-negative integer/,
+    );
+    const fromFile = resolveRunProfile({
+      env: {},
+      argv: [],
+      settingsFile: { path: "s.json", text: '{"switches":{"seed":7}}' },
+    });
+    expect(fromFile.switches.seed).toBe(7);
+  });
+
+  it("reads the prune arm from its experiment switch, and hands it on as one (MS-T7-6)", () => {
+    const p = resolveRunProfile({ env: { SEKHEMET_PRUNE: "random" }, argv: [] });
+    expect(p.switches.prune).toBe("random");
+    expect(p.sources["switches.prune"]).toBe("env");
+    expect(profileArgs(p).env.SEKHEMET_PRUNE).toBe("random");
+    expect(resolveRunProfile({ env: {}, argv: [] }).switches.prune).toBeUndefined();
+    expect(profileArgs(resolveRunProfile({ env: {}, argv: [] })).env.SEKHEMET_PRUNE).toBe("query");
+  });
+
+  it("names B2.5's two arms: the evidence gate and the tool arm, with their defaults (rule 29a, M2)", () => {
+    const d = resolveRunProfile({ env: {}, argv: [] });
+    expect(d.switches).toMatchObject({ evidenceGate: "off", toolArm: "progressive" });
+    const p = resolveRunProfile({
+      env: { SEKHEMET_EVIDENCE_GATE: "on" },
+      argv: ["--tool-arm", "fixed"],
+    });
+    expect(p.switches).toMatchObject({ evidenceGate: "on", toolArm: "fixed" });
+    expect(p.sources).toMatchObject({ "switches.evidenceGate": "env", "switches.toolArm": "flag" });
+    expect(runProfileHash(p)).not.toBe(runProfileHash(d));
+    // Handed on to the product's command line unchanged.
+    const { argv, env } = profileArgs(p);
+    expect(env.SEKHEMET_EVIDENCE_GATE).toBe("on");
+    expect(argv).toContain("--tool-arm");
+    expect(runProfileHash(resolveRunProfile({ env, argv }))).toBe(runProfileHash(p));
+    expect(() => resolveRunProfile({ env: {}, argv: ["--tool-arm", "some"] })).toThrow(
+      /--tool-arm is progressive or fixed/,
     );
   });
 });

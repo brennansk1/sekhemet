@@ -50,6 +50,7 @@ describe("the runner reads the stop-reason table and records the step evidence (
       hooks?: LifecycleHookEngine;
       promptTokenBudget?: number;
       usage?: (n: number) => Record<string, number>;
+      evidenceGate?: "off" | "on";
     } = {},
   ) => {
     const { usage: usageFor, ...extra } = extraAll;
@@ -93,7 +94,9 @@ describe("the runner reads the stop-reason table and records the step evidence (
     }).run();
   };
   const readA: Omit<ToolCall, "id"> = { name: "read_file", arguments: { path: "src/a.js" } };
-  const list: Omit<ToolCall, "id"> = { name: "list_dir", arguments: { path: "." } };
+  // A second harmless find-phase call; grep_search is in every writing class's
+  // fixed set (WL-M2-3), where list_dir no longer is.
+  const list: Omit<ToolCall, "id"> = { name: "grep_search", arguments: { query: "module" } };
 
   it("WL-T3-13, WL-T3-1, WL-M2-5, WL-M3-4: each sample has its own step budget; the evidence gives the steps of each and every step's phase, tokens and format errors", async () => {
     const result = await run("card_k", "pass_at_k = 3", (n) => (n % 2 === 1 ? [readA] : [list]));
@@ -109,6 +112,8 @@ describe("the runner reads the stop-reason table and records the step evidence (
       expect(s.finishReason).toBe("tool_calls");
     }
     expect(ev.settings.toolSet).toBe("fixed");
+    // Worker-loop rule 27 and WL-N9-4: the evidence-gate switch, off by default.
+    expect(ev.settings.evidenceGate).toBe("off");
     // WL-M3-5: the attempt's W, 16,384 − 4,096 − 2,048 − 256.
     expect(ev.settings.promptBudgetTokens).toBe(9_984);
     // WL-M3-4: the step rows carry the same facts.
@@ -199,4 +204,9 @@ describe("the runner reads the stop-reason table and records the step evidence (
     const attempt = store.runs?.listAttempts("card_h").at(-1);
     expect(attempt?.status).toBe("halted");
   }, 60_000);
+
+  it("WL-N9-4: records the evidence-gate switch it ran with", async () => {
+    const result = await run("card_eg", "", () => [readA], { evidenceGate: "on" });
+    expect(result.evidence.settings.evidenceGate).toBe("on");
+  });
 });

@@ -1,0 +1,1292 @@
+[
+  {
+    "id": "chronicle/card_chron_iface",
+    "fixture": "chronicle",
+    "card": "card_chron_iface",
+    "files": [
+      {
+        "path": "src/types.ts",
+        "sha256": "18e9c7ce2c8983adca8dd3135e270d269c46eea7a65c77b9d561cac6dcba5778"
+      }
+    ],
+    "acceptanceTests": ["tests/types.spec.ts"],
+    "provenance": "written by an agent (claude-opus-5-5), verified by the frozen tests",
+    "verification": {
+      "command": "vitest run tests/types.spec.ts",
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "atSeed": {
+        "typecheckExitCode": 1,
+        "exitCode": 0,
+        "passed": 4,
+        "total": 4,
+        "outputSha256": "dbc31b61c728be438649734f91d423d72a825efde6658b19631e2b8413f15051"
+      },
+      "onReference": {
+        "exitCode": 0,
+        "passed": 4,
+        "total": 4,
+        "outputSha256": "dbc31b61c728be438649734f91d423d72a825efde6658b19631e2b8413f15051"
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "chronicle/card_chron_hasher",
+    "fixture": "chronicle",
+    "card": "card_chron_hasher",
+    "files": [
+      {
+        "path": "src/hasher.ts",
+        "sha256": "71755bc55b31930a1d898dba1ebc3ebf60400effef494f87ba00fc3d120040ad"
+      }
+    ],
+    "acceptanceTests": ["tests/hasher.spec.ts"],
+    "provenance": "written by an agent (claude-opus-5-5), verified by the frozen tests",
+    "verification": {
+      "command": "vitest run tests/hasher.spec.ts",
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "atSeed": {
+        "typecheckExitCode": 1,
+        "exitCode": 1,
+        "passed": 0,
+        "total": 5,
+        "outputSha256": "3bee24900d77016ca7343b5d6fb4bdbc2692f4e35759a726e73aa1823e4dc91c"
+      },
+      "onReference": {
+        "exitCode": 0,
+        "passed": 5,
+        "total": 5,
+        "outputSha256": "93e33c227952098fad481fe8136ef5d76b660fb278b2227fa0cba9e3f1f9bd81"
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "chronicle/card_chron_db",
+    "fixture": "chronicle",
+    "card": "card_chron_db",
+    "files": [
+      {
+        "path": "src/db.ts",
+        "sha256": "7d2df792839900ad7d001c98b16d1763a03d4d9ca4b0c3344bbb0c2d6c029559"
+      }
+    ],
+    "acceptanceTests": ["tests/db.spec.ts"],
+    "provenance": "written by an agent (claude-opus-5-5), verified by the frozen tests",
+    "verification": {
+      "command": "vitest run tests/db.spec.ts",
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "atSeed": {
+        "typecheckExitCode": 1,
+        "exitCode": 1,
+        "passed": 0,
+        "total": 6,
+        "outputSha256": "470bad6fb9bf9443918e7fba7a4830b6b433f268cb7797316b02af750c82381b"
+      },
+      "onReference": {
+        "exitCode": 0,
+        "passed": 6,
+        "total": 6,
+        "outputSha256": "98c19423e109dcbeb9449c027a460f453cd041a83c224c4fc8b43d46c1e6e133"
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "chronicle/card_chron_verifier",
+    "fixture": "chronicle",
+    "card": "card_chron_verifier",
+    "files": [
+      {
+        "path": "src/verifier.ts",
+        "sha256": "78181f6b065997b685646b5712577d68fbb7a884e8f0f61d5d9a38271d498c42"
+      }
+    ],
+    "acceptanceTests": ["tests/verifier.spec.ts"],
+    "provenance": "written by an agent (claude-opus-5-5), verified by the frozen tests",
+    "verification": {
+      "command": "vitest run tests/verifier.spec.ts",
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "atSeed": {
+        "typecheckExitCode": 1,
+        "exitCode": 1,
+        "passed": 0,
+        "total": 5,
+        "outputSha256": "c36d56ca4379ec56f0dabd50c93dd20cbb60dd5c77961d2bd6c6d5b1773ed438"
+      },
+      "onReference": {
+        "exitCode": 0,
+        "passed": 5,
+        "total": 5,
+        "outputSha256": "d9cb40b2355d24f4d4c4c471b24c3f8978be9f93a922f10aa336fb2f6f13b0e8"
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "chronicle/card_chron_ledger",
+    "fixture": "chronicle",
+    "card": "card_chron_ledger",
+    "files": [
+      {
+        "path": "src/ledger.ts",
+        "sha256": "798eb09ff4017f48e8b2ad8e97fcc042e4c13b1617302f67b14b08be965cac23"
+      }
+    ],
+    "acceptanceTests": ["tests/ledger.spec.ts"],
+    "provenance": "written by an agent (claude-opus-5-5), verified by the frozen tests",
+    "verification": {
+      "command": "vitest run tests/ledger.spec.ts",
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "atSeed": {
+        "typecheckExitCode": 1,
+        "exitCode": 1,
+        "passed": 0,
+        "total": 5,
+        "outputSha256": "52fc1f3c152a6245361d0d07d32921a663f4e1015384aba3cc68e89c7a4817f9"
+      },
+      "onReference": {
+        "exitCode": 0,
+        "passed": 5,
+        "total": 5,
+        "outputSha256": "36869c816b9e96d35d9331aa6b55f780585e0c76c8c18d16a3b7f95cb779b9a7"
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "chronicle/card_chron_api",
+    "fixture": "chronicle",
+    "card": "card_chron_api",
+    "files": [
+      {
+        "path": "src/server.ts",
+        "sha256": "5f1479fa4c7cf8ab923dc7a7cdb37ea6922659b04171a1c4d2c3df8e9277e1ec"
+      }
+    ],
+    "acceptanceTests": ["tests/e2e_api.spec.ts"],
+    "provenance": "written by an agent (claude-opus-5-5), verified by the frozen tests",
+    "verification": {
+      "command": "vitest run tests/e2e_api.spec.ts",
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "atSeed": {
+        "typecheckExitCode": 1,
+        "exitCode": 1,
+        "passed": 0,
+        "total": 5,
+        "outputSha256": "d3c48084c36b48e75550c7b07cfd74125accd67fcd78ce588045d44453248e4e"
+      },
+      "onReference": {
+        "exitCode": 0,
+        "passed": 5,
+        "total": 5,
+        "outputSha256": "b86408c2537989812594fcb6ed6ab33c449288030684d8f7dd8de6401f4eaa24"
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "onyx/card_onyx_1_types",
+    "fixture": "onyx",
+    "card": "card_onyx_1_types",
+    "files": [
+      {
+        "path": "src/types.ts",
+        "sha256": "91e0588f6b9e16f6310566e944eabb5e3b08534e7c44c4cd88b3c42129699f0c"
+      }
+    ],
+    "acceptanceTests": ["tests/types.spec.ts"],
+    "provenance": "written by an agent (claude-opus-5-5), verified by the frozen tests",
+    "verification": {
+      "command": "vitest run tests/types.spec.ts",
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "atSeed": {
+        "typecheckExitCode": 1,
+        "exitCode": 0,
+        "passed": 4,
+        "total": 4,
+        "outputSha256": "33701b0c43002c409e4fb7edf1222c847f1dc7def8ee79fc011107cdcde3ae49"
+      },
+      "onReference": {
+        "exitCode": 0,
+        "passed": 4,
+        "total": 4,
+        "outputSha256": "33701b0c43002c409e4fb7edf1222c847f1dc7def8ee79fc011107cdcde3ae49"
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "onyx/card_onyx_2_crypto",
+    "fixture": "onyx",
+    "card": "card_onyx_2_crypto",
+    "files": [
+      {
+        "path": "src/crypto.ts",
+        "sha256": "d6a4be3d0f8a444398b879c7cb3fbbbc7a5f2c66716720c406b9d86e0321e26f"
+      }
+    ],
+    "acceptanceTests": ["tests/crypto.spec.ts"],
+    "provenance": "written by an agent (claude-opus-5-5), verified by the frozen tests",
+    "verification": {
+      "command": "vitest run tests/crypto.spec.ts",
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "atSeed": {
+        "typecheckExitCode": 1,
+        "exitCode": 1,
+        "passed": 0,
+        "total": 14,
+        "outputSha256": "121ffc646315b40c473e65c65d0404cadada53eb43bbd6071580f557bfdb452f"
+      },
+      "onReference": {
+        "exitCode": 0,
+        "passed": 14,
+        "total": 14,
+        "outputSha256": "11a9916e210cb0edfce78daed64061d7088a9ece435c39bbd548733e38970da3"
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "onyx/card_onyx_3_db",
+    "fixture": "onyx",
+    "card": "card_onyx_3_db",
+    "files": [
+      {
+        "path": "src/db.ts",
+        "sha256": "9f937189cf1f4d2de2d54bf01b11d5ebb9d612406f446e1d9172f0adad469a47"
+      }
+    ],
+    "acceptanceTests": ["tests/db.spec.ts"],
+    "provenance": "written by an agent (claude-opus-5-5), verified by the frozen tests",
+    "verification": {
+      "command": "vitest run tests/db.spec.ts",
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "atSeed": {
+        "typecheckExitCode": 1,
+        "exitCode": 1,
+        "passed": 0,
+        "total": 12,
+        "outputSha256": "dba4ffd145bf94fe3382a20e7e38ad3538d1df19c2fd518470af53666d0a0e44"
+      },
+      "onReference": {
+        "exitCode": 0,
+        "passed": 12,
+        "total": 12,
+        "outputSha256": "6e4379907fa9cf0c4a19293574ce0c06b28238843ade64daa4f463969c28a591"
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "onyx/card_onyx_4_vault",
+    "fixture": "onyx",
+    "card": "card_onyx_4_vault",
+    "files": [
+      {
+        "path": "src/vault.ts",
+        "sha256": "5660fab18eaa713b36df61a712bf4860cbc5628bc6ceb729007b809e73c999af"
+      }
+    ],
+    "acceptanceTests": ["tests/vault.spec.ts"],
+    "provenance": "written by an agent (claude-opus-5-5), verified by the frozen tests",
+    "verification": {
+      "command": "vitest run tests/vault.spec.ts",
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "atSeed": {
+        "typecheckExitCode": 1,
+        "exitCode": 1,
+        "passed": 0,
+        "total": 10,
+        "outputSha256": "9a0e69b42fca070b61a93b5a196f18b125378c30ad1befaf1bf396f740b0cc3a"
+      },
+      "onReference": {
+        "exitCode": 0,
+        "passed": 10,
+        "total": 10,
+        "outputSha256": "eb0825280671fb2de6a598a18cba307cb82726363aa64dadcbd6c8a8c487eeab"
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "onyx/card_onyx_5_scanner",
+    "fixture": "onyx",
+    "card": "card_onyx_5_scanner",
+    "files": [
+      {
+        "path": "src/scanner.ts",
+        "sha256": "a2aad72f8b5fdd1b80bc1362c2ef6a90736462f9580b8f0aa55cf661defb21a4"
+      }
+    ],
+    "acceptanceTests": ["tests/scanner.spec.ts"],
+    "provenance": "written by an agent (claude-opus-5-5), verified by the frozen tests",
+    "verification": {
+      "command": "vitest run tests/scanner.spec.ts",
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "atSeed": {
+        "typecheckExitCode": 1,
+        "exitCode": 1,
+        "passed": 0,
+        "total": 18,
+        "outputSha256": "42e93db7677ec220017c80414acc4e26119400faaf1f2755abae3cab27e81071"
+      },
+      "onReference": {
+        "exitCode": 0,
+        "passed": 18,
+        "total": 18,
+        "outputSha256": "4b4fd5cc8a8021f4ceb3a3c4b411bfda9deb81284a5272c1e387c9bbdc0e8f01"
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "onyx/card_onyx_6_injector",
+    "fixture": "onyx",
+    "card": "card_onyx_6_injector",
+    "files": [
+      {
+        "path": "src/injector.ts",
+        "sha256": "4288a2c6645f04e8f1cceaef19817e5853fb21525565f9b38624f65fd5696ddf"
+      }
+    ],
+    "acceptanceTests": ["tests/injector.spec.ts"],
+    "provenance": "written by an agent (claude-opus-5-5), verified by the frozen tests",
+    "verification": {
+      "command": "vitest run tests/injector.spec.ts",
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "atSeed": {
+        "typecheckExitCode": 1,
+        "exitCode": 1,
+        "passed": 0,
+        "total": 11,
+        "outputSha256": "2576003c9f9ca2cd04d6b7000bbc90b8c233aa5b343db65347f0a0e3966f4b03"
+      },
+      "onReference": {
+        "exitCode": 0,
+        "passed": 11,
+        "total": 11,
+        "outputSha256": "4b12ee2124c670fd3d06d3ce9d4c50608240945e34af175f7a102e946b4b5bf2"
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "onyx/card_onyx_7_cli",
+    "fixture": "onyx",
+    "card": "card_onyx_7_cli",
+    "files": [
+      {
+        "path": "src/cli.ts",
+        "sha256": "1d2f866b0a9bc83f6175f6a35fbae92ecebc03283060269857590ddf54cb2cd1"
+      }
+    ],
+    "acceptanceTests": ["tests/cli.spec.ts"],
+    "provenance": "written by an agent (claude-opus-5-5), verified by the frozen tests",
+    "verification": {
+      "command": "vitest run tests/cli.spec.ts",
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "atSeed": {
+        "typecheckExitCode": 1,
+        "exitCode": 1,
+        "passed": 0,
+        "total": 14,
+        "outputSha256": "f772f230d6fde43e789c3f44e1197287683445dc1edaf7844644ee1ed4564933"
+      },
+      "onReference": {
+        "exitCode": 0,
+        "passed": 14,
+        "total": 14,
+        "outputSha256": "0e0c7a2d0a8c7b5797537799daa42aa38b57e1c612e8d465ef3e966ce7cfd682"
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "onyx/card_onyx_8_e2e",
+    "fixture": "onyx",
+    "card": "card_onyx_8_e2e",
+    "files": [
+      {
+        "path": "src/app.ts",
+        "sha256": "7dbf732cbbc16b811091f07990983d6114a9b4473839ac1020ef9023ecb361aa"
+      }
+    ],
+    "acceptanceTests": ["tests/e2e.spec.ts"],
+    "provenance": "written by an agent (claude-opus-5-5), verified by the frozen tests",
+    "verification": {
+      "command": "vitest run tests/e2e.spec.ts",
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "atSeed": {
+        "typecheckExitCode": 1,
+        "exitCode": 1,
+        "passed": 0,
+        "total": 10,
+        "outputSha256": "1995ce909ddd6d84140b8a63254810ebcdffa4cd43f5ed01a7beabf3d11fc92d"
+      },
+      "onReference": {
+        "exitCode": 0,
+        "passed": 10,
+        "total": 10,
+        "outputSha256": "c74b19600b6a8ebf1eb139ec358f92f52163f7ed63559f5581d8170e7aae2fd9"
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "vanguard/card_vang_1_types",
+    "fixture": "vanguard",
+    "card": "card_vang_1_types",
+    "files": [
+      {
+        "path": "src/types.ts",
+        "sha256": "703959652c4efbea8303f510cf8f75cea4c8211a443d74f70b7d2e3fed574423"
+      }
+    ],
+    "acceptanceTests": ["tests/types.spec.ts"],
+    "provenance": "written by an agent (claude-opus-5-5), verified by the frozen tests",
+    "verification": {
+      "command": "vitest run tests/types.spec.ts",
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "atSeed": {
+        "typecheckExitCode": 1,
+        "exitCode": 0,
+        "passed": 5,
+        "total": 5,
+        "outputSha256": "5d41b16c94a00953a96e95e7be386520da8dad3f24a6807f8df3f5c2c013fcca"
+      },
+      "onReference": {
+        "exitCode": 0,
+        "passed": 5,
+        "total": 5,
+        "outputSha256": "5d41b16c94a00953a96e95e7be386520da8dad3f24a6807f8df3f5c2c013fcca"
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "vanguard/card_vang_2_hmac",
+    "fixture": "vanguard",
+    "card": "card_vang_2_hmac",
+    "files": [
+      {
+        "path": "src/hmac.ts",
+        "sha256": "af8b9ddc9f278a8050e3c1d7892e5dd2937e02d582943e4fb06cc4b1761fcae5"
+      }
+    ],
+    "acceptanceTests": ["tests/hmac.spec.ts"],
+    "provenance": "written by an agent (claude-opus-5-5), verified by the frozen tests",
+    "verification": {
+      "command": "vitest run tests/hmac.spec.ts",
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "atSeed": {
+        "typecheckExitCode": 1,
+        "exitCode": 1,
+        "passed": 0,
+        "total": 18,
+        "outputSha256": "7a62c2e1ce2723e8747ba43e6fc417da11f25a673c59b8fa41cc6b64b84a78a0"
+      },
+      "onReference": {
+        "exitCode": 0,
+        "passed": 18,
+        "total": 18,
+        "outputSha256": "fab65fd08f5a6fed58459cc74dc59c9014dd6fd2a2d626b2dc35d40aec7c8eca"
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "vanguard/card_vang_3_store",
+    "fixture": "vanguard",
+    "card": "card_vang_3_store",
+    "files": [
+      {
+        "path": "src/store.ts",
+        "sha256": "9c9248683aa01888f2aa44f7ec90d48e96944a55450671dec0ff1b1d14f20d5c"
+      }
+    ],
+    "acceptanceTests": ["tests/store.spec.ts"],
+    "provenance": "written by an agent (claude-opus-5-5), verified by the frozen tests",
+    "verification": {
+      "command": "vitest run tests/store.spec.ts",
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "atSeed": {
+        "typecheckExitCode": 1,
+        "exitCode": 1,
+        "passed": 0,
+        "total": 11,
+        "outputSha256": "a9bd87ac84c9b536551b5fe2f7fe1847facfb8f4661834bb8c34890b3c5f893c"
+      },
+      "onReference": {
+        "exitCode": 0,
+        "passed": 11,
+        "total": 11,
+        "outputSha256": "9a233ec686e05f4c0b316795e5c8ab4c4e65fe94fd608a40bd2713bd4f76ff00"
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "vanguard/card_vang_4_ingest",
+    "fixture": "vanguard",
+    "card": "card_vang_4_ingest",
+    "files": [
+      {
+        "path": "src/ingest.ts",
+        "sha256": "1c5a05eb2dbfec843c3de4900be1a94ee5b892c1cdd2a2930fac6e8a0433bd55"
+      }
+    ],
+    "acceptanceTests": ["tests/ingest.spec.ts"],
+    "provenance": "written by an agent (claude-opus-5-5), verified by the frozen tests",
+    "verification": {
+      "command": "vitest run tests/ingest.spec.ts",
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "atSeed": {
+        "typecheckExitCode": 1,
+        "exitCode": 1,
+        "passed": 0,
+        "total": 12,
+        "outputSha256": "a658dcea4bcd7ffb842fcd6c5fab0ab8d4021dd710f6ab3068e12c8643fbc850"
+      },
+      "onReference": {
+        "exitCode": 0,
+        "passed": 12,
+        "total": 12,
+        "outputSha256": "11ed4e526aa0b48a733d5f54f278a36489fe2ff18dada18f8138140590ca6252"
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "vanguard/card_vang_5_replay",
+    "fixture": "vanguard",
+    "card": "card_vang_5_replay",
+    "files": [
+      {
+        "path": "src/replay.ts",
+        "sha256": "db2f304ffb06793802c0ec90fe5b6de4c6cc0e55b47848cac56d92e495c664ef"
+      }
+    ],
+    "acceptanceTests": ["tests/replay.spec.ts"],
+    "provenance": "written by an agent (claude-opus-5-5), verified by the frozen tests",
+    "verification": {
+      "command": "vitest run tests/replay.spec.ts",
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "atSeed": {
+        "typecheckExitCode": 1,
+        "exitCode": 1,
+        "passed": 0,
+        "total": 10,
+        "outputSha256": "d474ea1bb8cf35adb7e501532459062a9be9f66920472a17ee4a856f5bf500c1"
+      },
+      "onReference": {
+        "exitCode": 0,
+        "passed": 10,
+        "total": 10,
+        "outputSha256": "ade166a960e1c2cdc31b4de21a1cfb9f847dcffd7cf1f7a2d849265764132fed"
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "vanguard/card_vang_6_sse",
+    "fixture": "vanguard",
+    "card": "card_vang_6_sse",
+    "files": [
+      {
+        "path": "src/sse.ts",
+        "sha256": "96c46a3be4a6b9a38f3dd67438490063cff00bc6c90e32b20077ed4a185227cf"
+      }
+    ],
+    "acceptanceTests": ["tests/sse.spec.ts"],
+    "provenance": "written by an agent (claude-opus-5-5), verified by the frozen tests",
+    "verification": {
+      "command": "vitest run tests/sse.spec.ts",
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "atSeed": {
+        "typecheckExitCode": 1,
+        "exitCode": 1,
+        "passed": 0,
+        "total": 11,
+        "outputSha256": "34e058264feb49a3f94790630947ed113d629d6a3369af29882953761696956b"
+      },
+      "onReference": {
+        "exitCode": 0,
+        "passed": 11,
+        "total": 11,
+        "outputSha256": "1b52d83b748c17fe1251d35ac2dad4483d56ed2fea10e107ac6474531bec24d2"
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "vanguard/card_vang_7_cli",
+    "fixture": "vanguard",
+    "card": "card_vang_7_cli",
+    "files": [
+      {
+        "path": "src/cli.ts",
+        "sha256": "aeee8a94d299ae17c96472653720311a9e1f9a4adc331267e1c7ace46003dac9"
+      }
+    ],
+    "acceptanceTests": ["tests/cli.spec.ts"],
+    "provenance": "written by an agent (claude-opus-5-5), verified by the frozen tests",
+    "verification": {
+      "command": "vitest run tests/cli.spec.ts",
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "atSeed": {
+        "typecheckExitCode": 1,
+        "exitCode": 1,
+        "passed": 0,
+        "total": 15,
+        "outputSha256": "2d37a4c388f9b2ca49cb029a7c4883e32c88138966d31beefe515120fe9530eb"
+      },
+      "onReference": {
+        "exitCode": 0,
+        "passed": 15,
+        "total": 15,
+        "outputSha256": "fd8b75ddc2ba8d2f0ec6abf3032a74aa1784790b3be1421f5c3517d11145985a"
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "vanguard/card_vang_8_e2e",
+    "fixture": "vanguard",
+    "card": "card_vang_8_e2e",
+    "files": [
+      {
+        "path": "src/daemon.ts",
+        "sha256": "ad7a67f34825bfa8eef6bc48159162fd2f16c5d9faca00666a3030feb93c04f0"
+      }
+    ],
+    "acceptanceTests": ["tests/e2e.spec.ts"],
+    "provenance": "written by an agent (claude-opus-5-5), verified by the frozen tests",
+    "verification": {
+      "command": "vitest run tests/e2e.spec.ts",
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "atSeed": {
+        "typecheckExitCode": 1,
+        "exitCode": 1,
+        "passed": 0,
+        "total": 9,
+        "outputSha256": "51f8d5abdd726392b2ce3a652ba58ee48dea499cd16257325b25c60747a9a918"
+      },
+      "onReference": {
+        "exitCode": 0,
+        "passed": 9,
+        "total": 9,
+        "outputSha256": "69d43f1e810e5172c9e90c21f436f848ae14ca724c359a6ced36dc893a6f0086"
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "basalt-canvas/card_canvas_1_tokens",
+    "fixture": "basalt-canvas",
+    "card": "card_canvas_1_tokens",
+    "files": [
+      {
+        "path": "src/tokens.ts",
+        "sha256": "5d5216e6d0bc4d0b5f57d39b087d303cf74c6861612835701c699ef38046112f"
+      }
+    ],
+    "acceptanceTests": ["tests/tokens.spec.ts"],
+    "provenance": "written by an agent (claude-opus-5-5), verified by the frozen tests",
+    "verification": {
+      "command": "vitest run tests/tokens.spec.ts",
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "atSeed": {
+        "typecheckExitCode": 1,
+        "exitCode": 1,
+        "passed": 0,
+        "total": 8,
+        "outputSha256": "126244eb338ddf5ca77a14aa0d659efaa5a7185d246e79985f390f491dd6c43e"
+      },
+      "onReference": {
+        "exitCode": 0,
+        "passed": 8,
+        "total": 8,
+        "outputSha256": "882d74e6f2c6db88b9f94814d326d83cd9144de49ef2006223eaa720196e9af8"
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "basalt-canvas/card_canvas_2_store",
+    "fixture": "basalt-canvas",
+    "card": "card_canvas_2_store",
+    "files": [
+      {
+        "path": "src/store.ts",
+        "sha256": "5bb2779ed2a780a6a0e7ec33cb0d1e669a4ef34f859159efaeef897ebd1959e2"
+      }
+    ],
+    "acceptanceTests": ["tests/store.spec.ts"],
+    "provenance": "written by an agent (claude-opus-5-5), verified by the frozen tests",
+    "verification": {
+      "command": "vitest run tests/store.spec.ts",
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "atSeed": {
+        "typecheckExitCode": 1,
+        "exitCode": 1,
+        "passed": 0,
+        "total": 16,
+        "outputSha256": "1b6bd256be5eb5be5e27faa3261240b9d4bd1e408cc5efa21dfd25ce9f6c6148"
+      },
+      "onReference": {
+        "exitCode": 0,
+        "passed": 16,
+        "total": 16,
+        "outputSha256": "c854c175a2797c2faeb944081efb310c016ca129f8d12c5e76c28fcf7a3b9208"
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "basalt-canvas/card_canvas_3_card_tile",
+    "fixture": "basalt-canvas",
+    "card": "card_canvas_3_card_tile",
+    "files": [
+      {
+        "path": "src/card_tile.ts",
+        "sha256": "3d083a36f87e84d05c5f28f7b7dd431ea48f331c0f7552dd136227cd8cbf0d90"
+      }
+    ],
+    "acceptanceTests": ["tests/card.spec.ts"],
+    "provenance": "written by an agent (claude-opus-5-5), verified by the frozen tests",
+    "verification": {
+      "command": "vitest run tests/card.spec.ts",
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "atSeed": {
+        "typecheckExitCode": 1,
+        "exitCode": 1,
+        "passed": 0,
+        "total": 12,
+        "outputSha256": "d2d4bbdf2499684e9f5f59085d03fcf3f47c8592f12e119e0dbb8d187f2a94e8"
+      },
+      "onReference": {
+        "exitCode": 0,
+        "passed": 12,
+        "total": 12,
+        "outputSha256": "4fed29500e8870daccba7ef84939c78e53107cb45c6f52c86369ee39980f4031"
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "basalt-canvas/card_canvas_4_board",
+    "fixture": "basalt-canvas",
+    "card": "card_canvas_4_board",
+    "files": [
+      {
+        "path": "src/board.ts",
+        "sha256": "6c56a3f4cbb5c69dd7f544ee0b0cd7f7e65d3741d60098c328bd95f2c72d5e05"
+      }
+    ],
+    "acceptanceTests": ["tests/board.spec.ts"],
+    "provenance": "written by an agent (claude-opus-5-5), verified by the frozen tests",
+    "verification": {
+      "command": "vitest run tests/board.spec.ts",
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "atSeed": {
+        "typecheckExitCode": 1,
+        "exitCode": 1,
+        "passed": 0,
+        "total": 15,
+        "outputSha256": "f9e675131afa7f39c98861893b4fd27a81319483bade7f82524385f0c06ed373"
+      },
+      "onReference": {
+        "exitCode": 0,
+        "passed": 15,
+        "total": 15,
+        "outputSha256": "b88dd99daf5eb308732291d74ef5458cbdf975b980608447afb16ae1ad4622fb"
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "basalt-canvas/card_canvas_5_dag_layout",
+    "fixture": "basalt-canvas",
+    "card": "card_canvas_5_dag_layout",
+    "files": [
+      {
+        "path": "src/dag_layout.ts",
+        "sha256": "7b7852d532de03fdbc82d911b8517e6d1eed4a63c335a9cfd588cfa998947191"
+      }
+    ],
+    "acceptanceTests": ["tests/dag_layout.spec.ts"],
+    "provenance": "written by an agent (claude-opus-5-5), verified by the frozen tests",
+    "verification": {
+      "command": "vitest run tests/dag_layout.spec.ts",
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "atSeed": {
+        "typecheckExitCode": 1,
+        "exitCode": 1,
+        "passed": 0,
+        "total": 13,
+        "outputSha256": "5846cc4078949700eae0459dcea865de77e3276d079322ae4d092b2fa9521bbf"
+      },
+      "onReference": {
+        "exitCode": 0,
+        "passed": 13,
+        "total": 13,
+        "outputSha256": "c81cb8b112de51e838757ad231005cb861235f2b9919d12981903a5d4b5aa4e8"
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "basalt-canvas/card_canvas_6_dag_canvas",
+    "fixture": "basalt-canvas",
+    "card": "card_canvas_6_dag_canvas",
+    "files": [
+      {
+        "path": "src/dag_canvas.ts",
+        "sha256": "7b45221c0db5245413219ea6a020cc1ec8385da6df06e1c2895cfc06de0f924c"
+      }
+    ],
+    "acceptanceTests": ["tests/dag_canvas.spec.ts"],
+    "provenance": "written by an agent (claude-opus-5-5), verified by the frozen tests",
+    "verification": {
+      "command": "vitest run tests/dag_canvas.spec.ts",
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "atSeed": {
+        "typecheckExitCode": 1,
+        "exitCode": 1,
+        "passed": 0,
+        "total": 15,
+        "outputSha256": "0d0a59ed68563fd99c9b45f83e22a2aee2d2a94dd2f3312117569a7afd5254fa"
+      },
+      "onReference": {
+        "exitCode": 0,
+        "passed": 15,
+        "total": 15,
+        "outputSha256": "e0ce52e00d9d6a3c2dd8cc34cbdda82468c7976368ec2501d3ca652a6a6169e4"
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "basalt-canvas/card_canvas_7_palette",
+    "fixture": "basalt-canvas",
+    "card": "card_canvas_7_palette",
+    "files": [
+      {
+        "path": "src/palette.ts",
+        "sha256": "9415bd0a71f21959db256b378921cd5fb314942d50873c6129976c5bc876e5f6"
+      }
+    ],
+    "acceptanceTests": ["tests/palette.spec.ts"],
+    "provenance": "written by an agent (claude-opus-5-5), verified by the frozen tests",
+    "verification": {
+      "command": "vitest run tests/palette.spec.ts",
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "atSeed": {
+        "typecheckExitCode": 1,
+        "exitCode": 1,
+        "passed": 0,
+        "total": 19,
+        "outputSha256": "6926ae8e91c0a7ee2eba9d866a10fa4ad42bdb37b4c3dc2bbb916eae6cf6edce"
+      },
+      "onReference": {
+        "exitCode": 0,
+        "passed": 19,
+        "total": 19,
+        "outputSha256": "c65fdd2e722e7bf8633c8aeb44d248582a393fa77613704e31f314546460fdb4"
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  },
+  {
+    "id": "basalt-canvas/card_canvas_8_e2e_ui",
+    "fixture": "basalt-canvas",
+    "card": "card_canvas_8_e2e_ui",
+    "files": [
+      {
+        "path": "src/app.ts",
+        "sha256": "3be05dac06f900da45268c3ab2732a2dd9252a9133bd7bc9451f1ca3f5a46b23"
+      }
+    ],
+    "acceptanceTests": ["tests/e2e_ui.spec.ts"],
+    "provenance": "written by an agent (claude-opus-5-5), verified by the frozen tests",
+    "verification": {
+      "command": "vitest run tests/e2e_ui.spec.ts",
+      "appliedOn": "the fixture seeded as scripts/run_suite.mjs seeds it, with every earlier card's reference solution committed",
+      "atSeed": {
+        "typecheckExitCode": 1,
+        "exitCode": 1,
+        "passed": 0,
+        "total": 14,
+        "outputSha256": "65ec7ae18515190b6f3bb73659d6c6c237c422f2ecb82119fcaed2b6621658df"
+      },
+      "onReference": {
+        "exitCode": 0,
+        "passed": 14,
+        "total": 14,
+        "outputSha256": "7c44e9072889c4672c48386d5ebd89d71cbdd566cedee41aaa04cd28d970be64"
+      },
+      "typecheck": {
+        "command": "tsc -b",
+        "exitCode": 0
+      },
+      "lint": {
+        "command": "biome check .",
+        "exitCode": 0
+      }
+    },
+    "labelledBy": {
+      "principal": "frozen tests",
+      "kind": "executed",
+      "passedFrozenTests": true
+    }
+  }
+]

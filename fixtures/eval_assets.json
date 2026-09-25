@@ -1,4 +1,28 @@
 {
-  "about": "Evaluation assets (measurement.md rule 29, T11): each is versioned, hashed and listed here with its size, who labelled it and the criteria that use it. An item is never edited to improve a result; a change is a new version, and the earlier hash is kept. Labels are a person's or executed, never a model's. Nothing is scored against an asset that is not listed. B2.4's three (reference solutions, golden briefs, the held-out acceptance suite) wait for a person's labels and are not registered yet.",
-  "assets": []
+  "about": "Evaluation assets (measurement.md rule 29, T11): each is versioned, hashed and listed here with its size, who labelled it and the criteria that use it. An item is never edited to improve a result; a change is a new version, and the earlier hash is kept. Labels are a person's or executed, never a model's. Nothing is scored against an asset that is not listed. B2.4's reference solutions are labelled by execution (each passed its card's frozen tests; scripts/verify_reference_solutions.mjs records and registers them); its golden briefs and held-out acceptance suite wait for a person's labels and are not registered yet.",
+  "assets": [
+    {
+      "name": "reference-solutions",
+      "version": "3",
+      "hash": "163347f8d5fee2f12ae2cf793fa117792b97f91b95ad469c4154b46023c3f5a2",
+      "items": 30,
+      "labelledBy": "frozen tests (each solution executed against its card's frozen acceptance test)",
+      "provenance": "written by an agent (claude-opus-5-5), verified by the frozen tests",
+      "usedBy": ["MS-T7-2", "MS-T7-3", "CX-P1-5"],
+      "builtIn": "B2.4",
+      "path": "fixtures/reference_solutions",
+      "versions": [
+        {
+          "version": "1",
+          "hash": "9a9b49e2c103ee00c8df9343844c729bfc028e16dc49b89ff1d87f77f553cebf",
+          "items": 30
+        },
+        {
+          "version": "2",
+          "hash": "29585a576d97c896948370d8199e138c93d814a6c06063252db76dbfc745c20d",
+          "items": 30
+        }
+      ]
+    }
+  ]
 }

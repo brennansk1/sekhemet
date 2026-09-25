@@ -1717,6 +1717,8 @@ export class CardRunner {
       ...(this.options.temperature !== undefined ? { temperature: this.options.temperature } : {}),
       thinking: this.options.thinking ?? "off",
       workerMethod: this.options.workerMethod ?? "baseline",
+      // Rule 27 and WL-N9-4: every bundle records the evidence-gate switch.
+      evidenceGate: this.options.evidenceGate ?? "off",
       isolation: (this.options.sandbox ?? new ProcessSandbox()).confinement,
       // WL-M2-5 and WL-M3-5: the tool arm and the attempt's prompt budget W.
       ...(session ? { toolSet: session.getToolSetArm() } : {}),

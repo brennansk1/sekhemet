@@ -152,16 +152,19 @@ describe("the Worker's reason is kept short", () => {
 
 /**
  * Ratchets, not budgets: the tool interface a session sends, with note's gate
- * enum, measured 2026-09-25 with the allocator's estimator. Each is over
- * DEC-27's 1,700 because the default arm keeps the whole catalog; worker-loop
- * WL-M2-3's fixed set must bring each to at most 1,700, and these constants
- * only ever fall toward that.
+ * enum, measured with the allocator's estimator. They were 2,012, 2,099 and
+ * 2,043 while the implement class carried the whole catalog; worker-loop
+ * WL-M2-3's fixed set brought them under DEC-27's 1,700 (measured
+ * 2026-09-25), and they only ever fall from here.
  */
-const IMPLEMENT_TOOL_INTERFACE_TOKENS = 2_012;
-/** With `run_script`, for a script-capable Worker (WL-M2-4). */
-const SCRIPT_CAPABLE_TOOL_INTERFACE_TOKENS = 2_099;
+const IMPLEMENT_TOOL_INTERFACE_TOKENS = 1_024;
+/**
+ * With `run_script`, for a script-capable Worker (WL-M2-4), in `read_symbol`'s
+ * place so that `grep_search`, which the gate remedies name, stays offered.
+ */
+const SCRIPT_CAPABLE_TOOL_INTERFACE_TOKENS = 1_068;
 /** With a 23-gate enum: a project with mutation, the visual layer and every project gate. */
-const IMPLEMENT_23_GATES_TOOL_INTERFACE_TOKENS = 2_043;
+const IMPLEMENT_23_GATES_TOOL_INTERFACE_TOKENS = 1_055;
 
 describe("the gate enum's cost against DEC-27's 1,700-token tool interface", () => {
   const gates15 = [
@@ -205,7 +208,7 @@ describe("the gate enum's cost against DEC-27's 1,700-token tool interface", () 
   });
 
   it("keeps every class with a fixed tool set within 1,700 tokens", () => {
-    for (const cls of ["review", "research", "spike"] as const) {
+    for (const cls of ["implement", "review", "research", "spike"] as const) {
       expect(tokens(sent(toolsForClass(cls), gates15)), cls).toBeLessThanOrEqual(1_700);
     }
   });

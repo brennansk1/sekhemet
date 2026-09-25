@@ -394,7 +394,11 @@ export function usageFromLlamaServer(
  * nanoseconds. Ollama reports no prefix-cache figures, so the hit rate stays
  * undefined rather than guessed.
  */
+/** Ollama's `load_duration` below this (1 s) is a warm request, not a load. */
+export const OLLAMA_LOAD_THRESHOLD_NS = 1_000_000_000;
+
 export function usageFromOllama(data: {
+  load_duration?: number;
   prompt_eval_count?: number;
   prompt_eval_duration?: number;
   eval_count?: number;
@@ -405,6 +409,11 @@ export function usageFromOllama(data: {
   if (finite(data.eval_count)) out.completionTokens = data.eval_count;
   if (finite(data.prompt_eval_duration)) out.prefillMs = data.prompt_eval_duration / 1e6;
   if (finite(data.eval_duration)) out.decodeMs = data.eval_duration / 1e6;
+  // MS-T7-1: the load the server did for this request, reported apart. A
+  // warm request still reports a few milliseconds; only a second or more is
+  // a load of the weights (confirmation check, M3).
+  if (finite(data.load_duration) && data.load_duration >= OLLAMA_LOAD_THRESHOLD_NS)
+    out.loadMs = Math.round(data.load_duration / 1e6);
   const prefill = rate(data.prompt_eval_count, out.prefillMs);
   const decode = rate(data.eval_count, out.decodeMs);
   if (prefill !== undefined && (data.prompt_eval_count ?? 0) > 1) {
@@ -507,6 +516,20 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
   private apiFormat: "ollama" | "openai";
   private sampling: SamplingOptions;
   private options: HttpAdapterOptions;
+  private fixedSeed: number | undefined;
+
+  /**
+   * Fix the sampling seed of every later request (measurement rule 10): a
+   * measured run's RunProfile names it; undefined returns to the server's own.
+   */
+  public setSeed(seed: number | undefined): void {
+    this.fixedSeed = seed;
+  }
+
+  /** The fixed sampling seed, when one is set. */
+  public get seed(): number | undefined {
+    return this.fixedSeed;
+  }
 
   /** The sampling profile a request resolves to: planning overlays code. */
   public samplingFor(req: Pick<InferenceRequest, "purpose">): SamplingOptions {
@@ -920,6 +943,8 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
         ...(this.options.contextTokens !== undefined
           ? { num_ctx: this.options.contextTokens }
           : {}),
+        // Rule 10: a fixed sampling seed, only when a measured run set one.
+        ...(this.fixedSeed !== undefined ? { seed: this.fixedSeed } : {}),
       },
     };
 
@@ -942,6 +967,7 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
     type OllamaChunk = {
       message?: { content?: string; thinking?: string; tool_calls?: NativeToolCall[] };
       done?: boolean;
+      load_duration?: number;
       prompt_eval_count?: number;
       prompt_eval_duration?: number;
       eval_count?: number;
@@ -1006,6 +1032,8 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
     };
     if (stream) payload.stream_options = { include_usage: true };
     if (req.slot !== undefined) payload.id_slot = req.slot;
+    // Rule 10: a fixed sampling seed, only when a measured run set one.
+    if (this.fixedSeed !== undefined) payload.seed = this.fixedSeed;
 
     if (sampling.topP !== undefined) payload.top_p = sampling.topP;
     if (sampling.topK !== undefined) payload.top_k = sampling.topK;

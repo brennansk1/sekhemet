@@ -26,9 +26,11 @@ import { unregisteredCopyModules } from "../src/prompt_tags.js";
  * B2.1 review's fixes moved 13 more (the harness's 8 project-gate remedies
  * into the gates copy module; 4 lines of worker_prompt.ts and 1 of
  * session.ts into the Worker copy module) and the 22 qualification strings
- * moved into the qualification copy module.
+ * moved into the qualification copy module; 443 when read_file's directory and
+ * outline replies moved into the Worker copy module, to name only the tools
+ * the arm offers (the B2.5 arms review, item 3).
  */
-const RECORDED_LITERAL_TOTAL = 446;
+const RECORDED_LITERAL_TOTAL = 443;
 
 const texts = (file: string, source: string) =>
   extractModelFacingLiterals(file, source).map((l) => l.text);

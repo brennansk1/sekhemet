@@ -498,7 +498,68 @@ describe("apps/harness executeCard wiring (wave 2, part 1)", () => {
     },
   );
 
-  it("harvests a passing run as an exemplar, feeds the learning guard and streams tokens live (E11, E17, M2)", async () => {
+  it("runs B2.5's arms the RunProfile names — the evidence gate and the fixed tool set — and records them in the evidence", async () => {
+    const { resolveRunProfile } = await import("@sekhemet/eval");
+    const armed = await executeCard(
+      {
+        ...ctx,
+        runProfile: resolveRunProfile({
+          env: { SEKHEMET_EVIDENCE_GATE: "on" },
+          argv: ["--tool-arm", "fixed"],
+        }),
+      },
+      await newCard("card_arms"),
+      scripted([WRITE_A]).adapter,
+    );
+    expect(armed.evidence.settings).toMatchObject({ evidenceGate: "on", toolSet: "fixed" });
+    // Without a profile the defaults hold, and the experiment switch is read from the environment.
+    process.env.SEKHEMET_EVIDENCE_GATE = "on";
+    try {
+      const plain = await executeCard(
+        ctx,
+        await newCard("card_env_gate"),
+        scripted([WRITE_A]).adapter,
+      );
+      expect(plain.evidence.settings).toMatchObject({ evidenceGate: "on", toolSet: "progressive" });
+    } finally {
+      Reflect.deleteProperty(process.env, "SEKHEMET_EVIDENCE_GATE");
+    }
+    const off = await executeCard(ctx, await newCard("card_no_gate"), scripted([WRITE_A]).adapter);
+    expect(off.evidence.settings).toMatchObject({ evidenceGate: "off", toolSet: "progressive" });
+  });
+
+  it("fixes the sampling seed the RunProfile names on the card's model, and leaves it unset by default (rule 10)", async () => {
+    const { resolveRunProfile } = await import("@sekhemet/eval");
+    const seeds: (number | undefined)[] = [];
+    const withSeed = (id: string) => {
+      const a = scripted([WRITE_A]).adapter as ReturnType<typeof scripted>["adapter"] & {
+        setSeed: (n: number | undefined) => void;
+      };
+      a.setSeed = (n) => seeds.push(n);
+      return { card: newCard(id), adapter: a };
+    };
+    const one = withSeed("card_seeded");
+    await executeCard(
+      { ...ctx, runProfile: resolveRunProfile({ env: {}, argv: ["--seed", "7"] }) },
+      await one.card,
+      one.adapter,
+    );
+    expect(seeds).toEqual([7]);
+    const two = withSeed("card_unseeded");
+    await executeCard(ctx, await two.card, two.adapter);
+    // Every card sets it, so a seed never carries over to a card that names none (review minor 2).
+    expect(seeds).toEqual([7, undefined]);
+    // A seed the model cannot take is refused, not silently dropped.
+    await expect(
+      executeCard(
+        { ...ctx, runProfile: resolveRunProfile({ env: {}, argv: ["--seed", "7"] }) },
+        await newCard("card_no_seed_support"),
+        scripted([WRITE_A]).adapter,
+      ),
+    ).rejects.toThrow(/fixes the sampling seed at 7, but scripted cannot take one/);
+  });
+
+  it("holds a passing run as an exemplar candidate until its class has five, feeds the learning guard and streams tokens live (E11, rule 20, E17, M2)", async () => {
     const card = await newCard("card_learn");
     let n = 0;
     const adapter: LocalInferenceAdapter = {
@@ -520,12 +581,12 @@ describe("apps/harness executeCard wiring (wave 2, part 1)", () => {
     };
     const result = await executeCard(ctx, card, adapter);
     expect(result.passed).toBe(true);
-    const exemplars = readdirSync(join(repo, ".sekhemet", "exemplars"));
-    expect(exemplars).toHaveLength(1);
-    const stored = JSON.parse(
-      readFileSync(join(repo, ".sekhemet", "exemplars", exemplars[0] as string), "utf8"),
-    );
-    expect(stored[0].cardId).toBe("card_learn");
+    // One passing card is below the exemplar inlet's threshold of five per
+    // class (measurement rule 20): it waits in the pool, and none is offered.
+    const pool = JSON.parse(readFileSync(join(repo, ".sekhemet", "exemplar_pool.json"), "utf8"));
+    const waiting = Object.values(pool.waiting as Record<string, { cardId: string }[]>).flat();
+    expect(waiting.map((e) => e.cardId)).toEqual(["card_learn"]);
+    expect(existsSync(join(repo, ".sekhemet", "exemplars"))).toBe(false);
     const guard = JSON.parse(readFileSync(join(repo, ".sekhemet", "learning_guard.json"), "utf8"));
     expect(guard.history.map((h: { cardId: string }) => h.cardId)).toContain("card_learn");
     await new Promise((r) => setTimeout(r, 300));

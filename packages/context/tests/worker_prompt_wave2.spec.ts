@@ -8,6 +8,7 @@ import { linesNamedFor, pruneLines, queryTerms } from "../src/pruner.js";
 import type { ToolInterfaceSpec } from "../src/tool_interface.js";
 import { TOOL_SEARCH_SPEC, ToolLoader, searchTools } from "../src/tool_search.js";
 import { computeContextVersion } from "../src/versioning.js";
+import { workerCopy } from "../src/worker_copy.js";
 import {
   type WorkerPromptInput,
   assertPromptDeterminism,
@@ -264,18 +265,36 @@ describe("C19: tool_search", () => {
     // Suite run 4, card_chron_ledger: two turns of tool_search for
     // "ChronicleEvent AuditReport openDatabase hashEvent GENESIS_HASH", each
     // told "No tool matches". The file fix did not cover symbols.
+    // WL-M2-7: each call is read_symbol's real signature (path and symbol),
+    // with the file that declares the symbol, so it can be made as written.
     const readSymbol: ToolInterfaceSpec = {
       name: "read_symbol",
-      summary: "Read one symbol's definition.",
-      parameters: [{ name: "name", type: "string", required: true, description: "symbol" }],
+      summary: "Read one named declaration and its body.",
+      parameters: [
+        { name: "path", type: "string", required: true, description: "Path" },
+        { name: "symbol", type: "string", required: true, description: "Declaration name" },
+      ],
+    };
+    const declared: Record<string, string> = {
+      ChronicleEvent: "src/types.ts",
+      GENESIS_HASH: "src/hasher.ts",
     };
     const loader = new ToolLoader([...tools, grep, readSymbol], ["read_file", "edit"]);
-    const r = loader.handle("ChronicleEvent openDatabase GENESIS_HASH");
+    const r = loader.handle("ChronicleEvent openDatabase GENESIS_HASH", (s) => declared[s]);
     expect(r.loaded).toEqual(["read_symbol"]);
     expect(r.text).toMatch(/finds tools, not code/);
-    expect(r.text).toContain('read_symbol(name: "ChronicleEvent")');
-    expect(r.text).toContain('read_symbol(name: "GENESIS_HASH")');
+    expect(r.text).toContain(workerCopy.readSymbolCall("src/types.ts", "ChronicleEvent"));
+    expect(r.text).toContain('read_symbol(path="src/hasher.ts", symbol="GENESIS_HASH")');
+    expect(r.text).toContain(workerCopy.symbolNotDeclared("openDatabase"));
+    expect(r.text).not.toMatch(/read_symbol\(name/);
     expect(loader.isLoaded("read_symbol")).toBe(true);
+
+    // A query that also names a tool keeps its symbols (WL-M2-7).
+    const mixed = new ToolLoader([...tools, grep, readSymbol], ["read_file", "edit"]);
+    const m = mixed.handle("grep ChronicleEvent", (s) => declared[s]);
+    expect(m.loaded).toEqual(["grep", "read_symbol"]);
+    expect(m.text).toContain("grep(");
+    expect(m.text).toContain(workerCopy.readSymbolCall("src/types.ts", "ChronicleEvent"));
   });
 });
 
@@ -322,6 +341,76 @@ describe("C3: query-aware line pruning", () => {
     );
     expect(r.prompt).toContain("this.total = undefined;");
     expect(r.prompt).toMatch(/elided; read_file that range/);
+  });
+
+  it("MS-T7-6: behind its arm, the null baseline drops lines at random instead, keeping the structure", () => {
+    const input = base({
+      budgetTokens: 1300,
+      scopeFiles: [{ path: "src/ledger.ts", content: file }],
+      gateFailures: [failure],
+      goal: "Record amounts in the ledger",
+    });
+    const query = buildWorkerPrompt(input);
+    const random = buildWorkerPrompt({ ...input, pruneArm: "random" });
+    // Off by default: the default is the pruner's prompt.
+    expect(buildWorkerPrompt({ ...input, pruneArm: "query" }).prompt).toBe(query.prompt);
+    expect(random.prompt).not.toBe(query.prompt);
+    // The same structure: pinned line, declarations, markers.
+    expect(random.prompt).toContain("this.total = undefined;");
+    expect(random.prompt).toContain("export class Ledger {");
+    expect(random.prompt).toMatch(/elided; read_file that range/);
+    // Reproducible: the seed comes from the card and the file.
+    expect(buildWorkerPrompt({ ...input, pruneArm: "random" }).prompt).toBe(random.prompt);
+    // The experiment switch selects it when the input names no arm.
+    process.env.SEKHEMET_PRUNE = "random";
+    try {
+      expect(buildWorkerPrompt(input).prompt).toBe(random.prompt);
+    } finally {
+      Reflect.deleteProperty(process.env, "SEKHEMET_PRUNE");
+    }
+  });
+
+  it("resolves the arm once per build and keys the determinism check with it (part 2 review)", () => {
+    const input = base({
+      budgetTokens: 1300,
+      scopeFiles: [{ path: "src/ledger.ts", content: file }],
+      gateFailures: [failure],
+      goal: "Record amounts in the ledger",
+    });
+    const writes: string[] = [];
+    const real = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      writes.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      buildWorkerPrompt(input);
+      process.env.SEKHEMET_PRUNE = "random";
+      buildWorkerPrompt(input);
+    } finally {
+      Reflect.deleteProperty(process.env, "SEKHEMET_PRUNE");
+      process.stderr.write = real;
+    }
+    expect(writes.filter((w) => w.includes("nondeterministic"))).toEqual([]);
+  });
+
+  it("mixes the run's seed into the null arm's seed, and keeps the old seed without one", () => {
+    const input = base({
+      budgetTokens: 1300,
+      scopeFiles: [{ path: "src/ledger.ts", content: file }],
+      gateFailures: [failure],
+      goal: "Record amounts in the ledger",
+      pruneArm: "random",
+    });
+    const unseeded = buildWorkerPrompt(input).prompt;
+    const seven = buildWorkerPrompt({ ...input, seed: 7 }).prompt;
+    const results = new Set(
+      [7, 8, 9, 10, 11].map((seed) => buildWorkerPrompt({ ...input, seed }).prompt),
+    );
+    expect(buildWorkerPrompt({ ...input, seed: 7 }).prompt).toBe(seven);
+    expect(results.size).toBeGreaterThan(1);
+    // Without a seed the draw is the card-and-file one it always was.
+    expect(buildWorkerPrompt({ ...input }).prompt).toBe(unseeded);
   });
 });
 

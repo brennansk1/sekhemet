@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -9,6 +10,7 @@ import {
   type QueueEntryRecord,
   type QueueRunDriver,
   cardOutcome,
+  prepareIndependentCard,
   seededCards,
   suiteQueueRunner,
   unmetDependencies,
@@ -260,6 +262,44 @@ describe("the suite runner module, on the product's queue path (MS-M9-3, MS-M9-1
     expect(runScore(r)).toMatchObject({ passed: 0, measured: 0, notRun: 3 });
   });
 
+  it("keeps each fixture's model load time apart from its cards' time (MS-T7-1)", async () => {
+    const repo = fixtureRepo();
+    const d = driver(repo, {
+      entries: [entry("card_a", 1, true), entry("card_c", 1, true)],
+      merge: { "src/a.ts": "x\n" },
+    });
+    const inner = d.runQueue;
+    d.runQueue = (r, t) => {
+      const out = inner(r, t);
+      const file = join(r, ".sekhemet", "queue_report.json");
+      const rep = JSON.parse(readFileSync(file, "utf8"));
+      writeFileSync(
+        file,
+        JSON.stringify({
+          ...rep,
+          modelLoads: [
+            {
+              modelId: "cyber-tiel",
+              spawnToHealthyMs: { count: 2, totalMs: 500_000, firstMs: 300_000 },
+            },
+          ],
+        }),
+      );
+      return out;
+    };
+    const runner = suiteQueueRunner(d, { tasks: TASKS, cardTimeoutMs: 60_000 });
+    const r = await runFrozenSuite(suite, runner);
+    expect(runner.modelLoads()).toEqual([
+      {
+        fixture: "alpha",
+        modelId: "cyber-tiel",
+        spawnToHealthyMs: { count: 2, totalMs: 500_000, firstMs: 300_000 },
+      },
+    ]);
+    // The cards' wall clock does not include it.
+    expect(r.cost.wallClockSeconds).toBe(20);
+  });
+
   it("reads the seeded cards from the board and checks the count against the manifest", () => {
     const repo = fixtureRepo();
     mkdirSync(join(repo, ".sekhemet"), { recursive: true });
@@ -275,5 +315,143 @@ describe("the suite runner module, on the product's queue path (MS-M9-3, MS-M9-1
     expect(cards.map((c) => c.id)).toEqual(["card_a", "card_b"]);
     expect(cards[1]?.info).toEqual(INFO.card_b);
     expect(() => seededCards(repo, 3)).toThrow(/seeded 2 card\(s\), manifest declares 3/);
+  });
+});
+
+describe("independent mode: one card from a main holding its predecessors' reference work (MS-T7-3)", () => {
+  async function board(repo: string, ids: string[]) {
+    const { CardStore, EventLog, initSchema } = await import("@sekhemet/kernel");
+    mkdirSync(join(repo, ".sekhemet"), { recursive: true });
+    const db = new DatabaseSync(join(repo, ".sekhemet", "events.db"));
+    initSchema(db);
+    const store = new CardStore(db, new EventLog(db));
+    for (const id of ids) await store.createCard({ id, tier: "task", title: id, status: "ready" });
+    db.close();
+  }
+  const statusOf = (repo: string) => {
+    const db = new DatabaseSync(join(repo, ".sekhemet", "events.db"), { readOnly: true });
+    const rows = db.prepare("select id, status from cards order by id").all() as {
+      id: string;
+      status: string;
+    }[];
+    db.close();
+    return Object.fromEntries(rows.map((r) => [r.id, r.status]));
+  };
+  const gitRepo = () => {
+    const repo = mkdtempSync(join(tmpdir(), "indep-"));
+    const git = (...a: string[]) =>
+      execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=T", ...a], {
+        cwd: repo,
+        encoding: "utf8",
+      }).trim();
+    mkdirSync(join(repo, "src"), { recursive: true });
+    writeFileSync(join(repo, "src", "a.ts"), "");
+    writeFileSync(join(repo, "src", "b.ts"), "");
+    writeFileSync(join(repo, ".gitignore"), ".sekhemet/\n");
+    git("init", "-q", "-b", "main");
+    git("add", "-A");
+    git("commit", "-q", "-m", "seed");
+    return { repo, git };
+  };
+  const references = () => {
+    const dir = mkdtempSync(join(tmpdir(), "refs-"));
+    for (const [card, file, text] of [
+      ["card_a", "src/a.ts", "export const a = 1;\n"],
+      ["card_b", "src/b.ts", "export const b = 2;\n"],
+    ] as const) {
+      mkdirSync(join(dir, "alpha", card, "src"), { recursive: true });
+      writeFileSync(join(dir, "alpha", card, file), text);
+    }
+    return dir;
+  };
+
+  it("commits every earlier card's reference solution to main and leaves only this card Ready", async () => {
+    const { repo, git } = gitRepo();
+    await board(repo, ["card_a", "card_b", "card_c"]);
+    const r = await prepareIndependentCard(repo, {
+      fixture: "alpha",
+      cardId: "card_c",
+      cardOrder: ["card_a", "card_b", "card_c"],
+      referencesDir: references(),
+    });
+    expect(r.predecessors).toEqual(["card_a", "card_b"]);
+    expect(readFileSync(join(repo, "src", "a.ts"), "utf8")).toBe("export const a = 1;\n");
+    expect(git("log", "--format=%s", "main")).toBe(
+      "independent mode: the reference solutions of card_a, card_b\nseed",
+    );
+    expect(git("status", "--porcelain")).toBe("");
+    expect(statusOf(repo)).toEqual({ card_a: "done", card_b: "done", card_c: "ready" });
+  });
+
+  it("carries the earlier cards' acceptance tests onto main, as acceptance does, and nothing of later cards (review M2)", async () => {
+    const { repo, git } = gitRepo();
+    mkdirSync(join(repo, "acceptance"), { recursive: true });
+    for (const t of ["a.test.ts", "b.test.ts", "c.test.ts"])
+      writeFileSync(join(repo, "acceptance", t), `// ${t}\n`);
+    git("add", "-A");
+    git("commit", "-q", "-m", "acceptance");
+    await board(repo, ["card_a", "card_b", "card_c"]);
+    const refs = references();
+    mkdirSync(join(refs, "alpha", "card_c", "src"), { recursive: true });
+    writeFileSync(join(refs, "alpha", "card_c", "src", "c.ts"), "export const c = 3;\n");
+    await prepareIndependentCard(repo, {
+      fixture: "alpha",
+      cardId: "card_b",
+      cardOrder: ["card_a", "card_b", "card_c"],
+      referencesDir: refs,
+      acceptanceTests: { card_a: ["a.test.ts"], card_b: ["b.test.ts"], card_c: ["c.test.ts"] },
+    });
+    const tracked = git("ls-files").split("\n");
+    expect(tracked).toContain("tests/a.test.ts");
+    expect(tracked).not.toContain("tests/b.test.ts");
+    expect(tracked).not.toContain("tests/c.test.ts");
+    expect(tracked).not.toContain("src/c.ts");
+    // Card b's own solution is not on main either.
+    expect(readFileSync(join(repo, "src", "b.ts"), "utf8")).toBe("");
+  });
+
+  it("gives the first card an untouched main, and later cards wait in the backlog", async () => {
+    const { repo, git } = gitRepo();
+    await board(repo, ["card_a", "card_b", "card_c"]);
+    await prepareIndependentCard(repo, {
+      fixture: "alpha",
+      cardId: "card_a",
+      cardOrder: ["card_a", "card_b", "card_c"],
+      referencesDir: references(),
+    });
+    expect(git("log", "--format=%s", "main")).toBe("seed");
+    expect(statusOf(repo)).toEqual({ card_a: "ready", card_b: "backlog", card_c: "backlog" });
+  });
+
+  it("refuses a predecessor with no reference solution", async () => {
+    const { repo } = gitRepo();
+    await board(repo, ["card_a", "card_x", "card_c"]);
+    await expect(
+      prepareIndependentCard(repo, {
+        fixture: "alpha",
+        cardId: "card_c",
+        cardOrder: ["card_a", "card_x", "card_c"],
+        referencesDir: references(),
+      }),
+    ).rejects.toThrow(/no reference solution for alpha\/card_x/);
+  });
+
+  it("runs each card in its own queue run, with the per-card timeout", async () => {
+    const repos: string[] = [];
+    const d = driver(fixtureRepo(), { entries: [entry("card_a", 1, true)] });
+    const runner = suiteQueueRunner(
+      {
+        ...d,
+        prepareCard: (task) => {
+          const repo = fixtureRepo();
+          repos.push(repo);
+          return { repo, cardId: task.cardId };
+        },
+      },
+      { tasks: TASKS, cardTimeoutMs: 60_000, independent: true },
+    );
+    await runFrozenSuite(suite, runner);
+    expect(d.runs.map((r) => r.timeoutMs)).toEqual([60_000, 60_000, 60_000]);
+    expect(new Set(d.runs.map((r) => r.repo)).size).toBe(3);
   });
 });

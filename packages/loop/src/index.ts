@@ -20,3 +20,4 @@ export * from "./budget.js";
 export * from "./ts_service.js";
 export * from "./write_contract.js";
 export * from "./phase.js";
+export * from "./evidence_gate.js";

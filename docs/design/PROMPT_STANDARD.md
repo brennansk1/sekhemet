@@ -107,7 +107,7 @@ Ranked by expected gain per cost on a 24 GB host running a 13 GB Worker:
     - one sentence stating that the attempt ends when `check` passes or a stop condition is named;
     - one positive sentence stating that the acceptance test checks behaviour and the solution must be general.
 
-    The owner approved the first two for B2.5 (DEC-41); the third waits for the owner's approval before it is run. Whatever its verdict, the gates remain the real defence against test gaming.
+    The owner approved the first two for B2.5 (DEC-41) and the third under DEC-42. Whatever its verdict, the gates remain the real defence against test gaming.
 31. **Seshat.**
     - Consolidate before planning (rule 8).
     - Produce structured outputs by grammar or JSON schema at temperature 0, followed by a separate critic pass.

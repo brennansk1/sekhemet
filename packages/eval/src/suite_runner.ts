@@ -1,6 +1,16 @@
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { join, posix } from "node:path";
+import { execFileSync } from "node:child_process";
+import {
+  copyFileSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+} from "node:fs";
+import { dirname, join, posix } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { CardStore, EventLog } from "@sekhemet/kernel";
 import type { SuiteTask, TaskOutcome } from "./suite.js";
 
 /**
@@ -184,6 +194,89 @@ export function cardOutcome(
   };
 }
 
+/**
+ * Prepare a repository for one card in independent mode (MS-T7-3): every
+ * earlier card's reference solution (`<referencesDir>/<fixture>/<card>/`,
+ * repository-relative files) is committed to `main`, the earlier cards are
+ * done and the later ones wait in the backlog, so the queue runs this card
+ * alone and its result depends on no earlier card's outcome.
+ */
+export async function prepareIndependentCard(
+  repo: string,
+  o: {
+    fixture: string;
+    cardId: string;
+    cardOrder: readonly string[];
+    referencesDir: string;
+    /**
+     * Each card's staged acceptance tests (`acceptance/<t>`): an accepted
+     * card's tests are on `main` as `tests/<t>`, as sequential acceptance
+     * leaves them (review M2).
+     */
+    acceptanceTests?: Readonly<Record<string, readonly string[]>>;
+  },
+): Promise<{ predecessors: string[] }> {
+  const at = o.cardOrder.indexOf(o.cardId);
+  if (at === -1) throw new Error(`${o.fixture}/${o.cardId} is not on the board`);
+  const predecessors = o.cardOrder.slice(0, at);
+  for (const p of predecessors) {
+    const dir = join(o.referencesDir, o.fixture, p);
+    if (!existsSync(dir)) throw new Error(`no reference solution for ${o.fixture}/${p}`);
+  }
+  for (const p of predecessors) {
+    cpSync(join(o.referencesDir, o.fixture, p), repo, { recursive: true });
+    for (const t of o.acceptanceTests?.[p] ?? []) {
+      const from = join(repo, "acceptance", t);
+      if (!existsSync(from))
+        throw new Error(`${o.fixture}/${p}: its acceptance test ${t} is missing`);
+      mkdirSync(dirname(join(repo, "tests", t)), { recursive: true });
+      copyFileSync(from, join(repo, "tests", t));
+    }
+  }
+  const git = (...a: string[]) =>
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "core.hooksPath=/dev/null",
+        "-c",
+        "user.email=suite@sekhemet.local",
+        "-c",
+        "user.name=Frozen Suite",
+        ...a,
+      ],
+      { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+    ).trim();
+  if (predecessors.length) {
+    git("add", "-A");
+    if (git("diff", "--cached", "--name-only"))
+      git(
+        "commit",
+        "-q",
+        "-m",
+        `independent mode: the reference solutions of ${predecessors.join(", ")}`,
+      );
+  }
+  const db = new DatabaseSync(join(repo, ".sekhemet", "events.db"));
+  try {
+    const store = new CardStore(db, new EventLog(db));
+    for (const [i, id] of o.cardOrder.entries()) {
+      if (i === at) continue;
+      await store.updateCardStatus(
+        id,
+        i < at ? "done" : "backlog",
+        i < at
+          ? "independent mode: its reference solution is on main"
+          : "independent mode: a later card",
+        "harness",
+      );
+    }
+  } finally {
+    db.close();
+  }
+  return { predecessors };
+}
+
 /** One attempt as the queue's report records it (`queue_report.json`). */
 export interface QueueEntryRecord {
   cardId: string;
@@ -199,12 +292,38 @@ export interface QueueEntryRecord {
 }
 
 /** The queue report a run wrote, or undefined when it wrote none. */
-export function readQueueReport(repo: string): { entries: QueueEntryRecord[] } | undefined {
+/** A model's load time as the queue recorded it, apart from the cards (MS-T7-1). */
+export interface ModelLoad {
+  modelId: string;
+  /** What the server said its loads cost (Ollama): how many, the total, the first. */
+  loadMs?: LoadStat;
+  /**
+   * For a server the harness started: from spawn to its first healthy
+   * /health, every start. It falls inside the first card's wall clock too.
+   */
+  spawnToHealthyMs?: LoadStat;
+}
+
+export interface LoadStat {
+  count: number;
+  totalMs: number;
+  firstMs: number;
+}
+
+export function readQueueReport(
+  repo: string,
+): { entries: QueueEntryRecord[]; modelLoads?: ModelLoad[] } | undefined {
   const file = join(repo, ".sekhemet", "queue_report.json");
   if (!existsSync(file)) return undefined;
   try {
-    const r = JSON.parse(readFileSync(file, "utf8")) as { entries?: QueueEntryRecord[] };
-    return { entries: Array.isArray(r.entries) ? r.entries : [] };
+    const r = JSON.parse(readFileSync(file, "utf8")) as {
+      entries?: QueueEntryRecord[];
+      modelLoads?: ModelLoad[];
+    };
+    return {
+      entries: Array.isArray(r.entries) ? r.entries : [],
+      ...(Array.isArray(r.modelLoads) ? { modelLoads: r.modelLoads } : {}),
+    };
   } catch {
     return undefined;
   }
@@ -224,6 +343,13 @@ export interface QueueRunDriver {
   runQueue(repo: string, timeoutMs: number): { timedOut: boolean };
   /** The prerequisites the board says a card is still waiting on. */
   waitingOn(repo: string, cardId: string): string[];
+  /**
+   * Independent mode (MS-T7-3): a fresh repository for one card, its main
+   * holding every earlier card's reference solution and only it Ready.
+   */
+  prepareCard?(
+    task: SuiteTask,
+  ): { repo: string; cardId: string } | Promise<{ repo: string; cardId: string }>;
   log?(line: string): void;
 }
 
@@ -338,31 +464,48 @@ function queueCardOutcome(
  */
 export function suiteQueueRunner(
   driver: QueueRunDriver,
-  opts: { tasks: readonly SuiteTask[]; cardTimeoutMs: number },
-): (task: SuiteTask) => Promise<Omit<TaskOutcome, "task">> {
+  opts: { tasks: readonly SuiteTask[]; cardTimeoutMs: number; independent?: boolean },
+): ((task: SuiteTask) => Promise<Omit<TaskOutcome, "task">>) & {
+  /** Each fixture's model loads, reported apart from the cards' time (MS-T7-1). */
+  modelLoads: () => (ModelLoad & { fixture: string })[];
+} {
   const log = driver.log ?? (() => {});
   const runs = new Map<
     string,
     { repo: string; timedOut: boolean; timeoutMs: number; report?: { entries: QueueEntryRecord[] } }
   >();
-  return async (task) => {
-    let run = runs.get(task.suite);
+  const loads: (ModelLoad & { fixture: string })[] = [];
+  const runTask = async (task: SuiteTask): Promise<Omit<TaskOutcome, "task">> => {
+    // Independent mode runs each card alone, in its own repository (MS-T7-3).
+    const key = opts.independent ? `${task.suite}/${task.cardId}` : task.suite;
+    let run = runs.get(key);
+    let independentId: string | undefined;
     if (!run) {
-      const repo = driver.prepare(task.suite);
-      const cards = opts.tasks.filter((t) => t.suite === task.suite).length;
+      let repo: string;
+      if (opts.independent) {
+        if (!driver.prepareCard) throw new Error("independent mode needs the driver's prepareCard");
+        const prepared = await driver.prepareCard(task);
+        repo = prepared.repo;
+        independentId = prepared.cardId;
+      } else {
+        repo = driver.prepare(task.suite);
+      }
+      const cards = opts.independent ? 1 : opts.tasks.filter((t) => t.suite === task.suite).length;
       const timeoutMs = cards * opts.cardTimeoutMs;
       log(`  ${task.suite}: sekhemet queue over ${cards} card(s) ...`);
       const { timedOut } = driver.runQueue(repo, timeoutMs);
       // A timed-out queue leaves the partial report it wrote after its last entry.
       const report = readQueueReport(repo);
+      for (const l of report?.modelLoads ?? []) loads.push({ fixture: task.suite, ...l });
       run = { repo, timedOut, timeoutMs, ...(report ? { report } : {}) };
-      runs.set(task.suite, run);
+      runs.set(key, run);
     }
-    const cardId = driver.resolveCardId(task, run.repo);
+    const cardId = independentId ?? driver.resolveCardId(task, run.repo);
     const o = queueCardOutcome(driver, run.repo, cardId, run);
     log(
       `  ${task.suite}/${cardId} ... ${o.blocked ? "BLOCKED" : o.notRun ? "NOT RUN" : o.passed ? "PASS" : "FAIL"} ${o.wallClockSeconds}s${o.stopReason ? ` (${o.stopReason})` : ""}`,
     );
     return o;
   };
+  return Object.assign(runTask, { modelLoads: () => [...loads] });
 }

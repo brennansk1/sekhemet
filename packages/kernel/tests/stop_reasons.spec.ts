@@ -92,4 +92,14 @@ describe("one default budget (WL-T3-11)", () => {
     expect(defaultSecondsBudget()).toBe(2800);
     expect(defaultSecondsBudget(10)).toBe(700);
   });
+
+  it("never counts a stop the harness or the integration caused against the Worker (rule 31, DEC-42)", () => {
+    for (const r of ["error", "rebase_conflict", "integration_failed"] as const) {
+      expect(STOP_REASONS[r].measuresModel).toBe(false);
+    }
+    // Environment stops of every kind stay out of the competence model.
+    for (const [reason, row] of Object.entries(STOP_REASONS)) {
+      if (row.class === "environment") expect([reason, row.measuresModel]).toEqual([reason, false]);
+    }
+  });
 });

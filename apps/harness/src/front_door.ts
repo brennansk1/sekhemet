@@ -51,6 +51,7 @@ export const COMMANDS = [
   "resume",
   "overnight",
   "calibrate",
+  "prompt-screen",
   "daemon",
   "traces",
   "acp",

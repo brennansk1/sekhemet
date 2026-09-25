@@ -7,13 +7,11 @@ import {
   LearningGuard,
   type TaskHistory,
   type Trajectory,
+  checkSkillCandidate,
   distillSkill,
-  formatM0Report,
   mineToolProposals,
   playbookDiagnostics,
-  runM0Protocol,
   siftSlice,
-  synthesizeTasksFromHistory,
   validateToolProposal,
   writeToolCandidate,
 } from "@sekhemet/eval";
@@ -67,6 +65,7 @@ import {
 import { type ProcessSandbox, runConfined, runTrusted } from "@sekhemet/sandbox";
 import { gitEnvFor, planRelease, publishRelease, runActGate } from "@sekhemet/sync";
 import { airgapSkillApproval, approveVerifiedSkill } from "./airgap.js";
+import { pendingM0, recordM0Pending } from "./m0_path.js";
 import { searchLibraries } from "./pm/libraries.js";
 import {
   type CombinationDeps,
@@ -738,39 +737,19 @@ export async function runWave2Command(
       return 0;
     }
     case "m0": {
-      // `sekhemet m0 --worker <name> [--runs 3] [--budgets 50,150] [--max-commits 200]`
+      // `sekhemet m0 --worker <name> [--runs 3] [--budgets 50,150] [--max-commits 200]`:
+      // a person may run it any time; a complete run clears M0 pending (MS-M9-6).
       const worker = flag(args, "--worker");
       if (!worker || !io.model) return done("Usage: sekhemet m0 --worker <model>", 1);
-      const synth = await synthesizeTasksFromHistory(k.repoPath, {
-        maxCommits: Number(flag(args, "--max-commits") ?? 200),
-      });
-      print(
-        `Synthesized ${synth.tasks.length} fail-to-pass task(s) from ${synth.scanned} candidate commit(s); ${synth.rejected.length} rejected.`,
-      );
-      if (synth.tasks.length === 0) return 1;
-      // The one measurement path (MS-M9-1): every attempt runs through the
-      // product's queue in a cloned workspace, never an in-process session.
-      const { productCardRunner, recordM0Result } = await import("./m0_path.js");
+      const { runM0 } = await import("./m0_path.js");
       const { sendPush } = await import("./notify.js");
-      const { dirname } = await import("node:path");
-      const { fileURLToPath } = await import("node:url");
-      const report = await runM0Protocol({
-        tasks: synth.tasks,
+      const r = await runM0(k, {
+        worker,
         adapter: io.model(worker),
         runs: Number(flag(args, "--runs") ?? 3),
         budgets: (flag(args, "--budgets") ?? "50,150").split(",").map(Number),
-        benchmark: {
-          harnessRepoPath: k.repoPath,
-          defaultRepoPath: k.repoPath,
-          workspaceMode: "clone",
-          runCard: productCardRunner({ worker }),
-        },
-      });
-      print(formatM0Report(report));
-      await recordM0Result(report, {
-        log: k.log,
-        worker,
-        harnessRoot: join(dirname(fileURLToPath(import.meta.url)), "..", "..", ".."),
+        maxCommits: Number(flag(args, "--max-commits") ?? 200),
+        print,
         notify: async (title, message) => {
           await sendPush(
             k.repoPath,
@@ -779,11 +758,7 @@ export async function runWave2Command(
           );
         },
       });
-      const out = join(k.repoPath, ".sekhemet", "m0", "latest.json");
-      mkdirSync(join(k.repoPath, ".sekhemet", "m0"), { recursive: true });
-      writeFileSync(out, `${JSON.stringify(report, null, 2)}\n`);
-      print(`Report: ${out}`);
-      return 0;
+      return r === "no tasks" ? 1 : 0;
     }
     case "qualify": {
       // `sekhemet qualify --models a,b [--speculative on] [--check]` (models
@@ -815,6 +790,12 @@ export async function runWave2Command(
           );
           refused ||= why !== undefined;
           print(why ?? `${a.modelId}: qualified for this combination on this host.`);
+          // MS-M9-6: the M0 protocol this Worker still owes.
+          const owed = (await pendingM0(k.log)).find((p) => p.worker === n);
+          if (owed)
+            print(
+              `M0 pending for ${n} (${owed.combination}): sekhemet overnight runs it, or run sekhemet m0 --worker ${n}`,
+            );
         }
         return refused ? 1 : 0;
       }
@@ -836,6 +817,14 @@ export async function runWave2Command(
         combination ??= qualificationCombination(a, { ...io.combinationDeps, registry });
         const look = registry.lookupQualification(a.modelId, combination);
         anyQualified ||= look.status === "qualified";
+        // MS-M9-6: a Worker qualified (or re-qualified) for a combination owes
+        // the M0 protocol for it; the overnight run does it first.
+        if (look.status === "qualified")
+          await recordM0Pending(k.log, {
+            worker: n,
+            combination: describeCombination(combination),
+            reason: "qualified for this combination on this host",
+          });
         print(
           `${a.modelId}: ${(best.passRate * 100).toFixed(1)}% on ${best.arm} ${look.status === "qualified" ? "QUALIFIED" : "not qualified"} for ${describeCombination(combination)} (${Object.entries(
             best.byCategory,
@@ -854,6 +843,17 @@ export async function runWave2Command(
       const lockPath = join(k.repoPath, ".sekhemet", "skills.lock.json");
       const [sub, name] = args;
       if (sub === "approve" && name) {
+        // MS-T8-5: a skill whose own checks were run is approved only when
+        // they passed; a hand-written skill with no such record stays approvable.
+        const last = (await k.log.getEventsByTypes(["learning/skill_checked"]))
+          .map((e) => e.payload as { name?: string; status?: string })
+          .filter((p) => p.name === name)
+          .at(-1);
+        if (last && last.status !== "checked")
+          return done(
+            `${name} is not approved: its own checks are ${last.status ?? "unrecorded"} (a skill is admitted by its checks passing, rule 18)`,
+            1,
+          );
         // SEC-46: offline, only the content a signed update bundle carried.
         const gate = airgapSkillApproval(k.repoPath, dir, name);
         if (!gate.ok) return done(gate.reason ?? "refused", 1);
@@ -1024,8 +1024,19 @@ async function improveCommand(k: Kernel, args: string[], io: CommandIO): Promise
       trajectories.filter((t) => t.cardClass === cls),
       { outDir: join(dot, "skill-candidates") },
     );
-    if (skill)
-      print(`skill candidate ${skill.name} (${skill.triggers.join(", ")}) at ${skill.path}`);
+    if (skill?.path) {
+      // MS-T8-5: its own checks, confined, before anyone sees it.
+      const { dirname } = await import("node:path");
+      const checked = await checkSkillCandidate(dirname(skill.path));
+      await k.log.append({
+        actor: "harness",
+        type: "learning/skill_checked",
+        payload: { name: skill.name, ...checked },
+      });
+      print(
+        `skill candidate ${skill.name} (${skill.triggers.join(", ")}): ${checked.status} — ${checked.reason}${checked.status === "discarded" ? "" : ` (${skill.path})`}`,
+      );
+    }
   }
 
   // E14: the informative slice for the next quick evaluation.

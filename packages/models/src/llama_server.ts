@@ -218,6 +218,9 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
   private mtpSuspended = false;
   /** When the running server was last checked against this profile (MD-M4-1); undefined: not adopted. */
   private adoptedAt: number | undefined;
+  /** The last start this adapter made, and whether a reply has reported it yet (MS-T7-1). */
+  private lastStartup: { spawnToHealthyMs: number; at: string } | undefined;
+  private startupUnreported = false;
 
   constructor(private profile: LlamaServerProfile) {
     const port = profile.port ?? 8098;
@@ -635,6 +638,7 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
       await evictOllamaModels(this.profile.ollamaBaseUrl);
       if (this.profile.slotCacheDir) mkdirSync(this.profile.slotCacheDir, { recursive: true });
 
+      const spawnedAt = Date.now();
       this.child = spawn(this.profile.binary ?? "llama-server", this.launchArgs(), {
         stdio: ["ignore", "ignore", "pipe"],
       });
@@ -650,6 +654,12 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
           throw new Error(`llama-server exited during startup: ${stderr.slice(-800)}`);
         }
         if (await this.healthy()) {
+          // MS-T7-1: the load, apart from the cards' time.
+          this.lastStartup = {
+            spawnToHealthyMs: Date.now() - spawnedAt,
+            at: new Date(spawnedAt).toISOString(),
+          };
+          this.startupUnreported = true;
           await this.slotAction("restore");
           this.adoptedAt = Date.now();
           await this.recordQuantisation();
@@ -671,7 +681,20 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
     ...args: Parameters<HttpInferenceAdapter["generate"]>
   ): ReturnType<HttpInferenceAdapter["generate"]> {
     await this.ensureRunning();
-    return super.generate(...args);
+    const response = await super.generate(...args);
+    if (this.startupUnreported && this.lastStartup) {
+      this.startupUnreported = false;
+      return {
+        ...response,
+        usage: { ...response.usage, spawnToHealthyMs: this.lastStartup.spawnToHealthyMs },
+      };
+    }
+    return response;
+  }
+
+  /** The last start this adapter made: from spawn to the first healthy `/health` (MS-T7-1). */
+  public get startup(): { spawnToHealthyMs: number; at: string } | undefined {
+    return this.lastStartup;
   }
 
   /**

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 import {
   TOOL_SEARCH_NAME,
@@ -25,6 +25,7 @@ import {
   checkBounds,
   finalizeFailures,
   gateCopy,
+  importGraph,
   onlyNotRun,
   runBuiltinGates,
 } from "@sekhemet/gates";
@@ -42,6 +43,13 @@ import type { ExecutionResult } from "@sekhemet/sandbox";
 import { apiHints } from "./api_surface.js";
 import { OscillationDetector } from "./detector.js";
 import {
+  type EvidenceRecord,
+  changedExportedSignatures,
+  missingEvidence,
+  readRanges,
+  shownLineRanges,
+} from "./evidence_gate.js";
+import {
   integrityFailures,
   scanDiffIntegrity,
   worktreeDiff,
@@ -51,6 +59,7 @@ import { type LadderState, RepairLadder, type RungPolicy } from "./ladder.js";
 import { type ToolObservation, fail } from "./observation.js";
 import { PHASE_WRITE_TOOLS, phaseOf } from "./phase.js";
 import { buildRepoMap, dataContracts } from "./repo_map.js";
+import { splitLines, toLf } from "./text.js";
 import {
   TOOL_CATALOG,
   cardClassFor,
@@ -121,6 +130,38 @@ export function normaliseCommand(command: string): string {
     .trim();
 }
 
+/**
+ * A file's content after a write tool call, without writing it, for the
+ * evidence-gated commit's signature check (WL-N9-2). Undefined when the call
+ * would not apply or cannot change a signature (a symbol body, an insertion).
+ */
+function prospectiveContent(
+  call: { name: string; arguments: Record<string, unknown> },
+  before: string,
+): string | undefined {
+  const a = call.arguments;
+  if (call.name === "write_file") return typeof a.content === "string" ? a.content : undefined;
+  if (call.name === "edit") {
+    if (typeof a.search !== "string" || typeof a.replace !== "string" || a.search === "") {
+      return undefined;
+    }
+    // As the real edit does: match on LF-normalised text (review minor 4).
+    const text = toLf(before);
+    const search = toLf(a.search);
+    const replace = toLf(a.replace);
+    return text.split(search).length === 2 ? text.replace(search, () => replace) : undefined;
+  }
+  if (call.name === "replace_lines") {
+    const start = Number(a.start);
+    const end = Number(a.end);
+    if (typeof a.replacement !== "string" || !(start >= 1) || !(end >= start)) return undefined;
+    const lines = toLf(before).split("\n");
+    lines.splice(start - 1, end - start + 1, ...toLf(a.replacement).split("\n"));
+    return lines.join("\n");
+  }
+  return undefined;
+}
+
 export class CardExecutionSessionImpl implements CardExecutionSession {
   public readonly cardId: string;
   private stepBudget: number;
@@ -137,6 +178,21 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   /** The last `check` result, and whether a file was written after it. */
   private lastCheck: GateResult | undefined;
   private writtenSinceCheck = true;
+  /** What the harness observed this attempt, for the evidence-gated commit (rule 29a). */
+  private evidence: EvidenceRecord[] = [];
+  /** The scope files the staged acceptance tests import (WL-N9-1), once per attempt. */
+  private acceptanceImports: string[] | undefined;
+  /** The worktree's import graph for WL-N9-2, until the next write changes it. */
+  private importGraphCache: { files: string[]; graph: Map<string, Set<string>> } | undefined;
+  /** A finish the evidence gate turned into a check that passed: the card ends gate_passed. */
+  private evidenceCheckPassed = false;
+  /**
+   * The verification the evidence gate's check just ran, when it found only
+   * gates that could not run or the runner threw: the normal finish path
+   * reuses it rather than run the gates a second time (follow-up 1), so the
+   * switch adds no gate run to an A/B's cost. Cleared by a write.
+   */
+  private finishVerification: { result: GateResult } | { error: unknown } | undefined;
   /** Facts from gate results that survive resets (see working_memory.ts). */
   private memory = new WorkingMemory();
   private compactedTurns = 0;
@@ -592,6 +648,186 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     );
   }
 
+  /** The step record a call leaves for the evidence-gated commit: what ran, never what was said. */
+  private recordEvidence(
+    call: { name: string; arguments: Record<string, unknown> },
+    observation: ToolObservation,
+  ): void {
+    if (!observation.ok) return;
+    const path =
+      typeof call.arguments.path === "string" ? call.arguments.path.replace(/^\.\//, "") : "";
+    if (call.name === "read_file") {
+      const m = /^read .+ lines (\d+)-(\d+) of (\d+)$/.exec(observation.summary);
+      if (m && path) {
+        // The lines the reply shows, not its summary: a long reply is clamped (review blocker 2).
+        const lines = Number(m[3]);
+        const requested = { from: Number(m[1]), to: Number(m[2]) };
+        for (const [from, to] of shownLineRanges(observation.content, requested)) {
+          this.evidence.push({ kind: "read", path, from, to, lines });
+        }
+      }
+    } else if (WRITE_TOOLS.has(call.name) && path) {
+      this.evidence.push({ kind: "write", path });
+      this.importGraphCache = undefined;
+    } else if (call.name === "find_references" && typeof call.arguments.symbol === "string") {
+      const symbol = call.arguments.symbol;
+      const file =
+        typeof call.arguments.file === "string"
+          ? call.arguments.file.replace(/^\.\//, "")
+          : this.tools.declaringFile(symbol);
+      if (file) this.evidence.push({ kind: "references", symbol, file });
+    }
+  }
+
+  /**
+   * Rule 29a: a write or a finish whose evidence is missing is answered with
+   * what is missing and the call that supplies it; a finish runs the check
+   * instead and returns its result (WL-N9-1 to 3).
+   */
+  private async evidencePostponement(call: {
+    name: string;
+    arguments: Record<string, unknown>;
+  }): Promise<ToolObservation | undefined> {
+    const postponed = (content: string): ToolObservation => ({
+      tool: call.name,
+      ok: false,
+      summary: workerCopy.evidencePostponed,
+      content,
+      deniedRule: "evidence_gate",
+    });
+    if (call.name === "finish_card") {
+      if (!missingEvidence(this.evidence, { kind: "finish" })) return undefined;
+      let check: ToolObservation;
+      try {
+        check = await this.checkObservation();
+      } catch (error) {
+        // Gates that throw are the normal finish path's to report (gates rule 9).
+        this.finishVerification = { error };
+        return undefined;
+      }
+      // Gates that could not run: finish normally, to done_pending_gates (review blocker 1).
+      if (!this.lastCheck || onlyNotRun(this.lastCheck)) {
+        if (this.lastCheck) this.finishVerification = { result: this.lastCheck };
+        return undefined;
+      }
+      if (this.lastCheck.passed) {
+        // The check the finish waited for passed: the card is done (review minor 6).
+        this.evidenceCheckPassed = true;
+        return { tool: "finish_card", ok: true, summary: check.summary, content: check.content };
+      }
+      return postponed(`${workerCopy.evidenceFinish}\n${check.content}`);
+    }
+    const rawPath = call.arguments.path;
+    if (!WRITE_TOOLS.has(call.name) || typeof rawPath !== "string") return undefined;
+    const path = rawPath.replace(/^\.\//, "");
+    // A write outside the scope is the scope refusal's to answer (review minor 5).
+    const scope = this.options.scopeFiles?.map((f) => f.replace(/^\.\//, ""));
+    if (scope && !scope.includes(path)) return undefined;
+    const missing = missingEvidence(this.evidence, {
+      kind: "write",
+      path,
+      importedScopeFiles: this.importedScopeFiles(),
+      signatureChanges: this.signatureChanges(call, path),
+    });
+    if (!missing) return undefined;
+    if (missing.kind === "unread") {
+      // Reads that each come back whole, under the clamp and the outline threshold.
+      const calls = missing.files.flatMap((f) => {
+        let source: string;
+        try {
+          source = this.tools.readRaw(f);
+        } catch {
+          return [workerCopy.readFileCall(f)];
+        }
+        const ranges = readRanges(source, f);
+        const whole = ranges.length === 1 && splitLines(source).lines.length <= 200;
+        return whole
+          ? [workerCopy.readFileCall(f)]
+          : ranges.map(([a, b]) => workerCopy.readFileRangeCall(f, String(a), String(b)));
+      });
+      return postponed(workerCopy.evidenceUnread(missing.files.join(", "), calls.join(", ")));
+    }
+    if (missing.kind === "importers") {
+      return postponed(
+        workerCopy.evidenceImporters(
+          missing.symbol,
+          missing.importers.join(", "),
+          workerCopy.findReferencesCall(missing.symbol, missing.file),
+        ),
+      );
+    }
+    return undefined;
+  }
+
+  /** The scope files the staged acceptance tests import (WL-N9-1). */
+  private importedScopeFiles(): string[] {
+    if (this.acceptanceImports) return this.acceptanceImports;
+    const tests = (this.card.acceptanceTests ?? []).map((t) =>
+      t.startsWith("tests/") ? t : `tests/${t}`,
+    );
+    const scope = new Set((this.options.scopeFiles ?? []).map((f) => f.replace(/^\.\//, "")));
+    const graph = importGraph(tests, this.tools.root, 50);
+    const imported = new Set(tests.flatMap((t) => [...(graph.get(t) ?? [])]));
+    this.acceptanceImports = [...imported].filter((f) => scope.has(f)).sort();
+    return this.acceptanceImports;
+  }
+
+  /** Exported declarations of `path` whose signature this write changes, with their importers (WL-N9-2). */
+  private signatureChanges(
+    call: { name: string; arguments: Record<string, unknown> },
+    path: string,
+  ): { symbol: string; importers: string[] }[] {
+    if (!/\.[cm]?[jt]sx?$/.test(path)) return [];
+    let before: string;
+    try {
+      before = this.tools.readRaw(path);
+    } catch {
+      return [];
+    }
+    const after = prospectiveContent(call, before);
+    if (after === undefined) return [];
+    const changed = changedExportedSignatures(path, before, after);
+    if (changed.length === 0) return [];
+    const importers = this.importersOf(path);
+    return changed.map((symbol) => ({ symbol, importers }));
+  }
+
+  /**
+   * The worktree's source files that import `path`, from the import graph,
+   * built once and kept until a write (review minor 7). At most 2,000 files.
+   * Relative imports only: a package-name import (`@scope/pkg`) of a
+   * workspace package is not resolved, so its importers are not named (a
+   * known gap, worker-loop rule 29a's row).
+   */
+  private importersOf(path: string): string[] {
+    if (!this.importGraphCache) {
+      const files: string[] = [];
+      const skip = new Set(["node_modules", "dist", ".git", ".sekhemet", "acceptance", "coverage"]);
+      const walk = (dir: string): void => {
+        for (const entry of readdirSync(join(this.tools.root, dir), { withFileTypes: true })) {
+          if (files.length >= 2_000) return;
+          const rel = dir ? `${dir}/${entry.name}` : entry.name;
+          if (entry.isDirectory()) {
+            if (!skip.has(entry.name)) walk(rel);
+          } else if (/\.[cm]?[jt]sx?$/.test(entry.name) && !entry.name.endsWith(".d.ts")) {
+            files.push(rel);
+          }
+        }
+      };
+      walk("");
+      this.importGraphCache = { files, graph: importGraph(files, this.tools.root, 2_000) };
+    }
+    const { files, graph } = this.importGraphCache;
+    return files.filter((f) => f !== path && graph.get(f)?.has(path)).sort();
+  }
+
+  /** The evidence gate's fallback verification, once (follow-up 1). */
+  private takeFinishVerification(): { result: GateResult } | { error: unknown } | undefined {
+    const taken = this.finishVerification;
+    this.finishVerification = undefined;
+    return taken;
+  }
+
   private strictRefusal(call: {
     name: string;
     arguments: Record<string, unknown>;
@@ -665,7 +901,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         this.catalog(),
         this.catalog().map((t) => t.name),
       );
-    const r = loader.handle(q);
+    const r = loader.handle(q, (symbol) => this.tools.declaringFile(symbol));
     if (r.loaded.length === 0) {
       const files = this.filesAskedFor(q);
       if (files) return files;
@@ -921,11 +1157,15 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   private catalog() {
     // L18: the card's class fixes its tool list (explore, plan, review,
     // research, implement), unless the caller chose tools itself.
-    const base =
+    const progressive = this.options.progressiveTools === true;
+    const chosen =
       this.options.tools ??
       toolsForClass(cardClassFor(this.card), TOOL_CATALOG, {
         scriptCapable: this.options.scriptCapable,
+        arm: progressive ? "progressive" : "fixed",
       });
+    // WL-M2-2: the fixed-set arm never offers tool_search, whoever chose the tools.
+    const base = progressive ? chosen : chosen.filter((t) => t.name !== TOOL_SEARCH_NAME);
     return this.withNoteGate(this.options.restricted ? restrictedToolCatalog(base) : base);
   }
 
@@ -1110,8 +1350,11 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       ...this.tools.getReadFiles().map((f) => `read ${f}`),
     ];
     const pending = this.pendingScopeFiles();
+    // Rule 10: the run's fixed seed, set on the model, also seeds the prune null arm.
+    const seed = (this.options.modelAdapter as { seed?: unknown }).seed;
     const built = buildWorkerPrompt({
       card: { ...this.card, stepsUsed: this.stepsUsed },
+      ...(typeof seed === "number" ? { seed } : {}),
       // C19: with progressive loading the system prompt carries the core
       // tools' contracts and a one-line index of the rest; what tool_search
       // has loaded since rides in the volatile tail, so the prefix survives.
@@ -1176,6 +1419,17 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     // Shown in full in the prompt (even when empty): it has been read (L17). A
     // file the allocator cut or shrank has not (the confirmation review).
     for (const path of built.shownInFull) this.tools.markSeen(path);
+    // Rule 29a: a file the prompt shows in full has reached the Worker whole.
+    if (this.options.evidenceGate === "on") {
+      for (const path of built.shownInFull) {
+        try {
+          const lines = splitLines(this.tools.readRaw(path)).lines.length;
+          this.evidence.push({ kind: "read", path, from: 1, to: lines, lines });
+        } catch {
+          // A file the session left out is not a read.
+        }
+      }
+    }
     return built;
   }
 
@@ -1402,6 +1656,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     // tool_search, not only the tools loaded so far.
     const offeredNames = this.offeredToolNames();
     const offered = new Set(offeredNames);
+    this.tools.setOfferedTools(offeredNames);
     const truncated =
       response.finishReason === "length"
         ? thinking.reasoningBudgetTokens > 0 &&
@@ -1548,18 +1803,21 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     }
 
     this.tools.resetFinish();
+    this.finishVerification = undefined;
     const observations: ToolObservation[] = [];
-    // The stall warning leads the turn's observations so the Worker reads it
-    // before the results of the calls it just repeated.
-    if (this.pendingStallWarning) {
-      observations.push({
-        tool: "stall",
-        ok: false,
-        summary: "no progress on the last turn",
-        content: this.pendingStallWarning,
-      });
-      this.pendingStallWarning = undefined;
-    }
+    // The stall warning leads the turn's history so the Worker reads it
+    // before the results of the calls it just repeated. It is kept apart from
+    // the calls' observations, which stay at their calls' indices (review
+    // item 11): the step records pair observations[i] with toolCalls[i].
+    const stallWarning: ToolObservation | undefined = this.pendingStallWarning
+      ? {
+          tool: "stall",
+          ok: false,
+          summary: "no progress on the last turn",
+          content: this.pendingStallWarning,
+        }
+      : undefined;
+    this.pendingStallWarning = undefined;
     let suspected: { gate: string; reason: string } | undefined;
     for (const call of toolCalls) {
       // `check` runs the real gates without ending the card: the agent was
@@ -1594,6 +1852,13 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         observations.push(refused);
         continue;
       }
+      // Rule 29a: with the switch on, a write or a finish waits for its evidence.
+      const postponed =
+        this.options.evidenceGate === "on" ? await this.evidencePostponement(call) : undefined;
+      if (postponed) {
+        observations.push(postponed);
+        continue;
+      }
       const observation =
         call.name === "check"
           ? await this.checkObservation()
@@ -1607,6 +1872,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
                   ? await this.subtaskObservation(call.arguments.question, call.arguments.context)
                   : await this.tools.execute(call);
       observations.push(observation);
+      this.recordEvidence(call, observation);
       if (call.name === "run_cmd") this.recordCommand(call, turnIndex, observation);
       if (this.options.hooks) {
         const post = await this.options.hooks.emit("post-tool", {
@@ -1633,6 +1899,8 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         const path = call.arguments.path;
         if (typeof path === "string") this.filesWritten.add(path.replace(/^\.\//, ""));
         this.writtenSinceCheck = true;
+        // The files changed: a verification of the old tree is not reused.
+        this.finishVerification = undefined;
         this.writeCount++;
         this.effects++;
         if (typeof path === "string") this.memory.noteWrite(path);
@@ -1642,8 +1910,11 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     this.history.push({
       turn: turnIndex,
       action: toolCalls.map((c) => c.name).join(", "),
-      result: observations.map((o) => o.content).join("\n---\n"),
+      result: [...(stallWarning ? [stallWarning] : []), ...observations]
+        .map((o) => o.content)
+        .join("\n---\n"),
     });
+    if (stallWarning) observations.push(stallWarning);
 
     // GT-M6-5: the Worker named a gate as wrong. Grinding repair rungs against
     // it is what gates exist to prevent, so the card parks for a person.
@@ -1690,7 +1961,8 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     const wroteThisTurn = toolCalls.some(
       (c, i) => WRITE_TOOLS.has(c.name) && observations[i]?.ok === true,
     );
-    const checkedThisTurn = toolCalls.some((c) => c.name === "check");
+    const checkedThisTurn = toolCalls.some((c) => c.name === "check") || this.evidenceCheckPassed;
+    this.evidenceCheckPassed = false;
 
     // A passing check with nothing written after it is a finished card: asking
     // for a separate finish_card only costs a turn.
@@ -1753,8 +2025,10 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     }
 
     if (!stopReason && this.tools.wantsFinish()) {
+      const reused = this.takeFinishVerification();
       try {
-        gateResult = await this.runVerification();
+        if (reused !== undefined && "error" in reused) throw reused.error;
+        gateResult = reused !== undefined ? reused.result : await this.runVerification();
       } catch (err) {
         // The Worker declared the work done and the gates could not run (a
         // tampered gates.toml, a refused sandbox). The work is kept, and the
@@ -1895,6 +2169,8 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       }
     }
     const result = await this.runVerificationInner();
+    // Rule 29a: the tests ran on the tree as it stands.
+    if (!onlyNotRun(result)) this.evidence.push({ kind: "tests" });
     if (this.options.hooks) {
       const post = await this.options.hooks
         .emit("post-gate", {

@@ -19,6 +19,8 @@ export interface RunSettings {
   thinking?: string;
   /** The Worker's working method (baseline | strict). */
   workerMethod?: string;
+  /** The evidence-gated commit switch (off | on), worker-loop rule 29a. */
+  evidenceGate?: string;
   /** The confinement the card ran under (seatbelt | bubblewrap | none), SEC-21. */
   isolation?: string;
   /** The tool arm: the fixed set per class or progressive loading (worker-loop WL-M2-5). */
