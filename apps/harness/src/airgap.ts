@@ -13,7 +13,7 @@ import {
 import { basename, join } from "node:path";
 import { type RegistryLookup, onPath } from "@sekhemet/gates";
 import type { EventLog } from "@sekhemet/kernel";
-import type { ModelRegistry } from "@sekhemet/models";
+import { type ModelRegistry, readChatTemplate, templateChecksum } from "@sekhemet/models";
 import { ProcessSandbox } from "@sekhemet/sandbox";
 import { type TextFetch, docRoot, sitemapUrls } from "./research/docs.js";
 import { ResearchCache } from "./research/polite.js";
@@ -194,10 +194,13 @@ export async function buildModelManifest(dir: string): Promise<ModelManifest> {
     .filter((n) => /\.(gguf|safetensors|bin)$/.test(n))
     .sort()) {
     const path = join(dir, f);
+    const template = await readChatTemplate(path);
     models.push({
       id: f.replace(/\.(gguf|safetensors|bin)$/, ""),
       file: f,
       sha256: await sha256File(path),
+      // "none" is recorded too, so a template added later is caught.
+      templateChecksum: template ? templateChecksum(template.template) : "none",
       sizeBytes: statSync(path).size,
       ...(/(IQ\d_[A-Z]+|Q\d_K_[A-Z]+|Q\d_\d|F16|BF16)/i.exec(f)
         ? {
@@ -235,6 +238,21 @@ export async function verifyModels(
         detail: `sha256 mismatch (${sum.slice(0, 12)} != ${m.sha256.slice(0, 12)})`,
       });
       continue;
+    }
+    // SEC-34a: identical weights can still run a different chat template.
+    if (m.templateChecksum) {
+      const template = await readChatTemplate(path);
+      const sum = template ? templateChecksum(template.template) : "none";
+      if (sum !== m.templateChecksum) {
+        out.push({
+          id: m.id,
+          ok: false,
+          detail: template
+            ? `chat template checksum mismatch in ${basename(template.source)} (${sum.slice(0, 12)} != ${m.templateChecksum.slice(0, 12)})`
+            : "chat template missing: the manifest names one, the model has none",
+        });
+        continue;
+      }
     }
     // SEC-34b: the manifest's tier is recorded, never trusted as this
     // machine's qualification; the model still qualifies here before a card.

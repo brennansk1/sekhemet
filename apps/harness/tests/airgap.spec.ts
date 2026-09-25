@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,6 +24,35 @@ import {
   verifyModels,
 } from "../src/airgap.js";
 import { ResearchCache } from "../src/research/polite.js";
+
+/** A minimal GGUF v3 file: no tensors, one metadata key (the chat template). */
+function ggufWithTemplate(template: string): Buffer {
+  const str = (v: string) => {
+    const b = Buffer.from(v, "utf8");
+    const len = Buffer.alloc(8);
+    len.writeBigUInt64LE(BigInt(b.length));
+    return Buffer.concat([len, b]);
+  };
+  const u32 = (n: number) => {
+    const b = Buffer.alloc(4);
+    b.writeUInt32LE(n);
+    return b;
+  };
+  const u64 = (n: number) => {
+    const b = Buffer.alloc(8);
+    b.writeBigUInt64LE(BigInt(n));
+    return b;
+  };
+  return Buffer.concat([
+    Buffer.from("GGUF"),
+    u32(3),
+    u64(0),
+    u64(1),
+    str("tokenizer.chat_template"),
+    u32(8),
+    str(template),
+  ]);
+}
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -105,6 +135,51 @@ describe("NEW-security-2: the manifest in air-gap mode", () => {
     expect(code).toBe(1);
     expect(out.join("\n")).toMatch(/signature/i);
     expect(reg.get("tiny-Q4_K_M")).toBeUndefined();
+  });
+
+  it("refuses weights whose chat template differs from the manifest, naming it (SEC-34a)", async () => {
+    const src = tmp();
+    writeFileSync(join(src, "coder.safetensors"), "weights-a");
+    writeFileSync(
+      join(src, "tokenizer_config.json"),
+      JSON.stringify({ chat_template: "{{ good }}" }),
+    );
+    const m = await buildModelManifest(src);
+    expect(m.models[0]?.templateChecksum).toMatch(/^[0-9a-f]{64}$/);
+    const dst = tmp();
+    writeFileSync(join(dst, "coder.safetensors"), "weights-a");
+    writeFileSync(
+      join(dst, "tokenizer_config.json"),
+      JSON.stringify({ chat_template: "{{ evil }}" }),
+    );
+    const reg = new ModelRegistry(join(dst, "models.json"));
+    const r = await verifyModels(m, dst, reg);
+    expect(r[0]?.ok).toBe(false);
+    expect(r[0]?.detail).toMatch(/chat template.*tokenizer_config\.json/);
+    expect(reg.get("coder")).toBeUndefined();
+  });
+
+  it("prefers chat_template.jinja and records 'none' so a template added later is caught (SEC-34a)", async () => {
+    const src = tmp();
+    writeFileSync(join(src, "coder.safetensors"), "weights-a");
+    const m = await buildModelManifest(src);
+    expect(m.models[0]?.templateChecksum).toBe("none");
+    const dst = tmp();
+    writeFileSync(join(dst, "coder.safetensors"), "weights-a");
+    writeFileSync(join(dst, "tokenizer_config.json"), JSON.stringify({ chat_template: "{{ a }}" }));
+    writeFileSync(join(dst, "chat_template.jinja"), "{{ added }}");
+    const r = await verifyModels(m, dst);
+    expect(r[0]?.ok).toBe(false);
+    expect(r[0]?.detail).toMatch(/chat_template\.jinja/);
+  });
+
+  it("reads a GGUF model's embedded chat template for the manifest", async () => {
+    const src = tmp();
+    writeFileSync(join(src, "tiny-Q4_K_M.gguf"), ggufWithTemplate("{{ messages }}"));
+    const m = await buildModelManifest(src);
+    expect(m.models[0]?.templateChecksum).toBe(
+      createHash("sha256").update("{{ messages }}", "utf8").digest("hex"),
+    );
   });
 
   it("records the manifest's tier but still requires this machine's qualification (SEC-34b)", async () => {

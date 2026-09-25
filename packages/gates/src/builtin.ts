@@ -496,6 +496,8 @@ function writeCache(cacheRoot: string, key: string, info: RegistryInfo): void {
  * resolves through the user's `.npmrc`, mirror included.
  */
 export interface RegistryEndpoints {
+  /** npm registry base (the packument API), e.g. a Verdaccio mirror. */
+  npm?: string;
   /** PyPI JSON API base, e.g. a devpi index. */
   pypi?: string;
   /** crates.io API base. */
@@ -505,6 +507,7 @@ export interface RegistryEndpoints {
 }
 
 export const DEFAULT_REGISTRY_ENDPOINTS: Required<RegistryEndpoints> = {
+  npm: "https://registry.npmjs.org",
   pypi: "https://pypi.org/pypi",
   crates: "https://crates.io/api/v1/crates",
   go: "https://proxy.golang.org",
@@ -531,26 +534,30 @@ async function getJson(
   return { status: res.status, body: await res.json() };
 }
 
-/** npm through `npm view`, plus the download point the registry publishes. */
+/**
+ * npm through the registry's own API, plus the download point it publishes.
+ * An HTTP request made by the harness (security item 32, SEC-14): never
+ * `npm view` in the worktree, so a worktree `.npmrc` cannot redirect it, and
+ * the caller's `fetchImpl` is the network policy that records it.
+ */
 async function lookupNpm(
-  root: string,
+  _root: string,
   name: string,
   options: EcosystemRegistryOptions,
 ): Promise<RegistryInfo | undefined> {
-  const r = spawnSync("npm", ["view", name, "time.created", "--json"], {
-    cwd: root,
-    encoding: "utf8",
-    timeout: 30_000,
-  });
-  if (r.status !== 0) {
-    return /E404|404 Not Found/.test(`${r.stderr}${r.stdout}`) ? { exists: false } : undefined;
-  }
-  const created = JSON.parse(r.stdout || '""') as string;
+  const base = options.endpoints?.npm ?? DEFAULT_REGISTRY_ENDPOINTS.npm;
+  const res = await getJson(
+    `${base}/${name.startsWith("@") ? `@${encodeURIComponent(name.slice(1))}` : encodeURIComponent(name)}`,
+    options,
+  );
+  if (res.status === 404) return { exists: false };
+  const created = (res.body as { time?: { created?: string } } | undefined)?.time?.created;
+  if (!res.body) return undefined;
   const downloads = await getJson(
-    `https://api.npmjs.org/downloads/point/last-week/${encodeURIComponent(name)}`,
+    `https://api.npmjs.org/downloads/point/last-week/${name.split("/").map(encodeURIComponent).join("/")}`,
     options,
   )
-    .then((res) => (res.body as { downloads?: number } | undefined)?.downloads)
+    .then((r) => (r.body as { downloads?: number } | undefined)?.downloads)
     .catch(() => undefined);
   return {
     exists: true,

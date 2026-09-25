@@ -233,6 +233,8 @@ export interface SessionOptions {
    * executor; verification runs only the static gates, with no formatter.
    */
   restricted?: boolean | undefined;
+  /** The one network policy (security item 28); absent means offline. */
+  networkPolicy?: import("@sekhemet/sandbox").EffectiveNetworkPolicy | undefined;
   /** Sandbox for the agent's tools; defaults to a new ProcessSandbox. */
   sandbox?: ProcessSandbox | undefined;
   /** The project's protected globs (`gates.toml [project] protected`, defect 5). */

@@ -48,10 +48,11 @@ import {
   readSwapUsedBytes,
 } from "@sekhemet/models";
 import { type SpidrSliceKind, scoreDifficulty, stepBudgetForDifficulty } from "@sekhemet/planner";
-import { confinedSandbox } from "@sekhemet/sandbox";
+import { confinedSandbox, mergeNetworkConfigs, policyFetch } from "@sekhemet/sandbox";
 import { NodeGitSyncAdapter } from "@sekhemet/sync";
 import { isAirgapped, mirrorRegistry } from "./airgap.js";
 import { withArchitectureGate } from "./architecture_gate.js";
+import { networkConfigs } from "./config_apply.js";
 import { readSettings } from "./integrations.js";
 import { learnFromAttempt } from "./learning/reflect.js";
 import type { LearningStore } from "./learning/store.js";
@@ -389,6 +390,8 @@ export async function executeCard(
   });
   let turnStartedMs = Date.now();
   const tracedModel = tracer && cardSpan ? traced(model, tracer, () => cardSpan.context) : model;
+  const nets = networkConfigs(ctx.repoPath);
+  const networkPolicy = mergeNetworkConfigs(nets.user, nets.project);
   const runner = new CardRunner({
     card,
     repoRoot: ctx.repoPath,
@@ -413,7 +416,27 @@ export async function executeCard(
     // New dependencies are checked against the npm registry (existence, age),
     // answers cached under .sekhemet; offline it degrades to an advisory (S10).
     // Air-gapped: only mirrored packages exist (X10).
-    registry: isAirgapped(ctx.repoPath) ? mirrorRegistry(ctx.repoPath) : npmRegistry(ctx.repoPath),
+    // Registry lookups are the harness's own requests: through the one
+    // network policy, each recorded on the ledger (security item 32, SEC-14).
+    registry: isAirgapped(ctx.repoPath)
+      ? mirrorRegistry(ctx.repoPath)
+      : npmRegistry(ctx.repoPath, {
+          fetchImpl: policyFetch(networkPolicy, {
+            purpose: "supply-chain",
+            record: (r) => {
+              void ctx.cardStore
+                .recordEvent({
+                  type: "harness/egress",
+                  cardId: card.id,
+                  actor: "system",
+                  payload: r,
+                })
+                .catch(() => undefined);
+            },
+          }) as typeof fetch,
+        }),
+    // The card's sandboxed commands: the policy narrowed by gates.toml (item 30).
+    networkPolicy,
     // Ask-tier commands wait for a person on the decision queue (S8, K20).
     onApproval: decisionApprover(ctx.cardStore, card.id, ctx.approvalTimeoutMs ?? 60_000),
     signal: abort.signal,

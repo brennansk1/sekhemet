@@ -27,7 +27,14 @@ import {
   serializeContextPack,
 } from "@sekhemet/kernel";
 import { candidateSettings, harnessCommit } from "@sekhemet/models";
-import { EgressProxy, ProcessSandbox, tagUntrusted } from "@sekhemet/sandbox";
+import {
+  EgressProxy,
+  ProcessSandbox,
+  allowlistWarnings,
+  cardAllowlist,
+  mergeNetworkConfigs,
+  tagUntrusted,
+} from "@sekhemet/sandbox";
 import type { GitSyncAdapter } from "@sekhemet/sync";
 import { CardExecutionSessionImpl } from "./session.js";
 import type {
@@ -895,10 +902,25 @@ export class CardRunner {
     // S5: with a network allowlist, the card's commands reach the network
     // only through an egress proxy that forwards allowlisted domains and logs
     // every request to the ledger.
-    const allow = this.config.project.networkAllow ?? [];
+    // Item 30: the user's policy narrowed by the repository's gates.toml.
+    // With no policy the card is offline: nothing widens by default (SEC-13).
+    const policy = this.options.networkPolicy ?? mergeNetworkConfigs({}, {});
+    const allow = cardAllowlist(policy, this.config.project.networkAllow ?? []);
+    // SEC-15b: a wildcard or upload-capable host is recorded on the card.
+    for (const w of allowlistWarnings(allow)) {
+      this.emit({
+        type: "status",
+        cardId: card.id,
+        message: `network allowlist warning: ${w.host} — ${w.reason}`,
+      });
+      void store
+        ?.recordEvent({ type: "card/egress_warning", cardId: card.id, actor: "system", payload: w })
+        .catch(() => undefined);
+    }
     if (allow.length > 0 && !this.options.allowNetwork && !this.options.restricted) {
       this.egress = new EgressProxy({
         allow,
+        deny: policy.fetchDeny,
         onRequest: (r) => {
           void store
             ?.recordEvent({ type: "card/egress", cardId: card.id, actor: "system", payload: r })

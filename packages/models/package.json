@@ -9,6 +9,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@huggingface/gguf": "0.4.6",
     "@sekhemet/kernel": "workspace:*"
   },
   "devDependencies": {

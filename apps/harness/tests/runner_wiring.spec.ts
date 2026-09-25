@@ -454,19 +454,23 @@ describe("apps/harness executeCard wiring (wave 2, part 1)", () => {
   });
 
   it.runIf(process.platform === "darwin")(
-    "routes a card's network through the allowlisting proxy and logs each request (S5, S8)",
+    "refuses a card's request to a loopback host even when both allowlists name it, and logs it (SEC-9, S5)",
     async () => {
       const { createServer } = await import("node:http");
       const upstream = createServer((_req, res) => res.end("pong-from-upstream"));
       const port: number = await new Promise((r) =>
         upstream.listen(0, "127.0.0.1", () => r((upstream.address() as { port: number }).port)),
       );
+      const userConfig = join(repo, "..", `user-config-${Date.now()}.toml`);
+      const savedUserConfig = process.env.SEKHEMET_USER_CONFIG;
       try {
         writeFileSync(
           join(repo, ".sekhemet", "gates.toml"),
           `[project]\nmax_files = 3\nmax_diff_lines = 200\nnetwork_allow = ["127.0.0.1"]\n\n[[gate]]\nid = "unit"\nrung = "test"\nlayer = "functional"\ncommand = "node"\nargs = ["-e", "process.exit(0)"]\ntimeout_s = 30\nparser = "generic"\n`,
         );
         execFileSync("git", ["commit", "-qam", "allowlist"], { cwd: repo });
+        writeFileSync(userConfig, '[network]\nmode = "allowlist"\nfetch_allow = ["127.0.0.1"]\n');
+        process.env.SEKHEMET_USER_CONFIG = userConfig;
         const card = await newCard("card_net");
         const { adapter } = scripted([
           [
@@ -481,12 +485,14 @@ describe("apps/harness executeCard wiring (wave 2, part 1)", () => {
           WRITE_A,
         ]);
         const result = await executeCard(ctx, card, adapter);
-        expect(result.turns[0]?.observations[0]?.content).toContain("pong-from-upstream");
+        expect(result.turns[0]?.observations[0]?.content).not.toContain("pong-from-upstream");
         const egress = await cardStore.cardEvents(card.id, ["card/egress"]);
         expect(
           egress.map((e) => (e.payload as { host: string; allowed: boolean }).allowed),
-        ).toEqual([true]);
+        ).toEqual([false]);
       } finally {
+        process.env.SEKHEMET_USER_CONFIG = savedUserConfig;
+        rmSync(userConfig, { force: true });
         await new Promise((r) => upstream.close(() => r(undefined)));
       }
     },

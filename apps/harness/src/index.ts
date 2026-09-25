@@ -35,14 +35,19 @@ import {
   measureThroughput,
 } from "@sekhemet/models";
 import { SpidrFeaturePlanner } from "@sekhemet/planner";
-import { ProcessSandbox, confinedSandbox } from "@sekhemet/sandbox";
+import {
+  ProcessSandbox,
+  confinedSandbox,
+  mergeNetworkConfigs,
+  policyFetch,
+} from "@sekhemet/sandbox";
 import { NodeGitSyncAdapter, gitEnvFor, hardenGitForProcess } from "@sekhemet/sync";
 import { runAcpStdio } from "./acp.js";
 import { isAirgapped, mirrorRegistry } from "./airgap.js";
 import { resolveVisionModel, visionPrePass } from "./attachments.js";
 import { parseModelList, runCalibrate } from "./calibrate_cmd.js";
 import { resolveConfig } from "./config.js";
-import { effectiveConfig, queueDefaults, reviewLimit } from "./config_apply.js";
+import { effectiveConfig, networkConfigs, queueDefaults, reviewLimit } from "./config_apply.js";
 import { daemonStart, daemonStatus, daemonStop } from "./daemon.js";
 import { type DoctorReport, runDoctor } from "./doctor.js";
 import {
@@ -763,7 +768,29 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         // Air-gapped: only mirrored packages exist (X10).
         registry: isAirgapped(config.repoPath)
           ? mirrorRegistry(config.repoPath)
-          : npmRegistry(config.repoPath),
+          : npmRegistry(config.repoPath, {
+              // Through the one network policy (security item 32, SEC-14).
+              fetchImpl: policyFetch(
+                (() => {
+                  const n = networkConfigs(config.repoPath);
+                  return mergeNetworkConfigs(n.user, n.project);
+                })(),
+                {
+                  purpose: "supply-chain",
+                  record: (r) => {
+                    void cardStore
+                      .recordEvent({
+                        type: "harness/egress",
+                        // Inside the card-diff branch: cardId is set.
+                        cardId: String(cardId),
+                        actor: "system",
+                        payload: r,
+                      })
+                      .catch(() => undefined);
+                  },
+                },
+              ) as typeof fetch,
+            }),
       });
       res = {
         ...res,

@@ -16,6 +16,8 @@ export default defineConfig({
     // RED until an agent implements them; running them here would report the
     // harness as broken for doing exactly what it is supposed to do.
     exclude: EXCLUDE,
+    // Tests never read the owner's real ~/.sekhemet/config.toml (B1 review).
+    env: { SEKHEMET_USER_CONFIG: "/nonexistent/sekhemet-test-user-config.toml" },
     projects: [
       { extends: true, test: { name: "unit", include: split.unit } },
       { extends: true, test: { name: "integration", include: split.integration } },

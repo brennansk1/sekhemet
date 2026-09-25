@@ -46,7 +46,7 @@ v1 includes: binding to a non-loopback address safely; an identity for each pers
 - **Reopen if:** v1 meets its Definition of Done.
 
 ### DEC-08
-**Libraries approved to add, when their workstream arrives.** *Owner, 2026-09-22 (D5).* SPDX parsing (`spdx-expression-parse`, `spdx-satisfies`, `spdx-correct`), and the official clients `@octokit/*`, `@modelcontextprotocol/sdk`, `jira.js`, `@linear/sdk` and Slack Bolt. Every other proposal in COVERAGE still needs the owner's yes, one by one. **Added 2026-09-24 (DEC-29):** Playwright and axe-core (development only), fast-check, Valibot, vLLM (a separate process). **Added 2026-09-25 (DEC-38):** SimpleWebAuthn and `openid-client`, and a bundled common-password list with a permissive licence. **Added 2026-09-25 (DEC-39):** `@anthropic-ai/sandbox-runtime`, `ipaddr.js`, `request-filtering-agent`.
+**Libraries approved to add, when their workstream arrives.** *Owner, 2026-09-22 (D5).* SPDX parsing (`spdx-expression-parse`, `spdx-satisfies`, `spdx-correct`), and the official clients `@octokit/*`, `@modelcontextprotocol/sdk`, `jira.js`, `@linear/sdk` and Slack Bolt. Every other proposal in COVERAGE still needs the owner's yes, one by one. **Added 2026-09-24 (DEC-29):** Playwright and axe-core (development only), fast-check, Valibot, vLLM (a separate process). **Added 2026-09-25 (DEC-38):** SimpleWebAuthn and `openid-client`, and a bundled common-password list with a permissive licence. **Added 2026-09-25 (DEC-39):** `@anthropic-ai/sandbox-runtime`, `ipaddr.js`, `request-filtering-agent`. **(DEC-40):** `@huggingface/gguf`; the RedCode-Exec payload subset.
 - **Why:** they replace hand-rolled code the reviews found wrong (the licence check rejects MIT-0 and "MIT AND …"; three GitHub paths with three ID formats).
 - **Reopen if:** a licence or maintenance check at the time of adding fails.
 
@@ -231,6 +231,15 @@ What professional boards do not show is left off the card face: the agent's step
 - **System requirements:** ripgrep on both platforms, socat on Linux.
 - **Why:** research in [SANDBOX_REUSE.md](../research/SANDBOX_REUSE.md). srt closes gaps ours has: mach-lookup and LaunchServices on macOS, Unix sockets and io_uring on Linux, and resolved-address checks. It is maintained, and it is the sandbox Claude Code uses.
 - **Reopen if:** srt fails the containment suite on either platform, or an srt release breaks confinement (we fail closed, so every card would stop).
+
+### DEC-40 — reuse first, at every step
+**Every build step first looks for a maintained, permissively licensed library or dataset, and uses it instead of our own.** *Owner, 2026-09-25: "again for each step make sure if there is a usable repo or python library you use it."*
+- **Approved the same day:**
+  - `@huggingface/gguf` 0.4.6 (MIT). It reads a model's chat template offline for SEC-34a, and serves the model library's header scan (NEW-models-13).
+  - A curated subset of RedCode-Exec (github.com/AI-secure/RedCode, MIT), vendored with its licence notice as the payloads of the injection fixtures (NEW-security-4).
+- **Not yet approved:** starting Docker Desktop to test containment on Linux. The B1 milestone's Linux half waits for it.
+- **How:** each new library is proposed with its licence, size and what it replaces, and installed only on the owner's yes. Approvals are listed in DEC-08.
+- **Reopen if:** only the owner.
 
 ## Engineering decisions
 

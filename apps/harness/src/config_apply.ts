@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { type TomlTable, parseToml } from "@sekhemet/kernel";
+import type { NetworkConfig } from "@sekhemet/sandbox";
 import { type ResolvedConfig, resolveConfig } from "./config.js";
 
 /**
@@ -91,4 +92,37 @@ export function queueDefaults(
 /** The board's Review limit from `[review] wip` ("auto" keeps the board's own). */
 export function reviewLimit(cfg: ResolvedConfig["config"]): number | undefined {
   return typeof cfg.review.wip === "number" && cfg.review.wip > 0 ? cfg.review.wip : undefined;
+}
+
+/**
+ * The user's and the project's `[network]` tables, kept apart so the policy
+ * can let the project only narrow (security item 28). Keys: `mode`,
+ * `fetch_allow` (`allow`, the older name, is read as the same key),
+ * `fetch_deny`, `research`.
+ */
+export function networkConfigs(
+  repoPath: string,
+  userConfigPath = process.env.SEKHEMET_USER_CONFIG ?? join(homedir(), ".sekhemet", "config.toml"),
+): { user: NetworkConfig; project: NetworkConfig } {
+  const read = (path: string): NetworkConfig => {
+    if (!existsSync(path)) return {};
+    try {
+      const t = (parseToml(readFileSync(path, "utf8")).network ?? {}) as TomlTable;
+      const list = (v: unknown) =>
+        Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : undefined;
+      const mode = t.mode;
+      const allow = list(t.fetch_allow) ?? list(t.allow);
+      const deny = list(t.fetch_deny);
+      return {
+        ...(mode === "offline" || mode === "allowlist" || mode === "open" ? { mode } : {}),
+        ...(allow ? { fetchAllow: allow } : {}),
+        ...(deny ? { fetchDeny: deny } : {}),
+        ...(t.research === "yes" || t.research === "no" ? { research: t.research } : {}),
+      };
+    } catch {
+      // An unreadable file widens nothing.
+      return {};
+    }
+  };
+  return { user: read(userConfigPath), project: read(join(repoPath, ".sekhemet", "config.toml")) };
 }

@@ -16,3 +16,4 @@ export * from "./calibration.js";
 export * from "./qualification.js";
 export * from "./schedule.js";
 export * from "./bakeoff.js";
+export * from "./chat_template.js";
