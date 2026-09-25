@@ -42,6 +42,12 @@ describe("gate templates by language (G27)", () => {
       gateTemplate(repo({ "pyproject.toml": "" }))?.map((g) => g.args.slice(0, 2).join(" ")),
     ).toEqual(["-m ruff", "-m mypy", "-m pytest"]);
     expect(gateTemplate(repo({ "Cargo.toml": "" }))?.[0]?.command).toBe("cargo");
+    // Rust's gates are read by the cargo parser, proven on real output (GT-M6-2).
+    expect(gateTemplate(repo({ "Cargo.toml": "" }))?.map((g) => g.parser)).toEqual([
+      "cargo",
+      "cargo",
+      "cargo",
+    ]);
     const go = repo({ "go.mod": "module x" });
     const toml = renderGatesToml(gateTemplate(go) ?? []);
     const parsed = parseToml(toml) as { gate: { id: string; command: string }[] };

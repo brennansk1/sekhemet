@@ -77,6 +77,10 @@ const failure: GateFailure = {
   exitCode: 2,
   errorExcerpt: "src/a.ts:1:14 TS2322: Type 'number' is not assignable to type 'string'.",
   suggestedFixFiles: ["src/a.ts"],
+  expected: "the gate to pass",
+  actual: "it failed",
+  minimalRepro: "pnpm test",
+  suggestedAction: "Fix the failure shown.",
   location: { file: "src/a.ts", line: 1 },
 };
 
@@ -557,6 +561,25 @@ describe("fail-to-pass at card start (G12)", () => {
     const retry = await runner(card, { attempt: 2, useExistingWorktree: true }).run();
     expect(retry.failToPass).toBeUndefined();
   });
+
+  it("reports unknown, not fails, when every failure is a gate that could not run", async () => {
+    const card = await newCard({ acceptanceTests: ["a.spec.ts"] });
+    const notRun: GateRunner = {
+      runGates: async () => ({
+        passed: false,
+        durationMs: 1,
+        rungResults: [],
+        failures: [{ ...failure, errorExcerpt: "test not run: spawn pnpm ENOENT", notRun: true }],
+      }),
+    };
+    const result = await runner(card, {
+      gateRunner: notRun,
+      onWorktreeReady: withTest(),
+      stepBudget: 1,
+      modelAdapter: scripted(() => [write(1)]).adapter,
+    }).run();
+    expect(result.failToPass).toMatchObject({ status: "unknown" });
+  });
 });
 
 describe("resume after memory pressure (H17)", () => {
@@ -755,5 +778,98 @@ describe("gate failure routes the card to Planning (B2)", () => {
 
     expect(result.finalStatus).toBe("planning");
     expect(result.parked).toBeUndefined();
+  });
+});
+
+describe("a gate the Worker suspects parks the card (GT-M6-5)", () => {
+  it("parks with gate_suspected, and the evidence names the gate and the reason", async () => {
+    const card = await newCard();
+    const reason = "the unit gate asserts the old API this card replaces";
+    const { adapter, seen } = scripted(() => [
+      { id: "n", name: "note", arguments: { message: reason, gate: "unit" } },
+    ]);
+    const { lc, moves } = lifecycle();
+    const result = await runner(card, { modelAdapter: adapter, lifecycle: lc }).run();
+
+    expect(result.stopReason).toBe("gate_suspected");
+    expect(result.finalStatus).toBe("parked");
+    expect(moves).toEqual(["in_progress", "parked"]);
+    expect(result.evidence.stopDetail).toEqual({ gate: "unit", reason });
+    // A gate's name alone never refuses it: one that has not failed yet can
+    // still encode an assumption the card is changing (rule 18).
+    expect(result.parked?.suggestion).toContain("unit");
+    expect(result.parked?.suggestion).toContain(reason);
+    // The attempt's gates: declared, built-in and the harness's own.
+    const noteTool = seen[0]?.tools?.find((t) => t.name === "note");
+    const gateEnum = (
+      noteTool?.parameters as { properties: Record<string, { enum?: string[] }> } | undefined
+    )?.properties.gate?.enum;
+    expect(gateEnum).toEqual(
+      expect.arrayContaining(["bounds", "integrity", "lint", "secrets", "typecheck", "unit"]),
+    );
+  });
+});
+
+describe("a gate that could not run is not charged on the runner's own paths (B2.3 confirmation)", () => {
+  const notRun: GateFailure = {
+    ...failure,
+    gate: "typecheck",
+    errorExcerpt: "typecheck not run: definitely-not-a-binary-xyz did not start",
+    notRun: true,
+  };
+  const sequence = (results: ("pass" | "notRun")[]): GateRunner => {
+    let i = 0;
+    return {
+      runGates: async (): Promise<GateResult> => {
+        const r = results[Math.min(i++, results.length - 1)];
+        return r === "pass"
+          ? { passed: true, failures: [], durationMs: 1, rungResults: [] }
+          : { passed: false, failures: [{ ...notRun }], durationMs: 1, rungResults: [] };
+      },
+    };
+  };
+
+  it("forced verification with only not-run gates stops done_pending_gates", async () => {
+    const card = await newCard({ stepBudget: 1 });
+    const result = await runner(card, {
+      stepBudget: 1,
+      gateRunner: sequence(["notRun"]),
+      modelAdapter: scripted(() => [write(1)]).adapter,
+    }).run();
+    expect(result.stopReason).toBe("done_pending_gates");
+  });
+
+  it("re-verification after a rebase with only not-run gates stops done_pending_gates", async () => {
+    const card = await newCard();
+    const { adapter } = scripted((t) => {
+      if (t === 1) {
+        // main moves under the card, touching another file: a clean rebase.
+        writeFileSync(join(repo, "src", "b.ts"), "export const b = 1;\n");
+        git(repo, "add", "-A");
+        git(repo, "commit", "-qm", "main moved");
+        return [write(1), finish];
+      }
+      return [finish];
+    });
+    const result = await runner(card, {
+      modelAdapter: adapter,
+      gateRunner: sequence(["pass", "notRun"]),
+    }).run();
+    expect(result.stopReason).toBe("done_pending_gates");
+  });
+});
+
+describe("note's gate enum holds only the gates this attempt runs (B2.3 confirmation)", () => {
+  it("leaves out a declared gate whose rung the attempt does not run", async () => {
+    const card = await newCard();
+    const { adapter, seen } = scripted(() => [finish]);
+    await runner(card, { modelAdapter: adapter, restricted: true }).run();
+    const noteTool = seen[0]?.tools?.find((t) => t.name === "note");
+    const gateEnum = (
+      noteTool?.parameters as { properties: Record<string, { enum?: string[] }> } | undefined
+    )?.properties.gate?.enum;
+    // Restricted mode runs the static layer only: typecheck and lint, not unit.
+    expect(gateEnum).toContain("typecheck");
+    expect(gateEnum).not.toContain("unit");
   });
 });

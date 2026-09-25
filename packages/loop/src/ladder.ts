@@ -1,3 +1,4 @@
+import { workerCopy } from "@sekhemet/context";
 import type { GateFailure } from "@sekhemet/gates";
 
 /**
@@ -47,8 +48,9 @@ export const REPAIR_LADDER: RungPolicy[] = [
     maxAttempts: 1,
     resetContext: true,
     requireSketch: false,
-    directive:
-      "Previous repair attempts did not resolve this. Your turn history has been cleared. Re-read the relevant files from disk before editing — do not rely on what you believed the file contained.",
+    // From the Worker's copy module: it points at the content in the prompt
+    // rather than asking for a re-read the scope files mark as unneeded.
+    directive: workerCopy.freshContextDirective,
   },
   {
     rung: "edit_sketch",

@@ -11,6 +11,7 @@ export * from "./repo_map.js";
 export * from "./ladder.js";
 export * from "./card_runner.js";
 export * from "./tool_catalog.js";
+export * from "./tool_schema.js";
 export * from "./parse_gate.js";
 export * from "./manager.js";
 export * from "./api_surface.js";

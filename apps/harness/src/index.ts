@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { freemem, tmpdir, totalmem } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { BoardServiceImpl, evidenceSummaryOf } from "@sekhemet/board";
+import { type RunProfile, type SuiteRunResult, runScore } from "@sekhemet/eval";
 import {
   DeterministicGateRunner,
   detectGateTemplate,
@@ -28,8 +29,6 @@ import {
 } from "@sekhemet/kernel";
 import { planRepair } from "@sekhemet/loop";
 import {
-  HttpInferenceAdapter,
-  MANAGED_MODEL_NAMES,
   MemoryWatchdog,
   ModelRegistry,
   ModelRoster,
@@ -38,7 +37,6 @@ import {
   PrefixCacheMonitor,
   ThroughputMeter,
   type UnloadableAdapter,
-  createNail35BAdapter,
   defaultRegistryPath,
   measureThroughput,
   resolveWorkerModelId,
@@ -54,7 +52,7 @@ import { NodeGitSyncAdapter, gitEnvFor, hardenGitForProcess } from "@sekhemet/sy
 import { runAcpStdio } from "./acp.js";
 import { isAirgapped, mirrorRegistry } from "./airgap.js";
 import { resolveVisionModel, visionPrePass } from "./attachments.js";
-import { parseModelList, runCalibrate } from "./calibrate_cmd.js";
+import { parseModelList, runCalibrate, runMtpAb } from "./calibrate_cmd.js";
 import { resolveConfig } from "./config.js";
 import { effectiveConfig, networkConfigs, queueDefaults, reviewLimit } from "./config_apply.js";
 import { daemonStart, daemonStatus, daemonStop } from "./daemon.js";
@@ -71,6 +69,7 @@ import {
   inferDependencies,
   nextAttemptNumber,
   pruneRunData,
+  recordQueueProgress,
   recordReview,
   requestAbort,
   rewindCard,
@@ -87,16 +86,24 @@ import { reviewCard } from "./learning/review.js";
 import { LearningStore } from "./learning/store.js";
 import { licenseGate } from "./license_gate.js";
 import { runMcpStdioServer } from "./mcp.js";
+import {
+  autoAcceptRefusal,
+  profileForQueue,
+  profileForRun,
+  readMeasurementMarker,
+} from "./measure_cmd.js";
 import { sendPush, startNotifier } from "./notify.js";
 import { runOvernight } from "./overnight.js";
 import { DEFAULT_PM_MODEL, answerQueued, createPmAdapter, holdRunnerLease } from "./pm/service.js";
 import { PmStore } from "./pm/store.js";
+import { qualificationCombination, qualificationRefusal } from "./qualify.js";
 import { diffTrajectories, formatDiff, formatTrajectory, trajectories } from "./replay.js";
 import { isResearchCard, runResearchCard } from "./research/cards.js";
 import { CRAWL4AI_CREDIT, runResearchCommand } from "./research/cli.js";
 import { ResearchService, researchSources } from "./research/service.js";
 import { oneShotResearcher } from "./research/service.js";
 import { DEFAULT_DASHBOARD_PORT, startDashboardServer } from "./server.js";
+import { bakeOffOnSuitePath } from "./suite_path.js";
 import { tracesCommand } from "./tracing.js";
 import { trailerGate } from "./trailer_gate.js";
 import { nextForReview, park, sendBack, unpark } from "./triage.js";
@@ -109,7 +116,6 @@ import {
   applyTunedPolicy,
   liveReuseDeps,
   modelRegistry,
-  observeOutcome,
   planCommand,
   queuePrelude,
   recordBakeOff,
@@ -156,6 +162,7 @@ export interface CliConfig {
     | "skills"
     | "release"
     | "ci"
+    | "measure"
     | "help";
   targetArg?: string | undefined;
   restrictedMode: boolean;
@@ -435,6 +442,32 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       const i = rest.indexOf(name);
       return i === -1 ? undefined : rest[i + 1];
     };
+    // `sekhemet calibrate --mtp-ab --from <repo,...> [--max-steps N] [--thinking off|surgical|all] [--worker cyber-tiel]`:
+    // MTP decided on recorded Worker steps (MD-M11-1/2).
+    if (rest.includes("--mtp-ab")) {
+      const repos = (flag("--from") ?? "").split(",").filter(Boolean);
+      if (repos.length === 0) {
+        console.error(
+          "Usage: sekhemet calibrate --mtp-ab --from <repo,...> [--max-steps N] [--thinking off|surgical|all]",
+        );
+        process.exitCode = 2;
+        return;
+      }
+      const maxSteps = Number(flag("--max-steps")) || undefined;
+      const thinking = flag("--thinking");
+      if (thinking !== undefined && !["off", "surgical", "all"].includes(thinking)) {
+        console.error("--thinking takes off, surgical or all");
+        process.exitCode = 2;
+        return;
+      }
+      process.exitCode = await runMtpAb({
+        repos,
+        ...(flag("--worker") ? { worker: flag("--worker") as string } : {}),
+        ...(maxSteps ? { maxSteps } : {}),
+        ...(thinking ? { thinking: thinking as "off" | "surgical" | "all" } : {}),
+      });
+      return;
+    }
     const buckets = flag("--buckets")
       ?.split(",")
       .map(Number)
@@ -893,6 +926,8 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         const root = req.repoRoot ?? req.cwd;
         const runner = new DeterministicGateRunner(new ProcessSandbox(), {
           repoRoot: root,
+          // The caller caps once, after every gate (gates rule 20).
+          maxFailuresReported: Number.POSITIVE_INFINITY,
           ...(req.expectedConfigSha256 ? { expectedConfigSha256: req.expectedConfigSha256 } : {}),
         });
         return runner.runGates(req.rungs, req.cwd);
@@ -1055,43 +1090,24 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     const fixture = flag("--fixture") ?? "chronicle";
     const manager = flag("--manager");
     const harnessRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-    const script = join(harnessRoot, "scripts", "run_gate.sh");
+    // The one measurement path (measurement MS-M9-1): each Worker runs the
+    // fixture through the suite runner, and so through the product's queue.
     const base = join(tmpdir(), `sekhemet-bakeoff-${Date.now()}`);
-
-    const rows: { worker: string; report?: QueueReport; error?: string }[] = [];
-    for (const worker of workers) {
-      const runRoot = join(base, worker.replace(/[^A-Za-z0-9._-]/g, "_"));
-      mkdirSync(runRoot, { recursive: true });
-      console.log(`\n=== bake-off: ${worker} on ${fixture} ===`);
-      const code = await new Promise<number>((resolve) => {
-        const child = spawn(
-          "bash",
-          [script, fixture, "--worker", worker, ...(manager ? ["--manager", manager] : [])],
-          { stdio: "inherit", env: { ...process.env, GATE_RUN_DIR: runRoot } },
-        );
-        child.on("exit", (c) => resolve(c ?? 1));
-      });
-
-      const runDir = readdirSync(runRoot).map((d) => join(runRoot, d))[0];
-      const reportPath = runDir ? join(runDir, ".sekhemet", "queue_report.json") : "";
-      if (reportPath && existsSync(reportPath)) {
-        rows.push({ worker, report: JSON.parse(readFileSync(reportPath, "utf8")) as QueueReport });
-      } else {
-        rows.push({ worker, error: `no report (exit ${code})` });
-      }
-    }
+    const rows = await bakeOffOnSuitePath({ harnessRoot, workers, fixture, manager, dir: base });
 
     console.log(`\nBake-off on ${fixture}${manager ? ` (manager: ${manager})` : ""}`);
-    console.log("worker                                   Pass@1  escalated  minutes  tokens");
+    console.log(
+      "worker                                   passed/measured  first try  minutes  tokens",
+    );
     for (const row of rows) {
-      if (!row.report) {
+      if (!row.result) {
         console.log(`${row.worker.padEnd(40)} ${row.error}`);
         continue;
       }
-      const r = row.report;
-      const tokens = r.entries.reduce((n, e) => n + e.promptTokens + e.completionTokens, 0);
+      const r = row.result;
+      const score = runScore(r);
       console.log(
-        `${row.worker.padEnd(40)} ${(r.passAt1 * 100).toFixed(0).padStart(5)}%  ${(((r.passAfterEscalation ?? r.passAt1) as number) * 100).toFixed(0).padStart(8)}%  ${(r.totalDurationMs / 60000).toFixed(1).padStart(7)}  ${String(tokens).padStart(6)}`,
+        `${row.worker.padEnd(40)} ${`${score.passed}/${score.measured}`.padStart(15)}  ${String(r.firstTry).padStart(9)}  ${(r.cost.wallClockSeconds / 60).toFixed(1).padStart(7)}  ${String(r.cost.tokens).padStart(6)}`,
       );
     }
     const out = join(config.repoPath, ".sekhemet", "bakeoff_report.json");
@@ -1104,15 +1120,15 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       config.repoPath,
       fixture,
       rows
-        .filter((r) => r.report)
+        .filter((r) => r.result)
         .map((r) => {
-          const rep = r.report as QueueReport;
+          const res = r.result as SuiteRunResult;
           return {
             adapter: bakeRoster.resolve(r.worker, "worker"),
-            passed: rep.entries.filter((e) => e.passed && e.attempt === 1).length,
-            total: new Set(rep.entries.map((e) => e.cardId)).size,
-            minutes: rep.totalDurationMs / 60000,
-            tokens: rep.entries.reduce((n, e) => n + e.promptTokens + e.completionTokens, 0),
+            passed: res.firstTry,
+            total: runScore(res).measured,
+            minutes: res.cost.wallClockSeconds / 60,
+            tokens: res.cost.tokens,
             stepBudget: appliedStepBudget(config.repoPath) ?? DEFAULT_STEP_BUDGET,
           };
         }),
@@ -1168,6 +1184,18 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       process.exit(1);
     }
 
+    // One recorded RunProfile (measurement MS-M9-4/5): resolved once from the
+    // settings file, the experiment switches and the flags, written into the
+    // card's evidence, and the switches the card runs with are read from it.
+    let runProfile: RunProfile;
+    try {
+      runProfile = profileForRun(argv, process.env);
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exitCode = 2;
+      return;
+    }
+
     console.log(`\nExecuting card ${cardId}: "${card.title}"`);
     console.log(`Scope: [${card.scopeFiles.join(", ") || "unrestricted"}]`);
     console.log(`Budget: ${card.stepBudget} steps\n`);
@@ -1179,17 +1207,33 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     // settings; no flag is the default Worker, as before.
     const workerIdx = argv.indexOf("--worker");
     const workerName = workerIdx !== -1 ? argv[workerIdx + 1]?.replace(/^ollama\//, "") : undefined;
-    const model = !workerName
-      ? createNail35BAdapter()
-      : (MANAGED_MODEL_NAMES as readonly string[]).includes(workerName)
-        ? new ModelRoster({ registry: modelRegistry() }).resolve(workerName, "worker")
-        : new HttpInferenceAdapter({ ...NAIL_WORKER_PROFILE, modelId: workerName });
+    // Through the roster, as `qualify` and the queue build it, so the three
+    // agree on the combination (B2.2 confirmation): one registry, read once.
+    const registry = modelRegistry();
+    const model = new ModelRoster({ registry }).resolve(
+      workerName ?? NAIL_WORKER_PROFILE.modelId,
+      "worker",
+    );
     console.log(`Worker: ${model.modelId}`);
+    // MD-N8-1: the Worker runs cards only once its exact combination (engine,
+    // model build, host, settings) has qualified on this host. Nothing loads.
+    const refusal = qualificationRefusal(
+      registry,
+      model,
+      qualificationCombination(model, { registry }),
+      workerName ?? model.modelId,
+    );
+    if (refusal) {
+      console.error(refusal);
+      process.exitCode = 1;
+      return;
+    }
     const ctx = {
       repoPath: config.repoPath,
       restrictedMode: config.restrictedMode,
       cardStore,
       boardService,
+      runProfile,
     };
     let result: Awaited<ReturnType<typeof executeCard>>;
     // Ctrl+C stops the card cleanly before its next turn (L25); a second exits.
@@ -1201,7 +1245,10 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     };
     process.on("SIGINT", onSigint);
     try {
-      result = await executeCard(ctx, card, model, undefined, { signal: stop.signal });
+      result = await executeCard(ctx, card, model, undefined, {
+        signal: stop.signal,
+        ...(runProfile.policies.stepCap ? { maxSteps: runProfile.policies.stepCap } : {}),
+      });
     } finally {
       process.off("SIGINT", onSigint);
       // Release the weights on every exit path, including a crash mid-card:
@@ -1232,6 +1279,33 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     // One run profile, so a run exercises what was built (integration review):
     // --profile full = exploration, escalated retries, review, and the step
     // cap the replay tuner recommended (16 until a tuning report exists).
+    // One recorded RunProfile (measurement MS-M9-1, MS-M9-4): the queue is the
+    // path every measured run takes, so it resolves its settings once and
+    // records them in every attempt's evidence. Flags that cannot resolve to
+    // one profile (`--profile full` rewrites four others) run as before and
+    // record none; refusing them on the command line is surface's (SUR-45).
+    // --auto-accept stands in for the person only in a repository a measured
+    // run prepared (review M5): the human is the rate limiter.
+    const acceptRefusal = autoAcceptRefusal(argv, config.repoPath);
+    if (acceptRefusal) {
+      console.error(acceptRefusal);
+      process.exitCode = 2;
+      return;
+    }
+    const measurement = argv.includes("--auto-accept")
+      ? readMeasurementMarker(config.repoPath)
+      : undefined;
+    let queueProfile: RunProfile | undefined;
+    try {
+      queueProfile = profileForQueue(
+        argv,
+        process.env,
+        queueDefaults(effectiveConfig(config.repoPath, argv).config, []),
+        appliedStepBudget(config.repoPath),
+      );
+    } catch (err) {
+      console.log(`Run profile not recorded: ${err instanceof Error ? err.message : String(err)}`);
+    }
     if (argv[argv.indexOf("--profile") + 1] === "full") {
       let cap = 16;
       try {
@@ -1279,16 +1353,28 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     // signals, ceremonies, goals, the throughput floor, and WSJF/RICE order.
     let ready: CardRecord[];
     try {
+      // MD-N8-1: the Worker's combination must have qualified on this host;
+      // resolving it builds the adapter without starting a server.
+      const workerName = workerModel ?? NAIL_WORKER_PROFILE.modelId;
+      const registry = modelRegistry();
+      const workerProbe = new ModelRoster({ registry }).resolve(workerName, "worker");
       ({ ordered: ready } = await queuePrelude(
         { repoPath: config.repoPath, cardStore, log },
         readyRaw,
         {
+          workerRefusal: qualificationRefusal(
+            registry,
+            workerProbe,
+            qualificationCombination(workerProbe, { registry }),
+            workerName,
+          ),
           workerModelId: workerModel ?? NAIL_WORKER_PROFILE.modelId,
           reviewWip: (await boardService.getBoardState()).wipLimits.review,
         },
       ));
     } catch (err) {
-      // M15: below the overnight throughput floor the harness refuses to run.
+      // M15: below the overnight throughput floor the harness refuses to run;
+      // MD-N8-1: so it does with a Worker whose combination has not qualified.
       console.error(err instanceof Error ? err.message : String(err));
       process.exitCode = 1;
       return;
@@ -1565,6 +1651,8 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       askTeam: (cardId: string, question: string, meta: { questionEntryId?: string }) =>
         askTeam(cardId, question, meta),
       watchdog,
+      ...(queueProfile ? { runProfile: queueProfile } : {}),
+      ...(measurement ? { measurement } : {}),
       afterTurn: async (_cardId: string, turn: { turnIndex: number }) => {
         await answerPm(turn.turnIndex).catch((err) =>
           console.log(`   PM: could not answer (${err instanceof Error ? err.message : err})`),
@@ -1717,6 +1805,16 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         ...(result.resumedFrom ? { resumedFromStep: result.resumedFrom.step } : {}),
         ...(result.replan ? { replanRequested: true } : {}),
       });
+      // The report so far, after every entry: a run stopped part-way (the
+      // suite runner's timeout) keeps the record of every card it finished.
+      recordQueueProgress(config.repoPath, {
+        startedAt: new Date(started).toISOString(),
+        model: workerModelId,
+        ...(managerModel ? { managerModel } : {}),
+        entries,
+        modelSwaps: router.swapCount,
+        totalDurationMs: Date.now() - started,
+      });
       console.log(
         `   ${result.passed ? "PASSED" : "FAILED"} (${result.stopReason}) in ${result.evidence.turnsUsed} turns, ${(result.evidence.durationMs / 1000).toFixed(1)}s`,
       );
@@ -1729,9 +1827,8 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         ).catch(() => undefined);
         if (note) console.log(`   ${note.split("\n").join("\n   ")}`);
       }
-      // The learning guard watches the outcome of the last learning change (E17).
-      const guardNote = observeOutcome(config.repoPath, card.id, result.passed);
-      if (guardNote) console.log(`   ${guardNote}`);
+      // The learning guard observes every card once, in the card runner
+      // (`learnFromOutcome`); observing here too counted each card twice.
       if (result.stopReason === "memory_pressure") {
         console.log("   queue halted: memory pressure");
         halted = true;
@@ -1872,12 +1969,20 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
               text: r.answer.slice(0, 500),
               scope: {},
               source: "research",
+              // The struggle is the executed signal; the Researcher's answer
+              // is a synthesis (MS-T8-9). The candidate waits for a person:
+              // probation is off (O15, MS-T8-15).
               evidence: [
-                { cardId: u.cardId, note: `Researcher, sources: ${r.sources.join("; ")}` },
+                { cardId: u.cardId, note: u.text, source: "gate", verified: "execution" },
+                {
+                  cardId: u.cardId,
+                  note: `Researcher, sources: ${r.sources.join("; ")}`,
+                  source: "researcher",
+                  verified: "none",
+                },
               ],
             });
-            if (rule) runRules.add(rule.id);
-            console.log(`   Researcher proposed a rule for ${u.cardId}`);
+            if (rule) console.log(`   Researcher proposed a candidate rule for ${u.cardId}`);
           }
         }
 
@@ -2025,7 +2130,7 @@ function printFrontDoorHelp(): void {
 function printDevHelp(): void {
   const lines: [string, string][] = [
     ["plan <spec>", "Decompose a spec into cards without running them"],
-    ["queue [--auto-accept] [--worker m] [--manager m]", "Run Ready cards"],
+    ["queue [--worker m] [--manager m]", "Run Ready cards"],
     ["resume <card>", "Continue a card that stopped part-way"],
     ["gate [card]", "Run the verification gates"],
     ["gates init", "Write the gate template for this project's language"],

@@ -13,13 +13,23 @@ export type GateRung =
 /** The six verification layers a gate can belong to. */
 export type GateLayer = "static" | "functional" | "robustness" | "security" | "visual" | "hygiene";
 
-/** Where a failure occurred, when the parser can pin it down. */
+/**
+ * Where a failure occurred. `file` is repository-relative; `.` names the
+ * whole change, for a failure about no one file (bounds, a gate that could
+ * not run).
+ */
 export interface FailureLocation {
   file: string;
   line?: number;
   column?: number;
 }
 
+/**
+ * The one shape a failure reaches the model in (gates rule 19). The six
+ * fields `gate`, `location`, `expected`, `actual`, `minimalRepro` and
+ * `suggestedAction` are required and non-empty (GT-M6-6); the pipeline also
+ * checks them at run time (`assertCompleteFailures`, `finalizeFailures`).
+ */
 export interface GateFailure {
   rung: GateRung;
   exitCode: number;
@@ -28,27 +38,40 @@ export interface GateFailure {
   suggestedFixFiles: string[];
 
   /** Identifier of the gate that produced this failure. */
-  gate?: string;
+  gate: string;
   layer?: GateLayer;
-  location?: FailureLocation;
+  location: FailureLocation;
   /** What the gate required. */
-  expected?: string;
+  expected: string;
   /** What it observed instead. */
-  actual?: string;
+  actual: string;
   /**
-   * The exact command that reproduces this failure.
+   * The exact command that reproduces this failure; for a harness-run layer
+   * with no command of its own, `check`, the tool that runs every gate again.
    *
    * A description is not sufficient: the agent must be able to re-run it
    * verbatim to confirm a repair.
    */
-  minimalRepro?: string;
-  suggestedAction?: string;
+  minimalRepro: string;
+  /** What to do next, completable in one step (rule 21), from the gates copy module. */
+  suggestedAction: string;
+  /**
+   * The gate could not run (rule 9): it is not the card's work and never
+   * counts against the model. Ranked after every real failure; when only
+   * such failures remain, the card stops with `done_pending_gates`.
+   */
+  notRun?: boolean;
 }
+
+/** The same type: every `GateFailure` is complete. Kept as a name for readers of rank.ts. */
+export type CompleteGateFailure = GateFailure;
 
 export interface GateResult {
   passed: boolean;
   failures: GateFailure[];
   durationMs: number;
+  /** Harness defects found while finalizing failures (an incomplete failure, filled in). */
+  defects?: string[];
   /** Per-gate outcomes, retained even when a later gate fails. */
   rungResults?: RungOutcome[];
 }
@@ -61,9 +84,30 @@ export interface RungOutcome {
   exitCode: number;
   durationMs: number;
   skipped?: boolean;
+  /** Why a gate did not run, for the evidence: a skipped or not-run outcome says so. */
+  reason?: string;
+  /** The mutation gate's measurement, for the evidence (measurement MS-M10-4). */
+  mutation?: MutationMeasure;
+}
+
+/**
+ * What the mutation gate measured. `score` is killed over total, and `null`
+ * when it is not measured: the tests fail on the unmutated change
+ * (`refused`) or the change has no mutable lines. It is never 1 by default.
+ */
+export interface MutationMeasure {
+  score: number | null;
+  killed: number;
+  total: number;
+  /** Why the gate did not score. */
+  refused?: string;
+  /** Changed code in a language the gate cannot mutate, each with the reason. */
+  notMeasured: { file: string; reason: string }[];
 }
 
 export interface BoundsCheckOptions {
+  /** The integration branch the diff is measured against, for the repro (default `main`). */
+  base?: string;
   filesTouched: string[];
   linesAdded: number;
   linesRemoved: number;
@@ -73,7 +117,7 @@ export interface BoundsCheckOptions {
 
 export interface BoundsCheckResult {
   passed: boolean;
-  failure?: GateFailure;
+  failure?: CompleteGateFailure;
 }
 
 /** One executable gate, as declared in `gates.toml`. */
@@ -144,4 +188,9 @@ export interface GatesConfig {
 
 export interface GateRunner {
   runGates(rungs: GateRung[], cwd: string): Promise<GateResult>;
+  /**
+   * The ids of the gates a wrapper adds around its inner runner, innermost
+   * first (GT-M6-5: `note`'s enum is built from them, never from a hand copy).
+   */
+  gateIds?: readonly string[];
 }

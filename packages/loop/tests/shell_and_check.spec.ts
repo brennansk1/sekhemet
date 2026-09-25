@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, platform, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,6 +14,16 @@ describe("@sekhemet/loop shell command lines and the check tool", () => {
     root = mkdtempSync(join(tmpdir(), "shellcheck-"));
     mkdirSync(join(root, "src"), { recursive: true });
     writeFileSync(join(root, "src", "a.ts"), "one\ntwo\nthree\n");
+    // A card worktree is a git repository: the integrity gate reads its diff.
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: root });
+    execFileSync("git", ["-c", "user.email=t@t.t", "-c", "user.name=T", "add", "-A"], {
+      cwd: root,
+    });
+    execFileSync(
+      "git",
+      ["-c", "user.email=t@t.t", "-c", "user.name=T", "commit", "-q", "-m", "seed"],
+      { cwd: root },
+    );
   });
   afterEach(() => rmSync(root, { recursive: true, force: true }));
 
@@ -64,6 +75,10 @@ describe("@sekhemet/loop shell command lines and the check tool", () => {
               exitCode: 2,
               errorExcerpt: "src/a.ts:1:1 TS2304: Cannot find name 'x'.",
               suggestedFixFiles: ["src/a.ts"],
+              expected: "the gate to pass",
+              actual: "it failed",
+              minimalRepro: "pnpm test",
+              suggestedAction: "Fix the failure shown.",
               location: { file: "src/a.ts", line: 1 },
             },
           ],
@@ -103,6 +118,11 @@ describe("@sekhemet/loop shell command lines and the check tool", () => {
       exitCode: 2,
       errorExcerpt: `src/a.ts:${n}:1 TS2304: Cannot find name 'x${n}'.`,
       suggestedFixFiles: ["src/a.ts"],
+      location: { file: "src/a.ts" },
+      expected: "the gate to pass",
+      actual: "it failed",
+      minimalRepro: "pnpm test",
+      suggestedAction: "Fix the failure shown.",
     });
     // Fails with two errors on submit, then passes on the re-check after the edit.
     const runner: GateRunner = {
@@ -168,6 +188,11 @@ describe("@sekhemet/loop shell command lines and the check tool", () => {
               errorExcerpt:
                 "src/a.ts:29:6 TS2339: Property 'run' does not exist on type 'DatabaseSync'.",
               suggestedFixFiles: ["src/a.ts"],
+              location: { file: "src/a.ts" },
+              expected: "the gate to pass",
+              actual: "it failed",
+              minimalRepro: "pnpm test",
+              suggestedAction: "Fix the failure shown.",
             },
           ],
         };
@@ -235,6 +260,10 @@ describe("@sekhemet/loop shell command lines and the check tool", () => {
             errorExcerpt:
               "src/a.ts:3:10 TS2375: Type is not assignable with exactOptionalPropertyTypes.",
             suggestedFixFiles: ["src/a.ts"],
+            expected: "the gate to pass",
+            actual: "it failed",
+            minimalRepro: "pnpm test",
+            suggestedAction: "Fix the failure shown.",
             location: { file: "src/a.ts", line: 3 },
           },
         ],
@@ -314,6 +343,10 @@ describe("@sekhemet/loop shell command lines and the check tool", () => {
             errorExcerpt:
               "src/a.ts:2:5 TS2339: Property 'run' does not exist on type 'DatabaseSync'.",
             suggestedFixFiles: ["src/a.ts"],
+            expected: "the gate to pass",
+            actual: "it failed",
+            minimalRepro: "pnpm test",
+            suggestedAction: "Fix the failure shown.",
             location: { file: "src/a.ts", line: 2 },
           },
         ],

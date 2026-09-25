@@ -14,6 +14,8 @@ export * from "./kv_policy.js";
 export * from "./registry.js";
 export * from "./calibration.js";
 export * from "./qualification.js";
+export * from "./qualification_key.js";
 export * from "./schedule.js";
 export * from "./bakeoff.js";
 export * from "./chat_template.js";
+export * from "./quantisation.js";

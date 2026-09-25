@@ -9,3 +9,5 @@ export * from "./builtin.js";
 export * from "./templates.js";
 export * from "./visual.js";
 export * from "./gate_host.js";
+export * from "./copy.js";
+export * from "./rank.js";

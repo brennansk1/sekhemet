@@ -6,8 +6,10 @@ import {
   type GateResult,
   type GateRung,
   type GateRunner,
+  RERUN_GATES,
   type RungOutcome,
   exportsFromSource,
+  gateCopy,
   moduleExports,
 } from "@sekhemet/gates";
 
@@ -228,9 +230,10 @@ export function reachabilityGate(
     location: { file, line: 0, column: 0 },
     expected: "every export this card adds is used or required",
     actual: `${name} has no caller`,
+    minimalRepro: RERUN_GATES,
     // Completable in one step, as every remedy must be: the model already
     // knows the name and the file, and each option is a single edit.
-    suggestedAction: `Nothing uses ${name}. Either wire it into the code that needs it, or remove the export (keep it unexported if it is a local helper). If a later card genuinely needs it, say so with note rather than leaving it dangling.`,
+    suggestedAction: gateCopy.unusedExport(name),
   }));
 }
 
@@ -241,6 +244,8 @@ export function withReachabilityGate(
   base = "main",
 ): GateRunner {
   return {
+    // GT-M6-5: the gate this wrapper adds, for `note`'s enum.
+    gateIds: [...(inner.gateIds ?? []), "reachability"],
     runGates: async (rungs: GateRung[], cwd: string): Promise<GateResult> => {
       const res = await inner.runGates(rungs, cwd);
       const started = Date.now();

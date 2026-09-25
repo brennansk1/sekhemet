@@ -94,6 +94,8 @@ describe("Y14/Y15/Y16: the PR through the App", () => {
         rungResults: [
           { gate: "typecheck", passed: false, durationMs: 10 },
           { gate: "test", passed: true, durationMs: 20 },
+          // A requested rung with no gate: recorded, never posted as a failing check.
+          { gate: "parse", passed: false, skipped: true, durationMs: 0, reason: "no gate" },
         ],
         failures: [{ gate: "typecheck", errorExcerpt: "src/a.ts(3,1): error TS2322: bad" }],
         diff: "+++ b/src/a.ts\n",

@@ -3,17 +3,55 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   type LiteralInventory,
+  MODEL_PATH_FILES,
   compareWithInventory,
+  copyModuleShapedFiles,
   extractModelFacingLiterals,
   inventoryOf,
   scanModelFacingLiterals,
 } from "../src/prompt_literals.js";
+import { unregisteredCopyModules } from "../src/prompt_tags.js";
 
 // Context CX-M1-13 and PROMPT_STANDARD rules 13 and 36: every model-facing
 // literal outside a copy module is recorded, and the record may only shrink.
 
+/**
+ * The number of literals in prompt_literals_baseline.json, exactly. A record
+ * that shrinks lowers it in the same change, so a hand edit of the JSON shows
+ * here. History: 506 at first; 513 when the inventory also read `directive:`
+ * fields, `ladder.ts` and `working_memory.ts`; 495 when B2.3 moved 18 gate
+ * remedies into the gates copy module; 483 when the B2 coherence pass moved
+ * 12 Worker literals into the Worker copy module; 481 when edit's
+ * not-found remedy and recall's description moved there too; 446 when the
+ * B2.1 review's fixes moved 13 more (the harness's 8 project-gate remedies
+ * into the gates copy module; 4 lines of worker_prompt.ts and 1 of
+ * session.ts into the Worker copy module) and the 22 qualification strings
+ * moved into the qualification copy module.
+ */
+const RECORDED_LITERAL_TOTAL = 446;
+
 const texts = (file: string, source: string) =>
   extractModelFacingLiterals(file, source).map((l) => l.text);
+
+describe("a refusal is model-facing only where the Worker meets it", () => {
+  const refusal = (name: string) =>
+    `export function ${name}(model: string) { return \`Refusing \${model} as the Worker: not qualified for this combination on this host.\`; }`;
+
+  it("does not inventory a refusal the harness application says to a person", () => {
+    expect(texts("apps/harness/src/qualify.ts", refusal("qualificationRefusal"))).toEqual([]);
+  });
+
+  it("names the person-facing builders, so another refusal in the app is still inventoried", () => {
+    expect(texts("apps/harness/src/x.ts", refusal("toolRefusal"))).toHaveLength(1);
+  });
+
+  it("still inventories a refusal built on the Worker's path", () => {
+    expect(texts("packages/loop/src/x.ts", refusal("confinementRefusal"))).toEqual([
+      "Refusing ${} as the Worker: not qualified for this combination on this host.",
+    ]);
+    expect(texts("packages/sandbox/src/x.ts", refusal("addressRefusal"))).toHaveLength(1);
+  });
+});
 
 describe("finding model-facing literals", () => {
   it("finds prompts, tool descriptions and chat content by where they are written", () => {
@@ -61,11 +99,31 @@ describe("finding model-facing literals", () => {
     `;
     expect(texts("packages/kernel/src/x.ts", source)).toEqual([]);
     expect(
+      texts("packages/gates/src/copy.ts", 'const P = { prompt: "Write the plan now please." };'),
+    ).toEqual([]);
+  });
+
+  it("does not exempt a file shaped like a copy module that is not registered", () => {
+    expect(
       texts(
         "packages/loop/src/worker_copy.ts",
         'const P = { prompt: "Write the plan now please." };',
       ),
-    ).toEqual([]);
+    ).toEqual(["Write the plan now please."]);
+  });
+
+  it("finds a repair rung's directive", () => {
+    expect(
+      texts(
+        "packages/kernel/src/x.ts",
+        'const r = { rung: "x", directive: "Repair the specific failure above now." };',
+      ),
+    ).toEqual(["Repair the specific failure above now."]);
+  });
+
+  it("reads the repair ladder and the working memory as the Worker's prompt path", () => {
+    expect(MODEL_PATH_FILES).toContain("packages/loop/src/ladder.ts");
+    expect(MODEL_PATH_FILES).toContain("packages/loop/src/working_memory.ts");
   });
 
   it("counts every prose literal in a file on the model's path", () => {
@@ -107,12 +165,15 @@ describe("CX-M1-13: the repository's model-facing literals", () => {
   const root = join(import.meta.dirname, "..", "..", "..");
   const path = join(import.meta.dirname, "..", "prompt_literals_baseline.json");
 
+  it("registers every file shaped like a copy module (rule 13)", () => {
+    expect(unregisteredCopyModules(copyModuleShapedFiles(root))).toEqual([]);
+  });
+
   it("adds no model-facing literal outside a copy module, and the record only shrinks", () => {
     const current = scanModelFacingLiterals(root);
     expect(current.length).toBeGreaterThan(50);
-    if (process.env.SEKHEMET_RECORD_PROMPT_BASELINE === "1" && !existsSync(path)) {
-      writeFileSync(path, `${JSON.stringify(inventoryOf(current), null, 2)}\n`);
-    }
+    // Recording never creates the record: a missing file would accept everything.
+    expect(existsSync(path), `${path} is missing; restore it from git`).toBe(true);
     const read = () => JSON.parse(readFileSync(path, "utf8")) as LiteralInventory;
     let diff = compareWithInventory(current, read());
     // Recording only ever shrinks the record: it refuses while anything is added.
@@ -128,5 +189,9 @@ describe("CX-M1-13: the repository's model-facing literals", () => {
       diff.stale.map((e) => `${e.file} ${e.text}`),
       "recorded literals that are gone: rerun with SEKHEMET_RECORD_PROMPT_BASELINE=1 to shrink the record",
     ).toEqual([]);
+    expect(
+      read().literals.length,
+      "the record's size differs from RECORDED_LITERAL_TOTAL: lower the constant with the record",
+    ).toBe(RECORDED_LITERAL_TOTAL);
   });
 });

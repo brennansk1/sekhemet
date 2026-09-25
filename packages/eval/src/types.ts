@@ -110,7 +110,35 @@ export interface TaskAttemptResult {
   regressed: string[];
   failureReason?: AttemptFailureReason | undefined;
   error?: string | undefined;
+  /**
+   * Steps the product's card execution recorded, and those whose reply held
+   * a well-formed call to an offered tool (no format error, not prose only):
+   * the M0 protocol's valid-tool-call rate (measurement MS-M9-6).
+   */
+  toolCallSteps?: { steps: number; valid: number } | undefined;
 }
+
+/** One attempt as the product's card execution ran it (measurement MS-M9-1). */
+export interface ProductCardRun {
+  stopReason: string;
+  turnsUsed: number;
+  promptTokens: number;
+  completionTokens: number;
+  /** Per step, from the evidence (worker-loop WL-M2-5). */
+  steps: { formatErrors: number; proseOnly: number }[];
+}
+
+/**
+ * Runs one attempt in a prepared workspace through the product's card
+ * execution, leaving its accepted result in the workspace for the oracle.
+ */
+export type ProductCardRunner = (input: {
+  workspacePath: string;
+  task: SyntheticTask;
+  stepBudget: number;
+  attempt: number;
+  temperature: number;
+}) => Promise<ProductCardRun>;
 
 export interface TaskBenchmarkResult {
   taskId: string;
@@ -212,6 +240,12 @@ export interface BenchmarkOptions {
   /** Setup usually needs network (dependency install). Tests never do. */
   allowSetupNetwork?: boolean | undefined;
   onProgress?: ((event: BenchmarkProgressEvent) => void) | undefined;
+  /**
+   * Run each attempt through the product's card execution instead of an
+   * in-process session (measurement rule 9, MS-M9-1). `sekhemet m0` always
+   * passes one; the in-process session remains for this harness's own tests.
+   */
+  runCard?: ProductCardRunner | undefined;
 }
 
 export interface EvalHarness {

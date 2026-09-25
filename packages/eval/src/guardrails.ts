@@ -6,8 +6,9 @@ import { DEFAULT_STEP_BUDGET } from "@sekhemet/kernel";
  * Guardrails for every self-improvement loop (E5, E8, E17; design
  * "Rigorous guardrails across all loops"): changes are measured on the
  * frozen suites before they land, bounded in size, applied one at a time,
- * and rolled back automatically when the live pass rate drops over the
- * next 10 cards.
+ * and watched: the live pass rate over the next 10 cards is reported as an
+ * advisory signal, and a rollback waits for a paired suite run that shows a
+ * loss (measurement rule 18).
  */
 
 function readJson<T>(path: string, fallback: T): T {
@@ -86,17 +87,23 @@ export async function runFrozenRegressionGate(options: {
   };
 }
 
-// --------------------------------- E17: automatic rollback over a 10-card window
+// ------------------------------- E17: an advisory 10-card window (rule 18)
 
 export interface LearningChange {
   id: string;
   kind: "rule" | "skill" | "budget" | "prompt" | "tool" | "route";
   description: string;
   activatedAt: string;
-  /** Pass rate over the window before activation. */
-  baselinePassRate: number;
+  /** Pass rate over the window before activation; undefined with no history (never an assumed 1.0). */
+  baselinePassRate?: number;
   baselineCards: number;
-  status: "watching" | "kept" | "rolled_back";
+  /**
+   * `flagged`: the pass rate dropped over the window — an advisory signal,
+   * reported and never acted on. Rollback happens only on a later paired
+   * suite run that shows a loss (measurement rule 18, MS-T8-3).
+   * `rolled_back` appears only in state files written before that rule.
+   */
+  status: "watching" | "kept" | "flagged" | "insufficient data" | "rolled_back";
   outcomes: boolean[];
   resolvedAt?: string;
   reason?: string;
@@ -150,7 +157,9 @@ export class LearningGuard {
     const rec: LearningChange = {
       ...change,
       activatedAt: this.now(),
-      baselinePassRate: recent.length ? recent.filter((h) => h.passed).length / recent.length : 1,
+      ...(recent.length
+        ? { baselinePassRate: recent.filter((h) => h.passed).length / recent.length }
+        : {}),
       baselineCards: recent.length,
       status: "watching",
       outcomes: [],
@@ -162,29 +171,36 @@ export class LearningGuard {
 
   /**
    * Record one card outcome. When the watched change has seen `window`
-   * cards, it is kept or, if the pass rate dropped by more than `maxDrop`,
-   * rolled back: the returned decision tells the caller to undo it.
+   * cards, the window is reported: `flagged` when the pass rate dropped by
+   * more than `maxDrop`, `insufficient` when there was no history to compare
+   * with, else `kept`. It is advisory: nothing is undone here. At n = 10 the
+   * standard deviation is about 0.16 against a 0.1 threshold, so a rollback
+   * waits for a paired suite run that resolves a loss (rule 18, MS-T8-3).
    */
   public observe(
     cardId: string,
     passed: boolean,
-  ): { rollback?: LearningChange; kept?: LearningChange } {
+  ): { flagged?: LearningChange; kept?: LearningChange; insufficient?: LearningChange } {
     this.state.history.push({ cardId, passed, at: this.now() });
     const w = this.watching();
-    let result: { rollback?: LearningChange; kept?: LearningChange } = {};
+    let result: { flagged?: LearningChange; kept?: LearningChange; insufficient?: LearningChange } =
+      {};
     if (w) {
       w.outcomes.push(passed);
       if (w.outcomes.length >= this.window) {
         const rate = w.outcomes.filter(Boolean).length / w.outcomes.length;
-        const drop = w.baselinePassRate - rate;
         w.resolvedAt = this.now();
-        if (drop > (this.options.maxDrop ?? 0.1)) {
-          w.status = "rolled_back";
-          w.reason = `pass rate ${(rate * 100).toFixed(0)}% over ${w.outcomes.length} cards vs ${(w.baselinePassRate * 100).toFixed(0)}% before`;
-          result = { rollback: w };
+        if (w.baselinePassRate === undefined) {
+          w.status = "insufficient data";
+          w.reason = `insufficient data: no cards before ${w.id}, so its ${(rate * 100).toFixed(0)}% over ${w.outcomes.length} cards has nothing to compare with`;
+          result = { insufficient: w };
+        } else if (w.baselinePassRate - rate > (this.options.maxDrop ?? 0.1)) {
+          w.status = "flagged";
+          w.reason = `advisory: pass rate ${(rate * 100).toFixed(0)}% over ${w.outcomes.length} cards vs ${(w.baselinePassRate * 100).toFixed(0)}% before; only a paired suite run that shows a loss rolls it back (rule 18)`;
+          result = { flagged: w };
         } else {
           w.status = "kept";
-          w.reason = `pass rate ${(rate * 100).toFixed(0)}% held (baseline ${(w.baselinePassRate * 100).toFixed(0)}%)`;
+          w.reason = `pass rate ${(rate * 100).toFixed(0)}% held (baseline ${((w.baselinePassRate ?? 0) * 100).toFixed(0)}%)`;
           result = { kept: w };
         }
       }

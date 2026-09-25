@@ -2,6 +2,13 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import {
+  type QualificationCombination,
+  type SpeculativeSetting,
+  changedCombinationElements,
+  combinationKey,
+  describeCombination,
+} from "./qualification_key.js";
 import type { ToolArm } from "./types.js";
 
 /**
@@ -25,9 +32,40 @@ export interface QualificationRecord {
   status: "qualified" | "failed" | "invalidated";
   /** KV type the qualification ran with (below-8-bit KV needs one, M16). */
   kvType?: string;
-  /** Why the record was invalidated (a template change, M12). */
+  /** Why the record was invalidated (a template change, M12), or why it failed. */
   reason?: string;
   byCategory?: Record<string, number>;
+}
+
+/**
+ * One combination's qualification (rule 27a, MD-N8-1): the record, the exact
+ * combination it ran on, the speed measured with it, and whether the
+ * tool-call checks (schema validity, the multi-step conversation, recall and
+ * recovery) passed on their own.
+ */
+export interface CombinationQualification extends QualificationRecord {
+  key: string;
+  combination: QualificationCombination;
+  toolCallChecks?: boolean;
+  speed?: { decodeTokensPerSecond: number; medianCaseMs: number };
+}
+
+/** What a lookup found for a model and combination (MD-N8-1, MD-N8-4). */
+export interface QualificationLookup {
+  status: "qualified" | "failed" | "invalidated" | "missing";
+  /** One sentence: why the combination may or may not be used. */
+  reason: string;
+  /** For `invalidated`: the elements that differ from the nearest qualified combination. */
+  changed?: string[];
+  record?: CombinationQualification;
+}
+
+export type ThinkingPolicy = "off" | "surgical" | "all";
+
+/** SEKHEMET_THINKING=off|surgical|all; anything else is the default, off. */
+export function thinkingPolicyFromEnv(env: NodeJS.ProcessEnv = process.env): ThinkingPolicy {
+  const v = env.SEKHEMET_THINKING;
+  return v === "surgical" || v === "all" ? v : "off";
 }
 
 export interface SpeculativeDecision {
@@ -37,6 +75,10 @@ export interface SpeculativeDecision {
   reason: string;
   fingerprint: string;
   date: string;
+  /** The thinking policy it was measured under; a decision applies to that policy only (MD-M7-2). */
+  thinking?: ThinkingPolicy;
+  /** The draft model it was measured with (MD-N8-5); absent for the model's own MTP head. */
+  draft?: string;
 }
 
 export interface ModelEntry {
@@ -65,7 +107,14 @@ export interface ModelEntry {
   manifestTier?: string;
   /** Earlier qualification records, newest last. */
   qualificationHistory?: QualificationRecord[];
+  /** The latest speculative decision recorded, for display. */
   speculative?: SpeculativeDecision;
+  /** Each thinking policy's decision (MD-M7-2): the one a launch reads. */
+  speculativeByPolicy?: Partial<Record<ThinkingPolicy, SpeculativeDecision>>;
+  /** A draft model's decisions (MD-N8-5), keyed by the draft model, then the thinking policy. */
+  speculativeByDraft?: Record<string, Partial<Record<ThinkingPolicy, SpeculativeDecision>>>;
+  /** Qualifications per combination (rule 27a), newest last. */
+  qualifications?: CombinationQualification[];
   roles?: RegistryRole[];
 }
 
@@ -196,6 +245,114 @@ export class ModelRegistry {
     return q !== undefined && q.status === "qualified" && q.passRate >= bar;
   }
 
+  /**
+   * Record a qualification for one combination (MD-N8-1). The per-model
+   * record (`qualification`) is kept up to date as well, so readers written
+   * before combinations still see the latest result.
+   */
+  public recordCombinationQualification(
+    id: string,
+    combination: QualificationCombination,
+    record: Omit<CombinationQualification, "date" | "key" | "combination">,
+  ): CombinationQualification {
+    const entry = this.entries.get(id) ?? { id };
+    const date = this.now().toISOString();
+    const full: CombinationQualification = {
+      ...record,
+      date,
+      key: combinationKey(combination),
+      combination,
+    };
+    entry.qualifications = [...(entry.qualifications ?? []), full];
+    if (entry.qualification) {
+      entry.qualificationHistory = [...(entry.qualificationHistory ?? []), entry.qualification];
+    }
+    const { key: _k, combination: _c, toolCallChecks: _t, speed: _s, ...plain } = full;
+    entry.qualification = plain;
+    this.entries.set(id, entry);
+    this.save();
+    return full;
+  }
+
+  /**
+   * Whether a model may be used with this combination (MD-N8-1). The newest
+   * record for the exact combination decides; with none, the nearest
+   * qualified combination names what changed (MD-N8-4).
+   */
+  public lookupQualification(
+    id: string,
+    combination: QualificationCombination,
+  ): QualificationLookup {
+    const entry = this.entries.get(id);
+    const all = entry?.qualifications ?? [];
+    const key = combinationKey(combination);
+    const exact = [...all].reverse().find((q) => q.key === key);
+    if (exact) {
+      if (exact.status === "qualified") {
+        return {
+          status: "qualified",
+          reason: `qualified ${exact.date.slice(0, 10)}`,
+          record: exact,
+        };
+      }
+      const invalidated = exact.status === "invalidated";
+      return {
+        status: invalidated ? "invalidated" : "failed",
+        reason: `this combination ${invalidated ? "was invalidated" : "failed qualification"}${exact.reason ? `: ${exact.reason}` : ""}`,
+        record: exact,
+      };
+    }
+    const nearest = all
+      .filter((q) => q.status === "qualified")
+      .map((q) => ({ q, changed: changedCombinationElements(q.combination, combination) }))
+      .sort((a, b) => a.changed.length - b.changed.length)[0];
+    if (nearest) {
+      return {
+        status: "invalidated",
+        reason: `${nearest.changed.join(", ")} changed since it qualified (${describeCombination(nearest.q.combination)})`,
+        changed: nearest.changed,
+        record: nearest.q,
+      };
+    }
+    return {
+      status: "missing",
+      reason: entry?.qualification
+        ? "qualified per model, before combinations were recorded; this combination never qualified"
+        : "never qualified on this host",
+    };
+  }
+
+  /**
+   * The newest qualification of this model on this host with the given
+   * speculative setting, prefix caching on, and the given launch settings
+   * (MD-N8-2). The launch knows these elements; the rest of the combination
+   * (engine and model builds, template, context version) is checked when the
+   * model is assigned or used (MD-N8-1).
+   */
+  public speculativeQualification(
+    id: string,
+    want: {
+      host: string;
+      speculative: Exclude<SpeculativeSetting, "off">;
+      contextTokens?: number;
+      kvType?: string;
+      parallelSlots?: number;
+    },
+  ): CombinationQualification | undefined {
+    const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+    return [...(this.entries.get(id)?.qualifications ?? [])].reverse().find((q) => {
+      const s = q.combination.settings;
+      return (
+        q.combination.host === want.host &&
+        same(s.speculative, want.speculative) &&
+        s.prefixCaching &&
+        (want.contextTokens === undefined || s.contextTokens === want.contextTokens) &&
+        (want.kvType === undefined || s.kvType === want.kvType) &&
+        (want.parallelSlots === undefined || s.parallelSlots === want.parallelSlots)
+      );
+    });
+  }
+
   public recordThroughput(id: string, bucket: string, prefill: number, decode: number): void {
     const entry = this.entries.get(id) ?? { id };
     entry.throughput = { ...(entry.throughput ?? {}), [bucket]: { prefill, decode } };
@@ -206,6 +363,20 @@ export class ModelRegistry {
   public recordSpeculative(id: string, decision: SpeculativeDecision): void {
     const entry = this.entries.get(id) ?? { id };
     entry.speculative = decision;
+    if (decision.thinking && decision.draft) {
+      // A draft model's decision is its own (MD-N8-5): it never stands in for the MTP head's.
+      entry.speculativeByDraft = {
+        ...(entry.speculativeByDraft ?? {}),
+        [decision.draft]: {
+          ...(entry.speculativeByDraft?.[decision.draft] ?? {}),
+          [decision.thinking]: decision,
+        },
+      };
+    } else if (decision.thinking)
+      entry.speculativeByPolicy = {
+        ...(entry.speculativeByPolicy ?? {}),
+        [decision.thinking]: decision,
+      };
     this.entries.set(id, entry);
     this.save();
   }

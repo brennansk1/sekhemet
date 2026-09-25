@@ -434,6 +434,12 @@ export interface StepRecord {
   formatErrors?: number;
   /** 1 when the reply held no tool call and no attempt at one (worker-loop WL-M2-5). */
   proseOnly?: number;
+  /** Prompt tokens the server served from its cache, and evaluated (models MD-M4-4). */
+  cachedPromptTokens?: number;
+  evaluatedPromptTokens?: number;
+  /** With speculative decoding: tokens drafted and accepted (MD-M4-4). */
+  draftTokens?: number;
+  draftAcceptedTokens?: number;
   /** The checkpoint commit taken at this step, if one was (H18/H19). */
   gitRef?: string;
   createdAt: string;

@@ -57,7 +57,30 @@ export interface Trajectory {
   title: string;
   cardClass: string;
   passed: boolean;
-  steps: { action: string; result: string }[];
+  /** `closed: false` marks a tool call that never got its result. */
+  steps: { action: string; result: string; closed?: boolean }[];
+}
+
+/**
+ * A trajectory is structurally complete when its turns are in order and
+ * every tool call got its result (measurement MS-T8-6, context rule 25):
+ * only such a trajectory may become an exemplar or a skill's source. Counts
+ * a caller does not know are not held against it.
+ */
+export function structurallyComplete(
+  steps: readonly { turn?: number; calls?: number; observations?: number; closed?: boolean }[],
+): boolean {
+  let last = Number.NEGATIVE_INFINITY;
+  for (const st of steps) {
+    if (st.closed === false) return false;
+    if (st.calls !== undefined && st.observations !== undefined && st.observations < st.calls)
+      return false;
+    if (st.turn !== undefined) {
+      if (st.turn <= last) return false;
+      last = st.turn;
+    }
+  }
+  return true;
 }
 
 export interface SkillCandidate {
@@ -91,7 +114,7 @@ export async function distillSkill(
   trajectories: readonly Trajectory[],
   options: { minExamples?: number; adapter?: LocalInferenceAdapter; outDir?: string } = {},
 ): Promise<SkillCandidate | undefined> {
-  const wins = trajectories.filter((t) => t.passed);
+  const wins = trajectories.filter((t) => t.passed && structurallyComplete(t.steps));
   if (wins.length < (options.minExamples ?? 3)) return undefined;
   const cls = wins[0]?.cardClass ?? "general";
   const counts = new Map<string, number>();
@@ -169,13 +192,21 @@ export function harvestExemplars(
     scopeFiles: string[];
     passed: boolean;
     tokens: number;
-    turns: { turn: number; action: string; result: string }[];
+    turns: {
+      turn: number;
+      action: string;
+      result: string;
+      calls?: number;
+      observations?: number;
+    }[];
     date?: string;
   }[],
 ): Exemplar[] {
   const out: Exemplar[] = [];
   for (const c of cards) {
     if (!c.passed || c.turns.length === 0) continue;
+    // An unclosed tool call or turns out of order never become an exemplar (MS-T8-6).
+    if (!structurallyComplete(c.turns)) continue;
     const ex: Exemplar = {
       cardId: c.id,
       cardClass: cardClassOf(c),

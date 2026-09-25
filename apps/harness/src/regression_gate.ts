@@ -1,7 +1,15 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import type { GateFailure, GateResult, GateRung, GateRunner, RungOutcome } from "@sekhemet/gates";
+import {
+  type GateFailure,
+  type GateResult,
+  type GateRung,
+  type GateRunner,
+  RERUN_GATES,
+  type RungOutcome,
+  gateCopy,
+} from "@sekhemet/gates";
 import { changedSources } from "./reachability_gate.js";
 
 /**
@@ -99,7 +107,7 @@ export function regressionFailures(
       ...f,
       gate: "regression",
       suggestedFixFiles: changed,
-      suggestedAction: `${file} passed on main and fails with this card's change, so the change broke work that was already finished. The fix is in what you changed (${where}): make it keep ${file}'s behaviour while doing what this card asks. Do not edit the test.`,
+      suggestedAction: gateCopy.regressionBroken(file, where),
     };
   });
 
@@ -114,8 +122,8 @@ export function regressionFailures(
     // The Worker has write_file, not git: the failure carries what to write.
     const restore =
       original.length <= CARRY_LIMIT
-        ? `Restore it in one step: write_file ${file} with exactly this content, as it is on main:\n${original}`
-        : `It is ${original.split("\n").length} lines on main, too long to restore by hand here: say with note that ${file} was removed and needs restoring, and finish.`;
+        ? gateCopy.regressionRestore(file, original)
+        : gateCopy.regressionTooLong(file, String(original.split("\n").length));
     removed.push({
       rung: "hygiene",
       gate: "regression",
@@ -126,7 +134,8 @@ export function regressionFailures(
       location: { file },
       expected: "every test main has still exists",
       actual: `${file} is gone`,
-      suggestedAction: `${file} is a test main already has, and this card removed or emptied it. A test that no longer exists cannot fail, which is why removing one is refused; if it is genuinely obsolete, say so with note and let a human remove it. ${restore}`,
+      minimalRepro: RERUN_GATES,
+      suggestedAction: gateCopy.regressionRemoved(file, restore),
     });
   }
   return [...restated, ...removed];
@@ -135,6 +144,8 @@ export function regressionFailures(
 /** Wrap a gate runner so every verification protects what main guarantees. */
 export function withRegressionGate(inner: GateRunner, options: RegressionOptions = {}): GateRunner {
   return {
+    // GT-M6-5: the gate this wrapper adds, for `note`'s enum.
+    gateIds: [...(inner.gateIds ?? []), "regression"],
     runGates: async (rungs: GateRung[], cwd: string): Promise<GateResult> => {
       const res = await inner.runGates(rungs, cwd);
       const started = Date.now();

@@ -334,16 +334,13 @@ export function createPmApi(ctx: PmApiContext) {
         ctx.json(res, 400, { error: "Nothing to change" });
         return true;
       }
-      // E5: a rule the frozen-fixture regression gate rejected cannot be approved.
+      // DEC-28, measurement rule 16a: a project rule is admitted by a person's
+      // approval; the frozen suite never admits one. A suite verdict from
+      // `improve --gate-rule` is a diagnostic, shown with the approval.
       const gate = verb === "approve" ? await ruleGateVerdict(ctx.log, id) : undefined;
-      if (gate && !gate.accepted) {
-        ctx.json(res, 409, { error: `The frozen regression gate rejected ${id}: ${gate.reason}` });
-        return true;
-      }
       const rule = await learning.update(id, change);
       if (!rule) ctx.json(res, 404, { error: `No rule ${id}` });
-      else
-        ctx.json(res, 200, { rule, ...(verb === "approve" ? { gated: gate !== undefined } : {}) });
+      else ctx.json(res, 200, { rule, ...(gate ? { suiteDiagnostic: gate } : {}) });
       return true;
     }
     const prefAction = /^\/api\/learning\/profile\/([A-Za-z0-9_-]+)(?:\/(dismiss))?$/.exec(url);

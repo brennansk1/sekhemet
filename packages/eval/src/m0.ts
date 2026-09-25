@@ -1,6 +1,7 @@
 import type { LocalInferenceAdapter } from "@sekhemet/models";
 import { candidateSettings } from "@sekhemet/models";
 import { BenchmarkHarness } from "./benchmark.js";
+import { clopperPearson } from "./stats.js";
 import type { BenchmarkOptions, EvalBenchmarkResult, EvalHarness, SyntheticTask } from "./types.js";
 
 /**
@@ -41,7 +42,26 @@ export interface M0Report {
   results: EvalBenchmarkResult[];
   /** Tasks that pass at 150 but never at 50: step-starved, not incapable. */
   stepStarved: string[];
+  /**
+   * Steps whose reply was a well-formed call to an offered tool, over every
+   * step of every attempt, with a Clopper–Pearson 95% interval (MS-M9-6).
+   * Absent when no attempt recorded its steps. Steps within a card are not
+   * independent, so the interval is narrower than the truth.
+   */
+  validToolCalls?: M0ValidToolCalls;
 }
+
+export interface M0ValidToolCalls {
+  valid: number;
+  steps: number;
+  rate: number;
+  interval: { low: number; high: number };
+  /** Below {@link M0_PIVOT_RATE}: the M0 pivot condition (rule 28a, O20). */
+  pivot: boolean;
+}
+
+/** The valid-tool-call rate below which the M0 pivot condition holds (rule 28a). */
+export const M0_PIVOT_RATE = 0.7;
 
 export const M0_DEFAULTS = { runs: 3, budgets: [50, 150], maxTasks: 30 } as const;
 
@@ -103,7 +123,28 @@ export async function runM0Protocol(options: M0Options): Promise<M0Report> {
   const high = summaries.find((s) => s.stepBudget === Math.max(...budgets));
   const stepStarved =
     low && high && low !== high ? high.everPassed.filter((t) => !low.everPassed.includes(t)) : [];
-  return { taskCount: tasks.length, budgets: summaries, results, stepStarved };
+  const counted = results.flatMap((r) =>
+    r.tasks.flatMap((t) => t.attempts.flatMap((a) => (a.toolCallSteps ? [a.toolCallSteps] : []))),
+  );
+  const steps = counted.reduce((n, c) => n + c.steps, 0);
+  const valid = counted.reduce((n, c) => n + c.valid, 0);
+  const validToolCalls: M0ValidToolCalls | undefined =
+    steps > 0
+      ? {
+          valid,
+          steps,
+          rate: valid / steps,
+          interval: clopperPearson(valid, steps),
+          pivot: valid / steps < M0_PIVOT_RATE,
+        }
+      : undefined;
+  return {
+    taskCount: tasks.length,
+    budgets: summaries,
+    results,
+    stepStarved,
+    ...(validToolCalls ? { validToolCalls } : {}),
+  };
 }
 
 export function formatM0Report(report: M0Report): string {
@@ -113,6 +154,13 @@ export function formatM0Report(report: M0Report): string {
       `  budget ${b.stepBudget}: Pass@1 mean ${(b.mean * 100).toFixed(1)}% (min ${(b.min * 100).toFixed(1)}, max ${(b.max * 100).toFixed(1)}, sd ${(b.stddev * 100).toFixed(1)}) over ${b.runs} runs; always ${b.alwaysPassed.length}, ever ${b.everPassed.length}; ~${b.meanTokens} tokens, ${b.meanMinutes} min per run`,
     );
   }
+  const v = report.validToolCalls;
+  const pct = (x: number) => `${Math.round(x * 100)}%`;
+  lines.push(
+    v
+      ? `  valid tool calls ${v.valid}/${v.steps} = ${pct(v.rate)} (95% CI ${pct(v.interval.low)}-${pct(v.interval.high)})${v.pivot ? `: below ${pct(M0_PIVOT_RATE)}, the M0 pivot condition (the owner decides; O20)` : ""}`
+      : "  valid tool calls: not measured (no attempt recorded its steps)",
+  );
   if (report.stepStarved.length)
     lines.push(`  step-starved at the low budget: ${report.stepStarved.join(", ")}`);
   return lines.join("\n");

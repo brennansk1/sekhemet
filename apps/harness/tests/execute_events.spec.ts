@@ -20,6 +20,7 @@ import {
   type QueueReport,
   acceptCard,
   executeCard,
+  recordQueueProgress,
   stepEventPayload,
   writeQueueReport,
 } from "../src/execute.js";
@@ -205,5 +206,28 @@ describe("@sekhemet/harness execution ledger events", () => {
     expect(existsSync(join(repo, ".sekhemet", "queue_report.json"))).toBe(true);
     const latest = JSON.parse(readFileSync(join(repo, ".sekhemet", "queue_report.json"), "utf8"));
     expect(latest.startedAt).toBe("2026-09-18T16:00:00.000Z");
+  });
+
+  it("records the queue's progress after every entry, so a run stopped part-way keeps its record (review M4)", () => {
+    const entry = {
+      cardId: "c1",
+      attempt: 1,
+      passed: true,
+      accepted: true,
+      stopReason: "gates_passed",
+      turns: 3,
+      durationMs: 10,
+      promptTokens: 100,
+      completionTokens: 5,
+    };
+    recordQueueProgress(repo, {
+      startedAt: "2026-09-25T01:00:00.000Z",
+      model: "cyber-tiel",
+      entries: [entry],
+      modelSwaps: 0,
+      totalDurationMs: 10,
+    });
+    const partial = JSON.parse(readFileSync(join(repo, ".sekhemet", "queue_report.json"), "utf8"));
+    expect(partial).toMatchObject({ partial: true, entries: [entry], passAt1: 1 });
   });
 });

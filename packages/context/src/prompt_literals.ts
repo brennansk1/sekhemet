@@ -2,20 +2,20 @@ import { createHash } from "node:crypto";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import ts from "typescript";
-import { isCopyModulePath } from "./prompt_tags.js";
+import { COPY_MODULE_PATTERN, isCopyModulePath } from "./prompt_tags.js";
 
 /**
  * The model-facing literal inventory (context CX-M1-13; PROMPT_STANDARD
  * rules 13 and 36).
  *
- * Every sentence a model reads should come from its role's copy module. Until
- * the copy modules exist, every model-facing literal elsewhere is recorded;
- * a test fails when one is added and the record may only shrink.
+ * Every sentence a model reads should come from its role's copy module (a
+ * file registered in `COPY_MODULES`). Every model-facing literal elsewhere is
+ * recorded; a test fails when one is added and the record may only shrink.
  *
  * A literal is model-facing when it is prose (three or more words) and is
  * written in one of these places:
  * - the value of a request or tool field (`systemPrompt`, `prompt`, `summary`,
- *   `returns`, `instruction`, `suggestedAction`, `rungDirective`);
+ *   `returns`, `instruction`, `suggestedAction`, `rungDirective`, `directive`);
  * - a `description`, `content`, `text` or `result` beside a field that marks a
  *   model-facing object (`role`, `parameters`, `placement`, `tool`,
  *   `toolCallId`, `required`, `turn`), or under a `parameters` or
@@ -62,8 +62,10 @@ export const MODEL_PATH_FILES: readonly string[] = [
   "packages/context/src/prompts.ts",
   "packages/context/src/tool_interface.ts",
   "packages/context/src/worker_prompt.ts",
+  "packages/loop/src/ladder.ts",
   "packages/loop/src/observation.ts",
   "packages/loop/src/tools.ts",
+  "packages/loop/src/working_memory.ts",
 ];
 
 const FIELDS = new Set([
@@ -74,6 +76,7 @@ const FIELDS = new Set([
   "instruction",
   "suggestedAction",
   "rungDirective",
+  "directive",
 ]);
 const MARKED_FIELDS = new Set(["description", "content", "text", "result"]);
 const MARKERS = new Set([
@@ -89,7 +92,21 @@ const SCHEMA_KEYS = new Set(["parameters", "properties"]);
 const CALLS = new Set(["ok", "fail", "denied", "untrusted", "clampObservation"]);
 const CONSTANT =
   /(^|_)(PROMPT|SYSTEM|PREAMBLE|NOTE|INSTRUCTIONS?|BRIEF|METHOD|FORMAT|HEADERS)$|^(system|prompt)$/;
-const BUILDER = /(Prompt|PromptFor|Directive|Instructions?|Refusal)$|^refuse[A-Z]/;
+const BUILDER = /(Prompt|PromptFor|Directive|Instructions?)$/;
+/**
+ * A refusal builder (`…Refusal`, `refuse…`) is model-facing: the Worker's
+ * refusals come back to it as observations or command output. The builders
+ * whose refusal is said to a person on the CLI or the dashboard are named
+ * here, one by one, so a new refusal is inventoried until someone decides it
+ * is a person's.
+ */
+const REFUSAL_BUILDER = /Refusal$|^refuse[A-Z]/;
+const PERSON_FACING_REFUSALS: ReadonlySet<string> = new Set([
+  // apps/harness/src/qualify.ts: "Refusing <model> as the Worker…", on the CLI.
+  "qualificationRefusal",
+  // apps/harness/src/measure_cmd.ts: "--auto-accept merges cards no person accepted…", on the CLI.
+  "autoAcceptRefusal",
+]);
 
 function nameOf(node: ts.Node | undefined): string | undefined {
   if (!node) return undefined;
@@ -145,7 +162,7 @@ function functionName(fn: ts.Node): string | undefined {
 }
 
 /** Why a literal is model-facing, or undefined when it is not. */
-function contextOf(node: ts.Node, modelPath: boolean): string | undefined {
+function contextOf(node: ts.Node, modelPath: boolean, path: string): string | undefined {
   let child: ts.Node = node;
   for (let n: ts.Node | undefined = node.parent; n; child = n, n = n.parent) {
     if (ts.isPropertyAssignment(n) && n.initializer === child) {
@@ -167,6 +184,9 @@ function contextOf(node: ts.Node, modelPath: boolean): string | undefined {
     if (ts.isFunctionLike(n)) {
       const name = functionName(n);
       if (name && BUILDER.test(name)) return `${name}()`;
+      if (name && REFUSAL_BUILDER.test(name) && !PERSON_FACING_REFUSALS.has(name)) {
+        return `${name}()`;
+      }
     }
     if (ts.isSourceFile(n)) break;
   }
@@ -188,7 +208,7 @@ export function extractModelFacingLiterals(file: string, source: string): Prompt
     const text = literalText(node);
     if (text !== undefined) {
       if (isProse(text)) {
-        const context = contextOf(node, modelPath);
+        const context = contextOf(node, modelPath, path);
         if (context) {
           out.push({
             file: path,
@@ -224,14 +244,26 @@ function sourceFiles(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-/** Scan `packages/*\/src` and `apps/harness/src` under the repository root. */
-export function scanModelFacingLiterals(root: string): PromptLiteral[] {
-  const dirs = [
+function scannedDirs(root: string): string[] {
+  return [
     ...readdirSync(join(root, "packages"))
       .sort()
       .map((p) => join(root, "packages", p, "src")),
     join(root, "apps", "harness", "src"),
   ];
+}
+
+/** Repository-relative files under the scanned directories shaped like a copy module. */
+export function copyModuleShapedFiles(root: string): string[] {
+  return scannedDirs(root)
+    .flatMap((dir) => sourceFiles(dir))
+    .map((f) => relative(root, f).replaceAll("\\", "/"))
+    .filter((f) => COPY_MODULE_PATTERN.test(f));
+}
+
+/** Scan `packages/*\/src` and `apps/harness/src` under the repository root. */
+export function scanModelFacingLiterals(root: string): PromptLiteral[] {
+  const dirs = scannedDirs(root);
   return dirs.flatMap((dir) =>
     sourceFiles(dir).flatMap((f) =>
       extractModelFacingLiterals(relative(root, f), readFileSync(f, "utf8")),

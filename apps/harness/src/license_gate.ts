@@ -2,7 +2,15 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import type { GateFailure, GateResult, GateRung, GateRunner, RungOutcome } from "@sekhemet/gates";
+import {
+  type GateFailure,
+  type GateResult,
+  type GateRung,
+  type GateRunner,
+  RERUN_GATES,
+  type RungOutcome,
+  gateCopy,
+} from "@sekhemet/gates";
 import { licenseVerdict } from "./pm/libraries.js";
 import { readProvenance } from "./registers.js";
 
@@ -194,7 +202,7 @@ export function repoLicenseAudit(root: string): LicenseFinding[] {
 export function licenseGate(
   root: string,
   base = "main",
-): { failures: GateFailure[]; advisories: string[] } {
+): { failures: GateFailure[]; advisories: string[]; skipped?: string } {
   const failures: GateFailure[] = [];
   const advisories: string[] = [];
   try {
@@ -204,7 +212,11 @@ export function licenseGate(
     });
   } catch {
     // No base to compare against: every dependency would look new.
-    return { failures, advisories: [`licences: no ${base} branch to compare against; skipped`] };
+    return {
+      failures,
+      advisories: [`licences: no ${base} branch to compare against; skipped`],
+      skipped: `no ${base} branch to compare against`,
+    };
   }
   for (const m of manifests(root)) {
     const before = new Set(m.deps(atBase(root, base, m.file) ?? ""));
@@ -225,9 +237,10 @@ export function licenseGate(
         location: { file: m.file },
         actual: dep,
         expected: "a permissive licence, or an entry in docs/reference/PROVENANCE.md (Licences)",
+        minimalRepro: RERUN_GATES,
         suggestedAction: f.license
-          ? `Choose a permissively licensed alternative, or have a person list "${dep}" with ${f.license} and how it is used in the licence register.`
-          : `Install "${dep}" so its licence can be read, or have a person list it in the licence register.`,
+          ? gateCopy.licenseNotPermissive(dep, f.license)
+          : gateCopy.licenseUnknown(dep),
       });
     }
   }
@@ -240,14 +253,36 @@ export function licenseGate(
  */
 export function withLicenseGate(inner: GateRunner, repoRoot: string, base = "main"): GateRunner {
   return {
+    // GT-M6-5: the gate this wrapper adds, for `note`'s enum.
+    gateIds: [...(inner.gateIds ?? []), "licenses"],
     runGates: async (rungs: GateRung[], cwd: string): Promise<GateResult> => {
       const res = await inner.runGates(rungs, cwd);
       const started = Date.now();
-      let lic: { failures: GateFailure[] };
+      let lic: { failures: GateFailure[]; skipped?: string };
       try {
         lic = licenseGate(cwd || repoRoot, base);
-      } catch {
-        return res;
+      } catch (err) {
+        // Fail closed (gates rule 9): a licence gate that could not run is
+        // reported as not run, never passed and never absent.
+        const reason = (err instanceof Error ? err.message : String(err)).split("\n")[0] ?? "";
+        lic = {
+          failures: [
+            {
+              rung: "security",
+              gate: "licenses",
+              layer: "security",
+              exitCode: -1,
+              errorExcerpt: `licenses not run: ${reason}`,
+              suggestedFixFiles: [],
+              location: { file: "." },
+              expected: "every new dependency's licence read",
+              actual: reason || "the licence gate could not run",
+              minimalRepro: RERUN_GATES,
+              suggestedAction: gateCopy.gateNotRun("licenses"),
+              notRun: true,
+            },
+          ],
+        };
       }
       const outcome = {
         gate: "licenses",
@@ -256,6 +291,7 @@ export function withLicenseGate(inner: GateRunner, repoRoot: string, base = "mai
         passed: lic.failures.length === 0,
         exitCode: lic.failures.length === 0 ? 0 : 1,
         durationMs: Date.now() - started,
+        ...(lic.skipped ? { skipped: true, reason: lic.skipped } : {}),
       } satisfies RungOutcome;
       return {
         ...res,

@@ -15,7 +15,12 @@ import {
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
-import { type LspPool, condenseToolOutput, languageOf as lspLanguageOf } from "@sekhemet/context";
+import {
+  type LspPool,
+  condenseToolOutput,
+  languageOf as lspLanguageOf,
+  workerCopy,
+} from "@sekhemet/context";
 import type { ToolCall } from "@sekhemet/models";
 import {
   type ExecutionResult,
@@ -119,6 +124,11 @@ export type ApprovalHandler = (request: {
 }) => Promise<boolean>;
 
 export interface ToolExecutorOptions {
+  /**
+   * Whether the session offers `recall` (context CX-M1-1). Default true; when
+   * false, condensed output carries no recall pointer.
+   */
+  recallOffered?: boolean | undefined;
   worktreePath: string;
   scopeFiles?: string[] | undefined;
   agentRole?: string | undefined;
@@ -223,6 +233,7 @@ export class ToolExecutor {
   private notes: string[] = [];
   private finishRequested = false;
   private readFiles = new Set<string>();
+  private shownInFull = new Set<string>();
   /** Worktree-relative files whose current contents the agent has seen this card. */
   private seen = new Set<string>();
   private deniedByRule = new Map<string, number>();
@@ -242,6 +253,14 @@ export class ToolExecutor {
    * Record that the agent has the file's contents in front of it without a
    * read_file call (pinned in the prompt), so read-before-edit admits it.
    */
+  /**
+   * The files the last prompt showed in full (the B2.1 review, B2): edit's
+   * refusal points at the content above only for these.
+   */
+  public setShownInFull(paths: readonly string[]): void {
+    this.shownInFull = new Set(paths);
+  }
+
   public markSeen(relPath: string): void {
     try {
       this.seen.add(this.rel(resolveInWorktree(this.root, relPath)));
@@ -690,7 +709,7 @@ export class ToolExecutor {
       return fail(
         "edit",
         `Search string not found in ${path}`,
-        `edit failed: the search string does not appear in ${path}. Re-read the file and copy the exact text, including indentation.`,
+        workerCopy.editNotFound(path, this.shownInFull.has(path.replace(/^\.\//, ""))),
       );
     }
     if (occurrences > 1) {
@@ -1492,6 +1511,7 @@ Promise.resolve(__result).then((v) => { process.stdout.write(typeof v === "strin
       exitCode: result.exitCode,
       command: label,
       maxLines: RUN_CMD_MAX_LINES,
+      ...(this.options.recallOffered === false ? { recallOffered: false } : {}),
     }).text;
 
     if (result.timedOut) {

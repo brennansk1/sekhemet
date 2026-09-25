@@ -20,7 +20,14 @@ export default defineConfig({
     env: { SEKHEMET_USER_CONFIG: "/nonexistent/sekhemet-test-user-config.toml" },
     projects: [
       { extends: true, test: { name: "unit", include: split.unit } },
-      { extends: true, test: { name: "integration", include: split.integration } },
+      // A card run with real git and SQLite takes 4.3-4.5 s alone on the 24 GB
+      // reference host (execute_events at ef31a37 and after B2.4), so the 5 s
+      // default failed ~50 of them whenever the host was busy. The limit is
+      // for hangs, not speed; assertions are unchanged.
+      {
+        extends: true,
+        test: { name: "integration", include: split.integration, testTimeout: 30_000 },
+      },
     ],
   },
 });

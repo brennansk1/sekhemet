@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ContextCondenser } from "../src/condenser.js";
+import { ContextCondenser, compactHistory } from "../src/condenser.js";
 import type { TurnHistoryItem } from "../src/prompts.js";
 
 describe("@sekhemet/context ContextCondenser", () => {
@@ -43,11 +43,35 @@ Done in 1.2s`;
     const masked = ContextCondenser.maskOlderObservations(history, 2);
 
     // Turns 1 and 2 should be masked into compact pointers
-    expect(masked[0]?.result).toContain("preserved in WAL: 50 lines omitted");
-    expect(masked[1]?.result).toContain("preserved in WAL: 30 lines omitted");
+    expect(masked[0]?.result).toMatch(
+      /50 lines, \S+ tokens, omitted; recall\(ref\) returns them\. EvidenceRef: ev_/,
+    );
+    expect(masked[1]?.result).toMatch(/30 lines, \S+ tokens, omitted/);
+    // No internal jargon (CX-M1-1): the store is not named.
+    expect(masked[0]?.result).not.toMatch(/\bWAL\b/);
 
     // Turns 3 and 4 should be preserved intact
     expect(masked[2]?.result).toBe("file written successfully");
     expect(masked[3]?.result).toBe("tests passed: 4/4");
+  });
+
+  it("points at recall only when recall is offered (CX-M1-1)", () => {
+    const history = [
+      { turn: 1, action: "read_file", result: Array(20).fill("a line of the file").join("\n") },
+      { turn: 2, action: "note", result: "ok" },
+      { turn: 3, action: "note", result: "ok" },
+    ];
+    const masked = ContextCondenser.maskOlderObservations(history, 2, { recallOffered: false });
+    expect(masked[0]?.result).toMatch(
+      /^\[Observation #1: read_file: a line of the file\. 20 lines, \S+ tokens, omitted\.\]$/,
+    );
+    const many = Array.from({ length: 10 }, (_, i) => ({
+      turn: i + 1,
+      action: "note",
+      result: `r${i}`,
+    }));
+    const compacted = compactHistory(many, 3, { recallOffered: false }).turns[0]?.result ?? "";
+    expect(compacted).not.toMatch(/recall|\[ref /);
+    expect(compactHistory(many, 3).turns[0]?.result).toMatch(/recall\(ref\)/);
   });
 });

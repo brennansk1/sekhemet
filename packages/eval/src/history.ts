@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { git } from "./git.js";
 import { type TaskSynthesisResult, TaskSynthesizer } from "./synthesis.js";
 import type { CommandSpec, SyntheticTask, WorkspaceMode } from "./types.js";
@@ -83,6 +85,21 @@ function defaultCommand(file: string): string {
   return file;
 }
 
+/**
+ * The install a task's workspace runs before its tests (MS-T8-12), named by
+ * the repository's lockfile. Install scripts never run: the commits are the
+ * project's history, not code anyone reviewed for this machine.
+ */
+export function defaultSetupCommands(repoPath: string): CommandSpec[] {
+  if (existsSync(join(repoPath, "pnpm-lock.yaml")))
+    return [{ command: "pnpm", args: ["install", "--frozen-lockfile", "--ignore-scripts"] }];
+  if (existsSync(join(repoPath, "package-lock.json")))
+    return [{ command: "npm", args: ["ci", "--ignore-scripts"] }];
+  if (existsSync(join(repoPath, "yarn.lock")))
+    return [{ command: "yarn", args: ["install", "--frozen-lockfile", "--ignore-scripts"] }];
+  return [];
+}
+
 export async function synthesizeTasksFromHistory(
   repoPath: string,
   options: HistorySynthesisOptions = {},
@@ -106,7 +123,7 @@ export async function synthesizeTasksFromHistory(
         scopeFiles: c.sourceFiles,
         testFiles: c.testFiles,
         ...(options.testCommand ? { testCommand: options.testCommand } : {}),
-        ...(options.setupCommands ? { setupCommands: options.setupCommands } : {}),
+        setupCommands: options.setupCommands ?? defaultSetupCommands(repoPath),
         ...(options.workspaceRoot ? { workspaceRoot: options.workspaceRoot } : {}),
         ...(options.workspaceMode ? { workspaceMode: options.workspaceMode } : {}),
         ...(options.linkPaths ? { linkPaths: options.linkPaths } : {}),

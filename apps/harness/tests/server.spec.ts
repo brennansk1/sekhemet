@@ -654,6 +654,30 @@ describe("@sekhemet/harness Dashboard Server", () => {
     expect((await getJson("/api/queue")).body.startedAt).toBe("2026-09-18T10:00:00.000Z");
   });
 
+  it("shows the latest M0 result and its pivot condition on the Machine view (MS-M9-6)", async () => {
+    expect((await getJson("/api/machine")).body.m0).toBeUndefined();
+    await log.append({
+      actor: "harness",
+      type: "measure/m0",
+      payload: {
+        worker: "cyber-tiel",
+        validToolCalls: {
+          valid: 12,
+          steps: 20,
+          rate: 0.6,
+          interval: { low: 0.36, high: 0.81 },
+          pivot: true,
+        },
+      },
+    });
+    const m0 = (await getJson("/api/machine")).body.m0 as {
+      worker: string;
+      validToolCalls: { pivot: boolean };
+    };
+    expect(m0.worker).toBe("cyber-tiel");
+    expect(m0.validToolCalls.pivot).toBe(true);
+  });
+
   it("reports memory against its thresholds, and the level changes past 0.85", async () => {
     memUsedRatio = 0.8;
     const below = await getJson("/api/machine");

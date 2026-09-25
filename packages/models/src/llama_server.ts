@@ -1,11 +1,14 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { existsSync, mkdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, statSync } from "node:fs";
 import { tmpdir, totalmem } from "node:os";
+import { basename, resolve } from "node:path";
 import { hostFingerprintHash } from "./calibration.js";
 import { type HttpAdapterOptions, HttpInferenceAdapter } from "./http_adapter.js";
 import { assertKvPolicy } from "./kv_policy.js";
 import { type ModelsDirOptions, resolveModelPath } from "./models_dir.js";
-import type { ModelRegistry } from "./registry.js";
+import type { SpeculativeSetting } from "./qualification_key.js";
+import { readQuantisation } from "./quantisation.js";
+import { type ModelRegistry, type ThinkingPolicy, thinkingPolicyFromEnv } from "./registry.js";
 import type { AdapterHealth, ToolArm } from "./types.js";
 
 /**
@@ -79,8 +82,37 @@ export interface LlamaServerProfile {
    * speculative-decoding measurement for this model on this host (M19).
    */
   registry?: ModelRegistry;
-  /** Enable the model's grafted multi-token-prediction head. */
+  /**
+   * The model has a grafted multi-token-prediction head, so speculative
+   * decoding can be measured. Whether a launch uses it is the registry's
+   * recorded decision for this host and thinking policy (MD-M7-1), never
+   * this flag.
+   */
   mtp?: boolean;
+  /** The thinking policy this launch runs under (default "off"); MTP decisions are per policy. */
+  thinkingPolicy?: ThinkingPolicy;
+  /**
+   * A draft model for speculative decoding (`-md`, MD-N8-5). Used only when
+   * the registry records a decision for this draft model, this host and this
+   * thinking policy that enables it, and this combination has qualified with
+   * it; then the MTP head is not used (one speculative method per launch).
+   */
+  draftModelPath?: string;
+  /** The draft model's id in decisions and qualifications; default: its file name without `.gguf`. */
+  draftModelId?: string;
+  /** `--draft-max`: tokens drafted per step with a draft model. Unset leaves the server's default. */
+  draftMaxTokens?: number;
+  /**
+   * How long an adopted server's `/props` check stands before it is read
+   * again (default 60 s): another process may have restarted the server on
+   * this port with other settings in the meantime.
+   */
+  propsRecheckMs?: number;
+  /**
+   * Measurement probes only: force speculative decoding on or off, ignoring
+   * the recorded decision, so an A/B can measure both sides.
+   */
+  speculativeOverride?: boolean;
   /**
    * Directory for KV-cache slot files. When set, the slot is saved before the
    * server is stopped for a model swap and restored after it restarts, so the
@@ -161,6 +193,16 @@ export async function evictOllamaModels(baseUrl = "http://127.0.0.1:11434"): Pro
   return evicted;
 }
 
+/** What a running llama-server reports about itself (`GET /props`, MD-M4-1/3). */
+export interface ServerProps {
+  modelPath?: string;
+  /** Per-slot context (`default_generation_settings.n_ctx`). */
+  contextTokens?: number;
+  /** Speculative decoding on (`default_generation_settings.speculative`). */
+  mtp?: boolean;
+  build?: string;
+}
+
 /**
  * A llama-server process owned by the harness, exposed as an inference adapter.
  *
@@ -174,6 +216,8 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
   private starting: Promise<void> | undefined;
   private readonly url: string;
   private mtpSuspended = false;
+  /** When the running server was last checked against this profile (MD-M4-1); undefined: not adopted. */
+  private adoptedAt: number | undefined;
 
   constructor(private profile: LlamaServerProfile) {
     const port = profile.port ?? 8098;
@@ -219,15 +263,105 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
   }
 
   /**
-   * Whether this launch uses the MTP head (M19): the registry's measured
-   * decision for this host when there is one, else the profile's `mtp`;
-   * never while the watchdog has it suspended (M20).
+   * Whether this launch uses the MTP head: only when the registry records a
+   * decision for this model, this host and this thinking policy that enables
+   * it (MD-M7-1/2, models rule 13: off until measured); never while the
+   * watchdog has it suspended (M20). A measurement probe forces it.
    */
   public mtpEnabled(): boolean {
-    if (this.mtpSuspended) return false;
-    const measured = this.registry?.get(this.profile.modelId)?.speculative;
-    if (measured && measured.fingerprint === hostFingerprintHash()) return measured.enabled;
-    return this.profile.mtp === true;
+    if (this.mtpSuspended || this.profile.draftModelPath) return false;
+    if (this.profile.speculativeOverride !== undefined) return this.profile.speculativeOverride;
+    return this.speculativeStatusFor("mtp").enabled;
+  }
+
+  /**
+   * The launch's elements of a qualification combination (rule 27a): the
+   * per-request window, KV type, speculative decoding, prefix caching and
+   * slots. The caller adds the engine and model builds, the host, the chat
+   * template and the context version.
+   */
+  public launchSettings(): {
+    contextTokens: number;
+    kvType: string;
+    speculative: SpeculativeSetting;
+    prefixCaching: boolean;
+    parallelSlots: number;
+  } {
+    return {
+      contextTokens: this.contextWindow?.contextTokens ?? this.profile.contextTokens ?? 8192,
+      kvType: this.profile.kvType ?? "q8_0",
+      speculative: this.speculativeSetting(),
+      prefixCaching: this.cacheSettings() !== undefined,
+      parallelSlots: this.slotCount(),
+    };
+  }
+
+  /** The draft model's id (MD-N8-5), when one is configured. */
+  public draftModelId(): string | undefined {
+    const p = this.profile.draftModelPath;
+    return p ? (this.profile.draftModelId ?? basename(p).replace(/\.gguf$/i, "")) : undefined;
+  }
+
+  /** Whether this launch uses the draft model: the same two conditions as MTP (MD-N8-5). */
+  public draftEnabled(): boolean {
+    const draft = this.draftModelId();
+    if (!draft || this.mtpSuspended) return false;
+    if (this.profile.speculativeOverride !== undefined) return this.profile.speculativeOverride;
+    return this.speculativeStatusFor({ draft }).enabled;
+  }
+
+  /** The speculative decoding this launch uses, as a qualification combination names it. */
+  public speculativeSetting(): SpeculativeSetting {
+    const draft = this.draftModelId();
+    if (draft) return this.draftEnabled() ? { draft } : "off";
+    return this.mtpEnabled() ? "mtp" : "off";
+  }
+
+  /** Whether the configured speculative method is on, and why (for doctor and the run's log). */
+  public speculativeStatus(): { enabled: boolean; reason: string } {
+    const draft = this.draftModelId();
+    return this.speculativeStatusFor(draft ? { draft } : "mtp");
+  }
+
+  /**
+   * Both must allow speculation (models rule 13, MD-M7-1/2, MD-N8-2): the
+   * speed decision recorded for this model, method, host and thinking
+   * policy, and a qualification of this combination with the method on and
+   * prefix caching on whose tool-call checks passed.
+   */
+  private speculativeStatusFor(method: Exclude<SpeculativeSetting, "off">): {
+    enabled: boolean;
+    reason: string;
+  } {
+    const label = method === "mtp" ? "MTP" : `draft model ${method.draft}`;
+    const policy = this.profile.thinkingPolicy ?? thinkingPolicyFromEnv();
+    const entry = this.registry?.get(this.profile.modelId);
+    const decision =
+      method === "mtp"
+        ? entry?.speculativeByPolicy?.[policy]
+        : entry?.speculativeByDraft?.[method.draft]?.[policy];
+    const host = hostFingerprintHash();
+    if (!decision || decision.fingerprint !== host) {
+      return { enabled: false, reason: `${label} not measured on this host (thinking ${policy})` };
+    }
+    if (!decision.enabled) return { enabled: false, reason: decision.reason };
+    const q = this.registry?.speculativeQualification(this.profile.modelId, {
+      host,
+      speculative: method,
+      ...(this.contextWindow ? { contextTokens: this.contextWindow.contextTokens } : {}),
+      kvType: this.profile.kvType ?? "q8_0",
+      parallelSlots: this.slotCount(),
+    });
+    if (!q || this.cacheSettings() === undefined) {
+      return {
+        enabled: false,
+        reason: `not qualified with ${label} on and prefix caching on for this launch (MD-N8-2)`,
+      };
+    }
+    if (q.status !== "qualified" || q.toolCallChecks === false) {
+      return { enabled: false, reason: q.reason ?? `${label} failed its qualification` };
+    }
+    return { enabled: true, reason: decision.reason };
   }
 
   /** The cache flags this launch uses, after the host default. */
@@ -311,7 +445,18 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
       ...(p.metrics ? ["--metrics"] : []),
       ...(p.webui === false ? ["--no-webui"] : []),
       ...(p.reasoning ? ["--reasoning", p.reasoning] : []),
-      ...(this.mtpEnabled() ? ["--spec-type", "draft-mtp"] : []),
+      // Two draft tokens: the measured sweet spot for a grafted head (MD-M7-2).
+      ...(this.mtpEnabled() ? ["--spec-type", "draft-mtp", "--spec-draft-n-max", "2"] : []),
+      // A draft model (MD-N8-5), all its layers on the GPU like the main model's.
+      ...(this.draftEnabled() && p.draftModelPath
+        ? [
+            "-md",
+            p.draftModelPath,
+            "-ngld",
+            String(p.gpuLayers ?? 99),
+            ...(p.draftMaxTokens !== undefined ? ["--draft-max", String(p.draftMaxTokens)] : []),
+          ]
+        : []),
       ...(p.slotCacheDir ? ["--slot-save-path", p.slotCacheDir] : []),
       ...(p.extraArgs ?? []),
     ];
@@ -370,17 +515,117 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
   }
 
   private async healthy(): Promise<boolean> {
+    return (await this.healthState()) === "ok";
+  }
+
+  /** `/health`: ok, still loading (503), or nothing listening / another error. */
+  private async healthState(): Promise<"ok" | "loading" | "down"> {
     try {
       const res = await fetch(`${this.url}/health`, { signal: AbortSignal.timeout(2000) });
-      return res.ok;
+      return res.ok ? "ok" : res.status === 503 ? "loading" : "down";
     } catch {
-      return false;
+      return "down";
     }
+  }
+
+  /**
+   * What the server on this port reports about itself (`GET /props`): the
+   * loaded model, the per-slot context, whether speculative decoding is on
+   * and the build. Undefined fields are ones the server did not report.
+   */
+  public async serverProps(): Promise<ServerProps | undefined> {
+    try {
+      const res = await fetch(`${this.url}/props`, { signal: AbortSignal.timeout(5000) });
+      if (!res.ok) return undefined;
+      const p = (await res.json()) as {
+        model_path?: unknown;
+        build_info?: unknown;
+        default_generation_settings?: { n_ctx?: unknown; speculative?: unknown };
+      };
+      const g = p.default_generation_settings ?? {};
+      return {
+        ...(typeof p.model_path === "string" ? { modelPath: p.model_path } : {}),
+        ...(typeof g.n_ctx === "number" ? { contextTokens: g.n_ctx } : {}),
+        ...(typeof g.speculative === "boolean" ? { mtp: g.speculative } : {}),
+        ...(typeof p.build_info === "string" ? { build: p.build_info } : {}),
+      };
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Why the server already on this port is not ours, or undefined when it
+   * is (MD-M4-1): another model, another per-slot context, or another MTP
+   * state than this launch would use. A server that does not say which
+   * model it runs is not adopted either.
+   */
+  private async foreignServer(): Promise<string | undefined> {
+    const props = await this.serverProps();
+    const port = this.profile.port ?? 8098;
+    if (props?.modelPath === undefined)
+      return `the server on port ${port} does not report its model (/props); refusing to adopt it`;
+    if (!samePath(props.modelPath, this.profile.modelPath))
+      return `port ${port} is serving ${props.modelPath}, not ${this.profile.modelPath}; stop that server or use another port`;
+    // The per-slot window, or, with a unified KV cache, the total across
+    // slots: llama.cpp reports either as n_ctx (checked against b10809 live
+    // before relying on it, models.md State).
+    const want = this.contextWindow?.contextTokens;
+    const total = this.totalContextTokens();
+    if (
+      props.contextTokens !== undefined &&
+      props.contextTokens !== want &&
+      props.contextTokens !== total
+    )
+      return `port ${port} is serving ${this.profile.modelId} with context ${props.contextTokens}, not ${want}${total !== want ? ` (or ${total} across its slots)` : ""}; restart it with this profile`;
+    // A probe that forces the speculative method must know the server runs it
+    // that way: a server that does not say is not adopted (M11).
+    if (this.profile.speculativeOverride !== undefined && props.mtp === undefined)
+      return `the server on port ${port} does not report its MTP state (/props); a speculative probe cannot adopt it: stop it first`;
+    if (props.mtp !== undefined && props.mtp !== this.mtpEnabled())
+      return `port ${port} is serving ${this.profile.modelId} with MTP ${props.mtp ? "on" : "off"}, but this launch uses it ${this.mtpEnabled() ? "on" : "off"}; restart it with this profile`;
+    return undefined;
+  }
+
+  /**
+   * Record the running model's quantisation from its GGUF header when the
+   * registry does not have it yet (MD-M4-5; SEC-37b keys on it).
+   */
+  private async recordQuantisation(): Promise<void> {
+    if (!this.registry || this.registry.get(this.profile.modelId)?.quant) return;
+    const quant = await readQuantisation(this.profile.modelPath);
+    if (quant) this.registry.upsert(this.profile.modelId, { quant });
+  }
+
+  /** Adopt a running server only once it has shown it is ours, and again once that check is stale. */
+  private async adopt(): Promise<void> {
+    const recheck = this.profile.propsRecheckMs ?? 60_000;
+    if (this.adoptedAt !== undefined && Date.now() - this.adoptedAt < recheck) return;
+    this.adoptedAt = undefined;
+    const why = await this.foreignServer();
+    if (why) throw new Error(why);
+    this.adoptedAt = Date.now();
+    await this.recordQuantisation();
   }
 
   /** Start the server if needed and wait until it reports healthy. */
   public async ensureRunning(): Promise<void> {
-    if (await this.healthy()) return;
+    let state = await this.healthState();
+    if (state === "loading") {
+      // A server still loading answers 503: wait for it rather than starting
+      // a second one on the same port (A10).
+      const deadline = Date.now() + (this.profile.startupTimeoutMs ?? 600_000);
+      while (state === "loading" && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 250));
+        state = await this.healthState();
+      }
+      if (state === "loading")
+        throw new Error(
+          `the server on port ${this.profile.port ?? 8098} is still loading after ${Math.round((this.profile.startupTimeoutMs ?? 600_000) / 1000)} s`,
+        );
+    }
+    if (state === "ok") return this.adopt();
+    this.adoptedAt = undefined;
     if (this.starting) return this.starting;
 
     this.starting = (async () => {
@@ -406,6 +651,8 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
         }
         if (await this.healthy()) {
           await this.slotAction("restore");
+          this.adoptedAt = Date.now();
+          await this.recordQuantisation();
           return;
         }
         await new Promise((r) => setTimeout(r, 1000));
@@ -485,8 +732,21 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
     }
   }
 
+  /**
+   * Why a new launch on this port would measure a server it does not own:
+   * something already answers /health there (M11). Undefined when the port is free.
+   */
+  public async portBusy(): Promise<string | undefined> {
+    const state = await this.healthState();
+    return state === "ok" || state === "loading"
+      ? `a server already answers /health on port ${this.profile.port ?? 8098}`
+      : undefined;
+  }
+
   /** Stop the server process, releasing its memory. */
   public override async unload(): Promise<void> {
+    // Whatever happens to this server, the next use checks the port again (A9).
+    this.adoptedAt = undefined;
     const child = this.child;
     if (!child || child.exitCode !== null) return;
     await this.slotAction("save");
@@ -696,4 +956,13 @@ export function createQwen38Managed(
   return new ManagedLlamaServerAdapter(
     chronicleLlamaServerProfile({ reasoning: "per-request", ...options, slotCacheDir }),
   );
+}
+
+/**
+ * Whether two model paths name the same file: resolved through symbolic
+ * links when both exist (A8), else compared as absolute paths.
+ */
+function samePath(a: string, b: string): boolean {
+  const real = (p: string) => (existsSync(p) ? realpathSync(p) : resolve(p));
+  return real(a) === real(b);
 }

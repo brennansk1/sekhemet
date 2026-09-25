@@ -1,0 +1,4 @@
+{
+  "about": "Evaluation assets (measurement.md rule 29, T11): each is versioned, hashed and listed here with its size, who labelled it and the criteria that use it. An item is never edited to improve a result; a change is a new version, and the earlier hash is kept. Labels are a person's or executed, never a model's. Nothing is scored against an asset that is not listed. B2.4's three (reference solutions, golden briefs, the held-out acceptance suite) wait for a person's labels and are not registered yet.",
+  "assets": []
+}

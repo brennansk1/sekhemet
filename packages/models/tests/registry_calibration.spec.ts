@@ -30,6 +30,7 @@ import {
 } from "../src/index.js";
 import type { InferenceRequest, InferenceResponse, TokenUsage } from "../src/types.js";
 import { fakeServer } from "./support/fake_server.js";
+import { qualifyMtp } from "./support/qualify_mtp.js";
 
 const GB = 1024 ** 3;
 const dirs: string[] = [];
@@ -299,9 +300,27 @@ describe("M19: speculative decoding decided by measurement", () => {
       registry: reg,
     });
     expect(a.launchArgs()).not.toContain("draft-mtp");
-    // Without a measurement the profile decides.
+    // Without a measurement it stays off, whatever the profile says (MD-M7-1).
     const b = new ManagedLlamaServerAdapter({ modelId: "other", modelPath: "/m.gguf", mtp: true });
-    expect(b.launchArgs()).toContain("draft-mtp");
+    expect(b.launchArgs()).not.toContain("draft-mtp");
+    // A measured gain for this host and policy turns it on (MD-M7-2).
+    reg.recordSpeculative("other", {
+      enabled: true,
+      speedup: 1.3,
+      reason: "measured",
+      fingerprint: hostFingerprintHash(),
+      date: "2026-09-25",
+      thinking: "off",
+    });
+    const c = new ManagedLlamaServerAdapter({
+      modelId: "other",
+      modelPath: "/m.gguf",
+      mtp: true,
+      registry: reg,
+      thinkingPolicy: "off",
+    });
+    qualifyMtp(reg, c);
+    expect(c.launchArgs()).toContain("draft-mtp");
   });
 });
 

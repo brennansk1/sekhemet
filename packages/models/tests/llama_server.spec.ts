@@ -2,14 +2,17 @@ import { describe, expect, it } from "vitest";
 import { ManagedLlamaServerAdapter, createCyberTielWorker } from "../src/llama_server.js";
 
 describe("@sekhemet/models managed llama-server", () => {
-  it("launches with the MTP head, jinja templates and 8-bit KV", () => {
-    const args = createCyberTielWorker("/models/x.gguf").launchArgs();
+  it("has an MTP head but launches without it until measured, with jinja templates and 8-bit KV", () => {
+    const worker = createCyberTielWorker("/models/x.gguf");
+    const args = worker.launchArgs();
     const flag = (name: string) => args[args.indexOf(name) + 1];
 
     expect(flag("-m")).toBe("/models/x.gguf");
     expect(args).toContain("--jinja");
-    // Without draft-mtp the grafted head is dead weight.
-    expect(flag("--spec-type")).toBe("draft-mtp");
+    // The grafted head is there to be measured; it is used only on a recorded
+    // gain for this host and thinking policy (models rule 13, MD-M7-1).
+    expect(worker.launchProfile.mtp).toBe(true);
+    expect(args).not.toContain("--spec-type");
     // 4-bit KV is prohibited for tool-calling models. 16k: this hybrid-attention
     // MoE's KV cache is small enough that the larger window costs ~0.16GB.
     expect(flag("-ctk")).toBe("q8_0");

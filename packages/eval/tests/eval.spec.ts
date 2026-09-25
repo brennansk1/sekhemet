@@ -119,6 +119,38 @@ describe("@sekhemet/eval BenchmarkHarness", () => {
     expect(result.passAt1).toBe(0);
   });
 
+  it("runs the attempt through the product's card execution when given one, and counts its valid tool calls (MS-M9-1)", async () => {
+    // A model with no replies: the in-process session must not be used.
+    const model = new MockInferenceAdapter("mock-eval", []);
+    const seen: { workspacePath: string; stepBudget: number }[] = [];
+    const result = await new BenchmarkHarness().runBenchmark([task()], model, {
+      passAtK: 1,
+      stepBudget: 7,
+      runCard: async ({ workspacePath, stepBudget }) => {
+        seen.push({ workspacePath, stepBudget });
+        writeFileSync(join(workspacePath, "add.js"), "module.exports = (a, b) => a + b;\n");
+        return {
+          stopReason: "gates_passed",
+          turnsUsed: 3,
+          promptTokens: 300,
+          completionTokens: 30,
+          steps: [
+            { formatErrors: 0, proseOnly: 0 },
+            { formatErrors: 1, proseOnly: 0 },
+            { formatErrors: 0, proseOnly: 1 },
+          ],
+        };
+      },
+    });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.stepBudget).toBe(7);
+    expect(result.passAt1).toBe(1);
+    const attempt = result.tasks[0]?.attempts[0];
+    expect(attempt?.toolCallSteps).toEqual({ steps: 3, valid: 1 });
+    expect(attempt?.totalTokens).toBe(330);
+    expect(attempt?.inferenceCalls).toBe(0);
+  });
+
   it("records the settings a number was produced under", async () => {
     const model = respond([{ id: "1", name: "finish_card", arguments: {} }]);
     const result = await new BenchmarkHarness().runBenchmark([task()], model, {

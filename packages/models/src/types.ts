@@ -110,6 +110,10 @@ export interface TokenUsage {
   cacheHitRate?: number;
   /** Prompt tokens the server actually evaluated (not served from cache). */
   evaluatedPromptTokens?: number;
+  /** Tokens the speculative draft proposed this call (llama-server `draft_n`, MD-M4-4). */
+  draftTokens?: number;
+  /** Of those, the tokens the model accepted (`draft_n_accepted`). */
+  draftAcceptedTokens?: number;
   /** Prefill (prompt evaluation) speed for this request, tokens/s (M3). */
   prefillTokensPerSecond?: number;
   /** Decode (generation) speed for this request, tokens/s (M3). */

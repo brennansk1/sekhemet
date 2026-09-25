@@ -1,0 +1,10 @@
+{
+  "tool": "biome",
+  "case": "check_text",
+  "command": "$REPO/node_modules/.bin/biome check .",
+  "repro": "pnpm lint",
+  "exitCode": 1,
+  "stdout": "Checked 2 files in 4ms. No fixes applied.\nFound 3 errors.\n",
+  "stderr": "./src/a.ts:3:12 lint/suspicious/noDoubleEquals  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n  × Use === instead of ==\n  \n    1 │ export function same(a: number, b: number): boolean {\n    2 │   const unused = 1;\n  > 3 │   return a == b;\n      │            ^^\n    4 │ }\n    5 │ \n  \n  i == is only allowed when comparing against null\n  \n    1 │ export function same(a: number, b: number): boolean {\n    2 │   const unused = 1;\n  > 3 │   return a == b;\n      │            ^^\n    4 │ }\n    5 │ \n  \n  i Using == may be unsafe if you are relying on type coercion\n  \n  i Unsafe fix: Use ===\n  \n    3 │ ··return·a·===·b;\n      │              +   \n\n./src/a.ts:6:22 lint/style/noUnusedTemplateLiteral  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n  × Do not use template literals if interpolation and special-character handling are not needed.\n  \n    4 │ }\n    5 │ \n  > 6 │ export const label = `plain`;\n      │                      ^^^^^^^\n    7 │ \n  \n  i Unsafe fix: Replace with string literal\n  \n    4 4 │   }\n    5 5 │   \n    6   │ - export·const·label·=·`plain`;\n      6 │ + export·const·label·=·\"plain\";\n    7 7 │   \n  \n\n./src/a.ts format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n  × Formatter would have printed the following content:\n  \n    1 1 │   export function same(a: number, b: number): boolean {\n    2   │ - ··const·unused·=·1;\n    3   │ - ··return·a·==·b;\n      2 │ + → const·unused·=·1;\n      3 │ + → return·a·==·b;\n    4 4 │   }\n    5 5 │   \n  \n\ncheck ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n  × Some errors were emitted while running checks.\n  \n\n",
+  "version": "Version: 1.9.4"
+}

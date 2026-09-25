@@ -6,12 +6,14 @@ import type { TurnHistoryItem } from "@sekhemet/context";
 import { PrefixStabilityGuard } from "@sekhemet/context";
 import type { GateResult, GateRung } from "@sekhemet/gates";
 import {
+  DEFAULT_GATES,
   type EvidenceBundle,
   type GatesConfig,
   type RunSettings,
   type StepEvidence,
   compileEvidence,
   loadGatesConfig,
+  onlyNotRun,
 } from "@sekhemet/gates";
 import {
   type AgentRole,
@@ -30,7 +32,7 @@ import {
   defaultSecondsBudget,
   serializeContextPack,
 } from "@sekhemet/kernel";
-import { candidateSettings, harnessCommit } from "@sekhemet/models";
+import { type ToolArm, candidateSettings, harnessProvenance } from "@sekhemet/models";
 import {
   EgressProxy,
   ProcessSandbox,
@@ -49,6 +51,13 @@ import type {
   SessionOptions,
   TurnResult,
 } from "./types.js";
+
+/** The attempt row's letter for a tool arm (kernel `attempts.tool_arm`). */
+const ARM_LETTER: Record<ToolArm, "A" | "B" | "C"> = {
+  arm_a_flat: "A",
+  arm_b_json: "B",
+  arm_c_sketch: "C",
+};
 
 /** Board operations the runner needs, kept as an interface to avoid a cycle. */
 export interface CardLifecycle {
@@ -309,6 +318,16 @@ function isTampered(err: unknown): boolean {
   return (err as { reason?: string } | undefined)?.reason === "git_metadata_tampered";
 }
 
+/** The server-reported cache and draft counts of a step (models MD-M4-4). */
+const stepUsage = (u: TurnResult["usage"]) => ({
+  ...(u?.cachedPromptTokens !== undefined ? { cachedPromptTokens: u.cachedPromptTokens } : {}),
+  ...(u?.evaluatedPromptTokens !== undefined
+    ? { evaluatedPromptTokens: u.evaluatedPromptTokens }
+    : {}),
+  ...(u?.draftTokens !== undefined ? { draftTokens: u.draftTokens } : {}),
+  ...(u?.draftAcceptedTokens !== undefined ? { draftAcceptedTokens: u.draftAcceptedTokens } : {}),
+});
+
 export class CardRunner {
   /** Set when the worktree preflight refused git: the card stops (SEC-2). */
   private tampered: string | undefined;
@@ -508,6 +527,11 @@ export class CardRunner {
    * request: nothing reaches a model that the log cannot reconstruct.
    */
   private logPrompt(record: PromptRecord): string {
+    const blobs = new BlobStore(this.options.repoRoot);
+    // The exact definitions sent, stored once per distinct set (kernel rule 17).
+    const toolSchemas = record.toolDefinitions
+      ? blobs.put(JSON.stringify(record.toolDefinitions))
+      : undefined;
     const pack = serializeContextPack({
       cardId: this.options.card.id,
       ...(this.attemptId ? { attemptId: this.attemptId } : {}),
@@ -517,8 +541,17 @@ export class CardRunner {
       prompt: record.prompt,
       tools: record.tools,
       ...(record.reasoning ? { reasoning: record.reasoning } : {}),
+      ...(toolSchemas ? { toolSchemas } : {}),
+      ...(record.toolArm ? { toolArm: record.toolArm } : {}),
+      thinking: this.options.thinking ?? "off",
+      ...(record.reasoningBudgetTokens !== undefined
+        ? { reasoningBudgetTokens: record.reasoningBudgetTokens }
+        : {}),
+      ...(record.maxTokens !== undefined ? { maxTokens: record.maxTokens } : {}),
+      ...(record.temperature !== undefined ? { temperature: record.temperature } : {}),
+      ...(record.purpose ? { purpose: record.purpose } : {}),
     });
-    return new BlobStore(this.options.repoRoot).put(pack);
+    return blobs.put(pack);
   }
 
   /** The turn as a step row with its gate results (K17, K18); ids go back on the turn (K4). */
@@ -558,6 +591,8 @@ export class CardRunner {
           : {}),
         ...(turn.formatErrors !== undefined ? { formatErrors: turn.formatErrors } : {}),
         ...(turn.proseOnly !== undefined ? { proseOnly: turn.proseOnly } : {}),
+        // MD-M4-4: the server's cache and draft accounting for the step.
+        ...stepUsage(turn.usage),
       });
       turn.attemptId = this.attemptId;
       turn.stepId = step.id;
@@ -772,6 +807,14 @@ export class CardRunner {
         detail: `${tests.join(", ")} already pass against the untouched implementation, so they cannot tell whether this card did anything.`,
       };
     }
+    // Gates that could not start say nothing about the tests: not red, not green.
+    if (result.failures.length > 0 && result.failures.every((f) => f.notRun === true)) {
+      return {
+        status: "unknown",
+        tests,
+        detail: `gates could not run: ${result.failures[0]?.errorExcerpt.split("\n")[0] ?? ""}`,
+      };
+    }
     const first = result.failures[0]?.errorExcerpt.split("\n")[0] ?? "failing";
     return {
       status: "fails",
@@ -939,13 +982,7 @@ export class CardRunner {
         // as the spec requires), unless the caller chose specific rungs.
         // Under --restricted only the static layer runs: executing the repo's
         // tests would execute its code (S12).
-        gateRungs: [
-          ...new Set(
-            this.config.gates
-              .filter((g) => g.blocking && (!this.options.restricted || g.layer === "static"))
-              .map((g) => g.rung),
-          ),
-        ],
+        gateRungs: this.verifiedRungs(),
         ...(this.config.project.autofix ? { autofixCommand: this.config.project.autofix } : {}),
         ...(this.config.project.styleFix && this.config.project.styleFixRules
           ? {
@@ -963,6 +1000,8 @@ export class CardRunner {
         },
         // The built-in security, hygiene and robustness layers (G3).
         builtinGates: this.config.project,
+        // GT-M6-5: the gates `note` may name as wrong, fixed for the attempt.
+        suspectableGates: this.suspectableGates(),
         stateDir: join(this.options.repoRoot, ".sekhemet"),
         ...(this.egressPort ? { allowedDomains: allow, egressProxyPort: this.egressPort } : {}),
         ...(store
@@ -1039,6 +1078,11 @@ export class CardRunner {
               cardId: card.id,
               attemptNumber: attempt,
               modelId: this.options.modelAdapter.modelId,
+              // The arm the steps are sent in (A3), as the session chooses it.
+              toolArm:
+                ARM_LETTER[
+                  this.options.toolArm ?? this.options.modelAdapter.preferredToolArm ?? "arm_a_flat"
+                ],
               ...(resumedFrom ? { resumedFromStep: resumedFrom.step } : {}),
               ...(this.options.forkedFrom ? { forkedFrom: this.options.forkedFrom } : {}),
             })
@@ -1175,6 +1219,7 @@ export class CardRunner {
           stopReason = turn.stopReason;
           if (turn.budget) stopDetail = { ...turn.budget };
           if (turn.hookVeto) stopDetail = { ...turn.hookVeto };
+          if (turn.suspectedGate) stopDetail = { ...turn.suspectedGate };
           if (turn.repeatedCall) stopDetail = { repeated: turn.repeatedCall };
           // Rule 31: human_abort's next action is to see who stopped it.
           if (turn.abortedBy !== undefined) stopDetail = { by: turn.abortedBy };
@@ -1237,6 +1282,9 @@ export class CardRunner {
             stopReason = "gate_passed";
             await this.checkpoint(session.getStepsUsed(), "pass", checkpointShas, true);
             if (this.tampered) stopReason = "git_metadata_tampered";
+          } else if (onlyNotRun(lastGateResult)) {
+            // Only gates that could not run: not the Worker's failure (rule 9).
+            stopReason = "done_pending_gates";
           }
         } catch (err) {
           stopReason = "done_pending_gates";
@@ -1328,7 +1376,10 @@ export class CardRunner {
         try {
           const again = await session.runVerification();
           lastGateResult = again;
-          if (!again.passed) stopReason = "integration_failed";
+          if (!again.passed) {
+            // Only gates that could not run is not an integration failure (rule 9).
+            stopReason = onlyNotRun(again) ? "done_pending_gates" : "integration_failed";
+          }
         } catch {
           stopReason = "done_pending_gates";
         }
@@ -1487,6 +1538,46 @@ export class CardRunner {
    * the repair ladder (rule 31): the table's next action, with the detail
    * stored beside the reason. Undefined leaves the ladder's own diagnosis.
    */
+  /**
+   * The gates this runner knows of, by id: the declared gates and the project
+   * gates the caller wraps around the runner. The session adds the gates it
+   * runs itself (bounds, integrity, hooks, the built-in layers) from the same
+   * sources that emit their ids (GT-M6-5).
+   */
+  private suspectableGates(): string[] {
+    // Only the declared gates of the rungs this attempt verifies (and the
+    // default gate for a requested rung the project did not declare), as the
+    // runner selects them.
+    const rungs = new Set(this.options.gateRungs ?? this.verifiedRungs());
+    const declared = this.config.gates.filter((g) => rungs.has(g.rung));
+    const defaults = DEFAULT_GATES.filter(
+      (g) => rungs.has(g.rung) && !declared.some((d) => d.rung === g.rung),
+    );
+    return [
+      ...new Set([
+        ...declared.map((g) => g.id),
+        ...defaults.map((g) => g.id),
+        ...(this.options.projectGateIds ?? []),
+      ]),
+    ].sort();
+  }
+
+  /**
+   * The rungs the card's verification runs: every blocking gate the project
+   * declares (lint included, as the spec requires); under --restricted only
+   * the static layer, since executing the repo's tests would execute its code
+   * (S12).
+   */
+  private verifiedRungs(): GateRung[] {
+    return [
+      ...new Set(
+        this.config.gates
+          .filter((g) => g.blocking && (!this.options.restricted || g.layer === "static"))
+          .map((g) => g.rung),
+      ),
+    ];
+  }
+
   private parkDetail(
     stopReason: ExecutionStopReason,
     detail: Record<string, unknown> | undefined,
@@ -1496,6 +1587,9 @@ export class CardRunner {
     if (row.class === "capability_ceiling" && row.mayVerify) return undefined;
     if (stopReason === "hook_veto" && detail) {
       return `Vetoed by ${String(detail.hook)}: ${String(detail.reason)}. ${row.nextAction}`;
+    }
+    if (stopReason === "gate_suspected" && detail) {
+      return `The Worker suspects the ${String(detail.gate)} gate: ${String(detail.reason)}. ${row.nextAction}`;
     }
     if (stopReason === "git_metadata_tampered" && this.tampered) {
       return `${this.tampered.slice(0, 300)} ${row.nextAction}`;
@@ -1612,7 +1706,14 @@ export class CardRunner {
       ...candidateSettings(this.options.modelAdapter),
       modelId: this.options.modelAdapter.modelId,
       toolArm: this.options.toolArm ?? this.options.modelAdapter.preferredToolArm ?? "arm_a_flat",
-      harnessCommit: harnessCommit(this.options.repoRoot),
+      // MD-M4-2: the harness's own commit and built output, never the card's repository.
+      // The short form evidence has always carried; `card/repro` keeps the full commit.
+      harnessCommit:
+        harnessProvenance().commit === "unknown"
+          ? "unknown"
+          : harnessProvenance().commit.slice(0, 12),
+      harnessDirty: harnessProvenance().dirty,
+      harnessDistSha: harnessProvenance().distSha,
       ...(this.options.temperature !== undefined ? { temperature: this.options.temperature } : {}),
       thinking: this.options.thinking ?? "off",
       workerMethod: this.options.workerMethod ?? "baseline",
@@ -1636,6 +1737,7 @@ export class CardRunner {
       formatErrors: t.formatErrors ?? 0,
       proseOnly: t.proseOnly ?? 0,
       ...(t.truncated ? { truncated: t.truncated } : {}),
+      ...stepUsage(t.usage),
     }));
 
     const evidence = compileEvidence({

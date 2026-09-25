@@ -1,5 +1,12 @@
 import { execFileSync } from "node:child_process";
-import type { GateFailure, GateResult, GateRung, GateRunner, RungOutcome } from "@sekhemet/gates";
+import {
+  type GateFailure,
+  type GateResult,
+  type GateRung,
+  type GateRunner,
+  type RungOutcome,
+  gateCopy,
+} from "@sekhemet/gates";
 import { missingTrailers } from "@sekhemet/sync";
 
 /**
@@ -49,16 +56,19 @@ export function trailerGate(root: string, base = "main"): GateFailure[] {
     exitCode: 1,
     errorExcerpt: `commit ${v.sha.slice(0, 10)} "${v.subject.slice(0, 60)}" lacks ${v.missing.join(", ")}`,
     suggestedFixFiles: [],
+    location: { file: "." },
     actual: v.missing.join(", "),
+    minimalRepro: `git log --format=%B -n 1 ${v.sha}`,
     expected: "Card, Agent-Model, Agent-Harness, Agent-Role, Co-authored-by",
-    suggestedAction:
-      "Commits on a card branch are the harness's checkpoints; do not commit by hand with run_cmd.",
+    suggestedAction: gateCopy.handCommit,
   }));
 }
 
 /** Wrap a gate runner so every verification checks the branch's trailers. */
 export function withTrailerGate(inner: GateRunner, base = "main"): GateRunner {
   return {
+    // GT-M6-5: the gate this wrapper adds, for `note`'s enum.
+    gateIds: [...(inner.gateIds ?? []), "trailers"],
     runGates: async (rungs: GateRung[], cwd: string): Promise<GateResult> => {
       const res = await inner.runGates(rungs, cwd);
       const started = Date.now();

@@ -40,23 +40,55 @@ export const PROMPT_ACRONYM_ALLOWLIST: readonly string[] = [
 /** Identifiers allowed by pattern: TypeScript error codes such as `TS2375`. */
 export const PROMPT_ACRONYM_PATTERNS: readonly RegExp[] = [/^TS\d{4,5}$/];
 
-/** Words used for emphasis. They are never added to the allowlist (rule 10). */
-export const PROMPT_EMPHASIS_WORDS: readonly string[] = ["MUST", "NEVER", "CRITICAL", "IMPORTANT"];
+/**
+ * Words used for emphasis. They are never added to the allowlist (rule 10),
+ * and the lint flags them even inside a code span, where a template could
+ * otherwise hide them.
+ */
+export const PROMPT_EMPHASIS_WORDS: readonly string[] = [
+  "MUST",
+  "NEVER",
+  "CRITICAL",
+  "IMPORTANT",
+  "ALWAYS",
+  "ONLY",
+  "NOT",
+  "DO",
+  "NOTE",
+  "WARNING",
+];
 
 /**
- * A copy module: the one file per role that may hold model-facing sentences
- * (rule 13, CX-M1-13). Named `copy.ts`, `<role>_copy.ts`, or kept in a
- * `copy/` folder. None exists yet; every model-facing literal is recorded in
- * the grandfathered inventory until it moves into one.
+ * The copy modules, by role: the one file per role that may hold
+ * model-facing sentences (rule 13, CX-M1-13). Only a file registered here is
+ * exempt from the literal inventory. A file shaped like a copy module
+ * (`copy.ts`, `<role>_copy.ts`, a `copy/` folder) that is not registered is a
+ * finding, so a new copy module is registered in the same change that
+ * creates it.
  */
+export const COPY_MODULES: Readonly<Record<string, string>> = {
+  gates: "packages/gates/src/copy.ts",
+  qualification: "packages/models/src/qualification_copy.ts",
+  worker: "packages/context/src/worker_copy.ts",
+};
+
+/** The shape of a copy module's path; a match must be registered in `COPY_MODULES`. */
 export const COPY_MODULE_PATTERN = /(^|\/)(copy\/[^/]+\.ts|copy\.ts|[a-z0-9_]+_copy\.ts)$/;
 
 const TAGS = new Set(REGISTERED_PROMPT_TAGS);
 const ACRONYMS = new Set(PROMPT_ACRONYM_ALLOWLIST);
 const EMPHASIS = new Set(PROMPT_EMPHASIS_WORDS);
+const COPY_PATHS = new Set(Object.values(COPY_MODULES));
+
+const normalise = (path: string) => path.replaceAll("\\", "/");
 
 export function isRegisteredPromptTag(name: string): boolean {
   return TAGS.has(name);
+}
+
+/** True for a word used for emphasis (rule 10). */
+export function isEmphasisWord(word: string): boolean {
+  return EMPHASIS.has(word);
 }
 
 /** True for an all-capital word the lint's emphasis check lets through. */
@@ -65,6 +97,26 @@ export function isAllowlistedCapitalWord(word: string): boolean {
   return ACRONYMS.has(word) || PROMPT_ACRONYM_PATTERNS.some((re) => re.test(word));
 }
 
+/** True only for a registered copy module (repository-relative path). */
 export function isCopyModulePath(path: string): boolean {
-  return COPY_MODULE_PATTERN.test(path.replaceAll("\\", "/"));
+  return COPY_PATHS.has(normalise(path));
+}
+
+/**
+ * Packages whose copy only people read (the dashboard's words). A file there
+ * shaped like a copy module is not a model's copy module and need not be
+ * registered.
+ */
+export const HUMAN_COPY_ROOTS: readonly string[] = ["packages/ui/"];
+
+/** Paths shaped like a copy module that are not registered in `COPY_MODULES`. */
+export function unregisteredCopyModules(paths: readonly string[]): string[] {
+  return paths
+    .map(normalise)
+    .filter(
+      (p) =>
+        COPY_MODULE_PATTERN.test(p) &&
+        !COPY_PATHS.has(p) &&
+        !HUMAN_COPY_ROOTS.some((root) => p.startsWith(root)),
+    );
 }

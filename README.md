@@ -129,8 +129,9 @@ The front door above covers daily use; these are the underlying commands, run as
 ## Release gates
 
 `fixtures/` holds target projects the harness must build autonomously, each with
-contract-first acceptance tests. `scripts/run_gate.sh <fixture> [queue args]`
-runs one from a clean scratch repository.
+contract-first acceptance tests. `node scripts/run_suite.mjs --worker cyber-tiel
+[--fixtures chronicle,onyx]` runs them through the product's queue from clean
+scratch repositories (measurement MS-M9-1).
 
 - **Chronicle** — a cryptographic event ledger, 6 cards. Bar: at least 5 of 6 pass
   on the first attempt, repairs within 3 rungs, zero test mutation, zero

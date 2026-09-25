@@ -10,7 +10,9 @@ import {
   LearningGuard,
   boundPolicyChange,
   commandShape,
+  defaultSetupCommands,
   distillSkill,
+  formatM0Report,
   generateMutants,
   harvestExemplars,
   mineCommitCandidates,
@@ -22,6 +24,7 @@ import {
   runM0Protocol,
   runMutationCampaign,
   siftSlice,
+  structurallyComplete,
   synthesizeTasksFromHistory,
   validateToolProposal,
   writeToolCandidate,
@@ -84,6 +87,41 @@ describe("E2/E12: task synthesis from the repository's own history", () => {
     expect(task.issueDescription).toContain("<path>");
     expect(task.scopeFiles).toEqual(["add.js"]);
     expect(res.rejected[0]?.subject).toBe("refactor");
+  }, 30_000);
+
+  it("MS-T8-12: installs the dependencies in each task's own workspace, and discards the task when that fails", async () => {
+    const { repo, git } = gitRepo();
+    writeFileSync(join(repo, "add.js"), "module.exports = (a, b) => a - b;\n");
+    writeFileSync(join(repo, "package.json"), '{ "name": "x", "private": true }\n');
+    writeFileSync(join(repo, "package-lock.json"), '{ "lockfileVersion": 3, "packages": {} }\n');
+    git("add", "-A");
+    git("commit", "-q", "-m", "seed");
+    writeFileSync(join(repo, "add.js"), "module.exports = (a, b) => a + b;\n");
+    mkdirSync(join(repo, "tests"));
+    writeFileSync(
+      join(repo, "tests", "add.test.js"),
+      "const add = require('../add');\nif (add(2, 3) !== 5) process.exit(1);\n",
+    );
+    git("add", "-A");
+    git("commit", "-q", "-m", "fix add");
+    // The lockfile names the install; the source repository is never touched by it.
+    expect(defaultSetupCommands(repo)).toEqual([
+      { command: "npm", args: ["ci", "--ignore-scripts"] },
+    ]);
+    const failing = await synthesizeTasksFromHistory(repo, {
+      setupCommands: [{ command: "node", args: ["-e", "process.exit(3)"] }],
+    });
+    expect(failing.tasks).toEqual([]);
+    expect(failing.rejected[0]?.violations.join(" ")).toMatch(
+      /dependency install failed .*exited 3/,
+    );
+    const ok = await synthesizeTasksFromHistory(repo, {
+      setupCommands: [
+        { command: "node", args: ["-e", "require('fs').writeFileSync('installed', '')"] },
+      ],
+    });
+    expect(ok.tasks).toHaveLength(1);
+    expect(existsSync(join(repo, "installed"))).toBe(false);
   }, 30_000);
 });
 
@@ -152,6 +190,91 @@ describe("E1/E3: the M0 protocol", () => {
   });
 });
 
+describe("MS-M9-6: the M0 protocol's valid-tool-call rate and the pivot condition", () => {
+  const attemptWith = (id: string, steps: number, valid: number) => ({
+    taskId: id,
+    attempt: 1,
+    passed: false,
+    temperature: 0,
+    durationMs: 1,
+    turnsUsed: steps,
+    promptTokens: 0,
+    completionTokens: 0,
+    totalTokens: 0,
+    inferenceCalls: 0,
+    stopReason: "gates_failed" as never,
+    workspacePath: "",
+    flippedToPassing: [],
+    stillFailing: [],
+    regressed: [],
+    toolCallSteps: { steps, valid },
+  });
+  const harnessWith = (valid: number): EvalHarness => ({
+    async runBenchmark(tasks, adapter, options = {}) {
+      return {
+        taskCount: tasks.length,
+        passAt1: 0,
+        passAtK: 0,
+        totalTokens: 0,
+        totalTimeMs: 0,
+        tasks: tasks.map((t) => ({
+          taskId: t.id,
+          passed: false,
+          passedFirstAttempt: false,
+          attempts: [attemptWith(t.id, 10, valid)],
+          durationMs: 1,
+          totalTokens: 0,
+        })),
+        settings: { modelId: adapter.modelId, stepBudget: options.stepBudget } as never,
+      } satisfies EvalBenchmarkResult;
+    },
+  });
+  const tasks = ["a", "b"].map((id) => ({
+    id,
+    repoCommit: "HEAD",
+    issueDescription: id,
+    failToPassTests: ["x"],
+    passToPassTests: [],
+  }));
+  const adapter = new ManagedLlamaServerAdapter({ modelId: "w", modelPath: "/m/W-IQ3_S.gguf" });
+
+  it("reports valid tool calls over every step with an exact interval, and the pivot below 70%", async () => {
+    const low = await runM0Protocol({
+      tasks,
+      adapter,
+      harness: harnessWith(6),
+      runs: 1,
+      budgets: [50],
+    });
+    expect(low.validToolCalls).toMatchObject({ valid: 12, steps: 20, rate: 0.6, pivot: true });
+    expect(low.validToolCalls?.interval.low).toBeCloseTo(0.361, 2);
+    expect(low.validToolCalls?.interval.high).toBeCloseTo(0.809, 2);
+    expect(formatM0Report(low)).toMatch(
+      /valid tool calls 12\/20 = 60% \(95% CI 36%-81%\): below 70%, the M0 pivot condition/,
+    );
+    const high = await runM0Protocol({
+      tasks,
+      adapter,
+      harness: harnessWith(9),
+      runs: 1,
+      budgets: [50],
+    });
+    expect(high.validToolCalls).toMatchObject({ rate: 0.9, pivot: false });
+  });
+
+  it("says the rate was not measured when no attempt recorded its steps", async () => {
+    const report = await runM0Protocol({
+      tasks,
+      adapter,
+      harness: fakeHarness({ 50: [["a"]] }),
+      runs: 1,
+      budgets: [50],
+    });
+    expect(report.validToolCalls).toBeUndefined();
+    expect(formatM0Report(report)).toMatch(/valid tool calls: not measured/);
+  });
+});
+
 describe("E4: MODEL_MATRIX.md from bake-off records", () => {
   it("renders one table per fixture with full settings and lists inadmissible records apart", () => {
     const rec = (modelId: string, passAt1: number, incomplete?: string[]) => ({
@@ -208,8 +331,8 @@ describe("E5: frozen regression suite gates learning changes", () => {
   });
 });
 
-describe("E17: automatic rollback over a 10-card window", () => {
-  it("keeps one change at a time and rolls back when the pass rate drops", () => {
+describe("E17: the 10-card window is an advisory signal (measurement rule 18, MS-T8-3)", () => {
+  it("keeps one change at a time and flags a drop, but never rolls back", () => {
     const path = join(tmp(), "guard.json");
     const guard = new LearningGuard(path);
     for (let i = 0; i < 10; i++) guard.observe(`b${i}`, i < 8);
@@ -218,12 +341,24 @@ describe("E17: automatic rollback over a 10-card window", () => {
     expect(() => guard.activate({ id: "rule_y", kind: "rule", description: "y" })).toThrow(
       /one change at a time/,
     );
-    let decision = {};
+    let decision: ReturnType<LearningGuard["observe"]> = {};
     for (let i = 0; i < 10; i++) decision = guard.observe(`c${i}`, i < 5);
-    expect((decision as { rollback?: { id: string } }).rollback?.id).toBe("rule_x");
+    expect(decision).not.toHaveProperty("rollback");
+    expect(decision.flagged?.id).toBe("rule_x");
+    expect(decision.flagged?.reason).toMatch(/advisory.*paired suite run/);
     const reloaded = new LearningGuard(path);
-    expect(reloaded.changes()[0]?.status).toBe("rolled_back");
+    expect(reloaded.changes()[0]?.status).toBe("flagged");
     expect(reloaded.watching()).toBeUndefined();
+  });
+
+  it("assumes no baseline without history: it reports insufficient data", () => {
+    const guard = new LearningGuard(join(tmp(), "guard.json"));
+    const change = guard.activate({ id: "rule_x", kind: "rule", description: "new rule" });
+    expect(change.baselinePassRate).toBeUndefined();
+    let decision: ReturnType<LearningGuard["observe"]> = {};
+    for (let i = 0; i < 10; i++) decision = guard.observe(`c${i}`, false);
+    expect(decision.flagged).toBeUndefined();
+    expect(decision.insufficient?.reason).toMatch(/insufficient data/);
   });
 });
 
@@ -327,6 +462,63 @@ describe("E11: exemplar harvesting", () => {
     ]);
     expect(got.map((e) => e.cardId)).toEqual(["c1"]);
     expect(store.topFor("implement:ts").map((e) => e.cardId)).toEqual(["c1"]);
+  });
+});
+
+describe("MS-T8-6: only structurally complete trajectories become exemplars or skill sources", () => {
+  const card = (
+    id: string,
+    turns: {
+      turn: number;
+      action: string;
+      result: string;
+      calls?: number;
+      observations?: number;
+    }[],
+  ) => ({
+    id,
+    tier: "task",
+    title: `Fix ${id}`,
+    scopeFiles: ["src/a.ts"],
+    passed: true,
+    tokens: 100,
+    turns,
+  });
+
+  it("refuses an exemplar with an unclosed tool call or turns out of order", () => {
+    expect(structurallyComplete([{ turn: 1, calls: 2, observations: 2 }, { turn: 2 }])).toBe(true);
+    expect(structurallyComplete([{ turn: 1, calls: 2, observations: 1 }])).toBe(false);
+    expect(structurallyComplete([{ turn: 2 }, { turn: 1 }])).toBe(false);
+    const store = new ExemplarStore(join(tmp(), "ex"));
+    const got = harvestExemplars(store, [
+      card("ok", [{ turn: 1, action: "edit src/a.ts", result: "ok", calls: 1, observations: 1 }]),
+      card("open", [{ turn: 1, action: "edit src/a.ts", result: "", calls: 1, observations: 0 }]),
+      card("jumbled", [
+        { turn: 2, action: "check", result: "pass" },
+        { turn: 1, action: "edit", result: "ok" },
+      ]),
+    ]);
+    expect(got.map((e) => e.cardId)).toEqual(["ok"]);
+  });
+
+  it("leaves an incomplete trajectory out of a skill's sources", async () => {
+    const t = (id: string, closed = true) => ({
+      cardId: id,
+      title: "Add ledger migration",
+      cardClass: "task:ts:feature",
+      passed: true,
+      steps: [
+        { action: "read_file src/db.ts", result: "ok" },
+        { action: "edit src/db.ts", result: "ok", closed },
+      ],
+    });
+    // Two complete wins are below the three a skill needs.
+    expect(await distillSkill([t("c1"), t("c2"), t("c3", false)])).toBeUndefined();
+    expect((await distillSkill([t("c1"), t("c2"), t("c3")]))?.provenance).toEqual([
+      "c1",
+      "c2",
+      "c3",
+    ]);
   });
 });
 

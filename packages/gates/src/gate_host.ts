@@ -4,6 +4,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { type Server, createServer, request } from "node:https";
 import { join } from "node:path";
 import type { TLSSocket } from "node:tls";
+import { completeFailures } from "./rank.js";
 import type { GateResult, GateRung, GateRunner } from "./types.js";
 
 /**
@@ -209,9 +210,20 @@ export class RemoteGateRunner implements GateRunner {
           res.on("end", () => {
             try {
               const parsed = JSON.parse(text) as GateResult & { error?: string };
-              if (res.statusCode !== 200)
+              if (res.statusCode !== 200) {
                 reject(new Error(`gate host: ${parsed.error ?? res.statusCode}`));
-              else resolve(parsed);
+                return;
+              }
+              // The host's failures meet the same contract as local ones (rule
+              // 19): a gap is filled and recorded, never trusted as it came.
+              const defects = [...(parsed.defects ?? [])];
+              resolve({
+                ...parsed,
+                failures: completeFailures(parsed.failures ?? [], (d) =>
+                  defects.push(`the gate host: ${d}`),
+                ),
+                ...(defects.length > 0 ? { defects } : {}),
+              });
             } catch {
               reject(new Error(`gate host answered ${res.statusCode}: ${text.slice(0, 200)}`));
             }

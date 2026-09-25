@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { type GateFailure, parseNumstat } from "@sekhemet/gates";
+import { type GateFailure, gateCopy, parseNumstat } from "@sekhemet/gates";
 import { gitEnvFor } from "@sekhemet/sync";
 
 /**
@@ -89,8 +89,12 @@ export function scanDiffIntegrity(
   return out;
 }
 
-/** The card's diff against its base, including files not yet committed. */
-export function worktreeDiff(root: string, base = "main"): string {
+/**
+ * The card's diff against its base, including files not yet committed;
+ * undefined when git cannot produce it, so the gates that judge the diff say
+ * they did not run rather than pass an empty one.
+ */
+export function worktreeDiff(root: string, base = "main"): string | undefined {
   try {
     // A card worktree is preflighted and pinned (security items 18–21).
     const env = gitEnvFor(root);
@@ -107,7 +111,7 @@ export function worktreeDiff(root: string, base = "main"): string {
       },
     );
   } catch {
-    return "";
+    return undefined;
   }
 }
 
@@ -134,15 +138,22 @@ export function worktreeNumstat(
   }
 }
 
-export function integrityFailures(violations: IntegrityViolation[]): GateFailure[] {
+/**
+ * Integrity violations as failures with all six fields (gates rule 19). The
+ * repro shows the card's lines in the file against `base`.
+ */
+export function integrityFailures(violations: IntegrityViolation[], base = "main"): GateFailure[] {
   return violations.slice(0, 3).map((v) => ({
-    rung: "integrity" as never,
+    rung: "hygiene",
     gate: "integrity",
+    layer: "hygiene",
     exitCode: 1,
     errorExcerpt: `${v.file}: "${v.line}" ${v.why} (${v.pattern})`,
     suggestedFixFiles: [v.file],
     location: { file: v.file },
-    suggestedAction:
-      "Remove the suppression and fix the underlying problem. A gate passed by switching a check off is not a pass: the reviewer will send it back.",
+    expected: "no check switched off in the card's lines",
+    actual: `${v.pattern}: ${v.line}`,
+    minimalRepro: `git diff ${base} -- ${v.file}`,
+    suggestedAction: gateCopy.integrity,
   }));
 }

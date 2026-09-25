@@ -331,6 +331,10 @@ const ADDED_STEP_COLUMNS: ReadonlyArray<[column: string, ddl: string]> = [
   ["answer_tokens", "answer_tokens INTEGER"],
   ["format_errors", "format_errors INTEGER"],
   ["prose_only", "prose_only INTEGER"],
+  ["cached_prompt_tokens", "cached_prompt_tokens INTEGER"],
+  ["evaluated_prompt_tokens", "evaluated_prompt_tokens INTEGER"],
+  ["draft_tokens", "draft_tokens INTEGER"],
+  ["draft_accepted_tokens", "draft_accepted_tokens INTEGER"],
 ];
 
 const ADDED_EVIDENCE_COLUMNS: ReadonlyArray<[column: string, ddl: string]> = [

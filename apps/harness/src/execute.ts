@@ -17,7 +17,7 @@ import {
   SkillsRegistry,
   useFileEvidenceStore,
 } from "@sekhemet/context";
-import { LearningGuard, harvestExemplars } from "@sekhemet/eval";
+import { LearningGuard, type RunProfile, harvestExemplars } from "@sekhemet/eval";
 import {
   DeterministicGateRunner,
   RemoteGateRunner,
@@ -44,9 +44,11 @@ import {
   type LocalInferenceAdapter,
   type MemoryWatchdog,
   ModelRegistry,
+  type ServerProps,
   type ThroughputStats,
   checkExecutionHeadroom,
   readSwapUsedBytes,
+  thinkingPolicyFromEnv,
 } from "@sekhemet/models";
 import { type SpidrSliceKind, scoreDifficulty, stepBudgetForDifficulty } from "@sekhemet/planner";
 import { confinedSandbox, mergeNetworkConfigs, policyFetch } from "@sekhemet/sandbox";
@@ -55,7 +57,7 @@ import { isAirgapped, mirrorRegistry } from "./airgap.js";
 import { withArchitectureGate } from "./architecture_gate.js";
 import { networkConfigs } from "./config_apply.js";
 import { readSettings } from "./integrations.js";
-import { learnFromAttempt } from "./learning/reflect.js";
+import { RULE_SIGNAL_MINIMUM, learnFromAttempt } from "./learning/reflect.js";
 import type { LearningStore } from "./learning/store.js";
 import { withLicenseGate } from "./license_gate.js";
 import { withReachabilityGate } from "./reachability_gate.js";
@@ -91,8 +93,7 @@ export function workerScriptCapable(modelId: string, registryPath?: string): boo
 
 /** SEKHEMET_THINKING=off|surgical|all; anything else is the default, off. */
 export function thinkingPolicy(): "off" | "surgical" | "all" {
-  const v = process.env.SEKHEMET_THINKING;
-  return v === "surgical" || v === "all" ? v : "off";
+  return thinkingPolicyFromEnv();
 }
 
 export interface ExecutionContext {
@@ -111,6 +112,15 @@ export interface ExecutionContext {
   learning?: LearningStore;
   /** Rules learned this run from verified signals: in force for the run. */
   runRules?: Set<string>;
+  /**
+   * The run's one resolved settings object (measurement MS-M9-4): its
+   * switches are what the card runs with, and it is written into every
+   * attempt's reproducibility record. Absent, the switches come from the
+   * environment as before.
+   */
+  runProfile?: RunProfile;
+  /** The measured run that prepared this repository, when one did (review M5). */
+  measurement?: { purpose: string; by: string; createdAt: string };
   /** One paragraph on who is on the team right now (from the residency plan). */
   teamNote?: () => string;
   /**
@@ -350,6 +360,11 @@ export async function executeCard(
               : new DeterministicGateRunner(sandbox, {
                   repoRoot: ctx.repoPath,
                   expectedConfigSha256: gatesConfig.sha256,
+                  // The card's verification caps once, after every gate and
+                  // wrapper has reported (finalizeFailures, gates rule 20):
+                  // the runner hands back everything, and the regression
+                  // wrapper reads the whole list.
+                  maxFailuresReported: Number.POSITIVE_INFINITY,
                 }),
             ctx.repoPath,
           ),
@@ -412,6 +427,9 @@ export async function executeCard(
     stepBudget: card.stepBudget,
     modelAdapter: tracedModel,
     gateRunner,
+    // GT-M6-5: the project gates wrapped around the runner above, as the
+    // wrappers name themselves, so the Worker's `note` can name one as wrong.
+    projectGateIds: gateRunner.gateIds ?? [],
     syncAdapter: gitAdapter,
     scopeFiles: card.scopeFiles,
     agentRole: "implementer",
@@ -498,9 +516,11 @@ export async function executeCard(
     scriptCapable: workerScriptCapable(model.modelId),
     // Where the Worker thinks: off (default), surgical or all. An experiment
     // setting until the frozen suite picks one; recorded in every bundle.
-    thinking: thinkingPolicy(),
+    thinking: ctx.runProfile?.switches.thinking ?? thinkingPolicy(),
     // The Worker's working method: baseline (default) or strict.
-    workerMethod: process.env.SEKHEMET_WORKER_METHOD === "strict" ? "strict" : "baseline",
+    workerMethod:
+      ctx.runProfile?.switches.workerMethod ??
+      (process.env.SEKHEMET_WORKER_METHOD === "strict" ? "strict" : "baseline"),
     // M2: decoded tokens go to the card's live file, which the dashboard
     // streams while the step is still generating.
     onToken: ctx.onToken
@@ -627,10 +647,17 @@ export async function executeCard(
       // A candidate that restates a rule the playbook already has (by fact
       // key, not wording) would only duplicate it in the window: drop it.
       const guarded = unlessPlaybookCovers(ctx.learning, playbook);
-      const proposed = await learnFromAttempt(guarded, card, result, attempt, (id) =>
-        ctx.runRules?.add(id),
-      );
-      if (proposed > 0) log(`   learning: ${proposed} candidate rule(s) from this attempt`);
+      // Probation is off until the owner allows it (O15, measurement rule 6,
+      // MS-T8-15): a candidate waits for a person's approval, and nothing
+      // learned here reaches a later card of the run.
+      const proposed = await learnFromAttempt(guarded, card, result, attempt, {
+        onInsufficient: (key, n) =>
+          log(
+            `   learning: insufficient data for ${key} (${n} of ${RULE_SIGNAL_MINIMUM} occurrences)`,
+          ),
+      });
+      if (proposed > 0)
+        log(`   learning: ${proposed} candidate rule(s) from this attempt, waiting for approval`);
     } catch {
       // Learning is a side channel; it must never fail a card.
     }
@@ -652,14 +679,21 @@ async function recordReproducibility(
   gatesSha: string,
   promptSha: string | undefined,
 ): Promise<void> {
+  // MD-M4-3: the running server's own report, never the adapter's intent.
+  const server = await (
+    model as { serverProps?: () => Promise<ServerProps | undefined> }
+  ).serverProps?.();
   const record = buildReproRecord({
     cardId,
     attempt,
     model,
     repoPath: ctx.repoPath,
     gatesSha,
+    ...(server ? { server } : {}),
     activeRules: [...(ctx.runRules ?? [])],
     ...(promptSha ? { promptSha } : {}),
+    ...(ctx.runProfile ? { runProfile: ctx.runProfile } : {}),
+    ...(ctx.measurement ? { measurement: ctx.measurement } : {}),
   });
   const dir = join(ctx.repoPath, ".sekhemet", "evidence");
   mkdirSync(dir, { recursive: true });
@@ -757,6 +791,8 @@ export function learnFromOutcome(
           turn: t.turnIndex,
           action: t.toolCalls.map((c) => c.name).join(", ") || "(no tool calls)",
           result: t.observations.map((o) => o.summary).join(" | "),
+          calls: t.toolCalls.length,
+          observations: t.observations.length,
         })),
       },
     ]);
@@ -766,16 +802,23 @@ export function learnFromOutcome(
   try {
     const guard = new LearningGuard(join(dot, "learning_guard.json"));
     const decision = guard.observe(card.id, result.passed);
-    if (decision.rollback) {
-      const change = decision.rollback;
-      log(`   learning guard: rolling back ${change.kind} ${change.id} (${change.reason ?? ""})`);
-      if (change.kind === "rule") void ctx.learning?.update(change.id, { status: "retired" });
+    // Advisory only (measurement rule 18): the window is reported, and a
+    // rollback waits for a paired suite run that shows a loss.
+    const change = decision.flagged ?? decision.insufficient;
+    if (change) {
+      log(`   learning guard: ${change.kind} ${change.id}: ${change.reason ?? ""}`);
       void ctx.cardStore
         .recordEvent({
-          type: "learning/rolled_back",
+          // A drop is flagged; a window with no history is not a flag (review minor).
+          type: decision.flagged ? "learning/flagged" : "learning/insufficient",
           cardId: card.id,
           actor: "system",
-          payload: { change: change.id, kind: change.kind, reason: change.reason ?? "" },
+          payload: {
+            change: change.id,
+            kind: change.kind,
+            status: change.status,
+            reason: change.reason ?? "",
+          },
         })
         .catch(() => undefined);
     }
@@ -1478,6 +1521,8 @@ export interface QueueReport {
   cache?: CacheSummary;
   /** The memory watchdog's level at the end of the run (M20). */
   memory?: { level: string; reason: string };
+  /** Written part-way through the run; the final report has no such mark. */
+  partial?: boolean;
 }
 
 /** A review finding (Seshat's or the Reviewer's), as `learning/review.ts` returns it. */
@@ -1511,6 +1556,35 @@ export async function recordReview(
 }
 
 /** Persist a queue scorecard where the dashboard and a human can both find it. */
+/**
+ * The queue's report so far, written after every entry (review M4): a run
+ * the suite runner's timeout stops still leaves the record of every card it
+ * finished. `partial` marks it until the queue writes its final report.
+ */
+export function recordQueueProgress(
+  repoPath: string,
+  so: Pick<QueueReport, "startedAt" | "model" | "entries" | "modelSwaps" | "totalDurationMs"> & {
+    managerModel?: string | undefined;
+  },
+): string {
+  const cards = [...new Set(so.entries.map((e) => e.cardId))];
+  const firstTry = so.entries.filter((e) => e.attempt === 1 && e.passed).length;
+  const eventually = cards.filter((id) =>
+    so.entries.some((e) => e.cardId === id && e.passed),
+  ).length;
+  return writeQueueReport(repoPath, {
+    startedAt: so.startedAt,
+    model: so.model,
+    ...(so.managerModel ? { managerModel: so.managerModel } : {}),
+    entries: so.entries,
+    passAt1: cards.length ? firstTry / cards.length : 0,
+    passAfterEscalation: cards.length ? eventually / cards.length : 0,
+    modelSwaps: so.modelSwaps,
+    totalDurationMs: so.totalDurationMs,
+    partial: true,
+  });
+}
+
 export function writeQueueReport(repoPath: string, report: QueueReport): string {
   const dir = join(repoPath, ".sekhemet");
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });

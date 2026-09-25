@@ -1,0 +1,10 @@
+{
+  "tool": "vitest",
+  "case": "text_one_failing",
+  "command": "node $REPO/node_modules/vitest/vitest.mjs run",
+  "repro": "pnpm test",
+  "exitCode": 1,
+  "stdout": "\n RUN  v3.2.7 $ROOT\n\n ❯ tests/ledger.spec.js (2 tests | 1 failed) 12ms\n   × ledger > adds two amounts 10ms\n     → expected 3 to be 2 // Object.is equality\n   ✓ ledger > keeps a string as it is 0ms\n\n Test Files  1 failed (1)\n      Tests  1 failed | 1 passed (2)\n   Start at  22:36:15\n   Duration  1.15s (transform 33ms, setup 0ms, collect 26ms, tests 12ms, environment 0ms, prepare 168ms)\n\n",
+  "stderr": "\n⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯\n\n FAIL  tests/ledger.spec.js > ledger > adds two amounts\nAssertionError: expected 3 to be 2 // Object.is equality\n\n- Expected\n+ Received\n\n- 2\n+ 3\n\n ❯ tests/ledger.spec.js:6:23\n      4| describe(\"ledger\", () => {\n      5|   it(\"adds two amounts\", () => {\n      6|     expect(add(1, 1)).toBe(2);\n       |                       ^\n      7|   });\n      8| \n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯\n\n",
+  "version": "vitest/3.2.7 darwin-arm64 node-v26.0.0"
+}

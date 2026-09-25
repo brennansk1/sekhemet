@@ -1,6 +1,6 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 import { defaultParserRegistry, rankFailures, remedyFor } from "../src/parsers.js";
 import type { GateFailure } from "../src/types.js";
@@ -60,9 +60,7 @@ describe("@sekhemet/gates targeted remedies", () => {
       stderr: "",
       minimalRepro: "tsc -b",
     });
-    expect(failure?.suggestedAction).toBe(
-      "Resolve TS9999 at src/a.ts:1. Read the surrounding lines before editing.",
-    );
+    expect(failure?.suggestedAction).toBe("Resolve TS9999 at src/a.ts:1.");
   });
 
   it("explains exactOptionalPropertyTypes: omit the property, never assign undefined", () => {
@@ -136,15 +134,17 @@ describe("a missing export is answered, not described", () => {
     expect(f?.suggestedAction).toContain("CardView, SPACING, Tone, VISIBLE");
   });
 
-  it("tells the model it does not need to read the module again", () => {
-    expect(failureFor(project(), "CanvasCard")?.suggestedAction).toMatch(
-      /no need to read .* again/,
-    );
+  it("never sends the model to read the module (GT-M6-3)", () => {
+    const action = failureFor(project(), "CanvasCard")?.suggestedAction;
+    expect(action).not.toMatch(/\bread\b/i);
+    expect(action).toContain("Import one of those");
   });
 
-  it("falls back to words when the module cannot be found", () => {
+  it("falls back to a search the model can run when the module cannot be found", () => {
     const f = failureFor(mkdtempSync(join(tmpdir(), "ts2305-empty-")), "CanvasCard");
-    expect(f?.suggestedAction).toMatch(/does not export that name/);
+    expect(f?.suggestedAction).toContain("./tokens.js does not export CanvasCard");
+    expect(f?.suggestedAction).toContain('grep_search with the query `from "./tokens.js"`');
+    expect(f?.suggestedAction).not.toMatch(/\bread\b/i);
   });
 });
 
@@ -246,5 +246,191 @@ describe("an unknown member is answered with the type's real members", () => {
     );
     expect(f?.suggestedAction).toContain("Entry has no member sequence");
     expect(f?.suggestedAction).toContain("hash, id");
+  });
+});
+
+describe("members and exports come from the syntax tree, and say exactly only when complete", () => {
+  const tsc = (cwd: string, line: string) =>
+    defaultParserRegistry.parse({
+      gate: gate("tsc"),
+      exitCode: 2,
+      stdout: line,
+      stderr: "",
+      minimalRepro: "tsc --noEmit",
+      cwd,
+    })[0];
+  const project = (files: Record<string, string>) => {
+    const dir = mkdtempSync(join(tmpdir(), "members-"));
+    mkdirSync(join(dir, "src"));
+    for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, "src", name), text);
+    return dir;
+  };
+
+  it("counts async methods, getters, initialised properties and inherited members", () => {
+    const dir = project({
+      "store.ts": [
+        "class Base {",
+        "  close(): void {}",
+        "}",
+        "export class Store extends Base {",
+        "  count = 0;",
+        "  async load(): Promise<void> {}",
+        "  get size(): number { return this.count; }",
+        "  static open(): Store { return new Store(); }",
+        "}",
+      ].join("\n"),
+    });
+    const f = tsc(
+      dir,
+      "src/a.ts(1,1): error TS2339: Property 'nope' does not exist on type 'Store'.",
+    );
+    // Instance members only: a static method is not a member of the instance type.
+    expect(f?.suggestedAction).toContain("Its members are exactly: close, count, load, size");
+  });
+
+  it("says the members include, not exactly, when a base type is outside what it can read", () => {
+    const dir = project({
+      "store.ts":
+        'import { Remote } from "remote-lib";\nexport class Store extends Remote {\n  load(): void {}\n}\n',
+    });
+    const f = tsc(
+      dir,
+      "src/a.ts(1,1): error TS2339: Property 'nope' does not exist on type 'Store'.",
+    );
+    expect(f?.suggestedAction).toContain("Its members include: load");
+    expect(f?.suggestedAction).not.toContain("exactly");
+  });
+
+  it("says include, not exactly, when the list is cut", () => {
+    const members = Array.from(
+      { length: 45 },
+      (_, i) => `  m${String(i).padStart(2, "0")}: number;`,
+    );
+    const dir = project({ "big.ts": `export interface Big {\n${members.join("\n")}\n}\n` });
+    const f = tsc(
+      dir,
+      "src/a.ts(1,1): error TS2339: Property 'nope' does not exist on type 'Big'.",
+    );
+    expect(f?.suggestedAction).toContain("Its members include:");
+    expect(f?.suggestedAction).not.toContain("exactly");
+  });
+
+  it("falls back to a search for a barrel that re-exports everything", () => {
+    const dir = project({
+      "index.ts": 'export * from "./tokens.js";\nexport const VERSION = 1;\n',
+      "tokens.ts": "export const SPACING = 4;\n",
+    });
+    const f = tsc(
+      dir,
+      `src/a.ts(1,10): error TS2305: Module '"./index.js"' has no exported member 'Missing'.`,
+    );
+    expect(f?.suggestedAction).toContain('grep_search with the query `from "./index.js"`');
+    expect(f?.suggestedAction).not.toContain("exactly");
+  });
+
+  it("never reads a module outside the worktree", () => {
+    const outside = mkdtempSync(join(tmpdir(), "outside-"));
+    writeFileSync(join(outside, "secret.ts"), "export const TOKEN = 1;\n");
+    const dir = project({});
+    const rel = relative(join(dir, "src"), join(outside, "secret.js"));
+    const f = tsc(
+      dir,
+      `src/a.ts(1,10): error TS2305: Module '"${rel}"' has no exported member 'Missing'.`,
+    );
+    expect(f?.suggestedAction).not.toContain("TOKEN");
+  });
+
+  it("suggests import type for an interface, and names where it searched", () => {
+    const dir = project({ "types.ts": "export interface Entry { id: number }\n" });
+    const found = tsc(dir, "src/a.ts(1,1): error TS2304: Cannot find name 'Entry'.");
+    expect(found?.suggestedAction).toContain('import type { Entry } from "./types.js";');
+    const missing = tsc(dir, "src/a.ts(1,1): error TS2304: Cannot find name 'Nowhere'.");
+    expect(missing?.suggestedAction).toContain("no module under src/ exports it");
+  });
+});
+
+describe("jest's --json report is read like vitest's", () => {
+  it("finds a failing test in a report that starts with numFailedTestSuites", () => {
+    const report = {
+      numFailedTestSuites: 1,
+      numTotalTestSuites: 1,
+      testResults: [
+        {
+          name: "/w/tests/a.test.js",
+          status: "failed",
+          assertionResults: [
+            {
+              ancestorTitles: ["a"],
+              title: "adds",
+              status: "failed",
+              failureMessages: [
+                "Error: expect(received).toBe(expected)\n    at /w/tests/a.test.js:4:9",
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const [f] = defaultParserRegistry.parse({
+      gate: { ...gate("jest"), rung: "test" },
+      exitCode: 1,
+      stdout: JSON.stringify(report),
+      stderr: "",
+      minimalRepro: "npx jest",
+      cwd: "/w",
+    });
+    expect(f?.location).toEqual({ file: "tests/a.test.js", line: 4, column: 9 });
+  });
+});
+
+describe("remedies claim only what they read (B2.3 confirmation)", () => {
+  const tsc = (cwd: string, line: string) =>
+    defaultParserRegistry.parse({
+      gate: gate("tsc"),
+      exitCode: 2,
+      stdout: line,
+      stderr: "",
+      minimalRepro: "tsc --noEmit",
+      cwd,
+    })[0];
+  const project = (files: Record<string, string>) => {
+    const dir = mkdtempSync(join(tmpdir(), "claims-"));
+    mkdirSync(join(dir, "src"));
+    for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, "src", name), text);
+    return dir;
+  };
+
+  it("says include, not exactly, for a type declared in more than one file", () => {
+    const dir = project({
+      "a.ts": "export interface Entry { id: number }\n",
+      "b.ts": "interface Entry { amount: number }\n",
+    });
+    const f = tsc(
+      dir,
+      "src/c.ts(1,1): error TS2339: Property 'nope' does not exist on type 'Entry'.",
+    );
+    expect(f?.suggestedAction).toContain("Its members include:");
+  });
+
+  it("sends a relative module it cannot resolve to a search", () => {
+    const f = tsc(
+      project({}),
+      `src/a.ts(1,10): error TS2305: Module '"./nowhere.js"' has no exported member 'X'.`,
+    );
+    expect(f?.suggestedAction).toContain('grep_search with the query `from "./nowhere.js"`');
+  });
+
+  it("does not follow a symlinked directory out of the worktree", () => {
+    const outside = mkdtempSync(join(tmpdir(), "outside-types-"));
+    writeFileSync(join(outside, "leak.ts"), "export interface Secret { token: string }\n");
+    const dir = project({});
+    symlinkSync(outside, join(dir, "src", "linked"));
+    const f = tsc(
+      dir,
+      "src/a.ts(1,1): error TS2339: Property 'nope' does not exist on type 'Secret'.",
+    );
+    expect(f?.suggestedAction).not.toContain("token");
+    const name = tsc(dir, "src/a.ts(1,1): error TS2304: Cannot find name 'Secret'.");
+    expect(name?.suggestedAction).not.toContain("linked/leak");
   });
 });

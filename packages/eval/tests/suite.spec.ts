@@ -3,9 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  type SuiteRunResult,
   type SuiteTask,
   compareRuns,
   loadFrozenSuite,
+  passKByCard,
   runFrozenSuite,
   summarise,
 } from "../src/suite.js";
@@ -110,43 +112,165 @@ describe("running it", () => {
   });
 });
 
-describe("comparing two runs", () => {
-  const base = {
-    suiteHash: "h",
-    version: "1.0.0",
-    passed: 5,
-    total: 10,
-    firstTry: 3,
-    outcomes: [],
-    cost: { wallClockSeconds: 100, tokens: 10, rungs: 8 },
-    at: "2026-09-20T00:00:00.000Z",
+describe("comparing two runs (M12: paired and exact)", () => {
+  /** A run of n cards; `pass(i)` says whether card i passed, `blocked(i)` whether it was blocked. */
+  const run = (
+    n: number,
+    pass: (i: number) => boolean,
+    over: { blocked?: (i: number) => boolean; rungs?: number; suiteHash?: string } = {},
+  ): SuiteRunResult => {
+    const outcomes = Array.from({ length: n }, (_, i) => ({
+      task: { suite: "alpha", cardId: `card_${i}`, title: `T${i}` },
+      passed: pass(i),
+      ...(over.blocked?.(i) ? { blocked: true } : {}),
+      wallClockSeconds: 60,
+      tokens: 1000,
+      rungs: 0,
+    }));
+    return {
+      suiteHash: over.suiteHash ?? "h",
+      version: "1.0.0",
+      passed: outcomes.filter((o) => o.passed).length,
+      total: n,
+      firstTry: outcomes.filter((o) => o.passed).length,
+      outcomes,
+      cost: { wallClockSeconds: 60 * n, tokens: 1000 * n, rungs: over.rungs ?? 0 },
+      at: "2026-09-20T00:00:00.000Z",
+    };
   };
 
-  it("reports more passes as an improvement", () => {
-    const v = compareRuns(base, { ...base, passed: 7 });
-    expect(v).toMatchObject({ comparable: true, improved: true, delta: 2 });
+  it("MS-M12-3: one more task, not significant, is not an improvement (the old expectation reversed)", () => {
+    const base = run(30, (i) => i < 15);
+    const v = compareRuns(
+      base,
+      run(30, (i) => i < 16),
+    );
+    expect(v).toMatchObject({
+      comparable: true,
+      improved: false,
+      delta: 1,
+      candidateOnly: 1,
+      baselineOnly: 0,
+      verdict: "not established",
+    });
+    expect(v.p).toBe(1);
+    expect(v.reason).toMatch(/not established/);
   });
 
-  it("reports fewer passes as a regression", () => {
-    expect(compareRuns(base, { ...base, passed: 4 }).improved).toBe(false);
+  it("MS-M12-2: pairs only the cards run in both, and reports the discordant counts, the exact p and the smallest detectable difference", () => {
+    // 30 cards: the candidate passes 22 the baseline failed, and loses none.
+    const base = run(30, (i) => i < 4);
+    const cand = run(32, (i) => i < 26 || i >= 30);
+    const v = compareRuns(base, cand);
+    expect(v.paired).toBe(30);
+    expect([v.baselineOnly, v.candidateOnly]).toEqual([0, 22]);
+    expect(v.p).toBeCloseTo(2 / 2 ** 22, 12);
+    expect(v.improved).toBe(true);
+    expect(v.verdict).toBe("improved");
+    expect(v.minDetectable).toBeGreaterThan(0);
+    expect(v.reason).toMatch(/smallest difference detectable at 80% power/);
+  });
+
+  it("counts a card blocked in only one run as that run's failure, and drops it only when blocked in both (review B1)", () => {
+    // The candidate fails card 0 and has cards 1-5 blocked; card 6 is blocked in both.
+    const blockedIn = (r: SuiteRunResult, ids: number[]) => ({
+      ...r,
+      outcomes: r.outcomes.map((o, i) =>
+        ids.includes(i) ? { ...o, passed: false, blocked: true } : o,
+      ),
+    });
+    const base = blockedIn(
+      run(30, () => true),
+      [6],
+    );
+    const cand = blockedIn(
+      run(30, (i) => i !== 0),
+      [1, 2, 3, 4, 5, 6],
+    );
+    const v = compareRuns(base, cand);
+    expect(v.paired).toBe(29);
+    expect(v.droppedBlocked).toBe(1);
+    expect(v.baselineOnly).toBe(6);
+    expect(v.verdict).toBe("worse");
+    expect(v.reason).toMatch(/1 card blocked in both runs left out/);
+  });
+
+  it("MS-M12-4: a significant effect under 20 points is marked not established", () => {
+    // 100 cards, 10 more passes and none lost: p = 0.002, but only 10 points.
+    const v = compareRuns(
+      run(100, (i) => i < 50),
+      run(100, (i) => i < 60),
+    );
+    expect(v.p).toBeLessThan(0.05);
+    expect(v.improved).toBe(false);
+    expect(v.verdict).toBe("not established");
+  });
+
+  it("pairs a card blocked in one run as that run's failure, and leaves out one blocked in both (review B1)", () => {
+    const base = run(10, () => false, { blocked: (i) => i === 0 });
+    expect(
+      compareRuns(
+        base,
+        run(10, () => false),
+      ).paired,
+    ).toBe(10);
+    const both = compareRuns(
+      base,
+      run(10, () => false, { blocked: (i) => i === 0 }),
+    );
+    expect([both.paired, both.droppedBlocked]).toEqual([9, 1]);
+  });
+
+  it("reports a resolvable loss as worse", () => {
+    const v = compareRuns(
+      run(30, () => true),
+      run(30, (i) => i >= 22),
+    );
+    expect(v).toMatchObject({ improved: false, verdict: "worse", baselineOnly: 22 });
   });
 
   it("refuses to compare runs of different suites", () => {
-    const v = compareRuns(base, { ...base, suiteHash: "other", passed: 9 });
+    const v = compareRuns(
+      run(10, () => true),
+      run(10, () => true, { suiteHash: "other" }),
+    );
     expect(v.comparable).toBe(false);
     expect(v.improved).toBe(false);
     expect(v.reason).toContain("different suites");
   });
 
-  it("breaks a tie on what the score cost", () => {
-    const cheaper = { ...base, cost: { ...base.cost, rungs: 5 } };
-    expect(compareRuns(base, cheaper)).toMatchObject({ improved: true, delta: 0 });
-    expect(compareRuns(base, cheaper).reason).toContain("fewer");
-    expect(compareRuns(base, { ...base }).improved).toBe(false);
+  it("does not call an equal score with fewer repair rungs an improvement (rule 4)", () => {
+    const v = compareRuns(
+      run(10, (i) => i < 5, { rungs: 8 }),
+      run(10, (i) => i < 5, { rungs: 5 }),
+    );
+    expect(v.improved).toBe(false);
+    expect(v.verdict).toBe("no difference");
+    expect(v.reason).toContain("fewer");
   });
 
-  it("summarises a run in one line", () => {
-    expect(summarise(base)).toContain("5/10 passed (3 first try)");
-    expect(summarise(base)).toContain("repair rung");
+  it("MS-M12-1: summarises passed over measured with a Clopper-Pearson interval, and blocked apart", () => {
+    const r = run(10, (i) => i < 5, { blocked: (i) => i >= 8 });
+    const line = summarise(r);
+    expect(line).toContain("5/8 passed");
+    expect(line).toContain("95% CI 24%-91%");
+    expect(line).toContain("2 blocked");
+    expect(line).toContain("repair rung");
+  });
+
+  it("MS-M12-5: reports pass@k and pass^k per card over repeated runs", () => {
+    const runs = [run(2, () => true), run(2, (i) => i === 0), run(2, (i) => i === 0)];
+    const byCard = passKByCard(runs, 2);
+    expect(byCard).toEqual([
+      { suite: "alpha", cardId: "card_0", runs: 3, passes: 3, passAtK: 1, passHatK: 1 },
+      {
+        suite: "alpha",
+        cardId: "card_1",
+        runs: 3,
+        passes: 1,
+        passAtK: expect.closeTo(2 / 3, 12),
+        passHatK: 0,
+      },
+    ]);
   });
 });

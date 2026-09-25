@@ -34,43 +34,95 @@ describe("learning: playbook and user profile", () => {
     rmSync(configDir, { recursive: true, force: true });
   });
 
-  it("turns a struggle into a candidate rule: inert, except for the run that learned it", async () => {
+  // Measurement rule 6 and MS-T8-4/-15 reverse the earlier "in force for the
+  // run that learned it": one struggle proposes nothing, and until the owner
+  // allows probation (O15) nothing learned in a run is applied before a
+  // person approves it.
+  const struggle = (text = "src/l.ts:9:5 TS2554: Expected 2 arguments, but got 1.") => ({
+    passed: true,
+    rulesUsed: [],
+    lessons: {
+      lines: [],
+      struggles: [
+        { text, edits: 2 },
+        // Has a built-in remedy: the failure block already says the fix.
+        { text: "src/l.ts:9:5 TS2741: Property 'timestamp' is missing", edits: 2 },
+      ],
+    },
+  });
+
+  it("proposes a rule only on the third occurrence of a signal, reporting insufficient data before (MS-T8-4)", async () => {
     const card = await cards.createCard({ tier: "task", title: "Ledger (SPIDR: Rule)" });
-    const runRules = new Set<string>();
-    const proposed = await learnFromAttempt(
-      store,
-      card,
-      {
-        passed: true,
-        rulesUsed: [],
-        lessons: {
-          lines: [],
-          struggles: [
-            { text: "src/l.ts:9:5 TS2554: Expected 2 arguments, but got 1.", edits: 2 },
-            // Has a built-in remedy: the failure block already says the fix.
-            { text: "src/l.ts:9:5 TS2741: Property 'timestamp' is missing", edits: 2 },
-          ],
-        },
-      },
-      1,
-      (id) => runRules.add(id),
-    );
-    expect(proposed).toBe(1);
+    const insufficient: string[] = [];
+    const opts = { onInsufficient: (key: string, n: number) => insufficient.push(`${key}:${n}`) };
+    expect(await learnFromAttempt(store, card, struggle(), 1, opts)).toBe(0);
+    expect(await learnFromAttempt(store, card, struggle(), 1, opts)).toBe(0);
+    expect(await store.rules()).toEqual([]);
+    expect(insufficient).toEqual(["TS2554:1", "TS2554:2"]);
+    expect(await learnFromAttempt(store, card, struggle(), 1, opts)).toBe(1);
     const [rule] = await store.rules();
     expect(rule).toMatchObject({
       status: "candidate",
       source: "struggle",
       scope: { kind: "Rule", errorPattern: "TS2554" },
     });
-    // Not in force for a later run...
-    expect(await store.activeFor("worker", { title: card.title, scopeFiles: [] })).toEqual([]);
-    // ...but in force for the rest of the run that learned it.
-    expect(
-      (await store.activeFor("worker", { title: card.title, scopeFiles: [] }, runRules)).length,
-    ).toBe(1);
-
+    // Its evidence is every occurrence, tagged with its source and how it was verified (MS-T8-9).
+    expect(rule?.evidence).toHaveLength(3);
+    expect(rule?.evidence.every((e) => e.source === "gate" && e.verified === "execution")).toBe(
+      true,
+    );
     await store.update(rule?.id ?? "", { status: "active" });
     expect((await store.activeFor("worker", { title: card.title, scopeFiles: [] })).length).toBe(1);
+  });
+
+  it("applies nothing it learned in the run before a person approves it: probation is off (MS-T8-15)", async () => {
+    const card = await cards.createCard({ tier: "task", title: "Ledger (SPIDR: Rule)" });
+    const runRules = new Set<string>();
+    for (let n = 0; n < 3; n++) {
+      await learnFromAttempt(store, card, struggle(), 1, { onProposed: (id) => runRules.add(id) });
+    }
+    expect((await store.rules())[0]?.status).toBe("candidate");
+    expect(runRules.size).toBe(0);
+    expect(
+      await store.activeFor("worker", { title: card.title, scopeFiles: [] }, runRules),
+    ).toEqual([]);
+    // Once the owner allows probation, a verified lesson may reach later cards of the run.
+    const other = await cards.createCard({ tier: "task", title: "Other (SPIDR: Rule)" });
+    const text = "src/m.ts:1:1 TS2345: Argument of type 'string' is not assignable.";
+    for (let n = 0; n < 3; n++) {
+      await learnFromAttempt(store, other, struggle(text), 1, {
+        probation: true,
+        onProposed: (id) => runRules.add(id),
+      });
+    }
+    expect(runRules.size).toBe(1);
+  });
+
+  it("does not propose from signals that are all unverified model syntheses (MS-T8-9)", async () => {
+    const r = await store.propose({
+      role: "worker",
+      text: "Always wrap database calls in a transaction.",
+      scope: {},
+      source: "research",
+      evidence: [{ note: "the Researcher said so", source: "researcher", verified: "none" }],
+    });
+    expect(r).toBeUndefined();
+    const withGate = await store.propose({
+      role: "worker",
+      text: "Always wrap database calls in a transaction.",
+      scope: {},
+      source: "research",
+      evidence: [
+        { note: "the Researcher said so", source: "researcher", verified: "none" },
+        {
+          cardId: "c1",
+          note: "SQLITE_BUSY survived 3 edits",
+          source: "gate",
+          verified: "execution",
+        },
+      ],
+    });
+    expect(withGate?.status).toBe("candidate");
   });
 
   it("counts helpful and harmful outcomes with a decaying value", async () => {

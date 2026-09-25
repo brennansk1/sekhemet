@@ -50,6 +50,26 @@ function idealModel(): MockInferenceAdapter {
   return new MockInferenceAdapter("ideal", [], {
     exhaustion: "throw",
     rules: [
+      // q1.1: the multi-step conversation and recall cases (models rule 27a).
+      {
+        match: "rows.length - 1",
+        response: reply([
+          call("edit", {
+            path: "src/ledger.ts",
+            search: "return rows.length - 1;",
+            replace: "return rows.length;",
+          }),
+        ]),
+      },
+      { match: "'Helo'", response: reply([call("check", { gate: "test" })]) },
+      {
+        match: "amount_cents",
+        response: reply([call("done", { summary: "the ledger uses amount_cents" })]),
+      },
+      {
+        match: "port 47831",
+        response: reply([call("run_cmd", { command: "curl -s http://127.0.0.1:47831/health" })]),
+      },
       {
         match: "src/sever.ts does not exist",
         response: reply([call("read_file", { path: "src/server.ts" })]),
@@ -99,6 +119,8 @@ describe("M22: qualification suite with deterministic scoring", () => {
       arguments: 1,
       multi_turn_recovery: 1,
       refusal: 1,
+      multi_step: 1,
+      recall: 1,
     });
     expect(r.qualified).toBe(true);
   });

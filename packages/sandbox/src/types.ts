@@ -55,6 +55,12 @@ export interface ExecutionResult {
   timedOut: boolean;
   /** Highest resident memory of the command tree that was sampled, in bytes. */
   memoryPeakBytes?: number;
+  /**
+   * The program never started: the spawn failed, or the confinement wrapper
+   * could not exec it. Exit 127 alone cannot say this — a program that ran and
+   * printed "No such file or directory" is reported 127 too (gates rule 9).
+   */
+  notStarted?: true;
 }
 
 export interface ExecutionSandbox {

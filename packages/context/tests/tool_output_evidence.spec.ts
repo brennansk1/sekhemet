@@ -37,6 +37,21 @@ function longTestOutput(): string {
 }
 
 describe("C8: condenseToolOutput is the command-output path", () => {
+  it("names recall in its footer only when recall is offered (CX-M1-1)", () => {
+    const store = new InMemoryEvidenceStore();
+    const out = condenseToolOutput(longTestOutput(), {
+      command: "pnpm test",
+      exitCode: 1,
+      evidenceStore: store,
+      recallOffered: false,
+    });
+    expect(out.text).not.toMatch(/recall|EvidenceRef/);
+    // In parentheses: a bracketed lower-case span reads as a placeholder (B8).
+    expect(out.text).toMatch(/\(\d+ lines condensed to \d+\)$/);
+    // The raw text is still kept, for the evidence bundle.
+    expect(store.get(out.evidenceRef as string)).toBe(longTestOutput());
+  });
+
   it("keeps the middle error line that head/tail clamping dropped, and keeps the raw text", () => {
     const store = new InMemoryEvidenceStore();
     const raw = longTestOutput();

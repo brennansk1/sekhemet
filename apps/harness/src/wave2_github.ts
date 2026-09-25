@@ -99,6 +99,9 @@ export async function openPullRequestViaApp(
     body: prBody(card, ev),
   });
   for (const r of ev?.rungResults ?? []) {
+    // A skipped rung (nothing declared, nothing to scan) ran nothing: it is in
+    // the evidence, never posted as a failing check.
+    if ((r as { skipped?: boolean }).skipped) continue;
     await postCheckRun(client, repo, {
       name: `sekhemet/${r.gate}`,
       headSha,

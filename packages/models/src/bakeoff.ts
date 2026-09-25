@@ -1,6 +1,8 @@
 import { execFileSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { basename, dirname } from "node:path";
+import { createHash } from "node:crypto";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { HttpInferenceAdapter } from "./http_adapter.js";
 import { ManagedLlamaServerAdapter } from "./llama_server.js";
 import type { LocalInferenceAdapter, ToolArm } from "./types.js";
@@ -80,6 +82,78 @@ export function candidateSettings(
     ...(sampling ? { sampling } : {}),
     ...overrides,
   };
+}
+
+export interface HarnessProvenance {
+  /** The harness repository's HEAD, or "unknown" outside a checkout. */
+  commit: string;
+  /** Tracked files differ from that commit. */
+  dirty: boolean;
+  /** A hash of every built `dist` directory: what actually ran (MD-M4-2). */
+  distSha: string;
+}
+
+let provenanceCache: HarnessProvenance | undefined;
+
+/** Every file under `dir`, relative, sorted. */
+function filesUnder(dir: string, prefix = ""): string[] {
+  const out: string[] = [];
+  for (const e of readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
+    a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
+  )) {
+    const rel = prefix ? `${prefix}/${e.name}` : e.name;
+    if (e.isDirectory()) out.push(...filesUnder(join(dir, e.name), rel));
+    else if (e.isFile()) out.push(rel);
+  }
+  return out;
+}
+
+/**
+ * The running harness's provenance (MD-M4-2): the commit and dirty flag of
+ * the repository this code was built from, found from the code's own
+ * location, and a hash of its built `dist` directories, since a package sees
+ * another only through `dist`, so the source commit alone does not say
+ * what ran. Never the target repository's HEAD. Computed once per process.
+ *
+ * `dirty` is `git status --porcelain --untracked-files=no`: tracked changes only, so an untracked
+ * source file does not set it. What ran is `distSha`, which hashes every
+ * built file whatever git knows of its source; read the two together.
+ */
+export function harnessProvenance(): HarnessProvenance {
+  if (provenanceCache) return provenanceCache;
+  const here = dirname(fileURLToPath(import.meta.url));
+  const git = (args: string[], cwd: string) =>
+    execFileSync("git", args, {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  let root: string | undefined;
+  let commit = "unknown";
+  let dirty = false;
+  try {
+    root = git(["rev-parse", "--show-toplevel"], here);
+    commit = git(["rev-parse", "HEAD"], root);
+    dirty = git(["status", "--porcelain", "--untracked-files=no"], root) !== "";
+  } catch {
+    // Not a checkout: an installed build still hashes its own output.
+  }
+  const base = root ?? join(here, "..", "..", "..");
+  const h = createHash("sha256");
+  for (const group of ["packages", "apps"]) {
+    const groupDir = join(base, group);
+    if (!existsSync(groupDir)) continue;
+    for (const pkg of readdirSync(groupDir).sort()) {
+      const dist = join(groupDir, pkg, "dist");
+      if (!existsSync(dist)) continue;
+      for (const f of filesUnder(dist)) {
+        h.update(`${group}/${pkg}/dist/${f}\0`);
+        h.update(readFileSync(join(dist, f)));
+      }
+    }
+  }
+  provenanceCache = { commit, dirty, distSha: h.digest("hex").slice(0, 16) };
+  return provenanceCache;
 }
 
 /** The harness's own commit (git HEAD of `repoPath`), or "unknown". */

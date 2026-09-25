@@ -32,10 +32,23 @@ export interface LearnedRule {
   /** Erev-Roth recency-weighted value: v <- (1 - 0.1) v + reward. */
   value: number;
   source: RuleSource;
-  evidence: { cardId?: string; note: string }[];
+  evidence: RuleEvidence[];
   createdAt: string;
   /** Similar existing rules at the time it was added, for consolidation. */
   related?: string[];
+}
+
+/**
+ * One signal behind a rule, tagged with where it came from and how it was
+ * verified (measurement MS-T8-9): `execution` (a gate failed and later
+ * passed), `person` (someone wrote it), `none` (a model's synthesis). An
+ * untagged item predates the tags.
+ */
+export interface RuleEvidence {
+  cardId?: string;
+  note: string;
+  source?: string;
+  verified?: "execution" | "person" | "none";
 }
 
 export type ProfileCategory = "code_style" | "planning" | "communication" | "priorities";
@@ -85,6 +98,7 @@ const EVENTS = {
   rule: "learn/rule",
   ruleOutcome: "learn/rule_outcome",
   profile: "learn/profile",
+  signal: "learning/signal",
 } as const;
 
 function globalPath(): string {
@@ -147,6 +161,11 @@ export class LearningStore {
       reach?: "project" | "global";
     },
   ): Promise<LearnedRule | undefined> {
+    // MS-T8-9: an inlet never proposes from signals that are all unverified
+    // model syntheses; one executed or person-written signal is required.
+    if (rule.evidence.length > 0 && rule.evidence.every((e) => e.verified === "none")) {
+      return undefined;
+    }
     const existing = (await this.rules()).filter(
       (r) => r.role === rule.role && r.status !== "retired",
     );
@@ -253,6 +272,22 @@ export class LearningStore {
       )
       .sort((a, b) => b.value - a.value)
       .slice(0, 8);
+  }
+
+  /**
+   * Record one inlet signal (measurement rule 20, MS-T8-4, MS-T8-9) and
+   * return every occurrence of its key so far, this one included.
+   */
+  public async recordSignal(signal: {
+    inlet: string;
+    key: string;
+    evidence: RuleEvidence;
+  }): Promise<RuleEvidence[]> {
+    await this.log.append({ actor: "harness", type: EVENTS.signal, payload: signal });
+    return (await this.log.getEventsByTypes([EVENTS.signal]))
+      .map((e) => e.payload as { inlet: string; key: string; evidence: RuleEvidence })
+      .filter((p) => p.inlet === signal.inlet && p.key === signal.key)
+      .map((p) => p.evidence);
   }
 
   /** Helpful/harmful accounting after a first attempt that carried these rules. */

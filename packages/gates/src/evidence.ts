@@ -11,6 +11,10 @@ export interface RunSettings {
   contextTokens?: number;
   toolArm: string;
   harnessCommit?: string;
+  /** Tracked harness files differed from that commit (MD-M4-2). */
+  harnessDirty?: boolean;
+  /** A hash of the harness's built `dist` directories: what actually ran (MD-M4-2). */
+  harnessDistSha?: string;
   /** Where the Worker thought (off | surgical | all): a result is only comparable within one policy. */
   thinking?: string;
   /** The Worker's working method (baseline | strict). */
@@ -43,6 +47,12 @@ export interface StepEvidence {
   proseOnly: number;
   /** The reply was cut off by a cap: which part, and the cap. */
   truncated?: { cut: string; capTokens: number };
+  /** Prompt tokens the server served from its cache, and evaluated (models MD-M4-4). */
+  cachedPromptTokens?: number;
+  evaluatedPromptTokens?: number;
+  /** With speculative decoding: tokens drafted and accepted (MD-M4-4). */
+  draftTokens?: number;
+  draftAcceptedTokens?: number;
 }
 
 export interface TokenTotals {

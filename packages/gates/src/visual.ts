@@ -10,7 +10,8 @@ import {
   spawnConfined,
   stopProcessTree,
 } from "@sekhemet/sandbox";
-import type { GateFailure, RungOutcome } from "./types.js";
+import { RERUN_GATES, gateCopy } from "./copy.js";
+import type { CompleteGateFailure, GateFailure, RungOutcome } from "./types.js";
 
 /**
  * The visual layer (G17-G20), driven over the Chrome DevTools Protocol with
@@ -496,7 +497,12 @@ export interface VisualGateContext {
   serve?: () => Promise<{ port: number; stop: () => void } | undefined>;
 }
 
-function fail(gate: string, excerpt: string, extra: Partial<GateFailure> = {}): GateFailure {
+/** A visual failure with all six fields (rule 19): the page is re-checked by `check`. */
+function fail(
+  gate: string,
+  excerpt: string,
+  extra: Partial<GateFailure> = {},
+): CompleteGateFailure {
   return {
     gate,
     rung: "visual",
@@ -504,13 +510,27 @@ function fail(gate: string, excerpt: string, extra: Partial<GateFailure> = {}): 
     exitCode: 1,
     errorExcerpt: excerpt,
     suggestedFixFiles: [],
+    location: { file: "." },
+    expected: `${gate} to pass`,
+    actual: excerpt,
+    minimalRepro: RERUN_GATES,
+    suggestedAction: gateCopy.visualLayout,
     ...extra,
   };
 }
 
+/** The visual layer's checks, one outcome each. */
+const VISUAL_CHECK_IDS = ["visual-console", "visual-layout", "visual-snapshot", "visual-a11y"];
+
+/**
+ * Every gate id the visual layer can put on a failure: its checks and the
+ * confinement failure (GT-M6-5 lists them from here).
+ */
+export const VISUAL_GATE_IDS: readonly string[] = [...VISUAL_CHECK_IDS, "visual-confinement"];
+
 export async function runVisualGates(
   ctx: VisualGateContext,
-): Promise<{ failures: GateFailure[]; outcomes: RungOutcome[]; advisories: string[] }> {
+): Promise<{ failures: CompleteGateFailure[]; outcomes: RungOutcome[]; advisories: string[] }> {
   const started = Date.now();
   const outcome = (gate: string, passed: boolean, skipped = false): RungOutcome => ({
     gate,
@@ -521,7 +541,7 @@ export async function runVisualGates(
     durationMs: Date.now() - started,
     ...(skipped ? { skipped: true } : {}),
   });
-  const gates = ["visual-console", "visual-layout", "visual-snapshot", "visual-a11y"];
+  const gates = VISUAL_CHECK_IDS;
   const skipped = (why: string) => ({
     failures: [],
     outcomes: gates.map((g) => outcome(g, true, true)),
@@ -536,8 +556,8 @@ export async function runVisualGates(
     return {
       failures: [
         fail("visual-confinement", excerpt, {
-          suggestedAction:
-            "This host cannot run the page or its browser confined. It is not the card's work: ask a person, or run with SEKHEMET_SANDBOX_ENGINE=native.",
+          suggestedAction: gateCopy.gateNotRun("visual"),
+          notRun: true,
         }),
       ],
       outcomes: gates.map((g) => outcome(g, false)),
@@ -567,10 +587,10 @@ export async function runVisualGates(
     served?.stop();
     return notRun(launchFailure);
   }
-  const failures: GateFailure[] = [];
+  const failures: CompleteGateFailure[] = [];
   const advisories: string[] = [];
   const byGate = new Map<string, number>(gates.map((g) => [g, 0]));
-  const add = (f: GateFailure) => {
+  const add = (f: CompleteGateFailure) => {
     failures.push(f);
     byGate.set(f.gate as string, (byGate.get(f.gate as string) ?? 0) + 1);
   };
@@ -584,7 +604,7 @@ export async function runVisualGates(
       for (const p of [...page.problems.console, ...page.problems.network].slice(0, 5)) {
         add(
           fail("visual-console", `@${width}px ${p}`, {
-            suggestedAction: "Fix the error the page logs or the request that fails.",
+            suggestedAction: gateCopy.visualConsole,
           }),
         );
       }
@@ -644,7 +664,7 @@ export async function runVisualGates(
               fail(
                 "visual-snapshot",
                 `${snap.name} @${width}px: no approved baseline; a candidate was written for a person to approve`,
-                { suggestedAction: `Approve ${candidate} by moving it to ${base}.` },
+                { suggestedAction: gateCopy.visualBaseline(`${snap.name} @${width}px`) },
               ),
             );
           } else advisories.push(`visual baseline recorded: ${snap.name} @${width}px`);

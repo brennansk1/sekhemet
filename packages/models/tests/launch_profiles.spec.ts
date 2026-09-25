@@ -1,4 +1,8 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { hostFingerprintHash } from "../src/calibration.js";
 import {
   ManagedLlamaServerAdapter,
   cacheProfileForHost,
@@ -6,9 +10,11 @@ import {
   createCyberTielWorker,
   createQwen38Managed,
 } from "../src/llama_server.js";
+import { ModelRegistry } from "../src/registry.js";
 import { ModelRoster } from "../src/roster.js";
 import { ModelRouter } from "../src/router.js";
 import { fakeServer } from "./support/fake_server.js";
+import { qualifyMtp } from "./support/qualify_mtp.js";
 
 const GB = 1024 ** 3;
 const flag = (args: string[], name: string) =>
@@ -104,7 +110,25 @@ describe("X29: the CHRONICLE §2 launch profile", () => {
 
 describe("M20 actions on a managed server", () => {
   it("suspending MTP drops --spec-type from the next launch", () => {
-    const a = createCyberTielWorker("/m.gguf");
+    // MTP is on only by a measured decision for this host and policy (MD-M7).
+    const probe = createCyberTielWorker("/m.gguf");
+    const registry = new ModelRegistry(
+      join(mkdtempSync(join(tmpdir(), "sek-mtp-")), "models.json"),
+    );
+    registry.recordSpeculative(probe.modelId, {
+      enabled: true,
+      speedup: 1.3,
+      reason: "measured",
+      fingerprint: hostFingerprintHash(),
+      date: "2026-09-25",
+      thinking: "off",
+    });
+    const a = new ManagedLlamaServerAdapter({
+      ...probe.launchProfile,
+      registry,
+      thinkingPolicy: "off",
+    });
+    qualifyMtp(registry, a);
     expect(flag(a.launchArgs(), "--spec-type")).toBe("draft-mtp");
     a.setMtpSuspended(true);
     expect(a.launchArgs()).not.toContain("--spec-type");

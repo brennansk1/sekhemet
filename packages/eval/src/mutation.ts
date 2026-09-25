@@ -78,7 +78,8 @@ export interface MutationReport {
   total: number;
   killed: number;
   survived: Mutant[];
-  score: number;
+  /** Killed over total; `null` when there was nothing to mutate (MS-M10-2), never 1. */
+  score: number | null;
   /** One suggested test per surviving mutant. */
   proposals: string[];
 }
@@ -100,7 +101,7 @@ export async function runMutationCampaign(
     total,
     killed: total - survived.length,
     survived,
-    score: total ? Math.round(((total - survived.length) / total) * 1000) / 1000 : 1,
+    score: total ? Math.round(((total - survived.length) / total) * 1000) / 1000 : null,
     proposals: survived.map(
       (m) =>
         `Add a test that fails if ${file}:${m.line} used \`${m.replacement}\` instead of \`${m.original}\` (${m.operator} mutant survives).`,

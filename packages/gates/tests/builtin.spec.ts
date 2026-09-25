@@ -211,7 +211,8 @@ describe("built-in gate layers (G3, G13, G14, G15, G16, G22, S10, S11)", () => {
         return true;
       },
     });
-    expect(runs).toBe(1);
+    // Once on the unmutated change (MS-M10-4), then once for the one mutant.
+    expect(runs).toBe(2);
     expect(r.advisories.some((a) => a.includes('a.ts:2 ">" -> ">="'))).toBe(true);
     expect(r.failures.some((f) => f.gate === "mutation")).toBe(false);
     const blocking = await runBuiltinGates({

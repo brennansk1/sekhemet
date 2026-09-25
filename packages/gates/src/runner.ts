@@ -6,13 +6,16 @@ import {
   loadGatesConfig,
   verifyGatesConfig,
 } from "./config.js";
+import { gateCopy } from "./copy.js";
 import { parseErrorToGateFailure } from "./parser.js";
-import { type ParseContext, defaultParserRegistry, rankFailures } from "./parsers.js";
+import { type ParseContext, defaultParserRegistry } from "./parsers.js";
+import { FAILURES_SHOWN, completeFailures, rankFailures } from "./rank.js";
 import type {
   BoundsCheckOptions,
   BoundsCheckResult,
   GateDefinition,
   GateFailure,
+  GateLayer,
   GateResult,
   GateRung,
   GateRunner,
@@ -27,7 +30,11 @@ export interface GateRunnerOptions {
   expectedConfigSha256?: string;
   /** Stop after the first blocking failure instead of collecting every gate. */
   failFast?: boolean;
-  /** Maximum failures handed back to the agent per attempt. */
+  /**
+   * Maximum failures handed back per run (default 3). The cap that reaches the
+   * model is applied once more, over every gate's failures together, by
+   * `finalizeFailures` (rule 20, F14).
+   */
   maxFailuresReported?: number;
 }
 
@@ -49,6 +56,8 @@ export function checkBounds(options: BoundsCheckOptions): BoundsCheckResult {
     throw new Error("Diff line counts cannot be negative");
   }
   const totalLines = options.linesAdded + options.linesRemoved;
+  const minimalRepro = `git diff --numstat ${options.base ?? "main"}`;
+  const location = { file: options.filesTouched[0] ?? "." };
 
   if (options.filesTouched.length > maxFiles) {
     return {
@@ -60,9 +69,14 @@ export function checkBounds(options: BoundsCheckOptions): BoundsCheckResult {
         exitCode: 1,
         errorExcerpt: `Exceeded file limit: touched ${options.filesTouched.length} files (limit: ${maxFiles}): ${options.filesTouched.join(", ")}`,
         suggestedFixFiles: options.filesTouched,
+        location,
         expected: `at most ${maxFiles} files changed`,
         actual: `${options.filesTouched.length} files changed`,
-        suggestedAction: "Split this card: the change spans more files than one card may touch.",
+        minimalRepro,
+        suggestedAction: gateCopy.boundsFiles(
+          String(options.filesTouched.length),
+          String(maxFiles),
+        ),
       },
     };
   }
@@ -77,9 +91,11 @@ export function checkBounds(options: BoundsCheckOptions): BoundsCheckResult {
         exitCode: 1,
         errorExcerpt: `Exceeded LOC diff limit: ${totalLines} diff lines (limit: ${maxLines}) across ${options.filesTouched.length} files`,
         suggestedFixFiles: options.filesTouched,
+        location,
         expected: `at most ${maxLines} diff lines`,
         actual: `${totalLines} diff lines`,
-        suggestedAction: "Split this card along a SPIDR boundary to fit the diff budget.",
+        minimalRepro,
+        suggestedAction: gateCopy.boundsLines(String(totalLines), String(maxLines)),
       },
     };
   }
@@ -110,8 +126,23 @@ export function parseNumstat(text: string): { file: string; added: number; remov
   return out;
 }
 
+/** The layer a rung belongs to, for an outcome with no gate to say. */
+const LAYER_OF_RUNG: Record<GateRung, GateLayer> = {
+  parse: "static",
+  typecheck: "static",
+  lint: "static",
+  test: "functional",
+  bounds: "hygiene",
+  hygiene: "hygiene",
+  visual: "visual",
+  security: "security",
+  robustness: "robustness",
+};
+
 export class DeterministicGateRunner implements GateRunner {
   private config: GatesConfig | undefined;
+  /** Defects found while completing parser output during the current run. */
+  private defects: string[] = [];
 
   constructor(
     private sandbox: ProcessSandbox,
@@ -147,13 +178,78 @@ export class DeterministicGateRunner implements GateRunner {
     failures: GateFailure[];
   }> {
     const start = performance.now();
-    const result = await this.sandbox.execute(gate.command, gate.args, {
-      allowedPaths: [cwd],
-      allowNetwork: false,
-      timeoutMs: gate.timeoutMs,
-      cwd,
-    });
+    const minimalRepro = [gate.command, ...gate.args].join(" ");
+    let result: Awaited<ReturnType<ProcessSandbox["execute"]>>;
+    try {
+      result = await this.sandbox.execute(gate.command, gate.args, {
+        allowedPaths: [cwd],
+        allowNetwork: false,
+        timeoutMs: gate.timeoutMs,
+        cwd,
+      });
+    } catch (err) {
+      // Fail closed (rule 9): a gate that could not start is not a pass, and
+      // it is never silently absent.
+      const reason = (err instanceof Error ? err.message : String(err)).split("\n")[0] ?? "";
+      return {
+        outcome: {
+          gate: gate.id,
+          rung: gate.rung,
+          layer: gate.layer,
+          passed: false,
+          exitCode: -1,
+          durationMs: Math.round(performance.now() - start),
+        },
+        failures: [
+          {
+            rung: gate.rung,
+            gate: gate.id,
+            layer: gate.layer,
+            exitCode: -1,
+            errorExcerpt: `${gate.id} not run: ${reason}`,
+            suggestedFixFiles: [],
+            location: { file: "." },
+            expected: `${gate.id} to run and exit 0`,
+            actual: reason || "the gate could not start",
+            minimalRepro,
+            suggestedAction: gateCopy.gateNotRun(gate.id),
+            notRun: true,
+          },
+        ],
+      };
+    }
     const durationMs = Math.round(performance.now() - start);
+    // The sandbox says the program never started (a missing binary): not run,
+    // never a failure the model is charged with (gates rule 9).
+    if (result.notStarted) {
+      const reason = (result.stderr.split("\n").find((l) => l.trim()) ?? "").trim();
+      return {
+        outcome: {
+          gate: gate.id,
+          rung: gate.rung,
+          layer: gate.layer,
+          passed: false,
+          exitCode: result.exitCode,
+          durationMs,
+        },
+        failures: [
+          {
+            rung: gate.rung,
+            gate: gate.id,
+            layer: gate.layer,
+            exitCode: result.exitCode,
+            errorExcerpt: `${gate.id} not run: ${reason || `${gate.command} did not start`}`,
+            suggestedFixFiles: [],
+            location: { file: "." },
+            expected: `${gate.id} to run and exit 0`,
+            actual: reason || `${gate.command} did not start`,
+            minimalRepro,
+            suggestedAction: gateCopy.gateNotRun(gate.id),
+            notRun: true,
+          },
+        ],
+      };
+    }
 
     const outcome: RungOutcome = {
       gate: gate.id,
@@ -171,11 +267,15 @@ export class DeterministicGateRunner implements GateRunner {
       exitCode: result.exitCode,
       stdout: result.stdout,
       stderr: result.stderr,
-      minimalRepro: [gate.command, ...gate.args].join(" "),
+      minimalRepro,
       cwd,
     };
 
-    const failures = defaultParserRegistry.parse(ctx);
+    // A parser that leaves a field empty is a harness defect: the gap is
+    // filled and recorded, never thrown mid-turn.
+    const failures = completeFailures(defaultParserRegistry.parse(ctx), (d) =>
+      this.defects.push(`the ${gate.parser} parser: ${d}`),
+    );
     if (result.timedOut) {
       for (const f of failures) {
         f.actual = `timed out after ${gate.timeoutMs}ms`;
@@ -221,6 +321,7 @@ export class DeterministicGateRunner implements GateRunner {
    */
   public async runGates(rungs: GateRung[], cwd: string): Promise<GateResult> {
     const start = performance.now();
+    this.defects = [];
     const config = this.resolveConfig(cwd);
 
     const requested = new Set(rungs);
@@ -239,6 +340,23 @@ export class DeterministicGateRunner implements GateRunner {
 
     const failures: GateFailure[] = [];
     const rungResults: RungOutcome[] = [];
+
+    // A requested rung with neither a declared gate nor a default is never
+    // silently absent: the evidence records that it did not run, and how to
+    // declare one.
+    for (const rung of requested) {
+      if (selected.some((g) => g.rung === rung)) continue;
+      rungResults.push({
+        gate: rung,
+        rung,
+        layer: LAYER_OF_RUNG[rung],
+        passed: false,
+        exitCode: -1,
+        durationMs: 0,
+        skipped: true,
+        reason: `no gate is declared for the ${rung} rung: add a [[gate]] with rung = "${rung}" to .sekhemet/gates.toml`,
+      });
+    }
 
     for (const gate of selected) {
       const { outcome, failures: gateFailures } = await this.runGate(gate, cwd);
@@ -275,15 +393,16 @@ export class DeterministicGateRunner implements GateRunner {
       if (onlyProtected) {
         const where = failure.suggestedFixFiles.join(", ");
         failure.suggestedFixFiles = [];
-        failure.suggestedAction = `Reported in ${where}, a protected test you may not edit. The test is the specification: change the implementation it exercises so this assertion holds.`;
+        failure.suggestedAction = gateCopy.protectedTest(where);
       }
     }
 
     return {
       passed: failures.length === 0,
-      // Hand back only the highest-leverage failures: fixing the most-referenced
-      // file first usually clears the rest.
-      failures: rankFailures(failures, this.options.maxFailuresReported ?? 3),
+      // Hand back only the highest-leverage failures, in dependency order
+      // (rule 20): fixing the first usually clears the rest.
+      failures: rankFailures(failures, this.options.maxFailuresReported ?? FAILURES_SHOWN, cwd),
+      ...(this.defects.length > 0 ? { defects: [...this.defects] } : {}),
       durationMs: Math.round(performance.now() - start),
       rungResults,
     };

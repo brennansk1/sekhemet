@@ -1,6 +1,16 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import type { RunProfile } from "./run_profile.js";
+import {
+  PLANNING_DISCORDANCE,
+  clopperPearson,
+  describeDetectable,
+  exactMcNemar,
+  minDetectableDifference,
+  passAtK,
+  passHatK,
+} from "./stats.js";
 
 /**
  * The frozen suite: the fixed set of tasks every claim about this harness is
@@ -47,7 +57,21 @@ export interface TaskOutcome {
   tokens: number;
   /** Repair rungs spent. A pass at rung 0 is worth more than a pass at rung 3. */
   rungs: number;
+  /**
+   * Blocked on a dependency an earlier failed card never delivered (rule 3):
+   * unmeasured, not failed. Counted apart and never paired.
+   */
+  blocked?: boolean;
+  /**
+   * Never run: the runner stopped the queue before reaching it, or the queue
+   * wrote no report (review M4). Unmeasured, like a blocked card.
+   */
+  notRun?: boolean;
 }
+
+/** Unmeasured in its run: blocked on a dependency, or never run. */
+export const unmeasured = (o: { blocked?: boolean; notRun?: boolean }): boolean =>
+  o.blocked === true || o.notRun === true;
 
 export interface SuiteRunResult {
   suiteHash: string;
@@ -58,7 +82,15 @@ export interface SuiteRunResult {
   cost: { wallClockSeconds: number; tokens: number; rungs: number };
   /** Passes that needed no repair, which is the number that should grow. */
   firstTry: number;
+  /** When the run's first card started: an A/B's cost measure must be named before it (rule 16c). */
+  startedAt?: string;
   at: string;
+  /** The run's one RunProfile, as the suite runner recorded it (rule 9a). */
+  runProfile?: RunProfile & { hash?: string };
+  /** Cards whose evidence records a different profile from the run's. */
+  profileMismatch?: string[];
+  /** The A/B entry the run was started under (`--ab-entry`), by hash (rule 16c). */
+  abEntry?: { sha256: string; costMeasure: string; recordedAt: string };
 }
 
 interface Manifest {
@@ -132,6 +164,7 @@ export async function runFrozenSuite(
   suite: FrozenSuite,
   runTask: (task: SuiteTask) => Promise<Omit<TaskOutcome, "task">>,
 ): Promise<SuiteRunResult> {
+  const startedAt = new Date().toISOString();
   const outcomes: TaskOutcome[] = [];
   for (const task of suite.tasks) {
     try {
@@ -161,57 +194,226 @@ export async function runFrozenSuite(
       tokens: outcomes.reduce((n, o) => n + o.tokens, 0),
       rungs: outcomes.reduce((n, o) => n + o.rungs, 0),
     },
+    startedAt,
     at: new Date().toISOString(),
   };
 }
 
+/** The effect size below which a 30-card suite claims nothing (rule 11). */
+export const MIN_CLAIMED_EFFECT = 0.2;
+
+export interface RunComparison {
+  comparable: boolean;
+  /** An established gain: significant (exact McNemar, 0.05) and at least 20 points. */
+  improved: boolean;
+  /** Candidate passes minus baseline passes over the paired cards. */
+  delta: number;
+  /** Cards run and measured in both runs. */
+  paired: number;
+  /** Paired cards only the baseline passed, and only the candidate passed. */
+  baselineOnly: number;
+  candidateOnly: number;
+  /** Two-sided exact McNemar p-value on the discordant pairs. */
+  p: number;
+  /**
+   * The smallest difference (a share of the paired cards) detectable at 80%
+   * power at the planning disagreement of 20%; null when none is.
+   */
+  minDetectable: number | null;
+  /** Cards blocked in both runs, left out of the pairing. */
+  droppedBlocked: number;
+  verdict: "improved" | "worse" | "not established" | "no difference" | "incomparable";
+  reason: string;
+}
+
+const cardKey = (t: SuiteTask) => `${t.suite}/${t.cardId}`;
+
+export interface PairedOutcomes {
+  /** Cards present in both runs and not blocked in both. */
+  paired: number;
+  /** Paired cards only the baseline passed, and only the candidate passed. */
+  baselineOnly: number;
+  candidateOnly: number;
+  /** Cards blocked in both runs: unmeasured in both, so left out (rule 3). */
+  droppedBlocked: number;
+  /** Paired cards measured (not blocked) in both runs, for cost comparisons. */
+  bothMeasured: { baseline: TaskOutcome; candidate: TaskOutcome }[];
+}
+
 /**
- * Whether a candidate beat a baseline. Two runs of different suites are not
- * comparable at all, so a hash mismatch is refused rather than reported as a
- * regression — the alternative silently compares a change against a different
- * set of tasks, which is worse than having no comparison.
+ * Pair two runs card by card. A card blocked in only one run counts as that
+ * run's failure — its arm failed to deliver what the card needed — so a
+ * change cannot hide a loss behind the cards it blocks; a card blocked in
+ * both is left out and counted (review B1).
  */
-export function compareRuns(
-  baseline: SuiteRunResult,
-  candidate: SuiteRunResult,
-): { comparable: boolean; improved: boolean; delta: number; reason: string } {
+export function pairOutcomes(
+  baseline: readonly TaskOutcome[],
+  candidate: readonly TaskOutcome[],
+): PairedOutcomes {
+  const cand = new Map(candidate.map((o) => [cardKey(o.task), o]));
+  const out: PairedOutcomes = {
+    paired: 0,
+    baselineOnly: 0,
+    candidateOnly: 0,
+    droppedBlocked: 0,
+    bothMeasured: [],
+  };
+  for (const b of baseline) {
+    const c = cand.get(cardKey(b.task));
+    if (!c) continue;
+    if (unmeasured(b) && unmeasured(c)) {
+      out.droppedBlocked++;
+      continue;
+    }
+    out.paired++;
+    const bPassed = b.passed && !unmeasured(b);
+    const cPassed = c.passed && !unmeasured(c);
+    if (bPassed && !cPassed) out.baselineOnly++;
+    if (!bPassed && cPassed) out.candidateOnly++;
+    if (!unmeasured(b) && !unmeasured(c)) out.bothMeasured.push({ baseline: b, candidate: c });
+  }
+  return out;
+}
+
+/**
+ * Compare two runs of the same suite (measurement rules 10–11, MS-M12-2..4):
+ * only cards run and measured in both are paired; the discordant pairs are
+ * tested with the exact McNemar test; a gain is "improved" only when it is
+ * significant at 0.05 **and** at least 20 points, and anything smaller or
+ * not significant is "not established". Every verdict states the smallest
+ * difference the pairing could have detected at 80% power. A different
+ * suite hash is refused: two runs of different tasks are not comparable.
+ */
+export function compareRuns(baseline: SuiteRunResult, candidate: SuiteRunResult): RunComparison {
   if (baseline.suiteHash !== candidate.suiteHash) {
     return {
       comparable: false,
       improved: false,
       delta: 0,
+      paired: 0,
+      baselineOnly: 0,
+      candidateOnly: 0,
+      p: 1,
+      minDetectable: null,
+      droppedBlocked: 0,
+      verdict: "incomparable",
       reason: `different suites (${baseline.suiteHash.slice(0, 8)} against ${candidate.suiteHash.slice(0, 8)}); the tasks or a fixture changed between the runs`,
     };
   }
-  const delta = candidate.passed - baseline.passed;
-  if (delta !== 0) {
-    return {
-      comparable: true,
-      improved: delta > 0,
-      delta,
-      reason: `${delta > 0 ? "+" : ""}${delta} task(s) against the baseline's ${baseline.passed}/${baseline.total}`,
-    };
-  }
-  // Equal scores are separated by what the score cost: the same number of
-  // passes with fewer repair rungs is a better harness, and is the usual
-  // shape of a real improvement on a small suite.
+  const { paired, baselineOnly, candidateOnly, droppedBlocked } = pairOutcomes(
+    baseline.outcomes,
+    candidate.outcomes,
+  );
+  const delta = candidateOnly - baselineOnly;
+  const p = exactMcNemar(baselineOnly, candidateOnly);
+  // At the planning disagreement (rule 11), not the observed one: two
+  // discordant pairs would otherwise claim a small detectable difference
+  // exactly when nothing is detectable (review M1).
+  const minDetectable = minDetectableDifference(paired, PLANNING_DISCORDANCE);
+  const effect = paired ? delta / paired : 0;
+  const significant = p < 0.05;
+  const big = Math.abs(effect) >= MIN_CLAIMED_EFFECT;
+  const verdict: RunComparison["verdict"] =
+    delta === 0
+      ? "no difference"
+      : significant && big
+        ? delta > 0
+          ? "improved"
+          : "worse"
+        : "not established";
   const rungs = candidate.cost.rungs - baseline.cost.rungs;
+  const cost =
+    rungs === 0 ? "" : `; ${Math.abs(rungs)} ${rungs < 0 ? "fewer" : "more"} repair rung(s)`;
+  const detectable = `${describeDetectable(minDetectable, paired, "difference")}${droppedBlocked ? `; ${droppedBlocked} card${droppedBlocked === 1 ? "" : "s"} blocked in both runs left out` : ""}`;
+  const head =
+    verdict === "no difference"
+      ? `no difference on ${paired} paired card(s)`
+      : `${delta > 0 ? "+" : ""}${delta} on ${paired} paired card(s) (${candidateOnly} gained, ${baselineOnly} lost; exact McNemar p = ${p.toFixed(4)})`;
+  const tail =
+    verdict === "not established"
+      ? ` — not established: ${significant ? `under the ${MIN_CLAIMED_EFFECT * 100}-point effect the suite can claim` : "not significant at 0.05"}`
+      : verdict === "improved" || verdict === "worse"
+        ? ` — ${verdict}`
+        : "";
   return {
     comparable: true,
-    improved: rungs < 0,
-    delta: 0,
-    reason:
-      rungs === 0
-        ? `no change: ${candidate.passed}/${candidate.total} at the same cost`
-        : `${candidate.passed}/${candidate.total} either way, ${Math.abs(rungs)} ${rungs < 0 ? "fewer" : "more"} repair rung(s)`,
+    improved: verdict === "improved",
+    delta,
+    paired,
+    baselineOnly,
+    candidateOnly,
+    p,
+    minDetectable,
+    droppedBlocked,
+    verdict,
+    reason: `${head}${tail}${cost}; ${detectable}`,
   };
+}
+
+/**
+ * pass@k and pass^k per card over repeated runs of the same suite (MS-M12-5):
+ * the chance at least one, and the chance all, of k runs pass. Blocked
+ * outcomes are not runs of the card.
+ */
+export function passKByCard(
+  runs: readonly SuiteRunResult[],
+  k: number,
+): {
+  suite: string;
+  cardId: string;
+  runs: number;
+  passes: number;
+  passAtK: number;
+  passHatK: number;
+}[] {
+  const byCard = new Map<string, { task: SuiteTask; runs: number; passes: number }>();
+  for (const r of runs) {
+    for (const o of r.outcomes) {
+      if (unmeasured(o)) continue;
+      const e = byCard.get(cardKey(o.task)) ?? { task: o.task, runs: 0, passes: 0 };
+      e.runs++;
+      if (o.passed) e.passes++;
+      byCard.set(cardKey(o.task), e);
+    }
+  }
+  return [...byCard.values()]
+    .filter((e) => e.runs >= k)
+    .map((e) => ({
+      suite: e.task.suite,
+      cardId: e.task.cardId,
+      runs: e.runs,
+      passes: e.passes,
+      passAtK: passAtK(e.passes, e.runs, k),
+      passHatK: passHatK(e.passes, e.runs, k),
+    }));
+}
+
+/** The measured score (rule 4, MS-M12-1): passed over the measured cards, with its interval. */
+export function runScore(r: SuiteRunResult): {
+  passed: number;
+  measured: number;
+  blocked: number;
+  notRun: number;
+  interval: { low: number; high: number };
+} {
+  const blocked = r.outcomes.filter((o) => o.blocked).length;
+  const notRun = r.outcomes.filter((o) => o.notRun && !o.blocked).length;
+  const measured = r.outcomes.length ? r.outcomes.length - blocked - notRun : r.total;
+  const passed = r.outcomes.length
+    ? r.outcomes.filter((o) => o.passed && !unmeasured(o)).length
+    : r.passed;
+  return { passed, measured, blocked, notRun, interval: clopperPearson(passed, measured) };
 }
 
 /** One line for a terminal, and the only summary a person should need. */
 export function summarise(r: SuiteRunResult): string {
   const hours = r.cost.wallClockSeconds / 3600;
+  const s = runScore(r);
+  const pct = (x: number) => `${Math.round(x * 100)}%`;
   return [
-    `${r.passed}/${r.total} passed (${r.firstTry} first try)`,
+    `${s.passed}/${s.measured} passed (95% CI ${pct(s.interval.low)}-${pct(s.interval.high)}; ${r.firstTry} first try)`,
+    ...(s.blocked ? [`${s.blocked} blocked`] : []),
+    ...(s.notRun ? [`${s.notRun} not run`] : []),
     `suite ${r.version} ${r.suiteHash.slice(0, 8)}`,
     `${hours >= 1 ? `${hours.toFixed(1)} h` : `${Math.round(r.cost.wallClockSeconds / 60)} min`}`,
     `${Math.round(r.cost.tokens / 1000)}k tokens`,

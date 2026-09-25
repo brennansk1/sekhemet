@@ -1,4 +1,4 @@
-import { TOOL_SEARCH_SPEC, type ToolInterfaceSpec } from "@sekhemet/context";
+import { TOOL_SEARCH_SPEC, type ToolInterfaceSpec, workerCopy } from "@sekhemet/context";
 import { type CardKind, cardKind } from "@sekhemet/kernel";
 
 /**
@@ -367,8 +367,7 @@ export const TOOL_CATALOG: ToolInterfaceSpec[] = [
   },
   {
     name: "recall",
-    summary:
-      "Fetch the full text of an earlier observation that was compacted. Use the EvidenceRef shown in its placeholder.",
+    summary: workerCopy.recallSummary,
     parameters: [
       {
         name: "ref",

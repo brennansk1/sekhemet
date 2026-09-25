@@ -189,6 +189,14 @@ export function confinedSandbox(restricted: boolean): ProcessSandbox {
  * profile, so `allowedPaths` and `allowNetwork` are enforced by the kernel
  * rather than merely described.
  */
+/**
+ * The confinement wrapper's own message when it cannot exec the program
+ * (sandbox-exec on macOS, bubblewrap on Linux): the program never started.
+ * A program's own "No such file or directory" does not match.
+ */
+const WRAPPER_EXEC_FAILED =
+  /^(?:sandbox-exec: execvp\(\) of '[^']*' failed|bwrap: execvp [^\n:]*): No such file or directory/m;
+
 export class ProcessSandbox implements ExecutionSandbox {
   private readonly mode: ConfinementMode;
   private readonly bwrap: string | undefined;
@@ -501,6 +509,8 @@ export class ProcessSandbox implements ExecutionSandbox {
           durationMs: Math.round(performance.now() - startTime),
           oomKilled: false,
           timedOut,
+          // A spawn error: nothing ran.
+          notStarted: true,
         });
       });
 
@@ -518,6 +528,8 @@ export class ProcessSandbox implements ExecutionSandbox {
           stderr,
         );
         const exitCode = notFound ? 127 : (code ?? (timedOut ? 124 : 1));
+        // The wrapper itself could not exec the program: it never started.
+        const notStarted = WRAPPER_EXEC_FAILED.test(stderr);
 
         const suffix = (truncated: boolean): string =>
           truncated ? `\n... [output truncated at ${maxBuffer} bytes] ...` : "";
@@ -530,6 +542,7 @@ export class ProcessSandbox implements ExecutionSandbox {
           oomKilled,
           timedOut,
           ...(memoryPeak > 0 ? { memoryPeakBytes: memoryPeak } : {}),
+          ...(notStarted ? { notStarted: true as const } : {}),
         });
       });
     });

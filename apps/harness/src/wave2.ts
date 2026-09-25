@@ -11,7 +11,6 @@ import {
   formatM0Report,
   mineToolProposals,
   playbookDiagnostics,
-  qualifyCandidates,
   runM0Protocol,
   siftSlice,
   synthesizeTasksFromHistory,
@@ -28,11 +27,18 @@ import {
 } from "@sekhemet/kernel";
 import {
   type LocalInferenceAdapter,
+  ManagedLlamaServerAdapter,
   ModelRegistry,
+  NAIL_WORKER_PROFILE,
+  QUALIFICATION_BAR,
+  type QualificationCombination,
   assertModelRunnable,
+  describeCombination,
   loadMachineProfile,
   planWorkWindow,
+  qualifyModel,
   scheduleNow,
+  thinkingPolicyFromEnv,
 } from "@sekhemet/models";
 import {
   DecisionStore,
@@ -62,6 +68,12 @@ import { type ProcessSandbox, runConfined, runTrusted } from "@sekhemet/sandbox"
 import { gitEnvFor, planRelease, publishRelease, runActGate } from "@sekhemet/sync";
 import { airgapSkillApproval, approveVerifiedSkill } from "./airgap.js";
 import { searchLibraries } from "./pm/libraries.js";
+import {
+  type CombinationDeps,
+  qualificationCombination,
+  qualificationRefusal,
+  speculativeProbe,
+} from "./qualify.js";
 import {
   type ReuseDeps,
   type ReuseFinding,
@@ -312,6 +324,12 @@ export async function queuePrelude(
   ready: CardRecord[],
   options: {
     workerModelId?: string;
+    /**
+     * Why the Worker may not run cards (MD-N8-1): its exact combination has
+     * not qualified on this host. The caller computes it (`qualificationRefusal`);
+     * the pass does not start.
+     */
+    workerRefusal?: string | undefined;
     reviewWip?: number;
     print?: (line: string) => void;
     now?: Date;
@@ -325,6 +343,8 @@ export async function queuePrelude(
   const ledger = ledgerOf(k);
   const now = options.now ?? new Date();
 
+  // MD-N8-1: refuse a Worker whose combination has not qualified on this host.
+  if (options.workerRefusal) throw new Error(options.workerRefusal);
   // M15: refuse a worker measured below the overnight floor.
   if (options.workerModelId) assertModelRunnable(loadMachineProfile(), options.workerModelId);
 
@@ -447,7 +467,8 @@ export type Wave2Command =
   | "improve"
   | "skills"
   | "release"
-  | "ci";
+  | "ci"
+  | "measure";
 export const WAVE2_COMMANDS: readonly Wave2Command[] = [
   "airgap",
   "onboard",
@@ -466,12 +487,15 @@ export const WAVE2_COMMANDS: readonly Wave2Command[] = [
   "skills",
   "release",
   "ci",
+  "measure",
 ];
 
 export interface CommandIO {
   print: (line: string) => void;
   /** Resolve a model name to an adapter (the queue's roster). */
   model?: (name: string) => LocalInferenceAdapter;
+  /** How `qualify` reads a combination's elements; tests pass fakes (qualify.ts). */
+  combinationDeps?: CombinationDeps;
 }
 
 function flag(args: string[], name: string): string | undefined {
@@ -724,14 +748,37 @@ export async function runWave2Command(
         `Synthesized ${synth.tasks.length} fail-to-pass task(s) from ${synth.scanned} candidate commit(s); ${synth.rejected.length} rejected.`,
       );
       if (synth.tasks.length === 0) return 1;
+      // The one measurement path (MS-M9-1): every attempt runs through the
+      // product's queue in a cloned workspace, never an in-process session.
+      const { productCardRunner, recordM0Result } = await import("./m0_path.js");
+      const { sendPush } = await import("./notify.js");
+      const { dirname } = await import("node:path");
+      const { fileURLToPath } = await import("node:url");
       const report = await runM0Protocol({
         tasks: synth.tasks,
         adapter: io.model(worker),
         runs: Number(flag(args, "--runs") ?? 3),
         budgets: (flag(args, "--budgets") ?? "50,150").split(",").map(Number),
-        benchmark: { harnessRepoPath: k.repoPath, defaultRepoPath: k.repoPath },
+        benchmark: {
+          harnessRepoPath: k.repoPath,
+          defaultRepoPath: k.repoPath,
+          workspaceMode: "clone",
+          runCard: productCardRunner({ worker }),
+        },
       });
       print(formatM0Report(report));
+      await recordM0Result(report, {
+        log: k.log,
+        worker,
+        harnessRoot: join(dirname(fileURLToPath(import.meta.url)), "..", "..", ".."),
+        notify: async (title, message) => {
+          await sendPush(
+            k.repoPath,
+            { event: "run_report", title, message, priority: 5 },
+            { log: k.log },
+          );
+        },
+      });
       const out = join(k.repoPath, ".sekhemet", "m0", "latest.json");
       mkdirSync(join(k.repoPath, ".sekhemet", "m0"), { recursive: true });
       writeFileSync(out, `${JSON.stringify(report, null, 2)}\n`);
@@ -739,26 +786,67 @@ export async function runWave2Command(
       return 0;
     }
     case "qualify": {
-      // `sekhemet qualify --models a,b`: the deterministic suite per model and arm.
+      // `sekhemet qualify --models a,b [--speculative on] [--check]` (models
+      // rule 27a, MD-N8-1): the deterministic suite per model and arm,
+      // recorded under the exact combination each model runs as on this host.
+      // --speculative on qualifies a managed model with its speculative method
+      // forced on, with prefix caching on (MD-N8-2). --check only reports
+      // whether each model's combination has qualified; it loads nothing.
       const names = (flag(args, "--models") ?? "").split(",").filter(Boolean);
-      if (names.length === 0 || !io.model) return done("Usage: sekhemet qualify --models <a,b>", 1);
-      const adapters = names.map((n) => (io.model as (n: string) => LocalInferenceAdapter)(n));
-      const results = await qualifyCandidates(adapters, {
-        registry: modelRegistry(),
-        release: async (a) => {
-          await (a as { unload?: () => Promise<void> }).unload?.();
-        },
-      });
-      for (const r of results) {
+      if (names.length === 0 || !io.model)
+        return done("Usage: sekhemet qualify --models <a,b> [--speculative on] [--check]", 1);
+      const registry = modelRegistry();
+      const speculative = flag(args, "--speculative") === "on";
+      const adapterFor = (n: string) => {
+        const a = (io.model as (n: string) => LocalInferenceAdapter)(n);
+        return speculative && a instanceof ManagedLlamaServerAdapter
+          ? speculativeProbe(a, registry)
+          : a;
+      };
+      if (args.includes("--check")) {
+        let refused = false;
+        for (const n of names) {
+          const a = adapterFor(n);
+          const why = qualificationRefusal(
+            registry,
+            a,
+            qualificationCombination(a, { ...io.combinationDeps, registry }),
+            n,
+          );
+          refused ||= why !== undefined;
+          print(why ?? `${a.modelId}: qualified for this combination on this host.`);
+        }
+        return refused ? 1 : 0;
+      }
+      let anyQualified = false;
+      for (const n of names) {
+        const a = adapterFor(n);
+        // Read after the run: its first request pins the chat template.
+        let combination: QualificationCombination | undefined;
+        const { best } = await qualifyModel(a, {
+          registry,
+          bar: QUALIFICATION_BAR,
+          combination: () => {
+            combination = qualificationCombination(a, { ...io.combinationDeps, registry });
+            return combination;
+          },
+          thinking: thinkingPolicyFromEnv(),
+        });
+        await (a as { unload?: () => Promise<void> }).unload?.();
+        combination ??= qualificationCombination(a, { ...io.combinationDeps, registry });
+        const look = registry.lookupQualification(a.modelId, combination);
+        anyQualified ||= look.status === "qualified";
         print(
-          `${r.modelId}: ${(r.best.passRate * 100).toFixed(1)}% on ${r.best.arm} ${r.qualified ? "QUALIFIED" : "not qualified"} (${Object.entries(
-            r.best.byCategory,
+          `${a.modelId}: ${(best.passRate * 100).toFixed(1)}% on ${best.arm} ${look.status === "qualified" ? "QUALIFIED" : "not qualified"} for ${describeCombination(combination)} (${Object.entries(
+            best.byCategory,
           )
             .map(([c, v]) => `${c} ${(v * 100).toFixed(0)}%`)
-            .join(", ")})`,
+            .join(
+              ", ",
+            )}; ${best.speed.decodeTokensPerSecond} tok/s)${look.status === "qualified" ? "" : `: ${look.reason}`}`,
         );
       }
-      return results.some((r) => r.qualified) ? 0 : 1;
+      return anyQualified ? 0 : 1;
     }
     case "skills": {
       // `sekhemet skills [list] | approve <name> | revoke <name>` (C10).
@@ -819,6 +907,11 @@ export async function runWave2Command(
     }
     case "improve":
       return improveCommand(k, args, io);
+    case "measure": {
+      // `sekhemet measure footprint | admit | rule-credit` (measurement rules 16b, 16c).
+      const { runMeasureCommand } = await import("./measure_cmd.js");
+      return runMeasureCommand(args, k, print);
+    }
   }
 }
 
@@ -839,7 +932,11 @@ async function improveCommand(k: Kernel, args: string[], io: CommandIO): Promise
     });
     for (const r of runs)
       print(
-        `mutation ${r.cardId} ${r.sha.slice(0, 10)}: ${r.killed}/${r.total} killed (score ${r.score})${r.proposalCardId ? `; test proposals on ${r.proposalCardId}` : ""}`,
+        `mutation ${r.cardId} ${r.sha.slice(0, 10)}: ${
+          r.refused
+            ? `not scored: ${r.refused}`
+            : `${r.killed}/${r.total} killed (score ${r.score ?? "not applicable: nothing to mutate"})`
+        }${r.notMeasured?.length ? `; not measured (language): ${r.notMeasured.join(", ")}` : ""}${r.proposalCardId ? `; test proposals on ${r.proposalCardId}` : ""}`,
       );
     if (runs.length === 0) print("No accepted cards left to mutate.");
     return 0;
@@ -851,14 +948,26 @@ async function improveCommand(k: Kernel, args: string[], io: CommandIO): Promise
     const { fileURLToPath } = await import("node:url");
     const harnessRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
     const worker = flag(args, "--worker");
-    const v = await gateRuleOnFixtures(k, gateRule, {
-      fixtures: (flag(args, "--fixtures") ?? "chronicle").split(",").filter(Boolean),
-      runFixture: (fixture, rule) =>
-        runFixtureGate(harnessRoot, fixture, rule, worker ? ["--worker", worker] : []),
-    });
+    let v: RuleGateVerdict;
+    try {
+      v = await gateRuleOnFixtures(k, gateRule, {
+        fixtures: (flag(args, "--fixtures") ?? "chronicle").split(",").filter(Boolean),
+        runFixture: (fixture, rule) =>
+          runFixtureGate(harnessRoot, fixture, rule, [
+            ...(worker ? ["--worker", worker] : []),
+            ...(flag(args, "--settings") ? ["--settings", flag(args, "--settings") as string] : []),
+          ]),
+      });
+    } catch (err) {
+      // A fixture run that failed is named, never scored as 0 of 0.
+      print(`The rule gate did not run: ${err instanceof Error ? err.message : String(err)}`);
+      return 1;
+    }
     for (const p of v.perSuite)
       print(`${p.suite}: ${p.baseline} -> ${p.candidate} (${p.delta >= 0 ? "+" : ""}${p.delta})`);
-    print(`${v.accepted ? "ACCEPTED" : "REJECTED"}: ${v.reason}`);
+    print(
+      `Diagnostic only: ${v.accepted ? "no fixture lost a card" : "a fixture lost cards"} (${v.reason}). A project rule is admitted by a person's approval; the frozen suite never admits one (DEC-28).`,
+    );
     return v.accepted ? 0 : 1;
   }
   const cards = await k.cardStore.listCards();
@@ -885,12 +994,17 @@ async function improveCommand(k: Kernel, args: string[], io: CommandIO): Promise
   }
 
   // E10: distil skills from passing cards per class.
-  const byCard = new Map<string, { action: string; result: string }[]>();
+  const byCard = new Map<string, Trajectory["steps"]>();
   for (const e of steps) {
     const list = byCard.get(e.cardId ?? "") ?? [];
     for (const c of (e.payload as { calls?: { name: string; target?: string; summary?: string }[] })
       .calls ?? []) {
-      list.push({ action: `${c.name}${c.target ? ` ${c.target}` : ""}`, result: c.summary ?? "" });
+      // A call the ledger holds without its result was never closed (MS-T8-6).
+      list.push({
+        action: `${c.name}${c.target ? ` ${c.target}` : ""}`,
+        result: c.summary ?? "",
+        closed: c.summary !== undefined,
+      });
     }
     byCard.set(e.cardId ?? "", list);
   }
@@ -954,28 +1068,6 @@ export function applyTunedPolicy(
 export function appliedStepBudget(repoPath: string): number | undefined {
   const p = join(repoPath, ".sekhemet", "budget_policy.json");
   return existsSync(p) ? new BudgetPolicyStore(p).current().stepBudget : undefined;
-}
-
-/**
- * Card outcomes feed the learning guard (E17); a rollback of a budget change
- * restores the previous policy.
- */
-export function observeOutcome(
-  repoPath: string,
-  cardId: string,
-  passed: boolean,
-): string | undefined {
-  const dot = join(repoPath, ".sekhemet");
-  const guardPath = join(dot, "learning_guard.json");
-  if (!existsSync(guardPath)) return undefined;
-  const r = new LearningGuard(guardPath).observe(cardId, passed);
-  if (r.rollback?.kind === "budget") {
-    new BudgetPolicyStore(join(dot, "budget_policy.json")).rollback(r.rollback.id);
-    return `learning guard rolled back ${r.rollback.id}: ${r.rollback.reason}`;
-  }
-  if (r.rollback) return `learning guard: roll back ${r.rollback.id} (${r.rollback.reason})`;
-  if (r.kept) return `learning guard kept ${r.kept.id}: ${r.kept.reason}`;
-  return undefined;
 }
 
 // -------------------------------------------------- bake-off records (M23, E4)
@@ -1114,9 +1206,12 @@ export interface RuleGateVerdict {
 /**
  * Run a candidate rule against the frozen fixtures (E5): each fixture is
  * run by `runFixture` without the rule and with it (the queue in the
- * fixture run adopts `SEKHEMET_CANDIDATE_RULE` for that run only), and the
- * rule may be approved only when no fixture loses a passing card. The
- * verdict is recorded on the ledger; approval checks it.
+ * fixture run adopts `SEKHEMET_CANDIDATE_RULE` for that run only). A
+ * diagnostic only (DEC-28, measurement rule 16a): the frozen suite never
+ * admits a project rule — its fixtures cannot exercise one repository's
+ * paths and error codes — so a person's approval admits it, and this
+ * verdict, recorded on the ledger, is shown beside the approval, never
+ * enforced.
  */
 export async function gateRuleOnFixtures(
   k: Kernel,
@@ -1158,43 +1253,50 @@ export async function ruleGateVerdict(
 }
 
 /**
- * Run one fixture through scripts/run_gate.sh (the same path as bake-off)
- * and read its queue report.
+ * Run one fixture on the one measurement path (measurement MS-M9-1): the
+ * suite runner, and through it the product's queue, with the candidate rule
+ * in force for that run only. Scored as passed over measured cards; a
+ * blocked or never-run card is unmeasured (rule 3). `args` may name the
+ * Worker (`--worker`) and a settings file (`--settings`); any other flag is
+ * refused, since an arm is named only through the RunProfile. A run that
+ * fails is an error, never a score of 0 of 0.
  */
 export async function runFixtureGate(
   harnessRoot: string,
   fixture: string,
   candidateRule: string | undefined,
-  queueArgs: string[] = [],
+  args: string[] = [],
+  spawn?: import("./suite_path.js").SuiteSpawn,
 ): Promise<{ passed: number; total: number }> {
-  const { spawn } = await import("node:child_process");
-  const { readdirSync, mkdtempSync } = await import("node:fs");
+  const { mkdtempSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
-  const runRoot = mkdtempSync(join(tmpdir(), `sekhemet-e5-${fixture}-`));
-  await new Promise<number>((resolve) => {
-    const child = spawn(
-      "bash",
-      [join(harnessRoot, "scripts", "run_gate.sh"), fixture, ...queueArgs],
-      {
-        stdio: "inherit",
-        env: {
-          ...process.env,
-          GATE_RUN_DIR: runRoot,
-          ...(candidateRule ? { SEKHEMET_CANDIDATE_RULE: candidateRule } : {}),
-        },
-      },
-    );
-    child.on("exit", (c) => resolve(c ?? 1));
+  const { runSuitePath } = await import("./suite_path.js");
+  const { runScore } = await import("@sekhemet/eval");
+  let worker: string = NAIL_WORKER_PROFILE.modelId;
+  let settingsFile: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] as string;
+    const value = args[i + 1];
+    if (a === "--worker" && value) worker = value;
+    else if (a === "--settings" && value) settingsFile = value;
+    else
+      throw new Error(
+        `the rule gate runs the suite path; ${a} is not one of its flags: name the arm in a settings file and pass --settings <file>`,
+      );
+    i++;
+  }
+  const out = join(mkdtempSync(join(tmpdir(), `sekhemet-e5-${fixture}-`)), "result.json");
+  const r = await runSuitePath({
+    harnessRoot,
+    worker,
+    fixtures: [fixture],
+    out,
+    ...(settingsFile ? { settingsFile } : {}),
+    ...(candidateRule ? { env: { SEKHEMET_CANDIDATE_RULE: candidateRule } } : {}),
+    ...(spawn ? { spawn } : {}),
   });
-  const runDir = readdirSync(runRoot).map((d) => join(runRoot, d))[0];
-  const report = runDir ? join(runDir, ".sekhemet", "queue_report.json") : "";
-  if (!report || !existsSync(report)) return { passed: 0, total: 0 };
-  const r = JSON.parse(readFileSync(report, "utf8")) as {
-    entries: { cardId: string; passed: boolean; attempt: number }[];
-  };
-  const cards = new Set(r.entries.map((e) => e.cardId));
-  const passed = new Set(r.entries.filter((e) => e.passed).map((e) => e.cardId));
-  return { passed: passed.size, total: cards.size };
+  const score = runScore(r);
+  return { passed: score.passed, total: score.measured };
 }
 
 // ---------------------------------------------- batched swaps (M25)

@@ -7,6 +7,7 @@ import type {
   TokenUsage,
   ToolArm,
   ToolCall,
+  ToolDefinition,
 } from "@sekhemet/models";
 import type { ProcessSandbox } from "@sekhemet/sandbox";
 import type { GitSyncAdapter } from "@sekhemet/sync";
@@ -79,6 +80,8 @@ export interface TurnResult {
   abortedBy?: string | undefined;
   /** With `hook_veto`: the hook and its reason (WL-T3-4). */
   hookVeto?: { hook: string; reason: string } | undefined;
+  /** With `gate_suspected`: the gate the Worker named in `note`, and its note (GT-M6-5). */
+  suspectedGate?: { gate: string; reason: string } | undefined;
   /** Why the reply ended, as the server said (WL-M3-4). */
   finishReason?: FinishReason | undefined;
   /**
@@ -118,6 +121,13 @@ export interface PromptRecord {
   prompt: string;
   tools: string[];
   reasoning?: string | undefined;
+  /** The rest of the request, so its context pack is exactly what was sent (kernel rule 17). */
+  toolDefinitions?: ToolDefinition[] | undefined;
+  toolArm?: ToolArm | undefined;
+  reasoningBudgetTokens?: number | undefined;
+  maxTokens?: number | undefined;
+  temperature?: number | undefined;
+  purpose?: string | undefined;
 }
 
 export interface SessionOptions {
@@ -282,6 +292,15 @@ export interface SessionOptions {
    * [project]`; absent or false runs none.
    */
   builtinGates?: import("@sekhemet/gates").GateProjectConfig | false | undefined;
+  /**
+   * The gates this attempt's `note` may name as wrong (GT-M6-5, option A):
+   * declared, built-in and the harness's own, fixed for the attempt so the
+   * tool schema stays byte-stable. The card runner computes it; empty offers
+   * no `gate` parameter.
+   */
+  suspectableGates?: readonly string[] | undefined;
+  /** Ids of the project gates wrapping the gate runner (execute.ts), added to `suspectableGates`. */
+  projectGateIds?: readonly string[] | undefined;
   /** The project's .sekhemet directory (visual baselines). */
   stateDir?: string | undefined;
   /** Registry lookup for the dependency gate (G15/S10); default the local cache. */

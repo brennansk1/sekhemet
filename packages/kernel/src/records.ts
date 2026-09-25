@@ -306,6 +306,16 @@ export class RunLedger {
       ...(r.answer_tokens != null ? { answerTokens: Number(r.answer_tokens) } : {}),
       ...(r.format_errors != null ? { formatErrors: Number(r.format_errors) } : {}),
       ...(r.prose_only != null ? { proseOnly: Number(r.prose_only) } : {}),
+      ...(r.cached_prompt_tokens != null
+        ? { cachedPromptTokens: Number(r.cached_prompt_tokens) }
+        : {}),
+      ...(r.evaluated_prompt_tokens != null
+        ? { evaluatedPromptTokens: Number(r.evaluated_prompt_tokens) }
+        : {}),
+      ...(r.draft_tokens != null ? { draftTokens: Number(r.draft_tokens) } : {}),
+      ...(r.draft_accepted_tokens != null
+        ? { draftAcceptedTokens: Number(r.draft_accepted_tokens) }
+        : {}),
       createdAt: String(r.created_at),
     };
   }
@@ -315,8 +325,9 @@ export class RunLedger {
       .prepare(
         `INSERT OR REPLACE INTO steps (id, attempt_id, card_id, step_index, calls, context_pack_id,
           repo_state_hash, prompt_tokens, completion_tokens, duration_ms, stop_reason, git_ref, created_at,
-          sample, phase, finish_reason, thinking_tokens, answer_tokens, format_errors, prose_only)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          sample, phase, finish_reason, thinking_tokens, answer_tokens, format_errors, prose_only,
+          cached_prompt_tokens, evaluated_prompt_tokens, draft_tokens, draft_accepted_tokens)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         p.id,
@@ -338,6 +349,10 @@ export class RunLedger {
         p.answerTokens ?? null,
         p.formatErrors ?? null,
         p.proseOnly ?? null,
+        p.cachedPromptTokens ?? null,
+        p.evaluatedPromptTokens ?? null,
+        p.draftTokens ?? null,
+        p.draftAcceptedTokens ?? null,
       );
   }
 

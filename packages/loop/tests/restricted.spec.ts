@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { type Server, createServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -41,6 +42,16 @@ describe("restricted mode is a read-only audit (S12, H27)", () => {
     root = mkdtempSync(join(tmpdir(), "restricted-"));
     mkdirSync(join(root, "src"), { recursive: true });
     writeFileSync(join(root, "src", "a.ts"), "export const a = 1;\n");
+    // A card worktree is a git repository: the integrity gate reads its diff.
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: root });
+    execFileSync("git", ["-c", "user.email=t@t.t", "-c", "user.name=T", "add", "-A"], {
+      cwd: root,
+    });
+    execFileSync(
+      "git",
+      ["-c", "user.email=t@t.t", "-c", "user.name=T", "commit", "-q", "-m", "seed"],
+      { cwd: root },
+    );
   });
   afterEach(() => rmSync(root, { recursive: true, force: true }));
 

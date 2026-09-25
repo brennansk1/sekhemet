@@ -13,12 +13,19 @@ import {
   loadProjectConventions,
   retrieveMaskedObservation,
   runSubtask,
+  workerCopy,
 } from "@sekhemet/context";
 import {
   DEFAULT_PROJECT_CONFIG,
   type GateFailure,
   type GateResult,
+  type GateRung,
+  RERUN_GATES,
+  builtinGateIds,
   checkBounds,
+  finalizeFailures,
+  gateCopy,
+  onlyNotRun,
   runBuiltinGates,
 } from "@sekhemet/gates";
 import type { CardRecord } from "@sekhemet/kernel";
@@ -41,7 +48,7 @@ import {
   worktreeNumstat,
 } from "./integrity.js";
 import { type LadderState, RepairLadder, type RungPolicy } from "./ladder.js";
-import type { ToolObservation } from "./observation.js";
+import { type ToolObservation, fail } from "./observation.js";
 import { PHASE_WRITE_TOOLS, phaseOf } from "./phase.js";
 import { buildRepoMap, dataContracts } from "./repo_map.js";
 import {
@@ -50,6 +57,7 @@ import {
   restrictedToolCatalog,
   toolsForClass,
 } from "./tool_catalog.js";
+import { toolDefinition } from "./tool_schema.js";
 import { ToolExecutor } from "./tools.js";
 import type {
   CardExecutionSession,
@@ -219,6 +227,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       lspPool: this.options.lspPool,
       cardClass: cardClassFor(this.card),
       webDocs: options.webDocs,
+      recallOffered: this.recallOffered(),
     });
     this.promptBudgetW = this.fixPromptBudget();
     if (options.progressiveTools) {
@@ -443,7 +452,13 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       // error lines are protected, and the raw text stays recallable.
       content: condenseToolOutput(
         `Gates failing (not submitted — keep working):\n${lines.join("\n")}`,
-        { command: "check", exitCode: 1, cardId: this.cardId, turn: this.stepsUsed },
+        {
+          command: "check",
+          exitCode: 1,
+          cardId: this.cardId,
+          turn: this.stepsUsed,
+          recallOffered: this.recallOffered(),
+        },
       ).text,
     };
   }
@@ -561,6 +576,22 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
    * check is wrong by construction. Both are refused with what the model
    * needs to act on, never silently.
    */
+  /** A `note` naming a gate this attempt does not run: one line, and nothing recorded. */
+  private unknownGateRefusal(call: {
+    name: string;
+    arguments: Record<string, unknown>;
+  }): ToolObservation | undefined {
+    const gate = call.arguments.gate;
+    if (call.name !== "note" || gate === undefined) return undefined;
+    const gates = this.suspectableGates();
+    if (typeof gate === "string" && gates.includes(gate)) return undefined;
+    return fail(
+      "note",
+      `unknown gate: ${String(gate)}`,
+      workerCopy.unknownGate(String(gate), gates.join(", ") || "none"),
+    );
+  }
+
   private strictRefusal(call: {
     name: string;
     arguments: Record<string, unknown>;
@@ -828,11 +859,8 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     const add = (path: string, label: string): void => {
       try {
         const content = this.tools.readRaw(path);
-        if (content.length <= MAX_CHARS) {
-          pinned.push({ path, content, label });
-          // Shown in full in the prompt (even when empty): it has been read (L17).
-          this.tools.markSeen(path);
-        }
+        // Counted as read only once the prompt shows it in full (buildPrompt).
+        if (content.length <= MAX_CHARS) pinned.push({ path, content, label });
       } catch {
         if (label === "scope file") pinned.push({ path, content: "", label });
       }
@@ -898,7 +926,55 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       toolsForClass(cardClassFor(this.card), TOOL_CATALOG, {
         scriptCapable: this.options.scriptCapable,
       });
-    return this.options.restricted ? restrictedToolCatalog(base) : base;
+    return this.withNoteGate(this.options.restricted ? restrictedToolCatalog(base) : base);
+  }
+
+  /**
+   * The attempt's gates, sorted: what `note`'s `gate` may name (GT-M6-5),
+   * listed from what emits the ids — the runner's declared and project gates,
+   * and here the bounds, integrity and hook gates when they run and the
+   * built-in layers' own list.
+   */
+  private suspectableGates(): string[] {
+    const builtin = this.options.builtinGates;
+    const ids = [
+      ...(this.options.suspectableGates ?? []),
+      ...(this.options.bounds ? ["bounds"] : []),
+      ...(this.options.integrityGate !== false ? ["integrity"] : []),
+      ...(this.options.hooks ? ["hook"] : []),
+      ...(builtin
+        ? builtinGateIds(this.options.restricted ? { ...builtin, mutation: false } : builtin)
+        : []),
+    ];
+    return [...new Set(ids)].sort();
+  }
+
+  /**
+   * GT-M6-5, option A: `note` takes an optional `gate`, an enum of this
+   * attempt's gates. It is structured, so a note that merely mentions a gate
+   * can never stop the card; the list is fixed for the attempt, so the schema
+   * stays byte-stable.
+   */
+  private withNoteGate(tools: ToolInterfaceSpec[]): ToolInterfaceSpec[] {
+    const gates = this.suspectableGates();
+    if (gates.length === 0) return tools;
+    return tools.map((t) =>
+      t.name === "note"
+        ? {
+            ...t,
+            parameters: [
+              ...t.parameters,
+              {
+                name: "gate",
+                type: "string" as const,
+                required: false,
+                description: workerCopy.noteGate,
+                enumValues: gates,
+              },
+            ],
+          }
+        : t,
+    );
   }
 
   /**
@@ -919,27 +995,19 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     return this.toolLoader ? this.toolLoader.visibleSchemas(all) : all;
   }
 
+  /** The request's tool definitions, from the one builder a replay also uses (tool_schema.ts). */
   private toolDefinitions() {
-    const catalog = this.catalog();
-    return catalog.map((t) => ({
-      name: t.name,
-      description: t.summary,
-      parameters: {
-        type: "object",
-        properties: Object.fromEntries(
-          t.parameters.map((p) => [
-            p.name,
-            {
-              type: p.type,
-              description: p.description,
-              ...(p.type === "array" ? { items: { type: "string" } } : {}),
-              ...(p.enumValues?.length ? { enum: p.enumValues } : {}),
-            },
-          ]),
-        ),
-        required: t.parameters.filter((p) => p.required).map((p) => p.name),
-      },
-    }));
+    return this.catalog().map(toolDefinition);
+  }
+
+  /** The tools this card is given, as the session renders and sends them (the prompt lint and golden renders read these). */
+  public getToolSpecs(): ToolInterfaceSpec[] {
+    return this.catalog();
+  }
+
+  /** Whether `recall` is offered: a pointer names it only then (context CX-M1-1). */
+  public recallOffered(): boolean {
+    return this.offeredToolNames().includes("recall");
   }
 
   /** The request budget in tokens, if the adapter's window is known. */
@@ -1039,7 +1107,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       ...[...this.filesWritten].sort().map((f) => `wrote ${f}`),
       // Listing what was already read is what stops the agent spending its
       // budget re-reading files it has in front of it.
-      ...this.tools.getReadFiles().map((f) => `read ${f} (do not re-read)`),
+      ...this.tools.getReadFiles().map((f) => `read ${f}`),
     ];
     const pending = this.pendingScopeFiles();
     const built = buildWorkerPrompt({
@@ -1103,6 +1171,11 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       this.compactedTurns = Math.max(this.compactedTurns, this.history.length - 6);
     }
     this.lastPrompt = built;
+    // What the prompt showed in full, for edit's refusal (the B2.1 review, B2).
+    this.tools.setShownInFull(built.shownInFull);
+    // Shown in full in the prompt (even when empty): it has been read (L17). A
+    // file the allocator cut or shrank has not (the confirmation review).
+    for (const path of built.shownInFull) this.tools.markSeen(path);
     return built;
   }
 
@@ -1294,6 +1367,12 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       prompt,
       tools: tools.map((t) => t.name),
       reasoning: thinking.reasoning,
+      // The rest of the request below, so the pack is exactly what was sent (kernel rule 17).
+      toolDefinitions: tools,
+      toolArm: this.options.toolArm ?? this.options.modelAdapter.preferredToolArm ?? "arm_a_flat",
+      reasoningBudgetTokens: thinking.reasoningBudgetTokens,
+      maxTokens: this.options.maxTokens,
+      temperature: this.options.temperature,
     });
 
     const response = await this.options.modelAdapter.generate({
@@ -1481,6 +1560,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       });
       this.pendingStallWarning = undefined;
     }
+    let suspected: { gate: string; reason: string } | undefined;
     for (const call of toolCalls) {
       // `check` runs the real gates without ending the card: the agent was
       // spending most of its turns trying to self-verify with shell commands.
@@ -1507,7 +1587,9 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         continue;
       }
       const refused =
-        this.tools.refuseNotOffered(call.name, offeredNames) ?? this.strictRefusal(call);
+        this.tools.refuseNotOffered(call.name, offeredNames) ??
+        this.strictRefusal(call) ??
+        this.unknownGateRefusal(call);
       if (refused) {
         observations.push(refused);
         continue;
@@ -1538,6 +1620,13 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       }
       if (call.name === "note" && observation.ok && typeof call.arguments.message === "string") {
         await this.options.onNote?.(call.arguments.message).catch(() => undefined);
+        // GT-M6-5: a note that names a gate says the gate is wrong.
+        if (typeof call.arguments.gate === "string") {
+          suspected = {
+            gate: call.arguments.gate,
+            reason: call.arguments.message.slice(0, 300),
+          };
+        }
       }
 
       if (observation.ok && WRITE_TOOLS.has(call.name)) {
@@ -1555,6 +1644,21 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       action: toolCalls.map((c) => c.name).join(", "),
       result: observations.map((o) => o.content).join("\n---\n"),
     });
+
+    // GT-M6-5: the Worker named a gate as wrong. Grinding repair rungs against
+    // it is what gates exist to prevent, so the card parks for a person.
+    if (suspected) {
+      this.isFinished = true;
+      return {
+        turnIndex,
+        toolCalls,
+        observations,
+        usage: response.usage,
+        rawText: response.text,
+        stopReason: "gate_suspected",
+        suspectedGate: suspected,
+      };
+    }
 
     let gateResult: GateResult | undefined;
     let stopReason: ExecutionStopReason | undefined;
@@ -1621,6 +1725,19 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         });
         gateResult = recheck;
         stopReason = "gate_passed";
+      } else if (onlyNotRun(recheck)) {
+        // What is left is gates that could not run: the Worker's failures are
+        // gone, so the card stops for the gates rather than keep repairing.
+        this.isFinished = true;
+        this.history.push({
+          turn: turnIndex,
+          action: "re-check after edit",
+          result: workerCopy.gatesNotRun(
+            recheck.failures.map((f) => f.errorExcerpt.split("\n")[0]).join(" | "),
+          ),
+        });
+        gateResult = recheck;
+        stopReason = "done_pending_gates";
       } else {
         recheckFailed = true;
         this.lastGateFailure = recheck.failures[0];
@@ -1658,6 +1775,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         };
       }
 
+      const gatesDidNotRun = onlyNotRun(gateResult);
       if (gateResult.passed) {
         this.isFinished = true;
         this.lastGateFailure = undefined;
@@ -1665,6 +1783,19 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         this.ladder.reset();
         this.activeRung = undefined;
         stopReason = "gate_passed";
+      } else if (gatesDidNotRun) {
+        // Blocker 1 of the B2.3 review: what is left is gates that could not
+        // run. That is not the Worker's failure: no repair rung, no measured
+        // stop — the work is kept for the gates to run.
+        this.isFinished = true;
+        this.history.push({
+          turn: turnIndex,
+          action: "verification",
+          result: workerCopy.gatesNotRun(
+            gateResult.failures.map((f) => f.errorExcerpt.split("\n")[0]).join(" | "),
+          ),
+        });
+        stopReason = "done_pending_gates";
       } else {
         // The repair cycle: surface the typed failure so the next prompt carries
         // it, and let the agent keep working rather than ending the card here.
@@ -1747,9 +1878,16 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
             {
               rung: "test",
               gate: "hook",
+              layer: "hygiene",
               exitCode: 1,
               errorExcerpt: `A pre-gate hook stopped verification: ${pre.reason ?? "blocked"}`,
               suggestedFixFiles: [],
+              location: { file: "." },
+              expected: "the pre-gate hooks to let verification run",
+              actual: pre.reason ?? "blocked",
+              minimalRepro: RERUN_GATES,
+              suggestedAction: gateCopy.hookBlocked(pre.reason ?? "blocked"),
+              notRun: true,
             },
           ],
           rungResults: [],
@@ -1788,21 +1926,45 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     }
     const rungs = this.options.gateRungs ?? ["typecheck", "test"];
     let result = await this.options.gateRunner.runGates(rungs, this.tools.root);
+    const base = this.options.baseBranch ?? "main";
+    // One read of the diff for every gate that judges it; undefined when git
+    // cannot produce it, and then those gates say they did not run.
+    const diff = worktreeDiff(this.tools.root, base);
+    const notRun = (gate: string, rung: GateRung, expected: string): GateFailure => ({
+      rung,
+      gate,
+      layer: "hygiene",
+      exitCode: -1,
+      errorExcerpt: `${gate} not run: the card's diff could not be read`,
+      suggestedFixFiles: [],
+      location: { file: "." },
+      expected,
+      actual: "git could not produce the diff",
+      minimalRepro: `git diff ${base}`,
+      suggestedAction: gateCopy.gateNotRun(gate),
+      notRun: true,
+    });
     // The integrity gate (ARIS: "plausible unsupported success"): a pass
     // bought by switching a check off is not a pass.
-    if (this.options.integrityGate !== false) {
+    if (this.options.integrityGate !== false && diff === undefined) {
+      result = {
+        ...result,
+        passed: false,
+        failures: [
+          notRun("integrity", "hygiene", "no check switched off in the card's lines"),
+          ...result.failures,
+        ],
+      };
+    } else if (this.options.integrityGate !== false && diff !== undefined) {
       const protectedTests = (this.card.acceptanceTests ?? []).map((t) =>
         t.startsWith("tests/") ? t : `tests/${t}`,
       );
-      const violations = scanDiffIntegrity(
-        worktreeDiff(this.tools.root, this.options.baseBranch ?? "main"),
-        protectedTests,
-      );
+      const violations = scanDiffIntegrity(diff, protectedTests);
       if (violations.length > 0) {
         result = {
           ...result,
           passed: false,
-          failures: [...integrityFailures(violations), ...result.failures],
+          failures: [...integrityFailures(violations, base), ...result.failures],
         };
       }
     }
@@ -1813,10 +1975,24 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       const staged = new Set(
         (this.card.acceptanceTests ?? []).map((t) => (t.startsWith("tests/") ? t : `tests/${t}`)),
       );
-      const perFile = worktreeNumstat(this.tools.root, this.options.baseBranch ?? "main");
-      if (perFile) {
+      const perFile = worktreeNumstat(this.tools.root, base);
+      if (!perFile) {
+        result = {
+          ...result,
+          passed: false,
+          failures: [
+            notRun(
+              "bounds",
+              "bounds",
+              `at most ${bounds.maxFiles} files and ${bounds.maxLines} lines`,
+            ),
+            ...result.failures,
+          ],
+        };
+      } else {
         const own = perFile.filter((f) => !staged.has(f.file));
         const verdict = checkBounds({
+          base,
           filesTouched: own.map((f) => f.file),
           linesAdded: own.reduce((n, f) => n + f.added, 0),
           linesRemoved: own.reduce((n, f) => n + f.removed, 0),
@@ -1847,12 +2023,11 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     // declared gates pass (mutation testing is only meaningful then).
     const builtin = this.options.builtinGates;
     if (builtin) {
-      const base = this.options.baseBranch ?? "main";
       const project = this.options.restricted ? { ...builtin, mutation: false } : builtin;
       const extra = await runBuiltinGates({
         root: this.tools.root,
         base,
-        diff: worktreeDiff(this.tools.root, base),
+        diff,
         // The acceptance tests the harness staged are not the card's writing.
         harnessOwned: (this.options.card?.acceptanceTests ?? []).map((t) => `tests/${t}`),
         project: result.passed ? project : { ...project, mutation: false },
@@ -1863,16 +2038,32 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         ...(this.options.registry ? { registry: this.options.registry } : {}),
         runTests: async () =>
           (await this.options.gateRunner.runGates(["test"], this.tools.root)).passed,
-      }).catch(() => undefined);
-      if (extra) {
-        this.advisories = extra.advisories;
-        result = {
-          ...result,
-          passed: result.passed && extra.failures.length === 0,
-          failures: [...extra.failures, ...result.failures],
-          rungResults: [...(result.rungResults ?? []), ...extra.outcomes],
-        };
-      }
+      });
+      // No catch: each built-in layer runs guarded and reports itself as not
+      // run, so the layers never vanish from the result (gates rule 9, B2.3).
+      this.advisories = extra.advisories;
+      result = {
+        ...result,
+        passed: result.passed && extra.failures.length === 0,
+        failures: [...extra.failures, ...result.failures],
+        rungResults: [...(result.rungResults ?? []), ...extra.outcomes],
+      };
+    }
+    // The one cap (gates rule 20, F14): every gate has reported, so declared,
+    // integrity, bounds and built-in failures are checked complete and ranked
+    // together, and three reach the model.
+    // A harness defect (an incomplete failure) is filled and recorded, never
+    // thrown mid-turn.
+    const defects = [...(result.defects ?? [])];
+    result = {
+      ...result,
+      failures: finalizeFailures(result.failures, {
+        cwd: this.tools.root,
+        onIncomplete: (d) => defects.push(d),
+      }),
+    };
+    if (defects.length > 0) {
+      this.advisories = [...this.advisories, ...defects.map((d) => `gate defect: ${d}`)];
     }
     this.memory.observe(result);
     return result;

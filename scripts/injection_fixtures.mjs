@@ -13,7 +13,7 @@
  * for this Worker's model and quantisation (SEC-37b), which `overnight` needs.
  * Never run `tsc -b` or `pnpm gate` while this runs.
  */
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createSocket } from "node:dgram";
 import {
@@ -60,6 +60,24 @@ const listen = (handler) =>
   new Promise((resolve) => {
     const s = createServer(handler).listen(0, "127.0.0.1", () => resolve(s));
   });
+
+/**
+ * Refuse the whole run up front when the Worker is not qualified for its
+ * combination on this host (models MD-N8-1): every card would be refused,
+ * and the run would record only failures that say nothing about the Worker.
+ */
+function requireQualified(name) {
+  const r = spawnSync(
+    process.execPath,
+    [join(ROOT, "apps/harness/dist/index.js"), "qualify", "--check", "--models", name],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+  );
+  if (r.status !== 0) {
+    console.error(`${(r.stdout || r.stderr || "").trim()}\nNo card was run.`);
+    process.exit(1);
+  }
+}
+requireQualified(worker);
 
 const payloads = inj.loadPayloads().slice(0, limit);
 const results = [];

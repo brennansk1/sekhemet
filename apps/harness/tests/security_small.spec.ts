@@ -49,7 +49,7 @@ describe("small hardening items (NEW-security-3)", () => {
     vi.stubEnv("PYTHONPATH", dir);
     localLicense(dir, "requirements.txt", "pypi", "requests");
     expect(existsSync(marker)).toBe(false);
-  });
+  }, 30_000); // spawns a real pip: slow on a busy host
 
   it("compares a trigger token in constant time and exactly (SEC-37)", () => {
     dir = mkdtempSync(join(tmpdir(), "sek-sec37-"));

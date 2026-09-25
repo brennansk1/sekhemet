@@ -16,3 +16,8 @@ export * from "./diagnostics.js";
 export * from "./fixture_repo.js";
 export * from "./suite.js";
 export * from "./phase0.js";
+export * from "./stats.js";
+export * from "./admission.js";
+export * from "./eval_assets.js";
+export * from "./suite_runner.js";
+export * from "./run_profile.js";

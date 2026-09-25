@@ -110,16 +110,16 @@ export function gateTemplate(
       ];
     case "rust":
       return [
-        gate("typecheck", "typecheck", "static", "cargo", ["check", "--all-targets"], "generic"),
+        gate("typecheck", "typecheck", "static", "cargo", ["check", "--all-targets"], "cargo"),
         gate(
           "lint",
           "lint",
           "static",
           "cargo",
           ["clippy", "--all-targets", "--", "-D", "warnings"],
-          "generic",
+          "cargo",
         ),
-        gate("unit", "test", "functional", "cargo", ["test"], "generic", 900_000),
+        gate("unit", "test", "functional", "cargo", ["test"], "cargo", 900_000),
       ];
     case "go":
       return [

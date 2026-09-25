@@ -1,10 +1,17 @@
-import type { GateFailure, GateRung } from "./types.js";
+import { RERUN_GATES, gateCopy } from "./copy.js";
+import type { CompleteGateFailure, GateRung } from "./types.js";
 
+/**
+ * One failure from raw output no dedicated parser reads. `minimalRepro` is
+ * the command that produced the output; without one, the `check` tool that
+ * runs every gate again.
+ */
 export function parseErrorToGateFailure(
   rung: GateRung,
   exitCode: number,
   rawOutput: string,
-): GateFailure {
+  minimalRepro: string = RERUN_GATES,
+): CompleteGateFailure {
   const lines = rawOutput.split("\n");
   const suggestedFixFiles = new Set<string>();
 
@@ -53,10 +60,18 @@ export function parseErrorToGateFailure(
           .filter(Boolean)
           .join("\n");
 
+  const excerpt = errorExcerpt || `Gate ${rung} failed with exit code ${exitCode}`;
+  const files = Array.from(suggestedFixFiles);
   return {
     rung,
+    gate: rung,
     exitCode,
-    errorExcerpt: errorExcerpt || `Gate ${rung} failed with exit code ${exitCode}`,
-    suggestedFixFiles: Array.from(suggestedFixFiles),
+    errorExcerpt: excerpt,
+    suggestedFixFiles: files,
+    location: { file: files[0] ?? "." },
+    expected: `${rung} to exit 0`,
+    actual: excerpt.split("\n")[0] ?? excerpt,
+    minimalRepro,
+    suggestedAction: gateCopy.rerun(minimalRepro),
   };
 }

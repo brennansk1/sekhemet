@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Mutant, generateMutants, runMutationCampaign } from "@sekhemet/eval";
-import { DeterministicGateRunner, loadGatesConfig } from "@sekhemet/gates";
+import { DeterministicGateRunner, loadGatesConfig, mutationNotMeasured } from "@sekhemet/gates";
 import type { CardStore, EventLog } from "@sekhemet/kernel";
 import { ProcessSandbox } from "@sekhemet/sandbox";
 
@@ -22,8 +22,17 @@ export interface MutationRun {
   sha: string;
   total: number;
   killed: number;
-  score: number;
+  /**
+   * Killed over total (M10): `null` when it is not measured — the tests fail
+   * on the unmutated checkout (`refused`) or the change has no mutable
+   * lines — never 1.
+   */
+  score: number | null;
   survived: (Pick<Mutant, "line" | "original" | "replacement" | "operator"> & { file: string })[];
+  /** Why the campaign was not scored (MS-M10-1). */
+  refused?: string;
+  /** Changed code files in a language the campaign cannot mutate (MS-M10-3). */
+  notMeasured?: string[];
   proposalCardId?: string;
 }
 
@@ -38,6 +47,16 @@ export interface MutationStepOptions {
 
 const SOURCE = /\.[cm]?[jt]sx?$/;
 const TEST = /(^|\/)(tests?|__tests__)\/|\.(spec|test)\.[cm]?[jt]sx?$/;
+/** Changed code files the campaign cannot mutate, sorted. */
+export function unmutableCodeFiles(repo: string, sha: string): string[] {
+  return (
+    git(repo, "show", "--name-only", "--format=", sha)
+      .split("\n")
+      // One rule with the mutation gate (MS-M10-3).
+      .filter((f) => mutationNotMeasured(f) !== undefined)
+      .sort()
+  );
+}
 
 const git = (cwd: string, ...args: string[]) =>
   execFileSync("git", args, {
@@ -98,11 +117,18 @@ export async function mutateAcceptedCards(
   for (const { cardId, sha } of accepted) {
     const checkout = join(repo, ".sekhemet", "mutation", cardId);
     rmSync(checkout, { recursive: true, force: true });
-    const run: MutationRun = { cardId, sha, total: 0, killed: 0, score: 1, survived: [] };
+    const run: MutationRun = { cardId, sha, total: 0, killed: 0, score: null, survived: [] };
+    const notMeasured = unmutableCodeFiles(repo, sha);
+    if (notMeasured.length) run.notMeasured = notMeasured;
     const proposals: string[] = [];
     try {
       git(repo, "worktree", "add", "-q", "--detach", checkout, sha);
-      let budget = opts.maxMutants ?? 8;
+      // MS-M10-1: the baseline run. Tests that already fail kill every mutant,
+      // and a broken checkout would score 1.0.
+      if (!(await runTests(checkout))) {
+        run.refused = `the tests fail on the unmutated checkout of ${sha.slice(0, 10)}, so no mutant can be scored`;
+      }
+      let budget = run.refused ? 0 : (opts.maxMutants ?? 8);
       for (const [file, lines] of addedSourceLines(repo, sha)) {
         if (budget <= 0) break;
         const abs = join(checkout, file);
@@ -142,7 +168,8 @@ export async function mutateAcceptedCards(
         }
       }
     }
-    run.score = run.total ? Math.round((run.killed / run.total) * 1000) / 1000 : 1;
+    run.score =
+      run.refused || run.total === 0 ? null : Math.round((run.killed / run.total) * 1000) / 1000;
     if (proposals.length > 0) {
       const card = await store.getCard(cardId);
       const proposal = await store.createCard(
@@ -172,6 +199,8 @@ export async function mutateAcceptedCards(
         killed: run.killed,
         score: run.score,
         survived: run.survived,
+        ...(run.refused ? { refused: run.refused } : {}),
+        ...(run.notMeasured ? { notMeasured: run.notMeasured } : {}),
         ...(run.proposalCardId ? { proposalCardId: run.proposalCardId } : {}),
       },
     });

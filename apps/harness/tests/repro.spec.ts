@@ -1,6 +1,8 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { resolveRunProfile, runProfileHash } from "@sekhemet/eval";
+import { ManagedLlamaServerAdapter, ModelRegistry } from "@sekhemet/models";
 import { describe, expect, it } from "vitest";
 import { buildReproRecord, quantFromFile, reproDiff, sampledDigest } from "../src/repro.js";
 
@@ -61,5 +63,84 @@ describe("per-attempt reproducibility record (H24)", () => {
     expect(a.harness.version).toMatch(/^\d+\.\d+\.\d+/);
     const b = { ...a, attempt: 2, gatesSha: "g2", activeRules: ["r1"] };
     expect(reproDiff(a, b)).toEqual(["active rules", "gates"]);
+  });
+
+  it("records the seven fields and what the server itself reports (MD-M4-3, MD-M4-5, MD-M4-2)", () => {
+    const repo = mkdtempSync(join(tmpdir(), "repro-repo-"));
+    const registry = new ModelRegistry(join(repo, "models.json"));
+    registry.upsert("worker", {
+      quant: "IQ3_XXS",
+      template: { checksum: "tmpl-sha", pinnedAt: "2026-09-25" },
+    });
+    const model = new ManagedLlamaServerAdapter({
+      modelId: "worker",
+      modelPath: join(repo, "Worker-UD-IQ3_XXS.gguf"),
+      contextTokens: 16384,
+      kvType: "q8_0",
+      registry,
+    });
+    const r = buildReproRecord({
+      cardId: "c",
+      attempt: 1,
+      model,
+      repoPath: repo,
+      gatesSha: "g",
+      promptSha: "p",
+      server: { modelPath: "/m/w.gguf", contextTokens: 16384, mtp: false, build: "b10809" },
+    });
+    // The header's quantisation from the registry, not the file name's label.
+    expect(r.model.quant).toBe("IQ3_XXS");
+    expect(r.templateChecksum).toBe("tmpl-sha");
+    expect(r.engine).toMatchObject({ contextTokens: 16384, kvType: "q8_0", mtp: false });
+    expect(r.server).toEqual({
+      modelPath: "/m/w.gguf",
+      contextTokens: 16384,
+      mtp: false,
+      build: "b10809",
+    });
+    expect(r.harness.commit).toMatch(/^[0-9a-f]{40}$/);
+    expect(r.harness.distSha).toMatch(/^[0-9a-f]{16}$/);
+    // A changed engine setting shows up between two attempts.
+    const b = { ...r, attempt: 2, engine: { ...r.engine, mtp: true } };
+    expect(reproDiff(r, b)).toEqual(["engine"]);
+  });
+  it("records the run's one RunProfile with its hash, and diffs it between attempts (MS-M9-4)", () => {
+    const repo = mkdtempSync(join(tmpdir(), "repro-profile-"));
+    const model = {
+      modelId: "m",
+      supportedArms: ["arm_a_flat" as const],
+      generate: async () => ({
+        text: "",
+        toolCalls: [],
+        usage: { promptTokens: 0, completionTokens: 0, durationMs: 0 },
+      }),
+    };
+    const profile = resolveRunProfile({
+      env: { SEKHEMET_THINKING: "surgical" },
+      argv: ["--max-turns", "20"],
+    });
+    const a = buildReproRecord({
+      cardId: "c",
+      attempt: 1,
+      model,
+      repoPath: repo,
+      gatesSha: "g",
+      runProfile: profile,
+    });
+    expect(a.runProfile).toMatchObject({
+      switches: { thinking: "surgical", workerMethod: "baseline" },
+      policies: { stepCap: 20 },
+      hash: runProfileHash(profile),
+    });
+    const other = resolveRunProfile({ env: {}, argv: [] });
+    const b = buildReproRecord({
+      cardId: "c",
+      attempt: 2,
+      model,
+      repoPath: repo,
+      gatesSha: "g",
+      runProfile: other,
+    });
+    expect(reproDiff(a, { ...b, recordedAt: a.recordedAt, attempt: 1 })).toContain("run profile");
   });
 });

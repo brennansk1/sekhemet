@@ -24,6 +24,8 @@ export class InstrumentedAdapter implements LocalInferenceAdapter {
   public readonly supportedArms: ToolArm[];
 
   public promptTokens = 0;
+  /** Of `promptTokens`, those the server served from its prompt cache (MS-M9-2). */
+  public cachedPromptTokens = 0;
   public completionTokens = 0;
   public inferenceCalls = 0;
   public inferenceMs = 0;
@@ -34,6 +36,43 @@ export class InstrumentedAdapter implements LocalInferenceAdapter {
   ) {
     this.modelId = inner.modelId;
     this.supportedArms = inner.supportedArms;
+    // An optional property forwarded live: absent on the inner adapter reads
+    // as absent here, never as a made-up `false`.
+    Object.defineProperty(this, "nativeTools", {
+      get: () => this.inner.nativeTools,
+      enumerable: true,
+    });
+  }
+
+  /** Forwarded from the inner adapter (see the constructor). */
+  public declare readonly nativeTools?: boolean;
+
+  // Every property the session reads passes through unchanged (MS-M9-2,
+  // measurement rule 9): a wrapper that hid the window, the native-tools
+  // flag or the measured arm measured a different Worker from the product's.
+  public get contextWindow(): LocalInferenceAdapter["contextWindow"] {
+    return this.inner.contextWindow;
+  }
+
+  public get preferredToolArm(): ToolArm | undefined {
+    return this.inner.preferredToolArm;
+  }
+
+  public healthCheck(): ReturnType<NonNullable<LocalInferenceAdapter["healthCheck"]>> {
+    return this.inner.healthCheck
+      ? this.inner.healthCheck()
+      : Promise.resolve({
+          ok: true,
+          modelId: this.modelId,
+          reachable: true,
+          loaded: true,
+          latencyMs: 0,
+        });
+  }
+
+  /** Release the inner adapter's weights, when it holds any. */
+  public async unload(): Promise<void> {
+    await (this.inner as { unload?: () => Promise<void> }).unload?.();
   }
 
   public get totalTokens(): number {
@@ -53,6 +92,7 @@ export class InstrumentedAdapter implements LocalInferenceAdapter {
 
     this.inferenceCalls++;
     this.promptTokens += response.usage.promptTokens;
+    this.cachedPromptTokens += response.usage.cachedPromptTokens ?? 0;
     this.completionTokens += response.usage.completionTokens;
     this.inferenceMs += response.usage.durationMs;
 

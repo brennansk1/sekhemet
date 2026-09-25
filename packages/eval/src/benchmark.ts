@@ -211,6 +211,33 @@ export class BenchmarkHarness implements EvalHarness {
     };
   }
 
+  /** The oracle after the attempt: every fail-to-pass test flipped, none regressed. */
+  private async judge(
+    path: string,
+    task: SyntheticTask,
+    context: RunContext,
+    result: TaskAttemptResult,
+    before: VerificationSnapshot,
+  ): Promise<TaskAttemptResult> {
+    const after = await context.verifier.snapshot(path, task);
+    result.after = after;
+
+    const flips = diffSnapshots(before, after);
+    result.flippedToPassing = flips.flippedToPassing;
+    result.stillFailing = flips.stillFailing;
+    result.regressed = flips.regressed;
+
+    result.passed = allPassing(after);
+    if (result.passed) {
+      result.failureReason = undefined;
+      result.error = undefined;
+    } else if (result.failureReason === undefined) {
+      result.failureReason =
+        result.stillFailing.length > 0 ? "fail_to_pass_unfixed" : "pass_to_pass_regressed";
+    }
+    return result;
+  }
+
   /** One sample: provision, verify before, run the loop, verify after. */
   private async runAttempt(
     task: SyntheticTask,
@@ -271,6 +298,34 @@ export class BenchmarkHarness implements EvalHarness {
         return result;
       }
 
+      if (options.runCard) {
+        // The product's card execution (MS-M9-1): the same prompt, tools,
+        // roles and policies a person's run gets.
+        try {
+          const run = await options.runCard({
+            workspacePath: workspace.path,
+            task,
+            stepBudget: task.stepBudget ?? context.stepBudget,
+            attempt,
+            temperature: context.plan.temperature,
+          });
+          result.stopReason = run.stopReason as TaskAttemptResult["stopReason"];
+          result.turnsUsed = run.turnsUsed;
+          result.promptTokens = run.promptTokens;
+          result.completionTokens = run.completionTokens;
+          result.totalTokens = run.promptTokens + run.completionTokens;
+          result.toolCallSteps = {
+            steps: run.steps.length,
+            valid: run.steps.filter((st) => st.formatErrors === 0 && st.proseOnly === 0).length,
+          };
+        } catch (error) {
+          result.stopReason = "error";
+          result.failureReason = "agent_error";
+          result.error = describeError(error);
+        }
+        return await this.judge(workspace.path, task, context, result, before);
+      }
+
       const adapter = new InstrumentedAdapter(modelAdapter, {
         temperature: context.plan.temperature,
         ...(options.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {}),
@@ -308,24 +363,7 @@ export class BenchmarkHarness implements EvalHarness {
       result.totalTokens = adapter.totalTokens;
       result.inferenceCalls = adapter.inferenceCalls;
 
-      const after = await context.verifier.snapshot(workspace.path, task);
-      result.after = after;
-
-      const flips = diffSnapshots(before, after);
-      result.flippedToPassing = flips.flippedToPassing;
-      result.stillFailing = flips.stillFailing;
-      result.regressed = flips.regressed;
-
-      result.passed = allPassing(after);
-      if (result.passed) {
-        result.failureReason = undefined;
-        result.error = undefined;
-      } else if (result.failureReason === undefined) {
-        result.failureReason =
-          result.stillFailing.length > 0 ? "fail_to_pass_unfixed" : "pass_to_pass_regressed";
-      }
-
-      return result;
+      return await this.judge(workspace.path, task, context, result, before);
     } finally {
       result.durationMs = Math.round(performance.now() - started);
       workspace.dispose();

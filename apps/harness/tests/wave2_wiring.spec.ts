@@ -7,11 +7,11 @@ import { CardStore, DEFAULT_STEP_BUDGET, EventLog, initSchema } from "@sekhemet/
 import { MockInferenceAdapter } from "@sekhemet/models";
 import { DecisionStore } from "@sekhemet/planner";
 import { afterEach, describe, expect, it } from "vitest";
+import { learnFromOutcome } from "../src/execute.js";
 import {
   type Kernel,
   appliedStepBudget,
   applyTunedPolicy,
-  observeOutcome,
   planCommand,
   queuePrelude,
   roleForCard,
@@ -344,17 +344,48 @@ describe("skills, release, ci and improve commands (C10, Y17, Y18, E10, E14, E15
 });
 
 describe("tune --apply and the learning guard (E8, E17)", () => {
-  it("applies within 15% and rolls a budget change back when outcomes drop", () => {
+  /** One card outcome through the card runner's one observer of the guard (review minor). */
+  const observe = (k: Kernel, i: number, passed: boolean, lines: string[]) =>
+    learnFromOutcome(
+      {
+        repoPath: k.repoPath,
+        restrictedMode: false,
+        cardStore: k.cardStore,
+        boardService: {} as never,
+      },
+      { id: `c${i}`, tier: "task", title: "Card", scopeFiles: [] } as never,
+      { passed, tokensUsed: 0, turns: [] } as never,
+      (l) => lines.push(l),
+    );
+
+  it("applies within 15%, and with no history before the change reports insufficient data (rule 18)", async () => {
     const k = kernel();
     const applied = applyTunedPolicy(k.repoPath, { stepBudget: 20, maxFailedChecks: 3 }, "tune");
     // WL-T3-11: from the one default of 40, a move of at most 15% lands on 34.
     expect(DEFAULT_STEP_BUDGET).toBe(40);
     expect(applied.stepBudget).toBe(34);
     expect(appliedStepBudget(k.repoPath)).toBe(34);
-    let msg: string | undefined;
-    for (let i = 0; i < 10; i++) msg = observeOutcome(k.repoPath, `c${i}`, i < 2);
-    expect(msg).toMatch(/rolled back/);
-    expect(appliedStepBudget(k.repoPath)).toBe(DEFAULT_STEP_BUDGET);
+    const lines: string[] = [];
+    for (let i = 0; i < 10; i++) observe(k, i, i < 2, lines);
+    // No history before the change: nothing to compare with, and nothing flagged.
+    expect(lines.join("\n")).toMatch(/insufficient data/);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(await k.log.getEventsByTypes(["learning/insufficient"])).toHaveLength(1);
+    expect(await k.log.getEventsByTypes(["learning/flagged"])).toHaveLength(0);
+    expect(appliedStepBudget(k.repoPath)).toBe(34);
+  });
+
+  it("with history, a drop is flagged and the budget is left as it was: only a paired suite run rolls back (rule 18)", async () => {
+    const k = kernel();
+    const lines: string[] = [];
+    // Ten passing cards before the change are its history.
+    for (let i = 0; i < 10; i++) observe(k, i, true, lines);
+    applyTunedPolicy(k.repoPath, { stepBudget: 20, maxFailedChecks: 3 }, "tune");
+    for (let i = 10; i < 20; i++) observe(k, i, i < 12, lines);
+    expect(lines.join("\n")).toMatch(/advisory: pass rate 20% over 10 cards vs 100% before/);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(await k.log.getEventsByTypes(["learning/flagged"])).toHaveLength(1);
+    expect(appliedStepBudget(k.repoPath)).toBe(34);
   });
 });
 

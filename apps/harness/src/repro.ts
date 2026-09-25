@@ -4,8 +4,14 @@ import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } fro
 import { arch, platform, totalmem } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { type RunProfile, runProfileHash } from "@sekhemet/eval";
 import { TOOL_CATALOG } from "@sekhemet/loop";
-import type { LocalInferenceAdapter } from "@sekhemet/models";
+import {
+  type LocalInferenceAdapter,
+  ManagedLlamaServerAdapter,
+  type ServerProps,
+  harnessProvenance,
+} from "@sekhemet/models";
 
 /**
  * The per-attempt reproducibility record (H24): everything that decides what
@@ -45,8 +51,38 @@ export interface ReproRecord {
   playbookSha: string | null;
   activeRules: string[];
   gatesSha: string;
-  harness: { commit: string | null; dirty: boolean; version: string };
+  /** The chat template's checksum the registry pinned (MD-M4-5), or null when none is pinned. */
+  templateChecksum: string | null;
+  /** The engine settings this launch uses (MD-M4-5): context, KV type, MTP, slots. */
+  engine: EngineSettings | null;
+  /** What the running server itself reported (`/props`, MD-M4-3), when it could be read. */
+  server?: ServerProps;
+  /** The harness's own commit, dirty flag and built-output hash (MD-M4-2). */
+  harness: { commit: string | null; dirty: boolean; version: string; distSha?: string };
   host: { platform: string; arch: string; memoryGb: number; node: string };
+  /** The run's one resolved settings object and its hash (measurement rule 9a, MS-M9-4). */
+  runProfile?: RunProfile & { hash: string };
+  /** The measured run that prepared the repository, whose `--auto-accept` merged the card (review M5). */
+  measurement?: { purpose: string; by: string; createdAt: string };
+}
+
+export interface EngineSettings {
+  contextTokens?: number;
+  kvType?: string;
+  mtp: boolean;
+  parallelSlots?: number;
+}
+
+/** The engine settings of a managed launch (MD-M4-5); null for other adapters. */
+function engineSettings(model: LocalInferenceAdapter): EngineSettings | null {
+  if (!(model instanceof ManagedLlamaServerAdapter)) return null;
+  const p = model.launchProfile;
+  return {
+    ...(model.contextWindow ? { contextTokens: model.contextWindow.contextTokens } : {}),
+    kvType: p.kvType ?? "q8_0",
+    mtp: model.mtpEnabled(),
+    parallelSlots: model.slotCount(),
+  };
 }
 
 const sha = (s: string | Buffer) => createHash("sha256").update(s).digest("hex");
@@ -91,7 +127,8 @@ export function sampledDigest(file: string): string | undefined {
 }
 
 let runtimeCache: string | undefined;
-function llamaRuntime(
+/** The llama.cpp build (`llama-server --version`, which loads no model); cached. */
+export function llamaRuntime(
   binary = process.env.SEKHEMET_LLAMA_SERVER ?? "llama-server",
 ): string | undefined {
   if (runtimeCache !== undefined) return runtimeCache || undefined;
@@ -109,7 +146,12 @@ function llamaRuntime(
   return runtimeCache || undefined;
 }
 
-function harnessCommit(): { commit: string | null; dirty: boolean; version: string } {
+function harnessCommit(): {
+  commit: string | null;
+  dirty: boolean;
+  version: string;
+  distSha: string;
+} {
   const here = dirname(fileURLToPath(import.meta.url));
   let version = "0.0.0";
   try {
@@ -119,22 +161,14 @@ function harnessCommit(): { commit: string | null; dirty: boolean; version: stri
   } catch {
     // Keep the default.
   }
-  try {
-    const commit = execFileSync("git", ["rev-parse", "HEAD"], {
-      cwd: here,
-      encoding: "utf8",
-      timeout: 5000,
-    }).trim();
-    const dirty =
-      execFileSync("git", ["status", "--porcelain", "--untracked-files=no"], {
-        cwd: here,
-        encoding: "utf8",
-        timeout: 5000,
-      }).trim() !== "";
-    return { commit, dirty, version };
-  } catch {
-    return { commit: null, dirty: false, version };
-  }
+  // One reading of the harness's provenance for the evidence and this record (MD-M4-2).
+  const p = harnessProvenance();
+  return {
+    commit: p.commit === "unknown" ? null : p.commit,
+    dirty: p.dirty,
+    version,
+    distSha: p.distSha,
+  };
 }
 
 /** The model file behind an adapter, when it is a managed llama-server model. */
@@ -155,13 +189,22 @@ export function buildReproRecord(input: {
   repoPath: string;
   gatesSha: string;
   activeRules?: string[];
+  /** The running server's own report (`serverProps()`), read by the caller. */
+  server?: ServerProps | undefined;
+  /** The run's resolved `RunProfile`, when the run resolved one (MS-M9-4). */
+  runProfile?: RunProfile | undefined;
+  measurement?: { purpose: string; by: string; createdAt: string } | undefined;
 }): ReproRecord {
   const file = modelFileOf(input.model);
   const playbookPath = join(input.repoPath, ".sekhemet", "playbook.toml");
   let bytes: number | undefined;
   if (file && existsSync(file)) bytes = statSync(file).size;
   const digest = file ? sampledDigest(file) : undefined;
-  const quant = file ? quantFromFile(file) : undefined;
+  const entry = (input.model as { registry?: { get(id: string): unknown } }).registry?.get(
+    input.model.modelId,
+  ) as { quant?: string; template?: { checksum?: string } } | undefined;
+  // The header's quantisation (recorded at launch), else the file name's.
+  const quant = entry?.quant ?? (file ? quantFromFile(file) : undefined);
   const runtime = file ? llamaRuntime() : undefined;
   return {
     schema: 1,
@@ -181,6 +224,9 @@ export function buildReproRecord(input: {
     playbookSha: existsSync(playbookPath) ? sha(readFileSync(playbookPath)) : null,
     activeRules: [...(input.activeRules ?? [])].sort(),
     gatesSha: input.gatesSha,
+    templateChecksum: entry?.template?.checksum ?? null,
+    engine: engineSettings(input.model),
+    ...(input.server ? { server: input.server } : {}),
     harness: harnessCommit(),
     host: {
       platform: platform(),
@@ -188,6 +234,10 @@ export function buildReproRecord(input: {
       memoryGb: Math.round(totalmem() / 1024 ** 3),
       node: process.version,
     },
+    ...(input.runProfile
+      ? { runProfile: { ...input.runProfile, hash: runProfileHash(input.runProfile) } }
+      : {}),
+    ...(input.measurement ? { measurement: input.measurement } : {}),
   };
 }
 
@@ -203,7 +253,11 @@ export function reproDiff(a: ReproRecord, b: ReproRecord): string[] {
   cmp("playbook", a.playbookSha, b.playbookSha);
   cmp("active rules", a.activeRules, b.activeRules);
   cmp("gates", a.gatesSha, b.gatesSha);
-  cmp("harness", a.harness.commit, b.harness.commit);
+  cmp("chat template", a.templateChecksum, b.templateChecksum);
+  cmp("engine", a.engine, b.engine);
+  cmp("server", a.server, b.server);
+  cmp("harness", [a.harness.commit, a.harness.distSha], [b.harness.commit, b.harness.distSha]);
   cmp("host", a.host, b.host);
+  cmp("run profile", a.runProfile?.hash ?? null, b.runProfile?.hash ?? null);
   return out;
 }

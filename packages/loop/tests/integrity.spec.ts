@@ -1,3 +1,4 @@
+import { missingFailureFields } from "@sekhemet/gates";
 import { describe, expect, it } from "vitest";
 import { integrityFailures, scanDiffIntegrity } from "../src/integrity.js";
 
@@ -55,5 +56,16 @@ describe("@sekhemet/loop integrity gate", () => {
     const [f] = integrityFailures(scanDiffIntegrity(diff("src/a.ts", "// @ts-ignore")));
     expect(f?.gate).toBe("integrity");
     expect(f?.suggestedAction).toMatch(/Remove the suppression/);
+  });
+
+  it("gives every integrity failure all six fields, on a real rung (GT-M6-6)", () => {
+    const [f] = integrityFailures(scanDiffIntegrity(diff("src/a.ts", "// @ts-ignore")), "develop");
+    expect(missingFailureFields(f ?? ({} as never))).toEqual([]);
+    expect(f).toMatchObject({
+      rung: "hygiene",
+      layer: "hygiene",
+      location: { file: "src/a.ts" },
+      minimalRepro: "git diff develop -- src/a.ts",
+    });
   });
 });

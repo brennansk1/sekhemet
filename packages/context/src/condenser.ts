@@ -1,6 +1,7 @@
 import { type EvidenceStore, defaultEvidenceStore } from "./evidence.js";
 import type { TurnHistoryItem } from "./prompts.js";
 import { estimateTokens, formatTokenCount } from "./tokens.js";
+import { workerCopy } from "./worker_copy.js";
 
 /**
  * Output condensing (Design §422-432).
@@ -451,6 +452,12 @@ export interface ToolOutputOptions {
   evidenceStore?: EvidenceStore;
   cardId?: string;
   turn?: number;
+  /**
+   * Whether the model can call `recall`. Default true. When false the footer
+   * carries no ref: a pointer the model cannot follow is a contradiction
+   * (context CX-M1-1). The raw text is kept either way.
+   */
+  recallOffered?: boolean;
 }
 
 export interface CondensedToolOutput {
@@ -535,7 +542,7 @@ export function condenseToolOutput(
       : []),
   ];
   return {
-    text: `${body}\n[${notes.join("; ")}. Full output: recall(ref="${evidenceRef}")]`,
+    text: `${body}\n${workerCopy.outputFooter(notes, options.recallOffered === false ? undefined : evidenceRef)}`,
     evidenceRef,
     protectedLinesCut: capped.cutProtected,
     result: { ...result, evidenceRef },
@@ -548,6 +555,12 @@ export interface MaskOptions {
   /** Mask every turn, ignoring the recent window (pressure tier 4). */
   maskAll?: boolean;
   cardId?: string;
+  /**
+   * Whether the model can call `recall`. Default true. When false, pointers
+   * carry no ref and no way back: a pointer the model cannot follow is a
+   * contradiction (context CX-M1-1).
+   */
+  recallOffered?: boolean;
 }
 
 /** First non-empty line, trimmed and length-capped — the pointer's semantic half. */
@@ -560,6 +573,9 @@ function summarize(action: string, result: string): string {
   const clipped = firstLine.length > 80 ? `${firstLine.slice(0, 77)}...` : firstLine;
   return `${action}: ${clipped}`;
 }
+
+/** The action of the one history entry `compactHistory` folds older turns into. */
+export const COMPACTED_HISTORY_ACTION = "compacted history";
 
 /**
  * In-place observation masking (Design §418-420).
@@ -582,6 +598,8 @@ export function maskOlderObservations(
 
   return turns.map((t, idx) => {
     if (idx >= total - keep) return t;
+    // CX-M1-5: the compaction index stays visible; it is already one line per turn.
+    if (t.action === COMPACTED_HISTORY_ACTION) return t;
 
     const lineCount = t.result.split("\n").length;
     if (!options.maskAll && lineCount <= 3 && t.result.length <= 120) return t;
@@ -596,10 +614,13 @@ export function maskOlderObservations(
     return {
       turn: t.turn,
       action: t.action,
-      result:
-        `[Observation #${t.turn}: ${summarize(t.action, t.result)} ` +
-        `(preserved in WAL: ${lineCount} lines omitted). ` +
-        `${formatTokenCount(maskedTokens)} tokens masked. EvidenceRef: ${ref}]`,
+      result: workerCopy.maskedPointer(
+        t.turn,
+        summarize(t.action, t.result),
+        lineCount,
+        formatTokenCount(maskedTokens),
+        options.recallOffered === false ? undefined : ref,
+      ),
     };
   });
 }
@@ -629,7 +650,11 @@ export function compactHistory(
       turn: t.turn,
       ...(options.cardId ? { cardId: options.cardId } : {}),
     });
-    return `- turn ${t.turn}: ${summarize(t.action, t.result)} [ref ${ref}]`;
+    return workerCopy.compactedLine(
+      t.turn,
+      summarize(t.action, t.result),
+      options.recallOffered === false ? undefined : ref,
+    );
   });
   const first = older[0]?.turn ?? 0;
   const last = older.at(-1)?.turn ?? 0;
@@ -638,8 +663,8 @@ export function compactHistory(
     turns: [
       {
         turn: last,
-        action: "compacted history",
-        result: `Turns ${first}-${last} compacted (${older.length} turns). Use recall(ref) for any full text.\n${lines.join("\n")}`,
+        action: COMPACTED_HISTORY_ACTION,
+        result: `${workerCopy.compactedHeader(first, last, older.length, options.recallOffered !== false)}\n${lines.join("\n")}`,
       },
       ...turns.slice(turns.length - keepRecent),
     ],

@@ -4,8 +4,8 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { arch, cpus, homedir, platform, totalmem } from "node:os";
 import { dirname, join } from "node:path";
 import { performance } from "node:perf_hooks";
-import type { ModelRegistry } from "./registry.js";
-import type { LocalInferenceAdapter, TokenUsage } from "./types.js";
+import type { ModelRegistry, ThinkingPolicy } from "./registry.js";
+import type { InferenceRequest, LocalInferenceAdapter, TokenUsage } from "./types.js";
 
 /**
  * Hardware calibration, tier profiles and throughput floors (M13, M14, M15),
@@ -721,9 +721,11 @@ export function decideSpeculative(
 }
 
 /**
- * Measure a model with and without its speculative head and record the
- * decision in the registry for this host; `ManagedLlamaServerAdapter`
- * launches with it (M19).
+ * Measure a model's decode speed with and without its speculative head, for
+ * display (M19). It records the verdict without a thinking policy, so it
+ * never reaches `speculativeByPolicy`: decode speed alone never justifies MTP
+ * (models rule 13), and only the per-step A/B (`mtpStepAB`, `sekhemet
+ * calibrate --mtp-ab`) decides what a launch uses.
  */
 export async function calibrateSpeculative(options: {
   modelId: string;
@@ -760,12 +762,258 @@ export async function calibrateSpeculative(options: {
       ? { memoryHeadroomOk: options.memoryHeadroomOk }
       : {}),
   });
+  // Display only: no thinking policy, so no launch reads it (models rule 13).
   options.registry?.recordSpeculative(options.modelId, {
     ...verdict,
     fingerprint: hostFingerprintHash(),
     date: new Date().toISOString(),
   });
   return verdict;
+}
+
+// ------------------------------------------------ MTP on seconds per step (M11)
+
+/** One replayed step's time on one server (MD-M11-1). */
+export interface StepTiming {
+  prefillSeconds: number;
+  decodeSeconds: number;
+  totalSeconds: number;
+  /** Accepted over drafted tokens, when the server drafted any. */
+  draftAcceptance?: number;
+  /**
+   * Tokens produced per verify step, when the server drafted any: each verify
+   * step yields its accepted drafts plus one token of its own.
+   */
+  tokensPerVerifyStep?: number;
+}
+
+export interface MtpAbResult {
+  steps: { plain: StepTiming; speculative: StepTiming }[];
+  /** Median paired difference, speculative minus plain, in total seconds per step. */
+  medianDeltaSeconds: number;
+  /**
+   * Median plain seconds per step over median speculative seconds per step:
+   * a ratio of whole steps (prefill and decode), not a decode speed-up.
+   */
+  speedup: number;
+  /** One-sided sign test on the paired deltas: the chance of this many faster steps by luck. */
+  signTestP: number;
+  enabled: boolean;
+  reason: string;
+  /** Peak memory each side reached, when a probe was given (the Metal working set on macOS). */
+  peakBytes?: { plain?: number; speculative?: number };
+  /** Where the per-step timings were written, when they were. */
+  evidencePath?: string;
+}
+
+/** The fewest replayed steps the A/B decides on (A6). */
+export const MTP_AB_MIN_STEPS = 30;
+/** The median saving must exceed this share of the plain median step (A6). */
+export const MTP_AB_MARGIN = 0.02;
+/** The sign test's level (A6). */
+export const MTP_AB_ALPHA = 0.05;
+
+const median = (xs: number[]): number => {
+  const s = [...xs].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? (s[m] as number) : ((s[m - 1] as number) + (s[m] as number)) / 2;
+};
+
+/**
+ * One-sided sign test: the probability of at least `faster` of `n` non-tied
+ * pairs favouring speculation if either side were equally likely to win.
+ */
+export function signTestP(faster: number, n: number): number {
+  if (n === 0 || faster <= 0) return 1;
+  // In log space: C(n, k) / 2^n overflows a double past n = 1023.
+  const lnFact = [0];
+  for (let i = 1; i <= n; i++) lnFact[i] = (lnFact[i - 1] as number) + Math.log(i);
+  const lnTerm = (k: number) =>
+    (lnFact[n] as number) - (lnFact[k] as number) - (lnFact[n - k] as number) - n * Math.LN2;
+  const terms: number[] = [];
+  for (let k = faster; k <= n; k++) terms.push(lnTerm(k));
+  const top = Math.max(...terms);
+  const lnP = top + Math.log(terms.reduce((sum, t) => sum + Math.exp(t - top), 0));
+  return Math.min(1, Math.exp(lnP));
+}
+
+async function timeSteps(
+  adapter: LocalInferenceAdapter,
+  steps: readonly InferenceRequest[],
+): Promise<StepTiming[]> {
+  const out: StepTiming[] = [];
+  // A discarded warm-up of the block's first step, so neither side pays a
+  // cold cache the other does not (M11).
+  const [first] = steps;
+  if (first) await adapter.generate(first);
+  for (const req of steps) {
+    const started = Date.now();
+    const r = await adapter.generate(req);
+    const u = r.usage;
+    const prefill = (u.prefillMs ?? 0) / 1000;
+    const decode = (u.decodeMs ?? 0) / 1000;
+    // The server's own split only when it reports both parts; otherwise the
+    // wall clock, so a step is never counted as only half its time.
+    const total =
+      u.prefillMs !== undefined && u.decodeMs !== undefined
+        ? prefill + decode
+        : (Date.now() - started) / 1000;
+    const accepted = u.draftAcceptedTokens ?? 0;
+    const verifySteps = u.completionTokens - accepted;
+    out.push({
+      prefillSeconds: prefill,
+      decodeSeconds: decode,
+      totalSeconds: total,
+      ...(u.draftTokens ? { draftAcceptance: accepted / u.draftTokens } : {}),
+      ...(u.draftTokens && verifySteps > 0
+        ? { tokensPerVerifyStep: u.completionTokens / verifySteps }
+        : {}),
+    });
+  }
+  return out;
+}
+
+/**
+ * The speculative A/B (MD-M11-1/2, A6): replay recorded Worker step prompts
+ * on the same GGUF and server build with speculation off and on, one server
+ * at a time, in ABBA order — plain on the first half, speculative on the
+ * first half, speculative on the second half, plain on the second half — so
+ * drift over the run (thermal, cache, background load) falls on both sides.
+ * It decides on paired total seconds per step, never on decode speed: on
+ * only when a one-sided sign test on the paired deltas gives p < 0.05 and
+ * the median saving exceeds 2% of the plain median step. The decision is
+ * recorded for the thinking policy the steps ran under (for a draft model,
+ * keyed by it, MD-N8-5), and every step's timings are written as evidence.
+ */
+export async function mtpStepAB(options: {
+  modelId: string;
+  steps: readonly InferenceRequest[];
+  plain: LocalInferenceAdapter;
+  speculative: LocalInferenceAdapter;
+  thinking: ThinkingPolicy;
+  registry?: ModelRegistry;
+  release?: (adapter: LocalInferenceAdapter) => Promise<void>;
+  peakBytes?: () => Promise<number | undefined>;
+  /** A draft model's id (MD-N8-5): the decision is keyed by it, not the MTP head's. */
+  draft?: string;
+  /** Default `MTP_AB_MIN_STEPS`. */
+  minSteps?: number;
+  /** Where the per-step evidence goes; default `evidence/` beside the registry, or none. */
+  evidenceDir?: string;
+  /**
+   * Why the A/B cannot start, when a server already answers on the port: an
+   * adopted server outlives `release`, so both halves would measure it (M11).
+   */
+  portBusy?: () => Promise<string | undefined>;
+}): Promise<MtpAbResult> {
+  const busy = await options.portBusy?.();
+  if (busy) throw new Error(`${busy}: stop it first, then run the A/B`);
+  const n = options.steps.length;
+  if (n === 0) throw new Error("no recorded Worker steps to replay: run the frozen suite first");
+  const minSteps = options.minSteps ?? MTP_AB_MIN_STEPS;
+  if (n < minSteps)
+    throw new Error(
+      `${n} recorded steps; the A/B needs at least ${minSteps}: run more cards first`,
+    );
+  const half = Math.ceil(n / 2);
+  const first = options.steps.slice(0, half);
+  const second = options.steps.slice(half);
+  // A: plain, first half.
+  const plainFirst = await timeSteps(options.plain, first);
+  await options.release?.(options.plain);
+  // B B: speculative, both halves, one load.
+  const specFirst = await timeSteps(options.speculative, first);
+  const specSecond = await timeSteps(options.speculative, second);
+  const specPeak = await options.peakBytes?.();
+  await options.release?.(options.speculative);
+  // A: plain, second half.
+  const plainSecond = await timeSteps(options.plain, second);
+  const plainPeak = await options.peakBytes?.();
+  await options.release?.(options.plain);
+  const plain = [...plainFirst, ...plainSecond];
+  const spec = [...specFirst, ...specSecond];
+
+  const deltas = plain.map((p, i) => (spec[i] as StepTiming).totalSeconds - p.totalSeconds);
+  const medianDeltaSeconds = median(deltas);
+  const plainMedian = median(plain.map((t) => t.totalSeconds));
+  const specMedian = median(spec.map((t) => t.totalSeconds));
+  const speedup = specMedian > 0 ? plainMedian / specMedian : 1;
+  const nonTied = deltas.filter((d) => d !== 0);
+  const faster = nonTied.filter((d) => d < 0).length;
+  const p = signTestP(faster, nonTied.length);
+  const saving = -medianDeltaSeconds;
+  const margin = MTP_AB_MARGIN * plainMedian;
+  const test = `${faster} of ${nonTied.length} steps faster, sign test p = ${p.toFixed(4)}`;
+  const enabled = medianDeltaSeconds < 0 && p < MTP_AB_ALPHA && saving > margin;
+  const reason = enabled
+    ? `faster per step: median ${saving.toFixed(2)} s saved over ${n} replayed steps (${test})`
+    : medianDeltaSeconds >= 0
+      ? `not faster per step: median ${medianDeltaSeconds.toFixed(2)} s over ${n} replayed steps (${test})`
+      : p >= MTP_AB_ALPHA
+        ? `not shown faster per step: ${test}, not under ${MTP_AB_ALPHA}`
+        : `median saving ${saving.toFixed(3)} s is under the ${MTP_AB_MARGIN * 100}% margin (${margin.toFixed(3)} s) of the plain step (${test})`;
+  const date = new Date().toISOString();
+  options.registry?.recordSpeculative(options.modelId, {
+    enabled,
+    speedup,
+    reason,
+    fingerprint: hostFingerprintHash(),
+    date,
+    thinking: options.thinking,
+    ...(options.draft ? { draft: options.draft } : {}),
+  });
+  const steps = plain.map((pl, i) => ({ plain: pl, speculative: spec[i] as StepTiming }));
+  const peakBytes =
+    plainPeak !== undefined || specPeak !== undefined
+      ? {
+          ...(plainPeak !== undefined ? { plain: plainPeak } : {}),
+          ...(specPeak !== undefined ? { speculative: specPeak } : {}),
+        }
+      : undefined;
+  const evidenceDir =
+    options.evidenceDir ??
+    (options.registry ? join(dirname(options.registry.path), "evidence") : undefined);
+  let evidencePath: string | undefined;
+  if (evidenceDir) {
+    const safe = (s: string) => s.replace(/[^\w.-]+/g, "_");
+    evidencePath = join(
+      evidenceDir,
+      `mtp-ab-${safe(options.modelId)}${options.draft ? `-draft-${safe(options.draft)}` : ""}-${options.thinking}-${date.slice(0, 10)}-${date.slice(11, 19).replaceAll(":", "")}.json`,
+    );
+    mkdirSync(evidenceDir, { recursive: true });
+    writeFileSync(
+      evidencePath,
+      `${JSON.stringify(
+        {
+          modelId: options.modelId,
+          ...(options.draft ? { draft: options.draft } : {}),
+          thinking: options.thinking,
+          host: hostFingerprintHash(),
+          date,
+          order: "ABBA",
+          enabled,
+          reason,
+          speedup,
+          medianDeltaSeconds,
+          signTestP: p,
+          ...(peakBytes ? { peakBytes } : {}),
+          steps,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+  }
+  return {
+    steps,
+    medianDeltaSeconds,
+    speedup,
+    signTestP: p,
+    enabled,
+    reason,
+    ...(peakBytes ? { peakBytes } : {}),
+    ...(evidencePath ? { evidencePath } : {}),
+  };
 }
 
 // --------------------------------------------------------- engine selection (M24)

@@ -10,6 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { workerCopy } from "@sekhemet/context";
 import { DeterministicGateRunner } from "@sekhemet/gates";
 import { CARD_STOP_REASONS, LifecycleHookEngine } from "@sekhemet/kernel";
 import {
@@ -22,6 +23,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { phaseOf } from "../src/phase.js";
 import { CardExecutionSessionImpl } from "../src/session.js";
 import { CLASS_TOOLS, TOOL_CATALOG, toolsForClass } from "../src/tool_catalog.js";
+import { toolDefinition } from "../src/tool_schema.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../../..");
 
@@ -240,6 +242,30 @@ describe("the session's structure (T3, M3, M2)", () => {
     expect(turn.observations[0]?.deniedRule).toBeUndefined();
     expect(turn.formatErrors).toBe(0);
     expect(turn.proseOnly).toBe(0);
+  });
+
+  it("sends the one tool builder's definitions, with note's gate enum from the Worker copy", async () => {
+    const m = windowed([read("a")]);
+    const s = session(m, { suspectableGates: ["typecheck", "lint"] });
+    await s.executeTurn();
+    const sent = m.callHistory.at(-1)?.tools ?? [];
+    expect(sent).toEqual(s.getToolSpecs().map(toolDefinition));
+    const note = sent.find((t) => t.name === "note");
+    const gate = (note?.parameters as { properties: Record<string, unknown> }).properties.gate;
+    expect(gate).toEqual({
+      type: "string",
+      description: workerCopy.noteGate,
+      // The integrity gate runs by default, so it is offered too (GT-M6-5).
+      enum: ["integrity", "lint", "typecheck"],
+    });
+  });
+
+  it("tells the tools whether recall is offered this session (CX-M1-1)", () => {
+    const withRecall = session(windowed([]));
+    expect(withRecall.getToolSpecs().some((t) => t.name === "recall")).toBe(true);
+    expect(withRecall.recallOffered()).toBe(true);
+    const tools = toolsForClass("implement").filter((t) => t.name !== "recall");
+    expect(session(windowed([]), { tools }).recallOffered()).toBe(false);
   });
 
   it("refuses a call to a tool not offered this session, naming the tools that are", async () => {

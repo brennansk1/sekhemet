@@ -6,6 +6,21 @@ The number to watch is not the pass count alone. It is **why the failures failed
 
 ---
 
+## The runner changed (B2.4): later runs are not directly comparable to earlier ones
+
+From the build that moves the suite runner into `packages/eval` (`suite_runner.ts`, measurement MS-M9-3), the suite runs each fixture through the product's `sekhemet queue` with its shipped defaults and `--auto-accept`, not card by card through `sekhemet run` (MS-M9-1, MS-M9-4): the queue's planning prelude, dependency deferral, learned rules and team note are now part of what is measured. Three things are also counted differently. The suite hash does not change, because it covers the manifest and the fixtures, not the runner. But a run on this build is **not directly comparable** to any run below, including the 10/14 on `468f67f`:
+
+- **Tokens are totalled over every attempt.** The script read only the `latest-` bundle, which holds the last attempt, so a card that needed several attempts was under-counted.
+- **A timeout is attributed to the runner.** A card the runner killed was reported with the stop reason of its last *finished* attempt. It now reads "timed out after N min", followed by the last recorded attempt's reason. The queue runs a fixture's cards in one process, so its timeout is the per-card timeout times the fixture's cards, and a card it never reached reads "no attempt recorded".
+- **Cards with declared ids are checked for unmet dependencies.** The script loaded the board's facts only for fixtures seeded by a script (chronicle), so no card of onyx, vanguard or basalt-canvas could ever be recorded as blocked. `onyx_8_e2e`'s "fixed after the run" below was therefore incomplete: the `./x.js` form was read, but never for onyx. From this build, a card the queue deferred, or ran while a module it needs was still empty on `main` when the run ended, is recorded as blocked and left out of the pass rate's denominator (measurement rule 3).
+
+- **A card never run is unmeasured.** A card the runner's timeout never reached, or one in a fixture whose queue wrote no report, is marked `notRun` and left out of the denominator like a blocked card; the queue now writes its report after every entry, so after a timeout the cards it finished keep their outcome.
+- **A card blocked in only one arm of a comparison is that arm's failure**, and one blocked in both is left out and counted, so a change cannot hide losses behind the cards it blocks.
+
+Each run also records its one `RunProfile` and that profile's hash (measurement rule 9a), and, when started with `--ab-entry`, the hash of the A/B's entry. **Still not isolated:** a passing card becomes an exemplar for later cards of the same run (measurement rule 6, NEW-measurement-1), so a fixture's later cards may see its earlier ones' work as examples.
+
+---
+
 ## Both runs so far measured the wrong thing
 
 **Read this before either score below.** The runner never accepted a passing card, so every card ran in a worktree branched from the untouched seed. A card that builds on another card's work — whose acceptance test imports a module an earlier card writes — therefore ran against an **empty file**, however well the earlier card had done.

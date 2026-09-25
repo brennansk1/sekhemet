@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { retrieveMaskedObservation } from "@sekhemet/context";
+import { retrieveMaskedObservation, workerCopy } from "@sekhemet/context";
 import { ProcessSandbox } from "@sekhemet/sandbox";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ToolExecutor } from "../src/tools.js";
@@ -157,6 +157,29 @@ describe("run_cmd (L8)", () => {
     const full = retrieveMaskedObservation(ref as string) ?? "";
     expect(full).toContain("progress line 200");
     expect(full).toContain("trailing noise 400");
+  });
+
+  it("writes no recall pointer when recall is not offered (CX-M1-1)", async () => {
+    const obs = await exec(
+      new ToolExecutor({ worktreePath: root, recallOffered: false }),
+      "run_cmd",
+      {
+        command: 'for i in $(seq 1 400); do echo "progress line $i"; done; exit 1',
+      },
+    );
+    expect(obs.content).toMatch(/lines condensed to/);
+    expect(obs.content).not.toMatch(/recall|EvidenceRef/);
+  });
+});
+
+describe("edit's remedy when the search text is missing (CX-M1-1)", () => {
+  it("points at the file's current content, not at a re-read", async () => {
+    const tools = new ToolExecutor({ worktreePath: root });
+    await exec(tools, "read_file", { path: "src/a.ts" });
+    const obs = await exec(tools, "edit", { path: "src/a.ts", search: "gamma", replace: "delta" });
+    expect(obs.ok).toBe(false);
+    expect(obs.content).toBe(workerCopy.editNotFound("src/a.ts"));
+    expect(obs.content).not.toMatch(/re-?read/i);
   });
 });
 

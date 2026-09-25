@@ -2,24 +2,43 @@
 // Run the frozen suite and record its score against its hash.
 //
 //   node scripts/run_suite.mjs --worker <model> [--fixtures chronicle,onyx] [--out <file>]
+//                              [--settings <file>] [--ab-entry <file>]
 //
-// Each fixture is copied into a fresh git repository and seeded once; every
-// card in it is then run through the real `sekhemet run`, which is the same
-// path a user takes. The model stays resident across cards on purpose: a
-// reload costs minutes and would dominate the wall-clock the suite reports.
+// Each fixture is copied into a fresh git repository and seeded once, and the
+// product's own `sekhemet queue` then runs all of its cards with the roles and
+// policies the product ships (measurement rule 9, MS-M9-1, MS-M9-4), with
+// `--auto-accept` standing in for the person who accepts each card, so later
+// cards build on earlier ones. Arms are named only through the RunProfile.
+// The model stays resident across cards: a reload costs minutes and would
+// dominate the wall-clock the suite reports.
 //
 // The score is written with the suite's hash. A run whose hash differs from
 // another's is not comparable to it, which is the whole point of freezing.
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, posix } from "node:path";
+import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const { loadFrozenSuite, runFrozenSuite, summarise } = await import(
-  join(ROOT, "packages/eval/dist/index.js")
-);
+const {
+  loadFrozenSuite,
+  profileArgs,
+  resolveRunProfile,
+  runFrozenSuite,
+  runProfileHash,
+  seededCards,
+  suiteQueueRunner,
+  summarise,
+} = await import(join(ROOT, "packages/eval/dist/index.js"));
 
 const arg = (name, fallback) => {
   const i = process.argv.indexOf(`--${name}`);
@@ -33,15 +52,77 @@ if (!worker) {
 }
 const only = arg("fixtures")?.split(",");
 /**
- * A harness-managed model (served by its own llama-server, e.g. cyber-tiel
- * with its MTP head) is named as is; anything else is an Ollama tag.
+ * The queue's roster names a harness-managed model (served by its own
+ * llama-server, e.g. cyber-tiel with its MTP head) as is and anything else
+ * by its Ollama tag, without the `ollama/` prefix `sekhemet run` took.
  */
-const MANAGED = ["cyber-tiel", "apodex", "dirk", "qwen3.8-27b"];
-const workerArg = worker.includes("/") || MANAGED.includes(worker) ? worker : `ollama/${worker}`;
+const workerName = worker.replace(/^ollama\//, "");
+/**
+ * Refuse the whole run up front when the Worker is not qualified for its
+ * combination on this host (models MD-N8-1): every card would be refused,
+ * and the run would record only failures that say nothing about the Worker.
+ */
+function requireQualified(name) {
+  const r = spawnSync(
+    process.execPath,
+    [join(ROOT, "apps/harness/dist/index.js"), "qualify", "--check", "--models", name],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+  );
+  if (r.status !== 0) {
+    console.error(`${(r.stdout || r.stderr || "").trim()}\nNo card was run.`);
+    process.exit(1);
+  }
+}
+requireQualified(worker);
+
 const out = arg("out", join(ROOT, ".sekhemet", "suite-runs", `run-${Date.now()}.json`));
-const workDir = arg("work", "/tmp/claude-501/suite");
+// The run's repositories hold each step's recorded prompt (kernel rule 17),
+// which the MTP A/B and the step-replay screen replay: keep them off /tmp,
+// which the OS clears.
+const workDir = arg("work", join(ROOT, ".sekhemet", "suite-work"));
 /** Long enough for the slowest legitimate card seen so far, and no longer. */
 const CARD_TIMEOUT_MS = Number(arg("card-timeout-min", "20")) * 60 * 1000;
+
+/**
+ * One recorded RunProfile for the whole run (measurement rule 9a): the
+ * shipped defaults, a settings file naming an arm, the experiment switches,
+ * the Worker, and acceptance in place of the person. The queue receives it
+ * as one flag per setting and the switches as environment variables, and
+ * records the profile it resolved in every attempt's evidence, which is
+ * checked against this one after the run.
+ */
+const settings = arg("settings");
+const runProfile = resolveRunProfile({
+  ...(settings ? { settingsFile: { path: settings, text: readFileSync(settings, "utf8") } } : {}),
+  env: process.env,
+  argv: ["--worker", workerName, "--auto-accept"],
+  envRoles: true,
+});
+const queueArgs = profileArgs(runProfile);
+
+/**
+ * An A/B's entry (measurement rule 16c): its one cost measure, written
+ * before the first card. The run records the entry's hash, so the result
+ * itself shows the entry existed before the run started (review M2).
+ */
+const abEntryPath = arg("ab-entry");
+let abEntry;
+if (abEntryPath) {
+  const text = readFileSync(abEntryPath, "utf8");
+  const entry = JSON.parse(text);
+  const at = Date.parse(entry.recordedAt ?? "");
+  if (entry.costMeasure !== "median tokens per card" || Number.isNaN(at) || at > Date.now()) {
+    console.error(
+      `--ab-entry ${abEntryPath}: the entry names "median tokens per card" and an ISO recordedAt no later than now (rule 16c). No card was run.`,
+    );
+    process.exit(2);
+  }
+  abEntry = {
+    sha256: createHash("sha256").update(text).digest("hex"),
+    costMeasure: entry.costMeasure,
+    recordedAt: entry.recordedAt,
+  };
+}
 
 const suite = loadFrozenSuite(ROOT);
 const tasks = only ? suite.tasks.filter((t) => only.includes(t.suite)) : suite.tasks;
@@ -90,185 +171,122 @@ function repoFor(fixture) {
     : ["scripts/seed_chronicle.mjs", dir];
   execFileSync("node", [join(ROOT, seeder[0]), ...seeder.slice(1)], { stdio: "ignore" });
   preflight(fixture, dir);
+  // The mark that lets this copy's queue take --auto-accept (review M5): a
+  // fixture copy made for measurement, not a person's repository.
+  writeFileSync(
+    join(dir, ".sekhemet", "measurement.json"),
+    `${JSON.stringify({ purpose: "frozen suite", by: "scripts/run_suite.mjs", createdAt: new Date().toISOString() }, null, 2)}\n`,
+  );
+  // Kept out of the fixture's history like the rest of the harness's state.
+  appendFileSync(join(dir, ".git", "info", "exclude"), "\n.sekhemet/measurement.json\n");
   repos.set(fixture, dir);
   return dir;
 }
 
 /**
- * The card ids a fixture actually seeded, in board order.
- *
- * A fixture with `cards.json` declares its ids; one seeded by a script does
- * not, and the manifest can only declare how many. Guessing the ids made
- * every task fail in zero seconds with no evidence bundle — a plumbing
- * failure that reads exactly like a catastrophic score, so the count is
- * checked against the manifest rather than trusted.
+ * The card ids and board facts each fixture actually seeded, in board order.
+ * The count is checked against the manifest inside `seededCards`.
  */
-const idsByFixture = new Map();
-const cardInfo = new Map();
-function cardIdsFor(fixture, expected) {
-  const cached = idsByFixture.get(fixture);
-  if (cached) return cached;
-  const db = new DatabaseSync(join(repoFor(fixture), ".sekhemet", "events.db"), { readOnly: true });
-  const rows = db
-    .prepare("select id, scope_files, acceptance_tests, spec from cards order by order_key, id")
-    .all();
-  db.close();
-  const ids = rows.map((r) => String(r.id));
-  for (const r of rows) {
-    cardInfo.set(String(r.id), {
-      scope: JSON.parse(String(r.scope_files ?? "[]")),
-      tests: JSON.parse(String(r.acceptance_tests ?? "[]")),
-      spec: String(r.spec ?? ""),
-    });
-  }
-  if (ids.length !== expected) {
-    throw new Error(
-      `frozen suite: ${fixture} seeded ${ids.length} card(s), manifest declares ${expected}`,
-    );
-  }
-  idsByFixture.set(fixture, ids);
-  return ids;
-}
-
-/**
- * The modules a card's acceptance test needs from *other* cards that are
- * still empty on main — its unmet dependencies.
- *
- * The first two runs of this suite never accepted a passing card, so every
- * card that builds on another's work ran against the empty seed file: the
- * model read types.ts for a type that could not be there, read it again, and
- * was stopped for repeating itself. A card whose dependency was never built
- * cannot pass, and running it measures nothing but that.
- */
-function unmetDependencies(repo, cardId) {
-  const info = cardInfo.get(cardId);
-  if (!info) return [];
-  const own = new Set(info.scope.map((f) => f.replace(/\.[cm]?tsx?$/, "")));
-  const needed = new Set();
-  for (const t of info.tests) {
-    const spec = join(repo, "acceptance", t);
-    if (!existsSync(spec)) continue;
-    for (const m of readFileSync(spec, "utf8").matchAll(
-      /from\s+["']\.\.\/(src\/[\w/.-]+?)(?:\.[cm]?js)?["']/g,
-    )) {
-      if (m[1] && !own.has(m[1])) needed.add(m[1]);
-    }
-  }
-  // A dependency the spec names but the test reaches only indirectly: run 4's
-  // card_chron_api says "Build on Ledger from src/ledger.ts" and its test
-  // imports only src/server.js, so it ran against an empty ledger.ts.
-  for (const m of info.spec.matchAll(/\b(src\/[\w/.-]+?)\.[cm]?[jt]sx?\b/g)) {
-    if (m[1] && !own.has(m[1])) needed.add(m[1]);
-  }
-  // A spec that dictates the card's own imports names them relative to the
-  // file being written: onyx_8's says `Vault from "./vault.js"`, and it ran
-  // for twenty minutes against an empty vault.ts because neither rule above
-  // saw that form.
-  const home = posix.dirname(info.scope[0] ?? "src/index.ts");
-  for (const m of info.spec.matchAll(/from\s+["']\.\/([\w/.-]+?)\.[cm]?js["']/g)) {
-    const mod = posix.join(home, m[1] ?? "");
-    if (m[1] && !own.has(mod)) needed.add(mod);
-  }
-  return [...needed].filter((mod) => {
-    const file = [".ts", ".tsx", "/index.ts"].map((e) => join(repo, `${mod}${e}`)).find(existsSync);
-    return !file || readFileSync(file, "utf8").trim() === "";
-  });
-}
-
-/** The evidence bundle is the record of what happened; read it, do not infer. */
-function outcomeFrom(repo, cardId, seconds, why) {
-  const file = join(repo, ".sekhemet", "evidence", `latest-${cardId}.json`);
-  if (!existsSync(file)) {
-    // "No bundle" covers two different failures and they must not share a
-    // label: a card killed by this runner's timeout was working when it died,
-    // while a card that never started is a plumbing fault — which is how the
-    // first attempt at this suite scored 0/6 in zero seconds.
-    return {
-      passed: false,
-      stopReason: why ?? "card did not start (no evidence bundle)",
-      wallClockSeconds: seconds,
-      tokens: 0,
-      rungs: 0,
-    };
-  }
-  const e = JSON.parse(readFileSync(file, "utf8"));
-  return {
-    passed: e.passed === true,
-    ...(e.stopReason ? { stopReason: String(e.stopReason) } : {}),
-    wallClockSeconds: seconds,
-    tokens: Number(e.tokens?.promptTokens ?? 0) + Number(e.tokens?.completionTokens ?? 0),
-    // Attempts beyond the first are repair rungs spent.
-    rungs: Math.max(0, Number(e.attempt ?? 1) - 1),
-  };
+const seeded = new Map();
+function cardsFor(fixture, expected) {
+  if (!seeded.has(fixture)) seeded.set(fixture, seededCards(repoFor(fixture), expected));
+  return seeded.get(fixture);
 }
 
 const started = Date.now();
 const perFixture = new Map();
 for (const t of tasks) perFixture.set(t.suite, (perFixture.get(t.suite) ?? 0) + 1);
 
-const result = await runFrozenSuite({ ...suite, tasks }, async (task) => {
-  const repo = repoFor(task.suite);
+/**
+ * The processes the runner module needs (MS-M9-3). Every decision that shapes
+ * the score — blocking, timeout attribution, token totals, acceptance — is
+ * made in packages/eval/src/suite_runner.ts, behind tests; this script only
+ * prepares the repositories and starts the product's `sekhemet queue` on each.
+ */
+const driver = {
+  prepare: repoFor,
   // Declared ids are used as given; synthesised ones are resolved from the
   // board the seeder actually wrote.
-  const cardId = task.cardId.startsWith(`${task.suite}_`)
-    ? (cardIdsFor(task.suite, perFixture.get(task.suite))[
-        Number(task.cardId.slice(task.suite.length + 1)) - 1
-      ] ?? task.cardId)
-    : task.cardId;
-  const blocked = unmetDependencies(repo, cardId);
-  if (blocked.length) {
-    const why = `blocked: ${blocked.join(", ")} never built (an earlier card failed)`;
-    console.log(`  ${task.suite}/${cardId} ... FAIL 0s (${why})`);
-    return { passed: false, stopReason: why, wallClockSeconds: 0, tokens: 0, rungs: 0 };
-  }
-  const t0 = Date.now();
-  let timedOut;
-  process.stdout.write(`  ${task.suite}/${cardId} ... `);
-  try {
-    execFileSync(
-      "node",
-      [
-        join(ROOT, "apps/harness/dist/index.js"),
-        "run",
-        cardId,
-        "--repo",
-        repo,
-        "--worker",
-        workerArg,
-      ],
-      { stdio: "ignore", timeout: CARD_TIMEOUT_MS },
-    );
-  } catch (err) {
-    // A non-zero exit is a failed card, not a failed run: the evidence
-    // bundle below is what decides, and stopping here would lose the rest.
-    if (err?.code === "ETIMEDOUT" || err?.signal === "SIGTERM") {
-      timedOut = `timed out after ${Math.round(CARD_TIMEOUT_MS / 60000)} min`;
-    }
-  }
-  const seconds = Math.round((Date.now() - t0) / 1000);
-  const o = outcomeFrom(repo, cardId, seconds, timedOut);
-  // A passing card is accepted — squash-merged to main — so the cards after
-  // it build on its work, as they would in a real project. Measuring each
-  // card against the empty seed measured nothing about building projects.
-  if (o.passed) {
+  resolveCardId: (task) => {
+    if (!task.cardId.startsWith(`${task.suite}_`)) return task.cardId;
+    const n = Number(task.cardId.slice(task.suite.length + 1)) - 1;
+    return cardsFor(task.suite, perFixture.get(task.suite))[n]?.id ?? task.cardId;
+  },
+  // Read from the board for declared ids too: the old script loaded board
+  // facts only for synthesised ids, so a fixture with cards.json never had a
+  // card blocked on an unbuilt dependency.
+  cardInfo: (repo, cardId) => {
+    const fixture = [...repos].find(([, dir]) => dir === repo)?.[0];
+    if (!fixture) return undefined;
+    return cardsFor(fixture, perFixture.get(fixture)).find((c) => c.id === cardId)?.info;
+  },
+  runQueue: (repo, timeoutMs) => {
+    // Resolve the card ids before the queue moves the board.
+    const fixture = [...repos].find(([, dir]) => dir === repo)?.[0];
+    if (fixture) cardsFor(fixture, perFixture.get(fixture));
     try {
       execFileSync(
         "node",
-        [join(ROOT, "apps/harness/dist/index.js"), "accept", cardId, "--repo", repo],
-        { stdio: "ignore", timeout: 5 * 60 * 1000 },
+        [join(ROOT, "apps/harness/dist/index.js"), "queue", "--repo", repo, ...queueArgs.argv],
+        { stdio: "inherit", timeout: timeoutMs, env: { ...process.env, ...queueArgs.env } },
       );
-    } catch {
-      o.stopReason = "passed, but accept failed: later cards cannot build on it";
+    } catch (err) {
+      // A non-zero exit is a run with failures, not a failed run: the report decides.
+      if (err?.code === "ETIMEDOUT" || err?.signal === "SIGTERM") return { timedOut: true };
+    }
+    return { timedOut: false };
+  },
+  waitingOn: (repo, cardId) => {
+    const db = new DatabaseSync(join(repo, ".sekhemet", "events.db"), { readOnly: true });
+    try {
+      return db
+        .prepare(
+          `SELECT d.depends_on_card_id AS d FROM card_dependencies d
+           JOIN cards c ON c.id = d.depends_on_card_id
+           WHERE d.card_id = ? AND c.status != 'done' ORDER BY d.depends_on_card_id`,
+        )
+        .all(cardId)
+        .map((r) => String(r.d));
+    } finally {
+      db.close();
+    }
+  },
+  log: (line) => console.log(line),
+};
+
+const result = await runFrozenSuite(
+  { ...suite, tasks },
+  suiteQueueRunner(driver, { tasks, cardTimeoutMs: CARD_TIMEOUT_MS }),
+);
+
+/**
+ * The profile each card actually ran with, from its evidence. A card whose
+ * recorded profile differs from the run's (a configuration layer on this
+ * host, a tuned step budget) is named, never silently pooled.
+ */
+const expected = runProfileHash({ ...runProfile, settingsFile: undefined });
+const mismatched = [];
+for (const [fixture, repo] of repos) {
+  for (const { id } of cardsFor(fixture, perFixture.get(fixture))) {
+    const file = join(repo, ".sekhemet", "evidence", `latest-${id}.json`);
+    if (!existsSync(file)) continue;
+    const recorded = JSON.parse(readFileSync(file, "utf8")).reproducibility?.runProfile;
+    if (recorded && runProfileHash({ ...recorded, settingsFile: undefined }) !== expected) {
+      mismatched.push(`${fixture}/${id}`);
     }
   }
+}
+if (mismatched.length) {
   console.log(
-    `${o.passed ? "PASS" : "FAIL"} ${seconds}s${o.stopReason ? ` (${o.stopReason})` : ""}`,
+    `WARNING: ${mismatched.length} card(s) ran with a different profile: ${mismatched.join(", ")}`,
   );
-  return o;
-});
+}
 
 mkdirSync(dirname(out), { recursive: true });
-writeFileSync(out, `${JSON.stringify({ ...result, worker, tasksRun: tasks.length }, null, 2)}\n`);
+writeFileSync(
+  out,
+  `${JSON.stringify({ ...result, worker, tasksRun: tasks.length, runProfile: { ...runProfile, hash: runProfileHash(runProfile) }, ...(abEntry ? { abEntry } : {}), ...(mismatched.length ? { profileMismatch: mismatched } : {}) }, null, 2)}\n`,
+);
 console.log(`\n${summarise(result)}`);
 console.log(`wall clock ${Math.round((Date.now() - started) / 60000)} min · recorded in ${out}`);
 for (const o of result.outcomes.filter((x) => !x.passed)) {

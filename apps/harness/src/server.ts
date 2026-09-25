@@ -733,6 +733,11 @@ export function startDashboardServer(
         worktrees: worktrees(repoPath),
         // The Sekhemet roster (not whatever the local Ollama happens to serve).
         roster: modelRoster(repoPath).roles,
+        // The latest M0 run and its pivot condition (measurement MS-M9-6).
+        ...(await (async () => {
+          const last = (await log.getEventsByTypes(["measure/m0"])).at(-1);
+          return last ? { m0: last.payload } : {};
+        })()),
       });
       return;
     }

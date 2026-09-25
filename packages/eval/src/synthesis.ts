@@ -202,8 +202,13 @@ export class TaskSynthesizer {
       if (request.testFiles?.length && label === "parent") {
         applyTestPatch(workspace.path, { commit: request.fixCommit, files: request.testFiles });
       }
+      // Dependencies are installed in this task's own throwaway workspace
+      // (MS-T8-12); a task whose install fails is discarded, not run bare.
       if (request.setupCommands && request.setupCommands.length > 0) {
-        await this.verifier.runSetup(workspace.path, request.setupCommands);
+        const setup = await this.verifier.runSetup(workspace.path, request.setupCommands);
+        if (!setup.ok) {
+          throw new Error(`dependency install failed at the ${label} commit: ${setup.failure}`);
+        }
       }
       return await this.verifier.snapshot(workspace.path, {
         id: `synthesis-${label}`,

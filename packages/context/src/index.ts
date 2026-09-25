@@ -25,3 +25,4 @@ export * from "./ranked_repo_map.js";
 export * from "./prompt_tags.js";
 export * from "./prompt_lint.js";
 export * from "./prompt_literals.js";
+export * from "./worker_copy.js";

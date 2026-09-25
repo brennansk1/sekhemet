@@ -1,5 +1,6 @@
 import type { ToolDefinition } from "@sekhemet/models";
 import { estimateTokens } from "./tokens.js";
+import { workerCopy } from "./worker_copy.js";
 import { assertNoBannedPlaceholders, assertToolInterfaceBudget } from "./zones.js";
 
 /**
@@ -37,12 +38,7 @@ export interface ToolInterfaceSpec {
 
 export const TOOL_INTERFACE_HEADER = "=== TOOL INTERFACE ===";
 
-const PREAMBLE = [
-  "Emit tool calls, not prose. You may emit several calls in one step; batch independent work (for example write a file and then call finish_card) rather than spending a step on each.",
-  "1. Arguments marked with a trailing asterisk are required.",
-  "2. Pass arguments as JSON values of the declared type.",
-  "3. Call only the tools named below. No other tool exists.",
-].join("\n");
+const PREAMBLE = workerCopy.toolPreamble;
 
 function compareParameters(a: ToolParameterSpec, b: ToolParameterSpec): number {
   if (a.required !== b.required) return a.required ? -1 : 1;
@@ -86,6 +82,20 @@ export function renderToolInterface(tools: ToolInterfaceSpec[]): string {
 
   assertNoBannedPlaceholders(rendered, "tool interface");
   assertToolInterfaceBudget(rendered);
+  return rendered;
+}
+
+/**
+ * The contracts of tools loaded mid-card, for the tail: the signatures only.
+ * The header and preamble are in the system prompt already, so the tail does
+ * not repeat "call only tools named…" beside a list that names only the
+ * loaded tools (the B2.1 review, B5; rule 11, each fact once).
+ */
+export function renderLoadedTools(tools: ToolInterfaceSpec[]): string {
+  if (tools.length === 0) return "";
+  const sorted = [...tools].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  const rendered = sorted.map(renderTool).join("\n");
+  assertNoBannedPlaceholders(rendered, "loaded tools");
   return rendered;
 }
 

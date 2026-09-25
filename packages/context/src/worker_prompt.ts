@@ -26,9 +26,14 @@ import {
 import { PROMPT_ZONE_1_SYSTEM, type SkillDisclosure, type TurnHistoryItem } from "./prompts.js";
 import { linesNamedFor, pruneLines } from "./pruner.js";
 import type { SkillManifest } from "./skills.js";
-import { type ToolInterfaceSpec, renderToolInterface } from "./tool_interface.js";
+import {
+  type ToolInterfaceSpec,
+  renderLoadedTools,
+  renderToolInterface,
+} from "./tool_interface.js";
 import { renderToolSearchIndex } from "./tool_search.js";
 import { computeContextVersion } from "./versioning.js";
+import { workerCopy } from "./worker_copy.js";
 import {
   type PromptZoneNumber,
   type ZoneFractionReport,
@@ -213,6 +218,11 @@ export interface WorkerPromptResult {
    * has seen them (C15). False means a nondeterministic input slipped in.
    */
   deterministic: boolean;
+  /**
+   * The scope files and acceptance tests this prompt shows in full, by path:
+   * what the tools may point at as "above" (the B2.1 review, B2).
+   */
+  shownInFull: string[];
 }
 
 const NATIVE_TOOLS_NOTE =
@@ -225,8 +235,9 @@ const HEADERS: Partial<Record<SectionKind, string>> = {
   lessons: "=== LESSONS SO FAR ===",
 };
 
+/** A numbered list. An item that arrives numbered keeps one number, not two (CX-M1-1). */
 function renderList(items: string[]): string {
-  return items.map((item, i) => `${i + 1}. ${item}`).join("\n");
+  return items.map((item, i) => `${i + 1}. ${item.replace(/^\s*\d+[.)]\s+/, "")}`).join("\n");
 }
 
 function scopeLine(files: string[]): string {
@@ -287,14 +298,16 @@ function failureText(failures: GateFailure[], code: string | undefined): string 
     );
   }
   if (code) lines.push("", "The code at the failing lines (> marks the line):", code);
-  lines.push(
-    "",
-    "INSTRUCTION: Address the error above in declared scope files and call finish_card when tests pass.",
-  );
+  lines.push("", workerCopy.repairInstruction);
   return lines.join("\n");
 }
 
-function goalText(input: WorkerPromptInput, stepsUsed: number): string {
+/**
+ * The goal tail. `notShown` names the scope files the prompt does not show in
+ * full; with any, the ready-to-verify line gives the read_file call instead of
+ * pointing at content above (the B2.1 review, B2).
+ */
+function goalText(input: WorkerPromptInput, stepsUsed: number, notShown: string[] = []): string {
   const { card } = input;
   const parts = [
     "=== GOAL (RE-INJECTED) ===",
@@ -310,9 +323,11 @@ function goalText(input: WorkerPromptInput, stepsUsed: number): string {
   }
   if (input.openTodos?.length) parts.push(`Still to write:\n${renderList(input.openTodos)}`);
   parts.push(
-    input.readyToVerify
-      ? "Next action: every declared scope file has been written. Do NOT write it again. If the content satisfies the criteria above, call finish_card now; otherwise read the file and correct it."
-      : "Next action: emit exactly one tool call now. Call finish_card only once every criterion above holds.",
+    !input.readyToVerify
+      ? workerCopy.nextAction
+      : notShown.length > 0
+        ? workerCopy.nextActionReadyRead(notShown)
+        : workerCopy.nextActionReady,
   );
   return parts.join("\n");
 }
@@ -469,7 +484,7 @@ function buildSections(
       order: 50,
       priority: 92,
       required: true,
-      text: `=== TOOLS LOADED WITH tool_search ===\n${renderToolInterface(input.loadedTools)}`,
+      text: `=== TOOLS LOADED WITH tool_search ===\n${renderLoadedTools(input.loadedTools)}`,
     });
   }
 
@@ -507,7 +522,7 @@ function buildSections(
       priority: 40,
       minTokens: 300,
       shrink: shrinkFile,
-      text: `=== ACCEPTANCE TEST: ${f.path} (shown in full; do not read_file it) ===\n${f.content || "(empty file)"}`,
+      text: `${workerCopy.testFileHeader(f.path, true)}\n${f.content || "(empty file)"}`,
     }),
   );
   (input.otherFiles ?? []).forEach((f, i) =>
@@ -591,7 +606,7 @@ function buildSections(
       priority: 90,
       minTokens: 400,
       shrink: pruningShrink(f.path, pruneQuery(input), failureBlob(input)),
-      text: `=== SCOPE FILE: ${f.path} (current content; edit it, do not read_file it) ===\n${f.content || "(empty file)"}`,
+      text: `${workerCopy.scopeFileHeader(f.path, true)}\n${f.content || "(empty file)"}`,
     }),
   );
   if (input.rungDirective) {
@@ -675,16 +690,6 @@ function buildSections(
         text: `How to fix${remedies.length > 1 ? ` (${i + 1})` : ""}: ${remedy}`,
       }),
     );
-  } else {
-    add({
-      id: "instruction",
-      kind: "failure",
-      placement: "volatile",
-      order: 400,
-      priority: 95,
-      required: true,
-      text: "INSTRUCTION: Proceed with implementation using available tools. Call finish_card when complete.",
-    });
   }
   add({
     id: "goal",
@@ -714,7 +719,7 @@ function render(sections: ContextSection[]): string {
 
 const CUT_LABELS: Partial<Record<SectionKind, string>> = {
   repo_map: "the repo map",
-  history_old: "earlier turns (recall(ref) brings any back)",
+  history_old: workerCopy.historyOldCut(true),
   other_file: "reference files",
   tests: "acceptance tests (read_file them if needed)",
   team: "the team note",
@@ -799,6 +804,16 @@ function inputKey(input: WorkerPromptInput, pinnedHash: string | undefined): str
     .digest("hex");
 }
 
+/** Whether `recall` is callable: in the tool set, the tool index or the native schemas. */
+function offersRecall(input: WorkerPromptInput): boolean {
+  return [
+    ...input.tools,
+    ...(input.toolIndex ?? []),
+    ...(input.loadedTools ?? []),
+    ...(input.nativeToolSchemas ?? []),
+  ].some((t) => t.name === "recall");
+}
+
 export function buildWorkerPrompt(input: WorkerPromptInput): WorkerPromptResult {
   const thresholds = input.thresholds ?? DEFAULT_PRESSURE_THRESHOLDS;
   const overhead =
@@ -818,8 +833,11 @@ export function buildWorkerPrompt(input: WorkerPromptInput): WorkerPromptResult 
 
   // Nominal history: compact long histories, mask all but the last two.
   const raw = input.turns ?? [];
-  const compacted = raw.length > 8 ? compactHistory(raw, 6, { ...store, ...cardId }).turns : raw;
-  const nominalTurns = maskOlderObservations(compacted, 2, { ...store, ...cardId });
+  // A pointer names recall only when the Worker can call it (CX-M1-1).
+  const recallOffered = offersRecall(input);
+  const maskOptions = { ...store, ...cardId, recallOffered };
+  const compacted = raw.length > 8 ? compactHistory(raw, 6, maskOptions).turns : raw;
+  const nominalTurns = maskOlderObservations(compacted, 2, maskOptions);
   const repoMapIn = input.repoMap ?? "";
   // With a pin, the disclosure in force when the card started stays (C4).
   const pinnedDisclosure = pin?.disclosure ?? input.skillDisclosure;
@@ -869,7 +887,67 @@ export function buildWorkerPrompt(input: WorkerPromptInput): WorkerPromptResult 
     ),
   ];
   const sections = [...allocation.sections];
-  const labels = [...new Set(cutKinds.map((k) => CUT_LABELS[k]).filter((l): l is string => !!l))];
+  // Which scope files and tests reach the Worker in full (the B2.1 review,
+  // B2): a shrunk or capped section says it is partial and how to read the
+  // rest, and a file the session left out is not shown at all.
+  const cutIds = new Set(
+    allocation.events
+      .filter((e) => e.action === "shrunk" || e.action === "capped")
+      .map((e) => e.id),
+  );
+  const shownInFull: string[] = [];
+  sections.forEach((section, i) => {
+    const scope = section.id.startsWith("scope:");
+    const test = section.id.startsWith("test:");
+    if (!scope && !test) return;
+    const path = section.id.slice(scope ? 6 : 5);
+    if (!cutIds.has(section.id)) {
+      shownInFull.push(path);
+      return;
+    }
+    const header = scope
+      ? workerCopy.scopeFileHeader(path, false)
+      : workerCopy.testFileHeader(path, false);
+    const nl = section.text.indexOf("\n");
+    sections[i] = { ...section, text: `${header}${nl >= 0 ? section.text.slice(nl) : ""}` };
+  });
+  const notShown = input.card.scopeFiles.filter((p) => !shownInFull.includes(p));
+  // A failing line in a file the prompt does not show in full gets the read
+  // for it; one shown in full needs none (the confirmation review, B2.1).
+  const failureAt = sections.findIndex((x) => x.id === "failure");
+  const failureSection = sections[failureAt];
+  if (failureSection) {
+    const reads = [
+      ...new Map(
+        // A failure from an older record may lack its location.
+        (input.gateFailures ?? []).flatMap(({ location }) => {
+          const file = location?.file;
+          const line = location?.line;
+          return file !== undefined &&
+            file !== "." &&
+            line !== undefined &&
+            line > 0 &&
+            !shownInFull.includes(file.replace(/^\.\//, ""))
+            ? [[file, workerCopy.readAround(file, line)] as const]
+            : [];
+        }),
+      ).values(),
+    ];
+    if (reads.length > 0) {
+      sections[failureAt] = {
+        ...failureSection,
+        text: `${failureSection.text}\n${reads.join("\n")}`,
+      };
+    }
+  }
+  if (input.readyToVerify && notShown.length > 0) {
+    const goalAt = sections.findIndex((x) => x.id === "goal");
+    const goal = sections[goalAt];
+    if (goal) sections[goalAt] = { ...goal, text: goalText(input, input.card.stepsUsed, notShown) };
+  }
+  const label = (k: SectionKind) =>
+    k === "history_old" ? workerCopy.historyOldCut(recallOffered) : CUT_LABELS[k];
+  const labels = [...new Set(cutKinds.map(label).filter((l): l is string => !!l))];
   if (labels.length > 0) {
     const goalAt = sections.findIndex((x) => x.id === "goal");
     sections.splice(goalAt < 0 ? sections.length : goalAt, 0, {
@@ -965,7 +1043,7 @@ export function buildWorkerPrompt(input: WorkerPromptInput): WorkerPromptResult 
         ? Math.round((allocation.usedTokens / budget) * 1000) / 1000
         : undefined,
     tier: pressure.tier,
-    maskedObservations: turnsUsed.filter((t) => t.result.includes("EvidenceRef:")).length,
+    maskedObservations: turnsUsed.filter((t) => t.result.startsWith("[Observation #")).length,
     compactedTurns: raw.length > 8 ? raw.length - 6 : 0,
     sectionsCut: allocation.events.filter((e) => e.action === "dropped").length,
     rulesInPrompt: allRulesUsed.length,
@@ -992,6 +1070,7 @@ export function buildWorkerPrompt(input: WorkerPromptInput): WorkerPromptResult 
     versionHash: version.version,
     metrics,
     deterministic,
+    shownInFull,
   };
 }
 

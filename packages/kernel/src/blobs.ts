@@ -61,6 +61,21 @@ export interface ContextPack {
   tools: string[];
   /** Reasoning setting of the request. */
   reasoning?: string;
+  /**
+   * The blob holding the exact tool definitions sent (their JSON), so a
+   * replay sends what was sent: a session's variants (note's gate enum,
+   * restricted and progressive sets) are not in the base catalog. Stored once
+   * and shared by every step that sent the same definitions.
+   */
+  toolSchemas?: string;
+  /** The tool arm the request was sent in (`arm_a_flat`, `arm_b_json`, `arm_c_sketch`). */
+  toolArm?: string;
+  /** The attempt's thinking policy (`off`, `surgical`, `all`): what an A/B files its decision under. */
+  thinking?: string;
+  reasoningBudgetTokens?: number;
+  maxTokens?: number;
+  temperature?: number;
+  purpose?: string;
 }
 
 /** Serialise a pack canonically (stable key order), so equal packs share an id. */

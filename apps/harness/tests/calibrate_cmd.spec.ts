@@ -118,6 +118,55 @@ describe("sekhemet calibrate (H3)", () => {
     expect(lines.some((l) => /speculative decoding: off/.test(l))).toBe(true);
   });
 
+  it("A1: a decode-only win never turns MTP on, and never overwrites the --mtp-ab decision (models rule 13)", async () => {
+    const probe = (id: string, decode: number): UnloadableAdapter => ({
+      modelId: id,
+      supportedArms: ["arm_a_flat"],
+      async generate(_req: InferenceRequest) {
+        return {
+          text: "ok",
+          toolCalls: [],
+          usage: {
+            promptTokens: 2048,
+            completionTokens: 64,
+            durationMs: 1000,
+            prefillTokensPerSecond: 400,
+            decodeTokensPerSecond: decode,
+          },
+        };
+      },
+      async unload() {},
+    });
+    const dir = mkdtempSync(join(tmpdir(), "cal-spec-"));
+    const registry = new ModelRegistry(join(dir, "models.json"));
+    // The per-step A/B already decided MTP off for this policy.
+    const abDecision = {
+      enabled: false,
+      speedup: 0.9,
+      reason: "not faster per step",
+      fingerprint: "this-host",
+      date: "2026-09-25",
+      thinking: "off" as const,
+    };
+    registry.recordSpeculative("a", abDecision);
+    const lines: string[] = [];
+    await runCalibrate({
+      models: parseModelList("a=worker"),
+      buckets: [2048],
+      decodeTokens: 16,
+      force: true,
+      resolve: () => probe("a", 30),
+      // Decode 33% faster: the case rule 13 says never justifies MTP alone.
+      speculative: () => ({ plain: probe("a-plain", 30), speculative: probe("a-mtp", 40) }),
+      path: join(dir, "machine.json"),
+      registry,
+      say: (l) => lines.push(l),
+    });
+    expect(registry.get("a")?.speculativeByPolicy?.off).toEqual(abDecision);
+    expect(registry.get("a")?.speculative?.thinking).toBeUndefined();
+    expect(lines.some((l) => /sekhemet calibrate --mtp-ab/.test(l))).toBe(true);
+  });
+
   it("does not load a head the host has no room for (24 GB reference machine)", async () => {
     const loaded: string[] = [];
     const probe = (id: string): UnloadableAdapter => ({

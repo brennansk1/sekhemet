@@ -309,6 +309,9 @@ export interface LlamaServerTimings {
   predicted_n?: number;
   predicted_ms?: number;
   predicted_per_second?: number;
+  /** Present only while speculative decoding runs. */
+  draft_n?: number;
+  draft_n_accepted?: number;
 }
 
 /** Server-reported accounting, before it is merged into `TokenUsage`. */
@@ -381,6 +384,8 @@ export function usageFromLlamaServer(
   if (out.completionTokens === undefined && finite(timings?.predicted_n)) {
     out.completionTokens = timings.predicted_n;
   }
+  if (finite(timings?.draft_n)) out.draftTokens = timings.draft_n;
+  if (finite(timings?.draft_n_accepted)) out.draftAcceptedTokens = timings.draft_n_accepted;
   return out;
 }
 

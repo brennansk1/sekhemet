@@ -21,18 +21,35 @@ function scopeOf(
 }
 const errorCode = (text: string) => /\b(TS\d{4}|lint\/[\w/]+)\b/.exec(text)?.[1];
 
+/** The playbook-rules inlet's volume threshold (measurement rule 20). */
+export const RULE_SIGNAL_MINIMUM = 3;
+
+export interface LearnFromAttemptOptions {
+  /**
+   * Whether a candidate may reach later cards of the run before a person
+   * approves it (O15). Off until the owner allows it (measurement rule 6,
+   * MS-T8-15): a candidate waits for approval with its evidence.
+   */
+  probation?: boolean;
+  /** Called with each new rule id, only under probation. */
+  onProposed?: (ruleId: string) => void;
+  /** A signal below its threshold: its key and how many times it has occurred. */
+  onInsufficient?: (key: string, occurrences: number) => void;
+}
+
 /**
  * After every attempt: count helpful/harmful for the rules the prompt carried
  * (first attempts only, so a retry's guidance does not muddy the signal), and
- * turn each failure that survived an edit into a candidate rule.
+ * record each failure that survived an edit as a signal. A signal becomes a
+ * candidate rule only on its third occurrence (rule 20, MS-T8-4); below
+ * that the inlet reports "insufficient data" and proposes nothing.
  */
 export async function learnFromAttempt(
   store: LearningStore,
   card: CardRecord,
   result: Pick<CardRunResult, "passed" | "rulesUsed" | "lessons">,
   attempt: number,
-  /** Called with each new rule id: the queue keeps them in force for the run. */
-  onProposed?: (ruleId: string) => void,
+  options: LearnFromAttemptOptions = {},
 ): Promise<number> {
   if (attempt === 1) {
     const learned = new Set((await store.rules()).map((r) => r.id));
@@ -49,18 +66,33 @@ export async function learnFromAttempt(
     // A known code already carries its remedy in the failure block itself: a
     // rule saying the same thing would only duplicate it in the window.
     if (code && remedyFor(code, message)) continue;
+    const key = code ?? message.replace(/\d+/g, "#").replace(/(["'`]).*?\1/g, "$1…$1");
+    const occurrences = await store.recordSignal({
+      inlet: "playbook rules",
+      key,
+      evidence: {
+        cardId: card.id,
+        note: `${s.text} survived ${s.edits} edit(s) before it was fixed`,
+        source: "gate",
+        verified: "execution",
+      },
+    });
+    if (occurrences.length < RULE_SIGNAL_MINIMUM) {
+      options.onInsufficient?.(key, occurrences.length);
+      continue;
+    }
     const rule = await store.propose({
       role: "worker",
       text: `"${message}" took ${s.edits + 1} attempts to fix on ${card.title.replace(/\s*\(SPIDR:[^)]*\)/, "")}. Before editing, read the declaration involved and check its real type or API.`,
       scope: scopeOf(card, code),
       source: "struggle",
-      evidence: [
-        { cardId: card.id, note: `${s.text} survived ${s.edits} edit(s) before it was fixed` },
-      ],
+      // The first proposal carries every occurrence; a later one only adds
+      // its own to the existing rule's evidence.
+      evidence: occurrences.length === RULE_SIGNAL_MINIMUM ? occurrences : occurrences.slice(-1),
     });
     if (rule) {
       proposed++;
-      onProposed?.(rule.id);
+      if (options.probation) options.onProposed?.(rule.id);
     }
   }
   return proposed;

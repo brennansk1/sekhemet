@@ -5,6 +5,7 @@ import { estimatePromptTokens } from "../src/allocator.js";
 import { InMemoryEvidenceStore } from "../src/evidence.js";
 import type { PlaybookRule } from "../src/playbook.js";
 import { TOOL_INTERFACE_HEADER, type ToolInterfaceSpec } from "../src/tool_interface.js";
+import { workerCopy } from "../src/worker_copy.js";
 import { type WorkerPromptInput, buildWorkerPrompt } from "../src/worker_prompt.js";
 
 const card = (stepsUsed: number): CardRecord => ({
@@ -240,9 +241,7 @@ describe("C7 and item 7: pressure tiers and cut order", () => {
     expect(r.prompt).toContain("acceptance tests (read_file them if needed)");
     expect(r.usedTokens).toBeLessThanOrEqual(Math.floor(2200 * 0.95));
     // The goal is still the last thing.
-    expect(
-      r.prompt.trimEnd().endsWith("Call finish_card only once every criterion above holds."),
-    ).toBe(true);
+    expect(r.prompt.trimEnd().endsWith(workerCopy.nextAction)).toBe(true);
   });
 
   it("stops with budget_exhausted when even the required sections do not fit", () => {

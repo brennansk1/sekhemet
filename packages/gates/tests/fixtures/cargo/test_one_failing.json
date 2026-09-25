@@ -1,0 +1,10 @@
+{
+  "tool": "cargo",
+  "case": "test_one_failing",
+  "command": "cargo test --offline --quiet",
+  "repro": "cargo test",
+  "exitCode": 101,
+  "stdout": "\nrunning 2 tests\n. 1/2\ntests::adds_two_amounts --- FAILED\n\nfailures:\n\n---- tests::adds_two_amounts stdout ----\n\nthread 'tests::adds_two_amounts' (4173823) panicked at src/lib.rs:11:9:\nassertion `left == right` failed\n  left: 3\n right: 2\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n\nfailures:\n    tests::adds_two_amounts\n\ntest result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+  "stderr": "error: test failed, to rerun pass `--lib`\n",
+  "version": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)"
+}

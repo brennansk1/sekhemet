@@ -159,7 +159,7 @@ describe("dashboard routes for the planner and sync (P9, P11, P13, P17, P20, Y8,
     expect(lines.join("\n")).toMatch(/Smallest unblocking action: Add the needed file/);
   });
 
-  it("refuses to approve a rule the frozen regression gate rejected (E5)", async () => {
+  it("approves a rule a person approves, whatever the diagnostic suite gate said (DEC-28, rule 16a)", async () => {
     const learning = new LearningStore(log);
     const bad = await learning.propose({
       role: "worker",
@@ -180,11 +180,13 @@ describe("dashboard routes for the planner and sync (P9, P11, P13, P17, P20, Y8,
       runFixture: async (_f, rule) => ({ passed: rule ? 2 : 5, total: 6 }),
     });
     const headers = { "x-sekhemet-action": "1", "content-type": "application/json" };
-    const refused = await call("POST", `/api/learning/rules/${bad?.id}/approve`, "{}", headers);
-    expect(refused.status).toBe(409);
-    expect(String(refused.json.error)).toMatch(/regression gate rejected/);
+    // The frozen suite never admits a project rule: its verdict is shown, not enforced.
+    const approved = await call("POST", `/api/learning/rules/${bad?.id}/approve`, "{}", headers);
+    expect(approved.status).toBe(200);
+    expect(approved.json.rule.status).toBe("active");
+    expect(approved.json.suiteDiagnostic).toMatchObject({ accepted: false });
     const ok = await call("POST", `/api/learning/rules/${good?.id}/approve`, "{}", headers);
     expect(ok.status).toBe(200);
-    expect(ok.json.gated).toBe(false);
+    expect(ok.json.suiteDiagnostic).toBeUndefined();
   });
 });

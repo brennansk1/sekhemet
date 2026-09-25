@@ -46,8 +46,13 @@ describe("the runner reads the stop-reason table and records the step evidence (
     id: string,
     project: string,
     calls: (n: number) => Omit<ToolCall, "id">[],
-    extra: { hooks?: LifecycleHookEngine; promptTokenBudget?: number } = {},
+    extraAll: {
+      hooks?: LifecycleHookEngine;
+      promptTokenBudget?: number;
+      usage?: (n: number) => Record<string, number>;
+    } = {},
   ) => {
+    const { usage: usageFor, ...extra } = extraAll;
     writeFileSync(join(repo, ".sekhemet", "gates.toml"), `[project]\n${project}\n\n${GATE}`);
     git("add", "-A");
     git("commit", "-qm", "seed");
@@ -68,7 +73,7 @@ describe("the runner reads the stop-reason table and records the step evidence (
         return {
           text: "",
           toolCalls: calls(n).map((c, i) => ({ id: `${n}-${i}`, ...c })),
-          usage: { promptTokens: 10, completionTokens: 3, durationMs: 1 },
+          usage: { promptTokens: 10, completionTokens: 3, durationMs: 1, ...(usageFor?.(n) ?? {}) },
           finishReason: "tool_calls",
         };
       },
@@ -132,6 +137,37 @@ describe("the runner reads the stop-reason table and records the step evidence (
     expect(rows.map((r) => [r.formatErrors, r.proseOnly])).toEqual([
       [0, 1],
       [0, 0],
+    ]);
+  }, 60_000);
+
+  it("MD-M4-4: each step records the server's cached and evaluated prompt tokens and, with MTP, drafted and accepted tokens", async () => {
+    const result = await run("card_u", "", (n) => (n === 1 ? [readA] : [list]), {
+      usage: (n) =>
+        n === 1
+          ? { cachedPromptTokens: 900, evaluatedPromptTokens: 100 }
+          : {
+              cachedPromptTokens: 950,
+              evaluatedPromptTokens: 50,
+              draftTokens: 40,
+              draftAcceptedTokens: 30,
+            },
+    });
+    const steps = result.evidence.steps ?? [];
+    expect(steps[0]).toMatchObject({ cachedPromptTokens: 900, evaluatedPromptTokens: 100 });
+    expect(steps[0]?.draftTokens).toBeUndefined();
+    expect(steps[1]).toMatchObject({ draftTokens: 40, draftAcceptedTokens: 30 });
+    const attempt = store.runs?.listAttempts("card_u").at(-1);
+    const rows = attempt ? (store.runs?.listSteps(attempt.id) ?? []) : [];
+    expect(
+      rows.map((r) => [
+        r.cachedPromptTokens,
+        r.evaluatedPromptTokens,
+        r.draftTokens,
+        r.draftAcceptedTokens,
+      ]),
+    ).toEqual([
+      [900, 100, undefined, undefined],
+      [950, 50, 40, 30],
     ]);
   }, 60_000);
 

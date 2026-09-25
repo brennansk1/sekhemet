@@ -1,6 +1,14 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, normalize } from "node:path";
-import type { GateFailure, GateResult, GateRung, GateRunner, RungOutcome } from "@sekhemet/gates";
+import {
+  type GateFailure,
+  type GateResult,
+  type GateRung,
+  type GateRunner,
+  RERUN_GATES,
+  type RungOutcome,
+  gateCopy,
+} from "@sekhemet/gates";
 import { changedSources } from "./reachability_gate.js";
 
 /**
@@ -113,6 +121,7 @@ export function architectureGate(root: string, options: ArchitectureOptions = {}
       location: { file, line: 0, column: 0 },
       expected: rule.text.replace(/`/g, ""),
       actual,
+      minimalRepro: RERUN_GATES,
       suggestedAction: action,
     });
   };
@@ -127,7 +136,7 @@ export function architectureGate(root: string, options: ArchitectureOptions = {}
             file,
             rule,
             `${file} imports ${crossing}`,
-            `The brief declares that ${rule.from} does not import ${rule.to}. Remove that import from ${file} and reach what you need another way — pass it in, or move the shared piece below both. If the invariant is wrong for this card, say so with note; do not work around it.`,
+            gateCopy.architectureImport(rule.from, rule.to, file),
           );
         }
       } else if (!covers(rule.file, file) && definesName(root, file, rule.name)) {
@@ -135,7 +144,7 @@ export function architectureGate(root: string, options: ArchitectureOptions = {}
           file,
           rule,
           `${file} defines ${rule.name}`,
-          `${rule.name} has one home: ${rule.file}. Delete the definition in ${file} and import it from ${rule.file} instead. If ${rule.file} lacks something you need, say so with note.`,
+          gateCopy.architectureHome(rule.name, rule.file, file),
         );
       }
     }
@@ -149,6 +158,8 @@ export function withArchitectureGate(
   options: ArchitectureOptions = {},
 ): GateRunner {
   return {
+    // GT-M6-5: the gate this wrapper adds, for `note`'s enum.
+    gateIds: [...(inner.gateIds ?? []), "architecture"],
     runGates: async (rungs: GateRung[], cwd: string): Promise<GateResult> => {
       const res = await inner.runGates(rungs, cwd);
       const started = Date.now();

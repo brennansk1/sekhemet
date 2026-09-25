@@ -1,0 +1,582 @@
+[
+  {
+    "name": "read_file",
+    "description": "Read a file, optionally a line range. Read before you edit.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Path relative to the worktree"
+        },
+        "start": {
+          "type": "number",
+          "description": "First line, 1-indexed"
+        },
+        "end": {
+          "type": "number",
+          "description": "Last line, inclusive"
+        }
+      },
+      "required": [
+        "path"
+      ]
+    }
+  },
+  {
+    "name": "write_file",
+    "description": "Create a file or replace its entire contents.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Path relative to the worktree"
+        },
+        "content": {
+          "type": "string",
+          "description": "Complete file contents"
+        }
+      },
+      "required": [
+        "path",
+        "content"
+      ]
+    }
+  },
+  {
+    "name": "edit",
+    "description": "Replace one unique chunk of text. Fails if the chunk is absent or ambiguous.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Path relative to the worktree"
+        },
+        "search": {
+          "type": "string",
+          "description": "Exact text, must occur once"
+        },
+        "replace": {
+          "type": "string",
+          "description": "Replacement text"
+        }
+      },
+      "required": [
+        "path",
+        "search",
+        "replace"
+      ]
+    }
+  },
+  {
+    "name": "replace_lines",
+    "description": "Replace an inclusive 1-indexed line range.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Path relative to the worktree"
+        },
+        "start": {
+          "type": "number",
+          "description": "First line to replace, 1-indexed"
+        },
+        "end": {
+          "type": "number",
+          "description": "Last line to replace, inclusive"
+        },
+        "replacement": {
+          "type": "string",
+          "description": "Lines to insert in their place"
+        }
+      },
+      "required": [
+        "path",
+        "start",
+        "end",
+        "replacement"
+      ]
+    }
+  },
+  {
+    "name": "read_symbol",
+    "description": "Read one named declaration and its body.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Path relative to the worktree"
+        },
+        "symbol": {
+          "type": "string",
+          "description": "Declaration name"
+        }
+      },
+      "required": [
+        "path",
+        "symbol"
+      ]
+    }
+  },
+  {
+    "name": "replace_symbol_body",
+    "description": "Replace the body of a named declaration, preserving indentation.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Path relative to the worktree"
+        },
+        "symbol": {
+          "type": "string",
+          "description": "Declaration name"
+        },
+        "body": {
+          "type": "string",
+          "description": "Statements only, without braces"
+        }
+      },
+      "required": [
+        "path",
+        "symbol",
+        "body"
+      ]
+    }
+  },
+  {
+    "name": "insert_after_symbol",
+    "description": "Insert new code immediately after a named declaration.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Path relative to the worktree"
+        },
+        "symbol": {
+          "type": "string",
+          "description": "Declaration to insert after"
+        },
+        "content": {
+          "type": "string",
+          "description": "Code to insert"
+        }
+      },
+      "required": [
+        "path",
+        "symbol",
+        "content"
+      ]
+    }
+  },
+  {
+    "name": "find_references",
+    "description": "Find references to a symbol. TypeScript/JavaScript symbols resolve through imports and re-exports; other files fall back to whole-word matches.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "symbol": {
+          "type": "string",
+          "description": "Symbol name to find"
+        },
+        "file": {
+          "type": "string",
+          "description": "File that declares it, when the name is declared in several"
+        },
+        "path": {
+          "type": "string",
+          "description": "Directory to search, defaults to the worktree"
+        }
+      },
+      "required": [
+        "symbol"
+      ]
+    }
+  },
+  {
+    "name": "go_to_definition",
+    "description": "Where a symbol is declared, with its type as the compiler sees it (TypeScript/JavaScript).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "symbol": {
+          "type": "string",
+          "description": "Symbol name"
+        },
+        "file": {
+          "type": "string",
+          "description": "Limit to declarations in this file"
+        }
+      },
+      "required": [
+        "symbol"
+      ]
+    }
+  },
+  {
+    "name": "subtask",
+    "description": "Answer a side question (where is X defined? what does this error mean?) in a separate context with read-only tools; only a short answer comes back.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "question": {
+          "type": "string",
+          "description": "One specific question"
+        },
+        "context": {
+          "type": "string",
+          "description": "What the helper needs to know: an excerpt, the error"
+        }
+      },
+      "required": [
+        "question"
+      ]
+    }
+  },
+  {
+    "name": "tool_search",
+    "description": "Load the full contract of tools by name or by what you need them for.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Tool names (comma-separated) or a description of the task"
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "start_process",
+    "description": "Start a long-running command in the background (a dev server, a watcher). It gets a free port in $PORT and keeps running across steps.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "A short handle, e.g. web"
+        },
+        "command": {
+          "type": "string",
+          "description": "The command line"
+        }
+      },
+      "required": [
+        "name",
+        "command"
+      ]
+    }
+  },
+  {
+    "name": "read_process",
+    "description": "Read a background process's latest output and whether it is still running.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Its handle"
+        },
+        "lines": {
+          "type": "number",
+          "description": "Last N lines, default 40"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    }
+  },
+  {
+    "name": "write_process",
+    "description": "Type input into a background process (an interactive prompt, a REPL); a newline is added.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Its handle"
+        },
+        "input": {
+          "type": "string",
+          "description": "The line to send"
+        }
+      },
+      "required": [
+        "name",
+        "input"
+      ]
+    }
+  },
+  {
+    "name": "stop_process",
+    "description": "Stop a background process.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Its handle"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    }
+  },
+  {
+    "name": "browse",
+    "description": "Load a page and return its rendered text: the card's own app on localhost (use its $PORT), or, on research cards, any URL.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "The URL"
+        }
+      },
+      "required": [
+        "url"
+      ]
+    }
+  },
+  {
+    "name": "grep_search",
+    "description": "Search file contents by regular expression. Skips gitignored files.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Regular expression"
+        },
+        "path": {
+          "type": "string",
+          "description": "Directory to search, defaults to the worktree"
+        },
+        "output_mode": {
+          "type": "string",
+          "description": "content (default), files_with_matches or count",
+          "enum": [
+            "content",
+            "files_with_matches",
+            "count"
+          ]
+        },
+        "context": {
+          "type": "number",
+          "description": "Lines around each hit"
+        },
+        "glob": {
+          "type": "string",
+          "description": "File filter, e.g. *.ts"
+        },
+        "case_insensitive": {
+          "type": "boolean",
+          "description": "Ignore case"
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "find_files",
+    "description": "List files matching a glob, newest first; .gitignore is respected.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "pattern": {
+          "type": "string",
+          "description": "Glob, for example src/**/*.ts"
+        },
+        "path": {
+          "type": "string",
+          "description": "Directory to search, defaults to the worktree"
+        }
+      },
+      "required": [
+        "pattern"
+      ]
+    }
+  },
+  {
+    "name": "list_dir",
+    "description": "List the entries of one directory.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Directory, defaults to the worktree root"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "check",
+    "description": "Run this card's verification gates now WITHOUT finishing. Returns typed failures. Use it instead of running tsc or tests yourself.",
+    "parameters": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    }
+  },
+  {
+    "name": "run_cmd",
+    "description": "Run a build, test or project script in the sandbox. Not for cat, grep or sed: use read_file, grep_search, edit.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "command": {
+          "type": "string",
+          "description": "A full command line, e.g. ls src"
+        },
+        "args": {
+          "type": "array",
+          "description": "Arguments as separate array elements",
+          "items": {
+            "type": "string"
+          }
+        },
+        "description": {
+          "type": "string",
+          "description": "What this command is for, in a few words"
+        }
+      },
+      "required": [
+        "command"
+      ]
+    }
+  },
+  {
+    "name": "docs",
+    "description": "Search documentation: the project's docs, and a dependency's README and type declarations at the installed version.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Text to look for"
+        },
+        "library": {
+          "type": "string",
+          "description": "A dependency to search at its installed version, for example zod"
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "git_history",
+    "description": "Search this repository's history before solving something: commit messages and code changes that mention a term, or one commit's diff.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Term, error code or symbol to search for"
+        },
+        "sha": {
+          "type": "string",
+          "description": "Show this commit instead"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "dependencies",
+    "description": "List the packages this project already has, to use instead of writing your own.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Filter by name"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "ask",
+    "description": "Ask a question about what the card requires instead of guessing. Answered from the card's spec, Done-when list and rules.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "question": {
+          "type": "string",
+          "description": "The question"
+        }
+      },
+      "required": [
+        "question"
+      ]
+    }
+  },
+  {
+    "name": "recall",
+    "description": "Fetch the full text of an earlier observation that was compacted. Use the EvidenceRef shown in its pointer.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "ref": {
+          "type": "string",
+          "description": "The EvidenceRef from a compacted observation"
+        }
+      },
+      "required": [
+        "ref"
+      ]
+    }
+  },
+  {
+    "name": "note",
+    "description": "Record a short note for the human reviewer.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string",
+          "description": "Note text"
+        },
+        "gate": {
+          "type": "string",
+          "description": "A gate you believe is wrong; naming one parks the card.",
+          "enum": [
+            "bounds",
+            "integrity",
+            "lint",
+            "typecheck",
+            "unit"
+          ]
+        }
+      },
+      "required": [
+        "message"
+      ]
+    }
+  },
+  {
+    "name": "finish_card",
+    "description": "Declare the work complete. Verification gates run immediately.",
+    "parameters": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    }
+  }
+]

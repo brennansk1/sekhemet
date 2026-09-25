@@ -8,9 +8,9 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-24. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 25 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 29 first.*
 
-1. **Where we are:** Phase B under way — B0 done 2026-09-25 (Entry 28); next B1. Design v3 is complete (Phase A.5 done 2026-09-25). Next: frontend mockups with the owner (dashboard spec, Configuration page first), and Phase B spec-driven in the plan's order — **B0** cuts, **B1** Worker containment, **B2** measurement and the baseline. Before a workstream starts, apply its spec's outstanding trace restorations (DoD §5.2.5).
+1. **Where we are:** Phase B — B0 done (Entry 28); B1 built, its Tier 3 injection run owed; B2.1–B2.3 done; B2.2 done except the model-needing checks; B2.4 part 1 done, part 2 next (Entry 29). **No model loads until the owner says so.** Owner answers pending: Docker, @stdlib, pytest/go, golden briefs and held-out labels, measuresModel for environment stops, the third A/B candidate, `--auto-accept`'s bound, the E5 removal.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
 3. **Done means:** `DEFINITION_OF_DONE.md` v3 — §5 for a card, a spec, a workstream and a release; §6 for the product.
 4. **Measurement:** suite `1.0.0`, hash `192b6e95fa3c`; thinking A/B arm "off" 10/14 on `468f67f` (SUITE_RUNS). The remaining arms wait on M1, M3, M8 (workstream B2.1).
@@ -20,6 +20,50 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 29 — 2026-09-24 → 2026-09-25 (B1 built; B2.1–B2.3 done; B2.2 and B2.4 part 1)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver; two implementer helpers and fresh independent reviewers, on disjoint files.
+
+- **Owner direction:**
+  - Reuse existing libraries and repos at every step (DEC-40).
+  - Two helpers beyond the lead.
+  - A prompt standard before any prompt work, written from literature and open-licensed sources, never from leaked vendor prompts (DEC-41).
+  - **No model loads until the owner says so** (2026-09-24, the host was swapping).
+- **B1, containment** (`b341663`, `525585e`, `5b17ed1`, `f3190d5`, `fa2f211`): built and reviewed. The Tier 3 injection run is **not yet evidenced**.
+  - The first two runs were void: every card was stopped by the harness's memory guard, since swap sat at 6–7 GB with the 13 GB Worker plus the owner's apps.
+  - The first also read 11/14 "held" through a weak exposure check. That check was fixed (`workerExposure`), and both files are kept in `evidence/` marked INVALID / NOT-RUN.
+  - Linux containment and srt as the default wait for the owner's Docker decision.
+- **B2.1, loop and prompt coherence:**
+  - The prompt standard (DEC-41).
+  - The prompt lint: per-template baselines that only fall, a versioned re-measure log, and the CX-M1-13 literal inventory (446) with registered copy modules for the Worker, gates and qualification.
+  - The Worker's 44 lint-flagged contradictions removed.
+  - "Shown in full" is tracked, so no sentence promises content the prompt doesn't hold.
+  - Seven golden renders from real sessions, and one tool-definition builder.
+  - The implement tool interface is over DEC-27 (2,012 tokens): a ratchet until WL-M2-3.
+- **B2.3, gate feedback (M6):**
+  - Real tool-output fixtures, remedies built from the TypeScript AST, and one failure cap with a reserved slot.
+  - A gate that cannot run (including a missing binary, via the sandbox's `notStarted`) ends as `done_pending_gates`, never as the Worker's failure.
+  - `note` gained a `gate` parameter (`gate_suspected` parks the card).
+  - The mutation gate got a baseline run, null scores and one shared language rule.
+- **B2.2, provenance and qualification:**
+  - A foreign server is refused via `/props`.
+  - MTP is off until `calibrate --mtp-ab` (at least 30 replayed steps, ABBA order, a sign test plus a 2% margin) and a speculative qualification allow it.
+  - Per-step cache and draft counts are recorded.
+  - Evidence carries the harness's own commit and dist hash.
+  - The context pack stores the whole request.
+  - Qualification is keyed by the ten-element combination with named invalidation. An unqualified Worker is refused by `run`, the queue, the suite and the injection runner. The q1.1 suite adds multi-step and recall checks.
+  - Needs a model: the live `/props` check, `qualify`, the MTP A/B. MD-N8-3 waits on B4.10.
+- **B2.4, part 1 (measurement):**
+  - Exact small-sample statistics (checked against scipy), DEC-28 admission with blocked-in-one-arm counted as a failure, the run profile checked and the cost measure named first, rule credit, and one measurement path (suite, bake-off, rule gate and m0 through the product's queue).
+  - `--auto-accept` only in measurement repositories.
+  - An advisory ten-card window (rollback only on a paired loss), the learning safeguards and the eval-asset checks.
+  - `scripts/run_gate.sh` removed (no caller).
+- **Test infrastructure:**
+  - The integration project's timeout is 30 s: a card run takes 4.3–4.5 s alone on this host, both before and after this work, so 5 s failed about 50 tests whenever the host was busy.
+  - The suite's work directory moved off `/tmp`.
+- **Reviews:** at least two independent rounds per workstream; every blocker and major fixed. Test reversals confirmed as required by the spec (MS-M12-3, MS-T8-4/15, DEC-28, rule 18).
+- **Where the cards stop:** B1 built and reviewed, its Tier 3 injection run still owed (needs a model window); B2.1–B2.3 done; B2.2 done except model-needing checks; B2.4 part 1 committed. Gate: 232 files, 1,752 tests (1 skipped), tsc and Biome clean. Next: B2.4 part 2 (T7, T8-5/7/11, the cross-path prompt test), and T11 reference solutions (agent-written, verified by the frozen tests). Owner answers pending: Docker, @stdlib, pytest/go, the golden briefs and held-out labels, measuresModel for environment stops, the third A/B candidate, `--auto-accept`'s bound and the E5 removal. With the owner's go-ahead, a model window: the injection run, `qualify`, the MTP A/B. Then B2.5, the baseline.
 
 ### Entry 28 — 2026-09-25 (Phase B begins: B0 done)
 
