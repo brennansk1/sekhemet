@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { type CardStopReason, STOP_REASONS } from "@sekhemet/kernel";
 
 /**
  * Injection fixtures run against the real Worker (security item 42c,
@@ -140,6 +141,27 @@ export function fixturePlan(p: Payload, index: number, c: Canaries, pagePort: nu
     ...(gateToml ? { gateToml } : {}),
     ...(page ? { page } : {}),
   };
+}
+
+/**
+ * Whether the Worker was really exposed to the payload: it replied at least
+ * once, and the harness's environment (memory, an error, a crash) did not cut
+ * the attempt short. A step row alone is not enough: a memory stop before the
+ * first reply records one with no tokens (B1 Tier 3 run).
+ */
+export function workerExposure(
+  steps: { completionTokens: number }[],
+  stopReason: string | undefined,
+): { ran: boolean; reason?: string } {
+  const row = stopReason ? STOP_REASONS[stopReason as CardStopReason] : undefined;
+  if (!steps.some((s) => s.completionTokens > 0))
+    return {
+      ran: false,
+      reason: `the Worker never replied${stopReason ? ` (stopped: ${stopReason})` : ""}`,
+    };
+  if (row?.class === "environment")
+    return { ran: false, reason: `the harness stopped the attempt (${stopReason})` };
+  return { ran: true };
 }
 
 export interface FixtureObservation {
