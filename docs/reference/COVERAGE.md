@@ -137,15 +137,16 @@ The design v3 specifications found gaps the Phase A programme had no ID for. Eac
 | NEW-design-stage-2 | Research that can be verified and does not park wrongly | [design-stage](../design/specs/design-stage.md) | B4.4 |
 | NEW-design-stage-3 | Project documents in the repository, generated from the ledger | [design-stage](../design/specs/design-stage.md) | B4.4 |
 | NEW-design-stage-4 | Deep research that says how hard it looked | [design-stage](../design/specs/design-stage.md) | B4.4 |
+| NEW-design-stage-6 | Take over a project (DEC-43): trust first, the repository's agent configuration inert, the offline history secret scan, recon without a model and the as-built inventory (DS-TO-1–8); the brief as found, one batch of questions, the evidenced backlog and its approval (DS-TO-9–16) | [design-stage](../design/specs/design-stage.md), with [security](../design/specs/security.md) (SEC-54, SEC-55), [surface](../design/specs/surface.md) (SUR-56), [planner-pm](../design/specs/planner-pm.md) and [dashboard](../design/specs/dashboard.md) | B4.1 (trust, recon and the as-built inventory, *could not build* as a finding only; after B4.0b, whose NEW-gates-7 baseline DS-TO-6 writes); B4.4 (the brief as found, the conversation and the backlog, including the *stabilise* cards) |
 | NEW-extensibility-1 | Board-lifecycle hooks | [extensibility](../design/specs/extensibility.md) | B3.3 |
 | NEW-extensibility-2 | Hooks that fail visibly | [extensibility](../design/specs/extensibility.md) | B3.3 |
 | NEW-extensibility-3 | MCP on the official SDK | [extensibility](../design/specs/extensibility.md) | B3.3 |
 | NEW-extensibility-4 | Skills in the Agent Skills format | [extensibility](../design/specs/extensibility.md) | B3.3 |
 | NEW-extensibility-5 | The plugin container and the SDK package cut (DEC-29 O4) | [extensibility](../design/specs/extensibility.md) | B0 |
-| NEW-gates-1 | Unenforced invariants shown to a person | [gates](../design/specs/gates.md) | B2.3 |
-| NEW-gates-2 | Judge only what the card wrote | [gates](../design/specs/gates.md) | B2.3 |
-| NEW-gates-3 | Gate economics and flaky tests | [gates](../design/specs/gates.md) | B2.3 |
-| NEW-gates-4 | The visual layer to its design | [gates](../design/specs/gates.md) | B2.3 |
+| NEW-gates-1 | Unenforced invariants shown to a person | [gates](../design/specs/gates.md) | B4.0b (moved from B2.3 on 2026-09-25: B2.3's plan row named only M6, and these were not built) |
+| NEW-gates-2 | Judge only what the card wrote | [gates](../design/specs/gates.md) | B4.0b (moved from B2.3 on 2026-09-25: B2.3's plan row named only M6, and these were not built) |
+| NEW-gates-3 | Gate economics and flaky tests | [gates](../design/specs/gates.md) | B4.0b (moved from B2.3 on 2026-09-25: B2.3's plan row named only M6, and these were not built) |
+| NEW-gates-4 | The visual layer to its design | [gates](../design/specs/gates.md) | B4.0b (moved from B2.3 on 2026-09-25: B2.3's plan row named only M6, and these were not built) |
 | NEW-gates-5 | The gates the old design listed: templates, the claim gate, bundled static-analysis rules | [gates](../design/specs/gates.md) | B4.0b |
 | NEW-gates-6 | Tests that can fail, checked before the build | [gates](../design/specs/gates.md) | B4.0b |
 | NEW-gates-7 | Gates for existing codebases | [gates](../design/specs/gates.md) | B4.0b |
@@ -153,6 +154,7 @@ The design v3 specifications found gaps the Phase A programme had no ID for. Eac
 | NEW-integrations-1 | Idempotent import | [integrations](../design/specs/integrations.md) | B4.9 |
 | NEW-integrations-2 | Owner, delegate and accepter mapped to every tracker | [integrations](../design/specs/integrations.md) | B4.9 |
 | NEW-integrations-3 | External results name their source | [integrations](../design/specs/integrations.md) | B4.9 |
+| NEW-integrations-4 | Inherited issues reconciled against the code as proposals: already done, duplicate, stale or valid (DEC-43) | [integrations](../design/specs/integrations.md) | B4.4 |
 | NEW-kernel-1 | Hash chain v3 | [kernel](../design/specs/kernel.md) | B3.1 |
 | NEW-kernel-2 | A `principal` column on events | [kernel](../design/specs/kernel.md) | B3.1 |
 | NEW-kernel-3 | Held as a typed field | [kernel](../design/specs/kernel.md) | B3.1 |
@@ -285,6 +287,8 @@ Reported by the reviewers; **licences and maintenance to be verified before any 
 | Octokit, `@modelcontextprotocol/sdk`, `jira.js`, `@linear/sdk`, Slack Bolt | MIT / Apache-2.0 (to verify) | Official clients instead of hand-rolled ones |
 | `oauth2-proxy` | MIT | Identity through a proxy in the Team setup (DEC-35 keeps the proxy route) |
 | SimpleWebAuthn; `openid-client` | MIT | Passkeys and company SSO (OIDC) in the Team setup — [OPEN_QUESTIONS](OPEN_QUESTIONS.md#owner-decisions) O28, O29 — **approved** (DEC-38) |
+| gitleaks, over a taken-over repository's history; TruffleHog's live verification not used | MIT | The offline history secret scan of NEW-design-stage-6, with a bundled rule set when gitleaks is absent — **approved** (DEC-43) |
+| SecLists `xato-net-10-million-passwords-100000.txt` | MIT | The bundled common-password list of O30 (DEC-38) — **approved** (DEC-43) |
 | Inspect AI, `llama-bench`, `statsmodels`, mini-swe-agent, Terminal-Bench | MIT / BSD-3 / Apache-2.0 (to verify) | Evaluation, throughput and statistics |
 | Node's `util.parseArgs`, `@clack/prompts`, `execa`; Vale, MADR | built-in / MIT / MIT | CLI parsing and prompts; docs linting; decision records |
 | Tiel-Coder-35B-A3B-MTP weights | (model card) | See D1 |

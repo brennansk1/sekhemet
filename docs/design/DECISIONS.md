@@ -46,7 +46,7 @@ v1 includes: binding to a non-loopback address safely; an identity for each pers
 - **Reopen if:** v1 meets its Definition of Done.
 
 ### DEC-08
-**Libraries approved to add, when their workstream arrives.** *Owner, 2026-09-22 (D5).* SPDX parsing (`spdx-expression-parse`, `spdx-satisfies`, `spdx-correct`), and the official clients `@octokit/*`, `@modelcontextprotocol/sdk`, `jira.js`, `@linear/sdk` and Slack Bolt. Every other proposal in COVERAGE still needs the owner's yes, one by one. **Added 2026-09-24 (DEC-29):** Playwright and axe-core (development only), fast-check, Valibot, vLLM (a separate process). **Added 2026-09-25 (DEC-38):** SimpleWebAuthn and `openid-client`, and a bundled common-password list with a permissive licence. **Added 2026-09-25 (DEC-39):** `@anthropic-ai/sandbox-runtime`, `ipaddr.js`, `request-filtering-agent`. **(DEC-40):** `@huggingface/gguf`; the RedCode-Exec payload subset.
+**Libraries approved to add, when their workstream arrives.** *Owner, 2026-09-22 (D5).* SPDX parsing (`spdx-expression-parse`, `spdx-satisfies`, `spdx-correct`), and the official clients `@octokit/*`, `@modelcontextprotocol/sdk`, `jira.js`, `@linear/sdk` and Slack Bolt. Every other proposal in COVERAGE still needs the owner's yes, one by one. **Added 2026-09-24 (DEC-29):** Playwright and axe-core (development only), fast-check, Valibot, vLLM (a separate process). **Added 2026-09-25 (DEC-38):** SimpleWebAuthn and `openid-client`, and a bundled common-password list with a permissive licence. **Added 2026-09-25 (DEC-39):** `@anthropic-ai/sandbox-runtime`, `ipaddr.js`, `request-filtering-agent`. **(DEC-40):** `@huggingface/gguf`; the RedCode-Exec payload subset. **(DEC-43):** gitleaks (MIT) as the optional history secret scanner; the common-password list is SecLists' `xato-net-10-million-passwords-100000.txt` (MIT).
 - **Why:** they replace hand-rolled code the reviews found wrong (the licence check rejects MIT-0 and "MIT AND …"; three GitHub paths with three ID formats).
 - **Reopen if:** a licence or maintenance check at the time of adding fails.
 
@@ -279,6 +279,36 @@ What professional boards do not show is left off the card face: the agent's step
   - The card's 262,144-token context is not used: the host sets 16,384 (DEC-27).
   - Its default of thinking on with an unlimited budget is left to B2.5's thinking arms to measure.
 - **Reopen if:** only the owner.
+
+### DEC-43 — take over a project
+**Sekhemet takes on an unfinished, partly built project, beside starting a new one.** *Owner, 2026-09-25: approved the feature and delegated its details to the lead.* Written as [design-stage](specs/design-stage.md) §2.10 and NEW-design-stage-6, with [integrations](specs/integrations.md) NEW-integrations-4 for the inherited issues. Six steps, in this order:
+  1. **Trust first.** Nothing from the repository runs before workspace trust. Its own agent configuration stays inert, untrusted text until a person approves it; that approval is stored as workspace trust is, in the user directory and never in the repository. The full history is scanned offline for secrets. Submodules are not cloned recursively.
+  2. **Recon without a model:** manifests, lockfiles, scripts, CI, the ranked repo map, the git history, the docs and the connected tracker's issues.
+  3. **Prove what works by running it:** install with scripts off, then build and test confined with no network, twice. "Could not build" is a finding, never a stall. Half-done work is detected.
+  4. **A brief as found:** what the project claims, set against what runs, each claim labelled proven, claimed-unproven or contradicted, with citations.
+  5. **One PM conversation:** one batch of up to five questions at the start (one or none for a small leftover), in proportion to the project. Each question is a decision request with the `safe_default` policy whose default cites a finding. When the person approves the take-over plan, every unanswered question takes its default, recorded on the ledger; no timer and no deadline decide anything. **This is the later ruling, and an exception for a take-over only** to [design-stage](specs/design-stage.md) §2.2.3's one question at a time, to [planner-pm](specs/planner-pm.md) PM-P2-3's two open questions per pass, and to the reversal recorded in planner-pm §9 (one decision request each, at most two per pass); every other planning pass keeps those rules.
+  6. **A backlog with evidence, then approval:** stabilise, finish, defer. Inherited issues are reconciled as proposals. Characterize before change; no rewrite.
+- **Approved the same day:**
+  - **gitleaks** (MIT) as the optional offline scanner of the history's secrets. When it is not installed, a bundled offline rule set scans instead. TruffleHog's live verification is not used: it sends each candidate secret to its provider, which would break offline-by-default and send a secret off the machine.
+  - **The bundled common-password list** of [DEC-38](#dec-38--the-owner-approves-the-teams-recommendations) O30: SecLists' `xato-net-10-million-passwords-100000.txt` (MIT), bundled with its licence notice.
+- **Why:** half-finished repositories are the common case, and the professional first move on one is to find out what is true before planning. Repository-supplied agent configuration has run before a trust prompt in another coding agent (Check Point on CVE-2025-59536). Environment setup fails often enough in published benchmarks (EnvBench) that "could not build" must be a finding rather than a stall. Models tend to write code instead of asking (HumanEvalComm), so the questions are asked once, up front, each with a default. Evidence in [design-stage](specs/design-stage.md) §9.
+- **Reopen if:** only the owner.
+
+### DEC-44 — what to reuse for the rest of Phase B
+**The lead adopts the reuse survey's picks, each added when its workstream arrives.** *Lead, 2026-09-25, under the owner's delegation of every decision (DEC-42, reaffirmed the same day). Survey: `~/.sekhemet/plans/reuse_survey.md`, licences and last releases checked against the npm registry and GitHub on 2026-09-25 ([DEC-40](#dec-40--reuse-first-at-every-step)).*
+- **Approved to add** (each under DEC-08's licence and maintenance check when added):
+  - **gitleaks'** own rule file (MIT), vendored as the bundled offline rule set of DEC-43, so both scan paths report the same rule ids;
+  - **osv-scanner** in offline mode (Apache-2.0, already wrapped) with downloaded per-ecosystem databases, for the vulnerability inventory of a take-over;
+  - **ast-grep** (MIT), as a separate program, for half-done detection (stubs, `NotImplementedError`, `todo!()`, skipped and todo tests) across languages, before trust as it runs no repository code;
+  - **deps.dev** (Google's free API), in research mode only and through the one network policy, for dependency age, licences and advisories;
+  - the approved **spdx-*** packages with a vendored **ScanCode LicenseDB** category snapshot (CC-BY-4.0 data, attributed) as the one licence classifier;
+  - **yaml** (ISC) for CI files; **fast-xml-parser** (MIT) as one JUnit XML path; **@manypkg/get-packages** (MIT) for workspaces; **semver** (ISC); **nodemailer** (MIT-0) for email in B4.11; **marked** (MIT) for parsing project documents;
+  - **mutmut** (BSD-3), **cargo-mutants** (MIT) and **PIT** (Apache-2.0) as optional mutation tools run as separate programs.
+- **Models for our own tests only, never dependencies:** knip and dependency-cruiser (both would execute repository configuration or add a second parser against T2's one index).
+- **Built by us, because nothing usable exists:** an offline security rule set of about 30 curated rules for TypeScript, JavaScript and Python (Semgrep's registry forbids redistribution; the other sets are AGPL, Commons Clause or other languages), test-smell lint, stub-kill, the requirement graph, criterion lint, fault localisation for JS/TS, per-framework half-done checks, and the small presence, Inbox and gate-cache pieces.
+- **Not usable:** TruffleHog (AGPL; live verification sends secrets away), libyear (LGPL-3.0), elkjs (EPL-2.0 or GPL), askalono (archived). The semgrep and opengrep engines (LGPL-2.1) stay acceptable only as unmodified separate programs, as today.
+- **Why:** each pick saves a build the plan would otherwise do, under a licence the product can ship; the build list is what remains after the search.
+- **Reopen if:** a pick's licence or maintenance changes before it is added, or a workstream finds it does not fit.
 
 ## Engineering decisions
 

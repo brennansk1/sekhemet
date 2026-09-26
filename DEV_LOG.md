@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 40 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 41 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,37 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 41 — 2026-09-25 (design: taking over an unfinished project; the reuse survey; the password list)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver. Two read-only researchers (the design as it stood; outside practice), one design writer, one reuse surveyor, one full independent design review, a fix round, and a narrow re-check (Sonnet).
+
+- **The owner's request:** Sekhemet must take on unfinished projects: reconnaissance, collaboration and clarification as the PM, then proceeding. The owner delegated every decision.
+- **Research:**
+  - **The design:** covered existing repositories (onboarding, the error baseline, import) but never an unfinished one. Nothing recovered intent, proved what works, turned half-done work into cards, or had the PM confirm what was found. No audience walk inherits a repository.
+  - **Outside practice:** trust first (repository agent configuration has been an attack path, CVE-2025-59536); run it rather than trust the README (environment setup often fails, EnvBench); ask few questions, early, each with a default (HumanEvalComm, ClarifyGPT); plan, then approval (Kiro, Copilot Workspace).
+- **DEC-43, "Take over a project"** (NEW-design-stage-6, DS-TO-1–16; NEW-integrations-4; security 34c, 38a, SEC-54/55; SUR-56):
+  - **Trust first:** the repository's agent configuration is inert until approved, and the approval is stored as workspace trust is. An offline history secret scan (gitleaks, or its vendored rules). No submodules.
+  - **Recon** without a model.
+  - **Build and test,** confined with no network and twice; *could not build* is a finding.
+  - **Half-done work** detected.
+  - **A brief as found:** proven only by an executed result, with test links proposed until a person confirms them.
+  - **Questions:** one batch of up to five `safe_default` decision requests, defaults applied only when the plan is approved. This is the later ruling over the one-question rule, for take-over only.
+  - **An evidenced backlog:** stabilise, finish, defer. Secret rotation is a person's task; characterize before change.
+  - **Placement:**
+    - B4.1 builds trust, recon and the inventory, and now needs B4.0b;
+    - B4.4 builds the brief, the conversation and the backlog, and its milestone becomes "starts or takes over";
+    - DEFINITION_OF_DONE §6.4 gains an "inherit a half-built repository" walk.
+  - **A security defect it named:** `onboard` starts language servers before trust (surface item 9, SUR-56), fixed in B4.1.
+  - **Review:** 4 majors (the batch against the recorded one-question reversal; "proven" skipping P13's rules; approvals stored in the repository and events without data classes; stabilise cards against the `change` kinds and B4.1's order), all fixed and confirmed.
+- **DEC-44, reuse picks**, from a survey of every remaining workstream (`~/.sekhemet/plans/reuse_survey.md`):
+  - **Adopted:** gitleaks' rules, osv-scanner offline, ast-grep, deps.dev, spdx plus ScanCode's LicenseDB, yaml, fast-xml-parser, @manypkg/get-packages, semver, nodemailer, marked, and mutmut, cargo-mutants and PIT.
+  - **Built ourselves:** an offline security rule set, test-smell lint, stub-kill, the requirement graph, criterion lint, and JS/TS fault localisation.
+  - **Ruled out:** TruffleHog, libyear, elkjs, askalono.
+- **Coverage correction:** NEW-gates-1–4 were assigned to B2.3, whose plan row named only M6, and none was built. All four move to B4.0b.
+- **B4.10's last item:** the common-password list ships (SecLists `xato-net-10-million-passwords-100000.txt`, MIT, 100,000 entries, licence beside it). A test proves an 18-character common password is refused. PROVENANCE and OPEN_QUESTIONS are updated.
+- **Gate:** a snapshot of `b612f90` plus the design's files: `tsc -b` and Biome clean, 329 files and 2,547 tests pass.
+- **Where the cards stop:** B4.0a part 2 is fixed and checked and goes next; then B4.0b (brief in `~/.sekhemet/plans/B4.0b_plan.md`).
 
 ### Entry 40 — 2026-09-25 (B4.0a part 1: the seam)
 

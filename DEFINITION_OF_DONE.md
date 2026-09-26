@@ -101,7 +101,7 @@ Five levels, each built on the one before. Nothing is done at a level because so
 
 ### 5.1 A card is done when, in order:
 1. its acceptance tests were staged before any work and shown to test something, by the rule for the card's `change` ([DEC-26](docs/design/DECISIONS.md#dec-26--one-vocabulary-for-the-kind-of-card-and-the-run), [gates](docs/design/specs/gates.md)):
-   - `feature` and `fix`: the tests **failed** at an assertion before any work (red first; a types-only card is red on typecheck);
+   - `feature` and `fix`: the tests **failed** at an assertion before any work (red first; a types-only card is red on typecheck); a build-repair `fix` card is red when the build command fails on the base ([gates](docs/design/specs/gates.md) rule 6b, DEC-43);
    - `characterize`: the tests **pass** on the unchanged code — they capture what it does — and fail against stand-in implementations of the code they cover;
    - `refactor`: every existing test stays green and no public behaviour changes (the source index shows the exported surface unchanged, unless the card says otherwise);
    - `upgrade`: the tests the upgrade must keep passing are named, and pass after it;
@@ -149,7 +149,8 @@ All of these hold on one release commit. This is the target the plan works towar
 4. **The three audiences can do their jobs**, each proven by an end-to-end test against the real dashboard and a real board:
    - a **developer** finds which card is blocked and why within three actions from the board, at 1440 and 1100 pixels wide;
    - a **beginner**, with the Learn layer on, reaches the explanation of a WIP limit from the board by keyboard alone;
-   - a **non-developer** starts a new project and gets its status in plain words without a terminal, including at 400 pixels wide.
+   - a **non-developer** starts a new project and gets its status in plain words without a terminal, including at 400 pixels wide;
+   - a person **inherits a half-built repository and takes it to an accepted card** ([DEC-43](docs/design/DECISIONS.md#dec-43--take-over-a-project)): from *Take over a project*, nothing in the repository runs before trust, the brief as found labels each claim proven, claimed-unproven or contradicted with its citation, one batch of questions carries its defaults, and a card from the approved, evidenced backlog is built, gated and accepted, with no terminal and no file edited by hand ([design-stage](docs/design/specs/design-stage.md) DS-TO-15).
 5. **Accessible.** Every colour pair the tokens use as text or as a control's only edge meets WCAG 2.2 AA, asserted by a test over the tokens as used; every control has an accessible name; nothing a person needs is available only on hover.
 6. **The Team setup works** ([DEC-35](docs/design/DECISIONS.md#dec-35--one-product-two-setups-solo-and-team), extending [DEC-06](docs/design/DECISIONS.md#dec-06)): bound to a non-loopback address, an unauthenticated request cannot change anything, each of the four access levels can do only what [teams](docs/design/specs/teams.md) §2.2 allows, a person the project's Accept rule does not name cannot accept, and every event names its person.
 7. **A new user reaches a first card.** From a fresh clone and an empty repository, one documented first run leads to a card built and gated, on the reference machine, without editing a file by hand.

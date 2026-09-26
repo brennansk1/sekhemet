@@ -16,8 +16,9 @@ export const MAX_PASSWORD_LENGTH = 256;
 
 /**
  * The bundled list: one password per line, under the package's `data/`
- * directory. The list itself is chosen and added under DEC-08's licence
- * check; until it is, the check reports it missing (never fetched).
+ * directory. It is SecLists' `xato-net-10-million-passwords-100000.txt`
+ * (MIT, bundled with its licence notice; approved in DEC-43). Until the file
+ * is added, the check reports it missing (never fetched).
  */
 export const BUNDLED_PASSWORD_LIST = fileURLToPath(
   new URL("../../data/common-passwords.txt", import.meta.url),

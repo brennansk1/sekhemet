@@ -16,7 +16,7 @@ Decisions only the owner can make, each with the default the design uses until t
 | --- | --- | --- | --- |
 | O28 | **Passkeys in v1** with SimpleWebAuthn (MIT) for the Team setup's local accounts | B4.10 (NEW-teams-4, [teams](../design/specs/teams.md) item 12) | **Decided: yes** (DEC-38). Passkeys resist phishing and NIST SP 800-63B-4 allows syncable passkeys at AAL2 |
 | O29 | **Company SSO (OIDC) in v1** with `openid-client` (MIT): PKCE, a claim-to-level mapping and strict mode | B4.10 (NEW-teams-4, [teams](../design/specs/teams.md) item 12) | **Decided: yes** (DEC-38). Enterprise teams expect it, and the proxy route asks every team to run oauth2-proxy |
-| O30 | **Bundle a common-password list** for the Team setup's password check — which list, and under which licence? | B4.10 (NEW-teams-3, [teams](../design/specs/teams.md) item 11, TEAM-9) | **Decided** (DEC-38): a bundled, offline list with a permissive licence, never an online lookup (which would break air-gapped installs and the egress rules). The specific list is chosen in B4.10 under DEC-08's licence and maintenance check |
+| O30 | **Bundle a common-password list** for the Team setup's password check — which list, and under which licence? | B4.10 (NEW-teams-3, [teams](../design/specs/teams.md) item 11, TEAM-9) | **Decided** (DEC-38): a bundled, offline list with a permissive licence, never an online lookup (which would break air-gapped installs and the egress rules). Chosen in B4.10 ([DEC-43](../design/DECISIONS.md)): SecLists' `xato-net-10-million-passwords-100000.txt` (MIT), bundled as `apps/harness/data/common-passwords.txt` with its licence |
 
 **Answered:**
 

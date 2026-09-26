@@ -24,7 +24,7 @@ import {
   restoreCredentials,
 } from "../src/team/credential_store.js";
 import { Identity } from "../src/team/identity.js";
-import { checkPassword } from "../src/team/passwords.js";
+import { checkPassword, passwordListPresent } from "../src/team/passwords.js";
 import { requester } from "../src/team/requester.js";
 import { newSetupTokenCommand, recordSwitchToSolo, soloStartBlocked } from "../src/team/serve.js";
 import { type IdentitySettings, bindHost, identitySettings } from "../src/team/settings.js";
@@ -92,7 +92,7 @@ beforeEach(() => {
   log = new EventLog(db);
   dir = join(root, "identity");
   clock = Date.parse("2026-09-25T09:00:00Z");
-  // A tiny fixture list stands in for the bundled one (the real list is pending approval).
+  // A tiny fixture list stands in for the bundled one in the unit checks.
   writeFileSync(LIST(), "passwordpassword1\nqwertyuiopasdfgh\n");
 });
 
@@ -131,6 +131,13 @@ describe("TEAM-9: passwords", () => {
     checkPassword(PASSWORD, opts());
     expect(fetchSpy).not.toHaveBeenCalled();
     fetchSpy.mockRestore();
+  });
+
+  it("TEAM-9: the bundled list ships and refuses a common password that passes the length rule (DEC-43)", () => {
+    expect(passwordListPresent()).toBe(true);
+    // From SecLists' top-100,000 list, 18 characters: long enough, still common.
+    expect(checkPassword("123456789987654321")).toMatchObject({ ok: false, rule: "common" });
+    expect(checkPassword("correct horse battery staple, kept")).toMatchObject({ ok: true });
   });
 
   it("reports the bundled list as missing rather than refusing everything", () => {

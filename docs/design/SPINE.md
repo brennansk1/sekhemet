@@ -135,11 +135,11 @@ One row per spec, from its front matter; `docs.spec.ts` fails the build when the
 | [models](specs/models.md) | `partial` | M4, M7, M11 + 13 new |
 | [measurement](specs/measurement.md) | `partial` | M9, M10, M12, T7, T8, T11 + 5 new |
 | [planner-pm](specs/planner-pm.md) | `partial` | P1, P2, P6, P13 + 9 new |
-| [design-stage](specs/design-stage.md) | `partial` | P2, P7, P14, S8 + 5 new |
+| [design-stage](specs/design-stage.md) | `partial` | P2, P7, P14, S8 + 6 new |
 | [review-git](specs/review-git.md) | `partial` | S5, S6, P8 + 5 new |
 | [dashboard](specs/dashboard.md) | `partial` | P3, P4, P5, P11, P12, P13, T5, S3c + 10 new |
-| [security](specs/security.md) | `partial` | S1, S2, S3, S3a, S3b, S3c, S9 + 10 new |
-| [integrations](specs/integrations.md) | `partial` | P9, S3c + 3 new |
+| [security](specs/security.md) | `partial` | S1, S2, S3, S3a, S3b, S3c, S9 + 11 new |
+| [integrations](specs/integrations.md) | `partial` | P9, S3c + 4 new |
 | [extensibility](specs/extensibility.md) | `partial` | S9, S4 + 5 new |
 | [runtime](specs/runtime.md) | `partial` | T5, P9, S3c + 10 new |
 | [teams](specs/teams.md) | `not-built` | 11 new |
