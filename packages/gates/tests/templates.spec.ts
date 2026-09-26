@@ -58,4 +58,39 @@ describe("gate templates by language (G27)", () => {
     ]);
     expect(detectGateTemplate(repo({ "README.md": "" }))).toBeUndefined();
   });
+
+  it("derives a format gate from the project's own formatter when its configuration exists (GT-N5-1)", () => {
+    const fmt = (files: Record<string, string>) =>
+      (gateTemplate(repo(files)) ?? [])
+        .filter((g) => g.id === "format")
+        .map((g) => [g.command, g.args.join(" "), g.parser, g.rung, g.layer]);
+    const pkg = JSON.stringify({ scripts: { test: "vitest run" } });
+    expect(fmt({ "package.json": pkg, "pnpm-lock.yaml": "", "biome.json": "{}" })).toEqual([
+      ["pnpm", "exec biome format .", "biome", "lint", "static"],
+    ]);
+    expect(fmt({ "package.json": pkg, "package-lock.json": "{}", ".prettierrc": "{}" })).toEqual([
+      ["npx", "prettier --check .", "generic", "lint", "static"],
+    ]);
+    expect(
+      fmt({ "package.json": JSON.stringify({ prettier: {}, scripts: {} }), "yarn.lock": "" }),
+    ).toEqual([["yarn", "prettier --check .", "generic", "lint", "static"]]);
+    // Biome's check already formats: no second gate for the same thing.
+    expect(
+      fmt({
+        "package.json": JSON.stringify({ scripts: { lint: "biome check ." } }),
+        "biome.json": "{}",
+      }),
+    ).toEqual([]);
+    expect(fmt({ "package.json": pkg })).toEqual([]);
+    expect(fmt({ "pyproject.toml": "[tool.ruff]\nline-length = 100\n" })).toEqual([
+      ["python3", "-m ruff format --check .", "generic", "lint", "static"],
+    ]);
+    expect(fmt({ "requirements.txt": "", "ruff.toml": "" })).toHaveLength(1);
+    expect(fmt({ "pyproject.toml": "[project]\nname = 'x'\n" })).toEqual([]);
+    expect(fmt({ "Cargo.toml": "", "rustfmt.toml": "edition = '2021'" })).toEqual([
+      ["cargo", "fmt --check", "generic", "lint", "static"],
+    ]);
+    expect(fmt({ "Cargo.toml": "", ".rustfmt.toml": "" })).toHaveLength(1);
+    expect(fmt({ "Cargo.toml": "" })).toEqual([]);
+  });
 });

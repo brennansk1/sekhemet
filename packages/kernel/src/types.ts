@@ -261,6 +261,41 @@ export interface CardRecord {
    * and the command line.
    */
   configOverrides?: CardConfigOverrides;
+  /**
+   * Base tests whose behaviour this card changes, as `file > name` (or a
+   * whole file): the regression gate accepts their failure once the card's
+   * new versions are staged (gates rule 25a, planner-pm PM-N6-3).
+   */
+  supersedes?: string[];
+  /**
+   * What the card declares to its gates beyond its tests: DOM assertions and
+   * intended overlaps for the visual gate, a refactor's declared surface
+   * change, an upgrade's kept tests (gates rules 29, 6b; GT-N4-4, GT-N4-6,
+   * GT-TQ-8, GT-TQ-11).
+   */
+  gateChecks?: CardGateChecks;
+}
+
+/** A DOM assertion a card declares for the visual gate (GT-N4-6). */
+export interface CardDomAssertion {
+  selector: string;
+  /** Default true: the element is present. */
+  present?: boolean;
+  text?: string;
+  attribute?: string;
+  value?: string;
+}
+
+/** A card's declarations to its gates (`CardRecord.gateChecks`). */
+export interface CardGateChecks {
+  /** DOM assertions the visual gate checks with the project's (GT-N4-6). */
+  visualAssertions?: CardDomAssertion[];
+  /** Selector pairs whose overlap the card intends (GT-N4-4). */
+  allowOverlap?: [string, string][];
+  /** A refactor that changes its scope's exported surface on purpose (GT-TQ-8). */
+  surfaceChange?: boolean;
+  /** The tests an upgrade must keep passing, `file > name` (GT-TQ-11). */
+  keptTests?: string[];
 }
 
 /** A card's configuration overrides: `config.toml` sections, each a table (SUR-40). */

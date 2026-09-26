@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
-import ts from "typescript";
+import { ts } from "@sekhemet/gates";
 
 /**
  * Semantic symbol lookup for TypeScript and JavaScript (L9), through the

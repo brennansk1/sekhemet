@@ -601,6 +601,40 @@ const fixed =
     ...(where === "card" ? { cardId: m[1] } : where === "project" ? { projectId: m[1] } : {}),
   });
 
+/**
+ * What a card declares to its gates (`gateChecks`: DOM assertions, allowed
+ * overlaps, a refactor's declared surface change, an upgrade's kept tests)
+ * changes what the gates judge, so it needs Accept as well as the route's own
+ * permission — never instead of it (gates rule 31a, GT-N4-6).
+ */
+function declaresGateChecks(body: Record<string, unknown>): boolean {
+  if (body.gateChecks !== undefined) return true;
+  return (
+    Array.isArray(body.parts) &&
+    body.parts.some(
+      (p) => typeof p === "object" && p !== null && (p as { gateChecks?: unknown }).gateChecks,
+    )
+  );
+}
+
+/** The route's permissions, with Accept added (never substituted) when the body declares gate checks. */
+const withGateChecks =
+  (inner: Resolver): Resolver =>
+  (m, body) => {
+    if (body === undefined) {
+      const rule = inner(m, undefined);
+      return { ...rule, needsBody: true };
+    }
+    const rule = inner(m, body);
+    if (rule.needsBody || !declaresGateChecks(body)) return rule;
+    return {
+      ...rule,
+      permissions: rule.permissions.includes("accept")
+        ? rule.permissions
+        : [...rule.permissions, "accept"],
+    };
+  };
+
 /** Every write route the dashboard server serves, and the permission it needs (TEAM-4). */
 const ROUTES: [methods: string[], pattern: RegExp, resolve: Resolver][] = [
   [
@@ -623,13 +657,17 @@ const ROUTES: [methods: string[], pattern: RegExp, resolve: Resolver][] = [
   [["POST"], new RegExp(`^/api/cards/(${CARD})/(rewind|fork|run)$`), fixed("agent.start", "card")],
   [["POST"], new RegExp(`^/api/cards/(${CARD})/reroute$`), fixed("issue.edit", "card")],
   [["POST"], new RegExp(`^/api/cards/(${CARD})/reorder$`), fixed("priority.change", "card")],
-  [["POST", "PATCH"], new RegExp(`^/api/cards/(${CARD})/split$`), fixed("scope.change", "card")],
+  [
+    ["POST", "PATCH"],
+    new RegExp(`^/api/cards/(${CARD})/split$`),
+    withGateChecks(fixed("scope.change", "card")),
+  ],
   [["POST", "PATCH"], new RegExp(`^/api/cards/(${CARD})/gate$`), fixed("gates.run", "card")],
   [["POST"], new RegExp(`^/api/cards/(${CARD})/attachments$`), fixed("issue.file", "card")],
   [
     ["PATCH"],
     new RegExp(`^/api/cards/(${CARD})$`),
-    (m, body) =>
+    withGateChecks((m, body) =>
       body === undefined
         ? { permissions: [], cardId: m[1], needsBody: true }
         : {
@@ -639,11 +677,12 @@ const ROUTES: [methods: string[], pattern: RegExp, resolve: Resolver][] = [
             ],
             cardId: m[1],
           },
+    ),
   ],
   [
     ["POST", "PATCH"],
     new RegExp(`^/api/projects/(${PROJ})/cards$`),
-    fixed("issue.file", "project"),
+    withGateChecks(fixed("issue.file", "project")),
   ],
   [
     ["PATCH"],
@@ -714,6 +753,8 @@ const ROUTES: [methods: string[], pattern: RegExp, resolve: Resolver][] = [
     fixed("members.manage"),
   ],
   [["POST"], /^\/api\/projects$/, fixed("project.create")],
+  // Gates rule 31 (GT-N4-1): a new visual baseline is a person's approval.
+  [["POST"], /^\/api\/visual\/baselines\/[\w.-]+\/approve$/, fixed("accept")],
 ];
 
 const IDENTITY_ROUTES = /^\/api\/(session|setup|tokens|account|oidc|passkeys|invites)(\/|$)/;

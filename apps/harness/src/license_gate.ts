@@ -8,6 +8,7 @@ import {
   type GateRung,
   type GateRunner,
   RERUN_GATES,
+  type RunGatesOptions,
   type RungOutcome,
   gateCopy,
 } from "@sekhemet/gates";
@@ -255,8 +256,12 @@ export function withLicenseGate(inner: GateRunner, repoRoot: string, base = "mai
   return {
     // GT-M6-5: the gate this wrapper adds, for `note`'s enum.
     gateIds: [...(inner.gateIds ?? []), "licenses"],
-    runGates: async (rungs: GateRung[], cwd: string): Promise<GateResult> => {
-      const res = await inner.runGates(rungs, cwd);
+    runGates: async (
+      rungs: GateRung[],
+      cwd: string,
+      runOptions?: RunGatesOptions,
+    ): Promise<GateResult> => {
+      const res = await inner.runGates(rungs, cwd, runOptions);
       const started = Date.now();
       let lic: { failures: GateFailure[]; skipped?: string };
       try {

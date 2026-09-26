@@ -68,7 +68,8 @@ http.createServer((q, r) => { r.setHeader("content-type", "text/html"); r.end('<
       const r = await runVisualGates({ root, config, stateDir: join(root, ".sekhemet") });
       // The server ran (it wrote inside the worktree) and the page was checked.
       expect(existsSync(join(root, "env.json"))).toBe(true);
-      expect(r.outcomes.every((o) => !o.skipped)).toBe(true);
+      // Every check ran; only the DOM check has nothing declared to judge (GT-N4-6).
+      expect(r.outcomes.filter((o) => o.skipped).map((o) => o.gate)).toEqual(["visual-dom"]);
       expect(r.failures.filter((f) => f.gate === "visual-layout")).toEqual([]);
       expect(existsSync(marker)).toBe(false);
       const seen = JSON.parse(readFileSync(join(root, "env.json"), "utf8")) as string[];

@@ -84,6 +84,40 @@ describe("the payload schema registry (K-S7-4, K-S7-9, K-S7-10)", () => {
     expect(count()).toBe(before + 1);
   });
 
+  it("K-S7-4: a card's nightly mutation score is registered, its measure checked (GT-N5-5)", () => {
+    const before = count();
+    const measure = {
+      score: null,
+      killed: 0,
+      total: 0,
+      refused: "no live mutant: every mutant judged was stillborn, so nothing was measured",
+      notMeasured: [],
+      stillborn: 2,
+      equivalent: 0,
+      acceptance: { score: null, killed: 0, total: 0, reason: "not run" },
+      stale: ["src/a.ts:3"],
+    };
+    log.appendNow({
+      actor: "system",
+      type: "card/mutation_completed",
+      cardId: "c",
+      payload: { queue: ".sekhemet/nightly/mutation/c.json", measure },
+    });
+    expect(count()).toBe(before + 1);
+    expect(() =>
+      log.appendNow({
+        actor: "system",
+        type: "card/mutation_completed",
+        cardId: "c",
+        payload: {
+          queue: ".sekhemet/nightly/mutation/c.json",
+          measure: { ...measure, score: "high" },
+        },
+      }),
+    ).toThrow(/card\/mutation_completed.*score/);
+    expect(count()).toBe(before + 1);
+  });
+
   it("K-S7-9: a personal, free-text or secret-bearing field goes only in the private part", async () => {
     const before = count();
     expect(() =>

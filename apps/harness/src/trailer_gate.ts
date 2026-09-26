@@ -4,6 +4,7 @@ import {
   type GateResult,
   type GateRung,
   type GateRunner,
+  type RunGatesOptions,
   type RungOutcome,
   gateCopy,
 } from "@sekhemet/gates";
@@ -69,8 +70,12 @@ export function withTrailerGate(inner: GateRunner, base = "main"): GateRunner {
   return {
     // GT-M6-5: the gate this wrapper adds, for `note`'s enum.
     gateIds: [...(inner.gateIds ?? []), "trailers"],
-    runGates: async (rungs: GateRung[], cwd: string): Promise<GateResult> => {
-      const res = await inner.runGates(rungs, cwd);
+    runGates: async (
+      rungs: GateRung[],
+      cwd: string,
+      runOptions?: RunGatesOptions,
+    ): Promise<GateResult> => {
+      const res = await inner.runGates(rungs, cwd, runOptions);
       const started = Date.now();
       const failures = trailerGate(cwd, base);
       const outcome: RungOutcome = {

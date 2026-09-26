@@ -8,7 +8,20 @@ import {
   extractConventions,
   loadProjectConventions,
 } from "@sekhemet/context";
-import { detectGateTemplate, gateTemplate, renderGatesToml } from "@sekhemet/gates";
+import {
+  BASELINE_EVENT,
+  type BaselineEntry,
+  DeterministicGateRunner,
+  baselineFromEvents,
+  captureBaseline,
+  detectGateTemplate,
+  gateTemplate,
+  loadGatesConfig,
+  partialFiles,
+  readWorkspace,
+  renderGatesToml,
+  verificationRungs,
+} from "@sekhemet/gates";
 import type { CardStore, EventLog } from "@sekhemet/kernel";
 import {
   type LocalInferenceAdapter,
@@ -17,12 +30,13 @@ import {
   type QualificationCase,
   qualifyModel,
 } from "@sekhemet/models";
+import { confinedSandbox } from "@sekhemet/sandbox";
 import { deriveGates } from "./init.js";
 import { applyExploration, exploreProject } from "./learning/explore.js";
 import { LearningStore } from "./learning/store.js";
 
 /**
- * `sekhemet onboard` (X1, design "Onboarding run"): the seven steps, in
+ * `sekhemet onboard` (X1, design "Onboarding run"): the eight steps, in
  * order, each writing what it learned under `.sekhemet/onboard/` so the
  * next card does not rediscover it:
  *
@@ -34,7 +48,9 @@ import { LearningStore } from "./learning/store.js";
  *      playbook with evidence;
  *   6. drafts of AGENTS.md and CLAUDE.md;
  *   7. the qualification suite for the machine's models, with cases built
- *      from this repository's own files.
+ *      from this repository's own files;
+ *   8. the onboarding baseline: what already fails, recorded on the ledger
+ *      so cards count only new failures (gates rule 15a).
  *
  * Nothing is enforced until the user reviews it: `--apply` installs the
  * proposed gates and the AGENTS.md / CLAUDE.md drafts.
@@ -65,6 +81,12 @@ export interface OnboardReport {
   drafts: string[];
   qualification: { modelId: string; passRate: number; qualified: boolean }[];
   applied: string[];
+  /**
+   * Step 8, the onboarding baseline (gates rule 15a, GT-BF-2): how many
+   * pre-existing findings it holds, how many are flaky tests, and whether it
+   * is on the ledger. Absent when the step was switched off.
+   */
+  baseline?: { entries: number; flaky: number; recorded: boolean; path: string };
 }
 
 const SKIP = new Set([
@@ -327,6 +349,14 @@ export interface OnboardOptions {
   lspTimeoutMs?: number;
   store?: { log: EventLog; cardStore: CardStore };
   say?: (line: string) => void;
+  /**
+   * Step 8, the onboarding baseline (gates rule 15a): run the gates, the
+   * suite twice, confined with no network, and record what already fails.
+   * Default on.
+   */
+  baseline?: boolean;
+  /** A read-only audit (S12): only the static gates run for the baseline. */
+  restricted?: boolean;
 }
 
 export async function runOnboard(root: string, opts: OnboardOptions = {}): Promise<OnboardReport> {
@@ -478,6 +508,17 @@ export async function runOnboard(root: string, opts: OnboardOptions = {}): Promi
     );
   }
 
+  // 8. The onboarding baseline, on the gates cards will run (after --apply,
+  // the proposed ones): what already fails is recorded, so a card is never
+  // asked to fix what it did not write (gates rule 15a, GT-BF-2).
+  let baseline: OnboardReport["baseline"];
+  if (opts.baseline !== false) {
+    baseline = await recordOnboardingBaseline(root, dir, opts.store?.log, opts.restricted === true);
+    say(
+      `8. Baseline: ${baseline.entries} pre-existing finding(s), ${baseline.flaky} flaky test(s)${baseline.recorded ? ", on the ledger" : ""} (${baseline.path}); cards count only new ones.`,
+    );
+  }
+
   const report: OnboardReport = {
     repoMap: { files: map.files.length, tokens: map.usedTokens, cacheKey: map.cacheKey },
     languageServers,
@@ -488,9 +529,102 @@ export async function runOnboard(root: string, opts: OnboardOptions = {}): Promi
     drafts,
     qualification,
     applied,
+    ...(baseline ? { baseline } : {}),
   };
   writeFileSync(join(dir, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
   return report;
+}
+
+// ------------------------------------------------ step 8: the onboarding baseline
+
+/**
+ * Take the onboarding baseline (gates rule 15a, GT-BF-2; design-stage
+ * DS-TO-6): every blocking gate the project runs — the static ones once, the
+ * suite twice — confined, with no network and no verdict cache, and record it
+ * as one `project/baseline` event with each run's command and exit code.
+ * Written to `.sekhemet/onboard/baseline.json` too, for the person to read.
+ */
+export async function recordOnboardingBaseline(
+  root: string,
+  dir: string,
+  log: EventLog | undefined,
+  restricted = false,
+): Promise<NonNullable<OnboardReport["baseline"]>> {
+  const gatesConfig = loadGatesConfig(root);
+  const runner = new DeterministicGateRunner(confinedSandbox(restricted), {
+    repoRoot: root,
+    expectedConfigSha256: gatesConfig.sha256,
+    maxFailuresReported: Number.POSITIVE_INFINITY,
+    verdictCache: false,
+  });
+  // In a workspace, every package's own gates too, as a card's run has them
+  // (rule 34a, review M3): the tree is the base.
+  const ws = readWorkspace(root);
+  const taken = await captureBaseline({
+    runner,
+    root,
+    rungs: verificationRungs(gatesConfig.gates, restricted),
+    gates: gatesConfig.gates,
+    ...(ws ? { workspace: { base: "HEAD", changed: ws.packages.map((p) => p.dir) } } : {}),
+  });
+  const payload = {
+    kind: "recorded",
+    entries: taken.entries,
+    runs: taken.runs,
+    // Minor 1: flaky tests are left to quarantine, and listed.
+    flaky: taken.flaky,
+    // Review M2: files the source index reads only in part are pre-existing.
+    partial: partialFiles(root),
+    gatesSha256: gatesConfig.sha256,
+  };
+  const path = join(dir, "baseline.json");
+  writeFileSync(path, `${JSON.stringify(payload, null, 2)}\n`);
+  if (log) await log.append({ actor: "system", type: BASELINE_EVENT, payload });
+  return {
+    entries: taken.entries.length,
+    flaky: taken.flaky.length,
+    recorded: log !== undefined,
+    path: relative(root, path),
+  };
+}
+
+/** The baseline in force, from the ledger (GT-BF-2); undefined when onboarding never recorded one. */
+export async function loadBaseline(
+  log: Pick<EventLog, "getEventsByTypes">,
+): Promise<ReturnType<typeof baselineFromEvents>> {
+  return baselineFromEvents(await log.getEventsByTypes([BASELINE_EVENT, "card/accepted"]));
+}
+
+/** What records a baseline event: the event log, or the card store's project-wide facts. */
+export interface BaselineWriter {
+  append(params: { actor: string; type: string; payload: unknown }): Promise<unknown>;
+}
+
+/**
+ * Record baselined diagnostics a card's gates no longer found (rule 15a):
+ * the baseline shrinks by them once the card is accepted.
+ */
+export async function recordBaselineShrink(
+  log: BaselineWriter,
+  gone: readonly BaselineEntry[],
+  card?: string,
+  gates?: readonly string[],
+): Promise<void> {
+  // Review M4: a card's run that judged its gates and found every baselined
+  // diagnostic still there is recorded too — its shrink is the card's last
+  // judged run's, so an earlier run's disappearance is taken back. Without a
+  // card there is nothing to take back.
+  if (gone.length === 0 && (card === undefined || !gates?.length)) return;
+  await log.append({
+    actor: "system",
+    type: BASELINE_EVENT,
+    payload: {
+      kind: "shrink",
+      fingerprints: gone.map((e) => e.fingerprint),
+      ...(card ? { card } : {}),
+      ...(gates?.length ? { gates: [...gates] } : {}),
+    },
+  });
 }
 
 // ----------------------------------------------------------- X2: convention drift

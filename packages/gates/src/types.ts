@@ -61,6 +61,14 @@ export interface GateFailure {
    * such failures remain, the card stops with `done_pending_gates`.
    */
   notRun?: boolean;
+  /**
+   * A finding no repair of the Worker's can clear — the gate's verdict is
+   * partial on a file the card did not change (GT-IX-1) — so it is routed to
+   * a person, never to the repair loop: ranked after every real failure, and
+   * when only such failures (and gates that could not run) remain, the card
+   * stops with `done_pending_gates`.
+   */
+  forPerson?: boolean;
 }
 
 /** The same type: every `GateFailure` is complete. Kept as a name for readers of rank.ts. */
@@ -74,6 +82,30 @@ export interface GateResult {
   defects?: string[];
   /** Per-gate outcomes, retained even when a later gate fails. */
   rungResults?: RungOutcome[];
+  /**
+   * The workspace packages whose own gates this run included (gates rule
+   * 34a): present only when the runner ran the package stage itself, so the
+   * verification does not run it a second time.
+   */
+  workspace?: { packages: string[] };
+}
+
+/** What a caller asks of one run of the declared gates beyond its rungs. */
+export interface RunGatesOptions {
+  /**
+   * Run the functional gate on the full suite, never impacted tests only
+   * (review B1): what a layer that would forgive every failure of an
+   * impacted-only run asks for, so it judges the full suite instead.
+   */
+  fullSuite?: boolean;
+  /**
+   * The card's change in a workspace (gates rule 34a, GT-BF-4): its base and
+   * changed files. A runner that runs package gates runs those of the
+   * packages the change touched and their dependents first, through the same
+   * verdict cache and quarantine as the declared gates, and says so in
+   * `GateResult.workspace`.
+   */
+  workspace?: { base: string; changed: readonly string[] };
 }
 
 export interface RungOutcome {
@@ -100,6 +132,8 @@ export interface RungOutcome {
   source?: GateResultSource;
   /** The mutation gate's measurement, for the evidence (measurement MS-M10-4). */
   mutation?: MutationMeasure;
+  /** Files the gate made for the evidence bundle: screenshots, baselines, diffs (rule 35, GT-N4-3). */
+  artifacts?: { kind: string; ref: string }[];
   /**
    * The verdict came from the cache: the same tree and the same gate
    * definition already ran on this card, so no process started (rule 33,
@@ -110,6 +144,55 @@ export interface RungOutcome {
   note?: string;
   /** Tests that failed, then passed on a re-run of the unchanged tree: flaky, quarantined for the card (rule 34, GT-N3-4). */
   quarantined?: QuarantinedTest[];
+  /**
+   * Files the gate read facts from that the source index parsed only with
+   * errors recovered, or has no parser for: its verdict on them is partial,
+   * never a pass (GT-IX-1).
+   */
+  partial?: { file: string; reason: string; baselined?: boolean }[];
+  /**
+   * `false` when the functional gate ran only the impacted tests (they
+   * failed, so the full suite did not run): no layer may forgive such an
+   * outcome into a pass (review B1). Absent when the full suite ran.
+   */
+  fullSuite?: false;
+  /**
+   * For a gate that exited non-zero: whether every failure in its output
+   * was read — a JSON or JUnit report, or a summary whose counts equal the
+   * failures parsed, with nothing cut by the output cap. Only an outcome
+   * read in full may be forgiven into a pass (review M1); `parseGap` says
+   * what could not be read.
+   */
+  parsedInFull?: boolean;
+  parseGap?: string;
+  /**
+   * Base tests the card declared superseded whose failure the regression
+   * gate accepted, each with the staged tests that replace it (rule 25a,
+   * GT-BF-1).
+   */
+  superseded?: { test: string; staged: string[] }[];
+  /**
+   * The bounds gate's count of tool-applied diff lines and the bound in
+   * force (rule 12, GT-BF-3, GT-BF-5): `lines` 0 and no tool when none.
+   */
+  toolApplied?: ToolAppliedCount;
+}
+
+/** Diff lines a declared mechanical tool applied, in total, with the bound in force. */
+export interface ToolAppliedCount {
+  tool?: string;
+  /** Diff lines (added and removed) the tool applied, the unit of `max_diff_lines`. */
+  lines: number;
+  limit: number;
+  /** The tool's own record for the counted files: lines it changed, per file. */
+  files?: Record<string, number>;
+}
+
+/** What a mechanical tool recorded it changed: lines per file (loop `toolAppliedLines`). */
+export interface ToolAppliedRecord {
+  tool: string;
+  /** Lines the tool changed, per repository-relative file. */
+  files: Record<string, number>;
 }
 
 /** A flaky test, quarantined for the card with both runs attached (rule 34, GT-N3-4). */
@@ -149,6 +232,7 @@ export type GateResultSource =
  * (`refused`) or the change has no mutable lines. It is never 1 by default.
  */
 export interface MutationMeasure {
+  /** The suite score: the diff's mutants the whole suite kills, over non-equivalent, non-stillborn mutants (GT-TQ-3). */
   score: number | null;
   killed: number;
   total: number;
@@ -156,6 +240,33 @@ export interface MutationMeasure {
   refused?: string;
   /** Changed code in a language the gate cannot mutate, each with the reason. */
   notMeasured: { file: string; reason: string }[];
+  /**
+   * The acceptance-test score: the diff's mutants the card's acceptance
+   * tests alone kill (GT-TQ-3), what feeds "proven"; `reason` when it was
+   * not measured. Mutants of a per-language tool count in the suite score only.
+   */
+  acceptance?: { score: number | null; killed: number; total: number; reason?: string };
+  /** Mutants the typecheck rejected, excluded from both scores (GT-TQ-4). */
+  stillborn?: number;
+  /**
+   * Why no mutant was judged stillborn: the typecheck fails on the unmutated
+   * tree (the onboarding baseline applied), so its verdict on a mutant says
+   * nothing about the mutant, and every mutant ran through the tests (GT-TQ-4).
+   */
+  stillbornNotJudged?: string;
+  /** Mutants whose transpiled output is the original's, excluded and never run (GT-TQ-4). */
+  equivalent?: number;
+  /**
+   * The diff had more mutants than `mutation_max`: the first were scored and
+   * the rest queued for the nightly run (GT-N5-5).
+   */
+  partial?: { scored: number; deferred: number; queue: string };
+  /** Per-language mutation tools that ran (GT-N5-2), each with why it gave no verdict, when it did not. */
+  tools?: { tool: string; files: string[]; refused?: string }[];
+  /** `mutation_blocking` and a test gap: the requirement shows passing, strength unmet (rule 32a). */
+  strengthUnmet?: boolean;
+  /** Deferred mutants the nightly run did not run: their file changed since. */
+  stale?: string[];
 }
 
 export interface BoundsCheckOptions {
@@ -209,6 +320,12 @@ export interface GateProjectConfig {
   maxFiles: number;
   maxDiffLines: number;
   /**
+   * Diff lines a declared mechanical tool applied on the Worker's behalf
+   * (rename, codemod, formatter, lockfile update), counted apart from
+   * `maxDiffLines` (rule 12, GT-BF-3, GT-BF-5); default 500.
+   */
+  maxToolAppliedLines: number;
+  /**
    * Formatter run over the card's scope files before verification, as argv;
    * scope file paths are appended. Formatting is not worth a model's turns, and
    * running it only on scope files keeps protected tests untouched.
@@ -253,6 +370,8 @@ export interface GateProjectConfig {
   gateHost?: import("./gate_host.js").GateHostConfig;
   /** The visual layer (G17-G20), from the `[visual]` table. */
   visual?: import("./visual.js").VisualConfig;
+  /** The claim gate for research cards (rule 27a, GT-N5-3), from the `[claims]` table. */
+  claims?: import("./claims.js").ClaimGateConfig;
 }
 
 export interface GatesConfig {
@@ -272,7 +391,8 @@ export interface GatesConfig {
 }
 
 export interface GateRunner {
-  runGates(rungs: GateRung[], cwd: string): Promise<GateResult>;
+  /** Every wrapper passes `options` to its inner runner unchanged. */
+  runGates(rungs: GateRung[], cwd: string, options?: RunGatesOptions): Promise<GateResult>;
   /**
    * The ids of the gates a wrapper adds around its inner runner, innermost
    * first (GT-M6-5: `note`'s enum is built from them, never from a hand copy).

@@ -39,6 +39,7 @@ import {
   type CardConfigOverrides,
   type CardDelegate,
   type CardDossier,
+  type CardGateChecks,
   type CardHold,
   type CardRecord,
   type CardStatus,
@@ -144,6 +145,10 @@ export interface CreateCardInput {
   delegate?: CardDelegate | null;
   /** The card's layer of the configuration (SUR-40). */
   configOverrides?: CardConfigOverrides;
+  /** Base tests whose behaviour this card changes, as `file > name` (gates rule 25a). */
+  supersedes?: string[];
+  /** What the card declares to its gates (GT-N4-4, GT-N4-6, GT-TQ-8, GT-TQ-11). */
+  gateChecks?: CardGateChecks;
 }
 
 /**
@@ -192,6 +197,10 @@ export interface CardUpdate {
   change?: CardChange;
   /** The card's layer of the configuration (SUR-40); `null` clears it. */
   configOverrides?: CardConfigOverrides | null;
+  /** The base tests this card supersedes (gates rule 25a); `null` clears them. */
+  supersedes?: string[] | null;
+  /** What the card declares to its gates; `null` clears it. */
+  gateChecks?: CardGateChecks | null;
 }
 
 /**
@@ -200,6 +209,52 @@ export interface CardUpdate {
  * where it would make every later replay throw.
  */
 const CARD_TIERS: readonly CardTier[] = ["initiative", "epic", "feature", "story", "task"];
+
+/** What is wrong with a `gateChecks` value, or undefined when it has the declared shape. */
+function gateChecksProblem(v: unknown): string | undefined {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return "must be a table";
+  const g = v as Record<string, unknown>;
+  const known = ["visualAssertions", "allowOverlap", "surfaceChange", "keptTests"];
+  const extra = Object.keys(g).filter((k) => !known.includes(k));
+  if (extra.length > 0) return `has unknown field(s) ${extra.join(", ")}`;
+  const str = (x: unknown) => typeof x === "string" && x.length > 0;
+  if (
+    g.visualAssertions !== undefined &&
+    !(
+      Array.isArray(g.visualAssertions) &&
+      g.visualAssertions.every(
+        (a) =>
+          typeof a === "object" &&
+          a !== null &&
+          str((a as { selector?: unknown }).selector) &&
+          ["present", "text", "attribute", "value"].every((k) => {
+            const x = (a as Record<string, unknown>)[k];
+            return (
+              x === undefined || (k === "present" ? typeof x === "boolean" : typeof x === "string")
+            );
+          }),
+      )
+    )
+  ) {
+    return "visualAssertions must be a list of {selector, present?, text?, attribute?, value?}";
+  }
+  if (
+    g.allowOverlap !== undefined &&
+    !(
+      Array.isArray(g.allowOverlap) &&
+      g.allowOverlap.every((p) => Array.isArray(p) && p.length === 2 && p.every(str))
+    )
+  ) {
+    return "allowOverlap must be a list of selector pairs";
+  }
+  if (g.surfaceChange !== undefined && typeof g.surfaceChange !== "boolean") {
+    return "surfaceChange must be true or false";
+  }
+  if (g.keptTests !== undefined && !(Array.isArray(g.keptTests) && g.keptTests.every(str))) {
+    return "keptTests must be a list of test names";
+  }
+  return undefined;
+}
 
 function validateCardFields(
   id: string,
@@ -212,8 +267,13 @@ function validateCardFields(
     split?: unknown;
     delegate?: unknown;
     configOverrides?: unknown;
+    gateChecks?: unknown;
   },
 ): void {
+  if (fields.gateChecks !== undefined && fields.gateChecks !== null) {
+    const why = gateChecksProblem(fields.gateChecks);
+    if (why) throw new Error(`Card ${id}: gateChecks ${why}`);
+  }
   const o = fields.configOverrides;
   if (o !== undefined && o !== null) {
     const table = (v: unknown) => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -439,6 +499,12 @@ export class CardStore {
             ),
           }
         : {}),
+      ...(row.supersedes !== null && row.supersedes !== undefined
+        ? { supersedes: parseJsonColumn<string[]>(row.supersedes, []) }
+        : {}),
+      ...(row.gate_checks !== null && row.gate_checks !== undefined
+        ? { gateChecks: parseJsonColumn<CardGateChecks>(row.gate_checks, {}) }
+        : {}),
     };
   }
 
@@ -485,6 +551,7 @@ export class CardStore {
       split: input.split,
       delegate: input.delegate,
       configOverrides: input.configOverrides,
+      gateChecks: input.gateChecks,
     });
     // K-S4-9: a card starts where no entry condition has been skipped —
     // parked only with its recorded reason (rule 27).
@@ -572,6 +639,8 @@ export class CardStore {
       owner: input.owner ?? ("owner" in assigned ? assigned.owner : null),
       delegate: input.delegate ?? ("delegate" in assigned ? assigned.delegate : null),
       configOverrides: input.configOverrides ?? null,
+      supersedes: input.supersedes ?? null,
+      gateChecks: input.gateChecks ?? null,
       createdAt: now,
       updatedAt: now,
     };
@@ -789,6 +858,7 @@ export class CardStore {
       kind: patch.kind,
       change: patch.change,
       configOverrides: patch.configOverrides,
+      gateChecks: patch.gateChecks,
     });
     // K-N9-2: the stored kind and change are a person's decision, named, and
     // never changed under a running attempt or its verification.

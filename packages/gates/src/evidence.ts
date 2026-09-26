@@ -2,7 +2,13 @@ import { createHash } from "node:crypto";
 import { canonicalJson } from "@sekhemet/kernel";
 import { NO_GATES_CONFIG } from "./config.js";
 import type { TestStrengthRecord } from "./test_strength.js";
-import type { GateFailure, GateResult, QuarantinedTest, RungOutcome } from "./types.js";
+import type {
+  GateFailure,
+  GateResult,
+  QuarantinedTest,
+  RungOutcome,
+  ToolAppliedCount,
+} from "./types.js";
 
 /** Model and sampling settings a result was produced under. */
 export interface RunSettings {
@@ -145,6 +151,16 @@ export interface EvidenceBundle {
    * and which, with both runs, so a suite comparison can report them.
    */
   quarantined?: { count: number; tests: QuarantinedTest[] };
+  /**
+   * Every base test the card superseded, with the staged tests that replace
+   * it (rule 25a, GT-BF-1): a person sees each one in Review.
+   */
+  superseded?: { test: string; staged: string[] }[];
+  /**
+   * Diff lines a declared mechanical tool applied, apart from the Worker's,
+   * and `max_tool_applied_lines` in force (rule 35, GT-BF-3, GT-BF-5).
+   */
+  toolApplied?: ToolAppliedCount;
 }
 
 /** What the card's extensions did not do as written (extensibility EXT-10, EXT-22a, EXT-25). */
@@ -261,7 +277,11 @@ export function compileEvidence(params: CompileEvidenceParams): EvidenceBundle {
     skipped: (params.gateResult.rungResults ?? [])
       .filter((r) => r.skipped && !r.unavailable)
       .map((r) => ({ gate: r.gate, reason: r.reason ?? "not run" })),
-    artifacts: params.artifacts ?? [],
+    // The caller's artifacts and every gate's own (screenshots and diffs, GT-N4-3).
+    artifacts: [
+      ...(params.artifacts ?? []),
+      ...(params.gateResult.rungResults ?? []).flatMap((r) => r.artifacts ?? []),
+    ],
     abandoned: params.abandoned ?? [],
     ...(executesLater(params.filesTouched).length
       ? { executesLater: executesLater(params.filesTouched) }
@@ -280,7 +300,25 @@ export function compileEvidence(params: CompileEvidenceParams): EvidenceBundle {
     ...(params.quarantined?.length
       ? { quarantined: { count: params.quarantined.length, tests: params.quarantined } }
       : {}),
+    ...(toolAppliedIn(params.gateResult.rungResults)
+      ? { toolApplied: toolAppliedIn(params.gateResult.rungResults) as ToolAppliedCount }
+      : {}),
+    ...(supersededIn(params.gateResult.rungResults).length
+      ? { superseded: supersededIn(params.gateResult.rungResults) }
+      : {}),
   };
+}
+
+/** The bounds gate's tool-applied count and the bound in force (GT-BF-5), from its outcome. */
+function toolAppliedIn(outcomes: readonly RungOutcome[] | undefined): ToolAppliedCount | undefined {
+  return (outcomes ?? []).find((o) => o.gate === "bounds" && o.toolApplied)?.toolApplied;
+}
+
+/** The supersessions the regression gate accepted (rule 25a), from its outcome. */
+function supersededIn(
+  outcomes: readonly RungOutcome[] | undefined,
+): { test: string; staged: string[] }[] {
+  return (outcomes ?? []).flatMap((o) => o.superseded ?? []);
 }
 
 /**
@@ -313,7 +351,7 @@ export function summarizeEvidence(bundle: EvidenceBundle): string {
   const gates = bundle.rungResults
     .map(
       (r) =>
-        `${r.unavailable ? "UNAVAILABLE" : r.skipped ? "-" : r.passed ? "PASS" : "FAIL"} ${r.gate}`,
+        `${r.unavailable ? "UNAVAILABLE" : r.skipped ? "-" : r.partial?.some((x) => !x.baselined) ? "PARTIAL" : r.passed ? "PASS" : "FAIL"} ${r.gate}`,
     )
     .join("  ");
 

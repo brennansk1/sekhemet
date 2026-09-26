@@ -5,6 +5,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   rmdirSync,
   statSync,
@@ -14,8 +15,9 @@ import { dirname, extname, isAbsolute, join, normalize, relative, sep } from "no
 import type { CardChange } from "@sekhemet/kernel";
 import type { ProcessSandbox } from "@sekhemet/sandbox";
 import { gitEnvFor } from "@sekhemet/sync";
-import ts from "typescript";
 import { scanHalfDone } from "./half_done.js";
+import { createSourceIndex } from "./index/source_index.js";
+import { parseSyntax, ts } from "./index/typescript.js";
 import { type JUnitCase, parseJUnit } from "./junit.js";
 import { redGreenRule } from "./red_green.js";
 import type { GateDefinition } from "./types.js";
@@ -78,17 +80,7 @@ function isCode(file: string): boolean {
 }
 
 function parse(path: string): ts.SourceFile {
-  const text = readFileSync(path, "utf8");
-  const ext = extname(path).toLowerCase();
-  const kind =
-    ext === ".tsx"
-      ? ts.ScriptKind.TSX
-      : ext === ".jsx"
-        ? ts.ScriptKind.JSX
-        : [".js", ".mjs", ".cjs"].includes(ext)
-          ? ts.ScriptKind.JS
-          : ts.ScriptKind.TS;
-  return ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, kind);
+  return parseSyntax(path, readFileSync(path, "utf8"));
 }
 
 /** A test file, or a module under a test-support directory: never the interface. */
@@ -140,79 +132,19 @@ function resolveRelative(
   return { file: planned, exists: false };
 }
 
-function hasModifier(node: ts.Node, kind: ts.SyntaxKind): boolean {
-  return ts.canHaveModifiers(node) && (ts.getModifiers(node) ?? []).some((m) => m.kind === kind);
-}
-
-function bindingNames(name: ts.BindingName, out: Set<string>): void {
-  if (ts.isIdentifier(name)) out.add(name.text);
-  else for (const el of name.elements) if (!ts.isOmittedExpression(el)) bindingNames(el.name, out);
-}
-
 /**
- * The names a module exports, types included; `unknown` when they cannot be
- * listed (CommonJS, `export =`, or `export *` from a package), and then no
- * name is treated as missing.
+ * The names a module exports, types included, from the source index (T2);
+ * `unknown` when they cannot be listed (CommonJS, `export =`, or `export *`
+ * from a package or a missing file), and then no name is treated as missing.
  */
-function moduleExports(
-  root: string,
-  file: string,
-  depth = 0,
-): { names: Set<string>; unknown: boolean } {
-  const names = new Set<string>();
+function moduleExports(root: string, file: string): { names: Set<string>; unknown: boolean } {
   const path = join(root, file);
-  if (!isFile(path) || depth > 5) return { names, unknown: true };
-  const sf = parse(path);
-  if (/\bmodule\.exports\b|(^|[^\w$.])exports\.[\w$]+\s*=/.test(sf.text)) {
-    return { names, unknown: true };
+  if (!isFile(path)) return { names: new Set(), unknown: true };
+  if (/\bmodule\.exports\b|(^|[^\w$.])exports\.[\w$]+\s*=/.test(readFileSync(path, "utf8"))) {
+    return { names: new Set(), unknown: true };
   }
-  let unknown = false;
-  for (const st of sf.statements) {
-    if (ts.isExportAssignment(st)) {
-      if (st.isExportEquals) unknown = true;
-      else names.add("default");
-      continue;
-    }
-    if (ts.isExportDeclaration(st)) {
-      const clause = st.exportClause;
-      if (clause && ts.isNamedExports(clause)) {
-        for (const el of clause.elements) names.add(el.name.text);
-      } else if (clause && ts.isNamespaceExport(clause)) {
-        names.add(clause.name.text);
-      } else if (st.moduleSpecifier && ts.isStringLiteral(st.moduleSpecifier)) {
-        const spec = st.moduleSpecifier.text;
-        const target = spec.startsWith(".") ? resolveRelative(root, file, spec) : undefined;
-        if (!target?.exists) {
-          unknown = true;
-          continue;
-        }
-        const inner = moduleExports(root, target.file, depth + 1);
-        if (inner.unknown) unknown = true;
-        for (const n of inner.names) if (n !== "default") names.add(n);
-      }
-      continue;
-    }
-    if (!hasModifier(st, ts.SyntaxKind.ExportKeyword)) continue;
-    if (hasModifier(st, ts.SyntaxKind.DefaultKeyword)) {
-      names.add("default");
-      continue;
-    }
-    if (ts.isVariableStatement(st)) {
-      for (const d of st.declarationList.declarations) bindingNames(d.name, names);
-    } else if (
-      (ts.isFunctionDeclaration(st) ||
-        ts.isClassDeclaration(st) ||
-        ts.isInterfaceDeclaration(st) ||
-        ts.isTypeAliasDeclaration(st) ||
-        ts.isEnumDeclaration(st) ||
-        ts.isModuleDeclaration(st)) &&
-      st.name &&
-      ts.isIdentifier(st.name)
-    ) {
-      names.add(st.name.text);
-    }
-  }
-  return { names, unknown };
+  const { names, complete } = createSourceIndex(root).exportedNames(file);
+  return { names: new Set(names), unknown: !complete };
 }
 
 /** One module of the card's declared interface, as the acceptance tests import it. */
@@ -228,23 +160,6 @@ export interface InterfaceModule {
   importedBy: string[];
 }
 
-/** Names reached as `ns.name` through a namespace import. */
-function namespaceMembers(sf: ts.SourceFile, ns: string): Set<string> {
-  const out = new Set<string>();
-  const visit = (n: ts.Node): void => {
-    if (
-      ts.isPropertyAccessExpression(n) &&
-      ts.isIdentifier(n.expression) &&
-      n.expression.text === ns
-    ) {
-      out.add(n.name.text);
-    }
-    ts.forEachChild(n, visit);
-  };
-  visit(sf);
-  return out;
-}
-
 /** The project-code imports of one test file: module → names, plus the local bindings. */
 function codeImports(
   root: string,
@@ -257,34 +172,25 @@ function codeImports(
   const modules = new Map<string, { exists: boolean; names: Set<string> }>();
   const locals = new Set<string>();
   const namespaces = new Set<string>();
-  const path = join(root, test);
-  if (!isCode(test) || !isFile(path)) return { modules, locals, namespaces };
-  const sf = parse(path);
-  for (const st of sf.statements) {
-    if (!ts.isImportDeclaration(st) || !ts.isStringLiteral(st.moduleSpecifier)) continue;
-    const spec = st.moduleSpecifier.text;
-    if (!spec.startsWith(".")) continue;
-    const clause = st.importClause;
-    if (clause?.isTypeOnly) continue;
-    const target = resolveRelative(root, test, spec);
+  if (!isCode(test) || !isFile(join(root, test))) return { modules, locals, namespaces };
+  // The source index's import facts (T2); the resolver here also names the
+  // file a card will create, which the index's resolver never guesses at.
+  const facts = createSourceIndex(root).facts(test);
+  for (const imp of facts?.imports ?? []) {
+    if (!["value", "namespace", "side-effect"].includes(imp.kind)) continue;
+    if (!imp.specifier.startsWith(".")) continue;
+    const target = resolveRelative(root, test, imp.specifier);
     if (!target || TEST_SUPPORT.test(target.file)) continue;
     const entry = modules.get(target.file) ?? { exists: target.exists, names: new Set<string>() };
     modules.set(target.file, entry);
-    if (!clause) continue;
-    if (clause.name) {
-      entry.names.add("default");
-      locals.add(clause.name.text);
+    for (const b of imp.bindings) {
+      if (b.typeOnly) continue;
+      entry.names.add(b.imported);
+      locals.add(b.local);
     }
-    const nb = clause.namedBindings;
-    if (nb && ts.isNamedImports(nb)) {
-      for (const el of nb.elements) {
-        if (el.isTypeOnly) continue;
-        entry.names.add((el.propertyName ?? el.name).text);
-        locals.add(el.name.text);
-      }
-    } else if (nb && ts.isNamespaceImport(nb)) {
-      namespaces.add(nb.name.text);
-      for (const m of namespaceMembers(sf, nb.name.text)) entry.names.add(m);
+    if (imp.namespace) {
+      namespaces.add(imp.namespace.local);
+      for (const m of imp.namespace.members) entry.names.add(m);
     }
   }
   return { modules, locals, namespaces };
@@ -620,10 +526,38 @@ export async function runAcceptanceTests(
   tests: readonly string[],
   options: { bail?: boolean } = {},
 ): Promise<AcceptanceRun> {
+  const run = await runTestCases(sandbox, root, gate, tests, {
+    ...options,
+    requireAssertions: true,
+  });
+  if ("unavailable" in run) return run;
+  return {
+    results: classifyCases(run.cases, tests),
+    requireAssertions: run.requireAssertions,
+    command: run.command,
+  };
+}
+
+/**
+ * The test gate's command run through its JUnit path, confined with no
+ * network, and every case of the report: the named test files, or with none
+ * the whole suite (an upgrade's kept tests default to the suite's passing
+ * ones, GT-TQ-11). `requireAssertions` is tried first when asked and dropped
+ * for a runner that refuses it.
+ */
+export async function runTestCases(
+  sandbox: ProcessSandbox,
+  root: string,
+  gate: GateDefinition,
+  tests: readonly string[],
+  options: { bail?: boolean; requireAssertions?: boolean } = {},
+): Promise<
+  { cases: JUnitCase[]; requireAssertions: boolean; command: string } | { unavailable: string }
+> {
   const dir = join(root, REPORT_DIR);
   mkdirSync(dir, { recursive: true });
   try {
-    for (const want of [true, false]) {
+    for (const want of options.requireAssertions ? [true, false] : [false]) {
       const report = join(dir, `run-${process.pid}-${++reportSeq}.xml`);
       const cmd = acceptanceCommand(gate, tests, report, want, options.bail === true);
       if (!cmd) {
@@ -655,11 +589,7 @@ export async function runAcceptanceTests(
         } catch (err) {
           return { unavailable: `the JUnit report could not be read: ${brief(String(err))}` };
         }
-        return {
-          results: classifyCases(cases, tests),
-          requireAssertions: cmd.requireAssertions,
-          command: shown,
-        };
+        return { cases, requireAssertions: cmd.requireAssertions, command: shown };
       }
       if (!cmd.requireAssertions) {
         return {
@@ -1476,6 +1406,11 @@ async function judgeStrength(input: TestStrengthInput): Promise<TestStrengthReco
         ? `a ${rule.change} card's tests must pass on the base`
         : "a types-only card is red on the typecheck";
     record.stubKill = { status: "not_applicable", runs: [], reason: record.redAtAssertion.reason };
+    // GT-TQ-10: a characterize card's tests, green on the base, must still
+    // kill the stand-ins of the code they cover.
+    if (rule.change === "characterize" && input.kind !== "interface") {
+      return characterizeStandIns(input, record, iface, tests, rules, external, profile);
+    }
     return record;
   }
   const restore = stageStandIn(input.root, iface, "not-implemented");
@@ -1605,6 +1540,152 @@ async function judgeStrength(input: TestStrengthInput): Promise<TestStrengthReco
       } else {
         record.testGaps.push(
           `stub-kill (${external ? "tests from outside the card" : `${profile}: advisory`}): ${detail}`,
+        );
+      }
+      return record;
+    }
+  }
+  return record;
+}
+
+// --- GT-TQ-10: stand-ins for the code a characterization covers ---------------------
+
+/** The specifier a module uses for a sibling, as TypeScript's NodeNext writes it. */
+function jsSpecifier(file: string): string {
+  const ext = extname(file);
+  const js = ext === ".mts" ? ".mjs" : ext === ".cts" ? ".cjs" : ext.startsWith(".t") ? ".js" : ext;
+  return `${file.slice(0, file.length - ext.length)}${js}`;
+}
+
+/**
+ * Replace the names the tests import from existing code with a stand-in:
+ * the module moves to a sibling (`<name>.sekhemet-covered<ext>`), and a
+ * module in its place re-exports everything from it and exports the stand-in
+ * under each imported name (a module's own export shadows `export *`).
+ * Returns the function that puts every module back.
+ */
+export function stageCoveredStandIn(
+  root: string,
+  modules: readonly InterfaceModule[],
+  standIn: Exclude<StandIn, "not-implemented">,
+): () => void {
+  const moved: { path: string; aside: string }[] = [];
+  const restore = () => {
+    for (const m of moved.reverse()) {
+      rmSync(m.path, { force: true });
+      renameSync(m.aside, m.path);
+    }
+  };
+  try {
+    for (const m of modules) {
+      if (!m.exists || m.names.length === 0) continue;
+      const path = join(root, m.file);
+      const ext = extname(m.file);
+      const aside = `${path.slice(0, path.length - ext.length)}.sekhemet-covered${ext}`;
+      renameSync(path, aside);
+      moved.push({ path, aside });
+      const rel = jsSpecifier(`./${aside.slice(dirname(aside).length + 1)}`);
+      const body = STAND_IN_BODY[standIn];
+      const lines = [
+        "// Sekhemet: a stand-in for the code a characterization covers, removed after the run.",
+        `export * from ${JSON.stringify(rel)};`,
+        ...m.names.map((n) =>
+          n === "default"
+            ? `export default function (...args) { ${body} }`
+            : `export function ${n}(...args) { ${body} }`,
+        ),
+      ];
+      writeFileSync(path, `${lines.join("\n")}\n`);
+    }
+  } catch (err) {
+    restore();
+    throw err;
+  }
+  return restore;
+}
+
+async function characterizeStandIns(
+  input: TestStrengthInput,
+  record: TestStrengthRecord,
+  iface: InterfaceModule[],
+  tests: string[],
+  rules: (typeof STRENGTH_TABLE)[DepthProfile],
+  external: boolean,
+  profile: DepthProfile,
+): Promise<TestStrengthRecord> {
+  const covered = iface.filter((m) => m.exists && m.names.length > 0);
+  if (covered.length === 0) {
+    record.stubKill.reason = "the tests import no existing project code to stand in for";
+    return record;
+  }
+  if (rules.stubKill === "off") {
+    record.stubKill.reason = `off at the ${profile} profile`;
+    return record;
+  }
+  // Only tests that pass on the base are characterizations; the gate run
+  // refuses the others (GT-TQ-7).
+  const base = await runAcceptanceTests(input.sandbox, input.root, input.testGate, tests);
+  if ("unavailable" in base) {
+    record.stubKill = { status: "not_judged", runs: [], reason: base.unavailable };
+    return record;
+  }
+  if (base.results.length === 0 || base.results.some((r) => r.kind !== "passed")) {
+    record.stubKill.reason = "not run: the tests do not pass on the base";
+    return record;
+  }
+  record.stubKill = { status: "killed", runs: [] };
+  for (const standIn of STAND_INS) {
+    const back = stageCoveredStandIn(input.root, covered, standIn);
+    let r: AcceptanceRun;
+    try {
+      r = await runAcceptanceTests(input.sandbox, input.root, input.testGate, tests, {
+        bail: true,
+      });
+    } finally {
+      back();
+    }
+    if ("unavailable" in r) {
+      record.stubKill = { status: "not_judged", runs: record.stubKill.runs, reason: r.unavailable };
+      return record;
+    }
+    // A kill is a failure at an assertion: an import, setup or runtime error
+    // under the stand-in says nothing about what the tests pin down, and a
+    // run that reported no result judged nothing.
+    const passed = r.results.filter((x) => x.kind === "passed");
+    const killed = r.results.filter((x) => x.kind === "assertion");
+    const other = r.results.filter((x) => x.kind !== "passed" && x.kind !== "assertion");
+    record.stubKill.runs.push({
+      standIn,
+      failed: killed.length,
+      ...(killed[0] ? { killedBy: killed[0].test } : {}),
+    });
+    if (r.results.length === 0) {
+      record.stubKill = {
+        status: "not_judged",
+        runs: record.stubKill.runs,
+        reason: `the run reported no test result when the code they cover ${standIn}`,
+      };
+      return record;
+    }
+    if (killed.length === 0 && other.length > 0) {
+      const first = other[0] as AcceptanceTestResult;
+      record.stubKill = {
+        status: "not_judged",
+        runs: record.stubKill.runs,
+        reason: `${first.test} failed when the code it covers ${standIn}, but not at an assertion (${first.kind}), so no kill is counted`,
+      };
+      return record;
+    }
+    if (killed.length === 0) {
+      record.stubKill.status = "survived";
+      record.stubKill.standIn = standIn;
+      record.stubKill.passing = passed.map((x) => x.test);
+      const detail = `${list(passed.map((x) => x.test))} pass on the base and also when the code they cover ${standIn}, so they characterize nothing about it.`;
+      if (rules.stubKill === "blocking" && !external) {
+        record.verdict = { status: "refused", stopReason: "vacuous_tests", detail };
+      } else {
+        record.testGaps.push(
+          `characterization stand-ins (${external ? "tests from outside the card" : `${profile}: advisory`}): ${detail}`,
         );
       }
       return record;

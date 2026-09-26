@@ -30,9 +30,10 @@ import { unregisteredCopyModules } from "../src/prompt_tags.js";
  * outline replies moved into the Worker copy module, to name only the tools
  * the arm offers (the B2.5 arms review, item 3); 438 when B4.0a built
  * Seshat's prompt from allocator sections and moved the re-plan prompt into
- * its copy module.
+ * its copy module; 437 when find_references' fallback moved into the Worker
+ * copy module with the source index (gates T2).
  */
-const RECORDED_LITERAL_TOTAL = 438;
+const RECORDED_LITERAL_TOTAL = 437;
 
 const texts = (file: string, source: string) =>
   extractModelFacingLiterals(file, source).map((l) => l.text);

@@ -1,0 +1,20 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`the improve step's mutants keep their tokens (T2) > generates the same mutants, lines and columns 1`] = `
+[
+  "m1 3:9 boundary <-><=",
+  "m2 3:14 logical ||->&&",
+  "m3 3:19 boundary >->>=",
+  "m4 3:32 boolean false->true",
+  "m5 4:9 boundary >->>=",
+  "m6 4:15 logical &&->||",
+  "m7 4:20 boundary <=-><",
+  "m8 4:36 equality !==->===",
+  "m9 5:12 equality ===->!==",
+  "m10 5:19 arithmetic +->-",
+  "m11 5:24 arithmetic -->+",
+  "m12 5:28 arithmetic *->/",
+  "m13 5:34 boolean true->false",
+  "m14 5:41 boolean false->true",
+]
+`;

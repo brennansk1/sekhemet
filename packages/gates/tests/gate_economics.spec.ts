@@ -7,6 +7,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -19,12 +20,13 @@ import {
   IMPACTED_TESTS_NO_INDEX,
   quarantinedTests,
   setQuarantinePolicy,
+  worktreeTreeHash,
 } from "../src/runner.js";
 import type { QuarantinePolicy } from "../src/types.js";
 
 // NEW-gates-3 (gates rules 33, 34): a verdict cached by tree and gate
-// definition (GT-N3-1), the full suite with "no source index" said until T2
-// (GT-N3-2), static gates before functional ones (GT-N3-3), and a flaky test
+// definition (GT-N3-1), the full suite with "no source index" said when the
+// card's base is unknown (GT-N3-2; impacted tests first: impacted_tests.spec.ts), static gates before functional ones (GT-N3-3), and a flaky test
 // re-run once and quarantined for the card (GT-N3-4). Real git, real
 // processes, real Vitest.
 
@@ -123,6 +125,26 @@ describe("the verdict cache (GT-N3-1)", () => {
     await fresh.runGates(["lint"], root);
     await fresh.runGates(["lint"], root);
     expect(starts(root)).toEqual(["lint", "lint", "lint", "lint", "lint"]);
+  });
+
+  it("sees a same-size change made in the same second as the index (no stale pass from git's racy stat cache)", () => {
+    // Git trusts an entry's stat data unless the index was written in the
+    // same second as the file; a copied index loses that timestamp, so a
+    // same-size edit in that second looked unchanged and a stale verdict
+    // was served. Retry until the seed and the edit share a second.
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const root = repo({ "src/a.ts": "export const a = 1;\n" }, logging("lint", "lint"));
+      const second = Math.floor(Date.now() / 1000);
+      const before = worktreeTreeHash(root);
+      writeFileSync(join(root, "src", "a.ts"), "export const a = 2;\n");
+      if (Math.floor(Date.now() / 1000) !== second) continue;
+      // The next hash is taken in a later second, as after a gate run.
+      while (Math.floor(Date.now() / 1000) === second) {}
+      const after = worktreeTreeHash(root);
+      expect(after).not.toBe(before);
+      return;
+    }
+    throw new Error("could not make the seed and the edit share a second");
   });
 
   it("keys a verdict by the tool's version and the environment the tree hash cannot see", async () => {

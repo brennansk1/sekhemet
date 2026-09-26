@@ -92,6 +92,47 @@ describe("the architecture gate", () => {
     expect(parseInvariants(brief)).toEqual({ rules: [], unenforced: [] });
   });
 
+  // GT-T2-2: the regex counted all three as a definition (gates review F1, reproduced).
+  it("does not count a type import, a comment or a local variable as a definition (GT-T2-2)", () => {
+    const root = repo({ ".sekhemet/brief.md": BRIEF, "src/types.ts": "", "src/ledger.ts": "" });
+    write(
+      root,
+      "src/ledger.ts",
+      [
+        'import { type PartitionKey } from "./types.js";',
+        "// type PartitionKey is defined in types.ts",
+        "export function key(k: PartitionKey): string {",
+        "  const PartitionKey = String(k);",
+        "  return PartitionKey;",
+        "}",
+      ].join("\n"),
+    );
+    expect(architectureGate(root)).toEqual([]);
+  });
+
+  it("does not count an import named in a comment or a string as a boundary crossing", () => {
+    const root = repo({ ".sekhemet/brief.md": BRIEF, "src/cli.ts": "", "src/db/store.ts": "" });
+    write(
+      root,
+      "src/db/store.ts",
+      '// never: import { run } from "../cli.js";\nexport const note = \'from "../cli.js"\';\n',
+    );
+    expect(architectureGate(root)).toEqual([]);
+  });
+
+  it("counts a dynamic import across the boundary", () => {
+    const root = repo({ ".sekhemet/brief.md": BRIEF, "src/cli.ts": "", "src/db/store.ts": "" });
+    write(root, "src/db/store.ts", 'export const load = () => import("../cli.js");\n');
+    expect(architectureGate(root)[0]?.actual).toBe("src/db/store.ts imports src/cli.ts");
+  });
+
+  it("fails a changed file it cannot parse cleanly rather than pass it (GT-IX-1)", () => {
+    const root = repo({ ".sekhemet/brief.md": BRIEF, "src/cli.ts": "", "src/db/store.ts": "" });
+    write(root, "src/db/store.ts", 'import { run } from "../cli.js";\nexport const x = (;\n');
+    const failures = architectureGate(root);
+    expect(failures.some((f) => /syntax error/.test(f.suggestedAction))).toBe(true);
+  });
+
   it("enforces nothing when the project declares nothing", () => {
     const root = repo({ "src/a.ts": "" });
     write(root, "src/a.ts", 'import "./b.js";\n');

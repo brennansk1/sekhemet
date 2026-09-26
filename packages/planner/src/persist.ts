@@ -189,8 +189,17 @@ export async function persistPlan(
       tokenBudget: estimate.tokens,
       secondsBudget: estimate.seconds,
       modelRoute: modelRouteFor(story.routing),
-      labels: [story.slice, `route:${story.routing}`],
+      // A cross-repository part names its repository (RG-N3-2).
+      labels: [
+        story.slice,
+        `route:${story.routing}`,
+        ...(story.card.labels ?? []).filter((l) => l.startsWith("repo:")),
+      ],
       ...(deps.length > 0 ? { dependsOn: deps } : {}),
+      // What the planned card declares to its gates: DOM assertions and
+      // intended overlaps for the visual gate, a refactor's surface change,
+      // an upgrade's kept tests (GT-N4-4, GT-N4-6, GT-TQ-8, GT-TQ-11).
+      ...(story.card.gateChecks ? { gateChecks: story.card.gateChecks } : {}),
       // A card created parked carries its reason (kernel rule 27, K-S4-9).
       ...(blockedReason ? { blockedReason } : {}),
     };

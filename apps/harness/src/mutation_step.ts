@@ -1,8 +1,21 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { join, relative } from "node:path";
 import { type Mutant, generateMutants, runMutationCampaign } from "@sekhemet/eval";
-import { DeterministicGateRunner, loadGatesConfig, mutationNotMeasured } from "@sekhemet/gates";
+import {
+  BASELINE_EVENT,
+  type BaselineEntry,
+  DeterministicGateRunner,
+  type GateRung,
+  type GateRunner,
+  type MutationMeasure,
+  baselineFromEvents,
+  loadGatesConfig,
+  mutationNotMeasured,
+  readMutationQueue,
+  runNightlyMutation,
+  withBaseline,
+} from "@sekhemet/gates";
 import type { CardStore, EventLog } from "@sekhemet/kernel";
 import { ProcessSandbox } from "@sekhemet/sandbox";
 
@@ -86,15 +99,152 @@ export function addedSourceLines(repo: string, sha: string): Map<string, number[
   return out;
 }
 
-function testGates(repo: string): (cwd: string) => Promise<boolean> {
+/** The onboarding baseline in force, as the card's own verification reads it (rule 15a). */
+interface BaselineInForce {
+  entries: BaselineEntry[];
+  gatesSha256?: string;
+}
+
+function testGates(
+  repo: string,
+  rung: GateRung = "test",
+  baseline?: BaselineInForce,
+): (cwd: string) => Promise<boolean> {
   return async (cwd) => {
     const config = loadGatesConfig(existsSync(join(cwd, ".sekhemet", "gates.toml")) ? cwd : repo);
-    const runner = new DeterministicGateRunner(new ProcessSandbox(), {
+    let runner: GateRunner = new DeterministicGateRunner(new ProcessSandbox(), {
       repoRoot: cwd,
       expectedConfigSha256: config.sha256,
     });
-    return (await runner.runGates(["test"], cwd)).passed;
+    // A pre-existing failure the baseline records is not the tree's to answer for.
+    if (baseline && baseline.entries.length > 0) {
+      runner = withBaseline(runner, {
+        baseline: baseline.entries,
+        gatesSha256: baseline.gatesSha256,
+        currentGatesSha256: config.sha256,
+      });
+    }
+    return (await runner.runGates([rung], cwd)).passed;
   };
+}
+
+/** The ledger event carrying a card's completed nightly mutation score (GT-N5-5). */
+export const MUTATION_COMPLETED = "card/mutation_completed";
+
+export interface NightlyMutationRun {
+  /** The queue file, repository-relative. */
+  queue: string;
+  cardId?: string;
+  /** The full score, written back to the queue and onto the card's ledger. */
+  measure?: MutationMeasure;
+  /** Why the queue was not run tonight; it stays queued. */
+  skipped?: string;
+}
+
+/**
+ * The nightly run of the mutants a card's verification deferred past
+ * `mutation_max` (gates rule 32, GT-N5-5; runtime.md): each queue not yet
+ * completed is run on the card's tree — its worktree while it exists, else
+ * a throwaway checkout of its accepted commit — through `runNightlyMutation`
+ * (the unmutated suite first; a mutant whose file changed is `stale`). The
+ * full score is recorded on the card's ledger as `card/mutation_completed`
+ * and only then written back to the queue as `completed`, so a run stopped
+ * between the two runs the queue again. The card's evidence bundle, written
+ * at verification, is not rewritten: it holds the partial score and the
+ * queue's path, and the ledger event holds the full one. A queue with no tree
+ * to run on is skipped, never scored.
+ */
+export async function runQueuedMutations(
+  repo: string,
+  log: EventLog,
+  opts: {
+    runTests?: (cwd: string) => Promise<boolean>;
+    runTypecheck?: (cwd: string) => Promise<boolean>;
+  } = {},
+): Promise<NightlyMutationRun[]> {
+  const dir = join(repo, ".sekhemet", "nightly", "mutation");
+  if (!existsSync(dir)) return [];
+  // The typecheck a stillborn verdict rests on is read through the onboarding
+  // baseline, as the card's verification reads it; it must still pass on the
+  // unmutated tree before any mutant is judged stillborn (GT-TQ-4).
+  const baseline = baselineFromEvents(
+    await log.getEventsByTypes([BASELINE_EVENT, "card/accepted"]),
+  );
+  const runTests = opts.runTests ?? testGates(repo, "test", baseline);
+  const runTypecheck = opts.runTypecheck ?? testGates(repo, "typecheck", baseline);
+  const accepted = new Map(
+    (await log.getEventsByTypes(["card/accepted"]))
+      .map((e) => [e.cardId ?? "", (e.payload as { sha?: string }).sha] as const)
+      .filter((a): a is readonly [string, string] => !!a[0] && typeof a[1] === "string"),
+  );
+  const runs: NightlyMutationRun[] = [];
+  for (const file of readdirSync(dir)
+    .filter((f) => f.endsWith(".json"))
+    .sort()) {
+    const path = join(dir, file);
+    const queue = relative(repo, path);
+    const q = readMutationQueue(path);
+    if (!q || q.completed) continue;
+    const cardId = q.cardId;
+    const run: NightlyMutationRun = { queue, ...(cardId ? { cardId } : {}) };
+    runs.push(run);
+    if (!cardId) {
+      run.skipped = "the queue names no card";
+      continue;
+    }
+    const worktree = join(repo, ".sekhemet", "worktrees", cardId);
+    const sha = accepted.get(cardId);
+    let tree: string | undefined = existsSync(worktree) ? worktree : undefined;
+    let checkout: string | undefined;
+    if (!tree && sha) {
+      checkout = join(repo, ".sekhemet", "mutation", `nightly-${cardId}`);
+      rmSync(checkout, { recursive: true, force: true });
+      try {
+        git(repo, "worktree", "add", "-q", "--detach", checkout, sha);
+        tree = checkout;
+      } catch {
+        checkout = undefined;
+      }
+    }
+    if (!tree) {
+      run.skipped = "neither the card's worktree nor an accepted commit to run on";
+      continue;
+    }
+    const root = tree;
+    // A mutant the typecheck rejects is stillborn only where the project
+    // declares a typecheck: a rung with no gate is not run, never a verdict.
+    const declared = loadGatesConfig(
+      existsSync(join(root, ".sekhemet", "gates.toml")) ? root : repo,
+    ).gates.some((g) => g.rung === "typecheck");
+    try {
+      run.measure = await runNightlyMutation({
+        queue: path,
+        root,
+        runTests: () => runTests(root),
+        ...(opts.runTypecheck || declared ? { runTypecheck: () => runTypecheck(root) } : {}),
+        // The ledger first: the queue is marked complete only once its score is recorded.
+        beforeComplete: async (measure) => {
+          await log.append({
+            actor: "system",
+            type: MUTATION_COMPLETED,
+            cardId,
+            payload: { queue, measure },
+          });
+        },
+      });
+    } catch (err) {
+      run.skipped = `the nightly run failed: ${err instanceof Error ? err.message : String(err)}`;
+    } finally {
+      if (checkout) {
+        try {
+          git(repo, "worktree", "remove", "--force", checkout);
+        } catch {
+          rmSync(checkout, { recursive: true, force: true });
+        }
+      }
+    }
+  }
+  return runs;
 }
 
 export async function mutateAcceptedCards(

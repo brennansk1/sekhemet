@@ -4,7 +4,13 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { TurnHistoryItem } from "@sekhemet/context";
 import { PrefixStabilityGuard } from "@sekhemet/context";
-import type { GateFailure, GateResult, GateRung, GateRunner } from "@sekhemet/gates";
+import type {
+  GateDefinition,
+  GateFailure,
+  GateResult,
+  GateRung,
+  GateRunner,
+} from "@sekhemet/gates";
 import {
   DEFAULT_GATES,
   type EvidenceBundle,
@@ -23,9 +29,11 @@ import {
   judgeRedFirst,
   loadGatesConfig,
   onlyNotRun,
+  passingTests,
   quarantinedTests,
   setQuarantinePolicy,
   testOrigins,
+  upgradeTestList,
   verificationRungs,
 } from "@sekhemet/gates";
 import {
@@ -175,6 +183,19 @@ function scopeCovers(scope: readonly string[], file: string): boolean {
 }
 
 /**
+ * The project's test gate, as the strength checks run it: its first blocking
+ * test gate, else the default. Undefined with `[gate_host]`: the tests run on
+ * the gate host, not here.
+ */
+export function projectTestGate(config: GatesConfig): GateDefinition | undefined {
+  if (config.project.gateHost) return undefined;
+  return (
+    config.gates.find((g) => g.rung === "test" && g.blocking) ??
+    DEFAULT_GATES.find((g) => g.rung === "test")
+  );
+}
+
+/**
  * The verification settings a card's session is built with, from the
  * project's gates.toml: the rungs, autofix and style fixes, protection, size
  * limits, built-in layers and state directory. One function for the card run
@@ -191,11 +212,17 @@ export function verificationSessionOptions(
   },
 ): Pick<SessionOptions, "autofixCommand" | "styleFixCommands" | "protectedGlobs"> & {
   gateRungs: GateRung[];
-  bounds: { maxFiles: number; maxLines: number };
+  bounds: { maxFiles: number; maxLines: number; maxToolAppliedLines: number };
   builtinGates: GatesConfig["project"];
   stateDir: string;
+  acceptanceTestGate?: GateDefinition;
 } {
+  const testGate = projectTestGate(config);
   return {
+    // The acceptance tests alone and an upgrade's kept tests run through the
+    // project's test gate on this machine (GT-TQ-3, GT-TQ-11); with a gate
+    // host they are not run here, and the evidence says why.
+    ...(testGate ? { acceptanceTestGate: testGate } : {}),
     // Verify against every blocking gate the project declares (lint included,
     // as the spec requires). Under --restricted only the static layer runs:
     // executing the repo's tests would execute its code (S12).
@@ -215,7 +242,12 @@ export function verificationSessionOptions(
       : {}),
     // The project's declared protection and size limits (defect 5, G10).
     protectedGlobs: config.project.protected,
-    bounds: { maxFiles: config.project.maxFiles, maxLines: config.project.maxDiffLines },
+    bounds: {
+      maxFiles: config.project.maxFiles,
+      maxLines: config.project.maxDiffLines,
+      // GT-BF-5: tool-applied lines under their own bound, the value in force.
+      maxToolAppliedLines: config.project.maxToolAppliedLines,
+    },
     // The built-in security, hygiene and robustness layers (G3). A card
     // whose scope does not hold CHANGELOG.md is told about a missing entry,
     // never failed for an edit it may not make (gates rule 17, GT-N2-2).
@@ -1202,14 +1234,64 @@ export class CardRunner {
     const inner = this.options.gateRunner;
     return {
       ...(inner.gateIds ? { gateIds: inner.gateIds } : {}),
-      runGates: async (rungs, cwd) => {
+      runGates: async (rungs, cwd, runOptions) => {
         try {
-          return await inner.runGates(rungs, cwd);
+          return await inner.runGates(rungs, cwd, runOptions);
         } finally {
           closeQuarantine(worktreePath);
         }
       },
     };
+  }
+
+  /**
+   * GT-TQ-11: the tests an upgrade card keeps passing. Named on the card, they
+   * stand; otherwise the project's tests that pass on the base are recorded on
+   * the card (its `gateChecks.keptTests`, on the ledger) before any step. An
+   * empty list, or a suite that cannot be read here, refuses the card.
+   */
+  private async upgradeKeptTests(
+    worktreePath: string,
+  ): Promise<{ tests: string[] } | { refused: string }> {
+    const { card, store } = this.options;
+    const named = card.gateChecks?.keptTests;
+    let passingOnBase: string[] = [];
+    if (!named?.length) {
+      const testGate = projectTestGate(this.config);
+      if (!testGate) {
+        return {
+          refused:
+            "an upgrade card names no test to keep, and the project's tests cannot be listed here (a gate host runs them): name the tests it must keep",
+        };
+      }
+      const base = await passingTests(
+        this.options.sandbox ?? new ProcessSandbox(),
+        worktreePath,
+        testGate,
+      );
+      if ("unavailable" in base) {
+        return {
+          refused: `an upgrade card names no test to keep, and the project's passing tests could not be listed: ${base.unavailable}`,
+        };
+      }
+      passingOnBase = base.tests;
+    }
+    const list = upgradeTestList({ ...(named?.length ? { named } : {}), passingOnBase });
+    if (list.refused !== undefined) return { refused: list.refused };
+    if (!named?.length) {
+      // The card carries its kept list from here on: this run's
+      // verification and every later one read it from the record.
+      // A list that cannot be recorded is not kept: the store's error stands,
+      // and the card does not start on a list only this run would know.
+      card.gateChecks = { ...(card.gateChecks ?? {}), keptTests: list.tests };
+      await store?.updateCard(card.id, { gateChecks: card.gateChecks }, "executor");
+    }
+    this.emit({
+      type: "status",
+      cardId: card.id,
+      message: `upgrade keeps ${list.tests.length} test(s) passing`,
+    });
+    return { tests: list.tests };
   }
 
   /**
@@ -1223,10 +1305,7 @@ export class CardRunner {
     tests: string[],
   ): Promise<TestStrengthRecord | undefined> {
     const { card } = this.options;
-    if (this.config.project.gateHost) return undefined;
-    const testGate =
-      this.config.gates.find((g) => g.rung === "test" && g.blocking) ??
-      DEFAULT_GATES.find((g) => g.rung === "test");
+    const testGate = projectTestGate(this.config);
     if (!testGate) return undefined;
     try {
       return await checkTestStrength({
@@ -1340,6 +1419,20 @@ export class CardRunner {
     // G12: a fresh card's acceptance tests must fail before work begins.
     let failToPass: FailToPassReport | undefined;
     const fresh = !resumedFrom && !this.options.useExistingWorktree && attempt === 1;
+    // GT-TQ-11: an upgrade card records on itself the tests it must keep
+    // passing — those it names, else the project's tests that pass on the
+    // base — and does not start with none. Its verification runs them.
+    if (fresh && card.change === "upgrade" && !this.options.restricted) {
+      const kept = await this.upgradeKeptTests(worktreePath);
+      if ("refused" in kept) {
+        return this.finishRefused(worktreePath, attempt, started, {
+          status: "refused",
+          tests: [],
+          detail: kept.refused,
+          stopReason: "base_not_green",
+        });
+      }
+    }
     if (
       fresh &&
       !this.options.restricted &&

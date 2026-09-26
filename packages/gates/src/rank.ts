@@ -1,7 +1,5 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { dirname, join, normalize } from "node:path";
-import ts from "typescript";
 import { RERUN_GATES, gateCopy } from "./copy.js";
+import { createSourceIndex } from "./index/source_index.js";
 import { redactSecrets } from "./secrets.js";
 import type { CompleteGateFailure, GateFailure } from "./types.js";
 
@@ -93,39 +91,21 @@ export function completeFailures(
 }
 
 /**
- * True when a result failed only because gates could not run (gates rule 9):
- * nothing in it is the Worker's, so no path may charge it to the model.
+ * True when a result failed only because gates could not run (gates rule 9)
+ * or on findings routed to a person (`forPerson`, GT-IX-1): nothing in it is
+ * the Worker's, so no path may charge it to the model, and the card stops
+ * with `done_pending_gates`.
  */
 export function onlyNotRun(result: { passed: boolean; failures: readonly GateFailure[] }): boolean {
   return (
-    !result.passed && result.failures.length > 0 && result.failures.every((f) => f.notRun === true)
+    !result.passed &&
+    result.failures.length > 0 &&
+    result.failures.every((f) => f.notRun === true || f.forPerson === true)
   );
 }
 
 /** Gates whose findings never hide behind three test failures: one slot is theirs. */
 const RESERVED_GATES = new Set(["integrity", "secrets"]);
-
-const EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"];
-
-function isFile(path: string): boolean {
-  try {
-    return statSync(path).isFile();
-  } catch {
-    return false;
-  }
-}
-
-/** A relative import specifier resolved to a project file, repository-relative. */
-function resolveRelative(importer: string, specifier: string, cwd: string): string | undefined {
-  const base = normalize(join(dirname(importer), specifier));
-  const stem = base.replace(/\.(m|c)?jsx?$/, "");
-  const candidates = [
-    base,
-    ...EXTENSIONS.map((e) => `${stem}${e}`),
-    ...EXTENSIONS.map((e) => join(stem, `index${e}`)),
-  ];
-  return candidates.find((c) => isFile(join(cwd, c)));
-}
 
 /**
  * Direct project imports of each file reachable from `files` (relative
@@ -137,30 +117,8 @@ export function importGraph(
   cwd: string,
   maxFiles = 500,
 ): Map<string, Set<string>> {
-  const graph = new Map<string, Set<string>>();
-  const queue = [...new Set(files)];
-  while (queue.length > 0 && graph.size < maxFiles) {
-    const file = queue.shift() as string;
-    if (graph.has(file)) continue;
-    const edges = new Set<string>();
-    graph.set(file, edges);
-    const abs = join(cwd, file);
-    if (!existsSync(abs)) continue;
-    let source: string;
-    try {
-      source = readFileSync(abs, "utf8");
-    } catch {
-      continue;
-    }
-    for (const ref of ts.preProcessFile(source, true, true).importedFiles) {
-      if (!ref.fileName.startsWith(".")) continue;
-      const target = resolveRelative(file, ref.fileName, cwd);
-      if (!target) continue;
-      edges.add(target);
-      if (!graph.has(target)) queue.push(target);
-    }
-  }
-  return graph;
+  // The source index's facts and resolver (T2): one reader of imports.
+  return createSourceIndex(cwd).importGraph(files, maxFiles);
 }
 
 function fileOf(failure: GateFailure): string | undefined {
@@ -230,7 +188,8 @@ export function rankFailures(
   // card's work, and the model's three slots are for what it can fix.
   const sorted = [...failures].sort(
     (a, b) =>
-      Number(a.notRun === true) - Number(b.notRun === true) ||
+      Number(a.notRun === true || a.forPerson === true) -
+        Number(b.notRun === true || b.forPerson === true) ||
       rung(a) - rung(b) ||
       (depth.get(a) ?? 0) - (depth.get(b) ?? 0) ||
       weight(b) - weight(a),

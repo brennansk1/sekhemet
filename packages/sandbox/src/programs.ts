@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
-import { isAbsolute } from "node:path";
+import { homedir } from "node:os";
+import { isAbsolute, join } from "node:path";
 
 const BIN_DIRS = [
   "/opt/homebrew/bin",
@@ -21,6 +22,12 @@ export const PROGRAM_ALLOWLIST: Readonly<Record<string, readonly string[]>> = {
   semgrep: BIN_DIRS.map((d) => `${d}/semgrep`),
   python3: ["/usr/bin/python3", "/opt/homebrew/bin/python3", "/usr/local/bin/python3"],
   bash: ["/bin/bash", "/usr/bin/bash", "/opt/homebrew/bin/bash"],
+  // The optional mutation tools (GT-N5-2, DEC-44), run confined over the diff.
+  mutmut: BIN_DIRS.map((d) => `${d}/mutmut`),
+  // `cargo install cargo-mutants` puts it in ~/.cargo/bin.
+  "cargo-mutants": [...BIN_DIRS, join(homedir(), ".cargo", "bin")].map((d) => `${d}/cargo-mutants`),
+  mvn: BIN_DIRS.map((d) => `${d}/mvn`),
+  gradle: BIN_DIRS.map((d) => `${d}/gradle`),
 };
 
 /** The absolute path of an allowlisted program, or undefined (refused, or not installed). */

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { type TomlTable, parseToml } from "@sekhemet/kernel";
+import { parseClaimGateConfig } from "./claims.js";
 import { parseGateHostConfig } from "./gate_host.js";
 import { gateTemplate } from "./templates.js";
 import type {
@@ -76,9 +77,19 @@ export const DEFAULT_GATES: GateDefinition[] = [
 ];
 
 export const DEFAULT_PROJECT_CONFIG: GateProjectConfig = {
-  protected: ["**/*.spec.ts", "**/*.test.ts", ".sekhemet/gates.toml", "tests/acceptance/**"],
+  // Every package's own gates.toml too (review-git rule 5): a Worker never edits a gate.
+  protected: [
+    "**/*.spec.ts",
+    "**/*.test.ts",
+    ".sekhemet/gates.toml",
+    "**/.sekhemet/gates.toml",
+    "tests/acceptance/**",
+  ],
   maxFiles: 3,
   maxDiffLines: 200,
+  // Rule 12, GT-BF-5: lines a declared mechanical tool applied (a rename, a
+  // codemod, a formatter, a lockfile update), under their own bound.
+  maxToolAppliedLines: 500,
 };
 
 function asString(value: unknown, fallback: string): string {
@@ -231,8 +242,20 @@ export function loadGatesConfig(repoRoot: string): GatesConfig {
     };
   }
 
-  const bytes = readFileSync(sourcePath);
-  const contents = bytes.toString("utf8");
+  return gatesConfigFromBytes(readFileSync(sourcePath), sourcePath, repoRoot);
+}
+
+/**
+ * A gate configuration from the bytes of a `gates.toml`, wherever they were
+ * read: the working tree, or a commit (a workspace package's own file is
+ * read from the card's base, never the card's copy — review-git rule 5).
+ */
+export function gatesConfigFromBytes(
+  bytes: Uint8Array,
+  sourcePath: string,
+  repoRoot: string,
+): GatesConfig {
+  const contents = Buffer.from(bytes).toString("utf8");
   const parsed = parseToml(contents);
 
   const projectTable = (parsed.project ?? {}) as TomlTable;
@@ -242,6 +265,10 @@ export function loadGatesConfig(repoRoot: string): GatesConfig {
       : [...DEFAULT_PROJECT_CONFIG.protected],
     maxFiles: asNumber(projectTable.max_files, DEFAULT_PROJECT_CONFIG.maxFiles),
     maxDiffLines: asNumber(projectTable.max_diff_lines, DEFAULT_PROJECT_CONFIG.maxDiffLines),
+    maxToolAppliedLines: asNumber(
+      projectTable.max_tool_applied_lines,
+      DEFAULT_PROJECT_CONFIG.maxToolAppliedLines,
+    ),
     ...(asStringArray(projectTable.autofix).length > 0
       ? { autofix: asStringArray(projectTable.autofix) }
       : {}),
@@ -290,6 +317,9 @@ export function loadGatesConfig(repoRoot: string): GatesConfig {
   if (gateHost) project.gateHost = gateHost;
   const visual = parseVisualConfig(parsed.visual);
   if (visual) project.visual = visual;
+  // The claim gate is declared here, so the file's pinned hash covers it (GT-N5-3).
+  const claims = parseClaimGateConfig(parsed.claims);
+  if (claims) project.claims = claims;
 
   const rawGates = Array.isArray(parsed.gate) ? (parsed.gate as TomlTable[]) : [];
   const gates = rawGates.map((raw, i) => toGateDefinition(raw, i, (w) => warnings.push(w)));

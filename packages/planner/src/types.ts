@@ -26,6 +26,18 @@ export interface CodebaseMap {
   sourceDir?: string;
   /** Test root used when a slice has to invent an acceptance test. */
   testDir?: string;
+  /**
+   * The repositories a multi-repository project spans, upstream first, each
+   * with the files it holds: a story whose scope spans two becomes two cards
+   * with a dependency edge (review-git rule 5, RG-N3-2).
+   */
+  repos?: CodebaseRepo[];
+}
+
+/** One repository of a multi-repository project, and the paths (of `files`) it holds. */
+export interface CodebaseRepo {
+  name: string;
+  files: string[];
 }
 
 /**

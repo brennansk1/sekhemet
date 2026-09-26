@@ -223,7 +223,13 @@ describe("built-in gate layers (G3, G13, G14, G15, G16, G22, S10, S11)", () => {
       which: none,
       runTests: async () => true,
     });
-    expect(blocking.failures.some((f) => f.gate === "mutation")).toBe(true);
+    // A survivor is a test gap for a person, never the Worker's failure,
+    // even when blocking (rule 32, GT-TQ-5): blocking marks strength unmet.
+    expect(blocking.failures.some((f) => f.gate === "mutation")).toBe(false);
+    expect(blocking.testGaps).toEqual([expect.stringContaining('a.ts:2 ">" -> ">="')]);
+    expect(blocking.outcomes.find((o) => o.gate === "mutation")?.mutation?.strengthUnmet).toBe(
+      true,
+    );
   });
 
   it("reads the built-in gate settings from gates.toml", () => {

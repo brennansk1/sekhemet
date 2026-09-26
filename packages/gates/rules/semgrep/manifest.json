@@ -1,0 +1,6 @@
+{
+  "name": "sekhemet-offline",
+  "version": "1.0.0",
+  "rules": 34,
+  "languages": ["javascript", "python", "typescript"]
+}

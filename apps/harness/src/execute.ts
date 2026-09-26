@@ -49,6 +49,7 @@ import {
   type CacheSummary,
   type LocalInferenceAdapter,
   type MemoryWatchdog,
+  type ModelEntry,
   ModelRegistry,
   type ServerProps,
   type ThroughputStats,
@@ -61,7 +62,7 @@ import { confinedSandbox, mergeNetworkConfigs, policyFetch } from "@sekhemet/san
 import { NodeGitSyncAdapter } from "@sekhemet/sync";
 import { integrationBranch } from "./accept.js";
 import { isAirgapped, mirrorRegistry } from "./airgap.js";
-import { cardGateRunner, gateBaseBranch } from "./card_gates.js";
+import { baselineInput, cardGateRunner, gateBaseBranch } from "./card_gates.js";
 import {
   lastPauseSeq,
   messageLabel,
@@ -83,10 +84,12 @@ import { RULE_SIGNAL_MINIMUM, learnFromAttempt } from "./learning/reflect.js";
 import { playbookRuleOf, standingErrorCode } from "./learning/scoping.js";
 import { type LearningStore, RULES_PER_PROMPT } from "./learning/store.js";
 import { recordLedgerRun } from "./ledger_evidence.js";
+import { loadBaseline, recordBaselineShrink } from "./onboard.js";
 import { buildReproRecord } from "./repro.js";
 import { workerWebDocs } from "./research/service.js";
 import { Tracer, toolCallSpan, traced } from "./tracing.js";
 import { hookEngineFor } from "./user_hooks.js";
+import { cardVision } from "./vision_check.js";
 import { PR_EVENT, openPullRequestViaApp, prBody } from "./wave2_github.js";
 import { loadRepoSkills, untrustedFiles } from "./workspace_trust.js";
 
@@ -173,6 +176,31 @@ export interface ExecutionContext {
   lspPool?: LspPool;
   /** Decoded tokens as they stream, for the dashboard's live step view (M2). */
   onToken?: (cardId: string, delta: string) => void;
+  /**
+   * Loads a qualified vision model for the visual gate's checklist (GT-N4-2),
+   * on its first question. Absent, a qualified model is named in the
+   * evidence as not loadable in this run.
+   */
+  loadVisionModel?: (model: string) => Promise<LocalInferenceAdapter>;
+  /** The registry's vision models; default the model registry's (tests pass their own). */
+  visionModels?: () => ModelEntry[];
+}
+
+/**
+ * The vision checklist for a card's visual layer (GT-N4-2): only a vision
+ * model the registry records as qualified answers it; otherwise the evidence
+ * says why none did. An unreadable registry qualifies none.
+ */
+export function visionForCard(ctx: ExecutionContext): ReturnType<typeof cardVision> {
+  let models: ModelEntry[];
+  try {
+    models = ctx.visionModels ? ctx.visionModels() : new ModelRegistry().visionModels();
+  } catch (err) {
+    return {
+      visionNotRun: `the model registry could not be read: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+  return cardVision(models, ctx.loadVisionModel);
 }
 
 /**
@@ -354,11 +382,26 @@ export async function executeCard(
   const gatesConfig = loadGatesConfig(ctx.repoPath);
   // The declared gates wrapped by the project gates, composed in one place
   // with `sekhemet gate <card>` (gates rule 8, T1).
+  // The onboarding baseline (gates rule 15a, GT-BF-2): only failures the
+  // card added count, and a baselined diagnostic it removed shrinks the
+  // baseline once the card is accepted.
+  const ledger = {
+    getEventsByTypes: (types: string[]) => ctx.cardStore.eventsOfType(types),
+    append: (p: { actor: string; type: string; payload: unknown }) =>
+      ctx.cardStore.recordLedgerEvent(p),
+  };
+  const baseline = await loadBaseline(ledger).catch(() => undefined);
   const gateRunner = cardGateRunner({
     repoPath: ctx.repoPath,
     gatesConfig,
     restricted: ctx.restrictedMode,
     card: inputCard,
+    ...(baseline
+      ? {
+          ...baselineInput(baseline),
+          onBaselineShrink: (gone, gates) => recordBaselineShrink(ledger, gone, card.id, gates),
+        }
+      : {}),
   });
   // C10 with S9: skills pinned in the user directory's lock, never one the
   // repository ships (SEC-31).
@@ -491,6 +534,8 @@ export async function executeCard(
         }),
     // The card's sandboxed commands: the policy narrowed by gates.toml (item 30).
     networkPolicy,
+    // GT-N4-2: the vision checklist only on a qualified vision model.
+    vision: visionForCard(ctx),
     // Ask-tier commands wait for a person on the decision queue (S8, K20).
     onApproval: decisionApprover(ctx.cardStore, card.id, ctx.approvalTimeoutMs ?? 60_000),
     signal: abort.signal,

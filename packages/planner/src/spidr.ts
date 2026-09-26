@@ -6,6 +6,7 @@ import {
   extractJsonObject,
 } from "@sekhemet/models";
 import { DEFAULT_MAX_SPLIT_DEPTH, DEFAULT_TIER_BUDGET, MAX_SCOPE_FILES } from "./constants.js";
+import { splitStoriesAcrossRepos } from "./cross_repo.js";
 import { routeByDifficulty, scoreDifficulty, stepBudgetForDifficulty } from "./difficulty.js";
 import { validateInvest } from "./invest.js";
 import { acceptanceTestPath, estimatePackTokens, selectScopeFiles } from "./scope.js";
@@ -761,6 +762,10 @@ export async function decomposeSpidr(
       break;
     }
   }
+
+  // RG-N3-2: a story spanning repositories is one card per repository.
+  const repos = params.codebaseMap?.repos;
+  if (repos && repos.length > 1) stories = splitStoriesAcrossRepos(stories, repos);
 
   return { stories, capabilityCeilings, source };
 }

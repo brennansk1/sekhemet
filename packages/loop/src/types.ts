@@ -356,7 +356,7 @@ export interface SessionOptions {
    * Card size limits enforced at every verification (G10). The runner passes
    * the `gates.toml` values; `false` or absent disables the bounds gate.
    */
-  bounds?: { maxFiles: number; maxLines: number } | false | undefined;
+  bounds?: { maxFiles: number; maxLines: number; maxToolAppliedLines?: number } | false | undefined;
   /**
    * The project settings the built-in gates read (G3: secrets, dependencies,
    * osv, semgrep, hygiene, mutation). The runner passes `gates.toml
@@ -374,6 +374,14 @@ export interface SessionOptions {
   projectGateIds?: readonly string[] | undefined;
   /** The project's .sekhemet directory (visual baselines). */
   stateDir?: string | undefined;
+  /**
+   * The project's test gate, run through its JUnit path: the acceptance
+   * tests alone (the acceptance-test mutation score, GT-TQ-3) and an
+   * upgrade's kept tests (GT-TQ-11). Absent with a gate host.
+   */
+  acceptanceTestGate?: import("@sekhemet/gates").GateDefinition | undefined;
+  /** The vision checklist for the visual layer, or why it does not run (GT-N4-2). */
+  vision?: Pick<import("@sekhemet/gates").VisualGateContext, "vision" | "visionNotRun"> | undefined;
   /** Registry lookup for the dependency gate (G15/S10); default the local cache. */
   registry?: import("@sekhemet/gates").RegistryLookup | undefined;
   /** Out-of-scope write denials tolerated before the card stops (`scope_violation`). */

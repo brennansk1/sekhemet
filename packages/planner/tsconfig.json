@@ -8,7 +8,8 @@
     { "path": "../kernel" },
     { "path": "../board" },
     { "path": "../context" },
-    { "path": "../models" }
+    { "path": "../models" },
+    { "path": "../sync" }
   ],
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "tests"]

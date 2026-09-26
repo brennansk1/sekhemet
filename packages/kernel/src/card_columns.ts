@@ -255,6 +255,20 @@ export const CARD_COLUMN_TABLE = [
     fromPayload: jsonOrNull("configOverrides"),
     patchKey: "configOverrides",
   },
+  // gates rule 25a (NEW-gates-7): the base tests this card supersedes.
+  {
+    column: "supersedes",
+    ddl: "supersedes JSON",
+    fromPayload: jsonOrNull("supersedes"),
+    patchKey: "supersedes",
+  },
+  // gates rules 29 and 6b (NEW-gates-4, NEW-gates-6): the card's declarations to its gates.
+  {
+    column: "gate_checks",
+    ddl: "gate_checks JSON",
+    fromPayload: jsonOrNull("gateChecks"),
+    patchKey: "gateChecks",
+  },
   {
     column: "created_at",
     ddl: "created_at TEXT NOT NULL",

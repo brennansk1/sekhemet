@@ -1,6 +1,7 @@
-import { basename } from "node:path";
+import { basename, join } from "node:path";
 import { type AttemptOutcome, type CardStore, firstModelAttempts } from "@sekhemet/kernel";
 import type { ModelHold, ModelRegistry } from "@sekhemet/models";
+import { unenforcedInvariants } from "../architecture_gate.js";
 import { LearningStore } from "../learning/store.js";
 import { type SwapLedger, sharedQueue } from "../model_access.js";
 import { plannerStandupSection } from "../wave2.js";
@@ -115,6 +116,7 @@ export async function buildSnapshot(
     ? { model: record.model, record: `${record.record} ${measured}` }
     : undefined;
   const remaining = cards.filter((c) => !["done", "rejected", "parked"].includes(c.status)).length;
+  const loose = unenforcedInvariants(join(repoPath, ".sekhemet", "brief.md"));
   const cfd = (await flowMetrics(pmStore.log, 60)).cfd;
   const daily = cfd.slice(1).map((d, i) => Math.max(0, d.done - (cfd[i]?.done ?? 0)));
   const fc = monteCarloForecast(daily, remaining);
@@ -135,6 +137,7 @@ export async function buildSnapshot(
       .map((p) => p.statement),
     // CX-N4-5, CX-N3-7: the approved PM rules, for Seshat alone.
     pmRules: await new LearningStore(pmStore.log).seshatRules().catch(() => []),
+    ...(loose.length > 0 ? { unenforcedInvariants: loose } : {}),
     today: new Date().toISOString().slice(0, 10),
   };
 }

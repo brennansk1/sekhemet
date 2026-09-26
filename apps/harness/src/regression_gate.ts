@@ -7,6 +7,7 @@ import {
   type GateRung,
   type GateRunner,
   RERUN_GATES,
+  type RunGatesOptions,
   type RungOutcome,
   gateCopy,
 } from "@sekhemet/gates";
@@ -48,6 +49,71 @@ export interface RegressionOptions {
   /** The card's own acceptance tests: failing those is the card's work, not a regression. */
   ownTests?: readonly string[];
   base?: string;
+  /**
+   * Base tests the card declares superseded, as `file > name` or a whole
+   * file (gates rule 25a, GT-BF-1): their failure is accepted once the card's
+   * new versions are staged (`ownTests` non-empty), and listed.
+   */
+  superseded?: readonly string[];
+}
+
+/** A supersession the gate accepted: the base test, and the staged tests that replace it. */
+export interface Supersession {
+  test: string;
+  staged: string[];
+}
+
+/** A failing test's name as its failure names it: the first line without its location. */
+function testTitle(f: GateFailure): string {
+  return (f.errorExcerpt.split("\n")[0] ?? "").replace(/^\S+\s*/, "");
+}
+
+/**
+ * The declared supersession a failure of a base test falls under, if any:
+ * `file > name` matches that test exactly. A declaration names tests: a bare
+ * file supersedes nothing (minor 2).
+ */
+function supersessionOf(
+  file: string,
+  f: GateFailure,
+  declared: readonly string[],
+): string | undefined {
+  const title = testTitle(f);
+  return declared.find((d) => {
+    const at = d.indexOf(" > ");
+    if (at === -1) return false;
+    return normalise(d.slice(0, at).trim()) === file && d.slice(at + 3).trim() === title;
+  });
+}
+
+/** A staged acceptance test's text, read where the harness stages it; "" when absent. */
+function stagedText(root: string, test: string): string {
+  for (const p of [test, test.startsWith("tests/") ? test : `tests/${test}`]) {
+    try {
+      return readFileSync(join(root, p), "utf8");
+    } catch {
+      // Not here.
+    }
+  }
+  return "";
+}
+
+/**
+ * The staged acceptance tests that hold the new version of a superseded test
+ * (rule 25a, minor 2): those declaring a test of the same name — its last
+ * `>`-separated part — through `it`, `test` or their modifiers.
+ */
+function newVersionsOf(root: string, declared: string, staged: readonly string[]): string[] {
+  const name =
+    declared
+      .slice(declared.indexOf(" > ") + 3)
+      .split(" > ")
+      .pop()
+      ?.trim() ?? "";
+  if (!name) return [];
+  const quoted = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const declares = new RegExp(`\\b(?:it|test)(?:\\.\\w+)*\\(\\s*(["'\`])${quoted}\\1`);
+  return staged.filter((t) => declares.test(stagedText(root, t)));
 }
 
 /** Test files committed on `base`, or undefined when there is no such base. */
@@ -93,13 +159,41 @@ export function regressionFailures(
   failures: readonly GateFailure[],
   options: RegressionOptions = {},
 ): GateFailure[] {
+  return judgeRegressions(root, failures, options).failures;
+}
+
+/**
+ * The regression gate's judgement: the failures, restated and added, and
+ * the supersessions it accepted (rule 25a) — whose failures are removed.
+ */
+export function judgeRegressions(
+  root: string,
+  failures: readonly GateFailure[],
+  options: RegressionOptions = {},
+): { failures: GateFailure[]; superseded: Supersession[] } {
   const base = options.base ?? "main";
   const guaranteed = testsOnBase(root, base);
-  if (!guaranteed) return [...failures];
+  if (!guaranteed) return { failures: [...failures], superseded: [] };
   const own = new Set((options.ownTests ?? []).map((t) => basename(t)));
   const changed = changedSources(root, base);
+  // Rule 25a: a declared supersession counts only with the new version of
+  // that test among the staged acceptance tests (minor 2).
+  const staged = [...(options.ownTests ?? [])];
+  const declared = (options.superseded ?? []).filter(
+    (d) => newVersionsOf(root, d, staged).length > 0,
+  );
+  const accepted = new Map<string, Supersession>();
 
-  const restated = failures.map((f): GateFailure => {
+  const kept = failures.filter((f) => {
+    const file = f.location?.file ? normalise(f.location.file) : undefined;
+    if (f.rung !== "test" || !file || !guaranteed.has(file)) return true;
+    const d = supersessionOf(file, f, declared);
+    if (!d) return true;
+    accepted.set(d, { test: d, staged: newVersionsOf(root, d, staged) });
+    return false;
+  });
+
+  const restated = kept.map((f): GateFailure => {
     const file = f.location?.file ? normalise(f.location.file) : undefined;
     if (f.rung !== "test" || !file || !guaranteed.has(file) || own.has(basename(file))) return f;
     const where = changed.length ? changed.join(", ") : "the source this card changed";
@@ -138,7 +232,7 @@ export function regressionFailures(
       suggestedAction: gateCopy.regressionRemoved(file, restore),
     });
   }
-  return [...restated, ...removed];
+  return { failures: [...restated, ...removed], superseded: [...accepted.values()] };
 }
 
 /** Wrap a gate runner so every verification protects what main guarantees. */
@@ -146,11 +240,48 @@ export function withRegressionGate(inner: GateRunner, options: RegressionOptions
   return {
     // GT-M6-5: the gate this wrapper adds, for `note`'s enum.
     gateIds: [...(inner.gateIds ?? []), "regression"],
-    runGates: async (rungs: GateRung[], cwd: string): Promise<GateResult> => {
-      const res = await inner.runGates(rungs, cwd);
+    runGates: async (
+      rungs: GateRung[],
+      cwd: string,
+      runOptions?: RunGatesOptions,
+    ): Promise<GateResult> => {
+      let res = await inner.runGates(rungs, cwd, runOptions);
       const started = Date.now();
-      const failures = regressionFailures(cwd, res.failures, options);
+      let { failures, superseded } = judgeRegressions(cwd, res.failures, options);
+      // A test gate whose every failure is an accepted supersession.
+      const forgiven = (o: RungOutcome, r: GateResult, left: readonly GateFailure[]) =>
+        superseded.length > 0 &&
+        !o.passed &&
+        !o.skipped &&
+        !o.unavailable &&
+        o.rung === "test" &&
+        r.failures.some((f) => f.gate === o.gate) &&
+        !left.some((f) => f.gate === o.gate);
+      // B1: an impacted-only run is never forgiven into a pass; when every
+      // failure it found is a supersession, the full suite is judged instead.
+      if (
+        !runOptions?.fullSuite &&
+        (res.rungResults ?? []).some((o) => o.fullSuite === false && forgiven(o, res, failures))
+      ) {
+        res = await inner.runGates(rungs, cwd, { ...(runOptions ?? {}), fullSuite: true });
+        ({ failures, superseded } = judgeRegressions(cwd, res.failures, options));
+      }
       const regressions = failures.filter((f) => f.gate === "regression");
+      // A test gate whose only failures were accepted supersessions passes
+      // (rule 25a) — when the full suite ran and its output was read in full
+      // (B1, M1); otherwise the gate's failure stands, and says why.
+      const judged = (res.rungResults ?? []).map((o) => {
+        if (!forgiven(o, res, failures)) return o;
+        if (o.fullSuite !== false && o.parsedInFull === true) return { ...o, passed: true };
+        const why =
+          o.fullSuite === false
+            ? "only the impacted tests ran"
+            : `its output was not read in full (${o.parseGap ?? "no reading of it was recorded"})`;
+        return {
+          ...o,
+          note: `${o.note ? `${o.note}; ` : ""}every failure is an accepted supersession, but ${why}: the failure stands`,
+        };
+      });
       const outcome: RungOutcome = {
         // It runs no tests itself — it reads the tree and the other gates'
         // results — so it reports as hygiene, like reachability. Reporting as
@@ -161,12 +292,26 @@ export function withRegressionGate(inner: GateRunner, options: RegressionOptions
         passed: regressions.length === 0,
         exitCode: regressions.length === 0 ? 0 : 1,
         durationMs: Date.now() - started,
+        // Every accepted supersession, for the evidence and Review (rule 25a).
+        ...(superseded.length > 0
+          ? {
+              superseded,
+              note: `accepted as superseded, new versions staged: ${superseded.map((s) => s.test).join("; ")}`,
+            }
+          : {}),
       };
+      const innerPassed =
+        res.passed ||
+        (superseded.length > 0 &&
+          failures.length === 0 &&
+          judged.every((o) => o.passed || (o.skipped && !o.unavailable)));
+      // A stood failure with nothing left to name keeps its test failures.
+      if (!innerPassed && failures.length === 0) failures = [...res.failures];
       return {
         ...res,
-        passed: res.passed && regressions.length === 0,
+        passed: innerPassed && regressions.length === 0,
         failures,
-        rungResults: [...(res.rungResults ?? []), outcome],
+        rungResults: [...judged, outcome],
       };
     },
   };

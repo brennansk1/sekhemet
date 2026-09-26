@@ -1,6 +1,14 @@
 import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { type BoardService, TransitionRefusedError } from "@sekhemet/board";
+import {
+  type BuiltinGateResult,
+  DEFAULT_CLAIMS_REPORT,
+  type GatesConfig,
+  type ReportedClaim,
+  loadGatesConfig,
+  runBuiltinGates,
+} from "@sekhemet/gates";
 import type { CardRecord, CardStatus, CardStore } from "@sekhemet/kernel";
 import { recordLedgerRun } from "../ledger_evidence.js";
 import { type Claim, reviewEligible } from "./claims.js";
@@ -90,6 +98,43 @@ export function researchNote(card: CardRecord, r: ResearchAnswer, at = new Date(
   ].join("\n");
 }
 
+/**
+ * The claims report the claim gate reads (gates rule 27a, GT-N5-3): every
+ * claim of the answer, typed. The research pipeline writes no reproduction
+ * script and no reason yet, so an executable claim reaches the gate with
+ * neither, and the gate holds the note back naming it.
+ */
+export function claimsReport(card: CardRecord, answer: ResearchAnswer): string {
+  const claims: ReportedClaim[] = (answer.claims ?? []).map((c) => ({
+    id: String(c.id),
+    kind: c.kind,
+    text: c.text,
+  }));
+  return `${JSON.stringify({ card: card.id, claims }, null, 2)}\n`;
+}
+
+/**
+ * A research card's verification (GT-N5-3): its claims report checked by the
+ * claim gate `gates.toml` declares, under the file's pinned hash, as for any
+ * card. Undefined when the project declares no `[claims]`.
+ */
+export async function verifyResearchClaims(
+  card: CardRecord,
+  repoPath: string,
+  gates: GatesConfig,
+): Promise<BuiltinGateResult | undefined> {
+  if (!gates.project.claims) return undefined;
+  return runBuiltinGates({
+    root: repoPath,
+    base: "HEAD",
+    // A note is not a code change: only the claim gate judges it.
+    diff: "",
+    project: { ...gates.project, mutation: false },
+    gates: [],
+    researchCardId: card.id,
+  });
+}
+
 export async function runResearchCard(
   card: CardRecord,
   ask: (question: string, cardId: string) => Promise<ResearchAnswer>,
@@ -124,8 +169,30 @@ export async function runResearchCard(
   // A report reaches Review when it is grounded, its citations point at
   // something that was read, and every executable claim has a verdict. The
   // last is the claim gate: execution is a gate like any other, so a note
-  // whose claims have never been run is not finished work.
-  const eligible = reviewEligible(answer.claims ?? [], new Map());
+  // whose claims have never been run is not finished work. The gate reads
+  // the claims report from the path `gates.toml [claims]` names (GT-N5-3);
+  // a project that declares none keeps the pipeline's own check, and the
+  // evidence says so.
+  const gatesConfig = loadGatesConfig(repoPath);
+  const reportRel = (gatesConfig.project.claims?.report ?? DEFAULT_CLAIMS_REPORT).replaceAll(
+    "{card}",
+    card.id,
+  );
+  mkdirSync(dirname(join(repoPath, reportRel)), { recursive: true });
+  writeFileSync(join(repoPath, reportRel), claimsReport(card, answer));
+  const claimGate = await verifyResearchClaims(card, repoPath, gatesConfig);
+  const eligible = claimGate
+    ? {
+        eligible: claimGate.failures.length === 0,
+        reason:
+          claimGate.failures.length === 0
+            ? "the claim gate passed"
+            : claimGate.failures.map((f) => f.errorExcerpt).join("; "),
+      }
+    : (() => {
+        const e = reviewEligible(answer.claims ?? [], new Map());
+        return { ...e, reason: `${e.reason} (no claim gate declared in gates.toml)` };
+      })();
   const passed = answer.grounded && answer.badCitations.length === 0 && eligible.eligible;
   const evDir = join(repoPath, ".sekhemet", "evidence");
   mkdirSync(evDir, { recursive: true });
@@ -144,7 +211,9 @@ export async function runResearchCard(
       { gate: "citations", rung: "research", passed: answer.badCitations.length === 0 },
       { gate: "claims", rung: "research", passed: eligible.eligible, detail: eligible.reason },
     ],
-    failures: [],
+    failures: claimGate?.failures ?? [],
+    claimsReport: reportRel,
+    ...(claimGate ? { gatesSha256: gatesConfig.sha256 } : {}),
     durationMs: Date.now() - started,
     diff: "",
     filesTouched: [],

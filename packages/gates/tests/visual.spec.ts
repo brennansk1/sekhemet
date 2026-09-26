@@ -114,6 +114,8 @@ describe("visual gates over CDP (G17, G18, G19, G20)", () => {
         viewports: [1280, 375],
         check: [{ selector: "#box", visible: true, no_overflow: true }],
         snapshot: [{ name: "box", selector: "#box" }],
+        // New baselines need a person unless the project says auto (GT-N4-1).
+        baseline_approval: "auto",
         ...over,
       }) as NonNullable<ReturnType<typeof parseVisualConfig>>;
 
@@ -184,6 +186,7 @@ describe("visual gates over CDP (G17, G18, G19, G20)", () => {
       expect(on.outcomes.map((o) => o.gate)).toEqual([
         "visual-console",
         "visual-layout",
+        "visual-dom",
         "visual-snapshot",
         "visual-a11y",
       ]);

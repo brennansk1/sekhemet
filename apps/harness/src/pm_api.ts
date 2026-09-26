@@ -55,6 +55,11 @@ const PATCHABLE: Record<string, (v: unknown) => unknown> = {
   dueDate: (v) =>
     v === null || (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v)) ? v : undefined,
   title: (v) => (typeof v === "string" && v.trim() ? v.trim().slice(0, 300) : undefined),
+  // What the card declares to its gates (GT-N4-4, GT-N4-6, GT-TQ-8, GT-TQ-11):
+  // the route needs Accept for it (access.ts), the kernel checks its shape and
+  // `card/updated` names the principal who changed it.
+  gateChecks: (v) =>
+    v === null || (typeof v === "object" && v !== null && !Array.isArray(v)) ? v : undefined,
 };
 
 /**

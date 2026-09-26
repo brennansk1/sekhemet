@@ -379,13 +379,15 @@ it("adds a negative", () => { expect(add(2, -7)).toBe(-5); });
   it("never quarantines after the first verification: a later flake is a failure", async () => {
     const c = await card({ stepBudget: 4 });
     // Turn 1 finishes with nothing written: the first verification fails on
-    // the acceptance tests (the flaky test passes, run 1). The flaky test
-    // fails on run 2, at the second verification, and its re-run would pass.
+    // the acceptance tests, which are the impacted tests, so the full suite
+    // — and the flaky test — does not run (rule 33, GT-N3-2). Turn 2 writes
+    // the fix: at the second verification the flaky test runs for the first
+    // time and fails, and its re-run would pass; quarantine is closed.
     const { adapter } = scripted((t) => (t === 1 ? [finish] : t === 2 ? [write] : [finish]));
     const result = await runner(c, RED, {
       modelAdapter: adapter,
       gateRunner: real(),
-      onWorktreeReady: seed(2),
+      onWorktreeReady: seed(1),
     }).run();
     expect(result.evidence.quarantined).toBeUndefined();
     expect(result.stopReason).not.toBe("gate_passed");

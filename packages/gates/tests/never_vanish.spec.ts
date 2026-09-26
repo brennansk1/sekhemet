@@ -149,11 +149,13 @@ describe("built-in gates never vanish", () => {
       which: none,
       runTests: async () => true,
     });
-    const survivors = r.failures.filter((f) => f.gate === "mutation");
-    expect(survivors.length).toBeGreaterThan(0);
-    for (const f of survivors) {
-      expect(f.suggestedAction).not.toMatch(/add a test|write a test/i);
-      expect(f.suggestedAction).toMatch(/Call note with gate "mutation"/);
+    // GT-TQ-5 (which replaces GT-M6-4's note remedy): a survivor never
+    // reaches the Worker as a failure; it is a test gap routed to a person.
+    expect(r.failures.filter((f) => f.gate === "mutation")).toEqual([]);
+    expect(r.testGaps.length).toBeGreaterThan(0);
+    for (const gap of r.testGaps) {
+      expect(gap).not.toMatch(/add a test|write a test/i);
+      expect(gap).toMatch(/a test gap for a person/);
     }
   });
 
@@ -274,8 +276,10 @@ describe("the ids a gate can emit are listed from the same source", () => {
       "visual-a11y",
       "visual-confinement",
       "visual-console",
+      "visual-dom",
       "visual-layout",
       "visual-snapshot",
+      "visual-vision",
     ]);
   });
 });

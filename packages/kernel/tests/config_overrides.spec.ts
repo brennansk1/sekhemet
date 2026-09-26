@@ -50,7 +50,8 @@ describe("NEW-surface-3: a card's configuration overrides", () => {
 
   it("a database from before the field gains it by a numbered migration", () => {
     disk.db.exec("ALTER TABLE cards DROP COLUMN config_overrides");
-    disk.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION - 1}`);
+    // Migration 16 added the column; later migrations run too.
+    disk.db.exec("PRAGMA user_version = 15");
     initSchema(disk.db);
     const cols = (disk.db.prepare("PRAGMA table_info(cards)").all() as { name: string }[]).map(
       (c) => c.name,
@@ -59,5 +60,15 @@ describe("NEW-surface-3: a card's configuration overrides", () => {
     expect(
       (disk.db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version,
     ).toBe(SCHEMA_VERSION);
+  });
+
+  it("gates rule 25a: a database from before `supersedes` gains it by migration 17", () => {
+    disk.db.exec("ALTER TABLE cards DROP COLUMN supersedes");
+    disk.db.exec("PRAGMA user_version = 16");
+    initSchema(disk.db);
+    const cols = (disk.db.prepare("PRAGMA table_info(cards)").all() as { name: string }[]).map(
+      (c) => c.name,
+    );
+    expect(cols).toContain("supersedes");
   });
 });

@@ -129,6 +129,8 @@ describe("X1: sekhemet onboard runs the seven steps", () => {
       "5",
       "6",
       "7",
+      // Step 8: the onboarding baseline (gates rule 15a, GT-BF-2).
+      "8",
     ]);
     expect(readFileSync(join(root, "AGENTS.md"), "utf8")).not.toContain("sekhemet onboard");
   });

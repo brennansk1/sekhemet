@@ -67,7 +67,12 @@ import { resolveVisionModel, visionPrePass } from "./attachments.js";
 import { bakeOffTaskPlan } from "./bakeoff_tasks.js";
 import { watchBoardHooks } from "./board_hooks.js";
 import { parseModelList, promptNeedFromLedgers, runCalibrate, runMtpAb } from "./calibrate_cmd.js";
-import { gateBaseBranch, verifyCardWorktree } from "./card_gates.js";
+import {
+  baselineInput,
+  gateBaseBranch,
+  lastToolApplied,
+  verifyCardWorktree,
+} from "./card_gates.js";
 import { handBack, postCardMessage, requestPause, takeOver } from "./collaborate.js";
 import { resolveConfig } from "./config.js";
 import {
@@ -194,6 +199,7 @@ import {
 } from "./tune.js";
 import { migrateLegacyUserDir } from "./user_dir.js";
 import { hookEngineFor } from "./user_hooks.js";
+import { approveBaseline, describeCandidate, visualCandidates } from "./visual_baseline.js";
 import { PressureControls, createCardWatchdog, workerFloorRefusal } from "./watchdog_actions.js";
 import {
   WAVE2_COMMANDS,
@@ -208,7 +214,6 @@ import {
   recordBakeOff,
   replanOnRung3,
   roleForCard,
-  runPackageGates,
   runWave2Command,
 } from "./wave2.js";
 import { runDependencyVerifications } from "./wave2_github.js";
@@ -1173,6 +1178,19 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         card: card ?? {},
         worktree: cwd,
         base,
+        // The same inputs as the card run: the onboarding baseline (GT-BF-2)
+        // and what a tool applied on its last run (GT-BF-3).
+        ...(await (
+          await import("./onboard.js")
+        )
+          .loadBaseline({
+            getEventsByTypes: (types: string[]) => cardStore.eventsOfType(types),
+          })
+          .then((b) => baselineInput(b))
+          .catch(() => ({}))),
+        ...(lastToolApplied(config.repoPath, cardId)
+          ? { toolApplied: lastToolApplied(config.repoPath, cardId) }
+          : {}),
         // Air-gapped: only mirrored packages exist (X10).
         registry: isAirgapped(config.repoPath)
           ? mirrorRegistry(config.repoPath)
@@ -1217,16 +1235,9 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       );
     }
     for (const a of res.advisories) console.log(`  advisory: ${a}`);
-    let passed = res.passed;
-    // Y19: in a monorepo, each package the card touches runs its own gates.
-    if (cardId && cwd !== config.repoPath) {
-      const changed = (await new NodeGitSyncAdapter(config.repoPath).getDiffStats(cardId))
-        .filesTouched;
-      const pkg = await runPackageGates(config.repoPath, cwd, changed, undefined, {
-        restricted: config.restrictedMode,
-      });
-      if (pkg.some((p) => !p.passed)) passed = false;
-    }
+    // Y19, RG-N3-1: each package the card touches runs its own gates inside
+    // the card's verification, so this verdict is the card run's.
+    const passed = res.passed;
     for (const r of res.rungResults) {
       const mark = r.unavailable ? "!" : r.passed ? "✓" : r.skipped ? "-" : "✗";
       const why = r.reason ? ` — ${r.reason}` : "";
@@ -1282,10 +1293,49 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
   }
 
   if (config.command === "gates") {
+    // `sekhemet gates approve-baseline <key> --sha256 <hash> [--card <id>]`:
+    // a person makes the visual candidate they saw the baseline, recorded
+    // with their principal (gates rule 31, GT-N4-1); with no key, the
+    // candidates waiting are listed with their card and SHA-256.
+    if (config.targetArg === "approve-baseline") {
+      const rest = argv.slice(argv.indexOf("approve-baseline") + 1);
+      const flag = (name: string) => {
+        const at = rest.indexOf(name);
+        return at >= 0 ? rest[at + 1] : undefined;
+      };
+      const key = rest.find(
+        (a, i) => !a.startsWith("--") && rest[i - 1] !== "--card" && rest[i - 1] !== "--sha256",
+      );
+      if (!key) {
+        const waiting = visualCandidates(config.repoPath);
+        console.log(
+          waiting.length
+            ? `Visual candidates waiting for approval:\n${waiting.map((c) => `  ${describeCandidate(c)}`).join("\n")}\nLook at one, then approve it with: sekhemet gates approve-baseline <key> --card <id> --sha256 <hash>`
+            : "No visual candidate is waiting for approval.",
+        );
+        return;
+      }
+      const r = await approveBaseline(cardStore, {
+        repoPath: config.repoPath,
+        key,
+        principal: cardStore.localPrincipal(),
+        cardId: flag("--card"),
+        sha256: flag("--sha256"),
+      });
+      if (!r.approved) {
+        console.error(`Not approved: ${r.reason}`);
+        process.exitCode = 1;
+        return;
+      }
+      console.log(`Approved ${r.key} as the baseline (sha256 ${r.sha256.slice(0, 12)}).`);
+      return;
+    }
     // `sekhemet gates init [--force]`: write the gate template detected from
     // the project's manifests to .sekhemet/gates.toml (G27).
     if (config.targetArg !== "init") {
-      console.error("Usage: sekhemet gates init [--force]");
+      console.error(
+        "Usage: sekhemet gates init [--force] | sekhemet gates approve-baseline <key> --sha256 <hash> [--card <id>]",
+      );
       process.exitCode = 1;
       return;
     }
@@ -2217,6 +2267,13 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       watchdog,
       runProfile: queueProfile,
       ...(measurement ? { measurement } : {}),
+      // GT-N4-2: a qualified vision model answers the visual gate's
+      // checklist, loaded on its first question on the queue the image
+      // pre-pass uses (a scheduled swap), released with the queue's models.
+      loadVisionModel: async (name: string) => {
+        router.ensureQueue({ queue: "vision", role: "reviewer", name });
+        return router.use("vision");
+      },
       afterTurn: async (_cardId: string, turn: { turnIndex: number }) => {
         // RUN-35, C8: a swap to Seshat while other cards run waits at the drain
         // barrier until every running step reaches its boundary, and no card

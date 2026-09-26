@@ -1,0 +1,30 @@
+{
+  "about": "Exports of Sekhemet that no production file imports by name, reachable only because their package's entry point (packages/<name>/src/index.ts) re-exports them with `export *` (GT-T2-4). Checked by hand with a search at the commit that added this list. No production file uses a namespace import at that commit; namespace use is covered by reachability_gate.spec.ts.",
+  "exports": [
+    {
+      "file": "packages/board/src/board_service.ts",
+      "name": "REVIEW_MINUTES_PRIOR",
+      "through": "barrel"
+    },
+    { "file": "packages/context/src/condenser.ts", "name": "condenseOutput", "through": "barrel" },
+    { "file": "packages/eval/src/admission.ts", "name": "interleaveArms", "through": "barrel" },
+    {
+      "file": "packages/gates/src/index/source_index.ts",
+      "name": "sourceIndexCacheStats",
+      "through": "barrel"
+    },
+    { "file": "packages/kernel/src/card_class.ts", "name": "scopeExtension", "through": "barrel" },
+    { "file": "packages/models/src/bakeoff.ts", "name": "quantFromName", "through": "barrel" },
+    {
+      "file": "packages/planner/src/decision.ts",
+      "name": "isDestructiveText",
+      "through": "barrel"
+    },
+    {
+      "file": "packages/sandbox/src/confined.ts",
+      "name": "confinedPlacement",
+      "through": "barrel"
+    },
+    { "file": "packages/sync/src/git_adapter.ts", "name": "parseTrailers", "through": "barrel" }
+  ]
+}

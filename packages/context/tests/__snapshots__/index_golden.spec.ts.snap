@@ -1,0 +1,172 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`the context package's source readers keep their answers (CX-IX) > outlines a file for the flat map 1`] = `
+{
+  "src/cli.ts": "src/cli.ts:
+  export default function main(): void",
+  "src/ledger.ts": "src/ledger.ts:
+  export class Ledger
+    private secret(): void
+  export const openLedger
+  export function closeLedger(l: Ledger): void",
+  "src/math.ts": "src/math.ts:
+  export function total(xs: number[]): number
+  export const ZERO
+  function hidden(): void",
+  "src/types.ts": "src/types.ts:
+  export interface Entry
+  export type EntryId = string;
+  export enum Kind { Debit, Credit }",
+}
+`;
+
+exports[`the context package's source readers keep their answers (CX-IX) > outlines each file: signatures, exports, imports and identifiers 1`] = `
+{
+  "src/cli.ts": {
+    "exports": [
+      "main",
+    ],
+    "identifiers": [
+      "balance",
+      "main",
+      "openLedger",
+      "total",
+    ],
+    "imports": [
+      "./ledger.js",
+      "./math.js",
+    ],
+    "lines": [
+      "  export default function main(): void",
+    ],
+    "path": "src/cli.ts",
+  },
+  "src/ledger.ts": {
+    "exports": [
+      "Ledger",
+      "openLedger",
+      "closeLedger",
+    ],
+    "identifiers": [
+      "Entry",
+      "Ledger",
+      "add",
+      "amount",
+      "balance",
+      "closeLedger",
+      "e",
+      "entries",
+      "entry",
+      "l",
+      "map",
+      "name",
+      "openLedger",
+      "push",
+      "secret",
+      "total",
+    ],
+    "imports": [
+      "./types.js",
+      "./math.js",
+    ],
+    "lines": [
+      "  export class Ledger",
+      "    constructor(public readonly name: string)",
+      "    add(entry: Entry): void",
+      "    balance(): number",
+      "  export const openLedger",
+      "  export function closeLedger(l: Ledger): void",
+    ],
+    "path": "src/ledger.ts",
+  },
+  "src/math.ts": {
+    "exports": [
+      "total",
+      "ZERO",
+      "ONE",
+    ],
+    "identifiers": [
+      "ONE",
+      "ZERO",
+      "a",
+      "b",
+      "hidden",
+      "reduce",
+      "total",
+      "xs",
+    ],
+    "imports": [],
+    "lines": [
+      "  export function total(xs: number[]): number",
+      "  export const ZERO",
+    ],
+    "path": "src/math.ts",
+  },
+  "src/types.ts": {
+    "exports": [
+      "Entry",
+      "EntryId",
+      "Kind",
+    ],
+    "identifiers": [
+      "Credit",
+      "Debit",
+      "Entry",
+      "EntryId",
+      "Kind",
+      "amount",
+      "id",
+    ],
+    "imports": [],
+    "lines": [
+      "  export interface Entry",
+      "  export type EntryId = string;",
+      "  export enum Kind",
+    ],
+    "path": "src/types.ts",
+  },
+}
+`;
+
+exports[`the context package's source readers keep their answers (CX-IX) > ranks and renders the map the same way 1`] = `
+{
+  "considered": 4,
+  "files": [
+    {
+      "path": "src/ledger.ts",
+      "rank": 0.45247,
+    },
+    {
+      "path": "src/math.ts",
+      "rank": 0.333864,
+    },
+    {
+      "path": "src/types.ts",
+      "rank": 0.170933,
+    },
+    {
+      "path": "src/cli.ts",
+      "rank": 0.042733,
+    },
+  ],
+  "text": "src/ledger.ts:
+  export class Ledger
+    constructor(public readonly name: string)
+    add(entry: Entry): void
+    balance(): number
+  export const openLedger
+  export function closeLedger(l: Ledger): void
+
+src/math.ts:
+  export function total(xs: number[]): number
+  export const ZERO
+
+src/types.ts:
+  export interface Entry
+  export type EntryId = string;
+  export enum Kind
+
+src/cli.ts:
+  export default function main(): void",
+}
+`;

@@ -311,6 +311,42 @@ describe("the 403 on every write endpoint (TEAM-4, TEAM-5, TEAM-32, INT-24)", ()
     expect(filed.status).toBe(201);
   });
 
+  it("GT-N4-6: what a card declares to its gates needs Accept as well as the edit permission, and names who changed it", async () => {
+    log.appendNow({
+      actor: "human",
+      type: "project/settings_changed",
+      principal: ADMIN,
+      payload: { project, accept_rule: [LEAD] },
+    });
+    const gateChecks = { visualAssertions: [{ selector: "#title", text: "Board" }] };
+    // A Member holds issue.edit but the Accept rule does not name them.
+    const refused = await send(MEMBER, `/api/cards/${cardId}`, { gateChecks }, "PATCH");
+    expect(refused.status).toBe(403);
+    expect(refused.data.permission).toBe("accept");
+    expect((await store.getCard(cardId))?.gateChecks).toBeUndefined();
+    // Filing a card or splitting one cannot carry gate checks past the rule either.
+    const filed = await send(MEMBER, `/api/projects/${project}/cards`, { title: "X", gateChecks });
+    expect(filed.status).toBe(403);
+    expect(filed.data.permission).toBe("accept");
+    const split = await send(MEMBER, `/api/cards/${cardId}/split`, {
+      parts: [{ title: "a", gateChecks }, { title: "b" }],
+    });
+    expect(split.status).toBe(403);
+    expect(split.data.permission).toBe("accept");
+    // Accept never replaces the route's own permission: a Stakeholder is refused it too.
+    expect(routePermissions("PATCH", `/api/cards/${cardId}`, { gateChecks })?.permissions).toEqual([
+      "issue.edit",
+      "accept",
+    ]);
+
+    const ok = await send(LEAD, `/api/cards/${cardId}`, { gateChecks }, "PATCH");
+    expect(ok.status).toBe(200);
+    expect((await store.getCard(cardId))?.gateChecks).toEqual(gateChecks);
+    const event = (await log.getEventsByTypes(["card/updated"])).at(-1);
+    expect(event?.principal).toBe(LEAD);
+    expect((event?.payload as { patch: unknown }).patch).toEqual({ gateChecks });
+  });
+
   it("answers a Stakeholder's message and holds the proposal for a Member (INT-24)", async () => {
     const sent = await send(STAKE, "/api/pm/messages", { text: "What's next?" });
     expect(sent.status).toBe(200);

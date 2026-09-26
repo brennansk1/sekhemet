@@ -5,9 +5,23 @@ import { basename, join } from "node:path";
 import { type TomlTable, parseToml } from "@sekhemet/kernel";
 import { resolveProgram, runConfined } from "@sekhemet/sandbox";
 import { gitEnvFor } from "@sekhemet/sync";
-import ts from "typescript";
+import { runClaimGate } from "./claims.js";
 import { RERUN_GATES, gateCopy } from "./copy.js";
-import { scanDiffForSecrets } from "./secrets.js";
+import { factsOfText } from "./index/source_index.js";
+import {
+  type LineMutant,
+  countVerdicts,
+  equivalentMutant,
+  isTestGap,
+  judgeMutants,
+  measureOf,
+  sha256,
+  stillbornTypecheck,
+  writeMutationQueue,
+} from "./mutation.js";
+import { type MutationToolId, mutationToolFor, runMutationTool } from "./mutation_tools.js";
+import { gitleaksAllowedPaths, scanDiffForSecrets } from "./secrets.js";
+import { bundledSemgrepRuleSet, ruleSetLabel } from "./semgrep_rules.js";
 import type {
   CompleteGateFailure,
   GateFailure,
@@ -17,7 +31,7 @@ import type {
   MutationMeasure,
   RungOutcome,
 } from "./types.js";
-import { VISUAL_GATE_IDS, runVisualGates } from "./visual.js";
+import { VISUAL_GATE_IDS, type VisualGateContext, runVisualGates } from "./visual.js";
 
 /**
  * The harness's own gates for the layers a project's `gates.toml` rarely
@@ -81,10 +95,23 @@ export interface BuiltinGateContext {
   registry?: RegistryLookup;
   /** Runs the test rung against the worktree as it stands (mutation testing). */
   runTests?: () => Promise<boolean>;
+  /** Runs the card's acceptance tests alone: the acceptance-test mutation score (GT-TQ-3). */
+  runAcceptanceTests?: () => Promise<boolean>;
+  /** Runs the project's typecheck: a mutant it rejects is stillborn (GT-TQ-4). */
+  runTypecheck?: () => Promise<boolean>;
+  /** The card, which names its nightly mutation queue (GT-N5-5). */
+  cardId?: string;
+  /**
+   * The research card being verified: its claims report is checked by the
+   * claim gate when `gates.toml` declares `[claims]` (GT-N5-3).
+   */
+  researchCardId?: string;
   /** The project's .sekhemet directory (visual baselines). Default `<root>/.sekhemet`. */
   stateDir?: string;
   /** Run the visual layer (G17-G20); the session turns it on once the declared gates pass. */
   visual?: boolean;
+  /** DOM assertions and overlaps the card declares, and the vision checklist (GT-N4-2, -4, -6). */
+  visualCard?: Pick<VisualGateContext, "assertions" | "allowOverlap" | "vision" | "visionNotRun">;
   /**
    * Files the harness staged into the worktree and the card may not edit —
    * its acceptance tests. The secrets gate judges what the card wrote: suite
@@ -104,6 +131,12 @@ export interface BuiltinGateResult {
   outcomes: RungOutcome[];
   /** Advisory findings that do not fail the card (mutation survivors). */
   advisories: string[];
+  /**
+   * Mutation survivors of the card's acceptance tests (or of every test,
+   * when those did not run alone): test gaps for the test-author step or a
+   * person, never the Worker's failure (GT-TQ-5). Also in `advisories`.
+   */
+  testGaps: string[];
 }
 
 /** SEC-35: the name travels as `$1`, never spliced into the script. */
@@ -130,13 +163,21 @@ async function runScanner(
    * confined scanner may not open /dev/stdout). Absent or empty, stdout stays.
    */
   reportFile?: string,
+  /**
+   * Files copied into the scanner's private home before it runs (the bundled
+   * rule set, which lies outside the worktree the confinement lets it read);
+   * `{home}` in `args` becomes that directory.
+   */
+  stage?: Readonly<Record<string, Buffer>>,
 ): Promise<{ status: number; stdout: string; stderr: string; refused: boolean }> {
   const home = mkdtempSync(join(tmpdir(), "sekhemet-scan-home-"));
   try {
+    for (const [name, bytes] of Object.entries(stage ?? {})) writeFileSync(join(home, name), bytes);
     const report = reportFile ? join(home, reportFile) : undefined;
+    const withHome = args.map((a) => a.replaceAll("{home}", home));
     const r = await runConfined(
       program,
-      report ? args.map((a) => (a === "{report}" ? report : a)) : args,
+      report ? withHome.map((a) => (a === "{report}" ? report : a)) : withHome,
       {
         root: ctx.root,
         ...(cwd ? { cwd } : {}),
@@ -283,8 +324,13 @@ async function secretsGate(
   locate: (p: string) => string | undefined,
 ): Promise<Draft[]> {
   const owned = new Set(ctx.harnessOwned ?? []);
+  // The project's gitleaks allowlist, read from the base: a card cannot
+  // allowlist the credential it adds by editing the file in the same change.
+  const gitleaksConfig = gitShow(ctx.root, ctx.base, ".gitleaks.toml");
+  const allowed = gitleaksAllowedPaths(gitleaksConfig);
+  const judged = (file: string) => !owned.has(file) && !allowed.some((r) => r.test(file));
   const found = scanDiffForSecrets(ctx.diff)
-    .filter((f) => !owned.has(f.file))
+    .filter((f) => judged(f.file))
     .map((f) =>
       failure(
         "secrets",
@@ -302,9 +348,7 @@ async function secretsGate(
   // gitleaks, when installed, over the changed files (its rule set is larger).
   const gitleaks = locate("gitleaks");
   if (gitleaks) {
-    for (const file of diffFiles(ctx.diff)
-      .filter((f) => !owned.has(f))
-      .slice(0, 50)) {
+    for (const file of diffFiles(ctx.diff).filter(judged).slice(0, 50)) {
       const abs = join(ctx.root, file);
       if (!existsSync(abs)) continue;
       const r = await runScanner(
@@ -321,10 +365,12 @@ async function secretsGate(
           "json",
           "--report-path",
           "{report}",
+          ...(gitleaksConfig ? ["--config", "{home}/gitleaks.toml"] : []),
         ],
         60_000,
         undefined,
         "gitleaks.json",
+        gitleaksConfig ? { "gitleaks.toml": Buffer.from(gitleaksConfig) } : undefined,
       );
       if (r.refused) {
         found.push(notRun("secrets", "gitleaks", r.stderr));
@@ -482,10 +528,16 @@ export function typosquatOf(name: string, known: readonly string[]): string | un
   return undefined;
 }
 
-function gitShow(root: string, base: string, file: string): string | undefined {
+/**
+ * A file as the base holds it, by the harness's own git in the worktree's
+ * guarded environment; undefined when the base has no such file.
+ */
+export function gitShow(root: string, base: string, file: string): string | undefined {
+  if (base.startsWith("-")) return undefined;
   try {
-    return execFileSync("git", ["show", `${base}:${file}`], {
+    return execFileSync("git", ["show", "--no-textconv", `${base}:${file}`], {
       cwd: root,
+      env: gitEnvFor(root),
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
       timeout: 10_000,
@@ -1150,16 +1202,62 @@ async function osvScan(
   return out;
 }
 
-async function semgrepGate(ctx: DiffContext, semgrep: string): Promise<Draft[] | undefined> {
-  const config = join(ctx.root, ".sekhemet", "semgrep.yml");
-  if (!existsSync(config)) return undefined;
+/**
+ * The rules semgrep runs with, named for the evidence: the project's own
+ * `.sekhemet/semgrep.yml` as the base holds it — read by the harness's guarded
+ * git and staged in the scanner's private home, so a card that adds or edits
+ * the file cannot change the rules its own change is judged by — else the
+ * rule set shipped with Sekhemet, usable offline (GT-N5-4, DEC-44).
+ */
+function semgrepRules(
+  root: string,
+  base: string,
+): {
+  args: string[];
+  stage?: Record<string, Buffer>;
+  note: string;
+} {
+  const own = gitShow(root, base, ".sekhemet/semgrep.yml");
+  if (own !== undefined) {
+    return {
+      args: ["--config", "{home}/project-semgrep.yml"],
+      stage: { "project-semgrep.yml": Buffer.from(own) },
+      note: "semgrep rules: .sekhemet/semgrep.yml (the project's, as the base holds it)",
+    };
+  }
+  const set = bundledSemgrepRuleSet();
+  return {
+    args: ["--config", "{home}/sekhemet-offline.yml"],
+    stage: { "sekhemet-offline.yml": readFileSync(set.path) },
+    note: `semgrep rules: ${ruleSetLabel(set)}`,
+  };
+}
+
+async function semgrepGate(
+  ctx: DiffContext,
+  semgrep: string,
+  rules: ReturnType<typeof semgrepRules>,
+): Promise<Draft[]> {
   const files = diffFiles(ctx.diff).filter((f) => existsSync(join(ctx.root, f)));
   if (files.length === 0) return [];
   const r = await runScanner(
     ctx,
     semgrep,
-    ["scan", "--config", config, "--json", "--metrics=off", "--quiet", ...files],
+    [
+      "scan",
+      ...rules.args,
+      // A `nosemgrep` comment is the card's own word about its code: never a waiver.
+      "--disable-nosem",
+      "--json",
+      "--metrics=off",
+      "--disable-version-check",
+      "--quiet",
+      ...files,
+    ],
     300_000,
+    undefined,
+    undefined,
+    rules.stage,
   );
   if (r.refused) return [notRun("semgrep", "semgrep", r.stderr)];
   // `--json` prints an object with `results` even when clean: empty or
@@ -1310,57 +1408,43 @@ function hygieneGate(ctx: DiffContext, advisories: string[] = []): Draft[] {
 
 // --- G13 diff-scoped mutation testing ------------------------------------------
 
-const SWAPS: Partial<Record<ts.SyntaxKind, string>> = {
-  [ts.SyntaxKind.EqualsEqualsEqualsToken]: "!==",
-  [ts.SyntaxKind.ExclamationEqualsEqualsToken]: "===",
-  [ts.SyntaxKind.LessThanToken]: "<=",
-  [ts.SyntaxKind.LessThanEqualsToken]: "<",
-  [ts.SyntaxKind.GreaterThanToken]: ">=",
-  [ts.SyntaxKind.GreaterThanEqualsToken]: ">",
-  [ts.SyntaxKind.PlusToken]: "-",
-  [ts.SyntaxKind.MinusToken]: "+",
-  [ts.SyntaxKind.AmpersandAmpersandToken]: "||",
-  [ts.SyntaxKind.BarBarToken]: "&&",
-  [ts.SyntaxKind.TrueKeyword]: "false",
-  [ts.SyntaxKind.FalseKeyword]: "true",
+/** Each operator token and what a mutant swaps it for, by the token's text. */
+const SWAPS: Readonly<Record<string, string>> = {
+  "===": "!==",
+  "!==": "===",
+  "<": "<=",
+  "<=": "<",
+  ">": ">=",
+  ">=": ">",
+  "+": "-",
+  "-": "+",
+  "&&": "||",
+  "||": "&&",
+  true: "false",
+  false: "true",
 };
 
-export interface LineMutant {
-  file: string;
-  line: number;
-  original: string;
-  replacement: string;
-  source: string;
-}
-
-/** Single-token mutants of `source` on the given lines (scanner tokens: never strings or comments). */
+/**
+ * Single-token mutants of `source` on the given lines, from the source
+ * index's operator facts (T2): tokens, never strings or comments.
+ */
 export function mutantsOnLines(
   file: string,
   source: string,
   lines: Set<number>,
   max: number,
 ): LineMutant[] {
-  const scanner = ts.createScanner(
-    ts.ScriptTarget.Latest,
-    true,
-    ts.LanguageVariant.Standard,
-    source,
-  );
-  const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, false);
   const out: LineMutant[] = [];
-  for (let kind = scanner.scan(); kind !== ts.SyntaxKind.EndOfFileToken; kind = scanner.scan()) {
-    const replacement = SWAPS[kind];
-    if (!replacement) continue;
-    const start = scanner.getTokenStart();
-    const line = sf.getLineAndCharacterOfPosition(start).line + 1;
-    if (!lines.has(line)) continue;
-    const original = scanner.getTokenText();
+  for (const op of factsOfText(file, source).operators) {
+    const replacement = SWAPS[op.text];
+    if (!replacement || !lines.has(op.line)) continue;
     out.push({
       file,
-      line,
-      original,
+      line: op.line,
+      start: op.start,
+      original: op.text,
       replacement,
-      source: `${source.slice(0, start)}${replacement}${source.slice(start + original.length)}`,
+      source: `${source.slice(0, op.start)}${replacement}${source.slice(op.start + op.text.length)}`,
     });
     if (out.length >= max) break;
   }
@@ -1394,63 +1478,194 @@ const BASELINE_FAILS =
   "the tests fail on the unmutated change, so a killed mutant would prove nothing";
 const NO_MUTABLE_LINES = "no mutable lines in the change";
 
+/** A ceiling on the mutants generated before the cap: the rest of the diff is not mutated. */
+const MUTANT_CEILING = 200;
+
+interface MutationGateResult {
+  /** Survivors of the tests that judge proof: test gaps for a person (GT-TQ-5). */
+  testGaps: string[];
+  measure: MutationMeasure;
+}
+
+/**
+ * G13 and rule 32: the diff's mutants, scored twice over non-equivalent
+ * mutants (GT-TQ-3, GT-TQ-4), with changed files in a language that has a
+ * mutation tool run through it when installed (GT-N5-2), and the mutants
+ * past `mutation_max` queued for the nightly run (GT-N5-5).
+ */
 async function mutationGate(
   ctx: DiffContext,
-): Promise<{ survivors: LineMutant[]; measure: MutationMeasure } | undefined> {
-  const runTests = ctx.runTests;
-  if (!runTests) return undefined;
+  locate: (program: string) => string | undefined,
+): Promise<MutationGateResult | undefined> {
   const max = ctx.project.mutationMax ?? 8;
-  const mutants: LineMutant[] = [];
+  const generated: LineMutant[] = [];
   const notMeasured: MutationMeasure["notMeasured"] = [];
-  for (const [file, lines] of addedLines(ctx.diff)) {
+  const toolFiles = new Map<MutationToolId, { programs: string[]; files: string[] }>();
+  const changed = addedLines(ctx.diff);
+  for (const [file, lines] of changed) {
     if (TEST_FILE.test(file)) continue;
+    const tool = mutationToolFor(file, ctx.root);
+    if (tool) {
+      const entry = toolFiles.get(tool.tool) ?? { programs: tool.programs, files: [] };
+      entry.files.push(file);
+      toolFiles.set(tool.tool, entry);
+      continue;
+    }
     const notMutable = mutationNotMeasured(file);
     if (notMutable) {
       notMeasured.push({ file, reason: notMutable });
       continue;
     }
-    if (!/\.[cm]?[jt]sx?$/.test(file) || mutants.length >= max) continue;
+    if (!/\.[cm]?[jt]sx?$/.test(file) || generated.length >= MUTANT_CEILING) continue;
     const abs = join(ctx.root, file);
     if (!existsSync(abs)) continue;
-    mutants.push(
+    generated.push(
       ...mutantsOnLines(
         file,
         readFileSync(abs, "utf8"),
         new Set(lines.map((l) => l.line)),
-        max - mutants.length,
+        MUTANT_CEILING - generated.length,
       ),
     );
   }
-  notMeasured.sort((a, b) => a.file.localeCompare(b.file));
-  const unscored = (refused: string): { survivors: LineMutant[]; measure: MutationMeasure } => ({
-    survivors: [],
-    measure: { score: null, killed: 0, total: 0, refused, notMeasured },
+  if (!ctx.runTests && toolFiles.size === 0) return undefined;
+  // GT-TQ-4: a mutant the transpiler erases is equivalent: counted, never run.
+  const originals = new Map<string, string>();
+  const original = (file: string) => {
+    if (!originals.has(file)) originals.set(file, readFileSync(join(ctx.root, file), "utf8"));
+    return originals.get(file) as string;
+  };
+  const live = generated.filter((m) => !equivalentMutant(m.file, original(m.file), m.source));
+  const equivalent = generated.length - live.length;
+  const scored = live.slice(0, max);
+  const deferred = live.slice(max);
+  const unscored = (refused: string): MutationGateResult => ({
+    testGaps: [],
+    measure: {
+      score: null,
+      killed: 0,
+      total: 0,
+      refused,
+      notMeasured: [...notMeasured].sort((a, b) => a.file.localeCompare(b.file)),
+    },
   });
   // Nothing to mutate is not measured, never a pass (MS-M10-2).
-  if (mutants.length === 0) return unscored(NO_MUTABLE_LINES);
+  if (scored.length === 0 && toolFiles.size === 0) return unscored(NO_MUTABLE_LINES);
+  const runTests = ctx.runTests;
   // The unmutated tests must pass before any mutant counts (MS-M10-1).
-  if (!(await runTests())) return unscored(BASELINE_FAILS);
-  const survivors: LineMutant[] = [];
-  for (const m of mutants) {
-    const abs = join(ctx.root, m.file);
-    const original = readFileSync(abs, "utf8");
-    try {
-      writeFileSync(abs, m.source);
-      if (await runTests()) survivors.push(m);
-    } finally {
-      writeFileSync(abs, original);
+  if (scored.length > 0 && runTests && !(await runTests())) return unscored(BASELINE_FAILS);
+  let acceptanceReason: string | undefined;
+  let runAcceptanceTests = ctx.runAcceptanceTests;
+  if (!runAcceptanceTests) acceptanceReason = "no acceptance-test run given";
+  else if (scored.length > 0 && !(await runAcceptanceTests())) {
+    acceptanceReason = "the acceptance tests fail on the unmutated change";
+    runAcceptanceTests = undefined;
+  }
+  const withAcceptance = runAcceptanceTests !== undefined;
+  // GT-TQ-4: a stillborn verdict only from a typecheck the unmutated tree passes.
+  const typecheck = scored.length > 0 && runTests ? await stillbornTypecheck(ctx.runTypecheck) : {};
+  const verdicts =
+    scored.length > 0 && runTests
+      ? await judgeMutants(ctx.root, scored, {
+          runTests,
+          ...(runAcceptanceTests ? { runAcceptanceTests } : {}),
+          ...(typecheck.runTypecheck ? { runTypecheck: typecheck.runTypecheck } : {}),
+        })
+      : [];
+  const counts = { ...countVerdicts(verdicts, withAcceptance), equivalent };
+  const testGaps: string[] = [];
+  verdicts.forEach((v, i) => {
+    const m = scored[i] as LineMutant;
+    if (!isTestGap(v, withAcceptance)) return;
+    testGaps.push(
+      `mutation survived: ${m.file}:${m.line} "${m.original}" -> "${m.replacement}" passes ${v === "survived" ? "every test" : "the card's acceptance tests"}; a test gap for a person, not the Worker's failure`,
+    );
+  });
+  // GT-N5-2: each language's own tool, when installed; otherwise named.
+  const tools: NonNullable<MutationMeasure["tools"]> = [];
+  for (const [tool, { programs, files }] of toolFiles) {
+    const program = programs.map((p) => locate(p)).find((p) => p !== undefined);
+    if (!program) {
+      for (const file of files) {
+        notMeasured.push({ file, reason: `mutation not measured: ${tool} not installed` });
+      }
+      continue;
+    }
+    const lines = new Map(
+      files.map((f) => [f, new Set((changed.get(f) ?? []).map((l) => l.line))] as const),
+    );
+    const run = await runMutationTool({
+      tool,
+      program,
+      root: ctx.root,
+      files,
+      lines,
+      diff: ctx.diff,
+    });
+    if (run.refused) {
+      tools.push({ tool, files, refused: run.refused });
+      for (const file of files)
+        notMeasured.push({ file, reason: `mutation not measured: ${run.refused}` });
+      continue;
+    }
+    tools.push({ tool, files });
+    for (const m of run.mutants) {
+      if (m.status === "stillborn") {
+        counts.stillborn++;
+        continue;
+      }
+      counts.total++;
+      // A timeout is detected, as the tools themselves count it.
+      if (m.status === "killed" || m.status === "timeout") counts.killed++;
+      else {
+        testGaps.push(
+          `mutation survived: ${m.file}:${m.line} (${tool}: ${m.description}) passes every test; a test gap for a person, not the Worker's failure`,
+        );
+      }
     }
   }
-  const killed = mutants.length - survivors.length;
+  const partial =
+    deferred.length > 0
+      ? {
+          scored: scored.length,
+          deferred: deferred.length,
+          queue: writeMutationQueue(
+            ctx.stateDir ?? join(ctx.root, ".sekhemet"),
+            ctx.cardId ?? sha256(ctx.diff).slice(0, 16),
+            {
+              ...(ctx.cardId ? { cardId: ctx.cardId } : {}),
+              scored: counts,
+              ...(acceptanceReason ? { acceptanceReason } : {}),
+              mutants: deferred.map((m) => ({
+                file: m.file,
+                line: m.line,
+                start: m.start,
+                original: m.original,
+                replacement: m.replacement,
+                fileSha256: sha256(original(m.file)),
+              })),
+            },
+          ),
+        }
+      : undefined;
+  notMeasured.sort((a, b) => a.file.localeCompare(b.file));
+  // Only tools ran, and none gave a verdict: not measured, never a pass.
+  if (verdicts.length === 0 && !tools.some((t) => !t.refused)) {
+    const none = unscored(tools.length > 0 ? "no mutation tool gave a verdict" : NO_MUTABLE_LINES);
+    return { ...none, measure: { ...none.measure, ...(tools.length > 0 ? { tools } : {}) } };
+  }
   return {
-    survivors,
-    // Rounded as the mutation step rounds it, so the two report one figure.
-    measure: {
-      score: Math.round((killed / mutants.length) * 1000) / 1000,
-      killed,
-      total: mutants.length,
+    testGaps,
+    measure: measureOf(counts, {
       notMeasured,
-    },
+      ...(acceptanceReason ? { acceptanceReason } : {}),
+      ...(typecheck.stillbornNotJudged ? { stillbornNotJudged: typecheck.stillbornNotJudged } : {}),
+      ...(partial ? { partial } : {}),
+      ...(tools.length > 0 ? { tools } : {}),
+      ...(ctx.project.mutationBlocking === true && testGaps.length > 0
+        ? { strengthUnmet: true }
+        : {}),
+    }),
   };
 }
 
@@ -1530,6 +1745,7 @@ function enabledLayers(
 export function builtinGateIds(project: GateProjectConfig): string[] {
   const ids: string[] = [...enabledLayers(project)];
   if (project.visual) ids.push("visual", ...VISUAL_GATE_IDS);
+  if (project.claims) ids.push("claims");
   return [...new Set(ids)].sort();
 }
 
@@ -1635,23 +1851,19 @@ export async function runBuiltinGates(ctx: BuiltinGateContext): Promise<BuiltinG
     await guard("semgrep", "security", "security", async () => {
       const t = Date.now();
       const semgrep = locate("semgrep");
-      const f = semgrep ? await semgrepGate(dctx, semgrep) : undefined;
-      if (f) failures.push(...f);
-      outcomes.push(
-        outcome(
-          "semgrep",
-          "security",
-          "security",
-          (f ?? []).length === 0,
-          t,
-          f === undefined,
-          !semgrep
-            ? "semgrep is not installed"
-            : f === undefined
-              ? "no .sekhemet/semgrep.yml rules"
-              : undefined,
-        ),
-      );
+      if (!semgrep) {
+        outcomes.push(
+          outcome("semgrep", "security", "security", true, t, true, "semgrep is not installed"),
+        );
+        return;
+      }
+      const rules = semgrepRules(ctx.root, ctx.base);
+      const f = await semgrepGate(dctx, semgrep, rules);
+      failures.push(...f);
+      outcomes.push({
+        ...outcome("semgrep", "security", "security", f.length === 0, t),
+        note: rules.note,
+      });
     });
   }
   if (enabled.has("hygiene")) {
@@ -1662,10 +1874,11 @@ export async function runBuiltinGates(ctx: BuiltinGateContext): Promise<BuiltinG
       outcomes.push(outcome("hygiene", "hygiene", "hygiene", f.length === 0, t));
     });
   }
+  const testGaps: string[] = [];
   if (enabled.has("mutation")) {
     await guard("mutation", "robustness", "robustness", async () => {
       const t = Date.now();
-      const r = await mutationGate(dctx);
+      const r = await mutationGate(dctx, locate);
       if (!r) {
         outcomes.push(
           outcome("mutation", "robustness", "robustness", true, t, true, "no test runner given"),
@@ -1674,9 +1887,15 @@ export async function runBuiltinGates(ctx: BuiltinGateContext): Promise<BuiltinG
       }
       const measured = (o: RungOutcome): RungOutcome => ({ ...o, mutation: r.measure });
       const refused = r.measure.refused;
-      if (refused === BASELINE_FAILS && ctx.project.mutationBlocking === true) {
-        // A blocking gate that could not score is not run: never a pass, and
-        // never the Worker's failure (rule 9).
+      if (
+        refused !== undefined &&
+        refused !== NO_MUTABLE_LINES &&
+        ctx.project.mutationBlocking === true
+      ) {
+        // A blocking gate that could not score — the unmutated tests fail, no
+        // tool gave a verdict, no live mutant — is not run: never a pass, and
+        // never the Worker's failure (rule 9). A change with nothing to mutate
+        // is the one refusal that is not a gap in the gate.
         failures.push(
           failure("mutation", "robustness", "robustness", `mutation not run: ${refused}`, {
             actual: refused,
@@ -1695,32 +1914,27 @@ export async function runBuiltinGates(ctx: BuiltinGateContext): Promise<BuiltinG
         );
         return;
       }
-      for (const m of r.survivors) {
-        advisories.push(
-          `mutation survived: ${m.file}:${m.line} "${m.original}" -> "${m.replacement}" still passes every test; add a test that pins this behaviour`,
-        );
-      }
-      const blocking = ctx.project.mutationBlocking === true && r.survivors.length > 0;
-      if (blocking) {
-        // A survivor is a gap in the tests, which the implementer may not
-        // edit (rule 17, GT-M6-4): the remedy routes it to a person.
-        failures.push(
-          ...r.survivors.slice(0, 3).map((m) =>
-            failure(
-              "mutation",
-              "robustness",
-              "robustness",
-              `${m.file}:${m.line} "${m.original}" -> "${m.replacement}" survives the tests`,
-              {
-                location: { file: m.file, line: m.line },
-                actual: `"${m.original}" -> "${m.replacement}" passes every test`,
-                suggestedAction: gateCopy.mutationGap(m.file, String(m.line)),
-              },
-            ),
-          ),
-        );
-      }
-      outcomes.push(measured(outcome("mutation", "robustness", "robustness", !blocking, t)));
+      // A survivor is a gap in the tests, which the implementer may not edit:
+      // it goes to a person, never to the Worker as a failure, even when the
+      // project makes mutation blocking (rule 32, GT-TQ-5, GT-TQ-12). Blocking
+      // then marks the requirement's strength unmet (rule 32a).
+      testGaps.push(...r.testGaps);
+      advisories.push(...r.testGaps);
+      outcomes.push(measured(outcome("mutation", "robustness", "robustness", true, t)));
+    });
+  }
+  // Rule 27a: a research card's claims, when the project declares the gate.
+  if (ctx.project.claims && ctx.researchCardId) {
+    const claims = ctx.project.claims;
+    const card = ctx.researchCardId;
+    await guard("claims", "test", "functional", async () => {
+      const r = await runClaimGate({
+        root: ctx.root,
+        report: join(ctx.root, claims.report.replaceAll("{card}", card)),
+        timeoutMs: claims.timeoutMs,
+      });
+      failures.push(...r.failures);
+      outcomes.push(r.outcome);
     });
   }
   if (ctx.project.visual && ctx.visual) {
@@ -1730,11 +1944,22 @@ export async function runBuiltinGates(ctx: BuiltinGateContext): Promise<BuiltinG
         root: ctx.root,
         config: visual,
         stateDir: ctx.stateDir ?? join(ctx.root, ".sekhemet"),
+        // GT-N4-1: the candidates it writes are this card's.
+        ...(ctx.cardId ? { cardId: ctx.cardId } : {}),
+        ...(ctx.visualCard?.assertions ? { assertions: ctx.visualCard.assertions } : {}),
+        ...(ctx.visualCard?.allowOverlap ? { allowOverlap: ctx.visualCard.allowOverlap } : {}),
+        ...(ctx.visualCard?.vision ? { vision: ctx.visualCard.vision } : {}),
+        ...(ctx.visualCard?.visionNotRun ? { visionNotRun: ctx.visualCard.visionNotRun } : {}),
       });
       failures.push(...r.failures);
       outcomes.push(...r.outcomes);
       advisories.push(...r.advisories);
     });
   }
-  return { failures: failures.map((f) => complete(f, ctx.base)), outcomes, advisories };
+  return {
+    failures: failures.map((f) => complete(f, ctx.base)),
+    outcomes,
+    advisories,
+    testGaps,
+  };
 }

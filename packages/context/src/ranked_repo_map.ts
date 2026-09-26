@@ -1,12 +1,21 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
-import ts from "typescript";
+import { join, relative, resolve } from "node:path";
+import {
+  type DeclarationFact,
+  type SourceFacts,
+  type SourceIndex,
+  TYPESCRIPT_PARSER_VERSION,
+  type WorkspacePackageFact,
+  createSourceIndex,
+  factsOfText,
+} from "@sekhemet/gates";
 import { estimatePromptTokens } from "./allocator.js";
 
 /**
  * The repo map (C1, design "Pipeline stages" and "Hierarchical
- * localization"): a TypeScript-compiler outline of each source file, a
+ * localization"): an outline of each source file from the source index's
+ * facts (gates T2; context rule 13b), a
  * graph of reference edges between files (imports, and uses of another
  * file's exported names), personalised PageRank seeded on the card's scope
  * files, and a binary search over how many ranked files fit the token
@@ -67,6 +76,8 @@ export interface RankedRepoMap {
   usedTokens: number;
   cacheKey: string;
   fromCache: boolean;
+  /** The parser that produced the outlines (CX-IX-3). */
+  producedBy: { parser: string; parserVersion: string };
 }
 
 const SKIP_DIRS = new Set([
@@ -115,106 +126,103 @@ function listSources(root: string, maxFiles: number): string[] {
   return out.sort();
 }
 
-function text(node: ts.Node, sf: ts.SourceFile): string {
-  return node.getText(sf).replace(/\s+/g, " ").trim();
-}
+const collapse = (text: string): string => text.replace(/\s+/g, " ").trim();
 
-function signatureOf(node: ts.Node, sf: ts.SourceFile): string {
-  const full = text(node, sf);
-  // Cut at the body: the first `{` that opens a block after the parameters, or `=` for values.
-  if (ts.isVariableStatement(node)) {
+/** A declaration's signature: its text up to the body, or up to `=` for a value (bodies are never shown). */
+function signatureOf(d: DeclarationFact, source: string): string {
+  const full = collapse(source.slice(d.start, d.end));
+  if (d.kind === "const" || d.kind === "let" || d.kind === "var") {
     return full.split("=")[0]?.trim() ?? full;
   }
-  if (
-    ts.isInterfaceDeclaration(node) ||
-    ts.isEnumDeclaration(node) ||
-    ts.isClassDeclaration(node)
-  ) {
+  if (d.kind === "interface" || d.kind === "enum" || d.kind === "class") {
     return full.split("{")[0]?.trim() ?? full;
   }
-  if (ts.isTypeAliasDeclaration(node)) {
-    return full.length > 140 ? `${full.slice(0, 137)}...` : full;
-  }
-  const body = (node as ts.FunctionLikeDeclaration).body;
-  if (body) return full.slice(0, full.length - text(body, sf).length).trim();
+  if (d.kind === "type") return full.length > 140 ? `${full.slice(0, 137)}...` : full;
+  if (d.bodyOpen !== -1) return collapse(source.slice(d.start, d.bodyOpen));
   return full;
 }
 
-function isExported(node: ts.Node): boolean {
-  const mods = ts.canHaveModifiers(node) ? ts.getModifiers(node) : undefined;
-  return mods?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) ?? false;
+const OUTLINED = new Set(["function", "class", "interface", "type", "enum", "const", "let", "var"]);
+
+/**
+ * One file's outline from the source index's facts (gates T2, context rule
+ * 13b): the signatures of the declarations it exports where it declares
+ * them, with an exported class's non-private methods; the modules it
+ * imports and re-exports from; and every name it declares or uses.
+ */
+export function outlineFile(path: string, source: string): FileOutline {
+  return outlineOfFacts(factsOfText(path, source), source);
 }
 
-/** Parse one file into its outline with the TypeScript compiler (no type check). */
-export function outlineFile(path: string, source: string): FileOutline {
-  const sf = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, false);
+function outlineOfFacts(facts: SourceFacts, source: string): FileOutline {
   const lines: string[] = [];
   const exports: string[] = [];
-  const imports: string[] = [];
-  const identifiers = new Set<string>();
-  for (const stmt of sf.statements) {
-    if (ts.isImportDeclaration(stmt) && ts.isStringLiteral(stmt.moduleSpecifier)) {
-      imports.push(stmt.moduleSpecifier.text);
-      continue;
-    }
-    if (
-      ts.isExportDeclaration(stmt) &&
-      stmt.moduleSpecifier &&
-      ts.isStringLiteral(stmt.moduleSpecifier)
-    ) {
-      imports.push(stmt.moduleSpecifier.text);
-      continue;
-    }
-    const exported = isExported(stmt);
-    const names: string[] = [];
-    if (
-      ts.isFunctionDeclaration(stmt) ||
-      ts.isClassDeclaration(stmt) ||
-      ts.isInterfaceDeclaration(stmt) ||
-      ts.isTypeAliasDeclaration(stmt) ||
-      ts.isEnumDeclaration(stmt)
-    ) {
-      if (stmt.name) names.push(stmt.name.text);
-    } else if (ts.isVariableStatement(stmt)) {
-      for (const d of stmt.declarationList.declarations) {
-        if (ts.isIdentifier(d.name)) names.push(d.name.text);
-      }
-    } else continue;
-    if (!exported) continue;
-    exports.push(...names);
-    lines.push(`  ${signatureOf(stmt, sf)}`);
-    if (ts.isClassDeclaration(stmt)) {
-      for (const m of stmt.members) {
-        const mods = ts.canHaveModifiers(m) ? ts.getModifiers(m) : undefined;
-        if (mods?.some((x) => x.kind === ts.SyntaxKind.PrivateKeyword)) continue;
-        if (ts.isMethodDeclaration(m) || ts.isConstructorDeclaration(m)) {
-          lines.push(`    ${signatureOf(m, sf)}`);
-        }
+  const decls = [...facts.declarations].sort((a, b) => a.start - b.start);
+  for (const d of decls) {
+    if (!d.topLevel || !d.exportedAtDeclaration || !OUTLINED.has(d.kind)) continue;
+    exports.push(d.name);
+    // A statement declaring several names is one line, written at its first.
+    if (source.startsWith("export", d.start)) lines.push(`  ${signatureOf(d, source)}`);
+    if (d.kind !== "class") continue;
+    for (const m of decls) {
+      if (
+        m.kind === "method" &&
+        m.container === d.name &&
+        m.containerKind === "class" &&
+        m.start > d.start &&
+        m.end <= d.end &&
+        !m.accessor &&
+        m.visibility !== "private"
+      ) {
+        lines.push(`    ${signatureOf(m, source)}`);
       }
     }
   }
-  const visit = (n: ts.Node): void => {
-    if (ts.isIdentifier(n)) identifiers.add(n.text);
-    ts.forEachChild(n, visit);
-  };
-  visit(sf);
-  return { path, lines, exports, imports, identifiers };
+  const imports = [
+    ...facts.imports
+      .filter((i) => i.kind !== "dynamic" && i.kind !== "require")
+      .map((i) => ({ line: i.line, specifier: i.specifier })),
+    ...facts.reExports.map((r) => ({ line: r.line, specifier: r.specifier })),
+  ]
+    .sort((a, b) => a.line - b.line)
+    .map((i) => i.specifier);
+  const identifiers = new Set([
+    ...facts.references.map((r) => r.name),
+    ...facts.declarations.filter((d) => d.name !== "constructor").map((d) => d.name),
+  ]);
+  return { path: facts.file, lines, exports, imports, identifiers };
 }
 
-function resolveImport(from: string, spec: string, known: Set<string>): string | undefined {
-  if (!spec.startsWith(".")) return undefined;
-  const base = join(dirname(from), spec).replace(/\\/g, "/");
-  const stem = base.replace(/\.(js|mjs|cjs|jsx)$/, "");
-  const candidates = [
-    base,
-    `${stem}.ts`,
-    `${stem}.tsx`,
-    `${stem}.js`,
-    `${stem}/index.ts`,
-    `${stem}/index.tsx`,
-    `${stem}/index.js`,
+/**
+ * A file's one-line role, from the source index (CX-IX-2): the first line of
+ * its first documentation comment, and the names it exports. Never a model.
+ */
+export function roleLine(facts: SourceFacts): string {
+  const names = [
+    ...new Set([
+      ...facts.exports
+        .filter((e) => e.name !== "export=")
+        .map((e) => (e.name === "default" ? (e.local ?? "default") : e.name)),
+      ...facts.reExports.flatMap((r) =>
+        r.kind === "named" ? r.names.map((n) => n.exported) : r.namespace ? [r.namespace] : [],
+      ),
+    ]),
   ];
-  return candidates.find((c) => known.has(c));
+  const listed =
+    names.length === 0
+      ? "No exports."
+      : `Exports ${names.slice(0, 6).join(", ")}${names.length > 6 ? `, and ${names.length - 6} more` : ""}.`;
+  if (!facts.doc) return listed;
+  const doc = /[.!?]$/.test(facts.doc) ? facts.doc : `${facts.doc}.`;
+  return `${doc} ${listed}`;
+}
+
+/** The package map's line for one workspace package: name, role and dependencies (CX-IX-1). */
+function packageLine(index: SourceIndex, pkg: WorkspacePackageFact): string {
+  const entry = pkg.entryPoints.find((e) => e.file)?.file;
+  const facts = entry ? index.facts(entry) : undefined;
+  const role = facts ? roleLine(facts) : "No entry point found.";
+  return `${pkg.name}: ${role}${pkg.deps.length ? ` Depends on ${pkg.deps.join(", ")}.` : ""}`;
 }
 
 /**
@@ -285,12 +293,33 @@ export function buildRankedRepoMap(root: string, options: RepoMapOptions = {}): 
   const absRoot = resolve(root);
   const budget = options.budgetTokens ?? 1200;
   const scope = (options.scopeFiles ?? []).map((f) => f.replace(/^\.\//, ""));
+  const index = createSourceIndex(absRoot);
+  // CX-IX-1: a workspace with more packages than a tenth of the budget holds
+  // gets a package map, and files are ranked only in the scope's packages.
+  const ws = existsSync(absRoot) ? index.workspace() : undefined;
+  let packageMap = "";
+  let inScopePackages: ((rel: string) => boolean) | undefined;
+  if (ws && ws.packages.length > 0) {
+    const text = `PACKAGES (name: role):\n${ws.packages.map((p) => packageLine(index, p)).join("\n")}`;
+    if (estimatePromptTokens(text) > budget / 10) {
+      packageMap = text;
+      const touched = ws.packages.filter((p) =>
+        scope.some((f) => f === p.dir || f.startsWith(`${p.dir}/`)),
+      );
+      if (touched.length > 0) {
+        inScopePackages = (rel) => touched.some((p) => rel.startsWith(`${p.dir}/`));
+      }
+    }
+  }
+  const fileBudget = packageMap ? budget - estimatePromptTokens(`${packageMap}\n\n`) : budget;
   const abs = existsSync(absRoot) ? listSources(absRoot, options.maxFiles ?? 400) : [];
   // CX-N5-2: the key hashes each file's content, not its size and mtime.
   const sources = new Map<string, string>();
   for (const p of abs) {
+    const rel = relative(absRoot, p).replace(/\\/g, "/");
+    if (inScopePackages && !inScopePackages(rel)) continue;
     try {
-      sources.set(relative(absRoot, p).replace(/\\/g, "/"), readFileSync(p, "utf8"));
+      sources.set(rel, readFileSync(p, "utf8"));
     } catch {
       // Unreadable: omit.
     }
@@ -300,19 +329,21 @@ export function buildRankedRepoMap(root: string, options: RepoMapOptions = {}): 
     .join("|");
   const specIds = options.specText ? specIdentifiers(options.specText) : [];
   const cacheKey = createHash("sha256")
-    .update(`${stamp}#${scope.join(",")}#${budget}#${options.damping ?? 0.85}#${specIds.join(",")}`)
+    .update(
+      `${stamp}#${scope.join(",")}#${budget}#${options.damping ?? 0.85}#${specIds.join(",")}#${packageMap}`,
+    )
     .digest("hex")
     .slice(0, 16);
   const hit = cache.get(cacheKey);
   if (hit) return { ...hit, fromCache: true };
 
   const outlines = new Map<string, FileOutline>();
+  let producedBy = { parser: "typescript", parserVersion: TYPESCRIPT_PARSER_VERSION };
   for (const [rel, source] of sources) {
-    try {
-      outlines.set(rel, outlineFile(rel, source));
-    } catch {
-      // Unparseable: omit.
-    }
+    const facts = factsOfText(rel, source);
+    if (facts.parseStatus === "unsupported") continue;
+    producedBy = { parser: facts.parser, parserVersion: facts.parserVersion };
+    outlines.set(rel, outlineOfFacts(facts, source));
   }
   const nodes = [...outlines.keys()].sort();
   const known = new Set(nodes);
@@ -330,8 +361,10 @@ export function buildRankedRepoMap(root: string, options: RepoMapOptions = {}): 
   };
   for (const [path, o] of outlines) {
     for (const spec of o.imports) {
-      const target = resolveImport(path, spec, known);
-      if (target) addEdge(path, target, 1);
+      if (!spec.startsWith(".")) continue;
+      // IX-2: the adapter's resolver, and only files the map considered.
+      const target = index.resolve(path, spec);
+      if (target.kind === "file" && known.has(target.path)) addEdge(path, target.path, 1);
     }
     for (const id of o.identifiers) {
       const owners = exporters.get(id);
@@ -365,11 +398,12 @@ export function buildRankedRepoMap(root: string, options: RepoMapOptions = {}): 
   let hi = outlineList.length;
   while (lo < hi) {
     const mid = Math.ceil((lo + hi) / 2);
-    if (estimatePromptTokens(render(outlineList.slice(0, mid))) <= budget) lo = mid;
+    if (estimatePromptTokens(render(outlineList.slice(0, mid))) <= fileBudget) lo = mid;
     else hi = mid - 1;
   }
   const chosen = outlineList.slice(0, lo);
-  const textOut = render(chosen);
+  const fileMap = render(chosen);
+  const textOut = packageMap ? (fileMap ? `${packageMap}\n\n${fileMap}` : packageMap) : fileMap;
   const result: RankedRepoMap = {
     text: textOut,
     files: chosen.map((f) => ({
@@ -380,6 +414,7 @@ export function buildRankedRepoMap(root: string, options: RepoMapOptions = {}): 
     usedTokens: estimatePromptTokens(textOut),
     cacheKey,
     fromCache: false,
+    producedBy,
   };
   if (cache.size > 32) cache.delete(cache.keys().next().value as string);
   cache.set(cacheKey, result);

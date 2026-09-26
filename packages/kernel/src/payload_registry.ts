@@ -69,6 +69,29 @@ const priv = (dataClass: Exclude<DataClass, "structural">, schema: v.GenericSche
 const ASSIGNED_ROLE = ID;
 const ASSIGNMENT_SCOPE = v.picklist(["personal", "baseline", "default"]);
 
+/** A mutation measure (gates `MutationMeasure`), as the nightly run records it. */
+const COUNT = v.pipe(v.number(), v.integer(), v.minValue(0));
+const SCORE = v.nullable(v.pipe(v.number(), v.minValue(0), v.maxValue(1)));
+const MUTATION_MEASURE = v.strictObject({
+  score: SCORE,
+  killed: COUNT,
+  total: COUNT,
+  refused: v.optional(TEXT),
+  notMeasured: v.array(v.strictObject({ file: ID, reason: TEXT })),
+  acceptance: v.optional(
+    v.strictObject({ score: SCORE, killed: COUNT, total: COUNT, reason: v.optional(TEXT) }),
+  ),
+  stillborn: v.optional(COUNT),
+  stillbornNotJudged: v.optional(TEXT),
+  equivalent: v.optional(COUNT),
+  partial: v.optional(v.strictObject({ scored: COUNT, deferred: COUNT, queue: ID })),
+  tools: v.optional(
+    v.array(v.strictObject({ tool: ID, files: v.array(ID), refused: v.optional(TEXT) })),
+  ),
+  strengthUnmet: v.optional(v.boolean()),
+  stale: v.optional(v.array(ID)),
+});
+
 // models NEW-models-14 (Smart Swap): swap records carry the weights' key, never their path.
 const VOLUME = v.picklist(["internal", "external"]);
 const CACHE_STATE = v.picklist(["cold", "warm"]);
@@ -487,6 +510,22 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     reason: priv("free_text", TEXT),
   },
   "review/auto_accept_enabled": { principal: s(PRINCIPAL), run: s(ID) },
+  // gates rule 31 (GT-N4-1): a person made a visual candidate the baseline —
+  // who, which screenshot (`<name>-<width>`) and its SHA-256, and the card
+  // whose run produced it when named.
+  "visual/baseline_approved": {
+    principal: s(PRINCIPAL),
+    key: s(v.pipe(v.string(), v.regex(/^[\w.-]+$/, "a snapshot key, <name>-<width>"))),
+    sha256: s(SHA256),
+    cardId: s(ID, true),
+  },
+  // gates rule 32 (GT-N5-5): the full mutation score of a card's deferred
+  // mutants, recorded before its queue is marked complete. The reasons are
+  // the harness's own fixed wording and repository paths, never a person's text.
+  "card/mutation_completed": {
+    queue: s(ID),
+    measure: s(MUTATION_MEASURE),
+  },
   "review/opened": {
     id: s(ID),
     principal: s(PRINCIPAL),

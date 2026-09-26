@@ -1,8 +1,17 @@
 import type { ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { inflateSync } from "node:zlib";
+import { crc32, deflateSync, inflateSync } from "node:zlib";
 import {
   findChrome,
   isHeadlessShell,
@@ -38,6 +47,21 @@ export interface VisualCheck {
 export interface VisualSnapshot {
   name: string;
   selector: string;
+  /** Regions of this snapshot whose content changes between runs, painted over (GT-N4-5). */
+  mask?: string[];
+}
+
+/**
+ * A DOM assertion (rule 29, GT-N4-6): the element is present (default) or
+ * absent, and, when given, its text or an attribute (present, or equal to
+ * `value`) is what the card declares.
+ */
+export interface DomAssertion {
+  selector: string;
+  present?: boolean;
+  text?: string;
+  attribute?: string;
+  value?: string;
 }
 
 export interface VisualConfig {
@@ -51,9 +75,45 @@ export interface VisualConfig {
   snapshots: VisualSnapshot[];
   /** Fraction of differing pixels a snapshot may have. Default 0.01. */
   threshold: number;
-  /** New baselines: written and passed ("auto") or failed until approved ("human"). */
+  /**
+   * New or changed baselines: failed until a person approves the candidate
+   * ("human", the default, rule 31, GT-N4-1), or written and passed ("auto",
+   * only when the project says so).
+   */
   baselineApproval: "auto" | "human";
   a11y: boolean;
+  /** Regions masked in every snapshot: content that changes between runs (GT-N4-5). */
+  mask: string[];
+  /** Fail two visible elements whose boxes intersect (GT-N4-4). Default true. */
+  overlap: boolean;
+  /** Overlaps the project declares, as selector pairs (either order). */
+  allowOverlap: [string, string][];
+  /** DOM assertions the project declares (GT-N4-6). */
+  assertions: DomAssertion[];
+}
+
+const strings = (v: unknown): string[] =>
+  Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+
+/** Selector pairs from `[["a", "b"], ...]`. */
+export function parseOverlapPairs(v: unknown): [string, string][] {
+  return (Array.isArray(v) ? v : [])
+    .map((p) => strings(p))
+    .filter((p) => p.length === 2)
+    .map((p) => [p[0], p[1]] as [string, string]);
+}
+
+/** DOM assertions from `[[visual.assert]]` terms (or a card's declaration). */
+export function parseDomAssertions(v: unknown): DomAssertion[] {
+  return (Array.isArray(v) ? (v as Record<string, unknown>[]) : [])
+    .filter((a) => a && typeof a.selector === "string")
+    .map((a) => ({
+      selector: String(a.selector),
+      ...(typeof a.present === "boolean" ? { present: a.present } : {}),
+      ...(typeof a.text === "string" ? { text: a.text } : {}),
+      ...(typeof a.attribute === "string" ? { attribute: a.attribute } : {}),
+      ...(typeof a.value === "string" ? { value: a.value } : {}),
+    }));
 }
 
 export function parseVisualConfig(raw: unknown): VisualConfig | undefined {
@@ -79,10 +139,19 @@ export function parseVisualConfig(raw: unknown): VisualConfig | undefined {
       })),
     snapshots: arr(t.snapshot)
       .filter((s) => typeof s.name === "string" && typeof s.selector === "string")
-      .map((s) => ({ name: String(s.name), selector: String(s.selector) })),
+      .map((s) => ({
+        name: String(s.name),
+        selector: String(s.selector),
+        ...(strings(s.mask).length > 0 ? { mask: strings(s.mask) } : {}),
+      })),
     threshold: typeof t.threshold === "number" ? t.threshold : 0.01,
-    baselineApproval: t.baseline_approval === "human" ? "human" : "auto",
+    // Only an explicit "auto" skips the person (GT-N4-1).
+    baselineApproval: t.baseline_approval === "auto" ? "auto" : "human",
     a11y: t.a11y !== false,
+    mask: strings(t.mask),
+    overlap: t.overlap !== false,
+    allowOverlap: parseOverlapPairs(t.allow_overlap),
+    assertions: parseDomAssertions(t.assert),
   };
 }
 
@@ -339,7 +408,67 @@ export class CdpPage {
     })) as { data: string };
     return Buffer.from(data, "base64");
   }
+
+  /** A PNG of the viewport as it stands (the vision checklist's screen). */
+  public async screenshotViewport(): Promise<Buffer> {
+    const { data } = (await this.send("Page.captureScreenshot", { format: "png" })) as {
+      data: string;
+    };
+    return Buffer.from(data, "base64");
+  }
+
+  /**
+   * Animations and transitions off (GT-N4-5): every CSS animation and
+   * transition is removed, running ones are cancelled to their end state,
+   * and the caret stops blinking, so a screenshot does not depend on when
+   * it was taken.
+   */
+  public async freeze(): Promise<void> {
+    await this.evaluate<void>(FREEZE_SCRIPT);
+  }
+
+  /** Paint an opaque box over every element the selectors match (GT-N4-5). */
+  public async mask(selectors: readonly string[], tag: string): Promise<void> {
+    if (selectors.length === 0) return;
+    await this.evaluate<void>(
+      `(${MASK_SCRIPT})(${JSON.stringify(selectors)}, ${JSON.stringify(tag)})`,
+    );
+  }
+
+  /** Remove the masks painted under `tag`. */
+  public async unmask(tag: string): Promise<void> {
+    await this.evaluate<void>(
+      `document.querySelectorAll('[data-sekhemet-mask=${JSON.stringify(tag)}]').forEach((e) => e.remove())`,
+    );
+  }
 }
+
+const FREEZE_SCRIPT = `(async () => {
+  const style = document.createElement("style");
+  style.setAttribute("data-sekhemet-freeze", "");
+  style.textContent = "*, *::before, *::after { animation: none !important; transition: none !important; caret-color: transparent !important; scroll-behavior: auto !important; }";
+  document.documentElement.appendChild(style);
+  for (const a of document.getAnimations ? document.getAnimations() : []) {
+    try { a.finish(); } catch { a.cancel(); }
+  }
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+})()`;
+
+const MASK_SCRIPT = `(selectors, tag) => {
+  for (const sel of selectors) {
+    let found = [];
+    try { found = [...document.querySelectorAll(sel)]; } catch { continue; }
+    for (const e of found) {
+      const r = e.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) continue;
+      const m = document.createElement("div");
+      m.setAttribute("data-sekhemet-mask", tag);
+      m.style.cssText = "position:absolute;margin:0;padding:0;border:0;pointer-events:none;z-index:2147483647;background:#ff00ff;" +
+        "left:" + (r.left + scrollX) + "px;top:" + (r.top + scrollY) + "px;width:" + r.width + "px;height:" + r.height + "px";
+      document.documentElement.appendChild(m);
+    }
+  }
+}`;
 
 // --- PNG decode and diff (G19) -------------------------------------------------------
 
@@ -424,6 +553,70 @@ export function pixelDiffRatio(a: Rgba, b: Rgba, tolerance = 16): number {
   return diff / (a.width * a.height || 1);
 }
 
+/** Encode RGBA pixels as an 8-bit RGBA PNG (the evidence's diff images, GT-N4-3). */
+export function encodePng(img: Rgba): Buffer {
+  const chunk = (type: string, data: Buffer) => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(body) >>> 0);
+    return Buffer.concat([len, body, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(img.width, 0);
+  ihdr.writeUInt32BE(img.height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6;
+  const stride = img.width * 4;
+  const raw = Buffer.alloc((stride + 1) * img.height);
+  for (let y = 0; y < img.height; y++) {
+    raw[y * (stride + 1)] = 0;
+    img.data.copy(raw, y * (stride + 1) + 1, y * stride, (y + 1) * stride);
+  }
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk("IHDR", ihdr),
+    chunk("IDAT", deflateSync(raw)),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
+}
+
+/**
+ * A diff image of two same-sized screenshots: differing pixels (as
+ * `pixelDiffRatio` counts them) in red over a faded copy of the baseline;
+ * undefined when the sizes differ.
+ */
+export function diffImage(baseline: Rgba, actual: Rgba, tolerance = 16): Rgba | undefined {
+  if (baseline.width !== actual.width || baseline.height !== actual.height) return undefined;
+  const out = Buffer.alloc(baseline.data.length);
+  for (let i = 0; i < baseline.data.length; i += 4) {
+    let differs = false;
+    for (let c = 0; c < 4; c++) {
+      if (Math.abs((baseline.data[i + c] as number) - (actual.data[i + c] as number)) > tolerance) {
+        differs = true;
+        break;
+      }
+    }
+    if (differs) {
+      out[i] = 255;
+      out[i + 1] = 0;
+      out[i + 2] = 0;
+    } else {
+      const g =
+        0.299 * (baseline.data[i] as number) +
+        0.587 * (baseline.data[i + 1] as number) +
+        0.114 * (baseline.data[i + 2] as number);
+      const v = Math.round(255 - (255 - g) * 0.3);
+      out[i] = v;
+      out[i + 1] = v;
+      out[i + 2] = v;
+    }
+    out[i + 3] = 255;
+  }
+  return { width: baseline.width, height: baseline.height, data: out };
+}
+
 // --- G18 layout predicates, G20 accessibility -------------------------------------------
 
 function layoutScript(check: VisualCheck): string {
@@ -484,7 +677,220 @@ export const A11Y_SCRIPT = `(() => {
   return out;
 })()`;
 
+// --- GT-N4-4 overlap, GT-N4-6 DOM assertions -------------------------------------------
+
+/**
+ * Pairs of visible elements whose layout boxes intersect (rule 29, GT-N4-4).
+ * Candidates are the page's boxes that are not inline text runs (block,
+ * flex, grid and inline-block boxes, and replaced elements such as images
+ * and controls), visible, with a size; an element and its own ancestor never
+ * pair. Where a container pair and its descendants' pairs are the same
+ * collision, only the outermost pair is named. An overlap is declared by a
+ * selector pair: each element, or one of its ancestors, matches one side.
+ */
+const OVERLAP_SCRIPT = `(allowed) => {
+  const REPLACED = new Set(["IMG", "VIDEO", "CANVAS", "SVG", "svg", "INPUT", "BUTTON", "SELECT", "TEXTAREA", "IFRAME", "OBJECT", "EMBED"]);
+  const where = (e) => {
+    const parts = [];
+    for (let n = e; n && n !== document.body && parts.length < 4; n = n.parentElement) {
+      if (n.id) { parts.unshift("#" + n.id); break; }
+      let p = n.tagName.toLowerCase();
+      if (typeof n.className === "string" && n.className.trim()) p += "." + n.className.trim().split(/\\s+/)[0];
+      const same = n.parentElement ? [...n.parentElement.children].filter((c) => c.tagName === n.tagName) : [];
+      if (same.length > 1) p += ":nth-of-type(" + (same.indexOf(n) + 1) + ")";
+      parts.unshift(p);
+    }
+    return parts.join(" > ");
+  };
+  const els = [];
+  for (const e of document.querySelectorAll("body *")) {
+    if (els.length >= 400) break;
+    if (e.hasAttribute("data-sekhemet-mask")) continue;
+    const s = getComputedStyle(e);
+    if (s.display === "none" || s.display === "contents" || s.visibility === "hidden" || Number(s.opacity) === 0) continue;
+    if (s.display === "inline" && !REPLACED.has(e.tagName)) continue;
+    if (e.closest("svg") && e.tagName.toLowerCase() !== "svg") continue;
+    const r = e.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) continue;
+    els.push({ e, r });
+  }
+  const matches = (e, sel) => { try { return e.closest(sel) !== null; } catch { return false; } };
+  const declared = (a, b) => allowed.some(([x, y]) => (matches(a, x) && matches(b, y)) || (matches(a, y) && matches(b, x)));
+  const hits = new Map();
+  for (let i = 0; i < els.length; i++) {
+    for (let j = i + 1; j < els.length; j++) {
+      const a = els[i], b = els[j];
+      if (a.e.contains(b.e) || b.e.contains(a.e)) continue;
+      const w = Math.min(a.r.right, b.r.right) - Math.max(a.r.left, b.r.left);
+      const h = Math.min(a.r.bottom, b.r.bottom) - Math.max(a.r.top, b.r.top);
+      if (w <= 1 || h <= 1) continue;
+      if (declared(a.e, b.e)) continue;
+      hits.set(i + ":" + j, { i, j, w, h });
+    }
+  }
+  const index = new Map(els.map((x, k) => [x.e, k]));
+  const ancestors = (k) => { const out = []; for (let n = els[k].e.parentElement; n; n = n.parentElement) { const x = index.get(n); if (x !== undefined) out.push(x); } return out; };
+  const has = (x, y) => hits.has(Math.min(x, y) + ":" + Math.max(x, y));
+  const out = [];
+  for (const { i, j, w, h } of hits.values()) {
+    if (ancestors(i).some((x) => x !== j && !els[x].e.contains(els[j].e) && has(x, j))) continue;
+    if (ancestors(j).some((x) => x !== i && !els[x].e.contains(els[i].e) && has(i, x))) continue;
+    out.push({ a: where(els[i].e), b: where(els[j].e), w: Math.round(w), h: Math.round(h) });
+    if (out.length >= 5) break;
+  }
+  return out;
+}`;
+
+const DOM_SCRIPT = `(a) => {
+  let found = [];
+  try { found = [...document.querySelectorAll(a.selector)]; } catch { return { invalid: true, count: 0 }; }
+  const e = found[0];
+  return {
+    count: found.length,
+    text: e ? (e.innerText ?? e.textContent ?? "").replace(/\\s+/g, " ").trim() : null,
+    attribute: e && a.attribute ? e.getAttribute(a.attribute) : null,
+  };
+}`;
+
+/** What a DOM assertion found wrong, or undefined when it holds (GT-N4-6). */
+export function domAssertionFailure(
+  a: DomAssertion,
+  found: { invalid?: boolean; count: number; text: string | null; attribute: string | null },
+): { excerpt: string; expected: string; actual: string } | undefined {
+  const present = a.present !== false;
+  if (found.invalid) {
+    return { excerpt: "not a valid selector", expected: "a valid selector", actual: "invalid" };
+  }
+  if (!present) {
+    return found.count > 0
+      ? {
+          excerpt: `present (${found.count}), expected absent`,
+          expected: "absent",
+          actual: `present (${found.count})`,
+        }
+      : undefined;
+  }
+  if (found.count === 0) {
+    return { excerpt: "absent, expected present", expected: "present", actual: "absent" };
+  }
+  if (a.text !== undefined) {
+    const want = a.text.replace(/\s+/g, " ").trim();
+    if (found.text !== want) {
+      return {
+        excerpt: `text ${JSON.stringify(found.text)}, expected ${JSON.stringify(want)}`,
+        expected: JSON.stringify(want),
+        actual: JSON.stringify(found.text),
+      };
+    }
+  }
+  if (a.attribute !== undefined) {
+    const got = found.attribute;
+    if (got === null) {
+      const expected = a.value === undefined ? "present" : JSON.stringify(a.value);
+      return { excerpt: `${a.attribute} absent, expected ${expected}`, expected, actual: "absent" };
+    }
+    if (a.value !== undefined && got !== a.value) {
+      return {
+        excerpt: `${a.attribute} ${JSON.stringify(got)}, expected ${JSON.stringify(a.value)}`,
+        expected: JSON.stringify(a.value),
+        actual: JSON.stringify(got),
+      };
+    }
+  }
+  return undefined;
+}
+
+// --- GT-N4-2 the vision checklist --------------------------------------------------------
+
+/** The checklist's version: a qualification holds for one version only (rule 30). */
+export const VISION_CHECKLIST_VERSION = "1";
+
+/** A local vision model answering the fixed checklist, one "yes" or "no" per question. */
+export interface VisionAdapter {
+  /** The model's registry id: its qualification is recorded against it. */
+  model: string;
+  answer(
+    png: Buffer,
+    questions: readonly string[],
+    options: { temperature: 0 },
+  ): Promise<readonly ("yes" | "no")[]>;
+}
+
+/**
+ * The vision model's measurement on the labelled screens (measurement T11),
+ * as the model registry records it for one model and checklist version.
+ */
+export interface VisionQualification {
+  model: string;
+  checklistVersion: string;
+  /** Screens a person approved, and how many of them the checklist failed. */
+  approvedScreens: number;
+  wrongFails: number;
+  /** Screens with a seeded visual defect, and how many the checklist passed. */
+  defectScreens: number;
+  falsePasses: number;
+}
+
+function binomialCdf(k: number, n: number, p: number): number {
+  let sum = 0;
+  let logC = 0;
+  for (let i = 0; i <= k; i++) {
+    if (i > 0) logC += Math.log(n - i + 1) - Math.log(i);
+    sum += Math.exp(logC + i * Math.log(p) + (n - i) * Math.log1p(-p));
+  }
+  return sum;
+}
+
+/**
+ * The exact (Clopper-Pearson) one-sided upper confidence bound on a rate
+ * with `k` events in `n` trials, at `confidence` (rule 30's 95%).
+ */
+export function exactUpperBound(k: number, n: number, confidence = 0.95): number {
+  if (n <= 0 || k >= n) return 1;
+  let lo = 0;
+  let hi = 1;
+  for (let t = 0; t < 60; t++) {
+    const mid = (lo + hi) / 2;
+    if (binomialCdf(k, n, mid) > 1 - confidence) lo = mid;
+    else hi = mid;
+  }
+  return hi;
+}
+
+/**
+ * Whether the vision checklist may fail a card (rule 30, GT-N4-2): only for
+ * the model and checklist version the registry measured, on at least 60
+ * approved and 30 seeded-defect screens, with a wrong-fail upper bound of
+ * at most 5% and a false-pass rate of at most 50%.
+ */
+export function visionMayBlock(
+  q: VisionQualification | undefined,
+  model: string,
+): { blocking: boolean; reason: string } {
+  const no = (reason: string) => ({ blocking: false, reason });
+  if (!q) return no(`no measurement recorded for ${model}`);
+  if (q.model !== model) return no(`the measurement is for ${q.model}, not ${model}`);
+  if (q.checklistVersion !== VISION_CHECKLIST_VERSION) {
+    return no(`measured on checklist ${q.checklistVersion}, not ${VISION_CHECKLIST_VERSION}`);
+  }
+  if (q.approvedScreens < 60) return no(`${q.approvedScreens} approved screens, 60 needed`);
+  if (q.defectScreens < 30) return no(`${q.defectScreens} seeded-defect screens, 30 needed`);
+  const upper = exactUpperBound(q.wrongFails, q.approvedScreens);
+  if (upper > 0.05) {
+    return no(`wrong-fail rate's 95% upper bound ${(upper * 100).toFixed(1)}% is over 5%`);
+  }
+  const falsePass = q.falsePasses / q.defectScreens;
+  if (falsePass > 0.5) return no(`false-pass rate ${(falsePass * 100).toFixed(0)}% is over 50%`);
+  return { blocking: true, reason: "measured" };
+}
+
 // --- the gate -------------------------------------------------------------------------
+
+/** A file the visual layer attaches to the evidence bundle (GT-N4-3). */
+export interface VisualArtifact {
+  kind: string;
+  ref: string;
+}
 
 export interface VisualGateContext {
   root: string;
@@ -495,6 +901,22 @@ export interface VisualGateContext {
   restricted?: boolean;
   /** Serves the app; returns its port and a stop function. Default: run `config.start` with PORT. */
   serve?: () => Promise<{ port: number; stop: () => void } | undefined>;
+  /** DOM assertions the card declares, checked with the project's (GT-N4-6). */
+  assertions?: readonly DomAssertion[];
+  /** Overlaps the card declares, as selector pairs (GT-N4-4). */
+  allowOverlap?: readonly (readonly [string, string])[];
+  /** The vision checklist (GT-N4-2): its adapter and, when measured, its qualification. */
+  vision?: { adapter: VisionAdapter; qualification?: VisionQualification };
+  /**
+   * Why no vision checklist runs (GT-N4-2): no vision model has qualified
+   * for this checklist version. The evidence's advisories say so.
+   */
+  visionNotRun?: string;
+  /**
+   * The card whose run this is (GT-N4-1): its candidates are kept under it,
+   * so another card's run of the same screen never replaces them.
+   */
+  cardId?: string;
 }
 
 /** A visual failure with all six fields (rule 19): the page is re-checked by `check`. */
@@ -520,32 +942,185 @@ function fail(
 }
 
 /** The visual layer's checks, one outcome each. */
-const VISUAL_CHECK_IDS = ["visual-console", "visual-layout", "visual-snapshot", "visual-a11y"];
+const VISUAL_CHECK_IDS = [
+  "visual-console",
+  "visual-layout",
+  "visual-dom",
+  "visual-snapshot",
+  "visual-a11y",
+];
 
 /**
- * Every gate id the visual layer can put on a failure: its checks and the
+ * Every gate id the visual layer can put on a failure: its checks, the
+ * vision checklist (an outcome only when it fails a card) and the
  * confinement failure (GT-M6-5 lists them from here).
  */
-export const VISUAL_GATE_IDS: readonly string[] = [...VISUAL_CHECK_IDS, "visual-confinement"];
+export const VISUAL_GATE_IDS: readonly string[] = [
+  ...VISUAL_CHECK_IDS,
+  "visual-vision",
+  "visual-confinement",
+];
 
-export async function runVisualGates(
-  ctx: VisualGateContext,
-): Promise<{ failures: CompleteGateFailure[]; outcomes: RungOutcome[]; advisories: string[] }> {
+/** The candidates of a run with no card (`sekhemet gate` on a bare tree). */
+const NO_CARD = "_project";
+
+/** A card's candidate directory: its id when that is a safe name, else a hash of it. */
+function cardDir(cardId: string | undefined): string {
+  if (cardId === undefined) return NO_CARD;
+  return /^[\w.-]+$/.test(cardId) && cardId !== NO_CARD
+    ? cardId
+    : `card-${createHash("sha256").update(cardId).digest("hex").slice(0, 16)}`;
+}
+
+/**
+ * Where a snapshot's baseline, candidate, screenshot and diff live. A
+ * candidate is kept per card and screen, with a record of the card that wrote
+ * it and its SHA-256 (GT-N4-1).
+ */
+function snapshotPaths(stateDir: string, key: string, cardId?: string) {
+  const dir = join(stateDir, "visual");
+  const candidates = join(dir, "candidates", cardDir(cardId));
+  return {
+    baseline: join(dir, "baselines", `${key}.png`),
+    candidate: join(candidates, `${key}.png`),
+    candidateRecord: join(candidates, `${key}.json`),
+    actual: join(dir, "actual", `${key}.png`),
+    diff: join(dir, "diff", `${key}.png`),
+  };
+}
+
+function writeFile(path: string, data: Buffer): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, data);
+}
+
+const sha256Of = (data: Buffer): string => createHash("sha256").update(data).digest("hex");
+
+/** A screenshot waiting for a person (GT-N4-1). */
+export interface VisualCandidate {
+  /** `<name>-<width>`. */
+  key: string;
+  /** The card whose run wrote it; absent for a run with no card. */
+  cardId?: string;
+  /** The SHA-256 of the PNG, which the person approves by. */
+  sha256: string;
+  writtenAt: string;
+}
+
+function writeCandidate(stateDir: string, key: string, cardId: string | undefined, png: Buffer) {
+  const p = snapshotPaths(stateDir, key, cardId);
+  writeFile(p.candidate, png);
+  const record: VisualCandidate = {
+    key,
+    ...(cardId !== undefined ? { cardId } : {}),
+    sha256: sha256Of(png),
+    writtenAt: new Date().toISOString(),
+  };
+  writeFileSync(p.candidateRecord, `${JSON.stringify(record)}\n`);
+}
+
+/** Every candidate waiting for a person, with the card that wrote it and its SHA-256. */
+export function listVisualCandidates(stateDir: string): VisualCandidate[] {
+  const root = join(stateDir, "visual", "candidates");
+  if (!existsSync(root)) return [];
+  const out: VisualCandidate[] = [];
+  for (const dir of readdirSync(root, { withFileTypes: true })) {
+    if (!dir.isDirectory()) continue;
+    for (const f of readdirSync(join(root, dir.name))) {
+      if (!f.endsWith(".json")) continue;
+      try {
+        const rec = JSON.parse(readFileSync(join(root, dir.name, f), "utf8")) as VisualCandidate;
+        const png = join(root, dir.name, `${f.slice(0, -5)}.png`);
+        if (typeof rec.key !== "string" || !existsSync(png)) continue;
+        // The hash listed is the file's own, never only what the record says.
+        out.push({ ...rec, sha256: sha256Of(readFileSync(png)) });
+      } catch {
+        // An unreadable record is not a candidate anyone can approve.
+      }
+    }
+  }
+  return out.sort(
+    (a, b) => a.key.localeCompare(b.key) || (a.cardId ?? "").localeCompare(b.cardId ?? ""),
+  );
+}
+
+export type VisualApproval =
+  | { approved: true; key: string; cardId?: string; sha256: string }
+  | { approved: false; reason: string; missing?: true };
+
+/**
+ * A person approves a candidate screenshot (`<name>-<width>`, rule 31,
+ * GT-N4-1) as the baseline: the candidate the named card's run wrote, and
+ * only when its SHA-256 is the one the person saw. The bytes hashed are the
+ * bytes made the baseline, so a candidate replaced after the person looked is
+ * never approved in its place. The caller records who approved it.
+ */
+export function approveVisualBaseline(
+  stateDir: string,
+  opts: { key: string; cardId?: string | undefined; sha256: string },
+): VisualApproval {
+  const { key, cardId } = opts;
+  const p = snapshotPaths(stateDir, key, cardId);
+  const whose = cardId ? `card ${cardId}` : "a run with no card";
+  if (!existsSync(p.candidate) || !existsSync(p.candidateRecord)) {
+    return {
+      approved: false,
+      reason: `no candidate ${key} from ${whose} is waiting`,
+      missing: true,
+    };
+  }
+  let record: VisualCandidate;
+  try {
+    record = JSON.parse(readFileSync(p.candidateRecord, "utf8")) as VisualCandidate;
+  } catch {
+    return { approved: false, reason: `the record of candidate ${key} cannot be read` };
+  }
+  if (record.key !== key || record.cardId !== cardId) {
+    return { approved: false, reason: `candidate ${key} was not written by ${whose}` };
+  }
+  if (!/^[0-9a-f]{64}$/.test(opts.sha256)) {
+    return { approved: false, reason: "an approval names the SHA-256 of the screenshot seen" };
+  }
+  const png = readFileSync(p.candidate);
+  const sha256 = sha256Of(png);
+  if (sha256 !== opts.sha256) {
+    return {
+      approved: false,
+      reason: `candidate ${key} from ${whose} is ${sha256.slice(0, 12)}, which differs from the one approved (${opts.sha256.slice(0, 12)}); look at it again`,
+    };
+  }
+  writeFile(p.baseline, png);
+  rmSync(p.candidate, { force: true });
+  rmSync(p.candidateRecord, { force: true });
+  return { approved: true, key, ...(cardId !== undefined ? { cardId } : {}), sha256 };
+}
+
+export async function runVisualGates(ctx: VisualGateContext): Promise<{
+  failures: CompleteGateFailure[];
+  outcomes: RungOutcome[];
+  advisories: string[];
+  artifacts: VisualArtifact[];
+}> {
   const started = Date.now();
-  const outcome = (gate: string, passed: boolean, skipped = false): RungOutcome => ({
+  const outcome = (
+    gate: string,
+    passed: boolean,
+    extra: Partial<RungOutcome> = {},
+  ): RungOutcome => ({
     gate,
     rung: "visual",
     layer: "visual",
     passed,
     exitCode: passed ? 0 : 1,
     durationMs: Date.now() - started,
-    ...(skipped ? { skipped: true } : {}),
+    ...extra,
   });
   const gates = VISUAL_CHECK_IDS;
   const skipped = (why: string) => ({
     failures: [],
-    outcomes: gates.map((g) => outcome(g, true, true)),
+    outcomes: gates.map((g) => outcome(g, true, { skipped: true })),
     advisories: [`visual gates skipped: ${why}`],
+    artifacts: [],
   });
   const chrome = findChrome();
   if (!chrome) return skipped("no local Chromium (set SEKHEMET_CHROME)");
@@ -562,6 +1137,7 @@ export async function runVisualGates(
       ],
       outcomes: gates.map((g) => outcome(g, false)),
       advisories: [excerpt],
+      artifacts: [],
     };
   };
   const served = ctx.serve ? await ctx.serve() : await serveApp(ctx);
@@ -589,11 +1165,19 @@ export async function runVisualGates(
   }
   const failures: CompleteGateFailure[] = [];
   const advisories: string[] = [];
+  const artifacts: VisualArtifact[] = [];
+  const snapshotArtifacts: VisualArtifact[] = [];
   const byGate = new Map<string, number>(gates.map((g) => [g, 0]));
   const add = (f: CompleteGateFailure) => {
     failures.push(f);
     byGate.set(f.gate as string, (byGate.get(f.gate as string) ?? 0) + 1);
   };
+  const assertions = [...ctx.config.assertions, ...(ctx.assertions ?? [])];
+  const allowOverlap = [...ctx.config.allowOverlap, ...(ctx.allowOverlap ?? [])];
+  const vision = ctx.vision
+    ? { ...ctx.vision, may: visionMayBlock(ctx.vision.qualification, ctx.vision.adapter.model) }
+    : undefined;
+  if (!vision && ctx.visionNotRun) advisories.push(`vision checklist not run: ${ctx.visionNotRun}`);
   try {
     const url = target;
     for (const width of ctx.config.viewports) {
@@ -639,50 +1223,42 @@ export async function runVisualGates(
             );
         }
       }
-      // G19
-      for (const snap of ctx.config.snapshots) {
-        const png = await page.screenshot(snap.selector);
-        const base = join(ctx.stateDir, "visual", "baselines", `${snap.name}-${width}.png`);
-        if (!png) {
+      // GT-N4-4: overlapping elements, unless declared.
+      if (ctx.config.overlap) {
+        const pairs = await page.evaluate<{ a: string; b: string; w: number; h: number }[]>(
+          `(${OVERLAP_SCRIPT})(${JSON.stringify(allowOverlap)})`,
+        );
+        for (const p of pairs) {
           add(
             fail(
-              "visual-snapshot",
-              `${snap.name} @${width}px: ${snap.selector} has no box to capture`,
-            ),
-          );
-          continue;
-        }
-        if (!existsSync(base)) {
-          const candidate =
-            ctx.config.baselineApproval === "auto"
-              ? base
-              : join(dirname(base), "..", "candidates", `${snap.name}-${width}.png`);
-          mkdirSync(dirname(candidate), { recursive: true });
-          writeFileSync(candidate, png);
-          if (ctx.config.baselineApproval === "human") {
-            add(
-              fail(
-                "visual-snapshot",
-                `${snap.name} @${width}px: no approved baseline; a candidate was written for a person to approve`,
-                { suggestedAction: gateCopy.visualBaseline(`${snap.name} @${width}px`) },
-              ),
-            );
-          } else advisories.push(`visual baseline recorded: ${snap.name} @${width}px`);
-          continue;
-        }
-        const ratio = pixelDiffRatio(decodePng(readFileSync(base)), decodePng(png));
-        if (ratio > ctx.config.threshold) {
-          const out = join(ctx.stateDir, "visual", "actual", `${snap.name}-${width}.png`);
-          mkdirSync(dirname(out), { recursive: true });
-          writeFileSync(out, png);
-          add(
-            fail(
-              "visual-snapshot",
-              `${snap.name} @${width}px differs from its baseline in ${(ratio * 100).toFixed(2)}% of pixels (limit ${(ctx.config.threshold * 100).toFixed(2)}%)`,
-              { actual: out, expected: base },
+              "visual-layout",
+              gateCopy.visualOverlapFound(p.a, p.b, `${width}`, `${p.w}x${p.h}`),
+              {
+                expected: gateCopy.visualOverlapExpected(p.a, p.b),
+                actual: gateCopy.visualOverlapActual(`${p.w}x${p.h}`),
+                suggestedAction: gateCopy.visualOverlap(p.a, p.b),
+              },
             ),
           );
         }
+      }
+      // GT-N4-6: declared DOM assertions.
+      for (const a of assertions) {
+        const found = await page.evaluate<{
+          invalid?: boolean;
+          count: number;
+          text: string | null;
+          attribute: string | null;
+        }>(`(${DOM_SCRIPT})(${JSON.stringify(a)})`);
+        const wrong = domAssertionFailure(a, found);
+        if (!wrong) continue;
+        add(
+          fail("visual-dom", `${a.selector} @${width}px: ${wrong.excerpt}`, {
+            expected: wrong.expected,
+            actual: wrong.actual,
+            suggestedAction: gateCopy.visualDom(a.selector),
+          }),
+        );
       }
       // G20
       if (ctx.config.a11y) {
@@ -698,16 +1274,139 @@ export async function runVisualGates(
           );
         }
       }
+      // GT-N4-5: screenshots with animations off and dynamic regions masked.
+      await page.freeze();
+      await page.mask(ctx.config.mask, "layer");
+      // G19
+      for (const snap of ctx.config.snapshots) {
+        await page.mask(snap.mask ?? [], "snapshot");
+        const png = await page.screenshot(snap.selector);
+        await page.unmask("snapshot");
+        const key = `${snap.name}-${width}`;
+        const at = `${snap.name} @${width}px`;
+        const paths = snapshotPaths(ctx.stateDir, key, ctx.cardId);
+        if (!png) {
+          add(
+            fail(
+              "visual-snapshot",
+              `${snap.name} @${width}px: ${snap.selector} has no box to capture`,
+            ),
+          );
+          continue;
+        }
+        writeFile(paths.actual, png);
+        snapshotArtifacts.push({ kind: "screenshot", ref: paths.actual });
+        if (!existsSync(paths.baseline)) {
+          if (ctx.config.baselineApproval === "auto") {
+            writeFile(paths.baseline, png);
+            advisories.push(`visual baseline recorded: ${at}`);
+          } else {
+            // A person approves every new baseline (rule 31, GT-N4-1).
+            writeCandidate(ctx.stateDir, key, ctx.cardId, png);
+            add(
+              fail(
+                "visual-snapshot",
+                `${snap.name} @${width}px: no approved baseline; a candidate was written for a person to approve`,
+                { suggestedAction: gateCopy.visualBaseline(at) },
+              ),
+            );
+          }
+          continue;
+        }
+        const baseline = decodePng(readFileSync(paths.baseline));
+        const actual = decodePng(png);
+        snapshotArtifacts.push({ kind: "visual-baseline", ref: paths.baseline });
+        const ratio = pixelDiffRatio(baseline, actual);
+        if (ratio > ctx.config.threshold) {
+          const diff = diffImage(baseline, actual);
+          if (diff) {
+            writeFile(paths.diff, encodePng(diff));
+            snapshotArtifacts.push({ kind: "visual-diff", ref: paths.diff });
+          }
+          // A changed screen is a candidate for a person, never a baseline by itself.
+          writeCandidate(ctx.stateDir, key, ctx.cardId, png);
+          add(
+            fail(
+              "visual-snapshot",
+              `${snap.name} @${width}px differs from its baseline in ${(ratio * 100).toFixed(2)}% of pixels (limit ${(ctx.config.threshold * 100).toFixed(2)}%)`,
+              {
+                actual: paths.actual,
+                expected: paths.baseline,
+                suggestedAction: gateCopy.visualChanged(at),
+              },
+            ),
+          );
+        }
+      }
+      // GT-N4-2: the vision checklist fails a card, never passes one.
+      if (vision)
+        await visionChecklist(page, width, vision, ctx.stateDir, add, advisories, artifacts);
     }
   } finally {
     await browser.close();
     served?.stop();
   }
-  return {
-    failures,
-    outcomes: gates.map((g) => outcome(g, (byGate.get(g) ?? 0) === 0)),
-    advisories,
-  };
+  artifacts.unshift(...snapshotArtifacts);
+  const outcomes = gates.map((g) => {
+    if (g === "visual-dom" && assertions.length === 0) {
+      return outcome(g, true, { skipped: true, reason: "no DOM assertions declared" });
+    }
+    return outcome(g, (byGate.get(g) ?? 0) === 0, {
+      // The screenshots travel on the snapshot outcome into the evidence (GT-N4-3).
+      ...(g === "visual-snapshot" && artifacts.length > 0 ? { artifacts } : {}),
+    });
+  });
+  if (failures.some((f) => f.gate === "visual-vision")) {
+    outcomes.push(outcome("visual-vision", false));
+  }
+  return { failures, outcomes, advisories, artifacts };
+}
+
+async function visionChecklist(
+  page: CdpPage,
+  width: number,
+  vision: NonNullable<VisualGateContext["vision"]> & { may: { blocking: boolean; reason: string } },
+  stateDir: string,
+  add: (f: CompleteGateFailure) => void,
+  advisories: string[],
+  artifacts: VisualArtifact[],
+): Promise<void> {
+  const questions = gateCopy.visionChecklist;
+  const png = await page.screenshotViewport();
+  const shot = join(stateDir, "visual", "actual", `vision-${width}.png`);
+  writeFile(shot, png);
+  artifacts.push({ kind: "vision-screenshot", ref: shot });
+  let answers: readonly ("yes" | "no")[];
+  try {
+    answers = await vision.adapter.answer(png, questions, { temperature: 0 });
+  } catch (err) {
+    advisories.push(
+      `vision checklist not answered @${width}px: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return;
+  }
+  if (answers.length !== questions.length || answers.some((a) => a !== "yes" && a !== "no")) {
+    advisories.push(`vision checklist not answered @${width}px: an unreadable reply`);
+    return;
+  }
+  const noes = questions.filter((_q, i) => answers[i] === "no");
+  if (noes.length === 0) {
+    advisories.push(`vision checklist: every answer yes; never a pass (@${width}px)`);
+    return;
+  }
+  for (const q of noes) {
+    if (!vision.may.blocking) {
+      advisories.push(`vision checklist (advisory: ${vision.may.reason}) @${width}px: no: ${q}`);
+      continue;
+    }
+    add(
+      fail("visual-vision", gateCopy.visionAnswered(`${width}`, vision.adapter.model, q), {
+        expected: "yes",
+        actual: "no",
+        suggestedAction: gateCopy.visionNo(q),
+      }),
+    );
+  }
 }
 
 /** A free loopback port. */

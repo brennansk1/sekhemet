@@ -1,36 +1,35 @@
+import { type DeclarationFact, factsOfText } from "@sekhemet/gates";
+
+/**
+ * The flat map's outline of one file, from the source index's facts (gates
+ * T2, context rule 13b): each declaration's own first line, bodies left out
+ * — exported interfaces, types, enums, constants and lets; every top-level
+ * class and function; and class methods that declare a visibility.
+ */
 export function extractSymbolOutline(filePath: string, source: string): string {
   const lines = source.split("\n");
+  const firstLine = (d: DeclarationFact) => (lines[d.line - 1] ?? "").trim();
   const symbolLines: string[] = [];
-
-  for (let i = 0; i < lines.length; i++) {
-    const rawLine = lines[i] ?? "";
-    const trimmed = rawLine.trim();
-
-    // Check for exports and top-level definitions
-    if (
-      trimmed.startsWith("export interface ") ||
-      trimmed.startsWith("export type ") ||
-      trimmed.startsWith("export enum ")
-    ) {
-      symbolLines.push(`  ${trimmed.replace(/\{$/, "").trim()}`);
-    } else if (trimmed.startsWith("export class ") || trimmed.startsWith("class ")) {
-      symbolLines.push(`  ${trimmed.replace(/\{$/, "").trim()}`);
-    } else if (trimmed.startsWith("export function ") || trimmed.startsWith("function ")) {
-      const sig = trimmed.split("{")[0]?.trim() ?? trimmed;
-      symbolLines.push(`  ${sig}`);
-    } else if (
-      trimmed.startsWith("public ") ||
-      trimmed.startsWith("private ") ||
-      trimmed.startsWith("protected ")
-    ) {
-      if (trimmed.includes("(") && trimmed.includes(")")) {
-        const sig = trimmed.split("{")[0]?.trim() ?? trimmed;
-        symbolLines.push(`    ${sig}`);
-      }
-    } else if (trimmed.startsWith("export const ") || trimmed.startsWith("export let ")) {
-      const decl = trimmed.split("=")[0]?.trim() ?? trimmed;
-      symbolLines.push(`  ${decl}`);
+  const shown = new Set<number>();
+  const facts = factsOfText(filePath, source);
+  for (const d of [...facts.declarations].sort((a, b) => a.start - b.start)) {
+    if (shown.has(d.line)) continue;
+    const line = firstLine(d);
+    let rendered: string | undefined;
+    if (d.topLevel && d.exportedAtDeclaration && ["interface", "type", "enum"].includes(d.kind)) {
+      rendered = `  ${line.replace(/\{$/, "").trim()}`;
+    } else if (d.topLevel && d.kind === "class") {
+      rendered = `  ${line.replace(/\{$/, "").trim()}`;
+    } else if (d.topLevel && d.kind === "function") {
+      rendered = `  ${line.split("{")[0]?.trim() ?? line}`;
+    } else if (d.kind === "method" && d.containerKind === "class" && d.visibility) {
+      rendered = `    ${line.split("{")[0]?.trim() ?? line}`;
+    } else if (d.topLevel && d.exportedAtDeclaration && (d.kind === "const" || d.kind === "let")) {
+      rendered = `  ${line.split("=")[0]?.trim() ?? line}`;
     }
+    if (!rendered) continue;
+    shown.add(d.line);
+    symbolLines.push(rendered);
   }
 
   if (symbolLines.length === 0) {

@@ -680,6 +680,10 @@ export const MIGRATIONS: readonly Migration[] = [
   { version: 15, name: "map the legacy assignee to owner and delegate", up: mapLegacyAssignee },
   // NEW-surface-3 (SUR-40): a card's configuration overrides.
   cardColumnMigration(16, "config_overrides"),
+  // gates rule 25a (NEW-gates-7): the base tests a card supersedes.
+  cardColumnMigration(17, "supersedes"),
+  // gates rules 29 and 6b: what a card declares to its gates.
+  cardColumnMigration(18, "gate_checks"),
 ];
 
 /** The schema version this build writes. */

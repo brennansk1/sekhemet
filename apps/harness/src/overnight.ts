@@ -46,8 +46,13 @@ export interface OvernightOptions {
   now?: () => Date;
   maxRounds?: number;
   say?: (line: string) => void;
-  /** Skip the end-of-night mutation step (E16). */
+  /** Skip the end-of-night mutation step (E16) and the deferred mutants (GT-N5-5). */
   skipMutation?: boolean;
+  /** The deferred mutants' nightly run (GT-N5-5); injectable for tests. */
+  nightlyMutation?: (
+    repoPath: string,
+    log: EventLog,
+  ) => Promise<import("./mutation_step.js").NightlyMutationRun[]>;
   /** The Worker the queue will run; unattended runs need its injection pass (SEC-37b). */
   worker?: { modelId: string; quant: string };
   /** Where injection-fixture passes are recorded (default: the user directory). */
@@ -363,6 +368,25 @@ export async function runOvernight(opts: OvernightOptions): Promise<OvernightSum
       say(
         `Mutation ${r.cardId}: ${r.killed}/${r.total} killed${r.proposalCardId ? `, proposals on ${r.proposalCardId}` : ""}.`,
       );
+  }
+  // GT-N5-5: the mutants cards' verifications deferred past `mutation_max`
+  // run now, and each full score goes onto its card's ledger.
+  if (!opts.skipMutation) {
+    const { runQueuedMutations } = await import("./mutation_step.js");
+    const nightly = await (opts.nightlyMutation ?? runQueuedMutations)(
+      opts.repoPath,
+      opts.log,
+    ).catch((err) => {
+      say(`Nightly mutation: ${err instanceof Error ? err.message : String(err)}.`);
+      return [];
+    });
+    for (const n of nightly) {
+      say(
+        n.measure
+          ? `Nightly mutation ${n.cardId}: ${n.measure.killed}/${n.measure.total} killed (score ${n.measure.score ?? "not measured"}).`
+          : `Nightly mutation ${n.cardId ?? n.queue}: not run (${n.skipped}).`,
+      );
+    }
   }
   // RUN-17: the full offline vulnerability scan, its result on the ledger.
   const scan = await (opts.vulnScan ?? defaultVulnScan)(opts.repoPath).catch(

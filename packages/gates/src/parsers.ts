@@ -1,7 +1,9 @@
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import ts from "typescript";
 import { RERUN_GATES, gateCopy } from "./copy.js";
+import type { SourceFacts } from "./index/facts.js";
+import { createSourceIndex, factsOfText } from "./index/source_index.js";
+import { ts } from "./index/typescript.js";
 import type { CompleteGateFailure, FailureLocation, GateDefinition } from "./types.js";
 
 export interface ParseContext {
@@ -91,22 +93,40 @@ export function remedyFor(code: string, message: string): string | undefined {
 }
 
 /**
- * The names a TypeScript module exports, read from its source.
+ * The names a TypeScript module exports, from the source index (T2).
  *
- * Deterministic and deliberately shallow — declarations and export lists, no
- * type checker — because it only has to answer "what may I import from here".
- * Returns undefined when the file cannot be read, so the caller falls back to
- * words rather than to a wrong list.
+ * `export *` is followed through the index's resolver, so a barrel's names
+ * are listed too (GT-M6-3). Returns undefined when the file cannot be read or
+ * a star target cannot be resolved inside `root` (by default the file's own
+ * directory), so the caller falls back to words rather than to a wrong list.
  */
-export function moduleExports(file: string): string[] | undefined {
-  try {
-    const src = readFileSync(file, "utf8");
-    // A barrel (`export * from`) exports names this shallow read cannot list.
-    if (/^\s*export\s*\*\s*from\b/m.test(src)) return undefined;
-    return exportsFromSource(src);
-  } catch {
-    return undefined;
+export function moduleExports(file: string, root: string = dirname(file)): string[] | undefined {
+  const index = createSourceIndex(root);
+  const { names, complete } = index.exportedNames(relative(root, file));
+  if (!complete) return undefined;
+  // A default export is named by its local name, what a model would import it as.
+  const local = index.facts(relative(root, file))?.exports.find((e) => e.name === "default")?.local;
+  return [...new Set(names.flatMap((n) => (n !== "default" ? [n] : local ? [local] : [])))].sort();
+}
+
+/**
+ * The names a module's own facts list: its exports (a default one by its
+ * local name) and its named and namespace re-exports. Undefined for a module
+ * with an `export *` when `stars` is "refuse".
+ */
+function listedExports(fx: SourceFacts, stars: "refuse" | "ignore"): string[] | undefined {
+  if (stars === "refuse" && fx.reExports.some((r) => r.kind === "star")) return undefined;
+  const names = new Set<string>();
+  for (const e of fx.exports) {
+    if (e.name === "default") {
+      if (e.local) names.add(e.local);
+    } else if (e.name !== "export=") names.add(e.name);
   }
+  for (const r of fx.reExports) {
+    if (r.kind === "named") for (const n of r.names) names.add(n.exported);
+    else if (r.kind === "namespace" && r.namespace) names.add(r.namespace);
+  }
+  return [...names].sort();
 }
 
 /**
@@ -115,22 +135,7 @@ export function moduleExports(file: string): string[] | undefined {
  * of any comparison can never disagree about syntax.
  */
 export function exportsFromSource(src: string): string[] {
-  const names = new Set<string>();
-  const decl =
-    /^\s*export\s+(?:declare\s+)?(?:default\s+)?(?:async\s+)?(?:const|let|var|function\*?|class|interface|type|enum|abstract\s+class)\s+([A-Za-z_$][\w$]*)/gm;
-  for (const m of src.matchAll(decl)) if (m[1]) names.add(m[1]);
-  for (const m of src.matchAll(/^\s*export\s*(?:type\s*)?\{([^}]*)\}/gm)) {
-    for (const part of (m[1] ?? "").split(",")) {
-      const name = part
-        .trim()
-        .split(/\s+as\s+/)
-        .pop()
-        ?.replace(/^type\s+/, "")
-        .trim();
-      if (name) names.add(name);
-    }
-  }
-  return [...names].sort();
+  return listedExports(factsOfText("module.ts", src), "ignore") ?? [];
 }
 
 /** Where Node's type declarations live: hoisted, or inside pnpm's store. */
@@ -149,44 +154,6 @@ function nodeTypesDir(cwd: string): string | undefined {
   }
 }
 
-/** Names declared at the top of a statement list (a file, or an ambient module's body). */
-function declaredNames(
-  statements: ts.NodeArray<ts.Statement>,
-  exportedOnly: boolean,
-): string[] | undefined {
-  const names = new Set<string>();
-  const exported = (s: ts.Statement) =>
-    !exportedOnly ||
-    (ts.canHaveModifiers(s) &&
-      (ts.getModifiers(s) ?? []).some((m) => m.kind === ts.SyntaxKind.ExportKeyword));
-  for (const s of statements) {
-    // `export * from`: names this read cannot list, so no list at all.
-    if (ts.isExportDeclaration(s) && !s.exportClause) return undefined;
-    if (ts.isExportDeclaration(s) && s.exportClause && ts.isNamedExports(s.exportClause)) {
-      for (const e of s.exportClause.elements) names.add(e.name.text);
-      continue;
-    }
-    if (!exported(s)) continue;
-    if (ts.isVariableStatement(s)) {
-      for (const d of s.declarationList.declarations) {
-        if (ts.isIdentifier(d.name)) names.add(d.name.text);
-      }
-    } else if (
-      (ts.isClassDeclaration(s) ||
-        ts.isInterfaceDeclaration(s) ||
-        ts.isFunctionDeclaration(s) ||
-        ts.isTypeAliasDeclaration(s) ||
-        ts.isEnumDeclaration(s) ||
-        ts.isModuleDeclaration(s)) &&
-      s.name &&
-      ts.isIdentifier(s.name)
-    ) {
-      names.add(s.name.text);
-    }
-  }
-  return [...names].sort();
-}
-
 /** The exports of `declare module "<name>"` blocks in a declaration file. */
 function ambientModuleExports(file: string, moduleName: string): string[] | undefined {
   let src: string;
@@ -196,19 +163,8 @@ function ambientModuleExports(file: string, moduleName: string): string[] | unde
     return undefined;
   }
   if (!src.includes(`"${moduleName}"`)) return undefined;
-  const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, false);
-  for (const s of sf.statements) {
-    if (
-      ts.isModuleDeclaration(s) &&
-      ts.isStringLiteral(s.name) &&
-      s.name.text === moduleName &&
-      s.body &&
-      ts.isModuleBlock(s.body)
-    ) {
-      return declaredNames(s.body.statements, false);
-    }
-  }
-  return undefined;
+  const block = factsOfText(file, src).ambientModules.find((m) => m.name === moduleName);
+  return block ? listedExports(block.facts, "refuse") : undefined;
 }
 
 /** The real path, symlinks resolved; undefined when it cannot be read. */
@@ -273,8 +229,7 @@ function packageExports(specifier: string, cwd: string): string[] | undefined {
   const file = packageTypesFile(cwd, specifier);
   if (!file) return undefined;
   try {
-    const sf = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, false);
-    return declaredNames(sf.statements, true);
+    return listedExports(factsOfText(file, readFileSync(file, "utf8")), "refuse");
   } catch {
     return undefined;
   }
@@ -312,7 +267,7 @@ function missingExportRemedy(
   if (!specifier) return undefined;
   const missing = MEMBER_IN_MESSAGE.exec(message)?.[1] ?? "that name";
   const target = moduleFileFor(importer, specifier, cwd);
-  const names = target ? moduleExports(target) : packageExports(specifier, cwd);
+  const names = target ? moduleExports(target, cwd) : packageExports(specifier, cwd);
   if (!names) return gateCopy.missingExportUnresolved(specifier, missing);
   const label = target ? relative(cwd, target) : specifier;
   if (names.length === 0) return gateCopy.missingExportNothing(label, missing);
@@ -367,19 +322,23 @@ function unknownNameRemedy(
   const name = /Cannot find name '([^']+)'/.exec(message)?.[1];
   if (!name) return undefined;
   const importerAbs = resolve(cwd, importer);
+  const index = createSourceIndex(cwd);
   let unlisted = false;
   for (const file of projectSources(cwd)) {
     if (file === importerAbs) continue;
-    const names = moduleExports(file);
+    const names = moduleExports(file, cwd);
     if (!names) unlisted = true;
     if (!names?.includes(name)) continue;
     let specifier = relative(dirname(importerAbs), file).replace(/\.(m|c)?tsx?$/, ".js");
     if (!specifier.startsWith(".")) specifier = `./${specifier}`;
-    const escaped = name.replace(/\$/g, "\\$");
-    const typeOnly = new RegExp(
-      `^\\s*export\\s+(?:declare\\s+)?(?:interface|type)\\s+${escaped}\\b`,
-      "m",
-    ).test(readFileSync(file, "utf8"));
+    const fx = index.facts(file);
+    const exported = fx?.exports.find((e) => e.name === name);
+    const typeOnly = Boolean(
+      exported?.typeOnly ||
+        fx?.declarations.some(
+          (d) => d.topLevel && d.name === (exported?.local ?? name) && d.typeOnly,
+        ),
+    );
     return gateCopy.unknownName(name, relative(cwd, file), specifier, typeOnly);
   }
   return unlisted ? gateCopy.unknownNameSearch(name) : gateCopy.unknownNameNowhere(name);
@@ -1001,6 +960,86 @@ const genericParser: FailureParser = (ctx) => {
     },
   ];
 };
+
+/** The sandbox's mark on output it cut at its buffer cap (`sandbox/src/executor.ts`). */
+const TRUNCATED = /\[output truncated at \d+ bytes\]/;
+/** An error the runner reported outside any one test: an unhandled error or rejection. */
+const UNHANDLED = /Unhandled (?:Errors?|Rejection)|^\s*Errors\s+\d+ errors?\b/m;
+
+/**
+ * Whether every failure in a non-zero exit's output was read (review M1): a
+ * JSON or JUnit report, or a summary whose counts equal the failures parsed,
+ * with nothing cut by the output cap and no error outside a test. Only a
+ * run read in full may have its failures forgiven into a pass (the
+ * baseline, a supersession, a quarantine); otherwise `gap` says what was not
+ * read.
+ */
+export function readInFull(
+  ctx: ParseContext,
+  failures: readonly CompleteGateFailure[],
+): { inFull: true } | { inFull: false; gap: string } {
+  const text = `${ctx.stdout}\n${ctx.stderr}`;
+  if (TRUNCATED.test(text)) {
+    return { inFull: false, gap: "its output was cut at the sandbox's output cap" };
+  }
+  const named = failures.filter((f) => f.location.file !== "." && !f.notRun);
+  if (named.length < failures.length) {
+    return { inFull: false, gap: "part of its output names no file or test" };
+  }
+  const args = ctx.gate.args.join(" ");
+  switch (ctx.gate.parser) {
+    case "vitest":
+    case "jest": {
+      if (UNHANDLED.test(text)) {
+        return { inFull: false, gap: "the runner reported an error outside any test" };
+      }
+      if (/--reporter[= ]junit/.test(args)) return { inFull: true };
+      if (/\{"num(?:Total|Failed|Passed|Pending)TestSuites"/.test(ctx.stdout))
+        return { inFull: true };
+      const tests = /^\s*Tests\s+(\d+) failed/m.exec(text);
+      // A file that failed to load is read as its own failure, not a test.
+      const perTest = named.filter((f) => !/\(the file failed\)/.test(f.errorExcerpt)).length;
+      if (!tests) return { inFull: false, gap: "its summary names no count of failed tests" };
+      if (Number(tests[1]) !== perTest) {
+        return {
+          inFull: false,
+          gap: `its summary counts ${tests[1]} failed tests, and ${perTest} were read`,
+        };
+      }
+      return { inFull: true };
+    }
+    case "tsc":
+    case "typescript": {
+      const lines = text.split("\n").filter((l) => /\berror TS\d+:/.test(l)).length;
+      const found = /Found (\d+) errors?/.exec(text);
+      if (found && Number(found[1]) !== named.length) {
+        return {
+          inFull: false,
+          gap: `its summary counts ${found[1]} errors, and ${named.length} were read`,
+        };
+      }
+      if (lines === 0 || lines !== named.length) {
+        return {
+          inFull: false,
+          gap: `it printed ${lines} error lines, and ${named.length} were read`,
+        };
+      }
+      return { inFull: true };
+    }
+    case "biome":
+    case "eslint": {
+      if (/--reporter[= ]json/.test(args) || /--format[= ]json/.test(args)) return { inFull: true };
+      const found = /Found (\d+) errors?/.exec(text);
+      if (found && Number(found[1]) === named.length) return { inFull: true };
+      return { inFull: false, gap: "its summary does not match the findings read" };
+    }
+    default:
+      return {
+        inFull: false,
+        gap: `the ${ctx.gate.parser} parser cannot tell whether it read every failure`,
+      };
+  }
+}
 
 /**
  * Registry mapping a gate's declared `parser` to its implementation.

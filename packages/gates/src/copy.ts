@@ -81,6 +81,8 @@ export const gateCopy = {
   // --- bounds: the Worker keeps the change small, or hands the split to a person -----
   boundsFiles: (files: string, limit: string) =>
     `This change touches ${files} files; one card may touch ${limit}. Keep only the files this card needs, or, if it cannot be done in ${limit}, call note with gate "bounds" and why, so a person can split the card.`,
+  boundsToolApplied: (tool: string, lines: string, limit: string) =>
+    `${tool} changed ${lines} lines for this card; one card may have a tool apply ${limit}. Apply it to fewer files, or, if it cannot be done in ${limit}, call note with gate "bounds" and why, so a person can split the card.`,
   boundsLines: (lines: string, limit: string) =>
     `This change is ${lines} lines; one card may change ${limit}. Keep only the lines this card needs, or, if it cannot be done in ${limit}, call note with gate "bounds" and why, so a person can split the card.`,
 
@@ -99,14 +101,50 @@ export const gateCopy = {
   changelog: "Add a one-line entry under Unreleased describing the change.",
   handCommit:
     "Commits on a card branch are made by the harness's checkpoints; do not commit by hand with run_cmd.",
-  mutationGap: (file: string, line: string) =>
-    `Your change at ${file}:${line} is not wrong: no test fails when this line changes, and you may not edit the tests. Call note with gate "mutation" and "test gap at ${file}:${line}", so a person adds the test.`,
 
   // --- visual -----------------------------------------------------------------------
   visualConsole: "Fix the error the page logs or the request that fails.",
   visualLayout: "Change the page's markup or styles so the element named above meets the check.",
   visualBaseline: (page: string) =>
     `No approved screenshot of ${page} exists yet, and only a person approves one. Call note with gate "visual-snapshot" so a person looks at the new screenshot.`,
+  visualChanged: (page: string) =>
+    `The screenshot of ${page} differs from its approved baseline. If the page should look like this, call note with gate "visual-snapshot" so a person approves the new screenshot; otherwise change the markup or styles back.`,
+  visualOverlapFound: (a: string, b: string, width: string, size: string) =>
+    `${a} overlaps ${b} @${width}px (${size}px)`,
+  visualOverlapExpected: (a: string, b: string) => `${a} and ${b} do not overlap`,
+  visualOverlapActual: (size: string) => `their boxes intersect over ${size}px`,
+  visionAnswered: (width: string, model: string, question: string) =>
+    `@${width}px ${model} answered no: ${question}`,
+  visualOverlap: (a: string, b: string) =>
+    `Change the page's layout so ${a} and ${b} no longer cover each other. If they are meant to overlap, call note with gate "visual-layout" and why, so a person can declare the overlap.`,
+  visualDom: (selector: string) =>
+    `Change the page so ${selector} is what the card declares: present or absent, its text, or its attribute, as the line above says.`,
+  visionNo: (question: string) =>
+    `A check of the rendered page answered no to "${question}". Fix what the question describes in the page's markup or styles; if the page is right, call note with gate "visual-vision" and why.`,
+  /** The vision checklist (rule 30): yes means the screen is fine. Its version is VISION_CHECKLIST_VERSION. */
+  visionChecklist: [
+    "Is every piece of text readable, with none cut off or drawn over other text?",
+    "Is every element fully inside the screen, with nothing cut off at an edge?",
+    "Are the elements free of overlaps that hide part of one another?",
+    "Are there no broken images, empty boxes or placeholder text?",
+    "Is the screen free of error messages, stack traces and raw code?",
+  ] as readonly string[],
+  /** The vision model's instruction: the numbered checklist, one yes or no per line. */
+  visionAsk: (numbered: string) =>
+    `Look at the screenshot and answer each numbered question with yes or no, one line per question, in the form "1. yes".\n${numbered}`,
+
+  // --- change kinds (refactor, upgrade) --------------------------------------------------
+  refactorSurface: (file: string) =>
+    `A refactor keeps what its files export. Put back the exports named above in ${file}, under their old names; if this card must change them, call note with gate "refactor-surface" and why, so a person can declare the change.`,
+  upgradeKept: (test: string) =>
+    `${test} passed before the upgrade and must still pass. Change the code that calls the upgraded dependency so it does; do not edit the test.`,
+
+  // --- the claim gate (a research card's report) ----------------------------------------
+  claimNoReproduction: "no reproduction and no reason",
+  claimNotReproduced: (id: string) =>
+    `Claim ${id} did not reproduce. Strike it from the report, or correct it and its script so the script shows what the claim says; if it cannot be run here, mark it unreproducible with the reason.`,
+  claimUnsettled: (id: string) =>
+    `Claim ${id} is executable but has no script and no reason. Add a script that shows it, or mark it unreproducible with the reason it cannot be run here.`,
 
   // --- project gates (apps/harness/src/*_gate.ts) ---------------------------------------
   regressionBroken: (file: string, where: string) =>
@@ -125,6 +163,11 @@ export const gateCopy = {
     `Choose a permissively licensed alternative to "${dependency}" (${license}). If this card needs it, call note with gate "licenses" and why, so a person can list it in the licence register.`,
   licenseUnknown: (dependency: string) =>
     `Install "${dependency}" so its licence can be read. If that is not possible, call note with gate "licenses" and why, so a person can list it in the licence register.`,
+  sourceNotParsed: (gate: string, file: string, reason: string) =>
+    `The ${gate} gate cannot judge ${file} until it parses cleanly. Fix the syntax error at ${reason}, then the gate reads it again.`,
+  /** Review M2: a partial verdict on a file the card did not change goes to a person. */
+  sourceNotParsedForPerson: (gate: string, file: string, reason: string) =>
+    `${file} is not this card's file and does not parse cleanly (${reason}), so the ${gate} gate's verdict is partial. Nothing for you to change here: a person decides, or re-baselines the project.`,
   unusedExport: (name: string) =>
     `Nothing uses ${name}. Either wire it into the code that needs it, or remove the export (keep it unexported if it is a local helper). If a later card genuinely needs it, say so with note rather than leaving it dangling.`,
 } as const;

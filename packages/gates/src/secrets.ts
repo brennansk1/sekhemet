@@ -1,3 +1,5 @@
+import { parseToml } from "@sekhemet/kernel";
+
 /**
  * Secret scanning (G14, and the write path's secret check, G7).
  *
@@ -171,6 +173,40 @@ export function scanDiffForSecrets(diff: string): SecretFinding[] {
       line++;
     } else if (!raw.startsWith("-")) {
       line++;
+    }
+  }
+  return out;
+}
+
+/**
+ * The path allowlist of a gitleaks configuration (`.gitleaks.toml`:
+ * `[allowlist] paths`, or `[[allowlists]] paths` in newer gitleaks), each a
+ * regular expression over the repository-relative path. The built-in scan
+ * and gitleaks honour one file, so a project's documented example
+ * credentials (a rule set's fixtures) are allowlisted once. Unreadable or
+ * absent: none.
+ */
+export function gitleaksAllowedPaths(toml: string | undefined): RegExp[] {
+  if (!toml) return [];
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = parseToml(toml) as Record<string, unknown>;
+  } catch {
+    return [];
+  }
+  const tables = [
+    parsed.allowlist,
+    ...(Array.isArray(parsed.allowlists) ? parsed.allowlists : []),
+  ].filter((t): t is Record<string, unknown> => !!t && typeof t === "object" && !Array.isArray(t));
+  const out: RegExp[] = [];
+  for (const t of tables) {
+    for (const p of Array.isArray(t.paths) ? t.paths : []) {
+      if (typeof p !== "string" || !p) continue;
+      try {
+        out.push(new RegExp(p));
+      } catch {
+        // A pattern JavaScript cannot read allowlists nothing.
+      }
     }
   }
   return out;

@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 44 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 45 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,56 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 45 — 2026-09-26 (B4.0b done: the source index, gates for existing codebases, the visual layer, templates and bundled rules, test strength)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver. Implementer helpers for T2, NEW-gates-7/RG-3, NEW-gates-4/5/TQ, the wiring and three fix rounds. Two full independent reviews (half B; the final part with a re-check of half B's blocker).
+
+- **T2, one AST source index** (`packages/gates/src/index/`):
+  - facts cached by content hash;
+  - references with positions;
+  - `partial` on recovered or unsupported files, baselined when pre-existing and otherwise a named failure for a person;
+  - IX-4: exactly one `typescript` importer, the adapter; six tree walkers use its re-exported `ts`, recorded;
+  - impacted tests first (GT-N3-2);
+  - context reads facts (CX-IX-3 partial: the prompt doesn't name the parser);
+  - IX-5 workspace facts.
+  Characterization goldens were recorded before each migration and are identical after.
+- **NEW-gates-7:**
+  - the onboarding baseline (onboarding step 8, confined, the suite twice; only new failures count; flips only on output read in full; a shrink uses the card's last judged run; not applied after `gates.toml` changes);
+  - superseded tests (a named test with its new version staged);
+  - the tool-applied lines bound;
+  - workspaces with `@manypkg/get-packages` 3.1.0. Package gates are cached and baselined, and the full suite skips packages already verified at the same tree hash, so each test runs once. Package `gates.toml` is read from the base and protected.
+- **RG-N3-1/2:** one verdict for the card run and `sekhemet gate`; a cross-repo story becomes two cards with an edge, each with its own test.
+- **NEW-gates-1:** unenforced invariants in the evidence, the UI and the PM's standup.
+- **NEW-gates-4:** the visual layer in real Chromium (overlap, masks, DOM assertions). Baselines need a person: candidates are stored per card, and approval is bound to the SHA-256 the person saw. The vision checklist is fail-only and needs a qualified vision model; with none qualified the check is partial.
+- **NEW-gates-5:**
+  - format gates;
+  - optional mutmut, cargo-mutants and PIT, confined;
+  - the claim gate, confined;
+  - our own offline security rule set (`sekhemet-offline` 1.0.0, 34 rules with fixtures), read from the base with `--disable-nosem`. **The rules are not yet validated under a real semgrep, which isn't installed here.**
+- **NEW-gates-6/8 remainder:**
+  - two mutation scores, with stillborn mutants judged only when the unmutated typecheck passes, and 0 live mutants reported as not measured;
+  - survivors go to test gaps, never the Worker;
+  - characterize stand-ins count only assertion failures as kills;
+  - refactor surface and upgrade kept-tests checks.
+- **Wiring:**
+  - acceptance and typecheck runners in verification;
+  - research claims reports;
+  - the card field `gateChecks` (migration 18), which needs Accept to change;
+  - `approve-baseline` CLI and REST, recorded with the principal;
+  - nightly mutation in overnight;
+  - `.gitleaks.toml` read from the base.
+- **Reviews:**
+  - **Half B:** 1 blocker (an impacted-only run could be flipped to a pass by quarantine, baseline or supersession) and 4 majors (baseline over incomplete output; `partial` misrouted; the package stage skipped the baseline, supersession and quarantine; the shrink removed live diagnostics), plus the doubled workspace cost. All fixed.
+  - **Final part:** 4 majors (gate checks editable without Accept; baseline approval not bound to the screenshot; nightly stillborn over a baselined typecheck; semgrep rules read from the card's tree), all fixed. The blocker's fix was re-checked and holds.
+- **The lead's own find, a fail-open in the verdict cache, shipped in `160310d`.** A flaky test under load turned out to be real: the tree hash copied git's index, losing its same-second racy check, so a same-size edit in the seed's second hashed as unchanged and served a stale verdict. It was reproduced deterministically and fixed test first by hashing from a fresh index (about 0.3 s on this repo). 4 of 5 parallel runs failed before; 0 of 5 after.
+- **Frozen suite:** the dry run over all 30 cards gives 0 stops. `card_vang_2_hmac`'s setup-phase failures are recorded as `redForWrongReason` (lead ruling: the strict checks apply only to tests written for the card).
+- **Gate:** a snapshot of `160310d` plus B4.0b: `tsc -b` and Biome clean, 428 files and 3,260 tests pass (37 skipped, each waiting for a real tool not installed here: semgrep for the 34 bundled rules, mutmut, cargo-mutants, gitleaks), exit codes checked.
+- **Where the cards stop:**
+  - B4.0b is done.
+  - **Waiting on the owner:** a one-time Semgrep install to validate the 34 bundled rules.
+  - **Waiting on model loads:** the B2.5 baseline's remaining 10 runs, Smart Swap calibration, the load-mode A/B, the MLX comparison, the paired A/Bs of B4.0a/b's Worker-visible changes, and vision qualification (which also needs a labelled screen set).
+  - **Next:** B4.1, which needs B3.3, B4.0a and B4.0b, all done: the first run for all three audiences, the Configuration page with Smart Swap's model section, and take-over's trust, recon and inventory.
 
 ### Entry 44 — 2026-09-26 (Smart Swap built and wired; B4.0b half A done)
 

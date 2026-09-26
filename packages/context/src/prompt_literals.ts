@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
-import ts from "typescript";
+import { ts } from "@sekhemet/gates";
 import { COPY_MODULE_PATTERN, isCopyModulePath } from "./prompt_tags.js";
 
 /**

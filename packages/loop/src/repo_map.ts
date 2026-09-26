@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { extractSymbolOutline } from "@sekhemet/context";
+import { factsOfText } from "@sekhemet/gates";
 
 const SKIP_DIRS = new Set(["node_modules", "dist", ".git", ".sekhemet", "coverage", ".next"]);
 const SOURCE_EXT = /\.(?:ts|tsx|js|jsx|mts|cts)$/;
@@ -125,7 +126,7 @@ export function dataContracts(root: string, scopeFiles: readonly string[] = []):
     if (scope.has(rel) || /(^|\/)(tests?|acceptance)\//.test(rel)) continue;
     let contract: string[];
     try {
-      contract = dataContract(readFileSync(abs, "utf8"));
+      contract = dataContract(rel, readFileSync(abs, "utf8"));
     } catch {
       continue;
     }
@@ -147,21 +148,12 @@ const MAX_BODY_LINES = 15;
  * creates. Suite run 5's vault card guessed a column, `created_at`, that the
  * schema in db.ts calls `created`; the map had shown only `openVaultDb`.
  */
-function dataContract(src: string): string[] {
+function dataContract(file: string, src: string): string[] {
   const out: string[] = [];
-  for (const m of src.matchAll(/export\s+(?:interface|type)\s+\w+[^{=;]*(?:=\s*)?\{/g)) {
-    const start = m.index ?? 0;
-    let depth = 0;
-    let end = -1;
-    for (let i = start + m[0].length - 1; i < src.length; i++) {
-      if (src[i] === "{") depth++;
-      else if (src[i] === "}" && --depth === 0) {
-        end = i + 1;
-        break;
-      }
-    }
-    if (end < 0) continue;
-    const body = src.slice(start, end);
+  // Exported interfaces and object types, from the source index (T2, GT-T2-3).
+  for (const d of factsOfText(file, src).declarations) {
+    if (!d.topLevel || !d.exported || d.isDefault || !d.typeOnly || d.bodyOpen === -1) continue;
+    const body = src.slice(d.start, d.bodyClose + 1);
     if (body.split("\n").length <= MAX_BODY_LINES) out.push(indent(body));
   }
   for (const m of src.matchAll(/CREATE\s+TABLE[^(]*\([^;`'"]*?\)/gi)) {

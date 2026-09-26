@@ -165,6 +165,11 @@ export const workerCopy = {
     `find_references(symbol="${symbol}", file="${file}")`,
 
   // --- language servers and the rename tool (worker-loop NEW-worker-loop-6/7) ---
+  /** `find_references` with no declaration resolved: the uses the source index read (gates T2). */
+  referencesFromIndex: (symbol: string, count: number): string =>
+    `${count} use(s) of ${symbol}, read from the source index's syntax trees (no declaration was resolved; comments and strings are left out; D = declaration):`,
+  /** The part of that reply for files the index has no parser for. */
+  referencesAsText: "(files the source index has no parser for: whole-word text matches)",
   /** A server that is absent, crashed or over its heap: the reply says what it fell back to. */
   languageServerUnavailable: (language: string, reason: string): string =>
     `(the ${language} language server is unavailable: ${reason}; whole-word text matches)`,

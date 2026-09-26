@@ -23,9 +23,10 @@ import {
   verifyGatesConfig,
 } from "./config.js";
 import { gateCopy } from "./copy.js";
+import { createSourceIndex } from "./index/source_index.js";
 import { type JUnitCase, parseJUnit } from "./junit.js";
 import { parseErrorToGateFailure } from "./parser.js";
-import { type ParseContext, defaultParserRegistry } from "./parsers.js";
+import { type ParseContext, defaultParserRegistry, readInFull } from "./parsers.js";
 import { FAILURES_SHOWN, completeFailures, rankFailures } from "./rank.js";
 import { acceptanceCommand } from "./test_strength.js";
 import type {
@@ -40,8 +41,16 @@ import type {
   GatesConfig,
   QuarantinePolicy,
   QuarantinedTest,
+  RunGatesOptions,
   RungOutcome,
 } from "./types.js";
+import {
+  declaredBuildGate,
+  packageGates,
+  repoRelativeFailure,
+  runPackageGates,
+  workspacePlan,
+} from "./workspace.js";
 
 export interface GateRunnerOptions {
   /** Repo root used to locate `.sekhemet/gates.toml`. */
@@ -117,9 +126,9 @@ export function quarantinedTests(cwd: string): QuarantinedTest[] {
 }
 
 /**
- * What the functional gate's evidence says until the source index can name
- * the tests reachable from a card's scope (rule 33, GT-N3-2): it runs the
- * full suite every time.
+ * What the functional gate's evidence says when the source index cannot name
+ * the tests reachable from a card's changes, because the card's base is not
+ * known (rule 33, GT-N3-2): it runs the full suite every time.
  */
 export const IMPACTED_TESTS_NO_INDEX = "impacted tests first: no source index";
 
@@ -144,10 +153,12 @@ export function worktreeTreeHash(cwd: string): string | undefined {
   try {
     const top = git(["rev-parse", "--show-toplevel"]);
     const abs = (p: string) => (isAbsolute(p) ? p : join(cwd, p));
-    const index = abs(git(["rev-parse", "--git-path", "index"]));
     const store = abs(git(["rev-parse", "--git-path", "objects"]));
-    // The real index's stat cache makes `add` hash only what changed.
-    if (existsSync(index)) copyFileSync(index, tmp);
+    // A fresh index, never a copy of the real one: git trusts an entry's
+    // stat data unless the index was written in the same second, and a
+    // copied index loses that timestamp, so a same-size edit made in the
+    // seed's second hashed as unchanged and served a stale verdict. Every
+    // file's content is hashed instead (rule 33: a verdict for this tree).
     mkdirSync(objects);
     // A card's worktree gets the guarded git environment: no hook, monitor
     // or helper the worktree names runs (security items 18-22). New blobs
@@ -275,11 +286,55 @@ export function costOrder(gates: readonly GateDefinition[]): GateDefinition[] {
     .map(({ g }) => g);
 }
 
+/** How one gate runs through the cache (rules 33-34). */
+interface CachedRun {
+  /** The worktree, when the gate runs in a package directory. */
+  root?: string;
+  /** Maps a package gate's failure to repository-relative paths. */
+  toRepo?: (f: GateFailure) => GateFailure;
+  /** Run the full suite, never impacted tests only (B1). */
+  fullSuite?: boolean;
+  /** Package directories whose test files the functional gate leaves out. */
+  exclude?: readonly string[];
+}
+
 /** A repository-relative path in one spelling. */
 function normPath(p: string, cwd: string): string {
   const rel = isAbsolute(p) ? relative(cwd, p) : p;
   return rel.replace(/\\/g, "/").replace(/^\.\//, "");
 }
+
+/**
+ * The files the card changed or added against `base`, relative to `cwd`:
+ * its diff and its untracked files, ignored ones excluded. Undefined when the
+ * diff cannot be read.
+ */
+function changedSince(cwd: string, base: string): string[] | undefined {
+  if (base.startsWith("-")) return undefined;
+  try {
+    const git = (args: string[]) =>
+      execFileSync("git", args, {
+        cwd,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 60_000,
+        env: gitEnvFor(cwd),
+      });
+    const top = git(["rev-parse", "--show-toplevel"]).trim();
+    const changed = [
+      ...git(["diff", "--name-only", "--no-renames", base, "--"]).split("\n"),
+      ...git(["ls-files", "--others", "--exclude-standard", "--full-name"]).split("\n"),
+    ].filter(Boolean);
+    return changed.map((f) => normPath(relative(cwd, join(top, f)), cwd));
+  } catch {
+    return undefined;
+  }
+}
+
+/** Runners that take test files as arguments, so impacted tests can run first (GT-N3-2). */
+const SELECTS_TEST_FILES = new Set(["vitest", "jest"]);
+/** A test file the runners above collect. */
+const TEST_FILE = /\.(?:spec|test)\.[cm]?[jt]sx?$/;
 
 /** A failing test's title as its failure names it: the first line without its location. */
 function testTitle(f: GateFailure): string {
@@ -470,6 +525,8 @@ export class DeterministicGateRunner implements GateRunner {
   ): Promise<{
     outcome: RungOutcome;
     failures: GateFailure[];
+    /** The runner said it found no test file among those it was given (minor 3). */
+    noTestFiles?: boolean;
   }> {
     const start = performance.now();
     const minimalRepro = [gate.command, ...gate.args].join(" ");
@@ -609,8 +666,34 @@ export class DeterministicGateRunner implements GateRunner {
         f.actual = `timed out after ${gate.timeoutMs}ms`;
       }
     }
+    // Review M1: whether every failure was read, so a layer may forgive them.
+    const read = readInFull(ctx, failures);
+    outcome.parsedInFull = read.inFull;
+    if (!read.inFull) outcome.parseGap = read.gap;
+    // Minor 3: a runner given files it does not collect reports none found.
+    const noTestFiles = /No test files found/i.test(`${result.stdout}\n${result.stderr}`);
 
-    return { outcome, failures };
+    return { outcome, failures, ...(noTestFiles ? { noTestFiles: true } : {}) };
+  }
+
+  /**
+   * One gate through this runner's verdict cache and, for a test gate,
+   * flaky-test quarantine (rules 33-34): what the workspace's package stage
+   * runs each package gate through, so a package gate is judged exactly as
+   * a declared one (review M3). `root` is the worktree when the gate runs in
+   * a package directory; failures come back repository-relative when
+   * `toRepo` maps them.
+   */
+  public async runGateCached(
+    gate: GateDefinition,
+    cwd: string,
+    root: string = cwd,
+    toRepo?: (f: GateFailure) => GateFailure,
+  ): Promise<{ outcome: RungOutcome; failures: GateFailure[] }> {
+    return this.runCached(gate, cwd, worktreeTreeHash(root), {
+      root,
+      ...(toRepo ? { toRepo } : {}),
+    });
   }
 
   public async runCustomCommandGate(
@@ -650,23 +733,46 @@ export class DeterministicGateRunner implements GateRunner {
     gate: GateDefinition,
     cwd: string,
     tree: string | undefined,
+    run: CachedRun = {},
   ): Promise<{ outcome: RungOutcome; failures: GateFailure[] }> {
+    const root = run.root ?? cwd;
+    const exclude = run.exclude ?? [];
     const key =
       tree && this.options.verdictCache !== false
-        ? `${tree}|${gateDefinitionHash(gate)}|${toolchainKey(gate, cwd, this.options.repoRoot)}`
+        ? `${tree}|${gateDefinitionHash(gate)}|${toolchainKey(gate, cwd, this.options.repoRoot)}|${exclude.join(",")}`
         : undefined;
     const hit = key ? this.verdicts.get(key) : undefined;
-    if (hit) {
+    // Asked for the full suite, an impacted-only verdict is no answer (B1).
+    if (hit && !(run.fullSuite && hit.outcome.fullSuite === false)) {
       return {
         outcome: { ...structuredClone(hit.outcome), cached: true },
         failures: structuredClone(hit.failures),
       };
     }
-    let { outcome, failures } = await this.runGate(gate, cwd);
+    const execute = async (fullSuite: boolean) => {
+      const r =
+        gate.rung === "test"
+          ? await this.runFunctional(gate, cwd, fullSuite, exclude)
+          : await this.runGate(gate, cwd);
+      return {
+        outcome: r.outcome,
+        failures: run.toRepo ? r.failures.map(run.toRepo) : r.failures,
+      };
+    };
+    let { outcome, failures } = await execute(run.fullSuite === true);
     if (gate.rung === "test") {
-      // Until the source index exists, every functional run is the full suite (GT-N3-2).
-      outcome = { ...outcome, note: IMPACTED_TESTS_NO_INDEX };
-      ({ outcome, failures } = await this.quarantineFlaky(gate, cwd, outcome, failures, tree));
+      let judged = await this.quarantineFlaky(gate, cwd, outcome, failures, tree, root);
+      // B1: an impacted-only run did not run the full suite, so quarantine
+      // may not turn it into a pass; when every failure it found is a flaky
+      // test, the full suite runs and is the verdict.
+      if (outcome.fullSuite === false && judged.forgivesAll) {
+        const full = await execute(true);
+        judged = await this.quarantineFlaky(gate, cwd, full.outcome, full.failures, tree, root);
+        const why =
+          "every failure of the impacted tests was a flaky test, so the full suite ran and is the verdict";
+        judged.outcome.note = judged.outcome.note ? `${judged.outcome.note}; ${why}` : why;
+      }
+      ({ outcome, failures } = judged);
     }
     const verdict =
       !outcome.unavailable &&
@@ -679,6 +785,116 @@ export class DeterministicGateRunner implements GateRunner {
       });
     }
     return { outcome, failures };
+  }
+
+  /** The test files the source index lists in `cwd`: what a runner that takes files may be given. */
+  private testFiles(cwd: string): string[] {
+    return createSourceIndex(cwd)
+      .files()
+      .filter((f) => TEST_FILE.test(f));
+  }
+
+  /**
+   * The functional gate, impacted tests first (rule 33, GT-N3-2): the test
+   * files the source index finds reachable from the card's changes run
+   * first, and a failure there is the verdict — marked `fullSuite: false`,
+   * so no layer forgives it into a pass (B1); only when they pass does the
+   * full suite run, so the attempt that enters Review has run every test.
+   * `fullSuite` skips the impacted run. Test files under `exclude` (packages
+   * whose own test gate passed on this tree) are left out of the run, by
+   * the same file arguments. The outcome's note says which happened.
+   */
+  private async runFunctional(
+    gate: GateDefinition,
+    cwd: string,
+    fullSuite = false,
+    exclude: readonly string[] = [],
+  ): Promise<{ outcome: RungOutcome; failures: GateFailure[] }> {
+    const noted = (
+      run: { outcome: RungOutcome; failures: GateFailure[] },
+      note: string,
+    ): { outcome: RungOutcome; failures: GateFailure[] } => ({
+      outcome: { ...run.outcome, note },
+      failures: run.failures,
+    });
+    // The declared suite less the tests the package gates already ran here.
+    const selects = SELECTS_TEST_FILES.has(gate.parser);
+    const all = exclude.length > 0 && selects ? this.testFiles(cwd) : undefined;
+    const rest = all?.filter((f) => !exclude.some((d) => f.startsWith(`${d}/`)));
+    const left = all && rest ? all.length - rest.length : 0;
+    const packages =
+      left > 0
+        ? `; ${left} test file${left === 1 ? "" : "s"} of packages whose own tests passed on this tree left out`
+        : "";
+    if (rest && left > 0 && rest.length === 0) {
+      return {
+        outcome: {
+          gate: gate.id,
+          rung: gate.rung,
+          layer: gate.layer,
+          passed: true,
+          exitCode: 0,
+          durationMs: 0,
+          note: "every test file ran in its package's own gate on this tree and passed; nothing was left to run",
+        },
+        failures: [],
+      };
+    }
+    const full: GateDefinition =
+      rest && left > 0 ? { ...gate, args: [...gate.args, ...rest] } : gate;
+    if (fullSuite) {
+      return noted(await this.runGate(full, cwd), `the full suite ran${packages}`);
+    }
+    const plan = this.impactedTests(gate, cwd, rest && left > 0 ? rest : undefined);
+    if (typeof plan === "string") return noted(await this.runGate(full, cwd), `${plan}${packages}`);
+    const files = `${plan.length} test file${plan.length === 1 ? "" : "s"}`;
+    const first = await this.runGate({ ...gate, args: [...gate.args, ...plan] }, cwd);
+    if (first.noTestFiles) {
+      // Minor 3: files the runner does not collect are no verdict; the full suite is.
+      return noted(
+        await this.runGate(full, cwd),
+        `impacted tests first: of ${files} reachable from the card's changes the runner found no test file; the full suite ran${packages}`,
+      );
+    }
+    if (!first.outcome.passed || first.failures.length > 0) {
+      return noted(
+        { outcome: { ...first.outcome, fullSuite: false }, failures: first.failures },
+        `impacted tests first: ${files} reachable from the card's changes failed; the full suite did not run`,
+      );
+    }
+    return noted(
+      await this.runGate(full, cwd),
+      `impacted tests first: ${files} reachable from the card's changes passed; the full suite ran${packages}`,
+    );
+  }
+
+  /**
+   * The test files to run first, or the note that says why the full suite
+   * runs instead: no card base to diff against, a runner that cannot be
+   * given files, or no test (or every test) reachable from the changes.
+   * `universe` is the test files the full run covers, when not all.
+   */
+  private impactedTests(
+    gate: GateDefinition,
+    cwd: string,
+    universe?: readonly string[],
+  ): string[] | string {
+    const base = this.policyFor(cwd).base;
+    const changed = base === undefined ? undefined : changedSince(cwd, base);
+    if (!changed) return IMPACTED_TESTS_NO_INDEX;
+    if (!SELECTS_TEST_FILES.has(gate.parser)) {
+      return `impacted tests first: the ${gate.parser} runner cannot be given test files; the full suite ran`;
+    }
+    const index = createSourceIndex(cwd);
+    const tests = universe ? [...universe] : index.files().filter((f) => TEST_FILE.test(f));
+    const reachable = index.reachableTests(changed, tests);
+    if (reachable.length === 0) {
+      return "impacted tests first: no test file is reachable from the card's changes; the full suite ran";
+    }
+    if (reachable.length === tests.length) {
+      return "impacted tests first: every test file is reachable from the card's changes; the full suite ran";
+    }
+    return reachable;
   }
 
   /** The quarantine policy for this worktree: the card runner's, else this runner's, else closed. */
@@ -694,26 +910,10 @@ export class DeterministicGateRunner implements GateRunner {
   private guardedFiles(cwd: string, policy: QuarantinePolicy): Set<string> | undefined {
     const guarded = new Set((policy.never ?? []).map((p) => normPath(p, cwd)));
     if (policy.base === undefined) return guarded;
-    if (policy.base.startsWith("-")) return undefined;
-    try {
-      const git = (args: string[]) =>
-        execFileSync("git", args, {
-          cwd,
-          encoding: "utf8",
-          stdio: ["ignore", "pipe", "ignore"],
-          timeout: 60_000,
-          env: gitEnvFor(cwd),
-        });
-      const top = git(["rev-parse", "--show-toplevel"]).trim();
-      const changed = [
-        ...git(["diff", "--name-only", "--no-renames", policy.base, "--"]).split("\n"),
-        ...git(["ls-files", "--others", "--exclude-standard", "--full-name"]).split("\n"),
-      ].filter(Boolean);
-      for (const f of changed) guarded.add(normPath(relative(cwd, join(top, f)), cwd));
-      return guarded;
-    } catch {
-      return undefined;
-    }
+    const changed = changedSince(cwd, policy.base);
+    if (!changed) return undefined;
+    for (const f of changed) guarded.add(f);
+    return guarded;
   }
 
   /**
@@ -764,17 +964,29 @@ export class DeterministicGateRunner implements GateRunner {
     outcome: RungOutcome,
     failures: GateFailure[],
     tree: string | undefined,
-  ): Promise<{ outcome: RungOutcome; failures: GateFailure[] }> {
+    root: string = cwd,
+  ): Promise<{ outcome: RungOutcome; failures: GateFailure[]; forgivesAll: boolean }> {
     // A quarantine holds only on the tree it was found on.
     const held = (f: GateFailure) => {
       const q = this.quarantine.get(testIdentity(f) ?? "");
       return q && tree !== undefined && q.tree === tree ? q : undefined;
     };
-    const policy = this.policyFor(cwd);
+    // Failures name files as the repository does; the re-run runs where the gate ran.
+    const here = (f: GateFailure): GateFailure =>
+      root === cwd
+        ? f
+        : {
+            ...f,
+            location: {
+              ...f.location,
+              file: normPath(relative(cwd, join(root, f.location.file)), cwd),
+            },
+          };
+    const policy = this.policyFor(root);
     const couldJudge =
       failures.length > 0 && !failures.some((f) => f.notRun || /^timed out after/.test(f.actual));
     if (policy.open && tree !== undefined && couldJudge) {
-      const guarded = this.guardedFiles(cwd, policy);
+      const guarded = this.guardedFiles(root, policy);
       const fresh = guarded
         ? failures.filter((f) => {
             const id = testIdentity(f);
@@ -782,17 +994,19 @@ export class DeterministicGateRunner implements GateRunner {
               id !== undefined &&
               !held(f) &&
               !this.rerunOnce.has(id) &&
-              !guarded.has(normPath(f.location.file, cwd))
+              !guarded.has(normPath(f.location.file, root))
             );
           })
         : [];
       if (fresh.length > 0) {
-        const files = [...new Set(fresh.map((f) => f.location.file))];
+        const files = [...new Set(fresh.map((f) => here(f).location.file))];
         const again = await this.rerunWithEvidence(gate, cwd, files);
         for (const f of fresh) {
           const id = testIdentity(f) as string;
           this.rerunOnce.add(id);
-          const passed = again?.cases.some((c) => isCaseOf(c, f, cwd) && c.status === "passed");
+          const passed = again?.cases.some(
+            (c) => isCaseOf(c, here(f), cwd) && c.status === "passed",
+          );
           if (!again || !passed) continue;
           const q = {
             test: `${f.location.file} > ${testTitle(f)}`,
@@ -801,7 +1015,7 @@ export class DeterministicGateRunner implements GateRunner {
             tree,
           };
           this.quarantine.set(id, q);
-          const key = worktreeKey(cwd);
+          const key = worktreeKey(root);
           QUARANTINE_RECORDS.set(key, [...(QUARANTINE_RECORDS.get(key) ?? []), { ...q }]);
         }
       }
@@ -810,15 +1024,33 @@ export class DeterministicGateRunner implements GateRunner {
       .map(held)
       .filter((q): q is QuarantinedTest & { tree: string } => q !== undefined)
       .map((q) => ({ ...q }));
-    if (quarantined.length === 0) return { outcome, failures };
+    if (quarantined.length === 0) return { outcome, failures, forgivesAll: false };
     const kept = failures.filter((f) => !held(f));
+    const forgivesAll = kept.length === 0;
+    // Only a full-suite run read in full may become a pass (B1, M1).
+    if (forgivesAll && (outcome.fullSuite === false || outcome.parsedInFull !== true)) {
+      const why =
+        outcome.fullSuite === false
+          ? "only the impacted tests ran"
+          : `its output was not read in full (${outcome.parseGap ?? "unknown"})`;
+      return {
+        outcome: {
+          ...outcome,
+          quarantined,
+          note: `${outcome.note ? `${outcome.note}; ` : ""}every failure was a quarantined flaky test, but ${why}: the failure stands`,
+        },
+        failures,
+        forgivesAll,
+      };
+    }
     return {
       outcome: {
         ...outcome,
         quarantined,
-        ...(kept.length === 0 ? { passed: true } : {}),
+        ...(forgivesAll ? { passed: true } : {}),
       },
       failures: kept,
+      forgivesAll,
     };
   }
 
@@ -829,7 +1061,11 @@ export class DeterministicGateRunner implements GateRunner {
    * Review surface needs the whole picture to assemble evidence, and an agent
    * repairing one rung at a time cannot see that two rungs share a root cause.
    */
-  public async runGates(rungs: GateRung[], cwd: string): Promise<GateResult> {
+  public async runGates(
+    rungs: GateRung[],
+    cwd: string,
+    options: RunGatesOptions = {},
+  ): Promise<GateResult> {
     const start = performance.now();
     this.defects = [];
     const config = this.resolveConfig(cwd);
@@ -871,9 +1107,30 @@ export class DeterministicGateRunner implements GateRunner {
     // Rule 33: one hash of the tree the gates start from keys every verdict
     // (and bounds a quarantine, rule 34).
     const tree = worktreeTreeHash(cwd);
-    const ordered = costOrder(selected);
+    // Rule 34a: the workspace's package gates first, through the same cache
+    // and quarantine, so every layer above judges them as it judges the
+    // declared gates (review M3).
+    const pkgs = options.workspace
+      ? await this.packageStage(
+          cwd,
+          options.workspace,
+          requested,
+          config.gates,
+          tree,
+          options.fullSuite === true,
+        )
+      : undefined;
+    if (pkgs) {
+      rungResults.push(...pkgs.outcomes);
+      failures.push(...pkgs.failures);
+    }
+    const ordered = costOrder(selected).filter((g) => !pkgs?.ranDeclared.includes(g.id));
     for (const [i, gate] of ordered.entries()) {
-      const { outcome, failures: gateFailures } = await this.runCached(gate, cwd, tree);
+      const { outcome, failures: gateFailures } = await this.runCached(gate, cwd, tree, {
+        ...(options.fullSuite ? { fullSuite: true } : {}),
+        // The declared suite leaves out the tests of packages that passed here.
+        ...(gate.rung === "test" && pkgs?.passedTests.length ? { exclude: pkgs.passedTests } : {}),
+      });
       rungResults.push(outcome);
       failures.push(...gateFailures);
 
@@ -920,6 +1177,67 @@ export class DeterministicGateRunner implements GateRunner {
       ...(this.defects.length > 0 ? { defects: [...this.defects] } : {}),
       durationMs: Math.round(performance.now() - start),
       rungResults,
+      ...(pkgs ? { workspace: { packages: pkgs.packages } } : {}),
+    };
+  }
+
+  /**
+   * The package stage (gates rule 34a, GT-BF-4; review M3 and efficiency):
+   * the packages the change touched and their dependents, in build order,
+   * each gate through `runGateCached`. When the change crosses a package
+   * boundary, a declared static gate that builds the workspace is the build
+   * step — run here once, and not again by the declared run — else each
+   * package's own `build` script. Only the gates of the requested rungs run.
+   */
+  private async packageStage(
+    root: string,
+    ws: NonNullable<RunGatesOptions["workspace"]>,
+    requested: ReadonlySet<GateRung>,
+    declared: readonly GateDefinition[],
+    tree: string | undefined,
+    /** B1: asked for the full suite, no package gate answers with impacted tests only. */
+    fullSuite = false,
+  ): Promise<{
+    outcomes: RungOutcome[];
+    failures: GateFailure[];
+    passedTests: string[];
+    ranDeclared: string[];
+    packages: string[];
+  }> {
+    const plan = workspacePlan(root, ws.changed);
+    const none = { outcomes: [], failures: [], passedTests: [], ranDeclared: [], packages: [] };
+    if (
+      !plan ||
+      plan.order.length === 0 ||
+      !(requested.has("test") || requested.has("typecheck"))
+    ) {
+      return none;
+    }
+    const build = plan.crossesBoundary ? declaredBuildGate(declared) : undefined;
+    const gates = packageGates(root, plan, {
+      base: ws.base,
+      rungs: requested,
+      declaredBuild: build !== undefined,
+    });
+    const r = await runPackageGates({
+      gates,
+      run: (g) =>
+        this.runCached(g.def, g.cwd, tree, {
+          root,
+          toRepo: (f) => repoRelativeFailure(f, root, g.pkg),
+          ...(fullSuite ? { fullSuite: true } : {}),
+        }),
+      ...(build
+        ? {
+            declaredBuild: () =>
+              this.runCached(build, root, tree, fullSuite ? { fullSuite: true } : {}),
+          }
+        : {}),
+    });
+    return {
+      ...r,
+      ranDeclared: build ? [build.id] : [],
+      packages: plan.order.map((p) => p.name),
     };
   }
 }

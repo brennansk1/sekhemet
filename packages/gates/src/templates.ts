@@ -68,11 +68,77 @@ function jsTemplate(pm: "pnpm" | "npm" | "yarn", root: string): GateDefinition[]
         120_000,
       ),
     );
+  const format = jsFormatGate(pm, root, s);
+  if (format) out.push(format);
   if (s.test) {
     const parser = /vitest/.test(s.test) ? "vitest" : /jest/.test(s.test) ? "jest" : "generic";
     out.push(gate("unit", "test", "functional", pm, run("test"), parser, 600_000));
   }
   return out;
+}
+
+const PRETTIER_CONFIGS = [
+  ".prettierrc",
+  ".prettierrc.json",
+  ".prettierrc.json5",
+  ".prettierrc.yaml",
+  ".prettierrc.yml",
+  ".prettierrc.toml",
+  ".prettierrc.js",
+  ".prettierrc.cjs",
+  ".prettierrc.mjs",
+  ".prettierrc.ts",
+  "prettier.config.js",
+  "prettier.config.cjs",
+  "prettier.config.mjs",
+  "prettier.config.ts",
+];
+
+/**
+ * The project's formatter as a check (GT-N5-1): Biome when `biome.json(c)`
+ * exists, else Prettier when its configuration does (a config file or a
+ * `prettier` key in package.json). A `lint` script that runs `biome check`
+ * or `biome ci` already checks formatting, so it gets no second gate.
+ */
+function jsFormatGate(
+  pm: "pnpm" | "npm" | "yarn",
+  root: string,
+  s: Record<string, string>,
+): GateDefinition | undefined {
+  const has = (f: string) => existsSync(join(root, f));
+  const exec = (tool: string, args: string[]): [string, string[]] =>
+    pm === "npm"
+      ? ["npx", [tool, ...args]]
+      : pm === "yarn"
+        ? [pm, [tool, ...args]]
+        : [pm, ["exec", tool, ...args]];
+  if (has("biome.json") || has("biome.jsonc")) {
+    if (/\bbiome\s+(check|ci)\b/.test(s.lint ?? "")) return undefined;
+    const [cmd, args] = exec("biome", ["format", "."]);
+    return gate("format", "lint", "static", cmd, args, "biome", 120_000);
+  }
+  let pkgPrettier = false;
+  try {
+    pkgPrettier =
+      "prettier" in (JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as object);
+  } catch {
+    pkgPrettier = false;
+  }
+  if (pkgPrettier || PRETTIER_CONFIGS.some(has)) {
+    const [cmd, args] = exec("prettier", ["--check", "."]);
+    return gate("format", "lint", "static", cmd, args, "generic", 120_000);
+  }
+  return undefined;
+}
+
+/** ruff's configuration: its own file, or a `[tool.ruff]` table in pyproject.toml. */
+function hasRuffConfig(root: string): boolean {
+  if (existsSync(join(root, "ruff.toml")) || existsSync(join(root, ".ruff.toml"))) return true;
+  try {
+    return /^\[tool\.ruff(\.|\])/m.test(readFileSync(join(root, "pyproject.toml"), "utf8"));
+  } catch {
+    return false;
+  }
 }
 
 /** The template id for a repository, from its manifests and lockfiles. */
@@ -105,6 +171,20 @@ export function gateTemplate(
     case "python":
       return [
         gate("lint", "lint", "static", "python3", ["-m", "ruff", "check", "."], "generic", 120_000),
+        // GT-N5-1: ruff format, when the project configures ruff.
+        ...(hasRuffConfig(root)
+          ? [
+              gate(
+                "format",
+                "lint",
+                "static",
+                "python3",
+                ["-m", "ruff", "format", "--check", "."],
+                "generic",
+                120_000,
+              ),
+            ]
+          : []),
         gate("typecheck", "typecheck", "static", "python3", ["-m", "mypy", "."], "generic"),
         gate("unit", "test", "functional", "python3", ["-m", "pytest", "-q"], "generic", 600_000),
       ];
@@ -119,6 +199,10 @@ export function gateTemplate(
           ["clippy", "--all-targets", "--", "-D", "warnings"],
           "cargo",
         ),
+        // GT-N5-1: rustfmt, when the project configures it.
+        ...(existsSync(join(root, "rustfmt.toml")) || existsSync(join(root, ".rustfmt.toml"))
+          ? [gate("format", "lint", "static", "cargo", ["fmt", "--check"], "generic", 120_000)]
+          : []),
         gate("unit", "test", "functional", "cargo", ["test"], "cargo", 900_000),
       ];
     case "go":

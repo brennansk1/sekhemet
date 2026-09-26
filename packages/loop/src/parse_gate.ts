@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
+import { ts } from "@sekhemet/gates";
 import { parseToml } from "@sekhemet/kernel";
 import { allowlistedEnv, resolveProgram } from "@sekhemet/sandbox";
-import ts from "typescript";
 
 export interface SyntaxProblem {
   line: number;

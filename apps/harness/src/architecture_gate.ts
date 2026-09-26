@@ -6,7 +6,10 @@ import {
   type GateRung,
   type GateRunner,
   RERUN_GATES,
+  type RunGatesOptions,
   type RungOutcome,
+  type SourceIndex,
+  createSourceIndex,
   gateCopy,
 } from "@sekhemet/gates";
 import { changedSources } from "./reachability_gate.js";
@@ -117,27 +120,43 @@ function covers(pattern: string, file: string): boolean {
   return stripExt(file) === stripExt(pattern) || file.startsWith(`${pattern}/`);
 }
 
-/** Repository-relative targets of a file's relative imports. */
-function relativeImports(root: string, file: string): string[] {
-  const src = readFileSync(join(root, file), "utf8");
-  const out: string[] = [];
-  for (const m of src.matchAll(/(?:from\s+|import\s*\(?\s*)["'](\.{1,2}\/[^"']+)["']/g)) {
-    if (m[1]) out.push(normalize(join(dirname(file), m[1])));
-  }
-  return out;
+/**
+ * Repository-relative targets of a file's relative imports and re-exports,
+ * of every kind (static, type, dynamic, `require`), from the source index
+ * (T2): a comment or a string naming a path is not an import. A target the
+ * resolver cannot find is judged by the path as written, so a crossing into a
+ * file not created yet is still a crossing.
+ */
+function relativeImports(index: SourceIndex, file: string): string[] {
+  const facts = index.facts(file);
+  const specifiers = [
+    ...(facts?.imports ?? []).map((i) => i.specifier),
+    ...(facts?.reExports ?? []).map((r) => r.specifier),
+  ].filter((s) => /^\.{1,2}\//.test(s));
+  return specifiers.map((s) => {
+    const target = index.resolve(file, s);
+    return target.kind === "file" ? target.path : normalize(join(dirname(file), s));
+  });
 }
 
-function definesName(root: string, file: string, name: string): boolean {
-  const src = readFileSync(join(root, file), "utf8");
-  return new RegExp(
-    `\\b(?:interface|type|class|function|enum|const|let|var)\\s+${name.replace(/\$/g, "\\$")}\\b`,
-  ).test(src);
+/**
+ * Whether a file declares `name` at its top level (GT-T2-2): an import of
+ * the name, a comment naming it or a local variable inside a function is not
+ * a second definition.
+ */
+function definesName(index: SourceIndex, file: string, name: string): boolean {
+  return (index.facts(file)?.declarations ?? []).some((d) => d.topLevel && d.name === name);
 }
 
 export interface ArchitectureOptions {
   /** Where the brief is; defaults to the checked-out tree's `.sekhemet/brief.md`. */
   briefPath?: string;
   base?: string;
+  /**
+   * Files the onboarding baseline recorded as readable only in part
+   * (GT-IX-1, review M2): pre-existing, never the Worker's to repair.
+   */
+  baselinePartial?: readonly { file: string; reason: string }[];
 }
 
 export function architectureGate(root: string, options: ArchitectureOptions = {}): GateFailure[] {
@@ -163,11 +182,32 @@ export function architectureGate(root: string, options: ArchitectureOptions = {}
     });
   };
 
+  const index = createSourceIndex(root);
+  const known = new Set((options.baselinePartial ?? []).map((p) => p.file));
   for (const file of changedSources(root, options.base ?? "main")) {
+    // GT-IX-1: a file that did not parse cleanly is not judged as holding —
+    // the Worker's to repair unless the onboarding baseline recorded it (M2).
+    const facts = index.facts(file);
+    if (facts && facts.parseStatus !== "ok" && !known.has(file)) {
+      const reason = facts.parseReason ?? facts.parseStatus;
+      failures.push({
+        rung: "hygiene",
+        gate: "architecture",
+        layer: "hygiene",
+        exitCode: 1,
+        errorExcerpt: `${file}: does not parse cleanly (${reason}), so the brief's invariants cannot be judged on it`,
+        suggestedFixFiles: [file],
+        location: { file, line: 0, column: 0 },
+        expected: `${file} parses without errors`,
+        actual: reason,
+        minimalRepro: RERUN_GATES,
+        suggestedAction: gateCopy.sourceNotParsed("architecture", file, reason),
+      });
+    }
     for (const rule of rules) {
       if (rule.kind === "no-import") {
         if (!covers(rule.from, file)) continue;
-        const crossing = relativeImports(root, file).find((t) => covers(rule.to, t));
+        const crossing = relativeImports(index, file).find((t) => covers(rule.to, t));
         if (crossing) {
           fail(
             file,
@@ -176,7 +216,7 @@ export function architectureGate(root: string, options: ArchitectureOptions = {}
             gateCopy.architectureImport(rule.from, rule.to, file),
           );
         }
-      } else if (!covers(rule.file, file) && definesName(root, file, rule.name)) {
+      } else if (!covers(rule.file, file) && definesName(index, file, rule.name)) {
         fail(
           file,
           rule,
@@ -197,13 +237,20 @@ export function withArchitectureGate(
   return {
     // GT-M6-5: the gate this wrapper adds, for `note`'s enum.
     gateIds: [...(inner.gateIds ?? []), "architecture"],
-    runGates: async (rungs: GateRung[], cwd: string): Promise<GateResult> => {
-      const res = await inner.runGates(rungs, cwd);
+    runGates: async (
+      rungs: GateRung[],
+      cwd: string,
+      runOptions?: RunGatesOptions,
+    ): Promise<GateResult> => {
+      const res = await inner.runGates(rungs, cwd, runOptions);
       const started = Date.now();
       const failures = architectureGate(cwd, options);
       const note = unenforcedNote(
         unenforcedInvariants(options.briefPath ?? join(cwd, ".sekhemet", "brief.md")),
       );
+      const partial = failures
+        .filter((f) => f.gate === "architecture" && /does not parse cleanly/.test(f.errorExcerpt))
+        .map((f) => ({ file: f.location?.file ?? "", reason: f.actual }));
       const outcome: RungOutcome = {
         gate: "architecture",
         rung: "hygiene",
@@ -213,6 +260,8 @@ export function withArchitectureGate(
         durationMs: Date.now() - started,
         // GT-N1-1: what the gate did not check is in every card's evidence.
         ...(note ? { note } : {}),
+        // GT-IX-1: the files its verdict is partial on.
+        ...(partial.length ? { partial } : {}),
       };
       return {
         ...res,

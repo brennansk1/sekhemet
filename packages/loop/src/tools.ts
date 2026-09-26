@@ -21,7 +21,7 @@ import {
   languageOf as lspLanguageOf,
   workerCopy,
 } from "@sekhemet/context";
-import { redactSecrets } from "@sekhemet/gates";
+import { factsOfText, redactSecrets } from "@sekhemet/gates";
 import type { ToolCall } from "@sekhemet/models";
 import {
   type ExecutionResult,
@@ -231,17 +231,43 @@ function isBinary(buf: Buffer): boolean {
 /** Unranged reads above this many lines return an outline (delegated reading). */
 const OUTLINE_THRESHOLD = 200;
 
-/** Top-level declarations with their line numbers, for the outline. */
-function outlineOf(lines: string[]): string {
-  const re =
-    /^(?:export\s+)?(?:default\s+)?(?:abstract\s+)?(?:async\s+)?(function\s*\*?|class|interface|type|enum|const|let|var|describe|it|test)\s*\(?\s*['"`]?([A-Za-z_$][\w$ -]*)/;
-  const out: string[] = [];
-  lines.forEach((line, i) => {
-    const m = re.exec(line);
-    if (m?.[2])
-      out.push(`${String(i + 1).padStart(5)}  ${m[1]?.replace(/\s+/g, "")} ${m[2].trim()}`);
-  });
-  return out.slice(0, 80).join("\n");
+/** Declaration keywords, per language, for a file the source index has no adapter for. */
+const OTHER_LANGUAGE_OUTLINE =
+  /^(?:abstract\s+)?(?:async\s+)?(function\s*\*?|class|interface|type|enum|const|let|var|describe|it|test)\s*\(?\s*['"`]?([A-Za-z_$][\w$ -]*)/;
+
+/**
+ * Top-level declarations and test blocks with their line numbers, for the
+ * outline: from the source index's facts (T2, GT-T2-3), and for a language it
+ * has no adapter for, from its declaration keywords.
+ */
+function outlineOf(path: string, lines: string[]): string {
+  const text = lines.join("\n");
+  const facts = factsOfText(path, text);
+  // A declaration at the start of a line is shown even when an unclosed brace
+  // above it (a file mid-edit) nests it in the recovered tree.
+  const atLineStart = (offset: number) => offset === 0 || text[offset - 1] === "\n";
+  const out: { line: number; text: string }[] = [];
+  if (facts.parseStatus === "unsupported") {
+    lines.forEach((line, i) => {
+      const m = OTHER_LANGUAGE_OUTLINE.exec(line);
+      if (m?.[2]) out.push({ line: i + 1, text: `${m[1]?.replace(/\s+/g, "")} ${m[2].trim()}` });
+    });
+  } else {
+    for (const d of facts.declarations) {
+      if (d.kind === "method" || !(d.topLevel || atLineStart(d.start))) continue;
+      out.push({ line: d.line, text: `${d.kind} ${d.name}` });
+    }
+    for (const t of facts.testBlocks) {
+      // A title is shown up to its first punctuation, as a heading.
+      const title = /^[A-Za-z_$][\w$ -]*/.exec(t.title)?.[0]?.trim() ?? t.title;
+      out.push({ line: t.line, text: `${t.callee} ${title}` });
+    }
+  }
+  return out
+    .sort((a, b) => a.line - b.line)
+    .slice(0, 80)
+    .map((o) => `${String(o.line).padStart(5)}  ${o.text}`)
+    .join("\n");
 }
 
 /** An observation with every secret the scanner finds redacted (security item 34, SEC-22). */
@@ -708,7 +734,7 @@ export class ToolExecutor {
     // a 16k window. Unranged reads of long files return an outline with line
     // numbers plus the head; the Worker then reads exactly what it needs.
     if (start === undefined && end === undefined && lines.length > OUTLINE_THRESHOLD) {
-      const outline = outlineOf(lines);
+      const outline = outlineOf(path, lines);
       const head = lines
         .slice(0, 40)
         .map((l, i) => `${String(i + 1).padStart(5)}│${l}`)
@@ -848,9 +874,9 @@ export class ToolExecutor {
     if (!existsSync(abs)) return fail("read_symbol", `file not found: ${path}`);
 
     const source = this.readText(abs);
-    const span = findSymbol(source, symbol);
+    const span = findSymbol(source, symbol, path);
     if (!span) {
-      const available = listSymbolNames(source).slice(0, 25);
+      const available = listSymbolNames(source, path).slice(0, 25);
       return fail(
         "read_symbol",
         `symbol "${symbol}" not found in ${path}`,
@@ -880,7 +906,7 @@ export class ToolExecutor {
     const original = this.readText(abs);
     const eol = detectEol(original);
     const text = toLf(original);
-    const span = findSymbol(text, symbol);
+    const span = findSymbol(text, symbol, path);
     if (!span) return fail("replace_symbol_body", `symbol "${symbol}" not found in ${path}`);
     if (span.bodyOpen === -1) {
       return fail(
@@ -916,7 +942,7 @@ export class ToolExecutor {
     const original = this.readText(abs);
     const eol = detectEol(original);
     const text = toLf(original);
-    const span = findSymbol(text, symbol);
+    const span = findSymbol(text, symbol, path);
     if (!span) return fail("insert_after_symbol", `symbol "${symbol}" not found in ${path}`);
 
     const block = reindentBlock(content, span.indent);
@@ -1289,13 +1315,7 @@ Promise.resolve(__result).then((v) => { process.stdout.write(typeof v === "strin
     } catch {
       refs = undefined;
     }
-    if (!refs) {
-      const text = this.grep(symbol, { path, wholeWord: true });
-      return {
-        ...text,
-        content: `(no TypeScript declaration of ${symbol}: whole-word text matches)\n${text.content}`,
-      };
-    }
+    if (!refs) return this.indexReferences(symbol, path);
     const within =
       path === "." ? refs : refs.filter((r) => r.path.startsWith(path.replace(/^\.\//, "")));
     return ok(
@@ -1307,6 +1327,63 @@ Promise.resolve(__result).then((v) => { process.stdout.write(typeof v === "strin
           .join("\n")}`,
         "references",
       ),
+    );
+  }
+
+  /**
+   * `find_references` when no declaration resolves: every use of the name in
+   * the source index's syntax trees, with its position — never a comment or
+   * a string (gates T2) — and whole-word text matches only in files the
+   * index has no parser for, said as such.
+   */
+  private indexReferences(symbol: string, path: string): ToolObservation {
+    const word = new RegExp(`(^|[^\\w$])${symbol.replace(/[$]/g, "\\$")}([^\\w$]|$)`);
+    const parsed: string[] = [];
+    const asText: string[] = [];
+    for (const abs of this.searchableFiles(resolveInWorktree(this.root, path))) {
+      if (parsed.length + asText.length >= MAX_GREP_MATCHES) break;
+      let text: string;
+      try {
+        const buf = readFileSync(abs);
+        if (isBinary(buf)) continue;
+        text = buf.toString("utf8");
+      } catch {
+        continue;
+      }
+      if (!text.includes(symbol)) continue;
+      const rel = this.rel(abs);
+      const lines = text.split("\n");
+      const facts = factsOfText(rel, text);
+      if (facts.parseStatus === "unsupported") {
+        lines.forEach((line, i) => {
+          if (word.test(line)) asText.push(`${rel}:${i + 1}  ${line.trim()}`);
+        });
+        continue;
+      }
+      const hits = [
+        ...facts.declarations
+          .filter((d) => d.name === symbol)
+          .map((d) => ({ at: d.start, line: d.line, def: true })),
+        ...facts.references
+          .filter((r) => r.name === symbol)
+          .map((r) => ({ at: r.start, line: r.line, def: false })),
+      ].sort((a, b) => a.at - b.at);
+      for (const h of hits) {
+        const column = h.at - text.lastIndexOf("\n", h.at - 1);
+        parsed.push(
+          `${h.def ? "D " : "  "}${rel}:${h.line}:${column}  ${(lines[h.line - 1] ?? "").trim()}`,
+        );
+      }
+    }
+    const body = [
+      workerCopy.referencesFromIndex(symbol, parsed.length),
+      ...parsed,
+      ...(asText.length ? [workerCopy.referencesAsText, ...asText] : []),
+    ].join("\n");
+    return ok(
+      "find_references",
+      `${parsed.length + asText.length} reference(s) to ${symbol}`,
+      clampObservation(body, "references"),
     );
   }
 

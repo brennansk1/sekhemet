@@ -536,11 +536,13 @@ export async function runWave2Command(
       return airgapCommand(k.repoPath, args, { log: k.log, registry: modelRegistry(), print });
     }
     case "onboard": {
-      // `sekhemet onboard [--apply] [--models a,b]` (X1): the seven steps.
+      // `sekhemet onboard [--apply] [--models a,b] [--no-baseline]` (X1): the
+      // eight steps, the last the onboarding baseline (gates rule 15a).
       const { runOnboard } = await import("./onboard.js");
       const names = (flag(args, "--models") ?? "").split(",").filter(Boolean);
       await runOnboard(k.repoPath, {
         apply: args.includes("--apply"),
+        baseline: !args.includes("--no-baseline"),
         store: { log: k.log, cardStore: k.cardStore },
         say: print,
         ...(names.length && io.model

@@ -1,0 +1,196 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`data contracts and module API summaries keep their text (GT-T2-3) > shows exported interface and object-type bodies outside the scope 1`] = `
+"src/types.ts:
+  export interface Row {
+    id: number;
+    name: string;
+  }
+  export type Shape = { w: number; h: number }"
+`;
+
+exports[`data contracts and module API summaries keep their text (GT-T2-3) > summarises an ambient module's classes and functions, following \`export *\` once 1`] = `"classes: Store { get, set, size }. functions: open, hidden"`;
+
+exports[`data contracts and module API summaries keep their text (GT-T2-3) > summarises an ambient module's classes and functions, following \`export *\` once 2`] = `"classes: Store { get, set, size }. functions: open, hidden"`;
+
+exports[`data contracts and module API summaries keep their text (GT-T2-3) > summarises an ambient module's classes and functions, following \`export *\` once 3`] = `
+[
+  "get",
+  "set",
+  "size",
+]
+`;
+
+exports[`findSymbol and listSymbolNames keep their answers (GT-T2-3) > lists the declared names 1`] = `
+[
+  "load",
+  "Store",
+  "Row",
+  "Id",
+  "Shape",
+  "Color",
+  "handler",
+  "config",
+  "counter",
+  "helper",
+  "nested",
+]
+`;
+
+exports[`findSymbol and listSymbolNames keep their answers (GT-T2-3) > locates each declaration with the same span, body and indentation 1`] = `
+{
+  "Color": {
+    "bodyClose": 522,
+    "bodyOpen": 509,
+    "declEnd": 523,
+    "declStart": 491,
+    "indent": "",
+    "kind": "enum",
+    "text": "export enum Color { Red, Green }",
+  },
+  "Id": {
+    "bodyClose": -1,
+    "bodyOpen": -1,
+    "declEnd": 444,
+    "declStart": 420,
+    "indent": "",
+    "kind": "type",
+    "text": "export type Id = string;",
+  },
+  "Row": {
+    "bodyClose": 417,
+    "bodyOpen": 385,
+    "declEnd": 418,
+    "declStart": 364,
+    "indent": "",
+    "kind": "interface",
+    "text": "export interface Row {
+  id: number;
+  name: string;
+}",
+  },
+  "Shape": {
+    "bodyClose": 488,
+    "bodyOpen": 465,
+    "declEnd": 489,
+    "declStart": 445,
+    "indent": "",
+    "kind": "type",
+    "text": "export type Shape = { w: number; h: number }",
+  },
+  "Store": {
+    "bodyClose": 361,
+    "bodyOpen": 205,
+    "declEnd": 362,
+    "declStart": 162,
+    "indent": "",
+    "kind": "class",
+    "text": "export default class Store<T> extends Base {
+  private items: T[] = [];
+  public get size(): number { return this.items.length; }
+  async add(item: T): Promise<void> {
+    this.items.push(item);
+  }
+}",
+  },
+  "add": {
+    "bodyClose": 359,
+    "bodyOpen": 328,
+    "declEnd": 360,
+    "declStart": 292,
+    "indent": "  ",
+    "kind": "method",
+    "text": "  async add(item: T): Promise<void> {
+    this.items.push(item);
+  }",
+  },
+  "config": {
+    "bodyClose": 655,
+    "bodyOpen": 642,
+    "declEnd": 656,
+    "declStart": 620,
+    "indent": "",
+    "kind": "const",
+    "text": "export const config = { retries: 3 }",
+  },
+  "counter": {
+    "bodyClose": -1,
+    "bodyOpen": -1,
+    "declEnd": 674,
+    "declStart": 658,
+    "indent": "",
+    "kind": "const",
+    "text": "let counter = 0;",
+  },
+  "handler": {
+    "bodyClose": 617,
+    "bodyOpen": 590,
+    "declEnd": 618,
+    "declStart": 524,
+    "indent": "",
+    "kind": "function",
+    "text": "export const handler = async (req: Request): Promise<Response> => {
+  return new Response();
+}",
+  },
+  "helper": {
+    "bodyClose": 736,
+    "bodyOpen": 699,
+    "declEnd": 737,
+    "declStart": 675,
+    "indent": "",
+    "kind": "function",
+    "text": "function helper(): void {
+  function nested() {}
+  nested();
+}",
+  },
+  "load": {
+    "bodyClose": 159,
+    "bodyOpen": 120,
+    "declEnd": 160,
+    "declStart": 62,
+    "indent": "",
+    "kind": "function",
+    "text": "export async function load(path: string): Promise<string> {
+  return readFileSync(path, "utf8");
+}",
+  },
+  "nested": {
+    "bodyClose": 722,
+    "bodyOpen": 721,
+    "declEnd": 723,
+    "declStart": 701,
+    "indent": "  ",
+    "kind": "function",
+    "text": "  function nested() {}",
+  },
+  "size": {
+    "bodyClose": 290,
+    "bodyOpen": 262,
+    "declEnd": 291,
+    "declStart": 234,
+    "indent": "  ",
+    "kind": "method",
+    "text": "  public get size(): number { return this.items.length; }",
+  },
+}
+`;
+
+exports[`the read_file outline keeps its lines (GT-T2-3) > outlines a long file's top-level declarations and test blocks with line numbers 1`] = `
+"    4  function load
+    8  class Store
+   16  interface Row
+   21  type Id
+   22  type Shape
+   23  enum Color
+   24  const handler
+   27  const config
+   28  let counter
+   29  function helper"
+`;
+
+exports[`the read_file outline keeps its lines (GT-T2-3) > outlines a long file's top-level declarations and test blocks with line numbers 2`] = `
+"    2  describe the store
+    5  test alone"
+`;

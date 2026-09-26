@@ -1,0 +1,21 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`mutation operators keep their tokens (T2) > mutates the same tokens on the given lines 1`] = `
+[
+  "3 <-><=",
+  "3 ||->&&",
+  "3 >->>=",
+  "3 false->true",
+  "4 >->>=",
+  "4 &&->||",
+  "4 <=-><",
+  "4 !==->===",
+  "5 ===->!==",
+  "5 +->-",
+  "5 -->+",
+  "5 true->false",
+  "5 false->true",
+  "7 <-><=",
+  "7 >->>=",
+]
+`;

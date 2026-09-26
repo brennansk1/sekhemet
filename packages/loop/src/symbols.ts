@@ -1,3 +1,4 @@
+import { type DeclarationFact, factsOfText } from "@sekhemet/gates";
 import { leadingIndent, toLf } from "./text.js";
 
 export interface SymbolSpan {
@@ -15,159 +16,74 @@ export interface SymbolSpan {
   kind: "function" | "class" | "interface" | "type" | "enum" | "const" | "method";
 }
 
-const ESCAPE_RE = /[.*+?^${}()|[\]\\]/g;
-const escapeRe = (s: string): string => s.replace(ESCAPE_RE, "\\$&");
-
 /**
- * Candidate declaration patterns, most specific first.
- *
- * Ordering matters: `const foo = () =>` must be tried before a bare `const foo`
- * so an arrow function is treated as a function rather than a value binding.
+ * Which declaration a name means when a file declares it more than once,
+ * most specific first: a function before a class, an arrow-function `const`
+ * before a plain value, a class member last.
  */
-function candidatePatterns(name: string): { re: RegExp; kind: SymbolSpan["kind"] }[] {
-  const n = escapeRe(name);
-  return [
-    {
-      re: new RegExp(
-        `^[ \\t]*(?:export\\s+)?(?:default\\s+)?(?:async\\s+)?function\\s*\\*?\\s+${n}\\b`,
-        "m",
-      ),
-      kind: "function",
-    },
-    {
-      re: new RegExp(
-        `^[ \\t]*(?:export\\s+)?(?:default\\s+)?(?:abstract\\s+)?class\\s+${n}\\b`,
-        "m",
-      ),
-      kind: "class",
-    },
-    { re: new RegExp(`^[ \\t]*(?:export\\s+)?interface\\s+${n}\\b`, "m"), kind: "interface" },
-    { re: new RegExp(`^[ \\t]*(?:export\\s+)?type\\s+${n}\\b`, "m"), kind: "type" },
-    { re: new RegExp(`^[ \\t]*(?:export\\s+)?(?:const\\s+)?enum\\s+${n}\\b`, "m"), kind: "enum" },
-    {
-      re: new RegExp(
-        `^[ \\t]*(?:export\\s+)?(?:const|let|var)\\s+${n}\\b[^=\\n]*=\\s*(?:async\\s*)?(?:\\([^)]*\\)|[A-Za-z_$][\\w$]*)\\s*(?::[^=]+)?=>`,
-        "m",
-      ),
-      kind: "function",
-    },
-    {
-      re: new RegExp(`^[ \\t]*(?:export\\s+)?(?:const|let|var)\\s+${n}\\b`, "m"),
-      kind: "const",
-    },
-    {
-      // Class member: `  public async foo<T>(...)` / `  foo(...)` / `  static foo(`
-      re: new RegExp(
-        `^[ \\t]*(?:(?:public|private|protected|static|readonly|abstract|override|async|get|set)\\s+)*${n}\\s*(?:<[^>]*>)?\\s*\\(`,
-        "m",
-      ),
-      kind: "method",
-    },
-  ];
+const PRIORITY: {
+  kind: SymbolSpan["kind"];
+  matches: (d: DeclarationFact) => boolean;
+}[] = [
+  { kind: "function", matches: (d) => d.kind === "function" },
+  { kind: "class", matches: (d) => d.kind === "class" },
+  { kind: "interface", matches: (d) => d.kind === "interface" },
+  { kind: "type", matches: (d) => d.kind === "type" },
+  { kind: "enum", matches: (d) => d.kind === "enum" },
+  { kind: "function", matches: (d) => isVariable(d) && d.arrow === true },
+  { kind: "const", matches: isVariable },
+  { kind: "method", matches: (d) => d.kind === "method" },
+];
+
+function isVariable(d: DeclarationFact): boolean {
+  return d.kind === "const" || d.kind === "let" || d.kind === "var";
 }
 
-/** Scan forward from `open` to the matching close brace, skipping strings and comments. */
-function matchBrace(source: string, open: number): number {
-  let depth = 0;
-  let i = open;
-
-  while (i < source.length) {
-    const ch = source[i];
-    const next = source[i + 1];
-
-    if (ch === "/" && next === "/") {
-      const nl = source.indexOf("\n", i);
-      i = nl === -1 ? source.length : nl;
-      continue;
-    }
-    if (ch === "/" && next === "*") {
-      const end = source.indexOf("*/", i + 2);
-      i = end === -1 ? source.length : end + 2;
-      continue;
-    }
-    if (ch === '"' || ch === "'" || ch === "`") {
-      const quote = ch;
-      i++;
-      while (i < source.length) {
-        if (source[i] === "\\") {
-          i += 2;
-          continue;
-        }
-        if (source[i] === quote) break;
-        i++;
-      }
-      i++;
-      continue;
-    }
-
-    if (ch === "{") depth++;
-    else if (ch === "}") {
-      depth--;
-      if (depth === 0) return i;
-    }
-    i++;
-  }
-
-  return -1;
+/** The declarations the source index finds in `text` (T2, GT-T2-3). */
+function declarationsOf(text: string, fileName: string): DeclarationFact[] {
+  return factsOfText(fileName, text).declarations;
 }
 
 /**
- * Locate a named declaration and the exact bounds of its body.
+ * Locate a named declaration and the exact bounds of its body, from the
+ * source index's syntax tree: braces inside strings, templates and comments
+ * never desync it, and a comment or a string naming the symbol is never
+ * mistaken for it.
  *
  * Returns `null` rather than throwing so callers can produce a tool observation
  * listing what *is* present, which is far more useful to a model than a stack trace.
  */
-export function findSymbol(source: string, name: string): SymbolSpan | null {
+export function findSymbol(
+  source: string,
+  name: string,
+  fileName = "symbol.ts",
+): SymbolSpan | null {
   const text = toLf(source);
-
-  for (const { re, kind } of candidatePatterns(name)) {
-    const m = re.exec(text);
-    if (!m) continue;
-
-    const declStart = m.index;
-    const lineStart = text.lastIndexOf("\n", declStart) + 1;
-    const lineEnd = text.indexOf("\n", declStart);
-    const indent = leadingIndent(text.slice(lineStart, lineEnd === -1 ? undefined : lineEnd));
-
-    // Find the terminator that closes this declaration: `{` for a body, `;`/newline otherwise.
-    const brace = text.indexOf("{", declStart);
-    const semi = text.indexOf(";", declStart);
-    const hasBody = brace !== -1 && (semi === -1 || brace < semi);
-
-    if (hasBody) {
-      const close = matchBrace(text, brace);
-      if (close !== -1) {
-        return { declStart, declEnd: close + 1, bodyOpen: brace, bodyClose: close, indent, kind };
-      }
-    }
-
-    if (semi !== -1) {
-      return { declStart, declEnd: semi + 1, bodyOpen: -1, bodyClose: -1, indent, kind };
-    }
-
-    const eol = text.indexOf("\n", declStart);
+  const named = declarationsOf(text, fileName).filter((d) => d.name === name);
+  for (const { kind, matches } of PRIORITY) {
+    const candidates = named.filter(matches);
+    // An overloaded function: the implementation, the one with a body.
+    const d = candidates.find((c) => c.bodyOpen !== -1) ?? candidates[0];
+    if (!d) continue;
+    const lineStart = text.lastIndexOf("\n", d.start - 1) + 1;
+    const lineEnd = text.indexOf("\n", lineStart);
     return {
-      declStart,
-      declEnd: eol === -1 ? text.length : eol,
-      bodyOpen: -1,
-      bodyClose: -1,
-      indent,
+      declStart: lineStart,
+      declEnd: d.end,
+      bodyOpen: d.bodyOpen,
+      bodyClose: d.bodyClose,
+      indent: leadingIndent(text.slice(lineStart, lineEnd === -1 ? undefined : lineEnd)),
       kind,
     };
   }
-
   return null;
 }
 
-/** Top-level-ish symbol names in a file, used to suggest alternatives on a miss. */
-export function listSymbolNames(source: string): string[] {
-  const re =
-    /^[ \t]*(?:export\s+)?(?:default\s+)?(?:abstract\s+)?(?:async\s+)?(?:function\s*\*?|class|interface|type|enum|const|let|var)\s+([A-Za-z_$][\w$]*)/gm;
+/** Declared symbol names in a file (members excluded), used to suggest alternatives on a miss. */
+export function listSymbolNames(source: string, fileName = "symbol.ts"): string[] {
   const names = new Set<string>();
-  let m: RegExpExecArray | null = re.exec(toLf(source));
-  while (m !== null) {
-    if (m[1]) names.add(m[1]);
-    m = re.exec(toLf(source));
+  for (const d of declarationsOf(toLf(source), fileName)) {
+    if (d.kind !== "method" && d.kind !== "namespace") names.add(d.name);
   }
   return [...names];
 }

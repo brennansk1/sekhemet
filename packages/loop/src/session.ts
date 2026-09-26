@@ -66,7 +66,7 @@ import type {
   SessionOptions,
   TurnResult,
 } from "./types.js";
-import { verifyCardTree } from "./verification.js";
+import { isResearchLabelled, verifyCardTree } from "./verification.js";
 import { WorkingMemory } from "./working_memory.js";
 
 /**
@@ -2371,6 +2371,8 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       staged: this.card.acceptanceTests ?? [],
       integrity: this.options.integrityGate !== false,
       ...(this.options.bounds ? { bounds: this.options.bounds } : {}),
+      // GT-BF-3: what rename_symbol applied is counted apart from the Worker's lines.
+      toolApplied: this.tools.toolAppliedLines(),
       ...(builtin
         ? {
             builtin: {
@@ -2381,6 +2383,24 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
           }
         : {}),
       restricted: this.options.restricted === true,
+      // What the card itself tells its gates: its id, change and declarations
+      // (GT-N5-5, GT-TQ-8, GT-TQ-11, GT-N4-4, GT-N4-6, GT-N5-3).
+      card: {
+        id: this.card.id,
+        change: this.card.change,
+        scopeFiles: this.card.scopeFiles,
+        gateChecks: this.card.gateChecks,
+        research: isResearchLabelled(this.card.labels),
+      },
+      ...(this.options.acceptanceTestGate
+        ? {
+            acceptance: {
+              testGate: this.options.acceptanceTestGate,
+              ...(this.options.sandbox ? { sandbox: this.options.sandbox } : {}),
+            },
+          }
+        : {}),
+      ...(this.options.vision ? { vision: this.options.vision } : {}),
     });
     // A harness defect (an incomplete failure) was filled and is recorded,
     // never thrown mid-turn.

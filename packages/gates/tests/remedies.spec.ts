@@ -315,10 +315,22 @@ describe("members and exports come from the syntax tree, and say exactly only wh
     expect(f?.suggestedAction).not.toContain("exactly");
   });
 
-  it("falls back to a search for a barrel that re-exports everything", () => {
+  it("lists a barrel's names, followed through `export *` by the source index (T2)", () => {
     const dir = project({
       "index.ts": 'export * from "./tokens.js";\nexport const VERSION = 1;\n',
       "tokens.ts": "export const SPACING = 4;\n",
+    });
+    const f = tsc(
+      dir,
+      `src/a.ts(1,10): error TS2305: Module '"./index.js"' has no exported member 'Missing'.`,
+    );
+    expect(f?.suggestedAction).toContain("SPACING, VERSION");
+    expect(f?.suggestedAction).not.toContain("grep_search");
+  });
+
+  it("falls back to a search for a barrel whose `export *` target cannot be resolved", () => {
+    const dir = project({
+      "index.ts": 'export * from "./gone.js";\nexport const VERSION = 1;\n',
     });
     const f = tsc(
       dir,

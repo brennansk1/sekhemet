@@ -1,0 +1,667 @@
+{
+  "rules": [
+    {
+      "id": "sekhemet.js-sql-string-building",
+      "message": "SQL built from a template literal with interpolations or by string concatenation. Pass values as bound parameters (placeholders such as $1 or ?, or a tagged sql`` template) instead of splicing them into the statement.",
+      "severity": "ERROR",
+      "languages": [
+        "typescript",
+        "javascript"
+      ],
+      "pattern-either": [
+        {
+          "pattern-regex": "(?:=|\\.(?:query|execute|raw|unsafe|prepare)\\()\\s*`(?=[^`]*?(?:SELECT\\b[^`]*?\\bFROM|INSERT\\s+INTO|UPDATE\\s+[\\w.\"]+\\s+SET|DELETE\\s+FROM|select\\b[^`]*?\\bfrom|insert\\s+into|update\\s+[\\w.\"]+\\s+set|delete\\s+from)\\b)[^`]*?\\$\\{"
+        },
+        {
+          "pattern-regex": "(?:=|\\.(?:query|execute|raw|unsafe|prepare)\\()\\s*(?:\"[^\"\\n]*?(?:SELECT\\b[^\"'\\n]*?\\bFROM|INSERT\\s+INTO|UPDATE\\s+[\\w.\"]+\\s+SET|DELETE\\s+FROM|select\\b[^\"'\\n]*?\\bfrom|insert\\s+into|update\\s+[\\w.\"]+\\s+set|delete\\s+from)\\b[^\"\\n]*\"|'[^'\\n]*?(?:SELECT\\b[^\"'\\n]*?\\bFROM|INSERT\\s+INTO|UPDATE\\s+[\\w.\"]+\\s+SET|DELETE\\s+FROM|select\\b[^\"'\\n]*?\\bfrom|insert\\s+into|update\\s+[\\w.\"]+\\s+set|delete\\s+from)\\b[^'\\n]*')\\s*\\+"
+        }
+      ],
+      "metadata": {
+        "ruleset": "sekhemet-offline",
+        "ruleset_version": "1.0.0",
+        "category": "security",
+        "cwe": "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+      }
+    },
+    {
+      "id": "sekhemet.js-child-process-exec-injection",
+      "message": "child_process exec/execSync runs its argument through a shell, and this command is assembled from variables. Use execFile or spawn with an argument array (no shell) so input cannot inject commands.",
+      "severity": "ERROR",
+      "languages": [
+        "typescript",
+        "javascript"
+      ],
+      "pattern-regex": "(?:\\b(?:child_process|childProcess|cp)\\.|[ \\t=(,;:!&|?{])(?:exec|execSync)\\(\\s*(?:`[^`]*\\$\\{|[\"'][^\"'\\n]*[\"']\\s*\\+|[A-Za-z_$][\\w$.]*\\s*\\+)",
+      "metadata": {
+        "ruleset": "sekhemet-offline",
+        "ruleset_version": "1.0.0",
+        "category": "security",
+        "cwe": "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+      }
+    },
+    {
+      "id": "sekhemet.js-spawn-shell-true",
+      "message": "spawn/execFile with `shell: true` hands the command line to a shell, so arguments are re-parsed and can inject commands. Drop `shell: true` and pass the arguments as an array.",
+      "severity": "WARNING",
+      "languages": [
+        "typescript",
+        "javascript"
+      ],
+      "pattern-regex": "\\b(?:spawn|spawnSync|execFile|execFileSync)\\([^;]*?\\bshell\\s*:\\s*true\\b",
+      "metadata": {
+        "ruleset": "sekhemet-offline",
+        "ruleset_version": "1.0.0",
+        "category": "security",
+        "cwe": "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+      }
+    },
+    {
+      "id": "sekhemet.js-eval-dynamic",
+      "message": "eval() of a value that is not a fixed string executes whatever that value contains. Parse the data instead (JSON.parse, a lookup table, a real parser).",
+      "severity": "ERROR",
+      "languages": [
+        "typescript",
+        "javascript"
+      ],
+      "pattern-regex": "[^.\\w$\\n\\r]eval\\(\\s*(?![\"'][^\"'\\n]*[\"']\\s*\\))(?!\\))",
+      "metadata": {
+        "ruleset": "sekhemet-offline",
+        "ruleset_version": "1.0.0",
+        "category": "security",
+        "cwe": "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code ('Eval Injection')"
+      }
+    },
+    {
+      "id": "sekhemet.js-new-function",
+      "message": "`new Function(...)` compiles a string into code at run time, which is eval by another name. Write the function in source, or dispatch through a table of known functions.",
+      "severity": "ERROR",
+      "languages": [
+        "typescript",
+        "javascript"
+      ],
+      "pattern-regex": "\\bnew[ \\t]+Function[ \\t]*\\(",
+      "metadata": {
+        "ruleset": "sekhemet-offline",
+        "ruleset_version": "1.0.0",
+        "category": "security",
+        "cwe": "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code ('Eval Injection')"
+      }
+    },
+    {
+      "id": "sekhemet.js-timer-string-eval",
+      "message": "setTimeout/setInterval with a string evaluates that string as code. Pass a function instead.",
+      "severity": "WARNING",
+      "languages": [
+        "typescript",
+        "javascript"
+      ],
+      "pattern-regex": "\\bset(?:Timeout|Interval)\\(\\s*(?:[\"'`]|[A-Za-z_$][\\w$.]*\\s*\\+)",
+      "metadata": {
+        "ruleset": "sekhemet-offline",
+        "ruleset_version": "1.0.0",
+        "category": "security",
+        "cwe": "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code ('Eval Injection')"
+      }
+    },
+    {
+      "id": "sekhemet.js-path-traversal-request",
+      "message": "A file path is built from request input (req.params, req.query or req.body), so `../` can reach files outside the intended directory. Reduce the input to a base name (path.basename) or resolve it and check it stays under the allowed root.",
+      "severity": "ERROR",
+      "languages": [
+        "typescript",
+        "javascript"
+      ],
+      "pattern-regex": "(?:\\bpath\\.(?:join|resolve)|\\b(?:readFile|readFileSync|createReadStream|createWriteStream|writeFile|writeFileSync|appendFile|appendFileSync|unlink|unlinkSync|rm|rmSync|sendFile|download))\\([^;\\n]*\\breq(?:uest)?\\.(?:params|query|body)\\b",
+      "metadata": {
+        "ruleset": "sekhemet-offline",
+        "ruleset_version": "1.0.0",
+        "category": "security",
+        "cwe": "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      }
+    },
+    {
+      "id": "sekhemet.js-weak-password-hash",
+      "message": "A password or secret is hashed with MD5/SHA-1, which is fast and broken for this purpose. Use a password hash: scrypt, argon2 or bcrypt, with a per-user salt.",
+      "severity": "ERROR",
+      "languages": [
+        "typescript",
+        "javascript"
+      ],
+      "pattern-regex": "\\bcreateHash\\(\\s*[\"'](?:md5|md4|sha1|MD5|SHA1)[\"']\\s*\\)\\s*\\.update\\(\\s*[^)\\n]*(?:[Pp]ass|[Pp]wd|[Ss]ecret)",
+      "metadata": {
+        "ruleset": "sekhemet-offline",
+        "ruleset_version": "1.0.0",
+        "category": "security",
+        "cwe": "CWE-916: Use of Password Hash With Insufficient Computational Effort"
+      }
+    },
+    {
+      "id": "sekhemet.js-weak-cipher",
+      "message": "Weak or deprecated encryption: crypto.createCipher derives its key without a salt and reuses IVs, and DES, RC4, RC2, Blowfish and ECB mode are broken. Use createCipheriv with aes-256-gcm (or chacha20-poly1305) and a random IV.",
+      "severity": "ERROR",
+      "languages": [
+        "typescript",
+        "javascript"
+      ],
+      "pattern-either": [
+        {
+          "pattern-regex": "\\bcreate(?:Cipher|Decipher)\\("
+        },
+        {
+          "pattern-regex": "\\bcreate(?:Cipher|Decipher)iv\\(\\s*[\"'](?:des|DES|rc4|RC4|rc2|RC2|bf|BF|blowfish|[a-z0-9-]+-ecb|[A-Z0-9-]+-ECB)\\b"
+        }
+      ],
+      "metadata": {
+        "ruleset": "sekhemet-offline",
+        "ruleset_version": "1.0.0",
+        "category": "security",
+        "cwe": "CWE-327: Use of a Broken or Risky Cryptographic Algorithm"
+      }
+    },
+    {
+      "id": "sekhemet.js-insecure-random-secret",
+      "message": "A token, secret, password, nonce, salt or key is generated with Math.random(), which is predictable. Use crypto.randomBytes, crypto.randomUUID or crypto.getRandomValues.",
+      "severity": "ERROR",
+      "languages": [
+        "typescript",
+        "javascript"
+      ],
+      "pattern-regex": "[A-Za-z_$]*(?:[Tt]oken|TOKEN|[Ss]ecret|SECRET|[Pp]assword|PASSWORD|[Nn]once|NONCE|[Ss]alt|SALT|[Aa]pi[Kk]ey|API_KEY|[Ss]ession[Ii]d|SESSION_ID)[\\w$]*\\s*(?:=(?!=)|:)[^;\\n]*\\bMath\\.random\\(",
+      "metadata": {
+        "ruleset": "sekhemet-offline",
+        "ruleset_version": "1.0.0",
+        "category": "security",
+        "cwe": "CWE-338: Use of Cryptographically Weak Pseudo-Random Number Generator (PRNG)"
+      }
+    },
+    {
+      "id": "sekhemet.js-tls-verification-disabled",
+      "message": "TLS certificate verification is turned off, so any server can impersonate the real one. Keep verification on and add the private CA with the `ca` option if needed.",
+      "severity": "ERROR",
+      "languages": [
+        "typescript",
+        "javascript"
+      ],
+      "pattern-either": [
+        {
+          "pattern-regex": "\\brejectUnauthorized\\s*:\\s*false\\b"
+        },
+        {
+          "pattern-regex": "\\bNODE_TLS_REJECT_UNAUTHORIZED\\b\\s*=\\s*[\"']?0"
+        },
+        {
+          "pattern-regex": "\\bstrictSSL\\s*:\\s*false\\b"
+        }
+      ],
+      "metadata": {
+        "ruleset": "sekhemet-offline",
+        "ruleset_version": "1.0.0",
+        "category": "security",
+        "cwe": "CWE-295: Improper Certificate Validation"
+      }
+    },
+    {
+      "id": "sekhemet.js-inner-html-variable",
+      "message": "HTML is written into the page from a variable (innerHTML, outerHTML, insertAdjacentHTML or document.write), which runs any markup or script the value carries. Use textContent, build DOM nodes, or sanitize with DOMPurify first.",
+      "severity": "WARNING",
+      "languages": [
+        "typescript",
+        "javascript"
+      ],
+      "pattern-either": [
+        {
+          "pattern-regex": "\\.(?:innerHTML|outerHTML)\\s*\\+?=\\s*(?!(?:DOMPurify\\.|purify\\.)?(?:sanitize|escape)\\w*\\()(?:[A-Za-z_$(]|`[^`]*\\$\\{|[\"'][^\"'\\n]*[\"']\\s*\\+)"
+        },
+        {
+          "pattern-regex": "\\.insertAdjacentHTML\\(\\s*[\"'][^\"'\\n]*[\"']\\s*,\\s*(?!(?:DOMPurify\\.|purify\\.)?(?:sanitize|escape)\\w*\\()(?:[A-Za-z_$(]|`[^`]*\\$\\{|[\"'][^\"'\\n]*[\"']\\s*\\+)"
+        },
+        {
+          "pattern-regex": "\\bdocument\\.write(?:ln)?\\(\\s*(?!(?:DOMPurify\\.|purify\\.)?(?:sanitize|escape)\\w*\\()(?:[A-Za-z_$(]|`[^`]*\\$\\{|[\"'][^\"'\\n]*[\"']\\s*\\+)"
+        }
+      ],
+      "metadata": {
+        "ruleset": "sekhemet-offline",
+        "ruleset_version": "1.0.0",
+        "category": "security",
+        "cwe": "CWE-79: Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting')"
+      }
+    },
+    {
+      "id": "sekhemet.js-dangerously-set-inner-html",
+      "message": "dangerouslySetInnerHTML is given a value that is neither a fixed string nor sanitized, so markup in it runs in the page. Render it as text, or pass it through DOMPurify.sanitize first.",
+      "severity": "WARNING",
+      "languages": [
+        "typescript",
+        "javascript"
+      ],
+      "pattern-regex": "\\bdangerouslySetInnerHTML\\s*[=:]\\s*\\{?\\s*\\{\\s*__html\\s*:\\s*(?!(?:DOMPurify\\.|purify\\.)?(?:sanitize|escape)\\w*\\()(?![\"'][^\"'\\n]*[\"']\\s*\\})[^\\s}]",
+      "metadata": {
+        "ruleset": "sekhemet-offline",
+        "ruleset_version": "1.0.0",
+        "category": "security",
+        "cwe": "CWE-79: Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting')"
+      }
+    },
+    {
+      "id": "sekhemet.js-ssrf-request-url",
+      "message": "An outgoing request's URL comes from request input, so a caller can make the server reach internal hosts (server-side request forgery). Map the input to an allow-list of known hosts instead of using it as the URL.",
+      "severity": "ERROR",
+      "languages": [
+        "typescript",
+        "javascript"
+      ],
+      "pattern-regex": "(?:\\bfetch|\\baxios(?:\\.(?:get|post|put|patch|delete|head|request))?|\\bgot(?:\\.(?:get|post))?|\\bhttps?\\.(?:get|request))\\(\\s*[^,;\\n]*?\\breq(?:uest)?\\.(?:query|body|params|headers)\\b",
+      "metadata": {
+        "ruleset": "sekhemet-offline",
+        "ruleset_version": "1.0.0",
+        "category": "security",
+        "cwe": "CWE-918: Server-Side Request Forgery (SSRF)"
+      }
+    },
+    {
+      "id": "sekhemet.js-node-serialize",
+      "message": "node-serialize (and serialize-to-js, funcster) revive functions when unserializing, so untrusted input runs code (CVE-2017-5941). Exchange data as JSON and validate it.",
+      "severity": "ERROR",
+      "languages": [
+        "typescript",
+        "javascript"
+      ],
+      "pattern-either": [
+        {
+          "pattern-regex": "\\bunserialize\\("
+        },
+        {
+          "pattern-regex": "\\brequire\\(\\s*[\"'](?:node-serialize|serialize-to-js|funcster)[\"']\\s*\\)"
+        },
+        {
+          "pattern-regex": "\\bfrom\\s+[\"'](?:node-serialize|serialize-to-js|funcster)[\"']"
+        }
+      ],
+      "metadata": {
+        "ruleset": "sekhemet-offline",
+        "ruleset_version": "1.0.0",
+        "category": "security",
+        "cwe": "CWE-502: Deserialization of Untrusted Data"
+      }
+    },
+    {
+      "id": "sekhemet.js-open-redirect",
+      "message": "The redirect target is taken straight from request input, so a link can send users to any site. Redirect only to relative paths or to an allow-list.",
+      "severity": "WARNING",
+      "languages": [
+        "typescript",
+        "javascript"
+      ],
+      "pattern-regex": "\\b(?:res|response|reply)\\.redirect\\(\\s*(?:\\d{3}\\s*,\\s*)?\\breq(?:uest)?\\.(?:params|query|body)\\b",
+      "metadata": {
+        "ruleset": "sekhemet-offline",
+        "ruleset_version": "1.0.0",
+        "category": "security",
+        "cwe": "CWE-601: URL Redirection to Untrusted Site ('Open Redirect')"
+      }
+    },
+    {
+      "id": "sekhemet.js-jwt-verification-weakened",
+      "message": "JWT verification is weakened: the `none` algorithm accepts unsigned tokens, and ignoreExpiration accepts expired ones. List only the algorithms you sign with and keep expiry checks on.",
+      "severity": "ERROR",
+      "languages": [
+        "typescript",
+        "javascript"
+      ],
+      "pattern-either": [
+        {
+          "pattern-regex": "\\balgorithms?\\s*:\\s*\\[?[^\\]\\n]*[\"'][Nn]one[\"']"
+        },
+        {
+          "pattern-regex": "\\bignoreExpiration\\s*:\\s*true\\b"
+        }
+      ],
+      "metadata": {
+        "ruleset": "sekhemet-offline",
+        "ruleset_version": "1.0.0",
+        "category": "security",
+        "cwe": "CWE-347: Improper Verification of Cryptographic Signature"
+      }
+    },
+    {
+      "id": "sekhemet.js-hardcoded-password",
+      "message": "A password, secret, API key or token is written into the source. Read it from the environment or a secret store, and rotate the value if it was ever committed.",
+      "severity": "WARNING",
+      "languages": [
+        "typescript",
+        "javascript"
+      ],
+      "pattern-regex": "[A-Za-z_$]*(?:[Pp]assword|PASSWORD|[Pp]asswd|PASSWD|[Ss]ecret|SECRET|[Ss]ecret[Kk]ey|SECRET_KEY|[Aa]pi[Kk]ey|API_KEY|api_key|[Aa]uth[Tt]oken|AUTH_TOKEN|auth_token)[\"']?\\s*(?:=(?!=)|:)\\s*[\"'](?!(?:[Pp]assword|PASSWORD|[Ss]ecret|SECRET|changeme|x+|\\*+|<[^\"'>]*>)[\"'])[^\"'\\s]{8,}[\"']",
+      "metadata": {
+        "ruleset": "sekhemet-offline",
+        "ruleset_version": "1.0.0",
+        "category": "security",
+        "cwe": "CWE-798: Use of Hard-coded Credentials"
+      }
+    },
+    {
+      "id": "sekhemet.python-sql-string-building",
+      "message": "SQL built with an f-string, %, + or .format(). Pass values as parameters to execute() (cursor.execute(sql, params)) or use bound parameters in SQLAlchemy text().",
+      "severity": "ERROR",
+      "languages": [
+        "python"
+      ],
+      "pattern-either": [
+        {
+          "pattern-regex": "(?:=|\\.(?:execute|executemany|executescript|raw)\\(|\\btext\\()\\s*[rR]?[fF][rR]?(?:\"(?=[^\"\\n]*(?:SELECT\\b[^\"'\\n]*?\\bFROM|INSERT\\s+INTO|UPDATE\\s+[\\w.\"]+\\s+SET|DELETE\\s+FROM|select\\b[^\"'\\n]*?\\bfrom|insert\\s+into|update\\s+[\\w.\"]+\\s+set|delete\\s+from)\\b)[^\"\\n]*\\{|'(?=[^'\\n]*(?:SELECT\\b[^\"'\\n]*?\\bFROM|INSERT\\s+INTO|UPDATE\\s+[\\w.\"]+\\s+SET|DELETE\\s+FROM|select\\b[^\"'\\n]*?\\bfrom|insert\\s+into|update\\s+[\\w.\"]+\\s+set|delete\\s+from)\\b)[^'\\n]*\\{)"
+        },
+        {
+          "pattern-regex": "(?:=|\\.(?:execute|executemany|executescript|raw)\\(|\\btext\\()\\s*(?:\"[^\"\\n]*?(?:SELECT\\b[^\"'\\n]*?\\bFROM|INSERT\\s+INTO|UPDATE\\s+[\\w.\"]+\\s+SET|DELETE\\s+FROM|select\\b[^\"'\\n]*?\\bfrom|insert\\s+into|update\\s+[\\w.\"]+\\s+set|delete\\s+from)\\b[^\"\\n]*\"|'[^'\\n]*?(?:SELECT\\b[^\"'\\n]*?\\bFROM|INSERT\\s+INTO|UPDATE\\s+[\\w.\"]+\\s+SET|DELETE\\s+FROM|select\\b[^\"'\\n]*?\\bfrom|insert\\s+into|update\\s+[\\w.\"]+\\s+set|delete\\s+from)\\b[^'\\n]*')\\s*(?:%|\\+|\\.format\\()"
+        }
+      ],
+      "metadata": {
+        "ruleset": "sekhemet-offline",
+        "ruleset_version": "1.0.0",
+        "category": "security",
+        "cwe": "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+      }
+    },
+    {
+      "id": "sekhemet.python-os-system-injection",
+      "message": "os.system/os.popen run their argument through a shell, and this command is not a fixed string. Use subprocess.run with an argument list and no shell.",
+      "severity": "ERROR",
+      "languages": [
+        "python"
+      ],
+      "pattern-regex": "\\bos\\.(?:system|popen)\\(\\s*(?![\"'][^\"'\\n]*[\"']\\s*\\))(?!\\))",
+      "metadata": {
+        "ruleset": "sekhemet-offline",
+        "ruleset_version": "1.0.0",
+        "category": "security",
+        "cwe": "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+      }
+    },
+    {
+      "id": "sekhemet.python-subprocess-shell-true",
+      "message": "subprocess with shell=True (or getoutput) runs a command line built from variables through a shell. Pass an argument list and leave shell=False.",
+      "severity": "ERROR",
+      "languages": [
+        "python"
+      ],
+      "pattern-either": [
+        {
+          "pattern-regex": "\\bsubprocess\\.(?:run|call|check_call|check_output|Popen)\\(\\s*(?![\"'][^\"'\\n]*[\"']\\s*,)[^\\n]*\\bshell\\s*=\\s*True\\b"
+        },
+        {
+          "pattern-regex": "\\bsubprocess\\.(?:getoutput|getstatusoutput)\\(\\s*(?![\"'][^\"'\\n]*[\"']\\s*\\))"
+        }
+      ],
+      "metadata": {
+        "ruleset": "sekhemet-offline",
+        "ruleset_version": "1.0.0",
+        "category": "security",
+        "cwe": "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+      }
+    },
+    {
+      "id": "sekhemet.python-eval-exec",
+      "message": "eval()/exec() of a value that is not a fixed string runs whatever that value contains. Use ast.literal_eval for literals, json for data, or a dispatch table.",
+      "severity": "ERROR",
+      "languages": [
+        "python"
+      ],
+      "pattern-regex": "[^.\\w\\n\\r](?:eval|exec)\\(\\s*(?![\"'][^\"'\\n]*[\"']\\s*\\))(?!\\))",
+      "metadata": {
+        "ruleset": "sekhemet-offline",
+        "ruleset_version": "1.0.0",
+        "category": "security",
+        "cwe": "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code ('Eval Injection')"
+      }
+    },
+    {
+      "id": "sekhemet.python-path-traversal-request",
+      "message": "A file path is built from request input, so `../` can reach files outside the intended directory. Use werkzeug's secure_filename or send_from_directory, or resolve the path and check it stays under the allowed root.",
+      "severity": "ERROR",
+      "languages": [
+        "python"
+      ],
+      "pattern-regex": "\\b(?:open|send_file|os\\.path\\.join|os\\.remove|os\\.unlink|shutil\\.rmtree|shutil\\.copy|Path|FileResponse)\\((?![^\\n]*secure_filename)[^\\n]*\\brequest\\.(?:args|form|files|values|json|data|GET|POST|query_params|path_params)\\b",
+      "metadata": {
+        "ruleset": "sekhemet-offline",
+        "ruleset_version": "1.0.0",
+        "category": "security",
+        "cwe": "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      }
+    },
+    {
+      "id": "sekhemet.python-weak-hash",
+      "message": "MD5/SHA-1 are broken for security use. Use hashlib.sha256 (or a password hash such as hashlib.scrypt for passwords); if this hash is not for security, say so with usedforsecurity=False.",
+      "severity": "WARNING",
+      "languages": [
+        "python"
+      ],
+      "pattern-either": [
+        {
+          "pattern-regex": "\\bhashlib\\.(?:md5|md4|sha1)\\((?![^\\n]*usedforsecurity\\s*=\\s*False)"
+        },
+        {
+          "pattern-regex": "\\bhashlib\\.new\\(\\s*[\"'](?:md5|md4|sha1|MD5|SHA1)[\"'](?![^\\n]*usedforsecurity\\s*=\\s*False)"
+        }
+      ],
+      "metadata": {
+        "ruleset": "sekhemet-offline",
+        "ruleset_version": "1.0.0",
+        "category": "security",
+        "cwe": "CWE-328: Use of Weak Hash"
+      }
+    },
+    {
+      "id": "sekhemet.python-weak-cipher",
+      "message": "DES, 3DES, RC2, RC4, Blowfish and ECB mode are broken or deprecated. Use AES-GCM or ChaCha20-Poly1305 (cryptography's AESGCM / ChaCha20Poly1305).",
+      "severity": "ERROR",
+      "languages": [
+        "python"
+      ],
+      "pattern-either": [
+        {
+          "pattern-regex": "\\b(?:DES|DES3|ARC2|ARC4|Blowfish|CAST)\\.new\\("
+        },
+        {
+          "pattern-regex": "\\bAES\\.new\\([^\\n]*\\bMODE_ECB\\b"
+        },
+        {
+          "pattern-regex": "\\balgorithms\\.(?:TripleDES|ARC4|Blowfish|IDEA|CAST5|SEED)\\("
+        },
+        {
+          "pattern-regex": "\\bmodes\\.ECB\\("
+        }
+      ],
+      "metadata": {
+        "ruleset": "sekhemet-offline",
+        "ruleset_version": "1.0.0",
+        "category": "security",
+        "cwe": "CWE-327: Use of a Broken or Risky Cryptographic Algorithm"
+      }
+    },
+    {
+      "id": "sekhemet.python-insecure-random-secret",
+      "message": "A token, secret, password, nonce, salt or key is generated with the random module, which is predictable. Use the secrets module (secrets.token_urlsafe, secrets.choice).",
+      "severity": "ERROR",
+      "languages": [
+        "python"
+      ],
+      "pattern-regex": "[A-Za-z_]*(?:token|TOKEN|secret|SECRET|password|PASSWORD|nonce|NONCE|salt|SALT|api_key|API_KEY)\\w*\\s*=(?!=)[^\\n#]*\\brandom\\.(?:random|randint|randrange|choice|choices|getrandbits|sample|randbytes)\\(",
+      "metadata": {
+        "ruleset": "sekhemet-offline",
+        "ruleset_version": "1.0.0",
+        "category": "security",
+        "cwe": "CWE-338: Use of Cryptographically Weak Pseudo-Random Number Generator (PRNG)"
+      }
+    },
+    {
+      "id": "sekhemet.python-tls-verification-disabled",
+      "message": "TLS certificate verification is turned off, so any server can impersonate the real one. Keep verify=True (pass verify='/path/to/ca.pem' for a private CA) and leave ssl contexts at CERT_REQUIRED.",
+      "severity": "ERROR",
+      "languages": [
+        "python"
+      ],
+      "pattern-either": [
+        {
+          "pattern-regex": "\\.(?:get|post|put|patch|delete|head|options|request|stream|Client|AsyncClient|urlopen)\\([^\\n]*\\bverify\\s*=\\s*False\\b"
+        },
+        {
+          "pattern-regex": "\\bssl\\._create_unverified_context\\b"
+        },
+        {
+          "pattern-regex": "\\.verify_mode\\s*=\\s*ssl\\.CERT_NONE\\b"
+        },
+        {
+          "pattern-regex": "\\.check_hostname\\s*=\\s*False\\b"
+        },
+        {
+          "pattern-regex": "\\.verify\\s*=\\s*False\\b"
+        }
+      ],
+      "metadata": {
+        "ruleset": "sekhemet-offline",
+        "ruleset_version": "1.0.0",
+        "category": "security",
+        "cwe": "CWE-295: Improper Certificate Validation"
+      }
+    },
+    {
+      "id": "sekhemet.python-ssrf-request-url",
+      "message": "An outgoing request's URL comes from request input, so a caller can make the server reach internal hosts (server-side request forgery). Map the input to an allow-list of known hosts instead of using it as the URL.",
+      "severity": "ERROR",
+      "languages": [
+        "python"
+      ],
+      "pattern-regex": "(?:\\b(?:requests|httpx|session|client)\\.(?:get|post|put|patch|delete|head)|\\burlopen)\\(\\s*[^,\\n)]*?\\brequest\\.(?:args|form|files|values|json|data|GET|POST|query_params|path_params)\\b",
+      "metadata": {
+        "ruleset": "sekhemet-offline",
+        "ruleset_version": "1.0.0",
+        "category": "security",
+        "cwe": "CWE-918: Server-Side Request Forgery (SSRF)"
+      }
+    },
+    {
+      "id": "sekhemet.python-unsafe-deserialization",
+      "message": "pickle, marshal, shelve, dill, joblib and jsonpickle can run code while loading, so untrusted bytes become untrusted code. Load data as JSON (or another data-only format) and validate it.",
+      "severity": "ERROR",
+      "languages": [
+        "python"
+      ],
+      "pattern-either": [
+        {
+          "pattern-regex": "\\b(?:pickle|cPickle|_pickle|dill|cloudpickle|joblib|marshal)\\.(?:loads?|Unpickler)\\("
+        },
+        {
+          "pattern-regex": "\\bshelve\\.open\\("
+        },
+        {
+          "pattern-regex": "\\bjsonpickle\\.decode\\("
+        },
+        {
+          "pattern-regex": "\\b(?:pd|pandas)\\.read_pickle\\("
+        }
+      ],
+      "metadata": {
+        "ruleset": "sekhemet-offline",
+        "ruleset_version": "1.0.0",
+        "category": "security",
+        "cwe": "CWE-502: Deserialization of Untrusted Data"
+      }
+    },
+    {
+      "id": "sekhemet.python-yaml-unsafe-load",
+      "message": "yaml.load without SafeLoader (or yaml.unsafe_load) can construct arbitrary Python objects from the document. Use yaml.safe_load, or pass Loader=yaml.SafeLoader.",
+      "severity": "ERROR",
+      "languages": [
+        "python"
+      ],
+      "pattern-either": [
+        {
+          "pattern-regex": "\\byaml\\.load(?:_all)?\\((?![^\\n]*\\bC?SafeLoader\\b)"
+        },
+        {
+          "pattern-regex": "\\byaml\\.unsafe_load(?:_all)?\\("
+        }
+      ],
+      "metadata": {
+        "ruleset": "sekhemet-offline",
+        "ruleset_version": "1.0.0",
+        "category": "security",
+        "cwe": "CWE-502: Deserialization of Untrusted Data"
+      }
+    },
+    {
+      "id": "sekhemet.python-jwt-verification-disabled",
+      "message": "JWT signature verification is disabled or the `none` algorithm is accepted, so forged tokens pass. Verify the signature and list only the algorithms you sign with.",
+      "severity": "ERROR",
+      "languages": [
+        "python"
+      ],
+      "pattern-either": [
+        {
+          "pattern-regex": "[\"']verify_signature[\"']\\s*:\\s*False\\b"
+        },
+        {
+          "pattern-regex": "\\bjwt\\.decode\\([^\\n]*\\bverify\\s*=\\s*False\\b"
+        },
+        {
+          "pattern-regex": "\\balgorithms\\s*=\\s*\\[[^\\]\\n]*[\"'][Nn]one[\"']"
+        }
+      ],
+      "metadata": {
+        "ruleset": "sekhemet-offline",
+        "ruleset_version": "1.0.0",
+        "category": "security",
+        "cwe": "CWE-347: Improper Verification of Cryptographic Signature"
+      }
+    },
+    {
+      "id": "sekhemet.python-hardcoded-password",
+      "message": "A password, secret, API key or token is written into the source. Read it from the environment or a secret store, and rotate the value if it was ever committed.",
+      "severity": "WARNING",
+      "languages": [
+        "python"
+      ],
+      "pattern-regex": "[A-Za-z_]*(?:password|PASSWORD|passwd|PASSWD|secret|SECRET|secret_key|SECRET_KEY|api_key|API_KEY|auth_token|AUTH_TOKEN)[\"']?\\s*(?:=(?!=)|:)\\s*[rbuRBU]?[\"'](?!(?:password|PASSWORD|secret|SECRET|changeme|x+|\\*+|<[^\"'>]*>)[\"'])[^\"'\\s]{8,}[\"']",
+      "metadata": {
+        "ruleset": "sekhemet-offline",
+        "ruleset_version": "1.0.0",
+        "category": "security",
+        "cwe": "CWE-798: Use of Hard-coded Credentials"
+      }
+    },
+    {
+      "id": "sekhemet.hardcoded-private-key",
+      "message": "A private key is embedded in the source. Load it from a file outside the repository or a secret store, and treat this key as compromised.",
+      "severity": "ERROR",
+      "languages": [
+        "typescript",
+        "javascript",
+        "python"
+      ],
+      "pattern-regex": "-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED |PGP )?PRIVATE KEY(?: BLOCK)?-----",
+      "metadata": {
+        "ruleset": "sekhemet-offline",
+        "ruleset_version": "1.0.0",
+        "category": "security",
+        "cwe": "CWE-321: Use of Hard-coded Cryptographic Key"
+      }
+    },
+    {
+      "id": "sekhemet.hardcoded-aws-access-key-id",
+      "message": "An AWS access key id is written into the source. Use the default credential chain (environment, profile, instance role) and deactivate this key if it is real.",
+      "severity": "ERROR",
+      "languages": [
+        "typescript",
+        "javascript",
+        "python"
+      ],
+      "pattern-regex": "\\b(?:AKIA|ASIA|ABIA|ACCA)[A-Z2-7]{16}\\b",
+      "metadata": {
+        "ruleset": "sekhemet-offline",
+        "ruleset_version": "1.0.0",
+        "category": "security",
+        "cwe": "CWE-798: Use of Hard-coded Credentials"
+      }
+    }
+  ]
+}

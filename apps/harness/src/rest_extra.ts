@@ -100,6 +100,8 @@ function cardFields(b: Record<string, unknown>): Record<string, unknown> {
     "dueDate",
     // SUR-40: the card's layer of the configuration (the kernel checks its shape).
     "configOverrides",
+    // What the card declares to its gates (GT-N4-4, GT-N4-6, GT-TQ-8, GT-TQ-11).
+    "gateChecks",
   ]) {
     if (b[k] !== undefined) out[k] = b[k];
   }

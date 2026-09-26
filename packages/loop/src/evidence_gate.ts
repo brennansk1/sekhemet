@@ -1,4 +1,4 @@
-import ts from "typescript";
+import { ts } from "@sekhemet/gates";
 import { OBSERVATION_CHAR_LIMIT } from "./observation.js";
 import { splitLines } from "./text.js";
 

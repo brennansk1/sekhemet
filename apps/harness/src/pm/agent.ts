@@ -40,6 +40,11 @@ export interface PmSnapshot {
   pmRules?: string[];
   /** The dossier of the card the person is looking at, one line per entry. */
   dossier?: { cardId: string; lines: string[] };
+  /**
+   * The brief's invariant lines the architecture gate cannot check, each
+   * with the forms it could be restated in (gates rule 26, GT-N1-1).
+   */
+  unenforcedInvariants?: { line: string; restate: string[] }[];
   today: string;
 }
 
@@ -825,5 +830,12 @@ export function ledgerStandup(s: PmSnapshot): string {
   lines.push(`Done: ${by("done").length} of ${s.cards.length} cards.`);
   if (s.forecast) lines.push(`Forecast: ${s.forecast}`);
   if (s.worker) lines.push(`Worker record: ${s.worker.record}`);
+  // GT-N1-1: an invariant no gate checks is said, never silently assumed to hold.
+  const loose = s.unenforcedInvariants ?? [];
+  if (loose.length) {
+    lines.push(
+      `Not enforced (restate as ${loose[0]?.restate.join(" or ")} for the architecture gate to check it): ${loose.map((l) => `"${l.line}"`).join("; ")}.`,
+    );
+  }
   return `${lines.join("\n")}\n\n_Answered from the ledger without loading a model. Ask a specific question for my judgement._`;
 }

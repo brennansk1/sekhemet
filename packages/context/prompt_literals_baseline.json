@@ -1783,11 +1783,6 @@
     },
     {
       "file": "packages/loop/src/tools.ts",
-      "hash": "8d531c7696a756a6",
-      "text": "(no TypeScript declaration of ${}: whole-word text matches)\n${}"
-    },
-    {
-      "file": "packages/loop/src/tools.ts",
       "hash": "8e04aece9e1ff22a",
       "text": "File not found: ${}"
     },

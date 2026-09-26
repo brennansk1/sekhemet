@@ -157,7 +157,8 @@ describe("MS-M10-4: the mutation gate's baseline", () => {
     });
     const o = mutationOutcome(r);
     expect(o?.mutation?.notMeasured).toEqual([
-      { file: "tool.py", reason: "no mutation operators for .py files" },
+      // Python has a tool, mutmut, which is not installed here (GT-N5-2).
+      { file: "tool.py", reason: "mutation not measured: mutmut not installed" },
     ]);
     expect(o?.mutation).toMatchObject({ score: 0, killed: 0, total: 1 });
   });

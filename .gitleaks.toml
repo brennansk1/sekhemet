@@ -1,0 +1,12 @@
+# gitleaks configuration for Sekhemet's own repository. Sekhemet's secrets
+# gate reads this file's path allowlist from the base branch, and passes the
+# file to gitleaks when it is installed.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Documented example credentials in the bundled semgrep rules' fixtures (AWS's example key id, private-key header lines)"
+paths = [
+  '''packages/gates/rules/semgrep/fixtures/''',
+]

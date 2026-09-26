@@ -107,6 +107,7 @@ import { cardTrace } from "./tracing.js";
 import { park, recordReviewOpened, reject, revertAccept, sendBack } from "./triage.js";
 import { generateDashboardHtml } from "./ui_html.js";
 import { hookEngineFor } from "./user_hooks.js";
+import { approveBaseline, visualCandidates } from "./visual_baseline.js";
 import { modelRegistry } from "./wave2.js";
 import { handleWave2Route, startGithubSync, startRecurringTicker } from "./wave2_server.js";
 import { type StreamClient, acceptWebSocket } from "./ws.js";
@@ -1212,6 +1213,8 @@ export function startDashboardServer(
         protected: config.project.protected,
         maxFiles: config.project.maxFiles,
         maxDiffLines: config.project.maxDiffLines,
+        // GT-BF-5: the bound on tool-applied lines in force (default 500).
+        maxToolAppliedLines: config.project.maxToolAppliedLines,
         sha256: config.sha256,
         // No gates.toml: the defaults ran (GT-T1-10).
         empty: config.empty === true,
@@ -1221,6 +1224,44 @@ export function startDashboardServer(
           notEnforced: unenforcedInvariants(join(repoPath, ".sekhemet", "brief.md")),
         },
       });
+      return;
+    }
+
+    // Gates rule 31 (GT-N4-1): the visual candidates waiting for a person,
+    // and a person's approval of one as the baseline, on the ledger with the
+    // approver's principal. The command line's `gates approve-baseline` is
+    // the same act.
+    if (url === "/api/visual/candidates" && req.method === "GET") {
+      json(res, 200, { candidates: visualCandidates(repoPath) });
+      return;
+    }
+    const baselineMatch = /^\/api\/visual\/baselines\/([\w.-]+)\/approve$/.exec(url);
+    if (baselineMatch && req.method === "POST") {
+      if (!isTrustedMutation(req)) {
+        json(res, 403, { error: "A baseline approval must come from the dashboard itself" });
+        return;
+      }
+      const store = options.cardStore;
+      if (!store) {
+        json(res, 503, { error: "No ledger: a baseline approval cannot be recorded" });
+        return;
+      }
+      let body: Record<string, unknown>;
+      try {
+        body = await readJsonBody(req);
+      } catch (err) {
+        json(res, 400, { error: err instanceof Error ? err.message : String(err) });
+        return;
+      }
+      const r = await approveBaseline(store, {
+        repoPath,
+        key: baselineMatch[1] as string,
+        principal: principalOf(req),
+        cardId: typeof body.cardId === "string" ? body.cardId : undefined,
+        sha256: typeof body.sha256 === "string" ? body.sha256 : undefined,
+      });
+      if (!r.approved) json(res, r.status, { error: r.reason });
+      else json(res, 200, { ok: true, key: r.key, sha256: r.sha256, principal: r.principal });
       return;
     }
 

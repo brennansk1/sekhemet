@@ -1,7 +1,12 @@
 {
   "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
   "files": {
-    "ignore": ["**/dist/**", "**/*.tsbuildinfo", "**/node_modules/**"]
+    "ignore": [
+      "**/dist/**",
+      "**/*.tsbuildinfo",
+      "**/node_modules/**",
+      "packages/gates/rules/semgrep/fixtures/**"
+    ]
   },
   "formatter": {
     "enabled": true,

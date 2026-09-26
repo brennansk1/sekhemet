@@ -68,6 +68,24 @@ describe("loop tools, wave 2 (L7, L9, L10, L16, G6, G7)", () => {
     expect(def.content).toContain("parseDate(s: string): number");
   });
 
+  it("find_references falls back to the source index's references, not text, when nothing declares the symbol (T2)", async () => {
+    writeFileSync(
+      join(root, "src", "globals.ts"),
+      '// registerPlugin is a host global\nexport const x = registerPlugin("a");\nconst s = "registerPlugin";\nhost.registerPlugin();\n',
+    );
+    writeFileSync(join(root, "src", "notes.md"), "registerPlugin in prose\n");
+    const obs = await run("find_references", { symbol: "registerPlugin" });
+    expect(obs.ok).toBe(true);
+    expect(obs.content).toContain("source index");
+    expect(obs.content).toContain("src/globals.ts:2:18");
+    expect(obs.content).toContain("src/globals.ts:4:6");
+    // Neither the comment nor the string is a reference.
+    expect(obs.content).not.toContain("src/globals.ts:1:");
+    expect(obs.content).not.toContain("src/globals.ts:3:");
+    // A file the index has no parser for is searched as text, and said so.
+    expect(obs.content).toContain("src/notes.md:1");
+  });
+
   it("docs searches a dependency's README and types at the installed version, and caches (L10)", async () => {
     writeFileSync(
       join(root, "package.json"),

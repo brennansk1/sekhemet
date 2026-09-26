@@ -14,8 +14,7 @@
     "@sekhemet/sync": "workspace:*",
     "@sekhemet/models": "workspace:*",
     "@sekhemet/gates": "workspace:*",
-    "@sekhemet/context": "workspace:*",
-    "typescript": "^5.7.3"
+    "@sekhemet/context": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.13.4"

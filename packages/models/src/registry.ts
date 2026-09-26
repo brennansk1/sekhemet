@@ -157,6 +157,20 @@ export interface ModelEntry {
   roles?: ModelRole[];
   /** It reads images (X3): a capability, not a role. */
   vision?: boolean;
+  /**
+   * Its measurement on the labelled screens for the visual gate's vision
+   * checklist (gates rule 30, measurement T11): one checklist version. Only
+   * a model this qualifies answers the checklist (GT-N4-2).
+   */
+  visionQualification?: {
+    checklistVersion: string;
+    approvedScreens: number;
+    wrongFails: number;
+    defectScreens: number;
+    falsePasses: number;
+    /** When and by whom it was measured. */
+    date?: string;
+  };
 }
 
 /** SHA-256 of a chat template, hex. */

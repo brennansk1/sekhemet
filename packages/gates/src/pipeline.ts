@@ -1,6 +1,6 @@
 import { performance } from "node:perf_hooks";
 import { type BuiltinGateContext, runBuiltinGates } from "./builtin.js";
-import { GatesConfigTamperError } from "./config.js";
+import { DEFAULT_PROJECT_CONFIG, GatesConfigTamperError } from "./config.js";
 import { RERUN_GATES, gateCopy } from "./copy.js";
 import { FAILURES_SHOWN, finalizeFailures, rankFailures } from "./rank.js";
 import { checkBounds } from "./runner.js";
@@ -12,7 +12,10 @@ import type {
   GateResult,
   GateRung,
   GateRunner,
+  RunGatesOptions,
   RungOutcome,
+  ToolAppliedCount,
+  ToolAppliedRecord,
 } from "./types.js";
 
 /**
@@ -200,7 +203,12 @@ export function verificationRungs(
  * runner), for the requested rungs. The runner hands back every failure; the
  * pipeline caps.
  */
-export function declaredStage(runner: GateRunner, rungs: GateRung[], cwd: string): GateStage {
+export function declaredStage(
+  runner: GateRunner,
+  rungs: GateRung[],
+  cwd: string,
+  runOptions?: RunGatesOptions,
+): GateStage {
   return {
     id: rungs.length === 1 ? (rungs[0] as string) : "gates",
     rung: rungs[0] ?? "test",
@@ -208,7 +216,9 @@ export function declaredStage(runner: GateRunner, rungs: GateRung[], cwd: string
     run: async () => {
       const id = rungs.length === 1 ? (rungs[0] as string) : "gates";
       const rung = rungs[0] ?? "test";
-      const r = (await runner.runGates(rungs, cwd)) as Partial<GateResult> | null | undefined;
+      const r = (await (runOptions
+        ? runner.runGates(rungs, cwd, runOptions)
+        : runner.runGates(rungs, cwd))) as Partial<GateResult> | null | undefined;
       // A reply the pipeline cannot read is no verdict: never a pass (rule 9).
       if (
         !r ||
@@ -264,6 +274,11 @@ export function declaredStage(runner: GateRunner, rungs: GateRung[], cwd: string
  * The card-size gate on the measured diff (rule 12): the lines the Worker
  * wrote, the staged acceptance tests excluded. `perFile` undefined means git
  * could not say, and the gate is unavailable — never passed.
+ *
+ * Lines a declared mechanical tool applied (`toolApplied`: a rename, a
+ * codemod, a formatter, a lockfile update) are taken out of the Worker's
+ * count and counted against `maxToolAppliedLines` instead (GT-BF-3,
+ * GT-BF-5); a file only the tool changed is not one of the Worker's files.
  */
 export function boundsStage(options: {
   base: string;
@@ -271,6 +286,8 @@ export function boundsStage(options: {
   staged?: readonly string[];
   maxFiles: number;
   maxLines: number;
+  maxToolAppliedLines?: number;
+  toolApplied?: ToolAppliedRecord | undefined;
 }): GateStage {
   return {
     id: "bounds",
@@ -288,7 +305,37 @@ export function boundsStage(options: {
         return { outcomes: [outcome], failures: [failure] };
       }
       const staged = new Set(options.staged ?? []);
-      const own = options.perFile.filter((f) => !staged.has(f.file));
+      const limit = options.maxToolAppliedLines ?? DEFAULT_PROJECT_CONFIG.maxToolAppliedLines;
+      const byTool = options.toolApplied?.files ?? {};
+      const toolFiles: Record<string, number> = {};
+      // The tool's own record (lines it changed) for the files it counted, so
+      // a later `sekhemet gate` can count them the same way.
+      const recorded: Record<string, number> = {};
+      const own: { file: string; added: number; removed: number }[] = [];
+      for (const f of options.perFile) {
+        if (staged.has(f.file)) continue;
+        // A line the tool changed is one removed and one added in the diff.
+        const n = byTool[f.file] ?? 0;
+        const toolAdded = Math.min(f.added, n);
+        const toolRemoved = Math.min(f.removed, n);
+        if (toolAdded + toolRemoved > 0) {
+          toolFiles[f.file] = toolAdded + toolRemoved;
+          recorded[f.file] = n;
+        }
+        const added = f.added - toolAdded;
+        const removed = f.removed - toolRemoved;
+        if (added + removed > 0 || (n === 0 && f.added + f.removed === 0)) {
+          own.push({ file: f.file, added, removed });
+        }
+      }
+      const toolLines = Object.values(toolFiles).reduce((a, b) => a + b, 0);
+      const tool = options.toolApplied?.tool;
+      const toolApplied: ToolAppliedCount = {
+        ...(tool && toolLines > 0 ? { tool, files: recorded } : {}),
+        lines: toolLines,
+        limit,
+      };
+      const failures: GateFailure[] = [];
       const verdict = checkBounds({
         base: options.base,
         filesTouched: own.map((f) => f.file),
@@ -297,18 +344,42 @@ export function boundsStage(options: {
         maxFiles: options.maxFiles,
         maxLines: options.maxLines,
       });
+      if (verdict.failure) failures.push(verdict.failure);
+      if (toolLines > limit) {
+        const name = tool ?? "a mechanical tool";
+        const files = Object.keys(toolFiles).sort();
+        failures.push({
+          rung: "bounds",
+          gate: "bounds",
+          layer: "hygiene",
+          exitCode: 1,
+          errorExcerpt: `Exceeded tool-applied line limit: ${name} applied ${toolLines} diff lines (limit: ${limit}) across ${files.length} files`,
+          suggestedFixFiles: files,
+          location: { file: files[0] ?? "." },
+          expected: `at most ${limit} tool-applied diff lines`,
+          actual: `${name} applied ${toolLines} diff lines`,
+          minimalRepro: `git diff --numstat ${options.base}`,
+          suggestedAction: gateCopy.boundsToolApplied(name, String(toolLines), String(limit)),
+        });
+      }
       return {
         outcomes: [
           {
             gate: "bounds",
             rung: "bounds",
             layer: "hygiene",
-            passed: verdict.passed,
-            exitCode: verdict.passed ? 0 : 1,
+            passed: failures.length === 0,
+            exitCode: failures.length === 0 ? 0 : 1,
             durationMs: 0,
+            toolApplied,
+            ...(toolLines > 0
+              ? {
+                  note: `${toolLines} tool-applied lines by ${tool ?? "a mechanical tool"} (limit ${limit}), not counted against max_diff_lines; the typecheck and the full suite must pass`,
+                }
+              : {}),
           },
         ],
-        failures: verdict.failure ? [verdict.failure] : [],
+        failures,
       };
     },
   };
