@@ -38,6 +38,7 @@ import {
   vocabularyTables,
 } from "@sekhemet/ui";
 import { checkoutNotice, integrationBranch } from "./accept.js";
+import { unenforcedInvariants } from "./architecture_gate.js";
 import {
   cardMessages,
   handBack,
@@ -80,6 +81,7 @@ import { gateWorker } from "./qualify.js";
 import { handleRestExtras } from "./rest_extra.js";
 import { runnerLease } from "./runner_lease.js";
 import { qualifiedSlotCapacity, slotWaitReason } from "./slot_lease.js";
+import { PresenceRecorder } from "./smart_swap.js";
 import {
   Access,
   AccessRefusedError,
@@ -595,6 +597,9 @@ export function startDashboardServer(
     return who.authenticated && who.via === "token" ? who.scope : undefined;
   };
   const askers = new WeakMap<IncomingMessage, string>();
+  // Smart Swap's presence (models rule 20e, C6): a person's dashboard request,
+  // on the ledger at most once per 5 minutes each, read by the queue's scheduler.
+  const presence = new PresenceRecorder(log);
   /** The person behind a write the access check passed; the install's person otherwise (Solo). */
   const principalOf = (req: IncomingMessage): string =>
     askers.get(req) ?? requester(req) ?? log.localPrincipal();
@@ -768,6 +773,10 @@ export function startDashboardServer(
     // Resolve and bind the requester first; in the Team setup a protected
     // endpoint answers 401 before any handler runs (TEAM-12).
     if (identityGate(req, res, url, identity, json)) return;
+    if (url.startsWith("/api/")) {
+      const who = requesterOf(req);
+      if (who.authenticated) presence.seen({ principal: who.principal, via: who.via });
+    }
     // Kernel rule 19, K-N2-8: the request's work is the person's who asked, so
     // every event a person causes names them, however deep it is appended.
     const person = requester(req) ?? (setup === "solo" ? log.localPrincipal() : undefined);
@@ -1206,6 +1215,11 @@ export function startDashboardServer(
         sha256: config.sha256,
         // No gates.toml: the defaults ran (GT-T1-10).
         empty: config.empty === true,
+        // The brief's invariants the architecture gate cannot check, shown
+        // on the board with the forms they could be restated in (GT-N1-1).
+        invariants: {
+          notEnforced: unenforcedInvariants(join(repoPath, ".sekhemet", "brief.md")),
+        },
       });
       return;
     }

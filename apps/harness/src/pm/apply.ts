@@ -131,6 +131,25 @@ export async function applyProposal(
         );
         previous = created.id;
         touched.push(created);
+        // Gates rule 6a (lead ruling): the part carries the original's own
+        // tests, so the records that made them the card's carry over with
+        // the PM as the author — never a record the original did not have.
+        if (card.acceptanceTests?.length) {
+          const own = (await ctx.cardStore.cardEvents(card.id, ["test/staged"])).filter((e) =>
+            ["planner", "test-author", "pm"].includes(
+              String((e.payload as { author?: unknown }).author),
+            ),
+          );
+          for (const e of own) {
+            const p = e.payload as { path: string; sha256: string };
+            await ctx.cardStore.recordEvent({
+              type: "test/staged",
+              cardId: created.id,
+              actor,
+              payload: { cardId: created.id, path: p.path, sha256: p.sha256, author: "pm" },
+            });
+          }
+        }
       }
       if (card.status !== "parked" && card.status !== "done") {
         await move(card, "parked", `split into ${touched.map((c) => c.id).join(", ")}`);

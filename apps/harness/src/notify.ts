@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 import type { EventLog, EventRecord } from "@sekhemet/kernel";
-import { type ModelSlowLoadPayload, SWAP_EVENTS, describeSlowLoad } from "@sekhemet/models";
+import {
+  type ModelRequantisedPayload,
+  type ModelSlowLoadPayload,
+  SWAP_EVENTS,
+  describeSlowLoad,
+} from "@sekhemet/models";
 import { egressRecorder, integrationFetch } from "./github_transport.js";
 import { readSettings, writeSettings } from "./integrations.js";
 import { PM_EVENTS } from "./pm/types.js";
@@ -34,6 +39,7 @@ export type NotifyEvent =
   | "needs_you"
   | "run_report"
   | "slow_load"
+  | "requantised"
   | "test";
 
 export const ALL_EVENTS: NotifyEvent[] = [
@@ -46,6 +52,7 @@ export const ALL_EVENTS: NotifyEvent[] = [
   "needs_you",
   "run_report",
   "slow_load",
+  "requantised",
 ];
 
 /**
@@ -271,6 +278,22 @@ export function noticeFor(e: EventRecord, dashboard?: string): Notice | undefine
       title: "A model loaded slowly",
       message: describeSlowLoad(slow).slice(0, 400),
       priority: 2,
+    };
+  }
+  if (e.type === SWAP_EVENTS.requantised) {
+    // models rule 20h: Ollama serves the model with another quantisation or
+    // hash than its file; exact weights need llama-server.
+    const r = p as unknown as ModelRequantisedPayload;
+    const what =
+      r.servedQuant && r.fileQuant
+        ? `as ${r.servedQuant}, but the file is ${r.fileQuant}`
+        : "with another weights hash than its file";
+    return {
+      event: "requantised",
+      key: `requantised:${r.model}`,
+      title: "A model is served requantised",
+      message: `Ollama serves ${r.model} ${what}. Its answers may differ from the qualified weights; serve it through llama-server where exact weights matter.`,
+      priority: 3,
     };
   }
   if (e.type === "card/question") {

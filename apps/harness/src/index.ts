@@ -42,6 +42,7 @@ import {
   describeOverride,
   escalationWindow,
   measureThroughput,
+  readSwapUsedBytes,
   resolveWorkerModelId,
 } from "@sekhemet/models";
 import { SpidrFeaturePlanner } from "@sekhemet/planner";
@@ -66,7 +67,7 @@ import { resolveVisionModel, visionPrePass } from "./attachments.js";
 import { bakeOffTaskPlan } from "./bakeoff_tasks.js";
 import { watchBoardHooks } from "./board_hooks.js";
 import { parseModelList, promptNeedFromLedgers, runCalibrate, runMtpAb } from "./calibrate_cmd.js";
-import { verifyCardWorktree } from "./card_gates.js";
+import { gateBaseBranch, verifyCardWorktree } from "./card_gates.js";
 import { handBack, postCardMessage, requestPause, takeOver } from "./collaborate.js";
 import { resolveConfig } from "./config.js";
 import {
@@ -132,13 +133,15 @@ import {
   readMeasurementMarker,
   withoutProfileFlags,
 } from "./measure_cmd.js";
-import { ModelAccess, describeModel, roleModelName } from "./model_access.js";
+import { ModelAccess, describeModel, roleModelName, weightsKey } from "./model_access.js";
 import { sendPush, startNotifier } from "./notify.js";
 import { nightModelServer, runOvernight } from "./overnight.js";
 import { DEFAULT_PM_MODEL, answerQueued, dailyStandup, pmModelFor } from "./pm/service.js";
 import { PmStore } from "./pm/store.js";
+import { seshatWait } from "./pm/while_worker.js";
 import { runPromptScreen } from "./prompt_screen_cmd.js";
 import { applyWorkerOverride, gateWorker } from "./qualify.js";
+import { QueuedReviews } from "./queued_reviews.js";
 import { diffTrajectories, formatDiff, formatTrajectory, trajectories } from "./replay.js";
 import { isResearchCard, runResearchCard } from "./research/cards.js";
 import { CRAWL4AI_CREDIT, runResearchCommand } from "./research/cli.js";
@@ -164,6 +167,17 @@ import { isReserved, parseHours } from "./scheduler.js";
 import { DEFAULT_DASHBOARD_PORT, startDashboardServer } from "./server.js";
 import { qualifiedSlotCapacity } from "./slot_lease.js";
 import { SlotPool } from "./slot_pool.js";
+import {
+  QueuedCardWork,
+  beginCalibrationNight,
+  calibrationHostReading,
+  cardOverlapTasks,
+  headroomProbeFor,
+  presenceTracker,
+  queueSwapMode,
+  quickAnswererFor,
+  refreshPlan,
+} from "./smart_swap.js";
 import { bakeOffOnSuitePath } from "./suite_path.js";
 import { describeSupervisorStart, removeWorktreesOnClose, supervisorStart } from "./supervisor.js";
 import { fairOrder } from "./team/fair_queue.js";
@@ -774,6 +788,10 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
   if (config.command === "overnight") {
     // `sekhemet overnight [--until 07:00] [--idle-min 20] [--max-failures 3] [queue flags...]`:
     // queue rounds while the machine is free and every breaker holds (H21, H23).
+    // `--calibration-night --permit-loads` passes to each round's queue: a
+    // calibration night (measurement rule 16d) runs Smart Swap's policy as
+    // designed, recording `measure/calibration`; the queue refuses it without
+    // the owner's `--permit-loads` or in a repository marked for a measurement.
     const { config: cfg } = resolveConfig({ repoPath: config.repoPath });
     // One runner (item 3): the night holds the lease, and each round's queue
     // runs under it (its token handed down), so no other runner slips in
@@ -1088,6 +1106,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     const sketcher = planAccess ? planAccess.adapterFor("plan") : undefined;
     if (planAccess) {
       await planAccess.measure();
+      // Kept synchronous (`acquire`): `plan` owns this scheduler, one queue only.
       await planAccess.use("plan").catch((err: unknown) => {
         console.error(`Planner: ${err instanceof Error ? err.message : String(err)}`);
       });
@@ -1145,7 +1164,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     if (cardId && cwd !== config.repoPath) {
       // The card's own verification — the same pipeline, runner, rungs,
       // branch, bounds and built-in layers as the card run (gates rule 8, T1).
-      const base = integrationBranch(config.repoPath);
+      const base = gateBaseBranch(config.repoPath, gatesConfig);
       console.log(`\nVerifying ${cardId} against ${base} in ${cwd}`);
       res = await verifyCardWorktree({
         repoPath: config.repoPath,
@@ -1654,6 +1673,8 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     // MD-N9-3: the Worker loads only once its footprint is shown to fit.
     await access.measure();
     try {
+      // Kept synchronous (`acquire`): `run` owns this scheduler and serves one
+      // card on one model; no other queue exists for `decide()` to weigh.
       await access.use("worker");
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
@@ -1685,6 +1706,8 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       result = await executeCard(ctx, card, model, undefined, {
         signal: stop.signal,
         ...(runCap ? { maxSteps: runCap } : {}),
+        // Models rule 20e: each step is a step boundary on the scheduler.
+        beginStep: () => access.beginStep("worker"),
       });
     } finally {
       process.off("SIGINT", onSigint);
@@ -1743,6 +1766,15 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     const acceptRefusal = autoAcceptRefusal(argv, config.repoPath);
     if (acceptRefusal) {
       console.error(acceptRefusal);
+      process.exitCode = 2;
+      return;
+    }
+    // Smart Swap this run (measurement rule 16d, models rule 20b): a
+    // measurement run in a marked repository (the frozen suite, a bake-off),
+    // a calibration night only when the owner permits loads, else live.
+    const swapMode = queueSwapMode(config.repoPath, argv);
+    if ("refused" in swapMode) {
+      console.error(swapMode.refused);
       process.exitCode = 2;
       return;
     }
@@ -1875,6 +1907,9 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         { queue: "worker", role: "worker", name: workerModel ?? NAIL_WORKER_PROFILE.modelId },
         // The Planner doubles as the PM you chat with during the run.
         { queue: "manager", role: "planner", name: pmModelName },
+        // Seshat answering a person: the same weights, the interactive class
+        // (models rule 20e: a person waiting; its swaps are interactive, C7).
+        { queue: "seshat", role: "planner", name: pmModelName },
         // The Planner's (stronger, dense) model as a coder, for --escalate-retries.
         { queue: "escalation", role: "planner", name: pmModelName, window: escalationWindow() },
         ...(researcherModel
@@ -1888,6 +1923,14 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       {
         registry: modelRegistry(),
         ledger: log,
+        // Rule 20g: the headroom probe, off until a calibration night sets its
+        // reserves (`[models] headroom_probe`, models §4).
+        ...(() => {
+          const probe = headroomProbeFor(
+            effectiveConfig(config.repoPath, argv).config.models.headroomProbe,
+          );
+          return probe ? { headroom: probe } : {};
+        })(),
         wrap: (adapter, queues) => {
           loaded.add(adapter);
           if (queues.includes("worker") || queues.includes("escalation"))
@@ -1914,6 +1957,29 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     const { watchdog } = createCardWatchdog(pressure, {
       log: (line) => console.log(`   ${line}`),
     });
+    // Smart Swap's snapshot (models rule 20e): presence from the dashboard's
+    // sessions, reserve-now and the reserved hours (C6); the watchdog's level
+    // (rule 19); and, while a model loads, the next Ready cards' CPU-side
+    // work (C9). The plan is read from the board at each card's start and end.
+    const presence = presenceTracker(log, {
+      hours: () => effectiveConfig(config.repoPath, argv).config.machine.hours,
+    });
+    const queuedWork = new QueuedCardWork({
+      next: async () => (await cardStore.listCards({ status: "ready" })) as CardRecord[],
+      tasks: (card) => cardOverlapTasks(config.repoPath, card),
+      log: (line) => console.log(`   ${line}`),
+    });
+    router.setSwapInputs({
+      presence: presence.current,
+      watchdogLevel: () => watchdog.state.level,
+      overlap: (loading) => queuedWork.run(loading),
+    });
+    await refreshPlan(router, cardStore).catch(() => undefined);
+    // Rule 20f (b): the Planner role's quick answerer, when a person named one.
+    const quick = quickAnswererFor(
+      router,
+      effectiveConfig(config.repoPath, argv).config.models.quickAnswerer,
+    );
     // Residency: every model's footprint against this host's usable memory
     // (MD-N9-3); a model of unknown size is refused when first asked for.
     const plan = await router.measure();
@@ -1936,8 +2002,12 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
             web,
             cardStore,
             log,
+            // Kept synchronous (`acquire`): it runs only inside Seshat's answer,
+            // which holds the manager; a queued request would wait behind the
+            // hold that waits for it. It refuses rather than evict a held model.
             model: () => router.use("researcher"),
           }).ask(question, opts);
+          // Synchronous for the same reason: Seshat's answer continues on the manager.
           await router.use("manager");
           return r;
         }
@@ -1997,6 +2067,9 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       const prior = router.activeRole;
       if (router.isResident("manager")) {
         const card = await cardStore.getCard(cardId);
+        // Kept synchronous (`acquire`): only when the manager is already
+        // resident, inside the Worker's own step, so it loads nothing; a
+        // queued request would wait for the step that waits for it.
         const res = await (await router.use("manager")).generate({
           systemPrompt:
             "You are Seshat, the project manager. A teammate (the coding Worker) is mid-card and asks a question its card's spec does not answer. Answer in at most three sentences, concretely, consistent with the spec and acceptance tests. If it is genuinely the lead's call, say so and give the most conservative choice.",
@@ -2005,6 +2078,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
           temperature: 0.2,
           maxTokens: 300,
         });
+        // Synchronous: `prior` was resident beside the manager, so this loads nothing.
         if (prior) await router.use(prior);
         // MD-N4-8: the adapter stripped the reasoning.
         return res.text.trim() || undefined;
@@ -2046,7 +2120,18 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       if (filed > 0) console.log(`   filed ${filed} answer(s) from Seshat in the cards' dossiers`);
     };
 
-    const answerPm = async (step?: number, batch = false): Promise<void> => {
+    /**
+     * One answer at a time: with parallel slots (RUN-35) two cards' step
+     * boundaries may both find the person's message; the second waits and
+     * finds it answered.
+     */
+    let answering: Promise<void> = Promise.resolve();
+    const answerPm = (step?: number, batch = false): Promise<void> => {
+      const next = answering.then(() => answerPmNow(step, batch));
+      answering = next.catch(() => undefined);
+      return next;
+    };
+    const answerPmNow = async (step?: number, batch = false): Promise<void> => {
       const queuedNow = await pmStore.queued();
       if (queuedNow.length === 0) return;
       // Only the human's messages pause the Worker; Worker questions wait for
@@ -2056,12 +2141,20 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         `   PM: pausing the Worker${step !== undefined ? ` after step ${step}` : ""} to answer`,
       );
       const workerWasActive = router.activeRole === "worker";
+      // Models rule 20e: the answer is a queued request — interactive when a
+      // person wrote (the `seshat` queue), a planner batch for Worker questions
+      // only — so `decide()` places it (C4, C5, C7) and it holds the model.
+      const seshatQueue = queuedNow.every(isWorkerQuestion) ? "manager" : "seshat";
       await answerQueued({
         repoPath: config.repoPath,
         cardStore,
         pmStore,
         pmModel,
-        acquire: () => router.hold("manager"),
+        acquire: () => router.submitHold(seshatQueue),
+        // Smart Swap (models rule 20f): the full answer's predicted wait, and
+        // whether it would break the Worker's floor mid-card (C5).
+        predictWait: () => seshatWait(router, seshatQueue, { homeBacklog: step !== undefined }),
+        ...(quick ? { quick } : {}),
         ...(step !== undefined ? { step } : {}),
         team: [
           `Worker (${workerModelId}): ${router.isResident("worker") ? "resident" : "swapped out"}; it asks you questions its cards' contracts do not answer.`,
@@ -2082,7 +2175,10 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
           workerPaused: true,
           ...(step !== undefined ? { step } : {}),
         });
-        const worker = (await router.use("worker")) as { ensureRunning?: () => Promise<void> };
+        // The Worker's return goes through `decide()`'s queue too (its home, C5).
+        const worker = (await router.useQueued("worker")) as {
+          ensureRunning?: () => Promise<void>;
+        };
         await worker.ensureRunning?.();
         await pmStore.setStatus({ phase: "idle" });
       }
@@ -2122,9 +2218,9 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       runProfile: queueProfile,
       ...(measurement ? { measurement } : {}),
       afterTurn: async (_cardId: string, turn: { turnIndex: number }) => {
-        // RUN-35: swapping the Worker out would stop the other running cards
-        // mid-step; the message waits until one card runs or Seshat is resident.
-        if (slots.running > 1 && !router.isResident("manager")) return;
+        // RUN-35, C8: a swap to Seshat while other cards run waits at the drain
+        // barrier until every running step reaches its boundary, and no card
+        // starts a step until the Worker is back (`beginStep`).
         await answerPm(turn.turnIndex).catch((err) =>
           console.log(`   PM: could not answer (${err instanceof Error ? err.message : err})`),
         );
@@ -2132,17 +2228,22 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     };
     // X15: review cards for PRs the harness did not open run the reviewer
     // procedure on a checkout (never an edit) and do not reach the Worker.
+    // Models rule 20e (C6): the external reviews are one queued review request,
+    // held for the batch and released after it.
+    const externalReviewer = router.queuedModel(reviewerModel ? "reviewer" : "manager", {
+      review: true,
+    });
     ready = await runExternalReviews(config.repoPath, ready, {
       store: cardStore,
       board: boardService,
       learning: ctx.learning,
-      reviewer: () => router.use(reviewerModel ? "reviewer" : "manager"),
+      reviewer: externalReviewer.model,
       ...(() => {
         const poster = reviewPosterFromEnv(config.repoPath, cardStore);
         return poster ? { github: poster } : {};
       })(),
       say: (line) => console.log(line),
-    });
+    }).finally(() => externalReviewer.release());
     // INT-16a, INT-16: a dependency bot's pull request runs the full gates on
     // its head (never the Worker); auto-merge only by the project's policy.
     ready = await runDependencyVerifications(config.repoPath, ready, {
@@ -2162,6 +2263,8 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       })(),
       load: async (name) => {
         router.ensureQueue({ queue: "vision", role: "reviewer", name });
+        // Kept synchronous (`acquire`): a pre-pass before the first card, when
+        // no other queue has work, and it releases its model itself.
         return router.use("vision");
       },
       release: async () => {
@@ -2206,30 +2309,47 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
      * while Seshat's model is resident, so it never forces an extra swap
      * unless --review asked for it.
      */
-    const reviewPassed = async (model: UnloadableAdapter) => {
+    const reviewOne = async (
+      model: UnloadableAdapter,
+      { card, diff }: { card: CardRecord; diff: string },
+    ) => {
       const preferences = (await ctx.learning.profile())
         .filter((p) => p.status === "active" && p.category === "code_style")
         .map((p) => p.statement);
       const rules = (await ctx.learning.rules())
         .filter((r) => r.status === "active" && r.role === "worker")
         .map((r) => r.text);
-      for (const { card, diff } of passedResults.splice(0)) {
-        const findings = await reviewCard(model, { card, diff, preferences, rules }).catch(
-          () => [],
-        );
-        if (findings.length === 0) continue;
-        console.log(`   Seshat's review of ${card.id}: ${findings.length} note(s)`);
-        // Into the card's dossier: the Review surface shows it, and a
-        // returned card's next attempt reads it.
-        await recordReview(
-          cardStore,
-          card.id,
-          findings,
-          reviewerModel ? "reviewer" : "manager",
-        ).catch(() => undefined);
-      }
+      const findings = await reviewCard(model, { card, diff, preferences, rules }).catch(() => []);
+      if (findings.length === 0) return;
+      console.log(`   Seshat's review of ${card.id}: ${findings.length} note(s)`);
+      // Into the card's dossier: the Review surface shows it, and a
+      // returned card's next attempt reads it.
+      await recordReview(
+        cardStore,
+        card.id,
+        findings,
+        reviewerModel ? "reviewer" : "manager",
+      ).catch(() => undefined);
     };
-    const attempt = async (rawCard: CardRecord, n: number, guidance?: string) => {
+    /**
+     * Models rule 20e (C2, C4, C6, C7): each passing card's review is queued
+     * as it passes and `decide()` chooses when the Reviewer visits — one tour
+     * for every review due, never more round trips than the storm cap — while
+     * the Worker keeps working; the run drains the rest at its end.
+     */
+    const reviews = new QueuedReviews<{ card: CardRecord; diff: string }>({
+      access: router,
+      queue: reviewerModel ? "reviewer" : "manager",
+      review: reviewOne,
+      log: (line) => console.log(`   ${line}`),
+    });
+    const attempt = async (
+      rawCard: CardRecord,
+      n: number,
+      guidance?: string,
+      /** RUN-35: the card's slot lease, its server slot (models rule 20i). */
+      serverSlot?: number,
+    ) => {
       // SUR-40: a --max-turns flag, else the card's own step budget override, else the run's.
       const cap = cardStepCap(
         rawCard,
@@ -2240,8 +2360,40 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       // when asked: capability-based routing, not the same model again.
       // The planner's route (P6) sends hard cards to the escalation model up front.
       const role = roleForCard(rawCard, n, escalateRetries);
-      const worker = await router.use(role);
-      if (role === "escalation") console.log(`   escalating ${rawCard.id} to ${worker.modelId}`);
+      // Models rule 20e: the card's model through `decide()`'s queue, so a
+      // tour under way finishes first. An escalated card runs on a visitor's
+      // weights (the Planner's): held for the attempt, so the policy (C3, the
+      // shortened keep-alive at elevated) never unloads them between its
+      // steps — a pin only the policy respects: the watchdog's emergency
+      // unloads them between steps (rule 19).
+      // An escalated card runs alone (the pass drained the slots): the Worker
+      // has no step meanwhile, so its request is not held back by C1.
+      if (role !== "worker") router.setHomeBacklog(undefined);
+      const visitorHold =
+        role === "worker"
+          ? undefined
+          : await router
+              .submitHold(role, { yieldsToWatchdog: true })
+              .finally(() => router.setHomeBacklog(true));
+      try {
+        const worker = visitorHold?.adapter ?? (await router.useQueued(role));
+        return await attemptOn(worker, { rawCard, card, role, cap, guidance, serverSlot });
+      } finally {
+        visitorHold?.release();
+      }
+    };
+    const attemptOn = async (
+      worker: UnloadableAdapter,
+      a: {
+        rawCard: CardRecord;
+        card: CardRecord;
+        role: string;
+        cap: number | undefined;
+        guidance: string | undefined;
+        serverSlot: number | undefined;
+      },
+    ) => {
+      const { rawCard, card, role, cap, guidance, serverSlot } = a;
       if (role === "worker") workerModelId = worker.modelId;
       // The real attempt number (across queue runs), not the round.
       const attemptNo = Math.max(
@@ -2251,12 +2403,25 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       console.log(`\n=== ${card.id} (attempt ${attemptNo}): ${card.title} ===`);
       // What earlier attempts learned reaches this one through the card's
       // dossier (lessons, answers, reviews, send-backs), read by the runner.
+      // C5 (models rule 20e): while a card runs the Worker has work, so its
+      // absences count against its floor of each rolling hour.
+      router.setHomeBacklog(true);
+      await refreshPlan(router, cardStore).catch(() => undefined);
       const result = await executeCard(ctx, rawCard, worker, guidance, {
         attempt: attemptNo,
         signal: queueStop.signal,
         ...(cap ? { maxSteps: cap } : {}),
+        ...(serverSlot !== undefined ? { serverSlot } : {}),
+        // Models rule 20e, C8: each step is admitted at the drain barrier.
+        beginStep: () => router.beginStep(role),
       });
-      if (result.passed) passedResults.push({ card, diff: result.evidence.diff ?? "" });
+      await refreshPlan(router, cardStore).catch(() => undefined);
+      if (result.passed) {
+        const passedCard = { card, diff: result.evidence.diff ?? "" };
+        passedResults.push(passedCard);
+        // Rule 20e (C6): its review is queued now; `decide()` batches the Reviewer's visits.
+        if (reviewerModel || reviewAll) reviews.add(passedCard);
+      }
       for (const st of result.lessons.struggles) {
         const code = /\b(TS\d{4}|lint\/[\w/]+)\b/.exec(st.text)?.[1];
         if (!code || !remedyFor(code, st.text))
@@ -2338,6 +2503,16 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
 
     /** Run every runnable card; defer those whose prerequisites have not merged. */
     const pass = async (cards: CardRecord[], n: number, plans?: Map<string, string>) => {
+      // C5, C1 (models rule 20e): while the pass has cards the Worker has work,
+      // so other queues wait for their threshold or cap, and its absences count.
+      router.setHomeBacklog(true);
+      try {
+        await passCards(cards, n, plans);
+      } finally {
+        router.setHomeBacklog(undefined);
+      }
+    };
+    const passCards = async (cards: CardRecord[], n: number, plans?: Map<string, string>) => {
       // Fair share per person, the per-person cap and aging (RUN-34, TEAM-30),
       // with the planner's order breaking ties.
       const fair = effectiveConfig(config.repoPath, argv).config;
@@ -2405,12 +2580,16 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
           await slots.drain();
           console.log(`\n=== ${card.id} (research): ${card.title} ===`);
           const { web } = await researchSources(config.repoPath, { log });
+          // Models rule 20e: one queued request for the card's questions, held
+          // until it ends. The Worker waits meanwhile (the pass runs it alone).
+          const researcher = router.queuedModel("researcher");
+          router.setHomeBacklog(undefined);
           const service = new ResearchService({
             repoPath: config.repoPath,
             web,
             cardStore,
             log,
-            model: () => router.use("researcher"),
+            model: researcher.model,
           });
           const r = await runResearchCard(
             card,
@@ -2418,10 +2597,17 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
             cardStore,
             config.repoPath,
             boardService,
-          ).catch((err) => {
-            console.log(`   research failed: ${err instanceof Error ? err.message : String(err)}`);
-            return undefined;
-          });
+          )
+            .catch((err) => {
+              console.log(
+                `   research failed: ${err instanceof Error ? err.message : String(err)}`,
+              );
+              return undefined;
+            })
+            .finally(async () => {
+              await researcher.release();
+              router.setHomeBacklog(true);
+            });
           if (r)
             console.log(
               `   ${r.passed ? "cited note ready for review" : "parked: not settled"}: ${r.notePath}`,
@@ -2439,7 +2625,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
           continue;
         }
         slots.start(card.id, claim, async () => {
-          const result = await attempt(card, n, plans?.get(card.id));
+          const result = await attempt(card, n, plans?.get(card.id), claim.slot);
           // A parked card (repair rung 4, vacuous tests) waits for a person; it
           // is not re-planned automatically.
           if (!result.passed && !result.parked) failed.push({ card, result });
@@ -2449,164 +2635,239 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       await slots.drain();
     };
 
-    try {
-      /**
-       * Rounds until nothing changes (integration review items 1 and 2).
-       * Each round: first attempts (with prerequisite sweeps), then ONE
-       * Researcher batch (one load for every question), then ONE manager
-       * batch (plans informed by the research, answers to Worker questions),
-       * then the retries. Cards that only became runnable later get the same
-       * plan-and-retry chance as the rest. Reflection, consolidation and the
-       * cross-family review run once at the end, after the retries, so they
-       * see whether the plans worked.
-       */
-      const retried = new Set<string>();
-      const reflections: {
-        card: CardRecord;
-        plan: string;
-        firstStop: string;
-        retryPassed: boolean;
-      }[] = [];
-      let firstAttempts: CardRecord[] = ready;
-      for (let round = 1; round <= 6 && !halted; round++) {
-        await pass(firstAttempts, 1);
-        firstAttempts = [];
-        let progress = true;
-        while (!halted && progress && deferred.length > 0) {
-          const before = deferred.length;
-          await pass([...deferred], 1);
-          progress = deferred.length < before;
-        }
-
-        const toRepair = failed
-          .splice(0, failed.length)
-          .filter(({ card }) => !retried.has(card.id));
-        if (halted || !managerModel || toRepair.length === 0) break;
-
-        // Researcher batch: one load, every unexplained struggle.
-        if (askResearcher && unexplained.length > 0) {
-          const { web } = await researchSources(config.repoPath, { log });
-          const service = new ResearchService({
-            repoPath: config.repoPath,
-            web,
-            cardStore,
-            log,
-            model: () => router.use("researcher"),
+    // Measurement rule 16d, MS-NM14-3: a calibration night runs the policy as
+    // designed, recording its protocol before the first load and checking
+    // DEC-42's host limits before each; it unloads everything at its end.
+    let calibration: { end: () => Promise<{ hostRefusals: string[] }> } | undefined;
+    const queueBody = async (): Promise<void> => {
+      try {
+        if (swapMode.mode === "calibration") {
+          const night = await beginCalibrationNight(router, {
+            record: (e) => {
+              log.appendNow({ actor: "harness", type: e.type, payload: e.payload });
+            },
+            runnerHolder: () => {
+              const marker = readMeasurementMarker(config.repoPath);
+              return marker
+                ? marker.purpose === "frozen suite"
+                  ? "suite"
+                  : "measurement"
+                : undefined;
+            },
+            host: () =>
+              calibrationHostReading({
+                swapUsedBytes: readSwapUsedBytes() ?? 0,
+                freeBytes: freemem(),
+                totalBytes: totalmem(),
+                warmedBytes: router.warmedBytes(),
+              }),
+            models: [
+              ...new Set(
+                [
+                  workerModel ?? NAIL_WORKER_PROFILE.modelId,
+                  pmModelName,
+                  researcherModel,
+                  reviewerModel,
+                ]
+                  .filter((m): m is string => Boolean(m))
+                  .map((m) => weightsKey(m)),
+              ),
+            ],
+            probes: router.headroomOn
+              ? ["read_probe", "drive_check", "headroom"]
+              : ["read_probe", "drive_check"],
           });
-          for (const u of unexplained.splice(0, 4)) {
-            const r = await service
-              .ask(
-                `A coding model working on this TypeScript project hit this error and needed several attempts to fix it: "${u.text}". What is the correct approach? Give one concrete rule.`,
-                { cardId: u.cardId },
-              )
-              .catch(() => undefined);
-            if (!r?.grounded) continue;
-            const struggled = await cardStore.getCard(u.cardId);
-            const rule = await ctx.learning.propose({
-              role: "worker",
-              text: r.answer.slice(0, 500),
-              // CX-N4-1: scoped to the struggle's error code and the card's kind.
-              scope: researchRuleScope(struggled ?? { title: "", scopeFiles: [] }, u.text),
-              source: "research",
-              // The struggle is the executed signal; the Researcher's answer
-              // is a synthesis (MS-T8-9). The candidate waits for a person:
-              // probation is off (O15, MS-T8-15).
-              evidence: [
-                { cardId: u.cardId, note: u.text, source: "gate", verified: "execution" },
-                {
-                  cardId: u.cardId,
-                  note: `Researcher, sources: ${r.sources.join("; ")}`,
-                  source: "researcher",
-                  verified: "none",
-                },
-              ],
-            });
-            if (rule) console.log(`   Researcher proposed a candidate rule for ${u.cardId}`);
+          if ("refused" in night) {
+            console.error(night.refused);
+            process.exitCode = 1;
+            halted = true;
+          } else {
+            calibration = night;
+            console.log("Calibration night: the policy runs as designed; every load is recorded.");
           }
         }
+        /**
+         * Rounds until nothing changes (integration review items 1 and 2).
+         * Each round: first attempts (with prerequisite sweeps), then ONE
+         * Researcher batch (one load for every question), then ONE manager
+         * batch (plans informed by the research, answers to Worker questions),
+         * then the retries. Cards that only became runnable later get the same
+         * plan-and-retry chance as the rest. Reflection, consolidation and the
+         * cross-family review run once at the end, after the retries, so they
+         * see whether the plans worked.
+         */
+        const retried = new Set<string>();
+        const reflections: {
+          card: CardRecord;
+          plan: string;
+          firstStop: string;
+          retryPassed: boolean;
+        }[] = [];
+        let firstAttempts: CardRecord[] = ready;
+        for (let round = 1; round <= 6 && !halted; round++) {
+          await pass(firstAttempts, 1);
+          firstAttempts = [];
+          let progress = true;
+          while (!halted && progress && deferred.length > 0) {
+            const before = deferred.length;
+            await pass([...deferred], 1);
+            progress = deferred.length < before;
+          }
 
-        // Manager batch: plans (the research is now in the playbook), answers.
-        const manager = await router.use("manager");
-        const plans = new Map<string, string>();
-        for (const { card, result } of toRepair) {
-          console.log(`\n--- manager reviewing ${card.id} ---`);
-          // A rung-3 re-plan request carries the Worker's own account of the
-          // standing failures; otherwise the evidence's failures.
-          const plan = await planRepair(manager, {
-            card,
-            stopReason: result.replan
-              ? `${result.stopReason}: ${result.replan.summary}`
-              : result.stopReason,
-            failures: result.replan?.failures ?? result.evidence.failures,
-            files: collectCardFiles(result.worktreePath, card),
-          });
-          plans.set(card.id, plan);
-          reflections.push({ card, plan, firstStop: result.stopReason, retryPassed: false });
+          const toRepair = failed
+            .splice(0, failed.length)
+            .filter(({ card }) => !retried.has(card.id));
+          if (halted || !managerModel || toRepair.length === 0) break;
+
+          // Researcher batch: one load, every unexplained struggle.
+          if (askResearcher && unexplained.length > 0) {
+            const { web } = await researchSources(config.repoPath, { log });
+            // Models rule 20e: the batch is one queued request, held until it ends.
+            const researcher = router.queuedModel("researcher");
+            const service = new ResearchService({
+              repoPath: config.repoPath,
+              web,
+              cardStore,
+              log,
+              model: researcher.model,
+            });
+            try {
+              for (const u of unexplained.splice(0, 4)) {
+                const r = await service
+                  .ask(
+                    `A coding model working on this TypeScript project hit this error and needed several attempts to fix it: "${u.text}". What is the correct approach? Give one concrete rule.`,
+                    { cardId: u.cardId },
+                  )
+                  .catch(() => undefined);
+                if (!r?.grounded) continue;
+                const struggled = await cardStore.getCard(u.cardId);
+                const rule = await ctx.learning.propose({
+                  role: "worker",
+                  text: r.answer.slice(0, 500),
+                  // CX-N4-1: scoped to the struggle's error code and the card's kind.
+                  scope: researchRuleScope(struggled ?? { title: "", scopeFiles: [] }, u.text),
+                  source: "research",
+                  // The struggle is the executed signal; the Researcher's answer
+                  // is a synthesis (MS-T8-9). The candidate waits for a person:
+                  // probation is off (O15, MS-T8-15).
+                  evidence: [
+                    { cardId: u.cardId, note: u.text, source: "gate", verified: "execution" },
+                    {
+                      cardId: u.cardId,
+                      note: `Researcher, sources: ${r.sources.join("; ")}`,
+                      source: "researcher",
+                      verified: "none",
+                    },
+                  ],
+                });
+                if (rule) console.log(`   Researcher proposed a candidate rule for ${u.cardId}`);
+              }
+            } finally {
+              await researcher.release();
+            }
+          }
+
+          // Manager batch: plans (the research is now in the playbook), answers.
+          // Models rule 20e: one queued request, held for the batch.
+          const managerHold = await router.submitHold("manager");
+          const manager = managerHold.adapter;
+          const plans = new Map<string, string>();
+          try {
+            for (const { card, result } of toRepair) {
+              console.log(`\n--- manager reviewing ${card.id} ---`);
+              // A rung-3 re-plan request carries the Worker's own account of the
+              // standing failures; otherwise the evidence's failures.
+              const plan = await planRepair(manager, {
+                card,
+                stopReason: result.replan
+                  ? `${result.stopReason}: ${result.replan.summary}`
+                  : result.stopReason,
+                failures: result.replan?.failures ?? result.evidence.failures,
+                files: collectCardFiles(result.worktreePath, card),
+              });
+              plans.set(card.id, plan);
+              reflections.push({ card, plan, firstStop: result.stopReason, retryPassed: false });
+              console.log(
+                plan
+                  .split("\n")
+                  .slice(0, 6)
+                  .map((l) => `   | ${l}`)
+                  .join("\n"),
+              );
+            }
+          } finally {
+            managerHold.release();
+          }
+          await answerPm(undefined, true).catch(() => undefined);
+          await collectAnswers();
+
+          // Retries, each once.
+          const retry = toRepair.map(({ card }) => card);
+          for (const card of retry) retried.add(card.id);
+          await pass(retry, 2, plans);
+          for (const r of reflections) {
+            r.retryPassed = entries.some(
+              (e) => e.cardId === r.card.id && e.attempt === 2 && e.passed,
+            );
+          }
+          failed.splice(0, failed.length); // a failed retry does not repeat
+        }
+        for (const card of deferred) {
           console.log(
-            plan
-              .split("\n")
-              .slice(0, 6)
-              .map((l) => `   | ${l}`)
-              .join("\n"),
+            `\n--- ${card.id} never ran: prerequisites ${(await blockedBy(card)).join(", ")} did not merge ---`,
           );
         }
-        await answerPm(undefined, true).catch(() => undefined);
-        await collectAnswers();
 
-        // Retries, each once.
-        const retry = toRepair.map(({ card }) => card);
-        for (const card of retry) retried.add(card.id);
-        await pass(retry, 2, plans);
-        for (const r of reflections) {
-          r.retryPassed = entries.some(
-            (e) => e.cardId === r.card.id && e.attempt === 2 && e.passed,
-          );
+        // End phase: learn from what happened, including the retries.
+        if (!halted && managerModel && (reflections.length > 0 || passedResults.length > 0)) {
+          // Models rule 20e: reflection and consolidation are one queued request,
+          // held for both; the reviews still queued join the same tour (C2).
+          const managerHold = await router.submitHold("manager");
+          try {
+            const manager = managerHold.adapter;
+            const learned = await reflectWithManager(manager, ctx.learning, reflections).catch(
+              () => 0,
+            );
+            if (learned > 0)
+              console.log(`\n--- Seshat proposed ${learned} rule(s) from this run ---`);
+            const c = await consolidateWithManager(manager, ctx.learning).catch(() => undefined);
+            if (c && c.merged + c.contradictions + c.duplicates > 0) {
+              console.log(
+                `--- Seshat consolidated rules: ${c.merged} merged, ${c.contradictions} contradiction(s) flagged, ${c.duplicates} duplicate(s) retired ---`,
+              );
+            }
+          } finally {
+            managerHold.release();
+          }
+          await answerPm(undefined, true).catch(() => undefined);
         }
-        failed.splice(0, failed.length); // a failed retry does not repeat
-      }
-      for (const card of deferred) {
-        console.log(
-          `\n--- ${card.id} never ran: prerequisites ${(await blockedBy(card)).join(", ")} did not merge ---`,
-        );
-      }
-
-      // End phase: learn from what happened, including the retries.
-      if (!halted && managerModel && (reflections.length > 0 || passedResults.length > 0)) {
-        const manager = await router.use("manager");
-        const learned = await reflectWithManager(manager, ctx.learning, reflections).catch(() => 0);
-        if (learned > 0) console.log(`\n--- Seshat proposed ${learned} rule(s) from this run ---`);
-        const c = await consolidateWithManager(manager, ctx.learning).catch(() => undefined);
-        if (c && c.merged + c.contradictions + c.duplicates > 0) {
+        // The reviews queued as cards passed (C6): the rest are served now,
+        // when `decide()` next lets the Reviewer visit (C7 may make them wait).
+        // A halted run (memory pressure, a stop) does not wait for them.
+        if (!halted) await reviews.drain();
+        // The human's messages are answered before the run ends; queued Worker
+        // questions too when Seshat is already resident (no extra swap).
+        await answerPm(undefined, router.isResident("manager")).catch(() => undefined);
+        const held = await boardService.listHeld();
+        for (const h of held)
           console.log(
-            `--- Seshat consolidated rules: ${c.merged} merged, ${c.contradictions} contradiction(s) flagged, ${c.duplicates} duplicate(s) retired ---`,
+            `\n--- ${h.id} is held: ${h.hold?.kind === "backpressure" ? `${h.hold.awaiting} refused: ${h.hold.reason}` : ""} ---`,
           );
+      } finally {
+        process.off("SIGINT", onSigint);
+        watchdog.stop();
+        presence.stop();
+        if (calibration) {
+          const night = await calibration.end().catch(() => ({ hostRefusals: [] as string[] }));
+          for (const why of night.hostRefusals) console.log(`   ${why}`);
         }
-        await answerPm(undefined, true).catch(() => undefined);
-        // Review last, once: the reviewer model loads a single time.
-        if (reviewerModel || reviewAll) {
-          await reviewPassed(reviewerModel ? await router.use("reviewer") : manager).catch(
-            () => undefined,
-          );
-        }
-      } else if (reviewAll && passedResults.length > 0) {
-        await reviewPassed(await router.use(reviewerModel ? "reviewer" : "manager")).catch(
-          () => undefined,
-        );
+        await router.releaseAll();
+        releaseLease();
       }
-      // The human's messages are answered before the run ends; queued Worker
-      // questions too when Seshat is already resident (no extra swap).
-      await answerPm(undefined, router.isResident("manager")).catch(() => undefined);
-      const held = await boardService.listHeld();
-      for (const h of held)
-        console.log(
-          `\n--- ${h.id} is held: ${h.hold?.kind === "backpressure" ? `${h.hold.awaiting} refused: ${h.hold.reason}` : ""} ---`,
-        );
-    } finally {
-      process.off("SIGINT", onSigint);
-      watchdog.stop();
-      await router.releaseAll();
-      releaseLease();
-    }
+    };
+    // Rule 20b: a measurement run (the frozen suite, a bake-off) bypasses C9
+    // and C10 and unloads its models when it ends, even when it fails.
+    await (swapMode.mode === "measurement" ? router.measurementRun(queueBody) : queueBody());
 
     const cardIds = [...new Set(entries.map((e) => e.cardId))];
     const firstTry = entries.filter((e) => e.attempt === 1 && e.passed).length;

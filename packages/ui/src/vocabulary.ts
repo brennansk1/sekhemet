@@ -186,6 +186,25 @@ export function isEmptyGateContract(sha: string | undefined): boolean {
   return sha === NO_GATES_CONFIG || sha === EMPTY_SHA256;
 }
 
+/**
+ * The gate strip's warning for the brief's invariants the architecture gate
+ * cannot check (gates GT-N1-1), from `/api/gates`' `invariants.notEnforced`:
+ * each line, and the two forms it could be restated in. Undefined when there
+ * are none.
+ */
+export function invariantsNotEnforced(
+  notEnforced: readonly { line: string; restate: readonly string[] }[] | undefined,
+): { label: string; heading: string; lines: string[]; forms: string[] } | undefined {
+  if (!notEnforced || notEnforced.length === 0) return undefined;
+  const n = notEnforced.length;
+  return {
+    label: `${n} ${n === 1 ? "invariant" : "invariants"} not enforced`,
+    heading: "The architecture gate cannot check these lines of the brief.",
+    lines: notEnforced.map((l) => l.line),
+    forms: [...(notEnforced[0]?.restate ?? [])],
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Stop reasons
 // ---------------------------------------------------------------------------

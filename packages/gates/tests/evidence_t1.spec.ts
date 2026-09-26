@@ -70,6 +70,13 @@ describe("the evidence bundle under one pipeline (T1)", () => {
     expect(e.abandoned).toEqual(["tried a Map; the test wants insertion order"]);
   });
 
+  it("rule 34: records every quarantined test, with the count, and nothing when there is none", () => {
+    expect(compileEvidence(base).quarantined).toBeUndefined();
+    const q = { test: "tests/a.spec.ts > flakes", firstRun: "fail", rerun: "passed", tree: "t:" };
+    const e = compileEvidence({ ...base, quarantined: [q] });
+    expect(e.quarantined).toEqual({ count: 1, tests: [q] });
+  });
+
   it("GT-T1-8: the summary shows an unavailable gate as not run, never as passed", () => {
     const text = summarizeEvidence(compileEvidence(base));
     expect(text).toMatch(/UNAVAILABLE osv/);

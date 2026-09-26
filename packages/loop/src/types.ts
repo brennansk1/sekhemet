@@ -306,6 +306,20 @@ export interface SessionOptions {
   subtaskAdapter?: LocalInferenceAdapter | undefined;
   /** Decoded tokens as they stream, for the dashboard's live step view (M2). */
   onToken?: ((delta: string) => void) | undefined;
+  /**
+   * The server slot this card runs on (RUN-35): its slot lease's number, sent
+   * as `id_slot`, so parallel cards keep their own KV slot and saved slot
+   * file (models rule 20i). Unset: the server's slot 0.
+   */
+  serverSlot?: number | undefined;
+  /**
+   * Smart Swap's step boundary (models rule 20e, C8; RUN-35): awaited before
+   * each step, which starts only once the residency scheduler admits it (no
+   * step starts while a decided swap waits at the drain barrier, and the
+   * step's weights are resident); the function it returns ends the step,
+   * which is a step boundary. Unset: every step starts at once.
+   */
+  beginStep?: (() => Promise<() => void>) | undefined;
   /** Project lifecycle hooks (K12): the ten events are emitted at their points. */
   hooks?: import("@sekhemet/kernel").LifecycleHookEngine | undefined;
   /** Official web docs for the `docs` tool when the installed copy has nothing (L10). */

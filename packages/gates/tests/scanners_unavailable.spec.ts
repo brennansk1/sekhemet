@@ -44,6 +44,8 @@ describe.runIf(platform() === "darwin")(
       git("commit", "-q", "-m", "seed");
       git("checkout", "-q", "-b", "card");
       writeFileSync(join(root, "a.ts"), "export const a = 1;\nexport const b = 2;\n");
+      // The card changes the lockfile, so osv has the card's dependencies to judge (GT-N2-1).
+      writeFileSync(join(root, "package-lock.json"), '{"lockfileVersion":3,"packages":{"":{}}}\n');
     });
     afterEach(() => {
       for (const d of [root, bin]) rmSync(d, { recursive: true, force: true });

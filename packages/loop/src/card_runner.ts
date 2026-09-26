@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { TurnHistoryItem } from "@sekhemet/context";
 import { PrefixStabilityGuard } from "@sekhemet/context";
-import type { GateFailure, GateResult, GateRung } from "@sekhemet/gates";
+import type { GateFailure, GateResult, GateRung, GateRunner } from "@sekhemet/gates";
 import {
   DEFAULT_GATES,
   type EvidenceBundle,
@@ -12,12 +12,20 @@ import {
   type RedFirstStatus,
   type RedFirstVerdict,
   type RunSettings,
+  type StagedTestRecord,
   type StepEvidence,
+  type TestOrigin,
+  type TestStrengthRecord,
   buildRepairRedCheck,
+  checkTestStrength,
+  closeQuarantine,
   compileEvidence,
   judgeRedFirst,
   loadGatesConfig,
   onlyNotRun,
+  quarantinedTests,
+  setQuarantinePolicy,
+  testOrigins,
   verificationRungs,
 } from "@sekhemet/gates";
 import {
@@ -43,6 +51,7 @@ import {
   ProcessSandbox,
   allowlistWarnings,
   cardAllowlist,
+  matchesGlob,
   mergeNetworkConfigs,
   tagUntrusted,
 } from "@sekhemet/sandbox";
@@ -146,6 +155,23 @@ export interface FailToPassReport {
   detail: string;
   /** The stop a refusal ends the card with (rule 6b). */
   stopReason?: RedFirstVerdict["stopReason"];
+  /** The acceptance tests' strength, judged before any work (rules 6, 6a, 32a; NEW-gates-6). */
+  testStrength?: TestStrengthRecord;
+}
+
+/**
+ * Whether a card's scope covers a file (GT-N2-2): an empty scope covers the
+ * whole repository, as does a root directory (`.`, `./`); otherwise an entry
+ * names the file, or is a glob or a directory that holds it.
+ */
+function scopeCovers(scope: readonly string[], file: string): boolean {
+  if (scope.length === 0) return true;
+  return scope.some((raw) => {
+    const entry = raw.trim().replace(/^\.\//, "");
+    if (entry === "" || entry === "." || entry === "/") return true;
+    if (entry.endsWith("/")) return file.startsWith(entry);
+    return entry === file || matchesGlob(file, entry);
+  });
 }
 
 /**
@@ -157,7 +183,12 @@ export interface FailToPassReport {
  */
 export function verificationSessionOptions(
   config: GatesConfig,
-  options: { repoRoot: string; restricted: boolean },
+  options: {
+    repoRoot: string;
+    restricted: boolean;
+    /** The card's scope: a changelog entry is demanded only when it holds CHANGELOG.md (GT-N2-2). */
+    scope?: readonly string[] | undefined;
+  },
 ): Pick<SessionOptions, "autofixCommand" | "styleFixCommands" | "protectedGlobs"> & {
   gateRungs: GateRung[];
   bounds: { maxFiles: number; maxLines: number };
@@ -170,19 +201,30 @@ export function verificationSessionOptions(
     // executing the repo's tests would execute its code (S12).
     gateRungs: verificationRungs(config.gates, options.restricted),
     ...(config.project.autofix ? { autofixCommand: config.project.autofix } : {}),
-    ...(config.project.styleFix && config.project.styleFixRules
+    // One style-fix process with every selected rule (gates rule 34b,
+    // GT-N3-5), not one process per rule.
+    ...(config.project.styleFix && (config.project.styleFixRules?.length ?? 0) > 0
       ? {
-          styleFixCommands: config.project.styleFixRules.map((rule) => [
-            ...(config.project.styleFix as string[]),
-            `--only=${rule}`,
-          ]),
+          styleFixCommands: [
+            [
+              ...config.project.styleFix,
+              ...(config.project.styleFixRules ?? []).map((rule) => `--only=${rule}`),
+            ],
+          ],
         }
       : {}),
     // The project's declared protection and size limits (defect 5, G10).
     protectedGlobs: config.project.protected,
     bounds: { maxFiles: config.project.maxFiles, maxLines: config.project.maxDiffLines },
-    // The built-in security, hygiene and robustness layers (G3).
-    builtinGates: config.project,
+    // The built-in security, hygiene and robustness layers (G3). A card
+    // whose scope does not hold CHANGELOG.md is told about a missing entry,
+    // never failed for an edit it may not make (gates rule 17, GT-N2-2).
+    builtinGates:
+      options.scope &&
+      !scopeCovers(options.scope, "CHANGELOG.md") &&
+      config.project.changelog !== false
+        ? { ...config.project, changelog: "advisory" }
+        : config.project,
     stateDir: join(options.repoRoot, ".sekhemet"),
   };
 }
@@ -195,6 +237,17 @@ export interface CardRunOptions extends Omit<SessionOptions, "cardId"> {
    * network, instead of tests that cannot run on a base that does not build.
    */
   buildRepair?: { command: string; args: string[]; timeoutMs?: number } | undefined;
+  /**
+   * Who wrote the card's acceptance tests, named explicitly for every staged
+   * file (the frozen suite passes `external`, so its measurement never
+   * changes). Unset, each file's origin is its own (`testOrigins`, lead
+   * ruling): `card` — a Planner, test-author or PM carry-over `test/staged`
+   * record matches its SHA-256, or the card's own diff wrote it — whose
+   * tests red-at-an-assertion and stub-kill may stop; `external` otherwise —
+   * the frozen suite's, a person's or a repository's tests, which need only
+   * fail on the base.
+   */
+  acceptanceTestsOrigin?: "card" | "external" | undefined;
   /** Hooks files that failed to load, each with its error, for the evidence (EXT-10). */
   hookErrors?: string[] | undefined;
   /** The card's configuration layer as `section.key = value` lines, for the evidence (SUR-40). */
@@ -1023,6 +1076,24 @@ export class CardRunner {
         ...(v.stopReason ? { stopReason: v.stopReason } : {}),
       };
     }
+    // NEW-gates-6 (rules 6, 6a, 32a): the smell lint, red at an assertion
+    // against a stub of the declared interface, and stub-kill, before any of
+    // the Worker's budget is spent. A check that could not judge (no JUnit
+    // path, a gate host) says so in the record and the gate run below decides.
+    const strength = await this.checkStrength(worktreePath, tests);
+    const withStrength = strength ? { testStrength: strength } : {};
+    if (strength?.verdict.stopReason && strength.verdict.status) {
+      return {
+        status: strength.verdict.status,
+        tests,
+        detail: strength.verdict.detail,
+        stopReason: strength.verdict.stopReason,
+        ...withStrength,
+      };
+    }
+    if (strength?.redAtAssertion.status === "red") {
+      return { status: "fails", tests, detail: strength.verdict.detail, ...withStrength };
+    }
     // A types-only card's acceptance test is a contract checked by the type
     // checker: `import type` and `expectTypeOf` are erased at runtime, so
     // under the test runner alone it passes against an empty file and the
@@ -1035,7 +1106,12 @@ export class CardRunner {
     try {
       result = await this.options.gateRunner.runGates(rungs, worktreePath);
     } catch (err) {
-      return { status: "unknown", tests, detail: `gates could not run: ${refusalReason(err)}` };
+      return {
+        status: "unknown",
+        tests,
+        detail: `gates could not run: ${refusalReason(err)}`,
+        ...withStrength,
+      };
     }
     // Gates that could not start say nothing about the tests: not red, not green.
     const verdict = judgeRedFirst(
@@ -1048,6 +1124,7 @@ export class CardRunner {
         status: "unknown",
         tests,
         detail: `gates could not run: ${result.failures[0]?.errorExcerpt.split("\n")[0] ?? ""}`,
+        ...withStrength,
       };
     }
     if (verdict.status === "fails") {
@@ -1056,6 +1133,7 @@ export class CardRunner {
         status: "fails",
         tests,
         detail: `${result.failures.length} failure(s); first: ${first}`,
+        ...withStrength,
       };
     }
     return {
@@ -1063,7 +1141,112 @@ export class CardRunner {
       tests,
       detail: verdict.detail,
       ...(verdict.stopReason ? { stopReason: verdict.stopReason } : {}),
+      ...withStrength,
     };
+  }
+
+  /**
+   * Each staged test's origin (lead ruling): the explicit origin when the
+   * caller names one, else `card` for a file a Planner, test-author or PM
+   * carry-over `test/staged` record matches by SHA-256 or the card's own
+   * diff wrote, `external` for the rest.
+   */
+  private async stagedTestOrigins(
+    worktreePath: string,
+    tests: string[],
+  ): Promise<Record<string, TestOrigin>> {
+    const { card } = this.options;
+    const forced = this.options.acceptanceTestsOrigin;
+    let staged: StagedTestRecord[] = [];
+    let cardDiff: string[] = [];
+    if (!forced) {
+      const events = await (
+        this.options.store?.cardEvents?.(card.id, ["test/staged"]) ?? Promise.resolve([])
+      ).catch(() => []);
+      staged = events
+        .map((e) => e.payload as Partial<StagedTestRecord>)
+        .filter(
+          (p): p is StagedTestRecord =>
+            typeof p?.path === "string" &&
+            typeof p.sha256 === "string" &&
+            typeof p.author === "string",
+        );
+      const base = this.options.baseBranch ?? "main";
+      try {
+        const git = (...args: string[]) =>
+          execFileSync("git", args, {
+            cwd: worktreePath,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "ignore"],
+          });
+        const harness = new Set(tests);
+        cardDiff = base.startsWith("-")
+          ? []
+          : [
+              ...git("diff", "--name-only", "--no-renames", base, "--").split("\n"),
+              ...git("ls-files", "--others", "--exclude-standard").split("\n"),
+            ].filter((f) => f && !harness.has(f));
+      } catch {
+        cardDiff = [];
+      }
+    }
+    return testOrigins({ root: worktreePath, tests, staged, cardDiff, forced });
+  }
+
+  /**
+   * The card's gate runner, closing quarantine once its first verification
+   * has run (rule 34): a later failure is the Worker's to fix, never
+   * quarantined.
+   */
+  private closingQuarantine(worktreePath: string): GateRunner {
+    const inner = this.options.gateRunner;
+    return {
+      ...(inner.gateIds ? { gateIds: inner.gateIds } : {}),
+      runGates: async (rungs, cwd) => {
+        try {
+          return await inner.runGates(rungs, cwd);
+        } finally {
+          closeQuarantine(worktreePath);
+        }
+      },
+    };
+  }
+
+  /**
+   * The acceptance tests' strength (NEW-gates-6), run through the project's
+   * test gate in this machine's sandbox. Undefined when it cannot be judged
+   * here: with `[gate_host]` the tests run on the gate host, and the gate run
+   * alone decides red-first.
+   */
+  private async checkStrength(
+    worktreePath: string,
+    tests: string[],
+  ): Promise<TestStrengthRecord | undefined> {
+    const { card } = this.options;
+    if (this.config.project.gateHost) return undefined;
+    const testGate =
+      this.config.gates.find((g) => g.rung === "test" && g.blocking) ??
+      DEFAULT_GATES.find((g) => g.rung === "test");
+    if (!testGate) return undefined;
+    try {
+      return await checkTestStrength({
+        sandbox: this.options.sandbox ?? new ProcessSandbox(),
+        root: worktreePath,
+        testGate,
+        tests,
+        origin: this.options.acceptanceTestsOrigin ?? "external",
+        origins: await this.stagedTestOrigins(worktreePath, tests),
+        change: card.change,
+        kind: cardKind(card),
+      });
+    } catch (err) {
+      this.emit({
+        type: "status",
+        cardId: card.id,
+        message: `test strength not judged: ${refusalReason(err)}`,
+      });
+      return undefined;
+    }
   }
 
   /** Move the card, holding it with a recorded reason when the board refuses. */
@@ -1150,6 +1333,10 @@ export class CardRunner {
       .catch(() => undefined);
     this.emit({ type: "status", cardId: card.id, message: `worktree ready at ${worktreePath}` });
 
+    // Rule 34: no quarantine begins during red-first; the card's first
+    // verification opens it (below) and closes it once it has run.
+    setQuarantinePolicy(worktreePath, undefined);
+    setQuarantinePolicy(worktreePath, { open: false });
     // G12: a fresh card's acceptance tests must fail before work begins.
     let failToPass: FailToPassReport | undefined;
     const fresh = !resumedFrom && !this.options.useExistingWorktree && attempt === 1;
@@ -1168,6 +1355,15 @@ export class CardRunner {
         return this.finishRefused(worktreePath, attempt, started, failToPass);
       }
     }
+
+    // Rule 34: a flaky test may be quarantined at the card's first
+    // verification only — a fresh attempt, before its first repair rung —
+    // never one of its acceptance tests or a test its diff changed or added.
+    setQuarantinePolicy(worktreePath, {
+      open: fresh,
+      never: (card.acceptanceTests ?? []).map((t) => (t.startsWith("tests/") ? t : `tests/${t}`)),
+      base: this.options.baseBranch ?? "main",
+    });
 
     const startMove = await this.move("in_progress");
     if (!startMove.ok) {
@@ -1267,6 +1463,7 @@ export class CardRunner {
           ...verificationSessionOptions(this.config, {
             repoRoot: this.options.repoRoot,
             restricted: this.options.restricted === true,
+            scope: this.options.card.scopeFiles,
           }),
           // GT-M6-5: the gates `note` may name as wrong, fixed for the attempt.
           suspectableGates: this.suspectableGates(),
@@ -1354,6 +1551,8 @@ export class CardRunner {
           // K11: every prompt is stored by hash before it is sent.
           onPrompt: (record: PromptRecord) => this.logPrompt(record),
           ...this.options,
+          // Rule 34: the first verification closes quarantine behind it.
+          gateRunner: this.closingQuarantine(worktreePath),
           // G25: each further sample draws at its own temperature.
           ...(sampleTemperature !== undefined ? { temperature: sampleTemperature } : {}),
           ...(resumedFrom && sampleIndex === 1
@@ -2004,7 +2203,11 @@ export class CardRunner {
       failures: [],
       filesWritten: [],
       lessons: [],
-      suggestion: `Rewrite ${failToPass.tests.join(", ")} so they fail until this card's behaviour exists; as staged they pass already.`,
+      // The strength check names what is wrong (a stand-in, a smell); without
+      // it, the tests passed on the untouched code.
+      suggestion: failToPass.testStrength?.verdict.stopReason
+        ? failToPass.detail
+        : `Rewrite ${failToPass.tests.join(", ")} so they fail until this card's behaviour exists; as staged they pass already.`,
     };
     this.emit({ type: "status", cardId: card.id, message: `vacuous tests: ${failToPass.detail}` });
     return this.finish({
@@ -2196,9 +2399,21 @@ export class CardRunner {
       durationMs,
       settings,
       gatesConfigSha256: this.config.sha256,
-      ...(session && session.getAdvisories().length > 0
-        ? { advisories: session.getAdvisories() }
+      // A test gap found at an advisory level goes to a person in Review,
+      // never to the Worker (GT-TQ-12).
+      ...((session?.getAdvisories().length ?? 0) +
+        (params.failToPass?.testStrength?.testGaps.length ?? 0) >
+      0
+        ? {
+            advisories: [
+              ...(session?.getAdvisories() ?? []),
+              ...(params.failToPass?.testStrength?.testGaps ?? []),
+            ],
+          }
         : {}),
+      ...(params.failToPass?.testStrength ? { testStrength: params.failToPass.testStrength } : {}),
+      // Rule 34: every test quarantined on the card, counted, for suite comparisons.
+      quarantined: quarantinedTests(params.worktreePath),
       // GT-T1-9: the SHA-256 of the attempt's event-log slice, which the
       // ledger recomputes; the transcript is kept by path beside it.
       ...(trajectoryRef ? { trajectoryRef } : {}),

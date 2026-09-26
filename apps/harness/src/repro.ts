@@ -7,9 +7,11 @@ import { fileURLToPath } from "node:url";
 import { type RunProfile, runProfileHash } from "@sekhemet/eval";
 import { TOOL_CATALOG } from "@sekhemet/loop";
 import {
+  DEFAULT_SWAP_POLICY,
   type LocalInferenceAdapter,
   ManagedLlamaServerAdapter,
   type ServerProps,
+  type SwapPolicyParams,
   type WorkerOverride,
   harnessProvenance,
 } from "@sekhemet/models";
@@ -67,6 +69,8 @@ export interface ReproRecord {
   measurement?: { purpose: string; by: string; createdAt: string };
   /** The person's override the Worker ran under (models rule 27, MD-N4-4). */
   workerOverride?: WorkerOverride;
+  /** Smart Swap's version and every parameter the scheduler ran under (models MD-N14-40). */
+  swapPolicy?: SwapPolicyParams;
 }
 
 export interface EngineSettings {
@@ -221,6 +225,8 @@ export function buildReproRecord(input: {
   /** The run's resolved `RunProfile`, when the run resolved one (MS-M9-4). */
   runProfile?: RunProfile | undefined;
   measurement?: { purpose: string; by: string; createdAt: string } | undefined;
+  /** The swap policy the scheduler ran under; default the RunProfile's, else the defaults. */
+  swapPolicy?: SwapPolicyParams | undefined;
 }): ReproRecord {
   const file = modelFileOf(input.model);
   const playbookPath = join(input.repoPath, ".sekhemet", "playbook.toml");
@@ -268,6 +274,7 @@ export function buildReproRecord(input: {
       ? { runProfile: { ...input.runProfile, hash: runProfileHash(input.runProfile) } }
       : {}),
     ...(input.measurement ? { measurement: input.measurement } : {}),
+    swapPolicy: input.swapPolicy ?? input.runProfile?.swapPolicy ?? DEFAULT_SWAP_POLICY,
     // Rule 27, MD-N4-4: a Worker running under a person's override says so.
     ...(workerOverride ? { workerOverride } : {}),
   };

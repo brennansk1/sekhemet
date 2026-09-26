@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 43 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 44 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,33 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 44 — 2026-09-26 (Smart Swap built and wired; B4.0b half A done)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver. Implementer helpers: Smart Swap part 1, part 2, the product wiring, and two fix rounds; the B4.0b gates items and their fix round. Two full independent reviews (Smart Swap, gates) and a narrow re-check of the four fixed blockers (Sonnet).
+
+- **Smart Swap, built** (models NEW-models-14, MD-N14-7..40; DEC-45):
+  - **The decision core:** one pure `decide()` with the full precedence. C1–C10: the threshold (during a pass the Worker's remaining cards count as its work, so other roles batch), tours with the ≤4! horizon, the C5 floor of 48 of every 60 minutes, and the C7 storm cap of max(1, ⌊θ_max·3600 ÷ C_pair⌋) round trips. Predicted waits use the median. Seshat answers from the ledger while the Worker runs, and the quick answerer is a setting that may never act. There is a closed-loop replay simulator and the paired-days sign-test admission. `RunProfile` records the swap policy.
+  - **The machine side:** the headroom probe, the minimum of GPU and system, off by default until a calibration night sets its reserves; a read-only probe with the owner's apps open showed 5.5 GB. Admission at 0.80 on both. Never two large models. The GPU ceiling is seeded from the recorded Metal crash, and a later timeout records a new one. The load-mode A/B, the drive, `--fit` and Ollama-requantisation guards, a 256 MB read probe. KV slots and prefix state are keyed per model; each card and each Seshat thread keeps its own slot (per-card `id_slot` only on multi-slot servers, so frozen-suite requests are byte-identical); slots are swept on erasure.
+  - **Wired into the product:**
+    - the queue's reviews, research, planning, reflection, external review, escalations and Seshat go through the policy's queue;
+    - step boundaries raise and lower the drain barrier;
+    - C9 overlap and C10 prefetch;
+    - presence, the watchdog level and the plan feed the snapshot;
+    - calibration nights (`overnight --calibration-night --permit-loads`);
+    - `withMeasurementRun` around the suite, bake-off, A/B and qualify.
+  - **Review:** 2 blockers (erasure never deleted slot files; an escalation hold defeated the watchdog's emergency unload) and 4 majors (most of the policy never ran in the product; `acquire` ignored the watchdog; the step barrier could stall; warmed page cache inflated DEC-42's free-memory reading), all fixed. The lead recorded two rulings in the spec: C7's floor of one round trip an hour, and the Worker's remaining cards counting as its work during a pass.
+- **B4.0b half A, done:**
+  - **NEW-gates-6, test strength:** a smell lint; red at an assertion against a throwing stub with `requireAssertions`; stub-kill over 7 stand-ins; one JUnit path (fast-xml-parser 5.11.1); ast-grep optional with a text fallback. **The lead's ruling:** strict checks apply to tests written for the card (in its own diff, or recorded by a planner, test author or PM through `test/staged` with a matching sha256). External tests (frozen-suite staged, a person's, pre-existing) record `redForWrongReason` and never stop the card. The frozen-suite dry run gives 30 cards and 0 stops, with `card_vang_2_hmac` recorded.
+  - **NEW-gates-3:** a verdict cache (tree hash + gate definition + tool, install and environment stamps); cheapest-first ordering; flaky quarantine only on positive per-test JUnit pass evidence, never for acceptance or card-diff tests, never during red-first, only at the first verification, ended by a tree change, and counted in the evidence; style fixes in one process.
+  - **NEW-gates-2:** osv judges only what the card added, across every changed lockfile (by `git diff --name-only`); the changelog is an advisory unless in scope; the `base_branch` setting; untracked files.
+  - **NEW-gates-1:** unenforced invariants in every card's evidence, `/api/gates` and the gate strip. The PM report is still open.
+  - **Review:** 2 blockers (quarantine failed open; the osv skip missed binary-marked and second lockfiles) and 2 majors (test origin never reached production; strength-check side effects leaked into the tree), all fixed.
+- **Re-check** (Sonnet): all four fixed blockers confirmed (quarantine fails closed; every changed lockfile scanned; erasure sweeps slot files and a failed index read restores nothing; the emergency unload of an escalation-held model with no running step). **The full gate then caught a security defect:** the strength check's own `git status`, `rev-parse` and `checkout` in a card worktree ran without the guarded git environment, so a repository's `core.fsmonitor` or smudge filter could run a program. Fixed test first (a marker-writing fsmonitor and filter are never run). SEC-18's allowlist gains `half_done.ts`, `runner.ts`, `test_strength.ts` and `headroom.ts` with reasons; each spawns only guarded git, ast-grep or read-only host probes, and the project's tests always run confined. The quick answerer's system prompt moved into the planner copy module.
+- **Gate:** a snapshot of `0c76973` plus this work: `tsc -b` and Biome clean, 397 files and 3,018 tests pass (1 skipped: real gitleaks, not installed), exit codes checked.
+- **Where the cards stop:**
+  - **B4.0b half B:** T2 (the one AST source index, IX-4 absorbing the remaining `typescript` importers), NEW-gates-4 (the visual layer), NEW-gates-5 (templates, per-language mutation, the claim gate, bundled offline rules), NEW-gates-7 (the onboarding baseline, superseded tests, tool-applied lines, workspaces), NEW-review-git-3, and NEW-gates-1's PM report. Also the rest of NEW-gates-6 (GT-TQ-3/4/5/8/10/11).
+  - **Waiting on model loads:** calibration of every Smart Swap D value, the load-mode A/B, the MLX engine comparison, the paired A/Bs of B4.0a's Worker-visible changes, and the B2.5 baseline's remaining 10 runs.
 
 ### Entry 43 — 2026-09-26 (Smart Swap: designed, specified and its record built; B4.0b part 1: one gate pipeline)
 

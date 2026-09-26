@@ -7,14 +7,22 @@ import { plannerStandupSection } from "../wave2.js";
 import {
   type PmSnapshot,
   answer,
-  isStatusQuestion,
   ledgerStandup,
+  seshatThreadId,
   summarizeConversation,
 } from "./agent.js";
 import { capabilityReport, capabilitySummary } from "./capability.js";
 import { flowMetrics, monteCarloForecast } from "./metrics.js";
 import { parseSlash, runSlash } from "./slash.js";
 import type { PmStore } from "./store.js";
+import { PM_EVENTS, type PmMessage } from "./types.js";
+import {
+  type SeshatWait,
+  ledgerAnswer,
+  ledgerQuestion,
+  quickAnswer,
+  waitInWords,
+} from "./while_worker.js";
 
 /** The PM's model unless the user names another: the 27B dense manager. */
 export const DEFAULT_PM_MODEL = "dirk-27b:latest";
@@ -161,6 +169,20 @@ export interface AnswerDeps {
     question: string,
     opts?: { deep?: boolean },
   ) => Promise<import("../research/researcher.js").ResearchAnswer>;
+  /**
+   * When the full answer would start (the median) and whether it would break
+   * the Worker's floor (models rule 20f, C5): the scheduler's `decide()`.
+   */
+  predictWait?: () => Promise<SeshatWait>;
+  /**
+   * The quick answerer a person named (a setting of the Planner role, rule
+   * 20f b): used only when `admitted` says the measured headroom admits it.
+   */
+  quick?: {
+    name: string;
+    admitted: () => Promise<boolean>;
+    acquire: () => Promise<ModelHold>;
+  };
 }
 
 /**
@@ -202,6 +224,63 @@ export async function dailyStandup(deps: {
   const text = await withPlannerStandup(ledgerStandup(snapshot), deps);
   const marker = text.indexOf("\n\n_Answered from the ledger");
   return marker === -1 ? text : text.slice(0, marker);
+}
+
+/** Whether a reply by `model` came after message `seq` (a note is said once per new message). */
+async function saidSince(pmStore: PmStore, seq: number, model: string): Promise<boolean> {
+  const replies = await pmStore.log.getEventsByTypes([PM_EVENTS.reply]);
+  return replies.some(
+    (e) => e.seq > seq && (e.payload as { model?: string } | undefined)?.model === model,
+  );
+}
+
+/**
+ * Rule 20f (b) and (c) while the Worker keeps its floor: a quick answer when
+ * a quick answerer is named and headroom admits it — labelled, with no tools,
+ * recording nothing it proposes — then the full answer's predicted wait in
+ * words, each said once per new message; the messages stay queued.
+ */
+async function answerWhileWorkerRuns(
+  deps: AnswerDeps,
+  queued: PmMessage[],
+  wait: SeshatWait,
+): Promise<void> {
+  const newest = Math.max(...queued.map((m) => m.seq));
+  const quick = deps.quick;
+  const quickModel = quick ? `${quick.name} (quick answer)` : undefined;
+  if (
+    quick &&
+    quickModel &&
+    !(await saidSince(deps.pmStore, newest, quickModel)) &&
+    (await quick.admitted().catch(() => false))
+  ) {
+    let hold: ModelHold | undefined;
+    try {
+      hold = await quick.acquire();
+      const snapshot = await buildSnapshot(
+        deps.repoPath,
+        deps.cardStore,
+        deps.pmStore,
+        deps.pmModel,
+      );
+      const text = await quickAnswer(hold.adapter, snapshot, queued, quick.name);
+      // No proposals, no cites: a quick answer never acts (rule 20f b).
+      await deps.pmStore.appendReply({ replyTo: [], text, model: quickModel });
+    } catch {
+      // A quick answer that fails leaves the full answer queued, as before.
+    } finally {
+      hold?.release();
+    }
+  }
+  if (!(await saidSince(deps.pmStore, newest, "scheduler")))
+    await deps.pmStore.appendReply({ replyTo: [], text: waitInWords(wait), model: "scheduler" });
+  await deps.pmStore.setStatus({
+    phase: "waiting_for_step",
+    model: deps.pmModel,
+    detail: waitInWords(wait),
+    etaSeconds: Math.round(wait.waitMs / 1000),
+    ...(deps.step !== undefined ? { step: deps.step, workerPaused: false } : {}),
+  });
 }
 
 export async function answerQueued(deps: AnswerDeps): Promise<boolean> {
@@ -249,16 +328,38 @@ export async function answerQueued(deps: AnswerDeps): Promise<boolean> {
   if (queued.length === 0) return true;
   const stepInfo = deps.step !== undefined ? { step: deps.step, workerPaused: true } : {};
 
-  // Status questions need facts, not judgement: answer from the ledger and
-  // never pay a 40-120 s model swap (research: swap-cost mitigation).
-  if (queued.every((m) => isStatusQuestion(m.text))) {
+  // Rule 20f (a): status, where the cards stop, what waits on the person and
+  // the predicted wait need facts, not judgement: answered from the ledger
+  // and the board, with no model and never a swap (MD-N14-27).
+  let wait: SeshatWait | undefined;
+  const toAnswer: typeof queued = [];
+  for (const m of queued) {
+    const kind = ledgerQuestion(m.text);
+    if (!kind) {
+      toAnswer.push(m);
+      continue;
+    }
+    if (kind === "wait") wait ??= await deps.predictWait?.();
     const snapshot = await buildSnapshot(deps.repoPath, deps.cardStore, deps.pmStore, deps.pmModel);
     await deps.pmStore.appendReply({
-      replyTo: queued.map((m) => m.id),
-      text: await withPlannerStandup(ledgerStandup(snapshot), deps),
+      replyTo: [m.id],
+      text:
+        kind === "status"
+          ? await withPlannerStandup(ledgerStandup(snapshot), deps)
+          : ledgerAnswer(kind, snapshot, wait),
       model: "ledger",
     });
-    return true;
+  }
+  if (toAnswer.length === 0) return true;
+  queued.splice(0, queued.length, ...toAnswer);
+
+  // Rule 20f (b), (c): when the full answer would break the Worker's floor
+  // (C5), a quick answer if one is admitted, the predicted wait in words,
+  // and the question stays queued for the full answer (MD-N14-28, -29).
+  wait ??= await deps.predictWait?.();
+  if (wait?.quickPath) {
+    await answerWhileWorkerRuns(deps, queued, wait);
+    return false;
   }
 
   let hold: ModelHold | undefined;
@@ -266,8 +367,8 @@ export async function answerQueued(deps: AnswerDeps): Promise<boolean> {
     await deps.pmStore.setStatus({
       phase: "loading_pm",
       model: deps.pmModel,
-      detail: `Loading the PM (${deps.pmModel})`,
-      etaSeconds: PM_LOAD_ETA_SECONDS,
+      detail: wait && wait.waitMs > 0 ? waitInWords(wait) : `Loading the PM (${deps.pmModel})`,
+      etaSeconds: wait ? Math.round(wait.waitMs / 1000) : PM_LOAD_ETA_SECONDS,
       ...stepInfo,
     });
     hold = await deps.acquire();
@@ -321,6 +422,7 @@ export async function answerQueued(deps: AnswerDeps): Promise<boolean> {
       summary,
       undefined,
       deps.researcher,
+      seshatThreadId(deps.repoPath),
     );
     const reply = await deps.pmStore.appendReply({
       replyTo: queued.map((m) => m.id),

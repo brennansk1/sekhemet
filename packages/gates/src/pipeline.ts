@@ -242,9 +242,18 @@ export function declaredStage(runner: GateRunner, rungs: GateRung[], cwd: string
           failures.push(failure);
         }
       }
+      // A flaky test is reported to the person, never charged to the Worker
+      // (rule 34, GT-N3-4).
+      const advisories = outcomes.flatMap((o) =>
+        (o.quarantined ?? []).map(
+          (q) =>
+            `flaky test quarantined until the tree changes: ${q.test} failed, then ${q.rerun}. First run: ${q.firstRun.split("\n").slice(0, 3).join(" ")}`,
+        ),
+      );
       return {
         outcomes,
         failures,
+        ...(advisories.length > 0 ? { advisories } : {}),
         ...(r.defects ? { defects: r.defects } : {}),
       };
     },

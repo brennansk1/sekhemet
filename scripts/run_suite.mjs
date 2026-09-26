@@ -295,7 +295,9 @@ const driver = {
       execFileSync("node", [join(ROOT, "apps/harness/dist/index.js"), ...args], {
         stdio: "inherit",
         timeout: timeoutMs,
-        env: { ...process.env, ...env },
+        // Gates rule 6a (lead ruling): the suite's staged acceptance tests are
+        // external, named explicitly so the frozen measurement never changes.
+        env: { ...process.env, ...env, SEKHEMET_ACCEPTANCE_ORIGIN: "external" },
       });
     } catch (err) {
       // A non-zero exit is a run with failures, not a failed run: the report decides.

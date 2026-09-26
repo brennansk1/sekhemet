@@ -1596,7 +1596,15 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       failedCheckStanding: this.lastGateFailures.length > 0,
     };
     this.stepMeta = {};
-    const turn = await this.executeTurnInner();
+    // Smart Swap (models rule 20e, C8): the step starts when the scheduler
+    // admits it, and its end is a step boundary; nothing preempts it mid-step.
+    const endStep = await this.options.beginStep?.();
+    let turn: TurnResult;
+    try {
+      turn = await this.executeTurnInner();
+    } finally {
+      endStep?.();
+    }
     Object.assign(turn, this.stepMeta);
     // WL-T3-1: the phase, from the one pure function.
     turn.phase = phaseOf({
@@ -1773,6 +1781,12 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       tools,
       // M9: the arm measured for this model, unless the card sets one.
       toolArm: this.options.toolArm ?? this.options.modelAdapter.preferredToolArm ?? "arm_a_flat",
+      // models rule 20i: the card's attempt is a live session on its slot, saved
+      // when the Worker's weights leave and re-prefilled on return until the
+      // slot-restore equivalence check passes (MD-N14-36).
+      session: { owner: this.cardId, kind: "live_card" },
+      // RUN-35: the card's slot lease is its server slot.
+      ...(this.options.serverSlot !== undefined ? { slot: this.options.serverSlot } : {}),
       // M2: tokens stream to the dashboard's step view as they are decoded.
       ...(this.options.onToken ? { onToken: this.options.onToken } : {}),
       ...(this.options.temperature !== undefined ? { temperature: this.options.temperature } : {}),

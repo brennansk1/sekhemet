@@ -1,3 +1,5 @@
+import type { Engine, LoadOptions } from "./load_mechanics.js";
+
 export type ToolArm = "arm_a_flat" | "arm_b_json" | "arm_c_sketch";
 
 /**
@@ -102,6 +104,13 @@ export interface InferenceRequest {
    * evict each other's cached prefix. Ignored by Ollama.
    */
   slot?: number;
+  /**
+   * The live session this request continues on its slot (models rule 20i):
+   * Seshat's thread by thread id, or a card's attempt. Its slot is saved when
+   * the weights leave and restored on return; `sources` are the ledger event
+   * and blob ids the prompt was built from, so an erasure deletes the slot.
+   */
+  session?: { owner: string; kind: "thread" | "live_card"; sources?: string[] };
   /** Whose prompt this is (worker, planner, seshat, reviewer, researcher): named in a refusal (CX-N3-3). */
   role?: string;
 }
@@ -205,6 +214,21 @@ export interface LocalInferenceAdapter {
   healthCheck?(): Promise<AdapterHealth>;
 }
 
+/**
+ * What a serving engine tells the residency scheduler (models rules 20g,
+ * 20h): a Metal command-buffer timeout (the host's GPU ceiling), or a model
+ * Ollama serves requantised.
+ */
+export type ModelSignal =
+  | { kind: "metal_timeout"; detail: string }
+  | {
+      kind: "requantised";
+      servedQuant?: string;
+      fileQuant?: string;
+      hashDiffers: boolean;
+      reason: string;
+    };
+
 /** An adapter that can release its weights. HttpInferenceAdapter implements this. */
 export interface UnloadableAdapter extends LocalInferenceAdapter {
   unload?(): Promise<void>;
@@ -220,7 +244,20 @@ export interface UnloadableAdapter extends LocalInferenceAdapter {
    * watchdog's unload): the server process is stopped or the request
    * cancelled, and the promise rejects.
    */
-  load?(signal?: AbortSignal): Promise<"loaded" | "adopted">;
+  load?(signal?: AbortSignal, options?: LoadOptions): Promise<"loaded" | "adopted">;
+  /** Listen for the engine's signals (a Metal timeout, a requantised model). */
+  onSignal?(listener: (signal: ModelSignal) => void): void;
+  /** The engine serving the weights (rule 20h), recorded on `model/loaded`. */
+  readonly engine?: Engine | undefined;
   /** The weights file (or store) and its bytes, for Smart Swap's record; undefined when unknown. */
   weightsSource?(): Promise<{ path: string; bytes: number } | undefined>;
+  /**
+   * The ledger's erasure index, swept over the adapter's saved slots before
+   * every restore (rule 20i, MD-N14-37: a slot an erasure covers is deleted).
+   */
+  setErasureSource?(
+    source:
+      | (() => { byEvent: ReadonlyMap<string, unknown>; byBlob: ReadonlyMap<string, unknown> })
+      | undefined,
+  ): void;
 }

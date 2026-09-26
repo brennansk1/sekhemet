@@ -1,4 +1,5 @@
 import { execFile, execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   appendFileSync,
   copyFileSync,
@@ -60,7 +61,7 @@ import { confinedSandbox, mergeNetworkConfigs, policyFetch } from "@sekhemet/san
 import { NodeGitSyncAdapter } from "@sekhemet/sync";
 import { integrationBranch } from "./accept.js";
 import { isAirgapped, mirrorRegistry } from "./airgap.js";
-import { cardGateRunner } from "./card_gates.js";
+import { cardGateRunner, gateBaseBranch } from "./card_gates.js";
 import {
   lastPauseSeq,
   messageLabel,
@@ -217,6 +218,14 @@ export interface ExecuteCardOptions {
   signal?: AbortSignal;
   /** A cap on the card's step budget (`queue --max-turns`), applied after planning. */
   maxSteps?: number;
+  /** The card's slot lease number, its server slot (RUN-35, models rule 20i). */
+  serverSlot?: number;
+  /**
+   * Smart Swap's step boundary (models rule 20e, C8): the residency
+   * scheduler's `beginStep` for the queue the card runs on. Each step waits
+   * for it and ends it, so a decided swap drains at the boundary.
+   */
+  beginStep?: () => Promise<() => void>;
 }
 
 /**
@@ -440,8 +449,10 @@ export async function executeCard(
     },
     card,
     repoRoot: ctx.repoPath,
+    ...(options.serverSlot !== undefined ? { serverSlot: options.serverSlot } : {}),
+    ...(options.beginStep ? { beginStep: options.beginStep } : {}),
     // RG-S5-14: cut from, rebased onto and diffed against the integration branch.
-    baseBranch: integrationBranch(ctx.repoPath),
+    baseBranch: gateBaseBranch(ctx.repoPath, gatesConfig),
     worktreePath,
     stepBudget: card.stepBudget,
     modelAdapter: tracedModel,
@@ -555,6 +566,12 @@ export async function executeCard(
     evidenceGate:
       ctx.runProfile?.switches.evidenceGate ??
       (process.env.SEKHEMET_EVIDENCE_GATE === "on" ? "on" : "off"),
+    // Gates rule 6a (lead ruling): the frozen suite names its staged tests
+    // external, so its measurement never changes with a record; unnamed,
+    // each staged file's origin is its own.
+    ...(process.env.SEKHEMET_ACCEPTANCE_ORIGIN === "external"
+      ? { acceptanceTestsOrigin: "external" as const }
+      : {}),
     // M2: decoded tokens go to the card's live file, which the dashboard
     // streams while the step is still generating.
     onToken: ctx.onToken
@@ -597,6 +614,25 @@ export async function executeCard(
         if (existsSync(from)) {
           copyFileSync(from, join(testsDir, name));
           log(`   staged acceptance test: tests/${name}`);
+          // Gates rule 6a (lead ruling): the staged file by path and SHA-256.
+          // Taken from the repository's acceptance/ directory, its author is
+          // the repository's: only a Planner, test-author or PM carry-over
+          // record for the same content makes it the card's own.
+          await ctx.cardStore
+            .recordEvent({
+              type: "test/staged",
+              cardId: card.id,
+              actor: "executor",
+              payload: {
+                cardId: card.id,
+                path: `tests/${name}`,
+                sha256: createHash("sha256")
+                  .update(readFileSync(join(testsDir, name)))
+                  .digest("hex"),
+                author: "repository",
+              },
+            })
+            .catch(() => undefined);
         }
       }
     },

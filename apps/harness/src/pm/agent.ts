@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { resolve } from "node:path";
 import {
   type AllocationResult,
   type ContextSection,
@@ -626,6 +628,14 @@ export function fitSeshatPrompt(
   };
 }
 
+/**
+ * Seshat's thread in a repository, as a live session's owner (models rule
+ * 20i): one per repository, no path in it.
+ */
+export function seshatThreadId(repoPath: string): string {
+  return `seshat-${createHash("sha256").update(resolve(repoPath)).digest("hex").slice(0, 12)}`;
+}
+
 /** Ask the PM model to answer the queued messages. One request, no side effects. */
 export async function answer(
   model: LocalInferenceAdapter,
@@ -637,7 +647,10 @@ export async function answer(
   libraries?: typeof searchLibraries,
   /** The Researcher, when one is configured (the fourth model). */
   researcher?: (question: string, opts?: { deep?: boolean }) => Promise<ResearchAnswer>,
+  /** The thread's live session (models rule 20i): its slot is saved and restored across swaps. */
+  threadId?: string,
 ): Promise<PmAnswer> {
+  const session = threadId ? { session: { owner: threadId, kind: "thread" as const } } : {};
   const tools = researcher ? [...PM_TOOLS, ASK_RESEARCHER_TOOL] : PM_TOOLS;
   const systemPrompt = pmSystemPrompt(snapshot);
   // CX-N3-7: every request is fitted to the Planner's configured context.
@@ -661,6 +674,7 @@ export async function answer(
     temperature: 0.3,
     maxTokens: SESHAT_ANSWER_TOKENS,
     role: "seshat",
+    ...session,
   });
   for (let round = 0; round < 2; round++) {
     const isLookup = (c: ToolCall) => c.name === "find_library" || c.name === "ask_researcher";
@@ -712,6 +726,7 @@ export async function answer(
       temperature: 0.3,
       maxTokens: SESHAT_ANSWER_TOKENS,
       role: "seshat",
+      ...session,
     });
   }
   calls.push(

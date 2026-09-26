@@ -10,6 +10,7 @@ import {
 } from "@sekhemet/gates";
 import { verificationSessionOptions, verifyCardTree } from "@sekhemet/loop";
 import { confinedSandbox } from "@sekhemet/sandbox";
+import { integrationBranch } from "./accept.js";
 import { withArchitectureGate } from "./architecture_gate.js";
 import { withLicenseGate } from "./license_gate.js";
 import { withReachabilityGate } from "./reachability_gate.js";
@@ -29,11 +30,24 @@ export interface CardGateInput {
     acceptanceTests?: string[] | undefined;
     spec?: string | undefined;
     acceptanceCriteria?: string[] | undefined;
+    /** The card's scope: a changelog entry is demanded only when it holds CHANGELOG.md (GT-N2-2). */
+    scopeFiles?: string[] | undefined;
   };
+}
+
+/**
+ * The branch the project gates judge a card against (gates rule 16,
+ * GT-N2-3): `[project] base_branch` in `gates.toml`, else the project's
+ * integration branch (`[review] integration_branch`) — never a hard-coded
+ * `main`.
+ */
+export function gateBaseBranch(repoPath: string, gatesConfig: GatesConfig): string {
+  return gatesConfig.project.baseBranch ?? integrationBranch(repoPath);
 }
 
 export function cardGateRunner(input: CardGateInput): GateRunner {
   const { repoPath, gatesConfig, card } = input;
+  const base = gateBaseBranch(repoPath, gatesConfig);
   // Restricted mode refuses to execute where the OS cannot confine the
   // subprocess, rather than quietly running the gates unsandboxed.
   const sandbox = confinedSandbox(input.restricted);
@@ -41,7 +55,7 @@ export function cardGateRunner(input: CardGateInput): GateRunner {
   // the commit-trailer contract on the card's branch — and refuses exports
   // the card added that nothing uses and nothing requires, which is how a
   // project decays one reasonable change at a time — and refuses a change
-  // that breaks or removes a test main already guarantees, or an invariant
+  // that breaks or removes a test the base already guarantees, or an invariant
   // the project's brief declares.
   return withArchitectureGate(
     withRegressionGate(
@@ -68,7 +82,9 @@ export function cardGateRunner(input: CardGateInput): GateRunner {
                   maxFailuresReported: Number.POSITIVE_INFINITY,
                 }),
             repoPath,
+            base,
           ),
+          base,
         ),
         // What asked for this card's work — its acceptance tests and its own
         // spec — makes an export reachable before the code that calls it exists.
@@ -76,10 +92,11 @@ export function cardGateRunner(input: CardGateInput): GateRunner {
           tests: card.acceptanceTests ?? [],
           text: [card.spec ?? "", ...(card.acceptanceCriteria ?? [])].join("\n"),
         },
+        base,
       ),
-      { ownTests: card.acceptanceTests ?? [] },
+      { ownTests: card.acceptanceTests ?? [], base },
     ),
-    { briefPath: join(repoPath, ".sekhemet", "brief.md") },
+    { briefPath: join(repoPath, ".sekhemet", "brief.md"), base },
   );
 }
 
@@ -99,7 +116,11 @@ export async function verifyCardWorktree(
 ): Promise<PipelineResult> {
   const { gatesConfig, restricted } = input;
   // The card run's own verification settings (GT-T1-1): one source.
-  const session = verificationSessionOptions(gatesConfig, { repoRoot: input.repoPath, restricted });
+  const session = verificationSessionOptions(gatesConfig, {
+    repoRoot: input.repoPath,
+    restricted,
+    scope: input.card.scopeFiles,
+  });
   return verifyCardTree({
     root: input.worktree,
     base: input.base,

@@ -1,6 +1,9 @@
 import { statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, parse, resolve } from "node:path";
+import type { GpuCeiling } from "./headroom.js";
+import type { Engine, LoadMode } from "./load_mechanics.js";
+import type { SwapOverheadPayload } from "./swap_policy.js";
 
 /**
  * Smart Swap: what a model swap costs — measured, predicted and flagged when
@@ -32,7 +35,19 @@ export const SWAP_EVENTS = {
   unloaded: "model/unloaded",
   firstToken: "model/first_token",
   slowLoad: "model/slow_load",
+  /** A GPU ceiling recorded on a Metal timeout (models MD-N14-33). */
+  gpuCeiling: "model/gpu_ceiling",
+  /** A model Ollama serves requantised (models rule 20h). */
+  requantised: "model/requantised",
 } as const;
+
+/** The `model/requantised` payload: structural only. */
+export interface ModelRequantisedPayload {
+  model: string;
+  servedQuant?: string;
+  fileQuant?: string;
+  hashDiffers: boolean;
+}
 
 /** Startup a load pays before reading weights (process, allocation, warm-up). */
 export const LOAD_OVERHEAD_MS = 5000;
@@ -77,6 +92,10 @@ export interface ModelLoadedPayload {
   medianMs: number;
   p90Ms: number;
   basis: "measured" | "estimate";
+  /** The engine that loaded it (rule 20h). */
+  engine?: Engine;
+  /** How it was loaded (rule 20h): mmap, `--no-mmap`, or a pre-read then mmap. */
+  loadMode?: LoadMode;
 }
 
 export interface ModelUnloadedPayload {
@@ -111,7 +130,10 @@ export type SwapPayload =
   | ModelLoadedPayload
   | ModelUnloadedPayload
   | ModelFirstTokenPayload
-  | ModelSlowLoadPayload;
+  | ModelSlowLoadPayload
+  | SwapOverheadPayload
+  | GpuCeiling
+  | ModelRequantisedPayload;
 
 /** One recorded swap event, as read back from the ledger. */
 export interface SwapEvent {
@@ -186,11 +208,31 @@ export function volumeOf(path: string, probe: VolumeProbe = {}): Volume {
 }
 
 /**
+ * The loads a prediction reads (MD-N14-8): after three consecutive loads
+ * above the p90 of the loads before them, the baseline is re-taken from
+ * those loads onward, because the drive or the placement changed.
+ */
+function sinceBaseline(loads: readonly number[]): number[] {
+  let start = 0;
+  for (let i = 0; i + 2 < loads.length; i++) {
+    const before = loads.slice(Math.max(start, i - PREDICTION_WINDOW), i);
+    if (before.length < MIN_MEASURED_SAMPLES) continue;
+    const p90 = percentile(before, 0.9);
+    if ([0, 1, 2].every((k) => (loads[i + k] as number) > p90)) start = i;
+  }
+  return loads.slice(start);
+}
+
+/**
  * The load history and the prediction it gives (MD-N14-4). Pure: fed samples,
  * it predicts; it reads no clock and no disk.
  */
 export class SwapCostBook {
   private readonly samples: LoadSample[] = [];
+  /** Recorded unload milliseconds per weights, oldest first. */
+  private readonly unloads = new Map<string, number[]>();
+  /** First-token milliseconds per weights: after a load, and warm. */
+  private readonly firstTokens = new Map<string, { afterLoad: number[]; warm: number[] }>();
 
   constructor(history: readonly LoadSample[] = []) {
     for (const s of history) this.add(s);
@@ -198,6 +240,40 @@ export class SwapCostBook {
 
   public add(sample: LoadSample): void {
     this.samples.push(sample);
+  }
+
+  /** Record an unload's milliseconds (rule 20d: C_pair's unloads). */
+  public addUnload(model: string, unloadMs: number): void {
+    const list = this.unloads.get(model) ?? [];
+    list.push(unloadMs);
+    this.unloads.set(model, list);
+  }
+
+  /** The median and p90 of the last 20 unloads of these weights; undefined with none. */
+  public unloadCost(model: string): { median: number; p90: number } | undefined {
+    const list = (this.unloads.get(model) ?? []).slice(-PREDICTION_WINDOW);
+    if (list.length === 0) return undefined;
+    return { median: percentile(list, 0.5), p90: percentile(list, 0.9) };
+  }
+
+  /** Record a first token: the first reply after a load, or a warm reply. */
+  public addFirstToken(model: string, ms: number, afterLoad: boolean): void {
+    const entry = this.firstTokens.get(model) ?? { afterLoad: [], warm: [] };
+    (afterLoad ? entry.afterLoad : entry.warm).push(ms);
+    this.firstTokens.set(model, entry);
+  }
+
+  /**
+   * The first-token time above steady state after a load (rule 20d): the
+   * median first token after a load less the median warm one (0 while no
+   * warm reply is known); undefined with no first token after a load.
+   */
+  public firstTokenExcess(model: string): number | undefined {
+    const entry = this.firstTokens.get(model);
+    const after = (entry?.afterLoad ?? []).slice(-PREDICTION_WINDOW);
+    if (after.length === 0) return undefined;
+    const warm = (entry?.warm ?? []).slice(-PREDICTION_WINDOW);
+    return Math.max(0, percentile(after, 0.5) - (warm.length ? percentile(warm, 0.5) : 0));
   }
 
   /**
@@ -220,10 +296,11 @@ export class SwapCostBook {
     cache: CacheState;
     bytes: number;
   }): LoadPrediction {
-    const mine = this.samples
-      .filter((s) => s.model === load.model && s.volume === load.volume && s.cache === load.cache)
-      .slice(-PREDICTION_WINDOW)
-      .map((s) => s.loadMs);
+    const mine = sinceBaseline(
+      this.samples
+        .filter((s) => s.model === load.model && s.volume === load.volume && s.cache === load.cache)
+        .map((s) => s.loadMs),
+    ).slice(-PREDICTION_WINDOW);
     if (mine.length >= MIN_MEASURED_SAMPLES) {
       return {
         ...load,
@@ -347,7 +424,14 @@ export class SwapCostTracker {
     return this.seeded;
   }
 
+  /** GPU ceilings recorded on Metal timeouts, read back from the ledger (MD-N14-33). */
+  public readonly ceilings: GpuCeiling[] = [];
+
   private apply(e: SwapEvent): void {
+    if (e.type === SWAP_EVENTS.gpuCeiling) {
+      this.ceilings.push(e.payload as GpuCeiling);
+      return;
+    }
     if (e.type === SWAP_EVENTS.loaded) {
       const p = e.payload as ModelLoadedPayload;
       this.book.add({
@@ -359,7 +443,12 @@ export class SwapCostTracker {
       });
       this.loadsAt.push({ at: e.at, model: p.model, bytes: p.bytes });
     } else if (e.type === SWAP_EVENTS.unloaded) {
-      this.lastUnload.set((e.payload as ModelUnloadedPayload).model, e.at);
+      const p = e.payload as ModelUnloadedPayload;
+      this.lastUnload.set(p.model, e.at);
+      if (p.confirmed) this.book.addUnload(p.model, p.unloadMs);
+    } else if (e.type === SWAP_EVENTS.firstToken) {
+      const p = e.payload as ModelFirstTokenPayload;
+      this.book.addFirstToken(p.model, p.firstTokenMs, true);
     }
   }
 
@@ -399,8 +488,12 @@ export class SwapCostTracker {
     loadMs: number;
     /** The worst pressure level at the load's start or end. */
     pressureLevel: number | undefined;
+    engine?: Engine;
+    loadMode?: LoadMode;
+    /** The cache state measured for this load (MD-N14-10); default the prediction's. */
+    cache?: CacheState;
   }): Promise<ModelSlowLoadPayload | undefined> {
-    const { prediction: p } = l;
+    const p = l.cache ? { ...l.prediction, cache: l.cache } : l.prediction;
     const at = this.options.now();
     const payload: ModelLoadedPayload = {
       model: p.model,
@@ -412,6 +505,8 @@ export class SwapCostTracker {
       medianMs: p.medianMs,
       p90Ms: p.p90Ms,
       basis: p.basis,
+      ...(l.engine ? { engine: l.engine } : {}),
+      ...(l.loadMode ? { loadMode: l.loadMode } : {}),
     };
     await this.write(SWAP_EVENTS.loaded, payload);
     this.apply({ type: SWAP_EVENTS.loaded, payload, at });
@@ -445,8 +540,25 @@ export class SwapCostTracker {
     this.apply({ type: SWAP_EVENTS.unloaded, payload: u, at: this.options.now() });
   }
 
+  /** Record a GPU ceiling (a Metal timeout): later admissions use it (MD-N14-33). */
+  public async gpuCeiling(c: GpuCeiling): Promise<void> {
+    await this.write(SWAP_EVENTS.gpuCeiling, c);
+    this.ceilings.push(c);
+  }
+
+  /** Record a model Ollama serves requantised (rule 20h); the notifier raises a notice. */
+  public async requantised(r: ModelRequantisedPayload): Promise<void> {
+    await this.write(SWAP_EVENTS.requantised, r);
+  }
+
   /** Record the first reply after a load (MD-N14-2). */
   public async firstToken(f: ModelFirstTokenPayload): Promise<void> {
     await this.write(SWAP_EVENTS.firstToken, f);
+    this.book.addFirstToken(f.model, f.firstTokenMs, true);
+  }
+
+  /** A warm reply's first token: steady state, kept in memory only (rule 20d). */
+  public warmFirstToken(model: string, ms: number): void {
+    this.book.addFirstToken(model, ms, false);
   }
 }

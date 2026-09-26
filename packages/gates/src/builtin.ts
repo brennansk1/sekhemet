@@ -1,9 +1,10 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { type TomlTable, parseToml } from "@sekhemet/kernel";
 import { resolveProgram, runConfined } from "@sekhemet/sandbox";
+import { gitEnvFor } from "@sekhemet/sync";
 import ts from "typescript";
 import { RERUN_GATES, gateCopy } from "./copy.js";
 import { scanDiffForSecrets } from "./secrets.js";
@@ -950,29 +951,171 @@ const LOCKFILES = [
   "go.sum",
 ];
 
-async function osvGate(ctx: BuiltinGateContext, osv: string): Promise<Draft[]> {
-  const lock = LOCKFILES.find((f) => existsSync(join(ctx.root, f)));
-  if (!lock) return [];
-  const r = await runScanner(
-    ctx,
-    osv,
-    ["--offline", "--format", "json", "--lockfile", join(ctx.root, lock)],
-    120_000,
-  );
-  if (r.refused) return [notRun("osv", "osv-scanner", r.stderr)];
-  // Its JSON report is an object even when clean: empty or unreadable output
-  // is no verdict (GT-T1-3).
-  if (parseJsonReport(r.stdout, isObject) === undefined) {
+/** One vulnerability osv-scanner reported, keyed so the base's and the card's can be compared. */
+interface OsvFinding {
+  key: string;
+  text: string;
+  name: string;
+  id: string;
+}
+
+/** Git's view of the card's worktree, in its guarded environment. */
+function gitIn(root: string, args: string[]): string {
+  return execFileSync("git", args, {
+    cwd: root,
+    env: gitEnvFor(root),
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: 30_000,
+    maxBuffer: 64 * 1024 * 1024,
+  });
+}
+
+/** Pathspecs for every lockfile osv-scanner reads, at any depth. */
+const LOCKFILE_SPECS = LOCKFILES.map((f) => `:(glob)**/${f}`);
+
+/** Every lockfile in the tree, tracked or new; undefined when git cannot say. */
+function lockfilesIn(root: string): string[] | undefined {
+  try {
+    return gitIn(root, ["ls-files", "-co", "--exclude-standard", "--", ...LOCKFILE_SPECS])
+      .split("\n")
+      .filter(Boolean);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The lockfiles the card changed, by git's own comparison of the files —
+ * `git diff --name-only` against the base and the untracked files — never
+ * by reading a text diff, which a binary or `-diff` attribute hides.
+ */
+function changedLockfiles(root: string, base: string): string[] | undefined {
+  if (base.startsWith("-")) return undefined;
+  try {
+    const changed = gitIn(root, [
+      "diff",
+      "--name-only",
+      "--no-renames",
+      "--no-ext-diff",
+      base,
+      "--",
+      ...LOCKFILE_SPECS,
+    ]);
+    const added = gitIn(root, [
+      "ls-files",
+      "--others",
+      "--exclude-standard",
+      "--",
+      ...LOCKFILE_SPECS,
+    ]);
+    return [...new Set([...changed.split("\n"), ...added.split("\n")].filter(Boolean))].filter(
+      (f) => existsSync(join(root, f)),
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Rule 15, GT-N2-1: the vulnerabilities the card added. Every lockfile the
+ * card changed is scanned, and so is each one's base copy (in a private
+ * temporary directory, removed after); only findings absent from the base
+ * are the card's. A card that changed no lockfile added no dependency, and
+ * the gate records a skip.
+ */
+async function osvGate(
+  ctx: BuiltinGateContext,
+  osv: string,
+): Promise<Draft[] | { skipped: string }> {
+  const locks = changedLockfiles(ctx.root, ctx.base);
+  if (locks === undefined) {
     return [
       notRun(
         "osv",
         "osv-scanner",
-        `exited ${r.status} with ${r.stdout.trim() ? "an unreadable" : "no"} report`,
+        "git could not say which lockfiles the card changed, so its dependencies cannot be told from the base's",
       ),
     ];
   }
+  if (locks.length === 0) return { skipped: "the card changed no lockfile" };
+  const drafts: Draft[] = [];
+  for (const lock of locks) drafts.push(...(await osvLockfile(ctx, osv, lock)));
+  return drafts;
+}
+
+/** One changed lockfile: its findings that its base copy does not have. */
+async function osvLockfile(ctx: BuiltinGateContext, osv: string, lock: string): Promise<Draft[]> {
+  const head = await osvScan(ctx, osv, join(ctx.root, lock));
+  if (!Array.isArray(head)) return [head];
+  if (head.length === 0) return [];
+  let baseBytes: Buffer | undefined;
+  try {
+    baseBytes = execFileSync("git", ["show", "--no-textconv", `${ctx.base}:${lock}`], {
+      cwd: ctx.root,
+      env: gitEnvFor(ctx.root),
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 10_000,
+      maxBuffer: 64 * 1024 * 1024,
+    });
+  } catch {
+    baseBytes = undefined; // No such lockfile on the base: every finding is new.
+  }
+  let known = new Set<string>();
+  if (baseBytes !== undefined) {
+    const dir = mkdtempSync(join(tmpdir(), "sekhemet-osv-base-"));
+    try {
+      writeFileSync(join(dir, basename(lock)), baseBytes);
+      const base = await osvScan(ctx, osv, join(dir, basename(lock)));
+      if (!Array.isArray(base)) {
+        return [
+          notRun(
+            "osv",
+            "osv-scanner",
+            `the base's ${lock} could not be scanned, so the card's findings cannot be told from the base's: ${base.actual}`,
+          ),
+        ];
+      }
+      known = new Set(base.map((f) => f.key));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+  return head
+    .filter((f) => !known.has(f.key))
+    .slice(0, 10)
+    .map((f) =>
+      failure("osv", "security", "security", f.text, {
+        location: { file: lock },
+        suggestedAction: gateCopy.vulnerable(f.name, f.id),
+      }),
+    );
+}
+
+/** One osv-scanner run over one lockfile: its findings, or why it gave no verdict. */
+async function osvScan(
+  ctx: BuiltinGateContext,
+  osv: string,
+  lockfile: string,
+): Promise<OsvFinding[] | Draft> {
+  const r = await runScanner(
+    ctx,
+    osv,
+    ["--offline", "--format", "json", "--lockfile", lockfile],
+    120_000,
+  );
+  if (r.refused) return notRun("osv", "osv-scanner", r.stderr);
+  // Its JSON report is an object even when clean: empty or unreadable output
+  // is no verdict (GT-T1-3).
+  if (parseJsonReport(r.stdout, isObject) === undefined) {
+    return notRun(
+      "osv",
+      "osv-scanner",
+      `exited ${r.status} with ${r.stdout.trim() ? "an unreadable" : "no"} report`,
+    );
+  }
   if (r.status === 0) return [];
-  const out: Draft[] = [];
+  const out: OsvFinding[] = [];
   try {
     const report = JSON.parse(r.stdout || "{}") as {
       results?: {
@@ -985,30 +1128,26 @@ async function osvGate(ctx: BuiltinGateContext, osv: string): Promise<Draft[]> {
     // A non-zero exit that names no vulnerability is a scanner failure, not a
     // clean result (B1 review): e.g. no local database under the private HOME.
     if (!(report.results ?? []).some((x) => (x.packages ?? []).length > 0)) {
-      return [notRun("osv", "osv-scanner", r.stderr || `exited ${r.status} with no report`)];
+      return notRun("osv", "osv-scanner", r.stderr || `exited ${r.status} with no report`);
     }
     for (const res of report.results ?? []) {
       for (const p of res.packages ?? []) {
         for (const v of p.vulnerabilities ?? []) {
-          out.push(
-            failure(
-              "osv",
-              "security",
-              "security",
-              `${p.package?.name}@${p.package?.version}: ${v.id} ${v.summary ?? ""}`.trim(),
-              {
-                location: { file: lock },
-                suggestedAction: gateCopy.vulnerable(String(p.package?.name), String(v.id)),
-              },
-            ),
-          );
+          const name = String(p.package?.name);
+          const id = String(v.id);
+          out.push({
+            key: `${name}@${p.package?.version}:${id}`,
+            text: `${name}@${p.package?.version}: ${id} ${v.summary ?? ""}`.trim(),
+            name,
+            id,
+          });
         }
       }
     }
   } catch {
-    return [notRun("osv", "osv-scanner", r.stderr || `exited ${r.status} with no report`)];
+    return notRun("osv", "osv-scanner", r.stderr || `exited ${r.status} with no report`);
   }
-  return out.slice(0, 10);
+  return out;
 }
 
 async function semgrepGate(ctx: DiffContext, semgrep: string): Promise<Draft[] | undefined> {
@@ -1081,7 +1220,7 @@ export const DEFAULT_DEBUG_PATTERNS = [
   "pdb.set_trace(",
 ];
 
-function hygieneGate(ctx: DiffContext): Draft[] {
+function hygieneGate(ctx: DiffContext, advisories: string[] = []): Draft[] {
   const out: Draft[] = [];
   const patterns = [...DEFAULT_DEBUG_PATTERNS, ...(ctx.project.debugPatterns ?? [])];
   for (const [file, lines] of addedLines(ctx.diff)) {
@@ -1106,12 +1245,22 @@ function hygieneGate(ctx: DiffContext): Draft[] {
     }
   }
   // A changelog, when the project keeps one, records every source change.
+  // Only a card whose scope holds CHANGELOG.md is failed for a missing entry;
+  // another is told, never asked for an edit it may not make (rule 17, GT-N2-2).
   const files = diffFiles(ctx.diff);
-  const keepsChangelog = ctx.project.changelog ?? existsSync(join(ctx.root, "CHANGELOG.md"));
+  const keepsChangelog =
+    ctx.project.changelog === "advisory"
+      ? existsSync(join(ctx.root, "CHANGELOG.md"))
+      : (ctx.project.changelog ?? existsSync(join(ctx.root, "CHANGELOG.md")));
   const sourceChanged = files.some(
     (f) => !TEST_FILE.test(f) && !f.startsWith(".sekhemet/") && !/\.md$/.test(f),
   );
-  if (keepsChangelog && sourceChanged && !files.includes("CHANGELOG.md")) {
+  const missingEntry = keepsChangelog && sourceChanged && !files.includes("CHANGELOG.md");
+  if (missingEntry && ctx.project.changelog === "advisory") {
+    advisories.push(
+      "hygiene: source changed but CHANGELOG.md has no entry for it; CHANGELOG.md is outside this card's scope, so a person adds one",
+    );
+  } else if (missingEntry) {
     out.push(
       failure(
         "hygiene",
@@ -1460,12 +1609,21 @@ export async function runBuiltinGates(ctx: BuiltinGateContext): Promise<BuiltinG
       const t = Date.now();
       const osv = locate("osv-scanner");
       // Nothing to scan is a skip, never a pass.
-      if (osv && !LOCKFILES.some((f) => existsSync(join(ctx.root, f)))) {
+      const locks = osv ? lockfilesIn(ctx.root) : [];
+      if (
+        osv &&
+        !LOCKFILES.some((f) => existsSync(join(ctx.root, f))) &&
+        (locks ?? []).length === 0
+      ) {
         outcomes.push(outcome("osv", "security", "security", true, t, true, "no lockfile to scan"));
       } else if (osv) {
         const f = await osvGate(ctx, osv);
-        failures.push(...f);
-        outcomes.push(outcome("osv", "security", "security", f.length === 0, t));
+        if (!Array.isArray(f)) {
+          outcomes.push(outcome("osv", "security", "security", true, t, true, f.skipped));
+        } else {
+          failures.push(...f);
+          outcomes.push(outcome("osv", "security", "security", f.length === 0, t));
+        }
       } else {
         outcomes.push(
           outcome("osv", "security", "security", true, t, true, "osv-scanner is not installed"),
@@ -1499,7 +1657,7 @@ export async function runBuiltinGates(ctx: BuiltinGateContext): Promise<BuiltinG
   if (enabled.has("hygiene")) {
     await guard("hygiene", "hygiene", "hygiene", async () => {
       const t = Date.now();
-      const f = hygieneGate(dctx);
+      const f = hygieneGate(dctx, advisories);
       failures.push(...f);
       outcomes.push(outcome("hygiene", "hygiene", "hygiene", f.length === 0, t));
     });

@@ -274,8 +274,15 @@ describe("NEW-models-14: Smart Swap — the record, the prediction and the slow-
       cache: "cold",
       loadMs: 9000,
     });
-    // Seshat's 12 GB went through the file cache after the Worker left: cold again.
-    expect(all[7]).toMatchObject({ model: "cyber", cache: "cold", loadMs: 20_000 });
+    // Seshat's 12 GB went through the file cache after the Worker left: predicted cold again
+    // (MD-N14-3 as amended: the prediction), at the drive's measured cold rate, 300 s.
+    // MD-N14-10: the recorded state is measured: 13 GB in 20 s is far above that rate, so warm.
+    expect(all[7]).toMatchObject({
+      model: "cyber",
+      cache: "warm",
+      loadMs: 20_000,
+      medianMs: 300_000,
+    });
     // No flag: under the 120 s bound.
     expect(all.filter((e) => e.type === "model/slow_load")).toHaveLength(1);
   });

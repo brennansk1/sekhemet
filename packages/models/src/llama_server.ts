@@ -1,15 +1,28 @@
 import { type ChildProcess, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, realpathSync, statSync } from "node:fs";
-import { tmpdir, totalmem } from "node:os";
+import { open } from "node:fs/promises";
+import { totalmem } from "node:os";
 import { basename, resolve } from "node:path";
 import { hostFingerprintHash } from "./calibration.js";
 import { type HttpAdapterOptions, HttpInferenceAdapter } from "./http_adapter.js";
 import { assertKvPolicy } from "./kv_policy.js";
+import {
+  DriveUnavailableError,
+  type LoadOptions,
+  assertLaunchFlags,
+  assertServedContext,
+  checkDrive,
+  loadModeArgs,
+  prereadSequential,
+} from "./load_mechanics.js";
 import { type ModelsDirOptions, resolveModelPath } from "./models_dir.js";
 import type { SpeculativeSetting } from "./qualification_key.js";
 import { readQuantisation } from "./quantisation.js";
 import { type ModelRegistry, type ThinkingPolicy, thinkingPolicyFromEnv } from "./registry.js";
-import type { AdapterHealth, ToolArm } from "./types.js";
+import { type ErasureView, type SlotKey, SlotStore, defaultSlotCacheDir } from "./slot_state.js";
+import { DEFAULT_READ_BYTES_PER_SECOND } from "./swap_cost.js";
+import type { AdapterHealth, InferenceRequest, TokenUsage, ToolArm } from "./types.js";
 
 /**
  * The GGUF each managed profile expects, as a name inside the user's models
@@ -120,6 +133,13 @@ export interface LlamaServerProfile {
    * swaps is the dominant swap cost; llama.cpp --slot-save-path).
    */
   slotCacheDir?: string;
+  /**
+   * The slot-restore equivalence check has passed on a calibration night
+   * (measurement rule 16d); until then a card's live slot is re-prefilled.
+   */
+  slotEquivalencePassed?: boolean;
+  /** The weights' recorded SHA-256, keying slot files (rule 20i); unset: a fingerprint of the file. */
+  weightsSha256?: string;
   /** `-t`: CPU threads. Unset leaves the server's default. */
   threads?: number;
   /** `-ngl`: layers offloaded to the GPU. Default 99 (all). */
@@ -163,6 +183,50 @@ export interface LlamaServerProfile {
   /** Ollama endpoint to evict models from before loading. */
   ollamaBaseUrl?: string;
   startupTimeoutMs?: number;
+}
+
+/** A live session on a server slot (rule 20i). */
+interface LiveSession {
+  slot: number;
+  owner: string;
+  kind: "thread" | "live_card";
+  sources?: string[];
+  promptTokens: number;
+  /** R: the prompt at the measured prefill speed. */
+  reprefillMs?: number;
+}
+
+/** KV bytes per token, for K before a slot's first save (hybrid MoE, q8_0; as `footprintBytes`). */
+const KV_BYTES_PER_TOKEN = 64 * 1024;
+
+/** llama.cpp's Metal command-buffer timeout, in its log or a failed request (MD-N14-33). */
+const METAL_TIMEOUT =
+  /kIOGPUCommandBufferCallbackErrorTimeout|GPU Timeout Error|command buffer \d+ failed with status/i;
+
+/**
+ * A fingerprint of a weights file for slot keys where no SHA-256 is
+ * recorded: its size and the SHA-256 of its first and last MiB. Hashing
+ * 13 GB on every swap would cost more than the slot saves.
+ */
+export async function weightsFingerprint(path: string): Promise<string> {
+  const h = createHash("sha256");
+  if (!existsSync(path)) return h.update(`missing:${path}`).digest("hex");
+  const size = statSync(path).size;
+  h.update(`size:${size}`);
+  const handle = await open(path, "r");
+  try {
+    const mib = 1024 ** 2;
+    const buf = Buffer.alloc(Math.min(mib, size));
+    await handle.read(buf, 0, buf.length, 0);
+    h.update(buf);
+    if (size > mib) {
+      await handle.read(buf, 0, buf.length, size - buf.length);
+      h.update(buf);
+    }
+  } finally {
+    await handle.close();
+  }
+  return h.digest("hex");
 }
 
 /**
@@ -221,6 +285,10 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
   /** The last start this adapter made, and whether a reply has reported it yet (MS-T7-1). */
   private lastStartup: { spawnToHealthyMs: number; at: string } | undefined;
   private startupUnreported = false;
+  /** The options of the load in progress (rule 20h): its load mode and `--cache-ram`. */
+  private loadOptions: LoadOptions = {};
+  /** The engine (rule 20h). */
+  public override readonly engine = "llama.cpp" as const;
 
   constructor(private profile: LlamaServerProfile) {
     const port = profile.port ?? 8098;
@@ -387,13 +455,20 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
    * Throws `KvPolicyError` when the KV type breaks the policy (M16), so a
    * forbidden launch never starts.
    */
-  public launchArgs(): string[] {
-    const args = this.buildLaunchArgs();
+  public launchArgs(options: LoadOptions = {}): string[] {
+    const args = this.buildLaunchArgs(options);
     assertKvPolicy(args, {
       toolCalling: this.profile.toolCalling !== false,
       qualifiedBelow8Bit: this.profile.qualifiedBelow8BitKv === true,
     });
+    // Rule 20h: no --mlock (it crashes on macOS) and no direct I/O.
+    assertLaunchFlags(args);
     return args;
+  }
+
+  /** `id_slot` goes only to a server with several slots (rule 16c). */
+  protected override sendsSlot(): boolean {
+    return this.slotCount() > 1;
   }
 
   /** Server slots (`-np`). */
@@ -410,10 +485,18 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
     return this.profile.parallelSlots !== undefined ? ctx * this.slotCount() : ctx;
   }
 
-  private buildLaunchArgs(): string[] {
+  private buildLaunchArgs(options: LoadOptions = {}): string[] {
     const p = this.profile;
     const parallel = this.slotCount();
-    const cache = this.cacheSettings();
+    const settings = this.cacheSettings();
+    // Rule 20h: `--cache-ram` sized from the headroom when the scheduler says so.
+    const cache =
+      options.cacheRamMiB === undefined
+        ? settings
+        : {
+            ...(settings ?? { ctxCheckpoints: cacheProfileForHost().ctxCheckpoints }),
+            cacheRamMiB: options.cacheRamMiB,
+          };
     return [
       "-m",
       p.modelPath,
@@ -466,6 +549,7 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
           ]
         : []),
       ...(p.slotCacheDir ? ["--slot-save-path", p.slotCacheDir] : []),
+      ...loadModeArgs(options.loadMode),
       ...(p.extraArgs ?? []),
     ];
   }
@@ -677,21 +761,36 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
 
   private start(signal?: AbortSignal): Promise<void> {
     this.starting = (async () => {
+      // Rule 20h: a disconnected drive is refused and its work stays queued.
+      const drive = await checkDrive(this.profile.modelPath);
+      if (drive.state === "disconnected")
+        throw new DriveUnavailableError(
+          `Refusing to load ${this.profile.modelId}: ${drive.reason}`,
+        );
       if (!existsSync(this.profile.modelPath)) {
         throw new Error(`Model file not found: ${this.profile.modelPath}`);
       }
+      const options = this.loadOptions;
+      const args = this.launchArgs(options);
       await evictOllamaModels(this.profile.ollamaBaseUrl);
       if (this.profile.slotCacheDir) mkdirSync(this.profile.slotCacheDir, { recursive: true });
       if (signal?.aborted) throw new Error("llama-server load aborted");
 
       const spawnedAt = Date.now();
-      this.child = spawn(this.profile.binary ?? "llama-server", this.launchArgs(), {
+      // Rule 20h: a sequential pre-read puts the weights in the file cache before mmap reads them.
+      if (options.loadMode === "preread_mmap")
+        await prereadSequential(this.profile.modelPath, signal ? { signal } : {});
+      this.metalReported = false;
+      this.child = spawn(this.profile.binary ?? "llama-server", args, {
         stdio: ["ignore", "ignore", "pipe"],
       });
       this.bindToParentLifetime(this.child);
       let stderr = "";
       this.child.stderr?.on("data", (chunk: Buffer) => {
-        stderr = (stderr + chunk.toString()).slice(-4000);
+        const text = chunk.toString();
+        stderr = (stderr + text).slice(-4000);
+        // MD-N14-33: the server's log shows a Metal command-buffer timeout.
+        this.noteMetalTimeout(text);
       });
 
       const deadline = Date.now() + (this.profile.startupTimeoutMs ?? 600_000);
@@ -706,7 +805,8 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
             at: new Date(spawnedAt).toISOString(),
           };
           this.startupUnreported = true;
-          await this.slotAction("restore");
+          await this.refuseShrunkContext();
+          await this.restoreLiveSlots();
           this.adoptedAt = Date.now();
           await this.recordQuantisation();
           return;
@@ -724,7 +824,16 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
     ...args: Parameters<HttpInferenceAdapter["generate"]>
   ): ReturnType<HttpInferenceAdapter["generate"]> {
     await this.ensureRunning();
-    const response = await super.generate(...args);
+    let response: Awaited<ReturnType<HttpInferenceAdapter["generate"]>>;
+    try {
+      response = await super.generate(...args);
+    } catch (err) {
+      // MD-N14-33: a request that failed on a Metal command-buffer timeout.
+      this.noteMetalTimeout(err instanceof Error ? err.message : String(err));
+      throw err;
+    }
+    const [req] = args;
+    if (req.session) this.trackSession(req, response.usage);
     if (this.startupUnreported && this.lastStartup) {
       this.startupUnreported = false;
       return {
@@ -772,10 +881,36 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
    * is healthy. A server already up, or one another start is loading, is
    * adopted: this adapter did not order that load.
    */
-  public override async load(signal?: AbortSignal): Promise<"loaded" | "adopted"> {
+  public override async load(
+    signal?: AbortSignal,
+    options: LoadOptions = {},
+  ): Promise<"loaded" | "adopted"> {
     const before = await this.healthState();
-    await this.ensureRunning(signal);
+    this.loadOptions = options;
+    try {
+      await this.ensureRunning(signal);
+    } finally {
+      this.loadOptions = {};
+    }
     return before === "down" ? "loaded" : "adopted";
+  }
+
+  /**
+   * Refuse a server this adapter started whose served context is smaller
+   * than requested: `--fit` shrinks it silently (rule 20h, MD-M4-1). The
+   * server is stopped and the start rejects.
+   */
+  private async refuseShrunkContext(): Promise<void> {
+    const served = (await this.serverProps())?.contextTokens;
+    const want = this.contextWindow?.contextTokens;
+    const total = this.totalContextTokens();
+    if (served === undefined || want === undefined || served === want || served === total) return;
+    try {
+      assertServedContext(Math.min(want, total), served);
+    } catch (err) {
+      this.child?.kill("SIGKILL");
+      throw err;
+    }
   }
 
   /** The weights file and its bytes, for Smart Swap's record; undefined when it is missing. */
@@ -792,24 +927,224 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
     return Math.round(weights * 1.03 + kv + 1.2 * 1024 ** 3);
   }
 
-  private get slotFile(): string {
-    return `${this.profile.modelId.replace(/[^\w.-]/g, "_")}.slot`;
+  private slots: SlotStore | undefined;
+  /** The ledger's erasures (rule 20i, MD-N14-37): swept before every restore. */
+  private erasures: (() => ErasureView) | undefined;
+  /** Whether this server's Metal timeout has been signalled (once per start). */
+  private metalReported = false;
+  /** The live session on each slot (rule 20i): Seshat's thread, a card's attempt. */
+  private readonly sessions = new Map<number, LiveSession>();
+  /** Sessions saved at the last unload, restored or re-prefilled at the next start. */
+  private pendingSessions: LiveSession[] = [];
+  private restoredLast: { owner: string; slot: number; action: string; reason?: string }[] = [];
+
+  private noteMetalTimeout(text: string): void {
+    const m = METAL_TIMEOUT.exec(text);
+    if (!m || this.metalReported) return;
+    this.metalReported = true;
+    this.signal({ kind: "metal_timeout", detail: m[0] });
+  }
+
+  private trackSession(req: InferenceRequest, usage: TokenUsage): void {
+    const session = req.session;
+    if (!session) return;
+    const slot = req.slot ?? 0;
+    const prev = this.sessions.get(slot);
+    const same = prev?.owner === session.owner;
+    // Unknown sources stay unknown: any erasure then deletes the slot.
+    const sources =
+      session.sources === undefined || (same && prev?.sources === undefined)
+        ? undefined
+        : [...new Set([...(same ? (prev?.sources ?? []) : []), ...session.sources])];
+    const pps = usage.prefillTokensPerSecond;
+    this.sessions.set(slot, {
+      slot,
+      owner: session.owner,
+      kind: session.kind,
+      ...(sources ? { sources } : {}),
+      promptTokens: usage.promptTokens,
+      ...(pps ? { reprefillMs: Math.round((usage.promptTokens / pps) * 1000) } : {}),
+    });
   }
 
   /**
-   * Save or restore slot 0's KV cache. Best effort: a missing file on the
-   * first start, or a server without slot support, costs only a cold prefill.
+   * Save every live slot when the weights leave (rule 20i, MD-N14-36): each
+   * session under its owner and kind, when K < R (R: its prompt at the
+   * measured prefill speed); slot 0's stable prefix when no session holds it.
+   */
+  public async saveLiveSlots(): Promise<void> {
+    const store = this.slotStore();
+    const live = [...this.sessions.values()];
+    this.sessions.clear();
+    this.pendingSessions = [];
+    if (!store) return;
+    let key: SlotKey;
+    try {
+      key = await this.slotKey();
+    } catch {
+      return;
+    }
+    for (const s of live) {
+      const common = {
+        slot: s.slot,
+        kind: s.kind,
+        owner: s.owner,
+        key,
+        ...(s.sources ? { sources: s.sources } : {}),
+      };
+      try {
+        const saved =
+          s.reprefillMs !== undefined
+            ? await store.saveIfWorth({
+                ...common,
+                estimatedBytes: s.promptTokens * KV_BYTES_PER_TOKEN,
+                reprefillMs: s.reprefillMs,
+              })
+            : await store.save(common);
+        if (saved) this.pendingSessions.push(s);
+      } catch {
+        // A slot that cannot be saved is re-prefilled on return.
+      }
+    }
+    if (!live.some((s) => s.slot === 0)) await this.slotAction("save");
+  }
+
+  /**
+   * On return (rule 20i, MD-N14-36): each saved session is restored into
+   * its slot when its key matches and K < R; a card's live slot is
+   * re-prefilled until the equivalence check has passed (measurement rule
+   * 16d, profile `slotEquivalencePassed`).
+   */
+  public async restoreLiveSlots(): Promise<void> {
+    // The spine (erasure): no slot whose prompt text an erasure covers is restored.
+    if (!this.sweepErased()) {
+      this.pendingSessions = [];
+      this.restoredLast = [];
+      return;
+    }
+    // In slot order: each session returns to the slot it was saved from.
+    const pending = [...this.pendingSessions].sort((x, y) => x.slot - y.slot);
+    this.pendingSessions = [];
+    this.restoredLast = [];
+    if (!pending.some((s) => s.slot === 0)) await this.slotAction("restore");
+    const store = this.slotStore();
+    if (!store || pending.length === 0) return;
+    let key: SlotKey;
+    try {
+      key = await this.slotKey();
+    } catch {
+      return;
+    }
+    for (const s of pending) {
+      const back = await store.restore({
+        slot: s.slot,
+        kind: s.kind,
+        owner: s.owner,
+        key,
+        reprefillMs: s.reprefillMs ?? Number.POSITIVE_INFINITY,
+        equivalencePassed: this.profile.slotEquivalencePassed === true,
+      });
+      this.restoredLast.push({
+        owner: s.owner,
+        slot: s.slot,
+        action: back.action,
+        ...(back.action === "reprefill" ? { reason: back.reason } : {}),
+      });
+      if (back.action === "restored") this.sessions.set(s.slot, s);
+    }
+  }
+
+  /**
+   * The ledger's erasure index this adapter sweeps its slot files by before
+   * every restore (rule 20i, MD-N14-37); the harness sets it from its ledger.
+   */
+  public setErasureSource(source: (() => ErasureView) | undefined): void {
+    this.erasures = source;
+  }
+
+  /**
+   * Delete every slot file an erasure covers. False when the index could not
+   * be read: then nothing is restored, rather than a slot an erasure covers.
+   */
+  private sweepErased(): boolean {
+    const store = this.slotStore();
+    if (!store || !this.erasures) return true;
+    try {
+      store.sweepErased(this.erasures());
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** What the last start did with each saved session: restored, or re-prefilled and why. */
+  public restoredSessions(): { owner: string; slot: number; action: string; reason?: string }[] {
+    return [...this.restoredLast];
+  }
+
+  /** The keyed slot store over `--slot-save-path` (rule 20i); undefined without one. */
+  public slotStore(): SlotStore | undefined {
+    if (!this.profile.slotCacheDir) return undefined;
+    this.slots ??= new SlotStore({
+      dir: this.profile.slotCacheDir,
+      serverUrl: this.url,
+      // The slot directory's read rate is not probed yet: the internal default (MD-N14-4).
+      readBytesPerSecond: DEFAULT_READ_BYTES_PER_SECOND.internal,
+    });
+    return this.slots;
+  }
+
+  /**
+   * The key a slot of this server is saved under (rule 20i): the weights'
+   * hash (the profile's recorded SHA-256, else a fingerprint of the file's
+   * size and first and last MiB), the engine build and chat template the
+   * server reports, the context and the KV type.
+   */
+  public async slotKey(): Promise<SlotKey> {
+    const props = await this.serverPropsRaw();
+    return {
+      weightsHash: this.profile.weightsSha256 ?? (await weightsFingerprint(this.profile.modelPath)),
+      engineBuild: props.build ?? "unknown",
+      contextTokens: this.totalContextTokens(),
+      kvType: this.profile.kvType ?? "q8_0",
+      template: createHash("sha256")
+        .update(props.template ?? "")
+        .digest("hex"),
+    };
+  }
+
+  /** `/props`' build and chat template, for the slot key. */
+  private async serverPropsRaw(): Promise<{ build?: string; template?: string }> {
+    try {
+      const res = await fetch(`${this.url}/props`, { signal: AbortSignal.timeout(5000) });
+      if (!res.ok) return {};
+      const p = (await res.json()) as { build_info?: unknown; chat_template?: unknown };
+      return {
+        ...(typeof p.build_info === "string" ? { build: p.build_info } : {}),
+        ...(typeof p.chat_template === "string" ? { template: p.chat_template } : {}),
+      };
+    } catch {
+      return {};
+    }
+  }
+
+  /**
+   * Save or restore slot 0's stable prefix through the keyed store (rule
+   * 20i): a restore happens only for a file saved under the same key. Its
+   * sources are unknown, so any erasure deletes it. Best effort: a missing
+   * file, another key or a server without slot support costs only a cold
+   * prefill.
    */
   public async slotAction(action: "save" | "restore"): Promise<boolean> {
-    if (!this.profile.slotCacheDir) return false;
+    const store = this.slotStore();
+    if (!store) return false;
     try {
-      const res = await fetch(`${this.url}/slots/0?action=${action}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ filename: this.slotFile }),
-        signal: AbortSignal.timeout(60_000),
-      });
-      return res.ok;
+      const key = await this.slotKey();
+      const slot = { slot: 0, kind: "prefix" as const, owner: this.profile.modelId, key };
+      if (action === "save") return (await store.save(slot)) !== undefined;
+      if (!this.sweepErased()) return false;
+      const back = await store.restore({ ...slot, reprefillMs: Number.POSITIVE_INFINITY });
+      return back.action === "restored";
     } catch {
       return false;
     }
@@ -835,7 +1170,7 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
       this.child = undefined;
       return;
     }
-    await this.slotAction("save");
+    await this.saveLiveSlots();
     child.kill("SIGTERM");
     await new Promise<void>((resolve) => {
       const timer = setTimeout(() => {
@@ -869,7 +1204,7 @@ export function createCyberTielWorker(
   return new ManagedLlamaServerAdapter({
     modelId: "cyber-tiel-coder-35b-a3b-mtp-iq3xxs",
     modelPath,
-    slotCacheDir: process.env.SEKHEMET_SLOT_CACHE ?? `${tmpdir()}/sekhemet-slots`,
+    slotCacheDir: defaultSlotCacheDir(),
     ...(binary ? { binary } : {}),
     // 16k: this hybrid-attention MoE keeps a small KV cache (the card documents
     // ~5GB at 262k in f16, so ~0.16GB here at q8_0). At 8k the ledger card's
@@ -921,7 +1256,7 @@ export function createApodexResearcher(
   return new ManagedLlamaServerAdapter({
     modelId: "apodex-1.1-mini",
     modelPath,
-    slotCacheDir: process.env.SEKHEMET_SLOT_CACHE ?? `${tmpdir()}/sekhemet-slots`,
+    slotCacheDir: defaultSlotCacheDir(),
     ...(binary ? { binary } : {}),
     port: 8101,
     // Slot 0: the research conversation. Slot 1: one-off web_fetch
@@ -1037,8 +1372,7 @@ export function chronicleLlamaServerProfile(
 export function createQwen38Managed(
   options: ChronicleProfileOptions = {},
 ): ManagedLlamaServerAdapter {
-  const slotCacheDir =
-    options.slotCacheDir ?? process.env.SEKHEMET_SLOT_CACHE ?? `${tmpdir()}/sekhemet-slots`;
+  const slotCacheDir = options.slotCacheDir ?? defaultSlotCacheDir();
   return new ManagedLlamaServerAdapter(
     chronicleLlamaServerProfile({ reasoning: "per-request", ...options, slotCacheDir }),
   );

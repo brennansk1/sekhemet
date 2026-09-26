@@ -117,15 +117,15 @@ function importedNames(file: string): Set<string> {
 
 /** Source files the card changed against `base`, committed or not. */
 export function changedSources(root: string, base: string): string[] {
+  const git = (args: string[]) =>
+    execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
   try {
-    return execFileSync("git", ["diff", "--name-only", base], {
-      cwd: root,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    })
-      .split("\n")
-      .map((f) => f.trim())
-      .filter((f) => f && SOURCE.test(f) && !TEST.test(f) && existsSync(join(root, f)));
+    // Files the card created and has not committed are the card's too (gates
+    // rule 15, GT-N2-4); ignored files are not.
+    const listed = `${git(["diff", "--name-only", base])}\n${git(["ls-files", "--others", "--exclude-standard"])}`;
+    return [...new Set(listed.split("\n").map((f) => f.trim()))].filter(
+      (f) => f && SOURCE.test(f) && !TEST.test(f) && existsSync(join(root, f)),
+    );
   } catch {
     // Not a git repository, or no such base: judge nothing rather than guess.
     return [];

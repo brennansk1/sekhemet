@@ -9,6 +9,7 @@ import {
   type RetentionReport,
   pruneRetention,
 } from "@sekhemet/kernel";
+import { defaultSlotCacheDir, sweepErasedSlots } from "@sekhemet/models";
 import { reapOrphanedGroups, runTrusted } from "@sekhemet/sandbox";
 import { NodeGitSyncAdapter, gitEnvFor } from "@sekhemet/sync";
 import { Tracer } from "./tracing.js";
@@ -43,6 +44,8 @@ export interface SupervisorStart {
   crashed: CrashSweepEntry[];
   retention?: RetentionReport;
   spansDeleted: number;
+  /** Saved KV slot files an erasure covers, deleted (models rule 20i, MD-N14-37). */
+  slotsErased: string[];
 }
 
 /** Finish every crashed attempt and return its card to Ready (RUN-9). */
@@ -155,7 +158,11 @@ export async function supervisorStart(
     log: EventLog;
     boardService: Pick<BoardService, "transitionCard">;
   },
-  options: { now?: number } = {},
+  options: {
+    now?: number;
+    /** The managed servers' slot directories; default `SEKHEMET_SLOT_CACHE`'s. */
+    slotDirs?: string[];
+  } = {},
 ): Promise<SupervisorStart> {
   const reapedProcesses = reapOrphanedGroups(processRegistryDir(ctx.repoPath));
   const crashed = await sweepCrashedAttempts(ctx.repoPath, ctx.cardStore, ctx.boardService);
@@ -163,7 +170,25 @@ export async function supervisorStart(
     () => undefined,
   );
   const spansDeleted = pruneTraces(ctx.repoPath, options.now);
-  return { reapedProcesses, crashed, ...(retention ? { retention } : {}), spansDeleted };
+  // The spine (erasure), after the retention prune's own erasure: a saved KV
+  // slot whose prompt text an erasure covers is deleted before any restore
+  // (models rule 20i, MD-N14-37). A slot of unknown sources goes on any
+  // erasure newer than the last sweep.
+  const index = ctx.log.erasureIndex();
+  const slotsErased = (options.slotDirs ?? [defaultSlotCacheDir()]).flatMap((dir) => {
+    try {
+      return sweepErasedSlots(dir, index);
+    } catch {
+      return [];
+    }
+  });
+  return {
+    reapedProcesses,
+    crashed,
+    ...(retention ? { retention } : {}),
+    spansDeleted,
+    slotsErased,
+  };
 }
 
 /** The lines `queue` prints for the start-up pass. */
@@ -188,6 +213,11 @@ export function describeSupervisorStart(start: SupervisorStart): string[] {
     for (const item of r.pruned) {
       lines.push(`   ${item.cardId ?? "(no card)"}: ${item.kind} ${item.id}`);
     }
+  }
+  if (start.slotsErased.length > 0) {
+    lines.push(
+      `Erasure: ${start.slotsErased.length} saved model slot(s) holding erased text deleted.`,
+    );
   }
   if (start.spansDeleted > 0) {
     lines.push(`Retention: ${start.spansDeleted} span(s) older than 30 days deleted.`);

@@ -13,3 +13,6 @@ export * from "./copy.js";
 export * from "./rank.js";
 export * from "./pipeline.js";
 export * from "./red_green.js";
+export * from "./junit.js";
+export * from "./half_done.js";
+export * from "./test_strength.js";

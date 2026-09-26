@@ -11,13 +11,16 @@ import { handleIntegrationsApi } from "./integrations.js";
 import { readSettings } from "./integrations.js";
 import { learnFromProposalChoices } from "./learning/reflect.js";
 import { LearningStore } from "./learning/store.js";
+import { sharedModelAccess } from "./model_access.js";
 import { ProposalError, applyProposal } from "./pm/apply.js";
 import { capabilityReport } from "./pm/capability.js";
 import { flowMetrics, pmQuality } from "./pm/metrics.js";
 import { DEFAULT_PM_MODEL, answerQueued, pmModelFor, runnerLease } from "./pm/service.js";
 import { PmStore } from "./pm/store.js";
 import { PM_EVENTS, type PmMessage, type PmStatus } from "./pm/types.js";
+import { seshatWait } from "./pm/while_worker.js";
 import { oneShotResearcher } from "./research/service.js";
+import { quickAnswererFor } from "./smart_swap.js";
 import { modelRegistry, ruleGateVerdict } from "./wave2.js";
 
 export interface PmApiContext {
@@ -102,6 +105,14 @@ export function createPmApi(ctx: PmApiContext) {
           return async () => ({ role: "chat", adapter: a, release: () => {} });
         })()
       : pmModelFor(pmModel, modelRegistry(), ctx.log);
+    // Rule 20f (b): the Planner role's quick answerer, when a person named one
+    // and the measured headroom admits it beside what is resident.
+    const quick = ctx.pmAdapter
+      ? undefined
+      : quickAnswererFor(
+          sharedModelAccess(),
+          effectiveConfig(ctx.repoPath).config.models.quickAnswerer,
+        );
     // The loop answers everyone's queued messages: it is not the person's who
     // happened to start it (kernel K-N2-8).
     answering = EventLog.unscoped(async () => {
@@ -113,6 +124,9 @@ export function createPmApi(ctx: PmApiContext) {
           pmStore,
           pmModel,
           acquire,
+          // Smart Swap (models rule 20f): the full answer's predicted wait, said in words.
+          ...(ctx.pmAdapter ? {} : { predictWait: () => seshatWait(sharedModelAccess(), "chat") }),
+          ...(quick ? { quick } : {}),
           ...(researcherModel
             ? {
                 researcher: (q: string, o?: { deep?: boolean }) =>

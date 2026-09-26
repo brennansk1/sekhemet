@@ -153,6 +153,53 @@ describe("project manager", () => {
     expect((await cards.getCard(card.id))?.status).toBe("parked");
   });
 
+  it("gates rule 6a: a split carries the original's own test records to each part, as the PM's", async () => {
+    const card = await cards.createCard({
+      tier: "task",
+      title: "Ledger",
+      status: "ready",
+      acceptanceTests: ["a.spec.ts", "b.spec.ts"],
+    });
+    const staged = (path: string, sha: string, author: string) =>
+      cards.recordEvent({
+        type: "test/staged",
+        cardId: card.id,
+        actor: "planner",
+        payload: { cardId: card.id, path, sha256: sha, author },
+      });
+    await staged("tests/a.spec.ts", "a".repeat(64), "planner");
+    await staged("tests/b.spec.ts", "b".repeat(64), "repository");
+    const [draft] = toProposals(
+      [
+        {
+          id: "1",
+          name: "propose_split_card",
+          arguments: {
+            card_id: card.id,
+            parts: [
+              { title: "Append", spec: "append-only insert", estimate: 3 },
+              { title: "Idempotency", spec: "dedupe by key", estimate: 2 },
+            ],
+            reason: "too big",
+          },
+        },
+      ],
+      [card],
+    );
+    const reply = await pm.appendReply({ replyTo: [], text: "x", proposals: draft ? [draft] : [] });
+    const { cards: parts } = await applyProposal(reply.proposals?.[0] as never, {
+      cardStore: cards,
+      boardService: board,
+      pmStore: pm,
+    });
+    for (const part of parts) {
+      const records = (await cards.cardEvents(part.id, ["test/staged"])).map((e) => e.payload);
+      expect(records).toEqual([
+        { cardId: part.id, path: "tests/a.spec.ts", sha256: "a".repeat(64), author: "pm" },
+      ]);
+    }
+  });
+
   it("drops invalid tool calls instead of producing broken proposals", async () => {
     const card = await cards.createCard({ tier: "task", title: "Api", status: "ready" });
     const drafts = toProposals(

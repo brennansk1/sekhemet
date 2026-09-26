@@ -4,7 +4,7 @@
     "outDir": "./dist",
     "rootDir": "./src"
   },
-  "references": [{ "path": "../kernel" }, { "path": "../sandbox" }],
+  "references": [{ "path": "../kernel" }, { "path": "../sandbox" }, { "path": "../sync" }],
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "tests"]
 }

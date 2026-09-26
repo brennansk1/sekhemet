@@ -47,6 +47,7 @@ const NOTICE_KIND = v.picklist([
   "needs_you",
   "run_report",
   "slow_load",
+  "requantised",
   "test",
 ]);
 const DAY = v.pipe(v.string(), v.regex(/^\d{4}-\d{2}-\d{2}$/, "a local day, YYYY-MM-DD"));
@@ -75,6 +76,8 @@ const MS = v.pipe(v.number(), v.minValue(0));
 const BYTES = v.pipe(v.number(), v.integer(), v.minValue(0));
 const QUEUES = v.array(ID);
 const SWAP_BASE = { model: s(ID), roles: s(QUEUES) };
+const ENGINE = v.picklist(["llama.cpp", "ollama", "mlx"]);
+const LOAD_MODE = v.picklist(["mmap", "no_mmap", "preread_mmap"]);
 
 export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
   // models MD-N14-1: a load the residency scheduler ordered, timed, with its prediction.
@@ -87,6 +90,62 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     medianMs: s(MS),
     p90Ms: s(MS),
     basis: s(v.picklist(["measured", "estimate"])),
+    // models rule 20h: the engine and load mode (MD-N14-34).
+    engine: s(ENGINE, true),
+    loadMode: s(LOAD_MODE, true),
+  },
+  // models MD-N14-34, MD-N14-40a: a load-mode A/B's result per mode and its choice.
+  "model/load_mode_ab": {
+    model: s(ID),
+    volume: s(VOLUME),
+    engine: s(ENGINE),
+    modes: s(
+      v.array(
+        v.strictObject({
+          mode: LOAD_MODE,
+          loads: BYTES,
+          medianLoadMs: MS,
+          medianFirstTokenMs: MS,
+          medianTotalMs: MS,
+        }),
+      ),
+    ),
+    decided: s(v.boolean()),
+    chosen: s(LOAD_MODE),
+  },
+  // models MD-N14-33, MD-N14-40a: a GPU ceiling recorded (a Metal timeout, a calibration night).
+  "model/gpu_ceiling": {
+    basis: s(v.picklist(["metal_timeout", "calibrated"])),
+    bytes: s(BYTES),
+    models: s(v.array(ID), true),
+  },
+  // models rule 20h: a model Ollama serves with another quantisation or hash than its file.
+  "model/requantised": {
+    model: s(ID),
+    servedQuant: s(ID, true),
+    fileQuant: s(ID, true),
+    hashDiffers: s(v.boolean()),
+  },
+  // models MD-N14-12, MD-N14-40a: θ over the rolling hour, with the policy's parameters.
+  "model/swap_overhead": {
+    theta: s(v.pipe(v.number(), v.minValue(0))),
+    windowMs: s(MS),
+    swapMs: s(MS),
+    swaps: s(BYTES),
+    placementNotice: s(v.boolean()),
+    policyVersion: s(ID),
+    params: s(v.record(v.string(), v.number())),
+  },
+  // measurement MS-NM14-3, models MD-N14-40a: a calibration night's declared protocol.
+  "measure/calibration": {
+    policyVersion: s(ID),
+    params: s(v.record(v.string(), v.number())),
+    models: s(v.array(ID)),
+    volumes: s(v.array(VOLUME)),
+    loadModes: s(v.array(LOAD_MODE)),
+    abOrder: s(v.array(LOAD_MODE)),
+    probes: s(v.array(v.picklist(["read_probe", "drive_check", "headroom"]))),
+    equivalenceCheck: s(v.boolean()),
   },
   // models MD-N14-2: an unload, timed, and whether it was proven.
   "model/unloaded": {
@@ -166,6 +225,8 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     session: s(ID),
     method: s(v.picklist(["password", "passkey", "oidc", "setup", "invite"])),
   },
+  // Presence (models rule 20e, C6): a person's dashboard request, at most once per 5 minutes each.
+  "session/active": { via: s(v.picklist(["solo", "session", "proxy"])) },
   "session/ended": {
     session: s(ID),
     reason: s(
@@ -396,6 +457,15 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     step: s(v.pipe(v.number(), v.integer(), v.minValue(1))),
   },
   "card/taken_over": { id: s(ID), principal: s(PRINCIPAL) },
+  // gates rule 6a (lead ruling, B4.0b review): a test file staged for a card —
+  // its path, its SHA-256 and who wrote it. A Planner, test-author or PM
+  // carry-over record makes the file the card's own; structural only.
+  "test/staged": {
+    cardId: s(ID),
+    path: s(ID),
+    sha256: s(SHA256),
+    author: s(v.picklist(["planner", "test-author", "pm", "person", "repository", "suite"])),
+  },
   // security item 39 (S9): a person trusted the repository's configuration
   // as it is now — who, and each file by its repository-relative path and SHA-256.
   "workspace/trusted": {

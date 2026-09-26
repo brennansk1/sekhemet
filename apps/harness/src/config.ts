@@ -16,7 +16,23 @@ export interface SekhemetConfig {
     /** 0 means unlimited. */
     powerBudgetKwhDay: number;
   };
-  models: { executor: string; planner: string; vision: string; pruner: string };
+  models: {
+    executor: string;
+    planner: string;
+    vision: string;
+    pruner: string;
+    /**
+     * Smart Swap's headroom probe (models rule 20g): off until a calibration
+     * night sets its reserves on this host (models §4; measurement rule 16d).
+     */
+    headroomProbe: boolean;
+    /**
+     * The Planner role's quick answerer (models rule 20f b): a small model
+     * that answers while the Worker runs, informational only, when the
+     * measured headroom admits it beside the Worker. Empty: none.
+     */
+    quickAnswerer: string;
+  };
   context: {
     workingBudget: number | "auto";
     mapTokens: number;
@@ -77,7 +93,14 @@ export interface SekhemetConfig {
  */
 export const DEFAULT_CONFIG: SekhemetConfig = {
   machine: { tier: "auto", hours: "08:00-18:00 Mon-Fri", powerBudgetKwhDay: 0 },
-  models: { executor: "auto", planner: "auto", vision: "auto", pruner: "auto" },
+  models: {
+    executor: "auto",
+    planner: "auto",
+    vision: "auto",
+    pruner: "auto",
+    headroomProbe: false,
+    quickAnswerer: "",
+  },
   context: { workingBudget: "auto", mapTokens: 1024, maskAfterObservations: 2 },
   loop: { defaultStepBudget: DEFAULT_STEP_BUDGET, stallWindow: 3, maxRungs: 4 },
   review: {
@@ -230,6 +253,8 @@ function project(merged: TomlTable, problems: string[] = [], user?: TomlTable): 
       planner: str(models.planner, d.models.planner),
       vision: str(models.vision, d.models.vision),
       pruner: str(models.pruner, d.models.pruner),
+      headroomProbe: bool(models.headroom_probe, d.models.headroomProbe),
+      quickAnswerer: str(models.quick_answerer, d.models.quickAnswerer),
     },
     context: {
       workingBudget:

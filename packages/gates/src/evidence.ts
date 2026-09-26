@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { canonicalJson } from "@sekhemet/kernel";
 import { NO_GATES_CONFIG } from "./config.js";
-import type { GateFailure, GateResult, RungOutcome } from "./types.js";
+import type { TestStrengthRecord } from "./test_strength.js";
+import type { GateFailure, GateResult, QuarantinedTest, RungOutcome } from "./types.js";
 
 /** Model and sampling settings a result was produced under. */
 export interface RunSettings {
@@ -133,6 +134,17 @@ export interface EvidenceBundle {
   extensions?: ExtensionEvidence;
   /** The card's own configuration layer, `section.key = value` per line (surface SUR-40). */
   configOverrides?: string[];
+  /**
+   * The acceptance tests' strength, judged before any work (rules 6, 6a,
+   * 32a; GT-TQ-9, GT-TQ-12): the depth profile, the smell lint, red at an
+   * assertion and stub-kill.
+   */
+  testStrength?: TestStrengthRecord;
+  /**
+   * Every flaky test quarantined on this card (rule 34, GT-N3-4): how many
+   * and which, with both runs, so a suite comparison can report them.
+   */
+  quarantined?: { count: number; tests: QuarantinedTest[] };
 }
 
 /** What the card's extensions did not do as written (extensibility EXT-10, EXT-22a, EXT-25). */
@@ -182,6 +194,9 @@ export interface CompileEvidenceParams {
   repoState?: string;
   extensions?: ExtensionEvidence;
   configOverrides?: string[];
+  testStrength?: TestStrengthRecord;
+  /** Every test quarantined on the card (rule 34). */
+  quarantined?: QuarantinedTest[];
 }
 
 /**
@@ -261,6 +276,10 @@ export function compileEvidence(params: CompileEvidenceParams): EvidenceBundle {
       ? { extensions: params.extensions }
       : {}),
     ...(params.configOverrides?.length ? { configOverrides: params.configOverrides } : {}),
+    ...(params.testStrength ? { testStrength: params.testStrength } : {}),
+    ...(params.quarantined?.length
+      ? { quarantined: { count: params.quarantined.length, tests: params.quarantined } }
+      : {}),
   };
 }
 

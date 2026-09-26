@@ -1,6 +1,11 @@
 // Gates strip (FRONTEND_DESIGN §2.5.3): one segment per gate in execution order.
 import { esc, icon } from "./dom.js";
-import { GATE_STATE_LABELS, formatDuration, joinWords } from "./lib/vocabulary.js";
+import {
+  GATE_STATE_LABELS,
+  formatDuration,
+  invariantsNotEnforced,
+  joinWords,
+} from "./lib/vocabulary.js";
 
 const ICON = {
   pass: "check",
@@ -86,6 +91,15 @@ export function gatesStripHtml(
   if (emptyContract) {
     segs.push(
       `<button class="g-seg warn" type="button" role="listitem" aria-label="Gate contract empty">${icon("alert")}<span class="nm">Gate contract empty</span><span class="pop" role="tooltip"><b>These results weren’t checked against a contract.</b>gates.toml hashed to <span class="mono">${esc(String(sha).slice(0, 8))}…</span>, the hash of an empty file.</span></button>`,
+    );
+  }
+  // GT-N1-1: the brief's invariants the architecture gate cannot check.
+  const inv = invariantsNotEnforced(config?.invariants?.notEnforced);
+  if (inv) {
+    const lines = inv.lines.map((l) => `<li>${esc(l)}</li>`).join("");
+    const forms = inv.forms.map((f) => `<span class="mono">${esc(f)}</span>`).join(" or ");
+    segs.push(
+      `<button class="g-seg warn" type="button" role="listitem" aria-label="${esc(inv.label)}">${icon("alert")}<span class="nm">${esc(inv.label)}</span><span class="pop" role="tooltip"><b>${esc(inv.heading)}</b><ul>${lines}</ul><div style="margin-top:4px">Restate each as ${forms}.</div></span></button>`,
     );
   }
   return `<div class="g-strip" role="list" aria-label="Gates">${segs.join("")}</div>`;

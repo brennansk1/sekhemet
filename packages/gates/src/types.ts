@@ -100,6 +100,42 @@ export interface RungOutcome {
   source?: GateResultSource;
   /** The mutation gate's measurement, for the evidence (measurement MS-M10-4). */
   mutation?: MutationMeasure;
+  /**
+   * The verdict came from the cache: the same tree and the same gate
+   * definition already ran on this card, so no process started (rule 33,
+   * GT-N3-1).
+   */
+  cached?: boolean;
+  /** What the evidence should say about how the gate ran ("impacted tests first: no source index", GT-N3-2). */
+  note?: string;
+  /** Tests that failed, then passed on a re-run of the unchanged tree: flaky, quarantined for the card (rule 34, GT-N3-4). */
+  quarantined?: QuarantinedTest[];
+}
+
+/** A flaky test, quarantined for the card with both runs attached (rule 34, GT-N3-4). */
+export interface QuarantinedTest {
+  /** The test as its failure names it (`file > name`). */
+  test: string;
+  /** The first run's failure. */
+  firstRun: string;
+  /** What the re-run of the unchanged tree found: the test's own JUnit result. */
+  rerun: string;
+  /** The tree the quarantine holds on; it ends when the tree changes. */
+  tree?: string;
+}
+
+/**
+ * When a flaky test may be quarantined (rule 34, GT-N3-4). Closed unless a
+ * card's first verification opens it: never during red-first, never after
+ * the first repair rung.
+ */
+export interface QuarantinePolicy {
+  /** A quarantine may begin now: the card's first verification. */
+  open: boolean;
+  /** Test files never quarantined: the card's acceptance tests. */
+  never?: readonly string[] | undefined;
+  /** The card's base: a test file the card's diff changed or added is never quarantined. */
+  base?: string | undefined;
 }
 
 /** Where a gate result came from (rule 35; kernel rule 37). */
@@ -191,8 +227,18 @@ export interface GateProjectConfig {
   builtin?: ("secrets" | "dependencies" | "osv" | "semgrep" | "hygiene" | "mutation")[];
   /** Extra debug-output markers the hygiene gate refuses (G22), e.g. "console.log(". */
   debugPatterns?: string[];
-  /** Require a CHANGELOG.md entry for source changes; default: when CHANGELOG.md exists. */
-  changelog?: boolean;
+  /**
+   * Require a CHANGELOG.md entry for source changes; default: when
+   * CHANGELOG.md exists. `"advisory"` is set per card, never from the file:
+   * a card whose scope does not hold CHANGELOG.md is told, not failed
+   * (rule 17, GT-N2-2).
+   */
+  changelog?: boolean | "advisory";
+  /**
+   * The integration branch the card's change is judged against (rule 16,
+   * GT-N2-3); default the project's `[review] integration_branch`.
+   */
+  baseBranch?: string;
   /** Diff-scoped mutation testing after the gates pass (G13); advisory unless blocking. */
   mutation?: boolean;
   mutationMax?: number;

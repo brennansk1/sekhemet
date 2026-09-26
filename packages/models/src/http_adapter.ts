@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { assertKvType } from "./kv_policy.js";
+import { type Engine, type LoadOptions, checkOllamaQuantisation } from "./load_mechanics.js";
 import { currentMemoryPressure } from "./memory.js";
 import { parseToolCallsFromText, stripReasoning } from "./parser.js";
 import { type ModelRegistry, type TemplatePinResult, fetchChatTemplate } from "./registry.js";
@@ -18,6 +19,7 @@ import type {
   InferenceRequest,
   InferenceResponse,
   LocalInferenceAdapter,
+  ModelSignal,
   ReasoningLevel,
   TokenUsage,
   ToolArm,
@@ -36,6 +38,13 @@ export interface SamplingOptions {
 
 export interface HttpAdapterOptions {
   modelId: string;
+  /**
+   * The quantisation of the file Ollama was given (rule 20h), compared on
+   * load with what Ollama serves; default the registry's `quant`.
+   */
+  sourceQuant?: string;
+  /** The SHA-256 of the file Ollama was given, compared with its blob digest. */
+  sourceSha256?: string;
   baseUrl?: string;
   apiFormat?: "ollama" | "openai";
   sampling?: SamplingOptions;
@@ -557,6 +566,54 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
   }
   private baseUrl: string;
   private apiFormat: "ollama" | "openai";
+  /** The engine behind this adapter, for Smart Swap's record (rule 20h); undefined when unknown. */
+  public readonly engine: Engine | undefined;
+  private readonly signalListeners: ((signal: ModelSignal) => void)[] = [];
+  private quantisationChecked = false;
+
+  /** Listen for this engine's signals (rules 20g, 20h). */
+  public onSignal(listener: (signal: ModelSignal) => void): void {
+    this.signalListeners.push(listener);
+  }
+
+  /** Tell every listener; a listener that throws never fails the request. */
+  protected signal(s: ModelSignal): void {
+    for (const l of this.signalListeners) {
+      try {
+        l(s);
+      } catch {
+        // A listener's failure is its own.
+      }
+    }
+  }
+
+  /**
+   * Rule 20h: once per adapter, when an Ollama model is loaded or first
+   * adopted, compare the quantisation Ollama serves with the file's
+   * (`sourceQuant`, else the registry's) and signal a mismatch.
+   */
+  private async checkServedQuantisation(): Promise<void> {
+    if (this.quantisationChecked || this.apiFormat !== "ollama") return;
+    this.quantisationChecked = true;
+    const quant = this.options.sourceQuant ?? this.options.registry?.get(this.modelId)?.quant;
+    if (!quant && !this.options.sourceSha256) return;
+    const r = await checkOllamaQuantisation(this.baseUrl, this.modelId, {
+      ...(quant ? { quant } : {}),
+      ...(this.options.sourceSha256 ? { sha256: this.options.sourceSha256 } : {}),
+    });
+    if (!r.requantised) return;
+    const servedDiffers =
+      quant !== undefined &&
+      r.servedQuant !== undefined &&
+      quant.toUpperCase() !== r.servedQuant.toUpperCase();
+    this.signal({
+      kind: "requantised",
+      ...(r.servedQuant ? { servedQuant: r.servedQuant } : {}),
+      ...(quant ? { fileQuant: quant } : {}),
+      hashDiffers: !servedDiffers,
+      reason: r.reason ?? "requantised",
+    });
+  }
   private sampling: SamplingOptions;
   private options: HttpAdapterOptions;
   private fixedSeed: number | undefined;
@@ -624,6 +681,7 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
     this.modelId = options.modelId;
     this.baseUrl = (options.baseUrl ?? "http://127.0.0.1:11434").replace(/\/+$/, "");
     this.apiFormat = options.apiFormat ?? "ollama";
+    this.engine = this.apiFormat === "ollama" ? "ollama" : undefined;
     this.sampling = options.sampling ?? {};
   }
 
@@ -701,9 +759,12 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
    * and is never retried, since a retry would queue behind the load it
    * abandoned. `signal` aborts it (the residency scheduler's `releaseAll`).
    */
-  public async load(signal?: AbortSignal): Promise<"loaded" | "adopted"> {
+  public async load(signal?: AbortSignal, _options?: LoadOptions): Promise<"loaded" | "adopted"> {
     if (this.apiFormat !== "ollama") return "adopted";
-    if (await this.isResident()) return "adopted";
+    if (await this.isResident()) {
+      await this.checkServedQuantisation();
+      return "adopted";
+    }
     const { res, release } = await this.request(
       "/api/generate",
       {
@@ -720,6 +781,7 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
     } finally {
       release();
     }
+    await this.checkServedQuantisation();
     return "loaded";
   }
 
@@ -1172,6 +1234,15 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
     };
   }
 
+  /**
+   * Whether a request names its server slot (`id_slot`): only on a server
+   * with more than one. Here the slot count is unknown, so only a slot above
+   * 0 (which implies several) is sent; a managed server knows its `-np`.
+   */
+  protected sendsSlot(slot: number): boolean {
+    return slot > 0;
+  }
+
   private async generateOpenAi(
     messages: ChatMessage[],
     req: InferenceRequest,
@@ -1187,7 +1258,9 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
       stream,
     };
     if (stream) payload.stream_options = { include_usage: true };
-    if (req.slot !== undefined) payload.id_slot = req.slot;
+    // Rule 16c: the card's slot only when the server has several; a
+    // single-slot server's request is byte-identical to one without it.
+    if (req.slot !== undefined && this.sendsSlot(req.slot)) payload.id_slot = req.slot;
     // Rule 10: a fixed sampling seed, only when a measured run set one.
     if (this.fixedSeed !== undefined) payload.seed = this.fixedSeed;
 

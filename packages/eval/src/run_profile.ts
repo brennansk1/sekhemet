@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { DEFAULT_SWAP_POLICY, type SwapPolicyParams } from "@sekhemet/models";
 
 /**
  * One recorded `RunProfile` (measurement rule 9a, MS-M9-4, MS-M9-5).
@@ -53,6 +54,13 @@ export interface RunProfile {
   settingsFile?: { path: string; sha256: string; contents?: string };
   /** Where each resolved value came from, for the record; not part of the hash. */
   sources: Record<string, ProfileSource>;
+  /**
+   * Smart Swap's version and every parameter (models MD-N14-40), recorded in
+   * every profile. Not part of the hash: it schedules when requests are
+   * served, never what they send, and a change to it is admitted by
+   * measurement rule 16a's scheduling row.
+   */
+  swapPolicy?: SwapPolicyParams;
 }
 
 export type ProfileSource = "default" | "config" | "settings" | "env" | "flag";
@@ -137,6 +145,7 @@ function defaults(): RunProfile {
       toolArm: "progressive",
     },
     sources: {},
+    swapPolicy: structuredClone(DEFAULT_SWAP_POLICY) as SwapPolicyParams,
   };
 }
 
@@ -152,7 +161,7 @@ function applyLayer(
   const unknown = (key: string) =>
     new RunProfileRefusal(
       `${where}: unknown setting ${key}; a run's settings are ${Object.keys(defaults())
-        .filter((k) => k !== "schema" && k !== "sources")
+        .filter((k) => k !== "schema" && k !== "sources" && k !== "swapPolicy")
         .join(", ")} and armUnderTest`,
     );
   for (const key of Object.keys(layer)) {

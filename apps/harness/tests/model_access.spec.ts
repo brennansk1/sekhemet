@@ -112,7 +112,7 @@ describe("ModelAccess: the harness's one path to a model (MD-N9-4)", () => {
     expect(access.isResident("chat")).toBe(true);
   });
 
-  it("M1: a held model is not evicted by another queue; the Researcher's flow holds once and releases", async () => {
+  it("M1: a held model is not evicted by another queue; the Researcher's flow waits its turn in the queue, holds once and releases", async () => {
     const events: string[] = [];
     const { resolve } = fakes(events);
     const access = ModelAccess.forQueues([{ queue: "chat", role: "planner", name: "qwen" }], {
@@ -124,10 +124,17 @@ describe("ModelAccess: the harness's one path to a model (MD-N9-4)", () => {
     await access.measure();
     const seshat = await access.hold("chat");
     const research = researcherModel("apodex", access);
-    await expect(research.acquire()).rejects.toBeInstanceOf(FootprintRefusal);
+    // Models rule 20e: a queued request, served once `decide()` may load it.
+    let served = false;
+    const first = research.acquire().then((m) => {
+      served = true;
+      return m;
+    });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(served).toBe(false);
     expect(events).toEqual([]);
     seshat.release();
-    const a = await research.acquire();
+    const a = await first;
     const b = await research.acquire();
     expect(a).toBe(b);
     expect(events).toEqual(["unload qwen"]);

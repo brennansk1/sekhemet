@@ -55,6 +55,35 @@ describe("the payload schema registry (K-S7-4, K-S7-9, K-S7-10)", () => {
     expect(count()).toBe(before + 1);
   });
 
+  it("K-S7-4: a staged test is recorded by path, SHA-256 and author, structural only (gates rule 6a)", () => {
+    const before = count();
+    const sha = "a".repeat(64);
+    log.appendNow({
+      actor: "planner",
+      type: "test/staged",
+      cardId: "c",
+      payload: { cardId: "c", path: "tests/a.spec.ts", sha256: sha, author: "planner" },
+    });
+    expect(count()).toBe(before + 1);
+    expect(() =>
+      log.appendNow({
+        actor: "planner",
+        type: "test/staged",
+        cardId: "c",
+        payload: { cardId: "c", path: "tests/a.spec.ts", sha256: "not-a-hash", author: "planner" },
+      }),
+    ).toThrow(/test\/staged.*sha256/);
+    expect(() =>
+      log.appendNow({
+        actor: "planner",
+        type: "test/staged",
+        cardId: "c",
+        payload: { cardId: "c", path: "tests/a.spec.ts", sha256: sha, author: "the model" },
+      }),
+    ).toThrow(/test\/staged.*author/);
+    expect(count()).toBe(before + 1);
+  });
+
   it("K-S7-9: a personal, free-text or secret-bearing field goes only in the private part", async () => {
     const before = count();
     expect(() =>

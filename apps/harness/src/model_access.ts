@@ -1,24 +1,36 @@
 import type { EventLog } from "@sekhemet/kernel";
 import {
   CO_RESIDENT_MIN_BYTES,
+  type GpuCeiling,
+  type HeadroomProbe,
+  type LoadOptions,
   ManagedLlamaServerAdapter,
   type ModelHold,
   type ModelRegistry,
   type ModelRole,
   ModelRoster,
+  type PageCacheWarmer,
+  type RequestClass,
   ResidencyScheduler,
   type ResolveOptions,
   SWAP_EVENTS,
   type SwapEvent,
+  type SwapPresence,
   UNFILLED,
   type UnloadableAdapter,
+  type VolumeProber,
+  type WatchdogLevel,
+  admitLoad,
   currentAssignment,
+  gpuCeilingsFrom,
   hostFingerprintHash,
   isManagedModelName,
   loadHostMachineProfile,
   measureUsableMemory,
+  pageCacheWarmer,
   resolveWorkerModelId,
   tierSettingsOf,
+  withMeasurementRun,
 } from "@sekhemet/models";
 
 /**
@@ -69,10 +81,52 @@ export interface ModelAccessOptions {
   ledger?: SwapLedger;
   /** The volume a weights file is on; default by its device (`volumeOf`). Tests pass fakes. */
   volumeOf?: (path: string) => "internal" | "external";
+  /**
+   * Smart Swap's memory probe (models rule 20g): every load admitted by the
+   * headroom. Not on by default until the calibration nights set the D
+   * values on the reference host (measurement rule 16d).
+   */
+  headroom?: HeadroomProbe;
+  /** GPU ceilings recorded elsewhere (rule 20g), beside those on the ledger; none: the seed. */
+  gpuCeilings?: GpuCeiling[];
+  /** Load options per weights (rule 20h): the load mode the A/B chose. */
+  loadOptions?: (weights: string) => LoadOptions | undefined;
+  /** The drive check and read probe before each load (rule 20h). */
+  volumeProbe?: VolumeProber;
+  /** The clock the scheduler times and decides by; default `Date.now`. Tests pass a fake. */
+  now?: () => number;
+  /** How often waits poll (memory pressure, the watchdog's level falling). Default 1 s. */
+  pollMs?: number;
 }
 
-/** What Smart Swap needs of the ledger. */
-export type SwapLedger = Pick<EventLog, "appendNow" | "getEventsByTypes">;
+/**
+ * What Smart Swap's snapshot reads from the product (models rule 20e), set
+ * once the product has them (the queue's watchdog starts after its router).
+ */
+export interface SwapInputs {
+  /** Presence (C6): the dashboard's sessions, reserve-now and the reserved hours. */
+  presence?: () => SwapPresence;
+  /** The memory watchdog's level (rule 19). */
+  watchdogLevel?: () => WatchdogLevel;
+  /** CPU-side work of queued cards, run while a model loads (C9). */
+  overlap?: (loading: string) => void | Promise<void>;
+}
+
+/** What a queued request says about itself (rule 20e): its class, predicted service, and whether it is a review (C6). */
+export interface QueuedRequest {
+  cls?: RequestClass;
+  /** Predicted service time (the median), for W (rule 20d). */
+  serviceMs?: number;
+  /** A review of a finished card (C6). */
+  review?: boolean;
+}
+
+/**
+ * What Smart Swap needs of the ledger; its erasure index, when it has one, is
+ * what every adapter sweeps its saved slots by before a restore (MD-N14-37).
+ */
+export type SwapLedger = Pick<EventLog, "appendNow" | "getEventsByTypes"> &
+  Partial<Pick<EventLog, "erasureIndex">>;
 
 /** Smart Swap's recorded history on a ledger, oldest first (MD-N14-4). */
 export async function swapHistory(ledger: SwapLedger): Promise<SwapEvent[]> {
@@ -147,6 +201,11 @@ function hostMemory(): { usableBytes: number; coResident: boolean } {
 export class ModelAccess {
   private readonly specs = new Map<string, QueueSpec>();
   private ledger: SwapLedger | undefined;
+  private inputs: SwapInputs = {};
+  /** Inside a measurement run (rule 20b): C9 and C10 are bypassed. */
+  private measuring = false;
+  /** C10's page-cache warmer, when the headroom probe is on. */
+  private warmer: PageCacheWarmer | undefined;
 
   private constructor(
     private readonly scheduler: ResidencyScheduler,
@@ -178,6 +237,31 @@ export class ModelAccess {
       ...(options.pressureLevel ? { pressureLevel: options.pressureLevel } : {}),
       ...(options.headroomWaitMs !== undefined ? { headroomWaitMs: options.headroomWaitMs } : {}),
       ...(options.log ? { log: options.log } : {}),
+      ...(options.headroom ? { headroom: options.headroom } : {}),
+      ...(options.gpuCeilings ? { gpuCeilings: options.gpuCeilings } : {}),
+      ...(options.loadOptions ? { loadOptions: options.loadOptions } : {}),
+      ...(options.volumeProbe ? { volumeProbe: options.volumeProbe } : {}),
+      ...(options.now ? { now: options.now } : {}),
+      ...(options.pollMs !== undefined ? { pollMs: options.pollMs } : {}),
+      // Smart Swap's snapshot inputs, read at each decision (rule 20e).
+      presence: () => access?.inputs.presence?.() ?? { present: false },
+      watchdogLevel: () => access?.inputs.watchdogLevel?.() ?? "normal",
+      // C9: while a model loads, the CPU-side work of queued cards runs.
+      overlap: async (loading) => {
+        if (access && !access.measuring) await access.inputs.overlap?.(loading);
+      },
+      // C10: the successor warmed into the page cache, only with the headroom probe.
+      ...(options.headroom
+        ? {
+            prefetch: async (weights: string) => {
+              if (!access || access.measuring)
+                throw new Error("a measurement run does not prefetch (rule 20b)");
+              await access.warmer?.warm(weights);
+            },
+          }
+        : {}),
+      // C10: warmed bytes count only while the weights are neither loaded nor unloaded since.
+      onResidencyChange: (weights) => access?.warmer?.forget(weights),
       swapCost: {
         record: ({ type, payload }) => {
           access?.ledger?.appendNow({ actor: "harness", type, payload });
@@ -188,6 +272,14 @@ export class ModelAccess {
     });
     access = new ModelAccess(scheduler, options);
     access.ledger = options.ledger;
+    if (options.headroom) {
+      const self = access;
+      self.warmer = pageCacheWarmer({
+        probe: options.headroom,
+        watchdogLevel: () => self.inputs.watchdogLevel?.() ?? "normal",
+        source: (weights) => self.weightsSource(weights),
+      });
+    }
     for (const q of queues) access.ensureQueue(q);
     return access;
   }
@@ -229,6 +321,13 @@ export class ModelAccess {
             ...(contextTokens > 0 ? { contextTokens } : {}),
             ...(maxTokens > 0 ? { maxTokens } : {}),
           });
+          // Rule 20i, MD-N14-37: before every restore the adapter deletes the
+          // slot files an erasure on this ledger covers.
+          adapter.setErasureSource?.(() => {
+            const index = this.ledger?.erasureIndex?.();
+            if (!index) throw new Error("no ledger to read erasures from");
+            return index;
+          });
           return this.options.wrap
             ? this.options.wrap(
                 adapter,
@@ -247,17 +346,71 @@ export class ModelAccess {
 
   /**
    * A queue's model, resident now and held until the hold is released: no
-   * other queue evicts it meanwhile (a Seshat answer, a research question).
+   * other queue evicts it meanwhile. This bypasses `decide()`'s queue (it is
+   * `acquire`): only for a caller that truly needs the model at once — prefer
+   * `submitHold`. `yieldsToWatchdog`: a pin only the policy respects (an
+   * escalated card's attempt, which the watchdog's emergency unloads between
+   * its steps, rule 19).
    */
-  public hold(queue: string): Promise<ModelHold> {
-    return this.scheduler.acquire(queue);
+  public hold(queue: string, opts: { yieldsToWatchdog?: boolean } = {}): Promise<ModelHold> {
+    return this.scheduler.acquire(queue, opts);
+  }
+
+  /**
+   * Queue a request for a queue's model (models rule 20e): `decide()` serves
+   * it when C1–C7 allow — batched into a tour with the other queues, aged by
+   * its class's cap, counted by the storm cap — and the caller then holds the
+   * model until it releases the hold. A flow of several requests (a batch of
+   * plans, Seshat's answer, a batch of research questions) is one request.
+   */
+  public submitHold(
+    queue: string,
+    opts: QueuedRequest & { yieldsToWatchdog?: boolean } = {},
+  ): Promise<ModelHold> {
+    return this.scheduler.submitHold(queue, opts);
+  }
+
+  /**
+   * A queue's model through `decide()`'s queue, resident once served but not
+   * held: for the flow that owns this `ModelAccess` and needs its model next
+   * (a card's start on the Worker, which its steps then keep, C8).
+   */
+  public useQueued(queue: string, opts: QueuedRequest = {}): Promise<UnloadableAdapter> {
+    return this.scheduler.submit(queue, async (adapter) => adapter, opts);
+  }
+
+  /**
+   * A model for a flow that may or may not need it (research that may be
+   * answered from memory): the first `model()` queues one `submitHold`,
+   * later ones return the same adapter; `release` ends the hold, if any.
+   */
+  public queuedModel(
+    queue: string,
+    opts: QueuedRequest = {},
+  ): { model: () => Promise<UnloadableAdapter>; release: () => Promise<void> } {
+    let held: Promise<ModelHold> | undefined;
+    return {
+      model: async () => {
+        held ??= this.submitHold(queue, opts).catch((err: unknown) => {
+          held = undefined;
+          throw err;
+        });
+        return (await held).adapter;
+      },
+      release: async () => {
+        const hold = await held?.catch(() => undefined);
+        held = undefined;
+        hold?.release();
+      },
+    };
   }
 
   /**
    * A queue's model, resident now but not held (evicting what may be
-   * evicted, proven): for the one flow that owns this `ModelAccess` and asks
-   * one model at a time (`run`, the queue). A caller that shares the
-   * scheduler holds instead (`hold`).
+   * evicted, proven). It bypasses `decide()`'s queue (it is `acquire`): only
+   * for a flow that owns this `ModelAccess` with one queue (`run`, `plan`),
+   * or a caller nested inside another request's hold, which a queued request
+   * would deadlock behind. Otherwise `useQueued`, `submitHold` or `submit`.
    */
   public async use(queue: string): Promise<UnloadableAdapter> {
     const hold = await this.scheduler.acquire(queue);
@@ -270,9 +423,13 @@ export class ModelAccess {
     return this.scheduler.adapterFor(queue);
   }
 
-  /** Queue work until the queue's weights are resident (MD-N9-2). */
-  public submit<T>(queue: string, work: (adapter: UnloadableAdapter) => Promise<T>): Promise<T> {
-    return this.scheduler.submit(queue, work);
+  /** Queue work until `decide()` has the queue's weights resident (MD-N9-2, rule 20e). */
+  public submit<T>(
+    queue: string,
+    work: (adapter: UnloadableAdapter) => Promise<T>,
+    opts: QueuedRequest = {},
+  ): Promise<T> {
+    return this.scheduler.submit(queue, work, opts);
   }
 
   public has(queue: string): boolean {
@@ -302,6 +459,156 @@ export class ModelAccess {
   public releaseAll(): Promise<void> {
     return this.scheduler.releaseAll();
   }
+
+  // --- Smart Swap (models rule 20e): what `decide()` predicts and needs ---
+
+  /**
+   * When a request on `queue` would start (the median, MD-N14-8) and whether
+   * its full answer takes rule 20f's quick path, so Seshat can say it.
+   * `homeBacklog`: the Worker is mid-card (the runner's step boundary).
+   */
+  public predictWait(
+    queue: string,
+    opts: { cls?: "interactive"; homeBacklog?: boolean } = {},
+  ): ReturnType<ResidencyScheduler["predictWait"]> {
+    return this.scheduler.predictWait(queue, opts);
+  }
+
+  /** θ, the caps with their feasibility, the placement notice and the policy's parameters. */
+  public swapStatus(): ReturnType<ResidencyScheduler["status"]> {
+    return this.scheduler.status();
+  }
+
+  /** Whether the Worker has a card in progress (C5 counts its absences then); undefined: its queue says. */
+  public setHomeBacklog(on: boolean | undefined): void {
+    this.scheduler.setHomeBacklog(on);
+  }
+
+  /**
+   * One step on a queue's weights (models rule 20e, C8; RUN-35): no step
+   * starts while a decided swap waits at the drain barrier, and none runs on
+   * weights that are not resident — it asks for them through `decide()`'s
+   * queue, so a tour under way (a batch of reviews) finishes first, a hold
+   * (Seshat's answer) ends first, and the watchdog's critical level starts no
+   * load. The returned function ends the step, a step boundary.
+   */
+  public async beginStep(queue: string): Promise<() => void> {
+    for (;;) {
+      const end = await this.scheduler.beginStep(queue);
+      if (this.scheduler.isResident(queue)) return end;
+      end();
+      await this.measure();
+      await this.scheduler.submit(queue, async () => undefined);
+    }
+  }
+
+  /** Smart Swap's snapshot inputs from the product (presence, the watchdog, C9's work). */
+  public setSwapInputs(inputs: SwapInputs): void {
+    this.inputs = { ...this.inputs, ...inputs };
+  }
+
+  /** The plan's next uses, as queues in order (C2's tours, Belady eviction, C10's successor). */
+  public setPlan(queues: readonly string[]): void {
+    if (this.measuring) return;
+    this.scheduler.setPlan(queues.filter((q) => this.scheduler.has(q)));
+  }
+
+  /** The plan in force, as the first queue on each planned weights. */
+  public plannedQueues(): string[] {
+    return this.scheduler.plannedWeights.map(
+      (w) => [...this.specs.values()].find((s) => weightsKey(s.name) === w)?.queue ?? w,
+    );
+  }
+
+  /** A step boundary with no step (the plan or an input changed): decide again. */
+  public boundary(): void {
+    this.scheduler.boundary();
+  }
+
+  /**
+   * Bytes the page-cache warmer read (C10) for weights not resident, each
+   * once: never counted as used memory, and never stale (a load or unload
+   * forgets them).
+   */
+  public warmedBytes(): number {
+    return this.warmer?.warmedBytes() ?? 0;
+  }
+
+  /** Whether the headroom probe is on (models rule 20g; off until calibration). */
+  public get headroomOn(): boolean {
+    return this.options.headroom !== undefined;
+  }
+
+  /**
+   * Whether the measured headroom admits a queue's model beside what is
+   * resident now, evicting nothing (rule 20f b's quick answerer). Without the
+   * headroom probe nothing is measured, so nothing is admitted.
+   */
+  public async admits(queue: string): Promise<{ ok: boolean; reason: string }> {
+    if (!this.options.headroom)
+      return { ok: false, reason: "the headroom probe is off, so no headroom is measured" };
+    if (this.scheduler.isResident(queue)) return { ok: true, reason: "resident" };
+    await this.measure();
+    const weights = weightsKey(this.specs.get(queue)?.name ?? queue);
+    const verdict = admitLoad({
+      reading: await this.options.headroom.read(),
+      candidate: { weights, footprintBytes: this.scheduler.footprintOf(weights) },
+      resident: this.scheduler.residentWeights().map((w) => ({
+        weights: w,
+        footprintBytes: this.scheduler.footprintOf(w) ?? 0,
+      })),
+      now: this.options.now?.() ?? Date.now(),
+      // The configured ceilings and those recorded on the ledger (rule 20g, MD-N14-33).
+      ceilings: gpuCeilingsFrom(await this.scheduler.gpuCeilings()),
+    });
+    return verdict.verdict === "admit"
+      ? { ok: true, reason: "admitted by the headroom" }
+      : { ok: false, reason: verdict.reason };
+  }
+
+  /**
+   * A queue's model held beside what is resident, never evicting (rule 20f
+   * b). Kept synchronous (`acquire` with `evict: false`): the quick answer's
+   * point is not to wait for a swap, and it evicts nothing, so no policy
+   * rule (C1–C7) is at stake.
+   */
+  public holdBeside(queue: string): Promise<ModelHold> {
+    return this.scheduler.acquire(queue, { evict: false });
+  }
+
+  /**
+   * A measurement run (the frozen suite, a bake-off, an A/B, qualification;
+   * measurement MS-NM14-3, rule 20b): C9's overlap, C10's prefetch and the
+   * plan are bypassed inside it, and its models are unloaded when it ends,
+   * even when it fails (DEC-42).
+   */
+  public async measurementRun<T>(run: () => Promise<T>): Promise<T> {
+    this.measuring = true;
+    try {
+      return await withMeasurementRun(this.scheduler, run);
+    } finally {
+      this.measuring = false;
+    }
+  }
+
+  /** A check before every load (a calibration night's DEC-42 limits); undefined removes it. */
+  public setLoadGuard(guard: ((weights: string) => void | Promise<void>) | undefined): void {
+    this.scheduler.setLoadGuard(guard);
+  }
+
+  /** The scheduler, for a calibration night (`runCalibrationNight`) and a measurement run. */
+  public get residency(): Pick<ResidencyScheduler, "setLoadGuard" | "releaseAll"> {
+    return this.scheduler;
+  }
+
+  /** A weights key's file, through the first queue that serves it; undefined when unknown. */
+  private async weightsSource(
+    weights: string,
+  ): Promise<{ path: string; bytes: number } | undefined> {
+    const spec = [...this.specs.values()].find((s) => weightsKey(s.name) === weights);
+    if (!spec) return undefined;
+    return this.scheduler.adapterFor(spec.queue).weightsSource?.();
+  }
 }
 
 let shared: ModelAccess | undefined;
@@ -318,9 +625,11 @@ export function sharedQueue(
 ): () => Promise<ModelHold> {
   access.recordSwapsOn(options.ledger);
   access.ensureQueue(spec);
+  // Rule 20e: through `decide()`'s queue (a person's chat is interactive by its
+  // queue's class; research waits its turn), then held until released.
   return async () => {
     await access.measure();
-    return access.hold(spec.queue);
+    return access.submitHold(spec.queue);
   };
 }
 

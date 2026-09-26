@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -66,6 +67,46 @@ describe("@sekhemet/harness execution ledger events", () => {
   afterEach(() => {
     db.close();
     rmSync(repo, { recursive: true, force: true });
+  });
+
+  it("gates rule 6a: records each staged acceptance test by path and SHA-256, as the repository's", async () => {
+    const test = 'import { it } from "vitest";\nit("a", () => {});\n';
+    mkdirSync(join(repo, "acceptance"));
+    writeFileSync(join(repo, "acceptance", "a.spec.ts"), test);
+    const card = await cardStore.createCard({
+      id: "card_staged",
+      tier: "task",
+      title: "Write a",
+      scopeFiles: ["src/a.ts"],
+      stepBudget: 2,
+      spec: "Write src/a.ts",
+      acceptanceTests: ["a.spec.ts"],
+    });
+    const ctx = {
+      repoPath: repo,
+      restrictedMode: false,
+      cardStore,
+      boardService,
+      log: () => {},
+      headroomCheck: false,
+    };
+    const model = new MockInferenceAdapter("scripted", [
+      {
+        text: "",
+        toolCalls: [{ id: "1", name: "finish_card", arguments: {} }],
+        usage: { promptTokens: 1, completionTokens: 1, durationMs: 1 },
+      },
+    ]);
+    await executeCard(ctx, card, model, "1. Export a.");
+    const staged = (await cardStore.cardEvents(card.id, ["test/staged"])).map((e) => e.payload);
+    expect(staged).toEqual([
+      {
+        cardId: card.id,
+        path: "tests/a.spec.ts",
+        sha256: createHash("sha256").update(test).digest("hex"),
+        author: "repository",
+      },
+    ]);
   });
 
   it("appends one card/step per turn, the repair plan, and the accept sha; the chain stays valid", async () => {

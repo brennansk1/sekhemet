@@ -49,6 +49,7 @@ import {
   restoreRole,
   scheduleNow,
   thinkingPolicyFromEnv,
+  withMeasurementRun,
 } from "@sekhemet/models";
 import {
   DecisionStore,
@@ -1010,16 +1011,26 @@ export async function runWave2Command(
         const a = adapterFor(n);
         // Read after the run: its first request pins the chat template.
         let combination: QualificationCombination | undefined;
-        const { best } = await qualifyModel(a, {
-          registry,
-          bar: QUALIFICATION_BAR,
-          combination: () => {
-            combination = qualificationCombination(a, { ...io.combinationDeps, registry });
-            return combination;
+        // A measurement run (measurement MS-NM14-3, DEC-42): the model is
+        // unloaded when it ends, even when it fails, and no Smart Swap rule
+        // reorders it (models rule 20b).
+        const { best } = await withMeasurementRun(
+          {
+            releaseAll: async () => {
+              await (a as { unload?: () => Promise<void> }).unload?.();
+            },
           },
-          thinking: thinkingPolicyFromEnv(),
-        });
-        await (a as { unload?: () => Promise<void> }).unload?.();
+          () =>
+            qualifyModel(a, {
+              registry,
+              bar: QUALIFICATION_BAR,
+              combination: () => {
+                combination = qualificationCombination(a, { ...io.combinationDeps, registry });
+                return combination;
+              },
+              thinking: thinkingPolicyFromEnv(),
+            }),
+        );
         combination ??= qualificationCombination(a, { ...io.combinationDeps, registry });
         const look = registry.lookupQualification(a.modelId, combination);
         anyQualified ||= look.status === "qualified";

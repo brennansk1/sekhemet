@@ -33,6 +33,7 @@ import {
   readSwapUsedBytes,
   saveMachineProfile,
   selectEngine,
+  withMeasurementRun,
 } from "@sekhemet/models";
 import { describeModel, launchVariant } from "./model_access.js";
 
@@ -480,21 +481,29 @@ export async function runMtpAb(opts: {
   );
   let r: Awaited<ReturnType<typeof mtpStepAB>>;
   try {
-    r = await mtpStepAB({
-      modelId: adapter.modelId,
-      steps: requests,
-      plain: probes.plain,
-      speculative: probes.speculative,
-      thinking,
-      registry,
-      release: async (a) => {
-        await (a as UnloadableAdapter).unload?.();
-      },
-      // An already-running Worker would be adopted by both probes and
-      // measured twice: refuse while the port answers (M11).
-      portBusy: () => probes.plain.portBusy(),
-      ...(probes.draft ? { draft: probes.draft } : {}),
-    });
+    // A measurement run (MS-NM14-3, DEC-42): both probes are unloaded when it
+    // ends, even when it fails; no Smart Swap rule reorders it (rule 20b).
+    const unloadBoth = async () => {
+      for (const a of [probes.plain, probes.speculative])
+        await (a as UnloadableAdapter).unload?.().catch(() => undefined);
+    };
+    r = await withMeasurementRun({ releaseAll: unloadBoth }, () =>
+      mtpStepAB({
+        modelId: adapter.modelId,
+        steps: requests,
+        plain: probes.plain,
+        speculative: probes.speculative,
+        thinking,
+        registry,
+        release: async (a) => {
+          await (a as UnloadableAdapter).unload?.();
+        },
+        // An already-running Worker would be adopted by both probes and
+        // measured twice: refuse while the port answers (M11).
+        portBusy: () => probes.plain.portBusy(),
+        ...(probes.draft ? { draft: probes.draft } : {}),
+      }),
+    );
   } catch (err) {
     say(err instanceof Error ? err.message : String(err));
     return 1;

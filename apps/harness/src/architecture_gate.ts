@@ -72,6 +72,43 @@ export function parseInvariants(brief: string): ParsedInvariants {
   return { rules, unenforced };
 }
 
+/** The two sentence forms the gate enforces, as a person restates an invariant in them (GT-N1-1). */
+export const INVARIANT_FORMS = [
+  "`A/` does not import `B`",
+  "`Name` is defined only in `path`",
+] as const;
+
+/** An Invariants line the gate cannot check, and the forms it could be restated in. */
+export interface UnenforcedInvariant {
+  line: string;
+  restate: string[];
+}
+
+/**
+ * The brief's invariant lines that match neither enforced form (gates rule
+ * 26, GT-N1-1): shown to a person as "not enforced" — on the board's gate
+ * contract and in every card's evidence — never silently treated as holding.
+ * Empty without a brief.
+ */
+export function unenforcedInvariants(briefPath: string): UnenforcedInvariant[] {
+  if (!existsSync(briefPath)) return [];
+  return parseInvariants(readFileSync(briefPath, "utf8")).unenforced.map((line) => ({
+    line,
+    restate: [...INVARIANT_FORMS],
+  }));
+}
+
+/** The evidence's note for the lines the gate did not enforce, if any. */
+function unenforcedNote(lines: readonly UnenforcedInvariant[]): string | undefined {
+  if (lines.length === 0) return undefined;
+  const n = lines.length;
+  return `${n} invariant ${n === 1 ? "line" : "lines"} in the brief ${n === 1 ? "is" : "are"} not enforced: ${lines
+    .map((l) => `"${l.line}"`)
+    .join(
+      "; ",
+    )}. Restate ${n === 1 ? "it" : "each"} as ${INVARIANT_FORMS.join(" or ")} for the architecture gate to check it.`;
+}
+
 const stripExt = (p: string): string => p.replace(/\.[cm]?[jt]sx?$/, "");
 
 /** Does `file` fall under `pattern` — the same file, or inside a directory ending `/`? */
@@ -164,6 +201,9 @@ export function withArchitectureGate(
       const res = await inner.runGates(rungs, cwd);
       const started = Date.now();
       const failures = architectureGate(cwd, options);
+      const note = unenforcedNote(
+        unenforcedInvariants(options.briefPath ?? join(cwd, ".sekhemet", "brief.md")),
+      );
       const outcome: RungOutcome = {
         gate: "architecture",
         rung: "hygiene",
@@ -171,6 +211,8 @@ export function withArchitectureGate(
         passed: failures.length === 0,
         exitCode: failures.length === 0 ? 0 : 1,
         durationMs: Date.now() - started,
+        // GT-N1-1: what the gate did not check is in every card's evidence.
+        ...(note ? { note } : {}),
       };
       return {
         ...res,

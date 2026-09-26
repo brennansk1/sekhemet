@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -46,6 +47,12 @@ describe.runIf(platform() === "darwin")("the security scanners run confined", ()
     vi.stubEnv("SEKHEMET_CANARY_API_KEY", "sk-canary");
     mkdirSync(join(root, "src"));
     writeFileSync(join(root, "src", "a.ts"), "export const a = 1;\n");
+    // A real repository: osv judges the lockfiles git says the card changed.
+    const git = (...a: string[]) => execFileSync("git", a, { cwd: root, stdio: "ignore" });
+    git("init", "-q", "-b", "main");
+    git("-c", "user.email=t@t.t", "-c", "user.name=T", "add", "-A");
+    git("-c", "user.email=t@t.t", "-c", "user.name=T", "commit", "-q", "-m", "seed");
+    // The card adds the lockfile, so osv has something to judge (GT-N2-1).
     writeFileSync(join(root, "package-lock.json"), "{}\n");
     mkdirSync(join(root, ".sekhemet"));
     writeFileSync(join(root, ".sekhemet", "semgrep.yml"), "rules: []\n");
@@ -57,7 +64,7 @@ describe.runIf(platform() === "darwin")("the security scanners run confined", ()
     const r = await runBuiltinGates({
       root,
       base: "main",
-      diff: "diff --git a/src/a.ts b/src/a.ts\n+++ b/src/a.ts\n+export const a = 1;\n",
+      diff: "diff --git a/src/a.ts b/src/a.ts\n+++ b/src/a.ts\n+export const a = 1;\ndiff --git a/package-lock.json b/package-lock.json\n+++ b/package-lock.json\n+{}\n",
       project: { protected: [], maxFiles: 3, maxDiffLines: 200 },
       gates: ["secrets", "osv", "semgrep"],
       programs,

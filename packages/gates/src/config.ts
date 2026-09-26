@@ -276,6 +276,15 @@ export function loadGatesConfig(repoRoot: string): GatesConfig {
       ? { networkAllow: asStringArray(projectTable.network_allow) }
       : {}),
   };
+  const warnings: string[] = [];
+  // Rule 16: the base is the configured branch. A value git would read as
+  // an option or a range is refused, never passed to git.
+  if (projectTable.base_branch !== undefined) {
+    const b = projectTable.base_branch;
+    if (typeof b === "string" && isBranchName(b)) project.baseBranch = b;
+    else
+      warnings.push(`[project] base_branch = ${JSON.stringify(b)} is not a branch name; ignored`);
+  }
 
   const gateHost = parseGateHostConfig(parsed.gate_host, repoRoot);
   if (gateHost) project.gateHost = gateHost;
@@ -283,7 +292,6 @@ export function loadGatesConfig(repoRoot: string): GatesConfig {
   if (visual) project.visual = visual;
 
   const rawGates = Array.isArray(parsed.gate) ? (parsed.gate as TomlTable[]) : [];
-  const warnings: string[] = [];
   const gates = rawGates.map((raw, i) => toGateDefinition(raw, i, (w) => warnings.push(w)));
 
   return {
@@ -293,6 +301,17 @@ export function loadGatesConfig(repoRoot: string): GatesConfig {
     sourcePath,
     ...(warnings.length > 0 ? { warnings } : {}),
   };
+}
+
+/** A git branch name that cannot be read as an option, a range or a path escape. */
+function isBranchName(b: string): boolean {
+  return (
+    /^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(b) &&
+    !b.includes("..") &&
+    !b.endsWith("/") &&
+    !b.endsWith(".lock") &&
+    b.length <= 200
+  );
 }
 
 export class GatesConfigTamperError extends Error {

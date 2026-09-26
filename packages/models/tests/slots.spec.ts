@@ -60,3 +60,36 @@ describe("parallelSlots: every slot keeps the full window", () => {
     expect(apodexContextTokens(24 * GB, { SEKHEMET_RESEARCHER_CTX: "junk" })).toBe(16384);
   });
 });
+
+describe("rule 16c: id_slot only when the server has more than one slot", () => {
+  class Adopted extends ManagedLlamaServerAdapter {
+    override async ensureRunning(): Promise<void> {}
+  }
+  const body = async (parallel: number, slot?: number) => {
+    const srv = await fakeServer(() => ({ json: { choices: [{ message: { content: "ok" } }] } }));
+    closers.push(srv.close);
+    const a = new Adopted({
+      modelId: "w",
+      modelPath: "/w.gguf",
+      port: srv.port,
+      contextTokens: 8192,
+      parallel,
+    });
+    await a.generate({
+      prompt: "p",
+      toolArm: "arm_a_flat",
+      ...(slot !== undefined ? { slot } : {}),
+    });
+    return JSON.stringify(srv.seen.find((s) => s.method === "POST")?.body);
+  };
+
+  it("a single-slot server's request body is byte-identical with and without the card's slot", async () => {
+    expect(await body(1, 0)).toBe(await body(1));
+    expect(await body(1, 0)).not.toContain("id_slot");
+  });
+
+  it("a two-slot server gets the card's slot", async () => {
+    expect(await body(2, 1)).toContain('"id_slot":1');
+    expect(await body(2, 0)).toContain('"id_slot":0');
+  });
+});
