@@ -324,14 +324,17 @@ export function triageBarHtml(card, evidence, { hint = true } = {}) {
       : `<div class="triage settled" role="note"><span>Closed</span></div>`;
   }
   const offline = s.connection === "offline";
-  const dis = offline ? ' disabled title="Offline"' : "";
+  // A disabled button's reason is adjacent text, never a hover title (DB-P12-3).
+  const dis = offline ? ' disabled aria-describedby="accept-why"' : "";
   const st = acceptState(card, evidence);
   const merging = acceptPending(card?.id);
   const acceptBtn = !evidence
     ? ""
     : `<button class="btn primary" type="button" data-accept${st.ok && !merging ? "" : ` disabled aria-describedby="accept-why"`}>${icon("merge")}${merging ? "Merging…" : "Accept"} ${kbd("A")}</button>`;
   const why =
-    !st.ok && evidence ? `<span class="why" id="accept-why">${esc(st.reason)}</span>` : "";
+    !st.ok && (evidence || offline)
+      ? `<span class="why" id="accept-why">${esc(st.reason)}</span>`
+      : "";
   const back = evidence
     ? `<button class="btn" type="button" data-back${dis}>${icon("send-back")}Send back ${kbd("R")}</button>`
     : "";

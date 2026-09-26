@@ -1,9 +1,10 @@
 // Command palette (FRONTEND_DESIGN §2.5.10): grouped, fuzzy, with shortcuts.
 import { openCheatsheet } from "./cheatsheet.js";
 import { MOD, copyText, esc, icon, kbd } from "./dom.js";
+import { paletteGoTo } from "./lib/nav.js";
 import { KIND_LABELS, columnLabel } from "./lib/vocabulary.js";
 import { pushOverlay, trapFocus } from "./overlay.js";
-import { toggleTheme } from "./shell.js";
+import { currentNav, toggleTheme } from "./shell.js";
 import { store } from "./store.js";
 import { toast } from "./toast.js";
 
@@ -70,10 +71,15 @@ function goTo(hash) {
   };
 }
 
+/** Go to: every shown view from the one keymap (lib/nav.js), then the list and the panel. */
 function views() {
   return [
-    { label: "Go to Review", keys: ["g", "r"], run: goTo("#/review") },
-    { label: "Go to Board", keys: ["g", "b"], run: goTo("#/board") },
+    ...paletteGoTo(currentNav()).map((p) => ({
+      label: `Go to ${p.label}${p.sub ? `, ${p.sub}` : ""}`,
+      search: p.search,
+      keys: p.keys,
+      run: goTo(p.route),
+    })),
     {
       label: "Go to List",
       search: "Board list table view",
@@ -85,52 +91,6 @@ function views() {
       search: "Seshat PM project manager chat ask",
       keys: [`${MOD}J`],
       run: () => window.dispatchEvent(new CustomEvent("sekhemet:open-pm")),
-    },
-    {
-      label: "Go to Seshat, the project manager",
-      search: "Seshat PM conversation",
-      keys: ["g", "a"],
-      run: goTo("#/pm"),
-    },
-    {
-      label: "Go to Insights",
-      search: "Insights flow metrics cycle time throughput",
-      keys: ["g", "f"],
-      run: goTo("#/insights"),
-    },
-    {
-      label: "Go to Integrations",
-      search: "Integrations GitHub Jira Linear Slack import export",
-      keys: ["g", "s"],
-      run: goTo("#/integrations"),
-    },
-    { label: "Go to Runs", keys: ["g", "q"], run: goTo("#/runs") },
-    { label: "Go to Ledger", keys: ["g", "l"], run: goTo("#/ledger") },
-    { label: "Go to Playbook", keys: ["g", "p"], run: goTo("#/playbook") },
-    { label: "Go to Machine", keys: ["g", "m"], run: goTo("#/machine") },
-    {
-      label: "Go to Inbox",
-      search: "Inbox decisions questions permission",
-      keys: ["g", "i"],
-      run: goTo("#/inbox"),
-    },
-    {
-      label: "Go to Dependencies",
-      search: "Dependencies graph DAG waits on",
-      keys: ["g", "d"],
-      run: goTo("#/graph"),
-    },
-    {
-      label: "Go to Workspace",
-      search: "Workspace projects master board",
-      keys: ["g", "w"],
-      run: goTo("#/workspace"),
-    },
-    {
-      label: "Go to Registry",
-      search: "Registry models bake-off qualification",
-      keys: ["g", "e"],
-      run: goTo("#/registry"),
     },
   ];
 }
@@ -150,7 +110,8 @@ export function toggleDensity() {
 
 function prefs() {
   return [
-    { label: "Switch theme", keys: ["t"], run: toggleTheme },
+    // No bare key for theme (§2.3.2).
+    { label: "Switch theme", search: "theme dark light", run: toggleTheme },
     {
       label: "Switch density (compact or comfortable)",
       search: "density comfortable compact tile bars tokens difficulty",

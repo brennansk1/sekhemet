@@ -310,7 +310,7 @@
   gap: 8px;
   height: 48px;
   padding: 0 16px;
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-control);
   flex: none;
 }
 .palette-input .ic {
@@ -325,7 +325,7 @@
   min-width: 0;
 }
 .palette-input input::placeholder {
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 .palette-list {
   overflow-y: auto;
@@ -398,7 +398,7 @@
 
 /* Cheat sheet (§2.5.12) */
 .cheats {
-  width: 880px;
+  width: 720px;
 }
 .cheats header {
   display: flex;
@@ -413,11 +413,14 @@
 .cheats header .icon-btn {
   margin-left: auto;
 }
+/* Scrolls inside the dialog (DB-P11-6): a flex child keeps its content
+   height unless allowed to shrink, and the dialog's overflow cut it off. */
 .cheat-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 16px 24px;
   padding: 16px;
+  min-height: 0;
   overflow-y: auto;
 }
 .cheat-grid h3 {
@@ -449,56 +452,21 @@
 .cheat-grid .off {
   opacity: 0.45;
 }
+.cheat-grid .note {
+  margin-top: 8px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
 
-/* 1024–1279: icon rail with tooltips and badges */
+/* 1024–1279: a narrower sidebar that keeps its labels; the icon rail is
+   retired (dashboard §2.2.2, DB-P11-2). */
 @media (max-width: 1279px) {
   .side {
-    width: var(--rail-w);
-    padding: 12px 6px;
-    align-items: stretch;
+    width: var(--sidebar-w-narrow);
   }
-  .side .lbl,
   .brand kbd,
-  .project,
-  .foot .tools .lbl,
   .foot .meter {
     display: none;
-  }
-  .brand {
-    justify-content: center;
-    padding: 4px 0 12px;
-  }
-  .nav a {
-    justify-content: center;
-    padding: 0;
-  }
-  .nav a[aria-current="page"]::before {
-    left: -6px;
-  }
-  .nav .n {
-    position: absolute;
-    top: 0;
-    right: 2px;
-    margin: 0;
-    font-size: 10px;
-    line-height: 12px;
-    min-width: 12px;
-    text-align: center;
-    border-radius: 6px;
-    background: var(--bg-raised);
-  }
-  .nav .n.long {
-    display: none;
-  }
-  .foot {
-    padding: 12px 0 0;
-    align-items: center;
-  }
-  .foot .row {
-    justify-content: center;
-  }
-  .foot .tools {
-    flex-direction: column;
   }
   .search {
     width: auto;
@@ -510,6 +478,7 @@
     grid-template-columns: repeat(2, 1fr);
   }
 }
+/* Below 768: no sidebar; the bottom bar (below) takes its place (§2.2.2, DB-P11-3). */
 @media (max-width: 767px) {
   .side {
     display: none;
@@ -535,12 +504,119 @@
 .foot .mem-pct {
   margin-left: auto;
 }
-.nav .sub {
-  color: var(--text-secondary);
-}
+/* The label keeps its width; the secondary text (Seshat) gives way first. */
 .nav a .lbl {
+  flex: none;
   white-space: nowrap;
+}
+.nav .sub {
+  margin-left: auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.nav .sub + .n {
+  margin-left: 8px;
+}
+
+/* Grouped navigation (dashboard §2.2.1, P11) */
+.nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.nav-group + .nav-group,
+.nav-more {
+  margin-top: 16px;
+}
+/* The project's name, and its folder as visible text (never a hover title,
+   DB-P12-6); a long path wraps rather than hiding its end. */
+.nav-project {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 28px;
+  padding: 4px 8px;
   min-width: 0;
+}
+.nav-project .name {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nav-project .path {
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.nav-more summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: var(--radius-control);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  list-style: none;
+}
+.nav-more summary::-webkit-details-marker {
+  display: none;
+}
+.nav-more summary:hover {
+  background: var(--bg-overlay);
+  color: var(--text-primary);
+}
+.nav-more[open] summary .ic {
+  transform: rotate(90deg);
+}
+.nav-more .nav-group {
+  margin-top: 2px;
+}
+.foot .nav-group {
+  margin: 0 -8px;
+}
+
+/* The phone's bottom bar (DB-P11-3): hidden until the 767 px query shows it. */
+.tabbar {
+  display: none;
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border-subtle);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.tabbar a {
+  flex: 1;
+  min-height: 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  text-decoration: none;
+}
+.tabbar a[aria-current="page"] {
+  color: var(--text-primary);
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+/* After the base rule, so the phone query wins the cascade. */
+@media (max-width: 767px) {
+  .tabbar {
+    display: flex;
+  }
+  .main {
+    padding-bottom: 48px;
+  }
 }

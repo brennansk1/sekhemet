@@ -47,8 +47,10 @@ function render() {
   const models = ui.data?.models ?? [];
   const bake = ui.data?.bakeoff ?? [];
   setTopbar({
-    title: "Registry",
-    crumb: ui.data ? `${models.length} models · ${bake.length} bake-off records` : "",
+    title: "Configuration",
+    crumb: ui.data
+      ? `Benchmark · ${models.length} models · ${bake.length} bake-off records`
+      : "Benchmark",
   });
   let html;
   if (ui.status === 0) html = '<div class="sk" style="height:160px"></div>';

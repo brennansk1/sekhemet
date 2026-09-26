@@ -1,34 +1,34 @@
 // Sidebar, topbar and the four shell bars (FRONTEND_DESIGN §2.2, §2.4).
-import { MOD, esc, icon, kbd } from "./dom.js";
+import { MOD, esc, icon, kbd, tip } from "./dom.js";
+import { bottomBar, navNameOf, visibleNav } from "./lib/nav.js";
 import { stopReasonLabel } from "./lib/vocabulary.js";
 import { ledgerAltered, store } from "./store.js";
 
-const NAV = [
-  { name: "review", label: "Review", icon: "review", key: "g r" },
-  // Hidden until the decisions endpoint answers (§2.4.8): never a dead link.
-  { name: "inbox", label: "Inbox", icon: "inbox", key: "g i", when: (s) => s.decisions.available },
-  { name: "board", label: "Board", icon: "board", key: "g b" },
-  {
-    name: "pm",
-    label: "Seshat",
-    sub: "Project manager",
-    icon: "chat",
-    key: "g a",
-    title: "Seshat, the project manager",
-  },
-  { name: "insights", label: "Insights", icon: "insights", key: "g f" },
-  { name: "runs", label: "Runs", icon: "runs", key: "g q" },
-  { name: "ledger", label: "Ledger", icon: "ledger", key: "g l" },
-  { name: "playbook", label: "Playbook", icon: "playbook", key: "g p" },
-  { name: "graph", label: "Dependencies", icon: "link", key: "g d" },
-  { name: "machine", label: "Machine", icon: "machine", key: "g m" },
-  { name: "workspace", label: "Workspace", icon: "layers", key: "g w" },
-  { name: "registry", label: "Registry", icon: "memory", key: "g e" },
-  { name: "integrations", label: "Integrations", icon: "plug", key: "g s" },
-];
+// The views the page mounts, by nav name (app.js); a view not built is never linked.
+let mounted = new Set();
+
+export function setNavViews(names) {
+  mounted = new Set(names.map(navNameOf).filter(Boolean));
+  renderSide();
+}
+
+/** The nav items shown now, in order (dashboard §2.2.1, P11). */
+export function currentNav() {
+  const s = store.state;
+  return visibleNav({
+    views: mounted,
+    team: false,
+    completedRuns: s.queue?.entries?.length ?? 0,
+    dependencyEdges: s.cards.filter((c) => c.dependsOn?.length).length,
+    playbookEntries: (s.playbook?.rules?.length ?? 0) + (s.playbook?.candidates?.length ?? 0),
+  });
+}
 
 let active = "";
 let lastSide = "";
+let lastTabs = "";
+/** The More disclosure, kept across renders; open by default while it holds the page. */
+let moreOpen = null;
 let lastBar = "";
 
 export function toggleTheme() {
@@ -51,7 +51,7 @@ export function setActiveNav(name) {
 /** The topbar belongs to the view: title, a quiet crumb, filters. Search is always on the right. */
 export function setTopbar({ title, crumb = "", filters = "" }) {
   const top = document.getElementById("top");
-  const html = `<h1 id="view-title">${esc(title)}</h1>${crumb ? `<span class="crumb">${esc(crumb)}</span>` : ""}${filters}<div class="right"><button class="search" type="button" data-palette title="Search or run a command (${MOD}K)">${icon("search", 14, "ic s14")}<span class="lbl">Search or run a command</span>${kbd(`${MOD}K`)}</button></div>`;
+  const html = `<h1 id="view-title">${esc(title)}</h1>${crumb ? `<span class="crumb">${esc(crumb)}</span>` : ""}${filters}<div class="right"><button class="search" type="button" data-palette aria-label="Search or run a command" aria-keyshortcuts="${MOD === "⌘" ? "Meta+K" : "Control+K"}" title="Search or run a command (${MOD}K)">${icon("search", 14, "ic s14")}<span class="lbl">Search or run a command</span>${kbd(`${MOD}K`)}</button></div>`;
   if (top.dataset.html !== html) {
     top.innerHTML = html;
     top.dataset.html = html;
@@ -151,16 +151,28 @@ function renderSide() {
       warn: true,
       title: `${waiting} decision${waiting === 1 ? "" : "s"} waiting on you`,
     };
-  const nav = NAV.filter((item) => !item.when || item.when(s))
-    .map((item) => {
-      const c = counts[item.name];
-      const cur = active === item.name ? ' aria-current="page"' : "";
-      const badge = c
-        ? `<span class="n tnum${c.warn ? " warn" : ""}${c.long ? " long" : ""}"${c.title ? ` title="${esc(c.title)}"` : ""}>${esc(c.n)}</span>`
-        : "";
-      return `<a href="#/${item.name}"${cur} title="${esc(item.title ?? item.label)} (${item.key})">${icon(item.icon)}<span class="lbl">${esc(item.label)}${item.sub ? `<span class="sub"> · ${esc(item.sub)}</span>` : ""}</span>${badge}</a>`;
-    })
-    .join("");
+  const shown = currentNav();
+  const link = (item) => {
+    const c = counts[item.name];
+    const cur = active === item.name ? ' aria-current="page"' : "";
+    const badge = c
+      ? `<span class="n tnum${c.warn ? " warn" : ""}${c.long ? " long" : ""}"${c.title ? ` title="${esc(c.title)}"` : ""}>${esc(c.n)}${c.title ? `<span class="sr-only">, ${esc(c.title)}</span>` : ""}</span>`
+      : "";
+    const sub = item.sub ? `<span class="sub">${esc(item.sub)}</span>` : "";
+    return `<a href="${item.route}"${cur} title="${esc(item.label)} (g ${item.chord})">${icon(item.icon)}<span class="lbl">${esc(item.label)}</span>${sub}${badge}</a>`;
+  };
+  const group = (g) =>
+    shown
+      .filter((i) => i.group === g)
+      .map(link)
+      .join("");
+  const project = s.meta?.project ?? "";
+  const more = group("more");
+  const moreActive = shown.some((i) => i.group === "more" && i.name === active);
+  const open = moreOpen ?? moreActive;
+  const nav = `<div class="nav-group">${group("workspace")}</div><div class="nav-group">${project ? `<div class="nav-project"><span class="name">${esc(project)}</span>${s.meta?.repoPath ? `<span class="path mono">${esc(s.meta.repoPath)}</span>` : ""}</div>` : ""}${group("project")}</div>${more ? `<details class="nav-more" data-nav-more${open ? " open" : ""}><summary>${icon("chevron-right", 14, "ic s14")}More</summary><div class="nav-group">${more}</div></details>` : ""}`;
+  const bottom = `<div class="nav-group">${group("bottom")}</div>`;
+  renderTabs(shown);
 
   const v = s.verification;
   let live;
@@ -171,8 +183,9 @@ function renderSide() {
   } else if (s.connection === "reconnecting" || s.connection === "connecting") {
     live = `<div class="row"><span class="dot warn"></span><span class="lbl">${s.connection === "connecting" ? "Connecting…" : "Reconnecting…"}</span></div>`;
   } else {
-    const n = v ? ` · ${v.totalEvents}` : "";
-    live = `<div class="row" title="Live. Ledger intact${v ? `, ${v.totalEvents} entries` : ""}"><span class="dot"></span><span class="lbl">Live · ledger intact${n}</span></div>`;
+    // The whole line is visible text; the title repeats it for when it is cut.
+    const text = `Live · ledger intact${v ? ` · ${v.totalEvents} ${v.totalEvents === 1 ? "entry" : "entries"}` : ""}`;
+    live = `<div class="row" title="${esc(text)}"><span class="dot"></span><span class="lbl">${esc(text)}</span></div>`;
   }
 
   const m = machineStatus(s.doctor, s.machine);
@@ -181,7 +194,7 @@ function renderSide() {
     m.memoryPercent !== undefined
       ? // The run guard acts on the pressure level, not the raw percentage (which
         // counts reclaimable cache), so the sidebar says the level, as Machine does.
-        `<a class="row" href="#/machine" title="${esc(`Memory pressure ${m.memoryLevel || "normal"}. ${m.memoryPercent}% used, including cache the system can reclaim.`)}"><span class="dot${memCls}" aria-hidden="true"></span><span class="lbl">Memory ${esc(m.memoryLevel || "normal")}</span><span class="lbl sec tnum mem-pct">${m.memoryPercent}% used</span></a>`
+        `<a class="row" href="#/machine" ${tip(`Memory pressure ${m.memoryLevel || "normal"}. ${m.memoryPercent}% used, including cache the system can reclaim.`)}><span class="dot${memCls}" aria-hidden="true"></span><span class="lbl">Memory ${esc(m.memoryLevel || "normal")}</span><span class="lbl sec tnum mem-pct">${m.memoryPercent}% used</span></a>`
       : `<div class="row">${icon("memory", 14, "ic s14")}<span class="lbl">Memory: checking…</span></div>`;
   const working = s.cards.some((c) => c.status === "in_progress");
   // The Worker from Sekhemet's roster; the served-model probe is the fallback.
@@ -191,13 +204,29 @@ function renderSide() {
     : m.model || (m.inferenceUp === false ? "No model server" : "Model: checking…");
   const model = `<div class="row" title="${esc(modelName)}"><span class="dot ${working ? "run" : "idle"}"></span><span class="lbl${m.model || worker?.model ? " mono" : ""}">${esc(modelName)}${m.model || worker?.model ? ` · ${working ? "working" : "idle"}` : ""}</span></div>`;
   const sand = document.documentElement.dataset.theme === "sand";
-  const tools = `<div class="tools"><button class="icon-btn" type="button" data-theme-toggle title="Theme (t)">${icon(sand ? "moon" : "sun", 14, "ic s14")}<span class="lbl">Theme</span></button><button class="icon-btn" type="button" data-cheats title="Keyboard shortcuts (?)">${icon("keyboard", 14, "ic s14")}<span class="lbl">Keys</span></button></div>`;
+  // Theme has no bare key (§2.3.2): it is here and in the palette.
+  const tools = `<div class="tools"><button class="icon-btn" type="button" data-theme-toggle title="Theme">${icon(sand ? "moon" : "sun", 14, "ic s14")}<span class="lbl">Theme</span></button><button class="icon-btn" type="button" data-cheats title="Keyboard shortcuts (?)" aria-description="Keyboard shortcuts" aria-keyshortcuts="?">${icon("keyboard", 14, "ic s14")}<span class="lbl">Keys</span></button></div>`;
 
-  const project = s.meta?.project ?? "";
-  const html = `<div class="brand">${icon("glyph", 18)}<b class="lbl">Sekhemet</b>${kbd(`${MOD}K`)}</div>${project ? `<div class="project" title="${esc(s.meta?.repoPath ?? "")}"><span>Project</span><b>${esc(project)}</b></div>` : ""}<div class="nav">${nav}</div><div class="foot">${live}${mem}${model}${tools}</div>`;
+  const html = `<div class="brand">${icon("glyph", 18)}<b class="lbl">Sekhemet</b>${kbd(`${MOD}K`)}</div><div class="nav">${nav}</div><div class="foot">${live}${mem}${model}<div class="nav">${bottom}</div>${tools}</div>`;
   if (html !== lastSide) {
     side.innerHTML = html;
     lastSide = html;
+  }
+}
+
+/** The phone's bottom bar: Status · Review · Board · PM, of the views shown (DB-P11-3). */
+function renderTabs(shown) {
+  const bar = document.getElementById("tabbar");
+  if (!bar) return;
+  const html = bottomBar(shown)
+    .map(
+      (i) =>
+        `<a href="${i.route}"${active === i.name ? ' aria-current="page"' : ""}>${icon(i.icon)}<span>${esc(i.short ?? i.label)}</span></a>`,
+    )
+    .join("");
+  if (html !== lastTabs) {
+    bar.innerHTML = html;
+    lastTabs = html;
   }
 }
 
@@ -263,6 +292,16 @@ export function initShell() {
     renderSide();
     renderBar();
   });
+  // The More disclosure keeps the person's choice across re-renders.
+  document.addEventListener(
+    "toggle",
+    (e) => {
+      if (e.target instanceof Element && e.target.matches("[data-nav-more]")) {
+        moreOpen = e.target.open;
+      }
+    },
+    true,
+  );
   document.addEventListener("click", (e) => {
     const t = e.target instanceof Element ? e.target : null;
     if (!t) return;

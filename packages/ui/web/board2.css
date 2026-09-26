@@ -156,7 +156,7 @@
   gap: 6px;
   height: 24px;
   padding: 0 6px 0 8px;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border-control);
   border-radius: var(--radius-control);
   background: var(--bg-surface);
   color: var(--text-secondary);
@@ -165,7 +165,7 @@
   min-width: 140px;
 }
 .vbar .q:focus-within {
-  border-color: var(--border-strong);
+  border-color: var(--border-control);
   outline: 2px solid var(--accent);
   outline-offset: -1px;
 }
@@ -181,7 +181,7 @@
   outline: none;
 }
 .vbar .q input::placeholder {
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 .vbar .vr {
   margin-left: auto;
@@ -617,7 +617,7 @@
   height: 28px;
   margin: 0 0 4px;
   padding: 0 8px;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border-control);
   border-radius: var(--radius-control);
   background: var(--bg-base);
   color: var(--text-primary);
@@ -1044,7 +1044,7 @@
   min-width: 0;
   height: 24px;
   padding: 0 8px;
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--border-control);
   border-radius: var(--radius-control);
   background: var(--bg-base);
   color: var(--text-primary);
@@ -1057,20 +1057,20 @@
   flex: 1 1 240px;
 }
 .push-form input::placeholder {
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 .slack-form input {
   flex: 1 1 200px;
   min-width: 0;
   height: 24px;
   padding: 0 8px;
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--border-control);
   border-radius: var(--radius-control);
   background: var(--bg-base);
   font-size: var(--text-xs);
 }
 .slack-form input::placeholder {
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 .switch {
   width: 32px;
@@ -1189,7 +1189,7 @@
 .isheet select,
 .isheet textarea {
   background: var(--bg-base);
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--border-control);
   border-radius: var(--radius-control);
   color: var(--text-primary);
   padding: 4px 8px;
@@ -1571,7 +1571,7 @@
   width: 100%;
   resize: vertical;
   padding: 6px 8px;
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--border-control);
   border-radius: var(--radius-control);
   background: var(--bg-surface);
   color: var(--text-primary);
@@ -1678,4 +1678,36 @@
 }
 .picker-menu .pl small:not(.mono) {
   font-family: var(--font-sans);
+}
+
+/* Phone width: the switch is a 44×44 px target (DB-P12-6) that still draws a
+   44×20 track: the extra height is a transparent border outside the fill. */
+@media (max-width: 767px) {
+  .switch,
+  .switch[aria-checked="true"] {
+    width: 44px;
+    height: 44px;
+    border: 12px solid transparent;
+    border-left-width: 0;
+    border-right-width: 0;
+    border-radius: 10px / 22px;
+    background-clip: padding-box;
+  }
+  .switch {
+    box-shadow: inset 0 0 0 1px var(--border-strong);
+  }
+  .switch[aria-checked="true"] {
+    box-shadow: none;
+  }
+  .switch span {
+    top: 4px;
+    left: 4px;
+  }
+  .switch[aria-checked="true"] span {
+    transform: translateX(24px);
+  }
+  /* The query's edge is on its wrapper, so the wrapper grows with the field. */
+  .vbar .q {
+    height: 44px;
+  }
 }

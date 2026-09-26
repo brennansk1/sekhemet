@@ -24,6 +24,16 @@ select {
   font: inherit;
   color: inherit;
 }
+/* Every input's edge is the control role, at least 3:1 on every surface
+   (dashboard P12, DB-P12-4). Zero specificity: a field inside a wrapper that
+   carries the edge (the view bar's query, the composer, the palette) drops it. */
+:where(
+    input:not([type="checkbox"], [type="radio"], [type="file"], [type="range"]),
+    textarea,
+    select
+  ) {
+  border: 1px solid var(--border-control);
+}
 button {
   background: none;
   border: 0;
@@ -158,11 +168,20 @@ kbd {
 .btn kbd {
   border-color: var(--border-strong);
 }
+/* A disabled button is a neutral fill, never faded gold (DB-P12-3); its reason
+   is adjacent text (`.why`), so the label may be decorative muted text. */
 .btn[disabled],
 .btn[aria-disabled="true"] {
-  opacity: 0.4;
+  background: var(--bg-overlay);
+  border-color: var(--border-subtle);
+  color: var(--text-muted);
   cursor: not-allowed;
   filter: none;
+}
+.btn[disabled] kbd,
+.btn[aria-disabled="true"] kbd {
+  color: inherit;
+  border-color: var(--border-subtle);
 }
 .btn.sm {
   height: 24px;
@@ -358,6 +377,12 @@ kbd {
   color: var(--text-secondary);
   padding: 4px 8px 2px;
 }
+.menu .mnote {
+  max-width: 280px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  padding: 2px 8px 6px;
+}
 .tip {
   position: fixed;
   z-index: 40;
@@ -477,4 +502,19 @@ kbd {
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+/* Phone width: every control is at least a 44×44 px target (WCAG 2.5.5,
+   dashboard DB-P12-6). From 768 px up the desktop density stays. */
+@media (max-width: 767px) {
+  button,
+  select,
+  summary,
+  a.btn,
+  [role="button"],
+  [role="tab"],
+  input:not([type="checkbox"], [type="radio"], [type="hidden"]) {
+    min-height: 44px;
+    min-width: 44px;
+  }
 }

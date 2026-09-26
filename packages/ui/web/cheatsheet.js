@@ -1,118 +1,15 @@
-// Keyboard cheat sheet (FRONTEND_DESIGN §2.5.12): `?` from anywhere.
+// Keyboard cheat sheet (dashboard §2.3.3): `?` from anywhere. Generated from
+// the one keymap the palette also reads (lib/nav.js, DB-P11-6).
 import { MOD, esc, icon, kbd } from "./dom.js";
+import { cheatSheet } from "./lib/nav.js";
 import { pushOverlay, trapFocus } from "./overlay.js";
+import { currentNav } from "./shell.js";
 import { store } from "./store.js";
 
-const SECTIONS = [
-  {
-    name: "Global",
-    rows: [
-      ["Command palette", [`${MOD}K`]],
-      ["Search cards", ["/"]],
-      ["Keyboard shortcuts", ["?"]],
-      ["Switch theme", ["t"]],
-      ["Close or cancel", ["Esc"]],
-    ],
-  },
-  {
-    name: "Navigate",
-    rows: [
-      ["Review", ["g", "r"]],
-      ["Board", ["g", "b"]],
-      ["Runs", ["g", "q"]],
-      ["Ledger", ["g", "l"]],
-      ["Playbook", ["g", "p"]],
-      ["Machine", ["g", "m"]],
-      ["Seshat", ["g", "a"]],
-      ["Insights", ["g", "f"]],
-      ["Integrations", ["g", "s"]],
-      ["Inbox (decisions)", ["g", "i"]],
-      ["Dependencies", ["g", "d"]],
-      ["Workspace (all projects)", ["g", "w"]],
-      ["Registry (models)", ["g", "e"]],
-    ],
-  },
-  {
-    name: "Inbox",
-    views: ["inbox"],
-    rows: [
-      ["Pick an option", ["1", "…", "9"]],
-      ["Answer", ["↵"]],
-      ["Next or previous request", ["j", "k"]],
-    ],
-  },
-  {
-    name: "Dependencies",
-    views: ["graph"],
-    rows: [
-      ["Pan", ["drag"]],
-      ["Zoom", ["+", "−"]],
-      ["Fit the graph", ["f"]],
-      ["Actual size", ["0"]],
-      ["Open the focused card", ["↵"]],
-    ],
-  },
-  {
-    name: "Seshat · Project manager",
-    rows: [
-      ["Open or close the panel", [`${MOD}J`]],
-      ["Send", ["↵"]],
-      ["New line", ["⇧", "↵"]],
-      ["Mention a card", ["@"]],
-      ["Apply or discard a proposal", ["y", "n"]],
-      ["Apply all in a group", ["⇧", "Y"]],
-    ],
-  },
-  {
-    name: "Cards",
-    views: ["board"],
-    rows: [
-      ["Move between columns", ["h", "l"]],
-      ["Move within a column", ["j", "k"]],
-      ["First or last in column", ["Home", "End"]],
-      ["Peek", ["Space"]],
-      ["Open card", ["↵"]],
-      ["Select", ["x"]],
-      ["Extend selection (list)", ["⇧", "J"]],
-      ["Priority, points, labels", ["⇧", "P"]],
-      ["Cycle, assignee", ["⇧", "C"]],
-      ["Any field", ["."]],
-      ["Board or list", ["v"]],
-      ["Group into swimlanes", ["⇧", "S"]],
-      ["Filter", ["/"]],
-      ["New card", ["c"]],
-    ],
-  },
-  {
-    name: "Review",
-    views: ["review", "card"],
-    rows: [
-      ["Accept", ["a"]],
-      ["Send back", ["r"]],
-      ["Park", ["p"]],
-      ["Undo accept", ["z"]],
-      ["Next or previous card", ["j", "k"]],
-      ["Open card", ["o"]],
-      ["Previous or next attempt", ["[", "]"]],
-      ["Next or previous annotation", ["n", "N"]],
-      ["Expand file", ["Space"]],
-      ["Unified or split diff", ["u"]],
-      ["Facts rail", ["f"]],
-      ["Send the note", [`${MOD}↵`]],
-    ],
-  },
-  {
-    name: "Card and lists",
-    views: ["card", "ledger", "runs", "machine"],
-    rows: [
-      ["Evidence, Plan, Steps, Thread, Files", ["1", "5"]],
-      ["Next or previous tab", ["←", "→"]],
-      ["Next or previous row", ["j", "k"]],
-      ["Open ledger entry", ["↵"]],
-      ["Re-run health checks", ["⇧", "R"]],
-    ],
-  },
-];
+/** `Mod+K` is ⌘K on a Mac and Ctrl+K elsewhere. */
+export function keyLabel(k) {
+  return k.startsWith("Mod+") ? `${MOD}${k.slice(4)}` : k;
+}
 
 let open = null;
 
@@ -128,13 +25,16 @@ export function closeCheatsheet() {
 export function openCheatsheet() {
   if (open) return closeCheatsheet();
   const view = store.state.route?.name ?? "";
-  const cols = SECTIONS.map((s) => {
-    const off = s.views && !s.views.includes(view) ? " off" : "";
-    const rows = s.rows
-      .map(([d, keys]) => `<div><dt>${esc(d)}</dt><dd>${kbd(...keys)}</dd></div>`)
-      .join("");
-    return `<section class="${off.trim()}"><h3>${esc(s.name)}</h3><dl>${rows}</dl></section>`;
-  }).join("");
+  const cols = cheatSheet(currentNav())
+    .map((s) => {
+      const off = s.views && !s.views.includes(view) ? " off" : "";
+      const rows = s.rows
+        .map((r) => `<div><dt>${esc(r.label)}</dt><dd>${kbd(...r.keys.map(keyLabel))}</dd></div>`)
+        .join("");
+      const note = s.note ? `<p class="note">${esc(s.note)}</p>` : "";
+      return `<section class="${off.trim()}"><h3>${esc(s.name)}</h3><dl>${rows}</dl>${note}</section>`;
+    })
+    .join("");
   const node = document.createElement("div");
   node.className = "scrim";
   node.innerHTML = `<div class="dialog cheats" role="dialog" aria-modal="true" aria-labelledby="cheats-h"><header><h2 id="cheats-h">Keyboard shortcuts</h2><button class="icon-btn" type="button" data-close aria-label="Close (Esc)">${icon("x")}</button></header><div class="cheat-grid">${cols}</div></div>`;

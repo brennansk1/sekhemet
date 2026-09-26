@@ -66,7 +66,7 @@ export function placeUnder(node, anchor, { align = "left", gap = 4 } = {}) {
 }
 
 /** A small menu anchored to a button. `items` are { label, checked, run } or "-" separators. */
-export function openMenu(anchor, items, { heading } = {}) {
+export function openMenu(anchor, items, { heading, note = "" } = {}) {
   closeMenus();
   const menu = document.createElement("div");
   menu.className = "menu";
@@ -77,6 +77,12 @@ export function openMenu(anchor, items, { heading } = {}) {
     h.className = "mh";
     h.textContent = heading;
     menu.append(h);
+  }
+  if (note) {
+    const n = document.createElement("div");
+    n.className = "mnote";
+    n.textContent = note;
+    menu.append(n);
   }
   for (const item of items) {
     if (item === "-") {

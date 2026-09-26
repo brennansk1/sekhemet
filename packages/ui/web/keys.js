@@ -2,29 +2,17 @@
 // `g` chords, then the current view. Single keys never fire while typing.
 import { openCheatsheet } from "./cheatsheet.js";
 import { isTyping } from "./dom.js";
+import { chordTarget } from "./lib/nav.js";
 import { closeTop, topOverlay } from "./overlay.js";
 import { openPalette } from "./palette.js";
 import { peekAct } from "./peek.js";
 import { togglePmPanel } from "./pm_panel.js";
-import { toggleTheme } from "./shell.js";
+import { currentNav } from "./shell.js";
 import { store } from "./store.js";
 import { undoAccept } from "./triage.js";
 
-const CHORDS = {
-  r: "#/review",
-  b: "#/board",
-  q: "#/runs",
-  l: "#/ledger",
-  m: "#/machine",
-  p: "#/playbook",
-  a: "#/pm",
-  f: "#/insights",
-  s: "#/integrations",
-  i: "#/inbox",
-  d: "#/graph",
-  w: "#/workspace",
-  e: "#/registry",
-};
+// `g` chords come from the one keymap (lib/nav.js): one per visible view,
+// and a chord for a hidden view does nothing (dashboard §2.3.1, DB-P11-4).
 let chordUntil = 0;
 
 function view() {
@@ -72,10 +60,10 @@ export function initKeys() {
 
     if (Date.now() < chordUntil) {
       chordUntil = 0;
-      const hash = CHORDS[e.key];
-      if (hash) {
+      const target = chordTarget(e.key, currentNav());
+      if (target) {
         e.preventDefault();
-        location.hash = hash;
+        location.hash = target.route;
       }
       return;
     }
@@ -86,10 +74,6 @@ export function initKeys() {
     if (e.key === "?") {
       e.preventDefault();
       openCheatsheet();
-      return;
-    }
-    if (e.key === "t") {
-      toggleTheme();
       return;
     }
     if (e.key === "/") {

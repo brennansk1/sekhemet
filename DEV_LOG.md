@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 34 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 35 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,29 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 35 — 2026-09-25 (B4.2 navigation and accessibility; B4.9 in its fix round)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver; two implementer helpers, one fresh independent reviewer covering B4.2 and B4.9.
+
+- **B4.2 (dashboard P11, P12):**
+  - **One keymap** (`packages/ui/src/nav.ts`) feeds the sidebar, the phone's bottom bar, the chords, the cheat sheet and the palette. Old routes open the item that replaced them, and `chordChangeNote` says where old chords go (`g s` opens nothing until Status is built). The Inbox stand-in is named.
+  - **Tokens:**
+    - the control-edge role (`--border-control`, 3:1 or better);
+    - DEC-42's parked/fail rule: copper keeps its hue, 23° from the accent, and differs from fail by glyph (`STATE_GLYPHS`) and by at least 10 L\* in both themes (Basalt `#DD8967`, Sand `#743217`).
+  - **DB-P12-6 is built:** `apps/harness/tests/a11y.spec.ts` runs every nav route and a card page at 400, 1100 and 1440 px in both themes. It uses real Chromium (`playwright-core` 1.61.1 on the cached build 1228, with no browser downloaded) and `axe-core` 4.13.0, both pinned under O5. It checks names and targets, 44 px targets at phone width, reflow at 200% zoom, and hover-only titles.
+    - It failed with 838 problems. The UI was fixed until it passed; the check was refined once, with the reason in the file.
+    - Views its two seeded cards don't reach are listed in dashboard §4.
+  - The review passed B4.2, with one major, the parked/fail hue, now decided.
+- **B4.9 (integrations P9):** the review found 2 blockers (Accept pushed before the network policy was checked; logins and issue text were in chained payloads) and 6 majors. The fix round is in progress.
+  - Lead decisions (DEC-42): `direction` is honoured (pull publishes nothing); the notifier (INT-17–20a) belongs to B4.9.
+  - The lead's own review added a third: `harness/egress` kept the full URL (research queries included) on the chain. The URL is now private, with a hash on the chain, and every writer awaits its record (security item 33).
+- **Gate:**
+  - The first snapshot, under `~/.sekhemet`, failed `onboard.spec`: the sandbox denies the config directory, so the test's language server couldn't read its own file. That's an environment artifact.
+  - Snapshots now live in the session scratchpad. The gate there (HEAD plus only B4.2's files): `tsc -b` and Biome clean, 313 files and 2,298 tests pass.
+- **Where the cards stop:**
+  - B4.9's fix round, then a re-check of its two blockers, the gate and the commit. Then its remaining INT scope (16/16a, 17–20c, 27/28, 37/38), then B4.10.
+  - The B2.5 baseline is running (thinking-surgical, round 1).
 
 ### Entry 34 — 2026-09-25 (B3.2 safe Accept; B3.3 surface, runtime, security, extensibility; baseline rescoring)
 

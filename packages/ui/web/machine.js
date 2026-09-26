@@ -46,12 +46,15 @@ function memoryHtml(m) {
       ? `<p class="sec mem-why">The system reports ${esc(guard)} pressure, and that is what the run guard acts on. The ${pct}% includes file cache the system can reclaim.</p>`
       : "";
   const t = m.thresholds ?? { warning: 0.85, throttle: 0.9, critical: 0.94 };
-  const tick = (r, label, up = false) =>
-    `<span class="tick${up ? " up" : ""}" style="left:${r * 100}%" title="${label}"><i></i><em class="tnum">${Math.round(r * 100)}%</em></span>`;
+  // The ticks carry only their percentage; what each one means is the visible
+  // legend under the gauge, never a hover title (DB-P12-6).
+  const tick = (r, up = false) =>
+    `<span class="tick${up ? " up" : ""}" style="left:${r * 100}%"><i></i><em class="tnum">${Math.round(r * 100)}%</em></span>`;
+  const legend = `<p class="sec mem-ticks tnum">${Math.round(t.warning * 100)}% warning · ${Math.round(t.throttle * 100)}% no new worktrees · ${Math.round(t.critical * 100)}% pause the Worker</p>`;
   const kernel = m.kernelLevel
     ? ({ 1: "normal", 2: "warning", 4: "critical" }[m.kernelLevel] ?? String(m.kernelLevel))
     : null;
-  return `<section class="mc-card"><h3 class="sh">Memory <span class="sec">${esc(lv.label)}</span></h3><div class="mem-big"><span class="v tnum">${pct}%</span><span class="sec tnum">${esc(gb(m.usedBytes))} used of ${esc(gb(m.totalBytes))}</span></div><div class="gauge ${lv.tone}" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-label="Memory used"><span class="fill" style="width:${Math.min(100, pct)}%"></span>${tick(t.warning, "Warning")}${tick(t.throttle, "No new worktrees", true)}${tick(t.critical, "Pause the Worker")}</div><p class="sec mem-why">${esc(lv.text)}</p>${source}<dl class="kv"><dt>Swap in use</dt><dd class="tnum">${m.swapUsedBytes !== undefined ? esc(gb(m.swapUsedBytes)) : '<span class="sec">Not readable here</span>'}</dd>${kernel ? `<dt>System pressure</dt><dd>${esc(kernel)}</dd>` : ""}<dt>Keep-alive now</dt><dd class="mono">${esc(m.recommendedKeepAlive)}</dd></dl></section>`;
+  return `<section class="mc-card"><h3 class="sh">Memory <span class="sec">${esc(lv.label)}</span></h3><div class="mem-big"><span class="v tnum">${pct}%</span><span class="sec tnum">${esc(gb(m.usedBytes))} used of ${esc(gb(m.totalBytes))}</span></div><div class="gauge ${lv.tone}" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-label="Memory used"><span class="fill" style="width:${Math.min(100, pct)}%"></span>${tick(t.warning)}${tick(t.throttle, true)}${tick(t.critical)}</div>${legend}<p class="sec mem-why">${esc(lv.text)}</p>${source}<dl class="kv"><dt>Swap in use</dt><dd class="tnum">${m.swapUsedBytes !== undefined ? esc(gb(m.swapUsedBytes)) : '<span class="sec">Not readable here</span>'}</dd>${kernel ? `<dt>System pressure</dt><dd>${esc(kernel)}</dd>` : ""}<dt>Keep-alive now</dt><dd class="mono">${esc(m.recommendedKeepAlive)}</dd></dl></section>`;
 }
 
 function modelHtml(d) {

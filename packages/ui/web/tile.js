@@ -1,5 +1,5 @@
 // Card tile (FRONTEND_DESIGN §2.5.1). Returns markup; every model string is escaped.
-import { esc, icon } from "./dom.js";
+import { esc, icon, tip } from "./dom.js";
 import { GATE_STATE_LABELS, KIND_LABELS, formatDuration, formatWait } from "./lib/vocabulary.js";
 import { labelChips, pointsText, prioMark } from "./marks.js";
 
@@ -168,5 +168,5 @@ export function tileHtml(card, opts = {}) {
   const prio = opts.hidePriority ? "" : prioMark(card.priority);
   const pts = pointsText(card.estimate);
   const labels = labelChips(card.labels, d.kinds?.length > 1 ? 1 : 2);
-  return `<li class="${cls}" role="option" id="tile-${esc(card.id)}" data-id="${esc(card.id)}" aria-selected="${opts.selected ? "true" : "false"}" aria-describedby="${esc(stId)}"><div class="r1">${sel}${prio}${kindTags(d.kinds)}${labels ? `<span class="lbls">${labels}</span>` : ""}<span class="id" title="${esc(card.id)}">${just}${difficultyMark(card)}${dep}${pts ? `<span class="pts tnum">${esc(pts)}</span>` : ""}${esc(d.shortId)}</span></div><p class="title">${esc(d.title)}</p><div class="r3">${mark}<span class="st${old ? " old" : ""}" id="${esc(stId)}" title="${esc(text)}">${waitIcon}<span>${esc(text)}</span></span></div>${r4}${usage}${excerpt}</li>`;
+  return `<li class="${cls}" role="option" id="tile-${esc(card.id)}" data-id="${esc(card.id)}" aria-selected="${opts.selected ? "true" : "false"}" aria-describedby="${esc(stId)}"><div class="r1">${sel}${prio}${kindTags(d.kinds)}${labels ? `<span class="lbls">${labels}</span>` : ""}<span class="id" ${tip(card.id)}>${just}${difficultyMark(card)}${dep}${pts ? `<span class="pts tnum">${esc(pts)}</span>` : ""}${esc(d.shortId)}</span></div><p class="title">${esc(d.title)}</p><div class="r3">${mark}<span class="st${old ? " old" : ""}" id="${esc(stId)}" title="${esc(text)}">${waitIcon}<span>${esc(text)}</span></span></div>${r4}${usage}${excerpt}</li>`;
 }

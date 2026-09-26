@@ -186,10 +186,12 @@
   border-color: var(--border-strong);
   background: var(--bg-overlay);
 }
+/* The global focus ring, 1 px outside the tile (§2.14.5, DB-P12-7); the
+   column body's 8 px padding keeps it unclipped. */
 .tile:focus-visible,
 .tile.focus {
   outline: 2px solid var(--accent);
-  outline-offset: -1px;
+  outline-offset: 1px;
 }
 .tile.t-running,
 .tile.t-fail,

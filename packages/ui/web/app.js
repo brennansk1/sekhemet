@@ -10,6 +10,7 @@ import * as insightsView from "./insights.js";
 import * as integrationsView from "./integrations.js";
 import { initKeys } from "./keys.js";
 import * as ledgerView from "./ledger.js";
+import { navNameOf } from "./lib/nav.js";
 import * as machineView from "./machine.js";
 import * as playbookView from "./playbook.js";
 import { initPm, loadThread, onPmEvent } from "./pm_client.js";
@@ -18,7 +19,7 @@ import * as pmView from "./pm_view.js";
 import * as registryView from "./registry.js";
 import * as reviewView from "./review.js";
 import * as runsView from "./runs.js";
-import { initShell, setActiveNav } from "./shell.js";
+import { initShell, setActiveNav, setNavViews } from "./shell.js";
 import { store } from "./store.js";
 import * as workspaceView from "./workspace.js";
 
@@ -35,6 +36,11 @@ const VIEWS = {
   integrations: integrationsView,
   inbox: inboxView,
   graph: graphView,
+  // P11 route names; the old ones keep opening the same views (§2.2.1).
+  // Projects shows the workspace rollup and Configuration the model registry
+  // until their own pages are built (NEW-dashboard-9, NEW-dashboard-6).
+  projects: workspaceView,
+  configuration: registryView,
   workspace: workspaceView,
   registry: registryView,
 };
@@ -61,7 +67,7 @@ function route() {
     return route();
   }
   store.state.route = parsed;
-  setActiveNav(parsed.name === "card" ? "" : parsed.name);
+  setActiveNav(navNameOf(parsed.name));
   const view = document.getElementById("view");
   if (currentName === parsed.name && current?.setParams) {
     current.setParams(parsed.params);
@@ -263,6 +269,7 @@ async function retryConnection() {
 /* ---------- Boot ---------- */
 
 async function boot() {
+  setNavViews(Object.keys(VIEWS));
   initShell();
   initKeys();
   const note = setTimeout(() => {

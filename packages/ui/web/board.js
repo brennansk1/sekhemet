@@ -1,5 +1,5 @@
 // Board (FRONTEND_DESIGN §2.4.2): columns, rails, keyed tile patching, keyboard.
-import { $, $$, esc, icon } from "./dom.js";
+import { $, $$, esc, icon, tip } from "./dom.js";
 import { fieldKey, selectionOrFocused } from "./fields.js";
 import * as lanes from "./lanes.js";
 import { formatQuery, sortByPriority } from "./lib/pm.js";
@@ -122,18 +122,18 @@ function headerHtml(status, count) {
   const lim = limitInfo(status, count);
   const parkedWarn = status === "parked" && count > 0 ? " full" : "";
   const c = lim
-    ? `<span class="c tnum${lim.state ? ` ${lim.state}` : ""}" title="${esc(lim.title)}">${count} / ${lim.limit}</span>`
+    ? `<span class="c tnum${lim.state ? ` ${lim.state}` : ""}" ${tip(lim.title)}>${count} / ${lim.limit}</span>`
     : `<span class="c tnum${parkedWarn}">${count}</span>`;
   const cap = lim
     ? `<div class="cap${lim.state ? ` ${lim.state}` : ""}"><i style="width:${Math.min(100, Math.round((count / lim.limit) * 100))}%"></i></div>`
     : "";
-  return `<div class="col-h"><h2 id="h-${status}">${esc(columnLabel(status))}</h2>${c}<button class="more" type="button" data-colmenu="${status}" aria-label="${esc(columnLabel(status))} column options">${icon("more")}</button></div>${cap}`;
+  return `<div class="col-h"><h2 id="h-${status}">${esc(columnLabel(status))}</h2>${c}<button class="more" type="button" data-colmenu="${status}" aria-label="${esc(columnLabel(status))} column options"${lim ? ` aria-description="${esc(lim.title)}"` : ""}>${icon("more")}</button></div>${cap}`;
 }
 
 function railHtml(status, count) {
   const hint = `${columnLabel(status)}: ${COLUMN_EMPTY[status].replace(/\.$/, "").toLowerCase()}`;
   const warn = status === "parked" && count > 0 ? " warn" : "";
-  return `<button class="rail" type="button" data-rail="${status}" title="${esc(hint)}. Press Enter to expand." aria-label="${esc(columnLabel(status))}, ${count} ${count === 1 ? "card" : "cards"}, collapsed"><span class="c tnum${warn}">${count}</span><span>${esc(columnLabel(status))}</span></button>`;
+  return `<button class="rail" type="button" data-rail="${status}" ${tip(`${hint}. Press Enter to expand.`)} aria-label="${esc(columnLabel(status))}, ${count} ${count === 1 ? "card" : "cards"}, collapsed"><span class="c tnum${warn}">${count}</span><span>${esc(columnLabel(status))}</span></button>`;
 }
 
 function renderTopbar() {
@@ -658,7 +658,12 @@ function onClick(e) {
         },
       });
     }
-    openMenu(menuBtn, items, { heading: columnLabel(status) });
+    // The WIP reason, which the header shows only as a count, is the menu's
+    // first line: reachable by keyboard and by touch (dashboard §2.14.2).
+    openMenu(menuBtn, items, {
+      heading: columnLabel(status),
+      note: menuBtn.getAttribute("aria-description") ?? "",
+    });
     return;
   }
   const tile = t.closest(".tile");

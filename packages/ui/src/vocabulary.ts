@@ -186,6 +186,20 @@ export function isEmptyGateContract(sha: string | undefined): boolean {
 
 export type Tone = "neutral" | "running" | "pass" | "fail" | "parked" | "blocked";
 
+/**
+ * The glyph each state carries beside its colour (an `ICONS` name). The copper
+ * of *Needs you* sits 7–10° of hue from the red ochre of a failure, so the two
+ * are told apart by glyph and by lightness, never by hue alone (DEC-42,
+ * dashboard §2.13.2). Running is the pulsing dot.
+ */
+export const STATE_GLYPHS = {
+  running: "dot",
+  pass: "check",
+  fail: "x",
+  parked: "pause",
+  blocked: "link",
+} as const satisfies Record<Exclude<Tone, "neutral">, string>;
+
 export interface StopReasonContext {
   /** The step the attempt stopped on. */
   step?: number;

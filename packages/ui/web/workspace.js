@@ -60,7 +60,7 @@ function render() {
   const { list, activeCap } = store.state.project;
   const active = list.filter((p) => p.status === "active").length;
   setTopbar({
-    title: "Workspace",
+    title: "Projects",
     crumb: `${list.length} project${list.length === 1 ? "" : "s"}${activeCap ? ` · ${active} of ${activeCap} running at once` : ""}`,
   });
   let html;

@@ -13,6 +13,16 @@ export function esc(v) {
     .replace(/'/g, "&#39;");
 }
 
+/**
+ * A hover title that is never the only way to its words (DB-P12-6): the same
+ * text is the element's accessible description, so a screen reader reaches it
+ * and the title stays a pointer-only duplicate. `text` is raw; it is escaped here.
+ */
+export function tip(text) {
+  const t = esc(text);
+  return `title="${t}" aria-description="${t}"`;
+}
+
 /** Parse one HTML string into a single element. The string must be pre-escaped. */
 export function el(html) {
   const t = document.createElement("template");

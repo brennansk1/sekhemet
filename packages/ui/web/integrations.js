@@ -227,7 +227,7 @@ function controls(e) {
     }
     case "github-pr": {
       const on = Boolean(e.enabled ?? e.connected);
-      return `<div class="iacts"><button class="switch" type="button" role="switch" aria-checked="${on}" data-toggle-pr ${busy("pr") ? "disabled" : ""}><span></span></button><span class="sec">${on ? "Accept opens a pull request." : "Accept merges locally as one commit."}</span></div>`;
+      return `<div class="iacts"><button class="switch" type="button" role="switch" aria-checked="${on}" aria-label="Open a pull request on Accept" data-toggle-pr ${busy("pr") ? "disabled" : ""}><span></span></button><span class="sec">${on ? "Accept opens a pull request." : "Accept merges locally as one commit."}</span></div>`;
     }
     case "research-web": {
       const on = Boolean(e.enabled ?? e.connected);

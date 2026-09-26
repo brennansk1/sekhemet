@@ -1,6 +1,6 @@
 // Ledger (FRONTEND_DESIGN §2.4.5): the tamper-evident history, one sentence per
 // row, newest first, filterable, with the full entry on Enter.
-import { $, $$, esc, getJSON, icon } from "./dom.js";
+import { $, $$, esc, getJSON, icon, tip } from "./dom.js";
 import { actorLabel, eventSentence, parseTitle, shortId } from "./lib/vocabulary.js";
 import { pushOverlay } from "./overlay.js";
 import { setTopbar } from "./shell.js";
@@ -87,7 +87,7 @@ function rowHtml(e) {
   const title = s.title
     ? ` <a href="#/card/${encodeURIComponent(e.cardId ?? "")}/thread" class="ttl-link">${esc(s.title)}</a>`
     : "";
-  return `<tr class="${bad ? "bad" : ""}${ui.selected === e.seq ? " sel" : ""}" data-seq="${e.seq}" tabindex="${ui.selected === e.seq ? "0" : "-1"}"><td class="r tnum">${e.seq}</td><td class="tnum sec">${esc(when(e.createdAt))}</td><td>${esc(s.actor)}</td><td class="sentence"><span>${esc(s.verb)}${title}${s.rest ? ` ${esc(s.rest)}` : ""}</span>${s.quote ? `<span class="q">“${esc(s.quote.length > 140 ? `${s.quote.slice(0, 137)}…` : s.quote)}”</span>` : ""}</td><td class="mono sec">${esc(e.type)}</td><td class="mono sec" title="prev ${esc(e.prevHash)}">${esc(String(e.hash).slice(0, 8))}</td></tr>`;
+  return `<tr class="${bad ? "bad" : ""}${ui.selected === e.seq ? " sel" : ""}" data-seq="${e.seq}" tabindex="${ui.selected === e.seq ? "0" : "-1"}"><td class="r tnum">${e.seq}</td><td class="tnum sec">${esc(when(e.createdAt))}</td><td>${esc(s.actor)}</td><td class="sentence"><span>${esc(s.verb)}${title}${s.rest ? ` ${esc(s.rest)}` : ""}</span>${s.quote ? `<span class="q">“${esc(s.quote.length > 140 ? `${s.quote.slice(0, 137)}…` : s.quote)}”</span>` : ""}</td><td class="mono sec">${esc(e.type)}</td><td class="mono sec" ${tip(`prev ${e.prevHash}`)}>${esc(String(e.hash).slice(0, 8))}</td></tr>`;
 }
 
 function tableHtml() {

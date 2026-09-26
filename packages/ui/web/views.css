@@ -685,7 +685,7 @@ ul.obs li .ic {
   height: 24px;
   max-width: 260px;
   background: var(--bg-raised);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border-control);
   border-radius: var(--radius-control);
   padding: 0 6px;
   font-size: var(--text-xs);
@@ -827,6 +827,10 @@ ul.obs li .ic {
 .mem-why {
   color: var(--text-secondary);
   margin-bottom: 12px;
+}
+.mem-ticks {
+  font-size: var(--text-xs);
+  margin-bottom: 8px;
 }
 .mc-card dl.kv dd {
   text-align: right;

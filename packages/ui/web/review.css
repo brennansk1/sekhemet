@@ -641,7 +641,7 @@ dl.kv dd {
   width: 100%;
   background: var(--bg-base);
   color: var(--text-primary);
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--border-control);
   border-radius: var(--radius-control);
   padding: 8px 12px;
   font: inherit;
@@ -652,7 +652,7 @@ dl.kv dd {
 }
 .composer textarea::placeholder,
 .park-pop input::placeholder {
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 .composer textarea[aria-invalid="true"] {
   border-color: var(--state-fail);

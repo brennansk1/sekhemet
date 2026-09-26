@@ -10,7 +10,10 @@
 
 export type ThemeName = "basalt" | "sand";
 
-/** The fifteen semantic color roles, identical in shape across themes. */
+/**
+ * The semantic color roles, identical in shape across themes: the fifteen of
+ * the design plus `borderControl`, the edge of every input (dashboard P12).
+ */
 export interface ColorTokens {
   bgBase: string;
   bgSurface: string;
@@ -18,6 +21,8 @@ export interface ColorTokens {
   bgOverlay: string;
   borderSubtle: string;
   borderStrong: string;
+  /** The edge of an input: at least 3:1 on every surface (§2.13.2). */
+  borderControl: string;
   textPrimary: string;
   textSecondary: string;
   textMuted: string;
@@ -37,6 +42,8 @@ export const BASALT: ColorTokens = {
   bgOverlay: "#2C2822",
   borderSubtle: "#2E2A24",
   borderStrong: "#3D382F",
+  // 3.64:1 on --bg-overlay, the lightest surface an input sits on (P12).
+  borderControl: "#857E70",
   textPrimary: "#EDE7DA",
   textSecondary: "#A79E8C",
   textMuted: "#6E6759",
@@ -48,7 +55,11 @@ export const BASALT: ColorTokens = {
   // which sit on the surface, clears 4.5:1 too (FRONTEND_DESIGN §3.9).
   stateFail: "#D2614F",
   stateRunning: "#4C8ED9",
-  stateParked: "#B08A3E",
+  // Copper, 23° of hue from the gold accent (it was 0.6°, P12), and 7–10°
+  // from the red ochre of a failure, so it is lifted to 10 L* lighter than
+  // --state-fail at the same hue (DEC-42): 6.99:1 on base, 6.49:1 on surface,
+  // 5.99:1 on raised.
+  stateParked: "#DD8967",
   stateBlocked: "#8A7F70",
 };
 
@@ -60,6 +71,8 @@ export const SAND: ColorTokens = {
   bgOverlay: "#E2DDD0",
   borderSubtle: "#DED8CA",
   borderStrong: "#C6BEAC",
+  // 3.27:1 on --bg-overlay; --border-strong measured 1.4–1.9:1 on inputs (P12).
+  borderControl: "#7F7768",
   textPrimary: "#1C1A16",
   textSecondary: "#5E5749",
   textMuted: "#8F8778",
@@ -68,7 +81,9 @@ export const SAND: ColorTokens = {
   statePass: "#2E7D4A",
   stateFail: "#A63A2B",
   stateRunning: "#2F6FB5",
-  stateParked: "#8C6A22",
+  // Copper, 23° of hue from the accent, deepened to 10 L* darker than
+  // --state-fail at the same hue (DEC-42): 8.57:1 on base, 9.5:1 on surface.
+  stateParked: "#743217",
   // Darkened from #7A7062 (4.39:1) for the same reason.
   stateBlocked: "#756C5E",
 };
@@ -99,7 +114,8 @@ export const DERIVED: Record<ThemeName, DerivedTokens> = {
 /** Layout constants shared by every view. */
 export const LAYOUT = {
   sidebarW: "216px",
-  railW: "52px",
+  /** 1024–1279 px: narrower, and it keeps its labels (the icon rail is retired, P11). */
+  sidebarWNarrow: "176px",
   topbarH: "44px",
 } as const;
 
@@ -203,7 +219,7 @@ ${spacingVars}
   --motion: ${MOTION.transition};
 
   --sidebar-w: ${LAYOUT.sidebarW};
-  --rail-w: ${LAYOUT.railW};
+  --sidebar-w-narrow: ${LAYOUT.sidebarWNarrow};
   --topbar-h: ${LAYOUT.topbarH};
 
   color-scheme: dark;

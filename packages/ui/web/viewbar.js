@@ -287,7 +287,7 @@ export function viewBarHtml(layout) {
 <button class="vsel" type="button" data-view-menu aria-haspopup="dialog"><span class="sec">View:</span> <b>${esc(v.name)}</b>${icon("chevron-down", 12, "ic s12")}</button>
 <div class="chips">${chips}<button class="filter" type="button" data-add-filter aria-haspopup="menu">${icon("filter", 12, "ic s12")}Filter</button></div>
 <label class="q">${icon("search", 12, "ic s12")}<input type="text" data-q value="${esc([vb.filter.text, vb.draft].filter(Boolean).join(" "))}" placeholder="Filter by title, or type label:api" aria-label="Filter cards. Accepts priority:, label:, epic:, cycle:, assignee:, kind:, is:" spellcheck="false">${kbd("/")}</label>
-<div class="vr"><button class="vsel" type="button" data-group-menu title="Group into swimlanes (⇧S)">${icon("layers", 12, "ic s12")}<span class="sec">Group:</span> <b>${esc(group.label)}</b></button>${save}</div>
+<div class="vr"><button class="vsel" type="button" data-group-menu title="Group into swimlanes (⇧S)" aria-description="Group into swimlanes" aria-keyshortcuts="Shift+S">${icon("layers", 12, "ic s12")}<span class="sec">Group:</span> <b>${esc(group.label)}</b></button>${save}</div>
 </div>`;
 }
 

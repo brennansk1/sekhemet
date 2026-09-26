@@ -57,6 +57,7 @@ ${STYLES.map((s) => `<link rel="stylesheet" href="/app/${s}">`).join("\n")}
     <p class="sk-note" id="sk-note" hidden>Connecting to Sekhemet…</p>
   </div>
 </main>
+<nav class="tabbar" id="tabbar" aria-label="Views"></nav>
 <div id="overlay-root"></div>
 <div class="toasts" id="toasts" aria-live="polite"></div>
 <div class="sr-only" id="live" aria-live="polite" aria-atomic="true"></div>
