@@ -2,7 +2,7 @@ import type { ChildProcess } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { extname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { spawnConfinedSync } from "@sekhemet/sandbox";
+import { processTreeResidentBytes, spawnConfinedSync } from "@sekhemet/sandbox";
 
 /**
  * A headless LSP client pool (C2, design "LSP client pool"). One language
@@ -117,6 +117,26 @@ export class LspClient {
 
   public get alive(): boolean {
     return !this.exited;
+  }
+
+  /** The server's process id while it runs. */
+  public get pid(): number | undefined {
+    return this.exited ? undefined : this.child?.pid;
+  }
+
+  /** A request is in flight: trimming must not stop it. */
+  public get busy(): boolean {
+    return this.pending.size > 0;
+  }
+
+  /** Close every open document, so the server may drop its state; returns how many. */
+  public closeDocuments(): number {
+    const count = this.opened.size;
+    for (const uri of this.opened.keys()) {
+      this.notify("textDocument/didClose", { textDocument: { uri } });
+    }
+    this.opened.clear();
+    return count;
   }
 
   private onData(chunk: Buffer): void {
@@ -346,6 +366,38 @@ export class LspPool {
       }
     }
     return closed;
+  }
+
+  /**
+   * What the pool's servers hold resident, in bytes: each server's process
+   * and its descendants (`typescript-language-server` runs `tsserver` as a
+   * child). Zero when none is running. For the memory guard, which counts a
+   * language server as a tenant beside the Worker (WL-N7-2).
+   */
+  public residentBytes(): number {
+    const pids = [...this.clients.values()]
+      .map((c) => c.pid)
+      .filter((p): p is number => p !== undefined);
+    if (pids.length === 0) return 0;
+    return processTreeResidentBytes(pids);
+  }
+
+  /**
+   * Give memory back: close every open document and stop every server not
+   * serving a request. A stopped server starts again on the next symbol
+   * request that needs it.
+   */
+  public async trimCaches(): Promise<{ stopped: number; documentsClosed: number }> {
+    let stopped = 0;
+    let documentsClosed = 0;
+    for (const [key, client] of this.clients) {
+      if (client.busy) continue;
+      documentsClosed += client.closeDocuments();
+      this.clients.delete(key);
+      if (client.alive) stopped++;
+      await client.shutdown();
+    }
+    return { stopped, documentsClosed };
   }
 
   public async closeAll(): Promise<void> {

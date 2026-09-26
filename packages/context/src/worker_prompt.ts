@@ -28,6 +28,7 @@ import { PROMPT_ZONE_1_SYSTEM, type SkillDisclosure, type TurnHistoryItem } from
 import { linesNamedFor, pruneLines } from "./pruner.js";
 import { type PruneArm, pruneArmFromEnv, pruneSeed, randomLinePrune } from "./random_prune.js";
 import type { SkillManifest } from "./skills.js";
+import { charsForTokens } from "./tokens.js";
 import {
   type ToolInterfaceSpec,
   renderLoadedTools,
@@ -218,6 +219,8 @@ export interface WorkerPromptResult {
   stopReason?: "budget_exhausted";
   /** Ids of the rules that reached the prompt, for outcome counting. */
   rulesUsed: string[];
+  /** Source card ids of the exemplars that reached the prompt (WL-N5-1). */
+  exemplarsUsed: string[];
   /** Kinds of sections that were cut, for the log. */
   cut: SectionKind[];
   /** The context pack record (C14). */
@@ -271,7 +274,7 @@ function shrinkFile(text: string, maxTokens: number): string | undefined {
   if (estimatePromptTokens(text) <= maxTokens) return text;
   const marker =
     "\n… (middle cut to fit the context window; read_file with a line range for it) …\n";
-  const room = (maxTokens - estimatePromptTokens(marker)) * 3.2;
+  const room = charsForTokens(maxTokens - estimatePromptTokens(marker));
   if (room < 200) return undefined;
   const head = Math.floor(room * 0.7);
   const tail = Math.floor(room * 0.3) - 4;
@@ -869,6 +872,14 @@ function offersRecall(input: WorkerPromptInput): boolean {
   ].some((t) => t.name === "recall");
 }
 
+/** The exemplars whose block reached the prompt, by source card (WL-N5-1). */
+function exemplarsShown(exemplars: readonly Exemplar[], sections: ContextSection[]): string[] {
+  const text = sections.find((s) => s.id === "exemplars")?.text ?? "";
+  return exemplars
+    .filter((e) => text.includes(`Example (${e.cardClass}, ${e.steps} steps): ${e.title}`))
+    .map((e) => e.cardId);
+}
+
 export function buildWorkerPrompt(given: WorkerPromptInput): WorkerPromptResult {
   // The prune arm is resolved once, so the determinism key covers it (C15).
   const input: WorkerPromptInput = { ...given, pruneArm: given.pruneArm ?? pruneArmFromEnv() };
@@ -1121,6 +1132,7 @@ export function buildWorkerPrompt(given: WorkerPromptInput): WorkerPromptResult 
     stop,
     ...(stop ? { stopReason: "budget_exhausted" as const } : {}),
     rulesUsed: allRulesUsed,
+    exemplarsUsed: exemplarsShown(input.exemplars ?? [], sections),
     cut: cutKinds,
     pack,
     zoneBudgets,

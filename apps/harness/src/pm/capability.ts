@@ -1,9 +1,15 @@
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
-import type { CardRecord } from "@sekhemet/kernel";
+import { DatabaseSync } from "node:sqlite";
+import {
+  type AttemptOutcome,
+  type CardRecord,
+  firstModelAttempts,
+  readAttemptOutcomes,
+} from "@sekhemet/kernel";
 
 /**
- * The Worker's measured competence, from this repo's own evidence.
+ * The Worker's measured competence, from this repo's own attempt records.
  *
  * Both research reports are blunt: there is no public benchmark for these
  * fine-tunes at this quantization, so capability must come from the ledger.
@@ -51,44 +57,51 @@ export function cardKind(card?: Pick<CardRecord, "title" | "labels">): string {
   return m?.[1] ?? "Other";
 }
 
-interface EvidenceAttempt {
+interface FirstAttempt {
   cardId: string;
-  attempt: number;
   passed: boolean;
-  linesAdded: number;
+  linesAdded?: number;
 }
 
-function readAttempts(repoPath: string): EvidenceAttempt[] {
-  const dir = join(repoPath, ".sekhemet", "evidence");
-  if (!existsSync(dir)) return [];
-  const out: EvidenceAttempt[] = [];
-  for (const f of readdirSync(dir)) {
-    // ev_* are the per-attempt bundles; latest-* are copies of them.
-    if (!f.startsWith("ev_") || !f.endsWith(".json")) continue;
-    try {
-      const e = JSON.parse(readFileSync(join(dir, f), "utf8")) as Partial<EvidenceAttempt>;
-      if (typeof e.cardId !== "string") continue;
-      out.push({
-        cardId: e.cardId,
-        attempt: typeof e.attempt === "number" ? e.attempt : 1,
-        passed: e.passed === true,
-        linesAdded: typeof e.linesAdded === "number" ? e.linesAdded : 0,
-      });
-    } catch {
-      // A partial bundle is skipped.
-    }
+/**
+ * The repository's attempt outcomes, from its ledger's `attempt/finished`
+ * records (WL-N5-2) — the one store every reader of outcomes uses.
+ */
+export function ledgerOutcomes(repoPath: string): AttemptOutcome[] {
+  const path = join(repoPath, ".sekhemet", "events.db");
+  if (!existsSync(path)) return [];
+  const db = new DatabaseSync(path, { readOnly: true });
+  try {
+    return readAttemptOutcomes(db);
+  } catch (err) {
+    // A ledger older than the events table has no outcomes to read; any other
+    // failure (a busy database) is not "no attempts" and is not hidden.
+    if (/no such table/i.test(String(err))) return [];
+    throw err;
+  } finally {
+    db.close();
   }
-  return out;
 }
 
 const BUCKETS = [25, 50, 100, 200, Number.POSITIVE_INFINITY];
 
-export function capabilityReport(repoPath: string, cards: CardRecord[]): CapabilityReport {
+export function capabilityReport(
+  repoPath: string,
+  cards: CardRecord[],
+  outcomes: readonly AttemptOutcome[] = ledgerOutcomes(repoPath),
+): CapabilityReport {
   const byId = new Map(cards.map((c) => [c.id, c]));
-  // First attempts only: that is what Pass@1 and the split decision need.
-  const first = readAttempts(repoPath).filter((a) => a.attempt === 1);
+  // First attempts only: that is what Pass@1 and the split decision need; a
+  // person's attempt says nothing about the Worker (MD-N6-2).
+  // A halted attempt says nothing about the Worker either: the first attempt
+  // is the card's first that measures the model (B4.0a review M2).
+  const first: FirstAttempt[] = firstModelAttempts(outcomes).map((o) => ({
+    cardId: o.cardId,
+    passed: o.passed,
+    ...(o.linesAdded !== undefined ? { linesAdded: o.linesAdded } : {}),
+  }));
 
-  const groups = new Map<string, EvidenceAttempt[]>();
+  const groups = new Map<string, FirstAttempt[]>();
   for (const a of first) {
     const kind = cardKind(byId.get(a.cardId));
     groups.set(kind, [...(groups.get(kind) ?? []), a]);
@@ -109,7 +122,11 @@ export function capabilityReport(repoPath: string, cards: CardRecord[]): Capabil
 
   const sizeCurve = BUCKETS.map((max, i) => {
     const min = i === 0 ? -1 : (BUCKETS[i - 1] as number);
-    const inBucket = first.filter((a) => a.linesAdded > min && a.linesAdded <= max);
+    // A record from before the attempt carried its size has no place on the
+    // curve; it still counts in the rates above (B4.0a review M1).
+    const inBucket = first.filter(
+      (a) => a.linesAdded !== undefined && a.linesAdded > min && a.linesAdded <= max,
+    );
     return {
       maxLines: Number.isFinite(max) ? max : 9999,
       attempts: inBucket.length,

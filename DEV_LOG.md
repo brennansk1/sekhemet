@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 39 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 40 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,26 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 40 — 2026-09-25 (B4.0a part 1: the seam)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver. Implementer helpers: half 1 and half 2 of B4.0a in parallel on disjoint files. One full independent review of the seam.
+
+- **Plan:** B4.0a's 17 change IDs, split into two halves joined by one seam (`~/.sekhemet/plans/B4.0a_plan.md`). Built on main while the B2.5 baseline is paused; the baseline runs from its own frozen snapshot, so nothing here touches it.
+- **Built (the seam):**
+  - **CX-N1-2: one token estimator** (3.2 chars per token, `tokens.ts`), replacing the leftover `/4`. Every Worker budget that counted by `/4` now counts about 25% higher; two goldens moved by exactly that. Its paired A/B is pending after the baseline.
+  - **WL-N5-1/2:** a self-contained `attempt/finished` (rung, arm, role, rules, exemplars, steps, class, project, lines, `builtBy`) and one reader, `readAttemptOutcomes`, with old events completed from their `attempt/started`. Replay gives the same rows. The capability report, the Worker's record, tune and `measure rule-credit` read only from it.
+  - **CX-N3-1:** `allocateContext` takes a role and window; a section over its cap throws.
+  - **LspPool:** `residentBytes()` and `trimCaches()`. The `ps` probe lives in the sandbox's trusted module, so SEC-18's allowlist does not grow.
+- **Review:** approve after two majors, both fixed by the lead with tests first.
+  - **M1:** records without `linesAdded` stay out of the size curve.
+  - **M2:** a card's first attempt is its first that measures the Worker, not a halt, crash or quota (`firstModelAttempts`, `measuresModel`).
+  - **Minors:** a busy database is no longer read as "no attempts"; the Researcher's answer cap is 3,500; the estimator row states its full effect. The ratio is not yet a context-version input (CX-N6-2, half 2).
+- **Gate:** a snapshot of `66d1276` plus the seam: `tsc -b` and Biome clean, 329 files and 2,546 tests pass, exit codes checked.
+- **Where the cards stop:**
+  - B4.0a half 1 continues: ctx-4 (rule curation) and ctx-5 (repo map), then CX-N3 remainder, wl-6 and wl-7.
+  - B4.0a half 2 continues: models-1..5, 9, 10, wl-4, wl-8, CX-N6-1/2.
+  - Every Worker-visible change waits for its paired A/B after B2.5, which is paused while the owner needs the RAM.
 
 ### Entry 39 — 2026-09-25 (B4.10 Team setup: identity, access, the fair queue, per-slot leases, the sign-in pages)
 

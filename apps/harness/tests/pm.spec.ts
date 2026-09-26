@@ -183,54 +183,42 @@ describe("project manager", () => {
     expect(await pm.queued()).toEqual([]);
   });
 
-  it("summarises the Worker's record from run reports", () => {
-    const record = workerRecord([
-      {
-        startedAt: "2026-09-18T10:00:00Z",
-        model: "cyber-tiel",
-        entries: [
-          {
-            cardId: "a",
-            attempt: 1,
-            passed: true,
-            accepted: true,
-            stopReason: "gate_passed",
-            turns: 2,
-            durationMs: 1,
-            promptTokens: 1,
-            completionTokens: 1,
-          },
-          {
-            cardId: "b",
-            attempt: 1,
-            passed: true,
-            accepted: true,
-            stopReason: "gate_passed",
-            turns: 4,
-            durationMs: 1,
-            promptTokens: 1,
-            completionTokens: 1,
-          },
-          {
-            cardId: "c",
-            attempt: 1,
-            passed: false,
-            accepted: false,
-            stopReason: "oscillation_detected",
-            turns: 10,
-            durationMs: 1,
-            promptTokens: 1,
-            completionTokens: 1,
-          },
-        ],
-        passAt1: 2 / 3,
-        passAfterEscalation: 2 / 3,
-        modelSwaps: 0,
-        totalDurationMs: 1,
-      },
-    ]);
+  it("WL-N5-2: summarises the Worker's record from attempt/finished records", async () => {
+    for (const id of ["a", "b", "c", "d"]) {
+      await cards.createCard({ id, tier: "task", title: id });
+    }
+    const run = async (
+      cardId: string,
+      stopReason: "gate_passed" | "oscillation_detected",
+      steps: number,
+      builtBy?: { kind: "person"; id: string },
+    ) => {
+      const a = await cards.runs.startAttempt({
+        cardId,
+        attemptNumber: cards.runs.nextAttemptNumber(cardId),
+        modelId: "cyber-tiel",
+        ...(builtBy ? { builtBy } : {}),
+      });
+      await cards.runs.finishAttempt({
+        attemptId: a.id,
+        status: stopReason === "gate_passed" ? "passed" : "failed",
+        stopReason,
+        tokensUsed: 1,
+        secondsUsed: 1,
+        steps,
+      });
+    };
+    await run("a", "gate_passed", 2);
+    await run("b", "gate_passed", 4);
+    await run("c", "oscillation_detected", 10);
+    await run("c", "gate_passed", 3); // a retry is not a first attempt
+    await run("d", "gate_passed", 1, { kind: "person", id: "p_1" }); // nor is a person's
+    const record = workerRecord(cards.runs.readAttemptOutcomes());
+    expect(record?.model).toBe("cyber-tiel");
     expect(record?.record).toContain("2/3 first attempts passed");
+    expect(record?.record).toContain("median of 4 steps");
     expect(record?.record).toContain("oscillation_detected ×1");
+    expect(workerRecord([])).toBeUndefined();
   });
 
   it("has no runner lease when no queue is running", () => {

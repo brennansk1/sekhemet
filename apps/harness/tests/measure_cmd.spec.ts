@@ -488,26 +488,33 @@ describe("sekhemet measure (MS-T8-13, MS-T8-14 wired)", () => {
     expect(lines.join("\n")).toMatch(/not stamped with its commit/);
   });
 
-  it("rule-credit: computes a rule's credit from attempt/finished records and records it", async () => {
+  it("rule-credit: computes a rule's credit from attempt/finished records and records it (WL-N5-2)", async () => {
     const k = kernel();
     for (let i = 0; i < 4; i++) {
-      await k.log.append({
-        actor: "harness",
-        type: "attempt/finished",
-        payload: {
-          cardId: `c${i}`,
-          projectId: "p",
-          cardClass: "task",
-          attemptNumber: 1,
-          stopReason: i % 2 ? "passed" : "gates_failed",
-          rules: i % 2 ? ["rule_x"] : [],
-          withheldRules: i % 2 ? [] : ["rule_x"],
-        },
+      await k.cardStore.createCard({ id: `c${i}`, tier: "task", title: `c${i}` });
+      const a = await k.cardStore.runs.startAttempt({
+        cardId: `c${i}`,
+        attemptNumber: 1,
+        modelId: "m",
+      });
+      await k.cardStore.runs.finishAttempt({
+        attemptId: a.id,
+        status: i % 2 ? "passed" : "failed",
+        stopReason: i % 2 ? "gate_passed" : "no_progress",
+        tokensUsed: 1,
+        secondsUsed: 1,
+        projectId: "p",
+        cardClass: "task",
+        ruleIds: i % 2 ? ["rule_x"] : [],
+        withheldRuleIds: i % 2 ? [] : ["rule_x"],
       });
     }
     const lines: string[] = [];
     expect(await runMeasureCommand(["rule-credit", "rule_x"], k, (l) => lines.push(l))).toBe(0);
-    expect(lines.join("\n")).toMatch(/rule_x: .*insufficient data/);
+    // Two pairs, each with the rule passing and without it failing.
+    expect(lines.join("\n")).toMatch(
+      /rule_x: credit 2 over 2 pair\(s\) \(2 helpful, 0 harmful\).*insufficient data/,
+    );
     const events = await k.log.getEventsByTypes(["learning/credit"]);
     expect(events[0]?.payload).toMatchObject({ ruleId: "rule_x", status: "insufficient data" });
   });

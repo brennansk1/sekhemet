@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 
 /**
  * Processes the harness trusts (security item 5, S3a): its own git, model
@@ -46,4 +46,42 @@ export function runTrusted(
       },
     );
   });
+}
+
+/**
+ * Resident bytes of the given processes and all their descendants, from one
+ * `ps` listing (macOS and Linux both report RSS in KiB). Zero when `ps`
+ * cannot run: the guard then sees only what it measures itself. The harness's
+ * own `ps`, a trusted process like the rest of this module (SEC-18).
+ */
+export function processTreeResidentBytes(roots: readonly number[]): number {
+  let listing: string;
+  try {
+    listing = execFileSync("ps", ["-A", "-o", "pid=,ppid=,rss="], {
+      encoding: "utf8",
+      timeout: 5_000,
+    });
+  } catch {
+    return 0;
+  }
+  const children = new Map<number, number[]>();
+  const rss = new Map<number, number>();
+  for (const line of listing.split("\n")) {
+    const [pid, ppid, kib] = line.trim().split(/\s+/).map(Number);
+    if (pid === undefined || ppid === undefined || kib === undefined) continue;
+    if (!Number.isFinite(pid) || !Number.isFinite(ppid) || !Number.isFinite(kib)) continue;
+    rss.set(pid, kib);
+    children.set(ppid, [...(children.get(ppid) ?? []), pid]);
+  }
+  const seen = new Set<number>();
+  const stack = [...roots];
+  let total = 0;
+  while (stack.length > 0) {
+    const pid = stack.pop() as number;
+    if (seen.has(pid)) continue;
+    seen.add(pid);
+    total += (rss.get(pid) ?? 0) * 1024;
+    stack.push(...(children.get(pid) ?? []));
+  }
+  return total;
 }

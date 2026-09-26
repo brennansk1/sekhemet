@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { type ContextSection, allocateContext, estimatePromptTokens } from "../src/allocator.js";
+import {
+  ALLOCATOR_WINDOW_MARGIN_TOKENS,
+  ContextCapError,
+  type ContextSection,
+  ROLE_ANSWER_TOKENS,
+  allocateContext,
+  estimatePromptTokens,
+} from "../src/allocator.js";
 
 const words = (n: number, tag: string) =>
   Array.from({ length: n }, (_, i) => `${tag}${i}`).join(" ");
@@ -208,5 +215,59 @@ describe("allocateContext", () => {
       ["remedy", "deduplicated", "rule"],
       ["lesson", "deduplicated", "rule"],
     ]);
+  });
+});
+
+describe("CX-N3-1: allocateContext for a role's window", () => {
+  it("derives the budget from the role's window less its answer and the margin, and records the role and each section's tokens", () => {
+    const r = allocateContext(worker(), {
+      role: "planner",
+      windowTokens: 8192,
+      answerTokens: 2048,
+    });
+    expect(r.budgetTokens).toBe(8192 - 2048 - ALLOCATOR_WINDOW_MARGIN_TOKENS);
+    expect(r.role).toBe("planner");
+    expect(r.windowTokens).toBe(8192);
+    expect(r.sectionTokens.map((s) => s.id)).toEqual(r.sections.map((s) => s.id));
+    expect(r.sectionTokens.reduce((a, s) => a + s.tokens + 1, 0)).toBe(r.usedTokens);
+    // Without an explicit answer, the role's default answer cap is reserved.
+    const d = allocateContext(worker(), { role: "reviewer", windowTokens: 12_288 });
+    expect(d.budgetTokens).toBe(
+      12_288 - ROLE_ANSWER_TOKENS.reviewer - ALLOCATOR_WINDOW_MARGIN_TOKENS,
+    );
+  });
+
+  it("fits a small window by the priorities, the required sections kept", () => {
+    const window = size(["laws", "scope", "fail", "goal"]) + 100 + ALLOCATOR_WINDOW_MARGIN_TOKENS;
+    const r = allocateContext(worker(), {
+      role: "worker",
+      windowTokens: window,
+      answerTokens: 100,
+    });
+    expect(r.fits).toBe(true);
+    expect(r.sections.map((s) => s.id)).toEqual(["laws", "scope", "fail", "goal"]);
+  });
+
+  it("asserts every cap: a shrink that returns more than its cap is refused, naming the section and the role", () => {
+    const plan: ContextSection = {
+      id: "plan",
+      kind: "plan",
+      placement: "static",
+      order: 0,
+      priority: 65,
+      capTokens: 20,
+      text: words(300, "p"),
+      shrink: (t) => t.slice(0, 400),
+    };
+    expect(() => allocateContext([plan], { role: "seshat", windowTokens: 8192 })).toThrow(
+      ContextCapError,
+    );
+    expect(() => allocateContext([plan], { role: "seshat", windowTokens: 8192 })).toThrow(
+      /plan.*seshat|seshat.*plan/,
+    );
+  });
+
+  it("refuses to allocate with neither a budget nor a window", () => {
+    expect(() => allocateContext(worker(), {} as never)).toThrow(/budget|window/);
   });
 });

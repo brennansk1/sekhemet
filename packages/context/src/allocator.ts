@@ -1,4 +1,5 @@
 import { factKeysOf } from "./facts.js";
+import { estimateTokens, tokensForChars } from "./tokens.js";
 
 /**
  * One context allocator (Integration review item 7, target architecture §4).
@@ -89,6 +90,49 @@ export interface AllocationEvent {
   coveredBy?: string;
 }
 
+/** The roles whose prompts the allocator assembles (CX-N3-1). */
+export type ContextRole = "worker" | "planner" | "seshat" | "reviewer" | "researcher";
+
+/**
+ * Each role's default answer cap, reserved out of its window when the
+ * caller does not pass the adapter's own (`answerTokens`). The values are
+ * the roster profiles' `maxTokens` (models `roster.ts`; Seshat's adapter in
+ * `pm/service.ts`).
+ */
+export const ROLE_ANSWER_TOKENS: Readonly<Record<ContextRole, number>> = {
+  worker: 2048,
+  planner: 2048,
+  seshat: 1200,
+  reviewer: 900,
+  // The Researcher's calls answer in up to 3,500 tokens (apodex_loop).
+  researcher: 3500,
+};
+
+/** Room left for the server's tokenizer to disagree with the estimate. */
+export const ALLOCATOR_WINDOW_MARGIN_TOKENS = 256;
+
+/** A section over its cap after allocation: a defect in its shrink, never sent. */
+export class ContextCapError extends Error {
+  constructor(
+    public readonly sectionId: string,
+    public readonly tokens: number,
+    public readonly capTokens: number,
+    public readonly role: ContextRole | undefined,
+  ) {
+    super(
+      `section ${sectionId} is ${tokens} tokens over its cap of ${capTokens}${role ? ` in the ${role} prompt` : ""}`,
+    );
+    this.name = "ContextCapError";
+  }
+}
+
+export interface SectionTokens {
+  id: string;
+  kind: SectionKind;
+  tokens: number;
+  capTokens?: number;
+}
+
 export interface AllocationResult {
   sections: ContextSection[];
   events: AllocationEvent[];
@@ -96,28 +140,49 @@ export interface AllocationResult {
   budgetTokens: number;
   /** False when even the required sections exceed the budget. */
   fits: boolean;
+  /** Each kept section's tokens, in render order (CX-N3-1, CX-N3-7). */
+  sectionTokens: SectionTokens[];
+  /** The role and window the budget was derived from, when given. */
+  role?: ContextRole;
+  windowTokens?: number;
 }
 
-export interface AllocateOptions {
-  budgetTokens: number;
+export type AllocateOptions = {
   /** Tokens already spent outside the sections (native tool schemas). */
   overheadTokens?: number;
   estimate?: (text: string) => number;
+  /** Whose prompt this is: named in the record and in a cap error. */
+  role?: ContextRole;
+} & (
+  | { budgetTokens: number; windowTokens?: undefined; answerTokens?: undefined }
+  | {
+      budgetTokens?: undefined;
+      /**
+       * The role's context window: the budget is the window less the answer
+       * cap (`answerTokens`, or the role's default) and the margin.
+       */
+      windowTokens: number;
+      answerTokens?: number;
+    }
+);
+
+/** The budget an allocation runs under: explicit, or the role's window less its answer. */
+export function allocationBudget(options: AllocateOptions): number {
+  if (options.budgetTokens !== undefined) return options.budgetTokens;
+  if (options.windowTokens === undefined) {
+    throw new Error("allocateContext needs budgetTokens or a role's windowTokens");
+  }
+  const answer = options.answerTokens ?? ROLE_ANSWER_TOKENS[options.role ?? "worker"];
+  return options.windowTokens - answer - ALLOCATOR_WINDOW_MARGIN_TOKENS;
 }
 
 /**
- * The prompt-side token estimate. Code tokenizes denser than prose; 3.2
- * characters per token errs on the safe side (the Worker's request
- * estimate uses the same ratio).
+ * The prompt-side token estimate: the package's one estimator (CX-N1-2,
+ * `tokens.ts`), under the name the allocator's callers use.
  */
-export function estimatePromptTokens(text: string): number {
-  return tokensForChars(text.length);
-}
+export const estimatePromptTokens: (text: string) => number = estimateTokens;
 
-/** The estimator on a length alone: it counts characters. */
-export function tokensForChars(length: number): number {
-  return Math.ceil(length / 3.2);
-}
+export { tokensForChars };
 
 const PLACEMENT_RANK: Record<SectionPlacement, number> = { system: 0, static: 1, volatile: 2 };
 
@@ -163,6 +228,8 @@ export function allocateContext(
   options: AllocateOptions,
 ): AllocationResult {
   const estimate = options.estimate ?? estimatePromptTokens;
+  const budgetTokens = allocationBudget(options);
+  const role = options.role;
   const events: AllocationEvent[] = [];
   const shrinkTo = (s: ContextSection, max: number): string | undefined =>
     s.shrink ? s.shrink(s.text, max) : shrinkHead(s.text, max, estimate);
@@ -175,6 +242,9 @@ export function allocateContext(
       const before = estimate(s.text);
       if (before <= s.capTokens) return s;
       const text = shrinkTo(s, s.capTokens);
+      if (text !== undefined && estimate(text) > s.capTokens) {
+        throw new ContextCapError(s.id, estimate(text), s.capTokens, role);
+      }
       if (text === undefined) {
         events.push({
           id: s.id,
@@ -232,7 +302,7 @@ export function allocateContext(
   const total = (): number => overhead + sections.reduce((a, s) => a + estimate(s.text) + 1, 0);
   const byPriority = [...sections].sort((a, b) => a.priority - b.priority || b.order - a.order);
   for (const victim of byPriority) {
-    const over = total() - options.budgetTokens;
+    const over = total() - budgetTokens;
     if (over <= 0) break;
     const current = sections.find((s) => s.id === victim.id);
     if (!current) continue;
@@ -283,13 +353,29 @@ export function allocateContext(
   sections.sort(
     (a, b) => PLACEMENT_RANK[a.placement] - PLACEMENT_RANK[b.placement] || a.order - b.order,
   );
+  // Every cap asserted on what is sent (CX-N3-1).
+  const sectionTokens: SectionTokens[] = sections.map((s) => {
+    const tokens = estimate(s.text);
+    if (s.capTokens !== undefined && tokens > s.capTokens) {
+      throw new ContextCapError(s.id, tokens, s.capTokens, role);
+    }
+    return {
+      id: s.id,
+      kind: s.kind,
+      tokens,
+      ...(s.capTokens !== undefined ? { capTokens: s.capTokens } : {}),
+    };
+  });
   const usedTokens = total();
   return {
     sections,
     events,
     usedTokens,
-    budgetTokens: options.budgetTokens,
-    fits: usedTokens <= options.budgetTokens,
+    budgetTokens,
+    fits: usedTokens <= budgetTokens,
+    sectionTokens,
+    ...(role ? { role } : {}),
+    ...(options.windowTokens !== undefined ? { windowTokens: options.windowTokens } : {}),
   };
 }
 

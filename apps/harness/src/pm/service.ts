@@ -1,8 +1,6 @@
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { basename, join } from "node:path";
-import type { CardStore } from "@sekhemet/kernel";
+import { basename } from "node:path";
+import { type AttemptOutcome, type CardStore, firstModelAttempts } from "@sekhemet/kernel";
 import { HttpInferenceAdapter, type LocalInferenceAdapter } from "@sekhemet/models";
-import type { QueueReport } from "../execute.js";
 import { LearningStore } from "../learning/store.js";
 import { plannerStandupSection } from "../wave2.js";
 import {
@@ -46,58 +44,38 @@ export {
 
 // --- Snapshot ----------------------------------------------------------------
 
-function readReports(repoPath: string): QueueReport[] {
-  const dir = join(repoPath, ".sekhemet", "runs");
-  const reports: QueueReport[] = [];
-  if (existsSync(dir)) {
-    for (const f of readdirSync(dir)
-      .filter((n) => n.endsWith(".json"))
-      .sort()) {
-      try {
-        reports.push(JSON.parse(readFileSync(join(dir, f), "utf8")) as QueueReport);
-      } catch {
-        // A partial report is skipped, not fatal.
-      }
-    }
-  }
-  if (reports.length === 0) {
-    const latest = join(repoPath, ".sekhemet", "queue_report.json");
-    if (existsSync(latest)) {
-      try {
-        reports.push(JSON.parse(readFileSync(latest, "utf8")) as QueueReport);
-      } catch {
-        // Ignore.
-      }
-    }
-  }
-  return reports;
-}
+/** How many recent first attempts the Worker's record covers. */
+const RECORD_WINDOW = 30;
 
 /**
  * The Worker's track record, in one line the PM can plan against.
  *
  * This is the PM's model of its teammate: how often first attempts pass, how
- * many turns a pass takes, and what the failures were. It is what lets the
- * PM say "split it" rather than "retry it".
+ * many steps a pass takes, and what the failures were. It is what lets the
+ * PM say "split it" rather than "retry it". It reads the attempt records
+ * alone (WL-N5-2), and a person's attempt is not the Worker's (MD-N6-2).
  */
 export function workerRecord(
-  reports: QueueReport[],
+  outcomes: readonly AttemptOutcome[],
 ): { model: string; record: string } | undefined {
-  const last = reports.at(-1);
+  const worker = outcomes.filter((o) => o.builtBy.kind !== "person");
+  const last = worker.at(-1);
   if (!last) return undefined;
-  const entries = reports.slice(-3).flatMap((r) => r.entries);
-  const first = entries.filter((e) => e.attempt === 1);
-  const passed = first.filter((e) => e.passed);
-  const turns = passed.map((e) => e.turns).sort((a, b) => a - b);
-  const median = turns.length ? turns[Math.floor(turns.length / 2)] : undefined;
+  const first = firstModelAttempts(worker).slice(-RECORD_WINDOW);
+  const passed = first.filter((o) => o.passed);
+  const steps = passed
+    .map((o) => o.steps)
+    .filter((n): n is number => n !== undefined)
+    .sort((a, b) => a - b);
+  const median = steps.length ? steps[Math.floor(steps.length / 2)] : undefined;
   const reasons = new Map<string, number>();
-  for (const e of first.filter((x) => !x.passed)) {
-    reasons.set(e.stopReason, (reasons.get(e.stopReason) ?? 0) + 1);
+  for (const o of first.filter((x) => !x.passed)) {
+    reasons.set(o.stopReason, (reasons.get(o.stopReason) ?? 0) + 1);
   }
   const failing = [...reasons].map(([r, n]) => `${r} ×${n}`).join(", ");
   return {
-    model: last.model,
-    record: `over the last ${Math.min(3, reports.length)} runs, ${passed.length}/${first.length} first attempts passed${median !== undefined ? `, a pass takes a median of ${median} turns` : ""}${failing ? `; failures: ${failing}` : ""}.`,
+    model: last.modelId,
+    record: `over the last ${first.length} first attempts, ${passed.length}/${first.length} first attempts passed${median !== undefined ? `, a pass takes a median of ${median} steps` : ""}${failing ? `; failures: ${failing}` : ""}.`,
   };
 }
 
@@ -107,17 +85,16 @@ export async function buildSnapshot(
   pmStore: PmStore,
   pmModel: string,
 ): Promise<PmSnapshot> {
-  const reports = readReports(repoPath);
-  const recentRuns = reports
-    .slice(-2)
-    .flatMap((r) => r.entries)
+  const outcomes = cardStore.runs.readAttemptOutcomes();
+  const recentRuns = outcomes
+    .slice(-10)
     .map(
-      (e) =>
-        `- \`${e.cardId}\` attempt ${e.attempt}: ${e.passed ? "passed" : `failed (${e.stopReason})`} in ${e.turns} turns, ${Math.round(e.durationMs / 1000)}s`,
+      (o) =>
+        `- \`${o.cardId}\` attempt ${o.attemptNumber}: ${o.passed ? "passed" : `failed (${o.stopReason})`}${o.steps !== undefined ? ` in ${o.steps} steps` : ""}, ${Math.round(o.secondsUsed)}s`,
     );
   const cards = await cardStore.listCards();
-  const record = workerRecord(reports);
-  const measured = capabilitySummary(capabilityReport(repoPath, cards));
+  const record = workerRecord(outcomes);
+  const measured = capabilitySummary(capabilityReport(repoPath, cards, outcomes));
   const worker = record
     ? { model: record.model, record: `${record.record} ${measured}` }
     : undefined;

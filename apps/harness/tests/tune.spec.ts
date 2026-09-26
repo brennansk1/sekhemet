@@ -1,10 +1,13 @@
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { describe, expect, it } from "vitest";
 import {
   type Attempt,
   describeTuning,
+  loadAttempts,
   replay,
   scorePolicy,
   tune,
@@ -107,5 +110,75 @@ describe("a repository with little history inherits the machine's tuning (MS-T8-
     });
     expect(r.kind).toBe("insufficient data");
     expect(describeTuning(r)).toMatch(/insufficient data: no class has 5 recorded attempts/);
+  });
+});
+
+describe("WL-N5-2: tune reads attempts from the attempt records", () => {
+  it("groups each finished attempt's steps by attempt id, numbered by its record, skipping a running attempt and a person's", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "tune-ledger-"));
+    mkdirSync(join(repo, ".sekhemet"), { recursive: true });
+    const db = new DatabaseSync(join(repo, ".sekhemet", "events.db"));
+    initSchema(db);
+    const store = new CardStore(db, new EventLog(db));
+    await store.createCard({ id: "a", tier: "story", title: "Add a parser" });
+    const step = (attemptId: string, turn: number, gate?: boolean) =>
+      store.recordEvent({
+        type: "card/step",
+        cardId: "a",
+        actor: "executor",
+        attemptId,
+        payload: {
+          turn,
+          usage: { durationMs: 1000 },
+          ...(gate !== undefined ? { gate: { passed: gate } } : {}),
+        },
+      });
+    const start = (builtBy?: { kind: "person"; id: string }) =>
+      store.runs.startAttempt({
+        cardId: "a",
+        attemptNumber: store.runs.nextAttemptNumber("a"),
+        modelId: "m",
+        ...(builtBy ? { builtBy } : {}),
+      });
+    const one = await start();
+    await step(one.id, 1);
+    await step(one.id, 2, false);
+    await store.runs.finishAttempt({
+      attemptId: one.id,
+      status: "failed",
+      stopReason: "no_progress",
+      tokensUsed: 1,
+      secondsUsed: 2,
+    });
+    const two = await start();
+    await step(two.id, 1);
+    await step(two.id, 2, true);
+    await store.runs.finishAttempt({
+      attemptId: two.id,
+      status: "passed",
+      stopReason: "gate_passed",
+      tokensUsed: 1,
+      secondsUsed: 2,
+    });
+    const person = await start({ kind: "person", id: "p_1" });
+    await step(person.id, 1, true);
+    await store.runs.finishAttempt({
+      attemptId: person.id,
+      status: "passed",
+      stopReason: "gate_passed",
+      tokensUsed: 0,
+      secondsUsed: 1,
+    });
+    const running = await start();
+    await step(running.id, 1);
+    db.close();
+
+    const attempts = loadAttempts([repo]);
+    expect(attempts.map((a) => [a.cardId, a.attempt, a.steps.length])).toEqual([
+      ["a", 1, 2],
+      ["a", 2, 2],
+    ]);
+    expect(attempts[1]?.steps.at(-1)?.gate).toEqual({ passed: true });
+    expect(attempts[0]?.cardClass).toBeDefined();
   });
 });

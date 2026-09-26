@@ -215,6 +215,24 @@ describe("C13: exemplars in the static zone", () => {
     expect(r.prompt.indexOf("WORKED EXAMPLES")).toBeLessThan(r.prompt.indexOf("GOAL"));
     expect(r.systemPrompt).not.toContain("WORKED EXAMPLES");
   });
+
+  it("WL-N5-1: names the exemplars that reached the prompt, by source card", () => {
+    const ex = (cardId: string, lines: number) => ({
+      cardId,
+      cardClass: "task:ts:feature",
+      title: `Card ${cardId}`,
+      trajectory: Array.from({ length: lines }, (_, i) => `write src/f${i}.ts -> ok`),
+      steps: lines,
+      tokens: 900,
+      date: "2026-09-01",
+    });
+    const r = buildWorkerPrompt(base({ exemplars: [ex("c1", 2), ex("c2", 2)] }));
+    expect(r.exemplarsUsed).toEqual(["c1", "c2"]);
+    // One too long for the exemplar block is not in the prompt, and not named.
+    const long = buildWorkerPrompt(base({ exemplars: [ex("c1", 2), ex("c3", 400)] }));
+    expect(long.exemplarsUsed).toEqual(["c1"]);
+    expect(buildWorkerPrompt(base({})).exemplarsUsed).toEqual([]);
+  });
 });
 
 describe("C19: tool_search", () => {

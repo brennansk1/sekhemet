@@ -197,6 +197,10 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   private memory = new WorkingMemory();
   private compactedTurns = 0;
   private rulesUsed = new Set<string>();
+  /** Exemplars (by source card) that reached a prompt this attempt (WL-N5-1). */
+  private exemplarsUsed = new Set<string>();
+  /** The highest ladder rung this attempt reached, 0-based (WL-N5-1). */
+  private highestRungIndex = 0;
   private repairAttempts = 0;
   private repoMapCache: string | undefined;
   private lastSystemPrompt = "";
@@ -1061,6 +1065,20 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     return [...this.rulesUsed];
   }
 
+  /** Exemplars, by source card id, that were in this attempt's prompt (WL-N5-1). */
+  public getExemplarsUsed(): string[] {
+    return [...this.exemplarsUsed];
+  }
+
+  /** The highest repair rung this attempt reached, 1..4 (WL-N5-1). */
+  public getHighestRung(): 1 | 2 | 3 | 4 {
+    return (Math.min(3, this.highestRungIndex) + 1) as 1 | 2 | 3 | 4;
+  }
+
+  private noteRung(): void {
+    this.highestRungIndex = Math.max(this.highestRungIndex, this.ladder.snapshot.rungIndex);
+  }
+
   /** How many turns the prompt has folded into a compacted entry, for evidence. */
   public getCompactedTurns(): number {
     return this.compactedTurns;
@@ -1429,6 +1447,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         : { readyToVerify: this.filesWritten.size > 0 }),
     });
     for (const id of built.rulesUsed) this.rulesUsed.add(id);
+    for (const id of built.exemplarsUsed) this.exemplarsUsed.add(id);
     this.lastPackRecord = built.pack;
     this.lastMetrics = built.metrics;
     if (this.history.length > 8) {
@@ -1804,6 +1823,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         this.lastGateFailure = forced.failures[0];
         this.lastGateFailures = forced.failures;
         this.activeRung = this.ladder.recordFailure();
+        this.noteRung();
         const ladderStop = await this.applyLadder(this.activeRung, turnIndex);
         return {
           turnIndex,
@@ -2119,6 +2139,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
 
         const policy = this.ladder.recordFailure();
         this.activeRung = policy;
+        this.noteRung();
 
         this.history.push({
           turn: turnIndex,

@@ -98,10 +98,10 @@ Turn 5: compacted history -> Turns 1-5 compacted (5 turns).
 - turn 3: read_file: src/ledger.ts (lines 1-7 of 7):
 - turn 4: grep_search: 4 match(es) for "append":
 - turn 5: read_file: src/ledger.ts (lines 1-7 of 7):
-Turn 6: grep_search -> [Observation #6: grep_search: 4 match(es) for "append":. 5 lines, 68 tokens, omitted.]
-Turn 7: read_file -> [Observation #7: read_file: src/ledger.ts (lines 1-7 of 7):. 8 lines, 54 tokens, omitted.]
-Turn 8: grep_search -> [Observation #8: grep_search: 4 match(es) for "append":. 5 lines, 68 tokens, omitted.]
-Turn 9: read_file -> [Observation #9: read_file: src/ledger.ts (lines 1-7 of 7):. 8 lines, 54 tokens, omitted.]
+Turn 6: grep_search -> [Observation #6: grep_search: 4 match(es) for "append":. 5 lines, 85 tokens, omitted.]
+Turn 7: read_file -> [Observation #7: read_file: src/ledger.ts (lines 1-7 of 7):. 8 lines, 68 tokens, omitted.]
+Turn 8: grep_search -> [Observation #8: grep_search: 4 match(es) for "append":. 5 lines, 85 tokens, omitted.]
+Turn 9: read_file -> [Observation #9: read_file: src/ledger.ts (lines 1-7 of 7):. 8 lines, 68 tokens, omitted.]
 Turn 10: grep_search -> 4 match(es) for "append":
 src/ledger.ts:5: export function append(entry: Entry): void {
 tests/ledger.spec.ts:2: import { append, rows } from "../src/ledger.js";

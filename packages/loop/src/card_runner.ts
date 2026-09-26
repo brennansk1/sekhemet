@@ -1260,7 +1260,8 @@ export class CardRunner {
           this.attemptId = (
             await store.runs.startAttempt({
               cardId: card.id,
-              attemptNumber: attempt,
+              // WL-N5-1: the real number, counting every earlier run of the card.
+              attemptNumber: Math.max(attempt, store.runs.nextAttemptNumber(card.id)),
               modelId: this.options.modelAdapter.modelId,
               // The arm the steps are sent in (A3), as the session chooses it.
               toolArm:
@@ -1671,6 +1672,9 @@ export class CardRunner {
     evidence: EvidenceBundle;
     written: { path: string; sha256: string } | undefined;
     stepsUsed: number;
+    rung?: 1 | 2 | 3 | 4;
+    ruleIds?: string[];
+    exemplarIds?: string[];
   }): Promise<void> {
     const runs = this.options.store?.runs;
     const { card } = this.options;
@@ -1699,6 +1703,14 @@ export class CardRunner {
         tokensUsed: p.tokensUsed,
         secondsUsed: p.secondsUsed,
         evidenceId: p.evidence.id,
+        // WL-N5-1: the one attempt record every reader of outcomes uses.
+        ...(p.rung ? { rung: p.rung } : {}),
+        ...(p.ruleIds ? { ruleIds: p.ruleIds } : {}),
+        ...(p.exemplarIds ? { exemplarIds: p.exemplarIds } : {}),
+        steps: p.stepsUsed,
+        cardClass: cardClassOf(card),
+        projectId: basename(this.options.repoRoot),
+        linesAdded: p.evidence.linesAdded,
       });
       // A halt says nothing about what the model can do; only outcomes count.
       if (row.measuresModel) {
@@ -2069,6 +2081,13 @@ export class CardRunner {
       evidence,
       written,
       stepsUsed: params.stepsUsed,
+      ...(session
+        ? {
+            rung: session.getHighestRung(),
+            ruleIds: session.getRulesUsed(),
+            exemplarIds: session.getExemplarsUsed(),
+          }
+        : {}),
     });
 
     // The final column. Every finished card enters Verify first: that is the

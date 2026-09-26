@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  PromptZoneBudgetError,
   PromptZoneFractionError,
   TOOL_INTERFACE_HEADER,
   buildWorkerPrompt,
@@ -196,6 +197,8 @@ describe("C5: prompt zone budgets on the live tool catalog", () => {
   it("only fits the live catalog in zone 1 because it is disclosed progressively", () => {
     expect(zones(progressive()).get(1)?.withinBudget).toBe(true);
     // The same catalog rendered in full, as every turn carried it before C19.
+    // Counted with the one estimator (CX-N1-2), its tool interface alone is
+    // over the tool-interface cap, which refuses it before the fractions do.
     expect(() =>
       buildWorkerPrompt({
         card,
@@ -203,7 +206,15 @@ describe("C5: prompt zone budgets on the live tool catalog", () => {
         budgetTokens: W,
         goal: "Add a hasher to src/a.ts.",
       }),
-    ).toThrow(PromptZoneFractionError);
+    ).toThrow(PromptZoneBudgetError);
+    expect(() =>
+      buildWorkerPrompt({
+        card,
+        tools: TOOL_CATALOG,
+        budgetTokens: W,
+        goal: "Add a hasher to src/a.ts.",
+      }),
+    ).toThrow(/"tool_interface"/);
   });
 
   it("refuses a playbook that would crowd the prefix instead of overflowing it", () => {

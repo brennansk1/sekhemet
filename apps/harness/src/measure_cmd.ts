@@ -25,7 +25,7 @@ import {
   watchPooled,
   writeMeasurementMarker,
 } from "@sekhemet/eval";
-import type { CardRecord } from "@sekhemet/kernel";
+import { type CardRecord, measuresModel } from "@sekhemet/kernel";
 import { TOOL_CATALOG, cardClassFor, toolsForClass } from "@sekhemet/loop";
 import { effectiveConfig } from "./config_apply.js";
 import type { Kernel } from "./wave2.js";
@@ -689,9 +689,24 @@ export async function runMeasureCommand(
     if (sub === "rule-credit") {
       const ruleId = args[1];
       if (!ruleId) throw new Error("Usage: sekhemet measure rule-credit <rule-id>");
-      const records = (await k.log.getEventsByTypes(["attempt/finished"])).map(
-        (e) => e.payload as AttemptFinished,
-      );
+      // WL-N5-2: the one reader of attempt outcomes.
+      // Only attempts that measure the Worker, numbered by the card's model
+      // tries, so a resume after a halt is its first (B4.0a review M2).
+      const tries = new Map<string, number>();
+      const measured = k.cardStore.runs
+        .readAttemptOutcomes()
+        .filter(measuresModel)
+        .sort((a, b) => a.attemptNumber - b.attemptNumber || a.seq - b.seq);
+      const records: AttemptFinished[] = measured.map((o) => ({
+        cardId: o.cardId,
+        projectId: o.projectId ?? "",
+        cardClass: o.cardClass ?? "",
+        attemptNumber: tries.set(o.cardId, (tries.get(o.cardId) ?? 0) + 1).get(o.cardId) as number,
+        builtBy: o.builtBy.kind,
+        stopReason: o.stopReason,
+        rules: o.ruleIds,
+        withheldRules: o.withheldRuleIds,
+      }));
       const c = ruleCredit(records, ruleId);
       await k.log.append({ actor: "harness", type: "learning/credit", payload: c });
       print(

@@ -1,7 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type { EventLog } from "./log.js";
+import { STOP_REASONS } from "./stop_reasons.js";
 import type {
+  AttemptOutcome,
   AttemptRecord,
   AttemptStatus,
   BuiltBy,
@@ -26,6 +28,7 @@ import type {
   StepToolCall,
   ToolArm,
 } from "./types.js";
+import { ATTEMPT_ROLES } from "./types.js";
 
 /** Ledger event types for run records; each is replayed into its table (K8). */
 export const RUN_EVENTS = {
@@ -67,6 +70,107 @@ function percentile(values: number[], p: number): number | undefined {
   const sorted = [...values].sort((a, b) => a - b);
   const idx = Math.min(sorted.length - 1, Math.ceil(p * sorted.length) - 1);
   return sorted[Math.max(0, idx)];
+}
+
+/** The `attempt/finished` payload as written since WL-N5-1. */
+type FinishedPayload = FinishAttemptInput & {
+  cardId: string;
+  attemptNumber: number;
+  modelId: string;
+  completedAt: string;
+};
+
+/**
+ * Does this outcome say anything about the Worker? Not when a person built
+ * it, and not when something outside the model stopped it — a halt, a crash,
+ * a quota, a hook (the stop reason's `measuresModel`, MD-N6-2).
+ */
+export function measuresModel(o: AttemptOutcome): boolean {
+  return o.builtBy.kind !== "person" && STOP_REASONS[o.stopReason]?.measuresModel !== false;
+}
+
+/**
+ * Each card's first attempt that measures the Worker, in ledger order: what
+ * Pass@1, the Worker's record and a rule's credit read as "first try". A
+ * resume after a halt starts a new attempt number, but it is still the
+ * Worker's first real try at the card (B4.0a review M2).
+ */
+export function firstModelAttempts(outcomes: readonly AttemptOutcome[]): AttemptOutcome[] {
+  const seen = new Set<string>();
+  const first: AttemptOutcome[] = [];
+  for (const o of [...outcomes].sort(
+    (a, b) => a.attemptNumber - b.attemptNumber || a.seq - b.seq,
+  )) {
+    if (seen.has(o.cardId) || !measuresModel(o)) continue;
+    seen.add(o.cardId);
+    first.push(o);
+  }
+  return first.sort((a, b) => a.seq - b.seq);
+}
+
+/**
+ * The one reader of attempt outcomes (WL-N5-2): `attempt/finished` records,
+ * in ledger order. A record written before the record was extended is
+ * completed from its own `attempt/started` event (number, model, arm,
+ * `builtBy`), never from another store. Takes any handle on the ledger, a
+ * read-only one included.
+ */
+export function readAttemptOutcomes(
+  db: DatabaseSync,
+  options: { cardId?: string } = {},
+): AttemptOutcome[] {
+  const types = [RUN_EVENTS.attemptStarted, RUN_EVENTS.attemptFinished];
+  const rows = (options.cardId
+    ? db
+        .prepare(
+          "SELECT seq, type, payload FROM events WHERE type IN (?, ?) AND card_id = ? ORDER BY seq",
+        )
+        .all(...types, options.cardId)
+    : db
+        .prepare("SELECT seq, type, payload FROM events WHERE type IN (?, ?) ORDER BY seq")
+        .all(...types)) as unknown as { seq: number; type: string; payload: string }[];
+  const started = new Map<string, Partial<AttemptRecord>>();
+  const out: AttemptOutcome[] = [];
+  for (const row of rows) {
+    const p = json<Record<string, unknown>>(row.payload, {});
+    if (row.type === RUN_EVENTS.attemptStarted) {
+      if (typeof p.id === "string") started.set(p.id, p as Partial<AttemptRecord>);
+      continue;
+    }
+    const f = p as Partial<FinishedPayload>;
+    if (typeof f.attemptId !== "string" || !f.status || !f.stopReason) continue;
+    const s = started.get(f.attemptId) ?? {};
+    const modelId = String(f.modelId ?? s.modelId ?? "");
+    const strings = (v: unknown): string[] =>
+      Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+    out.push({
+      seq: Number(row.seq),
+      attemptId: f.attemptId,
+      cardId: String(f.cardId ?? s.cardId ?? ""),
+      attemptNumber: Number(f.attemptNumber ?? s.attemptNumber ?? 1),
+      rung: (f.rung ?? s.rung ?? 1) as RepairRung,
+      toolArm: (f.toolArm ?? s.toolArm ?? "A") as ToolArm,
+      role: f.role ?? "worker",
+      modelId,
+      status: f.status,
+      passed: f.status === "passed",
+      stopReason: f.stopReason,
+      ...(typeof f.steps === "number" ? { steps: f.steps } : {}),
+      tokensUsed: Number(f.tokensUsed ?? 0),
+      secondsUsed: Number(f.secondsUsed ?? 0),
+      ruleIds: strings(f.ruleIds),
+      withheldRuleIds: strings(f.withheldRuleIds),
+      exemplarIds: strings(f.exemplarIds),
+      builtBy: f.builtBy ?? s.builtBy ?? { kind: "worker", id: modelId },
+      ...(f.cardClass ? { cardClass: f.cardClass } : {}),
+      ...(f.projectId ? { projectId: f.projectId } : {}),
+      ...(typeof f.linesAdded === "number" ? { linesAdded: f.linesAdded } : {}),
+      ...(f.repairPlanId ? { repairPlanId: f.repairPlanId } : {}),
+      ...(f.evidenceId ? { evidenceId: f.evidenceId } : {}),
+      completedAt: String(f.completedAt ?? ""),
+    });
+  }
+  return out;
 }
 
 /**
@@ -130,7 +234,34 @@ export class RunLedger {
   public async finishAttempt(input: FinishAttemptInput): Promise<AttemptRecord> {
     const attempt = this.getAttempt(input.attemptId);
     if (!attempt) throw new Error(`Attempt not found: ${input.attemptId}`);
-    const payload = { ...input, completedAt: new Date().toISOString() };
+    const rung = input.rung ?? attempt.rung;
+    if (!RUNGS.has(rung)) throw new Error(`Rung must be 1..4, got ${rung}`);
+    const toolArm = input.toolArm ?? attempt.toolArm;
+    if (!TOOL_ARMS.has(toolArm)) throw new Error(`Tool arm must be A, B or C, got ${toolArm}`);
+    const role = input.role ?? "worker";
+    if (!ATTEMPT_ROLES.includes(role)) {
+      throw new Error(`Attempt role must be ${ATTEMPT_ROLES.join(" or ")}, got ${role}`);
+    }
+    const builtBy = input.builtBy ??
+      attempt.builtBy ?? { kind: "worker" as const, id: attempt.modelId };
+    if ((builtBy.kind !== "worker" && builtBy.kind !== "person") || !builtBy.id) {
+      throw new Error(`builtBy is {kind: "worker" | "person", id}, got ${JSON.stringify(builtBy)}`);
+    }
+    // WL-N5-1: one self-contained record, read by every consumer of outcomes.
+    const payload: FinishedPayload = {
+      ...input,
+      cardId: attempt.cardId,
+      attemptNumber: attempt.attemptNumber,
+      modelId: attempt.modelId,
+      rung,
+      toolArm,
+      role,
+      builtBy,
+      ruleIds: [...(input.ruleIds ?? [])],
+      withheldRuleIds: [...(input.withheldRuleIds ?? [])],
+      exemplarIds: [...(input.exemplarIds ?? [])],
+      completedAt: new Date().toISOString(),
+    };
     await this.log.append(
       {
         actor: "executor",
@@ -142,6 +273,11 @@ export class RunLedger {
       { project: () => this.projectAttemptFinished(payload) },
     );
     return this.getAttempt(input.attemptId) as AttemptRecord;
+  }
+
+  /** Every finished attempt's outcome, in ledger order (WL-N5-2). */
+  public readAttemptOutcomes(options: { cardId?: string } = {}): AttemptOutcome[] {
+    return readAttemptOutcomes(this.db, options);
   }
 
   public getAttempt(id: string): AttemptRecord | undefined {
@@ -221,10 +357,12 @@ export class RunLedger {
   }
 
   private projectAttemptFinished(p: FinishAttemptInput & { completedAt: string }): void {
+    // A pre-extension record carries no rung, arm or builtBy: the started values stand.
     this.db
       .prepare(
         `UPDATE attempts SET status = ?, stop_reason = ?, tokens_used = ?, seconds_used = ?,
-          evidence_id = ?, completed_at = ? WHERE id = ?`,
+          evidence_id = ?, completed_at = ?, rung = COALESCE(?, rung),
+          tool_arm = COALESCE(?, tool_arm), built_by = COALESCE(?, built_by) WHERE id = ?`,
       )
       .run(
         p.status,
@@ -233,6 +371,9 @@ export class RunLedger {
         p.secondsUsed,
         p.evidenceId ?? null,
         p.completedAt,
+        p.rung ?? null,
+        p.toolArm ?? null,
+        p.builtBy ? JSON.stringify(p.builtBy) : null,
         p.attemptId,
       );
   }

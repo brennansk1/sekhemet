@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { DeterministicGateRunner } from "@sekhemet/gates";
 import {
@@ -128,6 +128,52 @@ describe("the runner reads the stop-reason table and records the step evidence (
     });
     // Rule 31a: the step budget ran out, and the evidence says so.
     expect(ev.stopDetail).toEqual({ budget: "steps", used: 2, of: 2 });
+  }, 60_000);
+
+  it("WL-N5-1: the attempt closes with one self-contained record, and a second run of the card is attempt 2", async () => {
+    await run("card_n", "", () => [readA]);
+    const card = await store.getCard("card_n");
+    if (!card) throw new Error("card_n missing");
+    // A second run of the same card, as a later queue pass starts it.
+    await new CardRunner({
+      card,
+      repoRoot: repo,
+      worktreePath: join(repo, ".sekhemet", "worktrees", "card_n_2"),
+      stepBudget: 1,
+      modelAdapter: {
+        modelId: "m",
+        supportedArms: ["arm_a_flat"],
+        contextWindow: { contextTokens: 16_384, maxTokens: 4_096 },
+        generate: async () => ({
+          text: "",
+          toolCalls: [{ id: "x", ...readA }],
+          usage: { promptTokens: 10, completionTokens: 3, durationMs: 1 },
+          finishReason: "tool_calls",
+        }),
+      },
+      gateRunner: new DeterministicGateRunner(new ProcessSandbox(), { repoRoot: repo }),
+      syncAdapter: new NodeGitSyncAdapter(repo),
+      scopeFiles: ["src/a.js"],
+      store,
+      verifyFailToPass: false,
+    }).run();
+    const outcomes = store.runs?.readAttemptOutcomes({ cardId: "card_n" }) ?? [];
+    expect(outcomes.map((o) => o.attemptNumber)).toEqual([1, 2]);
+    expect(outcomes[0]).toMatchObject({
+      cardId: "card_n",
+      rung: 1,
+      toolArm: "A",
+      role: "worker",
+      modelId: "m",
+      ruleIds: [],
+      exemplarIds: [],
+      steps: 2,
+      builtBy: { kind: "worker", id: "m" },
+      stopReason: "budget_exhausted",
+      projectId: basename(repo),
+    });
+    expect(outcomes[0]?.cardClass).toBeTruthy();
+    expect(outcomes[0]?.linesAdded).toBe(0);
   }, 60_000);
 
   it("WL-M2-5: a reply with no tool call is counted as prose-only, apart from format errors, in the evidence and the step rows", async () => {

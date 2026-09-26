@@ -484,6 +484,18 @@ export interface StartAttemptInput {
   builtBy?: BuiltBy;
 }
 
+/** The model role an attempt ran under (worker-loop rule 39); the Worker unless escalated. */
+export type AttemptRole = "worker" | "escalation";
+
+export const ATTEMPT_ROLES: readonly AttemptRole[] = ["worker", "escalation"];
+
+/**
+ * The close of an attempt (worker-loop rule 39, WL-N5-1). Everything past
+ * `evidenceId` is optional for the caller: the `attempt/finished` event is
+ * written self-contained, with the started record's values (attempt number,
+ * model, arm, `builtBy`) and explicit defaults filled in, so a reader never
+ * needs another store.
+ */
 export interface FinishAttemptInput {
   attemptId: string;
   status: Exclude<AttemptStatus, "running">;
@@ -491,6 +503,62 @@ export interface FinishAttemptInput {
   tokensUsed: number;
   secondsUsed: number;
   evidenceId?: string;
+  /** The highest rung the attempt reached; the started rung when omitted. */
+  rung?: RepairRung;
+  /** The arm the steps were sent in; the started arm when omitted. */
+  toolArm?: ToolArm;
+  /** Defaults to `worker`. */
+  role?: AttemptRole;
+  /** Playbook rules that reached the attempt's prompt. */
+  ruleIds?: string[];
+  /** Rules whose scope matched but were withheld by rotation (context CX-N4-6). */
+  withheldRuleIds?: string[];
+  /** Exemplars in the prompt, by their source card id. */
+  exemplarIds?: string[];
+  /** Who built it; the started record's when omitted. */
+  builtBy?: BuiltBy;
+  /** Steps taken. */
+  steps?: number;
+  /** The card class, `kind:ext` (models rule 31). */
+  cardClass?: string;
+  /** The project the card belongs to, for grouping comparable cards. */
+  projectId?: string;
+  /** The change's size, from the evidence (capability report's size curve). */
+  linesAdded?: number;
+  /** The `card/repair_plan` dossier entry the attempt ran under (WL-N5-7). */
+  repairPlanId?: string;
+}
+
+/**
+ * One attempt's outcome, read from its `attempt/finished` record alone
+ * (WL-N5-2): the capability report, the PM's Worker record, `tune`, rule
+ * credit and competence all read this and nothing else.
+ */
+export interface AttemptOutcome {
+  seq: number;
+  attemptId: string;
+  cardId: string;
+  attemptNumber: number;
+  rung: RepairRung;
+  toolArm: ToolArm;
+  role: AttemptRole;
+  modelId: string;
+  status: Exclude<AttemptStatus, "running">;
+  passed: boolean;
+  stopReason: CardStopReason;
+  steps?: number;
+  tokensUsed: number;
+  secondsUsed: number;
+  ruleIds: string[];
+  withheldRuleIds: string[];
+  exemplarIds: string[];
+  builtBy: BuiltBy;
+  cardClass?: string;
+  projectId?: string;
+  linesAdded?: number;
+  repairPlanId?: string;
+  evidenceId?: string;
+  completedAt: string;
 }
 
 export interface StepToolCall {
