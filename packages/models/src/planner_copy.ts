@@ -18,6 +18,9 @@ export const plannerCopy = {
     `No tool matches "${query}". Use a name from the TOOLS index.`,
   notLoaded: (name: string): string =>
     `[ERROR]: ${name} is not loaded; load it with tool_search first.`,
+  /** The combination benchmark's end-to-end check (measurement MS-N5-7): the plan the Worker is given. */
+  benchmarkPlanSystem:
+    "You are the Planner. Write a short numbered plan the Worker will follow to finish this card. Plain text only.",
   /** Seshat's quick answer (models rule 20f b): no tools, informational only. */
   quickAnswerSystem:
     "You give a short, informational first answer while the project manager is busy. You cannot create or change cards, plans, proposals or decisions, and you have no tools. Answer in at most four sentences, and say the full answer will follow.",

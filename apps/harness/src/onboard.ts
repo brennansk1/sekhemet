@@ -5,7 +5,6 @@ import {
   DEFAULT_LSP_SERVERS,
   LspClient,
   buildRankedRepoMap,
-  extractConventions,
   loadProjectConventions,
 } from "@sekhemet/context";
 import {
@@ -14,12 +13,9 @@ import {
   DeterministicGateRunner,
   baselineFromEvents,
   captureBaseline,
-  detectGateTemplate,
-  gateTemplate,
   loadGatesConfig,
   partialFiles,
   readWorkspace,
-  renderGatesToml,
   verificationRungs,
 } from "@sekhemet/gates";
 import type { CardStore, EventLog } from "@sekhemet/kernel";
@@ -31,9 +27,11 @@ import {
   qualifyModel,
 } from "@sekhemet/models";
 import { confinedSandbox } from "@sekhemet/sandbox";
-import { deriveGates } from "./init.js";
+import { type CiStep, deriveGates, installGates } from "./init.js";
 import { applyExploration, exploreProject } from "./learning/explore.js";
 import { LearningStore } from "./learning/store.js";
+import { ownRepoGitEnv } from "./takeover_recon.js";
+import { isWorkspaceTrusted } from "./workspace_trust.js";
 
 /**
  * `sekhemet onboard` (X1, design "Onboarding run"): the eight steps, in
@@ -54,6 +52,14 @@ import { LearningStore } from "./learning/store.js";
  *
  * Nothing is enforced until the user reviews it: `--apply` installs the
  * proposed gates and the AGENTS.md / CLAUDE.md drafts.
+ *
+ * Trust comes first (surface item 9, SUR-56; security item 38a): before the
+ * person trusts the repository only files and git objects are read — steps
+ * 2 and 8, which start language servers and run the project's gates, are
+ * skipped and say so. A different live `gates.toml` is shown as a diff and
+ * replaced only on confirmation, keeping a backup (item 10, SUR-7); the
+ * AGENTS.md section is one marked block replaced in place (SUR-9), holding
+ * only commands and locations no gate enforces (item 9a, SUR-37).
  */
 export interface DetectedCommand {
   kind: "build" | "test" | "lint" | "format" | "typecheck";
@@ -81,6 +87,14 @@ export interface OnboardReport {
   drafts: string[];
   qualification: { modelId: string; passRate: number; qualified: boolean }[];
   applied: string[];
+  /** Whether the repository was trusted to run its code (SUR-56). */
+  trusted: boolean;
+  /** The live gates.toml against the proposal, `-`/`+` lines; empty when equal or absent (SUR-7). */
+  gatesDiff: string;
+  /** Every CI step with the gate it became or why not (item 9b, SUR-35). */
+  ciCoverage: CiStep[];
+  /** The workspace graph recorded at onboarding (item 9d, SUR-39). */
+  workspace?: WorkspaceGraph;
   /**
    * Step 8, the onboarding baseline (gates rule 15a, GT-BF-2): how many
    * pre-existing findings it holds, how many are flaky tests, and whether it
@@ -312,13 +326,112 @@ export function agentsDraft(root: string, commands: DetectedCommand[], c: Conven
     ...(c.errorPatterns.length ? [`- Errors: ${c.errorPatterns.join(", ")}.`] : []),
     ...(c.sourceRoots.length ? [`- Source lives in: ${c.sourceRoots.join(", ")}.`] : []),
     "",
-    "## Rules for agents",
-    "- Keep each change small: at most 3 files and 200 changed lines.",
-    "- Write or update the failing test first, then the code.",
-    "- Never weaken a test assertion to make it pass.",
-    "",
   ];
+  // SUR-37: only commands and locations; a rule a gate enforces (change
+  // size, test-first, protected tests) is not repeated to other agents.
   return lines.join("\n");
+}
+
+const AGENTS_BEGIN = "<!-- sekhemet:begin -->";
+const AGENTS_END = "<!-- sekhemet:end -->";
+
+/**
+ * AGENTS.md with Sekhemet's one marked block (item 10, SUR-9): replaced in
+ * place when present, appended once when not; the person's text around it
+ * is kept as written.
+ */
+export function withAgentsBlock(existing: string, draft: string): string {
+  const body = draft.split("\n").slice(4).join("\n").trim();
+  const block = `${AGENTS_BEGIN}\n## Sekhemet: commands and locations\n\n${body}\n${AGENTS_END}`;
+  if (!existing) return `${draft.split("\n").slice(0, 4).join("\n")}\n${block}\n`;
+  const start = existing.indexOf(AGENTS_BEGIN);
+  const end = existing.indexOf(AGENTS_END);
+  if (start !== -1 && end > start) {
+    return `${existing.slice(0, start)}${block}${existing.slice(end + AGENTS_END.length)}`;
+  }
+  return `${existing.trimEnd()}\n\n${block}\n`;
+}
+
+// ------------------------------------------------ item 9d: the workspace graph
+
+export interface WorkspaceGraph {
+  tool?: string;
+  packages: { name: string; dir: string; deps: string[] }[];
+  /** Workspace packages, dependencies first. */
+  buildOrder: string[];
+  /** TypeScript project references: each tsconfig's directory and the directories it references. */
+  tsReferences: { dir: string; references: string[] }[];
+}
+
+function tsReferences(root: string): WorkspaceGraph["tsReferences"] {
+  const out: WorkspaceGraph["tsReferences"] = [];
+  const seen = new Set<string>();
+  const visit = (dir: string) => {
+    if (seen.has(dir)) return;
+    seen.add(dir);
+    const file = join(root, dir, "tsconfig.json");
+    if (!existsSync(file)) return;
+    let refs: string[] = [];
+    try {
+      // tsconfig allows comments and trailing commas; strip the common forms.
+      const text = readFileSync(file, "utf8")
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/^\s*\/\/.*$/gm, "")
+        .replace(/,(\s*[}\]])/g, "$1");
+      const parsed = JSON.parse(text) as { references?: { path?: string }[] };
+      refs = (parsed.references ?? [])
+        .map((r) => r.path)
+        .filter((p): p is string => typeof p === "string")
+        .map(
+          (p) =>
+            relative(root, join(root, dir, p))
+              .replace(/\\/g, "/")
+              .replace(/\/tsconfig[^/]*\.json$/, "") || ".",
+        );
+    } catch {
+      return;
+    }
+    if (refs.length) out.push({ dir, references: [...refs].sort() });
+    for (const r of refs) visit(r);
+  };
+  visit(".");
+  return out.sort((a, b) => a.dir.localeCompare(b.dir));
+}
+
+/**
+ * Record the workspace at onboarding (item 9d, SUR-39): pnpm, npm and yarn
+ * workspaces (read by `@manypkg/get-packages`) with each package's name,
+ * workspace dependencies and the build order, and the TypeScript project
+ * references, in `.sekhemet/onboard/workspace.json`. Undefined when the
+ * repository has neither.
+ */
+export function recordWorkspaceGraph(root: string, dir: string): WorkspaceGraph | undefined {
+  const ws = readWorkspace(root);
+  const refs = tsReferences(root);
+  if (!ws && refs.length === 0) return undefined;
+  const packages = (ws?.packages ?? []).map((p) => ({ name: p.name, dir: p.dir, deps: p.deps }));
+  const order: string[] = [];
+  const byName = new Map(packages.map((p) => [p.name, p]));
+  const visiting = new Set<string>();
+  const place = (name: string) => {
+    if (order.includes(name) || visiting.has(name)) return;
+    visiting.add(name);
+    for (const d of byName.get(name)?.deps ?? []) place(d);
+    visiting.delete(name);
+    order.push(name);
+  };
+  for (const p of [...packages].sort(
+    (a, b) => a.deps.length - b.deps.length || a.name.localeCompare(b.name),
+  ))
+    place(p.name);
+  const graph: WorkspaceGraph = {
+    ...(ws ? { tool: ws.tool } : {}),
+    packages,
+    buildOrder: order,
+    tsReferences: refs,
+  };
+  writeFileSync(join(dir, "workspace.json"), `${JSON.stringify(graph, null, 2)}\n`);
+  return graph;
 }
 
 // ---------------------------------------------------------------- step 7
@@ -340,6 +453,10 @@ export function repoQualificationCases(files: string[]): QualificationCase[] {
 
 export interface OnboardOptions {
   apply?: boolean;
+  /** Replace a different live gates.toml (its diff was shown), keeping a backup (SUR-7). */
+  confirm?: boolean;
+  /** Trusted to run repository code; default: the user directory's record (SUR-56). */
+  trusted?: boolean;
   /** Models to qualify (step 7); none: the step is skipped and says so. */
   models?: LocalInferenceAdapter[];
   registry?: ModelRegistry;
@@ -382,9 +499,23 @@ export async function runOnboard(root: string, opts: OnboardOptions = {}): Promi
   }
   const servers = opts.lspServers ?? DEFAULT_LSP_SERVERS;
   const languageServers: OnboardReport["languageServers"] = [];
+  const trusted = opts.trusted ?? isWorkspaceTrusted(root);
   for (const language of [...langs].sort()) {
     const server = servers[language];
     if (!server) continue;
+    if (!trusted) {
+      // SUR-56: a language server loads repository configuration and plugins.
+      languageServers.push({
+        language,
+        command: server.command,
+        ok: false,
+        detail: "not started: the repository is not trusted",
+      });
+      say(
+        `2. ${language} language server not started: this repository is not trusted yet (\`sekhemet dev trust\` shows what would run).`,
+      );
+      continue;
+    }
     const client = new LspClient(server, root, opts.lspTimeoutMs ?? 10_000);
     let ok = false;
     let detail = "";
@@ -406,16 +537,23 @@ export async function runOnboard(root: string, opts: OnboardOptions = {}): Promi
   const commands = detectCommands(root);
   say(`3. Commands: ${commands.map((c) => `${c.kind} ${c.command}`).join("; ") || "none found"}.`);
 
-  // 4. Proposed gates (the live gates.toml is never touched here).
-  const template = gateTemplate(root, detectGateTemplate(root));
+  // 4. Proposed gates, from the one deriver (the live gates.toml is never
+  // touched here): the CI coverage beside them (item 9b, SUR-35).
   const derived = deriveGates(root);
-  const toml = template ? renderGatesToml(template) : derived.toml;
+  const toml = derived.toml;
   const gatesPath = join(dir, "gates.proposed.toml");
   writeFileSync(gatesPath, toml);
-  const gates = template
-    ? template.map((g) => `${g.id}: ${g.command} ${g.args.join(" ")}`)
-    : derived.gates;
+  const gates = derived.gates;
+  writeFileSync(join(dir, "ci_coverage.json"), `${JSON.stringify(derived.ci, null, 2)}\n`);
   say(`4. Proposed gates (${relative(root, gatesPath)}): ${gates.join("; ") || "none"}.`);
+  for (const step of derived.ci) {
+    say(
+      `   CI ${step.file}:${step.line} ${step.command} → ${step.gate ? `gate ${step.gate}` : (step.reason ?? "").replace(/_/g, " ")}`,
+    );
+  }
+  const liveGates = join(root, ".sekhemet", "gates.toml");
+  const gatesDiff = existsSync(liveGates) ? installGates(root, toml, false).diff : "";
+  const workspace = recordWorkspaceGraph(root, dir);
 
   // 5. Conventions and a draft playbook.
   const conventions = measureConventions(root, files);
@@ -424,7 +562,12 @@ export async function runOnboard(root: string, opts: OnboardOptions = {}): Promi
     // Drift (X2) compares commits made after this point.
     writeFileSync(
       join(dir, "head.txt"),
-      `${execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim()}\n`,
+      `${execFileSync("git", ["rev-parse", "HEAD"], {
+        cwd: root,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        env: ownRepoGitEnv(root),
+      }).trim()}\n`,
     );
   } catch {
     // Not a git repository yet.
@@ -456,9 +599,7 @@ export async function runOnboard(root: string, opts: OnboardOptions = {}): Promi
     const existing = existsSync(join(root, name)) ? readFileSync(join(root, name), "utf8") : "";
     const body =
       name === "AGENTS.md"
-        ? existing
-          ? `${existing.trimEnd()}\n\n<!-- sekhemet onboard -->\n${agents.split("\n").slice(4).join("\n")}`
-          : agents
+        ? withAgentsBlock(existing, agents)
         : existing ||
           `# CLAUDE.md\n\nFollow [AGENTS.md](AGENTS.md): it lists this repository's commands and conventions.\n`;
     const draft = join(dir, `${name}.draft`);
@@ -494,13 +635,25 @@ export async function runOnboard(root: string, opts: OnboardOptions = {}): Promi
 
   const applied: string[] = [];
   if (opts.apply) {
-    const live = join(root, ".sekhemet", "gates.toml");
-    writeFileSync(live, toml);
-    applied.push(relative(root, live));
+    const installed = installGates(root, toml, opts.confirm === true);
+    if (installed.state === "written" || installed.state === "replaced") {
+      applied.push(".sekhemet/gates.toml");
+    }
+    if (installed.state === "replaced") say(`Kept the previous gates as ${installed.backup}.`);
+    if (installed.state === "needs_confirmation") {
+      say("Your .sekhemet/gates.toml differs from the proposal; kept. The difference:");
+      for (const l of installed.diff.split("\n")) say(`   ${l}`);
+      say("Rerun with --apply --yes to replace it (the old file is kept as gates.toml.bak).");
+    }
     for (const name of ["AGENTS.md", "CLAUDE.md"]) {
       writeFileSync(join(root, name), readFileSync(join(dir, `${name}.draft`), "utf8"));
       applied.push(name);
     }
+    // Drift is measured against what the person accepted (item 12, SUR-10).
+    writeFileSync(
+      join(dir, "conventions.json"),
+      `${JSON.stringify({ ...conventions, documented: loadProjectConventions(root, 250) }, null, 2)}\n`,
+    );
     say(`Applied: ${applied.join(", ")}.`);
   } else {
     say(
@@ -512,7 +665,11 @@ export async function runOnboard(root: string, opts: OnboardOptions = {}): Promi
   // the proposed ones): what already fails is recorded, so a card is never
   // asked to fix what it did not write (gates rule 15a, GT-BF-2).
   let baseline: OnboardReport["baseline"];
-  if (opts.baseline !== false) {
+  if (opts.baseline !== false && !trusted) {
+    say(
+      "8. Baseline not taken: it runs the project's gates, and this repository is not trusted yet.",
+    );
+  } else if (opts.baseline !== false) {
     baseline = await recordOnboardingBaseline(root, dir, opts.store?.log, opts.restricted === true);
     say(
       `8. Baseline: ${baseline.entries} pre-existing finding(s), ${baseline.flaky} flaky test(s)${baseline.recorded ? ", on the ledger" : ""} (${baseline.path}); cards count only new ones.`,
@@ -529,6 +686,10 @@ export async function runOnboard(root: string, opts: OnboardOptions = {}): Promi
     drafts,
     qualification,
     applied,
+    trusted,
+    gatesDiff,
+    ciCoverage: derived.ci,
+    ...(workspace ? { workspace } : {}),
     ...(baseline ? { baseline } : {}),
   };
   writeFileSync(join(dir, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
@@ -658,6 +819,8 @@ export function detectConventionDrift(
       {
         cwd: root,
         encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        env: ownRepoGitEnv(root),
       },
     )
       .split("\n")
@@ -684,13 +847,11 @@ export function detectConventionDrift(
       was: was.testStyle.join(", ") || "none",
       now: newStyles.join(", "),
     });
-  const documentedNow = extractConventions(
-    ["AGENTS.md", "CLAUDE.md"]
-      .map((n) => (existsSync(join(root, n)) ? readFileSync(join(root, n), "utf8") : ""))
-      .join("\n"),
-    250,
-  );
-  if (was.documented && documentedNow && documentedNow !== was.documented) {
+  // SUR-10: the documented conventions drift only when a commit changed
+  // AGENTS.md or CLAUDE.md, measured the way the snapshot was.
+  const documentedNow = loadProjectConventions(root, 250);
+  const docsChanged = files.some((f) => f === "AGENTS.md" || f === "CLAUDE.md");
+  if (docsChanged && was.documented && documentedNow && documentedNow !== was.documented) {
     drift.push({
       aspect: "documented conventions",
       was: "the onboarding snapshot",

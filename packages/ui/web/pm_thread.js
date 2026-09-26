@@ -6,7 +6,7 @@ import { formatClock, pmSteps, renderPmMarkdown, sourceCites, statusEtaSeconds }
 import { columnLabel } from "./lib/vocabulary.js";
 import { cardChip } from "./marks.js";
 import { openPeek } from "./peek.js";
-import { PM_NAME, loadThread, pendingMessage, pmModel, sendMessage } from "./pm_client.js";
+import { PM_NAME, loadThread, pendingMessage, sendMessage } from "./pm_client.js";
 import { bindProposals, proposalGroupHtml } from "./proposals.js";
 import { store } from "./store.js";
 
@@ -148,7 +148,7 @@ function pendingHtml(user) {
     case "loading_pm":
       note = pm.workerInvolved
         ? `Only one model fits in memory, so the Worker waits at a safe step boundary and continues from ${next} once ${PM_NAME} has replied. You can keep working; the reply lands here.`
-        : `${PM_NAME} runs on ${pmModel()} on this machine. You can keep working; the reply lands here.`;
+        : `${PM_NAME} runs on this machine. You can keep working; the reply lands here.`;
       break;
     case "thinking":
       note = "Reading the board, the runs and the ledger.";
@@ -238,14 +238,14 @@ function costLine() {
     return "Read-only server. Restart with sekhemet serve to talk to Seshat.";
   if (s.connection === "offline") return `Offline. Your message would not reach ${PM_NAME}.`;
   const running = s.cards.find((c) => c.status === "in_progress");
-  const model = pmModel();
   if (running) {
     const step = running.stepsUsed
       ? `on step ${running.stepsUsed} of ${running.stepBudget}`
       : "starting a card";
     return `The Worker is ${step}. Sending pauses it at the next step while ${PM_NAME} loads (about 40s).`;
   }
-  return `${PM_NAME} runs locally on ${model}. Replies take about a minute.`;
+  // The chat panel names no model (DB-N6-14): Configuration names every role's.
+  return `${PM_NAME} runs locally on this machine. Replies take about a minute.`;
 }
 
 function starters() {

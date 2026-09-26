@@ -1,0 +1,62 @@
+{
+  "role": "worker",
+  "version": "1",
+  "capSeconds": 120,
+  "chosenBy": "B4.1 part (c), measurement rule 31: six frozen-suite cards across kinds (SPIDR Rule, Data, Path, Interface, Visual), each finished in under two minutes by the reference Worker in the recorded baseline run ref-r1, each failing its acceptance tests at seed, each run from its reference main (rule 8). referenceSeconds is that run's wall clock.",
+  "items": [
+    {
+      "id": "chronicle/card_chron_hasher",
+      "fixture": "chronicle",
+      "card": "card_chron_hasher",
+      "kind": "rule",
+      "acceptanceTests": ["hasher.spec.ts"],
+      "tests": 5,
+      "referenceSeconds": 23
+    },
+    {
+      "id": "vanguard/card_vang_2_hmac",
+      "fixture": "vanguard",
+      "card": "card_vang_2_hmac",
+      "kind": "rule",
+      "acceptanceTests": ["hmac.spec.ts"],
+      "tests": 18,
+      "referenceSeconds": 57
+    },
+    {
+      "id": "onyx/card_onyx_3_db",
+      "fixture": "onyx",
+      "card": "card_onyx_3_db",
+      "kind": "data",
+      "acceptanceTests": ["db.spec.ts"],
+      "tests": 12,
+      "referenceSeconds": 42
+    },
+    {
+      "id": "onyx/card_onyx_6_injector",
+      "fixture": "onyx",
+      "card": "card_onyx_6_injector",
+      "kind": "path",
+      "acceptanceTests": ["injector.spec.ts"],
+      "tests": 11,
+      "referenceSeconds": 80
+    },
+    {
+      "id": "basalt-canvas/card_canvas_1_tokens",
+      "fixture": "basalt-canvas",
+      "card": "card_canvas_1_tokens",
+      "kind": "interface",
+      "acceptanceTests": ["tokens.spec.ts"],
+      "tests": 8,
+      "referenceSeconds": 54
+    },
+    {
+      "id": "basalt-canvas/card_canvas_4_board",
+      "fixture": "basalt-canvas",
+      "card": "card_canvas_4_board",
+      "kind": "visual",
+      "acceptanceTests": ["board.spec.ts"],
+      "tests": 15,
+      "referenceSeconds": 64
+    }
+  ]
+}

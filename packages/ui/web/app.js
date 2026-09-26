@@ -5,6 +5,7 @@ import { initAccount } from "./account.js";
 import * as boardView from "./board.js";
 import { initBulk } from "./bulk.js";
 import * as cardView from "./card.js";
+import * as configurationView from "./configuration.js";
 import { getJSON } from "./dom.js";
 import * as graphView from "./graph.js";
 import * as inboxView from "./inbox.js";
@@ -20,7 +21,6 @@ import * as playbookView from "./playbook.js";
 import { initPm, loadThread, onPmEvent } from "./pm_client.js";
 import { initPmPanel } from "./pm_panel.js";
 import * as pmView from "./pm_view.js";
-import * as registryView from "./registry.js";
 import * as reviewView from "./review.js";
 import * as runsView from "./runs.js";
 import { getSession, loadSession } from "./session.js";
@@ -44,12 +44,14 @@ const VIEWS = {
   inbox: inboxView,
   graph: graphView,
   // P11 route names; the old ones keep opening the same views (§2.2.1).
-  // Projects shows the workspace rollup and Configuration the model registry
-  // until their own pages are built (NEW-dashboard-9, NEW-dashboard-6).
+  // Projects shows the workspace rollup until its own page is built
+  // (NEW-dashboard-9). Configuration replaces Registry and Settings:
+  // `#/registry` opens its Benchmark, `#/settings` This browser (DB-N6-1).
   projects: workspaceView,
-  configuration: registryView,
+  configuration: configurationView,
   workspace: workspaceView,
-  registry: registryView,
+  registry: configurationView,
+  settings: configurationView,
   // The account menu's page (§2.2.6); in the palette, with no chord.
   account: profileView,
 };
@@ -65,7 +67,50 @@ export function parseHash(hash = location.hash) {
 }
 
 function defaultRoute() {
+  // DB-N6-2: with no role's weights in any model folder, Configuration › Models first.
+  if (store.state.modelSetup?.none) return "#/configuration/models";
   return store.state.cards.some((c) => c.status === "review") ? "#/review" : "#/board";
+}
+
+/**
+ * Whether any role has a model, and whether the Worker has one that fits
+ * (DB-N6-2): read from Configuration's roles and models. The *No Worker
+ * model* bar shows on every view until it has one.
+ */
+async function refreshModelSetup() {
+  try {
+    const [roles, models] = await Promise.all([
+      getJSON("/api/config/roles"),
+      getJSON("/api/config/models"),
+    ]);
+    if (!roles.ok || !models.ok) return;
+    const assigned = (roles.data.roles ?? []).filter((r) => r.model);
+    const found = models.data.models ?? [];
+    const none = assigned.length === 0 && found.length === 0;
+    const worker = (roles.data.roles ?? []).find((r) => r.role === "worker");
+    const workerFits =
+      Boolean(worker?.model) || found.some((m) => m.fits?.worker && m.fits.worker !== "no");
+    store.state.modelSetup = { none, noWorker: !none && !workerFits };
+    showNoWorkerBar(!none && !workerFits);
+  } catch {
+    // The page works without it; Configuration says the same.
+  }
+}
+
+function showNoWorkerBar(show) {
+  let bar = document.getElementById("sk-noworker");
+  if (!show) {
+    bar?.remove();
+    return;
+  }
+  if (bar) return;
+  bar = document.createElement("div");
+  bar.id = "sk-noworker";
+  bar.className = "cfg-bar";
+  bar.setAttribute("role", "status");
+  bar.innerHTML =
+    'No Worker model: cards cannot run until one fits this machine. <a href="#/configuration/models">Set up models</a>';
+  document.getElementById("view")?.before(bar);
 }
 
 function route() {
@@ -169,6 +214,7 @@ async function hydrate() {
   if (queue.ok) store.state.queue = queue.data;
   if (events.ok) store.state.verification = events.data.verification;
   if (board.ok) applyBoard(board.data);
+  await refreshModelSetup();
   store.set({ loaded: true });
   refreshDecisions().catch(() => {});
 }
@@ -248,6 +294,14 @@ export function connect() {
       onPmEvent(JSON.parse(ev.data));
     } catch {
       // A malformed frame is dropped; the thread reloads on reconnect.
+    }
+  });
+  // Configuration's progress: scan, hash, download, copy, benchmark (PM_CONTRACT §3).
+  source.addEventListener("config", (ev) => {
+    try {
+      window.dispatchEvent(new CustomEvent("sekhemet:config", { detail: JSON.parse(ev.data) }));
+    } catch {
+      // A malformed frame is dropped; the page re-reads on its next action.
     }
   });
   source.addEventListener("machine", (ev) => {

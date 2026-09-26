@@ -37,8 +37,8 @@ export interface Lease {
   token: string;
   startedAt: string;
   heartbeatAt: string;
-  /** What holds it: `run` (one card), `queue`, or `overnight`. */
-  kind?: "run" | "queue" | "overnight";
+  /** What holds it: `run` (one card), `queue`, `overnight`, or a quick `benchmark` (MS-N5-6). */
+  kind?: "run" | "queue" | "overnight" | "benchmark" | "qualify";
   cardId?: string;
   /** A child running under this lease (an overnight round), while it lives. */
   borrower?: { pid: number; processStart?: string };

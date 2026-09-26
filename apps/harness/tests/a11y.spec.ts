@@ -8,6 +8,7 @@ import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { NAV_ITEMS } from "@sekhemet/ui";
 import { type Browser, type Page, chromium } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { SMALL, writeGguf } from "../../../packages/models/tests/support/gguf_fixture.js";
 import { startDashboardServer } from "../src/server.js";
 import { identitySettings } from "../src/team/settings.js";
 
@@ -76,6 +77,10 @@ describe("the accessibility check (dashboard DB-P12-6)", () => {
 
   beforeAll(async () => {
     dir = mkdtempSync(join(tmpdir(), "sekhemet-a11y-"));
+    // Configuration › Models (B4.1) renders a folder with a model in it, and
+    // never the owner's real model folder.
+    writeGguf(join(dir, "models", "tiny-Q4_K_M.gguf"), { ...SMALL, name: "Tiny Llama" });
+    vi.stubEnv("SEKHEMET_MODELS_DIR", join(dir, "models"));
     db = new DatabaseSync(join(dir, "events.db"));
     initSchema(db);
     const log = new EventLog(db);
@@ -129,6 +134,7 @@ describe("the accessibility check (dashboard DB-P12-6)", () => {
   });
 
   afterAll(async () => {
+    vi.unstubAllEnvs();
     await browser?.close();
     await server?.close();
     await firstRun?.server.close();
@@ -146,7 +152,16 @@ describe("the accessibility check (dashboard DB-P12-6)", () => {
     },
     async () => {
       const problems: string[] = [];
-      const routes = [...NAV_ITEMS.map((n) => n.route), "#/card/card_a11y_1", "#/account/profile"];
+      const routes = [
+        ...NAV_ITEMS.map((n) => n.route),
+        "#/card/card_a11y_1",
+        "#/account/profile",
+        // Configuration's other sections (B4.1, DB-N6-1); Models is its default.
+        "#/configuration/benchmark",
+        "#/configuration/review",
+        "#/configuration/browser",
+        "#/configuration/project",
+      ];
       const solo = `http://127.0.0.1:${server.port}`;
       const teamBase = `http://127.0.0.1:${team.server.port}`;
       // Each page and the browser state it is seen in: signed out or signed in.
@@ -180,6 +195,14 @@ describe("the accessibility check (dashboard DB-P12-6)", () => {
               document.documentElement.dataset.theme = t;
             }, theme);
             await page.waitForTimeout(250);
+            // Configuration › Models renders after its reads: check it filled in.
+            if (url.startsWith(solo) && route === "#/configuration") {
+              await page.locator("#cfg-h-roles").waitFor({ timeout: 10_000 });
+            }
+            // Configuration › Benchmark renders after its reads too.
+            if (url.startsWith(solo) && route === "#/configuration/benchmark") {
+              await page.locator("#bench-h").waitFor({ timeout: 10_000 });
+            }
             const at = `${url.startsWith(solo) ? "" : "team "}${route} ${width}px ${theme}`;
             if ((await page.$('script[data-axe="1"]')) === null) {
               await page.addScriptTag({ path: AXE });

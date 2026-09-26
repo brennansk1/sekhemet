@@ -1,0 +1,8 @@
+{
+  "role": "planner",
+  "version": "1",
+  "capSeconds": 60,
+  "source": "golden-briefs",
+  "chosenBy": "B4.1 part (c), measurement rule 31: three golden briefs across audiences (a non-developer, a developer team, a developer), each scored by its implicit-requirement recall (MS-T7-7). Scored only once the golden briefs are labelled by a person and registered (rule 29, MS-T11-4); until then the Planner reads not_measured (rule 30a).",
+  "items": [{ "id": "b01" }, { "id": "b05" }, { "id": "b09" }]
+}

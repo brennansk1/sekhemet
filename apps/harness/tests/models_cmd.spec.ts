@@ -81,6 +81,25 @@ describe("sekhemet models assign and restore (NEW-models-10)", () => {
     expect(out.at(-1)).toMatch(/gemma-x is not qualified for the reviewer role on this host/);
   });
 
+  /** A recorded benchmark of qwen-next as the Worker on host-a, as the kernel registry requires it. */
+  const benchmarked = (tier: "quick" | "overnight") => ({
+    tier,
+    profileHash: "d".repeat(64),
+    host: "host-a",
+    combination: { worker: "qwen-next", planner: "p" },
+    partial: false,
+    roles: [
+      {
+        role: "worker",
+        model: "qwen-next",
+        state: "measured",
+        score: 1,
+        items: [{ id: "s1", score: 1 }],
+      },
+    ],
+    comparisons: [],
+  });
+
   it("MD-N10-1: the baseline changes only with a recorded overnight bake-off on this host", async () => {
     const { k, io, out, log, qualify } = setup();
     qualify("qwen-next");
@@ -91,13 +110,7 @@ describe("sekhemet models assign and restore (NEW-models-10)", () => {
     const quick = await log.append({
       actor: "harness",
       type: "measure/benchmarked",
-      payload: {
-        tier: "quick",
-        role: "worker",
-        model: "qwen-next",
-        host: "host-a",
-        evaluationSet: "frozen-suite",
-      },
+      payload: benchmarked("quick"),
     });
     expect(
       await runWave2Command(
@@ -111,13 +124,7 @@ describe("sekhemet models assign and restore (NEW-models-10)", () => {
     const night = await log.append({
       actor: "harness",
       type: "measure/benchmarked",
-      payload: {
-        tier: "overnight",
-        role: "worker",
-        model: "qwen-next",
-        host: "host-a",
-        evaluationSet: "frozen-suite",
-      },
+      payload: benchmarked("overnight"),
     });
     expect(
       await runWave2Command(

@@ -83,7 +83,12 @@ describe("onboarding records the baseline (GT-BF-2, rule 15a)", () => {
     const root = repo();
     const store = ledger();
     const lines: string[] = [];
-    const report = await runOnboard(root, { store, say: (l) => lines.push(l), lspServers: {} });
+    const report = await runOnboard(root, {
+      trusted: true,
+      store,
+      say: (l) => lines.push(l),
+      lspServers: {},
+    });
 
     const events = await store.log.getEventsByTypes([BASELINE_EVENT]);
     expect(events).toHaveLength(1);
@@ -110,7 +115,7 @@ describe("onboarding records the baseline (GT-BF-2, rule 15a)", () => {
   it("a card's gates count only what the card added, and a disappearance shrinks the baseline once accepted", async () => {
     const root = repo();
     const store = ledger();
-    await runOnboard(root, { store, say: () => undefined, lspServers: {} });
+    await runOnboard(root, { trusted: true, store, say: () => undefined, lspServers: {} });
     const baseline = await loadBaseline(store.log);
     expect(baseline?.entries).toHaveLength(2);
 
@@ -139,7 +144,7 @@ describe("onboarding records the baseline (GT-BF-2, rule 15a)", () => {
   it("keeps a diagnostic a later run found again, once the card is accepted", async () => {
     const root = repo();
     const store = ledger();
-    await runOnboard(root, { store, say: () => undefined, lspServers: {} });
+    await runOnboard(root, { trusted: true, store, say: () => undefined, lspServers: {} });
     const runner = cardGateRunner({
       repoPath: root,
       gatesConfig: loadGatesConfig(root),
@@ -167,7 +172,7 @@ describe("onboarding records the baseline (GT-BF-2, rule 15a)", () => {
     execFileSync("git", ["add", "-A"], { cwd: root });
     execFileSync("git", ["commit", "-qm", "legacy"], { cwd: root });
     const store = ledger();
-    await runOnboard(root, { store, say: () => undefined, lspServers: {} });
+    await runOnboard(root, { trusted: true, store, say: () => undefined, lspServers: {} });
     const loaded = await loadBaseline(store.log);
     expect(loaded?.partial.map((p) => p.file)).toEqual(["src/legacy.ts"]);
     const runner = cardGateRunner({
@@ -195,7 +200,7 @@ describe("onboarding records the baseline (GT-BF-2, rule 15a)", () => {
   it("does not apply a baseline taken with another gates.toml, and says re-baseline needed", async () => {
     const root = repo();
     const store = ledger();
-    await runOnboard(root, { store, say: () => undefined, lspServers: {} });
+    await runOnboard(root, { trusted: true, store, say: () => undefined, lspServers: {} });
     writeFileSync(join(root, ".sekhemet/gates.toml"), `${GATES}\n# changed\n`);
     const runner = cardGateRunner({
       repoPath: root,
@@ -211,7 +216,7 @@ describe("onboarding records the baseline (GT-BF-2, rule 15a)", () => {
 
   it("without a ledger the baseline is still written for the person to read", async () => {
     const root = repo();
-    const report = await runOnboard(root, { say: () => undefined, lspServers: {} });
+    const report = await runOnboard(root, { trusted: true, say: () => undefined, lspServers: {} });
     expect(report.baseline?.entries).toBe(2);
   });
 });

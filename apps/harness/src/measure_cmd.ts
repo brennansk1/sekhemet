@@ -16,6 +16,7 @@ import {
   type SuiteRunResult,
   compareRuns,
   evaluateHarnessChange,
+  measurementHolder,
   profileSwitchCount,
   readMeasurementMarker,
   resolveRunProfile,
@@ -153,7 +154,7 @@ export function profileForQueue(
 
 // The marker's one definition is in @sekhemet/eval (measurement_marker.ts),
 // shared with independent mode's measurement setup.
-export { type MeasurementMarker, readMeasurementMarker, writeMeasurementMarker };
+export { type MeasurementMarker, measurementHolder, readMeasurementMarker, writeMeasurementMarker };
 
 /** Why the queue refuses `--auto-accept` here, or undefined when it may run. */
 export function autoAcceptRefusal(

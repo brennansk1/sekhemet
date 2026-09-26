@@ -110,3 +110,48 @@ export function probeModelWeights(
     missing: probes.filter((p) => !p.ok).map((p) => p.modelId),
   };
 }
+
+/**
+ * The likely model folders on this machine (models rule 4a, MD-N12-8):
+ * `SEKHEMET_MODELS_DIR`, Ollama's model store, LM Studio's models folder,
+ * the Hugging Face hub cache and llama.cpp's cache — exactly those that
+ * exist here and are not yet configured. Only suggested: none is scanned
+ * until a person adds it.
+ */
+export function suggestedModelFolders(
+  options: {
+    home?: string;
+    env?: NodeJS.ProcessEnv;
+    platform?: NodeJS.Platform;
+    configured?: readonly string[];
+  } = {},
+): string[] {
+  const home = options.home ?? homedir();
+  const env = options.env ?? process.env;
+  const platform = options.platform ?? process.platform;
+  const hfHome = env.HF_HOME?.trim();
+  const candidates = [
+    env.SEKHEMET_MODELS_DIR?.trim(),
+    env.OLLAMA_MODELS?.trim() || join(home, ".ollama", "models"),
+    join(home, ".lmstudio", "models"),
+    join(home, ".cache", "lm-studio", "models"),
+    env.HF_HUB_CACHE?.trim() ||
+      (hfHome ? join(hfHome, "hub") : join(home, ".cache", "huggingface", "hub")),
+    env.LLAMA_CACHE?.trim() ||
+      (platform === "darwin"
+        ? join(home, "Library", "Caches", "llama.cpp")
+        : join(home, ".cache", "llama.cpp")),
+  ].filter((p): p is string => typeof p === "string" && p.length > 0);
+  const configured = new Set((options.configured ?? []).map((p) => resolve(p)));
+  const out: string[] = [];
+  for (const c of candidates) {
+    const p = resolve(c);
+    if (configured.has(p) || out.includes(p)) continue;
+    try {
+      if (statSync(p).isDirectory()) out.push(p);
+    } catch {
+      // Not on this machine.
+    }
+  }
+  return out;
+}

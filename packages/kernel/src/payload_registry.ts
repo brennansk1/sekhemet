@@ -100,6 +100,10 @@ const BYTES = v.pipe(v.number(), v.integer(), v.minValue(0));
 const QUEUES = v.array(ID);
 const SWAP_BASE = { model: s(ID), roles: s(QUEUES) };
 const ENGINE = v.picklist(["llama.cpp", "ollama", "mlx"]);
+/** A git commit: SHA-1, abbreviated or full, or a SHA-256 repository's 64 hex. */
+const COMMIT = v.pipe(v.string(), v.regex(/^(?:[0-9a-f]{7,40}|[0-9a-f]{64})$/, "a git commit"));
+/** A harness-defined code (a detector's kind, a reason): lower-case words joined by `_`. */
+const SLUG = v.pipe(v.string(), v.regex(/^[a-z][a-z0-9_]*$/, "a lower_snake_case code"));
 const LOAD_MODE = v.picklist(["mmap", "no_mmap", "preread_mmap"]);
 
 export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
@@ -619,6 +623,234 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     version: s(v.pipe(v.number(), v.integer(), v.minValue(1))),
     from: s(v.picklist(["card", "test"])),
     ref: s(ID),
+  },
+
+  // ── B4.1 ──────────────────────────────────────────────────────────────
+  // design-stage §3 (NEW-design-stage-6, DS-TO-3, SEC-55): the history's
+  // secret scan — which scanner, how many commits, and each finding's commit,
+  // path and rule. The secret is recorded nowhere, not even in the private
+  // part. `notScanned` is the harness's reason code when the preflight refused.
+  "takeover/secrets_scanned": {
+    scanner: s(v.picklist(["gitleaks", "builtin"])),
+    commits: s(COUNT),
+    findings: s(v.array(v.strictObject({ commit: COMMIT, path: ID, rule: ID }))),
+    notScanned: s(SLUG, true),
+  },
+  // design-stage §3 (DS-TO-5, DS-TO-7, DS-TO-8): the as-built inventory. The
+  // findings' ids, kinds (`stub`, `could_not_build`, …: the detectors' own
+  // slugs), paths, lines and commits are structural; the recon text read
+  // from docs, issues, commit messages and transcripts, and each finding's
+  // `reason` and `command`, are free text.
+  "takeover/inventory": {
+    baselineSeq: s(COUNT),
+    findings: s(
+      v.array(
+        v.strictObject({
+          id: ID,
+          kind: SLUG,
+          path: v.optional(ID),
+          line: v.optional(v.pipe(v.number(), v.integer(), v.minValue(1))),
+          commit: v.optional(COMMIT),
+        }),
+      ),
+    ),
+    recon: priv("free_text", TEXT),
+    findingDetails: priv(
+      "free_text",
+      v.array(v.strictObject({ id: ID, reason: v.optional(TEXT), command: v.optional(TEXT) })),
+    ),
+  },
+  // design-stage §3 (DS-TO-9): the brief as found — each claim's label and
+  // citations (finding ids, test ids, path:line, commits); its text private.
+  "takeover/brief_as_found": {
+    claims: s(
+      v.array(
+        v.strictObject({
+          id: ID,
+          label: v.picklist(["proven", "claimed_unproven", "contradicted"]),
+          citations: v.array(ID),
+        }),
+      ),
+    ),
+    claimTexts: priv("free_text", v.array(v.strictObject({ id: ID, text: TEXT }))),
+  },
+  // security item 38a, SEC-54: the audit record of an approved agent
+  // configuration file (repository-relative path, SHA-256, who). It grants
+  // nothing on replay; the repository's real path may name a home directory.
+  "trust/agent_config_approved": {
+    path: s(ID),
+    sha256: s(SHA256),
+    principal: s(PRINCIPAL),
+    repo: priv("personal", TEXT),
+  },
+  // security SEC-N10-4, models MD-N13-1: one record per scan — the depth and
+  // file limits and the counts; the folders' paths are a person's, private.
+  "models/scanned": {
+    folderCount: s(COUNT),
+    depth: s(COUNT),
+    fileLimit: s(COUNT),
+    found: s(COUNT),
+    skipped: s(COUNT),
+    truncated: s(v.boolean()),
+    folders: priv("personal", v.array(TEXT)),
+  },
+  // dashboard DB-N6, models rule 4a (B4.1 part b): a person added or removed
+  // a model folder on the Configuration page; the path names a person's
+  // directory, so it is private.
+  "models/folder_added": {
+    principal: s(PRINCIPAL),
+    includeSubfolders: s(v.boolean()),
+    path: priv("personal", TEXT),
+  },
+  "models/folder_removed": {
+    principal: s(PRINCIPAL),
+    includeSubfolders: s(v.boolean(), true),
+    path: priv("personal", TEXT),
+  },
+  // models MD-N12-6, MD-N7-1: an explicit download — the registered source
+  // host, the published SHA-256, whether the file matched, and who asked.
+  // Structural only: where it was written is never on the chain.
+  "model/downloaded": {
+    model: s(ID),
+    source: s(ID),
+    sha256: s(SHA256),
+    bytes: s(BYTES),
+    principal: s(PRINCIPAL),
+    verified: s(v.boolean()),
+  },
+  // dashboard DB-NM14-3 (B4.1 half-B): a person's *Measure speed* on this
+  // host — llama-bench's median decode and prefill and their spread (accepted
+  // only at 3% or less), the first token's time without and with the prefix
+  // cache, and why a part did not count. Structural only, never a path.
+  "model/speed_measured": {
+    model: s(ID),
+    role: s(ID),
+    host: s(ID),
+    depth: s(COUNT),
+    principal: s(PRINCIPAL),
+    accepted: s(v.boolean()),
+    decodeTokensPerSecond: s(MS, true),
+    prefillTokensPerSecond: s(MS, true),
+    spread: s(MS, true),
+    ttftWithoutCacheMs: s(MS, true),
+    ttftWithCacheMs: s(MS, true),
+    reason: priv("free_text", TEXT),
+  },
+  // models MD-N14-40a, MD-N14-41, dashboard DB-NM14-8: a copy a person
+  // confirmed, by the weights' key and hash and the volumes, never a path.
+  "model/copied": {
+    model: s(ID),
+    sha256: s(SHA256),
+    bytes: s(BYTES),
+    from: s(VOLUME),
+    to: s(VOLUME),
+    principal: s(PRINCIPAL),
+    verified: s(v.boolean()),
+  },
+  // measurement rules 36-37, MS-N5-8, MS-N5-11 (§3 contract): one combination
+  // benchmarked, quick or overnight. The RunProfile can name a settings
+  // file's path and contents, so it is private; its hash is on the chain.
+  "measure/benchmarked": {
+    tier: s(v.picklist(["quick", "overnight"])),
+    profileHash: s(SHA256),
+    // The host's fingerprint hash: a bake-off counts only on the host it ran on (MD-N10-1).
+    host: s(ID, true),
+    combination: s(v.record(v.string(), ID), true),
+    partial: s(v.boolean()),
+    roles: s(
+      v.array(
+        v.strictObject({
+          role: ID,
+          model: ID,
+          state: v.picklist(["measured", "partial", "not_measured"]),
+          cacheKey: v.optional(ID),
+          setHash: v.optional(SHA256),
+          score: v.optional(SCORE),
+          low: v.optional(SCORE),
+          high: v.optional(SCORE),
+          items: v.optional(v.array(v.strictObject({ id: ID, score: SCORE }))),
+          capped: v.optional(COUNT),
+          secondary: v.optional(
+            v.strictObject({
+              secondsPerItem: v.optional(MS),
+              validToolCallRate: v.optional(SCORE),
+              stepsToPass: v.optional(MS),
+              fits: v.boolean(),
+            }),
+          ),
+        }),
+      ),
+    ),
+    comparisons: s(
+      v.array(
+        v.strictObject({
+          role: ID,
+          a: ID,
+          b: ID,
+          better: COUNT,
+          worse: COUNT,
+          ties: COUNT,
+          p: SCORE,
+          indistinguishable: v.boolean(),
+        }),
+      ),
+    ),
+    endToEnd: s(v.strictObject({ passed: COUNT, total: COUNT }), true),
+    // Overnight only (MS-N5-11): the pairs resolved and those still tied, by combination id.
+    resolved: s(
+      v.array(v.strictObject({ role: v.optional(ID), better: ID, worse: ID, p: SCORE })),
+      true,
+    ),
+    indistinguishable: s(
+      v.array(v.strictObject({ role: v.optional(ID), a: ID, b: ID, p: SCORE })),
+      true,
+    ),
+    runProfile: priv("free_text", v.record(v.string(), v.unknown())),
+  },
+  // measurement MS-N5-6, MS-N5-12, models MD-N3-4/5 (B4.1 part (c)): a
+  // benchmark run started now (quick) or queued for the overnight window,
+  // and each night it resumes — the models it compares by id, the harness
+  // build, context version and qualification it ran under, and, when one of
+  // those changed, the run it discards and restarts with the reason's code.
+  "measure/benchmark_started": {
+    runId: s(ID),
+    tier: s(v.picklist(["quick", "overnight"])),
+    state: s(v.picklist(["queued", "running"])),
+    combinations: s(v.array(v.strictObject({ id: ID, models: v.record(v.string(), ID) }))),
+    host: s(ID),
+    benchmarkFirst: s(v.boolean(), true),
+    estimateSeconds: s(MS, true),
+    build: s(ID, true),
+    contextVersion: s(ID, true),
+    qualification: s(ID, true),
+    restartRun: s(COUNT, true),
+    reason: s(SLUG, true),
+  },
+  // MS-N5-6, MS-N5-12, MD-N3-5: where a run stopped and why — done, a
+  // person's Stop, the window's end, a reservation, a failure — how much it
+  // kept, and the block and item it resumes from. A failure's message is text.
+  "measure/benchmark_stopped": {
+    runId: s(ID),
+    tier: s(v.picklist(["quick", "overnight"])),
+    reason: s(v.picklist(["done", "person", "window_end", "reserved", "failed"])),
+    partial: s(v.boolean()),
+    completed: s(COUNT),
+    total: s(COUNT),
+    cursor: s(v.strictObject({ block: COUNT, item: COUNT }), true),
+    error: priv("free_text", TEXT),
+  },
+  // MS-N5-10, MS-N5-12: one overnight card or item completed, kept across
+  // nights so a stopped run resumes from the ledger, never from memory.
+  "measure/benchmark_item": {
+    runId: s(ID),
+    run: s(COUNT),
+    block: s(COUNT),
+    combinationId: s(ID),
+    role: s(ID),
+    item: s(ID),
+    score: s(SCORE),
+    seconds: s(MS),
+    seed: s(COUNT),
   },
 };
 

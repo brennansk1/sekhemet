@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
+import { Readable } from "node:stream";
 import { useAgent } from "request-filtering-agent";
 import { sandboxCopy } from "./copy.js";
 import { canonicalHost, domainAllowed } from "./egress.js";
@@ -177,6 +178,11 @@ export function policyFetch(
     purpose: string;
     record?: (r: NetworkRequestRecord) => undefined | Promise<unknown>;
     research?: boolean;
+    /**
+     * Stream the body instead of buffering it: a model download is gigabytes
+     * (models MD-N12-6, SEC-53), decided and recorded like any other request.
+     */
+    stream?: boolean;
   },
 ): (input: string | URL, init?: RequestInit) => Promise<Response> {
   return async (input, init) => {
@@ -203,7 +209,12 @@ export function policyFetch(
     if (refusal) return refuse(refusal);
     let res: Response;
     try {
-      res = await send(isLoopback(host) ? loopbackUrl(url, host) : url, init, isLoopback(host));
+      res = await send(
+        isLoopback(host) ? loopbackUrl(url, host) : url,
+        init,
+        isLoopback(host),
+        options.stream === true,
+      );
     } catch (err) {
       return refuse(err instanceof Error ? err.message : String(err));
     }
@@ -215,7 +226,12 @@ export function policyFetch(
 /** Statuses a `Response` may not carry a body for. */
 const NULL_BODY = new Set([101, 103, 204, 205, 304]);
 
-function send(url: URL, init: RequestInit | undefined, loopback: boolean): Promise<Response> {
+function send(
+  url: URL,
+  init: RequestInit | undefined,
+  loopback: boolean,
+  stream = false,
+): Promise<Response> {
   const req = url.protocol === "https:" ? httpsRequest : httpRequest;
   return new Promise((resolve, reject) => {
     const r = req(
@@ -228,6 +244,16 @@ function send(url: URL, init: RequestInit | undefined, loopback: boolean): Promi
         timeout: 15_000,
       },
       (res) => {
+        if (stream) {
+          const status = res.statusCode ?? 0;
+          resolve(
+            new Response(
+              NULL_BODY.has(status) ? null : (Readable.toWeb(res) as ReadableStream<Uint8Array>),
+              { status, headers: res.headers as Record<string, string> },
+            ),
+          );
+          return;
+        }
         const chunks: Buffer[] = [];
         res.on("data", (c: Buffer) => chunks.push(c));
         res.on("end", () =>

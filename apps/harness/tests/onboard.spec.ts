@@ -87,6 +87,7 @@ describe("X1: sekhemet onboard runs the seven steps", () => {
     const store = ledger();
     const lines: string[] = [];
     const report = await runOnboard(root, {
+      trusted: true,
       store,
       say: (l) => lines.push(l),
       lspServers: {
@@ -138,6 +139,7 @@ describe("X1: sekhemet onboard runs the seven steps", () => {
   it("--apply installs the gates and the drafts; a missing server is reported, not fatal", async () => {
     const root = repo();
     const r = await runOnboard(root, {
+      trusted: true,
       apply: true,
       say: () => undefined,
       lspServers: { typescript: { command: "no-such-lsp-server", args: [] } },
@@ -160,6 +162,7 @@ describe("SEC-17: the onboarding language-server probe runs confined", () => {
       const inside = join(root, "probe-ran");
       const script = `const fs = require("fs"); fs.writeFileSync(${JSON.stringify(inside)}, "x"); try { fs.writeFileSync(${JSON.stringify(marker)}, "escaped") } catch {}`;
       const r = await runOnboard(root, {
+        trusted: true,
         say: () => undefined,
         lspTimeoutMs: 5_000,
         lspServers: { typescript: { command: process.execPath, args: ["-e", script] } },
@@ -174,7 +177,7 @@ describe("SEC-17: the onboarding language-server probe runs confined", () => {
 describe("X2: convention drift against the onboarding snapshot", () => {
   it("detects a naming change in recent commits and posts it as Seshat's note", async () => {
     const root = repo();
-    await runOnboard(root, { say: () => undefined, lspServers: {} });
+    await runOnboard(root, { trusted: true, say: () => undefined, lspServers: {} });
     for (const n of ["userAccount", "orderLine", "priceBook"])
       write(root, `src/${n}.ts`, "export const x = 1;\n");
     execFileSync("git", ["add", "-A"], { cwd: root });

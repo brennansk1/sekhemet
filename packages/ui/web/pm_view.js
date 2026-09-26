@@ -4,7 +4,7 @@ import { esc, icon } from "./dom.js";
 import { loadLearning } from "./learning.js";
 import { proposalKind, strengthLabel } from "./lib/pm.js";
 import { cardChip } from "./marks.js";
-import { PM_NAME, pmModel } from "./pm_client.js";
+import { PM_NAME } from "./pm_client.js";
 import { setFullThread } from "./pm_panel.js";
 import { mountThread } from "./pm_thread.js";
 import { setTopbar } from "./shell.js";
@@ -43,8 +43,8 @@ function railHtml() {
   const ledger = s.verification
     ? `${s.verification.totalEvents} entries${s.verification.valid === false ? " · altered" : " · intact"}`
     : "Checking…";
-  const model = pmModel();
-  const sees = `<dl class="kv"><div><dt>Board</dt><dd>${s.cards.length} cards · live</dd></div><div><dt>Last run</dt><dd>${esc(runText)}</dd></div><div><dt>Ledger</dt><dd>${esc(ledger)}</dd></div><div><dt>Model</dt><dd class="mono">${esc(model)}</dd></div></dl>`;
+  // The model is named in Configuration, not beside the chat (DB-N6-14).
+  const sees = `<dl class="kv"><div><dt>Board</dt><dd>${s.cards.length} cards · live</dd></div><div><dt>Last run</dt><dd>${esc(runText)}</dd></div><div><dt>Ledger</dt><dd>${esc(ledger)}</dd></div><div><dt>Model</dt><dd><a href="#/configuration/models">In Configuration</a></dd></div></dl>`;
 
   const l = s.learning;
   let learned;

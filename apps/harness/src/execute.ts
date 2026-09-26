@@ -144,6 +144,12 @@ export interface ExecutionContext {
   runProfile?: RunProfile;
   /** The measured run that prepared this repository, when one did (review M5). */
   measurement?: { purpose: string; by: string; createdAt: string };
+  /**
+   * Gates rule 6a (lead ruling): the staged acceptance tests' origin for this
+   * run — a benchmark names them external, as the frozen suite does — set on
+   * the run, never in the process's environment (B4.1 half-B review).
+   */
+  acceptanceTestsOrigin?: "external";
   /** One paragraph on who is on the team right now (from the residency plan). */
   teamNote?: () => string;
   /**
@@ -614,7 +620,8 @@ export async function executeCard(
     // Gates rule 6a (lead ruling): the frozen suite names its staged tests
     // external, so its measurement never changes with a record; unnamed,
     // each staged file's origin is its own.
-    ...(process.env.SEKHEMET_ACCEPTANCE_ORIGIN === "external"
+    ...(ctx.acceptanceTestsOrigin === "external" ||
+    process.env.SEKHEMET_ACCEPTANCE_ORIGIN === "external"
       ? { acceptanceTestsOrigin: "external" as const }
       : {}),
     // M2: decoded tokens go to the card's live file, which the dashboard

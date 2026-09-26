@@ -115,6 +115,9 @@ const PERSON_FACING_REFUSALS: ReadonlySet<string> = new Set([
   // apps/harness/src/reservation.ts: why the queue did not start a card while the
   // machine is reserved, in the queue's log for a person (models MD-N3-1).
   "unattendedStartRefusal",
+  // packages/models/src/model_download.ts: "The folder already has a file named …; it is
+  // not replaced…", the dashboard's 409 and `sekhemet models fetch` (dashboard DB-NM14-2).
+  "refuseExisting",
 ]);
 
 function nameOf(node: ts.Node | undefined): string | undefined {

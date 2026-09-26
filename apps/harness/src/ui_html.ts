@@ -12,6 +12,7 @@ const STYLES = [
   "pm.css",
   "wave2.css",
   "account.css",
+  "config.css",
 ];
 
 /**

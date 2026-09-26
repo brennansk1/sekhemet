@@ -2,7 +2,7 @@
 // ⌘J from anywhere. A dock, not an overlay: the view narrows beside it.
 import { MOD, esc, icon, kbd } from "./dom.js";
 import { formatClock, pmSteps } from "./lib/pm.js";
-import { PM_NAME, pmModel } from "./pm_client.js";
+import { PM_NAME } from "./pm_client.js";
 import { avatar, mountThread } from "./pm_thread.js";
 import { store } from "./store.js";
 
@@ -36,9 +36,9 @@ function onPmRoute() {
 function statusLine() {
   const pm = store.state.pm;
   const s = pm.status ?? { phase: "idle" };
-  const model = pmModel();
   if (pm.available === false) return { text: "Not on this server", busy: false };
-  if (s.phase === "idle") return { text: `Project manager · ${model}`, busy: false, mono: model };
+  // No model name in the chat panel (DB-N6-14): Configuration names it.
+  if (s.phase === "idle") return { text: "Project manager", busy: false };
   const row = pmSteps(s, { workerInvolved: pm.workerInvolved, step: pm.step }).find(
     (r) => r.state === "current",
   );
@@ -52,9 +52,7 @@ function renderHead() {
   const clock = st.since
     ? ` · <span class="tnum" data-head-since="${st.since}">${formatClock(Date.now() - st.since)}</span>`
     : "";
-  const line = st.mono
-    ? `Project manager · <span class="mono">${esc(st.mono)}</span>`
-    : `${st.busy ? '<span class="dot run" aria-hidden="true"></span>' : ""}${esc(st.text)}${clock}`;
+  const line = `${st.busy ? '<span class="dot run" aria-hidden="true"></span>' : ""}${esc(st.text)}${clock}`;
   const html = `${avatar()}<div class="who"><b>${PM_NAME}</b><span class="line">${line}</span></div><a class="icon-btn" href="#/pm" title="Open the full conversation (g a)" aria-label="Open the full conversation">${icon("expand", 14, "ic s14")}</a><button class="icon-btn" type="button" data-pm-close title="Close (${MOD}J)" aria-label="Close the ${PM_NAME} panel">${icon("x", 14, "ic s14")}</button>`;
   const head = aside.querySelector(".pm-head");
   if (head.dataset.html !== html) {

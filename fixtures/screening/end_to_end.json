@@ -1,0 +1,26 @@
+{
+  "role": "end_to_end",
+  "version": "1",
+  "capSeconds": 180,
+  "chosenBy": "B4.1 part (c), measurement rule 31, MS-N5-7: two small frozen-suite cards run through the combination's Planner, Worker and Reviewer, each capped at 3 minutes; reported per card beside the role scores, never folded into them.",
+  "items": [
+    {
+      "id": "vanguard/card_vang_3_store",
+      "fixture": "vanguard",
+      "card": "card_vang_3_store",
+      "kind": "data",
+      "acceptanceTests": ["store.spec.ts"],
+      "tests": 11,
+      "referenceSeconds": 65
+    },
+    {
+      "id": "chronicle/card_chron_db",
+      "fixture": "chronicle",
+      "card": "card_chron_db",
+      "kind": "data",
+      "acceptanceTests": ["db.spec.ts"],
+      "tests": 6,
+      "referenceSeconds": 107
+    }
+  ]
+}

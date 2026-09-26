@@ -20,6 +20,8 @@ export * from "./pipeline.js";
 export * from "./red_green.js";
 export * from "./junit.js";
 export * from "./half_done.js";
+export * from "./history_secrets.js";
+export * from "./gate_start.js";
 export * from "./test_strength.js";
 export * from "./index/facts.js";
 export * from "./index/source_index.js";

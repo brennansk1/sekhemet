@@ -1,9 +1,17 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadGatesConfig } from "@sekhemet/gates";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { deriveGates, recommendRoster, runInit, toolchainChecks } from "../src/init.js";
 
 const GB = 1024 ** 3;
@@ -70,8 +78,9 @@ describe("sekhemet init (H25)", () => {
     expect(readFileSync(join(repo, ".sekhemet", "config.toml"), "utf8")).toMatch(
       /executor = "cyber-tiel"/,
     );
+    // SUR-34: one marked block that ignores .sekhemet/ by default.
     expect(readFileSync(join(repo, ".gitignore"), "utf8")).toMatch(
-      /^node_modules\/\n# Sekhemet\n\.sekhemet\/worktrees\//,
+      /^node_modules\/\n# >>> sekhemet[^\n]*\n\.sekhemet\/\*\n/,
     );
     // The generated file loads through the real gates parser.
     const cfg = loadGatesConfig(repo);
@@ -80,7 +89,7 @@ describe("sekhemet init (H25)", () => {
     const second = runInit(repo, { run, totalBytes: 24 * GB, say: () => {} });
     expect(second.wrote).toEqual([]);
     expect(second.kept).toEqual(["gates.toml", "config.toml"]);
-    expect(lines.at(-1)).toMatch(/Ready\. Next: `sekhemet calibrate`/);
+    expect(lines.at(-1)).toMatch(/Ready\. Ask for work with: sekhemet "/);
   });
 
   it("RUN-35: the runner lease and the slot leases are ignored by git, so a running card never dirties the tree", () => {
@@ -94,9 +103,9 @@ describe("sekhemet init (H25)", () => {
             ? "git version 2"
             : undefined;
       runInit(repo, { run, totalBytes: 24 * GB, say: () => {} });
+      // The block ignores all of .sekhemet/ but the shared files (SUR-34).
       const ignore = readFileSync(join(repo, ".gitignore"), "utf8").split("\n");
-      expect(ignore).toContain(".sekhemet/slots/");
-      expect(ignore).toContain(".sekhemet/runner.lock");
+      expect(ignore).toContain(".sekhemet/*");
       mkdirSync(join(repo, ".sekhemet", "slots"), { recursive: true });
       writeFileSync(join(repo, ".sekhemet", "slots", "0.lock"), "{}");
       writeFileSync(join(repo, ".sekhemet", "slots", "admit.lock"), "");
@@ -109,5 +118,41 @@ describe("sekhemet init (H25)", () => {
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }
+  });
+});
+
+// Review M1 (SUR-6, security S9): probing the toolchain runs no program the
+// repository chose. `pnpm --version` inside a repository whose package.json
+// has a `packageManager` field makes Corepack fetch that version; the probe
+// runs from a neutral directory with Corepack's download and pinning off.
+describe("the toolchain probe runs outside the repository (review M1)", () => {
+  it("runs each probe from the system temp directory with Corepack's strict mode, auto-pin and npm's version management off", () => {
+    const bin = realpathSync(mkdtempSync(join(tmpdir(), "probe-bin-")));
+    const seen = join(bin, "seen.txt");
+    const fake = join(bin, "pnpm");
+    writeFileSync(
+      fake,
+      [
+        "#!/bin/sh",
+        `{ pwd; echo "S=$COREPACK_ENABLE_STRICT"; echo "A=$COREPACK_ENABLE_AUTO_PIN"; echo "M=$npm_config_manage_package_manager_versions"; } > ${JSON.stringify(seen)}`,
+        "echo 10.0.0",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(fake, 0o755);
+    vi.stubEnv("PATH", bin);
+    try {
+      const checks = toolchainChecks();
+      expect(checks.find((c) => c.name === "pnpm")?.detail).toBe("10.0.0");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    const [cwd, strict, pin, manage] = readFileSync(seen, "utf8").trim().split("\n");
+    expect(cwd).toBe(realpathSync(tmpdir()));
+    expect(cwd).not.toBe(realpathSync(process.cwd()));
+    expect(strict).toBe("S=0");
+    expect(pin).toBe("A=0");
+    expect(manage).toBe("M=false");
+    rmSync(bin, { recursive: true, force: true });
   });
 });

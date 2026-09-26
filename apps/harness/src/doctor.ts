@@ -10,7 +10,10 @@ import {
   readKernelPressureLevel,
 } from "@sekhemet/models";
 import { ProcessSandbox } from "@sekhemet/sandbox";
+import { userConfigPath } from "./config.js";
 import { networkConfigs } from "./config_apply.js";
+import { configUpgradeCheck } from "./config_upgrade.js";
+import { toolProbeOptions } from "./init.js";
 import { pendingM0InRepo } from "./m0_path.js";
 import { checkRegisters } from "./registers.js";
 import { readMoveRecord, userDir } from "./user_dir.js";
@@ -82,7 +85,10 @@ export async function probeInference(endpoints: string[]): Promise<DiagnosticChe
 /** Verify a tool is on PATH and report the version it actually returns. */
 function probeBinary(name: string, args: string[], label = name): DiagnosticCheck {
   try {
+    // Review M1: from a neutral directory with Corepack's downloads off, so a
+    // repository's `packageManager` field chooses no program here.
     const out = execFileSync(name, args, {
+      ...toolProbeOptions(),
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 15_000,
@@ -255,6 +261,8 @@ export async function runDoctor(repoPath: string = process.cwd()): Promise<Docto
     pluginsCheck(repoPath),
     m0PendingCheck(repoPath),
     userDirCheck(),
+    // SUR-43: each renamed config key an upgrade rewrote, with its backup.
+    configUpgradeCheck([join(repoPath, ".sekhemet", "config.toml"), userConfigPath()]),
     hooksCheck(repoPath),
     researchConsentCheck(repoPath),
   ];

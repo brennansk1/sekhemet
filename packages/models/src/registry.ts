@@ -116,9 +116,39 @@ export interface SpeculativeDecision {
   draft?: string;
 }
 
+/**
+ * Where a model's weights come from (models rule 4, MD-N12-6; the model
+ * sources table in `hf_lookup.ts`): the official URL and its published
+ * SHA-256. A model with no source and hash offers no download.
+ */
+export interface ModelSource {
+  url: string;
+  /** The URL's host, as the network policy judges it. */
+  host: string;
+  sha256: string;
+  sizeBytes?: number;
+  /** A Hugging Face repository and file, when the source is one. */
+  repo?: string;
+  file?: string;
+}
+
+/** A place the weights sit on this host (MD-N14-41): the original and any verified copy. */
+export interface WeightsCopy {
+  path: string;
+  volume: "internal" | "external";
+  sha256: string;
+  date: string;
+}
+
 export interface ModelEntry {
   id: string;
   family?: string;
+  /** The official source and published SHA-256 (MD-N12-6). */
+  source?: ModelSource;
+  /** The weights' SHA-256: the published one, else the one first recorded here (MD-N12-2). */
+  sha256?: string;
+  /** Where the weights sit on this host, the original first; the registry prefers an internal copy (MD-N14-41). */
+  copies?: WeightsCopy[];
   quant?: string;
   sizeBytes?: number;
   contextWindow?: number;
@@ -357,6 +387,47 @@ export class ModelRegistry {
     this.touch(id);
     this.save();
     return entry;
+  }
+
+  /** Record a model's official source and published hash (MD-N12-6). */
+  public recordSource(id: string, source: ModelSource): ModelEntry {
+    return this.upsert(id, { source, sha256: source.sha256 });
+  }
+
+  /**
+   * Record a place the weights sit (MD-N14-41, DB-NM14-8): only a file whose
+   * SHA-256 matches the entry's, so a copy repoints the registry only after
+   * its hash is verified; the original is kept in the list, never removed.
+   */
+  public recordWeights(
+    id: string,
+    at: { path: string; volume: "internal" | "external"; sha256: string },
+  ): ModelEntry {
+    const entry = this.entries.get(id) ?? { id };
+    if (entry.sha256 && entry.sha256 !== at.sha256) {
+      throw new Error(
+        `${id}: the file's hash ${at.sha256.slice(0, 12)}… differs from the registry's ${entry.sha256.slice(0, 12)}…; the registry is unchanged`,
+      );
+    }
+    const copies = (entry.copies ?? []).filter((c) => c.path !== at.path);
+    return this.upsert(id, {
+      sha256: at.sha256,
+      copies: [...copies, { ...at, date: this.now().toISOString() }],
+    });
+  }
+
+  /** The weights this host should load (MD-N14-41): an internal copy with the same hash first. */
+  public preferredWeights(id: string): string | undefined {
+    const entry = this.entries.get(id);
+    const same = (entry?.copies ?? []).filter((c) => !entry?.sha256 || c.sha256 === entry.sha256);
+    return (same.find((c) => c.volume === "internal") ?? same[0])?.path;
+  }
+
+  /** The registry entry whose weights have this SHA-256, if any. */
+  public bySha256(sha256: string): ModelEntry | undefined {
+    return this.list().find(
+      (e) => e.sha256 === sha256 || (e.copies ?? []).some((c) => c.sha256 === sha256),
+    );
   }
 
   /**

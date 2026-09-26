@@ -1,9 +1,9 @@
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, realpathSync, statSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { totalmem } from "node:os";
-import { basename, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { hostFingerprintHash } from "./calibration.js";
 import { type HttpAdapterOptions, HttpInferenceAdapter } from "./http_adapter.js";
 import { assertKvPolicy } from "./kv_policy.js";
@@ -1385,4 +1385,27 @@ export function createQwen38Managed(
 function samePath(a: string, b: string): boolean {
   const real = (p: string) => (existsSync(p) ? realpathSync(p) : resolve(p));
   return real(a) === real(b);
+}
+
+/**
+ * llama-bench, the llama.cpp build's own benchmark (dashboard DB-NM14-3,
+ * DEC-44): beside `SEKHEMET_LLAMA_SERVER` when that names the build, else on
+ * the PATH. It loads the model itself, so it runs only inside a benchmark
+ * run of the residency scheduler, on a person's confirmed request.
+ */
+export function llamaBenchBinary(server = process.env.SEKHEMET_LLAMA_SERVER): string {
+  return server ? join(dirname(server), "llama-bench") : "llama-bench";
+}
+
+/** Run llama-bench and return its stdout (`BenchExec` for `runLlamaBench`); 20 minutes at most per run. */
+export function llamaBenchExec(): (bin: string, args: string[]) => Promise<string> {
+  return (bin, args) =>
+    new Promise((resolveRun, reject) => {
+      execFile(
+        bin,
+        args,
+        { timeout: 20 * 60_000, maxBuffer: 16 * 1024 * 1024, encoding: "utf8" },
+        (err, stdout) => (err ? reject(err) : resolveRun(stdout)),
+      );
+    });
 }

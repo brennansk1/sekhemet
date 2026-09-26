@@ -22,7 +22,7 @@ import {
   STOP_REASONS,
   isCardStatus,
 } from "@sekhemet/kernel";
-import { type LocalInferenceAdapter, NAIL_WORKER_PROFILE } from "@sekhemet/models";
+import type { LocalInferenceAdapter, ModelRole } from "@sekhemet/models";
 import { DecisionStore } from "@sekhemet/planner";
 import {
   BASALT,
@@ -39,6 +39,8 @@ import {
 } from "@sekhemet/ui";
 import { checkoutNotice, integrationBranch } from "./accept.js";
 import { unenforcedInvariants } from "./architecture_gate.js";
+import { createBenchmarkApi } from "./benchmark_api.js";
+import { type BenchmarkEnv, BenchmarkService, defaultBenchmarkEnv } from "./benchmark_cmd.js";
 import {
   cardMessages,
   handBack,
@@ -48,6 +50,7 @@ import {
   takeOver,
 } from "./collaborate.js";
 import { resolveConfig } from "./config.js";
+import { type ConfigApiDeps, createConfigApi } from "./config_api.js";
 import { effectiveConfig, queueDefaults } from "./config_apply.js";
 import {
   type MemorySample,
@@ -62,6 +65,7 @@ import {
   transcriptFiles,
   worktrees,
 } from "./dashboard_api.js";
+import { dashboardQualify, dashboardResidency, dashboardSpeed } from "./dashboard_models.js";
 import { runDoctor } from "./doctor.js";
 import {
   acceptCard,
@@ -71,7 +75,12 @@ import {
   requestAbort,
   rewindCard,
 } from "./execute.js";
-import { describeModel } from "./model_access.js";
+import {
+  type ModelAccess,
+  describeModel,
+  resolveWorkerName,
+  sharedModelAccess,
+} from "./model_access.js";
 import { startNotifier } from "./notify.js";
 import { dailyStandup } from "./pm/service.js";
 import { PmStore } from "./pm/store.js";
@@ -156,6 +165,18 @@ export interface DashboardServerOptions {
    * read from the qualification of the configured Worker when omitted.
    */
   parallelSlots?: () => number;
+  /**
+   * The residency scheduler the Configuration page loads and unloads through
+   * (rule 20a); the process's shared one — Seshat's and the Researcher's —
+   * when omitted. Tests pass one over fake adapters.
+   */
+  modelAccess?: ModelAccess;
+  /** The adapter Qualify to assign measures (rule 27a); `describeModel` when omitted. */
+  qualifyAdapter?: (model: string, role: ModelRole) => LocalInferenceAdapter;
+  /** Adjust the benchmark's environment (tests script its runner); the real one when omitted. */
+  benchmarkEnv?: (env: BenchmarkEnv) => BenchmarkEnv;
+  /** Configuration's live headroom probe (rule 20g); `null` fits by total memory (tests). */
+  headroomProbe?: ConfigApiDeps["headroomProbe"];
 }
 
 /** A body the access check read already, so the route's handler reads the same one. */
@@ -351,6 +372,85 @@ export function startDashboardServer(
     principalOf: (req) => principalOf(req),
   });
   const memoryProbe = options.memoryProbe ?? sampleMemory;
+  // Configuration's progress (scan, hash, download, copy, benchmark) goes out as `config` frames.
+  const emitConfig = (data: Record<string, unknown>) => {
+    const frame = `event: config\ndata: ${JSON.stringify(data)}\n\n`;
+    for (const s of streams) {
+      try {
+        s.write(frame);
+      } catch {
+        streams.delete(s);
+      }
+    }
+  };
+  const configRegistry = modelRegistry();
+  // Configuration › Models (B4.1 part b): Load and Unload through the
+  // dashboard's one residency scheduler, Qualify to assign on this host,
+  // and "Use the recommended models" through the benchmark's quick screen.
+  const configApi = createConfigApi({
+    repoPath,
+    log,
+    json,
+    readJsonBody,
+    isTrustedMutation,
+    principalOf: (req) => principalOf(req),
+    registry: configRegistry,
+    ...(options.headroomProbe !== undefined ? { headroomProbe: options.headroomProbe } : {}),
+    ...(options.cardStore ? { cardStore: options.cardStore } : {}),
+    // The interface has no calibration; the board service implementation does.
+    recalibrateReviewWip: async (minutes) =>
+      (
+        boardService as { calibrateReviewWip?: (m: number) => Promise<number> }
+      ).calibrateReviewWip?.(minutes),
+    residency: dashboardResidency(() => {
+      const access = options.modelAccess ?? sharedModelAccess();
+      access.recordSwapsOn(log);
+      return access;
+    }),
+    qualify: dashboardQualify({
+      repoPath,
+      registry: configRegistry,
+      access: () => options.modelAccess ?? sharedModelAccess(),
+      ...(options.qualifyAdapter ? { adapterFor: options.qualifyAdapter } : {}),
+    }),
+    // Measure speed (DB-NM14-3): llama-bench and the first token, a person's
+    // confirmed load inside one benchmark run of the same scheduler.
+    measureSpeed: dashboardSpeed({
+      repoPath,
+      access: () => {
+        const access = options.modelAccess ?? sharedModelAccess();
+        access.recordSwapsOn(log);
+        return access;
+      },
+    }),
+    startQuick: (combination, principal) => benchmarkService.startQuick(combination, principal),
+    emit: emitConfig,
+  });
+  // Configuration › Benchmark (B4.1 part c): the two-tier benchmark, its fit
+  // from the scanned models (MS-N5-5), each run's change as a `config` frame.
+  const benchmarkBase = defaultBenchmarkEnv({
+    repoPath,
+    log,
+    ...(options.cardStore ? { cardStore: options.cardStore } : {}),
+    fit: (role, model) => configApi.fitCheck(role, model),
+    onChange: (run) => emitConfig({ kind: "benchmark", run }),
+    // Its models load through the dashboard's one residency scheduler (rule 20a).
+    ...(options.modelAccess ? { modelAccess: options.modelAccess } : {}),
+  });
+  const benchmarkService = new BenchmarkService(
+    options.benchmarkEnv ? options.benchmarkEnv(benchmarkBase) : benchmarkBase,
+  );
+  const benchmarkApi = createBenchmarkApi({
+    service: benchmarkService,
+    json,
+    readJsonBody,
+    isTrustedMutation,
+    principalOf: (req) => principalOf(req),
+    // Defence in depth behind `authorize`: every change is an Admin's (config.manage).
+    mayManage: (req) =>
+      access.decide(principalOf(req), "config.manage", undefined, undefined, ceilingOf(req))
+        .allowed,
+  });
   const evidenceDir = join(repoPath, ".sekhemet", "evidence");
 
   // Evidence files are rewritten only when an attempt ends, so reads are cached
@@ -668,9 +768,13 @@ export function startDashboardServer(
   /** RUN-35: the configured Worker's qualified slots, as the queue reads them; one if unqualified. */
   const workerParallelSlots = (): number => {
     try {
-      const name =
-        queueDefaults(effectiveConfig(repoPath).config, []).worker ?? NAIL_WORKER_PROFILE.modelId;
       const registry = modelRegistry();
+      // SUR-11: the dashboard resolves the Worker as `run` and `queue` do.
+      const name = resolveWorkerName(
+        undefined,
+        queueDefaults(effectiveConfig(repoPath).config, []).worker,
+        { registry },
+      );
       const gate = gateWorker(registry, describeModel(name, "worker", { registry }), name);
       return gate.refusal ? 1 : gate.combination.settings.parallelSlots;
     } catch {
@@ -881,6 +985,9 @@ export function startDashboardServer(
       json(res, 200, { entries: await standing() });
       return;
     }
+
+    if (await configApi.handle(req, res, url, query)) return;
+    if (await benchmarkApi.handle(req, res, url, query)) return;
 
     // H12: workspace, project board and cards, split, run, gate, evidence, calibrate.
     if (
@@ -1838,6 +1945,7 @@ export function startDashboardServer(
             stopRecurring();
             github?.stop();
             stopIdentity();
+            configApi.close();
             if (timer) clearInterval(timer);
             unsubscribe();
             for (const stream of streams) stream.end();

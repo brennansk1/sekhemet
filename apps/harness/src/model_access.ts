@@ -1,6 +1,7 @@
 import type { EventLog } from "@sekhemet/kernel";
 import {
   CO_RESIDENT_MIN_BYTES,
+  FootprintRefusal,
   type GpuCeiling,
   type HeadroomProbe,
   type LoadOptions,
@@ -32,6 +33,7 @@ import {
   tierSettingsOf,
   withMeasurementRun,
 } from "@sekhemet/models";
+import { defaultWorkerName } from "./config_apply.js";
 
 /**
  * The harness's one path to a model (models rule 20a, MD-N9-4).
@@ -48,6 +50,23 @@ import {
  * combination, a gate or a measurement) and `launchVariant` (the same
  * managed launch with one setting changed, for calibration probes).
  */
+
+/**
+ * What a benchmark run holds (B4.1 half-B review, models rule 20a): its
+ * models, each loaded through the scheduler and held for the run; `release`
+ * unloads one it loaded (a model resident before the run stays).
+ */
+export interface BenchmarkLease {
+  load(role: ModelRole, model: string): Promise<UnloadableAdapter>;
+  release(role: ModelRole, model: string): Promise<void>;
+  /**
+   * Before a load this scheduler cannot see (llama-bench's own process, a
+   * qualification's adapter): every idle resident unloads (it reloads on its
+   * next request), and one in use or pinned refuses in words, so an unseen
+   * load never lands beside another model.
+   */
+  exclusive(): Promise<void>;
+}
 
 /** A queue: work one role's weights serve (chat, escalated retries, questions...). */
 export interface QueueSpec {
@@ -189,6 +208,19 @@ export function roleModelName(
   return model === UNFILLED ? undefined : model;
 }
 
+/**
+ * The Worker's name, one way for `run`, `queue` and the dashboard (SUR-11,
+ * MD-N10-3): the flag, else the person's assignment, else config.toml's
+ * `configured`, else the roster default for this machine's tier.
+ */
+export function resolveWorkerName(
+  flag: string | undefined,
+  configured: string | undefined,
+  opts: { registry: ModelRegistry; host?: string },
+): string {
+  return roleModelName("worker", flag, opts) ?? configured ?? defaultWorkerName();
+}
+
 function hostMemory(): { usableBytes: number; coResident: boolean } {
   const profile = loadHostMachineProfile();
   const usableBytes = profile?.usableBytes ?? measureUsableMemory().usableBytes;
@@ -204,6 +236,10 @@ export class ModelAccess {
   private inputs: SwapInputs = {};
   /** Inside a measurement run (rule 20b): C9 and C10 are bypassed. */
   private measuring = false;
+  /** Inside a benchmark run: no other role loads. */
+  private benchmarking = false;
+  /** The load guard set from outside (a calibration night), kept under a benchmark's. */
+  private loadGuard: ((weights: string) => void | Promise<void>) | undefined;
   /** C10's page-cache warmer, when the headroom probe is on. */
   private warmer: PageCacheWarmer | undefined;
 
@@ -448,6 +484,16 @@ export class ModelAccess {
     return this.scheduler.residentRoles();
   }
 
+  /** The weights resident now, by weights key. */
+  public residentWeights(): string[] {
+    return this.scheduler.residentWeights();
+  }
+
+  /** The weights loading now (a load in flight): what background disk work yields to. */
+  public loadingWeights(): string[] {
+    return this.scheduler.loadingWeights();
+  }
+
   public get swapCount(): number {
     return this.scheduler.swapCount;
   }
@@ -591,8 +637,86 @@ export class ModelAccess {
     }
   }
 
+  /**
+   * A benchmark run (measurement NEW-measurement-5, models rule 20a; B4.1
+   * half-B review): its models load through this scheduler, one lease for
+   * the run, and while it runs no other role loads — a queued request (a
+   * Seshat answer, a research question) stays queued until it ends, and an
+   * immediate hold is refused in words. C9's overlap and C10's prefetch are
+   * bypassed, as in any measurement run (rule 20b). When it ends, even when
+   * it fails, it unloads only what it loaded: a model resident before it
+   * stays, unless the run asked for `exclusive()` before a load this
+   * scheduler cannot see. One benchmark at a time.
+   */
+  public async benchmarkRun<T>(run: (lease: BenchmarkLease) => Promise<T>): Promise<T> {
+    if (this.benchmarking) throw new Error("A benchmark is running already; one runs at a time.");
+    const allowed = new Set<string>();
+    const holds = new Map<string, ModelHold>();
+    /** Queues whose weights this run loaded (not resident when it asked). */
+    const loadedHere = new Set<string>();
+    this.benchmarking = true;
+    this.measuring = true;
+    const outer = this.loadGuard;
+    this.scheduler.setLoadGuard(async (weights) => {
+      if (!allowed.has(weights))
+        throw new FootprintRefusal(
+          `A benchmark is running: ${weights} is not loaded until it ends; the work stays queued.`,
+        );
+      await outer?.(weights);
+    });
+    const queueOf = (role: ModelRole, model: string) => `benchmark/${role}/${model}`;
+    const lease: BenchmarkLease = {
+      load: async (role, model) => {
+        const queue = queueOf(role, model);
+        const had = holds.get(queue);
+        if (had) return had.adapter;
+        this.ensureQueue({ queue, role, name: model });
+        const key = weightsKey(model);
+        allowed.add(key);
+        if (!this.scheduler.residentWeights().includes(key)) loadedHere.add(queue);
+        await this.measure();
+        const hold = await this.scheduler.acquire(queue);
+        holds.set(queue, hold);
+        return hold.adapter;
+      },
+      release: async (role, model) => {
+        const queue = queueOf(role, model);
+        holds.get(queue)?.release();
+        holds.delete(queue);
+        if (loadedHere.delete(queue)) await this.scheduler.release(queue);
+      },
+      exclusive: async () => {
+        for (const queue of this.scheduler.residentRoles()) await this.scheduler.release(queue);
+        const left = this.scheduler.residentWeights();
+        if (left.length > 0)
+          throw new FootprintRefusal(
+            `${left.join(", ")} is in use; the measurement waits until it is free.`,
+          );
+      },
+    };
+    try {
+      return await run(lease);
+    } finally {
+      for (const h of holds.values()) h.release();
+      holds.clear();
+      for (const queue of loadedHere) await this.scheduler.release(queue).catch(() => undefined);
+      loadedHere.clear();
+      this.scheduler.setLoadGuard(outer);
+      this.benchmarking = false;
+      this.measuring = false;
+      // The work that waited is served now.
+      this.scheduler.boundary();
+    }
+  }
+
+  /** Whether a benchmark run holds the scheduler now. */
+  public get benchmarkRunning(): boolean {
+    return this.benchmarking;
+  }
+
   /** A check before every load (a calibration night's DEC-42 limits); undefined removes it. */
   public setLoadGuard(guard: ((weights: string) => void | Promise<void>) | undefined): void {
+    this.loadGuard = guard;
     this.scheduler.setLoadGuard(guard);
   }
 

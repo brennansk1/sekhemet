@@ -23,6 +23,7 @@ import {
   verifyGatesConfig,
 } from "./config.js";
 import { gateCopy } from "./copy.js";
+import { missingScriptIn, packageScriptPresent, scriptOf } from "./gate_start.js";
 import { createSourceIndex } from "./index/source_index.js";
 import { type JUnitCase, parseJUnit } from "./junit.js";
 import { parseErrorToGateFailure } from "./parser.js";
@@ -646,6 +647,41 @@ export class DeterministicGateRunner implements GateRunner {
     };
 
     if (result.exitCode === 0) return { outcome, failures: [] };
+
+    // SUR-12: the package manager found no such script, so the gate never
+    // started: not run, naming package.json — never charged to the card (rule 9).
+    // Only when the script said missing is the gate's own AND package.json
+    // really lacks it: a real failure whose output mentions some missing
+    // script stays a failure (review B3).
+    const ownScript = scriptOf(gate);
+    const missingScript =
+      ownScript &&
+      missingScriptIn(`${result.stdout}\n${result.stderr}`) === ownScript &&
+      !packageScriptPresent(cwd, ownScript)
+        ? ownScript
+        : undefined;
+    if (missingScript) {
+      const reason = `package.json has no "${missingScript}" script`;
+      return {
+        outcome,
+        failures: [
+          {
+            rung: gate.rung,
+            gate: gate.id,
+            layer: gate.layer,
+            exitCode: result.exitCode,
+            errorExcerpt: `${gate.id} not run: ${reason}`,
+            suggestedFixFiles: [],
+            location: { file: "package.json" },
+            expected: `${gate.id} to run and exit 0`,
+            actual: reason,
+            minimalRepro,
+            suggestedAction: gateCopy.gateCannotStart(gate.id, "package.json"),
+            notRun: true,
+          },
+        ],
+      };
+    }
 
     const ctx: ParseContext = {
       gate,

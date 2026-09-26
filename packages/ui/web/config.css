@@ -1,0 +1,203 @@
+/* Configuration (dashboard §2.16, NEW-dashboard-6): the sections, Models and
+   its model details, combinations, placement and residency (item 1a). */
+
+.cfg {
+  padding: 16px 24px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 1200px;
+  overflow-y: auto;
+}
+.cfg-lede {
+  margin: 0;
+  color: var(--text-secondary);
+}
+.cfg-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  border-bottom: 1px solid var(--border-subtle);
+  padding-bottom: 8px;
+}
+.cfg-tabs a.btn[aria-current="page"] {
+  background: var(--bg-overlay);
+  border-color: var(--border-strong);
+}
+.cfg section.cfg-sec {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.cfg h3 {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+.cfg h4 {
+  margin: 8px 0 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+.cfg p {
+  margin: 0;
+}
+.cfg .row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.cfg .why {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+.cfg .readonly-note {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+.cfg input[type="text"],
+.cfg select {
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+.cfg input[type="text"] {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+.cfg label.inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* A number and its grade, in words (DB-NM14-1). */
+.gnum {
+  white-space: nowrap;
+}
+.gnum .grade {
+  margin-left: 4px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.gnum .grade[data-grade="measured"] {
+  color: var(--state-pass);
+}
+
+.cfg .tbl td {
+  vertical-align: top;
+}
+.cfg .fit-no {
+  color: var(--state-fail);
+}
+.cfg .fit-swaps {
+  color: var(--state-parked);
+}
+.cfg .hash {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  word-break: break-all;
+}
+.cfg-roles {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cfg-role {
+  display: grid;
+  grid-template-columns: minmax(120px, 160px) 1fr;
+  gap: 4px 16px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.cfg-role .actions {
+  grid-column: 2;
+}
+.cfg-detail {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  padding: 12px;
+  background: var(--bg-raised);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cfg-detail dl {
+  display: grid;
+  grid-template-columns: minmax(120px, 200px) 1fr;
+  gap: 4px 12px;
+  margin: 0;
+}
+.cfg-detail dt {
+  color: var(--text-secondary);
+}
+.cfg-detail dd {
+  margin: 0;
+}
+.cfg-warn {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--state-parked);
+}
+.cfg-dialog {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  padding: 12px;
+  background: var(--bg-overlay);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cfg-progress {
+  font-size: var(--text-sm);
+}
+.cfg-timeline {
+  display: grid;
+  grid-template-columns: repeat(24, minmax(0, 1fr));
+  gap: 2px;
+  align-items: end;
+  height: 64px;
+}
+.cfg-timeline .hr {
+  background: var(--state-running);
+  min-height: 2px;
+  border-radius: 2px 2px 0 0;
+}
+
+@media (max-width: 767px) {
+  .cfg {
+    padding: 12px;
+  }
+  .cfg-role {
+    grid-template-columns: 1fr;
+  }
+  .cfg-role .actions {
+    grid-column: 1;
+  }
+  .cfg-detail dl {
+    grid-template-columns: 1fr;
+  }
+  .cfg input[type="checkbox"] {
+    width: 44px;
+    height: 44px;
+  }
+  .cfg input[type="text"],
+  .cfg select {
+    height: 44px;
+  }
+}
+
+/* The No Worker model bar on every view (DB-N6-2). */
+.cfg-bar {
+  padding: 8px 16px;
+  background: var(--bg-overlay);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+}

@@ -1,4 +1,5 @@
 import { basename, join } from "node:path";
+import { morningReport } from "@sekhemet/eval";
 import { type AttemptOutcome, type CardStore, firstModelAttempts } from "@sekhemet/kernel";
 import type { ModelHold, ModelRegistry } from "@sekhemet/models";
 import { unenforcedInvariants } from "../architecture_gate.js";
@@ -226,7 +227,12 @@ export async function dailyStandup(deps: {
   );
   const text = await withPlannerStandup(ledgerStandup(snapshot), deps);
   const marker = text.indexOf("\n\n_Answered from the ledger");
-  return marker === -1 ? text : text.slice(0, marker);
+  const standup = marker === -1 ? text : text.slice(0, marker);
+  // MS-N5-11: the overnight benchmark's morning report, from the last day.
+  const report = await morningReport(deps.pmStore.log, {
+    since: Date.now() - 24 * 3_600_000,
+  }).catch(() => "");
+  return report ? `${standup}\n\n${report}` : standup;
 }
 
 /** Whether a reply by `model` came after message `seq` (a note is said once per new message). */

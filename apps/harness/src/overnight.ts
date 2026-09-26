@@ -71,6 +71,13 @@ export interface OvernightOptions {
    * server (an Ollama model keeps itself warm).
    */
   modelServer?: { ensureRunning(): Promise<void>; unload?(): Promise<void> };
+  /**
+   * The overnight benchmark (models rule 20b, MD-N3-4/5): `first` runs the
+   * ones a person put first, before the queue; `after` the rest, once the
+   * backlog is done and the night's model server is released. Each checks
+   * its own window, with no idle exception. Returns the lines it said.
+   */
+  benchmark?: (phase: "first" | "after") => Promise<string[]>;
 }
 
 /**
@@ -262,6 +269,12 @@ export async function runOvernight(opts: OvernightOptions): Promise<OvernightSum
     }
   }
 
+  // Models rule 20b: a benchmark the person put first runs before the queue.
+  if (!summary.stoppedBecause && opts.benchmark && !windowOver())
+    await opts.benchmark("first").catch((err: unknown) => {
+      say(`Overnight benchmark: ${err instanceof Error ? err.message : String(err)}.`);
+    });
+
   while (!summary.stoppedBecause && summary.rounds < (opts.maxRounds ?? 100)) {
     if (stopAt && now() >= stopAt) {
       summary.stoppedBecause = `reached ${opts.until}`;
@@ -359,6 +372,12 @@ export async function runOvernight(opts: OvernightOptions): Promise<OvernightSum
   if (!summary.stoppedBecause) summary.stoppedBecause = "round limit";
   // RUN-18a: the rounds are over; the weights leave memory now, not at exit.
   await opts.modelServer?.unload?.().catch(() => undefined);
+  // Models rule 20b: by default the backlog goes first and the benchmark
+  // takes the rest of the window; a tripped breaker stops it too.
+  if (opts.benchmark && !/breaker/.test(summary.stoppedBecause))
+    await opts.benchmark("after").catch((err: unknown) => {
+      say(`Overnight benchmark: ${err instanceof Error ? err.message : String(err)}.`);
+    });
   // E16: loop 10 on what the night accepted: mutants of accepted diffs
   // become advisory test proposals, while the machine is still free.
   if (summary.passed > 0 && !opts.skipMutation) {

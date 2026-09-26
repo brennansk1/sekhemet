@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { type TomlTable, parseToml } from "@sekhemet/kernel";
 import type { NetworkConfig } from "@sekhemet/sandbox";
 import { type ResolvedConfig, resolveConfig } from "./config.js";
+import { recommendRoster } from "./init.js";
 import { userDir } from "./user_dir.js";
 
 /**
@@ -110,6 +111,8 @@ export function queueDefaults(
 ): { worker?: string; manager?: string; maxTurns?: number } {
   const has = (f: string) => argv.includes(f);
   return {
+    // Only what config.toml names: the person's assignment outranks config
+    // (MD-N10-3), and an unset Worker falls back to `defaultWorkerName()` last.
     ...(!has("--worker") && cfg.models.executor !== "auto" ? { worker: cfg.models.executor } : {}),
     ...(!has("--manager") && cfg.models.planner !== "auto" ? { manager: cfg.models.planner } : {}),
     ...(!has("--max-turns") && cfg.loop.defaultStepBudget > 0
@@ -154,4 +157,14 @@ export function networkConfigs(
     }
   };
   return { user: read(userConfigPath), project: read(join(repoPath, ".sekhemet", "config.toml")) };
+}
+
+/**
+ * The Worker when no flag, assignment or config.toml names one: the roster's
+ * for this machine's tier (SUR-11), the same resolution the dashboard's roster
+ * uses. Always the last fallback, never ahead of the person's assignment
+ * (MD-N10-3: the flag, then the assignment, then config.toml, then this).
+ */
+export function defaultWorkerName(): string {
+  return recommendRoster().worker;
 }

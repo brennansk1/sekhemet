@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULT_STEP_BUDGET, type TomlTable, parseToml } from "@sekhemet/kernel";
+import { parseHours } from "./scheduler.js";
 import type { IdentitySource, Level, OidcSettings } from "./team/settings.js";
 import { userDir } from "./user_dir.js";
 
@@ -8,11 +9,35 @@ export type MachineTier = "auto" | "S" | "M" | "L" | "XL";
 /** Tri-state, not a boolean: "allowlist" is a distinct posture from open or offline. */
 export type NetworkMode = "offline" | "allowlist" | "open";
 
+/**
+ * A model folder a person added on the Configuration page (models rule 4a,
+ * MD-N13-1): `folders = ["/path", { path = "/path", subfolders = true }]`.
+ * Subfolders are scanned only when set, to the depth and file-count limits.
+ */
+export interface ModelFolderSetting {
+  path: string;
+  includeSubfolders: boolean;
+}
+
 export interface SekhemetConfig {
   machine: {
     tier: MachineTier;
-    /** Hours reserved for interactive human use, e.g. "08:00-18:00 Mon-Fri". */
+    /**
+     * `[machine] reserved_hours` (surface item 23, models rule 20): the
+     * person's hours, e.g. "08:00-18:00 Mon-Fri"; unattended runs go outside
+     * them. The old key `hours` is read when this one is absent, and reported.
+     */
+    reservedHours: string;
+    /**
+     * The same value as `reservedHours`, under the old name its readers use.
+     * @deprecated read `reservedHours`.
+     */
     hours: string;
+    /**
+     * `[machine] overnight_hours` (models rule 20, MD-N3-4): optional; it
+     * narrows the overnight window, the complement of `reservedHours`.
+     */
+    overnightHours?: string;
     /** 0 means unlimited. */
     powerBudgetKwhDay: number;
   };
@@ -32,6 +57,12 @@ export interface SekhemetConfig {
      * measured headroom admits it beside the Worker. Empty: none.
      */
     quickAnswerer: string;
+    /**
+     * `[models] folders` (surface item 23, models rule 4a): the folders the
+     * Configuration page scans besides `--models-dir` and
+     * `SEKHEMET_MODELS_DIR`. Read from the user config only.
+     */
+    folders: ModelFolderSetting[];
   };
   context: {
     workingBudget: number | "auto";
@@ -92,7 +123,12 @@ export interface SekhemetConfig {
  * config is now the single place those live.
  */
 export const DEFAULT_CONFIG: SekhemetConfig = {
-  machine: { tier: "auto", hours: "08:00-18:00 Mon-Fri", powerBudgetKwhDay: 0 },
+  machine: {
+    tier: "auto",
+    reservedHours: "08:00-18:00 Mon-Fri",
+    hours: "08:00-18:00 Mon-Fri",
+    powerBudgetKwhDay: 0,
+  },
   models: {
     executor: "auto",
     planner: "auto",
@@ -100,6 +136,7 @@ export const DEFAULT_CONFIG: SekhemetConfig = {
     pruner: "auto",
     headroomProbe: false,
     quickAnswerer: "",
+    folders: [],
   },
   context: { workingBudget: "auto", mapTokens: 1024, maskAfterObservations: 2 },
   loop: { defaultStepBudget: DEFAULT_STEP_BUDGET, stallWindow: 3, maxRungs: 4 },
@@ -220,6 +257,60 @@ function remoteName(value: unknown, fallback: string): string {
     : fallback;
 }
 
+/**
+ * `[models] folders` from the user config only (models rule 4a: "kept in the
+ * user configuration"): a repository, a card or a flag cannot point the
+ * scan at a folder the person did not add.
+ */
+function modelFolders(user: TomlTable | undefined): ModelFolderSetting[] {
+  const raw = table(user, "models").folders;
+  if (!Array.isArray(raw)) return [];
+  const out: ModelFolderSetting[] = [];
+  for (const entry of raw) {
+    if (typeof entry === "string" && entry.length > 0) {
+      out.push({ path: entry, includeSubfolders: false });
+    } else if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+      const t = entry as TomlTable;
+      if (typeof t.path === "string" && t.path.length > 0) {
+        out.push({ path: t.path, includeSubfolders: t.subfolders === true });
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * `[machine] reserved_hours`, else the old `hours` (surface item 25: renamed,
+ * the old name read and reported for one release).
+ */
+function reservedHours(machine: TomlTable, problems: string[]): string {
+  if (typeof machine.reserved_hours === "string") return machine.reserved_hours;
+  if (typeof machine.hours === "string") {
+    problems.push(
+      "machine.hours is the old name of machine.reserved_hours; it was read as reserved_hours — rename it",
+    );
+    return machine.hours;
+  }
+  return DEFAULT_CONFIG.machine.reservedHours;
+}
+
+/** `[machine] overnight_hours`: optional; a value `parseHours` cannot read is refused. */
+function overnightHours(value: unknown, problems: string[]): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value === "string") {
+    try {
+      parseHours(value);
+      return value;
+    } catch {
+      // refused below
+    }
+  }
+  problems.push(
+    `machine.overnight_hours cannot be read (got ${JSON.stringify(value)}); use e.g. "22:00-06:00". It was refused and the overnight window is the complement of reserved_hours`,
+  );
+  return undefined;
+}
+
 function project(merged: TomlTable, problems: string[] = [], user?: TomlTable): SekhemetConfig {
   const d = DEFAULT_CONFIG;
   const machine = table(merged, "machine");
@@ -242,10 +333,15 @@ function project(merged: TomlTable, problems: string[] = [], user?: TomlTable): 
     ? (tierRaw as MachineTier)
     : d.machine.tier;
 
+  const reserved = reservedHours(machine, problems);
+  const overnight = overnightHours(machine.overnight_hours, problems);
+
   return {
     machine: {
       tier,
-      hours: str(machine.hours, d.machine.hours),
+      reservedHours: reserved,
+      hours: reserved,
+      ...(overnight !== undefined ? { overnightHours: overnight } : {}),
       powerBudgetKwhDay: num(machine.power_budget_kwh_day, d.machine.powerBudgetKwhDay),
     },
     models: {
@@ -255,6 +351,7 @@ function project(merged: TomlTable, problems: string[] = [], user?: TomlTable): 
       pruner: str(models.pruner, d.models.pruner),
       headroomProbe: bool(models.headroom_probe, d.models.headroomProbe),
       quickAnswerer: str(models.quick_answerer, d.models.quickAnswerer),
+      folders: modelFolders(user),
     },
     context: {
       workingBudget:

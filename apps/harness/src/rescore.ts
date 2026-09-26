@@ -5,6 +5,7 @@ import {
   type RunProfile,
   type SuiteRunResult,
   queueInvocation,
+  readMeasurementMarker,
   scoreCardProfiles,
 } from "@sekhemet/eval";
 import { effectiveConfig, queueDefaults } from "./config_apply.js";
@@ -36,14 +37,19 @@ export function expectedQueueProfile(
   );
 }
 
-/** The repositories a run's fixture used: its own copy, or one per card in independent mode. */
+/**
+ * The repositories a run's fixture used: its own copy, or one per card in
+ * independent mode — never a benchmark's card repository, whose marker says
+ * `benchmark` (NEW-measurement-5), even under the same fixture name.
+ */
 function fixtureRepos(workDir: string, fixture: string): string[] {
   if (!existsSync(workDir)) return [];
   return readdirSync(workDir)
     .filter((d) => d === fixture || d.startsWith(`${fixture}__`))
     .sort()
     .map((d) => join(workDir, d))
-    .filter((d) => existsSync(join(d, ".sekhemet", "evidence")));
+    .filter((d) => existsSync(join(d, ".sekhemet", "evidence")))
+    .filter((d) => readMeasurementMarker(d)?.purpose !== "benchmark");
 }
 
 /**

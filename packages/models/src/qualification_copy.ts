@@ -181,3 +181,13 @@ export const qualificationCopy = {
     },
   } satisfies Record<string, { prompt?: string; messages?: ChatTurn[] }>,
 };
+
+/**
+ * The prompt the page's Measure speed times a first token on (dashboard
+ * DB-NM14-3): long enough that prefill, not the network, dominates.
+ */
+export const SPEED_TTFT_PROMPT: string = Array.from(
+  { length: 300 },
+  (_, i) =>
+    `Line ${i + 1}: the board lists each card with its gates, its evidence and the person who accepts it.`,
+).join("\n");

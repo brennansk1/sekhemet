@@ -1,0 +1,7 @@
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+.sekhemet
+.git
+evidence
+packaging/out

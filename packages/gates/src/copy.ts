@@ -71,6 +71,9 @@ export const gateCopy = {
   /** A gate that could not run (rule 9): not the card's work, never counted against it. */
   gateNotRun: (gate: string) =>
     `The ${gate} gate could not run on this host; that is not the card's work and does not count against it. Fix any other failure shown; when only gates that could not run remain, the card stops for a person.`,
+  // SUR-12: the gate's script is missing from the file named, so it never started.
+  gateCannotStart: (gate: string, file: string) =>
+    `The ${gate} gate could not start: its script is missing from ${file}. That is not the card's work and does not count against it; a person edits ${file}, and when only gates that could not run remain, the card stops for them.`,
   hookBlocked: (reason: string) =>
     `A project hook stopped the gates: ${reason}. That is not the card's work and does not count against it; when nothing else fails, the card stops for a person.`,
 

@@ -79,6 +79,7 @@ Every document in `docs/` is listed here, and nowhere else is the source of trut
 
 | File | Purpose |
 |---|---|
+| [INSTALL.md](reference/INSTALL.md) | The two install paths — the npm package for a person, the server image for a team with its identity proxy and separate inference container — and the source install. |
 | [SUITE_RUNS.md](reference/SUITE_RUNS.md) | Every recorded frozen-suite score with its hash, and why the failures failed. |
 | [PHASE0.md](reference/PHASE0.md) | The go/no-go measurement and its verdict: what was measured, what it does not establish, and how to reproduce it. |
 | [MVP_PATH.md](reference/MVP_PATH.md) | The one sequence that has to work, and what is deliberately sequenced behind it. The gap lists are ordered by unit; this is ordered by what ships. |

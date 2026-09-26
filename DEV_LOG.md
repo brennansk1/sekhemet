@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 45 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 46 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,67 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 46 — 2026-09-26 (B4.1 done: the first run for all three audiences, take-over's trust, recon and inventory, and the Configuration page with Smart Swap's models and the combination benchmark)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver. Implementer helpers: step 0 (contracts), part (a) first run and take-over, part (b) the model library and page, part (c) the combination benchmark, the wiring, and two fix rounds (one per review half). Two full independent reviews (half A, half B) and two narrow re-checks of the fixed blockers (Sonnet).
+
+- **Step 0, the contracts:**
+  - payload registry entries;
+  - config keys (`[machine] reserved_hours` canonical with `hours` as an alias, `overnight_hours`, and the user-only `[models] folders`);
+  - the library and combination types;
+  - `config_routes.ts` (26 routes, each with its permission);
+  - PM_CONTRACT additions.
+- **Part (a), the first run and take-over** (surface SUR-*, design-stage NEW-design-stage-6, DS-TO-1..16, DEC-43):
+  - `first_run.ts` for all three audiences;
+  - take-over: trust first, recon with no model loaded (`takeover_recon.ts`), the as-built inventory, a history secrets scan (`history_secrets.ts`: gitleaks confined, a built-in fallback), half-done work (`scanUnfinished`), up to five `safe_default` questions applied when the plan is approved;
+  - `sekhemet ask` (O23 decided);
+  - `pack_npm.mjs`, the server package (`packaging/server/`), `INSTALL.md`;
+  - `config_upgrade.ts`.
+- **Part (b), Configuration › Models** (models NEW-models-14, dashboard DB-NM14-*, DEC-45):
+  - scanning the model folders, fit, the recommendation and placement;
+  - downloads from the Worker's verified source only, hash-verified in a `.part` file;
+  - a remote estimate by ranged read; llama-bench;
+  - `findRoleWeights`, and the registry's source, sha256 and copies.
+  Every number is graded *Measured*, *From the file* or *Estimated*.
+- **Part (c), the combination benchmark:**
+  - screening sets (`fixtures/screening/`) and quick screens;
+  - the overnight benchmark, `sekhemet benchmark` and its REST API;
+  - `benchmark` measurement-marker purpose. Its repos are excluded from rescoring, and bake-off evidence refuses quick or partial results.
+- **Wiring:**
+  - the dashboard's model actions;
+  - `gate_start.ts` (SUR-12);
+  - the Husky ruling (`GIT_CONFIG_PARAMETERS`);
+  - five modules added to the child_process allowlist, each accepted by the reviewer with its reason.
+- **The lead's own find, SUR-11 against MD-N10-3:** part (a) made the roster's recommended Worker act as config, so it overrode a person's assigned Worker, and `assigned_models_e2e.spec` failed. Fixed:
+  - config's step names only what `config.toml` sets;
+  - `resolveWorkerName` (the flag, then the assignment, then config, then the roster default) is the one resolution for `run`, `queue`, the night's server and the dashboard;
+  - measurement paths keep the reference Worker;
+  - a committed test's assertion that part (a) had changed was restored.
+- **Reviews:**
+  - **Half A:** 3 blockers and 5 majors, all fixed. The blocker fixes were re-checked and hold.
+    - Blockers: a history scan that errored read as clean; a secret in a package.json script reached the ledger; any failing output naming a missing script relabelled a real failure as not run.
+    - Majors: the first run's `pnpm --version` inside the repo downloaded the repo's pinned pnpm; the trust list differed from the gates that ran; gitleaks read the repo's own allowlist; the dashboard skipped the assignment; the server package served sign-in over plain HTTP.
+  - **Half B:** 1 blocker and 4 majors, all fixed; the blocker's fix was re-checked and holds across 15 spellings. One inert gap is left: `/api/./config/benchmark` is classified as a Member's, but no router serves that path, so nothing runs. It is hardened first thing in the next workstream.
+    - Blocker: benchmark routes spelled with a trailing slash, a doubled slash or percent-encoding escaped the Admin check, so a Member could start benchmarks.
+    - Majors: the recommended downloads confirmed were not the ones fetched; downloads could re-create an unmounted folder; benchmark loads bypassed the residency scheduler; Measure speed had no caller.
+  - **The lead's follow-up:** llama-bench and the page's Qualify load weights where the scheduler cannot see them. `BenchmarkLease.exclusive()` now unloads idle residents first and refuses while one is in use.
+  - **Three architecture rules**, each caught by the full gate and fixed:
+    - `scanUnfinished` reads imports from the one source index (GT-T2-3);
+    - the benchmark's planner reply uses the one reasoning strip (MD-N4-8);
+    - Measure speed's first-token prompt moved into the qualification copy module, and the download's same-name refusal is named as a person's (CX-M1-13; the literal record is unchanged at 437).
+- **Gate:** `pnpm gate` on the committed tree: `tsc -b` and `biome check .` clean; vitest 470 files, 3552 passed, 37 skipped, exit 0.
+- **Where the cards stop:**
+  - B4.1 is done.
+  - **Partial, marked so in the specs:**
+    - Measure speed has run only against fakes;
+    - `estimateLocal` (gguf-parser-go, local files only; DEC-44 amended) is not wired to the page;
+    - the engine comparison (llama.cpp beside MLX) is not built;
+    - the gitleaks configuration is untested against a real binary (not installed);
+    - the onboarding's hardened git environment has no test.
+  - **Waiting on the owner:** a one-time Semgrep install to validate the 34 bundled rules; model loads for everything above.
+  - The half-A review's test downloaded pnpm 8.6.11 and 9.1.4 into `~/Library/pnpm/.tools`; they are left for the owner to keep or delete.
+  - **Next:** B4.3.
 
 ### Entry 45 — 2026-09-26 (B4.0b done: the source index, gates for existing codebases, the visual layer, templates and bundled rules, test strength)
 

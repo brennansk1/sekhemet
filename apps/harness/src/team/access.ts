@@ -1,6 +1,7 @@
 import type { ServerResponse } from "node:http";
 import type { DatabaseSync } from "node:sqlite";
 import type { EventLog } from "@sekhemet/kernel";
+import { CONFIG_ROUTES } from "../config_routes.js";
 import { allMembers, personName } from "./members.js";
 import { LEVELS, type Level, isLevel, levelRank, lowerLevel } from "./settings.js";
 
@@ -755,6 +756,13 @@ const ROUTES: [methods: string[], pattern: RegExp, resolve: Resolver][] = [
   [["POST"], /^\/api\/projects$/, fixed("project.create")],
   // Gates rule 31 (GT-N4-1): a new visual baseline is a person's approval.
   [["POST"], /^\/api\/visual\/baselines\/[\w.-]+\/approve$/, fixed("accept")],
+  // The Configuration page (B4.1, dashboard DB-N6-15): each change needs its
+  // route's permission — `config.manage` (an Admin), review capacity `review.capacity`.
+  ...CONFIG_ROUTES.filter((r) => r.method !== "GET").map((r): [string[], RegExp, Resolver] => [
+    [r.method],
+    new RegExp(`^${r.path.replace(/:[A-Za-z]+/g, "[^/]+")}$`),
+    fixed(r.permission),
+  ]),
 ];
 
 const IDENTITY_ROUTES = /^\/api\/(session|setup|tokens|account|oidc|passkeys|invites)(\/|$)/;
@@ -778,6 +786,22 @@ export function routePermissions(
     const m = pattern.exec(url);
     if (m) return resolve(m, body);
   }
+  // A write that reads as a Configuration path only once decoded and its
+  // slashes collapsed (`/api//config/…`, `/api/config/%62enchmark`, a
+  // trailing slash) is never served as one, and still needs the Admin's
+  // permission, never a Member's fallback (B4.1 review: defence in depth).
+  if (readsAsConfigPath(url)) return { permissions: ["config.manage"] };
   // Any other write under /api/ still needs a Member (never an open door).
   return url.startsWith("/api/") ? { permissions: ["issue.edit"] } : undefined;
+}
+
+/** Whether a path is under `/api/config` once decoded, lower-cased and its slashes collapsed. */
+function readsAsConfigPath(url: string): boolean {
+  let path = url;
+  try {
+    path = decodeURIComponent(url);
+  } catch {
+    // A malformed escape: read the raw path.
+  }
+  return /^\/api\/config(?:\/|$)/.test(path.toLowerCase().replace(/\/+/g, "/"));
 }

@@ -1,0 +1,57 @@
+# A team server (surface item 31, NEW-surface-4, SUR-42): three containers.
+# See docs/reference/INSTALL.md. Replace every <...> before starting.
+services:
+  # The inference engine, in its own container: llama.cpp's server with the
+  # Worker's weights (the arguments are the Worker profile's launch
+  # arguments; a server whose model or context differs is refused, MD-M4-1).
+  inference:
+    image: ghcr.io/ggml-org/llama.cpp:server
+    command: ["-m", "/models/<worker>.gguf", "--host", "127.0.0.1", "--port", "8098"]
+    volumes:
+      - <models folder>:/models:ro
+
+  # The harness. It shares the engine's network namespace, so it reaches the
+  # engine on loopback exactly as on a laptop.
+  sekhemet:
+    build:
+      context: ../..
+      dockerfile: packaging/server/Dockerfile
+    network_mode: "service:inference"
+    # bubblewrap needs unprivileged user namespaces inside the container.
+    security_opt:
+      - seccomp=unconfined
+      - apparmor=unconfined
+    volumes:
+      - <repository>:/work
+      - sekhemet-user:/home/node/.sekhemet
+
+  # The identity-aware proxy: terminates TLS with your certificate, signs
+  # people in, and passes their email in X-Forwarded-Email. The harness
+  # trusts that header only from the addresses in [identity] trusted_proxies
+  # (integrations item 24). Only its HTTPS listener is published; its plain
+  # HTTP listener stays on the container's loopback (the default address).
+  identity-proxy:
+    # Pin the oauth2-proxy release you deploy.
+    image: quay.io/oauth2-proxy/oauth2-proxy:latest
+    command:
+      - --https-address=0.0.0.0:4443
+      - --tls-cert-file=/tls/tls.crt
+      - --tls-key-file=/tls/tls.key
+      - --upstream=http://inference:4040
+      - --email-domain=<your domain>
+      - --provider=oidc
+      - --oidc-issuer-url=<issuer>
+      - --pass-user-headers=true
+      - --set-xauthrequest=true
+    environment:
+      OAUTH2_PROXY_CLIENT_ID: <client id>
+      OAUTH2_PROXY_CLIENT_SECRET: <client secret>
+      OAUTH2_PROXY_COOKIE_SECRET: <32 random bytes, base64>
+    volumes:
+      # tls.crt (the full chain) and tls.key for the server's host name.
+      - <TLS certificate folder>:/tls:ro
+    ports:
+      - "443:4443"
+
+volumes:
+  sekhemet-user:

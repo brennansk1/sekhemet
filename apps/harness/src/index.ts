@@ -12,6 +12,7 @@ import {
   type PipelineResult,
   declaredStage,
   detectGateTemplate,
+  gateStartProblems,
   gateTemplate,
   generateGateHostCerts,
   loadGatesConfig,
@@ -74,15 +75,17 @@ import {
   verifyCardWorktree,
 } from "./card_gates.js";
 import { handBack, postCardMessage, requestPause, takeOver } from "./collaborate.js";
-import { resolveConfig } from "./config.js";
+import { resolveConfig, userConfigPath } from "./config.js";
 import {
   cardStepCap,
   configOverrideLines,
+  defaultWorkerName,
   effectiveConfig,
   networkConfigs,
   queueDefaults,
   reviewLimit,
 } from "./config_apply.js";
+import { upgradeConfigKeys } from "./config_upgrade.js";
 import { daemonStart, daemonStatus, daemonStop, rotateLog } from "./daemon.js";
 import { type DoctorReport, runDoctor } from "./doctor.js";
 import { egressEvent } from "./egress_event.js";
@@ -107,6 +110,7 @@ import {
   runLspPool,
 } from "./execute.js";
 import { reviewPosterFromEnv, runExternalReviews } from "./external_review.js";
+import { homeDestination, roleWeightsFinder, runFirstRun } from "./first_run.js";
 import {
   COMMANDS,
   FRONT_DOOR,
@@ -114,7 +118,7 @@ import {
   routeFrontDoor,
   runExitCode,
 } from "./front_door.js";
-import { runInit } from "./init.js";
+import { deriveGates, runInit } from "./init.js";
 import { notifySlack } from "./integrations.js";
 import { readSettings } from "./integrations.js";
 import { applyExploration, exploreProject } from "./learning/explore.js";
@@ -133,12 +137,19 @@ import { McpHub, loadMcpConfig, plannerToolsOf } from "./mcp_client.js";
 import {
   applyProfileSwitches,
   autoAcceptRefusal,
+  measurementHolder,
   profileForQueue,
   profileForRun,
   readMeasurementMarker,
   withoutProfileFlags,
 } from "./measure_cmd.js";
-import { ModelAccess, describeModel, roleModelName, weightsKey } from "./model_access.js";
+import {
+  ModelAccess,
+  describeModel,
+  resolveWorkerName,
+  roleModelName,
+  weightsKey,
+} from "./model_access.js";
 import { sendPush, startNotifier } from "./notify.js";
 import { nightModelServer, runOvernight } from "./overnight.js";
 import { DEFAULT_PM_MODEL, answerQueued, dailyStandup, pmModelFor } from "./pm/service.js";
@@ -218,9 +229,15 @@ import {
 } from "./wave2.js";
 import { runDependencyVerifications } from "./wave2_github.js";
 import {
+  agentConfigFiles,
+  approveAgentConfig,
   describeUntrusted,
+  isWorkspaceTrusted,
+  recordAgentConfigApprovals,
   setInvocationTrust,
+  trustAuthorityFor,
   trustFiles,
+  trustWorkspace,
   untrustedFiles,
 } from "./workspace_trust.js";
 
@@ -231,6 +248,9 @@ export interface CliConfig {
     | "reserve"
     | "pause"
     | "trust"
+    | "ask"
+    | "benchmark"
+    | "take-over"
     | "export"
     | "erase"
     | "doctor"
@@ -376,6 +396,17 @@ export function parseCliArgs(argv: string[] = process.argv.slice(2)): CliConfig 
   };
 }
 
+/**
+ * SUR-12: a derived test gate that cannot start (its script missing or
+ * wrong, its program absent) stops the run before any card or model,
+ * naming the file to edit; the lines to print, or none.
+ */
+function gateStartStop(repoPath: string): string[] {
+  return gateStartProblems(loadGatesConfig(repoPath), repoPath).map(
+    (p) => `The ${p.gate} gate cannot start: ${p.reason}. Edit ${p.file}; no card was run.`,
+  );
+}
+
 /** The repository's measurement marker, as the board's option (rule 24). */
 function measurementOption(repoPath: string): { measurementMarker?: { purpose: string } } {
   const marker = readMeasurementMarker(repoPath);
@@ -403,6 +434,11 @@ export function initLocalKernel(repoPath: string): {
   if (!existsSync(dotSekhemet)) {
     mkdirSync(dotSekhemet, { recursive: true });
   }
+
+  // SUR-43 (surface item 32): renamed config keys are rewritten after a
+  // backup in the same step as the ledger migration; doctor reports them.
+  upgradeConfigKeys(join(dotSekhemet, "config.toml"));
+  upgradeConfigKeys(userConfigPath());
 
   // The design and the permission engine's protected-path list both name
   // .sekhemet/events.db; opening a differently-named file meant the deny rule
@@ -767,6 +803,44 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     await boardService.calibrateReviewWip(project.reviewMinutesPerDay).catch(() => undefined);
   }
 
+  if (config.command === "benchmark") {
+    // `sekhemet dev benchmark estimate|quick|overnight|status|stop|report`
+    // (measurement NEW-measurement-5): the Configuration page's two-tier
+    // benchmark from the terminal, the same service.
+    const { benchmarkCommand, defaultBenchmarkEnv } = await import("./benchmark_cmd.js");
+    process.exitCode = await benchmarkCommand(
+      argv
+        .slice(argv.indexOf("benchmark") + 1)
+        .filter((a, i, all) => a !== "--repo" && all[i - 1] !== "--repo"),
+      defaultBenchmarkEnv({ repoPath: config.repoPath, log, cardStore }),
+      (l) => console.log(l),
+      cardStore.localPrincipal(),
+    );
+    return;
+  }
+
+  if (config.command === "models" && argv[argv.indexOf("models") + 1] === "fetch") {
+    // `sekhemet dev models fetch <model> [--folder <path>]` (MD-N12-6): the
+    // page's Download… in the terminal, the same verified implementation.
+    const { modelsFetch } = await import("./models_cmd.js");
+    const model = argv[argv.indexOf("fetch") + 1];
+    if (!model || model.startsWith("-")) {
+      console.log("Usage: sekhemet dev models fetch <model> [--folder <path>]");
+      process.exitCode = 2;
+      return;
+    }
+    const folderAt = argv.indexOf("--folder");
+    const folder = folderAt === -1 ? undefined : argv[folderAt + 1];
+    process.exitCode = await modelsFetch(model, {
+      repoPath: config.repoPath,
+      log,
+      principal: cardStore.localPrincipal(),
+      ...(folder ? { folder } : {}),
+      registry: modelRegistry(),
+    });
+    return;
+  }
+
   if ((WAVE2_COMMANDS as readonly string[]).includes(config.command)) {
     // goal, decide, m0, qualify, improve, skills, release, ci (wave2.ts).
     const cmd = config.command as Wave2Command;
@@ -822,10 +896,18 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       const i = rest.indexOf(name);
       return i === -1 ? undefined : rest[i + 1];
     };
+    // Models rule 20b (MD-N3-4/5): the queued overnight benchmark runs before
+    // the queue when a person put it first, after it otherwise, only inside
+    // the overnight window; one service for both phases.
+    const { BenchmarkService, defaultBenchmarkEnv } = await import("./benchmark_cmd.js");
+    const nightBench = new BenchmarkService(
+      defaultBenchmarkEnv({ repoPath: config.repoPath, log, cardStore }),
+    );
     const summary = await runOvernight({
       repoPath: config.repoPath,
       log,
       cardStore,
+      benchmark: (phase) => nightBench.runNight(phase, { say: (l) => console.log(l) }),
       hours: cfg.machine.hours,
       limits: {
         kwhPerDay: cfg.machine.powerBudgetKwhDay,
@@ -843,9 +925,11 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         // Worker profile), with an `ollama/` prefix stripped as the queue does.
         // A managed name resolves to the model it serves (B1 Tier 3 run).
         const modelId = resolveWorkerModelId(
-          flag("--worker") ??
-            queueDefaults(effectiveConfig(config.repoPath, argv).config, argv).worker ??
-            NAIL_WORKER_PROFILE.modelId,
+          resolveWorkerName(
+            flag("--worker"),
+            queueDefaults(effectiveConfig(config.repoPath, argv).config, argv).worker,
+            { registry: modelRegistry() },
+          ),
         );
         const quant = new ModelRegistry(defaultRegistryPath()).get(modelId)?.quant ?? "unknown";
         return { modelId, quant };
@@ -853,10 +937,11 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       // RUN-18a: the night owns the Worker's server; every round attaches to it.
       ...(() => {
         try {
-          const name =
-            flag("--worker") ??
-            queueDefaults(effectiveConfig(config.repoPath, argv).config, argv).worker ??
-            NAIL_WORKER_PROFILE.modelId;
+          const name = resolveWorkerName(
+            flag("--worker"),
+            queueDefaults(effectiveConfig(config.repoPath, argv).config, argv).worker,
+            { registry: modelRegistry() },
+          );
           const held = nightModelServer(
             describeModel(name, "worker", { registry: modelRegistry() }),
           );
@@ -872,16 +957,53 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
   }
 
   if (config.command === "trust") {
-    // `sekhemet dev trust [--yes]` (S9, items 38–40): exactly what the
-    // repository's configuration would run outside the sandbox, then the
-    // person's yes, recorded in the user directory by each file's SHA-256.
+    // `sekhemet dev trust [--yes]` (S9, items 38–40; surface item 9, SUR-56):
+    // exactly what the repository would run — its configuration outside the
+    // sandbox, and the install, build and test a take-over or onboarding
+    // runs confined — then the person's yes, recorded in the user directory.
+    // `--approve <file>` approves another agent's configuration file by its
+    // SHA-256 (security item 38a, SEC-54). In the Team setup only an Admin may.
+    const principal = cardStore.localPrincipal();
+    const authority = trustAuthorityFor(db, principal);
+    if (argv.includes("--approve")) {
+      const file = argv[argv.indexOf("--approve") + 1];
+      if (!file || !agentConfigFiles(config.repoPath).includes(file)) {
+        console.error(
+          `Usage: sekhemet dev trust --approve <file>, one of: ${agentConfigFiles(config.repoPath).join(", ") || "(none here)"}`,
+        );
+        process.exitCode = 2;
+        return;
+      }
+      try {
+        const approved = approveAgentConfig(config.repoPath, [file], principal, authority);
+        await recordAgentConfigApprovals(cardStore, config.repoPath, approved, principal);
+        console.log(
+          `Approved ${file} as it is now (sha256 ${approved[0]?.sha256.slice(0, 12)}); any change unapproves it.`,
+        );
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exitCode = 1;
+      }
+      return;
+    }
     const files = untrustedFiles(config.repoPath);
-    if (files.length === 0) {
+    const workspace = isWorkspaceTrusted(config.repoPath);
+    if (files.length === 0 && workspace) {
       console.log("Nothing in this repository waits for your trust.");
       return;
     }
-    console.log("This repository's configuration would run code outside the sandbox:");
-    for (const line of describeUntrusted(config.repoPath, files)) console.log(line);
+    if (files.length) {
+      console.log("This repository's configuration would run code outside the sandbox:");
+      for (const line of describeUntrusted(config.repoPath, files)) console.log(line);
+    }
+    if (!workspace) {
+      // Review M2: the gates the baseline will run, from the file it loads —
+      // a repository-shipped gates.toml is listed as the repository's.
+      const { trustPlanLines } = await import("./takeover.js");
+      console.log("Trusting it lets Sekhemet run, confined and with no network:");
+      for (const l of trustPlanLines(config.repoPath)) console.log(`   ${l}`);
+      console.log("   and its language servers.");
+    }
     let yes = argv.includes("--yes");
     if (!yes && process.stdin.isTTY && process.stdout.isTTY) {
       const { createInterface } = await import("node:readline/promises");
@@ -896,7 +1018,13 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       process.exitCode = 1;
       return;
     }
-    const principal = cardStore.localPrincipal();
+    try {
+      if (!workspace) trustWorkspace(config.repoPath, principal, authority);
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exitCode = 1;
+      return;
+    }
     const trusted = trustFiles(config.repoPath, files, principal);
     // The decision on the ledger too: who trusted what, by SHA-256 (item 39).
     await cardStore.recordLedgerEvent({
@@ -906,8 +1034,46 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       payload: { principal, files: trusted },
     });
     console.log(
-      `Trusted ${files.length} file(s) as they are now; any change to one untrusts it again.`,
+      `Trusted${workspace ? "" : " this repository and"} ${files.length} file(s) as they are now; any change to one untrusts it again.`,
     );
+    return;
+  }
+
+  if (config.command === "take-over") {
+    // `sekhemet dev take-over [--yes]` (design-stage §2.10 steps 1–3,
+    // NEW-design-stage-6): trust first, recon without a model, and — once
+    // trusted — install with scripts off, build and the suite twice, confined.
+    const { runTakeover } = await import("./takeover.js");
+    const report = await runTakeover(config.repoPath, {
+      store: cardStore,
+      log,
+      principal: cardStore.localPrincipal(),
+      ...(config.restrictedMode ? { restricted: true } : {}),
+      researchAllowed: effectiveConfig(config.repoPath).config.network.mode !== "offline",
+    });
+    if (!report.trusted) {
+      console.log(
+        "Trust it with `sekhemet dev trust` to run the install, build and tests above, then take it over again.",
+      );
+    }
+    return;
+  }
+
+  if (config.command === "ask") {
+    // `sekhemet ask "<question>"` (surface item 16a, NEW-surface-6; O23
+    // approved under DEC-42): Seshat's thread, from the terminal.
+    const { runAsk } = await import("./ask_cmd.js");
+    // The words after `ask`, up to the first flag.
+    const rest = argv.slice(argv.indexOf("ask") + 1);
+    const firstFlag = rest.findIndex((a) => a.startsWith("-"));
+    const question = (firstFlag === -1 ? rest : rest.slice(0, firstFlag)).join(" ");
+    process.exitCode = await runAsk(question, {
+      repoPath: config.repoPath,
+      cardStore,
+      pmStore: new PmStore(log),
+      pmModel: DEFAULT_PM_MODEL,
+      acquire: pmModelFor(DEFAULT_PM_MODEL, modelRegistry(), log),
+    });
     return;
   }
 
@@ -1002,8 +1168,14 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       repoPath: config.repoPath,
       port: config.port,
     });
-    const url = `http://127.0.0.1:${server.port}/#/board`;
-    console.log(`Sekhemet board: ${url}  (Ctrl+C to stop; --terminal for the text board)`);
+    const url = `http://127.0.0.1:${server.port}/#/${homePage}`;
+    console.log(
+      homePage === "configuration"
+        ? `Sekhemet Configuration: ${url}  (no model is set up yet; Ctrl+C to stop)`
+        : `Sekhemet board: ${url}  (Ctrl+C to stop; --terminal for the text board)`,
+    );
+    // Surface item 7: --yes prints the address and never opens a browser.
+    if (argv.includes("--yes")) return;
     const opener =
       process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
     spawn(opener, [url], { stdio: "ignore", detached: true })
@@ -1345,16 +1517,16 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       process.exitCode = 1;
       return;
     }
-    const kind = detectGateTemplate(config.repoPath);
-    const gates = gateTemplate(config.repoPath, kind);
-    if (!gates) {
+    // The one gate deriver (surface item 5.3, P10), as the first run uses.
+    const derived = deriveGates(config.repoPath);
+    if (derived.defs.length === 0) {
       console.error("No manifest recognised (package.json, pyproject.toml, Cargo.toml, go.mod).");
       process.exitCode = 1;
       return;
     }
     mkdirSync(dirname(target), { recursive: true });
-    writeFileSync(target, renderGatesToml(gates));
-    console.log(`Wrote ${target} (${kind}: ${gates.map((g) => g.id).join(", ")}).`);
+    writeFileSync(target, derived.toml);
+    console.log(`Wrote ${target} (${derived.gates.join("; ")}).`);
     return;
   }
 
@@ -1616,6 +1788,13 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       console.error(`Card not found: ${cardId}`);
       process.exit(1);
     }
+    // SUR-12: a derived test gate that cannot start stops the run, naming the file.
+    const cannotStart = gateStartStop(config.repoPath);
+    if (cannotStart.length) {
+      for (const line of cannotStart) console.error(line);
+      process.exitCode = 1;
+      return;
+    }
 
     // One recorded RunProfile (measurement MS-M9-4/5): resolved once from the
     // settings file, the experiment switches and the flags, written into the
@@ -1680,7 +1859,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         {
           queue: "worker",
           role: "worker",
-          name: roleModelName("worker", workerName, { registry }) ?? NAIL_WORKER_PROFILE.modelId,
+          name: roleModelName("worker", workerName, { registry }) ?? defaultWorkerName(),
         },
       ],
       { registry, ledger: log },
@@ -1819,6 +1998,14 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       process.exitCode = 2;
       return;
     }
+    // SUR-12: a derived test gate that cannot start stops the run before any
+    // card, naming the file to edit — rather than failing every card on it.
+    const queueCannotStart = gateStartStop(config.repoPath);
+    if (queueCannotStart.length) {
+      for (const line of queueCannotStart) console.error(line);
+      process.exitCode = 1;
+      return;
+    }
     // Smart Swap this run (measurement rule 16d, models rule 20b): a
     // measurement run in a marked repository (the frozen suite, a bake-off),
     // a calibration night only when the owner permits loads, else live.
@@ -1912,7 +2099,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     try {
       // MD-N8-1: the Worker's combination must have qualified on this host;
       // resolving it builds the adapter without starting a server.
-      const workerName = workerModel ?? NAIL_WORKER_PROFILE.modelId;
+      const workerName = workerModel ?? defaultWorkerName();
       const registry = modelRegistry();
       const workerProbe = describeModel(workerName, "worker", { registry });
       const gate = gateWorker(registry, workerProbe, workerName);
@@ -1923,7 +2110,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         readyRaw,
         {
           workerRefusal: gate.refusal,
-          workerModelId: workerModel ?? NAIL_WORKER_PROFILE.modelId,
+          workerModelId: workerModel ?? defaultWorkerName(),
           reviewWip: (await boardService.getBoardState()).wipLimits.review,
         },
       ));
@@ -1937,7 +2124,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     }
     if (workerOverride) {
       console.log(
-        `Worker ${workerModel ?? NAIL_WORKER_PROFILE.modelId}: ${describeOverride(workerOverride)}`,
+        `Worker ${workerModel ?? defaultWorkerName()}: ${describeOverride(workerOverride)}`,
       );
     }
 
@@ -1954,7 +2141,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     const cache = new PrefixCacheMonitor();
     const router = ModelAccess.forQueues(
       [
-        { queue: "worker", role: "worker", name: workerModel ?? NAIL_WORKER_PROFILE.modelId },
+        { queue: "worker", role: "worker", name: workerModel ?? defaultWorkerName() },
         // The Planner doubles as the PM you chat with during the run.
         { queue: "manager", role: "planner", name: pmModelName },
         // Seshat answering a person: the same weights, the interactive class
@@ -2077,7 +2264,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     queueLive.current = () => ({
       pmModel,
       roster: [
-        { role: "worker", model: workerModel ?? NAIL_WORKER_PROFILE.modelId },
+        { role: "worker", model: workerModel ?? defaultWorkerName() },
         { role: "manager", model: pmModel },
         ...(reviewerModel ? [{ role: "reviewer" as const, model: reviewerModel }] : []),
         ...(researcherModel ? [{ role: "researcher" as const, model: researcherModel }] : []),
@@ -2345,7 +2532,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     const failed: { card: CardRecord; result: Awaited<ReturnType<typeof executeCard>> }[] = [];
     let halted = false;
 
-    let workerModelId = workerModel ?? NAIL_WORKER_PROFILE.modelId;
+    let workerModelId = workerModel ?? defaultWorkerName();
     // --max-turns caps every card's step budget (the tuner's recommendation).
     const escalateRetries = argv.includes("--escalate-retries");
     if (argv.includes("--explore")) {
@@ -2703,14 +2890,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
             record: (e) => {
               log.appendNow({ actor: "harness", type: e.type, payload: e.payload });
             },
-            runnerHolder: () => {
-              const marker = readMeasurementMarker(config.repoPath);
-              return marker
-                ? marker.purpose === "frozen suite"
-                  ? "suite"
-                  : "measurement"
-                : undefined;
-            },
+            runnerHolder: () => measurementHolder(readMeasurementMarker(config.repoPath)),
             host: () =>
               calibrationHostReading({
                 swapUsedBytes: readSwapUsedBytes() ?? 0,
@@ -2720,12 +2900,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
               }),
             models: [
               ...new Set(
-                [
-                  workerModel ?? NAIL_WORKER_PROFILE.modelId,
-                  pmModelName,
-                  researcherModel,
-                  reviewerModel,
-                ]
+                [workerModel ?? defaultWorkerName(), pmModelName, researcherModel, reviewerModel]
                   .filter((m): m is string => Boolean(m))
                   .map((m) => weightsKey(m)),
               ),
@@ -2994,6 +3169,12 @@ function printFrontDoorHelp(): void {
 /** Every other command, for whoever develops the harness itself. */
 function printDevHelp(): void {
   const lines: [string, string][] = [
+    ["board [--terminal]", "The board (the bare `sekhemet` opens it; --terminal for text)"],
+    ["take-over", "Take over an unfinished project: trust, recon, then what runs"],
+    [
+      "trust [--yes] | trust --approve <file>",
+      "Trust this repository; approve another agent's config file",
+    ],
     ["plan <spec>", "Decompose a spec into cards without running them"],
     ["queue [--worker m] [--manager m]", "Run Ready cards"],
     ["resume <card>", "Continue a card that stopped part-way"],
@@ -3019,27 +3200,44 @@ function printDevHelp(): void {
   console.log(`\n${CRAWL4AI_CREDIT}`);
 }
 
+/** Where the next `board` opens and whether a browser may be opened (surface items 5b, 7). */
+let homePage: "board" | "configuration" = "board";
+
 /**
- * `sekhemet` with nothing after it is the product: derive the gates on first
- * run, say in one paragraph what it will use, then open the board.
+ * `sekhemet` with nothing after it is the product (surface items 5–8, P10):
+ * on first run — no `.sekhemet/config.toml` — the one first run of
+ * `first_run.ts`; then the board, or the Configuration page while no
+ * role's weights are found (item 5b). `--yes` never opens a browser.
  */
 async function openHome(flags: string[]): Promise<void> {
   const { repoPath } = parseCliArgs(flags);
-  const gatesFile = join(repoPath, ".sekhemet", "gates.toml");
-  const firstRun = !existsSync(gatesFile);
-  if (firstRun) await main(["gates", "init", ...flags]);
-  let gates = "none yet";
-  try {
-    gates =
-      loadGatesConfig(repoPath)
-        .gates.map((g) => g.id)
-        .join(", ") || gates;
-  } catch {
-    // An unreadable gates.toml is reported by doctor, not here.
+  const modelsDir = flags.includes("--models-dir")
+    ? flags[flags.indexOf("--models-dir") + 1]
+    : undefined;
+  const findRoleWeights = await roleWeightsFinder(modelsDir);
+  const yes = flags.includes("--yes");
+  if (!existsSync(join(repoPath, ".sekhemet", "config.toml"))) {
+    const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+    const out = await runFirstRun(repoPath, {
+      findRoleWeights,
+      yes,
+      interactive,
+      ask: async (q) => {
+        const { createInterface } = await import("node:readline/promises");
+        const rl = createInterface({ input: process.stdin, output: process.stdout });
+        const answer = (await rl.question(q)).trim();
+        rl.close();
+        return answer === "" || /^y(es)?$/i.test(answer);
+      },
+    });
+    if (out.code !== 0) {
+      process.exitCode = out.code;
+      return;
+    }
+    homePage = out.opens ?? "board";
+  } else {
+    homePage = await homeDestination(findRoleWeights);
   }
-  console.log(
-    `${firstRun ? "Set up. " : ""}Gates: ${gates}.\nReady. Ask for work with: sekhemet "add rate limiting to the API"`,
-  );
   return main(["board", ...flags]);
 }
 

@@ -10,6 +10,7 @@ import {
   type SuiteRunResult,
   type TaskHistory,
   type Trajectory,
+  bakeOffEvidence,
   checkSkillCandidate,
   distillSkill,
   mineToolProposals,
@@ -536,12 +537,14 @@ export async function runWave2Command(
       return airgapCommand(k.repoPath, args, { log: k.log, registry: modelRegistry(), print });
     }
     case "onboard": {
-      // `sekhemet onboard [--apply] [--models a,b] [--no-baseline]` (X1): the
+      // `sekhemet onboard [--apply [--yes]] [--models a,b] [--no-baseline]` (X1): the
       // eight steps, the last the onboarding baseline (gates rule 15a).
       const { runOnboard } = await import("./onboard.js");
       const names = (flag(args, "--models") ?? "").split(",").filter(Boolean);
       await runOnboard(k.repoPath, {
         apply: args.includes("--apply"),
+        // SUR-7: a different live gates.toml is replaced only with --yes, after its diff.
+        confirm: args.includes("--yes"),
         baseline: !args.includes("--no-baseline"),
         store: { log: k.log, cardStore: k.cardStore },
         say: print,
@@ -846,15 +849,17 @@ export async function runWave2Command(
         const found = (await k.log.getEventsByTypes(["measure/benchmarked"])).find(
           (e) => e.id === bakeOffId,
         );
-        const p = found?.payload as Partial<BakeOffEvidence> | undefined;
+        const p = found?.payload as { tier?: string; host?: string } | undefined;
         if (!found || !p) return done(`No recorded benchmark ${bakeOffId} on this ledger.`, 1);
-        bakeOff = {
+        // A finished overnight role on its full set is the evidence; anything
+        // else (a quick screen, a partial night) is refused by assignRole.
+        bakeOff = bakeOffEvidence(found, role) ?? {
           id: found.id,
           host: String(p.host ?? ""),
-          role: (p.role ?? "worker") as AssignedRole,
-          model: String(p.model ?? ""),
+          role,
+          model: "",
           tier: p.tier === "overnight" ? "overnight" : "quick",
-          evaluationSet: String(p.evaluationSet ?? ""),
+          evaluationSet: "",
           date: found.createdAt,
         };
       }

@@ -167,7 +167,7 @@ function decisionPolicy(context: string): string | undefined {
 const ACCEPTING_ACTORS = new Set(["human"]);
 
 /** The measurement marker's purposes (`@sekhemet/eval`'s `MeasurementMarker`). */
-const MEASUREMENT_PURPOSES = new Set(["frozen suite", "m0"]);
+const MEASUREMENT_PURPOSES = new Set(["frozen suite", "m0", "benchmark"]);
 
 /**
  * Columns a card only reaches by having passed its gates (B12).
@@ -618,7 +618,7 @@ export class BoardServiceImpl implements BoardService {
     t: { cardId: string; toStatus: CardStatus; reason: string },
     marker: { purpose: string } | undefined,
   ): Promise<void> {
-    if (!marker || (marker.purpose !== "frozen suite" && marker.purpose !== "m0")) {
+    if (!marker || !MEASUREMENT_PURPOSES.has(marker.purpose)) {
       throw new TransitionRefusedError(
         "override_forbidden",
         t.cardId,

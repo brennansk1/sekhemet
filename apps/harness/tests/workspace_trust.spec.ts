@@ -1,6 +1,14 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { skillSha256 } from "@sekhemet/context";
@@ -11,6 +19,7 @@ import { loadMcpConfig } from "../src/mcp_client.js";
 import { hookEngineFor } from "../src/user_hooks.js";
 import {
   describeUntrusted,
+  gatedFiles,
   loadRepoSkills,
   setInvocationTrust,
   trustFiles,
@@ -169,5 +178,30 @@ describe("S9: workspace trust", () => {
     expect(skills.getSkill("deploy")).toBeUndefined();
     expect(skills.rejected().map((r) => r.action)).toEqual(["rejected_changed"]);
     expect(await fireCardStart()).toBe(0);
+  });
+});
+
+// B4.1 half-A fix round (minor): the skill-script walk never follows a
+// symbolic link — a loop or a dangling link is listed as itself, never
+// descended into, and never throws.
+describe("the trust walk over skill scripts does not follow symbolic links", () => {
+  it("lists a looping and a dangling link as themselves, describes and trusts without throwing", () => {
+    const scripts = join(repo, ".sekhemet", "skills", "deploy", "scripts");
+    symlinkSync(".", join(scripts, "loop"));
+    symlinkSync(join(repo, "nowhere"), join(scripts, "dangling"));
+    const skill = join(".sekhemet", "skills", "deploy", "scripts");
+    expect(gatedFiles(repo)).toEqual([
+      join(".sekhemet", "hooks.toml"),
+      join(".sekhemet", "mcp.json"),
+      join(skill, "dangling"),
+      join(skill, "loop"),
+      join(skill, "run.sh"),
+    ]);
+    const described = describeUntrusted(repo).join("\n");
+    expect(described).toMatch(/dangling — a symbolic link to .*nowhere, never followed/);
+    expect(described).toMatch(/loop — a symbolic link to \., never followed/);
+    const trusted = trustFiles(repo, untrustedFiles(repo), "p_owner");
+    expect(trusted.map((t) => t.path)).toContain(".sekhemet/skills/deploy/scripts/dangling");
+    expect(untrustedFiles(repo)).toEqual([]);
   });
 });
