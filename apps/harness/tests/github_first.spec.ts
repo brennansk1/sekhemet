@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { generateKeyPairSync } from "node:crypto";
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -33,12 +34,22 @@ import {
   recordReviewOpened,
 } from "../src/accept.js";
 import { suggestedAccepters } from "../src/codeowners.js";
-import { reviewPosterFromEnv } from "../src/external_review.js";
+import { reviewPosterFromEnv, runExternalReview } from "../src/external_review.js";
 import { egressRecorder, integrationFetch } from "../src/github_transport.js";
 import { exportBoard, listIntegrations, syncGithub, writeSettings } from "../src/integrations.js";
-import { recordLedgerRun } from "../src/ledger_evidence.js";
-import { advanceOpenPullRequests, syncViaAdapter } from "../src/wave2_github.js";
-import { applyWebhookIntent, handleWave2Route } from "../src/wave2_server.js";
+import { cardBranchHead, ledgerEvidenceSummary, recordLedgerRun } from "../src/ledger_evidence.js";
+import {
+  advanceOpenPullRequests,
+  mirrorAgentStatuses,
+  runDependencyVerifications,
+  syncViaAdapter,
+} from "../src/wave2_github.js";
+import {
+  applyWebhookIntent,
+  detectDeliveryGaps,
+  handleWave2Route,
+  startGithubSync,
+} from "../src/wave2_server.js";
 
 /**
  * integrations P9 and NEW-integrations-2, with review-git RG-N5-3/-4, end to
@@ -115,10 +126,31 @@ function binWithoutGh(): string {
 
 interface Api {
   url: string;
-  seen: { method: string; url: string; body: unknown }[];
+  seen: { method: string; url: string; body: unknown; auth?: string }[];
   issues: Map<number, Record<string, unknown>>;
   edit: (n: number, patch: Record<string, unknown>) => void;
+  /** Projects v2: each project's Status options, and the issues on it (INT-20b). */
+  projects: { id: string; options: string[]; items: Map<number, string | undefined> }[];
+  /** Each Status set, as "<project>:<option>", in order. */
+  statusLog: string[];
+  /** The App's webhook delivery log, newest first (INT-11b). */
+  deliveries: Record<string, unknown>[];
+  /** The check runs on any head (INT-12b, INT-37). */
+  checkRuns: Record<string, unknown>[];
+  /** A pull request's head as GitHub holds it (INT-16a). */
+  prHeads: Map<number, string>;
+  /** A pull request's author and head repository; a same-repository Dependabot PR when unset (M1). */
+  prMeta: Map<number, { login: string; type: string; headRepo: string }>;
 }
+
+/** A GraphQL query, as the fake reads it: a read, not a write. */
+const isGraphqlRead = (s: { url: string; body: unknown }) =>
+  s.url === "/api/graphql" && /^\s*query/.test(String((s.body as { query?: string })?.query));
+/** The GraphQL issue-page queries a sync sent (INT-11c). */
+const issuePages = (api: Api) =>
+  api.seen.filter(
+    (s) => isGraphqlRead(s) && /issues\(first:/.test(String((s.body as { query: string }).query)),
+  );
 
 /** GitHub's REST API for o/r under GHES paths (`/api/v3`), issues held in memory. */
 async function fakeGitHub(): Promise<Api> {
@@ -130,6 +162,13 @@ async function fakeGitHub(): Promise<Api> {
     return new Date(clock).toISOString();
   };
   const seen: Api["seen"] = [];
+  const projects: Api["projects"] = [];
+  const statusLog: string[] = [];
+  const deliveries: Api["deliveries"] = [];
+  const checkRuns: Api["checkRuns"] = [{ status: "completed", conclusion: "success" }];
+  const prHeads = new Map<number, string>();
+  const prMeta: Api["prMeta"] = new Map();
+  let points = 0;
   let next = 100;
   const make = (n: number, fields: Record<string, unknown>) => ({
     ...fixture("issue.json"),
@@ -149,12 +188,120 @@ async function fakeGitHub(): Promise<Api> {
     req.on("end", () => {
       const body = raw ? JSON.parse(raw) : undefined;
       const url = req.url ?? "";
-      seen.push({ method: req.method ?? "", url, body });
-      const send = (status: number, json: unknown) => {
-        res.writeHead(status, { "content-type": "application/json" });
+      seen.push({
+        method: req.method ?? "",
+        url,
+        body,
+        auth: String(req.headers.authorization ?? ""),
+      });
+      const send = (status: number, json: unknown, graphql = false) => {
+        // GitHub meters REST and GraphQL apart, and says which in its headers.
+        res.writeHead(status, {
+          "content-type": "application/json",
+          "x-ratelimit-resource": graphql ? "graphql" : "core",
+          "x-ratelimit-limit": "5000",
+          "x-ratelimit-remaining": graphql ? String(5000 - points) : "4990",
+        });
         res.end(JSON.stringify(json));
       };
       const path = url.replace(/\?.*$/, "");
+      if (req.method === "POST" && path === "/api/graphql") {
+        const q = String((body as { query?: string }).query ?? "");
+        const vars = ((body as { variables?: Record<string, unknown> }).variables ?? {}) as Record<
+          string,
+          unknown
+        >;
+        points += 1;
+        const rateLimit = { cost: 1, limit: 5000, remaining: 5000 - points, used: points };
+        if (/issues\(first:/.test(q)) {
+          const since = Date.parse(String(vars.since ?? "1970-01-01"));
+          const nodes = [...issues.values()]
+            .filter((i) => Date.parse(String(i.updated_at)) >= since)
+            .map((i) => ({
+              number: i.number,
+              url: i.html_url,
+              title: i.title,
+              body: i.body ?? null,
+              state: i.state === "closed" ? "CLOSED" : "OPEN",
+              updatedAt: i.updated_at,
+              closedAt: i.closed_at ?? null,
+              assignees: { nodes: i.assignee ? [i.assignee] : [] },
+              labels: {
+                nodes: ((i.labels as { name: string }[]) ?? []).map((l) => ({ name: l.name })),
+              },
+              parent: null,
+              subIssues: {
+                nodes: ((i.sub_issues as number[]) ?? []).map((n) => ({ number: n })),
+              },
+            }));
+          return send(
+            200,
+            {
+              data: {
+                rateLimit,
+                repository: {
+                  issues: { pageInfo: { hasNextPage: false, endCursor: null }, nodes },
+                },
+              },
+            },
+            true,
+          );
+        }
+        if (/projectItems/.test(q)) {
+          const n = Number(vars.n);
+          const nodes = projects
+            .filter((p) => p.items.has(n))
+            .map((p) => ({
+              id: `${p.id}:item:${n}`,
+              project: {
+                id: p.id,
+                field: {
+                  id: `${p.id}:status`,
+                  options: p.options.map((o) => ({ id: `${p.id}:${o}`, name: o })),
+                },
+              },
+            }));
+          return send(200, { data: { repository: { issue: { projectItems: { nodes } } } } }, true);
+        }
+        if (/updateProjectV2ItemFieldValue/.test(q)) {
+          const p = projects.find((x) => x.id === vars.p);
+          const option = String(vars.o).slice(`${String(vars.p)}:`.length);
+          const n = Number(String(vars.i).split(":item:")[1]);
+          p?.items.set(n, option);
+          statusLog.push(`${String(vars.p)}:${option}`);
+          return send(
+            200,
+            { data: { updateProjectV2ItemFieldValue: { projectV2Item: {} } } },
+            true,
+          );
+        }
+        return send(200, { data: {} }, true);
+      }
+      if (
+        req.method === "POST" &&
+        /^\/api\/v3\/app\/installations\/\d+\/access_tokens$/.test(path)
+      ) {
+        return send(201, {
+          token: "ghs_installation",
+          expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+        });
+      }
+      if (req.method === "GET" && path === "/api/v3/app/hook/deliveries") {
+        return send(200, deliveries);
+      }
+      const pull = /^\/api\/v3\/repos\/o\/r\/pulls\/(\d+)$/.exec(path);
+      if (pull && req.method === "GET") {
+        const n = Number(pull[1]);
+        const meta = prMeta.get(n) ?? { login: "dependabot[bot]", type: "Bot", headRepo: "o/r" };
+        return send(200, {
+          number: n,
+          node_id: `PR_${n}`,
+          html_url: `https://github.com/o/r/pull/${n}`,
+          user: { login: meta.login, type: meta.type },
+          head: { sha: prHeads.get(n) ?? "0".repeat(40), repo: { full_name: meta.headRepo } },
+          base: { ref: "main", repo: { full_name: "o/r" } },
+        });
+      }
       if (req.method === "GET" && path === "/api/v3/repos/o/r/issues") {
         // As GitHub does: only issues updated at or after `since`.
         const since = Date.parse(
@@ -207,9 +354,8 @@ async function fakeGitHub(): Promise<Api> {
         return send(200, { login: "jane-gh", id: 7, type: "User" });
       }
       if (req.method === "GET" && /^\/api\/v3\/repos\/o\/r\/commits\/\w+\/check-runs$/.test(path)) {
-        return send(200, { check_runs: [{ status: "completed", conclusion: "success" }] });
+        return send(200, { total_count: checkRuns.length, check_runs: checkRuns });
       }
-      if (req.method === "POST" && path === "/api/graphql") return send(200, { data: {} });
       if (req.method === "POST" && /\/pulls\/\d+\/requested_reviewers$/.test(path)) {
         return send(201, {});
       }
@@ -231,6 +377,12 @@ async function fakeGitHub(): Promise<Api> {
     url,
     seen,
     issues,
+    projects,
+    statusLog,
+    deliveries,
+    checkRuns,
+    prHeads,
+    prMeta,
     edit: (n, patch) => {
       const cur = issues.get(n) ?? make(n, {});
       issues.set(n, { ...cur, ...patch, updated_at: tick() });
@@ -455,7 +607,9 @@ describe("B2: logins and issue text stay off the chain", () => {
 });
 
 describe("M6: the sync's direction is honoured", () => {
-  const writes = (api: Api) => api.seen.filter((s) => s.method !== "GET").length;
+  // A GraphQL query is a read, though it is a POST (INT-11c).
+  const writes = (api: Api) =>
+    api.seen.filter((s) => s.method !== "GET" && !isGraphqlRead(s)).length;
 
   it("pull takes the tracker's changes, pushes nothing and opens no issue", async () => {
     const api = await fakeGitHub();
@@ -593,10 +747,12 @@ describe("INT-3/4/5/7: the sync is idempotent and merges three ways", () => {
     await store.createCard({ tier: "task", title: "Board card", spec: "From the board." });
     const first = await syncGithub(repo, store, "both", log);
     expect(first.created).toBe(2); // one pulled, one pushed
-    const writes = api.seen.filter((s) => s.method !== "GET").length;
+    // A GraphQL query is a read, though it is a POST (INT-11c).
+    const writeCount = () => api.seen.filter((s) => s.method !== "GET" && !isGraphqlRead(s)).length;
+    const writes = writeCount();
     const second = await syncGithub(repo, store, "both", log);
     expect(second).toMatchObject({ created: 0, updated: 0, errors: [] });
-    expect(api.seen.filter((s) => s.method !== "GET").length).toBe(writes);
+    expect(writeCount()).toBe(writes);
     expect(await conflicts()).toBe(0);
   });
 
@@ -704,7 +860,9 @@ describe("NEW-integrations-2: owner and delegate on GitHub; independence from th
     await store.changeOwner(card.id, alice, alice);
     await store.delegateCard(card.id, { kind: "worker" }, alice);
     await syncGithub(repo, store, "both", log);
-    const created = api.seen.find((s) => s.method === "POST")?.body as {
+    const created = api.seen.find(
+      (s) => s.method === "POST" && s.url === "/api/v3/repos/o/r/issues",
+    )?.body as {
       assignees: string[];
       labels: string[];
     };
@@ -911,7 +1069,7 @@ describe("INT-12/12a/15/39: Accept opens a draft pull request and the card waits
     expect(await advanceOpenPullRequests(repo, store, log)).toEqual([
       { number: 5, state: "ready" },
     ]);
-    const ready = api.seen.find((s) => s.url === "/api/graphql");
+    const ready = api.seen.find((s) => s.url === "/api/graphql" && !isGraphqlRead(s));
     expect(JSON.stringify(ready?.body)).toContain("markPullRequestReadyForReview");
     expect(api.seen.find((s) => s.url.endsWith("/requested_reviewers"))?.body).toEqual({
       reviewers: ["alice-gh"],
@@ -921,6 +1079,63 @@ describe("INT-12/12a/15/39: Accept opens a draft pull request and the card waits
     const asked = api.seen.length;
     expect(await advanceOpenPullRequests(repo, store, log)).toEqual([]);
     expect(api.seen.length).toBe(asked);
+  });
+
+  it("M4: a declared blocking check not passing at the PR's current head keeps it from ready and from auto-merge", async () => {
+    const api = await fakeGitHub();
+    vi.stubEnv("SEKHEMET_GITHUB_HOST", api.url);
+    vi.stubEnv("SEKHEMET_GITHUB_AUTOMERGE", "1");
+    write(
+      repo,
+      ".sekhemet/config.toml",
+      '[review]\nintegration_branch = "develop"\nremote = "upstream"\nblocking_checks = ["ci/build"]\n',
+    );
+    await inReview("p8", { "src/b.ts": "export const b = 2;\n" });
+    await opened("p8");
+    await acceptCard(ctx(), await must("p8"));
+    const head = "ec26c3e57ca3a959ca5aad62de7213c562f8c821";
+    api.prHeads.set(5, head);
+    const writes = () => api.seen.filter((s) => s.url === "/api/graphql" && !isGraphqlRead(s));
+    const own = {
+      name: "sekhemet/unit",
+      status: "completed",
+      conclusion: "success",
+      head_sha: head,
+    };
+    const build = (conclusion: string, at: string, n: number) => ({
+      name: "ci/build",
+      status: "completed",
+      conclusion,
+      head_sha: at,
+      html_url: `https://ci.example.test/run/${n}`,
+    });
+    // Declared but not reported: every run there is passes, and still it waits.
+    api.checkRuns.splice(0, api.checkRuns.length, own);
+    expect(await advanceOpenPullRequests(repo, store, log)).toEqual([
+      { number: 5, state: "waiting" },
+    ]);
+    // Declared and failing.
+    api.checkRuns.splice(0, api.checkRuns.length, own, build("failure", head, 1));
+    expect(await advanceOpenPullRequests(repo, store, log)).toEqual([
+      { number: 5, state: "failing" },
+    ]);
+    // Passing at the head Sekhemet opened, but the PR's head has moved: no evidence for it.
+    const moved = "f".repeat(40);
+    api.prHeads.set(5, moved);
+    api.checkRuns.splice(0, api.checkRuns.length, own, build("success", head, 2));
+    expect(await advanceOpenPullRequests(repo, store, log)).toEqual([
+      { number: 5, state: "waiting" },
+    ]);
+    expect(writes()).toEqual([]);
+    // Passing at the current head: ready, and auto-merge pinned to that head.
+    api.prHeads.set(5, head);
+    expect(await advanceOpenPullRequests(repo, store, log)).toEqual([
+      { number: 5, state: "auto_merge" },
+    ]);
+    const merge = writes().find((s) =>
+      /enablePullRequestAutoMerge/.test(String((s.body as { query?: string }).query)),
+    );
+    expect((merge?.body as { variables: unknown }).variables).toMatchObject({ id: "PR_5", head });
   });
 
   it("B1: offline, nothing is pushed: the API host is refused before any push, and the refusal names the setting", async () => {
@@ -1096,5 +1311,705 @@ describe("RG-N5-3/-4: CODEOWNERS suggest accepters, and may be required", () => 
     expect((err as Error).message).toContain(alice);
     await acceptCard(ctx(), await must("o1"), "human", { principal: alice });
     expect((await must("o1")).status).toBe("done");
+  });
+});
+
+// ------------------------------------------------------------- B4.9 part 2
+
+/** The App on the fake's GHES paths, with a real RSA key (INT-11b). */
+function useApp(api: Api): void {
+  const { privateKey } = generateKeyPairSync("rsa", {
+    modulusLength: 2048,
+    privateKeyEncoding: { type: "pkcs8", format: "pem" },
+    publicKeyEncoding: { type: "spki", format: "pem" },
+  });
+  writeFileSync(join(root, "app.pem"), privateKey);
+  vi.stubEnv("SEKHEMET_GITHUB_APP_ID", "1");
+  vi.stubEnv("SEKHEMET_GITHUB_INSTALLATION_ID", "2");
+  vi.stubEnv("SEKHEMET_GITHUB_APP_KEY_PATH", join(root, "app.pem"));
+  vi.stubEnv("SEKHEMET_GITHUB_REPO", "o/r");
+  vi.stubEnv("SEKHEMET_GITHUB_HOST", api.url);
+}
+
+/** The dashboard's webhook route on a port, and a signed POST to it. */
+async function hookRoute(secret: string, extra: { gapCheckEveryMs?: number } = {}) {
+  const { createHmac } = await import("node:crypto");
+  const server = createServer((req, res) => {
+    void handleWave2Route(req, res, req.url ?? "", {
+      repoPath: repo,
+      cardStore: store,
+      log,
+      json: (r, status, body) => r.writeHead(status).end(JSON.stringify(body)),
+      isTrustedMutation: () => false,
+      readJsonBody: async () => ({}),
+      webhookSecret: secret,
+      ...extra,
+    });
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  closers.push(() => new Promise<void>((r) => server.close(() => r())));
+  const port = (server.address() as AddressInfo).port;
+  return (event: string, delivery: string, payload: unknown) => {
+    const body = JSON.stringify(payload);
+    return new Promise<number>((resolve) => {
+      const req = request(
+        {
+          host: "127.0.0.1",
+          port,
+          method: "POST",
+          path: "/webhooks/github",
+          headers: {
+            "x-hub-signature-256": `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`,
+            "x-github-event": event,
+            "x-github-delivery": delivery,
+          },
+        },
+        (res) => {
+          res.resume();
+          res.on("end", () => resolve(res.statusCode ?? 0));
+        },
+      );
+      req.end(body);
+    });
+  };
+}
+
+describe("INT-11c: issues come a page at a time through GraphQL, on GraphQL's own budget", () => {
+  it("one query per page brings the issues with their labels and sub-issues; the budgets are apart", async () => {
+    const api = await fakeGitHub();
+    vi.stubEnv("SEKHEMET_GITHUB_HOST", api.url);
+    api.edit(40, { title: "Parent", labels: [{ name: "epic" }], sub_issues: [41, 42] });
+    api.edit(41, { title: "Child one" });
+    api.edit(42, { title: "Child two" });
+    const r = await syncGithub(repo, store, "pull", log);
+    expect(r.errors).toEqual([]);
+    expect(r.created).toBe(3);
+    // One GraphQL query for the page; no REST issue list and no call per issue.
+    expect(issuePages(api)).toHaveLength(1);
+    expect(api.seen.filter((s) => /\/issues(\/|\?|$)/.test(s.url) && s.method === "GET")).toEqual(
+      [],
+    );
+    expect((await byRef("o/r#40"))[0]?.labels).toEqual(["epic"]);
+    // The sub-issues arrived in the same query: the snapshot holds them.
+    const snap = (await log.getEventsByTypes(["sync/snapshot"])).find(
+      (e) => (e.payload as { ref: { id: string } }).ref.id === "o/r#40",
+    );
+    expect((snap?.private as { item: { subIssues: string[] } }).item.subIssues).toEqual([
+      "o/r#41",
+      "o/r#42",
+    ]);
+    // GraphQL's points are counted apart from REST's requests (the `gh` login's /user is REST).
+    expect(r.budget?.graphql).toMatchObject({ requests: 1, spent: 1, limit: 5000 });
+    expect(r.budget?.rest.requests).toBe(1);
+    expect(r.budget?.rest.remaining).toBe(4990);
+  });
+});
+
+describe("INT-11b: webhooks first; a pull only to catch up", () => {
+  it("at server start with a webhook route, one catch-up pull takes what changed while it was down, and nothing polls on a timer", async () => {
+    const api = await fakeGitHub();
+    vi.stubEnv("SEKHEMET_GITHUB_HOST", api.url);
+    api.edit(50, { title: "Before the restart" });
+    await syncGithub(repo, store, "both", log);
+    const [card] = await byRef("o/r#50");
+    api.edit(50, { title: "Edited while the server was down" });
+    vi.stubEnv("SEKHEMET_GITHUB_WEBHOOK_SECRET", "hook");
+    const pagesBefore = issuePages(api).length;
+    const sync = startGithubSync(repo, store, log, { mirrorEveryMs: 10 });
+    closers.push(async () => sync.stop());
+    await sync.started;
+    expect((await must(card?.id as string)).title).toBe("Edited while the server was down");
+    expect(issuePages(api).length).toBe(pagesBefore + 1);
+    const [caught] = await log.getEventsByTypes(["github/catch_up"]);
+    expect(caught?.payload).toMatchObject({ reason: "restart", created: 0, updated: 1, errors: 0 });
+    // The server runs on: no timer pulls the tracker.
+    await new Promise((r) => setTimeout(r, 200));
+    expect(issuePages(api).length).toBe(pagesBefore + 1);
+  });
+
+  it("without a webhook route, or before the project was ever synced, the server pulls nothing at start", async () => {
+    const api = await fakeGitHub();
+    vi.stubEnv("SEKHEMET_GITHUB_HOST", api.url);
+    api.edit(51, { title: "Never synced" });
+    vi.stubEnv("SEKHEMET_GITHUB_WEBHOOK_SECRET", "hook");
+    const first = startGithubSync(repo, store, log, { mirrorEveryMs: 10 });
+    await first.started;
+    first.stop();
+    expect(issuePages(api)).toHaveLength(0);
+    await syncGithub(repo, store, "both", log);
+    vi.stubEnv("SEKHEMET_GITHUB_WEBHOOK_SECRET", "");
+    const second = startGithubSync(repo, store, log, { mirrorEveryMs: 10 });
+    await second.started;
+    second.stop();
+    expect(issuePages(api)).toHaveLength(1);
+    expect(await log.getEventsByTypes(["github/catch_up"])).toEqual([]);
+  });
+
+  it("on the App, a delivery the log shows failed is a gap: the next delivery's check pulls to catch up, once", async () => {
+    const api = await fakeGitHub();
+    useApp(api);
+    api.edit(52, { title: "Before the gap" });
+    await syncGithub(repo, store, "both", log);
+    const [card] = await byRef("o/r#52");
+    const post = await hookRoute("hook", { gapCheckEveryMs: 0 });
+    // A delivery GitHub could not make: the server answered nothing (GitHub's log records it).
+    api.edit(52, { title: "Edited during the gap" });
+    await new Promise((r) => setTimeout(r, 5));
+    const later = new Date().toISOString();
+    api.deliveries.push({
+      id: 9001,
+      guid: "0b989ba4-242f-11e5-81e1-c7b6966d2516",
+      delivered_at: later,
+      redelivery: false,
+      duration: 10,
+      status: "Invalid HTTP Response: 502",
+      status_code: 502,
+      event: "issues",
+      action: "edited",
+      installation_id: 2,
+      repository_id: 1,
+    });
+    // An ordinary delivery arrives: not a trigger, but its arrival runs the check.
+    expect(await post("issues", "d-ok-1", { action: "edited", issue: { number: 52 } })).toBe(202);
+    await vi.waitFor(async () =>
+      expect(await log.getEventsByTypes(["github/catch_up"])).toHaveLength(1),
+    );
+    const [caught] = await log.getEventsByTypes(["github/catch_up"]);
+    expect(caught?.payload).toMatchObject({ reason: "gap", gaps: 1, updated: 1, errors: 0 });
+    expect((await must(card?.id as string)).title).toBe("Edited during the gap");
+    // The App's delivery log is read with the App's JWT, not an installation token.
+    const read = api.seen.find((s) => s.url.startsWith("/api/v3/app/hook/deliveries"));
+    expect(read?.auth).toMatch(/^Bearer eyJ/);
+    // The same failed delivery is not a second gap.
+    expect(await post("issues", "d-ok-2", { action: "edited", issue: { number: 52 } })).toBe(202);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(await log.getEventsByTypes(["github/catch_up"])).toHaveLength(1);
+  });
+
+  it("on the gh transport a gap cannot be seen, and it says so", async () => {
+    const api = await fakeGitHub();
+    vi.stubEnv("SEKHEMET_GITHUB_HOST", api.url);
+    const r = await detectDeliveryGaps(repo, log);
+    expect(r.available).toBe(false);
+    expect(r.reason).toMatch(/gh/);
+    expect(r.reason).toMatch(/restart/);
+    expect(api.seen.filter((s) => s.url.includes("/hook/deliveries"))).toEqual([]);
+  });
+});
+
+describe("INT-16a/16: a dependency bot's pull request is verified by the full gates", () => {
+  let head: string;
+  beforeEach(() => {
+    git(repo, "checkout", "-q", "-b", "dependabot/npm/left-pad-2");
+    write(repo, "package.json", '{ "dependencies": { "left-pad": "2.0.0" } }\n');
+    git(repo, "add", "package.json");
+    git(repo, "commit", "-q", "-m", "Bump left-pad");
+    head = git(repo, "rev-parse", "HEAD");
+    git(repo, "checkout", "-q", "main");
+  });
+  const openedBy = async (login: string) => {
+    const hook = fixture("webhook-pull_request-closed.json");
+    hook.action = "opened";
+    hook.repository.full_name = "o/r";
+    hook.pull_request.html_url = "https://github.com/o/r/pull/9";
+    hook.pull_request.number = 9;
+    hook.pull_request.merged = false;
+    hook.pull_request.user = { login, id: 49699333, type: "Bot" };
+    hook.pull_request.head.sha = head;
+    hook.pull_request.head.repo = { full_name: "o/r" };
+    hook.pull_request.base.repo = { full_name: "o/r" };
+    const id = await applyWebhookIntent(store, intentFor("pull_request", hook), "d-dep");
+    return must(id as string);
+  };
+  const verifyBoard = () =>
+    new BoardServiceImpl(store, {
+      entryConditions: true,
+      evidenceFor: (id) => ledgerEvidenceSummary(store, repo, id),
+    });
+  /** The project's gates, run in the checkout they are given: here, that the bump is there. */
+  const gatesSeeing = (want: string) => async (cwd: string) => {
+    const text = readFileSync(join(cwd, "package.json"), "utf8");
+    const passed = text.includes(want);
+    return {
+      passed,
+      durationMs: 3,
+      rungResults: [{ gate: "deps", rung: "test", passed, durationMs: 3 }],
+      failures: passed
+        ? []
+        : [{ gate: "deps", rung: "test", exitCode: 1, errorExcerpt: "left-pad missing" }],
+    } as never;
+  };
+
+  it("INT-16a: every gate passes on the PR's head and the project allows it: auto-merge is enabled; the Worker never sees it", async () => {
+    const api = await fakeGitHub();
+    vi.stubEnv("SEKHEMET_GITHUB_HOST", api.url);
+    api.prHeads.set(9, head);
+    write(repo, ".sekhemet/config.toml", "[review]\nauto_merge_dependencies = true\n");
+    const card = await openedBy("dependabot[bot]");
+    expect(card).toMatchObject({ status: "ready", labels: ["dependency-update"] });
+    // Linked to its pull request, so no sync opens an issue for it.
+    expect(card.externalRef).toEqual({
+      system: "github",
+      id: "pr/9",
+      url: "https://github.com/o/r/pull/9",
+    });
+    const left = await runDependencyVerifications(repo, [card], {
+      store,
+      board: verifyBoard(),
+      runGates: gatesSeeing('"left-pad": "2.0.0"'),
+    });
+    expect(left).toEqual([]);
+    expect((await must(card.id)).status).toBe("review");
+    const merge = api.seen.find((s) =>
+      /enablePullRequestAutoMerge/.test(String((s.body as { query?: string })?.query)),
+    );
+    // Only at the head the gates ran on (GitHub refuses it at any other).
+    expect((merge?.body as { variables: unknown }).variables).toMatchObject({ id: "PR_9", head });
+    expect(String((merge?.body as { query: string }).query)).toContain("expectedHeadOid");
+    const [verified] = await store.cardEvents(card.id, ["github/dependency_verified"]);
+    expect(verified?.payload).toMatchObject({
+      id: card.id,
+      pr: 9,
+      headSha: head,
+      passed: true,
+      autoMerge: "enabled",
+    });
+  });
+
+  it("INT-16: every gate passes but the project does not allow auto-merge: it is left for a person, in Review", async () => {
+    const api = await fakeGitHub();
+    vi.stubEnv("SEKHEMET_GITHUB_HOST", api.url);
+    api.prHeads.set(9, head);
+    const card = await openedBy("renovate[bot]");
+    await runDependencyVerifications(repo, [card], {
+      store,
+      board: verifyBoard(),
+      runGates: gatesSeeing('"left-pad": "2.0.0"'),
+    });
+    expect((await must(card.id)).status).toBe("review");
+    expect(
+      api.seen.filter((s) =>
+        /enablePullRequestAutoMerge/.test(String((s.body as { query?: string })?.query)),
+      ),
+    ).toEqual([]);
+    const [verified] = await store.cardEvents(card.id, ["github/dependency_verified"]);
+    expect(verified?.payload).toMatchObject({ passed: true, autoMerge: "not_allowed" });
+  });
+
+  it("a failing gate, or a head that moved since the gates ran, enables nothing", async () => {
+    const api = await fakeGitHub();
+    vi.stubEnv("SEKHEMET_GITHUB_HOST", api.url);
+    write(repo, ".sekhemet/config.toml", "[review]\nauto_merge_dependencies = true\n");
+    const failing = await openedBy("dependabot[bot]");
+    await runDependencyVerifications(repo, [failing], {
+      store,
+      board: verifyBoard(),
+      runGates: gatesSeeing("3.0.0"),
+    });
+    expect((await must(failing.id)).status).toBe("parked");
+    const [f] = await store.cardEvents(failing.id, ["github/dependency_verified"]);
+    expect(f?.payload).toMatchObject({ passed: false, autoMerge: "gates_failed" });
+    await store.deleteCard?.(failing.id).catch?.(() => undefined);
+    api.prHeads.set(9, "f".repeat(40));
+    const moved = await store.createCard({
+      id: "card_deps9b",
+      tier: "task",
+      title: "Verify dependabot[bot] PR #9",
+      status: "ready",
+      spec: `Run the full gates against PR #9 at ${head} and report.`,
+      labels: ["dependency-update"],
+      externalRef: { system: "github", id: "pr/9", url: "https://github.com/o/r/pull/9" },
+    });
+    await runDependencyVerifications(repo, [moved], {
+      store,
+      board: verifyBoard(),
+      runGates: gatesSeeing('"left-pad": "2.0.0"'),
+    });
+    const [m] = await store.cardEvents(moved.id, ["github/dependency_verified"]);
+    expect(m?.payload).toMatchObject({ passed: true, autoMerge: "head_moved" });
+    expect(
+      api.seen.filter((s) =>
+        /enablePullRequestAutoMerge/.test(String((s.body as { query?: string })?.query)),
+      ),
+    ).toEqual([]);
+  });
+  it("M1: auto-merge only for the bot's own branch in this repository, checked again on GitHub", async () => {
+    const api = await fakeGitHub();
+    vi.stubEnv("SEKHEMET_GITHUB_HOST", api.url);
+    api.prHeads.set(9, head);
+    write(repo, ".sekhemet/config.toml", "[review]\nauto_merge_dependencies = true\n");
+    const merges = () =>
+      api.seen.filter((s) =>
+        /enablePullRequestAutoMerge/.test(String((s.body as { query?: string })?.query)),
+      );
+    // At intake: a login that only looks like the bot, or a fork's branch, makes no card.
+    for (const [login, type, fork] of [
+      ["dependabot", "Bot", false],
+      ["dependabot[bot]", "User", false],
+      ["dependabot[bot]", "Bot", true],
+    ] as const) {
+      const hook = fixture("webhook-pull_request-closed.json");
+      hook.action = "opened";
+      hook.repository.full_name = "o/r";
+      hook.pull_request.user = { login, id: 1, type };
+      hook.pull_request.head.repo = { full_name: fork ? "mallory/r" : "o/r" };
+      hook.pull_request.base.repo = { full_name: "o/r" };
+      expect(intentFor("pull_request", hook).kind, `${login} ${type} ${fork}`).toBe("ignored");
+    }
+    // Before auto-merge: GitHub says the pull request now comes from a fork.
+    api.prMeta.set(9, { login: "dependabot[bot]", type: "Bot", headRepo: "mallory/r" });
+    const card = await store.createCard({
+      id: "card_deps9m",
+      tier: "task",
+      title: "Verify dependabot[bot] PR #9",
+      status: "ready",
+      spec: `Run the full gates against PR #9 at ${head} and report.`,
+      labels: ["dependency-update"],
+      externalRef: { system: "github", id: "pr/9", url: "https://github.com/o/r/pull/9" },
+    });
+    await runDependencyVerifications(repo, [card], {
+      store,
+      board: verifyBoard(),
+      runGates: gatesSeeing('"left-pad": "2.0.0"'),
+    });
+    expect(merges()).toEqual([]);
+    const [v] = await store.cardEvents(card.id, ["github/dependency_verified"]);
+    expect(v?.payload).toMatchObject({ passed: true, autoMerge: "not_dependency_bot" });
+  });
+});
+
+describe("INT-20b: the card's state as the issue's project status; the assignee untouched", () => {
+  it("Ready, In progress, Review and Done set queued, working, waiting for review and completed in turn", async () => {
+    const api = await fakeGitHub();
+    vi.stubEnv("SEKHEMET_GITHUB_HOST", api.url);
+    const alice = store.localPrincipal();
+    await store.linkIdentity(alice, "github", "alice-gh", alice);
+    api.edit(60, { title: "Mirrored", assignee: { login: "alice-gh" } });
+    // One project uses GitHub's agent names, another the default board's.
+    api.projects.push(
+      {
+        id: "PVT_agent",
+        options: ["Queued", "Working", "Waiting for review", "Completed"],
+        items: new Map([[60, undefined]]),
+      },
+      {
+        id: "PVT_board",
+        options: ["Todo", "In Progress", "Done"],
+        items: new Map([[60, undefined]]),
+      },
+    );
+    await syncGithub(repo, store, "both", log);
+    const [card] = await byRef("o/r#60");
+    const id = card?.id as string;
+    const patchesBefore = api.seen.filter((s) => s.method === "PATCH").length;
+    for (const status of ["ready", "in_progress", "review", "done"] as const) {
+      await store.updateCardStatus(id, status, "moved", "harness", { override: true });
+      await mirrorAgentStatuses(repo, store, log);
+    }
+    expect(api.statusLog.filter((l) => l.startsWith("PVT_agent:"))).toEqual([
+      "PVT_agent:Queued",
+      "PVT_agent:Working",
+      "PVT_agent:Waiting for review",
+      "PVT_agent:Completed",
+    ]);
+    expect(api.statusLog.filter((l) => l.startsWith("PVT_board:"))).toEqual([
+      "PVT_board:Todo",
+      "PVT_board:In Progress",
+      "PVT_board:In Progress",
+      "PVT_board:Done",
+    ]);
+    // The mirror wrote no issue field: the assignee is still the person.
+    expect(api.seen.filter((s) => s.method === "PATCH").length).toBe(patchesBefore);
+    expect((api.issues.get(60)?.assignee as { login: string }).login).toBe("alice-gh");
+    const recorded = await store.cardEvents(id, ["github/agent_status"]);
+    expect(recorded.map((e) => (e.payload as { status: string }).status)).toEqual([
+      "queued",
+      "working",
+      "waiting_for_review",
+      "completed",
+    ]);
+    // Nothing moved, nothing set.
+    await mirrorAgentStatuses(repo, store, log);
+    expect(api.statusLog).toHaveLength(8);
+  });
+
+  it("the server mirrors a move from the ledger, without a sync", async () => {
+    const api = await fakeGitHub();
+    vi.stubEnv("SEKHEMET_GITHUB_HOST", api.url);
+    api.edit(61, { title: "Tailed" });
+    api.projects.push({
+      id: "PVT_1",
+      options: ["Queued", "Working"],
+      items: new Map([[61, undefined]]),
+    });
+    await syncGithub(repo, store, "pull", log);
+    const [card] = await byRef("o/r#61");
+    const sync = startGithubSync(repo, store, log, { mirrorEveryMs: 10 });
+    closers.push(async () => sync.stop());
+    await sync.started;
+    await store.updateCardStatus(card?.id as string, "ready", "moved", "harness", {
+      override: true,
+    });
+    await vi.waitFor(() => expect(api.statusLog).toEqual(["PVT_1:Queued"]));
+  });
+});
+
+describe("INT-20c: the tracker's Done does not move the board", () => {
+  it("an issue closed before the card passed its gates and was accepted keeps the card where it is and records one sync/conflict", async () => {
+    const api = await fakeGitHub();
+    vi.stubEnv("SEKHEMET_GITHUB_HOST", api.url);
+    api.edit(70, { title: "Closed early" });
+    await syncGithub(repo, store, "both", log);
+    const [card] = await byRef("o/r#70");
+    const id = card?.id as string;
+    await store.updateCardStatus(id, "in_progress", "running", "harness", { override: true });
+    api.edit(70, { state: "closed", closed_at: "2026-09-20T10:00:00Z" });
+    expect((await syncGithub(repo, store, "both", log)).errors).toEqual([]);
+    expect((await must(id)).status).toBe("in_progress");
+    const recorded = await log.getEventsByTypes(["sync/conflict"]);
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]?.payload).toEqual({
+      field: "state",
+      reason: "done_before_accept",
+      at: "2026-09-20T10:00:00Z",
+    });
+    // The board does not reopen the person's issue, and records the closure once.
+    await syncGithub(repo, store, "both", log);
+    expect(await conflicts()).toBe(1);
+    expect(api.issues.get(70)?.state).toBe("closed");
+  });
+
+  it("the issues.closed webhook records it at once; the next sync adds nothing; an accepted card's closure is no conflict", async () => {
+    const api = await fakeGitHub();
+    vi.stubEnv("SEKHEMET_GITHUB_HOST", api.url);
+    api.edit(71, { title: "Closed by hook" });
+    api.edit(72, { title: "Merged and closed" });
+    await syncGithub(repo, store, "both", log);
+    const [early] = await byRef("o/r#71");
+    const [accepted] = await byRef("o/r#72");
+    await store.updateCardStatus(early?.id as string, "review", "verified", "harness", {
+      override: true,
+    });
+    await store.updateCardStatus(accepted?.id as string, "review", "verified", "harness", {
+      override: true,
+    });
+    await store.recordPullRequestOpened(accepted?.id as string, {
+      pr: 8,
+      url: "https://github.com/o/r/pull/8",
+      headSha: "h",
+      accepter: store.localPrincipal(),
+    });
+    const post = await hookRoute("hook");
+    for (const n of [71, 72]) {
+      api.edit(n, { state: "closed", closed_at: `2026-09-21T10:00:0${n - 71}Z` });
+      const hook = fixture("webhook-issues-labeled.json");
+      hook.action = "closed";
+      hook.repository.full_name = "o/r";
+      hook.issue = { ...api.issues.get(n) };
+      expect(await post("issues", `d-close-${n}`, hook)).toBe(202);
+    }
+    expect((await must(early?.id as string)).status).toBe("review");
+    const recorded = await log.getEventsByTypes(["sync/conflict"]);
+    expect(recorded.map((e) => e.cardId)).toEqual([early?.id]);
+    await syncGithub(repo, store, "both", log);
+    expect(await conflicts()).toBe(1);
+  });
+});
+
+describe("INT-37/38: someone else's CI results name their source, and count only at the card's head", () => {
+  beforeEach(() => {
+    upstream = join(root, "upstream.git");
+    execFileSync("git", ["init", "-q", "--bare", upstream]);
+    git(repo, "remote", "add", "upstream", upstream);
+    git(repo, "branch", "develop");
+    write(
+      repo,
+      ".sekhemet/config.toml",
+      '[review]\nintegration_branch = "develop"\nremote = "upstream"\n',
+    );
+    board = new BoardServiceImpl(store, { entryConditions: true, customLimits: { review: 5 } });
+    writeSettings(repo, { githubPrOnAccept: true });
+  });
+
+  it("INT-37: each external check is recorded as source external with its name, run URL and head SHA; advisory unless declared blocking", async () => {
+    const api = await fakeGitHub();
+    vi.stubEnv("SEKHEMET_GITHUB_HOST", api.url);
+    await inReview("x1", { "src/b.ts": "export const b = 2;\n" });
+    await opened("x1");
+    await acceptCard(ctx(), await must("x1"));
+    const branchHead = cardBranchHead(repo, "x1") as string;
+    api.checkRuns.splice(
+      0,
+      api.checkRuns.length,
+      { name: "sekhemet/unit", status: "completed", conclusion: "success", head_sha: branchHead },
+      {
+        name: "ci/build",
+        status: "completed",
+        conclusion: "failure",
+        head_sha: branchHead,
+        html_url: "https://github.com/o/r/runs/11",
+        details_url: "https://ci.example/build/11",
+      },
+      {
+        name: "ci/lint",
+        status: "completed",
+        conclusion: "success",
+        head_sha: branchHead,
+        html_url: "https://github.com/o/r/runs/12",
+      },
+      { name: "ci/slow", status: "in_progress", conclusion: null, head_sha: branchHead },
+    );
+    await advanceOpenPullRequests(repo, store, log);
+    const results = (await store.cardEvents("x1", ["gate/result"]))
+      .map(
+        (e) =>
+          e.payload as { gate: string; source: string; passed: boolean; externalRef?: unknown },
+      )
+      .filter((r) => r.source === "external");
+    // Our own check is not someone else's; one still running has no result yet.
+    expect(results.map((r) => r.gate).sort()).toEqual(["ci/build", "ci/lint"]);
+    expect(results.find((r) => r.gate === "ci/build")).toMatchObject({
+      passed: false,
+      externalRef: {
+        system: "github",
+        checkName: "ci/build",
+        runUrl: "https://github.com/o/r/runs/11",
+        headSha: branchHead,
+      },
+    });
+    // Recorded once, however often the queue asks.
+    await advanceOpenPullRequests(repo, store, log);
+    expect(
+      (await store.cardEvents("x1", ["gate/result"])).filter(
+        (e) => (e.payload as { source: string }).source === "external",
+      ),
+    ).toHaveLength(2);
+    // Advisory: the failing ci/build does not fail the card's evidence.
+    const head = () => branchHead;
+    expect((await ledgerEvidenceSummary(store, repo, "x1", { branchHead: head }))?.passed).toBe(
+      true,
+    );
+    // Declared blocking, it counts.
+    const blocking = await ledgerEvidenceSummary(store, repo, "x1", {
+      blockingChecks: ["ci/build"],
+      branchHead: head,
+    });
+    expect(blocking?.passed).toBe(false);
+  });
+
+  it("INT-38: a result for a SHA other than the card branch's head is not evidence for the card", async () => {
+    const api = await fakeGitHub();
+    vi.stubEnv("SEKHEMET_GITHUB_HOST", api.url);
+    await inReview("x2", { "src/b.ts": "export const b = 2;\n" });
+    await opened("x2");
+    await acceptCard(ctx(), await must("x2"));
+    api.checkRuns.splice(0, api.checkRuns.length, {
+      name: "ci/build",
+      status: "completed",
+      conclusion: "failure",
+      head_sha: "a".repeat(40),
+      html_url: "https://github.com/o/r/runs/21",
+    });
+    await advanceOpenPullRequests(repo, store, log);
+    // Recorded as what it is — a result at another head …
+    const [external] = (await store.cardEvents("x2", ["gate/result"]))
+      .map((e) => e.payload as { source: string; externalRef?: { headSha: string } })
+      .filter((r) => r.source === "external");
+    expect(external?.externalRef?.headSha).toBe("a".repeat(40));
+    expect(cardBranchHead(repo, "x2")).not.toBe("a".repeat(40));
+    // … and, though declared blocking and failing, not counted for the card.
+    const summary = await ledgerEvidenceSummary(store, repo, "x2", {
+      blockingChecks: ["ci/build"],
+      branchHead: (id) => cardBranchHead(repo, id),
+    });
+    expect(summary?.passed).toBe(true);
+    expect(summary?.gatesRun).toBe(1);
+  });
+});
+
+describe("B3: the external review's git fetch goes through the network policy", () => {
+  const reviewCard = (id: string) =>
+    store.createCard({
+      id,
+      tier: "task",
+      title: "Review PR #12",
+      status: "ready",
+      spec: "Run the full gates against PR #12 at its head and report.",
+      labels: ["external-review"],
+      externalRef: { system: "github", id: "pr/12", url: "https://github.com/o/r/pull/12" },
+    });
+  const review = async (id: string) =>
+    runExternalReview(repo, await must(id), {
+      store,
+      board: new BoardServiceImpl(store, {
+        entryConditions: true,
+        evidenceFor: (c) => ledgerEvidenceSummary(store, repo, c),
+      }),
+      runGates: async () => ({ passed: true, failures: [], durationMs: 1 }) as never,
+    });
+
+  it("offline, a PR head on a remote host is not fetched; the refusal is recorded and names the setting", async () => {
+    const trace = join(root, "git-trace.log");
+    vi.stubEnv("GIT_TRACE", trace);
+    await reviewCard("card_rev12");
+    const r = await review("card_rev12");
+    expect(r.error).toMatch(/network policy refused github\.com/);
+    expect(r.error).toMatch(/\[network\] mode/);
+    const egress = (await log.getEventsByTypes(["harness/egress"])).map((e) => e.payload);
+    expect(egress).toMatchObject([{ host: "github.com", allowed: false }]);
+    const traced = existsSync(trace) ? readFileSync(trace, "utf8") : "";
+    expect(traced).not.toMatch(/git fetch|'fetch'/);
+    expect((await must("card_rev12")).status).toBe("ready");
+  });
+
+  it("a remote the policy allows is fetched, recorded before it runs", async () => {
+    const prs = join(root, "prs.git");
+    execFileSync("git", ["init", "-q", "--bare", prs]);
+    git(repo, "checkout", "-q", "-b", "pr-12");
+    write(repo, "src/c.ts", "export const c = 3;\n");
+    git(repo, "add", "src/c.ts");
+    git(repo, "commit", "-q", "-m", "PR 12");
+    const head = git(repo, "rev-parse", "HEAD");
+    git(repo, "push", "-q", prs, "pr-12:refs/pull/12/head");
+    git(repo, "checkout", "-q", "main");
+    git(repo, "remote", "set-url", "origin", prs);
+    await reviewCard("card_rev12b");
+    const r = await review("card_rev12b");
+    expect(r.error).toBeUndefined();
+    expect(r.headSha).toBe(head);
+    const egress = await log.getEventsByTypes(["harness/egress"]);
+    expect(egress.map((e) => e.payload)).toMatchObject([
+      { host: "localhost", allowed: true, purpose: "integration:github" },
+    ]);
+    expect((egress[0]?.private as { url: string }).url).toBe(`file://${prs}`);
+  });
+});
+
+describe("the ledger tail backs off after a refused egress", () => {
+  it("a refused mirror is not retried on every move of the board", async () => {
+    // A GitHub the offline policy refuses.
+    vi.stubEnv("SEKHEMET_GITHUB_HOST", "https://ghe.example.test");
+    await store.createCard({
+      id: "card_mb",
+      tier: "task",
+      title: "Mirrored",
+      status: "backlog",
+      externalRef: { system: "github", id: "o/r#80", url: "https://github.com/o/r/issues/80" },
+    });
+    const refusals = async () =>
+      (await log.getEventsByTypes(["harness/egress"])).filter(
+        (e) => !(e.payload as { allowed: boolean }).allowed,
+      ).length;
+    const sync = startGithubSync(repo, store, log, { mirrorEveryMs: 10 });
+    closers.push(async () => sync.stop());
+    await sync.started;
+    await store.updateCardStatus("card_mb", "ready", "moved", "harness", { override: true });
+    await vi.waitFor(async () => expect(await refusals()).toBeGreaterThan(0));
+    const after = await refusals();
+    for (const to of ["in_progress", "verify", "review"] as const) {
+      await store.updateCardStatus("card_mb", to, "moved", "harness", { override: true });
+      await new Promise((r) => setTimeout(r, 40));
+    }
+    expect(await refusals()).toBe(after);
   });
 });

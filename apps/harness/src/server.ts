@@ -70,6 +70,8 @@ import {
   rewindCard,
 } from "./execute.js";
 import { startNotifier } from "./notify.js";
+import { dailyStandup } from "./pm/service.js";
+import { PmStore } from "./pm/store.js";
 import { createPmApi } from "./pm_api.js";
 import { modelRoster } from "./pm_api.js";
 import { handleRestExtras } from "./rest_extra.js";
@@ -77,7 +79,7 @@ import { cardTrace } from "./tracing.js";
 import { park, recordReviewOpened, reject, revertAccept, sendBack } from "./triage.js";
 import { generateDashboardHtml } from "./ui_html.js";
 import { hookEngineFor } from "./user_hooks.js";
-import { handleWave2Route, startRecurringTicker } from "./wave2_server.js";
+import { handleWave2Route, startGithubSync, startRecurringTicker } from "./wave2_server.js";
 import { type StreamClient, acceptWebSocket } from "./ws.js";
 
 /** The loopback port the design fixes for the dashboard. */
@@ -1338,8 +1340,22 @@ export function startDashboardServer(
       const boundPort = typeof address === "object" && address ? address.port : port;
       // H20: push review, park, budget and question events to the user's
       // ntfy or Gotify, when set up. A no-op until then.
+      // INT-17 to INT-20a: one notifier for push and Slack, budgeted, with
+      // Seshat's daily standup when a channel accepts it.
+      const standupStore = options.cardStore;
       const notifier = startNotifier(options.log, repoPath, {
         dashboard: `http://127.0.0.1:${boundPort}`,
+        ...(standupStore
+          ? {
+              standup: () =>
+                dailyStandup({
+                  repoPath,
+                  cardStore: standupStore,
+                  pmStore: new PmStore(options.log),
+                  ...(options.pmModel ? { pmModel: options.pmModel } : {}),
+                }),
+            }
+          : {}),
       });
       // X16: due recurring templates clone into Ready cards, once a minute.
       const stopRecurring = options.cardStore
@@ -1354,12 +1370,19 @@ export function startDashboardServer(
             ...(options.recurringEveryMs ? { everyMs: options.recurringEveryMs } : {}),
           })
         : () => undefined;
+      // INT-11b, INT-20b: one catch-up pull at start when webhooks are the
+      // route (never a timer on the tracker), and linked cards' moves shown
+      // on their issues' Projects status.
+      const github = options.cardStore
+        ? startGithubSync(repoPath, options.cardStore, options.log)
+        : undefined;
       resolve({
         port: boundPort,
         close: () =>
           new Promise<void>((done) => {
             void notifier.then((n) => n.stop());
             stopRecurring();
+            github?.stop();
             if (timer) clearInterval(timer);
             unsubscribe();
             for (const stream of streams) stream.end();

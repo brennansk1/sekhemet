@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 36 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 37 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,41 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 37 — 2026-09-25 (B4.9 done: part 2, the notifier, import and the GitHub sync criteria)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver; three implementer helpers (two in parallel on disjoint files, then a fix round); one full independent review and a narrow re-check of its blockers (Sonnet).
+
+- **Built (integrations P9):**
+  - **The one notifier (INT-17–20a):**
+    - Slack (webhook or bot token, a secret) and push, both through the network policy.
+    - The kinds are review, decision and standup. The standup is built from the ledger without a model.
+    - `ok: false` on 4xx or a timeout.
+    - The budget is 3 unsolicited a day per person, capped at 5. Extras are held (`pm/notice_held`) for the standup.
+  - **Import (INT-27, -28):** Jira and Linear rows carry `externalRef` and propose no new cards. A strict CSV parser names the line of an unterminated quote.
+  - **INT-11b:** no timer polling. There is a catch-up pull at start, and gap detection through the App's delivery log (`gh` cannot see gaps; recorded).
+  - **INT-11c:** one GraphQL query per page with labels and sub-issues. The GraphQL point budget is kept apart from REST.
+  - **INT-16, -16a:** Dependabot and Renovate PRs get a verification card running full gates on the head. Auto-merge happens only under `[review] auto_merge_dependencies` with an unchanged head, else the PR is left for a person.
+  - **INT-20b:** the Projects status mirrors the card (queued, working, waiting for review, completed), and the assignee is never written.
+  - **INT-20c:** a tracker's Done before acceptance keeps the board and records `sync/conflict`.
+  - **INT-37, -38:** external checks are recorded as `source: external` with head SHA, and are advisory unless declared blocking.
+- **Review:** 3 blockers and 4 majors, all fixed.
+  - **B1:** the Slack webhook URL, a credential, sat in the egress private part. Credential-bearing URLs are now redacted to `origin/…`, and the tests scan every table and blob.
+  - **B2:** two notifiers (the dashboard and a queue run) double-sent. A send is now claimed with a derived event id, so a unique insert is atomic across processes, and the budget holds across notifiers.
+  - **B3:** a PR-head `git fetch` ran outside the policy.
+  - **M1–M4:** bot identity is strict (`[bot]`, `type: "Bot"`, the same repo); import never replaces a GitHub link; imported cards are untrusted by origin (`card/imported`); declared blocking checks gate ready and auto-merge.
+  - **Minors:** fixed by the helper and the lead.
+  - **The re-check** confirmed all three blockers. It also found an older, unreached `shallowClone` in `research/repo.ts` outside the policy, filed as a separate task.
+- **Lead's own:** push (ntfy and Gotify) was routed through the policy, test first. PM_CONTRACT gained `budget` and `origin: "import"`; security item 42 covers imported rows.
+- **Recorded gaps (P9 "Known gaps after B4.9"):**
+  - sub-issues are fetched but not made subtasks;
+  - an auto-merged dependency card stays in Review and counts against its WIP limit;
+  - a Projects status set to Done isn't read for INT-20c.
+- **Gate:** a snapshot of `c069b99` plus part 2: `tsc -b` and Biome clean, 318 files and 2,405 tests pass (exit codes checked).
+- **Where the cards stop:**
+  - B4.9 is done.
+  - Next is B4.10, Team setup (NEW-teams-1–4; passkeys and OIDC under DEC-38).
+  - B4.0a waits on the B2.5 baseline, which is at thinking-surgical round 1.
 
 ### Entry 36 — 2026-09-25 (B4.9 part 1: GitHub first, reviewed and fixed)
 

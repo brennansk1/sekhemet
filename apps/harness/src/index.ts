@@ -131,7 +131,7 @@ import {
 } from "./measure_cmd.js";
 import { sendPush, startNotifier } from "./notify.js";
 import { nightModelServer, runOvernight } from "./overnight.js";
-import { DEFAULT_PM_MODEL, answerQueued, createPmAdapter } from "./pm/service.js";
+import { DEFAULT_PM_MODEL, answerQueued, createPmAdapter, dailyStandup } from "./pm/service.js";
 import { PmStore } from "./pm/store.js";
 import { runPromptScreen } from "./prompt_screen_cmd.js";
 import { applyWorkerOverride, gateWorker } from "./qualify.js";
@@ -179,6 +179,7 @@ import {
   runPackageGates,
   runWave2Command,
 } from "./wave2.js";
+import { runDependencyVerifications } from "./wave2_github.js";
 import {
   describeUntrusted,
   setInvocationTrust,
@@ -1862,8 +1863,11 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     /** Struggles the playbook had no remedy for: the Researcher's queue. */
     const unexplained: { cardId: string; text: string }[] = [];
     const pmStore = new PmStore(log);
-    // H20: push review, park, budget and question events while the queue runs.
-    const notifier = await startNotifier(log, config.repoPath);
+    // H20, INT-17 to INT-20a: the one notifier (push and Slack, budgeted, and
+    // Seshat's daily standup) while the queue runs.
+    const notifier = await startNotifier(log, config.repoPath, {
+      standup: () => dailyStandup({ repoPath: config.repoPath, cardStore, pmStore, pmModel }),
+    });
     // Tells the dashboard this process holds the Worker, so PM messages are
     // answered here, between steps, instead of loading a second large model.
     // The lease also publishes the model roster and which role is resident,
@@ -2047,6 +2051,13 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         const poster = reviewPosterFromEnv(config.repoPath, cardStore);
         return poster ? { github: poster } : {};
       })(),
+      say: (line) => console.log(line),
+    });
+    // INT-16a, INT-16: a dependency bot's pull request runs the full gates on
+    // its head (never the Worker); auto-merge only by the project's policy.
+    ready = await runDependencyVerifications(config.repoPath, ready, {
+      store: cardStore,
+      board: boardService,
       say: (line) => console.log(line),
     });
     // X3: images on Ready cards are described by the vision model in one

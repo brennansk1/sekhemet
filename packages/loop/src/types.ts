@@ -197,6 +197,13 @@ export interface SessionOptions {
    * review findings, answers, research, notes, lessons), one line each.
    */
   dossierLines?: string[] | undefined;
+  /**
+   * The card's text is untrusted by origin though it has no external link:
+   * `import` for a card an import created or changed (`card/imported`, M3).
+   * Its title and spec are then tagged, and the tools run under the strict
+   * policy, as for a linked card (S9).
+   */
+  untrustedOrigin?: "import" | undefined;
   /** Working-memory lines from earlier attempts at this card (never start blank). */
   priorLessons?: string[] | undefined;
   /** Gate rungs run when the agent calls `finish_card`. Defaults to typecheck + test. */

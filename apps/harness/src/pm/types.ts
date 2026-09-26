@@ -33,6 +33,12 @@ export interface PmProposal {
   before?: Record<string, unknown>;
   cards?: Record<string, unknown>[];
   state: PmProposalState;
+  /**
+   * Where the proposal's content came from: `import` for a file's rows.
+   * Applied, each card it touches is recorded `card/imported` and its text
+   * reaches the Worker tagged untrusted (B4.9 part 2, M3).
+   */
+  origin?: "import";
 }
 
 export interface PmCite {
@@ -86,5 +92,13 @@ export const PM_EVENTS = {
   cycleCreated: "cycle/created",
   cycleUpdated: "cycle/updated",
   notify: "pm/notify",
+  /** A notice past the day's budget, held for the next standup (INT-20a). */
+  noticeHeld: "pm/notice_held",
+  /**
+   * A notifier's claim on a send, by an id derived from the notice (or the
+   * channel's standup and attempt), before anything is sent: of two notifiers
+   * on one ledger only one may record it, so each is sent once (B4.9 part 2, B2).
+   */
+  notifyClaimed: "pm/notify_claimed",
   summary: "pm/summary",
 } as const;

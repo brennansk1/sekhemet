@@ -203,13 +203,69 @@ function nextLink(header: string | null): string | undefined {
   return undefined;
 }
 
+/**
+ * One of GitHub's two meters as this client has seen it (integrations item
+ * 11a, INT-11c): REST counts requests, GraphQL counts points, and GitHub
+ * meters them apart. `limit`, `remaining`, `used` and `resetAt` are the last
+ * response's; `requests` and `spent` (points for GraphQL, requests for REST)
+ * are this client's own.
+ */
+export interface RateBudget {
+  requests: number;
+  spent: number;
+  limit?: number;
+  remaining?: number;
+  used?: number;
+  resetAt?: string;
+}
+
+/** GraphQL's `rateLimit` object, when a query asks for it. */
+interface GraphqlRateLimit {
+  cost?: number;
+  limit?: number;
+  remaining?: number;
+  used?: number;
+  resetAt?: string;
+}
+
+const num = (v: string | null | undefined) =>
+  v !== null && v !== undefined && v !== "" && Number.isFinite(Number(v)) ? Number(v) : undefined;
+
 /** REST and GraphQL with auth, API version, pagination and rate-limit backoff. */
 export class GitHubClient {
+  private readonly budgets: { rest: RateBudget; graphql: RateBudget } = {
+    rest: { requests: 0, spent: 0 },
+    graphql: { requests: 0, spent: 0 },
+  };
+
   constructor(
     private readonly tokens: TokenProvider,
     private readonly endpoints: GitHubEndpoints,
     private readonly options: ClientOptions,
   ) {}
+
+  /** The REST and GraphQL budgets, apart (INT-11c). */
+  public budget(): { rest: RateBudget; graphql: RateBudget } {
+    return { rest: { ...this.budgets.rest }, graphql: { ...this.budgets.graphql } };
+  }
+
+  /** Note a response against its meter: the headers GitHub sent, and a GraphQL query's cost. */
+  private note(meter: "rest" | "graphql", res: Response, rateLimit?: GraphqlRateLimit): void {
+    const b = this.budgets[meter];
+    b.requests += 1;
+    b.spent += meter === "graphql" ? (rateLimit?.cost ?? 1) : 1;
+    const limit = rateLimit?.limit ?? num(res.headers.get("x-ratelimit-limit"));
+    const remaining = rateLimit?.remaining ?? num(res.headers.get("x-ratelimit-remaining"));
+    const used = rateLimit?.used ?? num(res.headers.get("x-ratelimit-used"));
+    const reset = num(res.headers.get("x-ratelimit-reset"));
+    const resetAt =
+      rateLimit?.resetAt ??
+      (reset !== undefined ? new Date(reset * 1000).toISOString() : undefined);
+    if (limit !== undefined) b.limit = limit;
+    if (remaining !== undefined) b.remaining = remaining;
+    if (used !== undefined) b.used = used;
+    if (resetAt !== undefined) b.resetAt = resetAt;
+  }
 
   private async request(
     method: string,
@@ -233,6 +289,7 @@ export class GitHubClient {
         }),
       this.options,
     );
+    this.note("rest", res);
     if (!res.ok)
       throw new GitHubApiError(`${method} ${pathOrUrl} failed (${res.status})`, res.status, text);
     return { res, text };
@@ -247,12 +304,19 @@ export class GitHubClient {
    * Every page of a list endpoint, following `Link: rel="next"` until it is
    * exhausted (integrations item 11, INT-2) — never only the first page.
    */
-  public async restPages<T = unknown>(path: string, maxPages = 1000): Promise<T[]> {
+  public async restPages<T = unknown>(
+    path: string,
+    maxPages = 1000,
+    /** Stop after a page it holds true for (a newest-first log read back to a date). */
+    stopAfter?: (page: T[]) => boolean,
+  ): Promise<T[]> {
     const out: T[] = [];
     let next: string | undefined = path;
     for (let page = 0; next && page < maxPages; page++) {
       const { res, text } = await this.request("GET", next);
-      out.push(...((text ? JSON.parse(text) : []) as T[]));
+      const items = (text ? JSON.parse(text) : []) as T[];
+      out.push(...items);
+      if (stopAfter?.(items)) break;
       next = nextLink(res.headers.get("link"));
       // The token goes only to the configured API: a next link elsewhere stops.
       if (next && new URL(next).origin !== new URL(this.endpoints.apiUrl).origin) {
@@ -280,8 +344,13 @@ export class GitHubClient {
         }),
       this.options,
     );
-    if (!res.ok) throw new GitHubApiError(`GraphQL failed (${res.status})`, res.status, text);
+    if (!res.ok) {
+      this.note("graphql", res);
+      throw new GitHubApiError(`GraphQL failed (${res.status})`, res.status, text);
+    }
     const body = JSON.parse(text) as { data?: T; errors?: { message: string }[] };
+    const rateLimit = (body.data as { rateLimit?: GraphqlRateLimit } | undefined)?.rateLimit;
+    this.note("graphql", res, rateLimit ?? undefined);
     if (body.errors?.length)
       throw new GitHubApiError(`GraphQL: ${body.errors[0]?.message}`, 200, text);
     return body.data as T;
@@ -411,6 +480,38 @@ export interface PullRequestRef {
   headSha: string;
 }
 
+/** A check run as GitHub's REST API lists it: ours (`sekhemet/<gate>`) or someone else's CI. */
+export interface CheckRunInfo {
+  name?: string;
+  status: string;
+  conclusion: string | null;
+  head_sha?: string;
+  html_url?: string | null;
+  details_url?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+}
+
+/** The conclusions GitHub counts as passing. */
+const PASSING = new Set(["success", "skipped", "neutral"]);
+
+/** GitHub's combined rule: any completed run not success, skipped or neutral fails. */
+export function checksStateOf(runs: readonly CheckRunInfo[]): "success" | "pending" | "failure" {
+  if (
+    runs.some(
+      (r) =>
+        r.status === "completed" &&
+        r.conclusion !== "success" &&
+        r.conclusion !== "skipped" &&
+        r.conclusion !== "neutral",
+    )
+  ) {
+    return "failure";
+  }
+  if (runs.length === 0 || runs.some((r) => r.status !== "completed")) return "pending";
+  return "success";
+}
+
 /**
  * The PR lifecycle (design "Pull request lifecycle"): a draft with the
  * evidence summary, then ready once every check succeeds (reviewers from
@@ -442,25 +543,18 @@ export class PullRequestLifecycle {
     return { number: pr.number, nodeId: pr.node_id, url: pr.html_url, headSha: pr.head.sha };
   }
 
+  /** Every check run on a head, ours and anyone else's (INT-12b, INT-37). */
+  public async checkRuns(headSha: string): Promise<CheckRunInfo[]> {
+    const res = await this.client.rest<{ check_runs: CheckRunInfo[] }>(
+      "GET",
+      `${this.base}/commits/${headSha}/check-runs?per_page=100`,
+    );
+    return res.check_runs;
+  }
+
   /** `success` when every check run on the head has succeeded, `pending`, or `failure`. */
   public async checksState(headSha: string): Promise<"success" | "pending" | "failure"> {
-    const res = await this.client.rest<{
-      check_runs: { status: string; conclusion: string | null }[];
-    }>("GET", `${this.base}/commits/${headSha}/check-runs`);
-    const runs = res.check_runs;
-    if (
-      runs.some(
-        (r) =>
-          r.status === "completed" &&
-          r.conclusion !== "success" &&
-          r.conclusion !== "skipped" &&
-          r.conclusion !== "neutral",
-      )
-    ) {
-      return "failure";
-    }
-    if (runs.length === 0 || runs.some((r) => r.status !== "completed")) return "pending";
-    return "success";
+    return checksStateOf(await this.checkRuns(headSha));
   }
 
   /** Mark ready (GraphQL) and request reviewers from CODEOWNERS for the changed files. */
@@ -536,27 +630,65 @@ export class PullRequestLifecycle {
     );
   }
 
+  /**
+   * Auto-merge, pinned to `pr.headSha` (`expectedHeadOid`): GitHub refuses
+   * it when the pull request's head is no longer the one Sekhemet checked.
+   */
   public async enableAutoMerge(
     pr: PullRequestRef,
     method: "SQUASH" | "MERGE" | "REBASE" = "SQUASH",
   ): Promise<void> {
     await this.client.graphql(
-      "mutation($id:ID!,$m:PullRequestMergeMethod!){enablePullRequestAutoMerge(input:{pullRequestId:$id,mergeMethod:$m}){pullRequest{number}}}",
-      { id: pr.nodeId, m: method },
+      "mutation($id:ID!,$m:PullRequestMergeMethod!,$head:GitObjectID){enablePullRequestAutoMerge(input:{pullRequestId:$id,mergeMethod:$m,expectedHeadOid:$head}){pullRequest{number}}}",
+      { id: pr.nodeId, m: method, head: pr.headSha },
     );
   }
 
   /**
    * One lifecycle step, for the queue to call after checks post: ready
-   * when checks pass, auto-merge when the policy allows.
+   * when checks pass, auto-merge when the policy allows. `onChecks` sees the
+   * runs it decided on: where results from someone else's CI are recorded as
+   * external (INT-37).
+   *
+   * A check the project declares blocking (`[review] blocking_checks`) must
+   * have passed at the pull request's current head, as GitHub reports it now:
+   * one not yet reported, or reported only at another head — the PR's head
+   * moved since Sekhemet opened it — keeps it waiting; one that failed there
+   * keeps it failing. Either way it is not marked ready and auto-merge is
+   * not enabled (B4.9 part 2, M4).
    */
   public async advance(
     pr: PullRequestRef,
-    policy: { autoMerge: boolean; codeowners?: string; changedFiles?: string[] },
+    policy: {
+      autoMerge: boolean;
+      codeowners?: string;
+      changedFiles?: string[];
+      onChecks?: (runs: CheckRunInfo[]) => Promise<void>;
+      blockingChecks?: readonly string[];
+    },
   ): Promise<"waiting" | "failing" | "ready" | "auto_merge"> {
-    const state = await this.checksState(pr.headSha);
+    const runs = await this.checkRuns(pr.headSha);
+    await policy.onChecks?.(runs);
+    const state = checksStateOf(runs);
     if (state === "pending") return "waiting";
     if (state === "failure") return "failing";
+    const blocking = policy.blockingChecks ?? [];
+    if (blocking.length > 0) {
+      const now = await this.client.rest<{ head: { sha: string } }>(
+        "GET",
+        `${this.base}/pulls/${pr.number}`,
+      );
+      if (now.head.sha !== pr.headSha) return "waiting";
+      for (const name of blocking) {
+        const at = runs.filter((r) => r.name === name && r.head_sha === now.head.sha);
+        if (at.some((r) => r.status === "completed" && !PASSING.has(r.conclusion ?? ""))) {
+          return "failing";
+        }
+        if (!at.some((r) => r.status === "completed" && PASSING.has(r.conclusion ?? ""))) {
+          return "waiting";
+        }
+      }
+    }
     await this.markReady(pr, policy.codeowners, policy.changedFiles ?? []);
     if (policy.autoMerge) {
       await this.enableAutoMerge(pr);

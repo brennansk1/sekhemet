@@ -33,6 +33,11 @@ export interface SekhemetConfig {
     remote: string;
     /** An accept needs a code owner of the card's files (review-git §2.4.2, RG-N5-4). */
     requireCodeOwnerAccept: boolean;
+    /**
+     * A dependency bot's pull request that passes every gate is set to
+     * auto-merge (integrations INT-16a); off, it is left for a person (INT-16).
+     */
+    autoMergeDependencies: boolean;
   };
   /**
    * Solo or the Team setup ([teams](teams.md) §3): read from the user
@@ -63,6 +68,7 @@ export const DEFAULT_CONFIG: SekhemetConfig = {
     integrationBranch: "main",
     remote: "origin",
     requireCodeOwnerAccept: false,
+    autoMergeDependencies: false,
   },
   team: { mode: "solo" },
   network: { mode: "offline", allow: [] },
@@ -217,6 +223,7 @@ function project(merged: TomlTable, problems: string[] = [], user?: TomlTable): 
         review.require_code_owner_accept,
         d.review.requireCodeOwnerAccept,
       ),
+      autoMergeDependencies: bool(review.auto_merge_dependencies, d.review.autoMergeDependencies),
     },
     team: { mode: user?.team && table(user, "team").mode === "team" ? "team" : "solo" },
     network: { mode, allow: strArray(network.allow, d.network.allow) },

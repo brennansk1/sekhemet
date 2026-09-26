@@ -104,6 +104,12 @@ export interface WorkerPromptInput {
   repairPlan?: string;
   /** Per-card directives from the team: answers, a send-back note. */
   dossier?: { label: string; text: string }[];
+  /**
+   * Where the card's own text came from when it is untrusted by origin — an
+   * import (`import:<card>`) — though the card has no external link; the
+   * title is then tagged with it (S9; B4.9 part 2, M3).
+   */
+  untrustedSource?: string;
   /** Working-memory lessons and lessons from earlier attempts. */
   lessons?: string[];
   /**
@@ -612,6 +618,9 @@ function buildSections(
     }),
   );
   const { card } = input;
+  const titleSource = card.externalRef
+    ? `${card.externalRef.system}:${card.externalRef.id}`
+    : input.untrustedSource;
   add({
     id: "contract",
     kind: "contract",
@@ -622,7 +631,7 @@ function buildSections(
     // No step counter here: it changes every turn and lives in the goal tail.
     // S9 (B4.9 review M4): a linked card's title came from the tracker, as
     // its spec did, so it is tagged untrusted too.
-    text: `=== ACTIVE CARD CONTRACT ===\nCard ID: ${card.id}\nTier: ${card.tier.toUpperCase()}\nTitle: ${card.externalRef ? tagUntrusted(card.title, `${card.externalRef.system}:${card.externalRef.id}`) : card.title}\nDeclared Scope: ${scopeLine(card.scopeFiles)}`,
+    text: `=== ACTIVE CARD CONTRACT ===\nCard ID: ${card.id}\nTier: ${card.tier.toUpperCase()}\nTitle: ${titleSource ? tagUntrusted(card.title, titleSource) : card.title}\nDeclared Scope: ${scopeLine(card.scopeFiles)}`,
   });
 
   // --- volatile: the per-turn tail ---

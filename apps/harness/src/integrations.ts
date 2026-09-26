@@ -13,7 +13,13 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
 import type { CardRecord, CardStore, EventLog } from "@sekhemet/kernel";
-import { DELEGATE_LABEL, GitHubIssuesAdapter, type SyncAdapter } from "@sekhemet/sync";
+import {
+  DELEGATE_LABEL,
+  type GitHubClient,
+  GitHubIssuesAdapter,
+  type RateBudget,
+  type SyncAdapter,
+} from "@sekhemet/sync";
 import {
   egressRecorder,
   githubEndpoints,
@@ -22,12 +28,18 @@ import {
   integrationFetch,
   integrationRefusal,
 } from "./github_transport.js";
+import { importProposals } from "./import_board.js";
 import { keychainStore } from "./keychain.js";
 import type { ProposalDraft } from "./pm/agent.js";
 import type { PmStore } from "./pm/store.js";
 import { PM_EVENTS } from "./pm/types.js";
 import { userDir } from "./user_dir.js";
-import { type SyncDirection, forgejoFromEnv, syncViaAdapter } from "./wave2_github.js";
+import {
+  type SyncDirection,
+  forgejoFromEnv,
+  mirrorAgentStatuses,
+  syncViaAdapter,
+} from "./wave2_github.js";
 
 const run = promisify(execFile);
 
@@ -42,6 +54,15 @@ const run = promisify(execFile);
  */
 export interface IntegrationSettings {
   slackWebhookUrl?: string;
+  /** A Slack bot token (`xoxb-…`) and the channel it posts to, instead of a webhook. */
+  slackBotToken?: string;
+  slackChannel?: string;
+  /** The notice kinds Slack carries; every kind when unset (integrations item 21). */
+  slackEvents?: import("./notify.js").NotifyEvent[];
+  /** Unsolicited notices a day on Slack: 3 when unset, never more than 5 (item 23a). */
+  slackDailyBudget?: number;
+  /** When Seshat's daily standup is due, local `HH:MM`; 09:00 when unset (INT-18). */
+  standupAt?: string;
   githubPrOnAccept?: boolean;
   /** The Researcher may search papers, the web and GitHub. */
   researchWeb?: boolean;
@@ -82,7 +103,7 @@ function secureSettingsPath(path: string): void {
  * post to the channel, a push token to the phone. Where the host has a
  * keychain they live there (SEC-27a); the file keeps only their account names.
  */
-const SECRET_FIELDS = ["slackWebhookUrl", "push.token"] as const;
+const SECRET_FIELDS = ["slackWebhookUrl", "slackBotToken", "push.token"] as const;
 
 /** The file as stored: the settings, less secrets kept in the keychain, which it names. */
 type StoredSettings = IntegrationSettings & { keychain?: string[] };
@@ -272,8 +293,12 @@ export async function listIntegrations(repoPath: string): Promise<IntegrationEnt
       case "slack":
         return {
           ...base,
-          connected: Boolean(settings.slackWebhookUrl),
-          detail: settings.slackWebhookUrl ? "Webhook set" : "Not connected",
+          connected: Boolean(settings.slackWebhookUrl || settings.slackBotToken),
+          detail: settings.slackWebhookUrl
+            ? "Webhook set"
+            : settings.slackBotToken
+              ? "Bot token set"
+              : "Not connected",
         };
       default:
         return {
@@ -287,35 +312,20 @@ export async function listIntegrations(repoPath: string): Promise<IntegrationEnt
 
 // --- Slack --------------------------------------------------------------------
 
-/** Post to the configured Slack webhook. Returns false when not connected. */
+/**
+ * Post one message to Slack, when it is connected: the Slack channel of the
+ * one notifier (`slack.ts`), through the one network policy, recorded as
+ * `pm/notify`. Returns false when not connected.
+ */
 export async function notifySlack(
   repoPath: string,
   log: EventLog | undefined,
   kind: "standup" | "needs_you" | "run_report" | "test",
   text: string,
 ): Promise<{ ok: boolean; error?: string }> {
-  const url = readSettings(repoPath).slackWebhookUrl;
-  if (!url) return { ok: false, error: "Slack is not connected" };
-  let result: { ok: boolean; error?: string };
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    result = res.ok ? { ok: true } : { ok: false, error: `Slack answered ${res.status}` };
-  } catch (err) {
-    result = { ok: false, error: err instanceof Error ? err.message : String(err) };
-  }
-  await log
-    ?.append({
-      actor: "harness",
-      type: PM_EVENTS.notify,
-      payload: { channel: "slack", kind, ok: result.ok },
-    })
-    .catch(() => undefined);
-  return result;
+  const { sendSlack } = await import("./slack.js");
+  const r = await sendSlack(repoPath, { event: kind, title: "Sekhemet", message: text }, { log });
+  return r.skipped ? { ok: false, error: "Slack is not connected" } : r;
 }
 
 // --- CSV ------------------------------------------------------------------------
@@ -325,36 +335,7 @@ export function toCsv(rows: string[][]): string {
   return `${rows.map((r) => r.map(cell).join(",")).join("\r\n")}\r\n`;
 }
 
-/** RFC 4180 CSV: quoted fields, doubled quotes, newlines inside quotes. */
-export function parseCsv(text: string): string[][] {
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let field = "";
-  let quoted = false;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (quoted) {
-      if (c === '"' && text[i + 1] === '"') {
-        field += '"';
-        i++;
-      } else if (c === '"') quoted = false;
-      else field += c;
-    } else if (c === '"') quoted = true;
-    else if (c === ",") {
-      row.push(field);
-      field = "";
-    } else if (c === "\n" || c === "\r") {
-      if (c === "\r" && text[i + 1] === "\n") i++;
-      row.push(field);
-      if (row.some((f) => f !== "")) rows.push(row);
-      row = [];
-      field = "";
-    } else field += c;
-  }
-  row.push(field);
-  if (row.some((f) => f !== "")) rows.push(row);
-  return rows;
-}
+export { parseCsv } from "./import_board.js";
 
 // --- Export / import ------------------------------------------------------------
 
@@ -497,87 +478,13 @@ export function exportBoard(
   };
 }
 
-const pickPriority = (value: string): number | undefined => {
-  const v = value.trim().toLowerCase();
-  if (!v) return undefined;
-  if (v === "highest" || v === "urgent" || v === "blocker" || v === "critical") return 1;
-  if (v === "high" || v === "major") return 2;
-  if (v === "medium" || v === "normal") return 3;
-  if (v === "low" || v === "lowest" || v === "minor" || v === "trivial") return 4;
-  if (v === "no priority" || v === "none") return 0;
-  const n = Number(v);
-  return Number.isInteger(n) && n >= 0 && n <= 4 ? n : undefined;
-};
-
 /**
- * Parse another tool's export into card drafts.
- *
- * Column names are matched loosely (Jira calls it Summary, Linear calls it
- * Title), so a CSV from either tool, or a hand-made one, imports without a
- * mapping step. Nothing is created here: the drafts become proposals.
+ * Parse another tool's export into card drafts, all of them new cards: the
+ * board-aware form, which updates the cards a row already is, is
+ * `importProposals` (NEW-integrations-1).
  */
 export function importDrafts(format: string, content: string): ProposalDraft[] {
-  type Fields = Record<string, unknown>;
-  const drafts: Fields[] = [];
-  if (format === "jira-csv" || format === "linear-csv" || format === "csv") {
-    const [header, ...rows] = parseCsv(content);
-    if (!header) return [];
-    const col = (...names: string[]) =>
-      header.findIndex((h) => names.includes(h.trim().toLowerCase()));
-    const title = col("summary", "title", "name");
-    const desc = col("description", "body");
-    const prio = col("priority");
-    const est = col("story points", "estimate", "points", "custom field (story points)");
-    const labels = col("labels", "label");
-    const due = col("due date", "duedate", "due");
-    if (title < 0) return [];
-    for (const r of rows) {
-      const t = r[title]?.trim();
-      if (!t) continue;
-      const p = prio >= 0 ? pickPriority(r[prio] ?? "") : undefined;
-      const e = est >= 0 ? Number(r[est]) : Number.NaN;
-      const l = labels >= 0 ? (r[labels] ?? "").split(/[,\s]+/).filter(Boolean) : [];
-      const d = due >= 0 ? (r[due] ?? "").trim() : "";
-      drafts.push({
-        title: t.slice(0, 300),
-        ...(desc >= 0 && r[desc]?.trim() ? { spec: r[desc]?.trim() } : {}),
-        ...(p !== undefined ? { priority: p } : {}),
-        ...(Number.isFinite(e) && e > 0 ? { estimate: e } : {}),
-        ...(l.length ? { labels: l } : {}),
-        ...(/^\d{4}-\d{2}-\d{2}/.test(d) ? { dueDate: d.slice(0, 10) } : {}),
-      });
-    }
-  } else if (format === "github-json" || format === "json") {
-    const parsed = JSON.parse(content) as unknown;
-    const list = Array.isArray(parsed) ? parsed : ((parsed as { cards?: unknown[] }).cards ?? []);
-    for (const item of list as Record<string, unknown>[]) {
-      const t = typeof item.title === "string" ? item.title.trim() : "";
-      if (!t) continue;
-      const labelNames = Array.isArray(item.labels)
-        ? item.labels
-            .map((l) => (typeof l === "string" ? l : String((l as { name?: string }).name ?? "")))
-            .filter(Boolean)
-        : [];
-      const prioLabel = labelNames.find((l) => l.startsWith("priority:"));
-      const p = prioLabel
-        ? pickPriority(prioLabel.slice(9))
-        : pickPriority(String(item.priority ?? ""));
-      drafts.push({
-        title: t.slice(0, 300),
-        ...(typeof item.body === "string" && item.body.trim() ? { spec: item.body.trim() } : {}),
-        ...(typeof item.spec === "string" ? { spec: item.spec } : {}),
-        ...(p !== undefined ? { priority: p } : {}),
-        ...(labelNames.filter((l) => !l.includes(":")).length
-          ? { labels: labelNames.filter((l) => !l.includes(":")) }
-          : {}),
-      });
-    }
-  }
-  return drafts.map((fields) => ({
-    kind: "create_card" as const,
-    cards: [fields],
-    summary: `Import ${String(fields.title)}`,
-  }));
+  return importProposals(format, content, []);
 }
 
 // --- GitHub sync ----------------------------------------------------------------
@@ -623,6 +530,8 @@ export async function syncGithub(
   /** Cards not written because the tracker nests less deeply (INT-11e). */
   clamped: { id: string; ancestor: string }[];
   errors: string[];
+  /** GitHub's two meters as this sync saw them, apart (INT-11c). */
+  budget?: { rest: RateBudget; graphql: RateBudget };
 }> {
   const out = {
     created: 0,
@@ -639,10 +548,13 @@ export async function syncGithub(
   let adapter: SyncAdapter | undefined = forgejoFromEnv((url) =>
     integrationFetch(repoPath, record, url, "integration:forgejo"),
   );
+  let github: { client: GitHubClient; repo: { owner: string; repo: string } } | undefined;
   if (!adapter) {
     try {
       const t = await githubTransport(repoPath, record);
-      adapter = new GitHubIssuesAdapter(t.repo, t.client);
+      // INT-11c: a page of issues with their sub-issues and labels in one GraphQL query.
+      adapter = new GitHubIssuesAdapter(t.repo, t.client, { pull: "graphql" });
+      github = { client: t.client, repo: t.repo };
       // Linking the login changes the board's people: not on a push (M6).
       if (t.kind === "gh" && direction !== "push") await linkLocalLogin(cardStore, t.client);
     } catch (err) {
@@ -660,12 +572,23 @@ export async function syncGithub(
       lastSync: { ...(readSettings(repoPath).lastSync ?? {}), [adapter.system]: started },
     });
   }
+  // INT-20b: a sync that sends also shows each linked card's state on its issue.
+  if (github && direction !== "pull") {
+    const m = await mirrorAgentStatuses(repoPath, cardStore, eventLog, {
+      adapter,
+      repo: github.repo,
+    }).catch((err: unknown) => ({
+      errors: [err instanceof Error ? err.message : String(err)],
+    }));
+    r.errors.push(...m.errors.map((e) => `agent status: ${e}`));
+  }
   return {
     created: r.created + r.linked,
     updated: r.updated + r.pushed,
     skipped: 0,
     clamped: r.clamped,
     errors: r.errors,
+    ...(github ? { budget: github.client.budget() } : {}),
   };
 }
 
@@ -720,7 +643,12 @@ export async function handleIntegrationsApi(
   if (url === "/api/integrations/slack" && (req.method === "PUT" || req.method === "DELETE")) {
     if (!ctx.mutationGuard(req, res)) return true;
     if (req.method === "DELETE") {
-      writeSettings(ctx.repoPath, { slackWebhookUrl: undefined });
+      // Disconnect means every Slack credential: the webhook and the bot token.
+      writeSettings(ctx.repoPath, {
+        slackWebhookUrl: undefined,
+        slackBotToken: undefined,
+        slackChannel: undefined,
+      });
     } else {
       const b = await ctx.readJsonBody(req);
       const hook = typeof b.webhookUrl === "string" ? b.webhookUrl.trim() : "";
@@ -850,7 +778,9 @@ export async function handleIntegrationsApi(
     const content = typeof body.content === "string" ? body.content : "";
     let drafts: ProposalDraft[];
     try {
-      drafts = importDrafts(format, content);
+      // INT-27: a row that is already a card updates it; INT-28: a malformed
+      // CSV is refused with the line named.
+      drafts = importProposals(format, content, (await ctx.cardStore?.listCards()) ?? []);
     } catch (err) {
       ctx.json(res, 400, {
         error: `Could not read that file: ${err instanceof Error ? err.message : String(err)}`,
@@ -858,6 +788,11 @@ export async function handleIntegrationsApi(
       return true;
     }
     if (drafts.length === 0) {
+      if (importDrafts(format, content).length > 0) {
+        // Every row is already a card and changes nothing: an idempotent re-import.
+        ctx.json(res, 200, { proposals: [], unchanged: true });
+        return true;
+      }
       ctx.json(res, 400, { error: "No cards found. The file needs a Summary or Title column." });
       return true;
     }

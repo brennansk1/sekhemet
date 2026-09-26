@@ -400,3 +400,197 @@ describe("INT-9/10/11: webhook intake", () => {
     });
   });
 });
+
+describe("INT-11c: a page of issues through GraphQL, and GraphQL's own budget", () => {
+  /** GraphQL's issue node for issue n, as GitHub's schema names its fields. */
+  const node = (n: number, extra: Record<string, unknown> = {}) => ({
+    number: n,
+    url: `https://github.com/o/r/issues/${n}`,
+    title: `Issue ${n}`,
+    body: `Body ${n}`,
+    state: "OPEN",
+    updatedAt: "2026-09-01T00:00:00Z",
+    closedAt: null,
+    assignees: { nodes: [{ login: "octocat" }] },
+    labels: { nodes: [{ name: "bug" }, { name: DELEGATE_LABEL }] },
+    parent: null,
+    subIssues: { nodes: [] },
+    ...extra,
+  });
+
+  it("fetches each page's issues with their sub-issues and labels in one query, every page, and no REST issue call", async () => {
+    const srv = await fake((s) => {
+      if (s.url !== "/graphql") return { status: 404, json: { message: "Not Found" } };
+      const vars = (s.body as { variables: { after?: string | null } }).variables;
+      const first = !vars.after;
+      return {
+        headers: {
+          "x-ratelimit-resource": "graphql",
+          "x-ratelimit-limit": "5000",
+          "x-ratelimit-remaining": first ? "4999" : "4998",
+          "x-ratelimit-used": first ? "1" : "2",
+          "x-ratelimit-reset": "1790000000",
+        },
+        json: {
+          data: {
+            rateLimit: {
+              cost: 1,
+              limit: 5000,
+              remaining: first ? 4999 : 4998,
+              used: first ? 1 : 2,
+              resetAt: "2026-09-25T13:00:00Z",
+            },
+            repository: {
+              issues: {
+                pageInfo: { hasNextPage: first, endCursor: first ? "c1" : "c2" },
+                nodes: first
+                  ? [
+                      node(1, {
+                        subIssues: {
+                          nodes: [{ number: 2, repository: { nameWithOwner: "o/r" } }],
+                        },
+                      }),
+                      node(2, { parent: { number: 1, repository: { nameWithOwner: "o/r" } } }),
+                    ]
+                  : [node(3, { state: "CLOSED", closedAt: "2026-09-02T00:00:00Z" })],
+              },
+            },
+          },
+        },
+      };
+    });
+    const client = new GitHubClient(staticToken("t"), srv.endpoints, { fetch });
+    const adapter = new GitHubIssuesAdapter({ owner: "o", repo: "r" }, client, { pull: "graphql" });
+    const items = await adapter.pull("2026-01-01T00:00:00Z");
+    // One query per page, two pages; nothing per issue, nothing through REST.
+    expect(srv.seen.map((s) => s.url)).toEqual(["/graphql", "/graphql"]);
+    const q = (srv.seen[0]?.body as { query: string }).query;
+    expect(q).toMatch(/subIssues\(first:/);
+    expect(q).toMatch(/labels\(first:/);
+    expect((srv.seen[0]?.body as { variables: unknown }).variables).toMatchObject({
+      owner: "o",
+      name: "r",
+      since: "2026-01-01T00:00:00Z",
+    });
+    expect(items.map((i) => i.ref.id)).toEqual(["o/r#1", "o/r#2", "o/r#3"]);
+    expect(items[0]).toMatchObject({
+      title: "Issue 1",
+      body: "Body 1",
+      labels: ["bug"],
+      delegatedToWorker: true,
+      assignee: "octocat",
+      state: "open",
+      subIssues: ["o/r#2"],
+    });
+    expect(items[1]?.parent).toBe("o/r#1");
+    expect(items[2]).toMatchObject({ state: "closed", closedAt: "2026-09-02T00:00:00Z" });
+    // GraphQL's points are tracked apart from REST's requests.
+    const budget = client.budget();
+    expect(budget.graphql).toMatchObject({ requests: 2, spent: 2, remaining: 4998, limit: 5000 });
+    expect(budget.rest).toMatchObject({ requests: 0, spent: 0 });
+    expect(budget.rest.remaining).toBeUndefined();
+  });
+
+  it("REST requests count against the REST budget only", async () => {
+    const srv = await fake(() => ({
+      headers: {
+        "x-ratelimit-resource": "core",
+        "x-ratelimit-limit": "5000",
+        "x-ratelimit-remaining": "4990",
+        "x-ratelimit-used": "10",
+        "x-ratelimit-reset": "1790000000",
+      },
+      json: [],
+    }));
+    const client = new GitHubClient(staticToken("t"), srv.endpoints, { fetch });
+    await client.restPages("/repos/o/r/issues");
+    await client.rest("GET", "/repos/o/r");
+    expect(client.budget().rest).toMatchObject({ requests: 2, remaining: 4990, limit: 5000 });
+    expect(client.budget().graphql).toMatchObject({ requests: 0, spent: 0 });
+  });
+});
+
+describe("INT-16a and INT-20c at intake", () => {
+  it("a Dependabot PR's opening names the pull request, its head and its URL", () => {
+    const hook = fixture("webhook-pull_request-closed.json");
+    hook.action = "opened";
+    hook.pull_request.user = { login: "dependabot[bot]", id: 49699333, type: "Bot" };
+    hook.pull_request.head.repo = { full_name: "octo-org/octo-repo" };
+    hook.pull_request.base.repo = { full_name: "octo-org/octo-repo" };
+    expect(intentFor("pull_request", hook)).toEqual({
+      kind: "verify_dependency_pr",
+      pr: 5,
+      author: "dependabot[bot]",
+      headSha: "ec26c3e57ca3a959ca5aad62de7213c562f8c821",
+      url: "https://github.com/octo-org/octo-repo/pull/5",
+      repo: "octo-org/octo-repo",
+    });
+    hook.pull_request.user = { login: "octocat", id: 1, type: "User" };
+    expect(intentFor("pull_request", hook).kind).toBe("ignored");
+    // M1: the bot is its [bot] login, a Bot account, and a branch of this repository.
+    hook.pull_request.user = { login: "renovate", id: 2, type: "Bot" };
+    expect(intentFor("pull_request", hook).kind).toBe("ignored");
+    hook.pull_request.user = { login: "renovate[bot]", id: 2, type: "User" };
+    expect(intentFor("pull_request", hook).kind).toBe("ignored");
+    hook.pull_request.user = { login: "renovate[bot]", id: 2, type: "Bot" };
+    hook.pull_request.head.repo = { full_name: "mallory/octo-repo" };
+    expect(intentFor("pull_request", hook).kind).toBe("ignored");
+    hook.pull_request.head.repo = { full_name: "octo-org/octo-repo" };
+    expect(intentFor("pull_request", hook).kind).toBe("verify_dependency_pr");
+  });
+
+  it("an issue closed on the tracker is an intent, by its one identity and when it closed", () => {
+    const hook = fixture("webhook-issues-labeled.json");
+    hook.action = "closed";
+    hook.issue.state = "closed";
+    hook.issue.closed_at = "2026-09-20T10:00:00Z";
+    expect(intentFor("issues", hook)).toEqual({
+      kind: "issue_closed",
+      ref: {
+        system: "github",
+        id: "octo-org/octo-repo#1347",
+        url: hook.issue.html_url,
+      },
+      closedAt: "2026-09-20T10:00:00Z",
+    });
+  });
+});
+
+describe("INT-11b: every verified delivery is seen, even one that is not a trigger", () => {
+  it("calls afterDelivery once the signature holds, never before", async () => {
+    const secret = "s3cret";
+    const seen: string[] = [];
+    const server = createServer(
+      githubWebhookHandler({
+        secret,
+        onIntent: () => undefined,
+        afterDelivery: (event, delivery) => void seen.push(`${event}:${delivery}`),
+      }),
+    );
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    closers.push(() => new Promise<void>((r) => server.close(() => r())));
+    const port = (server.address() as AddressInfo).port;
+    const post = (s: string, headers: Record<string, string>) =>
+      new Promise<number>((resolve) => {
+        const req = request(
+          { host: "127.0.0.1", port, method: "POST", path: "/", headers },
+          (res) => {
+            res.resume();
+            res.on("end", () => resolve(res.statusCode ?? 0));
+          },
+        );
+        req.end(s);
+      });
+    const body = JSON.stringify({ action: "edited", issue: { number: 1 } });
+    const sig = `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`;
+    expect(await post(body, { "x-github-event": "issues", "x-github-delivery": "g-1" })).toBe(401);
+    expect(
+      await post(body, {
+        "x-github-event": "issues",
+        "x-github-delivery": "g-2",
+        "x-hub-signature-256": sig,
+      }),
+    ).toBe(202);
+    expect(seen).toEqual(["issues:g-2"]);
+  });
+});

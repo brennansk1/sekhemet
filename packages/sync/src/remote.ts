@@ -23,6 +23,10 @@ export interface ExternalItem {
   updatedAt: string;
   /** Parent issue, when the tracker has hierarchy. */
   parent?: string;
+  /** The item's sub-issues, by their one identity, when the pull fetched them (INT-11c). */
+  subIssues?: string[];
+  /** When the tracker closed it, if it is closed (INT-20c). */
+  closedAt?: string;
 }
 
 export interface SyncCard {
@@ -52,6 +56,46 @@ export interface SyncAdapter {
   pull(since: string): Promise<ExternalItem[]>;
   push(card: SyncCard): Promise<ExternalRef>;
   update(ref: ExternalRef, patch: Partial<SyncCard>): Promise<void>;
+  /**
+   * Show a linked card's state on the tracker as an agent session's status
+   * (integrations item 16a, INT-20b), where the tracker has one; never the assignee.
+   */
+  setAgentStatus?(ref: ExternalRef, status: AgentStatus): Promise<AgentStatusResult>;
+}
+
+/** The four statuses GitHub shows for an agent session (integrations item 16a). */
+export type AgentStatus = "queued" | "working" | "waiting_for_review" | "completed";
+
+/** Where an agent status was set: each project's option, or why nothing was. */
+export interface AgentStatusResult {
+  set: { project: string; option: string }[];
+  skipped?: string;
+}
+
+/**
+ * A Projects status option's name for an agent status: GitHub's own agent
+ * status names first, then the default Projects board's (Todo, In Progress,
+ * Done — where a card in Review is still In Progress), compared without case
+ * or punctuation.
+ */
+const STATUS_OPTIONS: Record<AgentStatus, string[]> = {
+  queued: ["queued", "todo", "ready"],
+  working: ["working", "inprogress"],
+  waiting_for_review: ["waitingforreview", "inreview", "review", "inprogress"],
+  completed: ["completed", "done"],
+};
+const optionKey = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+/** The option of a single-select Status field that stands for `status`, if any. */
+export function statusOption<T extends { name: string }>(
+  options: readonly T[],
+  status: AgentStatus,
+): T | undefined {
+  for (const want of STATUS_OPTIONS[status]) {
+    const hit = options.find((o) => optionKey(o.name) === want);
+    if (hit) return hit;
+  }
+  return undefined;
 }
 
 /**
@@ -175,10 +219,59 @@ interface RestIssue {
   assignee: { login: string } | null;
   state: string;
   updated_at: string;
+  closed_at?: string | null;
   pull_request?: unknown;
 }
 
-/** GitHub Issues through the one client (REST, paginated), `gh`'s login or the App's. */
+/** An issue as GitHub's GraphQL schema returns it (INT-11c). */
+interface GraphqlIssue {
+  number: number;
+  url: string;
+  title: string;
+  body: string | null;
+  state: "OPEN" | "CLOSED";
+  updatedAt: string;
+  closedAt: string | null;
+  assignees: { nodes: { login: string }[] };
+  labels: { nodes: { name: string }[] } | null;
+  parent: { number: number; repository?: { nameWithOwner: string } } | null;
+  subIssues: { nodes: { number: number; repository?: { nameWithOwner: string } }[] } | null;
+}
+
+/**
+ * One page of issues with their labels, parent and sub-issues in one query
+ * (integrations item 11a, INT-11c), and the query's cost, so GraphQL's point
+ * budget is tracked apart from REST's (`GitHubClient.budget`).
+ */
+const ISSUE_PAGE = `query($owner:String!,$name:String!,$since:DateTime,$after:String){
+  rateLimit{cost limit remaining used resetAt}
+  repository(owner:$owner,name:$name){
+    issues(first:100,after:$after,filterBy:{since:$since},orderBy:{field:UPDATED_AT,direction:ASC}){
+      pageInfo{hasNextPage endCursor}
+      nodes{
+        number url title body state updatedAt closedAt
+        assignees(first:1){nodes{login}}
+        labels(first:100){nodes{name}}
+        parent{number repository{nameWithOwner}}
+        subIssues(first:100){nodes{number repository{nameWithOwner}}}
+      }
+    }
+  }
+}`;
+
+/** The Projects the issue is on, each with its single-select Status field (INT-20b). */
+const PROJECT_ITEMS = `query($owner:String!,$name:String!,$n:Int!){
+  repository(owner:$owner,name:$name){
+    issue(number:$n){
+      projectItems(first:20){nodes{id project{id field(name:"Status"){... on ProjectV2SingleSelectField{id options{id name}}}}}}
+    }
+  }
+}`;
+
+const SET_PROJECT_STATUS =
+  "mutation($p:ID!,$i:ID!,$f:ID!,$o:String!){updateProjectV2ItemFieldValue(input:{projectId:$p,itemId:$i,fieldId:$f,value:{singleSelectOptionId:$o}}){projectV2Item{id}}}";
+
+/** GitHub Issues through the one client, `gh`'s login or the App's. */
 export class GitHubIssuesAdapter implements SyncAdapter {
   public readonly system = "github" as const;
   public readonly capabilities: SyncCapabilities = {
@@ -187,18 +280,73 @@ export class GitHubIssuesAdapter implements SyncAdapter {
     webhooks: true,
     maxDepth: 2,
   };
-  /** Over the one client, whose `fetch` is the caller's network policy (security item 33). */
+  /**
+   * Over the one client, whose `fetch` is the caller's network policy
+   * (security item 33). `pull: "graphql"` pulls a page of issues with their
+   * sub-issues and labels in one query (INT-11c); `rest` pages the REST list.
+   */
   constructor(
     private readonly repo: { owner: string; repo: string },
     private readonly client: GitHubClient,
+    private readonly options: { pull?: "graphql" | "rest" } = {},
   ) {}
 
   private get base(): string {
     return `/repos/${this.repo.owner}/${this.repo.repo}`;
   }
 
+  private idOf(n: number, repository?: { nameWithOwner: string }): string {
+    return githubIssueId(repository?.nameWithOwner ?? this.repo, n);
+  }
+
   /** Every issue updated since `since`, every page (INT-2); pull requests left out. */
   public async pull(since: string): Promise<ExternalItem[]> {
+    if (this.options.pull === "graphql") return this.pullGraphql(since);
+    return this.pullRest(since);
+  }
+
+  /** Every page through GraphQL, one query each, sub-issues and labels included (INT-11c). */
+  private async pullGraphql(since: string): Promise<ExternalItem[]> {
+    const out: ExternalItem[] = [];
+    let after: string | null = null;
+    for (let page = 0; page < 1000; page++) {
+      const data: {
+        repository: {
+          issues: {
+            pageInfo: { hasNextPage: boolean; endCursor: string | null };
+            nodes: GraphqlIssue[];
+          };
+        };
+      } = await this.client.graphql(ISSUE_PAGE, {
+        owner: this.repo.owner,
+        name: this.repo.repo,
+        since,
+        after,
+      });
+      const issues = data.repository.issues;
+      for (const i of issues.nodes) {
+        out.push({
+          ref: { system: "github", id: this.idOf(i.number), url: i.url },
+          title: i.title,
+          body: (i.body ?? "").replace(MARKER, ""),
+          ...splitLabels((i.labels?.nodes ?? []).map((l) => l.name)),
+          ...(i.assignees.nodes[0] ? { assignee: i.assignees.nodes[0].login } : {}),
+          state: i.state === "CLOSED" ? "closed" : "open",
+          updatedAt: i.updatedAt,
+          ...(i.closedAt ? { closedAt: i.closedAt } : {}),
+          ...(i.parent ? { parent: this.idOf(i.parent.number, i.parent.repository) } : {}),
+          ...(i.subIssues?.nodes.length
+            ? { subIssues: i.subIssues.nodes.map((c) => this.idOf(c.number, c.repository)) }
+            : {}),
+        });
+      }
+      if (!issues.pageInfo.hasNextPage || !issues.pageInfo.endCursor) break;
+      after = issues.pageInfo.endCursor;
+    }
+    return out;
+  }
+
+  private async pullRest(since: string): Promise<ExternalItem[]> {
     const items = await this.client.restPages<RestIssue>(
       `${this.base}/issues?state=all&per_page=100&since=${encodeURIComponent(since)}`,
     );
@@ -212,7 +360,48 @@ export class GitHubIssuesAdapter implements SyncAdapter {
         ...(i.assignee ? { assignee: i.assignee.login } : {}),
         state: i.state === "closed" ? "closed" : "open",
         updatedAt: i.updated_at,
+        ...(i.closed_at ? { closedAt: i.closed_at } : {}),
       }));
+  }
+
+  /**
+   * The card's state as the issue's Projects status (INT-20b): each project
+   * the issue is on whose Status field has an option for it; the assignee is
+   * never touched. An issue on no project, or a project without such an
+   * option, is skipped with the reason.
+   */
+  public async setAgentStatus(ref: ExternalRef, status: AgentStatus): Promise<AgentStatusResult> {
+    const data = await this.client.graphql<{
+      repository: {
+        issue: {
+          projectItems: {
+            nodes: {
+              id: string;
+              project: {
+                id: string;
+                field: { id: string; options: { id: string; name: string }[] } | null;
+              };
+            }[];
+          };
+        } | null;
+      };
+    }>(PROJECT_ITEMS, { owner: this.repo.owner, name: this.repo.repo, n: issueNumberOf(ref.id) });
+    const items = data.repository.issue?.projectItems.nodes ?? [];
+    if (items.length === 0) return { set: [], skipped: "the issue is on no project" };
+    const set: AgentStatusResult["set"] = [];
+    for (const item of items) {
+      const field = item.project.field;
+      const option = field?.options ? statusOption(field.options, status) : undefined;
+      if (!field || !option) continue;
+      await this.client.graphql(SET_PROJECT_STATUS, {
+        p: item.project.id,
+        i: item.id,
+        f: field.id,
+        o: option.id,
+      });
+      set.push({ project: item.project.id, option: option.name });
+    }
+    return set.length ? { set } : { set, skipped: `no Status option for ${status}` };
   }
 
   public async push(card: SyncCard): Promise<ExternalRef> {
@@ -292,6 +481,7 @@ export class ForgejoIssuesAdapter implements SyncAdapter {
         assignee: { login: string } | null;
         state: string;
         updated_at: string;
+        closed_at?: string | null;
       }[]
     >(
       "GET",
@@ -305,6 +495,7 @@ export class ForgejoIssuesAdapter implements SyncAdapter {
       ...(i.assignee ? { assignee: i.assignee.login } : {}),
       state: i.state === "closed" ? "closed" : "open",
       updatedAt: i.updated_at,
+      ...(i.closed_at ? { closedAt: i.closed_at } : {}),
     }));
   }
 

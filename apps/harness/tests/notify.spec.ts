@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { beforeEach, describe, expect, it } from "vitest";
+import { egressEvent } from "../src/egress_event.js";
 import {
   noticeFor,
   pushRequest,
@@ -117,6 +118,33 @@ describe("push notifications (H20)", () => {
     expect(last?.payload).toMatchObject({ channel: "ntfy", kind: "parked", ok: true });
   });
 
+  it("security item 33: a push goes through the one network policy and is recorded; offline refuses it before any connection", async () => {
+    const db = new DatabaseSync(":memory:");
+    initSchema(db);
+    const log = new EventLog(db);
+    // No fetch injected: the product's own path. The test config is offline.
+    writePush(repo, { kind: "ntfy", url: "https://ntfy.example.test", topic: "secret-topic-42" });
+    const r = await sendPush(repo, { event: "review", title: "t", message: "m" }, { log });
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/network policy refused ntfy\.example\.test/);
+    const egress = await log.getEventsByTypes(["harness/egress"]);
+    expect(egress.map((e) => e.payload)).toMatchObject([
+      { host: "ntfy.example.test", purpose: "integration:push", allowed: false },
+    ]);
+    // B1: the topic is the push credential: the ledger keeps the origin only.
+    expect((egress[0]?.private as { url?: string }).url).toBe("https://ntfy.example.test/…");
+    const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as {
+      name: string;
+    }[];
+    for (const { name } of tables) {
+      expect(JSON.stringify(db.prepare(`SELECT * FROM "${name}"`).all()), name).not.toContain(
+        "secret-topic-42",
+      );
+    }
+    const notify = await log.getEventsByTypes(["pm/notify"]);
+    expect(notify.at(-1)?.payload).toMatchObject({ channel: "ntfy", ok: false });
+  });
+
   it("tails the ledger: pushes new review and park events once, never history", async () => {
     const db = new DatabaseSync(":memory:");
     initSchema(db);
@@ -143,5 +171,36 @@ describe("push notifications (H20)", () => {
     await cards.updateCardStatus("card_new", "review", "again");
     expect(await n.tick()).toBe(0);
     n.stop();
+  });
+});
+
+describe("B1: a credential-bearing URL is recorded redacted", () => {
+  const at = "2026-09-25T10:00:00.000Z";
+  const rec = (url: string) => ({
+    url,
+    host: new URL(url).hostname,
+    purpose: "integration:test",
+    allowed: true,
+    payloadHash: "",
+    at,
+  });
+
+  it("a URL with a token in its query or its userinfo keeps only its origin; any URL when asked", () => {
+    for (const url of [
+      "https://api.example.test/x?access_token=abc123secret",
+      "https://api.example.test/x?sig=abc123secret&v=1",
+      "https://bob:abc123secret@git.example.test/o/r.git",
+    ]) {
+      const e = egressEvent(rec(url));
+      expect(e.private.url).toBe(`${new URL(url).protocol}//${new URL(url).host}/…`);
+      expect(JSON.stringify(e)).not.toContain("abc123secret");
+    }
+    const hook = "https://hooks.slack.com/services/T0/B0/abc123secret";
+    const redacted = egressEvent(rec(hook), { redactUrl: true });
+    expect(redacted.private.url).toBe("https://hooks.slack.com/…");
+    expect(JSON.stringify(redacted)).not.toContain("abc123secret");
+    // A plain URL is kept, privately, as before.
+    const plain = "https://api.github.com/repos/o/r/issues?page=2";
+    expect(egressEvent(rec(plain)).private.url).toBe(plain);
   });
 });

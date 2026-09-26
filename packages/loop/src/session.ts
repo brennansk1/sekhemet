@@ -1355,7 +1355,14 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     const budget = this.promptBudget();
     const guidance = this.guidance();
     const lines = (this.options.dossierLines ?? []).filter((l) => l.trim().length > 0);
-    const untrusted = lines.some(containsUntrusted) || this.card.externalRef !== undefined;
+    // S9: the card's own text is untrusted when it came from a tracker (its
+    // link) or from an imported file (its origin, M3).
+    const source = this.card.externalRef
+      ? `${this.card.externalRef.system}:${this.card.externalRef.id}`
+      : this.options.untrustedOrigin
+        ? `${this.options.untrustedOrigin}:${this.card.id}`
+        : undefined;
+    const untrusted = lines.some(containsUntrusted) || source !== undefined;
     // S9: with untrusted content in context, the contract says so, and the
     // tools run under the strict policy (no ask-tier approvals, no network).
     this.tools.setUntrustedContext(untrusted);
@@ -1374,6 +1381,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     const seed = (this.options.modelAdapter as { seed?: unknown }).seed;
     const built = buildWorkerPrompt({
       card: { ...this.card, stepsUsed: this.stepsUsed },
+      ...(source && !this.card.externalRef ? { untrustedSource: source } : {}),
       ...(typeof seed === "number" ? { seed } : {}),
       // C19: with progressive loading the system prompt carries the core
       // tools' contracts and a one-line index of the rest; what tool_search
@@ -1408,16 +1416,9 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       ...(this.lastGateFailures.length > 0
         ? { failureCode: this.failureCode(this.lastGateFailures) }
         : {}),
-      // A spec synced from an external tracker is untrusted (S9).
+      // A spec synced from an external tracker, or imported, is untrusted (S9, M3).
       ...(this.card.spec
-        ? {
-            goal: this.card.externalRef
-              ? tagUntrusted(
-                  this.card.spec,
-                  `${this.card.externalRef.system}:${this.card.externalRef.id}`,
-                )
-              : this.card.spec,
-          }
+        ? { goal: source ? tagUntrusted(this.card.spec, source) : this.card.spec }
         : {}),
       ...(this.card.acceptanceCriteria?.length
         ? { acceptanceCriteria: this.card.acceptanceCriteria }

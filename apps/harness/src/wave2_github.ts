@@ -1,17 +1,24 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { GateResult } from "@sekhemet/gates";
 import type { CardRecord, CardStore, EventLog, ExternalRef } from "@sekhemet/kernel";
 import {
+  type AgentStatus,
+  type AgentStatusResult,
+  type CheckRunInfo,
   type ExternalItem,
   type FetchLike,
   ForgejoIssuesAdapter,
   type GitHubClient,
+  GitHubIssuesAdapter,
   PullRequestLifecycle,
+  type PullRequestOrigin,
   type PullRequestRef,
   type SharedFields,
   type SyncAdapter,
   type SyncCard,
+  isDependencyBotPullRequest,
   issueNumberOf,
   mergeThreeWay,
   postCheckRun,
@@ -19,6 +26,7 @@ import {
   uploadSarif,
 } from "@sekhemet/sync";
 import { readCodeowners } from "./codeowners.js";
+import { effectiveConfig } from "./config_apply.js";
 import { evidenceSummary } from "./evidence_summary.js";
 import { egressRecorder, githubTransport, ownerRepo as ownerRepoOf } from "./github_transport.js";
 import { latestLedgerEvidence } from "./ledger_evidence.js";
@@ -176,6 +184,10 @@ export async function advancePullRequests(
     autoMerge: boolean;
     /** A card's changed files, from its evidence on the ledger (else the evidence file's diff). */
     filesOf?: (cardId: string) => Promise<readonly string[] | undefined>;
+    /** The ledger the PR's other checks are recorded on, as external results (INT-37). */
+    store?: CardStore;
+    /** Checks that must pass at the PR's current head first (`[review] blocking_checks`, M4). */
+    blockingChecks?: readonly string[];
   },
 ): Promise<{ number: number; state: string }[]> {
   // CODEOWNERS as the integration branch holds it (review-git §2.4.2).
@@ -188,10 +200,19 @@ export async function advancePullRequests(
       l.slice(6),
     );
     const files = [...((await options.filesOf?.(e.cardId ?? "")) ?? fromDiff)];
+    const store = options.store;
     const state = await new PullRequestLifecycle(client, p.repo).advance(p, {
       autoMerge: options.autoMerge,
+      ...(options.blockingChecks?.length ? { blockingChecks: options.blockingChecks } : {}),
       ...(codeowners ? { codeowners } : {}),
       changedFiles: files,
+      ...(store && e.cardId
+        ? {
+            onChecks: async (runs: CheckRunInfo[]) => {
+              await recordExternalChecks(store, e.cardId as string, runs);
+            },
+          }
+        : {}),
     });
     out.push({ number: p.number, state });
     if (state === "ready" || state === "auto_merge") {
@@ -223,7 +244,300 @@ export async function advanceOpenPullRequests(
   return advancePullRequests(t.client, repoPath, log, {
     autoMerge: env.SEKHEMET_GITHUB_AUTOMERGE === "1",
     filesOf: async (cardId) => (await latestLedgerEvidence(cardStore, cardId))?.filesTouched,
+    store: cardStore,
+    // M4: a declared external check gates ready and auto-merge at the PR's current head.
+    blockingChecks: effectiveConfig(repoPath).config.review.blockingChecks,
   });
+}
+
+/** Our own check runs, posted per gate (Y14): never someone else's result. */
+const OWN_CHECK = /^sekhemet\//;
+
+/**
+ * Results from someone else's CI (integrations item 15a, INT-37, INT-38):
+ * each completed check run on the card's pull request that Sekhemet did not
+ * post is recorded on the card's latest attempt as `source: "external"`
+ * with the check's name, its run URL and the head SHA it ran on — once per
+ * run and outcome. Whether it counts is the Review entry condition's
+ * (kernel rule 37, K-N8-4): advisory unless `[review] blocking_checks`
+ * declares it, and never evidence at a head other than the card branch's.
+ */
+export async function recordExternalChecks(
+  store: CardStore,
+  cardId: string,
+  runs: readonly CheckRunInfo[],
+): Promise<number> {
+  const evidence = await latestLedgerEvidence(store, cardId);
+  if (!evidence) return 0;
+  const have = store.runs
+    .listGateResults(evidence.attemptId)
+    .filter((r) => r.source === "external" && r.externalRef);
+  let recorded = 0;
+  for (const run of runs) {
+    const name = run.name ?? "";
+    const runUrl = run.html_url ?? run.details_url ?? "";
+    if (!name || OWN_CHECK.test(name) || run.status !== "completed" || !run.conclusion) continue;
+    if (!runUrl || !run.head_sha) continue; // K-N8-3: an external result names its run and head.
+    const passed = ["success", "neutral", "skipped"].includes(run.conclusion);
+    const seen = have.some(
+      (h) =>
+        h.gate === name &&
+        h.passed === passed &&
+        h.externalRef?.runUrl === runUrl &&
+        h.externalRef.headSha === run.head_sha,
+    );
+    if (seen) continue;
+    const took =
+      run.started_at && run.completed_at
+        ? Math.max(0, Date.parse(run.completed_at) - Date.parse(run.started_at))
+        : 0;
+    await store.runs.recordGateResult({
+      attemptId: evidence.attemptId,
+      cardId,
+      gate: name,
+      layer: "functional",
+      passed,
+      exitCode: passed ? 0 : 1,
+      durationMs: Number.isFinite(took) ? took : 0,
+      failures: [],
+      source: "external",
+      externalRef: { system: "github", checkName: name, runUrl, headSha: run.head_sha },
+    });
+    recorded++;
+  }
+  return recorded;
+}
+
+// ------------------------------------------------ INT-20b: agent status on the issue
+
+/**
+ * A card's state as GitHub's agent-session status (integrations item 16a):
+ * queued (Ready), working (Planning, In Progress, Verify), waiting for
+ * review (Review), completed (Done); nothing for Backlog, Parked or Rejected.
+ */
+export function agentStatusOf(status: string): AgentStatus | undefined {
+  if (status === "ready") return "queued";
+  if (status === "planning" || status === "in_progress" || status === "verify") return "working";
+  if (status === "review") return "waiting_for_review";
+  if (status === "done") return "completed";
+  return undefined;
+}
+
+/** Linked GitHub cards whose status differs from the last one shown on the issue. */
+async function agentStatusesDue(
+  store: CardStore,
+): Promise<{ card: CardRecord; ref: ExternalRef; status: AgentStatus }[]> {
+  const due: { card: CardRecord; ref: ExternalRef; status: AgentStatus }[] = [];
+  for (const card of await store.listCards()) {
+    const ref = card.externalRef;
+    if (ref?.system !== "github" || !ref.id.includes("#")) continue;
+    const status = agentStatusOf(card.status);
+    if (!status) continue;
+    const last = (await store.cardEvents(card.id, ["github/agent_status"])).at(-1);
+    if ((last?.payload as { status?: string } | undefined)?.status === status) continue;
+    due.push({ card, ref, status });
+  }
+  return due;
+}
+
+/**
+ * INT-20b: show each linked card's state on its issue's Projects status —
+ * queued, working, waiting for review, completed — and record it
+ * (`github/agent_status`), so a state is set once. The issue's assignee is
+ * never written: it stays the person. Nothing is asked of GitHub when no
+ * card's state changed.
+ */
+export async function mirrorAgentStatuses(
+  repoPath: string,
+  store: CardStore,
+  log: EventLog,
+  options: {
+    env?: NodeJS.ProcessEnv;
+    /** The tracker to set it on; default the project's GitHub transport. */
+    adapter?: Pick<SyncAdapter, "setAgentStatus">;
+    repo?: { owner: string; repo: string };
+  } = {},
+): Promise<{ set: number; skipped: number; errors: string[] }> {
+  const out = { set: 0, skipped: 0, errors: [] as string[] };
+  let due = await agentStatusesDue(store);
+  if (due.length === 0) return out;
+  let adapter = options.adapter;
+  let repo = options.repo;
+  if (!adapter) {
+    const t = await githubTransport(repoPath, egressRecorder(log), options.env ?? process.env);
+    adapter = new GitHubIssuesAdapter(t.repo, t.client);
+    repo = t.repo;
+  }
+  // Only this repository's issues: another's ref is not this transport's to write.
+  if (repo) {
+    const prefix = `${repo.owner}/${repo.repo}#`.toLowerCase();
+    due = due.filter((d) => d.ref.id.toLowerCase().startsWith(prefix));
+  }
+  for (const { card, ref, status } of due) {
+    try {
+      const r: AgentStatusResult = (await adapter.setAgentStatus?.(ref, status)) ?? {
+        set: [],
+        skipped: "the tracker has no agent status",
+      };
+      await store.recordEvent({
+        type: "github/agent_status",
+        cardId: card.id,
+        actor: "github",
+        payload: {
+          id: card.id,
+          ref: ref.id,
+          status,
+          projects: r.set.map((x) => x.project),
+          ...(r.skipped ? { skipped: r.skipped } : {}),
+        },
+      });
+      if (r.set.length) out.set++;
+      else out.skipped++;
+    } catch (err) {
+      out.errors.push(`${card.id}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return out;
+}
+
+// ---------------------------------------------- INT-20c: the tracker's Done
+
+/**
+ * INT-20c: a tracker closed a linked card the board has not accepted — not
+ * Done, not accepted, not awaiting its merge. The board keeps the card where
+ * it is and records a `sync/conflict` once per closure (keyed by when it closed).
+ */
+export async function recordDoneBeforeAccept(
+  store: CardStore,
+  card: CardRecord,
+  closedAt: string,
+  actor: string,
+): Promise<boolean> {
+  if (card.status === "done" || card.status === "rejected") return false;
+  if (card.accepter || card.hold?.kind === "awaitingMerge") return false;
+  const recorded = (await store.cardEvents(card.id, ["sync/conflict"])).some((e) => {
+    const p = e.payload as { field?: string; at?: string };
+    return p.field === "state" && p.at === closedAt;
+  });
+  if (recorded) return false;
+  await store.recordEvent({
+    type: "sync/conflict",
+    cardId: card.id,
+    actor,
+    payload: { field: "state", reason: "done_before_accept", at: closedAt },
+  });
+  return true;
+}
+
+// ------------------------------------- INT-16a, INT-16: dependency-bot pull requests
+
+/** The label a dependency bot's verification card carries (item 12). */
+export const DEPENDENCY_LABEL = "dependency-update";
+
+export const isDependencyVerification = (card: Pick<CardRecord, "labels">): boolean =>
+  (card.labels ?? []).includes(DEPENDENCY_LABEL);
+
+/**
+ * The queue's hook for a dependency bot's pull requests (INT-16a, INT-16):
+ * each verification card runs the project's full gates on the pull
+ * request's head in a throwaway checkout — never an edit, never the Worker
+ * (the external review's procedure) — and then, when every gate passed and
+ * the project's policy allows it (`[review] auto_merge_dependencies`),
+ * auto-merge is enabled, provided the pull request's head is still the one
+ * the gates ran on; otherwise it waits in Review for a person. Returns the
+ * cards left for the Worker.
+ */
+export async function runDependencyVerifications(
+  repoPath: string,
+  ready: CardRecord[],
+  deps: {
+    store: CardStore;
+    board: import("./research/cards.js").ResearchBoard;
+    /** The gates in a checkout; default the repository's full gates.toml rungs. */
+    runGates?: (cwd: string) => Promise<GateResult>;
+    env?: NodeJS.ProcessEnv;
+    say?: (line: string) => void;
+  },
+): Promise<CardRecord[]> {
+  const cards = ready.filter(isDependencyVerification);
+  if (cards.length === 0) return ready;
+  const { runExternalReview } = await import("./external_review.js");
+  const allowed = effectiveConfig(repoPath).config.review.autoMergeDependencies;
+  for (const card of cards) {
+    const r = await runExternalReview(repoPath, card, {
+      store: deps.store,
+      board: deps.board,
+      ...(deps.runGates ? { runGates: deps.runGates } : {}),
+    });
+    if (r.error) {
+      deps.say?.(`Dependency PR #${r.pr} (${card.id}): not verified (${r.error})`);
+      continue;
+    }
+    let autoMerge:
+      | "enabled"
+      | "not_allowed"
+      | "gates_failed"
+      | "head_moved"
+      | "not_dependency_bot"
+      | "refused" = "not_allowed";
+    if (!r.gatesPassed) autoMerge = "gates_failed";
+    else if (allowed) {
+      try {
+        const t = await githubTransport(
+          repoPath,
+          egressRecorder(deps.store),
+          deps.env ?? process.env,
+        );
+        const pr = await t.client.rest<
+          {
+            number: number;
+            node_id: string;
+            html_url: string;
+            head: { sha: string };
+          } & PullRequestOrigin
+        >("GET", `/repos/${t.repo.owner}/${t.repo.repo}/pulls/${r.pr}`);
+        // M1: GitHub's answer now, not the card's label: the bot's own branch here.
+        if (!isDependencyBotPullRequest(pr)) autoMerge = "not_dependency_bot";
+        else if (pr.head.sha !== r.headSha) autoMerge = "head_moved";
+        else {
+          await new PullRequestLifecycle(t.client, t.repo).enableAutoMerge({
+            number: pr.number,
+            nodeId: pr.node_id,
+            url: pr.html_url,
+            headSha: pr.head.sha,
+          });
+          autoMerge = "enabled";
+        }
+      } catch (err) {
+        autoMerge = "refused";
+        deps.say?.(
+          `Dependency PR #${r.pr}: auto-merge not enabled (${err instanceof Error ? err.message : String(err)})`,
+        );
+      }
+    }
+    await deps.store.recordEvent({
+      type: "github/dependency_verified",
+      cardId: card.id,
+      actor: "harness",
+      payload: { id: card.id, pr: r.pr, headSha: r.headSha, passed: r.gatesPassed, autoMerge },
+    });
+    deps.say?.(
+      `Dependency PR #${r.pr}: gates ${r.gatesPassed ? "pass" : "fail"}; ${
+        autoMerge === "enabled"
+          ? "auto-merge enabled"
+          : autoMerge === "not_allowed"
+            ? "left for a person (the project does not allow auto-merge)"
+            : autoMerge === "head_moved"
+              ? "not merged: its head moved since the gates ran"
+              : autoMerge === "not_dependency_bot"
+                ? "not merged: GitHub does not show it as the bot's own branch in this repository"
+                : autoMerge === "refused"
+                  ? "auto-merge refused by GitHub"
+                  : "not merged"
+      }`,
+    );
+  }
+  return ready.filter((c) => !isDependencyVerification(c));
 }
 
 /**
@@ -478,6 +792,10 @@ export async function syncViaAdapter(
         cards = await cardStore.listCards();
         out.created++;
         return;
+      }
+      // INT-20c: the tracker's Done never moves the board; closed early, it is recorded.
+      if (takes && item.state === "closed") {
+        await recordDoneBeforeAccept(cardStore, card, item.closedAt ?? item.updatedAt, actor);
       }
       const snap = snaps.get(snapKey(item.ref));
       const worker = card.delegate?.kind === "worker";

@@ -113,6 +113,8 @@ interface PmProposal {
   patch?: Record<string, unknown>;      // field -> new value
   before?: Record<string, unknown>;     // field -> old value, for the diff
   cards?: Partial<CardRecordLike>[];    // for create_card / split_card
+  origin?: "import";                    // an import's proposal: applying it records card/imported,
+                                        // and the card's text reaches the Worker tagged untrusted
   state: "open" | "applied" | "discarded" | "stale";
 }
 ```
@@ -141,11 +143,12 @@ interface PmProposal {
   `{ id, name, tier: "now" | "next" | "later", connected, detail?, lastSyncAt?, via }`.
   The `via` values are `"gh-cli"`, `"csv"`, `"webhook"` and `"api"`.
 - `POST /api/integrations/github/sync` with `{ direction: "pull" | "push" | "both" }`
-  returns `{ created, updated, skipped, clamped, errors }`. `pull` takes the
+  returns `{ created, updated, skipped, clamped, errors, budget? }`. `pull` takes the
   tracker's changes and sends nothing; `push` sends the board's changes and
   changes nothing on the board; `both` does both. `clamped` lists
   `{ id, ancestor }` for cards nested deeper than the tracker allows, which
-  are not written. It uses the GitHub App when configured, else the token of
+  are not written. `budget` is `{ rest, graphql }`, the two rate budgets
+  GitHub reported, kept apart (INT-11c). It uses the GitHub App when configured, else the token of
   the user's own `gh` login; no tokens are stored by Sekhemet. Every request
   goes through the network policy: offline (the default) it is refused, and
   the error names `[network] mode`.
@@ -158,6 +161,12 @@ interface PmProposal {
   (the preview is stored as a PM message, `messageId` its id),
   a preview using the same `PmProposal` flow, so import is never silent. Their
   ids work with `/api/pm/proposals/:id/apply` and `/discard`.
+  A row that is already a card is an `update_card` proposal (with
+  `patch.externalRef {system: "jira" | "linear", id, url}` for a Jira or Linear
+  row); when every row is a card and nothing changed it returns
+  `{ proposals: [], unchanged: true }`. An import never replaces a card's
+  `github` or `forgejo` link, and its proposals carry `origin: "import"`. A CSV with an unterminated quote
+  answers 400 with an `error` naming the line (integrations INT-27, INT-28).
 - `PUT /api/integrations/github-pr` with `{ enabled: boolean }` returns the entry.
 - `PUT /api/integrations/research-web` with `{ enabled }` returns the entry; the server's `detail` names the search provider or says how to configure one ([design-stage](specs/design-stage.md) §3).
 - Integration ids (canonical):
@@ -289,8 +298,12 @@ Slack endpoints (Now tier):
 - `POST /api/integrations/slack/test` sends a test message and returns
   `{ ok, error? }`.
 - `DELETE /api/integrations/slack` disconnects.
-- The PM's scheduled messages are written to the ledger as `pm/notify`, with
-  `{ channel: "slack", kind: "standup" | "needs_you" | "run_report", ok }`.
+- Slack is a channel of the one notifier: every message it sends is written
+  to the ledger as `pm/notify`, with `{ channel: "slack", kind: "review" |
+  "parked" | "budget" | "question" | "decision" | "standup" | "needs_you" |
+  "run_report" | "test", ok, to?, notice?, day? }`; a notice past the day's
+  budget is `pm/notice_held` and goes out in the next standup (integrations
+  INT-17 to INT-20a).
 
 ## 6. Learning: self-improvement and the user profile (2026-09-18)
 

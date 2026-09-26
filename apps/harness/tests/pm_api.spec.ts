@@ -6,7 +6,7 @@ import { BoardServiceImpl } from "@sekhemet/board";
 import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { MockInferenceAdapter } from "@sekhemet/models";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { parseCsv } from "../src/integrations.js";
+import { parseCsv, readSettings, writeSettings } from "../src/integrations.js";
 import { startDashboardServer } from "../src/server.js";
 
 const usage = { promptTokens: 1, completionTokens: 1, durationMs: 1 };
@@ -205,6 +205,13 @@ describe("PM and board-practice API", () => {
     expect(((await ok.json()) as { connected: boolean }).connected).toBe(true);
     const { readdirSync } = await import("node:fs");
     expect(readdirSync(join(configDir, "repos")).length).toBe(1);
+    // Disconnecting Slack removes every Slack credential, the bot token too.
+    writeSettings(repo, { slackBotToken: "xoxb-test", slackChannel: "C1" });
+    expect((await post("/api/integrations/slack", {}, "DELETE")).status).toBe(200);
+    const left = readSettings(repo);
+    expect(left.slackWebhookUrl).toBeUndefined();
+    expect(left.slackBotToken).toBeUndefined();
+    expect(left.slackChannel).toBeUndefined();
   });
 
   it("serves flow metrics from the ledger", async () => {

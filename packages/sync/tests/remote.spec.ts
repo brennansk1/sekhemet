@@ -466,8 +466,9 @@ describe("Y13: webhook intake", () => {
         pull_request: {
           number: 4,
           html_url: "u",
-          head: { sha: "h" },
-          user: { login: "dependabot[bot]" },
+          head: { sha: "h", repo: { full_name: "o/r" } },
+          base: { repo: { full_name: "o/r" } },
+          user: { login: "dependabot[bot]", type: "Bot" },
         },
       }).kind,
     ).toBe("verify_dependency_pr");

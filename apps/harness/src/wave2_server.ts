@@ -19,8 +19,22 @@ import {
   githubWebhookHandler,
 } from "@sekhemet/sync";
 import { suggestedAccepters } from "./codeowners.js";
-import { appClientFromEnv } from "./github_transport.js";
-import { findLinkedCard, recordSnapshot, subIssuesLabel } from "./wave2_github.js";
+import {
+  appClientFromEnv,
+  appJwtClientFromEnv,
+  egressRecorder,
+  githubEndpoints,
+  integrationFetch,
+} from "./github_transport.js";
+import { readSettings, syncGithub, writeSettings } from "./integrations.js";
+import {
+  DEPENDENCY_LABEL,
+  findLinkedCard,
+  mirrorAgentStatuses,
+  recordDoneBeforeAccept,
+  recordSnapshot,
+  subIssuesLabel,
+} from "./wave2_github.js";
 
 /**
  * Dashboard routes for the planner and sync wiring (wave 2, Builder C):
@@ -42,6 +56,12 @@ export interface Wave2RouteContext {
   readJsonBody: (req: IncomingMessage) => Promise<Record<string, unknown>>;
   /** Injectable for tests. */
   webhookSecret?: string;
+  /**
+   * How often, at most, a delivery's arrival reads the App's delivery log for
+   * a gap (INT-11b); default ten minutes.
+   */
+  gapCheckEveryMs?: number;
+  env?: NodeJS.ProcessEnv;
 }
 
 const CARD = "[A-Za-z0-9_.:-]+";
@@ -152,6 +172,8 @@ export async function applyWebhookIntent(
     case "verify_dependency_pr": {
       const id = idOf(intent.kind === "external_review" ? "review" : "deps", intent.pr);
       if (await store.getCard(id)) return id;
+      // Linked to its pull request (INT-16a), so no sync opens an issue for it.
+      const url = intent.url ?? "";
       await store.createCard(
         {
           id,
@@ -162,14 +184,22 @@ export async function applyWebhookIntent(
               : `Verify ${intent.author} PR #${intent.pr}`,
           status: "ready",
           spec: `Run the full gates against PR #${intent.pr} at ${intent.headSha || "its head"} and report.`,
-          labels: [intent.kind === "external_review" ? "external-review" : "dependency-update"],
-          ...(intent.kind === "external_review"
-            ? { externalRef: { system: "github" as const, id: `pr/${intent.pr}`, url: intent.url } }
+          labels: [intent.kind === "external_review" ? "external-review" : DEPENDENCY_LABEL],
+          ...(url || intent.kind === "external_review"
+            ? { externalRef: { system: "github" as const, id: `pr/${intent.pr}`, url } }
             : {}),
         },
         "github",
       );
       return id;
+    }
+    case "issue_closed": {
+      // INT-20c: the tracker's Done never moves the board; closed early, it is recorded.
+      const card = await findLinkedCard(store, intent.ref);
+      if (!card) return undefined;
+      const at = intent.closedAt ?? new Date().toISOString();
+      await recordDoneBeforeAccept(store, card, at, "github");
+      return card.id;
     }
     case "pull_request_closed": {
       // Kernel rule 24 (K-N3-4): the accepted card awaiting this pull request
@@ -232,6 +262,13 @@ export async function handleWave2Route(
         } finally {
           if (delivery) await settleDelivery(ctx.log, delivery, done);
         }
+      },
+      // INT-11b: a delivery's arrival, not a timer, is when the delivery log is read.
+      afterDelivery: () => {
+        void checkGapsAfterDelivery(ctx.repoPath, cardStore, ctx.log, {
+          everyMs: ctx.gapCheckEveryMs ?? 600_000,
+          env: ctx.env ?? process.env,
+        });
       },
     })(req, res);
     return true;
@@ -454,6 +491,196 @@ export async function handleWave2Route(
     return true;
   }
   return false;
+}
+
+// ------------------------------------------------ INT-11b: webhooks first
+
+/** The webhook route is configured: its secret is set (integrations item 12). */
+export const webhookRouteConfigured = (env: NodeJS.ProcessEnv = process.env): boolean =>
+  Boolean(env.SEKHEMET_GITHUB_WEBHOOK_SECRET);
+
+/** Where the delivery log was last read to, beside the sync's own `since`. */
+const DELIVERIES_KEY = "github:deliveries";
+
+/**
+ * A pull that catches up (integrations item 11a, INT-11b): after a restart,
+ * or a gap the App's delivery log shows. It takes the tracker's changes and
+ * sends nothing, from where the last sync left off; only a project that has
+ * synced before is caught up — a first pull is a person's to ask for.
+ */
+export async function catchUpGithub(
+  repoPath: string,
+  store: CardStore,
+  log: EventLog,
+  reason: "restart" | "gap",
+  gaps = 0,
+): Promise<{ ran: boolean; why?: string; errors?: string[] }> {
+  if (!readSettings(repoPath).lastSync?.github) {
+    return { ran: false, why: "never synced: a first pull is a person's to ask for" };
+  }
+  const started = new Date().toISOString();
+  const r = await syncGithub(repoPath, store, "pull", log);
+  if (r.errors.length === 0) {
+    writeSettings(repoPath, {
+      lastSync: { ...(readSettings(repoPath).lastSync ?? {}), [DELIVERIES_KEY]: started },
+    });
+  }
+  await log.append({
+    actor: "github",
+    type: "github/catch_up",
+    payload: { reason, gaps, created: r.created, updated: r.updated, errors: r.errors.length },
+  });
+  return { ran: true, errors: r.errors };
+}
+
+interface Delivery {
+  guid: string;
+  delivered_at: string;
+  status_code: number;
+  redelivery?: boolean;
+}
+
+/**
+ * A gap in webhook deliveries (INT-11b). GitHub's delivery ids are GUIDs, so
+ * a missed one is visible only in the App's delivery log
+ * (`GET /app/hook/deliveries`, read with the App's JWT): a delivery since the
+ * last check that no attempt delivered (no 2xx) is a gap. On the `gh`
+ * transport there is no such log to read, and that is said plainly.
+ */
+export async function detectDeliveryGaps(
+  repoPath: string,
+  log: EventLog,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<{ available: boolean; reason?: string; missed: number; checkedAt: string }> {
+  const checkedAt = new Date().toISOString();
+  const client = appJwtClientFromEnv(
+    integrationFetch(repoPath, egressRecorder(log), githubEndpoints(env).apiUrl),
+    env,
+  );
+  if (!client) {
+    return {
+      available: false,
+      reason:
+        "On the gh transport a missed webhook delivery cannot be seen: delivery ids are GUIDs, and only a GitHub App's delivery log lists the ones that failed. A restart catches up; connect the GitHub App for gap detection.",
+      missed: 0,
+      checkedAt,
+    };
+  }
+  const settings = readSettings(repoPath).lastSync ?? {};
+  const since = settings[DELIVERIES_KEY] ?? settings.github;
+  if (!since) return { available: true, missed: 0, checkedAt };
+  const from = Date.parse(since);
+  const attempts: Delivery[] = [];
+  // Newest first: read pages until the log is older than the last check.
+  const pages = await client.restPages<Delivery>("/app/hook/deliveries?per_page=100", 20, (page) =>
+    page.some((d) => Date.parse(d.delivered_at) < from),
+  );
+  for (const d of pages) if (Date.parse(d.delivered_at) >= from) attempts.push(d);
+  const delivered = new Set(
+    attempts.filter((d) => d.status_code >= 200 && d.status_code < 300).map((d) => d.guid),
+  );
+  const missed = new Set(attempts.filter((d) => !delivered.has(d.guid)).map((d) => d.guid));
+  return { available: true, missed: missed.size, checkedAt };
+}
+
+const lastGapCheck = new Map<string, number>();
+const gapChecks = new Map<string, Promise<void>>();
+
+/**
+ * After a delivery: read the delivery log for a gap, at most once per
+ * `everyMs` per project, and catch up when one shows. The checkpoint moves
+ * only when the log was read and, for a gap, the catch-up succeeded.
+ */
+export function checkGapsAfterDelivery(
+  repoPath: string,
+  store: CardStore,
+  log: EventLog,
+  opts: { everyMs: number; env: NodeJS.ProcessEnv },
+): Promise<void> {
+  const now = Date.now();
+  if (gapChecks.has(repoPath) || now - (lastGapCheck.get(repoPath) ?? 0) < opts.everyMs) {
+    return gapChecks.get(repoPath) ?? Promise.resolve();
+  }
+  lastGapCheck.set(repoPath, now);
+  const run = (async () => {
+    try {
+      const gap = await detectDeliveryGaps(repoPath, log, opts.env);
+      if (!gap.available) return;
+      if (gap.missed > 0) {
+        await catchUpGithub(repoPath, store, log, "gap", gap.missed);
+        return;
+      }
+      writeSettings(repoPath, {
+        lastSync: { ...(readSettings(repoPath).lastSync ?? {}), [DELIVERIES_KEY]: gap.checkedAt },
+      });
+    } catch {
+      // The log could not be read: the next delivery tries again.
+      lastGapCheck.delete(repoPath);
+    } finally {
+      gapChecks.delete(repoPath);
+    }
+  })();
+  gapChecks.set(repoPath, run);
+  return run;
+}
+
+/**
+ * The server's GitHub side (INT-11b, INT-20b). With a webhook route, one
+ * catch-up pull at start for what changed while the server was down — and no
+ * timer ever pulls the tracker after it. A tail of the local ledger shows a
+ * linked card's moves on its issue's Projects status; it asks GitHub only
+ * when a card's state changed.
+ */
+export function startGithubSync(
+  repoPath: string,
+  store: CardStore,
+  log: EventLog,
+  opts: { env?: NodeJS.ProcessEnv; mirrorEveryMs?: number; say?: (line: string) => void } = {},
+): { started: Promise<void>; stop: () => void } {
+  const env = opts.env ?? process.env;
+  const started = (async () => {
+    if (!webhookRouteConfigured(env)) return;
+    try {
+      const r = await catchUpGithub(repoPath, store, log, "restart");
+      if (r.ran)
+        opts.say?.(
+          `GitHub: caught up after the restart${r.errors?.length ? ` (${r.errors[0]})` : ""}`,
+        );
+    } catch (err) {
+      opts.say?.(`GitHub: no catch-up (${err instanceof Error ? err.message : String(err)})`);
+    }
+  })();
+  // The mirror reads the local ledger, never the tracker, and only once the ledger moved.
+  // After a failure — a refused egress, or GitHub unreachable — it waits a
+  // minute, doubling to an hour, rather than asking again on every move (and
+  // recording a refusal each time); a success resets the wait.
+  let seen = -1;
+  let busy = false;
+  let backoff = 0;
+  let retryAt = 0;
+  const tick = async () => {
+    if (busy) return;
+    const last = log.lastSeq();
+    if (last === seen || Date.now() < retryAt) return;
+    busy = true;
+    try {
+      await started;
+      const r = await mirrorAgentStatuses(repoPath, store, log, { env });
+      if (r.errors.length > 0) throw new Error(r.errors[0]);
+      backoff = 0;
+      retryAt = 0;
+    } catch {
+      backoff = Math.min(Math.max(backoff * 2, 60_000), 3_600_000);
+      retryAt = Date.now() + backoff;
+    } finally {
+      // Past its own writes (the status, the egress records), so they never re-trigger it.
+      seen = log.lastSeq();
+      busy = false;
+    }
+  };
+  const timer = setInterval(() => void tick(), opts.mirrorEveryMs ?? 5000);
+  timer.unref?.();
+  return { started, stop: () => clearInterval(timer) };
 }
 
 /**

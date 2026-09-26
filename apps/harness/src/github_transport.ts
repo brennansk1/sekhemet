@@ -15,6 +15,7 @@ import {
   GitHubClient,
   type GitHubEndpoints,
   InstallationTokenProvider,
+  createAppJwt,
   ghesEndpoints,
   loadPrivateKey,
 } from "@sekhemet/sync";
@@ -66,13 +67,18 @@ export function githubEndpoints(env: NodeJS.ProcessEnv = process.env): GitHubEnd
  */
 export type EgressRecorder = (r: NetworkRequestRecord) => undefined | Promise<unknown>;
 
-/** `harness/egress` on the ledger, from an event log or a card store. */
+/**
+ * `harness/egress` on the ledger, from an event log or a card store.
+ * `redactUrl` when the URL is the credential (a Slack webhook, a push
+ * topic): the ledger keeps its origin only (B4.9 part 2, B1).
+ */
 export function egressRecorder(
   ledger: Pick<EventLog, "append"> | Pick<CardStore, "recordLedgerEvent"> | undefined,
+  opts: { redactUrl?: boolean } = {},
 ): EgressRecorder {
   return (r) => {
     if (!ledger) return undefined;
-    const params = { actor: "harness", ...egressEvent(r) };
+    const params = { actor: "harness", ...egressEvent(r, opts) };
     return "append" in ledger ? ledger.append(params) : ledger.recordLedgerEvent(params);
   };
 }
@@ -209,6 +215,35 @@ export function remoteDestination(url: string): { url: string; host: string } {
   return { url: `file://${path}`, host: "localhost" };
 }
 
+/** The App's private key from the environment's keychain item or path (item 10). */
+function appPrivateKey(env: NodeJS.ProcessEnv): string {
+  return loadPrivateKey({
+    ...(env.SEKHEMET_GITHUB_APP_KEYCHAIN
+      ? { keychainService: env.SEKHEMET_GITHUB_APP_KEYCHAIN }
+      : {}),
+    ...(env.SEKHEMET_GITHUB_APP_KEY_PATH ? { path: env.SEKHEMET_GITHUB_APP_KEY_PATH } : {}),
+  });
+}
+
+/**
+ * The App itself, authenticated by its JWT rather than an installation token:
+ * what reads the App's webhook delivery log (`GET /app/hook/deliveries`,
+ * INT-11b). Through the caller's network policy, like every request.
+ */
+export function appJwtClientFromEnv(
+  fetchImpl: FetchLike,
+  env: NodeJS.ProcessEnv = process.env,
+): GitHubClient | undefined {
+  const appId = env.SEKHEMET_GITHUB_APP_ID;
+  if (!appId || !env.SEKHEMET_GITHUB_INSTALLATION_ID) return undefined;
+  const privateKey = appPrivateKey(env);
+  return new GitHubClient(
+    { token: async () => createAppJwt(appId, privateKey) },
+    githubEndpoints(env),
+    { fetch: fetchImpl },
+  );
+}
+
 /** The GitHub App client from the environment, when configured (item 10). */
 export function appClientFromEnv(
   fetchImpl: FetchLike,
@@ -218,12 +253,7 @@ export function appClientFromEnv(
   const installationId = env.SEKHEMET_GITHUB_INSTALLATION_ID;
   if (!appId || !installationId) return undefined;
   const endpoints = githubEndpoints(env);
-  const privateKey = loadPrivateKey({
-    ...(env.SEKHEMET_GITHUB_APP_KEYCHAIN
-      ? { keychainService: env.SEKHEMET_GITHUB_APP_KEYCHAIN }
-      : {}),
-    ...(env.SEKHEMET_GITHUB_APP_KEY_PATH ? { path: env.SEKHEMET_GITHUB_APP_KEY_PATH } : {}),
-  });
+  const privateKey = appPrivateKey(env);
   const options = { fetch: fetchImpl };
   return new GitHubClient(
     new InstallationTokenProvider({ appId, installationId, privateKey, endpoints, ...options }),

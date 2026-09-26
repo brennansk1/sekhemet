@@ -43,7 +43,17 @@ export type WebhookIntent =
       updatedAt?: string;
     }
   | { kind: "external_review"; pr: number; headSha: string; url: string }
-  | { kind: "verify_dependency_pr"; pr: number; author: string; headSha: string }
+  | {
+      kind: "verify_dependency_pr";
+      pr: number;
+      author: string;
+      headSha: string;
+      /** The pull request's page, and `owner/repo` (INT-16a). */
+      url?: string;
+      repo?: string;
+    }
+  /** A linked issue closed on the tracker (INT-20c), by its one identity. */
+  | { kind: "issue_closed"; ref: ExternalRef; closedAt?: string }
   /** A pull request closed: merged or not (kernel rule 24's `card/pr_closed`). */
   | {
       kind: "pull_request_closed";
@@ -57,7 +67,27 @@ export type WebhookIntent =
     }
   | { kind: "ignored"; reason: string };
 
-const BOTS = /^(dependabot|renovate)(\[bot\])?$/i;
+const BOTS = /^(dependabot|renovate)\[bot\]$/i;
+
+/** A pull request as GitHub's webhook and REST API describe its author and branches. */
+export interface PullRequestOrigin {
+  user?: { login?: string; type?: string } | null;
+  head?: { repo?: { full_name?: string } | null };
+  base?: { repo?: { full_name?: string } | null };
+}
+
+/**
+ * Whether a pull request is a dependency bot's own (INT-16a; B4.9 part 2,
+ * M1): the App's `[bot]` login — a person may name an account `dependabot`,
+ * but `[bot]` is GitHub's alone — a `Bot` account, and a branch of the
+ * repository itself, not a fork's. Checked at intake and again, on GitHub's
+ * current answer, before auto-merge.
+ */
+export function isDependencyBotPullRequest(pr: PullRequestOrigin): boolean {
+  const head = pr.head?.repo?.full_name?.toLowerCase();
+  const base = pr.base?.repo?.full_name?.toLowerCase();
+  return BOTS.test(pr.user?.login ?? "") && pr.user?.type === "Bot" && !!head && head === base;
+}
 
 /** Map one event to an intent (the five triggers; everything else is ignored). */
 export function intentFor(event: string, payload: Record<string, unknown>): WebhookIntent {
@@ -74,13 +104,15 @@ export function intentFor(event: string, payload: Record<string, unknown>): Webh
       pull_request?: unknown;
       assignee?: { login: string } | null;
       updated_at?: string;
+      closed_at?: string | null;
     };
     comment?: { id: number; body: string };
     pull_request?: {
       number: number;
       html_url: string;
-      head: { sha: string };
-      user?: { login: string };
+      head: { sha: string; repo?: { full_name?: string } | null };
+      base?: { repo?: { full_name?: string } | null };
+      user?: { login: string; type?: string };
       merged?: boolean;
       merge_commit_sha?: string | null;
       merged_by?: { login: string } | null;
@@ -106,6 +138,15 @@ export function intentFor(event: string, payload: Record<string, unknown>): Webh
         .filter(Boolean),
       ...(p.issue.assignee?.login ? { assignee: p.issue.assignee.login } : {}),
       ...(p.issue.updated_at ? { updatedAt: p.issue.updated_at } : {}),
+    };
+  }
+  if (event === "issues" && p.action === "closed" && p.issue && !p.issue.pull_request) {
+    const repo = p.repository?.full_name;
+    if (!repo) return { kind: "ignored", reason: "an issue event without its repository" };
+    return {
+      kind: "issue_closed",
+      ref: { system: "github", id: githubIssueId(repo, p.issue.number), url: p.issue.html_url },
+      ...(p.issue.closed_at ? { closedAt: p.issue.closed_at } : {}),
     };
   }
   if (event === "issue_comment" && p.action === "created" && p.issue && p.comment) {
@@ -151,12 +192,14 @@ export function intentFor(event: string, payload: Record<string, unknown>): Webh
         ...(p.repository?.full_name ? { repo: p.repository.full_name } : {}),
       };
     }
-    if (p.action === "opened" && BOTS.test(p.pull_request.user?.login ?? "")) {
+    if (p.action === "opened" && isDependencyBotPullRequest(p.pull_request)) {
       return {
         kind: "verify_dependency_pr",
         pr: p.pull_request.number,
         author: p.pull_request.user?.login ?? "",
         headSha: p.pull_request.head.sha,
+        url: p.pull_request.html_url,
+        ...(p.repository?.full_name ? { repo: p.repository.full_name } : {}),
       };
     }
   }
@@ -175,6 +218,11 @@ export function githubWebhookHandler(options: {
    * and the delivery is then answered 202 and does nothing (INT-9).
    */
   claimDelivery?: (delivery: string) => boolean | Promise<boolean>;
+  /**
+   * Every delivery whose signature holds, trigger or not, once it is
+   * answered: where the gap check hangs (INT-11b). Never awaited by the reply.
+   */
+  afterDelivery?: (event: string, delivery: string) => void;
   maxBytes?: number;
 }): (req: IncomingMessage, res: ServerResponse) => void {
   return (req, res) => {
@@ -224,6 +272,11 @@ export function githubWebhookHandler(options: {
         res
           .writeHead(500, { "content-type": "application/json" })
           .end(JSON.stringify({ error: String(err) }));
+      }
+      try {
+        options.afterDelivery?.(event, delivery);
+      } catch {
+        // The reply is sent; a failing observer must not fail the delivery.
       }
     });
   };

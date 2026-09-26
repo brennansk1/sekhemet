@@ -10,10 +10,12 @@ import { annotationsFromFailures } from "@sekhemet/sync";
 import { recordReview } from "./execute.js";
 import {
   appClientFromEnv,
+  decideEgress,
   egressRecorder,
   githubEndpoints,
   integrationFetch,
   ownerRepo,
+  remoteDestination,
 } from "./github_transport.js";
 import { reviewCard } from "./learning/review.js";
 import { recordLedgerRun } from "./ledger_evidence.js";
@@ -103,7 +105,18 @@ const git = (cwd: string, ...args: string[]) =>
     maxBuffer: 32 * 1024 * 1024,
   }).trim();
 
-function resolveHead(repo: string, target: ReviewTarget): string | undefined {
+/**
+ * The PR's head: the commit when this clone has it, else fetched from
+ * `origin` — and the fetch, a request like any other, is decided by the
+ * network policy and recorded as `harness/egress` before it runs; refused
+ * (offline, or a host the policy denies), nothing is fetched and the refusal
+ * names the setting (security item 33; B4.9 part 2, B3).
+ */
+async function resolveHead(
+  repo: string,
+  target: ReviewTarget,
+  store: CardStore,
+): Promise<{ head?: string; error?: string }> {
   const known = (sha: string) => {
     try {
       git(repo, "cat-file", "-e", `${sha}^{commit}`);
@@ -112,12 +125,31 @@ function resolveHead(repo: string, target: ReviewTarget): string | undefined {
       return false;
     }
   };
-  if (target.headSha && known(target.headSha)) return git(repo, "rev-parse", target.headSha);
+  if (target.headSha && known(target.headSha)) {
+    return { head: git(repo, "rev-parse", target.headSha) };
+  }
+  let remote: string;
+  try {
+    remote = git(repo, "remote", "get-url", "origin");
+  } catch {
+    return {};
+  }
+  const dest = remoteDestination(remote);
+  try {
+    await decideEgress(repo, egressRecorder(store), githubEndpoints(process.env).apiUrl, {
+      url: dest.url,
+      host: dest.host,
+      detail: `git fetch pull/${target.pr}/head`,
+      recordAllowed: true,
+    });
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
   try {
     git(repo, "fetch", "-q", "origin", `pull/${target.pr}/head:refs/sekhemet/review/${target.pr}`);
-    return git(repo, "rev-parse", `refs/sekhemet/review/${target.pr}`);
+    return { head: git(repo, "rev-parse", `refs/sekhemet/review/${target.pr}`) };
   } catch {
-    return undefined;
+    return {};
   }
 }
 
@@ -159,9 +191,11 @@ export async function runExternalReview(
       reason,
     });
   };
-  const head = target.pr ? resolveHead(repo, target) : undefined;
+  const resolved = target.pr ? await resolveHead(repo, target, options.store) : {};
+  const head = resolved.head;
   if (!head) {
-    result.error = `could not fetch PR #${target.pr} (no origin, or the head is gone)`;
+    result.error =
+      resolved.error ?? `could not fetch PR #${target.pr} (no origin, or the head is gone)`;
     // An environment failure, not a verdict: the card stays where it is with
     // the reason, and the next pass retries (the stop-reason table's `error`).
     // Parked needs a stop reason that parks, a person's reason or an open

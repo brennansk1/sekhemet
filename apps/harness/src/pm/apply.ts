@@ -34,6 +34,8 @@ const EDITABLE = new Set([
   "scopeFiles",
   "acceptanceCriteria",
   "dependsOn",
+  // An imported row's Jira or Linear key (INT-27); the PM's own tools never set it.
+  "externalRef",
 ]);
 
 function toUpdate(patch: Record<string, unknown>): CardUpdate {
@@ -161,6 +163,19 @@ export async function applyProposal(
     }
     default:
       throw new ProposalError(`Unsupported proposal kind ${proposal.kind}.`, 400);
+  }
+
+  // M3: a file's text is untrusted by origin, whatever the card's link:
+  // recorded on the ledger, so every later run of the card tags it.
+  if (proposal.origin === "import") {
+    for (const c of touched) {
+      await ctx.cardStore.recordEvent({
+        type: "card/imported",
+        cardId: c.id,
+        actor,
+        payload: { id: c.id, proposal: proposal.id },
+      });
+    }
   }
 
   await ctx.pmStore.setProposalState(

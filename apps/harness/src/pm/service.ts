@@ -172,12 +172,37 @@ export interface AnswerDeps {
  * failure there looks exactly like a PM that is still thinking.
  */
 /** Seshat's standup plus the planner's decisions waiting and next window (P13). */
-async function withPlannerStandup(text: string, deps: AnswerDeps): Promise<string> {
+async function withPlannerStandup(
+  text: string,
+  deps: Pick<AnswerDeps, "cardStore" | "pmStore">,
+): Promise<string> {
   const extra = await plannerStandupSection(deps.cardStore, deps.pmStore.log).catch(() => "");
   if (!extra) return text;
   const marker = "\n\n_Answered from the ledger";
   const at = text.indexOf(marker);
   return at === -1 ? `${text}\n${extra}` : `${text.slice(0, at)}\n${extra}${text.slice(at)}`;
+}
+
+/**
+ * Seshat's daily standup for the notifier (integrations item 21, INT-18):
+ * the same ledger standup `/standup` answers, with the planner's decisions
+ * waiting, built without loading a model.
+ */
+export async function dailyStandup(deps: {
+  repoPath: string;
+  cardStore: CardStore;
+  pmStore: PmStore;
+  pmModel?: string;
+}): Promise<string> {
+  const snapshot = await buildSnapshot(
+    deps.repoPath,
+    deps.cardStore,
+    deps.pmStore,
+    deps.pmModel ?? DEFAULT_PM_MODEL,
+  );
+  const text = await withPlannerStandup(ledgerStandup(snapshot), deps);
+  const marker = text.indexOf("\n\n_Answered from the ledger");
+  return marker === -1 ? text : text.slice(0, marker);
 }
 
 export async function answerQueued(deps: AnswerDeps): Promise<boolean> {

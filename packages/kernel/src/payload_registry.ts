@@ -37,6 +37,18 @@ const DELEGATE = v.nullable(
 const TEXT = v.string();
 const SHA256 = v.pipe(v.string(), v.regex(/^[0-9a-f]{64}$/, "a SHA-256 hex digest"));
 const SHARED_FIELD = v.picklist(["title", "body", "labels", "assignee"]);
+const NOTICE_KIND = v.picklist([
+  "review",
+  "parked",
+  "budget",
+  "question",
+  "decision",
+  "standup",
+  "needs_you",
+  "run_report",
+  "test",
+]);
+const DAY = v.pipe(v.string(), v.regex(/^\d{4}-\d{2}-\d{2}$/, "a local day, YYYY-MM-DD"));
 
 const s = (schema: v.GenericSchema, optional = false): PayloadField => ({
   dataClass: "structural",
@@ -69,6 +81,9 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     reason: priv("free_text", TEXT),
   },
   "card/delegated": { id: s(ID), from: s(DELEGATE), to: s(DELEGATE) },
+  // integrations M3 (B4.9 part 2): a card an import created or changed; its
+  // text reaches the Worker tagged untrusted, whatever its external link.
+  "card/imported": { id: s(ID), proposal: s(ID, true) },
   "card/owner_changed": {
     id: s(ID),
     from: s(v.nullable(PRINCIPAL)),
@@ -132,8 +147,11 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
       ),
       true,
     ),
-    field: s(SHARED_FIELD, true),
-    reason: s(v.literal("unmapped"), true),
+    // INT-20c: `{field: "state", reason: "done_before_accept", at}` — the
+    // tracker closed a linked card the board had not accepted; when it closed.
+    field: s(v.picklist(["title", "body", "labels", "assignee", "state"]), true),
+    reason: s(v.picklist(["unmapped", "done_before_accept"]), true),
+    at: s(TEXT, true),
     values: priv("personal", v.array(v.record(v.string(), v.unknown()))),
     assignee: priv("personal", v.pipe(v.string(), v.minLength(1))),
   },
@@ -154,7 +172,49 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
   "github/delivery": {
     delivery: s(ID),
     intent: s(
-      v.picklist(["create_card", "external_review", "verify_dependency_pr", "pull_request_closed"]),
+      v.picklist([
+        "create_card",
+        "external_review",
+        "verify_dependency_pr",
+        "pull_request_closed",
+        "issue_closed",
+      ]),
+    ),
+  },
+  // integrations INT-11b: a pull that caught up after a restart or a gap in
+  // the App's delivery log, with how many deliveries the gap held and what it took.
+  "github/catch_up": {
+    reason: s(v.picklist(["restart", "gap"])),
+    gaps: s(v.pipe(v.number(), v.integer(), v.minValue(0))),
+    created: s(v.pipe(v.number(), v.integer(), v.minValue(0))),
+    updated: s(v.pipe(v.number(), v.integer(), v.minValue(0))),
+    errors: s(v.pipe(v.number(), v.integer(), v.minValue(0))),
+  },
+  // integrations INT-20b: a linked card's state shown as its issue's
+  // Projects status; which projects by id, never a login.
+  "github/agent_status": {
+    id: s(ID),
+    ref: s(ID),
+    status: s(v.picklist(["queued", "working", "waiting_for_review", "completed"])),
+    projects: s(v.array(ID)),
+    skipped: s(TEXT, true),
+  },
+  // integrations INT-16a, INT-16: a dependency bot's pull request verified by
+  // the full gates on its head, and what the project's policy did with it.
+  "github/dependency_verified": {
+    id: s(ID),
+    pr: s(v.pipe(v.number(), v.integer(), v.minValue(1))),
+    headSha: s(v.pipe(v.string(), v.regex(/^[0-9a-f]{40}$/))),
+    passed: s(v.boolean()),
+    autoMerge: s(
+      v.picklist([
+        "enabled",
+        "not_allowed",
+        "gates_failed",
+        "head_moved",
+        "not_dependency_bot",
+        "refused",
+      ]),
     ),
   },
   // security item 33: each request the network policy decided, allowed or refused.
@@ -239,6 +299,34 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     id: s(ID),
     version: s(v.pipe(v.number(), v.integer(), v.minValue(2))),
     title: priv("free_text", TEXT),
+  },
+  // The one notifier (integrations items 20-23a): which channel, which kind,
+  // whether it went, and for the budget the person, the notice and the day.
+  // The notice's text and the channel's URL or token are never on the ledger.
+  "pm/notify": {
+    channel: s(v.picklist(["ntfy", "gotify", "slack"])),
+    kind: s(NOTICE_KIND),
+    ok: s(v.boolean()),
+    to: s(PRINCIPAL, true),
+    notice: s(ID, true),
+    day: s(DAY, true),
+  },
+  "pm/notice_held": {
+    kind: s(NOTICE_KIND),
+    to: s(PRINCIPAL, true),
+    notice: s(ID),
+    day: s(DAY, true),
+  },
+  // A notifier's claim on a send, recorded under an id derived from the
+  // notice — or the channel's standup and its attempt — before it is sent,
+  // so of two notifiers on one ledger only one sends it (B4.9 part 2, B2).
+  "pm/notify_claimed": {
+    kind: s(NOTICE_KIND),
+    notice: s(ID),
+    to: s(PRINCIPAL, true),
+    day: s(DAY, true),
+    channel: s(v.picklist(["ntfy", "gotify", "slack"]), true),
+    attempt: s(v.pipe(v.number(), v.integer(), v.minValue(0)), true),
   },
   "trace/linked": {
     requirementId: s(ID),

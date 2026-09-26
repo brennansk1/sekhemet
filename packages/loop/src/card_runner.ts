@@ -90,6 +90,24 @@ export type CardRunStore = Pick<
 > &
   Partial<Pick<CardStore, "runs" | "cardEvents">>;
 
+/**
+ * Whether a card's text is untrusted by its origin, not its link (S9; B4.9
+ * part 2, M3): `import` once an import created or changed it (the ledger's
+ * `card/imported`), whatever its `externalRef` says now.
+ */
+export async function untrustedOriginOf(
+  store: Partial<Pick<CardStore, "cardEvents">>,
+  cardId: string,
+): Promise<"import" | undefined> {
+  if (!store.cardEvents) return undefined;
+  try {
+    return (await store.cardEvents(cardId, ["card/imported"])).length > 0 ? "import" : undefined;
+  } catch {
+    // Unreadable: the strict reading, never the lax one.
+    return "import";
+  }
+}
+
 /** Difficulty 1..10 as the design's XS..XL scale (K25). */
 export function difficultyLabel(difficulty: number | undefined): string {
   if (difficulty === undefined) return "unknown";
@@ -1106,6 +1124,8 @@ export class CardRunner {
     }
 
     for (const m of startHook?.messages ?? []) dossierLines.push(`Project hook: ${m.content}`);
+    // M3: an imported card's text is untrusted by origin, from the ledger.
+    const untrustedOrigin = store ? await untrustedOriginOf(store, card.id) : undefined;
 
     // G25: pass@k with gate selection. Each sample starts from the same
     // tree and context; the first to pass the gates is taken. With
@@ -1188,6 +1208,7 @@ export class CardRunner {
               }
             : {}),
           ...(dossierLines.length > 0 ? { dossierLines } : {}),
+          ...(untrustedOrigin ? { untrustedOrigin } : {}),
           // L11: a note reaches the card's thread (its dossier, on the ledger)
           // the moment the Worker writes it, not at the end of the attempt.
           ...(store

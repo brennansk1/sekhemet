@@ -99,9 +99,13 @@ export interface ModelRoute {
   executor?: string;
 }
 
-/** Link to the card's origin in an external tracker (design §327). */
+/**
+ * Link to the card's origin in an external tracker (design §327): a synced
+ * GitHub or Forgejo issue, or a Jira or Linear row by its key (INT-27; `url`
+ * empty when the export has none).
+ */
 export interface ExternalRef {
-  system: "github" | "forgejo";
+  system: "github" | "forgejo" | "jira" | "linear";
   id: string;
   url: string;
 }
