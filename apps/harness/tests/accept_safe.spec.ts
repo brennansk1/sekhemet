@@ -21,6 +21,7 @@ import {
   acceptCard,
   checkoutNotice,
   enableAutoAccept,
+  gateStatusOf,
   recordReviewOpened,
   revertAccept,
 } from "../src/accept.js";
@@ -657,5 +658,32 @@ describe("NEW-review-git-5: who may accept (independent accept, O11) and the lig
       }),
     ).rejects.toThrow(/did not pass every gate/);
     expect((await card("pb")).status).toBe("verify");
+  });
+});
+
+describe("GateStatus from the evidence (RG-S5-7)", () => {
+  const ok = { gate: "unit", passed: true };
+  it("a gate that could not run is unavailable, never fail", () => {
+    const down = { gate: "gitleaks", passed: false, unavailable: true };
+    expect(gateStatusOf({ passed: true, rungResults: [ok, down] })).toBe("unavailable");
+    expect(gateStatusOf({ passed: false, rungResults: [ok, down] })).toBe("unavailable");
+  });
+  it("a gate that failed is fail, even beside an unavailable one", () => {
+    expect(
+      gateStatusOf({
+        passed: false,
+        rungResults: [
+          { gate: "unit", passed: false },
+          { gate: "gitleaks", passed: false, unavailable: true },
+        ],
+      }),
+    ).toBe("fail");
+    expect(gateStatusOf({ passed: true, rungResults: [ok] })).toBe("pass");
+    expect(
+      gateStatusOf({
+        passed: true,
+        rungResults: [ok, { gate: "e2e", passed: false, skipped: true }],
+      }),
+    ).toBe("partial");
   });
 });

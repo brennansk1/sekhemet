@@ -89,7 +89,8 @@ describe("MS-M10-4: the mutation gate's baseline", () => {
     });
     expect(runs).toBe(1);
     const o = mutationOutcome(r);
-    expect(o?.passed).toBe(true);
+    // Skipped, never a pass (GT-T1-11).
+    expect(o?.passed).toBe(false);
     expect(o?.skipped).toBe(true);
     expect(o?.reason).toMatch(/tests fail on the unmutated change/);
     expect(o?.mutation).toMatchObject({ score: null, killed: 0, total: 0 });

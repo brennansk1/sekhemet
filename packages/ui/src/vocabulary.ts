@@ -163,11 +163,13 @@ export function gateLabel(idOrRung: string): string {
   return GATE_LABELS[String(idOrRung).toLowerCase()] ?? humanize(idOrRung);
 }
 
-export type GateState = "pass" | "fail" | "skipped" | "not_run" | "running";
+/** `unavailable`: the gate could not produce a verdict (gates rule 9) — not a pass, not a failure of the work. */
+export type GateState = "pass" | "fail" | "unavailable" | "skipped" | "not_run" | "running";
 
 export const GATE_STATE_LABELS: Record<GateState, string> = {
   pass: "Passed",
   fail: "Failed",
+  unavailable: "Unavailable",
   skipped: "Skipped",
   not_run: "Not run",
   running: "Running",
@@ -176,8 +178,12 @@ export const GATE_STATE_LABELS: Record<GateState, string> = {
 /** SHA-256 of the empty string: what an absent gates.toml hashes to. */
 export const EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
+/** What a run on the defaults records instead of a hash (gates GT-T1-10). */
+const NO_GATES_CONFIG = "no gates.toml";
+
+/** No gates.toml: the text a run records now, or the empty-string hash older bundles carry. */
 export function isEmptyGateContract(sha: string | undefined): boolean {
-  return sha === EMPTY_SHA256;
+  return sha === NO_GATES_CONFIG || sha === EMPTY_SHA256;
 }
 
 // ---------------------------------------------------------------------------
@@ -374,6 +380,13 @@ export function stopReasonLabel(
           "Its acceptance tests fail before any work, but on an error rather than an assertion.",
         tone: "parked",
       };
+    case "base_not_green":
+      return {
+        short: "Tests fail on main",
+        sentence:
+          "Its tests must pass before any work, because it pins, restructures or upgrades existing code, but they fail.",
+        tone: "parked",
+      };
     case "gate_suspected":
       return {
         short: "Gate in question",
@@ -471,6 +484,8 @@ export interface EvidenceLike {
     rung: string;
     passed: boolean;
     skipped?: boolean;
+    /** The gate could not run (gates rule 9). */
+    unavailable?: boolean;
     durationMs?: number;
   }[];
   failures?: { gate?: string; rung: string; errorExcerpt?: string }[];
@@ -520,8 +535,16 @@ export function gateSummary(
     if (seen.has(id)) return;
     seen.add(id);
     const r = results.find((x) => x.gate === id);
-    const state: GateState = !r ? "not_run" : r.skipped ? "skipped" : r.passed ? "pass" : "fail";
-    const mine = state === "fail" ? failuresOf(id, rung ?? r?.rung) : [];
+    const state: GateState = !r
+      ? "not_run"
+      : r.skipped
+        ? "skipped"
+        : r.passed
+          ? "pass"
+          : r.unavailable
+            ? "unavailable"
+            : "fail";
+    const mine = state === "fail" || state === "unavailable" ? failuresOf(id, rung ?? r?.rung) : [];
     const first = firstLine(mine);
     out.push({
       id,
@@ -575,11 +598,16 @@ export function outcomeSentence(evidence: EvidenceLike, gates?: GateSummary[]): 
   if (evidence.passed) {
     return [step ? `Passed on step ${step}` : "Passed", time, diff].filter(Boolean).join(" · ");
   }
-  const failed = (gates ?? gateSummary(evidence))
-    .filter((g) => g.state === "fail")
-    .map((g) => g.label);
+  const summary = gates ?? gateSummary(evidence);
+  const failed = summary.filter((g) => g.state === "fail").map((g) => g.label);
+  const down = summary.filter((g) => g.state === "unavailable").map((g) => g.label);
   const stop = stopReasonLabel(evidence.stopReason);
-  const head = failed.length ? `Failed ${joinWords(failed)}` : "Failed";
+  const head = [
+    failed.length || !down.length ? (failed.length ? `Failed ${joinWords(failed)}` : "Failed") : "",
+    down.length ? `${joinWords(down)} unavailable` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
   return [head, step ? `${stop.short} on step ${step}` : stop.short].join(" · ");
 }
 

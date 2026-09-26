@@ -160,6 +160,20 @@ export const STOP_REASONS: Readonly<Record<CardStopReason, StopReasonRow>> = {
     nextAction:
       "A test fails for the wrong reason (an import, compile, collection or setup error): have the test-author step make it fail at an assertion.",
   },
+  base_not_green: {
+    class: "no_progress",
+    parks: "yes",
+    resumable: false,
+    mayVerify: false,
+    checkpoints: false,
+    endsSampling: true,
+    halts: false,
+    // A precondition that failed before any work: never the Worker's.
+    measuresModel: false,
+    goesTo: "Parked, before any step",
+    nextAction:
+      "A characterize, refactor or upgrade card's tests fail on the base: they must pass there before the card can start. Fix the tests, or plan the card as a fix.",
+  },
   done_pending_gates: {
     class: "done_pending_gates",
     parks: "no",

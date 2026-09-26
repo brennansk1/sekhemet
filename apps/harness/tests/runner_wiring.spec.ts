@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -393,7 +394,21 @@ describe("apps/harness executeCard wiring (wave 2, part 1)", () => {
 
     const [evidence] = cardStore.runs.listEvidence(card.id);
     expect(evidence?.id).toBe(result.evidence.id);
-    expect(evidence?.trajectoryRef).toMatch(/transcripts/);
+    // GT-T1-9: the trajectory reference is the SHA-256 of the attempt's
+    // event-log slice, recomputed here from the ledger; the transcript is
+    // kept beside it by path.
+    const events = await log.getEventsByCard(card.id);
+    const recorded = events.find((e) => e.type === "evidence/recorded");
+    const slice = events.filter(
+      (e) => e.attemptId === attempt?.id && e.seq < (recorded?.seq ?? Number.POSITIVE_INFINITY),
+    );
+    const recomputed = createHash("sha256")
+      .update(slice.map((e) => e.hash).join(""))
+      .digest("hex");
+    expect(slice.length).toBeGreaterThan(0);
+    expect(result.evidence.trajectoryRef).toBe(recomputed);
+    expect(evidence?.trajectoryRef).toBe(recomputed);
+    expect(result.evidence.transcriptPath).toMatch(/transcripts/);
     expect(cardStore.runs.competence(cardClassOf(card)).attempts).toBe(1);
     // K8: all of it replays byte-identically from the ledger.
     expect((await cardStore.verifyProjections()).identical).toBe(true);

@@ -6,7 +6,12 @@ import { mergeNetworkConfigs, policyAllowsEveryHost } from "@sekhemet/sandbox";
 import { effectiveConfig, explicitNetworkMode, networkConfigs } from "../config_apply.js";
 import { readSettings } from "../integrations.js";
 import { similarity } from "../learning/store.js";
-import { type ModelAccess, sharedModelAccess, sharedQueue } from "../model_access.js";
+import {
+  type ModelAccess,
+  type SwapLedger,
+  sharedModelAccess,
+  sharedQueue,
+} from "../model_access.js";
 import { researchFetch, researchGate } from "../research_consent.js";
 import { userPaths } from "../user_dir.js";
 import { crawl4aiInstalled } from "./crawl4ai.js";
@@ -89,11 +94,16 @@ export class ResearchMemory {
 export function researcherModel(
   name: string,
   access: ModelAccess = sharedModelAccess(),
+  ledger?: SwapLedger,
 ): {
   acquire: () => Promise<LocalInferenceAdapter>;
   release: () => Promise<void>;
 } {
-  const take = sharedQueue({ queue: "research", role: "researcher", name }, {}, access);
+  const take = sharedQueue(
+    { queue: "research", role: "researcher", name },
+    ledger ? { ledger } : {},
+    access,
+  );
   let held: Promise<ModelHold> | undefined;
   return {
     acquire: async () => {
@@ -330,7 +340,7 @@ export function oneShotResearcher(
 ): (question: string, opts?: AskOptions) => Promise<AskResult> {
   return async (question, opts = {}) => {
     const { web } = await researchSources(repoPath, log ? { log } : {});
-    const model = researcherModel(modelName);
+    const model = researcherModel(modelName, sharedModelAccess(), log);
     const service = new ResearchService({
       repoPath,
       web,

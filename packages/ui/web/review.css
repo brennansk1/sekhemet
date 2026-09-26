@@ -291,6 +291,9 @@ h3.sh .sec {
 .g-seg.not_run .ic {
   color: var(--text-secondary);
 }
+.g-seg.unavailable .ic {
+  color: var(--state-parked);
+}
 .g-seg.warn {
   flex: 1.3;
 }

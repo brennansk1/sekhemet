@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   BOARD_COLUMN_ORDER,
   EMPTY_SHA256,
+  GATE_STATE_LABELS,
   KIND_LABELS,
   actorLabel,
   callPhrase,
@@ -18,6 +19,7 @@ import {
   gateLabel,
   gateSummary,
   humanize,
+  isEmptyGateContract,
   loopRange,
   outcomeSentence,
   parseTitle,
@@ -257,6 +259,22 @@ describe("gates and outcomes", () => {
       "Tests:fail",
       "Size:pass",
     ]);
+  });
+
+  it("shows a gate that could not run as unavailable, not failed", () => {
+    const ev = {
+      passed: false,
+      rungResults: [
+        { gate: "unit", rung: "test", passed: true },
+        { gate: "gitleaks", rung: "security", passed: false, unavailable: true },
+      ],
+      failures: [{ gate: "gitleaks", rung: "security", errorExcerpt: "gitleaks not run: missing" }],
+    };
+    const gates = gateSummary(ev);
+    expect(gates.map((g) => g.state)).toEqual(["pass", "unavailable"]);
+    expect(GATE_STATE_LABELS.unavailable).toBe("Unavailable");
+    expect(outcomeSentence(ev)).not.toMatch(/Failed Gitleaks|Failed Secrets/);
+    expect(outcomeSentence(ev)).toMatch(/unavailable/);
   });
 
   it("fails Size when the diff exceeds the contract", () => {
@@ -634,5 +652,14 @@ describe("isolationLabel (SEC-21)", () => {
   it("is what the card's Run facts show", () => {
     const facts = readFileSync(join(import.meta.dirname, "..", "web", "facts.js"), "utf8");
     expect(facts).toMatch(/isolationLabel\(evidence\.settings\?\.isolation\)/);
+  });
+});
+
+describe("the empty gate contract (gates GT-T1-10)", () => {
+  it("recognises a run on the defaults as 'no gates.toml', and older bundles' empty-string hash", () => {
+    expect(isEmptyGateContract("no gates.toml")).toBe(true);
+    expect(isEmptyGateContract(EMPTY_SHA256)).toBe(true);
+    expect(isEmptyGateContract("4f1a".padEnd(64, "0"))).toBe(false);
+    expect(isEmptyGateContract(undefined)).toBe(false);
   });
 });

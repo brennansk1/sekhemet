@@ -212,4 +212,15 @@ export interface UnloadableAdapter extends LocalInferenceAdapter {
   confirmUnloaded?(timeoutMs?: number): Promise<boolean>;
   /** Bytes the model occupies when resident (weights, KV cache, runtime). */
   footprintBytes?(): Promise<number | undefined>;
+  /**
+   * Load the weights now rather than on the first request (models rule 20c,
+   * MD-N14-1), so the residency scheduler times the load it ordered.
+   * `adopted`: a running server already served them, and nothing loaded.
+   * `signal` aborts a load in flight (the scheduler's `releaseAll`, the
+   * watchdog's unload): the server process is stopped or the request
+   * cancelled, and the promise rejects.
+   */
+  load?(signal?: AbortSignal): Promise<"loaded" | "adopted">;
+  /** The weights file (or store) and its bytes, for Smart Swap's record; undefined when unknown. */
+  weightsSource?(): Promise<{ path: string; bytes: number } | undefined>;
 }

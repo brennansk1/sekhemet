@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { EventLog, EventRecord } from "@sekhemet/kernel";
+import { type ModelSlowLoadPayload, SWAP_EVENTS, describeSlowLoad } from "@sekhemet/models";
 import { egressRecorder, integrationFetch } from "./github_transport.js";
 import { readSettings, writeSettings } from "./integrations.js";
 import { PM_EVENTS } from "./pm/types.js";
@@ -32,6 +33,7 @@ export type NotifyEvent =
   | "standup"
   | "needs_you"
   | "run_report"
+  | "slow_load"
   | "test";
 
 export const ALL_EVENTS: NotifyEvent[] = [
@@ -43,6 +45,7 @@ export const ALL_EVENTS: NotifyEvent[] = [
   "standup",
   "needs_you",
   "run_report",
+  "slow_load",
 ];
 
 /**
@@ -256,6 +259,18 @@ export function noticeFor(e: EventRecord, dashboard?: string): Notice | undefine
       title: "A decision waits for you",
       message: `${String(p.question ?? "").slice(0, 300)}${card ? ` (${card})` : ""}`,
       priority: 4,
+    };
+  }
+  if (e.type === SWAP_EVENTS.slowLoad) {
+    // models MD-N14-5: a slow model load, its likely causes and their fixes;
+    // low priority, one per weights within the ten-minute rule.
+    const slow = p as unknown as ModelSlowLoadPayload;
+    return {
+      event: "slow_load",
+      key: `slow_load:${slow.model}`,
+      title: "A model loaded slowly",
+      message: describeSlowLoad(slow).slice(0, 400),
+      priority: 2,
     };
   }
   if (e.type === "card/question") {

@@ -46,6 +46,7 @@ const NOTICE_KIND = v.picklist([
   "standup",
   "needs_you",
   "run_report",
+  "slow_load",
   "test",
 ]);
 const DAY = v.pipe(v.string(), v.regex(/^\d{4}-\d{2}-\d{2}$/, "a local day, YYYY-MM-DD"));
@@ -67,7 +68,49 @@ const priv = (dataClass: Exclude<DataClass, "structural">, schema: v.GenericSche
 const ASSIGNED_ROLE = ID;
 const ASSIGNMENT_SCOPE = v.picklist(["personal", "baseline", "default"]);
 
+// models NEW-models-14 (Smart Swap): swap records carry the weights' key, never their path.
+const VOLUME = v.picklist(["internal", "external"]);
+const CACHE_STATE = v.picklist(["cold", "warm"]);
+const MS = v.pipe(v.number(), v.minValue(0));
+const BYTES = v.pipe(v.number(), v.integer(), v.minValue(0));
+const QUEUES = v.array(ID);
+const SWAP_BASE = { model: s(ID), roles: s(QUEUES) };
+
 export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
+  // models MD-N14-1: a load the residency scheduler ordered, timed, with its prediction.
+  "model/loaded": {
+    ...SWAP_BASE,
+    volume: s(VOLUME),
+    bytes: s(BYTES),
+    cache: s(CACHE_STATE),
+    loadMs: s(MS),
+    medianMs: s(MS),
+    p90Ms: s(MS),
+    basis: s(v.picklist(["measured", "estimate"])),
+  },
+  // models MD-N14-2: an unload, timed, and whether it was proven.
+  "model/unloaded": {
+    ...SWAP_BASE,
+    volume: s(VOLUME),
+    bytes: s(BYTES),
+    unloadMs: s(MS),
+    confirmed: s(v.boolean()),
+  },
+  // models MD-N14-2: the first reply after a recorded load.
+  "model/first_token": { ...SWAP_BASE, firstTokenMs: s(MS) },
+  // models MD-N14-5: a load past its bound, with its likely causes and fixes.
+  "model/slow_load": {
+    ...SWAP_BASE,
+    volume: s(VOLUME),
+    bytes: s(BYTES),
+    cache: s(CACHE_STATE),
+    loadMs: s(MS),
+    boundMs: s(MS),
+    causes: s(
+      v.array(v.picklist(["external_volume", "memory_pressure", "swap_in_use", "cold_cache"])),
+    ),
+    fixes: s(v.array(v.picklist(["copy_to_internal", "free_memory", "prewarm_overnight"]))),
+  },
   // models NEW-models-10: a role's model, assigned or restored by a person.
   "models/assigned": {
     role: s(ASSIGNED_ROLE),
@@ -340,7 +383,7 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     principal: s(PRINCIPAL, true),
     independent: s(v.boolean(), true),
     auto: s(v.literal(true), true),
-    gateStatus: s(v.picklist(["pass", "fail", "partial"]), true),
+    gateStatus: s(v.picklist(["pass", "fail", "partial", "unavailable"]), true),
     integration: s(ID, true),
   },
   // worker-loop NEW-worker-loop-10: collaborating on a running issue (DEC-34).

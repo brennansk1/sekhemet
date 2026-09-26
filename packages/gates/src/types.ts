@@ -84,11 +84,28 @@ export interface RungOutcome {
   exitCode: number;
   durationMs: number;
   skipped?: boolean;
+  /**
+   * The gate could not produce a verdict (rule 9): it threw, crashed, timed
+   * out without a result, its output could not be read, or a need it declares
+   * is missing. Never a pass; a blocking unavailable gate blocks Review, and
+   * `reason` says why (GT-T1-2, GT-T1-3, GT-T1-7).
+   */
+  unavailable?: boolean;
   /** Why a gate did not run, for the evidence: a skipped or not-run outcome says so. */
   reason?: string;
+  /**
+   * Where the result came from (rule 35, GT-T1-12): this machine's run, or an
+   * external CI check with its name, run URL and head sha. Absent means local.
+   */
+  source?: GateResultSource;
   /** The mutation gate's measurement, for the evidence (measurement MS-M10-4). */
   mutation?: MutationMeasure;
 }
+
+/** Where a gate result came from (rule 35; kernel rule 37). */
+export type GateResultSource =
+  | { kind: "local" }
+  | { kind: "external"; check: string; url?: string; headSha: string };
 
 /**
  * What the mutation gate measured. `score` is killed over total, and `null`
@@ -134,6 +151,20 @@ export interface GateDefinition {
   blocking: boolean;
   /** Changing this gate's baseline requires human sign-off. */
   baselineApproval?: "human" | "auto";
+  /**
+   * What the gate needs to run (rule 10): `env:NAME` (a variable set),
+   * `cmd:program` (a program on the host), or any other name the host
+   * declares it provides (a service, a port). A need the host cannot provide
+   * makes the gate `unavailable`, naming it (GT-T1-7).
+   */
+  needs?: string[];
+  /**
+   * The external CI check this gate stands for (rule 35, GT-T1-12): its
+   * result is advisory unless the gate is `blocking = true` in the file.
+   */
+  external?: string;
+  /** True when `blocking` was written in `gates.toml`, not defaulted. */
+  blockingDeclared?: boolean;
 }
 
 export interface GateProjectConfig {
@@ -181,9 +212,17 @@ export interface GateProjectConfig {
 export interface GatesConfig {
   project: GateProjectConfig;
   gates: GateDefinition[];
-  /** SHA-256 of the config file as loaded, verified on every card start. */
+  /**
+   * SHA-256 of the config file's bytes as loaded, verified on every card
+   * start; `NO_GATES_CONFIG` when there is no `gates.toml` and the defaults
+   * ran — never the hash of an empty string (GT-T1-10, GT-T1-13).
+   */
   sha256: string;
   sourcePath: string;
+  /** True when no `.sekhemet/gates.toml` exists (GT-T1-10). */
+  empty?: boolean;
+  /** An unknown rung, layer or parser, each naming the key and the value (GT-T1-6). */
+  warnings?: string[];
 }
 
 export interface GateRunner {

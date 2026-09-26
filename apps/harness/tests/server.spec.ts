@@ -490,9 +490,10 @@ describe("@sekhemet/harness Dashboard Server", () => {
       sha256: string;
       maxFiles: number;
     };
-    // This repo has no gates.toml, so the defaults apply and hash to nothing.
+    // This repo has no gates.toml: the defaults apply, and it says so rather
+    // than giving the hash of an empty string (GT-T1-10).
     expect(data.empty).toBe(true);
-    expect(data.sha256).toBe("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    expect(data.sha256).toBe("no gates.toml");
     expect(data.gates.length).toBeGreaterThanOrEqual(2);
     expect(data.gates[0]?.label).toBe("Types");
     expect(data.maxFiles).toBeGreaterThan(0);

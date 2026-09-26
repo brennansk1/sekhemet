@@ -1822,7 +1822,7 @@ export class CardStore {
       throw new Error(`Checkpoint step must be a non-negative integer, got ${cp.step}`);
     }
     if (!cp.gitRef?.trim()) throw new Error("Checkpoint needs a git ref");
-    if (!["pass", "fail", "partial", "suspended-quota"].includes(cp.gateStatus)) {
+    if (!["pass", "fail", "partial", "unavailable", "suspended-quota"].includes(cp.gateStatus)) {
       throw new Error(`Unknown checkpoint gate status: ${String(cp.gateStatus)}`);
     }
     // Checked before the append: the projection's foreign key would refuse

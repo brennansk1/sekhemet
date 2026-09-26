@@ -24,6 +24,10 @@ const RUNG_ORDER: Record<string, number> = {
   test: 2,
   bounds: 3,
   lint: 4,
+  // Hygiene (debug output, a changelog entry, trailers) and robustness come
+  // after every behaviour failure: a test failure outranks them (GT-T1-4).
+  hygiene: 5,
+  robustness: 6,
 };
 const DEFAULT_RUNG_ORDER = 2;
 

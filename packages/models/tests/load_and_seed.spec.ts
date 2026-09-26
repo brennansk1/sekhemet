@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { HttpInferenceAdapter, usageFromOllama } from "../src/http_adapter.js";
 import { fakeServer } from "./support/fake_server.js";
@@ -107,6 +108,50 @@ createServer((req, res) => {
     }
   }, 30_000);
 
+  it("an aborted load stops the server process it started, and rejects at once", async () => {
+    const { chmodSync, mkdtempSync, readFileSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { ManagedLlamaServerAdapter } = await import("../src/llama_server.js");
+    const dir = mkdtempSync(join(tmpdir(), "llama-abort-"));
+    const bin = join(dir, "fake-llama-server.mjs");
+    const pidFile = join(dir, "pid");
+    // Never healthy: a five-minute load from USB, cut short.
+    writeFileSync(
+      bin,
+      `#!/usr/bin/env node
+import { createServer } from "node:http";
+import { writeFileSync } from "node:fs";
+writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+const port = Number(process.argv[process.argv.indexOf("--port") + 1]);
+createServer((req, res) => { res.statusCode = 503; res.end("{}"); }).listen(port, "127.0.0.1");
+`,
+    );
+    chmodSync(bin, 0o755);
+    const model = join(dir, "model.gguf");
+    writeFileSync(model, "not a real model");
+    const a = new ManagedLlamaServerAdapter({
+      modelId: "fake",
+      modelPath: model,
+      binary: bin,
+      port: 18992,
+      startupTimeoutMs: 60_000,
+      ollamaBaseUrl: "http://127.0.0.1:1",
+    });
+    const controller = new AbortController();
+    const load = a.load(controller.signal);
+    load.catch(() => undefined);
+    for (let i = 0; i < 50 && !existsSync(pidFile); i++)
+      await new Promise((r) => setTimeout(r, 100));
+    const pid = Number(readFileSync(pidFile, "utf8"));
+    const started = Date.now();
+    controller.abort();
+    await expect(load).rejects.toThrow(/aborted/);
+    expect(Date.now() - started).toBeLessThan(3000);
+    await new Promise((r) => setTimeout(r, 200));
+    expect(() => process.kill(pid, 0)).toThrow();
+  }, 20_000);
+
   it("the throughput meter keeps every load of each model apart from its requests, reloads included (review M3)", async () => {
     const { ThroughputMeter } = await import("../src/telemetry.js");
     const m = new ThroughputMeter();
@@ -119,5 +164,83 @@ createServer((req, res) => {
       { modelId: "w", spawnToHealthyMs: { count: 2, totalMs: 16000, firstMs: 9000 } },
       { modelId: "o", loadMs: { count: 1, totalMs: 1200, firstMs: 1200 } },
     ]);
+  });
+});
+
+describe("an eager Ollama load is a cold load (models rule 20c, MD-N14-1)", () => {
+  async function slowOllama(delayMs: number) {
+    const { createServer } = await import("node:http");
+    let generates = 0;
+    const server = createServer((req, res) => {
+      let body = "";
+      req.on("data", (c) => {
+        body += c;
+      });
+      req.on("end", () => {
+        res.setHeader("content-type", "application/json");
+        if (req.url === "/api/ps") {
+          res.end(JSON.stringify({ models: [] }));
+          return;
+        }
+        generates++;
+        const t = setTimeout(() => res.end(JSON.stringify({ done: true })), delayMs);
+        res.on("close", () => clearTimeout(t));
+      });
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const { port } = server.address() as import("node:net").AddressInfo;
+    closers.push(
+      () =>
+        new Promise<void>((r) => {
+          server.closeAllConnections();
+          server.close(() => r());
+        }),
+    );
+    return { url: `http://127.0.0.1:${port}`, generates: () => generates };
+  }
+
+  it("waits out a slow load under the cold-load timeout, with no retry", async () => {
+    const srv = await slowOllama(500);
+    const a = new HttpInferenceAdapter({
+      modelId: "m",
+      baseUrl: srv.url,
+      apiFormat: "ollama",
+      requestTimeoutMs: 100,
+      coldLoadTimeoutMs: 3000,
+      maxRetries: 2,
+    });
+    expect(await a.load()).toBe("loaded");
+    expect(srv.generates()).toBe(1);
+  });
+
+  it("a load past the cold-load timeout fails once, naming that timeout, and is not retried", async () => {
+    const srv = await slowOllama(10_000);
+    const a = new HttpInferenceAdapter({
+      modelId: "m",
+      baseUrl: srv.url,
+      apiFormat: "ollama",
+      requestTimeoutMs: 50,
+      coldLoadTimeoutMs: 300,
+      maxRetries: 2,
+    });
+    await expect(a.load()).rejects.toThrow(/300ms/);
+    expect(srv.generates()).toBe(1);
+  });
+
+  it("an aborted load stops at once and is not retried", async () => {
+    const srv = await slowOllama(10_000);
+    const a = new HttpInferenceAdapter({
+      modelId: "m",
+      baseUrl: srv.url,
+      apiFormat: "ollama",
+      coldLoadTimeoutMs: 5000,
+    });
+    const controller = new AbortController();
+    const started = Date.now();
+    const load = a.load(controller.signal);
+    setTimeout(() => controller.abort(), 100);
+    await expect(load).rejects.toThrow(/aborted/);
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(srv.generates()).toBe(1);
   });
 });

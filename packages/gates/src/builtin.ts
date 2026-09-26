@@ -123,24 +123,51 @@ async function runScanner(
   args: string[],
   timeoutMs: number,
   cwd?: string,
+  /**
+   * A report file the scanner writes: `{report}` in `args` becomes a path in
+   * its own writable home, and what it wrote is read back as `stdout` (a
+   * confined scanner may not open /dev/stdout). Absent or empty, stdout stays.
+   */
+  reportFile?: string,
 ): Promise<{ status: number; stdout: string; stderr: string; refused: boolean }> {
   const home = mkdtempSync(join(tmpdir(), "sekhemet-scan-home-"));
   try {
-    const r = await runConfined(program, args, {
-      root: ctx.root,
-      ...(cwd ? { cwd } : {}),
-      writable: [home],
-      env: { HOME: home },
-      timeoutMs,
-    });
+    const report = reportFile ? join(home, reportFile) : undefined;
+    const r = await runConfined(
+      program,
+      report ? args.map((a) => (a === "{report}" ? report : a)) : args,
+      {
+        root: ctx.root,
+        ...(cwd ? { cwd } : {}),
+        writable: [home],
+        env: { HOME: home },
+        timeoutMs,
+      },
+    );
+    const written = report && existsSync(report) ? readFileSync(report, "utf8") : "";
     return {
       status: r.exitCode,
-      stdout: r.stdout,
+      stdout: written.trim() ? written : r.stdout,
       stderr: r.stderr,
       refused: r.exitCode === 126 && r.stderr.startsWith("Refusing to execute"),
     };
   } finally {
     rmSync(home, { recursive: true, force: true });
+  }
+}
+
+function isObject(v: unknown): boolean {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/** A scanner's JSON report, or undefined when it printed none or one that cannot be read. */
+function parseJsonReport(stdout: string, shape: (v: unknown) => boolean): unknown {
+  if (!stdout.trim()) return undefined;
+  try {
+    const v = JSON.parse(stdout) as unknown;
+    return shape(v) ? v : undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -210,8 +237,9 @@ function outcome(
     gate,
     rung,
     layer,
-    passed,
-    exitCode: passed ? 0 : 1,
+    // A layer that did not run never records a pass (GT-T1-11).
+    passed: passed && !skipped,
+    exitCode: skipped ? -1 : passed ? 0 : 1,
     durationMs: Date.now() - started,
     ...(skipped ? { skipped: true } : {}),
     ...(reason ? { reason } : {}),
@@ -291,22 +319,37 @@ async function secretsGate(
           "--report-format",
           "json",
           "--report-path",
-          "/dev/stdout",
+          "{report}",
         ],
         60_000,
+        undefined,
+        "gitleaks.json",
       );
       if (r.refused) {
         found.push(notRun("secrets", "gitleaks", r.stderr));
         break;
       }
-      if (r.status === 0) continue;
       // Exit 1 means leaks; anything else is gitleaks failing, never a pass.
-      if (r.status !== 1) {
+      if (r.status !== 0 && r.status !== 1) {
         found.push(notRun("secrets", "gitleaks", r.stderr || `exited ${r.status}`));
         break;
       }
+      // Its JSON report is an array, empty when clean: empty or unreadable
+      // output is no verdict (GT-T1-3), whatever the exit code.
+      const report = parseJsonReport(r.stdout, Array.isArray);
+      if (report === undefined) {
+        found.push(
+          notRun(
+            "secrets",
+            "gitleaks",
+            `exited ${r.status} with ${r.stdout.trim() ? "an unreadable" : "no"} report`,
+          ),
+        );
+        break;
+      }
+      if (r.status === 0) continue;
       try {
-        for (const leak of JSON.parse(r.stdout || "[]") as {
+        for (const leak of report as {
           RuleID?: string;
           StartLine?: number;
           Description?: string;
@@ -917,6 +960,17 @@ async function osvGate(ctx: BuiltinGateContext, osv: string): Promise<Draft[]> {
     120_000,
   );
   if (r.refused) return [notRun("osv", "osv-scanner", r.stderr)];
+  // Its JSON report is an object even when clean: empty or unreadable output
+  // is no verdict (GT-T1-3).
+  if (parseJsonReport(r.stdout, isObject) === undefined) {
+    return [
+      notRun(
+        "osv",
+        "osv-scanner",
+        `exited ${r.status} with ${r.stdout.trim() ? "an unreadable" : "no"} report`,
+      ),
+    ];
+  }
   if (r.status === 0) return [];
   const out: Draft[] = [];
   try {
@@ -969,6 +1023,18 @@ async function semgrepGate(ctx: DiffContext, semgrep: string): Promise<Draft[] |
     300_000,
   );
   if (r.refused) return [notRun("semgrep", "semgrep", r.stderr)];
+  // `--json` prints an object with `results` even when clean: empty or
+  // unreadable output is no verdict (GT-T1-3).
+  const parsed = parseJsonReport(r.stdout, isObject) as { results?: unknown } | undefined;
+  if (parsed === undefined || !Array.isArray(parsed.results)) {
+    return [
+      notRun(
+        "semgrep",
+        "semgrep",
+        `exited ${r.status} with ${r.stdout.trim() ? "an unreadable" : "no"} report`,
+      ),
+    ];
+  }
   try {
     const report = JSON.parse(r.stdout || "{}") as {
       errors?: unknown[];

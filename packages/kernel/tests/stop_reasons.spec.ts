@@ -42,7 +42,7 @@ describe("the stop-reason table (worker-loop rule 31)", () => {
 
   it("WL-T3-10: holds the five v1 reasons with rule 31's values; CARD_STOP_REASONS is the table's keys", () => {
     expect([...CARD_STOP_REASONS].sort()).toEqual(Object.keys(STOP_REASONS).sort());
-    expect(CARD_STOP_REASONS).toHaveLength(24);
+    expect(CARD_STOP_REASONS).toHaveLength(25);
     const want = {
       gate_suspected: ["capability_ceiling", "yes", false],
       tests_not_red_for_reason: ["no_progress", "yes", false],
@@ -54,6 +54,21 @@ describe("the stop-reason table (worker-loop rule 31)", () => {
       const row = STOP_REASONS[reason as keyof typeof want];
       expect([row.class, row.parks, row.resumable], reason).toEqual([cls, parks, resumable]);
     }
+  });
+
+  it("base_not_green: a green-first card's tests failing on the base parks before any step and never measures the model (gates rule 6b)", () => {
+    const row = STOP_REASONS.base_not_green;
+    expect(row).toBeDefined();
+    expect(row.measuresModel).toBe(false);
+    expect([row.class, row.parks, row.resumable, row.mayVerify]).toEqual([
+      "no_progress",
+      "yes",
+      false,
+      false,
+    ]);
+    expect(row.goesTo).toMatch(/before any step/i);
+    expect(row.nextAction).toMatch(/characterize, refactor or upgrade/);
+    expect(row.nextAction).toMatch(/fail on the base/);
   });
 
   it("rule 31: human_abort's next action says who stopped it, then resume or reject", () => {

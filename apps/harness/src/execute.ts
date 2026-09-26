@@ -24,11 +24,9 @@ import {
 import { LearningGuard, type RunProfile, harvestExemplars } from "@sekhemet/eval";
 import {
   DeterministicGateRunner,
-  RemoteGateRunner,
   compileEvidence,
   loadGatesConfig,
   npmRegistry,
-  readTls,
 } from "@sekhemet/gates";
 import {
   type CardRecord,
@@ -41,6 +39,7 @@ import {
 import {
   type CardRunResult,
   CardRunner,
+  type FailToPassReport,
   type ToolCallEvent,
   type TurnResult,
   calibratedStepBudget,
@@ -61,7 +60,7 @@ import { confinedSandbox, mergeNetworkConfigs, policyFetch } from "@sekhemet/san
 import { NodeGitSyncAdapter } from "@sekhemet/sync";
 import { integrationBranch } from "./accept.js";
 import { isAirgapped, mirrorRegistry } from "./airgap.js";
-import { withArchitectureGate } from "./architecture_gate.js";
+import { cardGateRunner } from "./card_gates.js";
 import {
   lastPauseSeq,
   messageLabel,
@@ -83,13 +82,9 @@ import { RULE_SIGNAL_MINIMUM, learnFromAttempt } from "./learning/reflect.js";
 import { playbookRuleOf, standingErrorCode } from "./learning/scoping.js";
 import { type LearningStore, RULES_PER_PROMPT } from "./learning/store.js";
 import { recordLedgerRun } from "./ledger_evidence.js";
-import { withLicenseGate } from "./license_gate.js";
-import { withReachabilityGate } from "./reachability_gate.js";
-import { withRegressionGate } from "./regression_gate.js";
 import { buildReproRecord } from "./repro.js";
 import { workerWebDocs } from "./research/service.js";
 import { Tracer, toolCallSpan, traced } from "./tracing.js";
-import { withTrailerGate } from "./trailer_gate.js";
 import { hookEngineFor } from "./user_hooks.js";
 import { PR_EVENT, openPullRequestViaApp, prBody } from "./wave2_github.js";
 import { loadRepoSkills, untrustedFiles } from "./workspace_trust.js";
@@ -348,54 +343,14 @@ export async function executeCard(
   }
   const gitAdapter = new NodeGitSyncAdapter(ctx.repoPath);
   const gatesConfig = loadGatesConfig(ctx.repoPath);
-  // Restricted mode refuses to execute where the OS cannot confine the
-  // subprocess, rather than quietly running the agent unsandboxed.
-  const sandbox = confinedSandbox(ctx.restrictedMode);
-  // X20, X26: every verification also runs the licence register gate and
-  // the commit-trailer contract on the card's branch — and refuses exports
-  // the card added that nothing uses and nothing requires, which is how a
-  // project decays one reasonable change at a time — and refuses a change
-  // that breaks or removes a test main already guarantees, or an invariant
-  // the project's brief declares.
-  const gateRunner = withArchitectureGate(
-    withRegressionGate(
-      withReachabilityGate(
-        withTrailerGate(
-          withLicenseGate(
-            // G24: a separate, mutually authenticated gate host when gates.toml
-            // names one; this machine's sandbox otherwise.
-            gatesConfig.project.gateHost
-              ? new RemoteGateRunner(
-                  gatesConfig.project.gateHost.url,
-                  readTls(gatesConfig.project.gateHost),
-                  {
-                    expectedConfigSha256: gatesConfig.sha256,
-                    repoRoot: ctx.repoPath,
-                  },
-                )
-              : new DeterministicGateRunner(sandbox, {
-                  repoRoot: ctx.repoPath,
-                  expectedConfigSha256: gatesConfig.sha256,
-                  // The card's verification caps once, after every gate and
-                  // wrapper has reported (finalizeFailures, gates rule 20):
-                  // the runner hands back everything, and the regression
-                  // wrapper reads the whole list.
-                  maxFailuresReported: Number.POSITIVE_INFINITY,
-                }),
-            ctx.repoPath,
-          ),
-        ),
-        // What asked for this card's work — its acceptance tests and its own
-        // spec — makes an export reachable before the code that calls it exists.
-        {
-          tests: inputCard.acceptanceTests ?? [],
-          text: [inputCard.spec ?? "", ...(inputCard.acceptanceCriteria ?? [])].join("\n"),
-        },
-      ),
-      { ownTests: inputCard.acceptanceTests ?? [] },
-    ),
-    { briefPath: join(ctx.repoPath, ".sekhemet", "brief.md") },
-  );
+  // The declared gates wrapped by the project gates, composed in one place
+  // with `sekhemet gate <card>` (gates rule 8, T1).
+  const gateRunner = cardGateRunner({
+    repoPath: ctx.repoPath,
+    gatesConfig,
+    restricted: ctx.restrictedMode,
+    card: inputCard,
+  });
   // C10 with S9: skills pinned in the user directory's lock, never one the
   // repository ships (SEC-31).
   const skills = loadRepoSkills(ctx.repoPath);
@@ -1670,7 +1625,7 @@ export interface QueueEntry {
   /** Why the card was parked for a person (repair rung 4, vacuous tests). */
   parked?: string;
   /** The fail-to-pass check at card start (G12). */
-  failToPass?: "fails" | "vacuous" | "unknown";
+  failToPass?: FailToPassReport["status"];
   /** The checkpoint step a memory-pressure stop resumed from (H17). */
   resumedFromStep?: number;
   /** The card stopped at repair rung 3 for a new plan (L15). */

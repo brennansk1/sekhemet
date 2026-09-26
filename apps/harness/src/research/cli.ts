@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import type { CardStore } from "@sekhemet/kernel";
 import { McpHub, loadMcpConfig } from "../mcp_client.js";
+import { sharedModelAccess } from "../model_access.js";
 import { crawl4aiInstalled } from "./crawl4ai.js";
 import { ResearchService, researchSources, researcherModel } from "./service.js";
 
@@ -70,7 +71,7 @@ export async function runResearchCommand(
     );
   }
   const modelName = flag(argv, "--model") ?? process.env.SEKHEMET_RESEARCHER ?? "apodex";
-  const model = researcherModel(modelName);
+  const model = researcherModel(modelName, sharedModelAccess(), log);
   const rounds = Number(flag(argv, "--rounds")) || undefined;
   const service = new ResearchService({
     repoPath,

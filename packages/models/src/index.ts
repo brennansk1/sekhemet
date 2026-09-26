@@ -5,6 +5,7 @@ export * from "./http_adapter.js";
 export * from "./memory.js";
 export * from "./models_dir.js";
 export * from "./residency.js";
+export * from "./swap_cost.js";
 export * from "./llama_server.js";
 export * from "./roster.js";
 export * from "./reasoning.js";

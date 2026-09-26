@@ -93,18 +93,97 @@ function asNumber(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
-/** Compute the canonical SHA-256 of a gates config file's bytes. */
-export function hashGatesConfig(contents: string): string {
-  return createHash("sha256").update(contents, "utf8").digest("hex");
+/**
+ * What a run on the defaults records as its configuration "hash" (GT-T1-10):
+ * a statement, never the SHA-256 of an empty string. It is still pinned, so a
+ * `gates.toml` written after the card started is tamper.
+ */
+export const NO_GATES_CONFIG = "no gates.toml";
+
+/** Compute the canonical SHA-256 of a gates config file's bytes (GT-T1-13). */
+export function hashGatesConfig(contents: string | Uint8Array): string {
+  return createHash("sha256")
+    .update(typeof contents === "string" ? Buffer.from(contents, "utf8") : contents)
+    .digest("hex");
 }
 
-function toGateDefinition(raw: TomlTable, index: number): GateDefinition {
-  const id = asString(raw.id, `gate_${index}`);
-  const rungRaw = asString(raw.rung, id);
-  const layerRaw = asString(raw.layer, "functional");
+/**
+ * Parsers the harness knows (`parsers.ts`), plus the ones whose name places a
+ * gate in its layer (rule 36). Any other name is a warning (GT-T1-6).
+ */
+export const KNOWN_PARSERS: ReadonlySet<string> = new Set([
+  "tsc",
+  "typescript",
+  "vitest",
+  "jest",
+  "biome",
+  "eslint",
+  "cargo",
+  "generic",
+  "gitleaks",
+  "stryker",
+  "playwright",
+]);
 
+/** The layer a parser's name places a gate in when the file gives none (rule 36). */
+const LAYER_OF_PARSER: Record<string, GateLayer> = {
+  gitleaks: "security",
+  stryker: "robustness",
+  playwright: "visual",
+};
+
+/** The layer a rung belongs to when neither the file nor the parser says. */
+const LAYER_OF_RUNG: Record<GateRung, GateLayer> = {
+  parse: "static",
+  typecheck: "static",
+  lint: "static",
+  test: "functional",
+  bounds: "hygiene",
+  hygiene: "hygiene",
+  visual: "visual",
+  security: "security",
+  robustness: "robustness",
+};
+
+/** The rung a parser's layer implies, when neither `rung` nor the id names one. */
+const RUNG_OF_LAYER: Partial<Record<GateLayer, GateRung>> = {
+  security: "security",
+  robustness: "robustness",
+  visual: "visual",
+};
+
+function toGateDefinition(
+  raw: TomlTable,
+  index: number,
+  warn: (w: string) => void,
+): GateDefinition {
+  const id = asString(raw.id, `gate_${index}`);
+  const parser = asString(raw.parser, "generic");
+  if (!KNOWN_PARSERS.has(parser)) {
+    warn(`gate "${id}": unknown parser = ${JSON.stringify(parser)}; its output is read as generic`);
+  }
+  const parserLayer = LAYER_OF_PARSER[parser];
+  // `rung` defaults to the id when that is a known rung (rule 36).
+  const rungRaw =
+    typeof raw.rung === "string"
+      ? raw.rung
+      : VALID_RUNGS.has(id as GateRung)
+        ? id
+        : ((parserLayer && RUNG_OF_LAYER[parserLayer]) ?? "test");
+  if (!VALID_RUNGS.has(rungRaw as GateRung)) {
+    warn(`gate "${id}": unknown rung = ${JSON.stringify(rungRaw)}; it runs as the test rung`);
+  }
   const rung = VALID_RUNGS.has(rungRaw as GateRung) ? (rungRaw as GateRung) : "test";
-  const layer = VALID_LAYERS.has(layerRaw as GateLayer) ? (layerRaw as GateLayer) : "functional";
+  const inferred = parserLayer ?? LAYER_OF_RUNG[rung];
+  if (typeof raw.layer === "string" && !VALID_LAYERS.has(raw.layer as GateLayer)) {
+    warn(
+      `gate "${id}": unknown layer = ${JSON.stringify(raw.layer)}; it runs in the ${inferred} layer`,
+    );
+  }
+  const layer =
+    typeof raw.layer === "string" && VALID_LAYERS.has(raw.layer as GateLayer)
+      ? (raw.layer as GateLayer)
+      : inferred;
 
   // Timeouts are declared in seconds in the file; the runner works in ms.
   const timeoutSeconds = asNumber(raw.timeout_s, 0);
@@ -116,10 +195,15 @@ function toGateDefinition(raw: TomlTable, index: number): GateDefinition {
     command: asString(raw.command, "pnpm"),
     args: asStringArray(raw.args),
     timeoutMs: timeoutSeconds > 0 ? timeoutSeconds * 1000 : asNumber(raw.timeout_ms, 180_000),
-    parser: asString(raw.parser, "generic"),
+    parser,
     blocking: raw.blocking === undefined ? true : raw.blocking === true,
+    ...(typeof raw.blocking === "boolean" ? { blockingDeclared: true } : {}),
     ...(raw.baseline_approval === "human" || raw.baseline_approval === "auto"
       ? { baselineApproval: raw.baseline_approval as "human" | "auto" }
+      : {}),
+    ...(asStringArray(raw.needs).length > 0 ? { needs: asStringArray(raw.needs) } : {}),
+    ...(typeof raw.external === "string" && raw.external.trim()
+      ? { external: raw.external.trim() }
       : {}),
   };
 }
@@ -141,12 +225,14 @@ export function loadGatesConfig(repoRoot: string): GatesConfig {
     return {
       project: { ...DEFAULT_PROJECT_CONFIG },
       gates: template ?? DEFAULT_GATES.map((g) => ({ ...g })),
-      sha256: hashGatesConfig(""),
+      sha256: NO_GATES_CONFIG,
       sourcePath,
+      empty: true,
     };
   }
 
-  const contents = readFileSync(sourcePath, "utf8");
+  const bytes = readFileSync(sourcePath);
+  const contents = bytes.toString("utf8");
   const parsed = parseToml(contents);
 
   const projectTable = (parsed.project ?? {}) as TomlTable;
@@ -197,13 +283,15 @@ export function loadGatesConfig(repoRoot: string): GatesConfig {
   if (visual) project.visual = visual;
 
   const rawGates = Array.isArray(parsed.gate) ? (parsed.gate as TomlTable[]) : [];
-  const gates = rawGates.map(toGateDefinition);
+  const warnings: string[] = [];
+  const gates = rawGates.map((raw, i) => toGateDefinition(raw, i, (w) => warnings.push(w)));
 
   return {
     project,
     gates: gates.length > 0 ? gates : DEFAULT_GATES.map((g) => ({ ...g })),
-    sha256: hashGatesConfig(contents),
+    sha256: hashGatesConfig(bytes),
     sourcePath,
+    ...(warnings.length > 0 ? { warnings } : {}),
   };
 }
 

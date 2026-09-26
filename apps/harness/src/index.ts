@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { freemem, tmpdir, totalmem } from "node:os";
 import { dirname, join } from "node:path";
@@ -9,15 +9,18 @@ import { BoardServiceImpl } from "@sekhemet/board";
 import { type RunProfile, type SuiteRunResult, profileArgs, runScore } from "@sekhemet/eval";
 import {
   DeterministicGateRunner,
+  type PipelineResult,
+  declaredStage,
   detectGateTemplate,
   gateTemplate,
   generateGateHostCerts,
   loadGatesConfig,
   npmRegistry,
   renderGatesToml,
-  runBuiltinGates,
+  runGatePipeline,
   startGateHost,
   summarizeEvidence,
+  verificationRungs,
 } from "@sekhemet/gates";
 import { remedyFor } from "@sekhemet/gates";
 import {
@@ -48,7 +51,7 @@ import {
   mergeNetworkConfigs,
   policyFetch,
 } from "@sekhemet/sandbox";
-import { NodeGitSyncAdapter, gitEnvFor, hardenGitForProcess } from "@sekhemet/sync";
+import { NodeGitSyncAdapter, hardenGitForProcess } from "@sekhemet/sync";
 import {
   checkoutNotice,
   enableAutoAccept,
@@ -63,6 +66,7 @@ import { resolveVisionModel, visionPrePass } from "./attachments.js";
 import { bakeOffTaskPlan } from "./bakeoff_tasks.js";
 import { watchBoardHooks } from "./board_hooks.js";
 import { parseModelList, promptNeedFromLedgers, runCalibrate, runMtpAb } from "./calibrate_cmd.js";
+import { verifyCardWorktree } from "./card_gates.js";
 import { handBack, postCardMessage, requestPause, takeOver } from "./collaborate.js";
 import { resolveConfig } from "./config.js";
 import {
@@ -118,7 +122,6 @@ import {
   openLocalLedger,
 } from "./ledger_cmds.js";
 import { cardBranchHead, ledgerEvidenceSummary } from "./ledger_evidence.js";
-import { licenseGate } from "./license_gate.js";
 import { runMcpStdioServer } from "./mcp.js";
 import { McpHub, loadMcpConfig, plannerToolsOf } from "./mcp_client.js";
 import {
@@ -167,7 +170,6 @@ import { fairOrder } from "./team/fair_queue.js";
 import { newSetupTokenCommand, recordSwitchToSolo } from "./team/serve.js";
 import { terminalBoardLines } from "./terminal_board.js";
 import { tracesCommand } from "./tracing.js";
-import { trailerGate } from "./trailer_gate.js";
 import { nextForReview, park, reject, reopen, revertAccept, sendBack, unpark } from "./triage.js";
 import {
   describeTuning,
@@ -951,7 +953,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       cardStore,
       pmStore: new PmStore(log),
       pmModel: DEFAULT_PM_MODEL,
-      acquire: pmModelFor(DEFAULT_PM_MODEL, modelRegistry()),
+      acquire: pmModelFor(DEFAULT_PM_MODEL, modelRegistry(), log),
       ...(acpResearcher
         ? {
             researcher: (q: string, o?: { deep?: boolean }) =>
@@ -1080,6 +1082,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     const planAccess = plannerName
       ? ModelAccess.forQueues([{ queue: "plan", role: "planner", name: plannerName }], {
           registry: modelRegistry(),
+          ledger: log,
         })
       : undefined;
     const sketcher = planAccess ? planAccess.adapterFor("plan") : undefined;
@@ -1136,45 +1139,21 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       console.log(`No worktree for ${cardId}; running the gates in the repository instead.`);
     }
     const gatesConfig = loadGatesConfig(config.repoPath);
-    // --restricted runs only the static layer, confined or not at all (S12).
-    const rungs = [
-      ...new Set(
-        gatesConfig.gates
-          .filter((g) => !config.restrictedMode || g.layer === "static")
-          .map((g) => g.rung),
-      ),
-    ];
-    const gateRunner = new DeterministicGateRunner(confinedSandbox(config.restrictedMode), {
-      repoRoot: config.repoPath,
-      expectedConfigSha256: gatesConfig.sha256,
-    });
-    console.log(`\nRunning ${rungs.join(", ")} in ${cwd}`);
-    let res = await gateRunner.runGates(rungs, cwd);
-    // The built-in security, hygiene and robustness layers, on the card's diff (G3).
+    for (const w of gatesConfig.warnings ?? []) console.log(`  warning: ${w}`);
+    const card = cardId ? await cardStore.getCard(cardId) : null;
+    let res: PipelineResult;
     if (cardId && cwd !== config.repoPath) {
-      const diff = (() => {
-        try {
-          const env = gitEnvFor(cwd);
-          execFileSync("git", ["add", "-A"], { cwd, env, stdio: "ignore" });
-          return execFileSync(
-            "git",
-            ["diff", "--cached", "--unified=0", "--no-ext-diff", "--no-textconv", "main"],
-            {
-              cwd,
-              env,
-              encoding: "utf8",
-              maxBuffer: 16 * 1024 * 1024,
-            },
-          );
-        } catch {
-          return "";
-        }
-      })();
-      const extra = await runBuiltinGates({
-        root: cwd,
-        base: "main",
-        diff,
-        project: { ...gatesConfig.project, mutation: false },
+      // The card's own verification — the same pipeline, runner, rungs,
+      // branch, bounds and built-in layers as the card run (gates rule 8, T1).
+      const base = integrationBranch(config.repoPath);
+      console.log(`\nVerifying ${cardId} against ${base} in ${cwd}`);
+      res = await verifyCardWorktree({
+        repoPath: config.repoPath,
+        gatesConfig,
+        restricted: config.restrictedMode,
+        card: card ?? {},
+        worktree: cwd,
+        base,
         // Air-gapped: only mirrored packages exist (X10).
         registry: isAirgapped(config.repoPath)
           ? mirrorRegistry(config.repoPath)
@@ -1199,23 +1178,27 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
               ) as typeof fetch,
             }),
       });
-      res = {
-        ...res,
-        passed: res.passed && extra.failures.length === 0,
-        failures: [...extra.failures, ...res.failures],
-        rungResults: [...(res.rungResults ?? []), ...extra.outcomes],
-      };
-      for (const a of extra.advisories) console.log(`  advisory: ${a}`);
-      // X20: dependencies the card adds, against the licence register.
-      const lic = licenseGate(cwd, "main");
-      if (lic.failures.length > 0)
-        res = { ...res, passed: false, failures: [...res.failures, ...lic.failures] };
-      for (const a of lic.advisories) console.log(`  advisory: ${a}`);
-      // X26: every commit on the card's branch carries the attribution trailers.
-      const trailers = trailerGate(cwd, "main");
-      if (trailers.length > 0)
-        res = { ...res, passed: false, failures: [...res.failures, ...trailers] };
+    } else {
+      // No card: the declared gates of the repository as it stands.
+      const rungs = verificationRungs(gatesConfig.gates, config.restrictedMode);
+      console.log(`\nRunning ${rungs.join(", ")} in ${cwd}`);
+      res = await runGatePipeline(
+        [
+          declaredStage(
+            new DeterministicGateRunner(confinedSandbox(config.restrictedMode), {
+              repoRoot: config.repoPath,
+              expectedConfigSha256: gatesConfig.sha256,
+              maxFailuresReported: Number.POSITIVE_INFINITY,
+            }),
+            rungs,
+            cwd,
+          ),
+        ],
+        { cwd },
+      );
     }
+    for (const a of res.advisories) console.log(`  advisory: ${a}`);
+    let passed = res.passed;
     // Y19: in a monorepo, each package the card touches runs its own gates.
     if (cardId && cwd !== config.repoPath) {
       const changed = (await new NodeGitSyncAdapter(config.repoPath).getDiffStats(cardId))
@@ -1223,30 +1206,14 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       const pkg = await runPackageGates(config.repoPath, cwd, changed, undefined, {
         restricted: config.restrictedMode,
       });
-      if (pkg.some((p) => !p.passed)) res = { ...res, passed: false };
+      if (pkg.some((p) => !p.passed)) passed = false;
     }
-    let boundsOk = true;
-    if (cardId && cwd !== config.repoPath) {
-      const stats = await new NodeGitSyncAdapter(config.repoPath).getDiffStats(cardId);
-      // Harness-staged acceptance tests are not the card's work, exactly as
-      // in the card runner's bounds check.
-      const staged = new Set(
-        ((await cardStore.getCard(cardId))?.acceptanceTests ?? []).map((t) =>
-          t.startsWith("tests/") ? t : `tests/${t}`,
-        ),
-      );
-      const own = (stats.perFile ?? []).filter((f) => !staged.has(f.file));
-      const files = own.length;
-      const lines = own.reduce((n, f) => n + f.added + f.removed, 0);
-      boundsOk = files <= gatesConfig.project.maxFiles && lines <= gatesConfig.project.maxDiffLines;
-      console.log(
-        `Bounds: ${files}/${gatesConfig.project.maxFiles} files, ${lines}/${gatesConfig.project.maxDiffLines} lines ${boundsOk ? "ok" : "EXCEEDED"}`,
-      );
+    for (const r of res.rungResults) {
+      const mark = r.unavailable ? "!" : r.passed ? "✓" : r.skipped ? "-" : "✗";
+      const why = r.reason ? ` — ${r.reason}` : "";
+      console.log(`  ${mark} ${r.gate} (${r.durationMs} ms)${why}`);
     }
-    for (const r of res.rungResults ?? []) {
-      console.log(`  ${r.passed ? "✓" : r.skipped ? "-" : "✗"} ${r.gate} (${r.durationMs} ms)`);
-    }
-    if (res.passed && boundsOk) {
+    if (passed) {
       console.log("All gates pass.\n");
       return;
     }
@@ -1647,7 +1614,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
           name: roleModelName("worker", workerName, { registry }) ?? NAIL_WORKER_PROFILE.modelId,
         },
       ],
-      { registry },
+      { registry, ledger: log },
     );
     const model = access.adapterFor("worker");
     console.log(`Worker: ${model.modelId}`);
@@ -1920,6 +1887,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       ],
       {
         registry: modelRegistry(),
+        ledger: log,
         wrap: (adapter, queues) => {
           loaded.add(adapter);
           if (queues.includes("worker") || queues.includes("escalation"))

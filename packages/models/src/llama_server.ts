@@ -633,14 +633,21 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
     await this.recordQuantisation();
   }
 
-  /** Start the server if needed and wait until it reports healthy. */
-  public async ensureRunning(): Promise<void> {
+  /**
+   * Start the server if needed and wait until it reports healthy. `signal`
+   * aborts a start in flight: the process this adapter spawned is killed and
+   * the promise rejects (the residency scheduler's `releaseAll`).
+   */
+  public async ensureRunning(signal?: AbortSignal): Promise<void> {
+    const aborted = () => new Error("llama-server load aborted");
+    if (signal?.aborted) throw aborted();
     let state = await this.healthState();
     if (state === "loading") {
       // A server still loading answers 503: wait for it rather than starting
       // a second one on the same port (A10).
       const deadline = Date.now() + (this.profile.startupTimeoutMs ?? 600_000);
       while (state === "loading" && Date.now() < deadline) {
+        if (signal?.aborted) throw aborted();
         await new Promise((r) => setTimeout(r, 250));
         state = await this.healthState();
       }
@@ -651,14 +658,31 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
     }
     if (state === "ok") return this.adopt();
     this.adoptedAt = undefined;
-    if (this.starting) return this.starting;
+    // An abort kills the process this adapter is starting, whoever started it.
+    const kill = () => {
+      if (this.child && this.child.exitCode === null && this.child.signalCode === null)
+        this.child.kill("SIGKILL");
+    };
+    signal?.addEventListener("abort", kill, { once: true });
+    try {
+      await (this.starting ?? this.start(signal));
+    } catch (err) {
+      if (signal?.aborted) throw aborted();
+      throw err;
+    } finally {
+      signal?.removeEventListener("abort", kill);
+    }
+    if (signal?.aborted) throw aborted();
+  }
 
+  private start(signal?: AbortSignal): Promise<void> {
     this.starting = (async () => {
       if (!existsSync(this.profile.modelPath)) {
         throw new Error(`Model file not found: ${this.profile.modelPath}`);
       }
       await evictOllamaModels(this.profile.ollamaBaseUrl);
       if (this.profile.slotCacheDir) mkdirSync(this.profile.slotCacheDir, { recursive: true });
+      if (signal?.aborted) throw new Error("llama-server load aborted");
 
       const spawnedAt = Date.now();
       this.child = spawn(this.profile.binary ?? "llama-server", this.launchArgs(), {
@@ -672,7 +696,7 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
 
       const deadline = Date.now() + (this.profile.startupTimeoutMs ?? 600_000);
       while (Date.now() < deadline) {
-        if (this.child.exitCode !== null) {
+        if (this.child.exitCode !== null || this.child.signalCode !== null) {
           throw new Error(`llama-server exited during startup: ${stderr.slice(-800)}`);
         }
         if (await this.healthy()) {
@@ -690,13 +714,10 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
         await new Promise((r) => setTimeout(r, 1000));
       }
       throw new Error(`llama-server did not become healthy in time: ${stderr.slice(-800)}`);
-    })();
-
-    try {
-      await this.starting;
-    } finally {
+    })().finally(() => {
       this.starting = undefined;
-    }
+    });
+    return this.starting;
   }
 
   public override async generate(
@@ -746,6 +767,23 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
     child.once("exit", () => process.removeListener("exit", kill));
   }
 
+  /**
+   * Load now (models rule 20c, MD-N14-1): start the server and wait until it
+   * is healthy. A server already up, or one another start is loading, is
+   * adopted: this adapter did not order that load.
+   */
+  public override async load(signal?: AbortSignal): Promise<"loaded" | "adopted"> {
+    const before = await this.healthState();
+    await this.ensureRunning(signal);
+    return before === "down" ? "loaded" : "adopted";
+  }
+
+  /** The weights file and its bytes, for Smart Swap's record; undefined when it is missing. */
+  public override async weightsSource(): Promise<{ path: string; bytes: number } | undefined> {
+    if (!existsSync(this.profile.modelPath)) return undefined;
+    return { path: this.profile.modelPath, bytes: statSync(this.profile.modelPath).size };
+  }
+
   /** Weights on disk, plus the KV cache for its context and runtime overhead. */
   public async footprintBytes(): Promise<number | undefined> {
     if (!existsSync(this.profile.modelPath)) return undefined;
@@ -793,7 +831,10 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
     // Whatever happens to this server, the next use checks the port again (A9).
     this.adoptedAt = undefined;
     const child = this.child;
-    if (!child || child.exitCode !== null) return;
+    if (!child || child.exitCode !== null || child.signalCode !== null) {
+      this.child = undefined;
+      return;
+    }
     await this.slotAction("save");
     child.kill("SIGTERM");
     await new Promise<void>((resolve) => {

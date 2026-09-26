@@ -115,7 +115,13 @@ export function checkoutNotice(repoPath: string, branch: string, sha: string): s
 export interface AcceptedEvidence {
   id?: string;
   passed?: boolean;
-  rungResults?: { gate: string; passed: boolean; skipped?: boolean; durationMs?: number }[];
+  rungResults?: {
+    gate: string;
+    passed: boolean;
+    skipped?: boolean;
+    unavailable?: boolean;
+    durationMs?: number;
+  }[];
   filesTouched?: string[];
   linesAdded?: number;
   linesRemoved?: number;
@@ -145,11 +151,17 @@ export async function ledgerBundle(
   }
 }
 
-/** `GateStatus` from the evidence, never hard-coded (RG-S5-7). */
-export function gateStatusOf(ev: AcceptedEvidence): "pass" | "fail" | "partial" {
+/**
+ * `GateStatus` from the evidence, never hard-coded (RG-S5-7). A gate that
+ * could not run is `unavailable`, never `fail`: it gave no verdict on the
+ * work (gates rule 9). A real failure beside it is still `fail`.
+ */
+export function gateStatusOf(ev: AcceptedEvidence): "pass" | "fail" | "partial" | "unavailable" {
   const rungs = ev.rungResults ?? [];
-  if (ev.passed !== true || rungs.some((r) => r.passed === false && r.skipped !== true))
-    return "fail";
+  const failed = rungs.some((r) => r.passed === false && r.skipped !== true && !r.unavailable);
+  const down = rungs.some((r) => r.passed === false && r.skipped !== true && r.unavailable);
+  if (failed || (ev.passed !== true && !down)) return "fail";
+  if (down) return "unavailable";
   return rungs.some((r) => r.skipped === true) ? "partial" : "pass";
 }
 

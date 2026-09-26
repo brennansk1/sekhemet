@@ -9,11 +9,16 @@ import {
   DEFAULT_GATES,
   type EvidenceBundle,
   type GatesConfig,
+  type RedFirstStatus,
+  type RedFirstVerdict,
   type RunSettings,
   type StepEvidence,
+  buildRepairRedCheck,
   compileEvidence,
+  judgeRedFirst,
   loadGatesConfig,
   onlyNotRun,
+  verificationRungs,
 } from "@sekhemet/gates";
 import {
   type AgentRole,
@@ -129,17 +134,67 @@ export interface RunProgressEvent {
 /** What the fail-to-pass check found before any work (G12). */
 export interface FailToPassReport {
   /**
-   * `fails`: the staged tests fail against the untouched code, as they must.
-   * `vacuous`: they already pass, so they cannot measure this card.
+   * By the red/green rule of the card's `change` (gates rule 6b, GT-N8-2):
+   * `fails`: red on the base, as a feature or fix card's must be.
+   * `green`: green on the base, a characterize, refactor or upgrade card's proof.
+   * `vacuous`: green where red was required, so the tests cannot measure this card.
+   * `refused`: red where green was required, or a build that already succeeds.
    * `unknown`: the gates could not run; the card proceeds.
    */
-  status: "fails" | "vacuous" | "unknown";
+  status: RedFirstStatus;
   tests: string[];
   detail: string;
+  /** The stop a refusal ends the card with (rule 6b). */
+  stopReason?: RedFirstVerdict["stopReason"];
+}
+
+/**
+ * The verification settings a card's session is built with, from the
+ * project's gates.toml: the rungs, autofix and style fixes, protection, size
+ * limits, built-in layers and state directory. One function for the card run
+ * and every check that must verify as it does (GT-T1-1), so the two cannot
+ * drift apart.
+ */
+export function verificationSessionOptions(
+  config: GatesConfig,
+  options: { repoRoot: string; restricted: boolean },
+): Pick<SessionOptions, "autofixCommand" | "styleFixCommands" | "protectedGlobs"> & {
+  gateRungs: GateRung[];
+  bounds: { maxFiles: number; maxLines: number };
+  builtinGates: GatesConfig["project"];
+  stateDir: string;
+} {
+  return {
+    // Verify against every blocking gate the project declares (lint included,
+    // as the spec requires). Under --restricted only the static layer runs:
+    // executing the repo's tests would execute its code (S12).
+    gateRungs: verificationRungs(config.gates, options.restricted),
+    ...(config.project.autofix ? { autofixCommand: config.project.autofix } : {}),
+    ...(config.project.styleFix && config.project.styleFixRules
+      ? {
+          styleFixCommands: config.project.styleFixRules.map((rule) => [
+            ...(config.project.styleFix as string[]),
+            `--only=${rule}`,
+          ]),
+        }
+      : {}),
+    // The project's declared protection and size limits (defect 5, G10).
+    protectedGlobs: config.project.protected,
+    bounds: { maxFiles: config.project.maxFiles, maxLines: config.project.maxDiffLines },
+    // The built-in security, hygiene and robustness layers (G3).
+    builtinGates: config.project,
+    stateDir: join(options.repoRoot, ".sekhemet"),
+  };
 }
 
 export interface CardRunOptions extends Omit<SessionOptions, "cardId"> {
   card: CardRecord;
+  /**
+   * A build-repair card's declared build command (gates rule 6b, DEC-43): its
+   * red check is this command failing on the base, run confined with no
+   * network, instead of tests that cannot run on a base that does not build.
+   */
+  buildRepair?: { command: string; args: string[]; timeoutMs?: number } | undefined;
   /** Hooks files that failed to load, each with its error, for the evidence (EXT-10). */
   hookErrors?: string[] | undefined;
   /** The card's configuration layer as `section.key = value` lines, for the evidence (SUR-40). */
@@ -946,11 +1001,28 @@ export class CardRunner {
     }
   }
 
-  /** G12: the staged acceptance tests must fail before any work is done. */
+  /**
+   * G12, rule 6b: the red-first check, judged by the red/green rule of the
+   * card's `change` (GT-N8-2) — one table, never `kind` or `split`.
+   */
   private async failToPass(worktreePath: string): Promise<FailToPassReport> {
     const tests = (this.options.card.acceptanceTests ?? []).map((t) =>
       t.startsWith("tests/") ? t : `tests/${t}`,
     );
+    // A build-repair card: red is its build command failing on the base.
+    const build = this.options.buildRepair;
+    if (build) {
+      const v = await buildRepairRedCheck(this.options.sandbox ?? new ProcessSandbox(), {
+        ...build,
+        cwd: worktreePath,
+      });
+      return {
+        status: v.status,
+        tests,
+        detail: v.detail,
+        ...(v.stopReason ? { stopReason: v.stopReason } : {}),
+      };
+    }
     // A types-only card's acceptance test is a contract checked by the type
     // checker: `import type` and `expectTypeOf` are erased at runtime, so
     // under the test runner alone it passes against an empty file and the
@@ -965,26 +1037,32 @@ export class CardRunner {
     } catch (err) {
       return { status: "unknown", tests, detail: `gates could not run: ${refusalReason(err)}` };
     }
-    if (result.passed) {
-      return {
-        status: "vacuous",
-        tests,
-        detail: `${tests.join(", ")} already pass against the untouched implementation, so they cannot tell whether this card did anything.`,
-      };
-    }
     // Gates that could not start say nothing about the tests: not red, not green.
-    if (result.failures.length > 0 && result.failures.every((f) => f.notRun === true)) {
+    const verdict = judgeRedFirst(
+      this.options.card.change,
+      { passed: result.passed, onlyNotRun: onlyNotRun(result) },
+      tests,
+    );
+    if (verdict.status === "unknown") {
       return {
         status: "unknown",
         tests,
         detail: `gates could not run: ${result.failures[0]?.errorExcerpt.split("\n")[0] ?? ""}`,
       };
     }
-    const first = result.failures[0]?.errorExcerpt.split("\n")[0] ?? "failing";
+    if (verdict.status === "fails") {
+      const first = result.failures[0]?.errorExcerpt.split("\n")[0] ?? "failing";
+      return {
+        status: "fails",
+        tests,
+        detail: `${result.failures.length} failure(s); first: ${first}`,
+      };
+    }
     return {
-      status: "fails",
+      status: verdict.status,
       tests,
-      detail: `${result.failures.length} failure(s); first: ${first}`,
+      detail: verdict.detail,
+      ...(verdict.stopReason ? { stopReason: verdict.stopReason } : {}),
     };
   }
 
@@ -1079,12 +1157,15 @@ export class CardRunner {
       fresh &&
       !this.options.restricted &&
       this.options.verifyFailToPass !== false &&
-      (card.acceptanceTests?.length ?? 0) > 0
+      ((card.acceptanceTests?.length ?? 0) > 0 || this.options.buildRepair)
     ) {
       failToPass = await this.failToPass(worktreePath);
       this.emit({ type: "status", cardId: card.id, message: `fail-to-pass: ${failToPass.status}` });
       if (failToPass.status === "vacuous") {
         return this.finishVacuous(worktreePath, attempt, started, failToPass);
+      }
+      if (failToPass.status === "refused") {
+        return this.finishRefused(worktreePath, attempt, started, failToPass);
       }
     }
 
@@ -1181,31 +1262,14 @@ export class CardRunner {
       const session =
         continued?.session ??
         new CardExecutionSessionImpl({
-          // Verify against every blocking gate the project declares (lint included,
-          // as the spec requires), unless the caller chose specific rungs.
-          // Under --restricted only the static layer runs: executing the repo's
-          // tests would execute its code (S12).
-          gateRungs: this.verifiedRungs(),
-          ...(this.config.project.autofix ? { autofixCommand: this.config.project.autofix } : {}),
-          ...(this.config.project.styleFix && this.config.project.styleFixRules
-            ? {
-                styleFixCommands: this.config.project.styleFixRules.map((rule) => [
-                  ...(this.config.project.styleFix as string[]),
-                  `--only=${rule}`,
-                ]),
-              }
-            : {}),
-          // The project's declared protection and size limits (defect 5, G10).
-          protectedGlobs: this.config.project.protected,
-          bounds: {
-            maxFiles: this.config.project.maxFiles,
-            maxLines: this.config.project.maxDiffLines,
-          },
-          // The built-in security, hygiene and robustness layers (G3).
-          builtinGates: this.config.project,
+          // The rungs, fixes, protection, limits and built-in layers, as
+          // `sekhemet gate <card>` verifies them (GT-T1-1).
+          ...verificationSessionOptions(this.config, {
+            repoRoot: this.options.repoRoot,
+            restricted: this.options.restricted === true,
+          }),
           // GT-M6-5: the gates `note` may name as wrong, fixed for the attempt.
           suspectableGates: this.suspectableGates(),
-          stateDir: join(this.options.repoRoot, ".sekhemet"),
           ...(this.egressPort ? { allowedDomains: allow, egressProxyPort: this.egressPort } : {}),
           ...(store
             ? {
@@ -1755,7 +1819,8 @@ export class CardRunner {
           filesTouched: p.evidence.filesTouched,
           linesAdded: p.evidence.linesAdded,
           linesRemoved: p.evidence.linesRemoved,
-          ...(this.transcriptPath ? { trajectoryRef: this.transcriptPath } : {}),
+          // GT-T1-9: the same slice hash the bundle carries.
+          ...(p.evidence.trajectoryRef ? { trajectoryRef: p.evidence.trajectoryRef } : {}),
         });
       }
       await runs.finishAttempt({
@@ -1900,13 +1965,8 @@ export class CardRunner {
    * (S12).
    */
   private verifiedRungs(): GateRung[] {
-    return [
-      ...new Set(
-        this.config.gates
-          .filter((g) => g.blocking && (!this.options.restricted || g.layer === "static"))
-          .map((g) => g.rung),
-      ),
-    ];
+    // The same rungs `sekhemet gate <card>` verifies (GT-T1-1).
+    return verificationRungs(this.config.gates, this.options.restricted === true);
   }
 
   private parkDetail(
@@ -1953,6 +2013,50 @@ export class CardRunner {
       started,
       turns: [],
       stopReason: "vacuous_tests",
+      lastGateResult: undefined,
+      checkpointShas: [],
+      stepsUsed: 0,
+      failToPass,
+      parkWith: parked,
+    });
+  }
+
+  /**
+   * Rule 6b refused the card before any step: a characterize, refactor or
+   * upgrade card's tests fail on the base, or a build-repair card's build
+   * already succeeds. Record why, park it, and return without a turn.
+   */
+  private async finishRefused(
+    worktreePath: string,
+    attempt: number,
+    started: number,
+    failToPass: FailToPassReport,
+  ): Promise<CardRunResult> {
+    const { card } = this.options;
+    // A green-first card's tests failing on the base, or a build-repair card
+    // whose build already succeeds (not red).
+    const stopReason = failToPass.stopReason ?? "base_not_green";
+    const parked: ParkDiagnosis = {
+      cardId: card.id,
+      stopReason,
+      attempts: 0,
+      replanned: false,
+      failures: [],
+      filesWritten: [],
+      lessons: [],
+      suggestion: failToPass.detail,
+    };
+    this.emit({
+      type: "status",
+      cardId: card.id,
+      message: `red-first refused: ${failToPass.detail}`,
+    });
+    return this.finish({
+      worktreePath,
+      attempt,
+      started,
+      turns: [],
+      stopReason,
       lastGateResult: undefined,
       checkpointShas: [],
       stepsUsed: 0,
@@ -2075,6 +2179,8 @@ export class CardRunner {
 
     // RG-S5-6: the state the gates ran on, which Accept compares with the branch.
     const repoState = await syncAdapter.getRepoStateHash(card.id).catch(() => undefined);
+    const trajectoryRef =
+      store?.runs && this.attemptId ? store.runs.trajectoryHash(this.attemptId) : undefined;
     const evidence = compileEvidence({
       cardId: card.id,
       attempt,
@@ -2093,7 +2199,10 @@ export class CardRunner {
       ...(session && session.getAdvisories().length > 0
         ? { advisories: session.getAdvisories() }
         : {}),
-      ...(this.transcriptPath ? { trajectoryRef: this.transcriptPath } : {}),
+      // GT-T1-9: the SHA-256 of the attempt's event-log slice, which the
+      // ledger recomputes; the transcript is kept by path beside it.
+      ...(trajectoryRef ? { trajectoryRef } : {}),
+      ...(this.transcriptPath ? { transcriptPath: this.transcriptPath } : {}),
       ...(steps.length > 0 ? { steps } : {}),
       ...(params.sampleSteps ? { sampleSteps: params.sampleSteps } : {}),
       ...(params.stopDetail ? { stopDetail: params.stopDetail } : {}),

@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 42 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 43 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,45 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 43 — 2026-09-26 (Smart Swap: designed, specified and its record built; B4.0b part 1: one gate pipeline)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver. Helpers: two researchers, the swap-record and gate-pipeline implementers, a spec writer, two fix rounds. Independent reviews: the design (expert), the spec, the code, and two narrow re-checks.
+
+- **The owner's request: Smart Swap.** Optimal switching between roles on one 24 GB Mac: adapt to measured load times, keep the roles working together, use free memory smartly, and give people a professional page for choosing models and combinations.
+  - **Research:**
+    - the outside survey (`docs/research/SMART_SWAP_RESEARCH_2026-09.md`);
+    - the lead's own search for reuse: llama.cpp slot save/restore, llama-bench, gguf-parser-go, HiGHS, Optuna;
+    - the owner's own measurements in `~/Desktop/Projects/Qwen 3.8 27B testing`. MLX is about 30% faster than llama.cpp at the same size (8.65 against about 6.3 tok/s for a dense 27B). Prefill dominates, and a cached prefix cut time to first token from 27.66 s to 0.88 s. The GPU wired limit (20 GB) binds, not the OS figure. A drafter beside a big model gave a Metal timeout. Ollama silently requantises.
+  - **The Worker's weights were copied to internal storage with the owner's approval** (hash-verified, the USB original kept).
+    - USB reads sequentially at 105 MB/s, but llama-server's mmap load from USB effectively ran at about 43 MB/s (about 300 s).
+    - The internal SSD reads at about 3.4 GB/s.
+  - **The design** (v1, then v2 after an expert review: 13 corrections, all adopted). Placement first. Decisions on C_pair, the full round-trip cost. One pure `decide()` shared by the live scheduler and a closed-loop replay simulator, with one precedence:
+    1. the watchdog;
+    2. holds;
+    3. the Worker's hourly floor;
+    4. a person waiting;
+    5. the storm cap;
+    6. the aging caps;
+    7. the idle hold;
+    8. the threshold.
+
+    It also has tours, rent-or-buy, and Seshat's deterministic answers while the Worker runs (a quick model may never act). Headroom is the minimum of the GPU and system measures, with admission at 0.80. There are never two large models, and a GPU ceiling seeded from the recorded crash. Load mode is chosen by A/B. KV slots and prefix state are keyed caches deleted on erasure. The model page is a section of Configuration.
+  - **The spec:** models NEW-models-14 (MD-N14-1..42), measurement MS-NM14-1..4, dashboard DB-NM14-1..9, and DEC-45. It amends models rules 3, 4c, 19, 20a/b, 22, runtime item 4 and 4a, RUN-34/35, measurement 9a/16a, and review-git item 2 and RG-P8-3.
+  - **Spec review:** 2 blockers (no precedence among the rules; "no two large models" contradicting itself) and 5 majors, all fixed.
+- **Built, the record** (MD-N14-1..6): every load, unload and first token recorded; load time predicted per weights, volume and cold/warm; a slow-load flag with cause and fix.
+  - Loads are eager at residency.
+  - The scheduler's lock no longer spans a load: its footprint is reserved, and the watchdog can abort a load in flight.
+  - The volume is judged by device, never by path.
+- **Built, B4.0b part 1:**
+  - **T1, one gate pipeline** (GT-T1-1..4, 6..13; GT-T1-5, the gate host, is not built). The card run and `sekhemet gate` give the same verdict. Scanners with empty output are unavailable. A runner that reports a failure without naming one, sends a malformed reply, or says it passed while an outcome failed is unavailable, never a pass. The gates.toml hash is over bytes.
+  - **NEW-gates-8:** one red/green table by `change`, and a build-repair red check confined with no network. A new stop reason, `base_not_green`, has `measuresModel: false`.
+- **Code review:** 1 blocker (the pipeline failed open on `{passed:false, failures:[]}`) and 1 major (the eager Ollama load used the warm timeout with retries), plus the lead's promotion of the lock-spanning load. All fixed. The re-check found a further fail-open, a reply saying passed while an outcome failed, which the lead fixed with a test first.
+- **Gate:** a snapshot of `2d97d02` plus these changes: `tsc -b` and Biome clean, 368 files and 2,747 tests pass (1 skipped: the real-gitleaks check, gitleaks not installed here), exit codes checked.
+- **Where the cards stop:**
+  - **Next:** the Smart Swap policy (MD-N14-7..40) and B4.0b's remaining NEW-gates-6/3/2/1, in parallel.
+  - **Then:** B4.0b half B (T2, NEW-gates-4/5/7, NEW-review-git-3).
+  - **Waiting for model loads:** calibration of every D value, the load-mode A/B, and the MLX engine comparison.
 
 ### Entry 42 — 2026-09-26 (B4.0a part 2: the rest of the engine after the baseline)
 

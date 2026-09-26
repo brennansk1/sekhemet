@@ -25,7 +25,8 @@ export type CardStatus =
   | "rejected"
   | "parked";
 
-export type GateStatus = "pass" | "fail" | "partial" | "suspended-quota";
+/** `unavailable`: a gate could not run and gave no verdict (gates rule 9), never `fail`. */
+export type GateStatus = "pass" | "fail" | "partial" | "unavailable" | "suspended-quota";
 
 export type AgentRole =
   | "lead-driver"
@@ -79,6 +80,8 @@ export type CardStopReason =
   | "gate_suspected"
   /** A staged test fails before any step, but not at an assertion (gates NEW-gates-6). */
   | "tests_not_red_for_reason"
+  /** A characterize, refactor or upgrade card's tests fail on the base, before any step (gates rule 6b). */
+  | "base_not_green"
   /** A pre-step project hook vetoed the step (worker-loop rule 32, WL-T3-4). */
   | "hook_veto"
   /** The process died mid-attempt; found on the next start (runtime RUN-9). */

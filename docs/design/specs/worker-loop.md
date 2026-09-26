@@ -135,6 +135,7 @@ The Worker loop is how a small local model turns one card into a verified diff: 
     | `oscillation_detected` | no_progress | no | no | yes | Verify | The repeated call and what to do instead |
     | `vacuous_tests` | no_progress | yes | no | no | Parked, before any step | The tests that already pass; rewrite them to fail until the behaviour exists |
     | `tests_not_red_for_reason` (new, [gates.md](gates.md) NEW-gates-6) | no_progress | yes | no | no | Parked, before any step | The test and its import, compile, collection or setup error; the test-author step makes it fail at an assertion |
+    | `base_not_green` (new, [gates.md](gates.md) rule 6b, NEW-gates-8) | no_progress | yes | no | no | Parked, before any step; does not measure the model | A characterize, refactor or upgrade card's tests fail on the base: fix the tests, or plan the card as a fix |
     | `done_pending_gates` | done_pending_gates | no | no | yes | Verify | Run the gates |
     | `scope_violation` | scope_violation | no | no | no | Verify | The file, and an offer to widen the scope |
     | `git_metadata_tampered` (new, [security.md](security.md) SEC-2) | scope_violation | yes | no | no | Parked; the worktree is discarded | The gitdir the `.git` pointer names against the harness's record; no git command ran; a person inspects before the card is re-queued from Ready |

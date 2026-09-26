@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { canonicalJson } from "@sekhemet/kernel";
+import { NO_GATES_CONFIG } from "./config.js";
 import type { GateFailure, GateResult, RungOutcome } from "./types.js";
 
 /** Model and sampling settings a result was produced under. */
@@ -95,12 +96,25 @@ export interface EvidenceBundle {
 
   /** A number without its settings is not admissible. */
   settings: RunSettings;
-  /** Hash of the gates.toml the run was verified against. */
+  /** Hash of the gates.toml the run was verified against; `no gates.toml` when the defaults ran (GT-T1-10). */
   gatesConfigSha256: string;
   /** Findings that do not fail the card: mutation survivors, unverified dependencies (G13, G15). */
-  advisories?: string[];
-  /** The transcript of this attempt (G11's trajectory reference). */
+  advisories: string[];
+  /** Gates that could not produce a verdict, each with why (rule 9, GT-T1-8). */
+  unavailable: { gate: string; reason: string }[];
+  /** Gates skipped with a reason: nothing to judge, a tool not installed (rule 9). */
+  skipped: { gate: string; reason: string }[];
+  /** Test output, screenshots and their diffs, scan reports, by reference (rule 35). */
+  artifacts: EvidenceArtifact[];
+  /** What the Worker tried and abandoned, in a short list (rule 35). */
+  abandoned: string[];
+  /**
+   * SHA-256 of the attempt's slice of the event log (GT-T1-9), recomputable
+   * from the ledger (`RunRecords.trajectoryHash`).
+   */
   trajectoryRef?: string;
+  /** The transcript of this attempt, by path. */
+  transcriptPath?: string;
   /** Touched files that run outside the sandbox later (SEC-32). */
   executesLater?: string[];
   /** Per-step phase, tokens, finish reason and format errors (WL-T3-1, WL-M3-4, WL-M2-5). */
@@ -136,6 +150,12 @@ export interface ExtensionEvidence {
   }[];
 }
 
+/** One artifact the evidence refers to (rule 35). */
+export interface EvidenceArtifact {
+  kind: string;
+  ref: string;
+}
+
 export interface CompileEvidenceParams {
   cardId: string;
   attempt: number;
@@ -153,6 +173,9 @@ export interface CompileEvidenceParams {
   gatesConfigSha256: string;
   advisories?: string[];
   trajectoryRef?: string;
+  transcriptPath?: string;
+  artifacts?: EvidenceArtifact[];
+  abandoned?: string[];
   steps?: StepEvidence[];
   sampleSteps?: number[];
   stopDetail?: Record<string, unknown>;
@@ -183,6 +206,7 @@ function evidenceId(params: CompileEvidenceParams): string {
       passed: r.passed,
       exitCode: r.exitCode,
       skipped: r.skipped === true,
+      ...(r.unavailable ? { unavailable: true } : {}),
     })),
     stopReason: params.stopReason,
     filesTouched: params.filesTouched,
@@ -215,11 +239,20 @@ export function compileEvidence(params: CompileEvidenceParams): EvidenceBundle {
     durationMs: params.durationMs,
     settings: params.settings,
     gatesConfigSha256: params.gatesConfigSha256,
-    ...(params.advisories?.length ? { advisories: params.advisories } : {}),
+    advisories: params.advisories ?? [],
+    unavailable: (params.gateResult.rungResults ?? [])
+      .filter((r) => r.unavailable)
+      .map((r) => ({ gate: r.gate, reason: r.reason ?? "it could not run" })),
+    skipped: (params.gateResult.rungResults ?? [])
+      .filter((r) => r.skipped && !r.unavailable)
+      .map((r) => ({ gate: r.gate, reason: r.reason ?? "not run" })),
+    artifacts: params.artifacts ?? [],
+    abandoned: params.abandoned ?? [],
     ...(executesLater(params.filesTouched).length
       ? { executesLater: executesLater(params.filesTouched) }
       : {}),
     ...(params.trajectoryRef ? { trajectoryRef: params.trajectoryRef } : {}),
+    ...(params.transcriptPath ? { transcriptPath: params.transcriptPath } : {}),
     ...(params.steps ? { steps: params.steps } : {}),
     ...(params.sampleSteps ? { sampleSteps: params.sampleSteps } : {}),
     ...(params.stopDetail ? { stopDetail: params.stopDetail } : {}),
@@ -259,7 +292,10 @@ export function executesLater(files: readonly string[]): string[] {
 /** Render a bundle as the compact summary shown in a terminal or review pane. */
 export function summarizeEvidence(bundle: EvidenceBundle): string {
   const gates = bundle.rungResults
-    .map((r) => `${r.skipped ? "-" : r.passed ? "PASS" : "FAIL"} ${r.gate}`)
+    .map(
+      (r) =>
+        `${r.unavailable ? "UNAVAILABLE" : r.skipped ? "-" : r.passed ? "PASS" : "FAIL"} ${r.gate}`,
+    )
     .join("  ");
 
   return [
@@ -269,6 +305,6 @@ export function summarizeEvidence(bundle: EvidenceBundle): string {
     `Gates: ${gates || "(none run)"}`,
     `Model: ${bundle.settings.modelId} temp=${bundle.settings.temperature ?? "default"} arm=${bundle.settings.toolArm}`,
     `Tokens: ${bundle.tokens.promptTokens} prompt / ${bundle.tokens.completionTokens} completion`,
-    `gates.toml: ${bundle.gatesConfigSha256.slice(0, 12)}`,
+    `gates.toml: ${bundle.gatesConfigSha256 === NO_GATES_CONFIG ? "none (defaults ran)" : bundle.gatesConfigSha256.slice(0, 12)}`,
   ].join("\n");
 }

@@ -2,7 +2,7 @@ import { basename } from "node:path";
 import { type AttemptOutcome, type CardStore, firstModelAttempts } from "@sekhemet/kernel";
 import type { ModelHold, ModelRegistry } from "@sekhemet/models";
 import { LearningStore } from "../learning/store.js";
-import { sharedQueue } from "../model_access.js";
+import { type SwapLedger, sharedQueue } from "../model_access.js";
 import { plannerStandupSection } from "../wave2.js";
 import {
   type PmSnapshot,
@@ -32,10 +32,11 @@ export const PM_LOAD_ETA_SECONDS = 45;
 export function pmModelFor(
   modelId = DEFAULT_PM_MODEL,
   registry?: ModelRegistry,
+  ledger?: SwapLedger,
 ): () => Promise<ModelHold> {
   return sharedQueue(
     { queue: "chat", role: "planner", name: modelId },
-    registry ? { registry } : {},
+    { ...(registry ? { registry } : {}), ...(ledger ? { ledger } : {}) },
   );
 }
 

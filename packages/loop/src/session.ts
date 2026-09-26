@@ -19,15 +19,11 @@ import {
   DEFAULT_PROJECT_CONFIG,
   type GateFailure,
   type GateResult,
-  type GateRung,
   RERUN_GATES,
   builtinGateIds,
-  checkBounds,
-  finalizeFailures,
   gateCopy,
   importGraph,
   onlyNotRun,
-  runBuiltinGates,
 } from "@sekhemet/gates";
 import type { CardRecord } from "@sekhemet/kernel";
 import {
@@ -49,12 +45,6 @@ import {
   readRanges,
   shownLineRanges,
 } from "./evidence_gate.js";
-import {
-  integrityFailures,
-  scanDiffIntegrity,
-  worktreeDiff,
-  worktreeNumstat,
-} from "./integrity.js";
 import { type LadderState, RepairLadder, type RungPolicy } from "./ladder.js";
 import { type ToolObservation, fail } from "./observation.js";
 import { PHASE_WRITE_TOOLS, phaseOf } from "./phase.js";
@@ -76,6 +66,7 @@ import type {
   SessionOptions,
   TurnResult,
 } from "./types.js";
+import { verifyCardTree } from "./verification.js";
 import { WorkingMemory } from "./working_memory.js";
 
 /**
@@ -2353,147 +2344,33 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       if (!command) continue;
       await this.tools.runCommandRaw(command, [...args, ...scope]).catch(() => undefined);
     }
-    const rungs = this.options.gateRungs ?? ["typecheck", "test"];
-    let result = await this.options.gateRunner.runGates(rungs, this.tools.root);
-    const base = this.options.baseBranch ?? "main";
-    // One read of the diff for every gate that judges it; undefined when git
-    // cannot produce it, and then those gates say they did not run.
-    const diff = worktreeDiff(this.tools.root, base);
-    const notRun = (gate: string, rung: GateRung, expected: string): GateFailure => ({
-      rung,
-      gate,
-      layer: "hygiene",
-      exitCode: -1,
-      errorExcerpt: `${gate} not run: the card's diff could not be read`,
-      suggestedFixFiles: [],
-      location: { file: "." },
-      expected,
-      actual: "git could not produce the diff",
-      minimalRepro: `git diff ${base}`,
-      suggestedAction: gateCopy.gateNotRun(gate),
-      notRun: true,
-    });
-    // The integrity gate (ARIS: "plausible unsupported success"): a pass
-    // bought by switching a check off is not a pass.
-    if (this.options.integrityGate !== false && diff === undefined) {
-      result = {
-        ...result,
-        passed: false,
-        failures: [
-          notRun("integrity", "hygiene", "no check switched off in the card's lines"),
-          ...result.failures,
-        ],
-      };
-    } else if (this.options.integrityGate !== false && diff !== undefined) {
-      const protectedTests = (this.card.acceptanceTests ?? []).map((t) =>
-        t.startsWith("tests/") ? t : `tests/${t}`,
-      );
-      const violations = scanDiffIntegrity(diff, protectedTests);
-      if (violations.length > 0) {
-        result = {
-          ...result,
-          passed: false,
-          failures: [...integrityFailures(violations, base), ...result.failures],
-        };
-      }
-    }
-    // The card-size gate (G10): measured on the real diff at every
-    // verification, so an oversized change fails like any other gate.
-    const bounds = this.options.bounds;
-    if (bounds) {
-      const staged = new Set(
-        (this.card.acceptanceTests ?? []).map((t) => (t.startsWith("tests/") ? t : `tests/${t}`)),
-      );
-      const perFile = worktreeNumstat(this.tools.root, base);
-      if (!perFile) {
-        result = {
-          ...result,
-          passed: false,
-          failures: [
-            notRun(
-              "bounds",
-              "bounds",
-              `at most ${bounds.maxFiles} files and ${bounds.maxLines} lines`,
-            ),
-            ...result.failures,
-          ],
-        };
-      } else {
-        const own = perFile.filter((f) => !staged.has(f.file));
-        const verdict = checkBounds({
-          base,
-          filesTouched: own.map((f) => f.file),
-          linesAdded: own.reduce((n, f) => n + f.added, 0),
-          linesRemoved: own.reduce((n, f) => n + f.removed, 0),
-          maxFiles: bounds.maxFiles,
-          maxLines: bounds.maxLines,
-        });
-        if (!verdict.passed && verdict.failure) {
-          result = {
-            ...result,
-            passed: false,
-            failures: [verdict.failure, ...result.failures],
-            rungResults: [
-              ...(result.rungResults ?? []),
-              {
-                gate: "bounds",
-                rung: "bounds",
-                layer: "hygiene",
-                passed: false,
-                exitCode: 1,
-                durationMs: 0,
-              },
-            ],
-          };
-        }
-      }
-    }
-    // The built-in layers (G3): security, hygiene, and robustness once the
-    // declared gates pass (mutation testing is only meaningful then).
+    // One gate pipeline (gates rule 8, T1): declared and project gates,
+    // integrity, bounds and the built-in layers, every one guarded, ranked
+    // and capped once after all have reported (rule 20). `sekhemet gate`
+    // calls the same function.
     const builtin = this.options.builtinGates;
-    if (builtin) {
-      const project = this.options.restricted ? { ...builtin, mutation: false } : builtin;
-      const extra = await runBuiltinGates({
-        root: this.tools.root,
-        base,
-        diff,
-        // The acceptance tests the harness staged are not the card's writing.
-        harnessOwned: (this.options.card?.acceptanceTests ?? []).map((t) => `tests/${t}`),
-        project: result.passed ? project : { ...project, mutation: false },
-        // The visual layer only once the declared gates pass: a page that
-        // does not build has nothing to look at.
-        visual: result.passed && !this.options.restricted,
-        ...(this.options.stateDir ? { stateDir: this.options.stateDir } : {}),
-        ...(this.options.registry ? { registry: this.options.registry } : {}),
-        runTests: async () =>
-          (await this.options.gateRunner.runGates(["test"], this.tools.root)).passed,
-      });
-      // No catch: each built-in layer runs guarded and reports itself as not
-      // run, so the layers never vanish from the result (gates rule 9, B2.3).
-      this.advisories = extra.advisories;
-      result = {
-        ...result,
-        passed: result.passed && extra.failures.length === 0,
-        failures: [...extra.failures, ...result.failures],
-        rungResults: [...(result.rungResults ?? []), ...extra.outcomes],
-      };
-    }
-    // The one cap (gates rule 20, F14): every gate has reported, so declared,
-    // integrity, bounds and built-in failures are checked complete and ranked
-    // together, and three reach the model.
-    // A harness defect (an incomplete failure) is filled and recorded, never
-    // thrown mid-turn.
-    const defects = [...(result.defects ?? [])];
-    result = {
-      ...result,
-      failures: finalizeFailures(result.failures, {
-        cwd: this.tools.root,
-        onIncomplete: (d) => defects.push(d),
-      }),
-    };
-    if (defects.length > 0) {
-      this.advisories = [...this.advisories, ...defects.map((d) => `gate defect: ${d}`)];
-    }
+    const result = await verifyCardTree({
+      root: this.tools.root,
+      base: this.options.baseBranch ?? "main",
+      rungs: this.options.gateRungs ?? ["typecheck", "test"],
+      runner: this.options.gateRunner,
+      staged: this.card.acceptanceTests ?? [],
+      integrity: this.options.integrityGate !== false,
+      ...(this.options.bounds ? { bounds: this.options.bounds } : {}),
+      ...(builtin
+        ? {
+            builtin: {
+              project: builtin,
+              ...(this.options.stateDir ? { stateDir: this.options.stateDir } : {}),
+              ...(this.options.registry ? { registry: this.options.registry } : {}),
+            },
+          }
+        : {}),
+      restricted: this.options.restricted === true,
+    });
+    // A harness defect (an incomplete failure) was filled and is recorded,
+    // never thrown mid-turn.
+    this.advisories = [...result.advisories, ...result.defects.map((d) => `gate defect: ${d}`)];
     this.memory.observe(result);
     return result;
   }

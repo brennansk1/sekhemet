@@ -1,5 +1,6 @@
 import { performance } from "node:perf_hooks";
 import { type ProcessSandbox, matchesGlob } from "@sekhemet/sandbox";
+import { onPath } from "./builtin.js";
 import {
   DEFAULT_GATES,
   DEFAULT_PROJECT_CONFIG,
@@ -36,6 +37,30 @@ export interface GateRunnerOptions {
    * `finalizeFailures` (rule 20, F14).
    */
   maxFailuresReported?: number;
+  /** What this host can provide to a gate's declared `needs` (rule 10, GT-T1-7). */
+  host?: HostCapabilities;
+}
+
+/**
+ * What a host provides to the gates that declare needs (rule 10): names it
+ * declares (a service, a port, credentials), plus `env:NAME` when the
+ * variable is set and `cmd:program` when the program is on its PATH.
+ */
+export interface HostCapabilities {
+  provides?: readonly string[];
+  env?: Readonly<Record<string, string | undefined>>;
+}
+
+/** The needs a host cannot provide, in the order declared (GT-T1-7). */
+export function missingNeeds(needs: readonly string[], host: HostCapabilities = {}): string[] {
+  const provided = new Set(host.provides ?? []);
+  const env = host.env ?? process.env;
+  return needs.filter((need) => {
+    if (provided.has(need)) return false;
+    if (need.startsWith("env:")) return !env[need.slice(4)];
+    if (need.startsWith("cmd:")) return !onPath(need.slice(4));
+    return true;
+  });
 }
 
 /**
@@ -179,6 +204,40 @@ export class DeterministicGateRunner implements GateRunner {
   }> {
     const start = performance.now();
     const minimalRepro = [gate.command, ...gate.args].join(" ");
+    // A need the host cannot provide: the gate never starts, and it is
+    // unavailable, naming what is missing (rule 10, GT-T1-7).
+    const missing = missingNeeds(gate.needs ?? [], this.options.host);
+    if (missing.length > 0) {
+      const reason = `needs ${missing.join(", ")}, which this host does not provide`;
+      return {
+        outcome: {
+          gate: gate.id,
+          rung: gate.rung,
+          layer: gate.layer,
+          passed: false,
+          exitCode: -1,
+          durationMs: 0,
+          unavailable: true,
+          reason,
+        },
+        failures: [
+          {
+            rung: gate.rung,
+            gate: gate.id,
+            layer: gate.layer,
+            exitCode: -1,
+            errorExcerpt: `${gate.id} not run: ${reason}`,
+            suggestedFixFiles: [],
+            location: { file: "." },
+            expected: `${gate.id} to run and exit 0`,
+            actual: reason,
+            minimalRepro,
+            suggestedAction: gateCopy.gateNotRun(gate.id),
+            notRun: true,
+          },
+        ],
+      };
+    }
     let result: Awaited<ReturnType<ProcessSandbox["execute"]>>;
     try {
       result = await this.sandbox.execute(gate.command, gate.args, {

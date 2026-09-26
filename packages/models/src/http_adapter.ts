@@ -1,3 +1,5 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { assertKvType } from "./kv_policy.js";
 import { currentMemoryPressure } from "./memory.js";
@@ -666,6 +668,14 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
    * for its KV cache and the runner. Undefined when it cannot be measured.
    */
   public async footprintBytes(): Promise<number | undefined> {
+    const size = await this.tagSize();
+    if (!size) return undefined;
+    const kv = (this.contextWindow?.contextTokens ?? 8192) * 160 * 1024; // dense f16 KV, conservative
+    return Math.round(size + kv + 1.5 * 1024 ** 3);
+  }
+
+  /** The model's size on an Ollama server (`/api/tags`); undefined when unknown. */
+  private async tagSize(): Promise<number | undefined> {
     if (this.apiFormat !== "ollama") return undefined;
     try {
       const res = await fetch(`${this.baseUrl}/api/tags`, { signal: AbortSignal.timeout(5000) });
@@ -676,12 +686,54 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
       const m = (body.models ?? []).find(
         (x) => x.name === this.modelId || x.model === this.modelId,
       );
-      if (!m?.size) return undefined;
-      const kv = (this.contextWindow?.contextTokens ?? 8192) * 160 * 1024; // dense f16 KV, conservative
-      return Math.round(m.size + kv + 1.5 * 1024 ** 3);
+      return m?.size || undefined;
     } catch {
       return undefined;
     }
+  }
+
+  /**
+   * Load the model now (models rule 20c, MD-N14-1): on Ollama, a request
+   * with no prompt loads it at this adapter's window, so the first real
+   * request does not reload it for another `num_ctx`. A model already
+   * resident, or a server this adapter does not manage (OpenAI-compatible),
+   * is adopted. The load is a cold load: it runs under `coldLoadTimeoutMs`
+   * and is never retried, since a retry would queue behind the load it
+   * abandoned. `signal` aborts it (the residency scheduler's `releaseAll`).
+   */
+  public async load(signal?: AbortSignal): Promise<"loaded" | "adopted"> {
+    if (this.apiFormat !== "ollama") return "adopted";
+    if (await this.isResident()) return "adopted";
+    const { res, release } = await this.request(
+      "/api/generate",
+      {
+        model: this.modelId,
+        keep_alive: this.resolveKeepAlive(),
+        ...(this.contextWindow !== undefined
+          ? { options: { num_ctx: this.contextWindow.contextTokens } }
+          : {}),
+      },
+      { cold: true, maxRetries: 0, ...(signal ? { signal } : {}) },
+    );
+    try {
+      await res.json();
+    } finally {
+      release();
+    }
+    return "loaded";
+  }
+
+  /**
+   * Where a local Ollama keeps its weights (`OLLAMA_MODELS`, else
+   * `~/.ollama/models`) and the model's size, for Smart Swap's record.
+   * Undefined for a remote server or an unknown size.
+   */
+  public async weightsSource(): Promise<{ path: string; bytes: number } | undefined> {
+    const host = new URL(this.baseUrl).hostname;
+    if (!["127.0.0.1", "localhost", "::1", "[::1]"].includes(host)) return undefined;
+    const bytes = await this.tagSize();
+    if (!bytes) return undefined;
+    return { path: process.env.OLLAMA_MODELS ?? join(homedir(), ".ollama", "models"), bytes };
   }
 
   /**
@@ -757,17 +809,22 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
   private async request(
     path: string,
     payload: unknown,
+    policy: { cold?: boolean; maxRetries?: number; signal?: AbortSignal } = {},
   ): Promise<{ res: Response; release: () => void }> {
-    const resident = path === "/api/chat" ? await this.isResident() : true;
+    const resident = policy.cold ? false : path === "/api/chat" ? await this.isResident() : true;
     const timeoutMs = resident
       ? (this.options.requestTimeoutMs ?? 300_000)
       : (this.options.coldLoadTimeoutMs ?? 480_000);
-    const maxRetries = this.options.maxRetries ?? 2;
+    const maxRetries = policy.maxRetries ?? this.options.maxRetries ?? 2;
+    const outer = policy.signal;
     let lastError: Error | undefined;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      if (outer?.aborted) throw new Error(`Inference request to ${path} aborted`);
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
+      const onAbort = () => controller.abort();
+      outer?.addEventListener("abort", onAbort, { once: true });
       let handedOff = false;
 
       try {
@@ -789,13 +846,21 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
           lastError = error;
         } else {
           handedOff = true;
-          return { res, release: () => clearTimeout(timer) };
+          // The abort keeps covering the body until it is read.
+          return {
+            res,
+            release: () => {
+              clearTimeout(timer);
+              outer?.removeEventListener("abort", onAbort);
+            },
+          };
         }
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err));
         if (error instanceof InferenceHttpError && !RETRYABLE_STATUS.has(error.status)) {
           throw error;
         }
+        if (outer?.aborted) throw new Error(`Inference request to ${path} aborted`);
         if (error.name === "AbortError") {
           lastError = new Error(`Inference request timed out after ${timeoutMs}ms`);
         } else if (lastError === undefined) {
@@ -803,7 +868,10 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
         }
         if (attempt === maxRetries) break;
       } finally {
-        if (!handedOff) clearTimeout(timer);
+        if (!handedOff) {
+          clearTimeout(timer);
+          outer?.removeEventListener("abort", onAbort);
+        }
       }
 
       if (attempt < maxRetries) {

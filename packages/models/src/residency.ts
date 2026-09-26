@@ -1,5 +1,11 @@
-import { readKernelPressureLevel } from "./memory.js";
-import type { AdapterHealth, UnloadableAdapter } from "./types.js";
+import { readKernelPressureLevel, readSwapUsedBytes } from "./memory.js";
+import {
+  type LoadPrediction,
+  type SwapCostOptions,
+  SwapCostTracker,
+  type Volume,
+} from "./swap_cost.js";
+import type { AdapterHealth, InferenceRequest, UnloadableAdapter } from "./types.js";
 
 /**
  * One scheduler owns model residency (models rule 20a, NEW-models-9).
@@ -25,8 +31,20 @@ import type { AdapterHealth, UnloadableAdapter } from "./types.js";
  *   holds its model while it runs. Every eviction proves the weights left
  *   (`confirmUnloaded`) and waits for normal memory pressure before the next
  *   load; a model whose health check fails is refused at once.
- * - **One lock** serialises every load and eviction, so two concurrent
- *   acquires never both decide on the same stale resident set.
+ * - **One lock** serialises every load decision and eviction, so two
+ *   concurrent acquires never both decide on the same stale resident set.
+ *   The load itself runs outside the lock (about five minutes from USB):
+ *   the loading model's footprint is reserved and marked `loading`, no
+ *   other load starts while one is in flight, and `release`, `releaseAll`
+ *   and the watchdog's unload never wait behind it. `releaseAll` aborts a
+ *   load in flight (the server process is killed or the Ollama load
+ *   cancelled) and frees its reservation; work queued for it stays queued.
+ * - **Smart Swap** (rule 20c, NEW-models-14): making weights resident loads
+ *   them then (`adapter.load`), timed; every load, unload and first reply
+ *   after a load is recorded with its volume, bytes and cold or warm state,
+ *   each load is predicted beforehand, and a slow one is flagged with its
+ *   causes and fixes (`SwapCostTracker`). A load that fails for a reason
+ *   other than memory rejects the work queued for it (MD-N14-6).
  */
 
 /** A role's need: which weights serve it and the context it needs. */
@@ -68,6 +86,12 @@ export interface ResidencySchedulerOptions {
   /** Poll interval while waiting for pressure. Default 1 s. */
   pollMs?: number;
   log?: (line: string) => void;
+  /** The clock loads and unloads are timed by. Default `Date.now`. */
+  now?: () => number;
+  /** Where Smart Swap records go and its history comes from (NEW-models-14). */
+  swapCost?: SwapCostOptions;
+  /** Longest wait for an aborted load, and its unload, to settle. Default 10 s. */
+  abortWaitMs?: number;
 }
 
 /** A load refused for memory: the work stays queued (MD-N9-3). */
@@ -83,6 +107,14 @@ export class SwapHeadroomError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "SwapHeadroomError";
+  }
+}
+
+/** A load `releaseAll` aborted: its work stays queued, and it is not a failed model. */
+export class LoadAbortedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "LoadAbortedError";
   }
 }
 
@@ -115,6 +147,11 @@ interface Job {
   reject: (error: unknown) => void;
 }
 
+/** One step of the pump: drain a resident queue, or wait out a load it started. */
+type PumpStep =
+  | { drain: string; release: () => void }
+  | { loading: string; done: Promise<unknown> };
+
 const gb = (n: number) => `${(n / 1024 ** 3).toFixed(1)} GB`;
 
 export class ResidencyScheduler {
@@ -132,11 +169,37 @@ export class ResidencyScheduler {
   private active: string | undefined;
   /** Holds on each weights: a held model is never evicted or unloaded. */
   private readonly holds = new Map<string, number>();
-  /** The tail of the one lock every load and eviction takes. */
+  /** The tail of the one lock every load decision and eviction takes. */
   private lock: Promise<void> = Promise.resolve();
+  /**
+   * Loads in flight (at most one), outside the lock: each reserves its
+   * footprint until it is resident or aborted.
+   */
+  private readonly loading = new Map<
+    string,
+    { controller: AbortController; done: Promise<unknown> }
+  >();
+  /** Smart Swap's record and prediction (NEW-models-14). */
+  private readonly cost: SwapCostTracker;
+  /** Each weights' file, bytes and volume, once read; null when unknown. */
+  private readonly sources = new Map<
+    string,
+    { path: string; bytes: number; volume: Volume } | null
+  >();
+  /** Weights whose first reply after a recorded load is still to be timed. */
+  private readonly firstReplyDue = new Set<string>();
+  /** Weights this scheduler loaded and recorded: only their unloads are real and recorded. */
+  private readonly loadedHere = new Set<string>();
 
   constructor(private readonly options: ResidencySchedulerOptions) {
     this.pinned = new Set(options.pinned ?? []);
+    this.cost = new SwapCostTracker({
+      swapUsedBytes: readSwapUsedBytes,
+      ...options.swapCost,
+      ...(options.log && !options.swapCost?.log ? { log: options.log } : {}),
+      now: this.now,
+      cacheBytes: options.usableBytes,
+    });
     for (const [key, spec] of Object.entries(options.weights)) {
       if (spec.footprintBytes !== undefined) this.footprints.set(key, spec.footprintBytes);
     }
@@ -159,9 +222,139 @@ export class ResidencyScheduler {
         ...this.options.roles.filter((r) => r.weights === key).map((r) => r.contextTokens),
       );
       adapter = spec.build(context);
+      this.timeFirstReply(key, adapter);
       this.adapters.set(key, adapter);
     }
     return adapter;
+  }
+
+  private readonly now = (): number => (this.options.now ?? Date.now)();
+
+  /**
+   * Time the first reply after a recorded load (MD-N14-2): from the
+   * request's start to its first streamed token, or to the reply when it
+   * does not stream. The adapter keeps its identity; only `generate` is
+   * wrapped, as the throughput meter wraps it.
+   */
+  private timeFirstReply(key: string, adapter: UnloadableAdapter): void {
+    const original = adapter.generate.bind(adapter);
+    adapter.generate = async (req: InferenceRequest) => {
+      if (!this.firstReplyDue.delete(key)) return original(req);
+      const start = this.now();
+      let first: number | undefined;
+      const onToken = req.onToken;
+      const response = await original(
+        onToken
+          ? {
+              ...req,
+              onToken: (delta: string) => {
+                first ??= this.now() - start;
+                onToken(delta);
+              },
+            }
+          : req,
+      );
+      await this.cost.firstToken({
+        model: key,
+        roles: this.rolesOf(key),
+        firstTokenMs: first ?? this.now() - start,
+      });
+      return response;
+    };
+  }
+
+  /** The weights' file, bytes and volume (read once); undefined when the adapter cannot say. */
+  private async sourceOf(
+    key: string,
+  ): Promise<{ path: string; bytes: number; volume: Volume } | undefined> {
+    if (!this.sources.has(key)) {
+      const role = this.rolesOf(key)[0];
+      const found = role
+        ? await this.adapterFor(role)
+            .weightsSource?.()
+            .catch(() => undefined)
+        : undefined;
+      this.sources.set(key, found ? { ...found, volume: this.cost.volumeOf(found.path) } : null);
+    }
+    return this.sources.get(key) ?? undefined;
+  }
+
+  /**
+   * What loading a queue's weights is predicted to cost now (MD-N14-4):
+   * cold or warm as the load would be, from the recorded history, else the
+   * stated estimate. Undefined when the weights' file is unknown. Loads nothing.
+   */
+  public async predictLoad(role: string): Promise<LoadPrediction | undefined> {
+    const key = this.need(role).weights;
+    await this.cost.ready();
+    const source = await this.sourceOf(key);
+    if (!source) return undefined;
+    return this.cost.book.predict({
+      model: key,
+      volume: source.volume,
+      cache: this.cost.cacheState(key, source.bytes),
+      bytes: source.bytes,
+    });
+  }
+
+  /** Unload `key` and record it (MD-N14-2); `confirm` proves the weights left. */
+  private async unloadRecorded(key: string, confirm: boolean): Promise<boolean> {
+    const adapter = this.adapters.get(key);
+    const start = this.now();
+    await adapter?.unload?.();
+    const confirmed = confirm ? ((await adapter?.confirmUnloaded?.()) ?? true) : false;
+    const unloadMs = this.now() - start;
+    this.firstReplyDue.delete(key);
+    const source = this.loadedHere.delete(key) ? await this.sourceOf(key) : undefined;
+    if (source) {
+      await this.cost.ready();
+      await this.cost.unloaded({
+        model: key,
+        roles: this.rolesOf(key),
+        volume: source.volume,
+        bytes: source.bytes,
+        unloadMs,
+        confirmed,
+      });
+    }
+    return confirmed;
+  }
+
+  /**
+   * Load `key` now when its adapter can load on request, timed, predicted
+   * and recorded, and flagged when slow (MD-N14-1, MD-N14-5). Runs outside
+   * the one lock, from `startLoad`, with its footprint reserved.
+   */
+  private async loadRecorded(key: string, signal: AbortSignal): Promise<void> {
+    const adapter = this.adapterFor(this.rolesOf(key)[0] as string);
+    if (!adapter.load) return;
+    await this.cost.ready();
+    const source = await this.sourceOf(key);
+    const prediction = source
+      ? this.cost.book.predict({
+          model: key,
+          volume: source.volume,
+          cache: this.cost.cacheState(key, source.bytes),
+          bytes: source.bytes,
+        })
+      : undefined;
+    const pressure = this.options.pressureLevel ?? readKernelPressureLevel;
+    const before = pressure();
+    const start = this.now();
+    const outcome = await adapter.load(signal);
+    if (signal.aborted) throw new LoadAbortedError(`The load of ${key} was aborted`);
+    const loadMs = this.now() - start;
+    if (outcome === "adopted" || !prediction) return;
+    const after = pressure();
+    const levels = [before, after].filter((l): l is number => l !== undefined);
+    await this.cost.loaded({
+      prediction,
+      roles: this.rolesOf(key),
+      loadMs,
+      pressureLevel: levels.length ? Math.max(...levels) : undefined,
+    });
+    this.loadedHere.add(key);
+    this.firstReplyDue.add(key);
   }
 
   /**
@@ -192,7 +385,7 @@ export class ResidencyScheduler {
     return this.exclusive(async () => {
       const key = this.need(role).weights;
       if (!this.resident.has(key) || this.isPinned(key) || this.isHeld(key)) return;
-      await this.adapters.get(key)?.unload?.();
+      await this.unloadRecorded(key, false);
       this.resident.delete(key);
       this.checked.delete(key);
       if (this.active && this.need(this.active).weights === key) this.active = undefined;
@@ -293,25 +486,64 @@ export class ResidencyScheduler {
    * `SwapHeadroomError` when an eviction was not proven, a
    * `ModelUnavailableError` when unhealthy.
    */
-  public acquire(role: string): Promise<ModelHold> {
-    return this.exclusive(async () => {
-      const key = this.need(role).weights;
-      if (!this.resident.has(key)) await this.makeResident(key, "now");
-      const adapter = this.adapterFor(role);
-      if (this.options.healthCheck !== false && adapter.healthCheck && !this.checked.has(key)) {
-        const health = await adapter.healthCheck();
-        this.options.log?.(
-          `health ${role} ${health.modelId}: ${health.ok ? "ok" : "UNAVAILABLE"}${health.detail ? ` (${health.detail})` : ""}`,
-        );
-        if (!health.ok) {
-          this.resident.delete(key);
-          throw new ModelUnavailableError(role, health);
-        }
-        this.checked.add(key);
+  public async acquire(role: string): Promise<ModelHold> {
+    const key = this.need(role).weights;
+    // A load this acquire started is held from the moment it is resident, so
+    // no other acquire evicts it before it is handed out.
+    let held: (() => void) | undefined;
+    try {
+      for (;;) {
+        const step = await this.exclusive(() => this.handOut(role, key, held));
+        if ("hold" in step) return step.hold;
+        // The load runs outside the lock; its failure or abort is this caller's.
+        const took = await step.wait;
+        if (typeof took === "function") held = took as () => void;
       }
-      this.active = role;
-      return { role, adapter, release: this.takeHold(key) };
-    });
+    } catch (err) {
+      held?.();
+      throw err;
+    }
+  }
+
+  /**
+   * Under the one lock: a hold on resident weights, or what to wait for
+   * first (a load of them now started, or the load in flight).
+   */
+  private async handOut(
+    role: string,
+    key: string,
+    held: (() => void) | undefined,
+  ): Promise<{ hold: ModelHold } | { wait: Promise<unknown> }> {
+    if (!this.resident.has(key)) {
+      const busy = this.inFlight(key);
+      if (busy) return { wait: busy };
+      return { wait: (await this.startLoad(key, "now", true)).done };
+    }
+    const adapter = this.adapterFor(role);
+    if (this.options.healthCheck !== false && adapter.healthCheck && !this.checked.has(key)) {
+      const health = await adapter.healthCheck();
+      this.options.log?.(
+        `health ${role} ${health.modelId}: ${health.ok ? "ok" : "UNAVAILABLE"}${health.detail ? ` (${health.detail})` : ""}`,
+      );
+      if (!health.ok) {
+        this.resident.delete(key);
+        throw new ModelUnavailableError(role, health);
+      }
+      this.checked.add(key);
+    }
+    this.active = role;
+    return { hold: { role, adapter, release: held ?? this.takeHold(key) } };
+  }
+
+  /**
+   * What an acquire of `key` waits for while a load is in flight: that load
+   * when it is of `key` (its failure is the caller's), else its end.
+   */
+  private inFlight(key: string): Promise<unknown> | undefined {
+    const own = this.loading.get(key);
+    if (own) return own.done;
+    if (this.loading.size === 0) return undefined;
+    return Promise.allSettled([...this.loading.values()].map((l) => l.done));
   }
 
   /** Queue work for a role; it runs once the role's weights are resident. */
@@ -369,17 +601,58 @@ export class ResidencyScheduler {
     return this.swaps;
   }
 
-  /** Unload everything nobody holds; queued work stays queued. */
+  /** Weights loading now, their footprint reserved. */
+  public loadingWeights(): string[] {
+    return [...this.loading.keys()];
+  }
+
+  /**
+   * Unload everything nobody holds, first aborting a load in flight (the
+   * watchdog's critical unload never waits minutes behind a load); queued
+   * work stays queued.
+   */
   public releaseAll(): Promise<void> {
     return this.exclusive(async () => {
+      await this.abortLoads();
       for (const key of [...this.resident]) {
         if (this.isHeld(key)) continue;
-        await this.adapters.get(key)?.unload?.();
+        await this.unloadRecorded(key, false);
         this.resident.delete(key);
         this.checked.delete(key);
       }
       this.active = undefined;
     });
+  }
+
+  /**
+   * Abort every load in flight and free its reservation: the adapter stops
+   * its server process or cancels its request, and its unload is asked for
+   * too, in case the server finished the load regardless. Neither is waited
+   * on longer than `abortWaitMs`. Called only under the one lock.
+   */
+  private async abortLoads(): Promise<void> {
+    const wait = this.options.abortWaitMs ?? 10_000;
+    const capped = async (p: Promise<unknown>) => {
+      let timer: NodeJS.Timeout | undefined;
+      await Promise.race([
+        p.then(
+          () => undefined,
+          () => undefined,
+        ),
+        new Promise((r) => {
+          timer = setTimeout(r, wait);
+        }),
+      ]);
+      clearTimeout(timer);
+    };
+    for (const [key, entry] of [...this.loading]) {
+      entry.controller.abort();
+      await capped(entry.done);
+      if (this.loading.get(key) === entry) this.loading.delete(key);
+      this.resident.delete(key);
+      await capped(this.adapters.get(key)?.unload?.() ?? Promise.resolve());
+      this.options.log?.(`residency: the load of ${key} was aborted`);
+    }
   }
 
   private rank(role: string): number {
@@ -414,23 +687,31 @@ export class ResidencyScheduler {
 
   private async pump(): Promise<void> {
     for (;;) {
-      const step = await this.exclusive(async () => {
+      const step = await this.exclusive(async (): Promise<PumpStep | undefined> => {
         // 1. Drain every queue whose weights are resident, in plan order,
         // holding them while the work runs.
         const ready = this.waitingRoles().find((r) => this.resident.has(this.need(r).weights));
         if (ready) return { drain: ready, release: this.takeHold(this.need(ready).weights) };
+        // A load in flight: no other starts; its end schedules this again.
+        if (this.loading.size > 0) return undefined;
         // 2. Load the next weights the plan and the queues ask for.
         const tried = new Set<string>();
         for (const role of this.waitingRoles()) {
           const key = this.need(role).weights;
           if (tried.has(key)) continue;
           tried.add(key);
-          if (await this.load(key)) return "loaded" as const;
+          const started = await this.load(key);
+          if (started) return { loading: key, done: started.done };
         }
         return undefined;
       });
       if (step === undefined) return;
-      if (step === "loaded") continue;
+      if ("done" in step) {
+        // The load runs outside the lock; then the queues are looked at again.
+        // An aborted load (the watchdog's unload) is not retried at once.
+        if (await this.settleQueued(step.loading, step.done)) continue;
+        return;
+      }
       try {
         await this.drain(step.drain);
       } finally {
@@ -465,22 +746,59 @@ export class ResidencyScheduler {
     return false;
   }
 
-  /** For queued work: a refusal keeps the work queued and is recorded. */
-  private async load(key: string): Promise<boolean> {
+  /**
+   * For queued work: a refusal for memory keeps the work queued and is
+   * recorded; a load that failed otherwise (a missing file, a server that
+   * exited) rejects the work queued for these weights (MD-N14-6).
+   */
+  private async load(key: string): Promise<{ done: Promise<unknown> } | false> {
     try {
-      await this.makeResident(key, "queue");
-      return true;
+      return await this.startLoad(key, "queue");
     } catch (err) {
-      return this.refuse(key, err instanceof Error ? err.message : String(err));
+      if (err instanceof FootprintRefusal || err instanceof SwapHeadroomError)
+        return this.refuse(key, err.message);
+      this.failQueued(key, err);
+      return false;
     }
   }
 
   /**
-   * Load `key`, first evicting what may be evicted: in `queue` mode weights
-   * nothing pins or holds and no work waits on; in `now` mode weights nothing
-   * pins or holds. Called only under the one lock.
+   * Wait out a load queued work started; false when it was aborted, whose
+   * work stays queued. A load that failed otherwise rejects its work.
    */
-  private async makeResident(key: string, mode: "queue" | "now"): Promise<void> {
+  private async settleQueued(key: string, done: Promise<unknown>): Promise<boolean> {
+    try {
+      await done;
+    } catch (err) {
+      if (err instanceof LoadAbortedError) return false;
+      this.failQueued(key, err);
+    }
+    return true;
+  }
+
+  private failQueued(key: string, err: unknown): void {
+    for (const role of this.rolesOf(key)) {
+      const queue = this.queues.get(role) ?? [];
+      this.queues.set(role, []);
+      for (const job of queue) job.reject(err);
+    }
+    this.options.log?.(
+      `residency: loading ${key} failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  /**
+   * Start loading `key`, first evicting what may be evicted: in `queue` mode
+   * weights nothing pins or holds and no work waits on; in `now` mode weights
+   * nothing pins or holds. Called only under the one lock, with no load in
+   * flight; the decision and evictions happen under it, then the footprint
+   * is reserved and the load runs outside it (`done`).
+   */
+  private async startLoad(
+    key: string,
+    mode: "queue" | "now",
+    holdWhenResident = false,
+  ): Promise<{ done: Promise<(() => void) | undefined> }> {
     const roles = this.rolesOf(key);
     const need = this.footprints.get(key);
     const who = `the ${roles.join("/")} model ${key}`;
@@ -490,8 +808,10 @@ export class ResidencyScheduler {
         `Refusing to load ${who}: the footprint of ${key} is unknown, so it cannot be shown to fit ${gb(usable)} usable; the work stays queued.`,
       );
     }
-    const residentBytes = () =>
-      [...this.resident].reduce((n, k) => n + (this.footprints.get(k) ?? 0), 0);
+    const bytesOf = (keys: Iterable<string>) =>
+      [...keys].reduce((n, k) => n + (this.footprints.get(k) ?? 0), 0);
+    // A load in flight holds its reservation.
+    const residentBytes = () => bytesOf(this.resident) + bytesOf(this.loading.keys());
     const oneAtATime = this.options.coResident === false;
     if (oneAtATime || residentBytes() + need > usable) {
       const evictable = [...this.resident].filter(
@@ -500,8 +820,11 @@ export class ResidencyScheduler {
           !this.isHeld(k) &&
           (mode === "now" || !this.rolesOf(k).some((r) => this.waiting(r) > 0)),
       );
-      const keep = [...this.resident].filter((k) => !evictable.includes(k));
-      const keptBytes = keep.reduce((n, k) => n + (this.footprints.get(k) ?? 0), 0);
+      const keep = [
+        ...[...this.resident].filter((k) => !evictable.includes(k)),
+        ...this.loading.keys(),
+      ];
+      const keptBytes = bytesOf(keep);
       if (keptBytes + need > usable || (oneAtATime && keep.length > 0)) {
         const resident = keep.length
           ? `${gb(keptBytes)} resident (${keep.join(", ")})`
@@ -519,21 +842,45 @@ export class ResidencyScheduler {
       if (evicted) this.swaps++;
     }
     this.adapterFor(roles[0] as string);
-    this.resident.add(key);
-    this.loads++;
-    for (const role of roles) this.refused.delete(role);
-    this.options.log?.(`residency: ${key} resident for ${roles.join(", ")}`);
+    const controller = new AbortController();
+    const entry: { controller: AbortController; done: Promise<(() => void) | undefined> } = {
+      controller,
+      done: Promise.resolve(undefined),
+    };
+    this.loading.set(key, entry);
+    entry.done = (async () => {
+      try {
+        await this.loadRecorded(key, controller.signal);
+        if (controller.signal.aborted) throw new LoadAbortedError(`The load of ${key} was aborted`);
+        this.resident.add(key);
+        this.loads++;
+        for (const role of roles) this.refused.delete(role);
+        this.options.log?.(`residency: ${key} resident for ${roles.join(", ")}`);
+        return holdWhenResident ? this.takeHold(key) : undefined;
+      } catch (err) {
+        if (controller.signal.aborted && !(err instanceof LoadAbortedError))
+          throw new LoadAbortedError(
+            `The load of ${key} was aborted: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        throw err;
+      } finally {
+        if (this.loading.get(key) === entry) this.loading.delete(key);
+        // Work queued behind the load is looked at again, unless it was aborted.
+        if (!controller.signal.aborted && this.waitingRoles().length > 0) this.schedule();
+      }
+    })();
+    // The caller awaits `done`; a rejection before it does is not unhandled.
+    entry.done.catch(() => undefined);
+    return { done: entry.done };
   }
 
   /**
    * Unload `victim` and prove it: the unload is confirmed and memory pressure
    * is back to normal before `next` loads. An unload request is not an unload.
-   * Called only under the one lock, from `makeResident`.
+   * Called only under the one lock, from `startLoad`.
    */
   private async evict(victim: string, next: string): Promise<void> {
-    const adapter = this.adapters.get(victim);
-    await adapter?.unload?.();
-    const confirmed = (await adapter?.confirmUnloaded?.()) ?? true;
+    const confirmed = await this.unloadRecorded(victim, true);
     this.checked.delete(victim);
     const pressure = this.options.pressureLevel ?? readKernelPressureLevel;
     const deadline = Date.now() + (this.options.headroomWaitMs ?? 30_000);

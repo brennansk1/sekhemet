@@ -1,3 +1,4 @@
+import type { EventLog } from "@sekhemet/kernel";
 import {
   CO_RESIDENT_MIN_BYTES,
   ManagedLlamaServerAdapter,
@@ -7,6 +8,8 @@ import {
   ModelRoster,
   ResidencyScheduler,
   type ResolveOptions,
+  SWAP_EVENTS,
+  type SwapEvent,
   UNFILLED,
   type UnloadableAdapter,
   currentAssignment,
@@ -58,6 +61,26 @@ export interface ModelAccessOptions {
   pressureLevel?: () => number | undefined;
   headroomWaitMs?: number;
   log?: (line: string) => void;
+  /**
+   * The ledger Smart Swap records every load and unload on, and reads its
+   * history from (models rule 20c, NEW-models-14). Without one nothing is
+   * recorded and every prediction is the stated estimate.
+   */
+  ledger?: SwapLedger;
+  /** The volume a weights file is on; default by its device (`volumeOf`). Tests pass fakes. */
+  volumeOf?: (path: string) => "internal" | "external";
+}
+
+/** What Smart Swap needs of the ledger. */
+export type SwapLedger = Pick<EventLog, "appendNow" | "getEventsByTypes">;
+
+/** Smart Swap's recorded history on a ledger, oldest first (MD-N14-4). */
+export async function swapHistory(ledger: SwapLedger): Promise<SwapEvent[]> {
+  return (await ledger.getEventsByTypes(Object.values(SWAP_EVENTS))).map((e) => ({
+    type: e.type,
+    payload: e.payload as SwapEvent["payload"],
+    at: Date.parse(e.createdAt),
+  }));
 }
 
 /** The weights a model name loads: managed names by their model id, Ollama tags by themselves. */
@@ -123,6 +146,7 @@ function hostMemory(): { usableBytes: number; coResident: boolean } {
 
 export class ModelAccess {
   private readonly specs = new Map<string, QueueSpec>();
+  private ledger: SwapLedger | undefined;
 
   private constructor(
     private readonly scheduler: ResidencyScheduler,
@@ -142,6 +166,9 @@ export class ModelAccess {
       ...host,
       ...(options.coResident !== undefined ? { coResident: options.coResident } : {}),
     };
+    // Smart Swap (NEW-models-14): the ledger is read when first needed, so
+    // one attached after construction (`recordSwapsOn`) still counts.
+    let access: ModelAccess | undefined;
     const scheduler = new ResidencyScheduler({
       roles: [],
       weights: {},
@@ -151,10 +178,32 @@ export class ModelAccess {
       ...(options.pressureLevel ? { pressureLevel: options.pressureLevel } : {}),
       ...(options.headroomWaitMs !== undefined ? { headroomWaitMs: options.headroomWaitMs } : {}),
       ...(options.log ? { log: options.log } : {}),
+      swapCost: {
+        record: ({ type, payload }) => {
+          access?.ledger?.appendNow({ actor: "harness", type, payload });
+        },
+        history: () => (access?.ledger ? swapHistory(access.ledger) : []),
+        ...(options.volumeOf ? { volumeOf: options.volumeOf } : {}),
+      },
     });
-    const access = new ModelAccess(scheduler, options);
+    access = new ModelAccess(scheduler, options);
+    access.ledger = options.ledger;
     for (const q of queues) access.ensureQueue(q);
     return access;
+  }
+
+  /**
+   * Record this scheduler's loads and unloads on `ledger` from now on, unless
+   * one is already attached (the process's shared scheduler is created by
+   * whichever caller asks first).
+   */
+  public recordSwapsOn(ledger: SwapLedger | undefined): void {
+    this.ledger ??= ledger;
+  }
+
+  /** What loading a queue's weights is predicted to cost now (MD-N14-4); loads nothing. */
+  public predictLoad(queue: string): ReturnType<ResidencyScheduler["predictLoad"]> {
+    return this.scheduler.predictLoad(queue);
   }
 
   /** Add a queue unless it is known; queues on known weights share their adapter. */
@@ -267,6 +316,7 @@ export function sharedQueue(
   options: ModelAccessOptions = {},
   access: ModelAccess = sharedModelAccess(options),
 ): () => Promise<ModelHold> {
+  access.recordSwapsOn(options.ledger);
   access.ensureQueue(spec);
   return async () => {
     await access.measure();

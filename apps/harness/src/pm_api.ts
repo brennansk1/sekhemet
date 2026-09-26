@@ -101,7 +101,7 @@ export function createPmApi(ctx: PmApiContext) {
           const a = (ctx.pmAdapter as () => LocalInferenceAdapter)();
           return async () => ({ role: "chat", adapter: a, release: () => {} });
         })()
-      : pmModelFor(pmModel, modelRegistry());
+      : pmModelFor(pmModel, modelRegistry(), ctx.log);
     // The loop answers everyone's queued messages: it is not the person's who
     // happened to start it (kernel K-N2-8).
     answering = EventLog.unscoped(async () => {

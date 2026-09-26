@@ -2,7 +2,14 @@
 import { esc, icon } from "./dom.js";
 import { GATE_STATE_LABELS, formatDuration, joinWords } from "./lib/vocabulary.js";
 
-const ICON = { pass: "check", fail: "x", skipped: "minus", not_run: "minus", running: "ring" };
+const ICON = {
+  pass: "check",
+  fail: "x",
+  unavailable: "minus",
+  skipped: "minus",
+  not_run: "minus",
+  running: "ring",
+};
 
 function seconds(ms) {
   return `${(ms / 1000).toFixed(1)} seconds`;
@@ -10,11 +17,15 @@ function seconds(ms) {
 
 /** "3 of 3 passed · Lint not run" */
 export function gatesHeadline(gates) {
-  const ran = gates.filter((g) => g.state === "pass" || g.state === "fail");
+  const ran = gates.filter(
+    (g) => g.state === "pass" || g.state === "fail" || g.state === "unavailable",
+  );
   const passed = gates.filter((g) => g.state === "pass").length;
   const notRun = gates.filter((g) => g.state === "not_run").map((g) => g.label);
   const skipped = gates.filter((g) => g.state === "skipped").map((g) => g.label);
+  const down = gates.filter((g) => g.state === "unavailable").map((g) => g.label);
   const parts = [`${passed} of ${ran.length + skipped.length} passed`];
+  if (down.length) parts.push(`${joinWords(down)} unavailable`);
   if (skipped.length) parts.push(`${joinWords(skipped)} skipped`);
   if (notRun.length) parts.push(`${joinWords(notRun)} not run`);
   return parts.join(" · ");
@@ -61,6 +72,9 @@ export function gatesStripHtml(
       pop += `<ul>${items}</ul>${mine.length > 3 ? `<div class="mono" style="margin-top:4px">Show all (${mine.length})</div>` : ""}`;
     } else if (g.state === "skipped" && firstFail) {
       pop += `<div style="margin-top:4px">Skipped because ${esc(firstFail.label)} failed.</div>`;
+    } else if (g.state === "unavailable") {
+      const why = String(mine[0]?.actual ?? mine[0]?.errorExcerpt ?? "").split("\n")[0];
+      pop += `<div style="margin-top:4px">Could not run, so it gave no verdict${why ? `: ${esc(why)}` : ""}.</div>`;
     } else if (g.state === "not_run") {
       pop +=
         '<div style="margin-top:4px">Declared in gates.toml but did not run in this attempt.</div>';

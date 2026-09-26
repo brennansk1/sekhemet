@@ -26,7 +26,6 @@ import { type LocalInferenceAdapter, NAIL_WORKER_PROFILE } from "@sekhemet/model
 import { DecisionStore } from "@sekhemet/planner";
 import {
   BASALT,
-  EMPTY_SHA256,
   ICONS,
   UI_LIB_DIR,
   UI_LIB_MODULES,
@@ -1205,7 +1204,8 @@ export function startDashboardServer(
         maxFiles: config.project.maxFiles,
         maxDiffLines: config.project.maxDiffLines,
         sha256: config.sha256,
-        empty: config.sha256 === EMPTY_SHA256,
+        // No gates.toml: the defaults ran (GT-T1-10).
+        empty: config.empty === true,
       });
       return;
     }
