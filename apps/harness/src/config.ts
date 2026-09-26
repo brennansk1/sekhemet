@@ -29,6 +29,10 @@ export interface SekhemetConfig {
     blockingChecks: string[];
     /** The branch cards are cut from and accepted into (review-git §2.6.2, RG-S5-14). */
     integrationBranch: string;
+    /** The git remote pull-request-on-accept pushes to (integrations item 15, INT-12). */
+    remote: string;
+    /** An accept needs a code owner of the card's files (review-git §2.4.2, RG-N5-4). */
+    requireCodeOwnerAccept: boolean;
   };
   /**
    * Solo or the Team setup ([teams](teams.md) §3): read from the user
@@ -52,7 +56,14 @@ export const DEFAULT_CONFIG: SekhemetConfig = {
   models: { executor: "auto", planner: "auto", vision: "auto", pruner: "auto" },
   context: { workingBudget: "auto", mapTokens: 1024, maskAfterObservations: 2 },
   loop: { defaultStepBudget: DEFAULT_STEP_BUDGET, stallWindow: 3, maxRungs: 4 },
-  review: { wip: "auto", reviewMinutesPerDay: 60, blockingChecks: [], integrationBranch: "main" },
+  review: {
+    wip: "auto",
+    reviewMinutesPerDay: 60,
+    blockingChecks: [],
+    integrationBranch: "main",
+    remote: "origin",
+    requireCodeOwnerAccept: false,
+  },
   team: { mode: "solo" },
   network: { mode: "offline", allow: [] },
   sync: { github: false, forgejo: "" },
@@ -142,6 +153,13 @@ function branchName(value: unknown, fallback: string): string {
     : fallback;
 }
 
+/** A git remote's name: no path, no option, nothing git would read as a URL. */
+function remoteName(value: unknown, fallback: string): string {
+  return typeof value === "string" && /^[\w][\w.-]*$/.test(value) && !value.includes("..")
+    ? value
+    : fallback;
+}
+
 function project(merged: TomlTable, problems: string[] = [], user?: TomlTable): SekhemetConfig {
   const d = DEFAULT_CONFIG;
   const machine = table(merged, "machine");
@@ -194,6 +212,11 @@ function project(merged: TomlTable, problems: string[] = [], user?: TomlTable): 
       reviewMinutesPerDay: positiveReviewMinutes(review.review_minutes_per_day, problems),
       blockingChecks: strArray(review.blocking_checks, d.review.blockingChecks),
       integrationBranch: branchName(review.integration_branch, d.review.integrationBranch),
+      remote: remoteName(review.remote, d.review.remote),
+      requireCodeOwnerAccept: bool(
+        review.require_code_owner_accept,
+        d.review.requireCodeOwnerAccept,
+      ),
     },
     team: { mode: user?.team && table(user, "team").mode === "team" ? "team" : "solo" },
     network: { mode, allow: strArray(network.allow, d.network.allow) },

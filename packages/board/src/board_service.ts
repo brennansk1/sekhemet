@@ -747,7 +747,14 @@ export class BoardServiceImpl implements BoardService {
    */
   public async closePullRequest(
     cardId: string,
-    pr: { pr: number; merged: boolean },
+    pr: {
+      pr: number;
+      merged: boolean;
+      /** The merge commit and who closed it (integrations INT-13, INT-14). */
+      mergeCommit?: string;
+      closedBy?: string;
+      closedByHandle?: string;
+    },
     actor = "harness",
   ): Promise<void> {
     await this.cardStore.recordPullRequestClosed(cardId, pr, actor);

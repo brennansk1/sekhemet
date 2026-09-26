@@ -25,6 +25,7 @@ import {
   policyFetch,
 } from "@sekhemet/sandbox";
 import { networkConfigs } from "./config_apply.js";
+import { egressEvent } from "./egress_event.js";
 import { type TextFetch, docRoot, sitemapUrls } from "./research/docs.js";
 import { ResearchCache } from "./research/polite.js";
 
@@ -887,9 +888,7 @@ export async function airgapCommand(
         purpose: "docs",
         ...(deps.log
           ? {
-              record: (r) => {
-                void deps.log?.append({ actor: "system", type: "harness/egress", payload: r });
-              },
+              record: (r) => deps.log?.append({ actor: "system", ...egressEvent(r) }),
             }
           : {}),
       });

@@ -17,6 +17,8 @@ export function evidenceSummary(
     linesRemoved?: number;
     diff?: string;
     screenshots?: string[];
+    /** Coverage percentages by measure, when a gate measured it (INT-12a). */
+    coverage?: Record<string, number>;
   },
   abandoned: readonly { attempt: number; stopReason: string }[],
 ): string {
@@ -40,6 +42,13 @@ export function evidenceSummary(
     `### Gates\n${gates || "_No gate results were recorded._"}`,
     `### Tests added\n${tests.length ? tests.map((t) => `- ${t}`).join("\n") : "_None._"}`,
     `### Diff\n${files.length} file(s), +${ev.linesAdded ?? 0} −${ev.linesRemoved ?? 0}`,
+    `### Coverage\n${
+      ev.coverage && Object.keys(ev.coverage).length
+        ? Object.entries(ev.coverage)
+            .map(([k, v]) => `${k} ${v}%`)
+            .join(", ")
+        : "_Not measured for this card._"
+    }`,
     `### Tried and abandoned\n${abandoned.length ? abandoned.map((a) => `- attempt ${a.attempt}: ${a.stopReason}`).join("\n") : "_Nothing._"}`,
     ev.screenshots?.length
       ? `### Screenshots\n${ev.screenshots.map((p) => `- [${basename(p)}](${p})`).join("\n")}`

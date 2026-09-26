@@ -13,14 +13,22 @@ code:
   - apps/harness/src/external_review.ts
   - apps/harness/src/notify.ts
   - apps/harness/src/execute.ts
+  - apps/harness/src/github_transport.ts
+  - apps/harness/src/codeowners.ts
 tests:
   - packages/sync/tests/remote.spec.ts
+  - packages/sync/tests/github_one.spec.ts
   - packages/sync/tests/sync.spec.ts
+  - packages/kernel/tests/identity_links.spec.ts
+  - apps/harness/tests/github_first.spec.ts
   - apps/harness/tests/wave2_github.spec.ts
   - apps/harness/tests/wave2_server.spec.ts
   - apps/harness/tests/external_review.spec.ts
   - apps/harness/tests/notify.spec.ts
   - apps/harness/tests/pm_api.spec.ts
+  - packages/loop/tests/untrusted.spec.ts
+  - packages/loop/tests/runner_depth.spec.ts
+  - packages/context/tests/worker_prompt.spec.ts
 changes: [P9, S3c, NEW-integrations-1, NEW-integrations-2, NEW-integrations-3]
 ---
 
@@ -62,7 +70,7 @@ Sekhemet sits beside the tracker and the code host a team already uses; it does 
 | `issue_comment.created` | `/review` on a pull request | an external review card (below) |
 | `pull_request.labeled` | label `sekhemet:review` | an external review card |
 | `pull_request.opened` | author Dependabot or Renovate | a verification card that runs the full gates; auto-merge only if the project's policy allows |
-| `pull_request.closed` | a PR the harness opened | moves its card as item 15 says |
+| `pull_request.closed` | a PR the harness opened, matched by its repository and number | moves its card as item 15 says |
 
 13. **External review cards.** A review card targets a PR the harness did not open: it runs the Reviewer procedure and the gates on a checkout, never edits, and posts its findings as a review.
 14. **Checks.** Each gate run on a card with a PR becomes a Check Run (`queued` → `in_progress` → `completed`, `success` or `failure`); typed gate failures become line annotations (path, lines, level, message, title, and `raw_details` carrying the error code or the gate rung), redacted first; security gates upload SARIF v2.1.0 (gzip, base64) to code scanning. Checks can be made required in branch protection.
@@ -102,16 +110,23 @@ Sekhemet sits beside the tracker and the code host a team already uses; it does 
 
 | Item | Source |
 | --- | --- |
-| `SyncAdapter`, `ExternalItem`, `FieldConflict` | `packages/sync/src/remote.ts` |
+| `SyncAdapter`, `ExternalItem`, `SyncCard` (`owner`, `delegate`), `FieldConflict`, `SharedFields`, `mergeThreeWay`, `githubIssueId`, `issueNumberOf`, `DELEGATE_LABEL` (`delegate:sekhemet-worker`) | `packages/sync/src/remote.ts` |
 | `ExternalRef` | `packages/kernel/src/types.ts:101` (`system`) |
-| `GitHubClient`, `loadPrivateKey`, `GitHubEndpoints`, `PullRequestLifecycle` | `packages/sync/src/github_app.ts` |
-| `verifySignature`, `intentFor`, `WebhookIntent`, `githubWebhookHandler` | `packages/sync/src/webhook.ts` |
-| `ForgejoIssuesAdapter`, `mergeLastWriterWins` (to become a three-way merge) | `packages/sync/src/remote.ts` |
+| `GitHubClient` (`rest`, `restPages`, `graphql`; one backoff for REST, GraphQL and the token exchange; a **required** `fetch` — the caller's network policy, never the global one), `ClientOptions`, `FetchLike`, `loadPrivateKey`, `GitHubEndpoints`, `PullRequestLifecycle` | `packages/sync/src/github_app.ts` |
+| The two transports behind the one client: `githubTransport` (the App, else `ghTransport`: the `gh` login's token), `GhUnavailableError` (`not_installed`, `not_logged_in`, `no_repository`); `connectedPolicy` (under an allowlist the connected API host and the git host it serves are allowed; `offline` refuses; a denied host stays denied), `integrationFetch(repoPath, record, apiUrl, purpose)` (every request decided and recorded, the request waiting for its record, a refusal naming the setting), `integrationRefusal`, `networkHint`, `decideEgress` (a request not sent through `fetch` — the API host before a push, the `git push` — decided and recorded first), `remoteDestination` (a remote's URL without credentials, and its host), `egressRecorder` (returns the ledger write), `githubRepoOf` and `githubRepoOfUrl` (`owner/repo` from `git remote get-url`, locally: `[review] remote`, then `origin`, then any; never `gh repo view`) | `apps/harness/src/github_transport.ts` |
+| Identity links: `CardStore.linkIdentity(principal, system, handle, by)`, `principalForHandle`, `handleOf`; event `person/identity_linked {principal, system}` with the login private | `packages/kernel/src/card_store.ts`, payload registry |
+| CODEOWNERS: `readCodeowners(repoPath, branch?)` (`git show <integration branch>:<path>`, never the working tree), `ownersOf`, `suggestedAccepters` | `apps/harness/src/codeowners.ts` |
+| `verifySignature`, `intentFor`, `WebhookIntent`, `githubWebhookHandler` (`claimDelivery`) | `packages/sync/src/webhook.ts`; `claimDelivery`, `settleDelivery` in `wave2_server.ts` |
+| `GitHubIssuesAdapter(repo, client)`, `ForgejoIssuesAdapter(baseUrl, repo, token, fetch)`; `reconcileExternalEdit` (`apply_on_completion`, or `replan_on_completion` with `change: scope \| criteria`) | `packages/sync/src/remote.ts` |
+| `syncViaAdapter(adapter, store, log, since, direction)` (`SyncDirection`: `pull` takes the tracker's changes and sends nothing, `push` sends and changes nothing on the board, `both`; result `{created, updated, scopeChanged, pushed, linked, clamped, errors}`), `findLinkedCard`, `recordSnapshot`, `advancePullRequests`, `advanceOpenPullRequests` (INT-12b on either transport), `forgejoFromEnv(fetchFor)`, `subIssuesLabel` | `apps/harness/src/wave2_github.ts` |
+| INT-11a at the card's end: a passing card with a `sync/scope_changed` recorded since its run began moves to Planning, the reason naming the changed fields | `packages/loop/src/card_runner.ts` (`scopeChangedSince`) |
+| A linked card's title tagged untrusted in the card contract (its spec in the goal) | `packages/context/src/worker_prompt.ts`; `packages/loop/src/session.ts` |
 | Integration settings (`~/.config/sekhemet/repos/<repo>-<hash>.json`), export/import, Slack | `apps/harness/src/integrations.ts` |
 | `startNotifier`, `noticeFor`, `sendPush`, `PushSettings` | `apps/harness/src/notify.ts` |
 | HTTP: `GET /api/integrations`; `POST /api/integrations/github/sync`; `GET /api/export?format=`; `POST /api/import`; `PUT /api/integrations/github-pr`; `PUT` and `DELETE /api/integrations/slack`, `POST …/slack/test`; `PUT /api/integrations/push`, `POST …/push/test`; `POST /webhooks/github` | shapes in [PM_CONTRACT.md §3 and §5](../PM_CONTRACT.md); routes in `integrations.ts:652-841`, `wave2_server.ts:158` |
-| Events: `sync/conflict`, `github/command`, `pm/notify`, `card/accepted` | `wave2_github.ts:304`, `wave2_server.ts:105`, `notify.ts:125`, `execute.ts:1332` |
+| Events, each with a registered payload schema ([kernel](kernel.md) rule 33): `sync/snapshot {ref, updatedAt, itemHash, agreedHash, boardOwner, worker}` with the item and the agreed fields — logins and the issue's text — private and erasable (an erased snapshot is no base); `sync/conflict` (`{fields: [{field, winner, at}]}` with the values private, or `{field: "assignee", reason: "unmapped"}` with the login private); `sync/scope_changed {id, fields, change}` (INT-11a); `sync/clamped {id, ancestor, ref, maxDepth}` (INT-11e); `github/delivery {delivery, intent}` (event id derived from the delivery id); `harness/egress {urlHash, host, purpose, allowed, reason?, status?, payloadHash, at}` with the URL in the private part (its path and query can carry what a person asked; `egress_event.ts`, B4.9 lead review) (purposes `integration:github`, `integration:forgejo`; a push's URL without credentials); `person/identity_linked`; `card/pr_closed {…, mergeCommit?, closedBy?}` (the closer's unlinked login private); `pm/notify`; `card/accepted` | `wave2_github.ts`, `wave2_server.ts`, `github_transport.ts`, `notify.ts`, `accept.ts`; `packages/kernel/src/payload_registry.ts` |
 | Env (developer and CI use): `SEKHEMET_GITHUB_APP_ID`, `_INSTALLATION_ID`, `_APP_KEYCHAIN`, `_APP_KEY_PATH`, `_HOST`, `_REPO`, `_AUTOMERGE`, `_WEBHOOK_SECRET`, `SEKHEMET_FORGEJO_*` | inventory in [surface](surface.md) |
+| Config: `[review] remote` (default `origin`, the remote pull-request-on-accept pushes to), `[review] require_code_owner_accept` (default false; review-git RG-N5-4) | `apps/harness/src/config.ts` |
 | Identity keys (new): `[identity] sources = ["accounts", "proxy", "oidc"]`, `user_header`, `trusted_proxies` (the full list, with sessions and the queue, is [teams](teams.md) §3); `accepters` is replaced by the project's Accept rule (DEC-35) | [teams](teams.md) §3; server user config |
 
 The integration tiers (now, next, later) and the reasons for GitHub first (Stack Overflow 2025: GitHub 81%, Jira 46%) are in [PM_CONTRACT.md §5](../PM_CONTRACT.md); this spec overrides its "Jira/Linear live sync: next" only by keeping it out of v1.
@@ -122,21 +137,27 @@ The integration tiers (now, next, later) and the reasons for GitHub first (Stack
 | --- | --- | --- | --- |
 | Export Jira CSV, Linear CSV, GitHub JSON, JSON (RFC 4180) | built | `integrations.ts:240-392`; `pm_api.spec.ts` | — |
 | Import as PM proposals | partial | `integrations.ts:413-475`; keys ignored, `externalRef` not set, re-import duplicates | NEW-integrations-1 |
-| GitHub sync through `gh` | partial | `integrations.ts:496-638`: up to 200 open issues, titles and bodies never updated; untested | P9 |
-| GitHub/Forgejo adapter | partial | `remote.ts`; no pagination (`:130-133`); LWW on the whole card's `updatedAt` (`:68`); board wins never pushed | P9 |
-| Webhook intake | partial | `webhook.ts`; no delivery dedupe (`:171-175`); `/plan`, `/split`, `/estimate`, `workflow_dispatch` recorded and never read (`wave2_server.ts:94-145`); card id `card_gh<n>`, id `n` (`:72-91`) | P9 |
-| Three ID formats | not-built (one ID) | `integrations.ts:551` (`owner/repo#n`), `remote.ts:137` (`n`), `wave2_server.ts:84` (`n`) | P9 |
-| Mid-card edit reconciled on completion | not-built | probed: the snapshot is overwritten each sync, edit lost (`wave2_github.ts:314`) | P9 |
-| Scope or criteria edit on a running card | partial (different behaviour) | posts a `default_deny` decision request "continue or restart" with a 12-hour deadline and counts the card as `paused`; the Worker is not stopped (`wave2_github.ts:246-276`; `wave2_github.spec.ts:164`); no end-of-card re-check against the edited criteria | P9 (DEC-25 R6) |
-| Owner, delegate and accepter mapped on export and sync; independence judged from the ledger | not-built | the card has one free-string `assignee` ("worker", "human" or a name) (`kernel/src/types.ts:194`) | NEW-integrations-2 |
+| One adapter, two transports | built (B4.9) | `syncGithub` runs the one `GitHubIssuesAdapter` over the one `GitHubClient`, whose token is the App's or the `gh` login's (`gh auth token`; `gh` runs no other command — the repository is read locally from `git remote get-url`, never `gh repo view`), or Forgejo when configured; the `gh` issue-list path is gone. On the `gh` transport the install's person is linked to the login once (`GET /user`). Every request — GitHub, Forgejo, the external review's poster, the queue's pull-request advance — goes through `integrationFetch`: the network policy, the connected API host allowed under an allowlist, refused offline; each is recorded as `harness/egress`, and a request whose record the ledger cannot write fails. `GitHubClient` takes no request without the caller's `fetch` (`github_first.spec.ts` M5, against a fake `gh` on `PATH` and a local server serving GitHub's documented example payloads) | — |
+| Offline by default, said plainly | built (B4.9) | A refused integration request names the setting that would allow it (`[network] mode`, `fetch_allow`, `fetch_deny` in the user's `config.toml`); the Integrations status of a repository the policy cannot reach reads "blocked by network mode" with the same hint (`github_first.spec.ts`) | — |
+| Logins and issue text off the chain | built (B4.9) | `sync/snapshot` keeps its ref, the tracker's `updatedAt` and SHA-256 hashes on the chain, the item and agreed fields in the private part; `sync/conflict`, `sync/scope_changed`, `sync/clamped`, `github/delivery` and `harness/egress` are registered, so a login in a payload is refused; erasing the private parts leaves no copy of a login in any table, and the next sync goes on (`github_first.spec.ts` B2) | — |
+| Pagination; every issue pulled | built (B4.9) | `GitHubClient.restPages` follows `Link: rel="next"` until exhausted, never off the configured API's origin (`github_one.spec.ts` INT-2) | — |
+| Three-way merge of shared fields; board wins pushed | built (B4.9) | `mergeThreeWay` against the `sync/snapshot`'s agreed fields: tracker-only changes come to the board, board-only changes are pushed, only a field both changed is a conflict, newer wins, the other value kept (private) on `sync/conflict` (`github_one.spec.ts` INT-4…6; `github_first.spec.ts` INT-3, INT-4, INT-5) | — |
+| Webhook intake | built (B4.9) | Signature before parsing (INT-10); each delivery at most once, across restarts — `github/delivery` on the ledger, an in-flight set between check and record (INT-9); `/plan`, `/split`, `/estimate` and `workflow_dispatch` ignored, not recorded (INT-11); a new card is found or created by its one identity with the issue's labels and records the agreed snapshot with them, so the next sync changes nothing; the board's `sub-issues:` label is never synced or replaced by the tracker's labels (M2); `pull_request.closed` moves only the card whose `card/pr_opened` names the same repository and number (M3); the text is kept as written and tagged untrusted where it reaches the Worker — the title in the card contract, the spec in the goal (INT-32; `github_one.spec.ts`, `github_first.spec.ts`, `wave2_server.spec.ts`, the loop's `untrusted.spec.ts`) | — |
+| One ID | built (B4.9) | `owner/repo#n` on the adapter, the webhook and the `gh` transport (`githubIssueId`); a card linked before, by a bare number with the same URL, is found and moved to the one ID on its next sync (`findLinkedCard`; INT-1) | — |
+| Mid-card edit reconciled on completion | built (B4.9) | a tracker edit to a running card is not applied; the snapshot keeps the old base, so the sync after the card leaves In progress or Verify applies it (INT-7) | — |
+| The sync's direction | built (B4.9) | `pull` takes the tracker's changes and sends nothing — no update, no new issue; `push` sends the board's changes and changes nothing on the board — no card, field or owner — and does not move the pull's `since`; a change a direction does not carry keeps the old base, so the next sync that carries it still sees it (`github_first.spec.ts` M6) | — |
+| Labels | built (B4.9) | a push carries the merged labels, so a label the tracker added is kept when the board changes the delegate (M1) | — |
+| Hierarchy depth clamped to the tracker's | built (B4.9) | a card nested deeper than the adapter's `capabilities.maxDepth` is not written; it is linked once to its nearest written ancestor (`sync/clamped`) and listed in the sync result's `clamped` (INT-11e; `github_first.spec.ts`). GitHub declares 2, which the board's card-and-subtask nesting never exceeds; Forgejo declares 1 | — |
+| Scope or criteria edit on a running card | built (B4.9) | the sync records `sync/scope_changed {fields, change}` on the card once — no decision request, no pause; at the card's end a passing card with one recorded since its run began goes to Planning, the reason naming the changed fields, instead of to Review; the next sync applies the edit (INT-11a; `wave2_github.spec.ts`, `runner_depth.spec.ts`) | — |
+| Owner, delegate and accepter mapped on export and sync; independence judged from the ledger | built (B4.9) | People's logins are linked to principals (`person/identity_linked`, the login private and erasable). Sync and push write the owner's login as the assignee and the Worker as the `delegate:sekhemet-worker` label, never "worker" as a user; a tracker reassignment to a linked login changes the owner, and independence stays the ledger's (`accepterCheck`: the delegator still refused, the new owner allowed); an unlinked login leaves the owner, is recorded once as `sync/conflict` and is not pushed over; GitHub JSON writes `assignees`, Jira and Linear CSV the label, raw JSON no derived `assignee`; the accepter is named in the PR body (`github_first.spec.ts` INT-36, INT-39, INT-40, INT-41). Linking a login for a person other than the install's own waits for accounts ([teams](teams.md) NEW-teams-2) | — |
 | External check results named as such | not-built | no `source` on gate results | NEW-integrations-3 |
-| Webhooks preferred, GraphQL batched, separate budgets, idempotency keys | not-built | pulls go through REST with no webhook preference or batching (`remote.ts:130-133`); GraphQL is used only for review-thread calls (`github_app.ts:378-449`) | P9 |
+| Webhooks preferred, GraphQL batched, separate budgets, idempotency keys | partial | Idempotency is built (B4.9): an item whose `updatedAt` the snapshot holds, on a card unchanged since, is skipped, and a redelivered webhook is dropped by its delivery id (INT-11d, INT-9). Nothing polls the tracker on a timer — a pull runs only when a person or the PM asks. Not yet: no catch-up pull after a restart, and no gap detection (GitHub's delivery ids are GUIDs, so a gap is visible only through the App's delivery log) (INT-11b); pulls are REST pages, GraphQL serves only review threads, with no point budget (INT-11c) | P9 |
 | App JWT, installation tokens, GHES endpoints | built | `github_app.ts`; `remote.spec.ts`, `wave2_github.spec.ts:67` | — |
-| Backoff: REST only | partial | `github_app.ts:159-169`; GraphQL `:176-194` and token exchange `:113-133` do not | P9 |
+| Backoff on REST, GraphQL and the token exchange | built (B4.9) | one `sendWithBackoff`: 429, 403 with no remaining quota or a secondary limit, and GraphQL's `RATE_LIMITED` in a 200 body wait `retry-after` (else exponentially) up to `maxRetries`, then report the rate limit (`github_one.spec.ts` INT-8) | — |
 | Check runs, annotations (with `raw_details`), SARIF | built | `wave2_github.spec.ts:87`; `github_app.ts:212-236`; annotations unredacted | S3c |
-| PR on Accept | partial | Done at PR open (`execute.ts:1323-1329`); base `"main"` (not the configured integration branch) and remote `origin` hard-coded (`wave2_github.ts:97`, `execute.ts:1544,1593`); `gh pr create` path untested | P9 |
+| PR on Accept, merge-aware | built (B4.9) | Accept resolves the transport first (INT-15: `gh` missing or logged out is named and nothing is pushed or moved), then decides the API host and the `[review] remote`'s host by the network policy — offline, or a host the policy refuses, and nothing is pushed, the refusal recorded and naming the setting (B1) — and records the push as `harness/egress` (its URL without credentials) before it runs; it opens a draft against `[review] integration_branch` through the one lifecycle, body the reviewed evidence — gates, diff stats, a Coverage section ("not measured" when no gate measured it), abandoned attempts — and "Accepted by" with the accepter's display name, never their email; check runs and SARIF only on the App transport (a person's token cannot create check runs); the card waits in Review held `awaitingMerge`; the `pull_request.closed` webhook moves it to Done with `mergeCommit` and the merger, or clears the hold and accepter with the closer recorded — `closedBy` when their login is linked, else the login privately (`github_first.spec.ts` INT-12, INT-12a, INT-13, INT-14, INT-15, B1). Ready-when-checks-pass with the reviewers the integration branch's CODEOWNERS names for the card's changed files runs in the queue on either transport (`advanceOpenPullRequests`; INT-12b, `github_first.spec.ts`, `wave2_github.spec.ts`) | — |
 | Review threads → repair subtasks | not-built | `openThreads`/`resolveThread` reachable only from tests (`github_app.ts:395-443`) | Later |
-| External review cards | built | `external_review.ts`, wired `index.ts:1518`; `external_review.spec.ts` | — |
+| External review cards | partial | `external_review.ts`, wired `index.ts:1518`; `external_review.spec.ts`; cards enter Review even when gates fail and bypass the board (`external_review.ts:141, 244-252`); [review-git](review-git.md) §4 owns them | S4 |
 | Dependency-bot verification cards | partial | intent and card (`webhook.ts:122`, `wave2_server.ts:113`); auto-merge policy unverified | P9 |
 | Notifier: ntfy/Gotify from the ledger | built | `notify.ts:186-214`; `notify.spec.ts` | — |
 | Agent status mirrored on the issue and Projects board | not-built | the queue moves PRs to ready and requests CODEOWNERS (`wave2.ts:384-393`); no issue status | P9 |
@@ -144,7 +165,8 @@ The integration tiers (now, next, later) and the reasons for GitHub first (Stack
 | Slack as a channel; standup, needs_you, decision | not-built | Slack is a separate pipeline called only for the run report (`index.ts:1936`) | P9 |
 | Tokens stored safely | not-built | plaintext JSON, 0600 only at creation (`integrations.ts:57-67`) | S3c |
 | Identity sources and the Accept rule on a server | not-built | server binds loopback (`server.ts:1190`); every write is actor `"human"` | P9 (DEC-06); accounts, levels and sign-in are [teams](teams.md) NEW-teams-1–4 |
-| `githubCache` keyed by repository | not-built | module global (`integrations.ts:106`) | P9 |
+| The repository, per project | built (B4.9) | `githubRepoOf` reads the project's own git remotes locally on each call (`[review] remote`, `origin`, then any) — no cache to go stale, no request; `SEKHEMET_GITHUB_REPO` wins (`github_transport.ts`) | — |
+| External review and the queue's PR advance through the policy | built (B4.9) | `reviewPosterFromEnv(repoPath, ledger)` and `advanceOpenPullRequests` take `integrationFetch` (`github_first.spec.ts` M5). GHES on a private address is refused by the policy's `request-filtering-agent` (security item 32) | — |
 
 ## 5. Changes for v1
 
@@ -168,6 +190,7 @@ The integration tiers (now, next, later) and the reasons for GitHub first (Stack
 - **INT-11b** WHEN a webhook route is configured and healthy THE SYSTEM SHALL NOT poll the tracker on a timer, and SHALL pull only to catch up after a restart or a gap in delivery IDs.
 - **INT-11c** WHEN a page of issues is pulled through GraphQL THE SYSTEM SHALL fetch their sub-issues and labels in the same query, and SHALL track the GraphQL point budget apart from the REST request budget.
 - **INT-11d** WHEN the same push is retried or the same webhook is redelivered THE SYSTEM SHALL change nothing the second time, keyed by the entity's `externalRef` and `updatedAt`.
+- **INT-11e** WHEN cards are pushed to a tracker whose declared `maxDepth` is shallower than their nesting THE SYSTEM SHALL write no item deeper than `maxDepth`, link each deeper card to its nearest written ancestor, and report the clamp in the sync result.
 
 **Merge-aware Accept.**
 - **INT-12** WHEN a card is accepted with PR-on-accept THE SYSTEM SHALL open a PR against the project's configured integration branch on the configured remote, and SHALL keep the card in Review held `awaitingMerge`, not Done — including when the integration branch is not the repository's default branch.
@@ -226,7 +249,7 @@ INT-1 to INT-30 and INT-36 to INT-41 (including the lettered criteria), plus the
 - **INT-34** WHEN a PR carries the `sekhemet:review` label THE SYSTEM SHALL create an external review card that never writes to the PR's branch.
 - **INT-35** WHEN a notifier starts on a ledger with history THE SYSTEM SHALL send nothing for events before its start.
 
-The `gh` transport and `gh pr create` are tested against a fake `gh` on `PATH`, and GitHub payloads in tests are recorded ones, not hand-made.
+The `gh` transport is tested against a fake `gh` on `PATH` that answers only `gh auth token`, and the GitHub payloads in tests are GitHub's documented examples (`packages/sync/tests/fixtures/github/`, from GitHub's webhook and REST documentation), not hand-made and not captured from live traffic.
 
 ## 7. Later
 

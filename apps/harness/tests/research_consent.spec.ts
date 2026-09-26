@@ -57,6 +57,31 @@ const egress = async () =>
   );
 const POLICY_REASONS = /offline|fetch_deny|fetch_allow/;
 
+describe("harness/egress keeps the URL private and erasable (kernel rule 33, B4.9 lead review)", () => {
+  it("records the host and a hash of the URL in the chain, and the URL itself only in the private part", async () => {
+    const url = "https://docs.example.test/search?q=my+private+question";
+    await expect(researchFetch(repo, log)(url)).rejects.toThrow(/research not allowed/);
+    const [e] = await log.getEventsByTypes(["harness/egress"]);
+    const payload = e?.payload as Record<string, unknown>;
+    expect(payload.url).toBeUndefined();
+    expect(payload.host).toBe("docs.example.test");
+    expect(payload.urlHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(JSON.stringify(payload)).not.toContain("private+question");
+    expect((e?.private as { url?: string } | undefined)?.url).toBe(url);
+  });
+
+  it("fails the request when its record cannot be written (security item 33)", async () => {
+    const failing = {
+      append: async () => {
+        throw new Error("ledger unavailable");
+      },
+    } as unknown as EventLog;
+    await expect(researchFetch(repo, failing)("https://docs.example.test/")).rejects.toThrow(
+      /ledger unavailable/,
+    );
+  });
+});
+
 describe("NEW-security-8: the one-time research question", () => {
   it("SEC-52: before the answer nothing goes out; a yes is recorded once in config.toml, never asked again, and opens no sandbox route", async () => {
     writeFileSync(userConfig, '# mine\n[models]\nworker = "cyber-tiel"\n');

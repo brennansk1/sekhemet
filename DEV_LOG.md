@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 35 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 36 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,34 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 36 — 2026-09-25 (B4.9 part 1: GitHub first, reviewed and fixed)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver; implementer helpers; one full independent review (Entry 35) and a narrow re-check of its blockers (Sonnet).
+
+- **Built (integrations P9, review-git RG-N5-3/-4):**
+  - **One adapter:** a single `GitHubIssuesAdapter` over the App or `gh` transport. Items are `owner/repo#n`, and bare numbers migrate. `mergeThreeWay` replaces last-writer-wins.
+  - **Webhooks:** deliveries are deduped on the ledger; a signed issue lands on the one card.
+  - **Accept:** merge-aware Accept opens a draft PR against the integration branch. The body carries the evidence and the accepter's display name. The card waits for the merge, and `pull_request.closed` matches both repo and number.
+  - **People:** identity links (`person/identity_linked`, login private). CODEOWNERS is read from the integration branch, with `[review] require_code_owner_accept`.
+  - **INT-11a:** a tracker scope edit sends a passing card back to Planning.
+  - **INT-11e:** hierarchy is clamped to the tracker's depth.
+  - **INT-12b:** PRs advance on either transport.
+  - `direction` is honoured: pull sends nothing, and push changes nothing on the board.
+- **Review fixes:**
+  - **B1:** the policy is checked for the API host and the remote's host before any push, and the push is recorded first.
+  - **B2:** `sync/snapshot`, `sync/conflict`, `github/delivery`, `harness/egress` and `github/pr_opened` are registered, with logins and text private.
+  - **M1–M6:** the merged labels are pushed; webhook labels are carried; the PR close matches the repo; the linked title is tagged untrusted in the prompt; every request goes through `integrationFetch`; direction is honoured.
+  - **The lead's own finding:** `harness/egress` kept research URLs on the chain. The URL is now private with its hash on the chain, and every writer awaits its record, so a record that fails fails the request.
+  - **The re-check** confirmed all three and found `github/pr_opened` unregistered, now fixed. Its failed write had been swallowed, which hid the INT-12b regression.
+- **Offline default:** GitHub is refused under `[network] mode = "offline"` (security item 33). The refusal names the setting, and Integrations shows "blocked by network mode".
+- **Gate** (a snapshot of `2920484` plus the B4.9 tree): `tsc -b` and Biome clean, 316 files and 2,361 tests pass (exit codes checked). The first run failed two list tests: SEC-18's allowlist lacked `github_transport.ts` and `codeowners.ts` (added with reasons), and front door's tool flags lacked `gh --hostname`.
+- **Where the cards stop:**
+  - B4.9 part 2 is in progress with two helpers:
+    - the notifier and import (INT-17–20a, 27, 28);
+    - GitHub sync (INT-11b, 11c, 16, 16a, 20b, 20c, 37, 38).
+  - Then its review, gate and commit, then B4.10.
+  - The baseline is at thinking-surgical round 1.
 
 ### Entry 35 — 2026-09-25 (B4.2 navigation and accessibility; B4.9 in its fix round)
 

@@ -1,0 +1,42 @@
+{
+  "action": "closed",
+  "number": 5,
+  "pull_request": {
+    "url": "https://api.github.com/repos/octo-org/octo-repo/pulls/5",
+    "id": 279147437,
+    "node_id": "MDExOlB1bGxSZXF1ZXN0Mjc5MTQ3NDM3",
+    "html_url": "https://github.com/octo-org/octo-repo/pull/5",
+    "number": 5,
+    "state": "closed",
+    "locked": false,
+    "title": "Update the README with new information.",
+    "user": { "login": "octocat", "id": 1, "type": "User" },
+    "body": "This is a pretty simple change that we need to pull into main.",
+    "created_at": "2019-05-15T15:20:33Z",
+    "updated_at": "2019-05-15T15:20:40Z",
+    "closed_at": "2019-05-15T15:20:40Z",
+    "merged_at": "2019-05-15T15:20:40Z",
+    "merge_commit_sha": "c4295bd74fb0f4fda03689c3df3f2803b658fd85",
+    "head": {
+      "label": "octo-org:sekhemet/c1",
+      "ref": "sekhemet/c1",
+      "sha": "ec26c3e57ca3a959ca5aad62de7213c562f8c821"
+    },
+    "base": {
+      "label": "octo-org:main",
+      "ref": "main",
+      "sha": "f95f852bd8fca8fcc58a9a2d6c842781e32a215e"
+    },
+    "draft": false,
+    "merged": true,
+    "merged_by": { "login": "hubot", "id": 2, "type": "User" }
+  },
+  "repository": {
+    "id": 1296269,
+    "name": "octo-repo",
+    "full_name": "octo-org/octo-repo",
+    "owner": { "login": "octo-org", "id": 6811672, "type": "Organization" },
+    "default_branch": "main"
+  },
+  "sender": { "login": "hubot", "id": 2, "type": "User" }
+}

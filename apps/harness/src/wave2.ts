@@ -394,16 +394,14 @@ export async function queuePrelude(
   const top = ranking[0];
   if (top) say(`Working goal ${top.goalId} first: ${top.why}.`);
 
-  // Y16: advance open Sekhemet PRs (ready once checks pass, auto-merge by policy).
-  const { githubAppFromEnv } = await import("./wave2_server.js");
-  const app = githubAppFromEnv();
-  if (app) {
-    const { advancePullRequests } = await import("./wave2_github.js");
-    for (const p of await advancePullRequests(app, k.repoPath, k.log, {
-      autoMerge: process.env.SEKHEMET_GITHUB_AUTOMERGE === "1",
-    }).catch(() => [])) {
-      say(`PR #${p.number}: ${p.state}`);
-    }
+  // Y16, INT-12b: advance open Sekhemet PRs (ready once checks pass, the
+  // code owners asked to review, auto-merge by policy), on either transport.
+  const { advanceOpenPullRequests } = await import("./wave2_github.js");
+  for (const p of await advanceOpenPullRequests(k.repoPath, k.cardStore, k.log).catch((err) => {
+    say(`PRs not advanced: ${err instanceof Error ? err.message : String(err)}`);
+    return [];
+  })) {
+    say(`PR #${p.number}: ${p.state}`);
   }
 
   const ordering = orderReadyCards(ready, loadPrioritizationConfig(k.repoPath), now);

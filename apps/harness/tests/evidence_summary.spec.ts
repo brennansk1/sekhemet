@@ -48,6 +48,19 @@ describe("the evidence summary (RG-S5-18)", () => {
     expect(body).toContain("[total.png](.sekhemet/evidence/visual/c1/total.png)");
   });
 
+  it("INT-12a: names the coverage when it was measured, and says so when it was not", () => {
+    expect(evidenceSummary(card, { ...ev, coverage: { lines: 87.5 } }, [])).toContain(
+      "### Coverage\nlines 87.5%",
+    );
+    expect(evidenceSummary(card, ev, [])).toContain("### Coverage\n_Not measured for this card._");
+  });
+
+  it("INT-39: the pull request's body names the accepter", () => {
+    expect(prBody(card, ev, [], "Jane Doe <jane@example.com>")).toContain(
+      "Accepted by Jane Doe <jane@example.com>",
+    );
+  });
+
   it("is the pull request's body on the App path too, with nothing invented when there is no evidence", () => {
     expect(prBody(card, ev)).toContain("- pass unit (1430 ms)");
     const bare = prBody(card, undefined);

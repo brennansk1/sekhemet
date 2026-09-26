@@ -252,14 +252,30 @@ describe("X15: external review cards", () => {
     ] as const) {
       await store.createCard({ id, tier: "task", title: id });
       await store.updateCardStatus(id, "review", "test setup", "harness", { override: true });
-      await board.acceptWithPullRequest(id, { pr, url: `u/${pr}`, headSha: "abc" }, "p_owner");
+      await board.acceptWithPullRequest(
+        id,
+        { pr, url: `https://github.com/o/r/pull/${pr}`, headSha: "abc" },
+        "p_owner",
+      );
     }
+    // Matched by repository and number (integrations M3).
     const closed = (pr: number, merged: boolean) =>
       intentFor("pull_request", {
         action: "closed",
-        pull_request: { number: pr, html_url: `u/${pr}`, head: { sha: "abc" }, merged },
+        pull_request: {
+          number: pr,
+          html_url: `https://github.com/o/r/pull/${pr}`,
+          head: { sha: "abc" },
+          merged,
+        },
+        repository: { full_name: "o/r" },
       });
-    expect(closed(31, true)).toEqual({ kind: "pull_request_closed", pr: 31, merged: true });
+    expect(closed(31, true)).toEqual({
+      kind: "pull_request_closed",
+      pr: 31,
+      merged: true,
+      repo: "o/r",
+    });
     expect(await applyWebhookIntent(store, closed(31, true), "d31")).toBe("card_m");
     expect(await store.getCard("card_m")).toMatchObject({ status: "done", accepter: "p_owner" });
     expect(await applyWebhookIntent(store, closed(32, false), "d32")).toBe("card_c");

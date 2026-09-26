@@ -125,6 +125,7 @@ describe("dashboard routes for the planner and sync (P9, P11, P13, P17, P20, Y8,
       action: "labeled",
       label: { name: "sekhemet" },
       issue: { number: 12, title: "Crash on save", body: "steps", html_url: "https://x/12" },
+      repository: { full_name: "o/r" },
     });
     const sig = `sha256=${createHmac("sha256", SECRET).update(body).digest("hex")}`;
     const ok = await call("POST", "/webhooks/github", body, {
@@ -132,9 +133,19 @@ describe("dashboard routes for the planner and sync (P9, P11, P13, P17, P20, Y8,
       "x-github-event": "issues",
     });
     expect(ok.status).toBe(202);
-    const card = await cardStore.getCard("card_gh12");
+    // One identity (INT-1); the text as written, tagged untrusted where it
+    // reaches a prompt (the loop's untrusted.spec.ts, INT-32).
+    const card = (await cardStore.listCards()).find((c) => c.externalRef?.id === "o/r#12");
     expect(card?.externalRef?.url).toBe("https://x/12");
-    expect(card?.spec).toContain("<untrusted_content");
+    expect(card?.spec).toBe("steps");
+    // Intake keeps the text as written; where it reaches the Worker it is
+    // tagged untrusted (S9): the title in the card contract, here, and the
+    // spec in the goal (the loop's untrusted.spec.ts).
+    const { buildWorkerPrompt } = await import("@sekhemet/context");
+    const built = buildWorkerPrompt({ card: card as never, tools: [] });
+    expect(built.prompt).toContain(
+      'Title: <untrusted_content source="github:o/r#12">\nCrash on save\n</untrusted_content>',
+    );
     const bad = await call("POST", "/webhooks/github", body, {
       "x-hub-signature-256": "sha256=00",
       "x-github-event": "issues",

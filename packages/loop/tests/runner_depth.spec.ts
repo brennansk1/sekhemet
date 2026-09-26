@@ -177,6 +177,44 @@ describe("card actuals, attempts and checkpoints (defects 2 and 8, K28, Y3)", ()
     );
   });
 
+  it("INT-11a: a scope change recorded while the card ran sends it to Planning, not Review, naming the field", async () => {
+    const card = await newCard();
+    const whys: (string | undefined)[] = [];
+    const moves: CardStatus[] = [];
+    const lc: CardLifecycle = {
+      transition: async (id, to, why) => {
+        moves.push(to);
+        whys.push(why);
+        await store.updateCardStatus(id, to);
+      },
+    };
+    const { adapter } = scripted((t) => {
+      if (t === 1) {
+        // The tracker's edit arrives mid-run: recorded by the sync, the Worker not paused.
+        void store.recordEvent({
+          type: "sync/scope_changed",
+          cardId: card.id,
+          actor: "github",
+          payload: { id: card.id, fields: ["body"], change: "scope" },
+        });
+        return [write(1)];
+      }
+      return [finish];
+    });
+    const result = await runner(card, { modelAdapter: adapter, lifecycle: lc }).run();
+    expect(result.stopReason).toBe("gate_passed");
+    expect(result.finalStatus).toBe("planning");
+    expect(moves).not.toContain("review");
+    expect(whys.at(-1)).toMatch(/scope.*body/);
+    // A later run, with no new edit, reaches Review as usual.
+    const again = await runner(await (store.getCard(card.id) as Promise<CardRecord>), {
+      lifecycle: lifecycle().lc,
+      useExistingWorktree: true,
+      attempt: 2,
+    }).run();
+    expect(again.finalStatus).toBe("review");
+  });
+
   it("stamps the attempt into the evidence, so a retry never overwrites attempt 1", async () => {
     const card = await newCard();
     const first = await runner(card, { attempt: 1 }).run();

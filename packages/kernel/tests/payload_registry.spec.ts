@@ -113,6 +113,27 @@ describe("the payload schema registry (K-S7-4, K-S7-9, K-S7-10)", () => {
     expect(o?.private).toEqual({ reason: "override: shipped by hand" });
   });
 
+  it("K-S7-4: the GitHub pull request record is registered, and a stray login in it is refused (B4.9 re-check)", async () => {
+    const pr = {
+      number: 5,
+      nodeId: "PR_1",
+      url: "https://github.com/o/r/pull/5",
+      headSha: "abc",
+      repo: { owner: "o", repo: "r" },
+    };
+    expect(PAYLOAD_SCHEMAS["github/pr_opened"]).toBeDefined();
+    await expect(
+      log.append({
+        actor: "harness",
+        type: "github/pr_opened",
+        payload: { ...pr, author: "jane-gh" },
+      }),
+    ).rejects.toThrow(/github\/pr_opened/);
+    await expect(
+      log.append({ actor: "harness", type: "github/pr_opened", payload: pr }),
+    ).resolves.toBeDefined();
+  });
+
   it("K-S7-10: every field of every registered event type carries a data class", () => {
     const types = Object.keys(PAYLOAD_SCHEMAS);
     expect(types.length).toBeGreaterThan(5);

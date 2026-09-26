@@ -66,7 +66,14 @@ import {
   undeliveredMessages,
 } from "./collaborate.js";
 import { configOverrideLines, networkConfigs } from "./config_apply.js";
-import { evidenceSummary } from "./evidence_summary.js";
+import { egressEvent } from "./egress_event.js";
+import type { evidenceSummary } from "./evidence_summary.js";
+import {
+  decideEgress,
+  egressRecorder,
+  githubTransport,
+  remoteDestination,
+} from "./github_transport.js";
 import { readSettings } from "./integrations.js";
 import { RULE_SIGNAL_MINIMUM, learnFromAttempt } from "./learning/reflect.js";
 import type { LearningStore } from "./learning/store.js";
@@ -79,8 +86,7 @@ import { workerWebDocs } from "./research/service.js";
 import { Tracer, toolCallSpan, traced } from "./tracing.js";
 import { withTrailerGate } from "./trailer_gate.js";
 import { hookEngineFor } from "./user_hooks.js";
-import { PR_EVENT, openPullRequestViaApp } from "./wave2_github.js";
-import { githubAppFromEnv } from "./wave2_server.js";
+import { PR_EVENT, openPullRequestViaApp, prBody } from "./wave2_github.js";
 import { loadRepoSkills, untrustedFiles } from "./workspace_trust.js";
 
 /** The repo's trace store, or none when it cannot be opened (tracing never blocks a card). */
@@ -490,16 +496,9 @@ export async function executeCard(
       : npmRegistry(ctx.repoPath, {
           fetchImpl: policyFetch(networkPolicy, {
             purpose: "supply-chain",
-            record: (r) => {
-              void ctx.cardStore
-                .recordEvent({
-                  type: "harness/egress",
-                  cardId: card.id,
-                  actor: "system",
-                  payload: r,
-                })
-                .catch(() => undefined);
-            },
+            // A lookup whose record fails fails too (security item 33).
+            record: (r) =>
+              ctx.cardStore.recordEvent({ ...egressEvent(r), cardId: card.id, actor: "system" }),
           }) as typeof fetch,
         }),
     // The card's sandboxed commands: the policy narrowed by gates.toml (item 30).
@@ -1888,64 +1887,80 @@ export function abandonedAttempts(
 }
 
 /**
- * Push the card's branch and open a pull request whose body is the evidence.
- * Uses the user's own git remote and `gh` login; Sekhemet holds no token.
+ * Pull-request-on-accept (integrations item 15): resolve the GitHub transport
+ * first — the App, else the user's own `gh` login, saying which is missing
+ * (INT-15) — and decide the API host and the remote's host by the network
+ * policy (B4.9 review B1), all before anything is pushed; then push the card
+ * branch to the configured remote, the push recorded as `harness/egress`,
+ * and open a draft against the integration branch whose body is the
+ * reviewed evidence and names the accepter (INT-12, INT-12a, INT-39). One
+ * client and one lifecycle for both transports.
  */
 export async function openPullRequest(
   ctx: ExecutionContext,
   card: CardRecord,
   branch: string,
-  base = "main",
+  options: {
+    base: string;
+    remote: string;
+    accepter?: string;
+    evidence?: Parameters<typeof evidenceSummary>[1];
+  },
 ): Promise<{ pr: number; url: string; headSha: string }> {
   const run = promisify(execFile);
-  await run("git", ["push", "-u", "origin", `${branch}:${branch}`], {
+  const record = egressRecorder(ctx.cardStore);
+  const transport = await githubTransport(ctx.repoPath, record);
+  const headSha = (
+    await run("git", ["rev-parse", `refs/heads/${branch}`], { cwd: ctx.repoPath, timeout: 10_000 })
+  ).stdout.trim();
+  const apiUrl = transport.endpoints.apiUrl;
+  // Nothing is pushed when the pull request cannot be opened: the API host
+  // first, then the remote's own host, each refused offline (B1).
+  await decideEgress(ctx.repoPath, record, apiUrl, {
+    url: apiUrl,
+    detail: `pull request on accept: ${card.id}`,
+  });
+  const remoteUrl = (
+    await run("git", ["remote", "get-url", options.remote], { cwd: ctx.repoPath, timeout: 10_000 })
+  ).stdout.trim();
+  const dest = remoteDestination(remoteUrl);
+  await decideEgress(ctx.repoPath, record, apiUrl, {
+    url: dest.url,
+    host: dest.host,
+    detail: `git push ${options.remote} ${branch}:${branch} ${headSha}`,
+    recordAllowed: true,
+  });
+  await run("git", ["push", "-u", options.remote, `${branch}:${branch}`], {
     cwd: ctx.repoPath,
     timeout: 120_000,
   });
-  // The GitHub App path (Y12, Y14-Y16): a draft PR, check runs per gate,
-  // SARIF, then the queue advances it; the gh CLI below is the fallback.
-  const app = githubAppFromEnv();
-  const appRepo = /^([\w.-]+)\/([\w.-]+)$/.exec(process.env.SEKHEMET_GITHUB_REPO ?? "");
-  if (app && appRepo) {
-    const headSha = (
-      await run("git", ["rev-parse", branch], { cwd: ctx.repoPath, timeout: 10_000 })
-    ).stdout.trim();
-    const pr = await openPullRequestViaApp(
-      app,
-      ctx.repoPath,
-      { owner: appRepo[1] as string, repo: appRepo[2] as string },
-      card,
-      branch,
-      headSha,
-    );
-    await ctx.cardStore
-      .recordEvent({
-        type: PR_EVENT,
-        cardId: card.id,
-        actor: "harness",
-        payload: { ...pr, repo: { owner: appRepo[1], repo: appRepo[2] } },
-      })
-      .catch(() => undefined);
-    return { pr: pr.number, url: pr.url, headSha: pr.headSha };
+  let ev = options.evidence;
+  if (!ev) {
+    try {
+      ev = JSON.parse(
+        readFileSync(join(ctx.repoPath, ".sekhemet", "evidence", `latest-${card.id}.json`), "utf8"),
+      ) as Parameters<typeof evidenceSummary>[1];
+    } catch {
+      // No evidence file: the body says so rather than inventing results.
+    }
   }
-  const title = card.title.replace(/\s*\(SPIDR:[^)]*\)\s*$/, "");
-  let ev: Parameters<typeof evidenceSummary>[1] = {};
-  try {
-    ev = JSON.parse(
-      readFileSync(join(ctx.repoPath, ".sekhemet", "evidence", `latest-${card.id}.json`), "utf8"),
-    ) as typeof ev;
-  } catch {
-    // No evidence file: the body says so rather than inventing results.
-  }
-  const body = `${evidenceSummary(card, ev, abandonedAttempts(ctx.cardStore, card.id))}\n\n_Implemented by the Sekhemet Worker and accepted in the dashboard. Card \`${card.id}\`._`;
-  const { stdout } = await run(
-    "gh",
-    ["pr", "create", "--head", branch, "--base", base, "--title", title, "--body", body],
-    { cwd: ctx.repoPath, timeout: 60_000 },
+  const body = prBody(card, ev, abandonedAttempts(ctx.cardStore, card.id), options.accepter);
+  const pr = await openPullRequestViaApp(
+    transport.client,
+    ctx.repoPath,
+    transport.repo,
+    card,
+    branch,
+    headSha,
+    undefined,
+    { base: options.base, body, checks: transport.kind === "app" },
   );
-  const url = stdout.trim().split("\n").at(-1) ?? "";
-  const headSha = (
-    await run("git", ["rev-parse", branch], { cwd: ctx.repoPath, timeout: 10_000 })
-  ).stdout.trim();
-  return { pr: Number(/\/pull\/(\d+)/.exec(url)?.[1] ?? 0), url, headSha };
+  // The lifecycle (INT-12b) reads this record: a write that fails is not hidden.
+  await ctx.cardStore.recordEvent({
+    type: PR_EVENT,
+    cardId: card.id,
+    actor: "harness",
+    payload: { ...pr, repo: transport.repo },
+  });
+  return { pr: pr.number, url: pr.url, headSha };
 }

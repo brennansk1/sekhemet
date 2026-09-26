@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { GateFailure } from "@sekhemet/gates";
 import type { CardRecord } from "@sekhemet/kernel";
 import type { ToolDefinition } from "@sekhemet/models";
+import { tagUntrusted } from "@sekhemet/sandbox";
 import {
   type AllocationEvent,
   type ContextSection,
@@ -619,7 +620,9 @@ function buildSections(
     priority: 100,
     required: true,
     // No step counter here: it changes every turn and lives in the goal tail.
-    text: `=== ACTIVE CARD CONTRACT ===\nCard ID: ${card.id}\nTier: ${card.tier.toUpperCase()}\nTitle: ${card.title}\nDeclared Scope: ${scopeLine(card.scopeFiles)}`,
+    // S9 (B4.9 review M4): a linked card's title came from the tracker, as
+    // its spec did, so it is tagged untrusted too.
+    text: `=== ACTIVE CARD CONTRACT ===\nCard ID: ${card.id}\nTier: ${card.tier.toUpperCase()}\nTitle: ${card.externalRef ? tagUntrusted(card.title, `${card.externalRef.system}:${card.externalRef.id}`) : card.title}\nDeclared Scope: ${scopeLine(card.scopeFiles)}`,
   });
 
   // --- volatile: the per-turn tail ---

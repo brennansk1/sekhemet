@@ -3,8 +3,9 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import type { BoardServiceImpl } from "@sekhemet/board";
-import type { CardRecord, CardStore } from "@sekhemet/kernel";
+import { type CardRecord, type CardStore, ERASED_MARKER } from "@sekhemet/kernel";
 import { MergeConflictError, NodeGitSyncAdapter, groupByIntent } from "@sekhemet/sync";
+import { ownersOf } from "./codeowners.js";
 import { effectiveConfig } from "./config_apply.js";
 import { localPersonDetails } from "./ledger_cmds.js";
 import { latestLedgerEvidence } from "./ledger_evidence.js";
@@ -50,7 +51,9 @@ export class AcceptRefusedError extends Error {
       | "unacknowledged"
       | "no_enabling_person"
       | "conflict"
-      | "no_branch",
+      | "no_branch"
+      | "not_code_owner"
+      | "pr_unavailable",
     message: string,
   ) {
     super(message);
@@ -185,6 +188,29 @@ export async function accepterCheck(
 }
 
 /**
+ * RG-N5-4: on a project that requires a code owner's accept, the accepting
+ * principal must own at least one of the card's files (CODEOWNERS, the last
+ * matching pattern for each file; owners mapped through linked GitHub
+ * logins). Any owner suffices; a refusal names the owners who may.
+ */
+function codeOwnerCheck(
+  ctx: AcceptContext,
+  card: CardRecord,
+  ev: AcceptedEvidence,
+  principal: string,
+): void {
+  if (!effectiveConfig(ctx.repoPath).config.review.requireCodeOwnerAccept) return;
+  const files = ev.filesTouched?.length ? ev.filesTouched : (card.scopeFiles ?? []);
+  const owners = ownersOf(ctx.repoPath, ctx.cardStore, files);
+  if (owners.principals.includes(principal)) return;
+  const who = [...owners.principals, ...owners.unmapped];
+  throw new AcceptRefusedError(
+    "not_code_owner",
+    `${principal} owns none of ${card.id}'s files, and this project requires a code owner's accept. Who may accept: ${who.join(", ") || "no code owner is named in CODEOWNERS for these files"}`,
+  );
+}
+
+/**
  * The light Accept friction (§2.4.3, O13; RG-N5-5): every `unmet` or
  * `unclear` Reviewer finding acknowledged, and every Implementation file
  * shown once — by a `review/opened` of this card after its latest evidence.
@@ -212,7 +238,32 @@ export async function acceptFriction(
   return { findings, files };
 }
 
-/** `Name <email>` for the install's person, else the opaque principal (§2.5.4). */
+/**
+ * The accepter's display name for a pull request's body, which leaves the
+ * machine (INT-39): the install's person's git `user.name`, or the name
+ * their person record holds — never their email; else the opaque principal.
+ */
+async function accepterName(
+  repoPath: string,
+  store: CardStore,
+  principal: string,
+): Promise<string> {
+  if (principal === store.localPrincipal()) {
+    try {
+      const name = new NodeGitSyncAdapter(repoPath).gitConfig("user.name");
+      if (name) return name;
+    } catch {
+      // No git name: the person record's below.
+    }
+  }
+  const created = (await store.eventsOfType(["person/created"])).find(
+    (e) => (e.payload as { principal?: string }).principal === principal,
+  );
+  const name = (created?.private as { name?: unknown } | undefined)?.name;
+  return typeof name === "string" && name && name !== ERASED_MARKER ? name : principal;
+}
+
+/** `Name <email>` for the install's person, else the opaque principal (§2.5.4): local trailers only. */
 function acceptedBy(repoPath: string, store: CardStore, principal: string): string {
   if (principal !== store.localPrincipal()) return principal;
   const d = localPersonDetails(repoPath);
@@ -324,6 +375,7 @@ export async function acceptPreconditions(
   } else {
     principal = options.principal ?? ctx.cardStore.localPrincipal();
     independent = (await accepterCheck(ctx.cardStore, cardId, principal)).independent;
+    codeOwnerCheck(ctx, card, ev, principal);
     const remaining = await acceptFriction(
       ctx.cardStore,
       cardId,
@@ -384,7 +436,21 @@ export async function acceptCard(
   const { readSettings } = await import("./integrations.js");
   if (!auto && readSettings(ctx.repoPath).githubPrOnAccept) {
     const branch = adapter.cardBranch(stored.id) as string;
-    const opened = await execute.openPullRequest(execCtx, stored, branch, target);
+    let opened: Awaited<ReturnType<typeof execute.openPullRequest>>;
+    try {
+      opened = await execute.openPullRequest(execCtx, stored, branch, {
+        base: target,
+        remote: effectiveConfig(ctx.repoPath).config.review.remote,
+        accepter: await accepterName(ctx.repoPath, ctx.cardStore, principal),
+        evidence: ev,
+      });
+    } catch (err) {
+      // INT-15: nothing moved — the card stays in Review, the reason said.
+      throw new AcceptRefusedError(
+        "pr_unavailable",
+        `${stored.id} stays in Review: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
     // The pull request's hold and `card/accepted` in one transaction (kernel S7).
     await ctx.boardService.acceptWithPullRequest(stored.id, opened, principal, "harness", [
       {

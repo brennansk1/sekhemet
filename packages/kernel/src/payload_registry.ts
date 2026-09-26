@@ -35,6 +35,8 @@ const DELEGATE = v.nullable(
   v.strictObject({ kind: v.picklist(["worker", "person"]), id: v.optional(PRINCIPAL) }),
 );
 const TEXT = v.string();
+const SHA256 = v.pipe(v.string(), v.regex(/^[0-9a-f]{64}$/, "a SHA-256 hex digest"));
+const SHARED_FIELD = v.picklist(["title", "body", "labels", "assignee"]);
 
 const s = (schema: v.GenericSchema, optional = false): PayloadField => ({
   dataClass: "structural",
@@ -79,10 +81,95 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     headSha: s(TEXT),
     accepter: s(PRINCIPAL, true),
   },
+  // integrations INT-12: the tracker's pull request as opened, for the
+  // lifecycle and the webhook's repository match; no login (B4.9 re-check).
+  "github/pr_opened": {
+    number: s(v.pipe(v.number(), v.integer(), v.minValue(1))),
+    nodeId: s(TEXT),
+    url: s(TEXT),
+    headSha: s(TEXT),
+    repo: s(v.strictObject({ owner: ID, repo: ID })),
+  },
   "card/pr_closed": {
     id: s(ID),
     pr: s(v.pipe(v.number(), v.integer(), v.minValue(1))),
     merged: s(v.boolean()),
+    // integrations INT-13, INT-14: the merge commit, and who closed it — the
+    // principal when their login is linked, else only the login, privately.
+    mergeCommit: s(v.pipe(v.string(), v.regex(/^[0-9a-f]{40}$/)), true),
+    closedBy: s(PRINCIPAL, true),
+    closedByHandle: priv("personal", TEXT),
+  },
+  // integrations item 6, NEW-integrations-2: a person's login on a tracker.
+  "person/identity_linked": {
+    principal: s(PRINCIPAL),
+    system: s(v.picklist(["github", "forgejo"])),
+    handle: priv("personal", v.pipe(v.string(), v.minLength(1))),
+  },
+  // integrations items 4 and 9 (B4.9 review B2): what a sync agreed — the
+  // ref, the tracker's updatedAt and hashes on the chain; the item and the
+  // agreed fields (logins, the issue's text) private and erasable.
+  "sync/snapshot": {
+    ref: s(v.strictObject({ system: v.picklist(["github", "forgejo"]), id: ID, url: v.string() })),
+    updatedAt: s(TEXT),
+    itemHash: s(SHA256),
+    agreedHash: s(SHA256),
+    boardOwner: s(v.nullable(PRINCIPAL)),
+    worker: s(v.boolean()),
+    item: priv("personal", v.record(v.string(), v.unknown())),
+    agreed: priv("personal", v.record(v.string(), v.unknown())),
+  },
+  // integrations INT-6 and INT-41: which field, who won and when on the
+  // chain; the values, or the unmapped login, private.
+  "sync/conflict": {
+    fields: s(
+      v.array(
+        v.strictObject({
+          field: SHARED_FIELD,
+          winner: v.picklist(["board", "tracker"]),
+          at: v.string(),
+        }),
+      ),
+      true,
+    ),
+    field: s(SHARED_FIELD, true),
+    reason: s(v.literal("unmapped"), true),
+    values: priv("personal", v.array(v.record(v.string(), v.unknown()))),
+    assignee: priv("personal", v.pipe(v.string(), v.minLength(1))),
+  },
+  // integrations INT-11a: a running card's scope or criteria changed in the tracker.
+  "sync/scope_changed": {
+    id: s(ID),
+    fields: s(v.array(SHARED_FIELD)),
+    change: s(v.picklist(["scope", "criteria"])),
+  },
+  // integrations INT-11e: a card nested deeper than the tracker, linked to its written ancestor.
+  "sync/clamped": {
+    id: s(ID),
+    ancestor: s(ID),
+    ref: s(ID),
+    maxDepth: s(v.pipe(v.number(), v.integer(), v.minValue(1))),
+  },
+  // integrations INT-9: a webhook delivery processed, by its id and intent kind.
+  "github/delivery": {
+    delivery: s(ID),
+    intent: s(
+      v.picklist(["create_card", "external_review", "verify_dependency_pr", "pull_request_closed"]),
+    ),
+  },
+  // security item 33: each request the network policy decided, allowed or refused.
+  // The URL is private: its path and query can carry what a person asked
+  // (B4.9 lead review). Events written before B4.9 carry it in the payload.
+  "harness/egress": {
+    url: priv("free_text", TEXT),
+    urlHash: s(SHA256),
+    host: s(TEXT),
+    purpose: s(ID),
+    allowed: s(v.boolean()),
+    reason: s(TEXT, true),
+    status: s(v.pipe(v.number(), v.integer()), true),
+    payloadHash: s(v.pipe(v.string(), v.regex(/^([0-9a-f]{64})?$/))),
+    at: s(TEXT),
   },
   // review-git §3: Accept, its undo, and the review records (S5, S6, NEW-review-git-5).
   "card/accepted": {

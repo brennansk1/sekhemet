@@ -3,16 +3,21 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { TransitionRefusedError } from "@sekhemet/board";
 import { DeterministicGateRunner, type GateResult, loadGatesConfig } from "@sekhemet/gates";
-import type { CardRecord, CardStatus, CardStore } from "@sekhemet/kernel";
+import type { CardRecord, CardStatus, CardStore, EventLog } from "@sekhemet/kernel";
 import type { LocalInferenceAdapter } from "@sekhemet/models";
 import { ProcessSandbox } from "@sekhemet/sandbox";
 import { annotationsFromFailures } from "@sekhemet/sync";
 import { recordReview } from "./execute.js";
+import {
+  appClientFromEnv,
+  egressRecorder,
+  githubEndpoints,
+  integrationFetch,
+  ownerRepo,
+} from "./github_transport.js";
 import { reviewCard } from "./learning/review.js";
 import { recordLedgerRun } from "./ledger_evidence.js";
 import type { ResearchBoard } from "./research/cards.js";
-import { ownerRepo } from "./wave2_github.js";
-import { githubAppFromEnv } from "./wave2_server.js";
 
 /**
  * External review cards (X15, design "External review cards"): a review
@@ -377,11 +382,19 @@ export async function runExternalReviews(
   return ready.filter((c) => !isExternalReview(c));
 }
 
-/** The App and repository to post reviews to, when both are configured. */
+/**
+ * The App and repository to post reviews to, when both are configured —
+ * every request through the network policy and recorded (security item 33).
+ */
 export function reviewPosterFromEnv(
+  repoPath: string,
+  ledger: Pick<EventLog, "append"> | Pick<CardStore, "recordLedgerEvent">,
   env: NodeJS.ProcessEnv = process.env,
 ): ExternalReviewOptions["github"] | undefined {
-  const client = githubAppFromEnv(env);
+  const client = appClientFromEnv(
+    integrationFetch(repoPath, egressRecorder(ledger), githubEndpoints(env).apiUrl),
+    env,
+  );
   const repo = ownerRepo(env.SEKHEMET_GITHUB_REPO);
   return client && repo ? { client, repo } : undefined;
 }

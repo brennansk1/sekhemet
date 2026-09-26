@@ -13,13 +13,21 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
 import type { CardRecord, CardStore, EventLog } from "@sekhemet/kernel";
+import { DELEGATE_LABEL, GitHubIssuesAdapter, type SyncAdapter } from "@sekhemet/sync";
+import {
+  egressRecorder,
+  githubEndpoints,
+  githubRepoOf,
+  githubTransport,
+  integrationFetch,
+  integrationRefusal,
+} from "./github_transport.js";
 import { keychainStore } from "./keychain.js";
 import type { ProposalDraft } from "./pm/agent.js";
 import type { PmStore } from "./pm/store.js";
 import { PM_EVENTS } from "./pm/types.js";
 import { userDir } from "./user_dir.js";
-import { syncViaAdapter, trackerFromEnv } from "./wave2_github.js";
-import { githubAppFromEnv } from "./wave2_server.js";
+import { type SyncDirection, forgejoFromEnv, syncViaAdapter } from "./wave2_github.js";
 
 const run = promisify(execFile);
 
@@ -205,38 +213,17 @@ const CATALOGUE: Omit<IntegrationEntry, "connected">[] = [
   { id: "confluence", name: "Confluence publishing", tier: "later", via: "api" },
 ];
 
-let githubCache: { at: number; repo?: string; error?: string } | undefined;
-
-/** The GitHub repo this project maps to, via the user's own `gh` login. */
-async function githubRepo(repoPath: string): Promise<{ repo?: string; error?: string }> {
-  if (githubCache && Date.now() - githubCache.at < 60_000) return githubCache;
-  try {
-    const { stdout } = await run(
-      "gh",
-      ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
-      {
-        cwd: repoPath,
-        timeout: 10_000,
-      },
-    );
-    githubCache = { at: Date.now(), repo: stdout.trim() };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    githubCache = {
-      at: Date.now(),
-      error: /ENOENT/.test(message)
-        ? "The gh CLI is not installed"
-        : /auth|login/i.test(message)
-          ? "gh is not logged in: run gh auth login"
-          : "This repository has no GitHub remote",
-    };
-  }
-  return githubCache;
-}
-
 export async function listIntegrations(repoPath: string): Promise<IntegrationEntry[]> {
   const settings = readSettings(repoPath);
-  const gh = await githubRepo(repoPath);
+  const found = await githubRepoOf(repoPath);
+  // Offline by default (integrations §4): a connected repository the network
+  // policy cannot reach says so, naming the setting.
+  const refused = found.repo ? integrationRefusal(repoPath, githubEndpoints().apiUrl) : undefined;
+  const blocked = refused ? ` — blocked by network mode (${refused.reason}): ${refused.hint}` : "";
+  const gh = {
+    repo: found.repo ? `${found.repo}${blocked}` : undefined,
+    error: found.error?.message,
+  };
   return CATALOGUE.map((entry) => {
     const lastSyncAt = settings.lastSync?.[entry.id];
     const base = { ...entry, ...(lastSyncAt ? { lastSyncAt } : {}) };
@@ -251,7 +238,7 @@ export async function listIntegrations(repoPath: string): Promise<IntegrationEnt
           detail: gh.repo
             ? settings.githubPrOnAccept
               ? `Accept opens a pull request on ${gh.repo}`
-              : "Off: Accept merges locally"
+              : `Off: Accept merges locally${blocked}`
             : (gh.error ?? ""),
         };
       case "jira":
@@ -388,11 +375,23 @@ const cleanTitle = (t: string) => t.replace(/\s*\(SPIDR:[^)]*\)\s*$/, "");
 
 export type ExportFormat = "jira-csv" | "linear-csv" | "github-json" | "json";
 
+/** The people's tracker logins, for writing a card's owner as an assignee (INT-36). */
+export interface ExportPeople {
+  handleOf(principal: string, system: string): string | undefined;
+}
+
 export function exportBoard(
   cards: CardRecord[],
   cycles: { id: string; name: string }[],
   format: ExportFormat,
+  people?: ExportPeople,
 ): { body: string; contentType: string; ext: string } {
+  // INT-36: the Worker is a delegate label, never a user; the owner is the
+  // assignee where the tool has the person's login (GitHub).
+  const labelsOf = (c: CardRecord) => [
+    ...(c.labels ?? []).filter((l) => l !== DELEGATE_LABEL),
+    ...(c.delegate?.kind === "worker" ? [DELEGATE_LABEL] : []),
+  ];
   const cycleName = (id?: string) => cycles.find((c) => c.id === id)?.name ?? "";
   const epicTitle = (id?: string) => cleanTitle(cards.find((c) => c.id === id)?.title ?? "");
   const describe = (c: CardRecord) =>
@@ -430,7 +429,7 @@ export function exportBoard(
         c.estimate !== undefined ? String(c.estimate) : "",
         cycleName(c.cycleId),
         epicTitle(c.epicId),
-        (c.labels ?? []).join(" "),
+        labelsOf(c).join(" "),
         c.dueDate ?? "",
         describe(c),
         c.id,
@@ -460,7 +459,7 @@ export function exportBoard(
         c.estimate !== undefined ? String(c.estimate) : "",
         cycleName(c.cycleId),
         epicTitle(c.epicId),
-        (c.labels ?? []).join(","),
+        labelsOf(c).join(","),
         c.dueDate ?? "",
         c.id,
       ]),
@@ -471,8 +470,12 @@ export function exportBoard(
     const issues = work.map((c) => ({
       title: cleanTitle(c.title),
       body: describe(c),
+      ...(() => {
+        const login = c.owner ? people?.handleOf(c.owner, "github") : undefined;
+        return login ? { assignees: [login] } : {};
+      })(),
       labels: [
-        ...(c.labels ?? []),
+        ...labelsOf(c),
         ...(c.priority ? [`priority:${LINEAR_PRIORITY[c.priority]?.toLowerCase()}`] : []),
         ...(c.estimate !== undefined ? [`estimate:${c.estimate}`] : []),
       ],
@@ -487,7 +490,8 @@ export function exportBoard(
     };
   }
   return {
-    body: `${JSON.stringify({ cards, cycles }, null, 2)}\n`,
+    // The derived `assignee` ("worker", "human") is not a person: owner and delegate say it.
+    body: `${JSON.stringify({ cards: cards.map(({ assignee: _a, ...c }) => c), cycles }, null, 2)}\n`,
     contentType: "application/json",
     ext: "json",
   };
@@ -578,165 +582,91 @@ export function importDrafts(format: string, content: string): ProposalDraft[] {
 
 // --- GitHub sync ----------------------------------------------------------------
 
-interface GhIssue {
-  number: number;
-  title: string;
-  body: string;
-  state: string;
-  url: string;
-  labels: { name: string }[];
+/**
+ * On the `gh` transport the login is the install's own person's: link it
+ * once, so their cards' owner is written as their login (integrations item 6).
+ * Nothing is linked when the lookup fails; the sync goes on.
+ */
+async function linkLocalLogin(
+  cardStore: CardStore,
+  client: { rest<T>(m: string, p: string): Promise<T> },
+): Promise<void> {
+  const me = cardStore.localPrincipal();
+  if (cardStore.handleOf(me, "github")) return;
+  try {
+    const user = await client.rest<{ login?: string }>("GET", "/user");
+    if (user?.login && !cardStore.principalForHandle("github", user.login)) {
+      await cardStore.linkIdentity(me, "github", user.login, me, "harness");
+    }
+  } catch {
+    // Unknown login: the owner is not written as an assignee until linked.
+  }
 }
 
 /**
- * Two-way sync with GitHub Issues via the user's own `gh` login.
- *
- * Pull creates a Backlog card for each open issue not yet linked; push opens
- * an issue for each unlinked card and closes or reopens linked issues to match
- * Done. Titles and bodies are not overwritten in either direction: a sync must
- * never destroy an edit someone made on the other side.
+ * Two-way sync with GitHub Issues (integrations items 7–11): one adapter over
+ * one client, whichever transport — the GitHub App when configured, else the
+ * user's own `gh` login — or Forgejo when that is configured. Every issue is
+ * pulled, page by page; shared fields merge three ways against the last
+ * snapshot, so an edit on either side is kept (`syncViaAdapter`).
  */
 export async function syncGithub(
   repoPath: string,
   cardStore: CardStore,
-  direction: "pull" | "push" | "both",
+  /** M6: `pull` takes the tracker's changes and sends nothing; `push` sends and changes nothing here. */
+  direction: SyncDirection,
   eventLog?: EventLog,
-): Promise<{ created: number; updated: number; skipped: number; errors: string[] }> {
-  const out = { created: 0, updated: 0, skipped: 0, errors: [] as string[] };
-  // The GitHub App or Forgejo adapter when configured (Y10-Y12, Y20): last-
-  // writer-wins with history, and mid-card scope edits pause the card.
-  const adapter = trackerFromEnv(githubAppFromEnv());
-  if (adapter && eventLog) {
-    const since = readSettings(repoPath).lastSync?.[adapter.system] ?? "1970-01-01T00:00:00Z";
-    const r = await syncViaAdapter(adapter, cardStore, eventLog, since);
-    writeSettings(repoPath, {
-      lastSync: {
-        ...(readSettings(repoPath).lastSync ?? {}),
-        [adapter.system]: new Date().toISOString(),
-      },
-    });
-    return {
-      created: r.created + r.pushed,
-      updated: r.updated + r.paused,
-      skipped: 0,
-      errors: r.errors,
-    };
-  }
-  const gh = await githubRepo(repoPath);
-  if (!gh.repo) {
-    out.errors.push(gh.error ?? "No GitHub repository");
+): Promise<{
+  created: number;
+  updated: number;
+  skipped: number;
+  /** Cards not written because the tracker nests less deeply (INT-11e). */
+  clamped: { id: string; ancestor: string }[];
+  errors: string[];
+}> {
+  const out = {
+    created: 0,
+    updated: 0,
+    skipped: 0,
+    clamped: [] as { id: string; ancestor: string }[],
+    errors: [] as string[],
+  };
+  if (!eventLog) {
+    out.errors.push("The sync needs the ledger");
     return out;
   }
-  const cards = await cardStore.listCards();
-  const linked = new Map(
-    cards
-      .filter((c) => c.externalRef?.system === "github")
-      .map((c) => [String(c.externalRef?.id), c]),
+  const record = egressRecorder(eventLog);
+  let adapter: SyncAdapter | undefined = forgejoFromEnv((url) =>
+    integrationFetch(repoPath, record, url, "integration:forgejo"),
   );
-
-  if (direction === "pull" || direction === "both") {
+  if (!adapter) {
     try {
-      const { stdout } = await run(
-        "gh",
-        [
-          "issue",
-          "list",
-          "--state",
-          "open",
-          "--limit",
-          "200",
-          "--json",
-          "number,title,body,state,url,labels",
-        ],
-        { cwd: repoPath, timeout: 30_000, maxBuffer: 16 * 1024 * 1024 },
-      );
-      for (const issue of JSON.parse(stdout) as GhIssue[]) {
-        const key = `${gh.repo}#${issue.number}`;
-        if (linked.has(key)) {
-          out.skipped++;
-          continue;
-        }
-        const labels = issue.labels.map((l) => l.name);
-        const prio = labels.find((l) => l.startsWith("priority:"));
-        const priority = prio ? pickPriority(prio.slice(9)) : undefined;
-        await cardStore.createCard(
-          {
-            tier: "task",
-            title: issue.title.slice(0, 300),
-            status: "backlog",
-            ...(issue.body?.trim() ? { spec: issue.body.trim() } : {}),
-            labels: labels.filter((l) => !l.includes(":")),
-            ...(priority !== undefined ? { priority } : {}),
-            externalRef: { system: "github", id: key, url: issue.url },
-          },
-          "github",
-        );
-        out.created++;
-      }
+      const t = await githubTransport(repoPath, record);
+      adapter = new GitHubIssuesAdapter(t.repo, t.client);
+      // Linking the login changes the board's people: not on a push (M6).
+      if (t.kind === "gh" && direction !== "push") await linkLocalLogin(cardStore, t.client);
     } catch (err) {
-      out.errors.push(`pull: ${err instanceof Error ? err.message : String(err)}`);
+      out.errors.push(err instanceof Error ? err.message : String(err));
+      return out;
     }
   }
-
-  if (direction === "push" || direction === "both") {
-    for (const card of await cardStore.listCards()) {
-      if (card.tier === "epic") continue;
-      const ref = card.externalRef?.system === "github" ? String(card.externalRef.id) : undefined;
-      try {
-        if (!ref) {
-          if (card.status === "done" || card.status === "rejected") {
-            out.skipped++;
-            continue;
-          }
-          const { stdout } = await run(
-            "gh",
-            [
-              "issue",
-              "create",
-              "--title",
-              cleanTitle(card.title),
-              "--body",
-              `${card.spec ?? ""}\n\n_Tracked by Sekhemet as \`${card.id}\`._`,
-            ],
-            { cwd: repoPath, timeout: 30_000 },
-          );
-          const url = stdout.trim().split("\n").at(-1) ?? "";
-          const number = url.split("/").at(-1);
-          await cardStore.updateCard(
-            card.id,
-            { externalRef: { system: "github", id: `${gh.repo}#${number}`, url } },
-            "github",
-          );
-          out.created++;
-        } else {
-          const number = ref.split("#").at(-1) ?? "";
-          const closed = card.status === "done" || card.status === "rejected";
-          const { stdout } = await run(
-            "gh",
-            ["issue", "view", number, "--json", "state", "-q", ".state"],
-            {
-              cwd: repoPath,
-              timeout: 15_000,
-            },
-          );
-          const isClosed = stdout.trim() === "CLOSED";
-          if (closed !== isClosed) {
-            await run("gh", ["issue", closed ? "close" : "reopen", number], {
-              cwd: repoPath,
-              timeout: 15_000,
-            });
-            out.updated++;
-          } else out.skipped++;
-        }
-      } catch (err) {
-        out.errors.push(`${card.id}: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
+  const since = readSettings(repoPath).lastSync?.[adapter.system] ?? "1970-01-01T00:00:00Z";
+  const started = new Date().toISOString();
+  const r = await syncViaAdapter(adapter, cardStore, eventLog, since, direction);
+  // The next pull starts where this one did: an edit made during it is not
+  // missed. A push took nothing, so it moves nothing on (M6).
+  if (r.errors.length === 0 && direction !== "push") {
+    writeSettings(repoPath, {
+      lastSync: { ...(readSettings(repoPath).lastSync ?? {}), [adapter.system]: started },
+    });
   }
-
-  writeSettings(repoPath, {
-    lastSync: { ...(readSettings(repoPath).lastSync ?? {}), github: new Date().toISOString() },
-  });
-  return out;
+  return {
+    created: r.created + r.linked,
+    updated: r.updated + r.pushed,
+    skipped: 0,
+    clamped: r.clamped,
+    errors: r.errors,
+  };
 }
 
 // --- Routes ---------------------------------------------------------------------
@@ -893,7 +823,10 @@ export async function handleIntegrationsApi(
       ctx.json(res, 501, { error: "This server was started read-only" });
       return true;
     }
-    const out = exportBoard(await ctx.cardStore.listCards(), await ctx.pmStore.cycles(), format);
+    const store = ctx.cardStore;
+    const out = exportBoard(await store.listCards(), await ctx.pmStore.cycles(), format, {
+      handleOf: (p, sys) => store.handleOf(p, sys),
+    });
     const name = `sekhemet-${basename(ctx.repoPath).replace(/[^A-Za-z0-9._-]/g, "_")}-${format}.${out.ext}`;
     res.writeHead(200, {
       "Content-Type": out.contentType,

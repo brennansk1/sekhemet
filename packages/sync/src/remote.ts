@@ -1,19 +1,24 @@
 import type { ExternalRef } from "@sekhemet/kernel";
-import { GitHubClient, type GitHubEndpoints, type TokenProvider } from "./github_app.js";
+import type { FetchLike, GitHubClient } from "./github_app.js";
 
 /**
- * The generic tracker adapter (Y10, design "Adapter interface") and its
- * GitHub (Y10) and Forgejo (Y11) implementations. The board owns card
- * state, gate results and budgets; the tracker owns title, description,
- * assignee and labels. Shared fields resolve last-writer-wins by
- * timestamp, and the losing value is kept in the history.
+ * The tracker adapter (integrations items 7–9) and its GitHub and Forgejo
+ * implementations. The board owns card state, gate results and budgets; the
+ * tracker owns what people write — title, description, assignee, labels.
+ * A field both sides can change merges three ways against the snapshot of
+ * the last sync (item 4, `mergeThreeWay`).
  */
 export interface ExternalItem {
   ref: ExternalRef;
   title: string;
+  /** The description, without the card marker the board writes. */
   body: string;
+  /** The tracker's labels, without the delegate label (`DELEGATE_LABEL`). */
   labels: string[];
+  /** The tracker's user login for the assignee: a person, never the Worker. */
   assignee?: string;
+  /** The delegate label is on the item: the Worker builds it (NEW-integrations-2). */
+  delegatedToWorker?: boolean;
   state: "open" | "closed";
   updatedAt: string;
   /** Parent issue, when the tracker has hierarchy. */
@@ -25,7 +30,10 @@ export interface SyncCard {
   title: string;
   spec?: string;
   labels?: string[];
-  assignee?: string;
+  /** The owner's login on this tracker (INT-36); present but undefined unassigns. */
+  owner?: string | undefined;
+  /** Who builds it: the Worker is written as a label, never as a user (INT-36). */
+  delegate?: "worker";
   status: string;
   updatedAt: string;
   externalRef?: ExternalRef;
@@ -46,8 +54,33 @@ export interface SyncAdapter {
   update(ref: ExternalRef, patch: Partial<SyncCard>): Promise<void>;
 }
 
-/** Fields each side owns (design): the rest are shared, last writer wins. */
-export const TRACKER_OWNED = ["title", "body", "assignee", "labels"] as const;
+/**
+ * The label that says the Worker is the card's delegate, on a tracker with no
+ * agent field (GitHub, Forgejo): the delegate is shown there, the assignee
+ * stays a person (integrations item 6, INT-36).
+ */
+export const DELEGATE_LABEL = "delegate:sekhemet-worker";
+
+/** One GitHub issue's one identity on every path: `owner/repo#n` (item 8, INT-1). */
+export function githubIssueId(repo: { owner: string; repo: string } | string, n: number): string {
+  const name = typeof repo === "string" ? repo : `${repo.owner}/${repo.repo}`;
+  return `${name}#${n}`;
+}
+
+/** The issue number of a tracker id: `owner/repo#n`, or a legacy bare `n`. */
+export function issueNumberOf(id: string): number {
+  const m = /(?:^|#)(\d+)$/.exec(id);
+  if (!m) throw new Error(`Not an issue id: ${id}`);
+  return Number(m[1]);
+}
+
+/** The fields both the board and the tracker may change (item 4). */
+export interface SharedFields {
+  title: string;
+  body: string;
+  labels: string[];
+  assignee?: string | undefined;
+}
 
 export interface FieldConflict {
   field: string;
@@ -57,44 +90,95 @@ export interface FieldConflict {
   at: string;
 }
 
+const SHARED: (keyof SharedFields)[] = ["title", "body", "labels", "assignee"];
+const norm = (field: keyof SharedFields, v: unknown) =>
+  JSON.stringify(field === "labels" ? [...((v as string[]) ?? [])].sort() : (v ?? null));
+
 /**
- * Merge a tracker item into a card, last writer wins per field, with the
- * losing value recorded. Card state stays the board's.
+ * The three-way merge of a shared field set (integrations item 4, INT-4…6):
+ * against `base`, the snapshot both sides agreed at the last sync, a field
+ * only the tracker changed goes to the board, a field only the board changed
+ * goes to the tracker, and only a field both changed is a true conflict —
+ * there the newer side wins and the other value is kept in the history.
+ * With no snapshot (a first link), a difference is resolved as a conflict.
  */
-export function mergeLastWriterWins(
-  card: SyncCard,
-  item: ExternalItem,
-): { card: SyncCard; history: FieldConflict[] } {
-  const trackerNewer = Date.parse(item.updatedAt) > Date.parse(card.updatedAt);
+export function mergeThreeWay(
+  base: SharedFields | undefined,
+  board: SharedFields & { updatedAt: string },
+  tracker: SharedFields & { updatedAt: string },
+): {
+  toBoard: Partial<SharedFields>;
+  toTracker: Partial<SharedFields>;
+  merged: SharedFields;
+  history: FieldConflict[];
+} {
+  const toBoard: Partial<SharedFields> = {};
+  const toTracker: Partial<SharedFields> = {};
+  const merged: SharedFields = { ...board };
   const history: FieldConflict[] = [];
-  const next: SyncCard = { ...card };
-  const pairs: [keyof SyncCard, unknown, unknown][] = [
-    ["title", card.title, item.title],
-    ["spec", card.spec ?? "", item.body],
-    ["labels", [...(card.labels ?? [])].sort(), [...item.labels].sort()],
-    ["assignee", card.assignee, item.assignee],
-  ];
-  for (const [field, mine, theirs] of pairs) {
-    if (JSON.stringify(mine) === JSON.stringify(theirs)) continue;
-    const winner = trackerNewer ? "tracker" : "board";
-    history.push({
-      field,
-      kept: winner === "tracker" ? theirs : mine,
-      lost: winner === "tracker" ? mine : theirs,
-      winner,
-      at: trackerNewer ? item.updatedAt : card.updatedAt,
-    });
-    if (trackerNewer) (next as unknown as Record<string, unknown>)[field] = theirs;
+  const trackerNewer = Date.parse(tracker.updatedAt) > Date.parse(board.updatedAt);
+  const set = (o: Partial<SharedFields>, f: keyof SharedFields, v: unknown) => {
+    (o as Record<string, unknown>)[f] = v;
+  };
+  for (const f of SHARED) {
+    if (norm(f, board[f]) === norm(f, tracker[f])) continue;
+    const boardChanged = !base || norm(f, board[f]) !== norm(f, base[f]);
+    const trackerChanged = !base || norm(f, tracker[f]) !== norm(f, base[f]);
+    let winner: "board" | "tracker";
+    if (trackerChanged && !boardChanged) winner = "tracker";
+    else if (boardChanged && !trackerChanged) winner = "board";
+    else {
+      winner = trackerNewer ? "tracker" : "board";
+      history.push({
+        field: f,
+        kept: winner === "tracker" ? tracker[f] : board[f],
+        lost: winner === "tracker" ? board[f] : tracker[f],
+        winner,
+        at: winner === "tracker" ? tracker.updatedAt : board.updatedAt,
+      });
+    }
+    if (winner === "tracker") {
+      set(toBoard, f, tracker[f]);
+      set(merged, f, tracker[f]);
+    } else set(toTracker, f, board[f]);
   }
-  if (trackerNewer) next.updatedAt = item.updatedAt;
-  return { card: next, history };
+  return { toBoard, toTracker, merged, history };
 }
 
-function cardBody(card: SyncCard): string {
+const MARKER = /\n*<!-- sekhemet:card=[^>]*-->\s*$/;
+
+function cardBody(card: Pick<SyncCard, "id" | "spec">): string {
   return `${card.spec ?? ""}\n\n<!-- sekhemet:card=${card.id} -->`.trim();
 }
 
-/** GitHub Issues through the App client (REST; sub-issues via GraphQL when enabled). */
+/** A tracker's labels without the delegate label, and whether it was there. */
+function splitLabels(names: string[]): { labels: string[]; delegatedToWorker: boolean } {
+  return {
+    labels: names.filter((l) => l !== DELEGATE_LABEL),
+    delegatedToWorker: names.includes(DELEGATE_LABEL),
+  };
+}
+
+/** The labels a card is written with: its own, plus the delegate label for the Worker. */
+function labelsFor(card: Partial<SyncCard>): string[] | undefined {
+  if (card.labels === undefined && card.delegate === undefined) return undefined;
+  const own = (card.labels ?? []).filter((l) => l !== DELEGATE_LABEL);
+  return card.delegate === "worker" ? [...own, DELEGATE_LABEL] : own;
+}
+
+interface RestIssue {
+  number: number;
+  html_url: string;
+  title: string;
+  body: string | null;
+  labels: { name: string }[];
+  assignee: { login: string } | null;
+  state: string;
+  updated_at: string;
+  pull_request?: unknown;
+}
+
+/** GitHub Issues through the one client (REST, paginated), `gh`'s login or the App's. */
 export class GitHubIssuesAdapter implements SyncAdapter {
   public readonly system = "github" as const;
   public readonly capabilities: SyncCapabilities = {
@@ -103,41 +187,28 @@ export class GitHubIssuesAdapter implements SyncAdapter {
     webhooks: true,
     maxDepth: 2,
   };
-  private readonly client: GitHubClient;
-
+  /** Over the one client, whose `fetch` is the caller's network policy (security item 33). */
   constructor(
     private readonly repo: { owner: string; repo: string },
-    tokens: TokenProvider,
-    endpoints?: GitHubEndpoints,
-    client?: GitHubClient,
-  ) {
-    this.client = client ?? new GitHubClient(tokens, endpoints);
+    private readonly client: GitHubClient,
+  ) {}
+
+  private get base(): string {
+    return `/repos/${this.repo.owner}/${this.repo.repo}`;
   }
 
+  /** Every issue updated since `since`, every page (INT-2); pull requests left out. */
   public async pull(since: string): Promise<ExternalItem[]> {
-    const items = await this.client.rest<
-      {
-        number: number;
-        html_url: string;
-        title: string;
-        body: string | null;
-        labels: { name: string }[];
-        assignee: { login: string } | null;
-        state: string;
-        updated_at: string;
-        pull_request?: unknown;
-      }[]
-    >(
-      "GET",
-      `/repos/${this.repo.owner}/${this.repo.repo}/issues?state=all&per_page=100&since=${encodeURIComponent(since)}`,
+    const items = await this.client.restPages<RestIssue>(
+      `${this.base}/issues?state=all&per_page=100&since=${encodeURIComponent(since)}`,
     );
     return items
       .filter((i) => !i.pull_request)
       .map((i) => ({
-        ref: { system: "github", id: String(i.number), url: i.html_url },
+        ref: { system: "github", id: githubIssueId(this.repo, i.number), url: i.html_url },
         title: i.title,
-        body: i.body ?? "",
-        labels: i.labels.map((l) => l.name),
+        body: (i.body ?? "").replace(MARKER, ""),
+        ...splitLabels(i.labels.map((l) => l.name)),
         ...(i.assignee ? { assignee: i.assignee.login } : {}),
         state: i.state === "closed" ? "closed" : "open",
         updatedAt: i.updated_at,
@@ -151,25 +222,28 @@ export class GitHubIssuesAdapter implements SyncAdapter {
     }
     const issue = await this.client.rest<{ number: number; html_url: string }>(
       "POST",
-      `/repos/${this.repo.owner}/${this.repo.repo}/issues`,
-      { title: card.title, body: cardBody(card), labels: card.labels ?? [] },
+      `${this.base}/issues`,
+      {
+        title: card.title,
+        body: cardBody(card),
+        labels: labelsFor(card) ?? [],
+        ...(card.owner ? { assignees: [card.owner] } : {}),
+      },
     );
-    return { system: "github", id: String(issue.number), url: issue.html_url };
+    return { system: "github", id: githubIssueId(this.repo, issue.number), url: issue.html_url };
   }
 
   public async update(ref: ExternalRef, patch: Partial<SyncCard>): Promise<void> {
-    await this.client.rest(
-      "PATCH",
-      `/repos/${this.repo.owner}/${this.repo.repo}/issues/${ref.id}`,
-      {
-        ...(patch.title !== undefined ? { title: patch.title } : {}),
-        ...(patch.spec !== undefined
-          ? { body: cardBody({ ...(patch as SyncCard), id: patch.id ?? "" }) }
-          : {}),
-        ...(patch.labels !== undefined ? { labels: patch.labels } : {}),
-        ...(patch.status === "done" ? { state: "closed" } : {}),
-      },
-    );
+    const labels = labelsFor(patch);
+    await this.client.rest("PATCH", `${this.base}/issues/${issueNumberOf(ref.id)}`, {
+      ...(patch.title !== undefined ? { title: patch.title } : {}),
+      ...(patch.spec !== undefined
+        ? { body: cardBody({ id: patch.id ?? "", spec: patch.spec }) }
+        : {}),
+      ...(labels !== undefined ? { labels } : {}),
+      ...("owner" in patch ? { assignees: patch.owner ? [patch.owner] : [] } : {}),
+      ...(patch.status === "done" ? { state: "closed" } : {}),
+    });
   }
 }
 
@@ -187,10 +261,12 @@ export class ForgejoIssuesAdapter implements SyncAdapter {
     private readonly baseUrl: string,
     private readonly repo: { owner: string; repo: string },
     private readonly token: string,
+    /** The caller's network policy: every request is decided and recorded (security item 33). */
+    private readonly fetch: FetchLike,
   ) {}
 
   private async call<T>(method: string, path: string, body?: unknown): Promise<T> {
-    const res = await fetch(`${this.baseUrl.replace(/\/+$/, "")}/api/v1${path}`, {
+    const res = await this.fetch(`${this.baseUrl.replace(/\/+$/, "")}/api/v1${path}`, {
       method,
       headers: {
         Authorization: `token ${this.token}`,
@@ -224,8 +300,8 @@ export class ForgejoIssuesAdapter implements SyncAdapter {
     return items.map((i) => ({
       ref: { system: "forgejo", id: String(i.number), url: i.html_url },
       title: i.title,
-      body: i.body ?? "",
-      labels: (i.labels ?? []).map((l) => l.name),
+      body: (i.body ?? "").replace(MARKER, ""),
+      ...splitLabels((i.labels ?? []).map((l) => l.name)),
       ...(i.assignee ? { assignee: i.assignee.login } : {}),
       state: i.state === "closed" ? "closed" : "open",
       updatedAt: i.updated_at,
@@ -274,13 +350,14 @@ export class ForgejoIssuesAdapter implements SyncAdapter {
 export type ReconcileAction =
   | { action: "none" }
   | { action: "apply_on_completion"; fields: string[] }
-  | { action: "pause_and_ask"; fields: string[]; question: string };
+  | { action: "replan_on_completion"; fields: string[]; change: "scope" | "criteria" };
 
 /**
- * An issue edited externally while its card is running (Y20, design
- * [DESIGN] note): edits to non-scope fields are reconciled when the card
- * completes; a change to the scope or the acceptance criteria pauses the
- * card and asks, because the running work may no longer be the right work.
+ * An issue edited externally while its card is running (integrations item
+ * 5, DEC-25 R6): edits to non-scope fields are applied when the card
+ * completes; a change to the scope or the acceptance criteria is recorded
+ * and, at the card's end, sends it to Planning instead of Review (INT-11a).
+ * The Worker is never paused for it. *Changed from Y20's pause-and-ask.*
  */
 export function reconcileExternalEdit(
   card: {
@@ -317,9 +394,9 @@ export function reconcileExternalEdit(
     (card.acceptanceCriteria ?? []).some((c) => !after.body.includes(c));
   if (scopeChanged || criteriaChanged) {
     return {
-      action: "pause_and_ask",
+      action: "replan_on_completion",
       fields: changed,
-      question: `The issue for "${card.title}" changed ${scopeChanged ? "its scope" : "its acceptance criteria"} while the card was running. Continue with the old version, or restart with the new one?`,
+      change: scopeChanged ? "scope" : "criteria",
     };
   }
   return { action: "apply_on_completion", fields: changed };

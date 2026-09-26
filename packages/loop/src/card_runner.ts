@@ -88,7 +88,7 @@ export type CardRunStore = Pick<
   | "recordDossierEntry"
   | "getDossier"
 > &
-  Partial<Pick<CardStore, "runs">>;
+  Partial<Pick<CardStore, "runs" | "cardEvents">>;
 
 /** Difficulty 1..10 as the design's XS..XL scale (K25). */
 export function difficultyLabel(difficulty: number | undefined): string {
@@ -971,8 +971,34 @@ export class CardRunner {
     }
   }
 
+  /** When `run` began, on the ledger's clock (INT-11a). */
+  private runStartedAt = new Date().toISOString();
+
+  /**
+   * The scope or acceptance-criteria change a tracker made to this card while
+   * it ran (`sync/scope_changed`, integrations INT-11a), as the move's
+   * reason naming the changed fields; undefined when there was none.
+   */
+  private async scopeChangedSince(startedAt: string): Promise<string | undefined> {
+    const events = await this.options.store?.cardEvents?.(this.options.card.id, [
+      "sync/scope_changed",
+    ]);
+    const changes = (events ?? []).filter((e) => e.createdAt >= startedAt);
+    if (changes.length === 0) return undefined;
+    const kinds = new Set<string>();
+    const fields = new Set<string>();
+    for (const e of changes) {
+      const p = e.payload as { change?: string; fields?: string[] };
+      if (p.change) kinds.add(p.change === "criteria" ? "acceptance criteria" : "scope");
+      for (const f of p.fields ?? []) fields.add(f);
+    }
+    return `the tracker changed the card's ${[...kinds].join(" and ")} while it ran (${[...fields].join(", ")}): re-plan against the edited issue`;
+  }
+
   public async run(): Promise<CardRunResult> {
     const started = this.now();
+    // The ledger's clock, for events recorded during this run (INT-11a).
+    this.runStartedAt = new Date().toISOString();
     const { card, syncAdapter, lifecycle, store } = this.options;
     const attempt = Math.max(1, Math.floor(this.options.attempt ?? 1));
     const checkpointShas: string[] = [];
@@ -2108,7 +2134,15 @@ export class CardRunner {
           held = { reason: toVerify.reason, wanted: "verify" };
         } else {
           finalStatus = "verify";
-          if (passed) {
+          const scope = passed ? await this.scopeChangedSince(this.runStartedAt) : undefined;
+          if (scope) {
+            // INT-11a: the tracker changed the scope or the criteria while the
+            // card ran — the result answers the old question, so it is
+            // re-planned against the edited issue instead of reviewed.
+            const moved = await this.move("planning", scope);
+            if (moved.ok) finalStatus = "planning";
+            else held = { reason: moved.reason, wanted: "planning" };
+          } else if (passed) {
             const toReview = await this.move("review");
             if (toReview.ok) finalStatus = "review";
             else held = { reason: toReview.reason, wanted: "review" };

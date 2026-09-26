@@ -3,10 +3,12 @@
   "modules": {
     "apps/harness/src/accept.ts": "Accept's notice for checkouts on the integration branch: the harness's own read-only git (worktree list --porcelain, rev-parse) on the project repository (RG-S5-2).",
     "apps/harness/src/airgap.ts": "Air-gap bundles: tar and ssh-keygen over harness-built archives; the airgap probe itself runs through the sandbox.",
+    "apps/harness/src/codeowners.ts": "The harness's own read-only git: `git show <integration branch>:CODEOWNERS` to name suggested accepters (review-git RG-N5-3/-4).",
     "apps/harness/src/daemon.ts": "Starts the harness's own CLI as a background daemon.",
     "apps/harness/src/doctor.ts": "Doctor probes: git worktree list and the installed tools' --version.",
     "apps/harness/src/execute.ts": "The harness's own git on the card's worktree (hardened environment).",
     "apps/harness/src/external_review.ts": "The harness's own git to read a card's diff for an external review.",
+    "apps/harness/src/github_transport.ts": "The gh CLI the owner logged in (`gh auth token`, `gh api`) and the harness's own `git remote get-url`, for the one GitHub adapter; every request it enables goes through the network policy (integrations P9, security item 33).",
     "apps/harness/src/governance.ts": "pmset: the host's thermal state (M-governance).",
     "apps/harness/src/index.ts": "The CLI: its own git and the OS URL opener for the dashboard.",
     "apps/harness/src/init.ts": "Toolchain checks: git, pnpm, llama-server, docker, gh --version.",

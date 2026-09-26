@@ -88,6 +88,64 @@ export interface TokenProvider {
 /** A static token (tests, or a pre-exchanged installation token). */
 export const staticToken = (t: string): TokenProvider => ({ token: async () => t });
 
+/** The `fetch` every GitHub call goes through: the network policy's (security item 33). */
+export type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
+
+export interface BackoffOptions {
+  maxRetries?: number;
+  sleep?: (ms: number) => Promise<void>;
+}
+
+/**
+ * A client's options: its `fetch` is required — every GitHub request goes
+ * through the caller's network policy and is recorded (security item 33);
+ * nothing falls back to the global `fetch`.
+ */
+export interface ClientOptions extends BackoffOptions {
+  fetch: FetchLike;
+}
+
+const realSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** A primary or secondary rate limit, however GitHub reports it (INT-8). */
+function rateLimited(res: Response, text: string): boolean {
+  if (res.status === 429) return true;
+  if (res.status === 403 && res.headers.get("x-ratelimit-remaining") === "0") return true;
+  if (res.status === 403 && /secondary rate limit/i.test(text)) return true;
+  // GraphQL reports its own limit in a 200 body.
+  return res.status === 200 && /"type"\s*:\s*"RATE_LIMITED"/.test(text);
+}
+
+/**
+ * One GitHub request with the backoff every call shares — REST, GraphQL and
+ * the token exchange (integrations item 11, INT-8): on a rate limit it waits
+ * `retry-after` (else exponentially), up to `maxRetries`, then reports it.
+ */
+async function sendWithBackoff(
+  label: string,
+  send: () => Promise<Response>,
+  options: BackoffOptions,
+): Promise<{ res: Response; text: string }> {
+  const sleep = options.sleep ?? realSleep;
+  const max = options.maxRetries ?? 3;
+  for (let attempt = 0; ; attempt++) {
+    const res = await send();
+    const text = await res.text();
+    if (!rateLimited(res, text)) return { res, text };
+    if (attempt >= max) {
+      throw new GitHubApiError(
+        `${label} hit GitHub's rate limit ${attempt + 1} times; giving up`,
+        res.status,
+        text,
+      );
+    }
+    const retryAfter = Number(res.headers.get("retry-after"));
+    await sleep(
+      Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 1000 * 2 ** attempt,
+    );
+  }
+}
+
 /**
  * Installation tokens, exchanged from the App JWT and cached until five
  * minutes before they expire.
@@ -102,7 +160,7 @@ export class InstallationTokenProvider implements TokenProvider {
       privateKey: string;
       endpoints?: GitHubEndpoints;
       now?: () => number;
-    },
+    } & ClientOptions,
   ) {}
 
   public async token(): Promise<string> {
@@ -110,18 +168,20 @@ export class InstallationTokenProvider implements TokenProvider {
     if (this.cached && this.cached.expiresAt - 300_000 > now) return this.cached.token;
     const jwt = createAppJwt(this.options.appId, this.options.privateKey, Math.floor(now / 1000));
     const base = (this.options.endpoints ?? GITHUB_DOT_COM).apiUrl;
-    const res = await fetch(
-      `${base}/app/installations/${this.options.installationId}/access_tokens`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${jwt}`,
-          Accept: "application/vnd.github+json",
-          "X-GitHub-Api-Version": "2022-11-28",
-        },
-      },
+    const doFetch = this.options.fetch;
+    const { res, text } = await sendWithBackoff(
+      "The installation token exchange",
+      () =>
+        doFetch(`${base}/app/installations/${this.options.installationId}/access_tokens`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${jwt}`,
+            Accept: "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+          },
+        }),
+      this.options,
     );
-    const text = await res.text();
     if (!res.ok)
       throw new GitHubApiError(
         `Installation token exchange failed (${res.status})`,
@@ -134,58 +194,92 @@ export class InstallationTokenProvider implements TokenProvider {
   }
 }
 
-/** REST and GraphQL with auth, API version, idempotency and rate-limit backoff. */
+/** The `rel="next"` URL of a `Link` header, if any (REST pagination). */
+function nextLink(header: string | null): string | undefined {
+  for (const part of (header ?? "").split(",")) {
+    const m = /<([^>]+)>\s*;\s*rel="next"/.exec(part);
+    if (m) return m[1];
+  }
+  return undefined;
+}
+
+/** REST and GraphQL with auth, API version, pagination and rate-limit backoff. */
 export class GitHubClient {
   constructor(
     private readonly tokens: TokenProvider,
-    private readonly endpoints: GitHubEndpoints = GITHUB_DOT_COM,
-    private readonly options: { maxRetries?: number; sleep?: (ms: number) => Promise<void> } = {},
+    private readonly endpoints: GitHubEndpoints,
+    private readonly options: ClientOptions,
   ) {}
 
+  private async request(
+    method: string,
+    pathOrUrl: string,
+    body?: unknown,
+  ): Promise<{ res: Response; text: string }> {
+    const url = /^https?:\/\//.test(pathOrUrl) ? pathOrUrl : `${this.endpoints.apiUrl}${pathOrUrl}`;
+    const doFetch = this.options.fetch;
+    const { res, text } = await sendWithBackoff(
+      `${method} ${pathOrUrl}`,
+      async () =>
+        doFetch(url, {
+          method,
+          headers: {
+            Authorization: `Bearer ${await this.tokens.token()}`,
+            Accept: "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+          },
+          ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+        }),
+      this.options,
+    );
+    if (!res.ok)
+      throw new GitHubApiError(`${method} ${pathOrUrl} failed (${res.status})`, res.status, text);
+    return { res, text };
+  }
+
   public async rest<T = unknown>(method: string, path: string, body?: unknown): Promise<T> {
-    const sleep = this.options.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
-    for (let attempt = 0; ; attempt++) {
-      const res = await fetch(`${this.endpoints.apiUrl}${path}`, {
-        method,
-        headers: {
-          Authorization: `Bearer ${await this.tokens.token()}`,
-          Accept: "application/vnd.github+json",
-          "X-GitHub-Api-Version": "2022-11-28",
-          ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
-        },
-        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-      });
-      const text = await res.text();
-      const limited =
-        res.status === 429 ||
-        (res.status === 403 && res.headers.get("x-ratelimit-remaining") === "0") ||
-        (res.status === 403 && /secondary rate limit/i.test(text));
-      if (limited && attempt < (this.options.maxRetries ?? 3)) {
-        const retryAfter = Number(res.headers.get("retry-after"));
-        await sleep(
-          Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 1000 * 2 ** attempt,
-        );
-        continue;
+    const { text } = await this.request(method, path, body);
+    return (text ? JSON.parse(text) : undefined) as T;
+  }
+
+  /**
+   * Every page of a list endpoint, following `Link: rel="next"` until it is
+   * exhausted (integrations item 11, INT-2) — never only the first page.
+   */
+  public async restPages<T = unknown>(path: string, maxPages = 1000): Promise<T[]> {
+    const out: T[] = [];
+    let next: string | undefined = path;
+    for (let page = 0; next && page < maxPages; page++) {
+      const { res, text } = await this.request("GET", next);
+      out.push(...((text ? JSON.parse(text) : []) as T[]));
+      next = nextLink(res.headers.get("link"));
+      // The token goes only to the configured API: a next link elsewhere stops.
+      if (next && new URL(next).origin !== new URL(this.endpoints.apiUrl).origin) {
+        throw new GitHubApiError(`A next page outside ${this.endpoints.apiUrl}: ${next}`, 0, "");
       }
-      if (!res.ok)
-        throw new GitHubApiError(`${method} ${path} failed (${res.status})`, res.status, text);
-      return (text ? JSON.parse(text) : undefined) as T;
     }
+    return out;
   }
 
   public async graphql<T = unknown>(
     query: string,
     variables: Record<string, unknown> = {},
   ): Promise<T> {
-    const res = await fetch(this.endpoints.graphqlUrl, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${await this.tokens.token()}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ query, variables }),
-    });
-    const text = await res.text();
+    const doFetch = this.options.fetch;
+    const { res, text } = await sendWithBackoff(
+      "GraphQL",
+      async () =>
+        doFetch(this.endpoints.graphqlUrl, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${await this.tokens.token()}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ query, variables }),
+        }),
+      this.options,
+    );
     if (!res.ok) throw new GitHubApiError(`GraphQL failed (${res.status})`, res.status, text);
     const body = JSON.parse(text) as { data?: T; errors?: { message: string }[] };
     if (body.errors?.length)

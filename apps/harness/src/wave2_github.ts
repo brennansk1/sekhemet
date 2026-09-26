@@ -1,22 +1,27 @@
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { CardRecord, CardStore, EventLog } from "@sekhemet/kernel";
-import { DecisionStore } from "@sekhemet/planner";
+import type { CardRecord, CardStore, EventLog, ExternalRef } from "@sekhemet/kernel";
 import {
   type ExternalItem,
+  type FetchLike,
   ForgejoIssuesAdapter,
   type GitHubClient,
-  GitHubIssuesAdapter,
   PullRequestLifecycle,
   type PullRequestRef,
+  type SharedFields,
   type SyncAdapter,
-  mergeLastWriterWins,
+  type SyncCard,
+  issueNumberOf,
+  mergeThreeWay,
   postCheckRun,
   reconcileExternalEdit,
-  staticToken,
   uploadSarif,
 } from "@sekhemet/sync";
+import { readCodeowners } from "./codeowners.js";
 import { evidenceSummary } from "./evidence_summary.js";
+import { egressRecorder, githubTransport, ownerRepo as ownerRepoOf } from "./github_transport.js";
+import { latestLedgerEvidence } from "./ledger_evidence.js";
 
 /**
  * The GitHub App and tracker paths (Y10-Y12, Y14-Y16, Y20), used when the
@@ -30,10 +35,7 @@ import { evidenceSummary } from "./evidence_summary.js";
  */
 export const PR_EVENT = "github/pr_opened";
 
-export function ownerRepo(spec: string | undefined): { owner: string; repo: string } | undefined {
-  const m = /^([\w.-]+)\/([\w.-]+)$/.exec(spec ?? "");
-  return m ? { owner: m[1] as string, repo: m[2] as string } : undefined;
-}
+export { ownerRepo } from "./github_transport.js";
 
 interface Evidence {
   passed?: boolean;
@@ -61,8 +63,10 @@ export function prBody(
   card: CardRecord,
   ev: Evidence | undefined,
   abandoned: readonly { attempt: number; stopReason: string }[] = [],
+  /** The person who accepted the card (INT-39): named here, never the assignee. */
+  accepter?: string,
 ): string {
-  return `${evidenceSummary(card, ev ?? {}, abandoned)}\n\n_Implemented by the Sekhemet Worker. Card \`${card.id}\`._`;
+  return `${evidenceSummary(card, ev ?? {}, abandoned)}\n\n_Implemented by the Sekhemet Worker. Card \`${card.id}\`._${accepter ? `\n\nAccepted by ${accepter}` : ""}`;
 }
 
 /**
@@ -79,15 +83,35 @@ export async function openPullRequestViaApp(
   branch: string,
   headSha: string,
   log?: EventLog,
+  options: {
+    /** The project's integration branch (INT-12); `main` only when none is given. */
+    base?: string;
+    /** The evidence summary, when the caller holds the reviewed evidence (INT-12a). */
+    body?: string;
+    /**
+     * Post check runs and SARIF: the App only — a person's `gh` token cannot
+     * create check runs.
+     */
+    checks?: boolean;
+  } = {},
 ): Promise<PullRequestRef> {
   const ev = readEvidence(repoPath, card.id);
   const life = new PullRequestLifecycle(client, repo);
   const pr = await life.openDraft({
     head: branch,
-    base: "main",
+    base: options.base ?? "main",
     title: card.title.replace(/\s*\(SPIDR:[^)]*\)\s*$/, ""),
-    body: prBody(card, ev),
+    body: options.body ?? prBody(card, ev),
   });
+  if (options.checks === false) {
+    await log?.append({
+      actor: "harness",
+      type: PR_EVENT,
+      cardId: card.id,
+      payload: { ...pr, repo },
+    });
+    return pr;
+  }
   for (const r of ev?.rungResults ?? []) {
     // A skipped rung (nothing declared, nothing to scan) ran nothing: it is in
     // the evidence, never posted as a failing check.
@@ -127,16 +151,8 @@ export async function openPullRequestViaApp(
  * Advance every open Sekhemet PR one lifecycle step (Y16): ready with
  * CODEOWNERS reviewers once all checks pass, auto-merge when enabled.
  */
-export async function advancePullRequests(
-  client: GitHubClient,
-  repoPath: string,
-  log: EventLog,
-  options: { autoMerge: boolean },
-): Promise<{ number: number; state: string }[]> {
-  const codeownersPath = [".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"]
-    .map((p) => join(repoPath, p))
-    .find((p) => existsSync(p));
-  const codeowners = codeownersPath ? readFileSync(codeownersPath, "utf8") : undefined;
+/** The Sekhemet pull requests not yet marked ready (or set to auto-merge). */
+async function pendingPullRequests(log: EventLog) {
   const opened = await log.getEventsByTypes([PR_EVENT, "github/pr_advanced"]);
   const done = new Set(
     opened
@@ -147,14 +163,31 @@ export async function advancePullRequests(
       )
       .map((e) => (e.payload as { number: number }).number),
   );
+  return opened.filter(
+    (e) => e.type === PR_EVENT && !done.has((e.payload as { number: number }).number),
+  );
+}
+
+export async function advancePullRequests(
+  client: GitHubClient,
+  repoPath: string,
+  log: EventLog,
+  options: {
+    autoMerge: boolean;
+    /** A card's changed files, from its evidence on the ledger (else the evidence file's diff). */
+    filesOf?: (cardId: string) => Promise<readonly string[] | undefined>;
+  },
+): Promise<{ number: number; state: string }[]> {
+  // CODEOWNERS as the integration branch holds it (review-git §2.4.2).
+  const codeowners = readCodeowners(repoPath);
   const out: { number: number; state: string }[] = [];
-  for (const e of opened.filter((x) => x.type === PR_EVENT)) {
+  for (const e of await pendingPullRequests(log)) {
     const p = e.payload as PullRequestRef & { repo: { owner: string; repo: string } };
-    if (done.has(p.number)) continue;
     const ev = readEvidence(repoPath, e.cardId ?? "");
-    const files = [...new Set((ev?.diff ?? "").match(/^\+\+\+ b\/(.+)$/gm) ?? [])].map((l) =>
+    const fromDiff = [...new Set((ev?.diff ?? "").match(/^\+\+\+ b\/(.+)$/gm) ?? [])].map((l) =>
       l.slice(6),
     );
+    const files = [...((await options.filesOf?.(e.cardId ?? "")) ?? fromDiff)];
     const state = await new PullRequestLifecycle(client, p.repo).advance(p, {
       autoMerge: options.autoMerge,
       ...(codeowners ? { codeowners } : {}),
@@ -173,159 +206,498 @@ export async function advancePullRequests(
   return out;
 }
 
-/** A tracker adapter from the environment: the GitHub App or Forgejo (Y10, Y11). */
-export function trackerFromEnv(
-  client: GitHubClient | undefined,
+/**
+ * INT-12b on either transport: advance the open Sekhemet pull requests —
+ * ready once every check passes, the code owners of the card's changed files
+ * asked to review, auto-merge by policy — through the App or the user's own
+ * `gh` login. Nothing is resolved, and `gh` is not run, when none is open.
+ */
+export async function advanceOpenPullRequests(
+  repoPath: string,
+  cardStore: CardStore,
+  log: EventLog,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<{ number: number; state: string }[]> {
+  if ((await pendingPullRequests(log)).length === 0) return [];
+  const t = await githubTransport(repoPath, egressRecorder(log), env);
+  return advancePullRequests(t.client, repoPath, log, {
+    autoMerge: env.SEKHEMET_GITHUB_AUTOMERGE === "1",
+    filesOf: async (cardId) => (await latestLedgerEvidence(cardStore, cardId))?.filesTouched,
+  });
+}
+
+/**
+ * Forgejo from the environment, when configured (Y11), over the caller's
+ * network policy (`integrationFetch` with purpose `integration:forgejo`);
+ * GitHub is `githubTransport`'s.
+ */
+export function forgejoFromEnv(
+  fetchFor: (apiUrl: string) => FetchLike,
   env: NodeJS.ProcessEnv = process.env,
 ): SyncAdapter | undefined {
-  const gh = ownerRepo(env.SEKHEMET_GITHUB_REPO);
-  if (client && gh) return new GitHubIssuesAdapter(gh, staticToken(""), undefined, client);
-  const fj = ownerRepo(env.SEKHEMET_FORGEJO_REPO);
+  const fj = ownerRepoOf(env.SEKHEMET_FORGEJO_REPO);
   if (env.SEKHEMET_FORGEJO_URL && env.SEKHEMET_FORGEJO_TOKEN && fj) {
-    return new ForgejoIssuesAdapter(env.SEKHEMET_FORGEJO_URL, fj, env.SEKHEMET_FORGEJO_TOKEN);
+    return new ForgejoIssuesAdapter(
+      env.SEKHEMET_FORGEJO_URL,
+      fj,
+      env.SEKHEMET_FORGEJO_TOKEN,
+      fetchFor(env.SEKHEMET_FORGEJO_URL),
+    );
   }
   return undefined;
 }
 
 /**
- * Two-way sync through a tracker adapter (Y10, Y11, Y20). Pull: new items
- * become Backlog cards; linked cards merge shared fields last-writer-wins
- * with the losing value kept on the ledger; an issue whose scope changed
- * while its card runs pauses the card behind a decision request. Push:
- * unlinked cards open issues; done cards close theirs.
+ * The card linked to an external item (integrations item 9, INT-1): by its
+ * one identity; a GitHub card linked before the one ID (a bare issue number
+ * with the same URL) is found too and moved to `owner/repo#n`.
+ */
+export async function findLinkedCard(
+  store: CardStore,
+  ref: ExternalRef,
+  cards?: readonly CardRecord[],
+): Promise<CardRecord | undefined> {
+  const all = cards ?? (await store.listCards());
+  const exact = all.find(
+    (c) => c.externalRef?.system === ref.system && c.externalRef.id === ref.id,
+  );
+  if (exact) return exact;
+  if (ref.system !== "github" || !ref.id.includes("#")) return undefined;
+  const n = String(issueNumberOf(ref.id));
+  const legacy = all.find(
+    (c) =>
+      c.externalRef?.system === "github" &&
+      c.externalRef.id === n &&
+      (!c.externalRef.url || c.externalRef.url === ref.url),
+  );
+  if (!legacy) return undefined;
+  return store.updateCard(legacy.id, { externalRef: ref }, "github");
+}
+
+/** What the last sync agreed for one item (integrations item 4): the merge's base. */
+interface Snapshot {
+  item: ExternalItem;
+  agreed: SharedFields;
+  /** The card's owner when agreed: a board change of owner is a change of assignee. */
+  boardOwner: string | null;
+  /** Whether the card was delegated to the Worker when agreed. */
+  worker: boolean;
+}
+
+/** The label the board writes for a webhook issue's sub-issues (item 12). */
+export const SUB_ISSUES_PREFIX = "sub-issues:";
+export const subIssuesLabel = (numbers: readonly number[]) =>
+  `${SUB_ISSUES_PREFIX}${numbers.join(",")}`;
+/** A label the board keeps for itself: never synced, never replaced by the tracker's (M2). */
+const boardOnly = (label: string) => label.startsWith(SUB_ISSUES_PREFIX);
+
+const snapKey = (ref: ExternalRef) => `${ref.system}:${ref.id}`;
+const sharedOf = (item: ExternalItem): SharedFields => ({
+  title: item.title,
+  body: item.body,
+  labels: [...item.labels],
+  ...(item.assignee ? { assignee: item.assignee } : {}),
+});
+const sameShared = (a: SharedFields, b: SharedFields) =>
+  a.title === b.title &&
+  a.body === b.body &&
+  JSON.stringify([...a.labels].sort()) === JSON.stringify([...b.labels].sort()) &&
+  (a.assignee ?? null) === (b.assignee ?? null);
+
+/** Canonical (key-sorted) JSON, so equal values hash equal. */
+function canonical(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
+  if (v && typeof v === "object") {
+    return `{${Object.keys(v)
+      .sort()
+      .filter((k) => (v as Record<string, unknown>)[k] !== undefined)
+      .map((k) => `${JSON.stringify(k)}:${canonical((v as Record<string, unknown>)[k])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(v ?? null);
+}
+const hashOf = (v: unknown) => createHash("sha256").update(canonical(v)).digest("hex");
+
+/**
+ * Each item's latest snapshot. Its item and agreed fields — logins and the
+ * issue's text — are the event's private part (kernel rule 33, B4.9 review
+ * B2): an erased snapshot is no base, so the next sync merges as on a first
+ * link. A snapshot written before they were private is read from its payload.
+ */
+async function snapshots(log: EventLog): Promise<Map<string, Snapshot>> {
+  const out = new Map<string, Snapshot>();
+  const isObject = (v: unknown): v is Record<string, unknown> =>
+    v !== null && typeof v === "object" && !Array.isArray(v);
+  for (const e of await log.getEventsByTypes(["sync/snapshot"])) {
+    const p = e.payload as {
+      ref?: ExternalRef;
+      item?: ExternalItem;
+      agreed?: SharedFields;
+      boardOwner?: string | null;
+      worker?: boolean;
+    };
+    const priv = (e.private ?? {}) as { item?: unknown; agreed?: unknown };
+    const item = isObject(priv.item) ? (priv.item as unknown as ExternalItem) : p.item;
+    const ref = p.ref ?? p.item?.ref;
+    if (!ref) continue;
+    if (!isObject(item)) {
+      out.delete(snapKey(ref));
+      continue;
+    }
+    out.set(snapKey(ref), {
+      item,
+      agreed: isObject(priv.agreed)
+        ? (priv.agreed as unknown as SharedFields)
+        : (p.agreed ?? sharedOf(item)),
+      boardOwner: p.boardOwner ?? null,
+      worker: p.worker ?? false,
+    });
+  }
+  return out;
+}
+
+/**
+ * Record what both sides agree for a linked card after a sync (the next
+ * merge's base): its ref, the tracker's `updatedAt` and the hashes public,
+ * the item and the agreed fields private and erasable (B4.9 review B2).
+ */
+export async function recordSnapshot(
+  store: CardStore,
+  card: CardRecord | null | undefined,
+  item: ExternalItem,
+  agreed: SharedFields = sharedOf(item),
+): Promise<void> {
+  if (!card) return;
+  await store.recordEvent({
+    type: "sync/snapshot",
+    cardId: card.id,
+    actor: item.ref.system === "github" ? "github" : "sync",
+    payload: {
+      ref: { system: item.ref.system, id: item.ref.id, url: item.ref.url },
+      updatedAt: item.updatedAt,
+      itemHash: hashOf(item),
+      agreedHash: hashOf(agreed),
+      boardOwner: card.owner ?? null,
+      worker: card.delegate?.kind === "worker",
+    },
+    private: { item, agreed },
+  });
+}
+
+/** Which way a sync goes (M6): take the tracker's changes, send the board's, or both. */
+export type SyncDirection = "pull" | "push" | "both";
+
+/**
+ * Two-way sync through a tracker adapter (integrations items 4–9, P9 and
+ * NEW-integrations-2). Pull: a new item becomes a Backlog card; a linked
+ * card merges its shared fields three ways against the last snapshot — a
+ * tracker-only change comes to the board (deferred while the card runs,
+ * INT-7), a board-only change goes to the tracker (INT-5), and only a field
+ * both changed is a conflict (INT-6). The tracker's assignee becomes the
+ * card's owner through the person's linked login (INT-40); a login linked to
+ * no one leaves the owner and is recorded once (INT-41). An item whose
+ * `updatedAt` the snapshot already holds, on a card unchanged since, is
+ * skipped (INT-11d). Push: unlinked cards open issues with the owner's login
+ * as assignee and the Worker as a label (INT-36); Done closes the issue.
+ *
+ * `direction` (M6): `pull` takes the tracker's changes and sends nothing —
+ * no update, no new issue; `push` sends the board's changes and changes
+ * nothing on the board — no new card, no field, no owner. A change a
+ * direction does not carry keeps the old base in the snapshot, so the next
+ * sync that carries it still sees it (the same rule as INT-7).
+ *
+ * A scope or acceptance-criteria edit to a running card (INT-11a) is
+ * recorded on the card as `sync/scope_changed`; the Worker is not paused,
+ * and at the card's end the runner moves it to Planning, not Review.
  */
 export async function syncViaAdapter(
   adapter: SyncAdapter,
   cardStore: CardStore,
   log: EventLog,
   since: string,
-): Promise<{ created: number; updated: number; paused: number; pushed: number; errors: string[] }> {
-  const out = { created: 0, updated: 0, paused: 0, pushed: 0, errors: [] as string[] };
-  // The ledger's actor for this tracker ("github", or "sync" for Forgejo).
+  direction: SyncDirection = "both",
+): Promise<{
+  /** Cards created from new items. */
+  created: number;
+  /** Cards the tracker's changes updated. */
+  updated: number;
+  /** Running cards whose scope or criteria the tracker changed (INT-11a). */
+  scopeChanged: number;
+  /** Items the board's changes updated. */
+  pushed: number;
+  /** New items opened for unlinked cards. */
+  linked: number;
+  /** Cards nested deeper than the tracker's `maxDepth`: not written, linked to an ancestor (INT-11e). */
+  clamped: { id: string; ancestor: string }[];
+  errors: string[];
+}> {
+  const out = {
+    created: 0,
+    updated: 0,
+    scopeChanged: 0,
+    pushed: 0,
+    linked: 0,
+    clamped: [] as { id: string; ancestor: string }[],
+    errors: [] as string[],
+  };
+  const takes = direction !== "push";
+  const sends = direction !== "pull";
   const actor = adapter.system === "github" ? "github" : "sync";
-  const snapshots = new Map<string, ExternalItem>();
-  for (const e of await log.getEventsByTypes(["sync/snapshot"])) {
-    const item = (e.payload as { item: ExternalItem }).item;
-    snapshots.set(`${item.ref.system}:${item.ref.id}`, item);
-  }
+  const system = adapter.system === "forgejo" ? "forgejo" : "github";
+  const snaps = await snapshots(log);
+  const handleOf = (principal: string | undefined) =>
+    principal ? cardStore.handleOf(principal, system) : undefined;
   let items: ExternalItem[] = [];
   try {
     items = await adapter.pull(since);
   } catch (err) {
     out.errors.push(`pull: ${err instanceof Error ? err.message : String(err)}`);
   }
-  const cards = await cardStore.listCards();
-  for (const item of items) {
-    const key = `${item.ref.system}:${item.ref.id}`;
-    const card = cards.find(
-      (c) => c.externalRef?.system === item.ref.system && c.externalRef.id === item.ref.id,
-    );
-    if (!card) {
-      if (item.state === "closed") continue;
-      await cardStore.createCard(
-        {
-          tier: "task",
-          title: item.title.slice(0, 300),
-          status: "backlog",
-          ...(item.body.trim() ? { spec: item.body.trim() } : {}),
-          labels: item.labels,
-          externalRef: item.ref,
-        },
-        actor,
-      );
-      out.created++;
-    } else {
-      const before = snapshots.get(key);
-      const rec = before ? reconcileExternalEdit(card, before, item) : { action: "none" as const };
-      if (rec.action === "pause_and_ask") {
-        await new DecisionStore({ store: cardStore, log }).request({
-          id: `sync_${key}_${item.updatedAt}`,
-          cardId: card.id,
-          question: rec.question,
-          options: [
-            {
-              label: "Continue with the old version",
-              consequence: "the running work stands",
-              effortDelta: "0",
-              riskNote: "May not match the issue now.",
-            },
-            {
-              label: "Restart with the new version",
-              consequence: "the card re-plans from the issue",
-              effortDelta: "a new attempt",
-              riskNote: "Discards the running attempt.",
-            },
-          ],
-          previewSketches: [],
-          recommendation: {
-            optionIndex: 1,
-            rationale: "The issue is the source of truth for scope.",
-          },
-          policy: "default_deny",
-          defaultIfNoAnswer: { deadline: new Date(Date.now() + 12 * 3_600_000).toISOString() },
-          category: "scope_boundary",
-          createdAt: new Date().toISOString(),
-        });
-        out.paused++;
-      } else if (rec.action !== "none" || !before) {
-        const merged = mergeLastWriterWins(
+  let cards = await cardStore.listCards();
+  const reconcile = async (item: ExternalItem): Promise<void> => {
+    try {
+      const card = await findLinkedCard(cardStore, item.ref, cards);
+      if (!card) {
+        if (item.state === "closed" || !takes) return;
+        const created = await cardStore.createCard(
           {
-            id: card.id,
-            title: card.title,
-            ...(card.spec ? { spec: card.spec } : {}),
-            labels: card.labels ?? [],
-            status: card.status,
-            updatedAt: card.updatedAt,
+            tier: "task",
+            title: item.title.slice(0, 300),
+            status: "backlog",
+            ...(item.body.trim() ? { spec: item.body.trim() } : {}),
+            labels: item.labels,
+            externalRef: item.ref,
           },
-          item,
+          actor,
         );
-        if (
-          merged.history.some((h) => h.winner === "tracker") &&
-          !["in_progress", "verify"].includes(card.status)
-        ) {
-          await cardStore.updateCard(
-            card.id,
-            {
-              title: merged.card.title,
-              ...(merged.card.spec ? { spec: merged.card.spec } : {}),
-              labels: merged.card.labels ?? [],
-            },
+        const owner = item.assignee
+          ? cardStore.principalForHandle(system, item.assignee)
+          : undefined;
+        if (owner) await cardStore.changeOwner(created.id, owner, undefined, actor);
+        await recordSnapshot(cardStore, await cardStore.getCard(created.id), item);
+        cards = await cardStore.listCards();
+        out.created++;
+        return;
+      }
+      const snap = snaps.get(snapKey(item.ref));
+      const worker = card.delegate?.kind === "worker";
+      const boardAssignee =
+        snap && (card.owner ?? null) === snap.boardOwner
+          ? snap.agreed.assignee
+          : handleOf(card.owner);
+      // The board's own labels (the sub-issues note) are never synced (M2).
+      const kept = (card.labels ?? []).filter(boardOnly);
+      const board: SharedFields = {
+        title: card.title,
+        body: card.spec ?? "",
+        labels: (card.labels ?? []).filter((l) => !boardOnly(l)),
+        ...(boardAssignee ? { assignee: boardAssignee } : {}),
+      };
+      const closeIt = sends && card.status === "done" && item.state !== "closed";
+      const delegateDiffers = worker !== (item.delegatedToWorker ?? false);
+      if (
+        snap &&
+        snap.item.updatedAt === item.updatedAt &&
+        sameShared(board, snap.agreed) &&
+        // A tracker edit deferred while the card ran is still pending (INT-7).
+        sameShared(sharedOf(item), snap.agreed) &&
+        snap.worker === worker &&
+        !closeIt
+      ) {
+        return; // INT-11d: seen, and nothing changed on either side since.
+      }
+      const running = ["in_progress", "verify"].includes(card.status);
+      if (running && takes && snap && snap.item.updatedAt !== item.updatedAt) {
+        // INT-11a: recorded on the card, never a pause; the runner reads it at the card's end.
+        const rec = reconcileExternalEdit(card, snap.item, item);
+        if (rec.action === "replan_on_completion") {
+          await cardStore.recordEvent({
+            type: "sync/scope_changed",
+            cardId: card.id,
             actor,
-          );
-          out.updated++;
+            payload: { id: card.id, fields: rec.fields, change: rec.change },
+          });
+          out.scopeChanged++;
         }
-        if (merged.history.length) {
+      }
+      const m = mergeThreeWay(
+        snap?.agreed,
+        { ...board, updatedAt: card.updatedAt },
+        { ...sharedOf(item), updatedAt: item.updatedAt },
+      );
+      const agreed: SharedFields = { ...m.merged };
+      const setAgreed = (f: keyof SharedFields, v: unknown) => {
+        (agreed as unknown as Record<string, unknown>)[f] = v;
+      };
+      // INT-7 and M6: a change this sync does not carry keeps the old base,
+      // so the next sync that carries it still sees it — the tracker's edit
+      // to a running card, the tracker's side on a push, the board's on a pull.
+      const toBoard = running || !takes ? {} : m.toBoard;
+      for (const f of Object.keys(m.toBoard) as (keyof SharedFields)[]) {
+        if (f in toBoard) continue;
+        setAgreed(f, snap ? snap.agreed[f] : board[f]);
+      }
+      const toTracker = sends ? m.toTracker : {};
+      for (const f of Object.keys(m.toTracker) as (keyof SharedFields)[]) {
+        if (f in toTracker) continue;
+        setAgreed(f, snap ? snap.agreed[f] : sharedOf(item)[f]);
+      }
+      const fields = {
+        ...(toBoard.title !== undefined ? { title: toBoard.title.slice(0, 300) } : {}),
+        ...(toBoard.body !== undefined ? { spec: toBoard.body } : {}),
+        ...(toBoard.labels !== undefined ? { labels: [...toBoard.labels, ...kept] } : {}),
+      };
+      if (Object.keys(fields).length > 0) {
+        await cardStore.updateCard(card.id, fields, actor);
+        out.updated++;
+      }
+      if ("assignee" in toBoard) {
+        const login = toBoard.assignee;
+        const owner = login ? cardStore.principalForHandle(system, login) : undefined;
+        if (login && !owner) {
+          // INT-41: a login linked to no one never becomes the owner.
           await cardStore.recordEvent({
             type: "sync/conflict",
             cardId: card.id,
             actor,
-            payload: merged.history,
+            payload: { field: "assignee", reason: "unmapped" },
+            private: { assignee: login },
           });
+        } else if ((owner ?? null) !== (card.owner ?? null)) {
+          await cardStore.changeOwner(card.id, owner ?? null, undefined, actor);
+          out.updated++;
         }
       }
-    }
-    await log.append({ actor, type: "sync/snapshot", payload: { item } });
-  }
-  for (const card of await cardStore.listCards()) {
-    if (card.tier === "epic") continue;
-    try {
-      if (!card.externalRef && card.status !== "done" && card.status !== "rejected") {
-        const ref = await adapter.push({
-          id: card.id,
-          title: card.title,
-          ...(card.spec ? { spec: card.spec } : {}),
-          status: card.status,
-          updatedAt: card.updatedAt,
+      // A conflict is recorded when this sync resolves it; one it does not
+      // carry is seen again, and recorded, by the sync that does.
+      const resolved = m.history.filter((h) =>
+        h.winner === "tracker" ? h.field in toBoard : sends,
+      );
+      if (resolved.length) {
+        await cardStore.recordEvent({
+          type: "sync/conflict",
+          cardId: card.id,
+          actor,
+          payload: {
+            fields: resolved.map((h) => ({ field: h.field, winner: h.winner, at: h.at })),
+          },
+          private: {
+            values: resolved.map((h) => ({ field: h.field, kept: h.kept, lost: h.lost })),
+          },
         });
-        await cardStore.updateCard(card.id, { externalRef: ref }, actor);
-        out.pushed++;
-      } else if (card.externalRef?.system === adapter.system && card.status === "done") {
-        const remote = items.find((i) => i.ref.id === card.externalRef?.id);
-        if (remote && remote.state !== "closed") {
-          await adapter.update(card.externalRef, { status: "done" });
-          out.pushed++;
-        }
       }
+      const patch: Partial<SyncCard> = { id: card.id };
+      if (toTracker.title !== undefined) patch.title = toTracker.title;
+      if (toTracker.body !== undefined) patch.spec = toTracker.body;
+      if (sends && (toTracker.labels !== undefined || delegateDiffers)) {
+        // M1: the merged labels — a label the tracker added is kept.
+        patch.labels = [...m.merged.labels];
+        if (worker) patch.delegate = "worker";
+      }
+      if ("assignee" in toTracker) patch.owner = toTracker.assignee;
+      if (closeIt) patch.status = "done";
+      let after = item;
+      if (Object.keys(patch).length > 1) {
+        await adapter.update(item.ref, patch);
+        out.pushed++;
+        // What the tracker holds now, so the next sync does not take the
+        // board's own push for a tracker edit.
+        const { assignee: _was, ...rest } = item;
+        const assignee = "owner" in patch ? patch.owner : item.assignee;
+        after = {
+          ...rest,
+          ...(assignee ? { assignee } : {}),
+          ...(patch.title !== undefined ? { title: patch.title } : {}),
+          ...(patch.spec !== undefined ? { body: patch.spec } : {}),
+          ...(patch.labels !== undefined
+            ? { labels: patch.labels, delegatedToWorker: worker }
+            : {}),
+          ...(patch.status === "done" ? { state: "closed" as const } : {}),
+        };
+      }
+      await recordSnapshot(cardStore, await cardStore.getCard(card.id), after, agreed);
+    } catch (err) {
+      out.errors.push(`${item.ref.id}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+  for (const item of items) await reconcile(item);
+  // A linked item the pull did not return has not changed since `since`: its
+  // snapshot is the tracker's state, so a board-only change is still pushed
+  // (INT-5) and an edit deferred while the card ran still lands (INT-7).
+  const pulled = new Set(items.map((i) => snapKey(i.ref)));
+  for (const card of await cardStore.listCards()) {
+    const ref = card.externalRef;
+    if (ref?.system !== adapter.system || pulled.has(snapKey(ref))) continue;
+    const snap = snaps.get(snapKey(ref));
+    if (snap) await reconcile(snap.item);
+  }
+  if (!sends) return out;
+  const all = await cardStore.listCards();
+  const byId = new Map(all.map((c) => [c.id, c]));
+  const writable = (c: CardRecord | undefined) => c !== undefined && c.tier !== "epic";
+  // A card's written ancestors, nearest first (epics are never written).
+  const ancestorsOf = (c: CardRecord): CardRecord[] => {
+    const chain: CardRecord[] = [];
+    const seen = new Set([c.id]);
+    for (let p = byId.get(c.parentId ?? ""); p && !seen.has(p.id); p = byId.get(p.parentId ?? "")) {
+      seen.add(p.id);
+      if (writable(p)) chain.push(p);
+    }
+    return chain;
+  };
+  const maxDepth = Math.max(1, adapter.capabilities.maxDepth);
+  // Parents first, so a card's ancestor is linked before the card is decided.
+  const depthOf = (c: CardRecord) => ancestorsOf(c).length + 1;
+  const pending = all
+    .filter((c) => writable(c) && !c.externalRef)
+    .filter((c) => c.status !== "done" && c.status !== "rejected")
+    .sort((a, b) => depthOf(a) - depthOf(b));
+  for (const card of pending) {
+    if (depthOf(card) > maxDepth) {
+      // INT-11e: never deeper than the tracker nests. The card is linked to
+      // its nearest ancestor at the deepest written level, once.
+      const ancestor = ancestorsOf(card)[depthOf(card) - maxDepth - 1] as CardRecord;
+      out.clamped.push({ id: card.id, ancestor: ancestor.id });
+      const ref = (await cardStore.getCard(ancestor.id))?.externalRef;
+      const linked = (await cardStore.cardEvents(card.id, ["sync/clamped"])).some(
+        (e) => (e.payload as { ancestor?: string }).ancestor === ancestor.id,
+      );
+      if (ref && !linked) {
+        await cardStore.recordEvent({
+          type: "sync/clamped",
+          cardId: card.id,
+          actor,
+          payload: { id: card.id, ancestor: ancestor.id, ref: ref.id, maxDepth },
+        });
+      }
+      continue;
+    }
+    try {
+      const owner = handleOf(card.owner);
+      const worker = card.delegate?.kind === "worker";
+      const labels = (card.labels ?? []).filter((l) => !boardOnly(l));
+      const ref = await adapter.push({
+        id: card.id,
+        title: card.title,
+        ...(card.spec ? { spec: card.spec } : {}),
+        labels,
+        ...(owner ? { owner } : {}),
+        ...(worker ? { delegate: "worker" as const } : {}),
+        status: card.status,
+        updatedAt: card.updatedAt,
+      });
+      const linked = await cardStore.updateCard(card.id, { externalRef: ref }, actor);
+      await recordSnapshot(cardStore, linked, {
+        ref,
+        title: card.title,
+        body: card.spec ?? "",
+        labels,
+        ...(owner ? { assignee: owner } : {}),
+        delegatedToWorker: worker,
+        state: "open",
+        updatedAt: "",
+      });
+      out.linked++;
     } catch (err) {
       out.errors.push(`${card.id}: ${err instanceof Error ? err.message : String(err)}`);
     }

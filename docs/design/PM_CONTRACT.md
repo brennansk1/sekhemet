@@ -141,8 +141,16 @@ interface PmProposal {
   `{ id, name, tier: "now" | "next" | "later", connected, detail?, lastSyncAt?, via }`.
   The `via` values are `"gh-cli"`, `"csv"`, `"webhook"` and `"api"`.
 - `POST /api/integrations/github/sync` with `{ direction: "pull" | "push" | "both" }`
-  returns `{ created, updated, skipped, errors }`. It uses the local `gh` CLI
-  and the user's own auth; no tokens are stored by Sekhemet.
+  returns `{ created, updated, skipped, clamped, errors }`. `pull` takes the
+  tracker's changes and sends nothing; `push` sends the board's changes and
+  changes nothing on the board; `both` does both. `clamped` lists
+  `{ id, ancestor }` for cards nested deeper than the tracker allows, which
+  are not written. It uses the GitHub App when configured, else the token of
+  the user's own `gh` login; no tokens are stored by Sekhemet. Every request
+  goes through the network policy: offline (the default) it is refused, and
+  the error names `[network] mode`.
+- An integration's `detail` in `GET /api/integrations` says "blocked by
+  network mode" when the network policy cannot reach it.
 - `GET /api/export?format=jira-csv|linear-csv|github-json|json` downloads the
   board in that tool's native import format, with
   `Content-Disposition: attachment; filename="sekhemet-<project>-<format>.<csv|json>"`.

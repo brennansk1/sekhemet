@@ -8,6 +8,7 @@ import {
   policyRefusal,
 } from "@sekhemet/sandbox";
 import { networkConfigs } from "./config_apply.js";
+import { egressEvent } from "./egress_event.js";
 import { userPaths } from "./user_dir.js";
 
 /**
@@ -93,31 +94,25 @@ export function researchFetch(
 ): (input: string | URL, init?: RequestInit) => Promise<Response> {
   const n = networkConfigs(repoPath);
   const policy = mergeNetworkConfigs(n.user, n.project);
-  const record = (r: NetworkRequestRecord) => {
-    void log
-      .append({ actor: "harness", type: "harness/egress", payload: r })
-      .catch(() => undefined);
-  };
+  // A request whose record fails fails too (security item 33).
+  const record = (r: NetworkRequestRecord) => log.append({ actor: "harness", ...egressEvent(r) });
   const fetchVia = policyFetch(policy, { purpose: "research", research: true, record });
   return async (input, init) => {
     if (policy.research !== "yes") {
       const url = new URL(String(input));
       const reason = `research not allowed ([network] research is not "yes"${n.project.research === "no" ? " for this project" : ""})`;
-      await log
-        .append({
-          actor: "harness",
-          type: "harness/egress",
-          payload: {
-            url: url.toString(),
-            host: url.hostname,
-            purpose: "research",
-            allowed: false,
-            reason,
-            payloadHash: "",
-            at: new Date().toISOString(),
-          } satisfies NetworkRequestRecord,
-        })
-        .catch(() => undefined);
+      await log.append({
+        actor: "harness",
+        ...egressEvent({
+          url: url.toString(),
+          host: url.hostname,
+          purpose: "research",
+          allowed: false,
+          reason,
+          payloadHash: "",
+          at: new Date().toISOString(),
+        }),
+      });
       throw new Error(`network policy refused ${url.hostname}: ${reason}`);
     }
     return fetchVia(input, init);
@@ -142,21 +137,18 @@ export function researchGate(
       policy.research !== "yes"
         ? `research not allowed ([network] research is not "yes"${n.project.research === "no" ? " for this project" : ""})`
         : policyRefusal(policy, u.hostname, { research: true });
-    await log
-      .append({
-        actor: "harness",
-        type: "harness/egress",
-        payload: {
-          url: u.toString(),
-          host: u.hostname,
-          purpose: `research:${via}`,
-          allowed: reason === undefined,
-          ...(reason ? { reason } : {}),
-          payloadHash: "",
-          at: new Date().toISOString(),
-        } satisfies NetworkRequestRecord,
-      })
-      .catch(() => undefined);
+    await log.append({
+      actor: "harness",
+      ...egressEvent({
+        url: u.toString(),
+        host: u.hostname,
+        purpose: `research:${via}`,
+        allowed: reason === undefined,
+        ...(reason ? { reason } : {}),
+        payloadHash: "",
+        at: new Date().toISOString(),
+      }),
+    });
     if (reason) throw new Error(`network policy refused ${u.hostname}: ${reason}`);
   };
 }

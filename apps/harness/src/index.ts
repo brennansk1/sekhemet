@@ -76,6 +76,7 @@ import {
 } from "./config_apply.js";
 import { daemonStart, daemonStatus, daemonStop, rotateLog } from "./daemon.js";
 import { type DoctorReport, runDoctor } from "./doctor.js";
+import { egressEvent } from "./egress_event.js";
 import {
   type QueueEntry,
   type QueueReport,
@@ -1133,17 +1134,14 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
                 })(),
                 {
                   purpose: "supply-chain",
-                  record: (r) => {
-                    void cardStore
-                      .recordEvent({
-                        type: "harness/egress",
-                        // Inside the card-diff branch: cardId is set.
-                        cardId: String(cardId),
-                        actor: "system",
-                        payload: r,
-                      })
-                      .catch(() => undefined);
-                  },
+                  // Inside the card-diff branch: cardId is set. A lookup whose
+                  // record fails fails too (security item 33).
+                  record: (r) =>
+                    cardStore.recordEvent({
+                      ...egressEvent(r),
+                      cardId: String(cardId),
+                      actor: "system",
+                    }),
                 },
               ) as typeof fetch,
             }),
@@ -2045,7 +2043,10 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       board: boardService,
       learning: ctx.learning,
       reviewer: () => router.use(reviewerModel ? "reviewer" : "manager"),
-      ...(reviewPosterFromEnv() ? { github: reviewPosterFromEnv() } : {}),
+      ...(() => {
+        const poster = reviewPosterFromEnv(config.repoPath, cardStore);
+        return poster ? { github: poster } : {};
+      })(),
       say: (line) => console.log(line),
     });
     // X3: images on Ready cards are described by the vision model in one

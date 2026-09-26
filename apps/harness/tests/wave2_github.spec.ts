@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { generateKeyPairSync } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { type IncomingMessage, type ServerResponse, createServer } from "node:http";
@@ -6,6 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
+import { DecisionStore } from "@sekhemet/planner";
 import { GitHubClient, staticToken } from "@sekhemet/sync";
 import { afterEach, describe, expect, it } from "vitest";
 import { syncGithub } from "../src/integrations.js";
@@ -65,7 +67,7 @@ function kernel() {
 
 describe("Y12: the App client comes from the environment", () => {
   it("is absent without an App id, and built from a key path with GHES endpoints", () => {
-    expect(githubAppFromEnv({})).toBeUndefined();
+    expect(githubAppFromEnv({}, fetch)).toBeUndefined();
     const { privateKey } = generateKeyPairSync("rsa", {
       modulusLength: 2048,
       privateKeyEncoding: { type: "pkcs8", format: "pem" },
@@ -73,12 +75,15 @@ describe("Y12: the App client comes from the environment", () => {
     });
     const dir = tmp();
     writeFileSync(join(dir, "key.pem"), privateKey);
-    const c = githubAppFromEnv({
-      SEKHEMET_GITHUB_APP_ID: "1",
-      SEKHEMET_GITHUB_INSTALLATION_ID: "2",
-      SEKHEMET_GITHUB_APP_KEY_PATH: join(dir, "key.pem"),
-      SEKHEMET_GITHUB_HOST: "https://ghes.corp",
-    });
+    const c = githubAppFromEnv(
+      {
+        SEKHEMET_GITHUB_APP_ID: "1",
+        SEKHEMET_GITHUB_INSTALLATION_ID: "2",
+        SEKHEMET_GITHUB_APP_KEY_PATH: join(dir, "key.pem"),
+        SEKHEMET_GITHUB_HOST: "https://ghes.corp",
+      },
+      fetch,
+    );
     expect(c).toBeInstanceOf(GitHubClient);
   });
 });
@@ -102,7 +107,12 @@ describe("Y14/Y15/Y16: the PR through the App", () => {
       }),
     );
     write(repo, ".sekhemet/evidence/c1.sarif", '{"version":"2.1.0","runs":[]}');
+    // CODEOWNERS as the integration branch holds it, not the working tree.
     write(repo, ".github/CODEOWNERS", "/src/ @alice\n");
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: repo });
+    git("init", "-q", "-b", "main");
+    git("add", ".github/CODEOWNERS");
+    git("-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-q", "-m", "owners");
     let checks = [{ status: "completed", conclusion: "success" }];
     const srv = await fake((method, url) => {
       if (method === "POST" && url === "/repos/o/r/pulls") {
@@ -117,10 +127,11 @@ describe("Y14/Y15/Y16: the PR through the App", () => {
       if (url === "/graphql") return { json: { data: {} } };
       return { status: 200, json: {} };
     });
-    const client = new GitHubClient(staticToken("t"), {
-      apiUrl: srv.url,
-      graphqlUrl: `${srv.url}/graphql`,
-    });
+    const client = new GitHubClient(
+      staticToken("t"),
+      { apiUrl: srv.url, graphqlUrl: `${srv.url}/graphql` },
+      { fetch },
+    );
     const { log, cardStore } = kernel();
     await cardStore.createCard({
       id: "c1",
@@ -162,8 +173,8 @@ describe("Y14/Y15/Y16: the PR through the App", () => {
   });
 });
 
-describe("Y10/Y11/Y20: syncGithub goes through the tracker adapter when configured", () => {
-  it("pulls a Forgejo issue into a card, pushes unlinked cards, and pauses a running card on a scope change", async () => {
+describe("Y10/Y11, INT-11a: syncGithub goes through the tracker adapter when configured", () => {
+  it("pulls a Forgejo issue into a card, pushes unlinked cards, and records a running card's scope change without pausing it", async () => {
     let body = "Touch src/a.ts";
     let updated = "2026-09-19T00:00:00Z";
     const srv = await fake((method, url) => {
@@ -205,7 +216,18 @@ describe("Y10/Y11/Y20: syncGithub goes through the tracker adapter when configur
     body = "Touch src/a.ts and src/b.ts";
     updated = "2026-09-20T00:00:00Z";
     await syncGithub(repo, cardStore, "both", log);
-    expect((await cardStore.getCard(pulled?.id as string))?.status).toBe("parked");
+    // INT-11a: never paused and no decision asked; recorded for the card's end.
+    expect((await cardStore.getCard(pulled?.id as string))?.status).toBe("in_progress");
+    expect(await new DecisionStore({ store: cardStore, log }).all()).toEqual([]);
+    const changed = await cardStore.cardEvents(pulled?.id as string, ["sync/scope_changed"]);
+    expect(changed.map((e) => e.payload)).toEqual([
+      { id: pulled?.id, fields: ["body"], change: "scope" },
+    ]);
+    // Recorded once: a second sync with nothing new records nothing more.
+    await syncGithub(repo, cardStore, "both", log);
+    expect(await cardStore.cardEvents(pulled?.id as string, ["sync/scope_changed"])).toHaveLength(
+      1,
+    );
     Reflect.deleteProperty(process.env, "SEKHEMET_CONFIG_DIR");
   });
 });

@@ -50,6 +50,7 @@ import {
   type DossierEntry,
   type DossierEntryInput,
   type DossierEntryKind,
+  ERASED_MARKER,
   type EventRecord,
   type ExternalRef,
   type ModelRoute,
@@ -892,6 +893,8 @@ export class CardStore {
     cardId: string;
     payload: T;
     principal?: string | undefined;
+    /** Personal data or free text, off the chain and erasable (rule 33). */
+    private?: Record<string, unknown> | undefined;
   }): Promise<EventRecord<T>> {
     const record = await this.eventLog.append(
       {
@@ -900,6 +903,7 @@ export class CardStore {
         cardId: params.cardId,
         payload: params.payload,
         ...(params.principal ? { principal: params.principal } : {}),
+        ...(params.private ? { private: params.private } : {}),
       },
       // K-S7-3: projected before COMMIT, so a failure rolls the append back.
       { project: (event) => this.applyEvent(event as EventRecord) },
@@ -1102,7 +1106,16 @@ export class CardStore {
    */
   public async recordPullRequestClosed(
     id: string,
-    pr: { pr: number; merged: boolean },
+    pr: {
+      pr: number;
+      merged: boolean;
+      /** The merge commit (integrations INT-13). */
+      mergeCommit?: string;
+      /** Who closed it, when their login maps to a principal (INT-14). */
+      closedBy?: string;
+      /** Their login, kept private (rule 33) — the only name when unmapped. */
+      closedByHandle?: string;
+    },
     actor = "harness",
   ): Promise<CardRecord> {
     const card = await this.requireCard(id);
@@ -1113,9 +1126,74 @@ export class CardStore {
       actor,
       type: "card/pr_closed",
       cardId: id,
-      payload: { id, pr: pr.pr, merged: pr.merged },
+      payload: {
+        id,
+        pr: pr.pr,
+        merged: pr.merged,
+        ...(pr.mergeCommit ? { mergeCommit: pr.mergeCommit } : {}),
+        ...(pr.closedBy ? { closedBy: pr.closedBy } : {}),
+      },
+      ...(pr.closedByHandle ? { private: { closedByHandle: pr.closedByHandle } } : {}),
     });
     return this.requireCard(id);
+  }
+
+  /**
+   * Link a person's login on a tracker to their principal (integrations item
+   * 6, NEW-integrations-2): `person/identity_linked {principal, system}`, the
+   * login in the private part, erasable (rule 33). The latest link of a login
+   * wins, so relinking moves it.
+   */
+  public async linkIdentity(
+    principal: string,
+    system: "github" | "forgejo",
+    handle: string,
+    by: string,
+    actor = "human",
+  ): Promise<void> {
+    await this.eventLog.append({
+      actor,
+      type: "person/identity_linked",
+      payload: { principal, system },
+      principal: by,
+      private: { handle: handle.trim() },
+    });
+  }
+
+  /** The principal a tracker login is linked to, if any (case-insensitive, like GitHub). */
+  public principalForHandle(system: string, handle: string): string | undefined {
+    return this.identityLinks(system).get(handle.trim().toLowerCase())?.principal;
+  }
+
+  /** The login a principal is linked to on a tracker, if any. */
+  public handleOf(principal: string, system: string): string | undefined {
+    for (const link of this.identityLinks(system).values()) {
+      if (link.principal === principal) return link.handle;
+    }
+    return undefined;
+  }
+
+  /** Each login's latest link, oldest first; an erased login links nothing. */
+  private identityLinks(system: string): Map<string, { principal: string; handle: string }> {
+    const rows = this.db
+      .prepare(
+        `SELECT json_extract(e.payload, '$.principal') AS principal,
+                json_extract(p.body, '$.handle') AS handle
+           FROM events e JOIN event_private p ON p.event_id = e.id
+          WHERE e.type = 'person/identity_linked'
+            AND json_extract(e.payload, '$.system') = ?
+          ORDER BY e.seq`,
+      )
+      .all(system) as { principal: string; handle: string | null }[];
+    const byHandle = new Map<string, { principal: string; handle: string }>();
+    for (const r of rows) {
+      if (typeof r.handle !== "string" || !r.handle || r.handle === ERASED_MARKER) continue;
+      const key = r.handle.toLowerCase();
+      // A later link of the principal elsewhere unlinks its earlier login.
+      for (const [k, v] of byHandle) if (v.principal === r.principal) byHandle.delete(k);
+      byHandle.set(key, { principal: r.principal, handle: r.handle });
+    }
+    return byHandle;
   }
 
   /**
@@ -1183,7 +1261,8 @@ export class CardStore {
   public async changeOwner(
     id: string,
     to: string | null,
-    principal: string,
+    /** The person who changed it; none for a tracker's change (integrations INT-40). */
+    principal: string | undefined,
     actor = "human",
   ): Promise<CardRecord> {
     const card = await this.requireCard(id);

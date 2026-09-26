@@ -173,7 +173,11 @@ export function policyAllowsEveryHost(
 
 export function policyFetch(
   policy: EffectiveNetworkPolicy,
-  options: { purpose: string; record?: (r: NetworkRequestRecord) => void; research?: boolean },
+  options: {
+    purpose: string;
+    record?: (r: NetworkRequestRecord) => undefined | Promise<unknown>;
+    research?: boolean;
+  },
 ): (input: string | URL, init?: RequestInit) => Promise<Response> {
   return async (input, init) => {
     const url = new URL(String(input));
@@ -189,23 +193,22 @@ export function policyFetch(
         .digest("hex"),
       at: new Date().toISOString(),
     };
-    const refuse = (reason: string): never => {
-      options.record?.({ ...base, allowed: false, reason });
+    // Each decision is recorded before the caller sees it, and a record that
+    // cannot be written fails the request (security item 33).
+    const refuse = async (reason: string): Promise<never> => {
+      await options.record?.({ ...base, allowed: false, reason });
       throw new Error(`network policy refused ${host}: ${reason}`);
     };
     const refusal = policyRefusal(policy, host, options);
-    if (refusal) refuse(refusal);
+    if (refusal) return refuse(refusal);
+    let res: Response;
     try {
-      const res = await send(
-        isLoopback(host) ? loopbackUrl(url, host) : url,
-        init,
-        isLoopback(host),
-      );
-      options.record?.({ ...base, allowed: true, status: res.status });
-      return res;
+      res = await send(isLoopback(host) ? loopbackUrl(url, host) : url, init, isLoopback(host));
     } catch (err) {
       return refuse(err instanceof Error ? err.message : String(err));
     }
+    await options.record?.({ ...base, allowed: true, status: res.status });
+    return res;
   };
 }
 

@@ -145,6 +145,8 @@ In the §4 row "Skills format: …", add "required `tools` unread" to the capabi
 > - **EXT-22a** WHEN a skill declares `tools` that the card's class set does not include THE SYSTEM SHALL leave the skill's manifest line and body out of that card's prompt, and record the omission in the card's evidence.
 
 ### `docs/design/specs/integrations.md` — §4 and §5 P9 (INV:O87; INV:X15)
+*Applied in B4.9 (2026-09-25): the §4 row, INT-11e, and the External review cards row now partial, S4.*
+
 Add a §4 row:
 > | Hierarchy depth clamped to the tracker's | not-built | `capabilities.maxDepth` is declared (`remote.ts:38`, `:104`, `:183`) and read by nothing | P9 |
 

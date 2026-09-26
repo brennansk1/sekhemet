@@ -11,15 +11,16 @@ import {
   standupReport,
 } from "@sekhemet/planner";
 import {
-  GITHUB_DOT_COM,
-  GitHubClient,
-  InstallationTokenProvider,
+  DELEGATE_LABEL,
+  type FetchLike,
+  type GitHubClient,
   NodeGitSyncAdapter,
   type WebhookIntent,
-  ghesEndpoints,
   githubWebhookHandler,
-  loadPrivateKey,
 } from "@sekhemet/sync";
+import { suggestedAccepters } from "./codeowners.js";
+import { appClientFromEnv } from "./github_transport.js";
+import { findLinkedCard, recordSnapshot, subIssuesLabel } from "./wave2_github.js";
 
 /**
  * Dashboard routes for the planner and sync wiring (wave 2, Builder C):
@@ -45,70 +46,105 @@ export interface Wave2RouteContext {
 
 const CARD = "[A-Za-z0-9_.:-]+";
 
-/** The GitHub App client from the environment, when configured (Y12). */
-export function githubAppFromEnv(env: NodeJS.ProcessEnv = process.env): GitHubClient | undefined {
-  const appId = env.SEKHEMET_GITHUB_APP_ID;
-  const installationId = env.SEKHEMET_GITHUB_INSTALLATION_ID;
-  if (!appId || !installationId) return undefined;
-  const endpoints = env.SEKHEMET_GITHUB_HOST
-    ? ghesEndpoints(env.SEKHEMET_GITHUB_HOST)
-    : GITHUB_DOT_COM;
-  const privateKey = loadPrivateKey({
-    ...(env.SEKHEMET_GITHUB_APP_KEYCHAIN
-      ? { keychainService: env.SEKHEMET_GITHUB_APP_KEYCHAIN }
-      : {}),
-    ...(env.SEKHEMET_GITHUB_APP_KEY_PATH ? { path: env.SEKHEMET_GITHUB_APP_KEY_PATH } : {}),
-  });
-  return new GitHubClient(
-    new InstallationTokenProvider({ appId, installationId, privateKey, endpoints }),
-    endpoints,
-  );
+/** The GitHub App client from the environment, when configured (integrations item 10). */
+export function githubAppFromEnv(
+  env: NodeJS.ProcessEnv,
+  /** The network policy's fetch (`integrationFetch`): required, never the global one. */
+  fetchImpl: FetchLike,
+): GitHubClient | undefined {
+  return appClientFromEnv(fetchImpl, env);
 }
 
-/** Act on a verified webhook intent: new cards, commands, review cards (Y13). */
+/**
+ * The claim on a webhook delivery (integrations item 12, INT-9): each
+ * `X-GitHub-Delivery` is processed at most once, across restarts — the
+ * processed ids are on the ledger as `github/delivery` events whose event id
+ * is derived from the delivery id, and an in-flight set closes the window
+ * between the check and the record.
+ */
+const inFlight = new Set<string>();
+const deliveryEventId = (delivery: string) =>
+  `ghd_${createHash("sha256").update(delivery).digest("hex").slice(0, 32)}`;
+
+export function claimDelivery(log: EventLog, delivery: string): boolean {
+  const id = deliveryEventId(delivery);
+  if (inFlight.has(id) || log.hasEvent(id)) return false;
+  inFlight.add(id);
+  return true;
+}
+
+/** Record a claimed delivery as processed, or release it when processing failed. */
+export async function settleDelivery(
+  log: EventLog,
+  delivery: string,
+  processed: { intent: string } | undefined,
+): Promise<void> {
+  const id = deliveryEventId(delivery);
+  try {
+    if (processed) {
+      await log.append({
+        id,
+        actor: "github",
+        type: "github/delivery",
+        payload: { delivery, intent: processed.intent },
+      });
+    }
+  } finally {
+    inFlight.delete(id);
+  }
+}
+
+/** `owner/repo` of a pull request's URL (`card/pr_opened`'s `url`), lower-cased. */
+function pullRequestRepo(url: string | undefined): string | undefined {
+  const m = /^https?:\/\/[^/]+\/([^/]+\/[^/]+)\/pull\/\d+/.exec(url ?? "");
+  return m?.[1]?.toLowerCase();
+}
+
+/** Act on a verified webhook intent: new cards, review cards, a pull request's close. */
 export async function applyWebhookIntent(
   store: CardStore,
   intent: WebhookIntent,
-  delivery: string,
+  _delivery: string,
 ): Promise<string | undefined> {
   const idOf = (prefix: string, n: number) => `card_${prefix}${n}`;
   switch (intent.kind) {
     case "create_card": {
-      const id = idOf("gh", intent.issue);
-      if (await store.getCard(id)) return id;
-      await store.createCard(
+      // INT-1: one card per issue, found by its one identity on every path.
+      const linked = await findLinkedCard(store, intent.ref);
+      if (linked) return linked.id;
+      const owner = intent.assignee
+        ? store.principalForHandle("github", intent.assignee)
+        : undefined;
+      // The issue's labels as the tracker holds them (M2); the delegate label
+      // is the Worker's, not a label, and the sub-issues note is the board's.
+      const labels = intent.labels.filter((l) => l !== DELEGATE_LABEL);
+      const card = await store.createCard(
         {
-          id,
           tier: "story",
-          title: `GitHub #${intent.issue}`,
+          title: intent.title.slice(0, 300),
           status: "backlog",
-          spec: `${intent.title}\n\n${intent.body}`,
-          externalRef: { system: "github", id: String(intent.issue), url: intent.url },
+          // As written: a linked card's text is tagged untrusted where it
+          // reaches a prompt (S9, the loop's goal).
+          ...(intent.body.trim() ? { spec: intent.body.trim() } : {}),
+          externalRef: intent.ref,
           labels: [
-            "github",
-            ...(intent.subIssues.length ? [`sub-issues:${intent.subIssues.join(",")}`] : []),
+            ...labels,
+            ...(intent.subIssues.length ? [subIssuesLabel(intent.subIssues)] : []),
           ],
         },
         "github",
       );
-      return id;
-    }
-    case "card_command": {
-      const card = (await store.listCards()).find(
-        (c) => c.externalRef?.system === "github" && c.externalRef.id === String(intent.issue),
-      );
-      if (!card) return undefined;
-      await store.recordDossierEntry({
-        cardId: card.id,
-        kind: "note",
-        text: `GitHub comment ${intent.commentId} asks for /${intent.command} ${intent.args}`,
-        actor: "github",
-      });
-      await store.recordEvent({
-        type: "github/command",
-        cardId: card.id,
-        actor: "github",
-        payload: { ...intent, delivery },
+      if (owner) await store.changeOwner(card.id, owner, undefined, "github");
+      // The agreed state, so the next sync of this issue changes nothing (INT-3).
+      await recordSnapshot(store, await store.getCard(card.id), {
+        ref: intent.ref,
+        title: intent.title,
+        body: intent.body.trim(),
+        labels,
+        delegatedToWorker: intent.labels.includes(DELEGATE_LABEL),
+        ...(intent.assignee ? { assignee: intent.assignee } : {}),
+        state: "open",
+        updatedAt: intent.updatedAt ?? "",
       });
       return card.id;
     }
@@ -137,28 +173,34 @@ export async function applyWebhookIntent(
     }
     case "pull_request_closed": {
       // Kernel rule 24 (K-N3-4): the accepted card awaiting this pull request
-      // moves to Done on a merge, or waits in Review again when it closed unmerged.
+      // moves to Done on a merge, or waits in Review again when it closed
+      // unmerged — with the merge commit and who closed it (INT-13, INT-14).
+      // Matched by repository and number (M3): the same number in another
+      // repository is another pull request.
       const card = (await store.listCards({ status: "review" })).find(
-        (c) => c.hold?.kind === "awaitingMerge" && c.hold.pr === intent.pr,
+        (c) =>
+          c.hold?.kind === "awaitingMerge" &&
+          c.hold.pr === intent.pr &&
+          intent.repo !== undefined &&
+          pullRequestRepo(c.hold.url) === intent.repo.toLowerCase(),
       );
       if (!card) return undefined;
+      const closer = intent.closedBy
+        ? store.principalForHandle("github", intent.closedBy)
+        : undefined;
       await new BoardServiceImpl(store, { entryConditions: true }).closePullRequest(
         card.id,
-        { pr: intent.pr, merged: intent.merged },
+        {
+          pr: intent.pr,
+          merged: intent.merged,
+          ...(intent.mergeCommit ? { mergeCommit: intent.mergeCommit } : {}),
+          ...(closer ? { closedBy: closer } : {}),
+          ...(intent.closedBy && !closer ? { closedByHandle: intent.closedBy } : {}),
+        },
         "github",
       );
       return card.id;
     }
-    case "enqueue_run":
-      await store
-        .recordEvent({
-          type: "github/dispatch",
-          cardId: "board",
-          actor: "github",
-          payload: { ...intent, delivery },
-        })
-        .catch(() => undefined);
-      return undefined;
     default:
       return undefined;
   }
@@ -181,8 +223,15 @@ export async function handleWave2Route(
     }
     githubWebhookHandler({
       secret,
+      claimDelivery: (delivery) => claimDelivery(ctx.log, delivery),
       onIntent: async (intent, delivery) => {
-        await applyWebhookIntent(cardStore, intent, delivery);
+        let done: { intent: string } | undefined;
+        try {
+          await applyWebhookIntent(cardStore, intent, delivery);
+          done = { intent: intent.kind };
+        } finally {
+          if (delivery) await settleDelivery(ctx.log, delivery, done);
+        }
       },
     })(req, res);
     return true;
@@ -396,7 +445,12 @@ export async function handleWave2Route(
             await cardStore.cardEvents(id, ["gate/result", "card/step", "attempt/started"]),
           )
         : undefined;
-    json(res, 200, { review: brief, ...(escalation ? { escalation } : {}) });
+    json(res, 200, {
+      review: brief,
+      ...(escalation ? { escalation } : {}),
+      // RG-N5-3: who should look, from CODEOWNERS.
+      suggestedAccepters: suggestedAccepters(ctx.repoPath, cardStore, card),
+    });
     return true;
   }
   return false;
