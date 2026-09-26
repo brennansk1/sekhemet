@@ -122,6 +122,32 @@ export interface TierSettings {
   /** May two roles' weights be resident at the same time? */
   coLoadRoles: boolean;
   reason: string;
+  /**
+   * The installed memory the tier was read from (MD-N1-1). Absent on a
+   * profile saved before the tier followed installed memory, which is then
+   * reclassified on read.
+   */
+  installedBytes?: number;
+  /** The Worker's measured need when it held the window up (MD-N1-2). */
+  promptNeedTokens?: number;
+}
+
+/**
+ * What the Worker's recorded prompts need (MD-N1-2): the p99 of their sizes
+ * plus the answer and thinking caps. Calibration never sets the working
+ * context below it.
+ */
+export interface PromptNeed {
+  p99PromptTokens: number;
+  answerTokens: number;
+  thinkingTokens: number;
+}
+
+/** The nearest-rank 99th percentile of recorded prompt sizes; undefined when none. */
+export function p99Tokens(sizes: readonly number[]): number | undefined {
+  if (sizes.length === 0) return undefined;
+  const sorted = [...sizes].sort((a, b) => a - b);
+  return sorted[Math.max(0, Math.ceil(0.99 * sorted.length) - 1)];
 }
 
 /**
@@ -135,10 +161,21 @@ export interface TierSettings {
  */
 export function tierSettingsFor(
   usableBytes: number,
-  options: { memoryBandwidthGbPerSecond?: number } = {},
+  options: {
+    memoryBandwidthGbPerSecond?: number;
+    /**
+     * Installed memory, which decides the tier (MD-N1-1; rule 8's Budget
+     * column). Omitted, the usable budget stands in for it.
+     */
+    installedBytes?: number;
+    /** The Worker's measured need, below which the context is never set (MD-N1-2). */
+    promptNeed?: PromptNeed;
+  } = {},
 ): TierSettings {
-  const tier = tierForBudget(usableBytes);
-  const gb = usableBytes / GB;
+  const installed = options.installedBytes ?? usableBytes;
+  const tier =
+    options.installedBytes !== undefined ? tierForInstalled(installed) : tierForBudget(usableBytes);
+  const gb = installed / GB;
   const [lo, hi] = tier.budgetGb;
   // XL is open-ended: treat half again over its floor as its top.
   const top = Number.isFinite(hi) ? hi : lo * 1.5;
@@ -148,14 +185,30 @@ export function tierSettingsFor(
   const coLoadRoles = tier.coLoaded.startsWith("yes") && usableBytes >= CO_RESIDENT_MIN_BYTES;
   const [ctxLo, ctxHi] = tier.workingContext;
   const [cardsLo, cardsHi] = tier.parallelCards;
+  const tierContext = roomy ? ctxHi : ctxLo;
+  const need = options.promptNeed;
+  const needTokens = need
+    ? need.p99PromptTokens + need.answerTokens + need.thinkingTokens
+    : undefined;
+  const held = needTokens !== undefined && needTokens > tierContext;
+  const basis =
+    options.installedBytes !== undefined
+      ? `${gb.toFixed(0)} GB installed (${(usableBytes / GB).toFixed(1)} GB usable)`
+      : `${gb.toFixed(1)} GB usable`;
   return {
     tier: tier.tier,
-    workingContextTokens: roomy ? ctxHi : ctxLo,
+    workingContextTokens: held ? (needTokens as number) : tierContext,
     parallelCards: roomy && fastBus ? cardsHi : cardsLo,
     coLoadRoles,
-    reason: `${gb.toFixed(1)} GB usable puts this machine ${roomy ? "high" : "low"} in tier ${tier.tier}${
+    reason: `${basis} puts this machine ${roomy ? "high" : "low"} in tier ${tier.tier}${
       fastBus ? "" : `, on a ${bandwidth?.toFixed(0)} GB/s bus`
-    }; roles ${coLoadRoles ? "co-load" : "swap"}`,
+    }; roles ${coLoadRoles ? "co-load" : "swap"}${
+      held && need
+        ? `; kept ${needTokens} tokens of working context rather than the tier's ${tierContext}, because the p99 of the Worker's recorded prompts (${need.p99PromptTokens}) plus the answer (${need.answerTokens}) and thinking (${need.thinkingTokens}) caps needs it`
+        : ""
+    }`,
+    ...(options.installedBytes !== undefined ? { installedBytes: options.installedBytes } : {}),
+    ...(held ? { promptNeedTokens: needTokens } : {}),
   };
 }
 
@@ -183,6 +236,24 @@ export function tierForBudget(budgetBytes: number): TierProfile {
   if (gb < 15.5) {
     throw new UnsupportedHardwareError(
       `${gb.toFixed(1)} GB of usable memory is below the 16 GB minimum; Sekhemet does not run cards here.`,
+    );
+  }
+  if (gb < 23.5) return TIER_PROFILES.S;
+  if (gb < 47.5) return TIER_PROFILES.M;
+  if (gb < 95.5) return TIER_PROFILES.L;
+  return TIER_PROFILES.XL;
+}
+
+/**
+ * The tier for a machine's installed memory (MD-N1-1; rule 8: the Budget
+ * column is installed memory, usable memory decides what fits within it).
+ * The 24 GB reference host is tier M, although only 16 GB of it is usable.
+ */
+export function tierForInstalled(installedBytes: number): TierProfile {
+  const gb = installedBytes / GB;
+  if (gb < 15.5) {
+    throw new UnsupportedHardwareError(
+      `${gb.toFixed(1)} GB of installed memory is below the 16 GB minimum; Sekhemet does not run cards here.`,
     );
   }
   if (gb < 23.5) return TIER_PROFILES.S;
@@ -247,12 +318,10 @@ export function assertThroughputFloor(
   const { prefillTokensPerSecond: p, decodeTokensPerSecond: d } = speed;
   if (p === undefined || d === undefined) return;
   const floor = THROUGHPUT_FLOORS[mode];
-  const short: string[] = [];
-  if (p < floor.prefill) short.push(`prefill ${p.toFixed(1)} tok/s < ${floor.prefill}`);
-  if (d < floor.decode) short.push(`decode ${d.toFixed(1)} tok/s < ${floor.decode}`);
-  if (short.length > 0) {
+  if (p < floor.prefill || d < floor.decode) {
+    // MD-N2-1: both rates, measured against required, whichever fell short.
     throw new ThroughputFloorError(
-      `Refusing to run cards on ${modelId}: ${short.join(", ")} (the ${mode} floor). A turn would take far longer than ~${floor.secondsPerTurn}s.`,
+      `Refusing to run cards on ${modelId}: measured prefill ${p.toFixed(1)} tok/s (required ${floor.prefill}), decode ${d.toFixed(1)} tok/s (required ${floor.decode}) — below the ${mode} floor. A turn would take far longer than ~${floor.secondsPerTurn}s.`,
       modelId,
       speed,
       mode,
@@ -569,6 +638,10 @@ export interface CalibrateHardwareOptions {
   candidates: { label: string; adapter: LocalInferenceAdapter; release?: () => Promise<void> }[];
   /** Usable memory; default measured from the host (`measureUsableMemory`). */
   usableBytes?: number;
+  /** Installed memory, which decides the tier (MD-N1-1); default the host's. */
+  installedBytes?: number;
+  /** The Worker's measured prompt need (MD-N1-2); omitted until recorded. */
+  promptNeed?: PromptNeed;
   buckets?: readonly number[];
   decodeTokens?: number;
   /** Prefill batch and offload sweep; omitted, the sweep does not run. */
@@ -594,7 +667,11 @@ export async function calibrateHardware(
   const measured = measureUsableMemory({ totalBytes: fingerprint.totalBytes });
   const usableBytes = options.usableBytes ?? measured.usableBytes;
   const bandwidth = options.memoryBandwidthGbPerSecond ?? measureMemoryBandwidth();
-  const settings = tierSettingsFor(usableBytes, { memoryBandwidthGbPerSecond: bandwidth });
+  const settings = tierSettingsFor(usableBytes, {
+    memoryBandwidthGbPerSecond: bandwidth,
+    installedBytes: options.installedBytes ?? fingerprint.totalBytes,
+    ...(options.promptNeed ? { promptNeed: options.promptNeed } : {}),
+  });
   const models: Record<string, ModelCalibration> = {};
   for (const c of options.candidates) {
     const cal = await calibrateModel(c.adapter, {
@@ -650,6 +727,31 @@ export function loadMachineProfile(
 ): MachineProfile | undefined {
   if (!existsSync(path)) return undefined;
   return JSON.parse(readFileSync(path, "utf8")) as MachineProfile;
+}
+
+/**
+ * The saved profile when it was measured on this host (MD-N1-3): the
+ * fingerprint is the key, and a profile from other hardware decides nothing.
+ */
+export function loadHostMachineProfile(
+  path: string = defaultMachineProfilePath(),
+): MachineProfile | undefined {
+  const profile = loadMachineProfile(path);
+  return profile && profile.fingerprintHash === hostFingerprintHash() ? profile : undefined;
+}
+
+/**
+ * What the tier decides for a saved profile. A profile saved before the tier
+ * followed installed memory is reclassified from its fingerprint (MD-N1-1).
+ */
+export function tierSettingsOf(profile: MachineProfile): TierSettings {
+  if (profile.settings?.installedBytes !== undefined) return profile.settings;
+  return tierSettingsFor(profile.usableBytes, {
+    installedBytes: profile.fingerprint.totalBytes,
+    ...(profile.memoryBandwidthGbPerSecond !== undefined
+      ? { memoryBandwidthGbPerSecond: profile.memoryBandwidthGbPerSecond }
+      : {}),
+  });
 }
 
 /** True when there is no profile or it was measured on different hardware. */

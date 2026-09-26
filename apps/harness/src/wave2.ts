@@ -7,6 +7,7 @@ import { readSkillLock, revokeSkill, skillProtectedWrites } from "@sekhemet/cont
 import {
   BudgetPolicyStore,
   LearningGuard,
+  type SuiteRunResult,
   type TaskHistory,
   type Trajectory,
   checkSkillCandidate,
@@ -27,18 +28,25 @@ import {
   parseToml,
 } from "@sekhemet/kernel";
 import {
+  type AssignedRole,
+  AssignmentRefusal,
+  type BakeOffEvidence,
+  type CandidateSettings,
   type LocalInferenceAdapter,
   ManagedLlamaServerAdapter,
   ModelRegistry,
   NAIL_WORKER_PROFILE,
   QUALIFICATION_BAR,
   type QualificationCombination,
-  assertModelRunnable,
+  assignRole,
+  currentAssignment,
   describeCombination,
   describeOverride,
-  loadMachineProfile,
+  fillReviewerDefault,
+  hostFingerprintHash,
   planWorkWindow,
   qualifyModel,
+  restoreRole,
   scheduleNow,
   thinkingPolicyFromEnv,
 } from "@sekhemet/models";
@@ -85,6 +93,7 @@ import {
   reuseSurvey,
   withPriorArt,
 } from "./research/reuse.js";
+import { workerFloorRefusal } from "./watchdog_actions.js";
 import { loadRepoSkills, skillsLockPath } from "./workspace_trust.js";
 
 /**
@@ -333,7 +342,11 @@ export async function queuePrelude(
   // MD-N8-1: refuse a Worker whose combination has not qualified on this host.
   if (options.workerRefusal) throw new Error(options.workerRefusal);
   // M15: refuse a worker measured below the overnight floor.
-  if (options.workerModelId) assertModelRunnable(loadMachineProfile(), options.workerModelId);
+  // MD-N2-1: named measured and required rates; read from this host's profile only (MD-N1-3).
+  if (options.workerModelId) {
+    const floor = workerFloorRefusal(options.workerModelId);
+    if (floor) throw new Error(floor);
+  }
 
   for (const d of await new DecisionStore(ledger).sweepDeadlines(now)) {
     say(
@@ -428,6 +441,18 @@ export function roleForCard(
   return attempt >= 2 && escalateRetries ? "escalation" : "worker";
 }
 
+/** A model's family and the assigned Worker's, as the registry records them (MD-N4-9). */
+function familiesFor(
+  registry: ModelRegistry,
+  host: string,
+  modelId: string,
+): { model?: string; worker?: string } {
+  const model = registry.get(modelId)?.family;
+  const workerId = currentAssignment(registry, host, "worker")?.model;
+  const worker = workerId ? registry.get(workerId)?.family : undefined;
+  return { ...(model ? { model } : {}), ...(worker ? { worker } : {}) };
+}
+
 /** The model registry the roster pins templates and arms in (M11). */
 export function modelRegistry(): ModelRegistry {
   return new ModelRegistry();
@@ -453,7 +478,8 @@ export type Wave2Command =
   | "skills"
   | "release"
   | "ci"
-  | "measure";
+  | "measure"
+  | "models";
 export const WAVE2_COMMANDS: readonly Wave2Command[] = [
   "airgap",
   "onboard",
@@ -473,6 +499,7 @@ export const WAVE2_COMMANDS: readonly Wave2Command[] = [
   "release",
   "ci",
   "measure",
+  "models",
 ];
 
 export interface CommandIO {
@@ -746,6 +773,121 @@ export async function runWave2Command(
         },
       });
       return r === "no tasks" ? 1 : 0;
+    }
+    case "models": {
+      // `sekhemet models assign <role> <model> [--baseline | --default --bake-off <event>]`
+      // and `sekhemet models restore <role>` (models rule 30a, NEW-models-10):
+      // a person assigns any model qualified here for the role; the recorded
+      // baseline and the shipped defaults change only with a recorded
+      // overnight bake-off on this host; every change is restorable in one step.
+      const [sub, roleArg, modelArg] = args;
+      const roles: AssignedRole[] = ["worker", "planner", "reviewer", "researcher"];
+      const role = roles.find((r) => r === roleArg);
+      const scope = args.includes("--baseline")
+        ? "baseline"
+        : args.includes("--default")
+          ? "default"
+          : "personal";
+      const registry = modelRegistry();
+      const host = (io.combinationDeps?.host ?? hostFingerprintHash)();
+      const principal = k.cardStore.localPrincipal();
+      if (sub === "list") {
+        // MD-N4-9: the Reviewer default, or unfilled when no other family qualified here.
+        const worker = currentAssignment(registry, host, "worker")?.model;
+        fillReviewerDefault(registry, host, worker ? registry.get(worker)?.family : "qwen");
+        for (const r of roles) {
+          const a = currentAssignment(registry, host, r);
+          const b = currentAssignment(registry, host, r, "baseline");
+          print(
+            `${r}: ${a ? `${a.model} (${a.scope}, ${a.by}, ${a.date.slice(0, 10)})` : "unassigned"}${b ? `; baseline ${b.model}` : ""}`,
+          );
+        }
+        return 0;
+      }
+      if (sub === "restore" && role) {
+        try {
+          const r = restoreRole(registry, host, role, { by: "person", scope });
+          await k.log.append({
+            actor: "human",
+            principal,
+            type: "models/restored",
+            payload: {
+              role,
+              model: r.assignment.model,
+              scope,
+              ...(r.replaced ? { replaced: r.replaced.model } : {}),
+            },
+          });
+          return done(
+            `${role}: restored ${r.assignment.model}${r.replaced ? ` (replacing ${r.replaced.model})` : ""}.`,
+            0,
+          );
+        } catch (err) {
+          if (err instanceof AssignmentRefusal) return done(err.message, 1);
+          throw err;
+        }
+      }
+      if (sub !== "assign" || !role || !modelArg || modelArg.startsWith("--") || !io.model) {
+        return done(
+          "Usage: sekhemet models assign <worker|planner|reviewer|researcher> <model> [--baseline | --default --bake-off <event id>] | models restore <role> | models list",
+          2,
+        );
+      }
+      const adapter = (io.model as (n: string) => LocalInferenceAdapter)(modelArg);
+      const combination = qualificationCombination(adapter, { ...io.combinationDeps, registry });
+      const look = registry.lookupQualification(adapter.modelId, combination);
+      // MD-N10-1: the bake-off is a recorded `measure/benchmarked` event.
+      const bakeOffId = flag(args, "--bake-off");
+      let bakeOff: BakeOffEvidence | undefined;
+      if (bakeOffId) {
+        const found = (await k.log.getEventsByTypes(["measure/benchmarked"])).find(
+          (e) => e.id === bakeOffId,
+        );
+        const p = found?.payload as Partial<BakeOffEvidence> | undefined;
+        if (!found || !p) return done(`No recorded benchmark ${bakeOffId} on this ledger.`, 1);
+        bakeOff = {
+          id: found.id,
+          host: String(p.host ?? ""),
+          role: (p.role ?? "worker") as AssignedRole,
+          model: String(p.model ?? ""),
+          tier: p.tier === "overnight" ? "overnight" : "quick",
+          evaluationSet: String(p.evaluationSet ?? ""),
+          date: found.createdAt,
+        };
+      }
+      try {
+        const r = assignRole(registry, {
+          role,
+          model: adapter.modelId,
+          scope,
+          by: "person",
+          host,
+          qualification: look.status,
+          ...(bakeOff ? { bakeOff } : {}),
+          // MD-N4-9: families as the registry records them.
+          families: familiesFor(registry, host, adapter.modelId),
+        });
+        await k.log.append({
+          actor: "human",
+          principal,
+          type: "models/assigned",
+          payload: {
+            role,
+            model: r.assignment.model,
+            scope,
+            qualification: look.status,
+            ...(r.previous ? { previous: r.previous.model } : {}),
+            ...(bakeOff ? { bakeOff: bakeOff.id } : {}),
+          },
+        });
+        return done(
+          `${role}: ${r.assignment.model} assigned (${scope})${r.previous ? `, replacing ${r.previous.model}; restore it with: sekhemet models restore ${role}${scope === "personal" ? "" : ` --${scope}`}` : ""}.`,
+          0,
+        );
+      } catch (err) {
+        if (err instanceof AssignmentRefusal) return done(err.message, 1);
+        throw err;
+      }
     }
     case "qualify": {
       // `sekhemet qualify --models a,b [--speculative on] [--check]` (models
@@ -1038,11 +1180,20 @@ async function improveCommand(k: Kernel, args: string[], io: CommandIO): Promise
     try {
       v = await gateRuleOnFixtures(k, gateRule, {
         fixtures: (flag(args, "--fixtures") ?? "chronicle").split(",").filter(Boolean),
-        runFixture: (fixture, rule) =>
-          runFixtureGate(harnessRoot, fixture, rule, [
-            ...(worker ? ["--worker", worker] : []),
-            ...(flag(args, "--settings") ? ["--settings", flag(args, "--settings") as string] : []),
-          ]),
+        runFixture: (fixture, rule, scope) =>
+          runFixtureGate(
+            harnessRoot,
+            fixture,
+            rule,
+            [
+              ...(worker ? ["--worker", worker] : []),
+              ...(flag(args, "--settings")
+                ? ["--settings", flag(args, "--settings") as string]
+                : []),
+            ],
+            undefined,
+            scope,
+          ),
       });
     } catch (err) {
       // A fixture run that failed is named, never scored as 0 of 0.
@@ -1173,11 +1324,23 @@ export function appliedStepBudget(repoPath: string): number | undefined {
  * Record each candidate's bake-off result with its full settings (M23) and
  * regenerate MODEL_MATRIX.md from every admissible record (E4).
  */
+/**
+ * The settings a bake-off child's cards ran with, as their evidence recorded
+ * them (MD-N4-6): the suite runner copies the first card's evidence settings
+ * into its result as `candidateSettings`.
+ */
+export function childSettings(result: SuiteRunResult): Partial<CandidateSettings> | undefined {
+  const s = (result as { candidateSettings?: Partial<CandidateSettings> }).candidateSettings;
+  return s && typeof s === "object" ? s : undefined;
+}
+
 export async function recordBakeOff(
   repoPath: string,
   fixture: string,
   rows: {
     adapter: LocalInferenceAdapter;
+    /** The settings the child run's evidence recorded (MD-N4-6); they win over the adapter's. */
+    settings?: Partial<CandidateSettings> | undefined;
     passed: number;
     total: number;
     minutes: number;
@@ -1202,6 +1365,9 @@ export async function recordBakeOff(
       minutes: r.minutes,
       tokens: r.tokens,
       repoPath: harnessRoot,
+      overrides: r.settings
+        ? { ...r.settings, settingsFrom: "child evidence" }
+        : { settingsFrom: "parent adapter (the child recorded none)" },
     });
     const missing = validateBakeOffRecord(rec);
     if (missing.length)
@@ -1364,6 +1530,7 @@ export async function gateRuleOnFixtures(
     runFixture: (
       fixture: string,
       candidateRule?: string,
+      candidateScope?: import("./learning/store.js").RuleScope,
     ) => Promise<{ passed: number; total: number }>;
   },
 ): Promise<RuleGateVerdict> {
@@ -1375,7 +1542,9 @@ export async function gateRuleOnFixtures(
     suites: options.fixtures,
     runSuite: async (suite, variant) => ({
       suite,
-      ...(await options.runFixture(suite, variant === "candidate" ? rule.text : undefined)),
+      ...(await (variant === "candidate"
+        ? options.runFixture(suite, rule.text, rule.scope)
+        : options.runFixture(suite))),
     }),
   });
   const out: RuleGateVerdict = { ruleId, ...verdict };
@@ -1410,6 +1579,8 @@ export async function runFixtureGate(
   candidateRule: string | undefined,
   args: string[] = [],
   spawn?: import("./suite_path.js").SuiteSpawn,
+  /** The gated rule's own scope (CX-N4-1): the run proposes the candidate with it. */
+  candidateScope?: import("./learning/store.js").RuleScope,
 ): Promise<{ passed: number; total: number }> {
   const { mkdtempSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
@@ -1435,7 +1606,14 @@ export async function runFixtureGate(
     fixtures: [fixture],
     out,
     ...(settingsFile ? { settingsFile } : {}),
-    ...(candidateRule ? { env: { SEKHEMET_CANDIDATE_RULE: candidateRule } } : {}),
+    ...(candidateRule
+      ? {
+          env: {
+            SEKHEMET_CANDIDATE_RULE: candidateRule,
+            ...(candidateScope ? { SEKHEMET_CANDIDATE_SCOPE: JSON.stringify(candidateScope) } : {}),
+          },
+        }
+      : {}),
     ...(spawn ? { spawn } : {}),
   });
   const score = runScore(r);
@@ -1455,7 +1633,8 @@ export function batchBySwaps(cards: CardRecord[], now: Date = new Date()): CardR
     cards.map((c, i) => ({
       cardId: c.id,
       project: c.projectId ?? c.parentId ?? "board",
-      role: c.modelRoute?.executor === "escalation" ? ("escalation" as const) : ("worker" as const),
+      // An escalated card runs on the Planner's weights, as execution, not planning.
+      role: c.modelRoute?.executor === "escalation" ? ("planner" as const) : ("worker" as const),
       modelId: c.modelRoute?.executor === "escalation" ? "escalation" : "worker",
       minutes: Math.max(
         1,
@@ -1466,7 +1645,33 @@ export function batchBySwaps(cards: CardRecord[], now: Date = new Date()): CardR
     { start: now, end: new Date(now.getTime() + 365 * 86_400_000) },
     { residentModelId: "worker" },
   );
-  return plan.batches.flatMap((b) => b.items.map((it) => byId.get(it.cardId) as CardRecord));
+  const batched = plan.batches.flatMap((b) =>
+    b.items.map((it) => byId.get(it.cardId) as CardRecord),
+  );
+  return prerequisitesFirst(batched);
+}
+
+/**
+ * MD-N3-2: projects run as batches unless a dependency forces the order: a
+ * prerequisite in the same queue moves to just before the first card that
+ * needs it (its own prerequisites before it), everything else keeps its place.
+ */
+export function prerequisitesFirst(cards: CardRecord[]): CardRecord[] {
+  const byId = new Map(cards.map((c) => [c.id, c]));
+  const out: CardRecord[] = [];
+  const placed = new Set<string>();
+  const place = (c: CardRecord, path: Set<string>) => {
+    if (placed.has(c.id) || path.has(c.id)) return;
+    path.add(c.id);
+    for (const dep of c.dependsOn ?? []) {
+      const pre = byId.get(dep);
+      if (pre) place(pre, path);
+    }
+    placed.add(c.id);
+    out.push(c);
+  };
+  for (const c of cards) place(c, new Set());
+  return out;
 }
 
 /** The scheduler's reserved-hours windows as the planner's declared hours (M25). */
@@ -1496,7 +1701,8 @@ export function overnightPlanLine(
     cards.map((c) => ({
       cardId: c.id,
       project: c.projectId ?? c.parentId ?? "board",
-      role: c.modelRoute?.executor === "escalation" ? ("escalation" as const) : ("worker" as const),
+      // An escalated card runs on the Planner's weights, as execution, not planning.
+      role: c.modelRoute?.executor === "escalation" ? ("planner" as const) : ("worker" as const),
       modelId: c.modelRoute?.executor === "escalation" ? "escalation" : "worker",
       minutes: Math.max(
         1,

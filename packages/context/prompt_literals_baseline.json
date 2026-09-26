@@ -128,11 +128,6 @@
     },
     {
       "file": "apps/harness/src/pm/agent.ts",
-      "hash": "7da6da4d96d3b102",
-      "text": "${}\n\nCONVERSATION SO FAR\n${}\n\nNEW MESSAGE${}\n${}\n\nReply to the human now. Use propose_* tools only f"
-    },
-    {
-      "file": "apps/harness/src/pm/agent.ts",
       "hash": "a0fbfdf828361814",
       "text": "Split ${} into ${} cards${}${}"
     },
@@ -797,16 +792,6 @@
       "text": "Repair the specific failure above. Make the smallest change that addresses the named location. Do no"
     },
     {
-      "file": "packages/loop/src/manager.ts",
-      "hash": "6822f02801aa7305",
-      "text": "You are the planning model in a coding harness. A smaller, faster worker model\nattempted a task and "
-    },
-    {
-      "file": "packages/loop/src/manager.ts",
-      "hash": "e8b1f824b89fa968",
-      "text": "CARD ${}: ${}\nScope files: ${}\nAcceptance criteria:\n${}\n\nThe worker stopped with: ${}\nGate failures:"
-    },
-    {
       "file": "packages/loop/src/observation.ts",
       "hash": "d139a6f0f8ae69b5",
       "text": "PERMISSION DENIED for ${}: ${}\nDo not retry this call. Choose a different approach within your decla"
@@ -1188,11 +1173,6 @@
     },
     {
       "file": "packages/loop/src/tool_catalog.ts",
-      "hash": "557903cc742988ad",
-      "text": "Ask a question about what the card requires instead of guessing. Answered from the card's spec, Done"
-    },
-    {
-      "file": "packages/loop/src/tool_catalog.ts",
       "hash": "56e0725ee32a1722",
       "text": "Matching commits, or the commit's diff"
     },
@@ -1400,11 +1380,6 @@
       "file": "packages/loop/src/tool_catalog.ts",
       "hash": "dc69b44948e13cd2",
       "text": "Declare the work complete. Verification gates run immediately."
-    },
-    {
-      "file": "packages/loop/src/tool_catalog.ts",
-      "hash": "e487ef240eb0a860",
-      "text": "The relevant parts of the card's contract, or guidance to proceed conservatively"
     },
     {
       "file": "packages/loop/src/tool_catalog.ts",

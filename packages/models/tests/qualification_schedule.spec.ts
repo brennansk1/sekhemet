@@ -150,13 +150,14 @@ describe("M22: qualification suite with deterministic scoring", () => {
     const seenArms: string[] = [];
     const model = idealModel();
     const original = model.generate.bind(model);
-    // Arm B is worse for this model: every JSON-arm answer is empty.
+    // Arms B and C are worse for this model: every call on them names no real tool.
     model.generate = async (req: InferenceRequest) => {
       seenArms.push(req.toolArm);
-      return req.toolArm === "arm_b_json" ? reply([]) : original(req);
+      return req.toolArm !== "arm_a_flat" ? reply([call("nope", {})]) : original(req);
     };
     const { best, results } = await qualifyModel(model, { registry: reg });
-    expect(results.map((r) => r.arm)).toEqual(["arm_a_flat", "arm_b_json"]);
+    // MD-N5-1: all three arms on the same tasks; A's lead is pinned.
+    expect(results.map((r) => r.arm)).toEqual(["arm_a_flat", "arm_b_json", "arm_c_sketch"]);
     expect(best.arm).toBe("arm_a_flat");
     expect(reg.armFor("ideal")).toBe("arm_a_flat");
     expect(reg.isQualified("ideal", 0.8)).toBe(true);
@@ -190,7 +191,14 @@ describe("M25: declared-hours scheduling", () => {
       [
         { cardId: "c1", project: "b", role: "worker", modelId: "nail", minutes: 20 },
         { cardId: "c2", project: "a", role: "worker", modelId: "nail", minutes: 20, priority: 5 },
-        { cardId: "p1", project: "a", role: "manager", modelId: "dirk", minutes: 30 },
+        {
+          cardId: "p1",
+          project: "a",
+          role: "planner",
+          planning: true,
+          modelId: "dirk",
+          minutes: 30,
+        },
         { cardId: "c3", project: "a", role: "worker", modelId: "nail", minutes: 20 },
         { cardId: "r1", project: "a", role: "researcher", modelId: "apodex", minutes: 200 },
       ],

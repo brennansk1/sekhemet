@@ -1,7 +1,8 @@
 import { basename } from "node:path";
 import { type AttemptOutcome, type CardStore, firstModelAttempts } from "@sekhemet/kernel";
-import { HttpInferenceAdapter, type LocalInferenceAdapter } from "@sekhemet/models";
+import type { ModelHold, ModelRegistry } from "@sekhemet/models";
 import { LearningStore } from "../learning/store.js";
+import { sharedQueue } from "../model_access.js";
 import { plannerStandupSection } from "../wave2.js";
 import {
   type PmSnapshot,
@@ -21,15 +22,21 @@ export const DEFAULT_PM_MODEL = "dirk-27b:latest";
 /** Seconds a cold load of the PM usually takes on this class of machine. */
 export const PM_LOAD_ETA_SECONDS = 45;
 
-export function createPmAdapter(modelId = DEFAULT_PM_MODEL): HttpInferenceAdapter {
-  return new HttpInferenceAdapter({
-    modelId,
-    apiFormat: "ollama",
-    contextTokens: 8192,
-    maxTokens: 1200,
-    disableReasoning: true,
-    sampling: { temperature: 0.3, topP: 0.9, topK: 20, minP: 0 },
-  });
+/**
+ * Seshat's model for a caller that holds no queue (the dashboard, the ACP
+ * bridge): the Planner role's `chat` queue on the process's one residency
+ * scheduler (MD-N9-4), so a chat answer and a research question never hold
+ * two large models at once. Each call returns a hold on the model, which
+ * `answerQueued` releases when the answer is written.
+ */
+export function pmModelFor(
+  modelId = DEFAULT_PM_MODEL,
+  registry?: ModelRegistry,
+): () => Promise<ModelHold> {
+  return sharedQueue(
+    { queue: "chat", role: "planner", name: modelId },
+    registry ? { registry } : {},
+  );
 }
 
 // --- Runner lease ------------------------------------------------------------
@@ -117,19 +124,33 @@ export async function buildSnapshot(
       .filter((p) => p.status === "active")
       .slice(0, 6)
       .map((p) => p.statement),
+    // CX-N4-5, CX-N3-7: the approved PM rules, for Seshat alone.
+    pmRules: await new LearningStore(pmStore.log).seshatRules().catch(() => []),
     today: new Date().toISOString().slice(0, 10),
   };
 }
 
 // --- Answering ---------------------------------------------------------------
 
+/** The event recording how Seshat's prompt was fitted (CX-N3-7). */
+export const PM_PROMPT_FITTED = "pm/prompt_fitted";
+
+/** A card's dossier as Seshat reads it: one line per entry, oldest first. */
+async function dossierLines(cardStore: CardStore, cardId: string): Promise<string[]> {
+  const dossier = await cardStore.getDossier(cardId).catch(() => undefined);
+  return (dossier?.entries ?? []).map((e) => `- ${e.kind} (${e.actor}): ${e.text}`);
+}
+
 export interface AnswerDeps {
   repoPath: string;
   cardStore: CardStore;
   pmStore: PmStore;
   pmModel: string;
-  /** Bring the PM model into memory (unloading the Worker if it holds it). */
-  acquire: () => Promise<LocalInferenceAdapter>;
+  /**
+   * Bring the PM model into memory (unloading the Worker if it may be
+   * unloaded) and hold it: nothing evicts it until the answer releases it.
+   */
+  acquire: () => Promise<ModelHold>;
   /** The Worker step the queue paused after, for the status line. */
   step?: number;
   /** Who is on the team and what asking each costs right now. */
@@ -239,6 +260,7 @@ export async function answerQueued(deps: AnswerDeps): Promise<boolean> {
     return true;
   }
 
+  let hold: ModelHold | undefined;
   try {
     await deps.pmStore.setStatus({
       phase: "loading_pm",
@@ -247,7 +269,8 @@ export async function answerQueued(deps: AnswerDeps): Promise<boolean> {
       etaSeconds: PM_LOAD_ETA_SECONDS,
       ...stepInfo,
     });
-    const model = await deps.acquire();
+    hold = await deps.acquire();
+    const model = hold.adapter;
     await deps.pmStore.setStatus({
       phase: "thinking",
       model: deps.pmModel,
@@ -281,9 +304,13 @@ export async function answerQueued(deps: AnswerDeps): Promise<boolean> {
       });
       return true;
     }
+    // CX-N3-7: the dossier of the card the person is looking at, newest message first.
+    const inView = [...queued].reverse().find((m) => m.context?.cardId)?.context?.cardId;
+    const dossier = inView ? await dossierLines(deps.cardStore, inView) : undefined;
     const snapshot = {
       ...(await buildSnapshot(deps.repoPath, deps.cardStore, deps.pmStore, deps.pmModel)),
       ...(deps.team ? { team: deps.team } : {}),
+      ...(inView && dossier?.length ? { dossier: { cardId: inView, lines: dossier } } : {}),
     };
     const result = await answer(
       model,
@@ -294,13 +321,25 @@ export async function answerQueued(deps: AnswerDeps): Promise<boolean> {
       undefined,
       deps.researcher,
     );
-    await deps.pmStore.appendReply({
+    const reply = await deps.pmStore.appendReply({
       replyTo: queued.map((m) => m.id),
       text: result.text,
       proposals: result.proposals,
       cites: result.cites,
       model: deps.pmModel,
     });
+    // CX-N3-7: what Seshat's prompt was fitted to, and each section's tokens.
+    if (result.promptBudget && result.promptSections) {
+      await deps.pmStore.log.append({
+        actor: "harness",
+        type: PM_PROMPT_FITTED,
+        payload: {
+          reply: reply.id,
+          ...result.promptBudget,
+          sections: result.promptSections.map((x) => ({ id: x.id, tokens: x.tokens })),
+        },
+      });
+    }
   } catch (err) {
     await deps.pmStore.appendReply({
       replyTo: queued.map((m) => m.id),
@@ -309,6 +348,7 @@ export async function answerQueued(deps: AnswerDeps): Promise<boolean> {
       model: deps.pmModel,
     });
   } finally {
+    hold?.release();
     await deps.pmStore.setStatus({ phase: "idle" });
   }
   return true;

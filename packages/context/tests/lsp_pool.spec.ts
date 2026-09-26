@@ -3,7 +3,13 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { LspPool } from "../src/lsp.js";
+import {
+  DEFAULT_LSP_HEAP_MB,
+  DEFAULT_LSP_SERVERS,
+  LspPool,
+  PYTHON_BOUNDS,
+  typescriptServer,
+} from "../src/lsp.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -67,5 +73,66 @@ describe("LspPool: resident memory and trimming (WL-N7-2 seam)", () => {
     } finally {
       await pool.closeAll();
     }
+  });
+});
+
+describe("NEW-worker-loop-7: language servers as bounded tenants", () => {
+  const roots: string[] = [];
+  afterEach(() => {
+    for (const r of roots.splice(0)) rmSync(r, { recursive: true, force: true });
+  });
+  const project = (): string => {
+    const root = mkdtempSync(join(tmpdir(), "lsp-wl7-"));
+    roots.push(root);
+    writeFileSync(join(root, "a.py"), "def greet():\n  return 1\n");
+    return root;
+  };
+  const fake = { command: process.execPath, args: [join(here, "support", "fake_lsp.mjs")] };
+
+  it("WL-N7-2: caps the server's heap, and excludes environment and dependency directories", async () => {
+    const root = project();
+    const pool = new LspPool({ servers: { python: { ...fake, ...PYTHON_BOUNDS, heapMb: 256 } } });
+    try {
+      const client = pool.clientFor(root, "a.py");
+      await client?.initialize();
+      // Give the server's configuration request its round trip.
+      await new Promise((r) => setTimeout(r, 200));
+      const echo = (await client?.request("sekhemet/echo", {})) as {
+        nodeOptions: string | null;
+        initOptions: unknown;
+        config: unknown[] | null;
+      };
+      expect(echo.nodeOptions).toContain("--max-old-space-size=256");
+      expect(JSON.stringify(echo.initOptions)).toContain(".venv");
+      expect(echo.config?.[0]).toMatchObject({ exclude: expect.arrayContaining(["**/.venv"]) });
+      expect(echo.config?.[1]).toBeNull();
+    } finally {
+      await pool.closeAll();
+    }
+  });
+
+  it("WL-N7-2: the guard's check trims the pool when its servers hold more than the cap", async () => {
+    const root = project();
+    const pool = new LspPool({ servers: { python: fake } });
+    try {
+      await pool.clientFor(root, "a.py")?.initialize();
+      expect(await pool.enforceResidentCap(1024 ** 4)).toMatchObject({ trimmed: false });
+      const over = await pool.enforceResidentCap(1);
+      expect(over.trimmed).toBe(true);
+      expect(over.residentBytes).toBeGreaterThan(1);
+      expect(pool.size).toBe(0);
+    } finally {
+      await pool.closeAll();
+    }
+  });
+
+  it("WL-N7-1: the TypeScript server is chosen by configuration: typescript-language-server or tsc --lsp", () => {
+    expect(typescriptServer(undefined)).toMatchObject({
+      command: "typescript-language-server",
+      args: ["--stdio"],
+    });
+    expect(typescriptServer("tsc")).toMatchObject({ command: "tsc", args: ["--lsp", "--stdio"] });
+    expect(DEFAULT_LSP_SERVERS.typescript?.heapMb).toBe(DEFAULT_LSP_HEAP_MB);
+    expect(JSON.stringify(DEFAULT_LSP_SERVERS.rust?.initializationOptions)).toContain("target");
   });
 });

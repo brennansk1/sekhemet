@@ -28,12 +28,14 @@ import {
 import { type CardRecord, measuresModel } from "@sekhemet/kernel";
 import { TOOL_CATALOG, cardClassFor, toolsForClass } from "@sekhemet/loop";
 import { effectiveConfig } from "./config_apply.js";
+import { abVerdictLine, contextVersionGate } from "./context_gate.js";
+import { workerContextVersion } from "./qualify.js";
 import type { Kernel } from "./wave2.js";
 
 /**
  * Measurement commands (measurement rules 9a, 16b, 16c):
  *
- *   sekhemet measure footprint [--out <file>] [--root <harness checkout>]
+ *   sekhemet measure footprint [--out <file>] [--root <this build's checkout>]
  *   sekhemet measure admit --baseline a.json,b.json --candidate c.json,d.json
  *                          --entry <ab-entry.json> --before <fp.json> --after <fp.json>
  *   sekhemet measure compare <baseline.json> <candidate.json>
@@ -55,6 +57,8 @@ export interface RecordedFootprint extends ChangeFootprint {
   commit: string;
   dirty: boolean;
   recordedAt: string;
+  /** The build's context version (context rule 27), stamped on the A/B it is part of (CX-N6-2). */
+  contextVersion: string;
 }
 
 /** The settings `sekhemet run` actually runs; the rest are the queue's. */
@@ -255,6 +259,7 @@ export function computeFootprint(root: string): RecordedFootprint {
     commit: git("rev-parse", "--short=12", "HEAD") || "unknown",
     dirty: git("status", "--porcelain") !== "",
     recordedAt: new Date().toISOString(),
+    contextVersion: workerContextVersion(),
   };
 }
 
@@ -459,8 +464,17 @@ export async function runMeasureCommand(
   const [sub] = args;
   try {
     if (sub === "footprint") {
-      // The harness's own source, not the project the command runs in.
-      const f = computeFootprint(flag(args, "--root") ?? HARNESS_ROOT);
+      // The harness's own source, not the project the command runs in. The
+      // prompt tokens, tools, switches and context version are this build's,
+      // so a --root naming another checkout would stamp its commit and lines
+      // on this build's numbers: refused (minor 4).
+      const root = flag(args, "--root");
+      if (root !== undefined && resolve(root) !== resolve(HARNESS_ROOT)) {
+        throw new Error(
+          `--root ${root} is not this build's checkout (${resolve(HARNESS_ROOT)}): a footprint's prompt tokens, tools, switches and context version are this build's. Run that checkout's own \`sekhemet measure footprint\` instead.`,
+        );
+      }
+      const f = computeFootprint(root ?? HARNESS_ROOT);
       const out = flag(args, "--out");
       if (out) writeFileSync(out, `${JSON.stringify(f, null, 2)}\n`);
       print(
@@ -520,7 +534,24 @@ export async function runMeasureCommand(
         },
       });
       print(result.reason);
+      // CX-N6-2: the line SUITE_RUNS.md records the verdict with, for the release gate.
+      if (after.contextVersion) {
+        print(
+          `Record in SUITE_RUNS.md: ${abVerdictLine(result.verdict, after.contextVersion, new Date().toISOString().slice(0, 10))}`,
+        );
+      }
       return 0;
+    }
+    if (sub === "context-gate") {
+      // `sekhemet measure context-gate [--suite-runs <file>]` (CX-N6-2, the release gate).
+      const file =
+        flag(args, "--suite-runs") ?? join(HARNESS_ROOT, "docs", "reference", "SUITE_RUNS.md");
+      const gate = contextVersionGate(
+        existsSync(file) ? readFileSync(file, "utf8") : "",
+        workerContextVersion(),
+      );
+      print(gate.reason);
+      return gate.ok ? 0 : 1;
     }
     if (sub === "compare") {
       // `sekhemet measure compare <baseline.json> <candidate.json>` (MS-M12-2..4).

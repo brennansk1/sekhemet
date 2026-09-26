@@ -5,12 +5,14 @@ import { BlobStore, type ContextPack, ledgerErasures } from "@sekhemet/kernel";
 import {
   type EngineCandidate,
   type InferenceRequest,
+  MODEL_ROLES,
   type MachineProfile,
   ManagedLlamaServerAdapter,
   type MeasuredSpeed,
   ModelRegistry,
   type ModelRole,
-  ModelRoster,
+  type PromptNeed,
+  REASONING_BUDGET_TOKENS,
   SPECULATIVE_HEADROOM_BYTES,
   type SpeculativeVerdict,
   type SweepCandidate,
@@ -27,10 +29,12 @@ import {
   modelTelemetry,
   mtpStepAB,
   needsRecalibration,
+  p99Tokens,
   readSwapUsedBytes,
   saveMachineProfile,
   selectEngine,
 } from "@sekhemet/models";
+import { describeModel, launchVariant } from "./model_access.js";
 
 /** The two adapters a speculative-decoding measurement compares (M19). */
 export interface SpeculativeProbes {
@@ -52,12 +56,11 @@ export interface SpeculativeProbes {
  */
 export function speculativeProbes(adapter: UnloadableAdapter): SpeculativeProbes | undefined {
   if (!(adapter instanceof ManagedLlamaServerAdapter)) return undefined;
-  const { registry: _measured, ...profile } = adapter.launchProfile;
   const draft = adapter.draftModelId();
-  if (profile.mtp !== true && draft === undefined) return undefined;
+  if (adapter.launchProfile.mtp !== true && draft === undefined) return undefined;
   return {
-    plain: new ManagedLlamaServerAdapter({ ...profile, speculativeOverride: false }),
-    speculative: new ManagedLlamaServerAdapter({ ...profile, speculativeOverride: true }),
+    plain: launchVariant(adapter, { speculativeOverride: false }),
+    speculative: launchVariant(adapter, { speculativeOverride: true }),
     ...(draft !== undefined ? { draft } : {}),
   };
 }
@@ -73,11 +76,9 @@ async function sweepProbe(
   candidate: SweepCandidate,
   buckets: number[] | undefined,
 ): Promise<{ speed: MeasuredSpeed; hitCliff?: boolean }> {
-  const { registry: _measured, ...profile } = adapter.launchProfile;
-  const probe = new ManagedLlamaServerAdapter({
-    ...profile,
+  const probe = launchVariant(adapter, {
     gpuLayers: candidate.gpuLayers,
-    extraArgs: [...(profile.extraArgs ?? []), "-b", String(candidate.batchTokens)],
+    extraArgs: [...(adapter.launchProfile.extraArgs ?? []), "-b", String(candidate.batchTokens)],
   });
   const baselineSwap = readSwapUsedBytes();
   try {
@@ -128,7 +129,51 @@ export interface CalibrateCommandOptions {
   sweep?: Parameters<typeof calibrateHardware>[0]["sweep"] | false;
   /** Injectable for tests: the with/without pair for the MTP measurement (M19). */
   speculative?: (adapter: UnloadableAdapter) => SpeculativeProbes | undefined;
+  /**
+   * The Worker's recorded prompt need (MD-N1-2), from `promptNeedFromLedgers`:
+   * the working context is never set below it.
+   */
+  promptNeed?: PromptNeed;
   say?: (line: string) => void;
+}
+
+/** The Worker's answer cap (the cyber-tiel profile's `maxTokens`). */
+export const WORKER_ANSWER_TOKENS = 2048;
+
+/**
+ * What the Worker's recorded prompts need (MD-N1-2): the p99 of every
+ * recorded step's prompt tokens across the given run ledgers, plus the
+ * answer cap and the largest thinking allowance a step may take. Undefined
+ * when no ledger holds a step (the p99 is B2.5's measurement until then).
+ */
+export function promptNeedFromLedgers(
+  repos: readonly string[],
+  caps: { answerTokens?: number; thinkingTokens?: number } = {},
+): PromptNeed | undefined {
+  const sizes: number[] = [];
+  for (const repo of repos) {
+    const dbPath = join(repo, ".sekhemet", "events.db");
+    if (!existsSync(dbPath)) continue;
+    const db = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      for (const r of db
+        .prepare("SELECT prompt_tokens AS n FROM steps WHERE prompt_tokens > 0")
+        .all() as { n: number }[]) {
+        sizes.push(Number(r.n));
+      }
+    } catch {
+      // A ledger without a steps table has recorded no prompt.
+    } finally {
+      db.close();
+    }
+  }
+  const p99 = p99Tokens(sizes);
+  if (p99 === undefined) return undefined;
+  return {
+    p99PromptTokens: p99,
+    answerTokens: caps.answerTokens ?? WORKER_ANSWER_TOKENS,
+    thinkingTokens: caps.thinkingTokens ?? REASONING_BUDGET_TOKENS.medium,
+  };
 }
 
 export const DEFAULT_CALIBRATION_MODELS: { name: string; role: ModelRole }[] = [
@@ -137,14 +182,14 @@ export const DEFAULT_CALIBRATION_MODELS: { name: string; role: ModelRole }[] = [
 
 export function parseModelList(spec: string | undefined): { name: string; role: ModelRole }[] {
   if (!spec) return DEFAULT_CALIBRATION_MODELS;
-  const roles: ModelRole[] = ["worker", "manager", "escalation", "reviewer", "researcher"];
   return spec
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean)
     .map((pair) => {
       const [name, role = "worker"] = pair.split("=");
-      if (!roles.includes(role as ModelRole)) throw new Error(`Unknown role "${role}" for ${name}`);
+      if (!(MODEL_ROLES as readonly string[]).includes(role))
+        throw new Error(`Unknown role "${role}" for ${name}`);
       return { name: name as string, role: role as ModelRole };
     });
 }
@@ -161,8 +206,9 @@ export async function runCalibrate(
     return saved;
   }
   const registry = opts.registry === null ? undefined : (opts.registry ?? new ModelRegistry());
-  const roster = new ModelRoster(registry ? { registry } : {});
-  const resolve = opts.resolve ?? ((n: string, r: ModelRole) => roster.resolve(n, r));
+  const resolve =
+    opts.resolve ??
+    ((n: string, r: ModelRole) => describeModel(n, r, registry ? { registry } : {}));
   const candidates = opts.models.map((m) => {
     const adapter = resolve(m.name, m.role);
     return { label: m.name, adapter, release: () => adapter.unload?.() ?? Promise.resolve() };
@@ -187,6 +233,7 @@ export async function runCalibrate(
     ...(opts.buckets ? { buckets: opts.buckets } : {}),
     ...(opts.decodeTokens ? { decodeTokens: opts.decodeTokens } : {}),
     ...(opts.usableBytes !== undefined ? { usableBytes: opts.usableBytes } : {}),
+    ...(opts.promptNeed ? { promptNeed: opts.promptNeed } : {}),
     ...(sweep ? { sweep } : {}),
     ...(opts.path !== undefined ? { path: opts.path } : {}),
   });
@@ -404,7 +451,7 @@ export async function runMtpAb(opts: {
 }): Promise<number> {
   const say = opts.say ?? ((l: string) => console.log(l));
   const registry = opts.registry ?? new ModelRegistry(defaultRegistryPath());
-  const adapter = new ModelRoster({ registry }).resolve(opts.worker ?? "cyber-tiel", "worker");
+  const adapter = describeModel(opts.worker ?? "cyber-tiel", "worker", { registry });
   const probes = speculativeProbes(adapter);
   if (!probes) {
     say(`${adapter.modelId} has no MTP head or draft model to measure.`);

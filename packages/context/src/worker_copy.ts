@@ -164,6 +164,47 @@ export const workerCopy = {
   findReferencesCall: (symbol: string, file: string): string =>
     `find_references(symbol="${symbol}", file="${file}")`,
 
+  // --- language servers and the rename tool (worker-loop NEW-worker-loop-6/7) ---
+  /** A server that is absent, crashed or over its heap: the reply says what it fell back to. */
+  languageServerUnavailable: (language: string, reason: string): string =>
+    `(the ${language} language server is unavailable: ${reason}; whole-word text matches)`,
+  renameSymbolSummary:
+    "Rename a declaration and every use of it across files in one call, through the language service.",
+  renamePathParam: "File that declares the symbol",
+  renameSymbolParam: "Current name",
+  renameNewNameParam: "New name",
+  renamed: (symbol: string, newName: string, sites: number, files: string): string =>
+    `Renamed ${symbol} to ${newName}: ${sites} site(s) in ${files}.`,
+  renameOutsideScope: (files: string): string =>
+    `Not renamed: the rename also changes ${files}, outside this card's scope. Rename only inside the scope, or ask for the card to declare the rename as its mechanical change.`,
+  renameProtected: (files: string): string =>
+    `Not renamed: the rename would change protected files (${files}).`,
+  renameArguments: "Give path, symbol and new_name; new_name must be an identifier.",
+  renameFileMissing: (path: string): string => `No file ${path} to rename in.`,
+  renameNoService: (symbol: string, path: string): string =>
+    `No language service could rename ${symbol} in ${path}; change each use with edit.`,
+
+  // --- ask's non-blocking question to a person (worker-loop NEW-worker-loop-4) --
+  askSummary:
+    "Ask what the card requires instead of guessing; its contract, Seshat or a person answers.",
+  askReturns: "Contract excerpts, an answer, or what to assume",
+  askAssumptionParam: "Your working assumption meanwhile",
+  askPostedSummary: "posted for a person; continuing on the assumption",
+  askDefaultAssumption: "the most conservative reading the acceptance tests allow",
+  askPosted: (assumption: string): string =>
+    `Nothing in the card's contract answers that, so it is posted for a person. Do not wait: continue on your assumption (${assumption}) and record it with note("Assumed: ..."). If an answer comes while you work, it arrives before a later step.`,
+  askAnswered: (
+    question: string,
+    answer: string,
+    contradicts: boolean,
+    assumption: string,
+  ): string =>
+    `A person answered your question "${question}": ${answer}.${contradicts ? ` This contradicts your assumption (${assumption}): change what you built on it.` : " This confirms your assumption."}`,
+  askAnswerFrom: "a person's answer to your question",
+  /** M3: the person's reply in the card's thread, after a contradicting answer. */
+  askReply: (question: string, reply: string): string =>
+    `A person replied about your question "${question}": ${reply}. Build on this, not on your assumption.`,
+
   // --- read_file's own replies, naming only offered tools (review item 3) -----
   /** read_file on a directory: the offered tool that lists it, when there is one. */
   readFileDirectory: (path: string, lister?: string): string =>

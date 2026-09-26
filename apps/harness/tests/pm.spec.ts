@@ -12,6 +12,7 @@ import { answerQueued, runnerLease, workerRecord } from "../src/pm/service.js";
 import { PmStore } from "../src/pm/store.js";
 
 const usage = { promptTokens: 10, completionTokens: 10, durationMs: 1 };
+const held = (adapter: MockInferenceAdapter) => ({ role: "chat", adapter, release: () => {} });
 
 describe("project manager", () => {
   let repo: string;
@@ -70,7 +71,7 @@ describe("project manager", () => {
       cardStore: cards,
       pmStore: pm,
       pmModel: "dirk-27b",
-      acquire: async () => model,
+      acquire: async () => held(model),
     });
     expect(answered).toBe(true);
 
@@ -221,6 +222,42 @@ describe("project manager", () => {
     expect(workerRecord([])).toBeUndefined();
   });
 
+  it("M1: Seshat holds the model for the whole answer and releases it after, even on a failure", async () => {
+    await pm.appendUserMessage("Plan next cycle");
+    const events: string[] = [];
+    const model = new MockInferenceAdapter("dirk-27b", [
+      { text: "Split the ledger card first.", toolCalls: [], usage },
+    ]);
+    const acquire = (adapter: MockInferenceAdapter) => async () => {
+      events.push("hold");
+      return { role: "chat", adapter, release: () => events.push("release") };
+    };
+    await answerQueued({
+      repoPath: repo,
+      cardStore: cards,
+      pmStore: pm,
+      pmModel: "dirk-27b",
+      acquire: acquire(model),
+    });
+    expect((await pm.thread()).at(-1)?.text).toContain("Split the ledger");
+    expect(events).toEqual(["hold", "release"]);
+
+    await pm.appendUserMessage("And after that?");
+    const broken = new MockInferenceAdapter("dirk-27b", []);
+    broken.generate = async () => {
+      throw new Error("the server went away");
+    };
+    await answerQueued({
+      repoPath: repo,
+      cardStore: cards,
+      pmStore: pm,
+      pmModel: "dirk-27b",
+      acquire: acquire(broken),
+    });
+    expect((await pm.thread()).at(-1)?.state).toBe("error");
+    expect(events).toEqual(["hold", "release", "hold", "release"]);
+  });
+
   it("has no runner lease when no queue is running", () => {
     expect(runnerLease(repo)).toBeUndefined();
   });
@@ -264,7 +301,7 @@ describe("project manager", () => {
       cardStore: cards,
       pmStore: pm,
       pmModel: "dirk-27b",
-      acquire: async () => model,
+      acquire: async () => held(model),
     });
     expect((await pm.summary())?.text).toBe("Human asked three questions; all answered.");
     expect((await pm.thread()).at(-1)?.text).toMatch(/^Compacted\./);

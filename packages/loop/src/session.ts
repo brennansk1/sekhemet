@@ -294,6 +294,8 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       allowedDomains: options.allowedDomains,
       egressProxyPort: options.egressProxyPort,
       lspPool: this.options.lspPool,
+      // WL-N6-2: a refactor card's rename may reach outside its scope.
+      mechanicalChange: this.card.change === "refactor",
       cardClass: cardClassFor(this.card),
       webDocs: options.webDocs,
       recallOffered: this.recallOffered(),
@@ -539,8 +541,12 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
    * take the most conservative reading the acceptance tests allow and to
    * record the assumption, which the human then sees in review.
    */
-  private async askObservation(question: unknown): Promise<ToolObservation> {
+  private async askObservation(question: unknown, assumed?: unknown): Promise<ToolObservation> {
     const q = typeof question === "string" ? question.trim() : "";
+    const assumption =
+      typeof assumed === "string" && assumed.trim()
+        ? assumed.trim()
+        : workerCopy.askDefaultAssumption;
     if (!q)
       return {
         tool: "ask",
@@ -594,6 +600,8 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
           content: `Seshat (project manager) answers: ${reply}`,
         };
       }
+      const posted = await this.postQuestion(q, assumption, questionEntryId);
+      if (posted) return posted;
       return {
         tool: "ask",
         ok: true,
@@ -603,6 +611,8 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       };
     }
     if (scored.length === 0) {
+      const posted = await this.postQuestion(q, assumption, questionEntryId);
+      if (posted) return posted;
       return {
         tool: "ask",
         ok: true,
@@ -617,6 +627,79 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       summary: `answered from ${scored.map((x) => x.from).join(", ")}`,
       content: `From the card's contract:\n${scored.map((x) => `- (${x.from}) ${x.t.trim()}`).join("\n")}`,
     };
+  }
+
+  /** Questions posted to a person, waiting for an answer (WL-N4-1). */
+  private waitingQuestions: {
+    decisionId: string;
+    question: string;
+    assumption: string;
+    questionEntryId: string | undefined;
+    /** M3: the contradiction was delivered; the person's reply is still to come. */
+    awaitingReply?: boolean;
+  }[] = [];
+
+  /**
+   * WL-N4-1: a question neither the contract nor Seshat answers is posted as
+   * a non-blocking decision request with the Worker's assumption; the Worker
+   * goes on. Undefined when there is nowhere to post it.
+   */
+  private async postQuestion(
+    question: string,
+    assumption: string,
+    questionEntryId: string | undefined,
+  ): Promise<ToolObservation | undefined> {
+    const id = await this.options.postDecision?.(question, assumption).catch(() => undefined);
+    if (!id) return undefined;
+    this.waitingQuestions.push({ decisionId: id, question, assumption, questionEntryId });
+    return {
+      tool: "ask",
+      ok: true,
+      summary: workerCopy.askPostedSummary,
+      content: workerCopy.askPosted(assumption),
+    };
+  }
+
+  /**
+   * WL-N4-2: at a step boundary, never mid-step, each answered question is
+   * handed to the Worker as an observation and filed under the question in
+   * the dossier; one that contradicts the assumption says so. M3: the
+   * person's own words (their reply in the card's thread) travel with the
+   * answer; a contradiction whose reply is not written yet is delivered now
+   * and the reply follows at the step boundary after it arrives.
+   */
+  private async deliverAnswers(): Promise<void> {
+    const read = this.options.readDecision;
+    if (!read || this.waitingQuestions.length === 0) return;
+    const still: typeof this.waitingQuestions = [];
+    for (const w of this.waitingQuestions) {
+      const d = await Promise.resolve(read(w.decisionId, w.questionEntryId)).catch(() => undefined);
+      if (!d?.answered) {
+        still.push(w);
+        continue;
+      }
+      const reply = d.reply?.trim();
+      if (w.awaitingReply) {
+        if (!reply) {
+          still.push(w);
+          continue;
+        }
+        this.deliverMessage(workerCopy.askReply(w.question, reply), workerCopy.askAnswerFrom);
+        await this.options.recordAnswer?.(reply, w.questionEntryId).catch(() => undefined);
+        continue;
+      }
+      const contradicts = d.optionIndex !== 0;
+      const option = d.option ?? String(d.optionIndex ?? "");
+      // A contradiction's own words replace "see the card's thread".
+      const answer = reply ? (contradicts ? reply : `${option} (${reply})`) : option;
+      this.deliverMessage(
+        workerCopy.askAnswered(w.question, answer, contradicts, w.assumption),
+        workerCopy.askAnswerFrom,
+      );
+      await this.options.recordAnswer?.(answer, w.questionEntryId).catch(() => undefined);
+      if (contradicts && !reply) still.push({ ...w, awaitingReply: true });
+    }
+    this.waitingQuestions = still;
   }
 
   /**
@@ -1061,6 +1144,11 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
     return this.tools.condensedTokensSaved;
   }
 
+  /** Lines a mechanical tool applied this attempt, per file (WL-N6-1; for gates GT-BF-3). */
+  public getToolApplied(): ReturnType<ToolExecutor["toolAppliedLines"]> {
+    return this.tools.toolAppliedLines();
+  }
+
   public getRulesUsed(): string[] {
     return [...this.rulesUsed];
   }
@@ -1154,6 +1242,8 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         ranked = buildRankedRepoMap(this.tools.root, {
           scopeFiles: this.options.scopeFiles ?? [],
           budgetTokens: 1200,
+          // CX-N5-1: files defining what the spec names rank up.
+          ...(this.card.spec ? { specText: this.card.spec } : {}),
         }).text;
       } catch {
         ranked = "";
@@ -1508,6 +1598,8 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
   }
 
   public async executeTurn(): Promise<TurnResult> {
+    // WL-N4-2: answers to posted questions arrive at the step boundary.
+    await this.deliverAnswers();
     const before = {
       filesWrittenBefore: this.filesWritten.size,
       failedCheckStanding: this.lastGateFailures.length > 0,
@@ -1916,7 +2008,7 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
           : call.name === "recall"
             ? this.recallObservation(call.arguments.ref)
             : call.name === "ask"
-              ? await this.askObservation(call.arguments.question)
+              ? await this.askObservation(call.arguments.question, call.arguments.assumption)
               : call.name === TOOL_SEARCH_NAME
                 ? this.toolSearchObservation(call.arguments.query)
                 : call.name === "subtask"

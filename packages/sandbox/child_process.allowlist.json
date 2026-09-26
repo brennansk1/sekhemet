@@ -62,6 +62,7 @@
     "packages/sync/src/repo_tools.ts": "The harness's own git, git-cliff for release notes and `act` for the CI gate."
   },
   "runTrusted": {
+    "apps/harness/src/bakeoff_tasks.ts": "The harness's own git to mine the project's history for bake-off tasks (log, diff) and to add, restore files in and remove a scratch worktree at a commit; the tests there run confined (MD-N4-7).",
     "apps/harness/src/supervisor.ts": "The harness's own git (reset, clean) to restore a crashed card's worktree to its last checkpoint, with the guarded worktree environment (runtime RUN-9).",
     "apps/harness/src/wave2.ts": "The harness's own git to add and remove --validate-tools' scratch worktree."
   }

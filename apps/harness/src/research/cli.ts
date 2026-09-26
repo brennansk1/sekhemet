@@ -1,9 +1,8 @@
 import { readFileSync } from "node:fs";
 import type { CardStore } from "@sekhemet/kernel";
-import type { LocalInferenceAdapter } from "@sekhemet/models";
 import { McpHub, loadMcpConfig } from "../mcp_client.js";
 import { crawl4aiInstalled } from "./crawl4ai.js";
-import { ResearchService, researchSources, researcherAdapter } from "./service.js";
+import { ResearchService, researchSources, researcherModel } from "./service.js";
 
 export const CRAWL4AI_CREDIT =
   "This product includes software developed by UncleCode (https://x.com/unclecode) as part of the Crawl4AI project (https://github.com/unclecode/crawl4ai).";
@@ -71,7 +70,7 @@ export async function runResearchCommand(
     );
   }
   const modelName = flag(argv, "--model") ?? process.env.SEKHEMET_RESEARCHER ?? "apodex";
-  let adapter: LocalInferenceAdapter | undefined;
+  const model = researcherModel(modelName);
   const rounds = Number(flag(argv, "--rounds")) || undefined;
   const service = new ResearchService({
     repoPath,
@@ -81,10 +80,7 @@ export async function runResearchCommand(
     ...(rounds ? { maxRounds: rounds } : {}),
     onEvent: (line) => process.stderr.write(`${line}\n`),
     ...(mcp ? { mcp } : {}),
-    model: async () => {
-      adapter ??= researcherAdapter(modelName);
-      return adapter;
-    },
+    model: model.acquire,
   });
   const cardId = flag(argv, "--card");
   // --batch <file>: one question per line (a line starting "deep:" runs deep),
@@ -134,8 +130,7 @@ export async function runResearchCommand(
   } finally {
     // The managed server is bound to this process (it never outlives it), so
     // unload it now; nothing may keep the CLI alive afterwards.
-    const unload = (adapter as { unload?: () => Promise<void> } | undefined)?.unload;
-    if (unload) await unload.call(adapter).catch(() => undefined);
+    await model.release().catch(() => undefined);
     mcp?.close();
   }
 }

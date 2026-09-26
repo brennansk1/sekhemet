@@ -121,6 +121,46 @@ export interface HttpAdapterOptions {
   registry?: ModelRegistry;
   /** Called when the template check changes the registry (pinned or changed). */
   onTemplatePin?: (modelId: string, result: TemplatePinResult) => void;
+  /** The role this adapter serves, named when a prompt is refused (CX-N3-3). */
+  role?: string;
+}
+
+/**
+ * Characters per token for counting a prompt before it is sent (CX-N3-3):
+ * the ratio of the context package's one estimator (`FALLBACK_CHARS_PER_TOKEN`,
+ * `packages/context/src/tokens.ts`), which the models package cannot import.
+ * A harness test holds the two equal.
+ */
+export const PROMPT_CHARS_PER_TOKEN = 3.2;
+
+/** A prompt's tokens by that estimate: every message's text and every tool schema sent. */
+export function countPromptTokens(
+  messages: readonly { content: string }[],
+  tools?: readonly ToolDefinition[],
+): number {
+  const chars =
+    messages.reduce((n, m) => n + m.content.length, 0) +
+    (tools?.length ? JSON.stringify(tools).length : 0);
+  return chars <= 0 ? 0 : Math.ceil(chars / PROMPT_CHARS_PER_TOKEN);
+}
+
+/**
+ * A request refused before it was sent because its prompt is larger than the
+ * context the adapter set for the model (CX-N3-3): an engine that silently
+ * drops the start of an over-long prompt would lose the instructions.
+ */
+export class ContextOverflowError extends Error {
+  constructor(
+    public readonly role: string,
+    public readonly modelId: string,
+    public readonly promptTokens: number,
+    public readonly contextTokens: number,
+  ) {
+    super(
+      `Refusing to send the ${role} prompt: ${promptTokens} tokens counted against the ${contextTokens}-token context set for ${modelId}; the engine would drop its start.`,
+    );
+    this.name = "ContextOverflowError";
+  }
 }
 
 /** A non-2xx inference response, with its status for callers that branch on it. */
@@ -460,7 +500,8 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
 
   /** The window this adapter was configured with, so callers can budget prompts. */
   public get contextWindow(): { contextTokens: number; maxTokens: number } | undefined {
-    const contextTokens = this.options.contextTokens;
+    // MD-N4-2: a window set in the model's registry entry overrides the factory's.
+    const contextTokens = this.registryEntry()?.contextWindow ?? this.options.contextTokens;
     if (contextTokens === undefined) return undefined;
     return { contextTokens, maxTokens: this.options.maxTokens ?? 2048 };
   }
@@ -531,16 +572,37 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
     return this.fixedSeed;
   }
 
-  /** The sampling profile a request resolves to: planning overlays code. */
-  public samplingFor(req: Pick<InferenceRequest, "purpose">): SamplingOptions {
-    if (req.purpose === "planning" && this.options.planningSampling) {
-      return { ...this.sampling, ...this.options.planningSampling };
-    }
-    return this.sampling;
+  /** The model's registry entry, when the adapter has a registry (MD-N4-2). */
+  private registryEntry(): ReturnType<ModelRegistry["get"]> {
+    return this.options.registry?.get(this.modelId);
   }
 
-  /** The reasoning level a request resolves to, after the adapter's default. */
+  /**
+   * The sampling profile a request resolves to: planning overlays code, and
+   * sampling set in the model's registry entry overrides both (MD-N4-2).
+   */
+  public samplingFor(req: Pick<InferenceRequest, "purpose">): SamplingOptions {
+    const base =
+      req.purpose === "planning" && this.options.planningSampling
+        ? { ...this.sampling, ...this.options.planningSampling }
+        : this.sampling;
+    const r = this.registryEntry()?.sampling;
+    if (!r) return base;
+    return {
+      ...base,
+      ...(r.temperature !== undefined ? { temperature: r.temperature } : {}),
+      ...(r.topP !== undefined ? { topP: r.topP } : {}),
+      ...(r.topK !== undefined ? { topK: r.topK } : {}),
+      ...(r.minP !== undefined ? { minP: r.minP } : {}),
+    };
+  }
+
+  /**
+   * The reasoning level a request resolves to, after the adapter's default.
+   * A registry entry that says the model has no reasoning turns it off (MD-N4-2).
+   */
   public reasoningFor(req: Pick<InferenceRequest, "reasoning">): ReasoningLevel {
+    if (this.registryEntry()?.reasoning?.supported === false) return "off";
     if (req.reasoning !== undefined) return req.reasoning;
     return this.options.disableReasoning === false ? "medium" : "off";
   }
@@ -548,7 +610,11 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
   /** Thinking tokens allowed for a request whose reasoning is on. */
   private thinkingBudget(req: InferenceRequest, level: ReasoningLevel): number {
     if (level === "off") return 0;
-    return req.reasoningBudgetTokens ?? REASONING_BUDGET_TOKENS[level];
+    const registered = this.registryEntry()?.reasoning?.defaultBudget;
+    return (
+      req.reasoningBudgetTokens ??
+      (registered !== undefined && registered > 0 ? registered : REASONING_BUDGET_TOKENS[level])
+    );
   }
 
   constructor(options: HttpAdapterOptions) {
@@ -559,8 +625,19 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
     this.sampling = options.sampling ?? {};
   }
 
+  private keepAliveOverride: string | undefined;
+
+  /**
+   * The memory watchdog's shortened keep-alive (MD-N2-4), in force until it
+   * is cleared with `undefined`.
+   */
+  public setKeepAliveOverride(value: string | undefined): void {
+    this.keepAliveOverride = value;
+  }
+
   /** Keep-alive, tightened when the host is under memory pressure. */
   private resolveKeepAlive(): string {
+    if (this.keepAliveOverride !== undefined) return this.keepAliveOverride;
     const configured = this.options.keepAlive ?? "5m";
     if (this.options.memoryAware === false) return configured;
 
@@ -600,7 +677,7 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
         (x) => x.name === this.modelId || x.model === this.modelId,
       );
       if (!m?.size) return undefined;
-      const kv = (this.options.contextTokens ?? 8192) * 160 * 1024; // dense f16 KV, conservative
+      const kv = (this.contextWindow?.contextTokens ?? 8192) * 160 * 1024; // dense f16 KV, conservative
       return Math.round(m.size + kv + 1.5 * 1024 ** 3);
     } catch {
       return undefined;
@@ -857,6 +934,19 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
     if (this.options.registry && !this.templateChecked) await this.verifyTemplate();
     const kind = this.stepKind(req);
     const messages = this.messages(req);
+    // CX-N3-3: never send a prompt larger than the context set for the model.
+    const window = this.contextWindow?.contextTokens;
+    if (window !== undefined) {
+      const counted = countPromptTokens(messages, req.tools);
+      if (counted > window) {
+        throw new ContextOverflowError(
+          req.role ?? this.options.role ?? "model",
+          this.modelId,
+          counted,
+          window,
+        );
+      }
+    }
     const level = this.reasoningFor(req);
     // Thinking tokens come out of the same allowance as the answer; without
     // the extra room a reasoning turn ends mid-thought with no tool call.
@@ -940,9 +1030,7 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
           ? { presence_penalty: sampling.presencePenalty }
           : {}),
         ...(sampling.repeatPenalty !== undefined ? { repeat_penalty: sampling.repeatPenalty } : {}),
-        ...(this.options.contextTokens !== undefined
-          ? { num_ctx: this.options.contextTokens }
-          : {}),
+        ...(this.contextWindow !== undefined ? { num_ctx: this.contextWindow.contextTokens } : {}),
         // Rule 10: a fixed sampling seed, only when a measured run set one.
         ...(this.fixedSeed !== undefined ? { seed: this.fixedSeed } : {}),
       },

@@ -144,22 +144,18 @@ describe("C4: the system prompt is pinned for the whole card", () => {
 });
 
 describe("C14/C20/C21: pack record, metrics and joint version", () => {
-  it("returns a pack with per-zone tokens and a version that changes with any of the three", () => {
+  it("returns a pack with per-zone tokens and a version over the harness's templates and tools, rules listed beside it (CX-N6-3)", () => {
     const r = buildWorkerPrompt(base({ repoMap: "src/ledger.ts:\n  export class Ledger" }));
     expect(r.pack.id).toMatch(/^ctx_[0-9a-f]{16}$/);
     expect(r.pack.zoneTokens.system).toBeGreaterThan(0);
     expect(r.pack.zoneTokens.static).toBeGreaterThan(0);
     expect(r.pack.version).toBe(r.versionHash);
+    expect(r.pack.guidance.map((g) => g.id)).toEqual(["rule_a", "rule_b"]);
     expect(r.metrics).toMatchObject({ step: 1, tier: "nominal", rulesInPrompt: 2 });
-    const v1 = computeContextVersion({ tools, rules: [ruleA] });
-    expect(computeContextVersion({ tools, rules: [ruleA] }).version).toBe(v1.version);
-    expect(computeContextVersion({ tools, rules: [ruleA, ruleB] }).playbook).not.toBe(v1.playbook);
-    expect(computeContextVersion({ tools: [...tools, grep], rules: [ruleA] }).tools).not.toBe(
-      v1.tools,
-    );
-    expect(computeContextVersion({ tools, rules: [ruleA], templates: ["x"] }).prompt).not.toBe(
-      v1.prompt,
-    );
+    const v1 = computeContextVersion({ tools });
+    expect(computeContextVersion({ tools }).version).toBe(v1.version);
+    expect(computeContextVersion({ tools: [...tools, grep] }).tools).not.toBe(v1.tools);
+    expect(computeContextVersion({ tools, templates: ["x"] }).prompt).not.toBe(v1.prompt);
   });
 
   it("counts masked observations in the metrics", () => {

@@ -205,3 +205,56 @@ describe("sekhemet calibrate (H3)", () => {
     expect(registry.get("a")?.speculative?.reason).toMatch(/headroom/);
   });
 });
+
+describe("NEW-models-1: calibration keeps the window the Worker's prompts need (MD-N1-2)", () => {
+  it("reads the p99 of recorded prompt sizes from run ledgers and holds the window up", async () => {
+    const { mkdirSync } = await import("node:fs");
+    const { DatabaseSync } = await import("node:sqlite");
+    const { promptNeedFromLedgers } = await import("../src/calibrate_cmd.js");
+    const repo = mkdtempSync(join(tmpdir(), "cal-need-"));
+    mkdirSync(join(repo, ".sekhemet"));
+    const db = new DatabaseSync(join(repo, ".sekhemet", "events.db"));
+    db.exec("CREATE TABLE steps (prompt_tokens INTEGER NOT NULL DEFAULT 0)");
+    const insert = db.prepare("INSERT INTO steps (prompt_tokens) VALUES (?)");
+    for (let i = 0; i < 99; i++) insert.run(8_000);
+    insert.run(0); // a step with no usage recorded is not a size
+    insert.run(13_500);
+    insert.run(13_500);
+    db.close();
+    const need = promptNeedFromLedgers([repo], { answerTokens: 2048, thinkingTokens: 1024 });
+    expect(need).toEqual({ p99PromptTokens: 13_500, answerTokens: 2048, thinkingTokens: 1024 });
+    expect(promptNeedFromLedgers([join(repo, "none")])).toBeUndefined();
+
+    const lines: string[] = [];
+    const profile = await runCalibrate({
+      models: parseModelList("a=worker"),
+      buckets: [2048],
+      force: true,
+      sweep: false,
+      usableBytes: 11 * 1024 ** 3,
+      resolve: () => ({
+        modelId: "a",
+        supportedArms: ["arm_a_flat"],
+        generate: async () => ({
+          text: "ok",
+          toolCalls: [],
+          usage: {
+            promptTokens: 2048,
+            completionTokens: 8,
+            durationMs: 100,
+            prefillTokensPerSecond: 400,
+            decodeTokensPerSecond: 30,
+          },
+        }),
+      }),
+      path: false,
+      registry: null,
+      ...(need ? { promptNeed: need } : {}),
+      say: (l) => lines.push(l),
+    });
+    expect(profile?.settings?.workingContextTokens).toBeGreaterThanOrEqual(16_572);
+    // 13,500 p99 + 2,048 answer + 1,024 thinking = 16,572, recorded on the profile.
+    expect(profile?.settings?.promptNeedTokens).toBe(16_572);
+    expect(lines.join("\n")).toMatch(/working context \d+ tokens/);
+  });
+});

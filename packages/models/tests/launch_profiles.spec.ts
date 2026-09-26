@@ -11,8 +11,9 @@ import {
   createQwen38Managed,
 } from "../src/llama_server.js";
 import { ModelRegistry } from "../src/registry.js";
+import { ResidencyScheduler } from "../src/residency.js";
 import { ModelRoster } from "../src/roster.js";
-import { ModelRouter } from "../src/router.js";
+import { escalationWindow } from "../src/roster.js";
 import { fakeServer } from "./support/fake_server.js";
 import { qualifyMtp } from "./support/qualify_mtp.js";
 
@@ -156,8 +157,8 @@ describe("M20 actions on a managed server", () => {
 describe("M5: the model roster makes Qwen3.8-27B (Dirk) reachable", () => {
   it("resolves qwen3.8-27b and dirk to one shared managed adapter", () => {
     const roster = new ModelRoster({ qwen38: { modelPath: "/q.gguf" } });
-    const manager = roster.resolve("qwen3.8-27b", "manager");
-    const escalation = roster.resolve("dirk", "escalation");
+    const manager = roster.resolve("qwen3.8-27b", "planner");
+    const escalation = roster.resolve("dirk", "planner", escalationWindow(24 * GB));
     expect(manager).toBe(escalation);
     expect(manager).toBeInstanceOf(ManagedLlamaServerAdapter);
     expect(manager.modelId).toBe("qwen3.8-27b");
@@ -165,15 +166,15 @@ describe("M5: the model roster makes Qwen3.8-27B (Dirk) reachable", () => {
 
   it("falls back to Ollama with the role's profile for any other name", () => {
     const roster = new ModelRoster({ totalBytes: 24 * GB });
-    const esc = roster.resolve("dirk-27b:latest", "escalation");
+    const esc = roster.resolve("dirk-27b:latest", "planner", escalationWindow(24 * GB));
     const rev = roster.resolve("gemma:12b", "reviewer");
     expect(esc).not.toBeInstanceOf(ManagedLlamaServerAdapter);
     expect(esc.contextWindow).toEqual({ contextTokens: 12288, maxTokens: 3072 });
     expect(rev.contextWindow).toEqual({ contextTokens: 12288, maxTokens: 900 });
-    expect(roster.resolve("dirk-27b:latest", "escalation")).not.toBe(esc);
+    expect(roster.resolve("dirk-27b:latest", "planner")).not.toBe(esc);
   });
 
-  it("two roles on the shared Qwen3.8 adapter never swap in the router", async () => {
+  it("two queues on the shared Qwen3.8 adapter never swap in the scheduler", async () => {
     const unloads: string[] = [];
     const fake = {
       modelId: "qwen3.8-27b",
@@ -188,16 +189,21 @@ describe("M5: the model roster makes Qwen3.8-27B (Dirk) reachable", () => {
       },
     };
     const roster = new ModelRoster({ managed: { "qwen3.8-27b": () => fake } });
-    const router = new ModelRouter(
-      {
-        manager: roster.factory("qwen3.8-27b", "manager"),
-        escalation: roster.factory("dirk", "escalation"),
+    const router = new ResidencyScheduler({
+      roles: [
+        { role: "chat", weights: "qwen", contextTokens: 8192 },
+        { role: "escalation", weights: "qwen", contextTokens: 12_288 },
+      ],
+      weights: {
+        qwen: { build: () => roster.resolve("qwen3.8-27b", "planner"), footprintBytes: 14 * GB },
       },
-      { pressureLevel: () => 1, headroomWaitMs: 0 },
-    );
-    await router.use("manager");
-    await router.use("escalation");
-    await router.use("manager");
+      usableBytes: 16 * GB,
+      pressureLevel: () => 1,
+      healthCheck: false,
+    });
+    (await router.acquire("chat")).release();
+    (await router.acquire("escalation")).release();
+    (await router.acquire("chat")).release();
     expect(router.swapCount).toBe(0);
     expect(unloads).toEqual([]);
   });

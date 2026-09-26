@@ -194,13 +194,17 @@
   },
   {
     "name": "ask",
-    "description": "Ask a question about what the card requires instead of guessing. Answered from the card's spec, Done-when list and rules.",
+    "description": "Ask what the card requires instead of guessing; its contract, Seshat or a person answers.",
     "parameters": {
       "type": "object",
       "properties": {
         "question": {
           "type": "string",
           "description": "The question"
+        },
+        "assumption": {
+          "type": "string",
+          "description": "Your working assumption meanwhile"
         }
       },
       "required": [

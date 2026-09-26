@@ -1,5 +1,16 @@
 export type ToolArm = "arm_a_flat" | "arm_b_json" | "arm_c_sketch";
 
+/**
+ * The harness consults a model in four roles (models rule 21, MD-N4-1): the
+ * Worker executes cards; the Planner plans, answers about the board and
+ * speaks as Seshat; the Reviewer reads a passing diff; the Researcher answers
+ * with sources. `vision` is a capability a model may hold, not a role. This
+ * is the only role enumeration: queues (chat, escalated retries, questions)
+ * are work a role's weights serve, not roles.
+ */
+export const MODEL_ROLES = ["worker", "planner", "reviewer", "researcher"] as const;
+export type ModelRole = (typeof MODEL_ROLES)[number];
+
 export interface ToolDefinition {
   name: string;
   description: string;
@@ -91,6 +102,8 @@ export interface InferenceRequest {
    * evict each other's cached prefix. Ignored by Ollama.
    */
   slot?: number;
+  /** Whose prompt this is (worker, planner, seshat, reviewer, researcher): named in a refusal (CX-N3-3). */
+  role?: string;
 }
 
 export interface TokenUsage {
@@ -190,4 +203,13 @@ export interface LocalInferenceAdapter {
   generate(req: InferenceRequest): Promise<InferenceResponse>;
   /** Health contract (M4); every adapter in this package implements it. */
   healthCheck?(): Promise<AdapterHealth>;
+}
+
+/** An adapter that can release its weights. HttpInferenceAdapter implements this. */
+export interface UnloadableAdapter extends LocalInferenceAdapter {
+  unload?(): Promise<void>;
+  /** Resolves true once the weights are really gone (see HttpInferenceAdapter). */
+  confirmUnloaded?(timeoutMs?: number): Promise<boolean>;
+  /** Bytes the model occupies when resident (weights, KV cache, runtime). */
+  footprintBytes?(): Promise<number | undefined>;
 }

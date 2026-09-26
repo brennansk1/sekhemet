@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 41 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 42 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,47 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 42 — 2026-09-26 (B4.0a part 2: the rest of the engine after the baseline)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver. Two implementer helpers (half 1 and half 2 in parallel), one fix-round helper, one full independent review, and a narrow check of the scheduler and rename fixes (Sonnet).
+
+- **Half 1:**
+  - **ctx-4, rule curation:** broad rules refused; kind, path, error and gate scoping ANDed; a defined tie-break; fact-key merge; PM rules only to Seshat; rotation with paired credit and automatic retirement; probation off.
+  - **ctx-5:** spec identifiers ranked up in the repo map; a content-hash cache key; condensing savings per tool.
+  - **CX-N3-2/6/8:** Worker priorities follow rule 10a; working memory keeps Seshat's answer; the re-plan is fitted to the Planner's window.
+  - **CX-N6-2/3:** the context version covers harness assets and budget policies; release-gate rung 9 compares it with the newest adopted A/B, and fails until one is stamped.
+  - **wl-4:** an unanswered `ask` becomes a non-blocking decision; the person's reply reaches the Worker at a step boundary.
+  - **wl-6:** `rename_symbol` applies each edit's own text.
+  - **wl-7:** language servers get heap caps, excludes, memory trims and a fallback; TS symbol tools go through the server first.
+- **Half 2:**
+  - **models-9:** the residency scheduler is the only way to a model (`model_access.ts`), and `ModelRouter` is deleted. Held models are pinned, and one lock serialises loads and evictions. On 24 GB it is one large model at a time.
+  - **models-1:** tier by installed memory.
+  - **models-2:** watchdog actions for `run` and `queue`.
+  - **models-3:** reserved hours; batching by project.
+  - **models-4:** one role type and registry overrides.
+  - **models-5:** per-arm scoring in `qualify`.
+  - **models-10:** `models assign|restore|list`, read by `run` and `queue`.
+  - **CX-N6-1:** a new context version invalidates qualifications.
+  - **CX-N3-3/7:** adapters refuse an over-long prompt; Seshat's and the Researcher's budgets.
+  - **wl-8:** the Planner's tool index.
+- **Review:** 4 majors, all fixed, with the scheduler and rename fixes confirmed by a narrow check.
+  - M1: a shared scheduler could evict a held model and admit two loads.
+  - M2: rename dropped the edit text.
+  - M3: a contradicting answer never reached the Worker.
+  - M4: two Worker-visible rows were not marked A/B pending.
+  - Six minors fixed, among them rule credit after the cap, the lost router assertions ported, `run` releasing through the scheduler, and history mining through `runTrusted`.
+- **A/B pending after the B2.5 baseline** (rule 21a): the estimator, CX-N3-2/4/5/6/8, CX-N4-2/3, CX-N5-1, the `ask` change, WL-N6 and WL-N7-1; WL-N8 and CX-N3-7 on the planning measure.
+- **Qualifications:** the context version changed, so every qualification is invalid until re-run with a model.
+- **Still partial:**
+  - WL-N7-1: the remaining `typescript` importers are IX-4, B4.0b.
+  - MD-N4-10: needs a Zone 3 measurement.
+  - MD-N3-4/5: wait on the overnight benchmark, NEW-measurement-5 in B4.1.
+- **Gate:** a snapshot of `cc1e06f` plus part 2: `tsc -b` and Biome clean, 358 files and 2,661 tests pass, exit codes checked.
+- **Where the cards stop:**
+  - **B4.0a part 3,** requested by the owner: swap cost measured, predicted, flagged and used by the scheduler. A new models change: every swap recorded; expected load time learned per model, drive and cold or warm; no swap for less work than it costs, with aging; a minimum residency; pre-warm; the predicted wait shown; a slow-load flag with cause and fix. The engine is built now; the dashboard view comes with B4.1.
+  - MD-N4-10 comes with it.
+  - Then B4.0b.
 
 ### Entry 41 — 2026-09-25 (design: taking over an unfinished project; the reuse survey; the password list)
 

@@ -4,7 +4,7 @@ import {
   type TierSettings,
   hostFingerprintHash,
   loadMachineProfile,
-  tierSettingsFor,
+  tierSettingsOf,
 } from "./calibration.js";
 import { HttpInferenceAdapter, NAIL_WORKER_PROFILE } from "./http_adapter.js";
 import {
@@ -15,7 +15,7 @@ import {
   createQwen38Managed,
 } from "./llama_server.js";
 import type { ModelRegistry } from "./registry.js";
-import type { ModelRole, UnloadableAdapter } from "./router.js";
+import type { ModelRole, UnloadableAdapter } from "./types.js";
 
 /** The inference engine behind an adapter (M24). */
 export function engineOf(adapter: unknown): string {
@@ -31,6 +31,17 @@ export function engineOf(adapter: unknown): string {
  */
 export const MANAGED_MODEL_NAMES = ["cyber-tiel", "apodex", "qwen3.8-27b", "dirk"] as const;
 export type ManagedModelName = (typeof MANAGED_MODEL_NAMES)[number];
+
+/**
+ * Each managed default's model family (MD-N4-9): the Worker and the Planner
+ * are Qwen. The Researcher's family is recorded from its model card when that
+ * default is registered; none is claimed here.
+ */
+export const MANAGED_MODEL_FAMILIES: Partial<Record<ManagedModelName, string>> = {
+  "cyber-tiel": "qwen",
+  "qwen3.8-27b": "qwen",
+  dirk: "qwen",
+};
 
 export function isManagedModelName(name: string): name is ManagedModelName {
   return (MANAGED_MODEL_NAMES as readonly string[]).includes(name);
@@ -59,27 +70,18 @@ export function resolveWorkerModelId(name: string): string {
 export function ollamaProfileForRole(
   role: ModelRole,
   modelId: string,
-  totalBytes: number = totalmem(),
 ): ConstructorParameters<typeof HttpInferenceAdapter>[0] {
-  const base = { modelId, apiFormat: "ollama" as const, disableReasoning: true };
+  const base = { modelId, apiFormat: "ollama" as const, disableReasoning: true, role };
   switch (role) {
     case "worker":
-      return { ...NAIL_WORKER_PROFILE, modelId };
-    case "manager":
+      return { ...NAIL_WORKER_PROFILE, modelId, role };
+    case "planner":
       return {
         ...base,
         contextTokens: 8192,
         maxTokens: 2048,
         sampling: { temperature: 0.2, topP: 0.9, topK: 20, minP: 0 },
         planningSampling: { temperature: 0.7, topP: 0.8 },
-      };
-    case "escalation":
-      return {
-        ...base,
-        // 12k keeps a dense 27B inside a 24 GB host; roomier hosts get 16k.
-        contextTokens: totalBytes >= 48 * 1024 ** 3 ? 16384 : 12288,
-        maxTokens: 3072,
-        sampling: { temperature: 0.2, topP: 0.9, topK: 20, minP: 0 },
       };
     case "researcher":
       return {
@@ -93,9 +95,27 @@ export function ollamaProfileForRole(
         ...base,
         contextTokens: 12288,
         maxTokens: 900,
-        sampling: { temperature: 0.1, topP: 0.9, topK: 20, minP: 0 },
+        sampling: { temperature: 0.2, topP: 0.9, topK: 20, minP: 0 },
       };
   }
+}
+
+/**
+ * The Planner's weights driving the coding loop for an escalated retry: a
+ * queue on the planner role, which needs more context and a longer answer.
+ * 12k keeps a dense 27B inside a 24 GB host; roomier hosts get 16k.
+ */
+export function escalationWindow(totalBytes: number = totalmem()): {
+  contextTokens: number;
+  maxTokens: number;
+} {
+  return { contextTokens: totalBytes >= 48 * 1024 ** 3 ? 16384 : 12288, maxTokens: 3072 };
+}
+
+/** What a caller may set on one resolution: the window it needs (MD-N9-1). */
+export interface ResolveOptions {
+  contextTokens?: number;
+  maxTokens?: number;
 }
 
 export interface ModelRosterOptions {
@@ -156,7 +176,7 @@ export class ModelRoster {
   public tierSettings(): TierSettings | undefined {
     const profile = this.calibrated();
     if (!profile) return undefined;
-    return profile.settings ?? tierSettingsFor(profile.usableBytes);
+    return tierSettingsOf(profile);
   }
 
   /**
@@ -190,9 +210,9 @@ export class ModelRoster {
     }) as unknown as A;
   }
 
-  public resolve(name: string, role: ModelRole): UnloadableAdapter {
+  public resolve(name: string, role: ModelRole, want: ResolveOptions = {}): UnloadableAdapter {
     if (!isManagedModelName(name)) {
-      const profile = ollamaProfileForRole(role, name, this.options.totalBytes);
+      const profile = { ...ollamaProfileForRole(role, name), ...want };
       // The engine decision is the whole point of measuring one: where the
       // OpenAI-compatible path won, the same weights are served over it
       // rather than through Ollama's own API.
@@ -231,7 +251,11 @@ export class ModelRoster {
         }
       });
     const adapter = this.withRegistry(this.tuned(build()));
-    this.options.registry?.upsert(adapter.modelId, { engine: engineOf(adapter) });
+    const family = MANAGED_MODEL_FAMILIES[name];
+    this.options.registry?.upsert(adapter.modelId, {
+      engine: engineOf(adapter),
+      ...(family ? { family } : {}),
+    });
     this.shared.set(key, adapter);
     return adapter;
   }
@@ -240,10 +264,5 @@ export class ModelRoster {
     const registry = this.options.registry;
     if (registry && adapter instanceof HttpInferenceAdapter) adapter.attachRegistry(registry);
     return adapter;
-  }
-
-  /** A router factory for a role, so `new ModelRouter({ worker: roster.factory(...) })`. */
-  public factory(name: string, role: ModelRole): () => UnloadableAdapter {
-    return () => this.resolve(name, role);
   }
 }

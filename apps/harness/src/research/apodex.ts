@@ -19,7 +19,7 @@
  * workflows/agent_team/prompts.py (Apache-2.0, Copyright Apodex AI); see NOTICE.
  */
 
-import type { LocalInferenceAdapter } from "@sekhemet/models";
+import { type LocalInferenceAdapter, stripReasoning } from "@sekhemet/models";
 
 /**
  * The visible answer without reasoning. Qwen3.5-family templates open
@@ -27,9 +27,8 @@ import type { LocalInferenceAdapter } from "@sekhemet/models";
  * everything up to the last `</think>` is reasoning.
  */
 export function stripThinking(text: string): string {
-  const at = text.lastIndexOf("</think>");
-  const tail = at === -1 ? text : text.slice(at + "</think>".length);
-  return tail.replace(/<think>[\s\S]*$/, "").trim();
+  // MD-N4-8: the one implementation, which the adapter already applied.
+  return stripReasoning(text);
 }
 
 /** web_search results, byte-for-byte the reference plaintext format. */

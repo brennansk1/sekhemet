@@ -56,6 +56,13 @@ import { RESTRICTED_TOOL_NAMES } from "./tool_catalog.js";
 import { type SymbolLocation, TsSymbolService, isTypeScriptLike } from "./ts_service.js";
 import { atomicWrite, validateWrite } from "./write_contract.js";
 
+/** One rename site: the offsets it replaces and the text that replaces them (M2). */
+interface RenameEdit {
+  start: number;
+  end: number;
+  text: string;
+}
+
 const SKIP_DIRS = new Set(["node_modules", "dist", ".git", ".sekhemet", "coverage", ".next"]);
 const MAX_GREP_MATCHES = 80;
 /** Lines of grep output (matches plus context) handed back at most. */
@@ -161,8 +168,17 @@ export interface ToolExecutorOptions {
   allowedDomains?: string[] | undefined;
   /** The card's egress proxy port (S5); commands get it as their only network. */
   egressProxyPort?: number | undefined;
-  /** Language servers for symbol tools on Python, Rust and other non-TS files (C2). */
+  /**
+   * Language servers for the symbol tools (C2, NEW-worker-loop-7): TypeScript
+   * through its server first, then the in-process service; other languages
+   * through theirs, then text search.
+   */
   lspPool?: LspPool | undefined;
+  /**
+   * The card declares a mechanical change (a `refactor`): `rename_symbol` may
+   * then change files outside the declared scope (WL-N6-2).
+   */
+  mechanicalChange?: boolean | undefined;
   /**
    * The library's official web docs for `docs(query, library)` when the
    * installed copy has nothing (supplied by the harness's research service).
@@ -192,6 +208,7 @@ export const MUTATING_TOOLS: ReadonlySet<string> = new Set([
   "replace_lines",
   "replace_symbol_body",
   "insert_after_symbol",
+  "rename_symbol",
   "run_cmd",
   "start_process",
   "write_process",
@@ -247,6 +264,8 @@ export class ToolExecutor {
   /** Worktree-relative files whose current contents the agent has seen this card. */
   private seen = new Set<string>();
   private deniedByRule = new Map<string, number>();
+  /** Lines a mechanical tool changed, per worktree-relative file (WL-N6-1, gates GT-BF-3). */
+  private toolApplied = new Map<string, Set<number>>();
 
   constructor(private options: ToolExecutorOptions) {
     this.root = canonicalizeRoot(options.worktreePath);
@@ -593,10 +612,20 @@ export class ToolExecutor {
         return this.insertAfterSymbol(str("path"), str("symbol"), str("content"));
       case "find_references": {
         const viaLsp = await this.lspReferences(str("symbol"), str("file"));
-        return viaLsp ?? this.findReferences(str("symbol"), str("path") ?? ".", str("file"));
+        if (viaLsp) return viaLsp;
+        // WL-N7-3: a non-TypeScript file whose server is out: text search, said so.
+        const down = this.lspDown(str("file"));
+        if (down && !isTypeScriptLike(str("file") ?? "")) {
+          return this.textReferences(str("symbol"), str("path") ?? ".", down);
+        }
+        return this.findReferences(str("symbol"), str("path") ?? ".", str("file"));
       }
-      case "go_to_definition":
-        return this.goToDefinition(str("symbol"), str("file"));
+      case "go_to_definition": {
+        const viaLsp = await this.lspDefinition(str("symbol"), str("file"));
+        return viaLsp ?? this.goToDefinition(str("symbol"), str("file"));
+      }
+      case "rename_symbol":
+        return this.renameSymbol(str("path"), str("symbol"), str("new_name"));
       case "run_script":
         return this.runScript(str("code"));
       case "start_process":
@@ -1292,20 +1321,16 @@ Promise.resolve(__result).then((v) => { process.stdout.write(typeof v === "strin
     file: string | undefined,
   ): Promise<ToolObservation | undefined> {
     const pool = this.options.lspPool;
-    if (!pool || !symbol || !file || isTypeScriptLike(file)) return undefined;
+    if (!pool || !symbol || !file) return undefined;
     const lang = lspLanguageOf(file);
-    if (!lang || lang === "typescript") return undefined;
-    const abs = resolveInWorktree(this.root, file);
-    if (!existsSync(abs)) return undefined;
-    const lines = readFileSync(abs, "utf8").split("\n");
-    const re = new RegExp(`\\b${symbol.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
-    const lineIdx = lines.findIndex((l) => re.test(l));
-    if (lineIdx < 0) return undefined;
-    const col = (lines[lineIdx] ?? "").search(re) + 1;
+    if (!lang) return undefined;
+    const at = this.symbolPosition(file, symbol);
+    if (!at) return undefined;
+    const { abs } = at;
     try {
       const client = pool.clientFor(this.root, abs);
       if (!client) return undefined;
-      const refs = await client.references(abs, lineIdx + 1, col, true);
+      const refs = await client.references(abs, at.line, at.column, true);
       return ok(
         "find_references",
         `${refs.length} reference(s) to ${symbol} (language server)`,
@@ -1316,9 +1341,218 @@ Promise.resolve(__result).then((v) => { process.stdout.write(typeof v === "strin
           "references",
         ),
       );
-    } catch {
-      return undefined; // No server installed or it failed: text fallback.
+    } catch (err) {
+      // WL-N7-3: absent, crashed or over its heap: out for the run; the caller falls back.
+      pool.markUnavailable(this.root, abs, errorText(err));
+      return undefined;
     }
+  }
+
+  /** Where a symbol first appears in a file, its declaration line first (1-based). */
+  private symbolPosition(
+    file: string,
+    symbol: string,
+  ): { abs: string; line: number; column: number } | undefined {
+    const abs = resolveInWorktree(this.root, file);
+    if (!existsSync(abs)) return undefined;
+    const lines = readFileSync(abs, "utf8").split("\n");
+    const name = symbol.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(`\\b${name}\\b`);
+    const decl = new RegExp(
+      `\\b(?:function|class|interface|type|enum|const|let|var|def|fn|struct)\\s+${name}\\b`,
+    );
+    let lineIdx = lines.findIndex((l) => decl.test(l));
+    if (lineIdx < 0) lineIdx = lines.findIndex((l) => re.test(l));
+    if (lineIdx < 0) return undefined;
+    const text = lines[lineIdx] ?? "";
+    const declAt = decl.exec(text);
+    const column = declAt
+      ? declAt.index + declAt[0].length - symbol.length + 1
+      : text.search(re) + 1;
+    return { abs, line: lineIdx + 1, column };
+  }
+
+  /** The language whose server is out for this file, and why (WL-N7-3). */
+  private lspDown(file: string | undefined): { language: string; reason: string } | undefined {
+    const pool = this.options.lspPool;
+    if (!pool || !file) return undefined;
+    const language = lspLanguageOf(file);
+    const reason = language
+      ? pool.unavailableReason(this.root, resolveInWorktree(this.root, file))
+      : undefined;
+    return language && reason ? { language, reason } : undefined;
+  }
+
+  /** Whole-word text matches, saying which server was out (WL-N7-3). */
+  private textReferences(
+    symbol: string | undefined,
+    path: string,
+    down: { language: string; reason: string },
+  ): ToolObservation {
+    const text = this.grep(symbol ?? "", { path, wholeWord: true });
+    return {
+      ...text,
+      content: `${workerCopy.languageServerUnavailable(down.language, clipReason(down.reason))}\n${text.content}`,
+    };
+  }
+
+  /** WL-N7-1: a declaration through the file's language server; undefined to fall back. */
+  private async lspDefinition(
+    symbol: string | undefined,
+    file: string | undefined,
+  ): Promise<ToolObservation | undefined> {
+    const pool = this.options.lspPool;
+    if (!pool || !symbol || !file || !lspLanguageOf(file)) return undefined;
+    const at = this.symbolPosition(file, symbol);
+    if (!at) return undefined;
+    try {
+      const client = pool.clientFor(this.root, at.abs);
+      if (!client) return undefined;
+      const defs = await client.definition(at.abs, at.line, at.column);
+      if (defs.length === 0) return undefined;
+      return this.definitions(
+        symbol,
+        defs.map((d) => {
+          const lineText = existsSync(d.path)
+            ? (readFileSync(d.path, "utf8").split("\n")[d.line - 1] ?? "").trim()
+            : "";
+          return { path: this.rel(d.path), line: d.line, column: d.column, detail: lineText };
+        }),
+      );
+    } catch (err) {
+      pool.markUnavailable(this.root, at.abs, errorText(err));
+      return undefined;
+    }
+  }
+
+  /** Lines a mechanical tool changed, per file, for the bounds gate (WL-N6-1). */
+  public toolAppliedLines(): { tool: "rename_symbol"; files: Record<string, number> } | undefined {
+    if (this.toolApplied.size === 0) return undefined;
+    const files: Record<string, number> = {};
+    for (const [f, lines] of [...this.toolApplied].sort(([a], [b]) => a.localeCompare(b))) {
+      files[f] = lines.size;
+    }
+    return { tool: "rename_symbol", files };
+  }
+
+  /**
+   * WL-N6-1/2: rename a declaration and every use through the language
+   * server (the in-process TypeScript service when there is none), in one
+   * call. Refused, naming the files, when a site is outside the card's scope
+   * (unless the card's change is mechanical) or protected. The changed lines
+   * are recorded as tool-applied.
+   */
+  private async renameSymbol(
+    path: string | undefined,
+    symbol: string | undefined,
+    newName: string | undefined,
+  ): Promise<ToolObservation> {
+    if (!path || !symbol || !newName || !/^[A-Za-z_$][\w$]*$/.test(newName)) {
+      return fail("rename_symbol", workerCopy.renameArguments);
+    }
+    const at = this.symbolPosition(path, symbol);
+    if (!at) return fail("rename_symbol", workerCopy.renameFileMissing(path));
+    const edits =
+      (await this.lspRenameEdits(at, newName)) ?? this.tsRenameEdits(path, symbol, newName);
+    if (!edits || edits.size === 0) {
+      return fail("rename_symbol", workerCopy.renameNoService(symbol, path));
+    }
+    const files = [...edits.keys()].sort();
+    const scope = this.options.scopeFiles ?? [];
+    const inScope = (f: string) =>
+      scope.some((p) => {
+        const pattern = p.replace(/^\.\//, "");
+        return f === pattern || f.endsWith(`/${pattern}`) || matchesGlob(f, pattern);
+      });
+    const outside = files.filter((f) => f.startsWith("..") || (scope.length > 0 && !inScope(f)));
+    if (
+      outside.length > 0 &&
+      (!this.options.mechanicalChange || outside.some((f) => f.startsWith("..")))
+    ) {
+      return fail("rename_symbol", workerCopy.renameOutsideScope(outside.join(", ")));
+    }
+    const guarded = files.filter((f) =>
+      (this.options.protectedGlobs ?? []).some((g) => matchesGlob(f, g)),
+    );
+    if (guarded.length > 0)
+      return fail("rename_symbol", workerCopy.renameProtected(guarded.join(", ")));
+    let sites = 0;
+    try {
+      for (const f of files) {
+        const abs = resolveInWorktree(this.root, f);
+        const text = this.readText(abs);
+        const spans = [...(edits.get(f) ?? [])].sort((a, b) => b.start - a.start);
+        let next = text;
+        const touched = this.toolApplied.get(f) ?? new Set<number>();
+        for (const e of spans) {
+          // M2: each edit's own text (a shorthand site keeps its shape).
+          next = `${next.slice(0, e.start)}${e.text}${next.slice(e.end)}`;
+          touched.add(text.slice(0, e.start).split("\n").length);
+          sites++;
+        }
+        this.writeText(abs, next);
+        this.toolApplied.set(f, touched);
+        this.seen.add(f);
+      }
+    } catch (err) {
+      return fail("rename_symbol", errorText(err));
+    }
+    const said = workerCopy.renamed(symbol, newName, sites, files.join(", "));
+    return ok("rename_symbol", said, said);
+  }
+
+  /** A rename's sites through the file's language server, by relative file; undefined to fall back. */
+  private async lspRenameEdits(
+    at: { abs: string; line: number; column: number },
+    newName: string,
+  ): Promise<Map<string, RenameEdit[]> | undefined> {
+    const pool = this.options.lspPool;
+    if (!pool || !lspLanguageOf(at.abs)) return undefined;
+    try {
+      const client = pool.clientFor(this.root, at.abs);
+      if (!client) return undefined;
+      const changes = await client.rename(at.abs, at.line, at.column, newName);
+      const out = new Map<string, RenameEdit[]>();
+      for (const c of changes) {
+        const text = existsSync(c.path) ? readFileSync(c.path, "utf8") : "";
+        const starts = lineStarts(text);
+        out.set(
+          this.rel(c.path),
+          c.edits.map((e) => ({
+            start: (starts[e.range.start.line] ?? 0) + e.range.start.character,
+            end: (starts[e.range.end.line] ?? 0) + e.range.end.character,
+            text: e.newText,
+          })),
+        );
+      }
+      return out;
+    } catch (err) {
+      pool.markUnavailable(this.root, at.abs, errorText(err));
+      return undefined;
+    }
+  }
+
+  /** A rename's sites through the in-process TypeScript service. */
+  private tsRenameEdits(
+    path: string,
+    symbol: string,
+    newName: string,
+  ): Map<string, RenameEdit[]> | undefined {
+    if (!isTypeScriptLike(path)) return undefined;
+    let locations: ReturnType<TsSymbolService["renameLocations"]>;
+    try {
+      locations = this.symbolService().renameLocations(symbol, path);
+    } catch {
+      locations = undefined;
+    }
+    if (!locations) return undefined;
+    const out = new Map<string, RenameEdit[]>();
+    for (const l of locations) {
+      const rel = this.rel(l.file);
+      const text = `${l.prefixText ?? ""}${newName}${l.suffixText ?? ""}`;
+      out.set(rel, [...(out.get(rel) ?? []), { start: l.start, end: l.start + l.length, text }]);
+    }
+    return out;
   }
 
   /** The file that declares a TypeScript/JavaScript symbol, for tool_search's read_symbol calls (WL-M2-7). */
@@ -1345,10 +1579,21 @@ Promise.resolve(__result).then((v) => { process.stdout.write(typeof v === "strin
         `No TypeScript/JavaScript declaration named ${symbol}${file ? ` in ${file}` : ""}. Try grep_search.`,
       );
     }
+    return this.definitions(
+      symbol,
+      defs.map((d) => ({ path: d.path, line: d.line, column: d.column, detail: d.type || d.text })),
+    );
+  }
+
+  /** The declarations found, one reply shape for every source (WL-N7-1). */
+  private definitions(
+    symbol: string,
+    defs: { path: string; line: number; column: number; detail: string }[],
+  ): ToolObservation {
     return ok(
       "go_to_definition",
       `${defs.length} declaration(s) of ${symbol}`,
-      defs.map((d) => `${d.path}:${d.line}:${d.column}\n  ${d.type || d.text}`).join("\n"),
+      defs.map((d) => `${d.path}:${d.line}:${d.column}\n  ${d.detail}`).join("\n"),
     );
   }
 
@@ -1570,30 +1815,45 @@ Promise.resolve(__result).then((v) => { process.stdout.write(typeof v === "strin
     // Condense rather than clamp (C8): error lines are protected from
     // truncation, repeats are grouped, and whenever anything is condensed away
     // the raw text stays recallable by the ref in the footer.
-    const detail = this.countCondensed(
+    const condensed = this.countCondensed(
       condenseToolOutput(stream, {
         exitCode: result.exitCode,
         command: label,
         maxLines: RUN_CMD_MAX_LINES,
         ...(this.options.recallOffered === false ? { recallOffered: false } : {}),
       }),
-    ).text;
+    );
+    const detail = condensed.text;
+    // CX-N5-3: what condensing removed, beside the raw output's size.
+    const condensing = {
+      rawTokens: condensed.result.originalTokens,
+      savedTokens: condensed.result.tokensSaved,
+    };
 
     if (result.timedOut) {
-      return fail(
-        "run_cmd",
-        `${label} timed out`,
-        `${heading}\nTIMED OUT after ${result.durationMs}ms\n${detail}`,
-      );
+      return {
+        ...fail(
+          "run_cmd",
+          `${label} timed out`,
+          `${heading}\nTIMED OUT after ${result.durationMs}ms\n${detail}`,
+        ),
+        condensing,
+      };
     }
     if (result.exitCode !== 0) {
-      return fail(
-        "run_cmd",
-        `${label} exited ${result.exitCode}`,
-        `${heading}\nexit code ${result.exitCode}\n${detail}`,
-      );
+      return {
+        ...fail(
+          "run_cmd",
+          `${label} exited ${result.exitCode}`,
+          `${heading}\nexit code ${result.exitCode}\n${detail}`,
+        ),
+        condensing,
+      };
     }
-    return ok("run_cmd", `${label} exited 0`, `${heading}\nexit code 0\n${detail}`);
+    return {
+      ...ok("run_cmd", `${label} exited 0`, `${heading}\nexit code 0\n${detail}`),
+      condensing,
+    };
   }
 
   /** Execute a command in the sandbox and return the raw result, bypassing observation framing. */
@@ -1876,4 +2136,21 @@ Promise.resolve(__result).then((v) => { process.stdout.write(typeof v === "strin
     }
     return out || undefined;
   }
+}
+
+/** A thrown value as text. */
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** A server's failure, short enough for one line of a reply. */
+function clipReason(reason: string): string {
+  return reason.length > 120 ? `${reason.slice(0, 119)}…` : reason;
+}
+
+/** Offsets of each line's start, for 0-based LSP positions. */
+function lineStarts(text: string): number[] {
+  const out = [0];
+  for (let i = 0; i < text.length; i++) if (text[i] === "\n") out.push(i + 1);
+  return out;
 }

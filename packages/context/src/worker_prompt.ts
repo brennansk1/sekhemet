@@ -35,8 +35,9 @@ import {
   renderToolInterface,
 } from "./tool_interface.js";
 import { renderToolSearchIndex } from "./tool_search.js";
-import { computeContextVersion } from "./versioning.js";
+import { type GuidanceItem, computeContextVersion, guidanceList } from "./versioning.js";
 import { workerCopy } from "./worker_copy.js";
+import { WORKER_PRIORITIES } from "./worker_priorities.js";
 import {
   type PromptZoneNumber,
   type ZoneFractionReport,
@@ -175,8 +176,10 @@ export interface ContextPackRecord {
   zoneTokens: { system: number; static: number; volatile: number; toolSchemas: number };
   prefixHash: string;
   staticPrefixHash: string;
-  /** Joint prompt/playbook/tool version (C21). */
+  /** The context version: the harness's assets only (context rule 27, CX-N6-3). */
   version: string;
+  /** The project's guidance the pack carried, each with its content hash (CX-N6-3). */
+  guidance: GuidanceItem[];
   tier: PressureTier;
   cut: SectionKind[];
 }
@@ -260,6 +263,8 @@ const HEADERS: Partial<Record<SectionKind, string>> = {
 function renderList(items: string[]): string {
   return items.map((item, i) => `${i + 1}. ${item.replace(/^\s*\d+[.)]\s+/, "")}`).join("\n");
 }
+
+const PRIORITY = WORKER_PRIORITIES;
 
 function scopeLine(files: string[]): string {
   return files.length > 0 ? files.join(", ") : "unrestricted (max 3 files)";
@@ -469,7 +474,7 @@ function buildSections(
       kind: "rules",
       placement: "system",
       order: 10 + i,
-      priority: 55,
+      priority: PRIORITY.rules,
       capTokens: 160,
       factKeys: ruleFactKeys(r),
       text: `- ${r.instruction}`,
@@ -513,7 +518,7 @@ function buildSections(
       kind: "late_rules",
       placement: "volatile",
       order: 205 + i,
-      priority: 55,
+      priority: PRIORITY.rules,
       capTokens: 160,
       factKeys: ruleFactKeys(r),
       text: `- ${r.instruction}`,
@@ -562,7 +567,7 @@ function buildSections(
       kind: "tests",
       placement: "static",
       order: 10 + i,
-      priority: 40,
+      priority: PRIORITY.tests,
       minTokens: 300,
       shrink: shrinkFile,
       text: `${workerCopy.testFileHeader(f.path, true)}\n${f.content || "(empty file)"}`,
@@ -591,7 +596,7 @@ function buildSections(
       kind: "team",
       placement: "static",
       order: 30,
-      priority: 45,
+      priority: PRIORITY.team,
       capTokens: 300,
       text: `=== YOUR TEAM ===\n${input.teamNote}`,
     });
@@ -602,7 +607,7 @@ function buildSections(
       kind: "plan",
       placement: "static",
       order: 31,
-      priority: 65,
+      priority: PRIORITY.plan,
       capTokens: 900,
       minTokens: 250,
       text: `=== REPAIR PLAN FROM THE PLANNING MODEL ===\nA previous attempt at this card failed. This plan diagnoses why. Follow it unless a rule above or the failure below says otherwise.\n${input.repairPlan}`,
@@ -614,7 +619,7 @@ function buildSections(
       kind: "dossier",
       placement: "static",
       order: 32 + i,
-      priority: 62,
+      priority: PRIORITY.dossier,
       capTokens: 300,
       inferKeys: true,
       text: `=== ${d.label.toUpperCase()} ===\n${d.text}`,
@@ -644,7 +649,7 @@ function buildSections(
       kind: "lessons",
       placement: "volatile",
       order: i,
-      priority: 60,
+      priority: PRIORITY.lessons,
       capTokens: 120,
       inferKeys: true,
       text: `- ${lesson}`,
@@ -673,7 +678,7 @@ function buildSections(
       kind: "rung",
       placement: "volatile",
       order: 200,
-      priority: 80,
+      priority: PRIORITY.rung,
       capTokens: 200,
       text: `=== REPAIR MODE ===\n${input.rungDirective}`,
     });
@@ -684,7 +689,7 @@ function buildSections(
       kind: "error_rules",
       placement: "volatile",
       order: 210 + i,
-      priority: 57,
+      priority: PRIORITY.errorRules,
       capTokens: 160,
       factKeys: ruleFactKeys(r),
       text: `- ${r.instruction}`,
@@ -742,7 +747,7 @@ function buildSections(
         kind: "remedy",
         placement: "volatile",
         order: 401 + i,
-        priority: 75,
+        priority: PRIORITY.remedy,
         capTokens: 200,
         factKeys: factKeysOf(remedy),
         text: `How to fix${remedies.length > 1 ? ` (${i + 1})` : ""}: ${remedy}`,
@@ -893,10 +898,15 @@ export function buildWorkerPrompt(given: WorkerPromptInput): WorkerPromptResult 
   const cardId = { cardId: input.card.id };
   const guard = input.prefixGuard;
   const pin = guard?.pinned(input.card.id);
+  // CX-N6-3: the version is the harness's; the project's guidance is listed beside it.
   const version = computeContextVersion({
     tools: [...(input.toolIndex ?? []), ...input.tools],
-    rules: input.rules ?? [],
-    ...(input.conventions ? { templates: [input.conventions] } : {}),
+  });
+  const guidance = guidanceList({
+    ...(input.rules ? { rules: input.rules } : {}),
+    ...(input.skills ? { skills: input.skills } : {}),
+    ...(input.exemplars ? { exemplars: input.exemplars } : {}),
+    ...(input.conventions ? { conventions: input.conventions } : {}),
   });
 
   // Nominal history: compact long histories, mask all but the last two.
@@ -1091,6 +1101,7 @@ export function buildWorkerPrompt(given: WorkerPromptInput): WorkerPromptResult 
     prefixHash,
     staticPrefixHash,
     version: version.version,
+    guidance,
     tier: pressure.tier,
     cut: cutKinds,
   };

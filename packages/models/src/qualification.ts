@@ -562,7 +562,8 @@ export async function qualifyModel(
     thinking?: ThinkingPolicy;
   } = {},
 ): Promise<{ results: QualificationResult[]; best: QualificationResult }> {
-  const arms = options.arms ?? ["arm_a_flat", "arm_b_json"];
+  // MD-N5-1: every arm on the same tasks, so the arm is decided by measurement.
+  const arms = options.arms ?? ["arm_a_flat", "arm_b_json", "arm_c_sketch"];
   const results: QualificationResult[] = [];
   for (const arm of arms) {
     const r = await runQualification(adapter, {
@@ -571,7 +572,13 @@ export async function qualifyModel(
       ...(options.cases ? { cases: options.cases } : {}),
     });
     results.push(r);
-    options.registry?.recordArmMeasurement(adapter.modelId, arm, r.passRate, r.cases.length);
+    options.registry?.recordArmMeasurement(
+      adapter.modelId,
+      arm,
+      r.passRate,
+      r.cases.length,
+      r.cases.filter((c) => c.schemaValid).length,
+    );
   }
   const best = [...results].sort((a, b) => b.passRate - a.passRate)[0] as QualificationResult;
   if (options.combination) {

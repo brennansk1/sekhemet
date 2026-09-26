@@ -63,7 +63,35 @@ const priv = (dataClass: Exclude<DataClass, "structural">, schema: v.GenericSche
   optional: true,
 });
 
+/** A model role (models `MODEL_ROLES`, validated by its writer; the kernel does not enumerate them). */
+const ASSIGNED_ROLE = ID;
+const ASSIGNMENT_SCOPE = v.picklist(["personal", "baseline", "default"]);
+
 export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
+  // models NEW-models-10: a role's model, assigned or restored by a person.
+  "models/assigned": {
+    role: s(ASSIGNED_ROLE),
+    model: s(ID),
+    scope: s(ASSIGNMENT_SCOPE),
+    qualification: s(v.picklist(["qualified", "overridden", "failed", "invalidated", "missing"])),
+    previous: s(ID, true),
+    bakeOff: s(ID, true),
+  },
+  // context CX-N3-7: the fit of Seshat's prompt; numbers and section ids only.
+  "pm/prompt_fitted": {
+    reply: s(ID),
+    role: s(ID),
+    windowTokens: s(v.number()),
+    budgetTokens: s(v.number()),
+    usedTokens: s(v.number()),
+    sections: s(v.array(v.strictObject({ id: ID, tokens: v.number() }))),
+  },
+  "models/restored": {
+    role: s(ASSIGNED_ROLE),
+    model: s(ID),
+    scope: s(ASSIGNMENT_SCOPE),
+    replaced: s(ID, true),
+  },
   "person/created": {
     principal: s(PRINCIPAL),
     local: s(v.boolean(), true),

@@ -149,6 +149,37 @@ export class TsSymbolService {
     return out.sort((a, b) => (a.path === b.path ? a.line - b.line : a.path < b.path ? -1 : 1));
   }
 
+  /**
+   * Every site a rename of the symbol declared as `symbol` (in `inFile`)
+   * changes, as absolute file, 0-based offset and length (WL-N6-1), with the
+   * text around the new name that keeps a shorthand property or a
+   * destructuring binding's shape (`{ foo }` becomes `{ bar: foo }`).
+   * Undefined when no declaration of that name exists.
+   */
+  public renameLocations(
+    symbol: string,
+    inFile?: string,
+  ):
+    | { file: string; start: number; length: number; prefixText?: string; suffixText?: string }[]
+    | undefined {
+    const decls = this.declarationPositions(symbol, inFile ? join(this.root, inFile) : undefined);
+    const decl = decls[0];
+    if (!decl) return undefined;
+    const locations =
+      this.service.findRenameLocations(decl.file, decl.pos, false, false, {
+        providePrefixAndSuffixTextForRename: true,
+      }) ?? [];
+    return locations
+      .filter((l) => l.fileName.startsWith(this.root))
+      .map((l) => ({
+        file: l.fileName,
+        start: l.textSpan.start,
+        length: l.textSpan.length,
+        ...(l.prefixText ? { prefixText: l.prefixText } : {}),
+        ...(l.suffixText ? { suffixText: l.suffixText } : {}),
+      }));
+  }
+
   /** Where `symbol` is declared, with its type as the compiler sees it. */
   public definition(symbol: string, inFile?: string): (SymbolLocation & { type: string })[] {
     const decls = this.declarationPositions(symbol, inFile ? join(this.root, inFile) : undefined);

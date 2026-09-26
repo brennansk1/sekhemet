@@ -10,8 +10,10 @@ import { estimatePromptTokens } from "./allocator.js";
  * graph of reference edges between files (imports, and uses of another
  * file's exported names), personalised PageRank seeded on the card's scope
  * files, and a binary search over how many ranked files fit the token
- * budget. The output is byte-stable for the same tree, scope and budget,
- * and cached by a key over file paths, sizes and mtimes.
+ * budget. Files defining an identifier the card's spec names are weighted
+ * up (CX-N5-1). The output is byte-stable for the same tree, scope, spec and
+ * budget, and cached by a key over file paths and content hashes, so a
+ * change that keeps a file's size and mtime still rebuilds it (CX-N5-2).
  */
 export interface RepoMapOptions {
   scopeFiles?: string[];
@@ -21,6 +23,30 @@ export interface RepoMapOptions {
   maxFiles?: number;
   /** PageRank damping. Default 0.85. */
   damping?: number;
+  /**
+   * The card's spec: a file defining an identifier it names is ranked above
+   * an otherwise equal file (CX-N5-1).
+   */
+  specText?: string;
+}
+
+/** Teleport weight added to a file defining a spec-named identifier (per scope seed: 1). */
+export const SPEC_TELEPORT_WEIGHT = 0.5;
+
+const SPEC_STOP = new Set(
+  "the and for with from that this into when then than not use make return value should must".split(
+    " ",
+  ),
+);
+
+/** The identifiers a spec names: code-like words of three characters or more, unique, sorted. */
+export function specIdentifiers(spec: string): string[] {
+  const out = new Set<string>();
+  for (const m of spec.matchAll(/[A-Za-z_$][\w$]{2,}/g)) {
+    const w = m[0];
+    if (!SPEC_STOP.has(w.toLowerCase())) out.add(w);
+  }
+  return [...out].sort();
 }
 
 export interface FileOutline {
@@ -202,13 +228,18 @@ export function personalizedPageRank(
   seeds: readonly string[],
   damping = 0.85,
   iterations = 40,
+  /** Extra teleport weight per node (a spec-named definition, CX-N5-1). */
+  boost: ReadonlyMap<string, number> = new Map(),
 ): Map<string, number> {
-  const n = nodes.length;
   const seedSet = new Set(seeds.filter((s) => nodes.includes(s)));
   const teleport = new Map<string, number>();
+  let mass = 0;
   for (const v of nodes) {
-    teleport.set(v, seedSet.size > 0 ? (seedSet.has(v) ? 1 / seedSet.size : 0) : 1 / n);
+    const w = (seedSet.size > 0 ? (seedSet.has(v) ? 1 : 0) : 1) + (boost.get(v) ?? 0);
+    teleport.set(v, w);
+    mass += w;
   }
+  for (const v of nodes) teleport.set(v, mass > 0 ? (teleport.get(v) ?? 0) / mass : 0);
   let rank = new Map(teleport);
   const outWeight = new Map<string, number>();
   for (const v of nodes) {
@@ -255,26 +286,32 @@ export function buildRankedRepoMap(root: string, options: RepoMapOptions = {}): 
   const budget = options.budgetTokens ?? 1200;
   const scope = (options.scopeFiles ?? []).map((f) => f.replace(/^\.\//, ""));
   const abs = existsSync(absRoot) ? listSources(absRoot, options.maxFiles ?? 400) : [];
-  const stamp = abs
-    .map((p) => {
-      const st = statSync(p);
-      return `${relative(absRoot, p)}:${st.size}:${Math.floor(st.mtimeMs)}`;
-    })
+  // CX-N5-2: the key hashes each file's content, not its size and mtime.
+  const sources = new Map<string, string>();
+  for (const p of abs) {
+    try {
+      sources.set(relative(absRoot, p).replace(/\\/g, "/"), readFileSync(p, "utf8"));
+    } catch {
+      // Unreadable: omit.
+    }
+  }
+  const stamp = [...sources]
+    .map(([rel, source]) => `${rel}:${createHash("sha256").update(source).digest("hex")}`)
     .join("|");
+  const specIds = options.specText ? specIdentifiers(options.specText) : [];
   const cacheKey = createHash("sha256")
-    .update(`${stamp}#${scope.join(",")}#${budget}#${options.damping ?? 0.85}`)
+    .update(`${stamp}#${scope.join(",")}#${budget}#${options.damping ?? 0.85}#${specIds.join(",")}`)
     .digest("hex")
     .slice(0, 16);
   const hit = cache.get(cacheKey);
   if (hit) return { ...hit, fromCache: true };
 
   const outlines = new Map<string, FileOutline>();
-  for (const p of abs) {
-    const rel = relative(absRoot, p).replace(/\\/g, "/");
+  for (const [rel, source] of sources) {
     try {
-      outlines.set(rel, outlineFile(rel, readFileSync(p, "utf8")));
+      outlines.set(rel, outlineFile(rel, source));
     } catch {
-      // Unreadable: omit.
+      // Unparseable: omit.
     }
   }
   const nodes = [...outlines.keys()].sort();
@@ -308,7 +345,12 @@ export function buildRankedRepoMap(root: string, options: RepoMapOptions = {}): 
   for (const [from, m] of [...edges]) {
     for (const to of m.keys()) if (scopeSet.has(to)) addEdge(to, from, 0.5);
   }
-  const rank = personalizedPageRank(nodes, edges, scope, options.damping ?? 0.85);
+  // CX-N5-1: files defining an identifier the spec names are weighted up.
+  const boost = new Map<string, number>();
+  for (const id of specIds) {
+    for (const owner of exporters.get(id) ?? []) boost.set(owner, SPEC_TELEPORT_WEIGHT);
+  }
+  const rank = personalizedPageRank(nodes, edges, scope, options.damping ?? 0.85, 40, boost);
   const ordered = [...nodes].sort((a, b) => {
     const sa = scopeSet.has(a) ? 1 : 0;
     const sb = scopeSet.has(b) ? 1 : 0;

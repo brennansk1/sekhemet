@@ -11,6 +11,11 @@ export interface ToolObservation {
   denied?: boolean;
   /** The permission rule that refused the call (scope, protected_file, ...). */
   deniedRule?: string;
+  /**
+   * What output condensing removed from this observation, beside the raw
+   * output's size, for the run's savings report (context CX-N5-3).
+   */
+  condensing?: { rawTokens: number; savedTokens: number };
 }
 
 const HEAD_CHARS = 2400;

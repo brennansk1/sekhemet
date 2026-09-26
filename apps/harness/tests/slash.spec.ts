@@ -36,7 +36,7 @@ describe("slash commands in Seshat's chat (H16)", () => {
       pmModel: "pm",
       acquire: async () => {
         loads++;
-        return model;
+        return { role: "chat", adapter: model, release: () => {} };
       },
       ...extra,
     });

@@ -87,7 +87,7 @@ describe("the front door", () => {
 describe("S10, SUR-15: the list of known flags cannot fall behind the source", () => {
   /** Flags the harness passes to other programs (git, gh, rg, docker), not its own. */
   const TOOL_FLAGS = new Set(
-    "--porcelain --no-ext-diff --no-textconv --name-only --oneline --max-count --line-number --no-heading --unified --cached --short --hard --detach --grep --jq --no-verify --body --head --title --state --format --hostname".split(
+    "--porcelain --no-ext-diff --no-textconv --name-only --oneline --max-count --line-number --no-heading --unified --cached --short --hard --detach --grep --jq --no-verify --body --head --title --state --format --hostname --no-merges".split(
       " ",
     ),
   );

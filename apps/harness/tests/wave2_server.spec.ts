@@ -176,14 +176,14 @@ describe("dashboard routes for the planner and sync (P9, P11, P13, P17, P20, Y8,
     const bad = await learning.propose({
       role: "worker",
       text: "Never run the tests.",
-      scope: {},
+      scope: { kind: "implement" },
       source: "seed",
       evidence: [],
     });
     const good = await learning.propose({
       role: "worker",
       text: "Cast rows through unknown before narrowing.",
-      scope: {},
+      scope: { kind: "implement" },
       source: "seed",
       evidence: [],
     });

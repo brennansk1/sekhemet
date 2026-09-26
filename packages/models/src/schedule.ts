@@ -1,4 +1,4 @@
-import type { ModelRole } from "./router.js";
+import type { ModelRole } from "./types.js";
 
 /**
  * Declared-hours scheduling (M25, design "Scheduling"): the user declares
@@ -77,6 +77,8 @@ export interface BacklogItem {
   cardId: string;
   project: string;
   role: ModelRole;
+  /** Planning work (plans, decomposition) runs first in the window; execution after. */
+  planning?: boolean;
   modelId: string;
   /** Estimated minutes (from the planner's estimate or measured actuals). */
   minutes: number;
@@ -105,7 +107,7 @@ export interface BacklogSchedule {
 /**
  * Plan a work window (M25). Items are grouped by model, then project, so
  * each model loads once per window and a project's cards run back to back
- * on a warm prefix cache. Planning (manager) batches go first in the
+ * on a warm prefix cache. Planning (planner) batches go first in the
  * window, so the planning block's output feeds the execution batches. The
  * model already resident, when given, goes first among execution batches
  * (no swap). Inside a batch, higher priority first, then card id.
@@ -123,8 +125,8 @@ export function planWorkWindow(
     byModel.set(it.modelId, list);
   }
   const modelOrder = [...byModel.keys()].sort((a, b) => {
-    const planA = byModel.get(a)?.some((i) => i.role === "manager") ? 0 : 1;
-    const planB = byModel.get(b)?.some((i) => i.role === "manager") ? 0 : 1;
+    const planA = byModel.get(a)?.some((i) => i.planning === true) ? 0 : 1;
+    const planB = byModel.get(b)?.some((i) => i.planning === true) ? 0 : 1;
     if (planA !== planB) return planA - planB;
     const resA = a === options.residentModelId ? 0 : 1;
     const resB = b === options.residentModelId ? 0 : 1;

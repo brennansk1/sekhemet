@@ -128,7 +128,10 @@ describe("M11/M12: model registry and template pinning", () => {
 
   it("the roster attaches the registry to the adapters it builds", () => {
     const reg = new ModelRegistry(join(tmp(), "models.json"));
-    reg.recordArmMeasurement("some-ollama-model", "arm_b_json", 0.95, 10);
+    // MD-N5-1: B pinned on a measured lead over A and C.
+    reg.recordArmMeasurement("some-ollama-model", "arm_a_flat", 0.6, 100, 60);
+    reg.recordArmMeasurement("some-ollama-model", "arm_b_json", 0.95, 100, 95);
+    reg.recordArmMeasurement("some-ollama-model", "arm_c_sketch", 0.5, 100, 50);
     const roster = new ModelRoster({ registry: reg });
     const a = roster.resolve("some-ollama-model", "worker") as HttpInferenceAdapter;
     expect(a.registry).toBe(reg);
@@ -136,22 +139,23 @@ describe("M11/M12: model registry and template pinning", () => {
   });
 });
 
-describe("M9: tool arm selected by measurement", () => {
-  it("picks the highest pass rate with enough trials, ties to the simpler arm", () => {
+describe("M9, MD-N5-1: tool arm selected by measurement", () => {
+  it("picks the most valid arm only on a measured lead over the other two", () => {
     const d = "2026-01-01";
+    const m = (valid: number, trials: number) => ({
+      passRate: valid / trials,
+      trials,
+      validCalls: valid,
+      toolCallValidity: valid / trials,
+      date: d,
+    });
     expect(
-      selectArm({
-        arm_a_flat: { passRate: 0.8, trials: 10, date: d },
-        arm_b_json: { passRate: 0.9, trials: 10, date: d },
-        arm_c_sketch: { passRate: 1, trials: 2, date: d },
-      }),
+      selectArm({ arm_a_flat: m(80, 100), arm_b_json: m(97, 100), arm_c_sketch: m(50, 100) }),
     ).toBe("arm_b_json");
+    // Level arms: nothing is pinned, and arm A runs unmeasured.
     expect(
-      selectArm({
-        arm_a_flat: { passRate: 0.9, trials: 10, date: d },
-        arm_b_json: { passRate: 0.9, trials: 10, date: d },
-      }),
-    ).toBe("arm_a_flat");
+      selectArm({ arm_a_flat: m(90, 100), arm_b_json: m(90, 100), arm_c_sketch: m(90, 100) }),
+    ).toBeUndefined();
     expect(selectArm({ arm_c_sketch: { passRate: 1, trials: 1, date: d } })).toBeUndefined();
   });
 });
@@ -189,7 +193,7 @@ describe("M15: throughput floors", () => {
     ).toThrow(ThroughputFloorError);
     expect(() =>
       assertThroughputFloor("slow", { prefillTokensPerSecond: 30, decodeTokensPerSecond: 7 }),
-    ).toThrow(/prefill 30.0 tok\/s < 40, decode 7.0 tok\/s < 10/);
+    ).toThrow(/prefill 30.0 tok\/s \(required 40\), decode 7.0 tok\/s \(required 10\)/);
     expect(() =>
       assertThroughputFloor("fast", { prefillTokensPerSecond: 90, decodeTokensPerSecond: 11 }),
     ).not.toThrow();
@@ -243,6 +247,8 @@ describe("M13: hardware calibration", () => {
         { label: "slow", adapter: slow.adapter },
       ],
       usableBytes: 20 * GB,
+      // A 20 GB machine: the tier follows installed memory (MD-N1-1).
+      installedBytes: 20 * GB,
       buckets: [2048],
       registry: reg,
       path: join(dir, "machine.json"),

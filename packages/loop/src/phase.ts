@@ -17,6 +17,7 @@ export const PHASE_WRITE_TOOLS: ReadonlySet<string> = new Set([
   "replace_lines",
   "replace_symbol_body",
   "insert_after_symbol",
+  "rename_symbol",
 ]);
 
 /** Tools that verify: a check, or the completion claim that runs the gates. */

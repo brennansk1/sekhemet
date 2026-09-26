@@ -28,7 +28,7 @@ function setup() {
     cardStore,
     pmStore,
     pmModel: "pm",
-    acquire: async () => model,
+    acquire: async () => ({ role: "chat", adapter: model, release: () => {} }),
     send: (m) => sent.push(m as Record<string, unknown>),
   });
   return { agent, sent, cardStore };

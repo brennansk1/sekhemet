@@ -1,5 +1,18 @@
+import {
+  type AllocationResult,
+  type ContextSection,
+  type SectionTokens,
+  allocateContext,
+  estimatePromptTokens,
+  shrinkHead,
+} from "@sekhemet/context";
 import type { CardRecord } from "@sekhemet/kernel";
-import type { LocalInferenceAdapter, ToolCall, ToolDefinition } from "@sekhemet/models";
+import {
+  type LocalInferenceAdapter,
+  type ToolCall,
+  type ToolDefinition,
+  stripReasoning,
+} from "@sekhemet/models";
 import type { ResearchAnswer } from "../research/researcher.js";
 import { formatHits, searchLibraries } from "./libraries.js";
 import type { Cycle, PmCite, PmMessage, PmProposal } from "./types.js";
@@ -21,6 +34,10 @@ export interface PmSnapshot {
   forecast?: string;
   /** Who is on the team and what asking each costs right now (residency). */
   team?: string;
+  /** The playbook rules in force for the PM role (context CX-N4-5), one each. */
+  pmRules?: string[];
+  /** The dossier of the card the person is looking at, one line per entry. */
+  dossier?: { cardId: string; lines: string[] };
   today: string;
 }
 
@@ -30,6 +47,10 @@ export interface PmAnswer {
   text: string;
   proposals: ProposalDraft[];
   cites: PmCite[];
+  /** The last request's prompt, per section, as the allocator kept it (CX-N3-7). */
+  promptSections?: SectionTokens[];
+  /** The budget it was fitted to: the role and the Planner's configured context. */
+  promptBudget?: { role: "seshat"; windowTokens: number; budgetTokens: number; usedTokens: number };
 }
 
 const PRIORITY = ["No priority", "Urgent", "High", "Medium", "Low"];
@@ -430,10 +451,179 @@ export function citesFrom(text: string, cards: CardRecord[]): PmCite[] {
 
 /** Remove reasoning blocks a model may emit despite being asked not to. */
 export function stripThinking(text: string): string {
-  return text
-    .replace(/<think>[\s\S]*?<\/think>/g, "")
-    .replace(/^[\s\S]*?<\/think>/, "")
-    .trim();
+  // MD-N4-8: the one implementation, which the adapter already applied.
+  return stripReasoning(text);
+}
+
+/** Seshat's window when the adapter does not say: the manager profile's 8,192. */
+export const SESHAT_DEFAULT_WINDOW_TOKENS = 8192;
+/** Seshat's answer cap (`maxTokens` of every PM request). */
+export const SESHAT_ANSWER_TOKENS = 1200;
+
+/** Keep the tail of a text (the newest lines), with a marker at its head. */
+function shrinkTail(text: string, maxTokens: number): string | undefined {
+  const marker = "(earlier lines cut to fit the context window) …\n";
+  if (estimatePromptTokens(text) <= maxTokens) return text;
+  const room = maxTokens - estimatePromptTokens(marker);
+  if (room <= 0) return undefined;
+  const ratio = text.length / Math.max(1, estimatePromptTokens(text));
+  let keep = Math.floor(room * ratio);
+  while (keep > 0 && estimatePromptTokens(marker + text.slice(text.length - keep)) > maxTokens)
+    keep -= 16;
+  if (keep <= 0) return undefined;
+  const tail = text.slice(text.length - keep);
+  const nl = tail.indexOf("\n");
+  return `${marker}${nl !== -1 && nl < tail.length * 0.4 ? tail.slice(nl + 1) : tail}`;
+}
+
+/**
+ * Seshat's prompt as allocator sections (CX-N3-7): the board, the rules for
+ * the PM, the profile, the conversation and the dossier each carry a
+ * priority; the person's newest messages are required. The system text is
+ * sent apart and counted as overhead, never cut.
+ */
+export function seshatSections(
+  s: PmSnapshot,
+  history: PmMessage[],
+  queued: PmMessage[],
+  summary?: { upToSeq: number; text: string },
+  extra?: { lookups?: string },
+): ContextSection[] {
+  const questions = queued
+    .map((m) => {
+      const ctx = m.context?.cardId ? ` [looking at \`${m.context.cardId}\`]` : "";
+      return `Human${ctx}: ${m.text}`;
+    })
+    .join("\n");
+  let order = 0;
+  const section = (
+    id: string,
+    kind: ContextSection["kind"],
+    text: string,
+    priority: number,
+    more: Partial<ContextSection> = {},
+  ): ContextSection => ({ id, kind, text, priority, placement: "static", order: order++, ...more });
+  const byStatus = new Map<string, CardRecord[]>();
+  for (const c of s.cards) byStatus.set(c.status, [...(byStatus.get(c.status) ?? []), c]);
+  const board = STATUS_ORDER.flatMap((status) => {
+    const list = byStatus.get(status);
+    return list?.length ? [`${status} (${list.length}):\n${list.map(cardLine).join("\n")}`] : [];
+  }).join("\n\n");
+  const cycles = s.cycles.length
+    ? s.cycles
+        .map(
+          (c) =>
+            `- \`${c.id}\` ${c.name} ${c.startsOn}..${c.endsOn} (${c.state})${c.goal ? `: ${c.goal}` : ""}`,
+        )
+        .join("\n")
+    : "none";
+  const conversation =
+    conversationDigest(history, Number.POSITIVE_INFINITY, summary) || "(new conversation)";
+  const out: ContextSection[] = [
+    section("today", "notice", `Today: ${s.today}`, 100, { required: true }),
+    section(
+      "pm_rules",
+      "rules",
+      s.pmRules?.length
+        ? `RULES FOR THE PM (approved)\n${s.pmRules.map((r) => `- ${r}`).join("\n")}`
+        : "",
+      89,
+    ),
+    section(
+      "profile",
+      "conventions",
+      s.preferences?.length
+        ? `WHAT THE HUMAN PREFERS (learned; adapt to it)\n${s.preferences.map((p) => `- ${p}`).join("\n")}`
+        : "",
+      70,
+    ),
+    section(
+      "forecast",
+      "notice",
+      s.forecast ? `FORECAST (Monte Carlo from real throughput)\n${s.forecast}` : "",
+      40,
+    ),
+    section("team", "team", s.team ? `YOUR TEAM\n${s.team}` : "", 60),
+    section("board", "contract", `BOARD\n${board || "(empty)"}`, 88, {
+      shrink: (t, max) => shrinkHead(t, max),
+      minTokens: 200,
+    }),
+    section("cycles", "notice", `CYCLES\n${cycles}`, 35),
+    section(
+      "runs",
+      "history_old",
+      `RECENT WORKER ATTEMPTS\n${s.recentRuns.length ? s.recentRuns.slice(-12).join("\n") : "none"}`,
+      45,
+    ),
+    section(
+      "capability",
+      "notice",
+      `WORKER CAPABILITY\n${s.worker ? `${s.worker.model}: ${s.worker.record}` : "no runs yet"}`,
+      65,
+    ),
+    section(
+      "dossier",
+      "dossier",
+      s.dossier?.lines.length
+        ? `DOSSIER OF \`${s.dossier.cardId}\`\n${s.dossier.lines.join("\n")}`
+        : "",
+      75,
+    ),
+    section("conversation", "history_recent", `CONVERSATION SO FAR\n${conversation}`, 80, {
+      shrink: (t, max) => shrinkTail(t, max),
+      minTokens: 120,
+    }),
+    section(
+      "lookups",
+      "failure",
+      extra?.lookups ? `LIBRARY SEARCH RESULTS\n${extra.lookups}` : "",
+      90,
+      {
+        shrink: (t, max) => shrinkHead(t, max),
+        minTokens: 150,
+      },
+    ),
+    section("newest", "goal", `NEW MESSAGE${queued.length > 1 ? "S" : ""}\n${questions}`, 1000, {
+      required: true,
+    }),
+    section(
+      "instruction",
+      "goal",
+      extra?.lookups
+        ? "Now reply to the human."
+        : "Reply to the human now. Use propose_* tools only for changes you recommend.",
+      1000,
+      { required: true },
+    ),
+  ];
+  return out;
+}
+
+/**
+ * Seshat's prompt fitted to the Planner model's configured context (CX-N3-7):
+ * the allocator's `seshat` role, the window less the answer cap and the
+ * margin, with the system text and the tool schemas counted as overhead.
+ */
+export function fitSeshatPrompt(
+  model: Pick<LocalInferenceAdapter, "contextWindow">,
+  systemPrompt: string,
+  tools: readonly ToolDefinition[],
+  sections: ContextSection[],
+): { prompt: string; allocation: AllocationResult; windowTokens: number } {
+  const windowTokens = model.contextWindow?.contextTokens ?? SESHAT_DEFAULT_WINDOW_TOKENS;
+  const allocation = allocateContext(sections, {
+    role: "seshat",
+    windowTokens,
+    answerTokens: SESHAT_ANSWER_TOKENS,
+    overheadTokens:
+      estimatePromptTokens(systemPrompt) +
+      (tools.length ? estimatePromptTokens(JSON.stringify(tools)) : 0),
+  });
+  return {
+    prompt: allocation.sections.map((x) => x.text).join("\n\n"),
+    allocation,
+    windowTokens,
+  };
 }
 
 /** Ask the PM model to answer the queued messages. One request, no side effects. */
@@ -449,26 +639,28 @@ export async function answer(
   researcher?: (question: string, opts?: { deep?: boolean }) => Promise<ResearchAnswer>,
 ): Promise<PmAnswer> {
   const tools = researcher ? [...PM_TOOLS, ASK_RESEARCHER_TOOL] : PM_TOOLS;
-  const questions = queued
-    .map((m) => {
-      const ctx = m.context?.cardId ? ` [looking at \`${m.context.cardId}\`]` : "";
-      return `Human${ctx}: ${m.text}`;
-    })
-    .join("\n");
-  const prompt = `${boardDigest(snapshot)}\n\nCONVERSATION SO FAR\n${conversationDigest(history, 3500, summary) || "(new conversation)"}\n\nNEW MESSAGE${queued.length > 1 ? "S" : ""}\n${questions}\n\nReply to the human now. Use propose_* tools only for changes you recommend.`;
+  const systemPrompt = pmSystemPrompt(snapshot);
+  // CX-N3-7: every request is fitted to the Planner's configured context.
+  let fitted = fitSeshatPrompt(
+    model,
+    systemPrompt,
+    tools,
+    seshatSections(snapshot, history, queued, summary),
+  );
 
   // Up to two lookup rounds: Seshat may search registries, read the results,
   // then answer. Proposal tool calls from every round are kept.
-  let context = prompt;
+  const lookupsSoFar: string[] = [];
   const calls: ToolCall[] = [];
   const researchCites: PmCite[] = [];
   let res = await model.generate({
-    systemPrompt: pmSystemPrompt(snapshot),
-    prompt: context,
+    systemPrompt,
+    prompt: fitted.prompt,
     tools,
     toolArm: "arm_a_flat",
     temperature: 0.3,
-    maxTokens: 1200,
+    maxTokens: SESHAT_ANSWER_TOKENS,
+    role: "seshat",
   });
   for (let round = 0; round < 2; round++) {
     const isLookup = (c: ToolCall) => c.name === "find_library" || c.name === "ask_researcher";
@@ -505,14 +697,21 @@ export async function answer(
       const hits = await (libraries ?? searchLibraries)(q, eco).catch(() => []);
       found.push(`find_library("${q}", ${eco}):\n${formatHits(hits)}`);
     }
-    context = `${context}\n\nLIBRARY SEARCH RESULTS\n${found.join("\n\n")}\n\nNow reply to the human.`;
+    lookupsSoFar.push(...found);
+    fitted = fitSeshatPrompt(
+      model,
+      systemPrompt,
+      tools,
+      seshatSections(snapshot, history, queued, summary, { lookups: lookupsSoFar.join("\n\n") }),
+    );
     res = await model.generate({
-      systemPrompt: pmSystemPrompt(snapshot),
-      prompt: context,
+      systemPrompt,
+      prompt: fitted.prompt,
       tools,
       toolArm: "arm_a_flat",
       temperature: 0.3,
-      maxTokens: 1200,
+      maxTokens: SESHAT_ANSWER_TOKENS,
+      role: "seshat",
     });
   }
   calls.push(
@@ -533,7 +732,18 @@ export async function answer(
     seen.add(key);
     return true;
   });
-  return { text, proposals, cites: [...citesFrom(text, snapshot.cards), ...sources] };
+  return {
+    text,
+    proposals,
+    cites: [...citesFrom(text, snapshot.cards), ...sources],
+    promptSections: fitted.allocation.sectionTokens,
+    promptBudget: {
+      role: "seshat",
+      windowTokens: fitted.windowTokens,
+      budgetTokens: fitted.allocation.budgetTokens,
+      usedTokens: fitted.allocation.usedTokens,
+    },
+  };
 }
 
 /**

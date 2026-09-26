@@ -2,7 +2,12 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { CardRecord, CardStore } from "@sekhemet/kernel";
-import type { LocalInferenceAdapter, ModelRegistry } from "@sekhemet/models";
+import {
+  type LocalInferenceAdapter,
+  type ModelRegistry,
+  extractJsonObject,
+  stripReasoning,
+} from "@sekhemet/models";
 
 /**
  * Multimodal card input (X3, design "Multimodal input"). Cards accept images
@@ -117,10 +122,10 @@ const SYSTEM =
   "You describe images attached to a software task for a teammate who cannot see them. Be literal and specific: visible text verbatim, layout, states, errors, values. Then list atomic yes/no visual criteria a finished implementation must meet. Answer with JSON only.";
 
 function parse(text: string): { description: string; criteria: string[] } {
-  const clean = text.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
-  try {
-    const json = /\{[\s\S]*\}/.exec(clean)?.[0];
-    const o = JSON.parse(json ?? "") as { description?: unknown; criteria?: unknown };
+  // MD-N4-8: the adapter stripped the reasoning; one helper reads the JSON.
+  const clean = stripReasoning(text);
+  {
+    const o = (extractJsonObject(clean) ?? {}) as { description?: unknown; criteria?: unknown };
     if (typeof o.description === "string")
       return {
         description: o.description.trim(),
@@ -128,9 +133,8 @@ function parse(text: string): { description: string; criteria: string[] } {
           ? o.criteria.filter((c): c is string => typeof c === "string").slice(0, 12)
           : [],
       };
-  } catch {
-    // Not JSON: the text itself is the description.
   }
+  // Not JSON: the text itself is the description.
   return { description: clean.slice(0, 2000), criteria: [] };
 }
 

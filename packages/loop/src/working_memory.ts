@@ -75,9 +75,18 @@ export class WorkingMemory {
     return [...this.struggles];
   }
 
-  /** Carry lessons from a previous attempt: prior failed approaches start known. */
+  /**
+   * Carry lessons from a previous attempt: prior failed approaches start
+   * known. At most six lines; a longer dossier keeps its first five and its
+   * last, which is Seshat's answer when there is one (context CX-N3-6). A
+   * line already carried is not prefixed again.
+   */
   public seed(lines: string[]): void {
-    this.seeded = lines.slice(0, 6);
+    const kept =
+      lines.length > SEEDED_LINES
+        ? [...lines.slice(0, SEEDED_LINES - 1), ...lines.slice(-1)]
+        : lines;
+    this.seeded = kept.map((l) => l.replace(CARRIED_PREFIX, ""));
   }
   private seeded: string[] = [];
 
@@ -91,10 +100,17 @@ export class WorkingMemory {
       );
     }
     for (const text of this.fixed.slice(-4)) out.push(`fixed: ${clip(text)} (do not reintroduce)`);
-    for (const line of this.seeded) out.push(`from an earlier attempt: ${clip(line, 220)}`);
-    return out.slice(0, 10);
+    // The carried lines keep their room: the last of them may be Seshat's answer.
+    const carried = this.seeded.map((line) => `from an earlier attempt: ${clip(line, 220)}`);
+    return [...out.slice(0, MEMORY_LINES - carried.length), ...carried];
   }
 }
+
+/** Most lines the memory puts in a prompt, and most carried from an earlier attempt. */
+const MEMORY_LINES = 10;
+const SEEDED_LINES = 6;
+/** One or more "from an earlier attempt:" prefixes, as a line carried twice would hold. */
+const CARRIED_PREFIX = /^(?:from an earlier attempt:\s*)+/;
 
 function clip(s: string, n = 160): string {
   return s.length > n ? `${s.slice(0, n - 1)}…` : s;

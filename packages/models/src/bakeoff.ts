@@ -19,12 +19,16 @@ export interface CandidateSettings {
   quant: string;
   engine: "llama.cpp" | "ollama" | "openai-compatible" | "mlx" | (string & {});
   toolArm: ToolArm;
+  /** False while the registry has pinned no arm for the model: arm A, unmeasured (MD-N5-2). */
+  toolArmMeasured: boolean;
   contextTokens: number | undefined;
   kvType?: string;
   sampling?: Record<string, number>;
   mtp?: boolean;
   /** A person's override the Worker runs under (rule 27, MD-N4-4). */
   workerOverride?: WorkerOverride;
+  /** Where these settings were read (MD-N4-6): the child run's evidence, or the parent's adapter. */
+  settingsFrom?: string;
 }
 
 export interface BakeOffRecord {
@@ -80,6 +84,10 @@ export function candidateSettings(
     quant,
     engine,
     toolArm: adapter.preferredToolArm ?? "arm_a_flat",
+    toolArmMeasured:
+      (adapter as { registry?: { armFor(id: string): ToolArm | undefined } }).registry?.armFor(
+        adapter.modelId,
+      ) !== undefined,
     contextTokens: adapter.contextWindow?.contextTokens,
     ...(kvType ? { kvType } : {}),
     ...(mtp !== undefined ? { mtp } : {}),

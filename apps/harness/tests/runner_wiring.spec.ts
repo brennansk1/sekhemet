@@ -255,7 +255,7 @@ describe("apps/harness executeCard wiring (wave 2, part 1)", () => {
     const plainRule = await learning.propose({
       role: "worker",
       text: "Always export constants by name, never default.",
-      scope: {},
+      scope: { kind: "implement" },
       source: "seed",
       evidence: [],
     });
@@ -281,15 +281,15 @@ describe("apps/harness executeCard wiring (wave 2, part 1)", () => {
       await guarded.propose({
         role: "worker",
         text: '"TS2375: undefined not assignable" took 3 attempts to fix.',
-        scope: {},
+        scope: { kind: "implement", errorPattern: "TS2375" },
         source: "struggle",
         evidence: [],
       }),
     ).toBeUndefined();
     const fresh = await guarded.propose({
       role: "worker",
-      text: '"TS2304: cannot find name" took 3 attempts to fix.',
-      scope: {},
+      text: '"TS2554: expected 2 arguments" took 3 attempts to fix.',
+      scope: { kind: "implement", errorPattern: "TS2554" },
       source: "struggle",
       evidence: [],
     });

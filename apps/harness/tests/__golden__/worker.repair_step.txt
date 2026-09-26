@@ -15,8 +15,8 @@ Emit tool calls, not prose. You may emit several calls in one step; batch indepe
 2. Pass arguments as JSON values of the declared type.
 3. Call only tools named in this prompt.
 
-ask(question*: string (The question)) -> The relevant parts of the card's contract, or guidance to proceed conservatively
-  Ask a question about what the card requires instead of guessing. Answered from the card's spec, Done-when list and rules.
+ask(question*: string (The question), assumption: string (Your working assumption meanwhile)) -> Contract excerpts, an answer, or what to assume
+  Ask what the card requires instead of guessing; its contract, Seshat or a person answers.
 check() -> PASS, or the failing gates with file, line and message
   Run this card's verification gates now WITHOUT finishing. Returns typed failures. Use it instead of running tsc or tests yourself.
 edit(path*: string (Path relative to the worktree), replace*: string (Replacement text), search*: string (Exact text, must occur once))

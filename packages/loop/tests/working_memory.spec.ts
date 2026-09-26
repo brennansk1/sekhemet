@@ -53,3 +53,27 @@ describe("@sekhemet/loop working memory", () => {
     ]);
   });
 });
+
+describe("CX-N3-6: a long dossier seeding the working memory keeps Seshat's answer", () => {
+  it("keeps the last line of a dossier over six lines, and prefixes a carried line once, never nested", () => {
+    const m = new WorkingMemory();
+    const dossier = [
+      "tried A",
+      "tried B",
+      "from an earlier attempt: tried C",
+      "tried D",
+      "tried E",
+      "tried F",
+      "tried G",
+      "Seshat: the column is named created_at, not createdAt.",
+    ];
+    m.seed(dossier);
+    const lines = m.lines();
+    expect(lines).toContain(
+      "from an earlier attempt: Seshat: the column is named created_at, not createdAt.",
+    );
+    expect(lines.filter((l) => l.includes("from an earlier attempt: from an earlier"))).toEqual([]);
+    expect(lines).toContain("from an earlier attempt: tried C");
+    expect(lines.filter((l) => l.startsWith("from an earlier attempt:"))).toHaveLength(6);
+  });
+});

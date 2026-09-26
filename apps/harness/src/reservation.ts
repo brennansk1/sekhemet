@@ -110,3 +110,20 @@ export async function mayStartCard(
   }
   return undefined;
 }
+
+/**
+ * Why a card may not start unattended now (models rule 20, MD-N3-1): while
+ * the machine is reserved — a person's reserve-now, or inside `[machine]
+ * reserved_hours` — an unattended run (an overnight round, the daemon)
+ * starts only a card marked urgent (priority 1). A person starting a card
+ * themselves is never refused here.
+ */
+export function unattendedStartRefusal(
+  card: Pick<CardRecord, "id" | "priority">,
+  ctx: { unattended: boolean; reservedNow: boolean; inReservedHours: boolean },
+): string | undefined {
+  if (!ctx.unattended || card.priority === 1) return undefined;
+  if (ctx.reservedNow) return "the machine is reserved and the card is not urgent";
+  if (ctx.inReservedHours) return "it is inside the reserved hours and the card is not urgent";
+  return undefined;
+}

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
-import { computeContextVersion, workerCopy } from "@sekhemet/context";
+import { FALLBACK_CHARS_PER_TOKEN, computeContextVersion, workerCopy } from "@sekhemet/context";
 import { gateCopy } from "@sekhemet/gates";
 import { TOOL_CATALOG } from "@sekhemet/loop";
 import {
@@ -14,6 +14,7 @@ import {
   hostFingerprintHash,
   samplingSettingsOf,
 } from "@sekhemet/models";
+import { launchVariant } from "./model_access.js";
 import { llamaRuntime, parseLlamaBuild, sampledDigest } from "./repro.js";
 
 /**
@@ -51,13 +52,24 @@ export function copyText(copy: Record<string, unknown>): string {
 /**
  * The Worker's context version for a qualification (context.md rule 27; the
  * lead's ruling on MD-N8-1): its prompt templates, the copy modules it reads
- * (the Worker's and the gates') and its tool schemas. Playbook rules are per
- * project and card, so they are not part of it.
+ * (the Worker's and the gates'), its tool schemas and the token estimator's
+ * characters-per-token ratio. Playbook rules are per project and card, so
+ * they are not part of it.
  */
-export function workerContextVersion(inventory: string = recordedLiteralInventory()): string {
+export function workerContextVersion(
+  inventory: string = recordedLiteralInventory(),
+  charsPerToken: number = FALLBACK_CHARS_PER_TOKEN,
+): string {
   return computeContextVersion({
     tools: TOOL_CATALOG,
-    templates: [copyText(workerCopy), copyText(gateCopy), inventory],
+    // The estimator's ratio sizes every budget the prompt is cut to (CX-N1-2),
+    // so a change of ratio is a change of the Worker's context.
+    templates: [
+      copyText(workerCopy),
+      copyText(gateCopy),
+      inventory,
+      `chars per token ${charsPerToken}`,
+    ],
   }).version;
 }
 
@@ -159,11 +171,11 @@ export function speculativeProbe(
   adapter: ManagedLlamaServerAdapter,
   registry?: ModelRegistry,
 ): ManagedLlamaServerAdapter {
-  return new ManagedLlamaServerAdapter({
-    ...adapter.launchProfile,
-    ...(registry ? { registry } : {}),
-    speculativeOverride: true,
-  });
+  return launchVariant(
+    adapter,
+    { speculativeOverride: true, ...(registry ? { registry } : {}) },
+    { keepRegistry: true },
+  );
 }
 
 /**
@@ -232,6 +244,9 @@ export function gateWorker(
   deps: CombinationDeps = {},
 ): WorkerGate {
   const combination = qualificationCombination(adapter, { ...deps, registry });
+  // CX-N6-1: a new context version invalidates every qualification made
+  // under the old one, naming both, and schedules its re-qualification.
+  registry.observeContextVersion(combination.settings.contextVersion);
   const refusal = qualificationRefusal(registry, adapter, combination, name);
   if (refusal) return { refusal, combination };
   const override = workerOverrideFor(registry, adapter, combination);

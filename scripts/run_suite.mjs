@@ -339,13 +339,17 @@ result.modelLoads = runner.modelLoads();
  * profile is kept for admission to compare across arms.
  */
 const scoredCards = [];
+/** The settings the first card's evidence recorded, for the bake-off's report (models MD-N4-6). */
+let candidateSettings;
 /** The person's override each card's Worker ran under, from its card/repro (MD-N4-4). */
 const overrides = new Map();
 for (const [fixture, repo] of repos) {
   for (const { id } of cardsFor(fixture, perFixture.get(fixture))) {
     const file = join(repo, ".sekhemet", "evidence", `latest-${id}.json`);
     if (!existsSync(file)) continue;
-    const repro = JSON.parse(readFileSync(file, "utf8")).reproducibility;
+    const bundle = JSON.parse(readFileSync(file, "utf8"));
+    candidateSettings ??= bundle.settings;
+    const repro = bundle.reproducibility;
     if (repro?.workerOverride)
       overrides.set(JSON.stringify(repro.workerOverride), repro.workerOverride);
     scoredCards.push({
@@ -377,7 +381,7 @@ function workerOverrideField() {
 mkdirSync(dirname(out), { recursive: true });
 writeFileSync(
   out,
-  `${JSON.stringify({ ...result, worker, tasksRun: tasks.length, runProfile: { ...runProfile, hash: runProfileHash(runProfile) }, mode: independent ? "independent" : "sequential", ...(abEntry ? { abEntry } : {}), ...(mismatched.length ? { profileMismatch: mismatched } : {}), cardProfiles, ...workerOverrideField() }, null, 2)}\n`,
+  `${JSON.stringify({ ...result, worker, tasksRun: tasks.length, runProfile: { ...runProfile, hash: runProfileHash(runProfile) }, mode: independent ? "independent" : "sequential", ...(abEntry ? { abEntry } : {}), ...(mismatched.length ? { profileMismatch: mismatched } : {}), cardProfiles, ...(candidateSettings ? { candidateSettings } : {}), ...workerOverrideField() }, null, 2)}\n`,
 );
 console.log(`\n${summarise(result)}`);
 /**

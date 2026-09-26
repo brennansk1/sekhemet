@@ -113,9 +113,11 @@ describe("X1: sekhemet onboard runs the seven steps", () => {
     expect(report.conventions.dominantNaming).toBe("kebab-case");
     expect(report.conventions.testLayout).toBe("tests-dir");
     expect(report.conventions.errorPatterns).toContain("NotFoundError");
+    // A convention is the AGENTS.md draft's, never a rule with no scope (context CX-N4-1, 24c).
     const rules = await new LearningStore(store.log).rules();
-    expect(rules.some((r) => /kebab-case/.test(r.text) && r.status === "candidate")).toBe(true);
+    expect(rules.some((r) => /kebab-case/.test(r.text))).toBe(false);
     const draft = readFileSync(join(root, ".sekhemet/onboard/AGENTS.md.draft"), "utf8");
+    expect(draft).toContain("- File names: kebab-case.");
     expect(draft).toContain("Keep functions under forty lines.");
     expect(draft).toContain("- test: `pnpm run test`");
     expect(report.qualification[0]).toMatchObject({ modelId: "tiny", qualified: false });

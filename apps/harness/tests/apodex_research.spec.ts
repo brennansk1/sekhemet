@@ -285,6 +285,17 @@ describe("Apodex solo research (its ReAct mode)", () => {
             },
           ],
         }),
+        // The budget is the allocator's Researcher budget (CX-N3-3), a little
+        // larger than the old fixed 7,000-token reserve: one more result passes it.
+        () => ({
+          toolCalls: [
+            {
+              id: "c2",
+              name: "web_fetch",
+              arguments: { url: "https://nodejs.org/api/sqlite.html", info_to_extract: "w" },
+            },
+          ],
+        }),
         () => ({
           toolCalls: [{ id: "d", name: "finalize_answer", arguments: { content: "done" } }],
         }),

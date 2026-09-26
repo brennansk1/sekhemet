@@ -21,6 +21,13 @@ export interface PlaybookRule {
    */
   errorPattern?: string;
   /**
+   * A learned rule's trigger gate as a scope (context rule 24b, CX-N4-2):
+   * the rule matches only while this gate — the failing gate's rung, as the
+   * loop passes it — is the one failing. Held in memory, never written to
+   * `playbook.toml`, whose `triggerGate` only ranks.
+   */
+  requiresGate?: string;
+  /**
    * What the rule is about, for duplicate detection (see `facts.ts`).
    * Inferred from the instruction when absent.
    */
@@ -33,7 +40,8 @@ export interface MatchRulesOptions {
   /**
    * The failing gate. It no longer pulls a rule in on its own (a typecheck
    * failure used to add every typecheck rule of every card); rules whose
-   * `triggerGate` matches are ranked first among those the scope matched.
+   * `triggerGate` matches are ranked first among those the scope matched, and
+   * a rule with `requiresGate` matches only while that gate is failing.
    */
   triggerGate?: string;
   /**
@@ -340,6 +348,8 @@ export class PlaybookRegistry {
    * - A rule with `errorPattern` also needs `failureText` to match it, so an
    *   error-scoped rule rides in the prompt only while that error stands.
    * - `triggerGate` ranks; it no longer adds a rule by itself.
+   * - `requiresGate` (a learned rule's trigger-gate scope) is AND: the rule
+   *   matches only while that gate is the failing one (CX-N4-2).
    * - Rules whose every fact key is in `coveredKeys` are left out, and of
    *   two matched rules about the same fact only the first (by rank) stays.
    */
@@ -353,6 +363,7 @@ export class PlaybookRegistry {
       if (scope === "card" && rule.errorPattern) return false;
       if (scope === "error" && !rule.errorPattern) return false;
       if (!rule.pattern || !textToMatch.includes(rule.pattern.toLowerCase())) return false;
+      if (rule.requiresGate && rule.requiresGate.toLowerCase() !== gate) return false;
       if (rule.errorPattern) {
         return (
           options.failureText !== undefined &&

@@ -269,39 +269,6 @@ export function measureConventions(root: string, files: string[]): Conventions {
   };
 }
 
-function conventionRules(c: Conventions): { text: string; evidence: string }[] {
-  const out: { text: string; evidence: string }[] = [];
-  const total = Object.values(c.fileNaming).reduce((a, b) => a + b, 0);
-  const n = c.fileNaming[c.dominantNaming] ?? 0;
-  if (total >= 4 && n / total >= 0.7) {
-    out.push({
-      text: `Name new source files in ${c.dominantNaming}, like the rest of the repository.`,
-      evidence: `${n} of ${total} multi-word file names are ${c.dominantNaming}`,
-    });
-  }
-  if (c.testLayout === "tests-dir")
-    out.push({
-      text: "Put tests under the tests/ directory, not next to the source.",
-      evidence: "most test files live in tests/",
-    });
-  if (c.testLayout === "colocated")
-    out.push({
-      text: "Put a test next to the file it tests (x.spec.ts beside x.ts).",
-      evidence: "most test files are colocated",
-    });
-  if (c.testStyle.length)
-    out.push({
-      text: `Write tests in this project's style: ${c.testStyle.join(", ")}.`,
-      evidence: "seen in the existing tests",
-    });
-  if (c.errorPatterns.length)
-    out.push({
-      text: `Report errors the way the codebase does: ${c.errorPatterns.join(", ")}.`,
-      evidence: "most frequent error constructions",
-    });
-  return out;
-}
-
 // ---------------------------------------------------------------- step 6
 
 export function agentsDraft(root: string, commands: DetectedCommand[], c: Conventions): string {
@@ -442,18 +409,11 @@ export async function runOnboard(root: string, opts: OnboardOptions = {}): Promi
       await opts.store.cardStore.listCards(),
     );
     rulesProposed += explored.proposed;
-    for (const r of conventionRules(conventions)) {
-      const rule = await learning.propose({
-        role: "worker",
-        text: r.text,
-        scope: {},
-        source: "seed",
-        evidence: [{ note: `onboarding: ${r.evidence}` }],
-      });
-      if (rule) rulesProposed++;
-    }
+    // The conventions themselves go to the AGENTS.md draft (step 6), which
+    // the Worker reads as project conventions: a rule restating one would
+    // have no scope and reach every prompt (context rules 24b, 24c).
   } else {
-    rulesProposed = exploreProject(root).length + conventionRules(conventions).length;
+    rulesProposed = exploreProject(root).length;
   }
   say(
     `5. Conventions: ${conventions.dominantNaming} files, tests ${conventions.testLayout}; ${rulesProposed} draft rule(s) for the playbook (candidates until approved).`,

@@ -1,8 +1,21 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { EventLog, LifecycleHookEngine } from "@sekhemet/kernel";
+import { type RuleCredit, ruleCredit } from "@sekhemet/eval";
+import type { AttemptOutcome, EventLog, LifecycleHookEngine } from "@sekhemet/kernel";
 import { userPaths } from "../user_dir.js";
+import {
+  ROTATION_EVENT,
+  type RotationRecord,
+  type ScopedCard,
+  creditRecords,
+  keyHolder,
+  matchesCard,
+  rankRules,
+  remedyCovers,
+  ruleKeys,
+  scopeRefusal,
+} from "./scoping.js";
 
 /**
  * What Sekhemet has learned: playbook rules for the Worker and Seshat, and a
@@ -20,11 +33,26 @@ export type RuleRole = "worker" | "manager";
 export type RuleStatus = "candidate" | "active" | "retired";
 export type RuleSource = "struggle" | "send_back" | "reflection" | "seed" | "research";
 
+/**
+ * Where a rule applies (context rule 24b): every declared field must match,
+ * AND, never OR. `kind` is a `CardKind` (a SPIDR word on an older rule is
+ * read as one); `triggerGate` is the failing gate's rung as the loop names it.
+ */
+export interface RuleScope {
+  kind?: string;
+  pathPattern?: string;
+  errorPattern?: string;
+  triggerGate?: string;
+}
+
+/** At most this many rules reach one prompt (context rule 24). */
+export const RULES_PER_PROMPT = 8;
+
 export interface LearnedRule {
   id: string;
   role: RuleRole;
   text: string;
-  scope: { kind?: string; pathPattern?: string; errorPattern?: string };
+  scope: RuleScope;
   reach: "project" | "global";
   status: RuleStatus;
   helpful: number;
@@ -49,6 +77,8 @@ export interface RuleEvidence {
   note: string;
   source?: string;
   verified?: "execution" | "person" | "none";
+  /** When the signal was recorded (the tie-break's "most recent evidence", CX-N4-3). */
+  at?: string;
 }
 
 export type ProfileCategory = "code_style" | "planning" | "communication" | "priorities";
@@ -96,7 +126,9 @@ export function similarity(a: string, b: string): number {
 }
 const EVENTS = {
   rule: "learn/rule",
+  /** Read from older ledgers only: credit now comes from the attempt record (rule 24e). */
   ruleOutcome: "learn/rule_outcome",
+  refused: "learn/rule_refused",
   profile: "learn/profile",
   signal: "learning/signal",
 } as const;
@@ -127,6 +159,10 @@ export class LearningStore {
   constructor(
     private log: EventLog,
     private hooks?: LifecycleHookEngine,
+    private options: {
+      /** The project's files, so a path pattern matching all of them is refused (CX-N4-1). */
+      projectFiles?: () => readonly string[];
+    } = {},
   ) {}
 
   // --- Rules -------------------------------------------------------------------
@@ -165,9 +201,35 @@ export class LearningStore {
     if (rule.evidence.length > 0 && rule.evidence.every((e) => e.verified === "none")) {
       return undefined;
     }
+    // CX-N4-1: a rule that would reach every prompt is refused, naming the pattern.
+    const refusal = scopeRefusal(rule.scope, this.options.projectFiles?.());
+    if (refusal) {
+      await this.log.append({
+        actor: "harness",
+        type: EVENTS.refused,
+        payload: { role: rule.role, source: rule.source, ...refusal },
+      });
+      return undefined;
+    }
+    const at = new Date().toISOString();
+    const evidence = rule.evidence.map((e) => ({ ...e, at: e.at ?? at }));
     const existing = (await this.rules()).filter(
       (r) => r.role === rule.role && r.status !== "retired",
     );
+    // CX-N4-4: one curator, one fact per key. A fact a gate remedy states is
+    // already in the failure block; one another rule holds gains evidence.
+    const keys = ruleKeys(rule);
+    if (remedyCovers(keys)) return undefined;
+    const holder = keyHolder(keys, existing);
+    if (holder) {
+      if (holder.reach === "project") {
+        await this.writeRule(
+          { ...holder, evidence: [...holder.evidence, ...evidence].slice(-8) },
+          "harness",
+        );
+      }
+      return undefined;
+    }
     // Mem0's update step: compare with the most similar existing rules.
     const ranked = existing
       .map((r) => ({ r, sim: similarity(r.text, rule.text) }))
@@ -181,7 +243,7 @@ export class LearningStore {
     if (dup) {
       if (dup.reach === "project") {
         await this.writeRule(
-          { ...dup, evidence: [...dup.evidence, ...rule.evidence].slice(-8) },
+          { ...dup, evidence: [...dup.evidence, ...evidence].slice(-8) },
           "harness",
         );
       }
@@ -189,6 +251,7 @@ export class LearningStore {
     }
     const full: LearnedRule = {
       ...rule,
+      evidence,
       id: `rule_${randomUUID().slice(0, 8)}`,
       reach: rule.reach ?? "project",
       ...(related.length > 0 ? { related } : {}),
@@ -245,32 +308,175 @@ export class LearningStore {
     return next;
   }
 
-  /** Active rules a card's prompt should carry, most valuable first. */
   /**
-   * Rules a card's prompt should carry, most valuable first: approved rules,
-   * plus candidates learned this run from verified signals (`runRules`), which
-   * are in force for the rest of the run and wait for a human beyond it.
+   * The rules in force a card's prompt may carry (context rule 24b, 24f):
+   * approved rules of the role whose kind and path match the card (AND; the
+   * error pattern and trigger gate are applied per step by the playbook),
+   * ranked by `rankRules`, at most eight. Probation is off (O15): a learned
+   * candidate never applies before a person approves it, even when the run
+   * lists it; a candidate a person seeded for the run (`source: "seed"`,
+   * E5) does. A rule whose scope would match every card is never in force.
    */
   public async activeFor(
     role: RuleRole,
-    card: { title: string; scopeFiles: string[] },
-    runRules?: Set<string>,
+    card: ScopedCard,
+    options: {
+      runRules?: ReadonlySet<string>;
+      /** The current error code, whose rules come first (CX-N4-3). */
+      errorCode?: string;
+      limit?: number;
+      /** The owner allowed probation (O15); never in a measurement run. */
+      probation?: boolean;
+      measurement?: boolean;
+    } = {},
   ): Promise<LearnedRule[]> {
-    const kind = /\(SPIDR:\s*([A-Za-z]+)/.exec(card.title)?.[1];
-    return (await this.rules())
-      .filter(
-        (r) =>
-          r.role === role &&
-          (r.status === "active" || (r.status === "candidate" && runRules?.has(r.id) === true)),
-      )
-      .filter(
-        (r) =>
-          (!r.scope.kind || r.scope.kind === kind) &&
-          (!r.scope.pathPattern ||
-            card.scopeFiles.some((f) => f.includes(r.scope.pathPattern ?? ""))),
-      )
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 8);
+    const onProbation = options.probation === true && options.measurement !== true;
+    const inForce = (r: LearnedRule) =>
+      r.status === "active" ||
+      (r.status === "candidate" &&
+        options.runRules?.has(r.id) === true &&
+        (r.source === "seed" || onProbation));
+    const matched = (await this.rules()).filter(
+      (r) =>
+        r.role === role &&
+        inForce(r) &&
+        scopeRefusal(r.scope) === undefined &&
+        matchesCard(r.scope, card),
+    );
+    return rankRules(matched, {
+      ...(options.errorCode ? { errorCode: options.errorCode } : {}),
+    }).slice(0, options.limit ?? RULES_PER_PROMPT);
+  }
+
+  /**
+   * The PM rules in force, for Seshat's snapshot (CX-N4-5): at most eight,
+   * ranked like the Worker's. A PM rule never reaches a Worker prompt,
+   * because `activeFor("worker", …)` reads only Worker rules.
+   */
+  public async seshatRules(): Promise<string[]> {
+    const rules = (await this.rules()).filter((r) => r.role === "manager" && r.status === "active");
+    return rankRules(rules, {})
+      .slice(0, RULES_PER_PROMPT)
+      .map((r) => r.text);
+  }
+
+  // --- Rotation and paired credit (CX-N4-6) --------------------------------------
+
+  public async rotations(): Promise<RotationRecord[]> {
+    return (await this.log.getEventsByTypes([ROTATION_EVENT])).map(
+      (e) => e.payload as RotationRecord,
+    );
+  }
+
+  /**
+   * Rotate the rules in force across comparable cards (measurement §2,
+   * *Admission*): on a card's first attempt, a rule goes into the prompt of
+   * one comparable card — same project and card class — and is withheld
+   * from the next, in start order, and the decision is recorded. A retry
+   * carries every rule; a measurement run rotates nothing, so trials stay
+   * independent. The same card's first attempt keeps its recorded decision.
+   * Only the ranked rules the prompt's cap admits (`limit`, default
+   * `RULES_PER_PROMPT`) are rotated: a rule the cap cuts is neither in the
+   * prompt nor withheld, so it is never credited as either. The treatment
+   * arm's credit reads the attempt record's rule ids (the rules a step
+   * really carried, after per-step scoping), not this decision.
+   */
+  public async rotate(
+    ranked: readonly LearnedRule[],
+    card: { id: string; projectId: string; cardClass: string },
+    attemptNumber: number,
+    options: { measurement?: boolean; limit?: number } = {},
+  ): Promise<{ inPrompt: LearnedRule[]; withheld: string[] }> {
+    const rules = ranked.slice(0, options.limit ?? RULES_PER_PROMPT);
+    if (attemptNumber !== 1 || options.measurement || rules.length === 0) {
+      return { inPrompt: [...rules], withheld: [] };
+    }
+    const all = await this.rotations();
+    const recorded = all.find((r) => r.cardId === card.id);
+    if (recorded) {
+      const out = new Set(recorded.withheld);
+      return {
+        inPrompt: rules.filter((r) => !out.has(r.id)),
+        withheld: rules.filter((r) => out.has(r.id)).map((r) => r.id),
+      };
+    }
+    const comparable = all.filter(
+      (r) => r.projectId === card.projectId && r.cardClass === card.cardClass,
+    );
+    const inPrompt: LearnedRule[] = [];
+    const withheld: string[] = [];
+    for (const rule of rules) {
+      const seen = comparable.filter(
+        (r) => r.with.includes(rule.id) || r.withheld.includes(rule.id),
+      ).length;
+      if (seen % 2 === 0) inPrompt.push(rule);
+      else withheld.push(rule.id);
+    }
+    const payload: RotationRecord = {
+      cardId: card.id,
+      projectId: card.projectId,
+      cardClass: card.cardClass,
+      with: inPrompt.map((r) => r.id),
+      withheld,
+    };
+    await this.log.append({
+      actor: "harness",
+      type: ROTATION_EVENT,
+      cardId: card.id,
+      payload,
+    });
+    return { inPrompt, withheld };
+  }
+
+  /**
+   * Each rule in force's paired credit, from the attempt record and the
+   * rotation alone (rule 24e, MS-T8-14, `ruleCredit`): its helpful and
+   * harmful counts and value are the credit's, and a rule a look finds
+   * harmful is retired automatically with the pairs and the test as its
+   * evidence — at no other time without a person (CX-N4-6).
+   */
+  public async settleCredit(outcomes: readonly AttemptOutcome[]): Promise<RuleCredit[]> {
+    const records = creditRecords(outcomes, await this.rotations());
+    const out: RuleCredit[] = [];
+    for (const rule of await this.rules()) {
+      if (rule.status !== "active" || rule.role !== "worker") continue;
+      const c = ruleCredit(records, rule.id);
+      out.push(c);
+      if (c.pairs === 0) continue;
+      const retire = c.status === "retired" && c.retiredAt !== undefined;
+      if (
+        !retire &&
+        rule.helpful === c.helpful &&
+        rule.harmful === c.harmful &&
+        rule.value === c.credit
+      ) {
+        continue;
+      }
+      await this.writeRule(
+        {
+          ...rule,
+          helpful: c.helpful,
+          harmful: c.harmful,
+          value: c.credit,
+          ...(retire && c.retiredAt
+            ? {
+                status: "retired" as const,
+                evidence: [
+                  ...rule.evidence,
+                  {
+                    note: `retired automatically at the look after ${c.retiredAt.look} pairs: ${c.helpful} helpful, ${c.harmful} harmful, P = ${c.retiredAt.p.toPrecision(3)} (one-sided exact test, alpha 0.05/3)`,
+                    source: "credit",
+                    verified: "execution" as const,
+                    at: new Date().toISOString(),
+                  },
+                ].slice(-8),
+              }
+            : {}),
+        },
+        "harness",
+      );
+    }
+    return out;
   }
 
   /**
@@ -287,36 +493,6 @@ export class LearningStore {
       .map((e) => e.payload as { inlet: string; key: string; evidence: RuleEvidence })
       .filter((p) => p.inlet === signal.inlet && p.key === signal.key)
       .map((p) => p.evidence);
-  }
-
-  /** Helpful/harmful accounting after a first attempt that carried these rules. */
-  public async recordOutcome(ruleIds: string[], cardId: string, passed: boolean): Promise<void> {
-    const rules = await this.rules();
-    for (const id of ruleIds) {
-      const rule = rules.find((r) => r.id === id);
-      if (!rule) continue;
-      if (rule.reach === "global") {
-        const updated = {
-          ...rule,
-          helpful: rule.helpful + (passed ? 1 : 0),
-          harmful: rule.harmful + (passed ? 0 : 1),
-          value: round((1 - DECAY) * rule.value + (passed ? 1 : -1)),
-        };
-        await this.writeRule(updated, "harness");
-      } else {
-        await this.log.append({
-          actor: "harness",
-          type: EVENTS.ruleOutcome,
-          cardId,
-          payload: { ruleId: id, cardId, helpful: passed },
-        });
-      }
-    }
-  }
-
-  /** Active rules that have clearly stopped helping: candidates for retirement. */
-  public async retirementCandidates(): Promise<LearnedRule[]> {
-    return (await this.rules()).filter((r) => r.status === "active" && r.harmful - r.helpful >= 3);
   }
 
   // --- Profile -----------------------------------------------------------------

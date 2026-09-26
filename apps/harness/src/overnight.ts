@@ -185,14 +185,14 @@ function defaultRunM0(
   opts: OvernightOptions,
 ): (worker: string, shouldStop: () => boolean) => Promise<"done" | "stopped" | "no tasks"> {
   return async (worker, shouldStop) => {
-    const { ModelRoster } = await import("@sekhemet/models");
+    const { describeModel } = await import("./model_access.js");
     const { modelRegistry } = await import("./wave2.js");
     const { runM0 } = await import("./m0_path.js");
     return runM0(
       { repoPath: opts.repoPath, log: opts.log },
       {
         worker,
-        adapter: new ModelRoster({ registry: modelRegistry() }).resolve(worker, "worker"),
+        adapter: describeModel(worker, "worker", { registry: modelRegistry() }),
         shouldStop,
         ...(opts.say ? { print: opts.say } : {}),
       },

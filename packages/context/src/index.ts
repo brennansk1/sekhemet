@@ -17,6 +17,7 @@ export * from "./pruner.js";
 export * from "./random_prune.js";
 export * from "./prefix_guard.js";
 export * from "./versioning.js";
+export * from "./worker_priorities.js";
 export * from "./conventions.js";
 export * from "./step_replay.js";
 export * from "./tool_search.js";

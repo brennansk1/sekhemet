@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { estimatePromptTokens, outlineFile } from "@sekhemet/context";
 import type { ChatTurn, LocalInferenceAdapter, ToolDefinition } from "@sekhemet/models";
-import { reasoningForStep } from "@sekhemet/models";
+import { ToolIndex, plannerCopy, reasoningForStep } from "@sekhemet/models";
 import { extractJsonObject } from "./spidr.js";
 import type { EditSketch, PlannedStory } from "./types.js";
 
@@ -84,6 +84,50 @@ function knownSymbols(root: string | undefined, files: readonly string[]): Set<s
   return out;
 }
 
+/**
+ * The Planner's tool rounds over an indexed tool set (WL-N8-1): the index is
+ * in the first message, the tools array is `tool_search` alone on every
+ * request, a loaded schema arrives as a tool message, and each request's
+ * messages extend the previous request's byte for byte.
+ */
+async function sketchWithToolIndex(
+  adapter: LocalInferenceAdapter,
+  request: Parameters<LocalInferenceAdapter["generate"]>[0],
+  prompt: string,
+  index: ToolIndex,
+  tools: PlannerTools,
+): Promise<string> {
+  const turns: ChatTurn[] = [{ role: "user", content: `${prompt}\n\n${index.indexText()}` }];
+  let text = "";
+  // One more round than without the index: loading a schema takes one.
+  for (let round = 0; round <= PLANNER_TOOL_ROUNDS + 1; round++) {
+    const res = await adapter.generate({
+      ...request,
+      messages: [...turns],
+      tools: [...index.tools],
+    });
+    text = res.text;
+    if (res.toolCalls.length === 0 || round === PLANNER_TOOL_ROUNDS + 1) break;
+    const calls = res.toolCalls.slice(0, PLANNER_TOOL_CALLS_PER_ROUND);
+    turns.push({ role: "assistant", content: res.text, toolCalls: calls });
+    for (const c of calls) {
+      const args = c.arguments as Record<string, unknown>;
+      const out =
+        c.name === "tool_search"
+          ? index.search(String(args.query ?? "")).content
+          : index.callable(c.name)
+            ? await tools.call(c.name, args).catch((err: unknown) => `[ERROR]: ${String(err)}`)
+            : plannerCopy.notLoaded(c.name);
+      turns.push({
+        role: "tool",
+        toolCallId: c.id,
+        content: out.slice(0, PLANNER_TOOL_RESULT_CHARS),
+      });
+    }
+  }
+  return text;
+}
+
 export async function sketchWithModel(
   adapter: LocalInferenceAdapter,
   story: PlannedStory,
@@ -127,14 +171,20 @@ export async function sketchWithModel(
     reasoningBudgetTokens: thinking.reasoningBudgetTokens,
     maxTokens: 700,
   };
+  // WL-N8-1: more than ten tools are offered as a one-line index and
+  // `tool_search`; a loaded schema is appended as a message.
+  const index = options.tools ? new ToolIndex(options.tools.definitions) : undefined;
   // EXT-20: an approved MCP server's tools, within the prompt budget. With
   // none, the request is the single call it always was.
-  const offered = options.tools
-    ? plannerToolsWithinBudget(options.tools.definitions, options.tools.budgetTokens)
-    : [];
+  const offered =
+    options.tools && !index?.indexed
+      ? plannerToolsWithinBudget(options.tools.definitions, options.tools.budgetTokens)
+      : [];
   let text: string;
   try {
-    if (offered.length === 0 || !options.tools) {
+    if (index?.indexed && options.tools) {
+      text = await sketchWithToolIndex(adapter, request, prompt, index, options.tools);
+    } else if (offered.length === 0 || !options.tools) {
       text = (await adapter.generate(request)).text;
     } else {
       const turns: ChatTurn[] = [{ role: "user", content: prompt }];

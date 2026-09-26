@@ -22,7 +22,7 @@ import {
   STOP_REASONS,
   isCardStatus,
 } from "@sekhemet/kernel";
-import { type LocalInferenceAdapter, ModelRoster, NAIL_WORKER_PROFILE } from "@sekhemet/models";
+import { type LocalInferenceAdapter, NAIL_WORKER_PROFILE } from "@sekhemet/models";
 import { DecisionStore } from "@sekhemet/planner";
 import {
   BASALT,
@@ -71,6 +71,7 @@ import {
   requestAbort,
   rewindCard,
 } from "./execute.js";
+import { describeModel } from "./model_access.js";
 import { startNotifier } from "./notify.js";
 import { dailyStandup } from "./pm/service.js";
 import { PmStore } from "./pm/store.js";
@@ -665,11 +666,7 @@ export function startDashboardServer(
       const name =
         queueDefaults(effectiveConfig(repoPath).config, []).worker ?? NAIL_WORKER_PROFILE.modelId;
       const registry = modelRegistry();
-      const gate = gateWorker(
-        registry,
-        new ModelRoster({ registry }).resolve(name, "worker"),
-        name,
-      );
+      const gate = gateWorker(registry, describeModel(name, "worker", { registry }), name);
       return gate.refusal ? 1 : gate.combination.settings.parallelSlots;
     } catch {
       return 1;

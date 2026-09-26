@@ -4,7 +4,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import type { ToolDefinition } from "@sekhemet/models";
+import type { ModelRole, ToolDefinition } from "@sekhemet/models";
 import type { PlannerTools } from "@sekhemet/planner";
 import { allowlistedEnv } from "@sekhemet/sandbox";
 import { userPaths } from "./user_dir.js";
@@ -44,8 +44,8 @@ export interface McpServerConfig {
   disabled?: boolean;
 }
 
-/** Who a tool list is for (extensibility item 23). */
-export type McpRole = "researcher" | "planner" | "seshat" | "worker";
+/** Who a tool list is for (extensibility item 23): a model role; Seshat is the Planner's. */
+export type McpRole = ModelRole;
 
 function httpUrl(cfg: McpServerConfig): URL | undefined {
   if (typeof cfg.url !== "string") return undefined;

@@ -28,9 +28,11 @@ import { unregisteredCopyModules } from "../src/prompt_tags.js";
  * session.ts into the Worker copy module) and the 22 qualification strings
  * moved into the qualification copy module; 443 when read_file's directory and
  * outline replies moved into the Worker copy module, to name only the tools
- * the arm offers (the B2.5 arms review, item 3).
+ * the arm offers (the B2.5 arms review, item 3); 438 when B4.0a built
+ * Seshat's prompt from allocator sections and moved the re-plan prompt into
+ * its copy module.
  */
-const RECORDED_LITERAL_TOTAL = 443;
+const RECORDED_LITERAL_TOTAL = 438;
 
 const texts = (file: string, source: string) =>
   extractModelFacingLiterals(file, source).map((l) => l.text);

@@ -549,6 +549,61 @@ export function condenseToolOutput(
   };
 }
 
+/** One condensed tool output: what it was and what condensing removed. */
+export interface CondensingItem {
+  tool: string;
+  rawTokens: number;
+  savedTokens: number;
+}
+
+/** A run's condensing savings, in total and per tool, beside the raw tool output (CX-N5-3). */
+export interface CondensingSummary {
+  rawTokens: number;
+  savedTokens: number;
+  /** Most saved first, then by tool name. */
+  byTool: { tool: string; calls: number; rawTokens: number; savedTokens: number }[];
+}
+
+export function summarizeCondensing(items: readonly CondensingItem[]): CondensingSummary {
+  const byTool = new Map<
+    string,
+    { tool: string; calls: number; rawTokens: number; savedTokens: number }
+  >();
+  let rawTokens = 0;
+  let savedTokens = 0;
+  for (const i of items) {
+    rawTokens += i.rawTokens;
+    savedTokens += i.savedTokens;
+    const t = byTool.get(i.tool) ?? { tool: i.tool, calls: 0, rawTokens: 0, savedTokens: 0 };
+    t.calls++;
+    t.rawTokens += i.rawTokens;
+    t.savedTokens += i.savedTokens;
+    byTool.set(i.tool, t);
+  }
+  return {
+    rawTokens,
+    savedTokens,
+    byTool: [...byTool.values()].sort(
+      (a, b) => b.savedTokens - a.savedTokens || a.tool.localeCompare(b.tool),
+    ),
+  };
+}
+
+/** Add per-tool summaries together (a run's cards into the run). */
+export function mergeCondensing(parts: readonly CondensingSummary[]): CondensingSummary {
+  return summarizeCondensing(
+    parts.flatMap((p) =>
+      p.byTool.flatMap((t) =>
+        Array.from({ length: t.calls }, (_, i) =>
+          i === 0
+            ? { tool: t.tool, rawTokens: t.rawTokens, savedTokens: t.savedTokens }
+            : { tool: t.tool, rawTokens: 0, savedTokens: 0 },
+        ),
+      ),
+    ),
+  );
+}
+
 export interface MaskOptions {
   /** Store the full observation text is written to before masking. */
   evidenceStore?: EvidenceStore;

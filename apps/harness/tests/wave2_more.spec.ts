@@ -97,7 +97,7 @@ describe("E5: learning approvals are gated on the frozen fixtures", () => {
     const rule = await learning.propose({
       role: "worker",
       text: "Always rewrite the whole file.",
-      scope: {},
+      scope: { kind: "implement" },
       source: "seed",
       evidence: [],
     });

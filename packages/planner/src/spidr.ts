@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 import type { CardRecord, CardTier } from "@sekhemet/kernel";
-import type { InferenceRequest, LocalInferenceAdapter } from "@sekhemet/models";
+import {
+  type InferenceRequest,
+  type LocalInferenceAdapter,
+  extractJsonObject,
+} from "@sekhemet/models";
 import { DEFAULT_MAX_SPLIT_DEPTH, DEFAULT_TIER_BUDGET, MAX_SCOPE_FILES } from "./constants.js";
 import { routeByDifficulty, scoreDifficulty, stepBudgetForDifficulty } from "./difficulty.js";
 import { validateInvest } from "./invest.js";
@@ -783,47 +787,8 @@ function nearestPredecessorIds(
 
 const SLICE_KINDS = new Set<string>(SLICE_ORDER);
 
-/** Balanced-brace scan; a model's JSON is usually wrapped in prose. */
-export function extractJsonObject(text: string): unknown {
-  const start = text.indexOf("{");
-  if (start < 0) {
-    return undefined;
-  }
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let i = start; i < text.length; i += 1) {
-    const char = text.charAt(i);
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-    if (char === "\\") {
-      escaped = true;
-      continue;
-    }
-    if (char === '"') {
-      inString = !inString;
-      continue;
-    }
-    if (inString) {
-      continue;
-    }
-    if (char === "{") {
-      depth += 1;
-    } else if (char === "}") {
-      depth -= 1;
-      if (depth === 0) {
-        try {
-          return JSON.parse(text.slice(start, i + 1)) as unknown;
-        } catch {
-          return undefined;
-        }
-      }
-    }
-  }
-  return undefined;
-}
+/** The one JSON reader (models `extractJsonObject`, MD-N4-8). */
+export { extractJsonObject } from "@sekhemet/models";
 
 const SLICE_PROMPT = [
   "Decompose the specification into SPIDR vertical slices.",

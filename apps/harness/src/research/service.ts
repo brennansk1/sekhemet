@@ -1,15 +1,12 @@
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { CardStore, EventLog } from "@sekhemet/kernel";
-import {
-  HttpInferenceAdapter,
-  type LocalInferenceAdapter,
-  createApodexResearcher,
-} from "@sekhemet/models";
+import type { LocalInferenceAdapter, ModelHold } from "@sekhemet/models";
 import { mergeNetworkConfigs, policyAllowsEveryHost } from "@sekhemet/sandbox";
 import { effectiveConfig, explicitNetworkMode, networkConfigs } from "../config_apply.js";
 import { readSettings } from "../integrations.js";
 import { similarity } from "../learning/store.js";
+import { type ModelAccess, sharedModelAccess, sharedQueue } from "../model_access.js";
 import { researchFetch, researchGate } from "../research_consent.js";
 import { userPaths } from "../user_dir.js";
 import { crawl4aiInstalled } from "./crawl4ai.js";
@@ -81,16 +78,38 @@ export class ResearchMemory {
   }
 }
 
-/** The Researcher's model by name: "apodex" is managed; anything else is an Ollama tag. */
-export function researcherAdapter(name: string): LocalInferenceAdapter {
-  if (name === "apodex") return createApodexResearcher();
-  return new HttpInferenceAdapter({
-    modelId: name,
-    apiFormat: "ollama",
-    contextTokens: 16384,
-    maxTokens: 1200,
-    disableReasoning: true,
-  });
+/**
+ * The Researcher's model by name ("apodex" is managed; anything else is an
+ * Ollama tag), as the `research` queue on the process's one scheduler
+ * (MD-N9-4). The first `acquire` takes one hold, kept across the flow's
+ * requests so nothing evicts the model mid-question; `release` releases it
+ * and unloads the model: a 16 GB model is not left resident behind one
+ * question.
+ */
+export function researcherModel(
+  name: string,
+  access: ModelAccess = sharedModelAccess(),
+): {
+  acquire: () => Promise<LocalInferenceAdapter>;
+  release: () => Promise<void>;
+} {
+  const take = sharedQueue({ queue: "research", role: "researcher", name }, {}, access);
+  let held: Promise<ModelHold> | undefined;
+  return {
+    acquire: async () => {
+      held ??= take().catch((err: unknown) => {
+        held = undefined;
+        throw err;
+      });
+      return (await held).adapter;
+    },
+    release: async () => {
+      const hold = await held?.catch(() => undefined);
+      held = undefined;
+      hold?.release();
+      await access.release("research");
+    },
+  };
 }
 
 export interface SourceStatus {
@@ -311,22 +330,18 @@ export function oneShotResearcher(
 ): (question: string, opts?: AskOptions) => Promise<AskResult> {
   return async (question, opts = {}) => {
     const { web } = await researchSources(repoPath, log ? { log } : {});
-    let adapter: LocalInferenceAdapter | undefined;
+    const model = researcherModel(modelName);
     const service = new ResearchService({
       repoPath,
       web,
       ...(cardStore ? { cardStore } : {}),
       ...(log ? { log } : {}),
-      model: async () => {
-        adapter ??= researcherAdapter(modelName);
-        return adapter;
-      },
+      model: model.acquire,
     });
     try {
       return await service.ask(question, opts);
     } finally {
-      const unload = (adapter as { unload?: () => Promise<void> } | undefined)?.unload;
-      if (unload) await unload.call(adapter).catch(() => undefined);
+      await model.release().catch(() => undefined);
     }
   };
 }

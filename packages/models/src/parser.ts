@@ -16,10 +16,65 @@ const REASONING_TAGS = ["think", "thinking", "reasoning", "scratchpad"];
 export function stripReasoning(text: string): string {
   let out = text;
   for (const tag of REASONING_TAGS) {
+    // A chat template that opens the block itself (Apodex) leaves only the
+    // close in the output: everything up to the last close is reasoning.
+    const close = `</${tag}>`;
+    const lower = out.toLowerCase();
+    const last = lower.lastIndexOf(close);
+    if (last !== -1 && lower.lastIndexOf(`<${tag}>`, last) === -1) {
+      out = out.slice(last + close.length);
+    }
     out = out.replace(new RegExp(`<${tag}>[\\s\\S]*?</${tag}>`, "gi"), "");
     out = out.replace(new RegExp(`<${tag}>[\\s\\S]*$`, "i"), "");
   }
   return out.trim();
+}
+
+/**
+ * The one way to read a JSON object from a model's reply (MD-N4-8): the
+ * first balanced object, strings and escapes respected, never a greedy span
+ * from the first brace to the last; the malformations local models emit
+ * most often are repaired first. Undefined when there is none.
+ */
+export function extractJsonObject(text: string): unknown {
+  const start = text.indexOf("{");
+  if (start < 0) return undefined;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i += 1) {
+    const char = text.charAt(i);
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (char === "{") depth += 1;
+    else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        const raw = text.slice(start, i + 1);
+        try {
+          return JSON.parse(raw) as unknown;
+        } catch {
+          try {
+            return JSON.parse(repairJson(raw)) as unknown;
+          } catch {
+            return undefined;
+          }
+        }
+      }
+    }
+  }
+  return undefined;
 }
 
 /** Repair the malformed JSON local models emit most often. */

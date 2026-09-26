@@ -68,7 +68,9 @@ export const PROMPT_EMPHASIS_WORDS: readonly string[] = [
  */
 export const COPY_MODULES: Readonly<Record<string, string>> = {
   gates: "packages/gates/src/copy.ts",
+  planner: "packages/models/src/planner_copy.ts",
   qualification: "packages/models/src/qualification_copy.ts",
+  replan: "packages/loop/src/replan_copy.ts",
   sandbox: "packages/sandbox/src/copy.ts",
   worker: "packages/context/src/worker_copy.ts",
 };

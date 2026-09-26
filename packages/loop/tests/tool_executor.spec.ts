@@ -210,5 +210,9 @@ describe("@sekhemet/loop ToolExecutor", () => {
     expect(obs.content).toContain("omitted");
     // The tail matters: compilers put their summary at the end.
     expect(obs.content).toContain("line 3999");
+    // CX-N5-3: the observation says what condensing removed, beside the raw size.
+    expect(obs.condensing?.rawTokens).toBeGreaterThan(obs.condensing?.savedTokens ?? 0);
+    expect(obs.condensing?.savedTokens).toBeGreaterThan(1000);
+    expect(tools.condensedTokensSaved).toBe(obs.condensing?.savedTokens);
   });
 });

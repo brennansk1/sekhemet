@@ -29,6 +29,15 @@ export type ExecutionStopReason = CardStopReason;
  * model's `planRepair`) and start the next attempt with the plan, or answered
  * in-loop through `SessionOptions.onReplan`.
  */
+/** A Worker question's decision as the session reads it (WL-N4-2, M3). */
+export interface DecisionReading {
+  answered: boolean;
+  optionIndex?: number;
+  option?: string;
+  /** The person's reply in the card's thread, when written. */
+  reply?: string;
+}
+
 export interface ReplanRequest {
   cardId: string;
   /** Verification attempts spent before the request. */
@@ -188,6 +197,24 @@ export interface SessionOptions {
    * which is handed to `askTeam` so a later answer can name its question.
    */
   recordQuestion?: ((question: string) => Promise<string | undefined>) | undefined;
+  /**
+   * WL-N4-1: post a question nothing answered now as a non-blocking decision
+   * request carrying the Worker's assumption; resolves to its id.
+   */
+  postDecision?:
+    | ((question: string, assumption: string) => Promise<string | undefined>)
+    | undefined;
+  /**
+   * WL-N4-2: the decision's state: answered, and the option chosen (0 is the
+   * assumption). M3: `reply` is the person's own words, their reply in the
+   * card's thread to the question (`questionEntryId`), when one is written.
+   */
+  readDecision?:
+    | ((
+        id: string,
+        questionEntryId?: string,
+      ) => DecisionReading | undefined | Promise<DecisionReading | undefined>)
+    | undefined;
   /** Record the team's in-run answer to a question in the card's dossier. */
   recordAnswer?:
     | ((answer: string, questionEntryId: string | undefined) => Promise<void>)

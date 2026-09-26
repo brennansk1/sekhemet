@@ -7,7 +7,7 @@ import {
   type MachineProfile,
   ManagedLlamaServerAdapter,
   ModelRoster,
-  ModelRouter,
+  ResidencyScheduler,
   type SweepPoint,
   type UnloadableAdapter,
   calibrateHardware,
@@ -152,6 +152,8 @@ describe("M14: the tier's numbers are derived and then applied", () => {
     const profile = await calibrateHardware({
       candidates: [{ label: "m", adapter }],
       usableBytes: 16 * GB,
+      // A 16 GB machine: the tier follows installed memory (MD-N1-1).
+      installedBytes: 16 * GB,
       buckets: [2048],
       memoryBandwidthGbPerSecond: 120,
       path: join(tmp(), "machine.json"),
@@ -173,7 +175,8 @@ describe("M14: the tier's numbers are derived and then applied", () => {
       fingerprintHash: hostFingerprintHash(),
       usableBytes: 16 * GB,
       tier: "S",
-      settings: tierSettingsFor(16 * GB),
+      // A 16 GB machine: the tier follows installed memory (MD-N1-1).
+      settings: tierSettingsFor(16 * GB, { installedBytes: 16 * GB }),
       models: {},
       ...over,
     });
@@ -212,7 +215,7 @@ describe("M14: the tier's numbers are derived and then applied", () => {
   });
 
   it("swaps roles instead of co-loading them below the co-residency floor", async () => {
-    const fake = (id: string, bytes: number): UnloadableAdapter => ({
+    const fake = (id: string): UnloadableAdapter => ({
       modelId: id,
       supportedArms: [],
       generate: async () => ({
@@ -222,24 +225,31 @@ describe("M14: the tier's numbers are derived and then applied", () => {
       }),
       unload: async () => undefined,
       confirmUnloaded: async () => true,
-      footprintBytes: async () => bytes,
     });
-    const build = (tier: ReturnType<typeof tierSettingsFor> | null) =>
-      new ModelRouter(
-        { worker: () => fake("w", 5 * GB), manager: () => fake("m", 5 * GB) },
-        { tier, pressureLevel: () => 1, headroomWaitMs: 0, healthCheck: false },
-      );
+    const build = (tier: ReturnType<typeof tierSettingsFor>, usableBytes: number) =>
+      new ResidencyScheduler({
+        roles: [
+          { role: "worker", weights: "w", contextTokens: 8192 },
+          { role: "chat", weights: "m", contextTokens: 8192 },
+        ],
+        weights: {
+          w: { build: () => fake("w"), footprintBytes: 5 * GB },
+          m: { build: () => fake("m"), footprintBytes: 5 * GB },
+        },
+        usableBytes,
+        coResident: tier.coLoadRoles,
+        pressureLevel: () => 1,
+        healthCheck: false,
+      });
     // Two 5 GB models would both fit the raw budget; the tier says they swap.
-    const swapping = build(tierSettingsFor(16 * GB));
-    expect((await swapping.calibrate(24 * GB)).resident).toEqual(["worker"]);
-    await swapping.use("worker");
-    await swapping.use("manager");
+    const swapping = build(tierSettingsFor(16 * GB, { installedBytes: 24 * GB }), 16 * GB);
+    (await swapping.acquire("worker")).release();
+    (await swapping.acquire("chat")).release();
     expect(swapping.swapCount).toBe(1);
 
-    const roomy = build(tierSettingsFor(64 * GB));
-    expect((await roomy.calibrate(80 * GB)).resident).toEqual(["worker", "manager"]);
-    await roomy.use("worker");
-    await roomy.use("manager");
+    const roomy = build(tierSettingsFor(64 * GB, { installedBytes: 96 * GB }), 64 * GB);
+    (await roomy.acquire("worker")).release();
+    (await roomy.acquire("chat")).release();
     expect(roomy.swapCount).toBe(0);
   });
 });

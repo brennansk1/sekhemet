@@ -51,8 +51,8 @@ describe("X3: images reach a vision model on both wire formats", () => {
 
   it("the registry names vision models and llama-server loads the projector", () => {
     const reg = new ModelRegistry("/tmp/sek-vision-none/models.json");
-    reg.upsert("qwen-vl", { roles: ["vision"] });
-    reg.upsert("coder", { roles: ["executor"] });
+    reg.upsert("qwen-vl", { vision: true });
+    reg.upsert("coder", { roles: ["worker"] });
     expect(reg.visionModels().map((m) => m.id)).toEqual(["qwen-vl"]);
     const llama = new ManagedLlamaServerAdapter({
       modelId: "vl",

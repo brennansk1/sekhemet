@@ -1,6 +1,6 @@
 import { createInterface } from "node:readline";
 import type { CardStore } from "@sekhemet/kernel";
-import type { LocalInferenceAdapter } from "@sekhemet/models";
+import type { ModelHold } from "@sekhemet/models";
 import { answerQueued } from "./pm/service.js";
 import type { PmStore } from "./pm/store.js";
 
@@ -32,7 +32,7 @@ export interface AcpDeps {
   cardStore: CardStore;
   pmStore: PmStore;
   pmModel: string;
-  acquire: () => Promise<LocalInferenceAdapter>;
+  acquire: () => Promise<ModelHold>;
   researcher?: Parameters<typeof answerQueued>[0]["researcher"];
   send: (msg: unknown) => void;
 }

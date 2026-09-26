@@ -15,13 +15,77 @@ import { processTreeResidentBytes, spawnConfinedSync } from "@sekhemet/sandbox";
 export interface LspServerCommand {
   command: string;
   args: string[];
+  /**
+   * The heap cap for a Node-based server, in MiB (`--max-old-space-size`
+   * through `NODE_OPTIONS`); its process tree is also held under twice this
+   * resident (WL-N7-2).
+   */
+  heapMb?: number;
+  /** Sent with `initialize` (exclusions, the tsserver memory cap). */
+  initializationOptions?: Record<string, unknown>;
+  /** Answers to the server's `workspace/configuration` requests, by section path. */
+  settings?: Record<string, unknown>;
 }
 
-/** Default servers per language; override per project. */
+/** A language server's default heap cap: a tenant beside a 13 GB Worker on 24 GB. */
+export const DEFAULT_LSP_HEAP_MB = 1024;
+
+/** What the run's language servers may hold resident together before the guard trims them. */
+export const LSP_RESIDENT_CAP_BYTES = 2 * DEFAULT_LSP_HEAP_MB * 1024 * 1024;
+
+/** Directories no server analyses: environments, dependencies, build output (WL-N7-2). */
+export const LSP_EXCLUDED_DIRS = [
+  "node_modules",
+  ".venv",
+  "venv",
+  "env",
+  "__pycache__",
+  "target",
+  "dist",
+  "build",
+  ".git",
+  ".sekhemet",
+] as const;
+
+const GLOBS = LSP_EXCLUDED_DIRS.map((d) => `**/${d}`);
+
+/** Pyright's bounds: its heap and its excluded directories, at init and on request. */
+export const PYTHON_BOUNDS: Pick<
+  LspServerCommand,
+  "heapMb" | "initializationOptions" | "settings"
+> = {
+  heapMb: DEFAULT_LSP_HEAP_MB,
+  initializationOptions: { python: { analysis: { exclude: GLOBS } } },
+  settings: { "python.analysis": { exclude: GLOBS } },
+};
+
+/**
+ * The TypeScript server, chosen by configuration (WL-N7-1): the default is
+ * `typescript-language-server`; `tsc` selects TypeScript 7's native server
+ * (`tsc --lsp --stdio`). `SEKHEMET_TS_LSP` sets it for a run.
+ */
+export function typescriptServer(choice: string | undefined): LspServerCommand {
+  const bounds = {
+    heapMb: DEFAULT_LSP_HEAP_MB,
+    initializationOptions: {
+      maxTsServerMemory: DEFAULT_LSP_HEAP_MB,
+      tsserver: { watchOptions: { excludeDirectories: GLOBS } },
+    },
+  };
+  return choice === "tsc"
+    ? { command: "tsc", args: ["--lsp", "--stdio"], ...bounds }
+    : { command: "typescript-language-server", args: ["--stdio"], ...bounds };
+}
+
+/** Default servers per language; override per project. Each is bounded (WL-N7-2). */
 export const DEFAULT_LSP_SERVERS: Record<string, LspServerCommand> = {
-  typescript: { command: "typescript-language-server", args: ["--stdio"] },
-  python: { command: "pyright-langserver", args: ["--stdio"] },
-  rust: { command: "rust-analyzer", args: [] },
+  typescript: typescriptServer(process.env.SEKHEMET_TS_LSP),
+  python: { command: "pyright-langserver", args: ["--stdio"], ...PYTHON_BOUNDS },
+  rust: {
+    command: "rust-analyzer",
+    args: [],
+    initializationOptions: { files: { excludeDirs: [...LSP_EXCLUDED_DIRS] } },
+  },
 };
 
 export function languageOf(path: string): string | undefined {
@@ -79,6 +143,8 @@ export class LspClient {
   private initialized: Promise<void> | undefined;
   public lastUsed = Date.now();
   private exited = false;
+  /** Why the server stopped, for the tool's fallback reply (WL-N7-3). */
+  public exitReason: string | undefined;
 
   constructor(
     private readonly server: LspServerCommand,
@@ -88,7 +154,17 @@ export class LspClient {
     // A language server executes the project's code (plugins, build
     // scripts, configs): it runs confined to the worktree with the allowlisted
     // environment and no network (S3a, SEC-17).
-    const child = spawnConfinedSync(server.command, server.args, { root, timeoutMs: 0 });
+    const child = spawnConfinedSync(server.command, server.args, {
+      root,
+      timeoutMs: 0,
+      // WL-N7-2: the heap capped, and the tree held under twice it.
+      ...(server.heapMb
+        ? {
+            env: { NODE_OPTIONS: `--max-old-space-size=${server.heapMb}` },
+            maxMemoryBytes: server.heapMb * 2 * 1024 * 1024,
+          }
+        : {}),
+    });
     if (!child) {
       this.exited = true;
       this.refused = "no OS confinement on this host";
@@ -97,8 +173,9 @@ export class LspClient {
     this.child = child;
     child.stderr.resume();
     this.child.stdout?.on("data", (chunk: Buffer) => this.onData(chunk));
-    this.child.on("exit", () => {
+    this.child.on("exit", (code, signal) => {
       this.exited = true;
+      this.exitReason = signal ? `stopped by ${signal}` : `exited with ${code ?? "no code"}`;
       for (const [, p] of this.pending) {
         clearTimeout(p.timer);
         p.reject(new LspError(`${server.command} exited`));
@@ -153,10 +230,21 @@ export class LspClient {
       if (this.buffer.length < headerEnd + 4 + length) return;
       const body = this.buffer.subarray(headerEnd + 4, headerEnd + 4 + length).toString("utf8");
       this.buffer = this.buffer.subarray(headerEnd + 4 + length);
-      let msg: { id?: number; result?: unknown; error?: { message: string; code: number } };
+      let msg: {
+        id?: number;
+        method?: string;
+        params?: unknown;
+        result?: unknown;
+        error?: { message: string; code: number };
+      };
       try {
         msg = JSON.parse(body);
       } catch {
+        continue;
+      }
+      // A request from the server: answer it, or it may wait on us.
+      if (msg.method !== undefined && msg.id !== undefined) {
+        this.write({ id: msg.id, result: this.answerServer(msg.method, msg.params) });
         continue;
       }
       if (typeof msg.id === "number" && this.pending.has(msg.id)) {
@@ -168,6 +256,13 @@ export class LspClient {
       }
       // Server requests and notifications (diagnostics, progress) are ignored.
     }
+  }
+
+  /** `workspace/configuration` from the server's settings (WL-N7-2); null otherwise. */
+  private answerServer(method: string, params: unknown): unknown {
+    if (method !== "workspace/configuration") return null;
+    const items = (params as { items?: { section?: string }[] } | undefined)?.items ?? [];
+    return items.map((i) => (i.section ? (this.server.settings?.[i.section] ?? null) : null));
   }
 
   private write(message: object): void {
@@ -203,11 +298,18 @@ export class LspClient {
           processId: process.pid,
           rootUri: pathToFileURL(this.root).href,
           capabilities: {
-            textDocument: { definition: {}, references: {}, documentSymbol: {} },
+            textDocument: { definition: {}, references: {}, documentSymbol: {}, rename: {} },
+            workspace: { configuration: true, workspaceEdit: { documentChanges: true } },
           },
           workspaceFolders: [{ uri: pathToFileURL(this.root).href, name: "root" }],
+          ...(this.server.initializationOptions
+            ? { initializationOptions: this.server.initializationOptions }
+            : {}),
         });
         this.notify("initialized", {});
+        if (this.server.settings) {
+          this.notify("workspace/didChangeConfiguration", { settings: this.server.settings });
+        }
       })();
     }
     return this.initialized;
@@ -267,6 +369,37 @@ export class LspClient {
     );
   }
 
+  /**
+   * Rename the symbol at a 1-based position (`textDocument/rename`): the
+   * server's workspace edit, as text edits per file, 0-based ranges (WL-N6-1).
+   */
+  public async rename(
+    path: string,
+    line: number,
+    column: number,
+    newName: string,
+  ): Promise<LspFileEdits[]> {
+    await this.initialize();
+    const uri = this.open(path);
+    const edit = await this.request<WorkspaceEditLike | null>("textDocument/rename", {
+      textDocument: { uri },
+      position: { line: line - 1, character: column - 1 },
+      newName,
+    });
+    const byFile = new Map<string, LspTextEdit[]>();
+    const add = (u: string, edits: LspTextEdit[]) => {
+      const file = decodeURIComponent(new URL(u).pathname);
+      byFile.set(file, [...(byFile.get(file) ?? []), ...edits]);
+    };
+    for (const [u, edits] of Object.entries(edit?.changes ?? {})) add(u, edits);
+    for (const dc of edit?.documentChanges ?? []) {
+      if (dc.textDocument?.uri && Array.isArray(dc.edits)) add(dc.textDocument.uri, dc.edits);
+    }
+    return [...byFile]
+      .map(([file, edits]) => ({ path: file, edits }))
+      .sort((a, b) => a.path.localeCompare(b.path));
+  }
+
   /** References to the symbol at a 1-based position. */
   public async references(
     path: string,
@@ -313,6 +446,23 @@ export class LspClient {
 
 type Rng = { start: { line: number; character: number } };
 
+/** One text edit of a workspace edit (0-based range). */
+export interface LspTextEdit {
+  range: { start: { line: number; character: number }; end: { line: number; character: number } };
+  newText: string;
+}
+
+/** A workspace edit's edits to one file (absolute path). */
+export interface LspFileEdits {
+  path: string;
+  edits: LspTextEdit[];
+}
+
+interface WorkspaceEditLike {
+  changes?: Record<string, LspTextEdit[]>;
+  documentChanges?: { textDocument?: { uri: string }; edits?: LspTextEdit[] }[];
+}
+
 export interface LspPoolOptions {
   servers?: Record<string, LspServerCommand>;
   /** Shut a server down after this long unused. Default 5 minutes. */
@@ -323,6 +473,7 @@ export interface LspPoolOptions {
 /** Clients keyed by language and root, with idle shutdown. */
 export class LspPool {
   private clients = new Map<string, LspClient>();
+  private unavailable = new Map<string, string>();
   private sweeper: ReturnType<typeof setInterval> | undefined;
 
   constructor(private readonly options: LspPoolOptions = {}) {}
@@ -334,6 +485,8 @@ export class LspPool {
     const server = (this.options.servers ?? DEFAULT_LSP_SERVERS)[language];
     if (!server) return undefined;
     const key = `${language}\n${resolve(root)}`;
+    // A server that was absent or failed stays out for the run (WL-N7-3).
+    if (this.unavailable.has(key)) return undefined;
     let client = this.clients.get(key);
     if (!client || !client.alive) {
       client = new LspClient(server, resolve(root), this.options.requestTimeoutMs);
@@ -341,6 +494,26 @@ export class LspPool {
       this.startSweeper();
     }
     return client;
+  }
+
+  /** Why the server for this file's language under `root` is out, when it is (WL-N7-3). */
+  public unavailableReason(root: string, path: string): string | undefined {
+    const language = languageOf(path);
+    return language ? this.unavailable.get(`${language}\n${resolve(root)}`) : undefined;
+  }
+
+  /**
+   * The server for this file's language failed (absent, crashed, over its
+   * heap): no further request starts it this run; the caller falls back.
+   */
+  public markUnavailable(root: string, path: string, reason: string): void {
+    const language = languageOf(path);
+    if (!language) return;
+    const key = `${language}\n${resolve(root)}`;
+    this.unavailable.set(key, reason);
+    const client = this.clients.get(key);
+    this.clients.delete(key);
+    void client?.shutdown();
   }
 
   public get size(): number {
@@ -400,11 +573,27 @@ export class LspPool {
     return { stopped, documentsClosed };
   }
 
+  /**
+   * The memory guard's check on this tenant (WL-N7-2): when the servers hold
+   * more than `capBytes` resident, give it back (`trimCaches`). A server that
+   * is stopped starts again on the next request that needs it; no gate waits
+   * on one.
+   */
+  public async enforceResidentCap(
+    capBytes: number,
+  ): Promise<{ residentBytes: number; trimmed: boolean }> {
+    const residentBytes = this.residentBytes();
+    if (residentBytes <= capBytes) return { residentBytes, trimmed: false };
+    await this.trimCaches();
+    return { residentBytes, trimmed: true };
+  }
+
   public async closeAll(): Promise<void> {
     if (this.sweeper) clearInterval(this.sweeper);
     this.sweeper = undefined;
     const all = [...this.clients.values()];
     this.clients.clear();
+    this.unavailable.clear();
     await Promise.all(all.map((c) => c.shutdown()));
   }
 }

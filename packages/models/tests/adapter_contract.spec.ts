@@ -5,8 +5,8 @@ import {
   HttpInferenceAdapter,
   KvPolicyError,
   ManagedLlamaServerAdapter,
-  ModelRouter,
   ModelUnavailableError,
+  ResidencyScheduler,
   assertKvPolicy,
   constrainedToolSchema,
   modelTelemetry,
@@ -205,23 +205,30 @@ describe("M4: adapter healthCheck contract", () => {
     expect(h.detail).toMatch(/model file/);
   });
 
-  it("the router refuses a role whose model is unavailable, with a typed error", async () => {
-    const router = new ModelRouter({
-      worker: () => ({
-        modelId: "w",
-        supportedArms: ["arm_a_flat"],
-        generate: async () => ({ text: "", toolCalls: [], usage: {} as never }),
-        healthCheck: async () => ({
-          ok: false,
-          modelId: "w",
-          reachable: true,
-          loaded: false,
-          latencyMs: 1,
-          detail: "model w is not available on the server",
-        }),
-      }),
+  it("the scheduler refuses a role whose model is unavailable, with a typed error", async () => {
+    const router = new ResidencyScheduler({
+      roles: [{ role: "worker", weights: "w", contextTokens: 8192 }],
+      usableBytes: 16 * 1024 ** 3,
+      weights: {
+        w: {
+          footprintBytes: 1,
+          build: () => ({
+            modelId: "w",
+            supportedArms: ["arm_a_flat"],
+            generate: async () => ({ text: "", toolCalls: [], usage: {} as never }),
+            healthCheck: async () => ({
+              ok: false,
+              modelId: "w",
+              reachable: true,
+              loaded: false,
+              latencyMs: 1,
+              detail: "model w is not available on the server",
+            }),
+          }),
+        },
+      },
     });
-    await expect(router.use("worker")).rejects.toBeInstanceOf(ModelUnavailableError);
+    await expect(router.acquire("worker")).rejects.toBeInstanceOf(ModelUnavailableError);
   });
 });
 

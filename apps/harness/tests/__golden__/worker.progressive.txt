@@ -29,7 +29,7 @@ write_file(content*: string (Complete file contents), path*: string (Path relati
   Create a file or replace its entire contents.
 
 === TOOL INDEX (call tool_search to load a tool's parameters before its first use) ===
-- ask: Ask a question about what the card requires instead of guessing. Answered from the card's spec, Done-when list and rules.
+- ask: Ask what the card requires instead of guessing; its contract, Seshat or a person answers.
 - browse: Load a page and return its rendered text: the card's own app on localhost (use its $PORT), or, on research cards, any URL.
 - check: Run this card's verification gates now WITHOUT finishing. Returns typed failures. Use it instead of running tsc or tests yourself.
 - dependencies: List the packages this project already has, to use instead of writing your own.
@@ -48,6 +48,7 @@ write_file(content*: string (Complete file contents), path*: string (Path relati
 - read_process: Read a background process's latest output and whether it is still running.
 - read_symbol: Read one named declaration and its body.
 - recall: Fetch the full text of an earlier observation that was compacted. Use the EvidenceRef shown in its pointer.
+- rename_symbol: Rename a declaration and every use of it across files in one call, through the language service.
 - replace_lines: Replace an inclusive 1-indexed line range.
 - replace_symbol_body: Replace the body of a named declaration, preserving indentation.
 - run_cmd: Run a build, test or project script in the sandbox. Not for cat, grep or sed: use read_file, grep_search, edit.

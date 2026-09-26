@@ -232,31 +232,34 @@ describe("C7 and item 7: pressure tiers and cut order", () => {
     expect(r87.stop).toBe(false);
   });
 
-  it("when the window is tight, cuts tests before the scope file and the failure, and says so", () => {
+  it("when the window is tight, cuts by rule 10a's order: the acceptance test and the failure last (CX-N3-2), and says so", () => {
     const scope = "export const x = 1;\n".repeat(60);
+    const tests = "it('x', () => {});\n".repeat(200);
     const input = base(6, {
       nativeToolSchemas: schemas,
       repoMap: bigMap,
       turns: longTurns,
-      acceptanceTests: [
-        { path: "tests/ledger.spec.ts", content: "it('x', () => {});\n".repeat(200) },
-      ],
+      acceptanceTests: [{ path: "tests/ledger.spec.ts", content: tests }],
       scopeFiles: [{ path: "src/ledger.ts", content: scope }],
       gateFailures: [ts2352],
     });
     const r = buildWorkerPrompt({ ...input, budgetTokens: 2200 });
     expect(r.stop).toBe(false);
-    expect(r.prompt).toContain(scope.trim());
+    // The acceptance test and the standing failure outrank everything cut.
+    expect(r.prompt).toContain(tests.trim());
     expect(r.prompt).toContain("TS2352: Conversion of type");
-    // The tier already dropped the repo map; old history went next, then the tests shrank.
+    // The tier already dropped the repo map; then the team note, history,
+    // rules and the plan, and only then the scope file.
     expect(r.events.filter((e) => e.action !== "capped").map((e) => [e.kind, e.action])).toEqual([
+      ["team", "dropped"],
       ["history_old", "dropped"],
-      ["tests", "shrunk"],
+      ["history_recent", "dropped"],
+      ["rules", "dropped"],
+      ["rules", "dropped"],
+      ["plan", "dropped"],
+      ["scope_file", "dropped"],
     ]);
-    expect(r.prompt).toContain("middle cut to fit the context window");
-    expect(r.cut).toEqual(["history_old", "tests"]);
     expect(r.prompt).toContain("(Context was cut to fit the window:");
-    expect(r.prompt).toContain("acceptance tests (read_file them if needed)");
     expect(r.usedTokens).toBeLessThanOrEqual(Math.floor(2200 * 0.95));
     // The goal is still the last thing.
     expect(r.prompt.trimEnd().endsWith(workerCopy.nextAction)).toBe(true);

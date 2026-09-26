@@ -1,8 +1,8 @@
 import { remedyFor } from "@sekhemet/gates";
-import type { CardRecord } from "@sekhemet/kernel";
+import { type AttemptOutcome, type CardRecord, cardKind } from "@sekhemet/kernel";
 import type { CardRunResult } from "@sekhemet/loop";
 import type { LocalInferenceAdapter } from "@sekhemet/models";
-import { type LearningStore, similarity } from "./store.js";
+import { type LearningStore, type RuleScope, similarity } from "./store.js";
 
 /**
  * The Reflector half of the playbook loop (ACE). Everything here starts from
@@ -11,13 +11,19 @@ import { type LearningStore, similarity } from "./store.js";
  * model only ever phrases and generalises what those signals already show.
  */
 
-const kindOf = (card: CardRecord) => /\(SPIDR:\s*([A-Za-z]+)/.exec(card.title)?.[1];
-function scopeOf(
-  card: CardRecord,
-  errorPattern?: string,
-): { kind?: string; errorPattern?: string } {
-  const kind = kindOf(card);
-  return { ...(kind ? { kind } : {}), ...(errorPattern ? { errorPattern } : {}) };
+/** A rule learned from a card is scoped to its kind, from `cardKind` (context rule 24b). */
+function scopeOf(card: CardRecord, errorPattern?: string): RuleScope {
+  return { kind: cardKind(card), ...(errorPattern ? { errorPattern } : {}) };
+}
+
+/**
+ * A send-back about the plan rather than the code — the card's size, split,
+ * scope or order — is a PM rule (context rule 24d).
+ */
+export function isPlanningNote(note: string): boolean {
+  return /\b(split|splitt?ing|too (big|large|small)|smaller cards?|(re-?)?plan(ned|ning)?|scope|estimate|priorit|order of|depends? on|dependency|acceptance criteri)/i.test(
+    note,
+  );
 }
 const errorCode = (text: string) => /\b(TS\d{4}|lint\/[\w/]+)\b/.exec(text)?.[1];
 
@@ -33,14 +39,19 @@ export interface LearnFromAttemptOptions {
   probation?: boolean;
   /** Called with each new rule id, only under probation. */
   onProposed?: (ruleId: string) => void;
+  /**
+   * The attempt record (WL-N5-2), read after a first attempt to settle each
+   * rule's paired credit (context CX-N4-6).
+   */
+  outcomes?: () => readonly AttemptOutcome[];
   /** A signal below its threshold: its key and how many times it has occurred. */
   onInsufficient?: (key: string, occurrences: number) => void;
 }
 
 /**
- * After every attempt: count helpful/harmful for the rules the prompt carried
- * (first attempts only, so a retry's guidance does not muddy the signal), and
- * record each failure that survived an edit as a signal. A signal becomes a
+ * After every attempt: settle the rules' paired credit from the attempt
+ * record (first attempts only, so a retry's guidance does not muddy the
+ * signal; context CX-N4-6), and record each failure that survived an edit as a signal. A signal becomes a
  * candidate rule only on its third occurrence (rule 20, MS-T8-4); below
  * that the inlet reports "insufficient data" and proposes nothing.
  */
@@ -51,14 +62,9 @@ export async function learnFromAttempt(
   attempt: number,
   options: LearnFromAttemptOptions = {},
 ): Promise<number> {
-  if (attempt === 1) {
-    const learned = new Set((await store.rules()).map((r) => r.id));
-    await store.recordOutcome(
-      result.rulesUsed.filter((id) => learned.has(id)),
-      card.id,
-      result.passed,
-    );
-  }
+  // Rule credit is paired and comes from the attempt record, never from
+  // this card's outcome alone (context rule 24e, CX-N4-6).
+  if (attempt === 1 && options.outcomes) await store.settleCredit(options.outcomes());
   let proposed = 0;
   for (const s of result.lessons.struggles) {
     const code = errorCode(s.text);
@@ -105,7 +111,7 @@ export async function learnFromSendBack(
   note: string,
 ): Promise<void> {
   await store.propose({
-    role: "worker",
+    role: isPlanningNote(note) ? "manager" : "worker",
     text: note,
     scope: scopeOf(card),
     source: "send_back",
@@ -202,11 +208,10 @@ export async function reflectWithManager(
   for (const r of parsed.rules ?? []) {
     const it = items[(r.case ?? 0) - 1];
     if (!it || typeof r.text !== "string" || r.text.trim().length < 12) continue;
-    const kind = kindOf(it.card);
     const rule = await store.propose({
       role: "worker",
       text: r.text.trim().slice(0, 400),
-      scope: kind ? { kind } : {},
+      scope: scopeOf(it.card),
       source: "reflection",
       evidence: [
         {

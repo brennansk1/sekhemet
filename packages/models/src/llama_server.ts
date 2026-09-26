@@ -403,6 +403,9 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
 
   /** The server's total context (`-c`). */
   public totalContextTokens(): number {
+    // MD-N4-2: a per-request window set in the registry sizes the launch.
+    const registered = this.registry?.get(this.profile.modelId)?.contextWindow;
+    if (registered !== undefined) return registered * this.slotCount();
     const ctx = this.profile.contextTokens ?? 8192;
     return this.profile.parallelSlots !== undefined ? ctx * this.slotCount() : ctx;
   }

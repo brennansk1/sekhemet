@@ -8,6 +8,7 @@
 //   6. `sekhemet doctor` passes (exit 0: memory, weights, inference, sandbox)
 //   7. the dashboard serves its page and /api/board
 //   8. the MCP server answers tools/list
+//   9. the built context version was measured by a suite A/B (context CX-N6-2)
 import { execFileSync, spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -127,11 +128,26 @@ async function mcp() {
   );
 }
 
+function contextVersion() {
+  try {
+    const out = execFileSync("node", [CLI, "measure", "context-gate"], {
+      cwd: ROOT,
+      encoding: "utf8",
+      timeout: 60_000,
+    });
+    record(9, "context version", true, out.trim().split("\n").at(-1) ?? "measured");
+  } catch (err) {
+    const said = `${err?.stdout ?? ""}`.trim().split("\n").at(-1);
+    record(9, "context version", false, said || "run `pnpm sekhemet measure context-gate`");
+  }
+}
+
 console.log("Release gate (DEFINITION_OF_DONE.md §4)");
 await gate();
 doctor();
 await dashboard();
 await mcp();
+contextVersion();
 const failed = results.filter((r) => !r.ok);
 // A verdict with rungs skipped is not a release verdict: say which ran.
 const skipped = process.argv.includes("--skip-gate");
@@ -139,7 +155,7 @@ console.log(
   failed.length
     ? `\nNOT releasable: ${failed.length} rung(s) failed.`
     : skipped
-      ? "\nRungs 6-8 pass; rungs 1-5 were skipped — not a release verdict."
+      ? "\nRungs 6-9 pass; rungs 1-5 were skipped — not a release verdict."
       : "\nReleasable: every rung passes.",
 );
 process.exitCode = failed.length ? 1 : 0;

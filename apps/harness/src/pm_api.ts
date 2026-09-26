@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { BoardService } from "@sekhemet/board";
 import { type CardStore, type CardUpdate, EventLog } from "@sekhemet/kernel";
 import type { LocalInferenceAdapter } from "@sekhemet/models";
-import { HttpInferenceAdapter, readKernelPressureLevel } from "@sekhemet/models";
+import { readKernelPressureLevel } from "@sekhemet/models";
 import { effectiveConfig } from "./config_apply.js";
 import { recommendRoster } from "./init.js";
 import { handleIntegrationsApi } from "./integrations.js";
@@ -14,11 +14,11 @@ import { LearningStore } from "./learning/store.js";
 import { ProposalError, applyProposal } from "./pm/apply.js";
 import { capabilityReport } from "./pm/capability.js";
 import { flowMetrics, pmQuality } from "./pm/metrics.js";
-import { DEFAULT_PM_MODEL, answerQueued, createPmAdapter, runnerLease } from "./pm/service.js";
+import { DEFAULT_PM_MODEL, answerQueued, pmModelFor, runnerLease } from "./pm/service.js";
 import { PmStore } from "./pm/store.js";
 import { PM_EVENTS, type PmMessage, type PmStatus } from "./pm/types.js";
 import { oneShotResearcher } from "./research/service.js";
-import { ruleGateVerdict } from "./wave2.js";
+import { modelRegistry, ruleGateVerdict } from "./wave2.js";
 
 export interface PmApiContext {
   repoPath: string;
@@ -95,7 +95,13 @@ export function createPmApi(ctx: PmApiContext) {
       return;
     }
     const cardStore = ctx.cardStore;
-    const adapter = (ctx.pmAdapter ?? (() => createPmAdapter(pmModel)))();
+    // MD-N9-4: through the process's one scheduler, loaded when first asked.
+    const acquire = ctx.pmAdapter
+      ? (() => {
+          const a = (ctx.pmAdapter as () => LocalInferenceAdapter)();
+          return async () => ({ role: "chat", adapter: a, release: () => {} });
+        })()
+      : pmModelFor(pmModel, modelRegistry());
     // The loop answers everyone's queued messages: it is not the person's who
     // happened to start it (kernel K-N2-8).
     answering = EventLog.unscoped(async () => {
@@ -106,7 +112,7 @@ export function createPmApi(ctx: PmApiContext) {
           cardStore,
           pmStore,
           pmModel,
-          acquire: async () => adapter,
+          acquire,
           ...(researcherModel
             ? {
                 researcher: (q: string, o?: { deep?: boolean }) =>

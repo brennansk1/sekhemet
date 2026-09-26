@@ -11,7 +11,8 @@ import { readKernelPressureLevel, readSwapUsedBytes } from "./memory.js";
  *
  *   elevated   suspend the MTP head (next launch), stop new worktrees,
  *              shorten keep-alive
- *   high       + trim KV/prompt caches
+ *   high       + one card at a time, trim KV/prompt and language-server
+ *              caches, mask older observations at the next step
  *   critical   + pause: issue no new turns until pressure falls
  *   emergency  + unload the models
  *
@@ -26,9 +27,27 @@ export type WatchdogAction =
   | "suspendMtp"
   | "stopNewWorktrees"
   | "shortenKeepAlive"
+  | "throttleParallelCards"
   | "trimCaches"
+  | "forceMasking"
   | "pauseTurns"
   | "unloadModels";
+
+/**
+ * Every action a level may list. Each has a handler the queue or the runner
+ * acts on (MD-N2-5; `apps/harness/src/watchdog_actions.ts`); an action with
+ * none is removed from the list rather than declared.
+ */
+export const WATCHDOG_ACTIONS: readonly WatchdogAction[] = [
+  "suspendMtp",
+  "stopNewWorktrees",
+  "shortenKeepAlive",
+  "throttleParallelCards",
+  "trimCaches",
+  "forceMasking",
+  "pauseTurns",
+  "unloadModels",
+];
 
 export const WATCHDOG_LEVELS: readonly WatchdogLevel[] = [
   "normal",
@@ -38,19 +57,20 @@ export const WATCHDOG_LEVELS: readonly WatchdogLevel[] = [
   "emergency",
 ];
 
+const ELEVATED: WatchdogAction[] = ["suspendMtp", "stopNewWorktrees", "shortenKeepAlive"];
+/**
+ * The 0.90 stage (MD-N2-4): one card at a time, the KV, prompt and
+ * language-server caches trimmed, and older observations masked at the next step.
+ */
+const HIGH: WatchdogAction[] = [...ELEVATED, "throttleParallelCards", "trimCaches", "forceMasking"];
+const CRITICAL: WatchdogAction[] = [...HIGH, "pauseTurns"];
+
 const ACTIONS_AT: Record<WatchdogLevel, WatchdogAction[]> = {
   normal: [],
-  elevated: ["suspendMtp", "stopNewWorktrees", "shortenKeepAlive"],
-  high: ["suspendMtp", "stopNewWorktrees", "shortenKeepAlive", "trimCaches"],
-  critical: ["suspendMtp", "stopNewWorktrees", "shortenKeepAlive", "trimCaches", "pauseTurns"],
-  emergency: [
-    "suspendMtp",
-    "stopNewWorktrees",
-    "shortenKeepAlive",
-    "trimCaches",
-    "pauseTurns",
-    "unloadModels",
-  ],
+  elevated: ELEVATED,
+  high: HIGH,
+  critical: CRITICAL,
+  emergency: [...CRITICAL, "unloadModels"],
 };
 
 /** The actions in force at a level (cumulative). */

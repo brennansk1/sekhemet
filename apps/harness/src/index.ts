@@ -29,10 +29,7 @@ import {
 } from "@sekhemet/kernel";
 import { planRepair } from "@sekhemet/loop";
 import {
-  MemoryWatchdog,
   ModelRegistry,
-  ModelRoster,
-  ModelRouter,
   NAIL_WORKER_PROFILE,
   PrefixCacheMonitor,
   ThroughputMeter,
@@ -40,6 +37,7 @@ import {
   type WorkerOverride,
   defaultRegistryPath,
   describeOverride,
+  escalationWindow,
   measureThroughput,
   resolveWorkerModelId,
 } from "@sekhemet/models";
@@ -62,8 +60,9 @@ import {
 import { runAcpStdio } from "./acp.js";
 import { isAirgapped, mirrorRegistry } from "./airgap.js";
 import { resolveVisionModel, visionPrePass } from "./attachments.js";
+import { bakeOffTaskPlan } from "./bakeoff_tasks.js";
 import { watchBoardHooks } from "./board_hooks.js";
-import { parseModelList, runCalibrate, runMtpAb } from "./calibrate_cmd.js";
+import { parseModelList, promptNeedFromLedgers, runCalibrate, runMtpAb } from "./calibrate_cmd.js";
 import { handBack, postCardMessage, requestPause, takeOver } from "./collaborate.js";
 import { resolveConfig } from "./config.js";
 import {
@@ -95,6 +94,7 @@ import {
   recordReview,
   requestAbort,
   rewindCard,
+  runLspPool,
 } from "./execute.js";
 import { reviewPosterFromEnv, runExternalReviews } from "./external_review.js";
 import {
@@ -129,9 +129,10 @@ import {
   readMeasurementMarker,
   withoutProfileFlags,
 } from "./measure_cmd.js";
+import { ModelAccess, describeModel, roleModelName } from "./model_access.js";
 import { sendPush, startNotifier } from "./notify.js";
 import { nightModelServer, runOvernight } from "./overnight.js";
-import { DEFAULT_PM_MODEL, answerQueued, createPmAdapter, dailyStandup } from "./pm/service.js";
+import { DEFAULT_PM_MODEL, answerQueued, dailyStandup, pmModelFor } from "./pm/service.js";
 import { PmStore } from "./pm/store.js";
 import { runPromptScreen } from "./prompt_screen_cmd.js";
 import { applyWorkerOverride, gateWorker } from "./qualify.js";
@@ -141,13 +142,22 @@ import { CRAWL4AI_CREDIT, runResearchCommand } from "./research/cli.js";
 import { planResearch } from "./research/plan_research.js";
 import { ResearchService, researchSources } from "./research/service.js";
 import { oneShotResearcher } from "./research/service.js";
-import { mayStartCard, parseUntil, releaseMachine, reserveMachine } from "./reservation.js";
+import {
+  mayStartCard,
+  parseUntil,
+  releaseMachine,
+  reservationNow,
+  reserveMachine,
+  unattendedStartRefusal,
+} from "./reservation.js";
+import { candidateRuleFromEnv, researchRuleScope } from "./rule_scopes.js";
 import {
   LEASE_TOKEN_ENV,
   type LiveLeaseInfo,
   acquireRunnerLease,
   leaseRefusal,
 } from "./runner_lease.js";
+import { isReserved, parseHours } from "./scheduler.js";
 import { DEFAULT_DASHBOARD_PORT, startDashboardServer } from "./server.js";
 import { qualifiedSlotCapacity } from "./slot_lease.js";
 import { SlotPool } from "./slot_pool.js";
@@ -168,11 +178,13 @@ import {
 } from "./tune.js";
 import { migrateLegacyUserDir } from "./user_dir.js";
 import { hookEngineFor } from "./user_hooks.js";
+import { PressureControls, createCardWatchdog, workerFloorRefusal } from "./watchdog_actions.js";
 import {
   WAVE2_COMMANDS,
   type Wave2Command,
   appliedStepBudget,
   applyTunedPolicy,
+  childSettings,
   isGreenfield,
   modelRegistry,
   planCommand,
@@ -237,6 +249,7 @@ export interface CliConfig {
     | "release"
     | "ci"
     | "measure"
+    | "models"
     | "help";
   targetArg?: string | undefined;
   restrictedMode: boolean;
@@ -541,10 +554,9 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       return i === -1 ? undefined : rest[i + 1];
     };
     const limit = Number(flag("--limit")) || undefined;
-    const model = new ModelRoster({ registry: modelRegistry() }).resolve(
-      flag("--worker") ?? "cyber-tiel",
-      "worker",
-    );
+    const model = describeModel(flag("--worker") ?? "cyber-tiel", "worker", {
+      registry: modelRegistry(),
+    });
     const report = await runPromptScreen({
       model,
       repos: (flag("--from") ?? "").split(",").filter(Boolean),
@@ -592,9 +604,14 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       ?.split(",")
       .map(Number)
       .filter((n) => n > 0);
+    // MD-N1-2: `--from <repo,...>` reads the Worker's recorded prompt sizes,
+    // below whose p99 (plus the answer and thinking caps) no window is set.
+    const needFrom = (flag("--from") ?? "").split(",").filter(Boolean);
+    const promptNeed = needFrom.length ? promptNeedFromLedgers(needFrom) : undefined;
     await runCalibrate({
       models: parseModelList(flag("--models")),
       ...(buckets?.length ? { buckets } : {}),
+      ...(promptNeed ? { promptNeed } : {}),
       force: rest.includes("--force"),
     });
     return;
@@ -732,14 +749,17 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
   if ((WAVE2_COMMANDS as readonly string[]).includes(config.command)) {
     // goal, decide, m0, qualify, improve, skills, release, ci (wave2.ts).
     const cmd = config.command as Wave2Command;
-    const roster = new ModelRoster({ registry: modelRegistry() });
+    const wave2Registry = modelRegistry();
     process.exitCode = await runWave2Command(
       cmd,
       argv
         .slice(argv.indexOf(cmd) + 1)
         .filter((a, i, all) => a !== "--repo" && all[i - 1] !== "--repo"),
       { repoPath: config.repoPath, cardStore, log, boardService },
-      { print: (l) => console.log(l), model: (name) => roster.resolve(name, "worker") },
+      {
+        print: (l) => console.log(l),
+        model: (name) => describeModel(name, "worker", { registry: wave2Registry }),
+      },
     );
     return;
   }
@@ -813,7 +833,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
             queueDefaults(effectiveConfig(config.repoPath, argv).config, argv).worker ??
             NAIL_WORKER_PROFILE.modelId;
           const held = nightModelServer(
-            new ModelRoster({ registry: modelRegistry() }).resolve(name, "worker"),
+            describeModel(name, "worker", { registry: modelRegistry() }),
           );
           return held ? { modelServer: held } : {};
         } catch {
@@ -931,7 +951,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       cardStore,
       pmStore: new PmStore(log),
       pmModel: DEFAULT_PM_MODEL,
-      acquire: async () => createPmAdapter(DEFAULT_PM_MODEL),
+      acquire: pmModelFor(DEFAULT_PM_MODEL, modelRegistry()),
       ...(acpResearcher
         ? {
             researcher: (q: string, o?: { deep?: boolean }) =>
@@ -1056,9 +1076,19 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       flagged("--planner") ??
       flagged("--sketcher") ??
       (configured !== "auto" ? configured : undefined);
-    const sketcher = plannerName
-      ? new ModelRoster({ registry: modelRegistry() }).resolve(plannerName, "manager")
+    // MD-N9-4: the Planner's model through the scheduler, loaded when first asked.
+    const planAccess = plannerName
+      ? ModelAccess.forQueues([{ queue: "plan", role: "planner", name: plannerName }], {
+          registry: modelRegistry(),
+        })
       : undefined;
+    const sketcher = planAccess ? planAccess.adapterFor("plan") : undefined;
+    if (planAccess) {
+      await planAccess.measure();
+      await planAccess.use("plan").catch((err: unknown) => {
+        console.error(`Planner: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    }
     // design-stage S8: the reuse survey reads public registries, GitHub and
     // paper indexes with short keyword queries only when a person allowed
     // research — asked once, on a new project's first plan, before any
@@ -1364,7 +1394,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       // The same gate as run and queue (review medium 2): refused unless its
       // combination qualified, marked when it runs under a person's override.
       const registry = modelRegistry();
-      const adapter = new ModelRoster({ registry }).resolve(as, "worker");
+      const adapter = describeModel(as, "worker", { registry });
       const gate = gateWorker(registry, adapter, as);
       if (gate.refusal) {
         console.error(gate.refusal);
@@ -1420,6 +1450,24 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     };
     const workers = (flag("--workers") ?? NAIL_WORKER_PROFILE.modelId).split(",").filter(Boolean);
     const fixture = flag("--fixture") ?? "chronicle";
+    // MD-N4-7: without --fixture, the tasks come from this repository's
+    // history (fail-to-pass fixes and reconstructions), and it says when too
+    // few exist. Running mined tasks needs the suite runner to take a task
+    // set; until then the mined set is recorded and the fixture runs.
+    if (!flag("--fixture")) {
+      const mined = await bakeOffTaskPlan(config.repoPath, fixture);
+      console.log(mined.message);
+      if (mined.tasks) {
+        const file = join(config.repoPath, ".sekhemet", "bakeoff", "history_tasks.json");
+        mkdirSync(dirname(file), { recursive: true });
+        writeFileSync(file, `${JSON.stringify(mined.tasks, null, 2)}\n`);
+      }
+      if (mined.source === "history") {
+        console.log(
+          `The suite runner cannot run mined tasks yet; recorded them in .sekhemet/bakeoff/history_tasks.json and running the ${fixture} fixture.`,
+        );
+      }
+    }
     const manager = flag("--manager");
     const harnessRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
     // The one measurement path (measurement MS-M9-1): each Worker runs the
@@ -1448,12 +1496,11 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     console.log(`\nReport: ${out}`);
     // Full-settings records and MODEL_MATRIX.md (M23, E4).
     const bakeRegistry = modelRegistry();
-    const bakeRoster = new ModelRoster({ registry: bakeRegistry });
     // Each record's settings as the run had them: a Worker under a person's
     // override is marked, so its record says so (review medium 2). The suite
     // runner already refused an unqualified one.
     const bakeAdapter = (worker: string) => {
-      const adapter = bakeRoster.resolve(worker, "worker");
+      const adapter = describeModel(worker, "worker", { registry: bakeRegistry });
       gateWorker(bakeRegistry, adapter, worker);
       return adapter;
     };
@@ -1466,6 +1513,8 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
           const res = r.result as SuiteRunResult;
           return {
             adapter: bakeAdapter(r.worker),
+            // MD-N4-6: the settings the child's evidence recorded.
+            settings: childSettings(res),
             passed: res.firstTry,
             total: runScore(res).measured,
             minutes: res.cost.wallClockSeconds / 60,
@@ -1588,16 +1637,29 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     // Through the roster, as `qualify` and the queue build it, so the three
     // agree on the combination (B2.2 confirmation): one registry, read once.
     const registry = modelRegistry();
-    const model = new ModelRoster({ registry }).resolve(
-      workerName ?? NAIL_WORKER_PROFILE.modelId,
-      "worker",
+    // MD-N10-3: no --worker runs the person's assigned Worker, else the default;
+    // MD-N9-4: its model comes from the scheduler (nothing loads here).
+    const access = ModelAccess.forQueues(
+      [
+        {
+          queue: "worker",
+          role: "worker",
+          name: roleModelName("worker", workerName, { registry }) ?? NAIL_WORKER_PROFILE.modelId,
+        },
+      ],
+      { registry },
     );
+    const model = access.adapterFor("worker");
     console.log(`Worker: ${model.modelId}`);
     // MD-N8-1: the Worker runs cards only once its exact combination (engine,
     // model build, host, settings) has qualified on this host. Nothing loads.
     // Rule 27, MD-N4-4: a person's override runs the failed combination, and
     // every bundle and card/repro of this run says so (the adapter is marked).
-    const gate = gateWorker(registry, model, workerName ?? model.modelId);
+    const gate = gateWorker(
+      registry,
+      model,
+      roleModelName("worker", workerName, { registry }) ?? model.modelId,
+    );
     if (gate.refusal) {
       console.error(gate.refusal);
       process.exitCode = 1;
@@ -1605,12 +1667,43 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       return;
     }
     if (gate.override) console.log(`Worker ${model.modelId}: ${describeOverride(gate.override)}`);
+    // MD-N2-3: below the overnight throughput floor `run` refuses, as the queue does.
+    const floorRefusal = workerFloorRefusal(model.modelId);
+    if (floorRefusal) {
+      console.error(floorRefusal);
+      process.exitCode = 1;
+      releaseRunLease();
+      return;
+    }
+    // MD-N2-2: the memory watchdog runs for the card's duration; at critical
+    // no new step starts (the runner checks it before every turn).
+    const pressure = new PressureControls({
+      adapters: () => [model],
+      lspPool: () => runLspPool(),
+      // The one path to a model releases it too (minor 6).
+      releaseModels: () => access.releaseAll(),
+      log: (line) => console.log(`   ${line}`),
+    });
+    // MD-N9-3: the Worker loads only once its footprint is shown to fit.
+    await access.measure();
+    try {
+      await access.use("worker");
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exitCode = 1;
+      releaseRunLease();
+      return;
+    }
+    const cardWatchdog = createCardWatchdog(pressure, {
+      log: (line) => console.log(`   ${line}`),
+    });
     const ctx = {
       repoPath: config.repoPath,
       restrictedMode: config.restrictedMode,
       cardStore,
       boardService,
       runProfile,
+      watchdog: cardWatchdog.watchdog,
     };
     let result: Awaited<ReturnType<typeof executeCard>>;
     // Ctrl+C stops the card cleanly before its next turn (L25); a second exits.
@@ -1628,10 +1721,11 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       });
     } finally {
       process.off("SIGINT", onSigint);
+      cardWatchdog.stop();
       // Release the weights on every exit path, including a crash mid-card:
       // a resident 13GB checkpoint left behind by a failed run is how the host
       // ran out of memory overnight.
-      await model.unload?.();
+      await access.releaseAll();
       releaseRunLease();
     }
 
@@ -1723,14 +1817,28 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     const configured = queueDefaults(effectiveConfig(config.repoPath, argv).config, argv);
     if (configured.maxTurns) argv.push("--max-turns", String(configured.maxTurns));
     const managerIdx = argv.indexOf("--manager");
-    const managerModel = managerIdx !== -1 ? argv[managerIdx + 1] : configured.manager;
+    const managerModel =
+      roleModelName("planner", managerIdx !== -1 ? argv[managerIdx + 1] : undefined, {
+        registry: modelRegistry(),
+      }) ?? configured.manager;
     const researcherIdx = argv.indexOf("--researcher");
     const researcherModel =
-      researcherIdx !== -1 ? argv[researcherIdx + 1] : process.env.SEKHEMET_RESEARCHER;
+      roleModelName("researcher", researcherIdx !== -1 ? argv[researcherIdx + 1] : undefined, {
+        registry: modelRegistry(),
+      }) ?? process.env.SEKHEMET_RESEARCHER;
     const reviewerIdx = argv.indexOf("--reviewer");
-    const reviewerModel = reviewerIdx !== -1 ? argv[reviewerIdx + 1] : undefined;
+    const reviewerModel = roleModelName(
+      "reviewer",
+      reviewerIdx !== -1 ? argv[reviewerIdx + 1] : undefined,
+      { registry: modelRegistry() },
+    );
     const workerIdx = argv.indexOf("--worker");
-    const workerModel = workerIdx !== -1 ? argv[workerIdx + 1] : configured.worker;
+    // MD-N10-3: the flag, else the person's assignment, else config.toml.
+    const assignedFrom = modelRegistry();
+    const workerModel =
+      roleModelName("worker", workerIdx !== -1 ? argv[workerIdx + 1] : undefined, {
+        registry: assignedFrom,
+      }) ?? configured.worker;
 
     if (project && project.status !== "active") {
       console.log(
@@ -1757,7 +1865,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       // resolving it builds the adapter without starting a server.
       const workerName = workerModel ?? NAIL_WORKER_PROFILE.modelId;
       const registry = modelRegistry();
-      const workerProbe = new ModelRoster({ registry }).resolve(workerName, "worker");
+      const workerProbe = describeModel(workerName, "worker", { registry });
       const gate = gateWorker(registry, workerProbe, workerName);
       workerOverride = gate.override;
       if (!gate.refusal) qualifiedSlots = gate.combination.settings.parallelSlots;
@@ -1784,90 +1892,71 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       );
     }
 
-    // Every role resolves through one roster (M5, C3): a managed name
-    // (cyber-tiel, apodex, qwen3.8-27b/dirk) runs under a harness-managed
-    // llama-server and roles on the same weights share one adapter; any other
-    // name is an Ollama model with its role's profile.
-    // The registry pins chat templates and supplies measured tool arms (M11).
-    const roster = new ModelRoster({ registry: modelRegistry() });
+    // Every queue's model comes from the one residency scheduler over the
+    // roster (MD-N9-4, M5, C3): queues on the same weights share one adapter
+    // at the largest window they need; every load is checked against usable
+    // memory and every eviction proven. The registry pins chat templates and
+    // supplies measured tool arms (M11).
     const pmModelName = managerModel ?? DEFAULT_PM_MODEL;
-    /** Every adapter the router loaded, for the watchdog's actions. */
+    /** Every adapter the scheduler built, for the watchdog's actions. */
     const loaded = new Set<UnloadableAdapter>();
     // Prefill/decode speed per model and the Worker's prefix-cache hit rate (M3, M18).
     const meter = new ThroughputMeter();
     const cache = new PrefixCacheMonitor();
-    const measured = new WeakSet<object>();
-    const track =
-      (factory: () => UnloadableAdapter, measure = false) =>
-      (): UnloadableAdapter => {
-        const adapter = factory();
-        loaded.add(adapter);
-        if (measure && !measured.has(adapter)) {
-          measured.add(adapter);
-          measureThroughput(adapter, meter, cache);
-        }
-        return adapter;
-      };
-    const workerFactory = roster.factory(workerModel ?? NAIL_WORKER_PROFILE.modelId, "worker");
-    const router = new ModelRouter(
-      {
-        worker: track(() => {
-          const worker = workerFactory();
-          // Every bundle and card/repro made under a person's override says so.
-          return workerOverride ? applyWorkerOverride(worker, workerOverride) : worker;
-        }, true),
-        // The manager doubles as the PM you chat with during the run; without
-        // --manager it is still available for chat, just not for repair plans.
-        manager: track(roster.factory(pmModelName, "manager")),
-        // The Researcher (--researcher <model>; the user's choice is Apodex-1.1-mini).
+    const router = ModelAccess.forQueues(
+      [
+        { queue: "worker", role: "worker", name: workerModel ?? NAIL_WORKER_PROFILE.modelId },
+        // The Planner doubles as the PM you chat with during the run.
+        { queue: "manager", role: "planner", name: pmModelName },
+        // The Planner's (stronger, dense) model as a coder, for --escalate-retries.
+        { queue: "escalation", role: "planner", name: pmModelName, window: escalationWindow() },
         ...(researcherModel
-          ? { researcher: track(roster.factory(researcherModel, "researcher")) }
-          : {}),
+          ? [{ queue: "researcher", role: "researcher" as const, name: researcherModel }]
+          : []),
         // A different model family for Seshat's review (--reviewer <model>).
-        ...(reviewerModel ? { reviewer: track(roster.factory(reviewerModel, "reviewer")) } : {}),
-        // The manager's (stronger, dense) model as a coder, for --escalate-retries.
-        escalation: track(roster.factory(pmModelName, "escalation"), true),
+        ...(reviewerModel
+          ? [{ queue: "reviewer", role: "reviewer" as const, name: reviewerModel }]
+          : []),
+      ],
+      {
+        registry: modelRegistry(),
+        wrap: (adapter, queues) => {
+          loaded.add(adapter);
+          if (queues.includes("worker") || queues.includes("escalation"))
+            measureThroughput(adapter, meter, cache);
+          // Every bundle and card/repro made under a person's override says so.
+          return queues.includes("worker") && workerOverride
+            ? applyWorkerOverride(adapter, workerOverride)
+            : adapter;
+        },
+        log: (line) => console.log(`   ${line}`),
       },
-      // Every swap proves the unload and waits for normal memory pressure.
-      { log: (line) => console.log(`   ${line}`) },
     );
-    // The memory watchdog (M20): polls every 2 s and acts through the
-    // adapters; the card runner checks it before every turn.
-    const eachLoaded = (fn: (a: UnloadableAdapter & Record<string, unknown>) => unknown) =>
-      Promise.allSettled(
-        [...loaded].map((a) => fn(a as UnloadableAdapter & Record<string, unknown>)),
-      );
-    const watchdog = new MemoryWatchdog({
-      handlers: {
-        suspendMtp: () => {
-          void eachLoaded((a) =>
-            (a as { setMtpSuspended?: (s: boolean) => void }).setMtpSuspended?.(true),
-          );
-        },
-        trimCaches: async () => {
-          await eachLoaded((a) => (a as { trimCache?: () => Promise<number> }).trimCache?.());
-        },
-        unloadModels: async () => {
-          await router.releaseAll();
-        },
+    // The memory watchdog (M20, NEW-models-2): polls every 2 s and acts
+    // through the adapters, the language servers, the router and the queue;
+    // the card runner checks it before every turn.
+    const pressure = new PressureControls({
+      adapters: () => loaded,
+      lspPool: () => runLspPool(),
+      releaseModels: async () => {
+        await router.releaseAll();
       },
-      releaseHandlers: {
-        suspendMtp: () => {
-          void eachLoaded((a) =>
-            (a as { setMtpSuspended?: (s: boolean) => void }).setMtpSuspended?.(false),
-          );
-        },
-      },
+      log: (line) => console.log(`   ${line}`),
     });
-    watchdog.onChange((state, previous) =>
-      console.log(`   memory watchdog: ${previous} -> ${state.level} (${state.reason})`),
-    );
-    watchdog.start();
-    // Hardware-aware residency: measure every model, derive the budget from
-    // this host's RAM, keep the most valuable set resident, swap the rest.
-    const plan = await router.calibrate(totalmem());
+    const { watchdog } = createCardWatchdog(pressure, {
+      log: (line) => console.log(`   ${line}`),
+    });
+    // Residency: every model's footprint against this host's usable memory
+    // (MD-N9-3); a model of unknown size is refused when first asked for.
+    const plan = await router.measure();
     console.log(
-      `Residency plan (${(plan.budgetBytes / 1024 ** 3).toFixed(0)} GB budget): resident ${plan.resident.join(", ") || "one at a time"}${plan.swapped.length ? `; swapped on demand: ${plan.swapped.join(", ")}` : "; nothing swaps"}.`,
+      `Residency: ${(plan.usableBytes / 1024 ** 3).toFixed(0)} GB usable; ${Object.entries(
+        plan.footprints,
+      )
+        .map(([k, b]) => `${k} ${(b / 1024 ** 3).toFixed(1)} GB`)
+        .join(
+          ", ",
+        )}${plan.unknown.length ? `; size unknown, refused until measured: ${plan.unknown.join(", ")}` : ""}.`,
     );
     const pmModel = managerModel ?? DEFAULT_PM_MODEL;
     /** Run a question past the Researcher, then hand the manager back. */
@@ -1909,7 +1998,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         ? { active: router.activeRole === "escalation" ? "manager" : router.activeRole }
         : {}),
       resident: router.residentRoles().map((r) => (r === "escalation" ? "manager" : r)),
-      coResident: plan.swapped.length === 0,
+      coResident: router.residentRoles().length > 1,
     });
 
     /**
@@ -1949,7 +2038,8 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
           maxTokens: 300,
         });
         if (prior) await router.use(prior);
-        return res.text.replace(/<think>[\s\S]*?<\/think>/g, "").trim() || undefined;
+        // MD-N4-8: the adapter stripped the reasoning.
+        return res.text.trim() || undefined;
       }
       const m = await pmStore.appendUserMessage(
         `[The Worker asks about ${cardId}] ${question}`,
@@ -2003,7 +2093,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         cardStore,
         pmStore,
         pmModel,
-        acquire: () => router.use("manager"),
+        acquire: () => router.hold("manager"),
         ...(step !== undefined ? { step } : {}),
         team: [
           `Worker (${workerModelId}): ${router.isResident("worker") ? "resident" : "swapped out"}; it asks you questions its cards' contracts do not answer.`,
@@ -2032,17 +2122,21 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     /** Rules learned during this run from verified signals: in force for this run. */
     const runRules = new Set<string>();
     // E5: a frozen-fixture regression run carries one candidate rule for this run only.
-    if (process.env.SEKHEMET_CANDIDATE_RULE) {
+    // CX-N4-1: it carries the gated rule's own scope; unscoped, it is not proposed.
+    const candidateRule = candidateRuleFromEnv(process.env);
+    if (candidateRule) {
       const candidate = await new LearningStore(log)
         .propose({
           role: "worker",
-          text: process.env.SEKHEMET_CANDIDATE_RULE,
-          scope: {},
+          text: candidateRule.text,
+          scope: candidateRule.scope,
           source: "seed",
           evidence: [],
         })
         .catch(() => undefined);
       if (candidate) runRules.add(candidate.id);
+    } else if (process.env.SEKHEMET_CANDIDATE_RULE) {
+      console.log("   E5: the candidate rule came without its scope; not proposed");
     }
     const ctx = {
       repoPath: config.repoPath,
@@ -2099,11 +2193,11 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         return name ? { modelName: name } : {};
       })(),
       load: async (name) => {
-        await router.releaseAll();
-        return roster.resolve(name, "reviewer");
+        router.ensureQueue({ queue: "vision", role: "reviewer", name });
+        return router.use("vision");
       },
-      release: async (m) => {
-        await (m as UnloadableAdapter).unload?.();
+      release: async () => {
+        await router.release("vision");
       },
       say: (line) => console.log(`   ${line}`),
     }).catch((err) => console.log(`   vision: ${err instanceof Error ? err.message : err}`));
@@ -2144,7 +2238,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
      * while Seshat's model is resident, so it never forces an extra swap
      * unless --review asked for it.
      */
-    const reviewPassed = async (model: Awaited<ReturnType<typeof router.use>>) => {
+    const reviewPassed = async (model: UnloadableAdapter) => {
       const preferences = (await ctx.learning.profile())
         .filter((p) => p.status === "active" && p.category === "code_style")
         .map((p) => p.statement);
@@ -2288,6 +2382,8 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         sinceSeq: queueSinceSeq,
       })) {
         if (halted) break;
+        // MD-N2-4: at the watchdog's high stage, one card at a time.
+        await pressure.beforeNextCard(slots);
         const card = (await cardStore.getCard(queued.id)) ?? queued;
         // RUN-18, RUN-48: no new card while the memory watchdog asks to stop
         // new worktrees (the queue waits for it to clear, then halts), nor
@@ -2297,6 +2393,19 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
           console.log(`   waiting: ${refusal}`);
           await watchdog.waitUntilBelow("elevated", 5 * 60_000);
           refusal = await mayStartCard({ cardStore, watchdog }, card);
+        }
+        // MD-N3-1: an unattended round (overnight, the daemon) starts only an
+        // urgent card while the machine is reserved, read now from the ledger
+        // and the reserved hours, so a reserve-now mid-round takes effect.
+        if (!refusal && process.env.SEKHEMET_OVERNIGHT_ROUND === "1") {
+          refusal = unattendedStartRefusal(card, {
+            unattended: true,
+            reservedNow: (await reservationNow(log)).reserved,
+            inReservedHours: isReserved(
+              parseHours(effectiveConfig(config.repoPath, argv).config.machine.hours),
+              new Date(),
+            ),
+          });
         }
         if (refusal) {
           console.log(`\n--- ${card.id} not started: ${refusal} ---`);
@@ -2424,10 +2533,12 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
               )
               .catch(() => undefined);
             if (!r?.grounded) continue;
+            const struggled = await cardStore.getCard(u.cardId);
             const rule = await ctx.learning.propose({
               role: "worker",
               text: r.answer.slice(0, 500),
-              scope: {},
+              // CX-N4-1: scoped to the struggle's error code and the card's kind.
+              scope: researchRuleScope(struggled ?? { title: "", scopeFiles: [] }, u.text),
               source: "research",
               // The struggle is the executed signal; the Researcher's answer
               // is a synthesis (MS-T8-9). The candidate waits for a person:

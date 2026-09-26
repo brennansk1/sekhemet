@@ -26,6 +26,11 @@ export default defineConfig({
       // Nor the owner's login keychain (SEC-27a): keychain.spec.ts turns it on
       // against a throwaway keychain of its own.
       SEKHEMET_KEYCHAIN: "off",
+      // MD-N4-5: nor the owner's user directory, model registry or machine
+      // profile: every test file writes them under the temporary directory.
+      SEKHEMET_CONFIG_DIR: join(tmpdir(), "sekhemet-test-user", ".sekhemet"),
+      SEKHEMET_MODEL_REGISTRY: join(tmpdir(), "sekhemet-test-user", "models.json"),
+      SEKHEMET_MACHINE_PROFILE: join(tmpdir(), "sekhemet-test-user", "machine.json"),
     },
     projects: [
       { extends: true, test: { name: "unit", include: split.unit } },

@@ -172,6 +172,21 @@ export const TOOL_CATALOG: ToolInterfaceSpec[] = [
     ],
   },
   {
+    // WL-N6-1: a rename across files is a tool; its words are the Worker's copy module's.
+    name: "rename_symbol",
+    summary: workerCopy.renameSymbolSummary,
+    parameters: [
+      { name: "path", type: "string", required: true, description: workerCopy.renamePathParam },
+      { name: "symbol", type: "string", required: true, description: workerCopy.renameSymbolParam },
+      {
+        name: "new_name",
+        type: "string",
+        required: true,
+        description: workerCopy.renameNewNameParam,
+      },
+    ],
+  },
+  {
     name: "subtask",
     summary:
       "Answer a side question (where is X defined? what does this error mean?) in a separate context with read-only tools; only a short answer comes back.",
@@ -360,10 +375,19 @@ export const TOOL_CATALOG: ToolInterfaceSpec[] = [
   },
   {
     name: "ask",
-    summary:
-      "Ask a question about what the card requires instead of guessing. Answered from the card's spec, Done-when list and rules.",
-    parameters: [{ name: "question", type: "string", required: true, description: "The question" }],
-    returns: "The relevant parts of the card's contract, or guidance to proceed conservatively",
+    // WL-N4-1: its words are the Worker's copy module's; the assumption is what
+    // the Worker goes on while a person may answer.
+    summary: workerCopy.askSummary,
+    parameters: [
+      { name: "question", type: "string", required: true, description: "The question" },
+      {
+        name: "assumption",
+        type: "string",
+        required: false,
+        description: workerCopy.askAssumptionParam,
+      },
+    ],
+    returns: workerCopy.askReturns,
   },
   {
     name: "recall",

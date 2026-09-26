@@ -11,10 +11,14 @@ import { basename, join } from "node:path";
 import { promisify } from "node:util";
 import { type BoardServiceImpl, legalPath } from "@sekhemet/board";
 import {
+  type CondensingSummary,
   ExemplarStore,
+  LSP_RESIDENT_CAP_BYTES,
   LspPool,
   PlaybookRegistry,
   SkillsRegistry,
+  mergeCondensing,
+  summarizeCondensing,
   useFileEvidenceStore,
 } from "@sekhemet/context";
 import { LearningGuard, type RunProfile, harvestExemplars } from "@sekhemet/eval";
@@ -76,7 +80,8 @@ import {
 } from "./github_transport.js";
 import { readSettings } from "./integrations.js";
 import { RULE_SIGNAL_MINIMUM, learnFromAttempt } from "./learning/reflect.js";
-import type { LearningStore } from "./learning/store.js";
+import { playbookRuleOf, standingErrorCode } from "./learning/scoping.js";
+import { type LearningStore, RULES_PER_PROMPT } from "./learning/store.js";
 import { recordLedgerRun } from "./ledger_evidence.js";
 import { withLicenseGate } from "./license_gate.js";
 import { withReachabilityGate } from "./reachability_gate.js";
@@ -396,16 +401,33 @@ export async function executeCard(
   const skills = loadRepoSkills(ctx.repoPath);
   const playbook = new PlaybookRegistry(ctx.repoPath);
   // Learned rules the human approved join the seeded playbook for this card,
-  // in memory only (never written to playbook.toml). Their pattern is the
-  // card's own title, so matchRules selects them here; an error-scoped rule
-  // keeps its scope, so it rides in the prompt only while its error stands.
-  for (const rule of (await ctx.learning?.activeFor("worker", card, ctx.runRules)) ?? []) {
-    playbook.addTransientRule({
-      id: rule.id,
-      pattern: card.title,
-      instruction: rule.text,
-      ...(rule.scope?.errorPattern ? { errorPattern: rule.scope.errorPattern } : {}),
+  // in memory only (never written to playbook.toml). Kind and path match at
+  // the card boundary; the error pattern and trigger gate stay scopes, so a
+  // rule rides in the prompt only while its error and gate stand (context
+  // rule 24b). Rules in force are rotated across comparable cards, and the
+  // decision is on the ledger for their paired credit (CX-N4-6).
+  if (ctx.learning) {
+    const errorCode = standingErrorCode(ctx.cardStore.runs, card.id);
+    const inForce = await ctx.learning.activeFor("worker", card, {
+      ...(ctx.runRules ? { runRules: ctx.runRules } : {}),
+      ...(errorCode ? { errorCode } : {}),
+      measurement: ctx.measurement !== undefined,
+      limit: Number.POSITIVE_INFINITY,
     });
+    const rotated = await ctx.learning
+      .rotate(
+        inForce,
+        { id: card.id, projectId: basename(ctx.repoPath), cardClass: cardClassOf(card) },
+        Math.max(attempt, ctx.cardStore.runs.nextAttemptNumber(card.id)),
+        { measurement: ctx.measurement !== undefined },
+      )
+      // The cap applies before the rotation (inside `rotate`): a rule the cap
+      // cuts is neither with nor withheld; the credit's treatment arm reads
+      // the attempt record's rule ids, the rules a step really carried.
+      .catch(() => ({ inPrompt: inForce.slice(0, RULES_PER_PROMPT), withheld: [] as string[] }));
+    for (const rule of rotated.inPrompt) {
+      playbook.addTransientRule(playbookRuleOf(rule, card.title));
+    }
   }
 
   const worktreePath = join(ctx.repoPath, ".sekhemet", "worktrees", card.id);
@@ -511,6 +533,16 @@ export async function executeCard(
     // Stop before the host does: a paused card resumes, an OOM takes the
     // machine. The watchdog's pause is checked before every turn.
     memoryProbe: () => {
+      // WL-N7-2: the language servers are a tenant the guard counts: over
+      // their cap they are trimmed before the turn (they restart on demand).
+      void (ctx.lspPool ?? runLspPool())
+        .enforceResidentCap(LSP_RESIDENT_CAP_BYTES)
+        .then((r) => {
+          if (r.trimmed) {
+            log(`   language servers held ${Math.round(r.residentBytes / 1024 ** 2)} MB: trimmed`);
+          }
+        })
+        .catch(() => undefined);
       if (ctx.watchdog?.shouldPauseTurns()) {
         return {
           ok: false,
@@ -717,6 +749,7 @@ export async function executeCard(
       // MS-T8-15): a candidate waits for a person's approval, and nothing
       // learned here reaches a later card of the run.
       const proposed = await learnFromAttempt(guarded, card, result, attempt, {
+        outcomes: () => ctx.cardStore.runs.readAttemptOutcomes(),
         onInsufficient: (key, n) =>
           log(
             `   learning: insufficient data for ${key} (${n} of ${RULE_SIGNAL_MINIMUM} occurrences)`,
@@ -1644,6 +1677,8 @@ export interface QueueEntry {
   replanRequested?: boolean;
   /** Tokens output condensing removed from what the Worker saw (runtime item 32, RUN-47). */
   condensedTokensSaved?: number;
+  /** The same per tool, beside the raw tool-output tokens (context CX-N5-3). */
+  condensing?: CondensingSummary;
 }
 
 export interface QueueReport {
@@ -1666,6 +1701,8 @@ export interface QueueReport {
   retention?: RetentionReport;
   /** Written part-way through the run; the final report has no such mark. */
   partial?: boolean;
+  /** Condensing's savings over the run, in total and per tool, beside the raw tokens (CX-N5-3). */
+  condensing?: CondensingSummary;
   /** Each model's load time, apart from the cards' time (MS-T7-1): `ThroughputMeter.loads()`. */
   modelLoads?: {
     modelId: string;
@@ -1722,18 +1759,21 @@ export function recordQueueProgress(
   const eventually = cards.filter((id) =>
     so.entries.some((e) => e.cardId === id && e.passed),
   ).length;
-  return writeQueueReport(repoPath, {
-    startedAt: so.startedAt,
-    model: so.model,
-    ...(so.managerModel ? { managerModel: so.managerModel } : {}),
-    entries: so.entries,
-    passAt1: cards.length ? firstTry / cards.length : 0,
-    passAfterEscalation: cards.length ? eventually / cards.length : 0,
-    modelSwaps: so.modelSwaps,
-    totalDurationMs: so.totalDurationMs,
-    ...(so.modelLoads?.length ? { modelLoads: so.modelLoads } : {}),
-    partial: true,
-  });
+  return writeQueueReport(
+    repoPath,
+    withRunCondensing({
+      startedAt: so.startedAt,
+      model: so.model,
+      ...(so.managerModel ? { managerModel: so.managerModel } : {}),
+      entries: so.entries,
+      passAt1: cards.length ? firstTry / cards.length : 0,
+      passAfterEscalation: cards.length ? eventually / cards.length : 0,
+      modelSwaps: so.modelSwaps,
+      totalDurationMs: so.totalDurationMs,
+      ...(so.modelLoads?.length ? { modelLoads: so.modelLoads } : {}),
+      partial: true,
+    }),
+  );
 }
 
 /** The ledger event a queue run's report is (runtime item 34b, RUN-56). */
@@ -1748,8 +1788,9 @@ export async function recordQueueReport(
   repoPath: string,
   report: QueueReport,
 ): Promise<string> {
-  await log.append({ actor: "harness", type: QUEUE_REPORTED, payload: { report } });
-  return writeQueueReport(repoPath, report);
+  const full = withRunCondensing(report);
+  await log.append({ actor: "harness", type: QUEUE_REPORTED, payload: { report: full } });
+  return writeQueueReport(repoPath, full);
 }
 
 /** Every recorded run report, oldest first, from the ledger. */
@@ -1783,6 +1824,31 @@ export async function rebuildRunCaches(repoPath: string, log: EventLog): Promise
   return written;
 }
 
+/** What condensing removed from a card's observations, per tool (CX-N5-3); nothing when none was condensed. */
+function condensingOf(turns: CardRunResult["turns"]): { condensing?: CondensingSummary } {
+  const items = turns.flatMap((t) =>
+    t.observations.flatMap((o) =>
+      o.condensing
+        ? [
+            {
+              tool: o.tool,
+              rawTokens: o.condensing.rawTokens,
+              savedTokens: o.condensing.savedTokens,
+            },
+          ]
+        : [],
+    ),
+  );
+  return items.length > 0 ? { condensing: summarizeCondensing(items) } : {};
+}
+
+/** A run's condensing savings from its entries, when any entry carries them (CX-N5-3). */
+function withRunCondensing(report: QueueReport): QueueReport {
+  if (report.condensing) return report;
+  const parts = report.entries.flatMap((e) => (e.condensing ? [e.condensing] : []));
+  return parts.length > 0 ? { ...report, condensing: mergeCondensing(parts) } : report;
+}
+
 /** One card's line in a queue run's report. */
 export function queueEntryOf(
   cardId: string,
@@ -1804,6 +1870,8 @@ export function queueEntryOf(
     ...(result.condensedTokensSaved !== undefined
       ? { condensedTokensSaved: result.condensedTokensSaved }
       : {}),
+    // CX-N5-3: the same, per tool, beside the raw tool-output tokens.
+    ...condensingOf(result.turns),
     ...(result.held ? { held: `${result.held.wanted}: ${result.held.reason}` } : {}),
     ...(result.parked ? { parked: result.parked.suggestion } : {}),
     ...(result.failToPass ? { failToPass: result.failToPass.status } : {}),
@@ -1840,7 +1908,8 @@ export function collectCardFiles(
   const paths = [...(card.acceptanceTests ?? []).map((t) => `tests/${t}`), ...card.scopeFiles];
   return paths.map((path) => {
     const abs = join(worktreePath, path);
-    return { path, content: existsSync(abs) ? readFileSync(abs, "utf8").slice(0, 8000) : "" };
+    // Whole: the re-plan's allocator caps each file to the Planner's window (CX-N3-8).
+    return { path, content: existsSync(abs) ? readFileSync(abs, "utf8") : "" };
   });
 }
 

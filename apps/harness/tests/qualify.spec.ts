@@ -5,7 +5,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { computeContextVersion, workerCopy } from "@sekhemet/context";
+import { FALLBACK_CHARS_PER_TOKEN, computeContextVersion, workerCopy } from "@sekhemet/context";
 import { gateCopy } from "@sekhemet/gates";
 import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { TOOL_CATALOG } from "@sekhemet/loop";
@@ -105,9 +105,16 @@ describe("the Worker's qualification combination (rule 27a)", () => {
     expect(workerContextVersion("inventory")).toBe(
       computeContextVersion({
         tools: TOOL_CATALOG,
-        templates: [copyText(workerCopy), copyText(gateCopy), "inventory"],
+        templates: [
+          copyText(workerCopy),
+          copyText(gateCopy),
+          "inventory",
+          `chars per token ${FALLBACK_CHARS_PER_TOKEN}`,
+        ],
       }).version,
     );
+    // The estimator's ratio is an input: changing it invalidates qualification.
+    expect(workerContextVersion("inventory", 3.0)).not.toBe(workerContextVersion("inventory"));
     // Editing a Worker literal outside the copy modules changes the recorded
     // inventory, and with it the version (B2.2 confirmation).
     expect(workerContextVersion("inventory a")).not.toBe(workerContextVersion("inventory b"));

@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { allocationBudget, charsForTokens, estimatePromptTokens } from "@sekhemet/context";
 import { moduleApiSummary } from "@sekhemet/loop";
 import type { ChatTurn, LocalInferenceAdapter, ToolCall, ToolDefinition } from "@sekhemet/models";
 import { formatHits, searchLibraries } from "../pm/libraries.js";
@@ -519,7 +520,35 @@ export function maskOldEvidence(rounds: string[], budgetChars: number): string[]
     total -= r.length - short.length;
     out[i] = short;
   }
+  // CX-N3-3: the newest round alone may still be over; its head is kept.
+  const last = out.length - 1;
+  if (last >= 0 && total > budgetChars) {
+    const r = out[last] as string;
+    const marker = "\n… (cut to fit the Researcher's window)";
+    const room = Math.max(0, r.length - (total - budgetChars) - marker.length);
+    out[last] = `${r.slice(0, room)}${marker}`;
+  }
   return out;
+}
+
+/**
+ * Characters of evidence the Researcher's window holds (context rule 10c,
+ * CX-N3-3): the allocator's `researcher` budget for the model's configured
+ * window (the window less the answer cap and the margin), less the fixed
+ * part of the prompt (system text, question, tool schemas), by the one
+ * estimator. Never negative.
+ */
+export function researcherEvidenceChars(
+  model: LocalInferenceAdapter,
+  fixedText: string,
+  thinkingTokens = 0,
+): number {
+  const windowTokens = model.contextWindow?.contextTokens ?? 16_384;
+  const room =
+    allocationBudget({ role: "researcher", windowTokens }) -
+    estimatePromptTokens(fixedText) -
+    thinkingTokens;
+  return room <= 0 ? 0 : charsForTokens(room);
 }
 
 function sourceList(evidence: Source[]): string {
@@ -541,10 +570,15 @@ export async function research(
   }\n\n${RESEARCH_METHOD}`;
   const tools = [...researchTools(Boolean(deps.web)), ...(deps.mcp?.toolDefinitions() ?? [])];
   const maxRounds = deps.maxRounds ?? (apodex ? 12 : 3);
-  // Characters of evidence the window holds, leaving room for the answer and thinking.
-  const budget = Math.max(12_000, ((model.contextWindow?.contextTokens ?? 16_384) - 5000) * 3);
   const evidence: Source[] = [];
   const head = `${ROLE_BRIEF}\n\nQUESTION\n${question}`;
+  // Characters of evidence the window holds: the allocator's Researcher
+  // budget less the fixed prompt and the thinking allowance (CX-N3-3).
+  const budget = researcherEvidenceChars(
+    model,
+    `${system}\n${head}\n${JSON.stringify(tools)}`,
+    apodex ? 1024 : 0,
+  );
   // Reasoning on for a reasoning-first model, bounded so the window survives.
   const think = apodex ? { reasoning: "low" as const, reasoningBudgetTokens: 1024 } : {};
   const sampling = apodex ? {} : { temperature: 0.2 };
@@ -822,9 +856,17 @@ export const APODEX_TEAM_BRIEF =
 
 const todayOf = (deps: ResearchDeps) => deps.today ?? new Date().toISOString().slice(0, 10);
 
-/** Characters of tool output the window holds before older results compact. */
+/**
+ * Characters of tool output the window holds before older results compact:
+ * the allocator's Researcher budget (CX-N3-3) less the Apodex system prompt,
+ * the team brief and the thinking allowance.
+ */
 const budgetFor = (model: LocalInferenceAdapter) =>
-  Math.max(16_000, ((model.contextWindow?.contextTokens ?? 16_384) - 7000) * 3);
+  researcherEvidenceChars(
+    model,
+    `${researchAgentPrompt("2026-01-01", "See the task for who uses your answer.")}\n${APODEX_TEAM_BRIEF}`,
+    1024,
+  );
 
 /**
  * Fill in a answer's claims and its grounded risk. Every site that builds a

@@ -64,7 +64,7 @@ describe("learning: playbook and user profile", () => {
     expect(rule).toMatchObject({
       status: "candidate",
       source: "struggle",
-      scope: { kind: "Rule", errorPattern: "TS2554" },
+      scope: { kind: "rule", errorPattern: "TS2554" },
     });
     // Its evidence is every occurrence, tagged with its source and how it was verified (MS-T8-9).
     expect(rule?.evidence).toHaveLength(3);
@@ -102,7 +102,7 @@ describe("learning: playbook and user profile", () => {
     const r = await store.propose({
       role: "worker",
       text: "Always wrap database calls in a transaction.",
-      scope: {},
+      scope: { kind: "data" },
       source: "research",
       evidence: [{ note: "the Researcher said so", source: "researcher", verified: "none" }],
     });
@@ -110,7 +110,7 @@ describe("learning: playbook and user profile", () => {
     const withGate = await store.propose({
       role: "worker",
       text: "Always wrap database calls in a transaction.",
-      scope: {},
+      scope: { kind: "data" },
       source: "research",
       evidence: [
         { note: "the Researcher said so", source: "researcher", verified: "none" },
@@ -125,36 +125,14 @@ describe("learning: playbook and user profile", () => {
     expect(withGate?.status).toBe("candidate");
   });
 
-  it("counts helpful and harmful outcomes with a decaying value", async () => {
-    const card = await cards.createCard({ tier: "task", title: "X" });
-    const rule = await store.propose({
-      role: "worker",
-      text: "Use exec for DDL.",
-      scope: {},
-      source: "seed",
-      evidence: [],
-    });
-    await store.update(rule?.id ?? "", { status: "active" });
-    const run = (passed: boolean) =>
-      learnFromAttempt(
-        store,
-        card,
-        { passed, rulesUsed: [rule?.id ?? ""], lessons: { lines: [], struggles: [] } },
-        1,
-      );
-    await run(true);
-    await run(false);
-    await run(false);
-    const r = (await store.rules())[0];
-    expect([r?.helpful, r?.harmful]).toEqual([1, 2]);
-    expect(r?.value).toBeCloseTo(-1.09, 2);
-  });
+  // Helpful and harmful counts come from paired credit on the attempt record
+  // (context rule 24e, CX-N4-6): learning_scoping.spec.ts.
 
   it("promotes a rule to every project on approval, and does not duplicate", async () => {
     const rule = await store.propose({
       role: "worker",
       text: "End relative imports in .js.",
-      scope: {},
+      scope: { kind: "implement" },
       source: "seed",
       evidence: [],
     });
@@ -169,7 +147,7 @@ describe("learning: playbook and user profile", () => {
       await elsewhere.propose({
         role: "worker",
         text: "end relative imports in .JS",
-        scope: {},
+        scope: { kind: "implement" },
         source: "seed",
         evidence: [],
       }),
@@ -223,11 +201,11 @@ describe("learning: playbook and user profile", () => {
     expect(rule?.evidence[0]?.note).toMatch(/suggested reach: all projects/);
   });
 
-  it("consolidates like Mem0: near-duplicates add evidence, related rules get a decision", async () => {
+  it("consolidates like Mem0: near-duplicates add evidence, related rules get a decision (rules with no fact key; keyed ones merge by key, CX-N4-4)", async () => {
     await store.propose({
       role: "worker",
-      text: "Use node:sqlite exec for DDL statements.",
-      scope: {},
+      text: "Use the exec method for DDL statements.",
+      scope: { kind: "data" },
       source: "seed",
       evidence: [],
     });
@@ -235,8 +213,8 @@ describe("learning: playbook and user profile", () => {
     expect(
       await store.propose({
         role: "worker",
-        text: "use node:sqlite exec for DDL statements",
-        scope: {},
+        text: "use the exec method for DDL statements",
+        scope: { kind: "data" },
         source: "seed",
         evidence: [],
       }),
@@ -244,8 +222,8 @@ describe("learning: playbook and user profile", () => {
     // Related but different: added, linked for Seshat to decide.
     const related = await store.propose({
       role: "worker",
-      text: "Use node:sqlite prepare for inserts, not exec.",
-      scope: {},
+      text: "Use the prepare method for inserts, not exec.",
+      scope: { kind: "data" },
       source: "struggle",
       evidence: [],
     });
@@ -279,7 +257,7 @@ describe("learning: playbook and user profile", () => {
     const refused = await hooked.propose({
       role: "worker",
       text: "Widen the parameter to any when the type fights you.",
-      scope: {},
+      scope: { kind: "implement" },
       source: "struggle",
       evidence: [{ cardId: "card_x", note: "third time" }],
     });
@@ -290,7 +268,7 @@ describe("learning: playbook and user profile", () => {
     const allowed = await hooked.propose({
       role: "worker",
       text: "Prefer a discriminated union over a boolean pair.",
-      scope: {},
+      scope: { kind: "implement" },
       source: "struggle",
       evidence: [],
     });

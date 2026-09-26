@@ -49,8 +49,14 @@ describe("exploring a project before the work (RSIAgent)", () => {
     expect((await applyExploration(store, repo, false)).activated).toBe(0);
     const again = await applyExploration(store, repo, true);
     expect(again.proposed).toBe(0); // duplicates strengthen evidence, never add rules
-    expect(again.activated).toBe(4); // ...but the earlier candidates are activated
-    expect((await store.rules()).every((r) => r.status === "active")).toBe(true);
+    // ...but the earlier candidates are activated. Of the four facts, only the
+    // error-scoped ESM one is a rule: TS2375's fact is the gate remedy's
+    // (context CX-N4-4), and the Vitest and node:sqlite facts have no scope,
+    // so they would reach every prompt (CX-N4-1).
+    expect(again.activated).toBe(1);
+    const rules = await store.rules();
+    expect(rules.map((r) => r.scope)).toEqual([{ errorPattern: "TS2835" }]);
+    expect(rules.every((r) => r.status === "active")).toBe(true);
     Reflect.deleteProperty(process.env, "SEKHEMET_CONFIG_DIR");
   });
 

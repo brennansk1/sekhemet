@@ -327,6 +327,28 @@ export function dossierPromptLines(dossier: CardDossier): string[] {
   return unique.slice(-DOSSIER_MAX_LINES);
 }
 
+/**
+ * M3: a person's reply in the card's thread to a Worker question: the newest
+ * entry a person (`human`) wrote in reply to the question, or after it.
+ */
+async function personReply(
+  store: Pick<CardStore, "getDossier">,
+  cardId: string,
+  questionEntryId: string | undefined,
+): Promise<string | undefined> {
+  const dossier = await store.getDossier(cardId).catch(() => undefined);
+  if (!dossier) return undefined;
+  const asked = dossier.entries.find((e) => e.entryId === questionEntryId)?.seq;
+  const replies = dossier.entries.filter(
+    (e) =>
+      e.actor === "human" &&
+      (e.kind === "answer" || e.kind === "note") &&
+      ((questionEntryId !== undefined && e.inReplyTo === questionEntryId) ||
+        (asked !== undefined && e.seq > asked)),
+  );
+  return replies.at(-1)?.text;
+}
+
 /** True for a board refusal the runner should absorb by holding the card. */
 function refusalReason(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err);
@@ -1196,6 +1218,46 @@ export class CardRunner {
                       attempt,
                     })
                   ).entryId,
+                // WL-N4-1/2: a question nothing answers now is posted to a person,
+                // without stopping the Worker; its answer is read at step boundaries.
+                ...(store.runs
+                  ? {
+                      postDecision: async (question: string, assumption: string) =>
+                        (
+                          await store.runs?.requestDecision({
+                            cardId: card.id,
+                            kind: "worker_question",
+                            question,
+                            context: `The Worker continues on its assumption: ${assumption}`,
+                            options: [
+                              `As assumed: ${assumption}`,
+                              "Otherwise: see the card's thread",
+                            ],
+                            recommendationIndex: 0,
+                          })
+                        )?.id,
+                      readDecision: async (id: string, questionEntryId?: string) => {
+                        const d = store.runs?.getDecision(id);
+                        if (!d) return undefined;
+                        // M3: the person's own words, their reply in the card's
+                        // thread to this question (written before or after the decision).
+                        const reply =
+                          d.status === "answered"
+                            ? await personReply(store, card.id, questionEntryId)
+                            : undefined;
+                        return {
+                          answered: d.status === "answered",
+                          ...(d.selectedOptionIndex !== undefined
+                            ? {
+                                optionIndex: d.selectedOptionIndex,
+                                option: d.options[d.selectedOptionIndex],
+                              }
+                            : {}),
+                          ...(reply ? { reply } : {}),
+                        };
+                      },
+                    }
+                  : {}),
                 recordAnswer: async (a: string, questionEntryId: string | undefined) => {
                   await store.recordDossierEntry({
                     cardId: card.id,

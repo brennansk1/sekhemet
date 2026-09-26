@@ -109,6 +109,12 @@ const PERSON_FACING_REFUSALS: ReadonlySet<string> = new Set([
   // apps/harness/src/runner_lease.ts: "Another runner holds the lease here…", on the CLI (exit 1)
   // and in the dashboard's 409 (runtime RUN-3, RUN-4).
   "leaseRefusal",
+  // packages/models/src/assignments.ts: "Refusing the assignment: … requires a recorded
+  // bake-off …", printed by `sekhemet models assign` (models MD-N10-1).
+  "bakeOffRefusal",
+  // apps/harness/src/reservation.ts: why the queue did not start a card while the
+  // machine is reserved, in the queue's log for a person (models MD-N3-1).
+  "unattendedStartRefusal",
 ]);
 
 function nameOf(node: ts.Node | undefined): string | undefined {

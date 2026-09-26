@@ -9,7 +9,7 @@ import {
   combinationKey,
   describeCombination,
 } from "./qualification_key.js";
-import type { ToolArm } from "./types.js";
+import type { ModelRole, ToolArm } from "./types.js";
 
 /**
  * The model registry (M11): the harness's memory of what works on this
@@ -17,11 +17,14 @@ import type { ToolArm } from "./types.js";
  * reasoning support, the measured tool arm, throughput per context bucket,
  * qualification, roles. Persisted as one JSON file (written atomically).
  */
-export type RegistryRole = "planner" | "executor" | "verifier" | "vision" | "pruner";
 
 export interface ArmMeasurement {
   passRate: number;
+  /** Tool-call attempts scored (cases times samples). */
   trials: number;
+  /** Share of those attempts whose call was schema-valid (MD-N5-1). */
+  toolCallValidity?: number;
+  validCalls?: number;
   date: string;
 }
 
@@ -125,6 +128,7 @@ export interface ModelEntry {
     temperature?: number;
     topP?: number;
     topK?: number;
+    minP?: number;
     penalties?: Record<string, number>;
   };
   reasoning?: { supported: boolean; defaultBudget: number; stripTraces: boolean };
@@ -149,7 +153,10 @@ export interface ModelEntry {
   qualifications?: CombinationQualification[];
   /** Persons' overrides of failed combinations (rule 27, MD-N4-4), newest last. */
   overrides?: QualificationOverride[];
-  roles?: RegistryRole[];
+  /** The roles it may hold (MD-N4-1: the one role type). */
+  roles?: ModelRole[];
+  /** It reads images (X3): a capability, not a role. */
+  vision?: boolean;
 }
 
 /** SHA-256 of a chat template, hex. */
@@ -176,17 +183,142 @@ export interface TemplatePinResult {
   previous?: string;
 }
 
+/** A model whose qualification a change invalidated, waiting to be qualified again (CX-N6-1). */
+export interface PendingRequalification {
+  modelId: string;
+  /** The combination key that was invalidated. */
+  key: string;
+  reason: string;
+  since: string;
+}
+
+/** The registry file beside its entries: state that belongs to the host, not one model. */
+interface RegistryRoot {
+  /** The context version the qualifications were last checked against (CX-N6-1). */
+  contextVersion?: string;
+  requalify?: PendingRequalification[];
+  /**
+   * Role assignments per host fingerprint, newest last (NEW-models-10): a
+   * person's own, the recorded baseline's and the shipped defaults'.
+   */
+  assignments?: Record<string, RoleAssignmentRecord[]>;
+}
+
+/** One role assignment as the registry keeps it (`assignments.ts` decides them). */
+export interface RoleAssignmentRecord {
+  role: string;
+  model: string;
+  scope: "personal" | "baseline" | "default";
+  by: string;
+  date: string;
+  /** The recorded bake-off that admitted a baseline or default change (MD-N10-1). */
+  bakeOff?: string;
+  /** Set when this assignment restored an earlier one (MD-N10-2). */
+  restored?: boolean;
+}
+
+type RegistryFile = RegistryRoot & { version?: number; models?: ModelEntry[] };
+
 export class ModelRegistry {
   private entries = new Map<string, ModelEntry>();
+  private root: RegistryRoot = {};
+  /** Entries and root fields this instance changed: only these override the file on save (MD-N4-5). */
+  private dirty = new Set<string>();
+  private dirtyRoot = new Set<keyof RegistryRoot>();
 
   constructor(
     public readonly path: string = defaultRegistryPath(),
     private now: () => Date = () => new Date(),
   ) {
-    if (existsSync(path)) {
-      const raw = JSON.parse(readFileSync(path, "utf8")) as { models?: ModelEntry[] };
-      for (const e of raw.models ?? []) this.entries.set(e.id, e);
+    const raw = this.readFile();
+    for (const e of raw.models ?? []) this.entries.set(e.id, e);
+    this.root = rootOf(raw);
+  }
+
+  private readFile(): RegistryFile {
+    if (!existsSync(this.path)) return {};
+    return JSON.parse(readFileSync(this.path, "utf8")) as RegistryFile;
+  }
+
+  private touch(id: string): void {
+    this.dirty.add(id);
+  }
+
+  /**
+   * Record the context version the harness runs now (CX-N6-1). When it
+   * differs from the one recorded, every combination qualified under another
+   * version is marked invalidated, naming the old and new versions, and its
+   * model is scheduled for re-qualification. Returns what was invalidated.
+   */
+  public observeContextVersion(version: string): PendingRequalification[] {
+    const previous = this.root.contextVersion;
+    if (previous === version) return [];
+    this.root.contextVersion = version;
+    this.dirtyRoot.add("contextVersion");
+    const invalidated: PendingRequalification[] = [];
+    if (previous !== undefined) {
+      const date = this.now().toISOString();
+      for (const entry of this.entries.values()) {
+        const newest = new Map<string, CombinationQualification>();
+        for (const q of entry.qualifications ?? []) newest.set(q.key, q);
+        for (const q of newest.values()) {
+          if (q.status !== "qualified" || q.combination.settings.contextVersion === version)
+            continue;
+          const reason = `context version changed (${q.combination.settings.contextVersion} -> ${version})`;
+          entry.qualifications = [
+            ...(entry.qualifications ?? []),
+            { ...q, status: "invalidated", reason, date },
+          ];
+          invalidated.push({ modelId: entry.id, key: q.key, reason, since: date });
+        }
+        if (invalidated.some((i) => i.modelId === entry.id)) {
+          if (entry.qualification && entry.qualification.status === "qualified") {
+            entry.qualificationHistory = [
+              ...(entry.qualificationHistory ?? []),
+              entry.qualification,
+            ];
+            entry.qualification = {
+              ...entry.qualification,
+              status: "invalidated",
+              reason: `context version changed (${previous} -> ${version})`,
+              date,
+            };
+          }
+          this.touch(entry.id);
+        }
+      }
+      if (invalidated.length > 0) {
+        this.root.requalify = [...(this.root.requalify ?? []), ...invalidated];
+        this.dirtyRoot.add("requalify");
+      }
     }
+    this.save();
+    return invalidated;
+  }
+
+  /** Models waiting to be qualified again after a change invalidated them (CX-N6-1). */
+  public pendingRequalifications(): PendingRequalification[] {
+    return [...(this.root.requalify ?? [])];
+  }
+
+  /** Every role assignment recorded for a host, oldest first (NEW-models-10). */
+  public roleAssignments(host: string): RoleAssignmentRecord[] {
+    return [...(this.root.assignments?.[host] ?? [])];
+  }
+
+  /** Append a role assignment for a host and save. */
+  public recordRoleAssignment(host: string, record: RoleAssignmentRecord): void {
+    this.root.assignments = {
+      ...(this.root.assignments ?? {}),
+      [host]: [...(this.root.assignments?.[host] ?? []), record],
+    };
+    this.dirtyRoot.add("assignments");
+    this.save();
+  }
+
+  /** The context version the qualifications were last checked against. */
+  public get contextVersion(): string | undefined {
+    return this.root.contextVersion;
   }
 
   public get(id: string): ModelEntry | undefined {
@@ -196,7 +328,7 @@ export class ModelRegistry {
   /** Models registered for the vision role (X3), best qualified first. */
   public visionModels(): ModelEntry[] {
     return this.list()
-      .filter((e) => e.roles?.includes("vision"))
+      .filter((e) => e.vision === true)
       .sort((a, b) => (b.qualification?.passRate ?? 0) - (a.qualification?.passRate ?? 0));
   }
 
@@ -208,6 +340,7 @@ export class ModelRegistry {
   public upsert(id: string, fields: Partial<Omit<ModelEntry, "id">>): ModelEntry {
     const entry: ModelEntry = { ...(this.entries.get(id) ?? { id }), ...fields, id };
     this.entries.set(id, entry);
+    this.touch(id);
     this.save();
     return entry;
   }
@@ -241,20 +374,40 @@ export class ModelRegistry {
       Reflect.deleteProperty(entry, "armMeasurements");
     }
     this.entries.set(id, entry);
+    this.touch(id);
     this.save();
     return { pinned: previous === undefined, changed, checksum, ...(previous ? { previous } : {}) };
   }
 
-  /** Record one arm's qualification pass rate (M9), then re-decide the arm. */
-  public recordArmMeasurement(id: string, arm: ToolArm, passRate: number, trials: number): void {
+  /**
+   * Record one arm's qualification: pass rate, trials and, when scored, its
+   * valid tool calls (MD-N5-1); then re-decide the pinned arm, which is
+   * cleared when the measurements no longer support one.
+   */
+  public recordArmMeasurement(
+    id: string,
+    arm: ToolArm,
+    passRate: number,
+    trials: number,
+    validCalls?: number,
+  ): void {
     const entry = this.entries.get(id) ?? { id };
     entry.armMeasurements = {
       ...(entry.armMeasurements ?? {}),
-      [arm]: { passRate, trials, date: this.now().toISOString() },
+      [arm]: {
+        passRate,
+        trials,
+        ...(validCalls !== undefined
+          ? { validCalls, toolCallValidity: trials > 0 ? validCalls / trials : 0 }
+          : {}),
+        date: this.now().toISOString(),
+      },
     };
     const best = selectArm(entry.armMeasurements);
     if (best) entry.toolArm = best;
+    else Reflect.deleteProperty(entry, "toolArm");
     this.entries.set(id, entry);
+    this.touch(id);
     this.save();
   }
 
@@ -270,6 +423,7 @@ export class ModelRegistry {
     }
     entry.qualification = { ...record, date: this.now().toISOString() };
     this.entries.set(id, entry);
+    this.touch(id);
     this.save();
   }
 
@@ -312,6 +466,16 @@ export class ModelRegistry {
     } = full;
     entry.qualification = plain;
     this.entries.set(id, entry);
+    this.touch(id);
+    // Qualified again under the version in force: no longer waiting (CX-N6-1).
+    if (
+      this.root.requalify?.some((r) => r.modelId === id) &&
+      (this.root.contextVersion === undefined ||
+        combination.settings.contextVersion === this.root.contextVersion)
+    ) {
+      this.root.requalify = this.root.requalify.filter((r) => r.modelId !== id);
+      this.dirtyRoot.add("requalify");
+    }
     this.save();
     return full;
   }
@@ -358,6 +522,7 @@ export class ModelRegistry {
       failedAt: exact.date,
     };
     entry.overrides = [...(entry.overrides ?? []), override];
+    this.touch(id);
     this.save();
     const { key: _k, combination: _c, failedAt: _f, ...plain } = override;
     return plain;
@@ -476,6 +641,7 @@ export class ModelRegistry {
     const entry = this.entries.get(id) ?? { id };
     entry.throughput = { ...(entry.throughput ?? {}), [bucket]: { prefill, decode } };
     this.entries.set(id, entry);
+    this.touch(id);
     this.save();
   }
 
@@ -497,37 +663,103 @@ export class ModelRegistry {
         [decision.thinking]: decision,
       };
     this.entries.set(id, entry);
+    this.touch(id);
     this.save();
   }
 
+  /**
+   * Write atomically, merged with the file as it is now (MD-N4-5): an entry
+   * or root field another process wrote since this one read is kept unless
+   * this instance changed the same one.
+   */
   private save(): void {
     mkdirSync(dirname(this.path), { recursive: true });
+    const disk = this.readFile();
+    for (const e of disk.models ?? []) {
+      if (!this.dirty.has(e.id)) this.entries.set(e.id, e);
+    }
+    const diskRoot = rootOf(disk);
+    const root: RegistryRoot = { ...diskRoot };
+    for (const k of this.dirtyRoot) {
+      if (this.root[k] === undefined) Reflect.deleteProperty(root, k);
+      else (root as Record<string, unknown>)[k] = this.root[k];
+    }
+    this.root = root;
     const tmp = `${this.path}.${process.pid}.tmp`;
-    writeFileSync(tmp, `${JSON.stringify({ version: 1, models: this.list() }, null, 2)}\n`);
+    writeFileSync(
+      tmp,
+      `${JSON.stringify({ version: 1, ...root, models: this.list() }, null, 2)}\n`,
+    );
     renameSync(tmp, this.path);
   }
 }
 
+function rootOf(raw: RegistryFile): RegistryRoot {
+  return {
+    ...(raw.contextVersion !== undefined ? { contextVersion: raw.contextVersion } : {}),
+    ...(raw.requalify !== undefined ? { requalify: raw.requalify } : {}),
+    ...(raw.assignments !== undefined ? { assignments: raw.assignments } : {}),
+  };
+}
+
+/** The lead a pinned arm must have in tool-call validity (register R4). */
+export const ARM_LEAD = 0.05;
+
+function wilson(k: number, n: number, z = 1.959964): { low: number; high: number } {
+  if (n <= 0) return { low: 0, high: 1 };
+  const p = k / n;
+  const denom = 1 + (z * z) / n;
+  const centre = (p + (z * z) / (2 * n)) / denom;
+  const half = (z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n))) / denom;
+  return { low: Math.max(0, centre - half), high: Math.min(1, centre + half) };
+}
+
 /**
- * The winning arm from measurements (M9): highest pass rate among arms with
- * at least `MIN_ARM_TRIALS` trials; ties go to the simpler arm (A, B, C).
+ * The difference in tool-call validity between two arms and its 95%
+ * interval (Newcombe's hybrid score interval from the two Wilson intervals,
+ * measurement.md's statistics for independent proportions).
+ */
+export function armLeadInterval(
+  a: Pick<ArmMeasurement, "trials" | "validCalls">,
+  b: Pick<ArmMeasurement, "trials" | "validCalls">,
+): { difference: number; low: number; high: number } {
+  const ka = a.validCalls ?? 0;
+  const kb = b.validCalls ?? 0;
+  const pa = a.trials > 0 ? ka / a.trials : 0;
+  const pb = b.trials > 0 ? kb / b.trials : 0;
+  const wa = wilson(ka, a.trials);
+  const wb = wilson(kb, b.trials);
+  const difference = pa - pb;
+  return {
+    difference,
+    low: difference - Math.sqrt((pa - wa.low) ** 2 + (wb.high - pb) ** 2),
+    high: difference + Math.sqrt((wa.high - pa) ** 2 + (pb - wb.low) ** 2),
+  };
+}
+
+/**
+ * The pinned arm (models rule 28, MD-N5-1): arms A, B and C each measured on
+ * at least `MIN_ARM_TRIALS` tool-call trials, and the best by tool-call
+ * validity leading the next by at least 5 points with the difference's 95%
+ * interval excluding zero. Otherwise none: the model runs arm A unmeasured.
  */
 export function selectArm(
   measurements: Partial<Record<ToolArm, ArmMeasurement>> | undefined,
   minTrials = MIN_ARM_TRIALS,
 ): ToolArm | undefined {
   if (!measurements) return undefined;
-  let best: ToolArm | undefined;
-  let bestRate = -1;
-  for (const arm of ARM_ORDER) {
-    const m = measurements[arm];
-    if (!m || m.trials < minTrials) continue;
-    if (m.passRate > bestRate) {
-      best = arm;
-      bestRate = m.passRate;
-    }
-  }
-  return best;
+  const scored = ARM_ORDER.map((arm) => ({ arm, m: measurements[arm] }));
+  if (scored.some(({ m }) => !m || m.trials < minTrials || m.validCalls === undefined))
+    return undefined;
+  const ranked = [...scored].sort(
+    (x, y) => (y.m?.toolCallValidity ?? 0) - (x.m?.toolCallValidity ?? 0),
+  );
+  const [first, second] = ranked as [
+    { arm: ToolArm; m: ArmMeasurement },
+    { arm: ToolArm; m: ArmMeasurement },
+  ];
+  const lead = armLeadInterval(first.m, second.m);
+  return lead.difference >= ARM_LEAD - 1e-9 && lead.low > 0 ? first.arm : undefined;
 }
 
 /**

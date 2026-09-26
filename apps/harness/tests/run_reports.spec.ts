@@ -146,8 +146,50 @@ describe("NEW-runtime-9: telemetry as specified", () => {
     expect(result.condensedTokensSaved).toBeGreaterThan(100);
     const entry = queueEntryOf(card.id, 1, result, false);
     expect(entry.condensedTokensSaved).toBe(result.condensedTokensSaved);
+    // CX-N5-3: per tool, beside the raw tool-output tokens.
+    expect(entry.condensing?.savedTokens).toBe(result.condensedTokensSaved);
+    expect(entry.condensing?.rawTokens).toBeGreaterThan(entry.condensing?.savedTokens ?? 0);
+    expect(entry.condensing?.byTool.map((t) => [t.tool, t.calls])).toEqual([["run_cmd", 1]]);
     k.db.close();
   }, 60_000);
+
+  it("CX-N5-3: a finished run's report gives condensing's savings in total and per tool, beside the raw tokens", async () => {
+    const repo = gitRepo();
+    const k = initLocalKernel(repo);
+    const entry = (cardId: string, saved: number, raw: number) => ({
+      cardId,
+      attempt: 1,
+      passed: true,
+      accepted: false,
+      stopReason: "gate_passed",
+      turns: 2,
+      durationMs: 1,
+      promptTokens: 1,
+      completionTokens: 1,
+      condensedTokensSaved: saved,
+      condensing: {
+        rawTokens: raw,
+        savedTokens: saved,
+        byTool: [{ tool: "run_cmd", calls: 1, rawTokens: raw, savedTokens: saved }],
+      },
+    });
+    await recordQueueReport(k.log, repo, {
+      startedAt: "2026-09-25T02:00:00.000Z",
+      model: "m",
+      entries: [entry("a", 300, 500), entry("b", 100, 400)],
+      passAt1: 1,
+      passAfterEscalation: 1,
+      modelSwaps: 0,
+      totalDurationMs: 1,
+    });
+    const [event] = await k.log.getEventsByTypes(["queue/reported"]);
+    expect((event?.payload as { report: QueueReport }).report.condensing).toEqual({
+      rawTokens: 900,
+      savedTokens: 400,
+      byTool: [{ tool: "run_cmd", calls: 2, rawTokens: 900, savedTokens: 400 }],
+    });
+    k.db.close();
+  });
 
   it("RUN-56: a queue run's report is one queue/reported event; with the files deleted the Runs view lists the same runs and figures, rebuilt from the ledger", async () => {
     const repo = gitRepo();
