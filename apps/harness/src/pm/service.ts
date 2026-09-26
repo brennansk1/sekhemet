@@ -1,11 +1,17 @@
 import { basename, join } from "node:path";
 import { morningReport } from "@sekhemet/eval";
-import { type AttemptOutcome, type CardStore, firstModelAttempts } from "@sekhemet/kernel";
+import {
+  type AttemptOutcome,
+  type CardRecord,
+  type CardStore,
+  firstModelAttempts,
+} from "@sekhemet/kernel";
 import type { ModelHold, ModelRegistry } from "@sekhemet/models";
+import { standupReport } from "@sekhemet/planner";
 import { unenforcedInvariants } from "../architecture_gate.js";
 import { LearningStore } from "../learning/store.js";
 import { type SwapLedger, sharedQueue } from "../model_access.js";
-import { plannerStandupSection } from "../wave2.js";
+import { projectStoryMap } from "../project_done.js";
 import {
   type PmSnapshot,
   answer,
@@ -13,11 +19,14 @@ import {
   seshatThreadId,
   summarizeConversation,
 } from "./agent.js";
+import { type Audience, nameFor, soloAudience } from "./audience.js";
 import { capabilityReport, capabilitySummary } from "./capability.js";
+import { namedDecisions } from "./decisions.js";
 import { flowMetrics, monteCarloForecast } from "./metrics.js";
-import { parseSlash, runSlash } from "./slash.js";
+import { parseSlash, resolveCard, runSlash } from "./slash.js";
 import type { PmStore } from "./store.js";
-import { PM_EVENTS, type PmMessage } from "./types.js";
+import { postSuggestions, suggestedText } from "./suggest.js";
+import { PM_EVENTS, type PmMessage, type PmProposal } from "./types.js";
 import {
   type SeshatWait,
   ledgerAnswer,
@@ -97,20 +106,36 @@ export function workerRecord(
   };
 }
 
+/** Who a snapshot is for, and what they can see (PM-N9-8); everything when no asker. */
+export interface SnapshotScope {
+  audience: Audience;
+  asker?: string | undefined;
+}
+
 export async function buildSnapshot(
   repoPath: string,
   cardStore: CardStore,
   pmStore: PmStore,
   pmModel: string,
+  scope?: SnapshotScope,
 ): Promise<PmSnapshot> {
-  const outcomes = cardStore.runs.readAttemptOutcomes();
+  // PM-N9-8: only the projects and issues the asker can see; a figure that
+  // would count what they cannot (the forecast, the story map) is left out.
+  const everything = await cardStore.listCards();
+  const cards = scope?.asker
+    ? everything.filter((c) => scope.audience.canSee(scope.asker as string, c.projectId))
+    : everything;
+  const partial = cards.length !== everything.length;
+  const visibleIds = new Set(cards.map((c) => c.id));
+  const outcomes = cardStore.runs
+    .readAttemptOutcomes()
+    .filter((o) => !partial || visibleIds.has(o.cardId));
   const recentRuns = outcomes
     .slice(-10)
     .map(
       (o) =>
         `- \`${o.cardId}\` attempt ${o.attemptNumber}: ${o.passed ? "passed" : `failed (${o.stopReason})`}${o.steps !== undefined ? ` in ${o.steps} steps` : ""}, ${Math.round(o.secondsUsed)}s`,
     );
-  const cards = await cardStore.listCards();
   const record = workerRecord(outcomes);
   const measured = capabilitySummary(capabilityReport(repoPath, cards, outcomes));
   const worker = record
@@ -120,10 +145,19 @@ export async function buildSnapshot(
   const loose = unenforcedInvariants(join(repoPath, ".sekhemet", "brief.md"));
   const cfd = (await flowMetrics(pmStore.log, 60)).cfd;
   const daily = cfd.slice(1).map((d, i) => Math.max(0, d.done - (cfd[i]?.done ?? 0)));
-  const fc = monteCarloForecast(daily, remaining);
+  const fc = partial ? undefined : monteCarloForecast(daily, remaining);
   const forecast = fc
     ? `${remaining} cards left: 50% likely within ${fc.p50Days} day(s), 85% within ${fc.p85Days} (from ${fc.samples} days of history).`
     : undefined;
+  const storyMap = partial
+    ? undefined
+    : await projectStoryMap({ repoPath, cardStore, log: pmStore.log }).catch(() => undefined);
+  // PM-N9-5: each decision names its person, and its default and deadline.
+  const decisions = await namedDecisions(
+    { cardStore, log: pmStore.log },
+    scope?.audience ?? soloAudience(),
+    scope?.asker,
+  ).catch(() => []);
   return {
     project: basename(repoPath),
     ...(forecast ? { forecast } : {}),
@@ -139,6 +173,9 @@ export async function buildSnapshot(
     // CX-N4-5, CX-N3-7: the approved PM rules, for Seshat alone.
     pmRules: await new LearningStore(pmStore.log).seshatRules().catch(() => []),
     ...(loose.length > 0 ? { unenforcedInvariants: loose } : {}),
+    // planner-pm §2.15: what is proven and unplanned, for the status and the claim guard.
+    ...(storyMap ? { storyMap } : {}),
+    ...(decisions.length ? { decisions } : {}),
     today: new Date().toISOString().slice(0, 10),
   };
 }
@@ -187,6 +224,14 @@ export interface AnswerDeps {
     admitted: () => Promise<boolean>;
     acquire: () => Promise<ModelHold>;
   };
+  /**
+   * Who is asked and what each person can see (planner-pm §2.8.5, PM-N9-8;
+   * teams item 19a). In the Team setup each person's messages are answered
+   * apart, from what they can see; a Solo install when omitted.
+   */
+  audience?: Audience;
+  /** The Planner role's model for /plan (PM-P1-2); the heuristic plans without it. */
+  planner?: () => Promise<ModelHold>;
 }
 
 /**
@@ -200,12 +245,40 @@ export interface AnswerDeps {
 async function withPlannerStandup(
   text: string,
   deps: Pick<AnswerDeps, "cardStore" | "pmStore">,
+  scope?: SnapshotScope,
 ): Promise<string> {
-  const extra = await plannerStandupSection(deps.cardStore, deps.pmStore.log).catch(() => "");
+  const extra = await plannerSection(deps, scope).catch(() => "");
   if (!extra) return text;
   const marker = "\n\n_Answered from the ledger";
   const at = text.indexOf(marker);
   return at === -1 ? `${text}\n${extra}` : `${text.slice(0, at)}\n${extra}${text.slice(at)}`;
+}
+
+/**
+ * The decisions waiting — each naming its person, its default and deadline
+ * (PM-N9-5) — and the next window, over what the asker can see (PM-N9-8).
+ */
+async function plannerSection(
+  deps: Pick<AnswerDeps, "cardStore" | "pmStore">,
+  scope?: SnapshotScope,
+): Promise<string> {
+  const audience = scope?.audience ?? soloAudience();
+  const lines = await namedDecisions(
+    { cardStore: deps.cardStore, log: deps.pmStore.log },
+    audience,
+    scope?.asker,
+  );
+  const r = await standupReport({ store: deps.cardStore, log: deps.pmStore.log });
+  const visible = new Set(
+    (await deps.cardStore.listCards())
+      .filter((c) => !scope?.asker || audience.canSee(scope.asker, c.projectId))
+      .map((c) => c.id),
+  );
+  const next = r.nextWindow.filter((n) => visible.has(n.id));
+  if (next.length) {
+    lines.push(`Next window: ${next.map((n) => `${n.title} (${n.estimate})`).join("; ")}.`);
+  }
+  return lines.join("\n");
 }
 
 /**
@@ -253,7 +326,9 @@ async function answerWhileWorkerRuns(
   deps: AnswerDeps,
   queued: PmMessage[],
   wait: SeshatWait,
+  scope: SnapshotScope,
 ): Promise<void> {
+  const to = scope.audience.setup === "team" && scope.asker ? { to: scope.asker } : {};
   const newest = Math.max(...queued.map((m) => m.seq));
   const quick = deps.quick;
   const quickModel = quick ? `${quick.name} (quick answer)` : undefined;
@@ -271,10 +346,11 @@ async function answerWhileWorkerRuns(
         deps.cardStore,
         deps.pmStore,
         deps.pmModel,
+        scope,
       );
       const text = await quickAnswer(hold.adapter, snapshot, queued, quick.name);
       // No proposals, no cites: a quick answer never acts (rule 20f b).
-      await deps.pmStore.appendReply({ replyTo: [], text, model: quickModel });
+      await deps.pmStore.appendReply({ replyTo: [], text, model: quickModel, ...to });
     } catch {
       // A quick answer that fails leaves the full answer queued, as before.
     } finally {
@@ -282,7 +358,12 @@ async function answerWhileWorkerRuns(
     }
   }
   if (!(await saidSince(deps.pmStore, newest, "scheduler")))
-    await deps.pmStore.appendReply({ replyTo: [], text: waitInWords(wait), model: "scheduler" });
+    await deps.pmStore.appendReply({
+      replyTo: [],
+      text: waitInWords(wait),
+      model: "scheduler",
+      ...to,
+    });
   await deps.pmStore.setStatus({
     phase: "waiting_for_step",
     model: deps.pmModel,
@@ -292,9 +373,134 @@ async function answerWhileWorkerRuns(
   });
 }
 
+/** Who asked a message: its principal, else the install's person. */
+const askerOf = (m: PmMessage, deps: AnswerDeps): string =>
+  m.principal ?? deps.cardStore.localPrincipal();
+
+/**
+ * Answer every queued PM message. In the Team setup each person's messages
+ * are answered apart, from the projects and issues that person can see and
+ * their own part of the conversation (PM-N9-8); in Solo, all at once.
+ */
 export async function answerQueued(deps: AnswerDeps): Promise<boolean> {
   const all = await deps.pmStore.queued();
   if (all.length === 0) return false;
+  const audience = deps.audience ?? soloAudience();
+  if (audience.setup !== "team") {
+    return answerFor(deps, all, { audience, asker: all.at(-1)?.principal });
+  }
+  const groups = new Map<string, PmMessage[]>();
+  for (const m of all) groups.set(askerOf(m, deps), [...(groups.get(askerOf(m, deps)) ?? []), m]);
+  let done = true;
+  for (const [asker, messages] of groups) {
+    if (!(await answerFor(deps, messages, { audience, asker }))) done = false;
+  }
+  return done;
+}
+
+/** Slash commands that change the board: a Member's, in the Team setup (TEAM-40). */
+const MEMBER_COMMANDS = new Set(["plan", "ready", "park", "backlog"]);
+/** Of those, the ones that name a card, whose own project's level applies (TEAM-6, -40). */
+const CARD_COMMANDS = new Set(["ready", "park", "backlog"]);
+
+/**
+ * PM-N9-3: a request to assign an issue to a person or to set a project's
+ * health changes nothing. The reply says who can, and — for an assignment,
+ * never for health — offers it as a suggestion on the issue.
+ */
+async function authorityAnswer(
+  deps: AnswerDeps,
+  m: PmMessage,
+  scope: SnapshotScope,
+  cards: CardRecord[],
+): Promise<{ text: string; proposals: Omit<PmProposal, "id" | "state">[] } | undefined> {
+  const text = m.text.trim();
+  const { audience } = scope;
+  const asker = scope.asker ?? deps.cardStore.localPrincipal();
+  const solo = audience.setup !== "team";
+  // "Set the project's health to at risk", "mark the project off track".
+  const health =
+    /\b(?:set|mark|make|change|update|put|flag)\b[^.?]*\bhealth\b/i.test(text) ||
+    /\b(?:set|mark|make|call|flag|put)\b[^.?]*\b(?:project|release)\b[^.?]*\b(?:on track|at risk|off track)\b/i.test(
+      text,
+    );
+  if (health) {
+    const card = cards.find((c) => c.id === m.context?.cardId);
+    const lead = audience.leadOf(card?.projectId ?? cards[0]?.projectId);
+    const who = solo
+      ? "you"
+      : lead
+        ? `${nameFor(audience, lead, asker)}, the project lead,`
+        : "the project lead";
+    return {
+      text: `A project's health is a person's call, never mine: ${who} ${who === "you" ? "set" : "sets"} it on the project's Status page. I can draft the weekly update without it (/update).`,
+      proposals: [],
+    };
+  }
+  const assign = /\bassign\b[^.?]*?\bto\s+(me|p_[0-9a-z]+|[A-Za-z][\w'-]*)/i.exec(text);
+  // "who should I assign this to?" names no one: a question for Seshat's judgement.
+  if (
+    !assign ||
+    /^(?:this|that|it|them|someone|somebody|who|whom|whoever)$/i.test(assign[1] ?? "")
+  ) {
+    return undefined;
+  }
+  const target = assign[1] ?? "";
+  const card =
+    cards.find((c) => c.id === m.context?.cardId) ??
+    cards.find((c) => text.includes(c.id)) ??
+    cards.find((c) => c.title.length > 3 && text.toLowerCase().includes(c.title.toLowerCase()));
+  const person =
+    /^me$/i.test(target) || audience.nameOf(asker)?.toLowerCase() === target.toLowerCase()
+      ? asker
+      : /^p_/.test(target)
+        ? target
+        : undefined;
+  const whoCan = card?.owner
+    ? `${nameFor(audience, card.owner, asker)} ${card.owner === asker ? "own" : "owns"} ${card.title} and can assign it${solo ? "" : ", as can any Member"}`
+    : solo
+      ? "you can assign it on the board"
+      : "a Member can assign it on the board";
+  const lead = `Assigning is a person's call, not mine: ${whoCan}.`;
+  const viewer = !solo && audience.levelOf(asker) === "viewer";
+  if (!card || !person || viewer) {
+    return {
+      text: `${lead}${!card ? " Open the issue, or name it, and I can post the assignment there as a suggestion." : !person ? ` I could not tell who "${target}" is; name them as they appear on the team.` : ""}`,
+      proposals: [],
+    };
+  }
+  const why = `${nameFor(audience, asker)} asked for it in the chat`;
+  const draft = {
+    kind: "update_card" as const,
+    cardId: card.id,
+    patch: { assignee: person },
+    before: { assignee: card.assignee ?? null },
+    why,
+    summary: `Suggested: ${suggestedText({ kind: "assignee", value: person }, card.title, (p) => nameFor(audience, p))}. Why: ${why}.`,
+  };
+  const posted = await postSuggestions([draft], {
+    cardStore: deps.cardStore,
+    cards,
+    audience,
+    asker,
+  });
+  const offered = posted.drafts.length
+    ? ` Suggested: ${suggestedText({ kind: "assignee", value: person }, card.title, (p) => nameFor(audience, p))}, on the issue for ${card.owner && card.owner !== asker ? nameFor(audience, card.owner, asker) : "a person"} to apply.`
+    : "";
+  return { text: `${lead}${offered}`, proposals: posted.drafts };
+}
+
+async function answerFor(
+  deps: AnswerDeps,
+  all: PmMessage[],
+  scope: SnapshotScope,
+): Promise<boolean> {
+  const team = scope.audience.setup === "team";
+  const to = team && scope.asker ? { to: scope.asker } : {};
+  const asker = scope.asker ?? deps.cardStore.localPrincipal();
+  const level = team && scope.asker ? scope.audience.levelOf(scope.asker) : "admin";
+  const snap = () =>
+    buildSnapshot(deps.repoPath, deps.cardStore, deps.pmStore, deps.pmModel, scope);
   // H16: slash commands are answered by code, from the ledger, before any
   // model loads; /plan is rewritten into the request it stands for.
   const queued: typeof all = [];
@@ -305,29 +511,61 @@ export async function answerQueued(deps: AnswerDeps): Promise<boolean> {
       continue;
     }
     if (cmd.name === "status" || cmd.name === "standup") {
-      const snapshot = await buildSnapshot(
-        deps.repoPath,
-        deps.cardStore,
-        deps.pmStore,
-        deps.pmModel,
-      );
+      const snapshot = await snap();
       await deps.pmStore.appendReply({
         replyTo: [m.id],
-        text: await withPlannerStandup(ledgerStandup(snapshot), deps),
+        text: await withPlannerStandup(ledgerStandup(snapshot), deps, scope),
         model: "ledger",
+        ...to,
       });
       continue;
+    }
+    // TEAM-40: a command that changes the board is checked as its endpoint is
+    // — TEAM-6, at the level of the card it names, when it names one.
+    if (MEMBER_COMMANDS.has(cmd.name)) {
+      let cardLevel = level;
+      if (team && CARD_COMMANDS.has(cmd.name)) {
+        const cardId = await resolveCard(deps.cardStore, cmd.args, scope);
+        if (cardId) {
+          const card = await deps.cardStore.getCard(cardId);
+          cardLevel = scope.audience.levelOf(asker, card?.projectId);
+        }
+      }
+      if (cardLevel !== "member" && cardLevel !== "admin") {
+        await deps.pmStore.appendReply({
+          replyTo: [m.id],
+          text: `You're ${cardLevel === undefined ? "not a member here" : `a ${cardLevel === "viewer" ? "Viewer" : "Stakeholder"} here`}; a Member can run /${cmd.name}.`,
+          model: "command",
+          ...to,
+        });
+        continue;
+      }
+    }
+    // PM-P1-2: /plan with the Planner's model when one is given.
+    let plannerHold: ModelHold | undefined;
+    if (cmd.name === "plan" && deps.planner) {
+      plannerHold = await deps.planner().catch(() => undefined);
     }
     const outcome = await runSlash(cmd, {
       cardStore: deps.cardStore,
       pmStore: deps.pmStore,
       repoPath: deps.repoPath,
       researcher: deps.researcher,
-    }).catch((err) => ({
-      reply: `The command failed: ${err instanceof Error ? err.message : String(err)}`,
-    }));
+      audience: scope.audience,
+      asker: scope.asker,
+      ...(plannerHold ? { planner: plannerHold.adapter } : {}),
+    })
+      .catch((err) => ({
+        reply: `The command failed: ${err instanceof Error ? err.message : String(err)}`,
+      }))
+      .finally(() => plannerHold?.release());
     if ("reply" in outcome) {
-      await deps.pmStore.appendReply({ replyTo: [m.id], text: outcome.reply, model: "command" });
+      await deps.pmStore.appendReply({
+        replyTo: [m.id],
+        text: outcome.reply,
+        model: "command",
+        ...to,
+      });
     } else if ("forward" in outcome) {
       queued.push({ ...m, text: outcome.forward });
     } else {
@@ -336,6 +574,26 @@ export async function answerQueued(deps: AnswerDeps): Promise<boolean> {
   }
   if (queued.length === 0) return true;
   const stepInfo = deps.step !== undefined ? { step: deps.step, workerPaused: true } : {};
+
+  // PM-N9-3: assigning a person and setting health are people's calls.
+  const visibleCards = (await snap()).cards;
+  const rest: typeof queued = [];
+  for (const m of queued) {
+    const a = await authorityAnswer(deps, m, scope, visibleCards);
+    if (!a) {
+      rest.push(m);
+      continue;
+    }
+    await deps.pmStore.appendReply({
+      replyTo: [m.id],
+      text: a.text,
+      proposals: a.proposals,
+      model: "ledger",
+      ...to,
+    });
+  }
+  if (rest.length === 0) return true;
+  queued.splice(0, queued.length, ...rest);
 
   // Rule 20f (a): status, where the cards stop, what waits on the person and
   // the predicted wait need facts, not judgement: answered from the ledger
@@ -349,14 +607,15 @@ export async function answerQueued(deps: AnswerDeps): Promise<boolean> {
       continue;
     }
     if (kind === "wait") wait ??= await deps.predictWait?.();
-    const snapshot = await buildSnapshot(deps.repoPath, deps.cardStore, deps.pmStore, deps.pmModel);
+    const snapshot = await snap();
     await deps.pmStore.appendReply({
       replyTo: [m.id],
       text:
         kind === "status"
-          ? await withPlannerStandup(ledgerStandup(snapshot), deps)
+          ? await withPlannerStandup(ledgerStandup(snapshot), deps, scope)
           : ledgerAnswer(kind, snapshot, wait),
       model: "ledger",
+      ...to,
     });
   }
   if (toAnswer.length === 0) return true;
@@ -367,7 +626,7 @@ export async function answerQueued(deps: AnswerDeps): Promise<boolean> {
   // and the question stays queued for the full answer (MD-N14-28, -29).
   wait ??= await deps.predictWait?.();
   if (wait?.quickPath) {
-    await answerWhileWorkerRuns(deps, queued, wait);
+    await answerWhileWorkerRuns(deps, queued, wait, scope);
     return false;
   }
 
@@ -388,8 +647,12 @@ export async function answerQueued(deps: AnswerDeps): Promise<boolean> {
       detail: "Reading the board and runs",
       ...stepInfo,
     });
-    const history = (await deps.pmStore.thread()).filter((m) => m.state === "done");
-    let summary = await deps.pmStore.summary();
+    // PM-N9-8: in the Team setup, only this person's part of the conversation
+    // (their messages, and the replies addressed to them).
+    const history = (await deps.pmStore.thread()).filter(
+      (m) => m.state === "done" && (!team || m.principal === scope.asker),
+    );
+    let summary = team ? undefined : await deps.pmStore.summary();
     const compactAsked = queued.some((m) => /^\s*\/compact\b/i.test(m.text));
     // Fold everything but the last 8 messages into the summary once there are
     // more than 16 unsummarised ones, or whenever the human asks (/compact).
@@ -398,7 +661,7 @@ export async function answerQueued(deps: AnswerDeps): Promise<boolean> {
       // An explicit /compact keeps only the last exchange verbatim.
       const keep = compactAsked ? 2 : 8;
       const fold = unsummarised.slice(0, Math.max(0, unsummarised.length - keep));
-      if (fold.length > 0) {
+      if (fold.length > 0 && !team) {
         const text = await summarizeConversation(model, summary?.text, fold);
         const upToSeq = fold.at(-1)?.seq ?? 0;
         await deps.pmStore.appendSummary(upToSeq, text);
@@ -412,14 +675,19 @@ export async function answerQueued(deps: AnswerDeps): Promise<boolean> {
           ? `Compacted. What I am carrying forward:\n\n${summary.text}`
           : "Nothing to compact yet.",
         model: deps.pmModel,
+        ...to,
       });
       return true;
     }
     // CX-N3-7: the dossier of the card the person is looking at, newest message first.
-    const inView = [...queued].reverse().find((m) => m.context?.cardId)?.context?.cardId;
+    const base = await snap();
+    const seen = new Set(base.cards.map((c) => c.id));
+    const inView = [...queued]
+      .reverse()
+      .find((m) => m.context?.cardId && seen.has(m.context.cardId))?.context?.cardId;
     const dossier = inView ? await dossierLines(deps.cardStore, inView) : undefined;
     const snapshot = {
-      ...(await buildSnapshot(deps.repoPath, deps.cardStore, deps.pmStore, deps.pmModel)),
+      ...base,
       ...(deps.team ? { team: deps.team } : {}),
       ...(inView && dossier?.length ? { dossier: { cardId: inView, lines: dossier } } : {}),
     };
@@ -433,12 +701,22 @@ export async function answerQueued(deps: AnswerDeps): Promise<boolean> {
       deps.researcher,
       seshatThreadId(deps.repoPath),
     );
+    // PM-N9-1, -9; TEAM-19, -40: triage changes become suggestions on the
+    // issue, a change to someone else's issue is marked for its owner, a
+    // Viewer is offered none.
+    const posted = await postSuggestions(result.proposals, {
+      cardStore: deps.cardStore,
+      cards: snapshot.cards,
+      audience: scope.audience,
+      asker: scope.asker,
+    });
     const reply = await deps.pmStore.appendReply({
       replyTo: queued.map((m) => m.id),
-      text: result.text,
-      proposals: result.proposals,
+      text: posted.notes.length ? `${result.text}\n\n${posted.notes.join(" ")}` : result.text,
+      proposals: posted.drafts,
       cites: result.cites,
       model: deps.pmModel,
+      ...to,
     });
     // CX-N3-7: what Seshat's prompt was fitted to, and each section's tokens.
     if (result.promptBudget && result.promptSections) {
@@ -458,6 +736,7 @@ export async function answerQueued(deps: AnswerDeps): Promise<boolean> {
       text: `I could not answer: ${err instanceof Error ? err.message : String(err)}. Your message is kept; send it again once the model is available.`,
       error: true,
       model: deps.pmModel,
+      ...to,
     });
   } finally {
     hold?.release();

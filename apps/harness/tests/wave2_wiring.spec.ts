@@ -457,6 +457,9 @@ describe("the CLI reaches the wave-2 wiring (production path)", () => {
         "Implement password hashing and rate limiting for login.",
         "--repo",
         k.repoPath,
+        // Tests never load a model: the Planner defaults to Seshat's (PM-P1-2).
+        "--planner",
+        "none",
       ]);
       const db = new DatabaseSync(join(k.repoPath, ".sekhemet", "events.db"));
       initSchema(db);

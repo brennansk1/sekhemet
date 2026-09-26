@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 46 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 47 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,70 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 47 — 2026-09-26 (B4.3 done: one planner, model first, with an acceptance-criterion contract; project done computed from a requirement graph, with slices and appetite)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver. Implementer helpers: step 0 (contracts), 1A (planner core), 1B (requirement graph), 2A (queue-side rules), 2B (Seshat), 3 (horizon, existing codebases, approval by profile), a dashboard-approval task, and two fix rounds (the first attempts stopped at the weekly limit and were resumed on Sonnet). Two review halves (Opus) and a narrow re-check of the blocker fix.
+
+- **Contracts (kernel):**
+  - requirements carry dependencies, Kano class, must-have, criteria and slice;
+  - slices have an appetite, extensions, cuts and releases (`release/proposed`, `release/proven`);
+  - cards gain `splitDepth`, `interface`, `criterionIds`, the Fibonacci `estimate` and dependency reasons;
+  - staged tests name their criteria, and approvals are bound to a SHA-256;
+  - human goal marks and suggestions (`hold` and `remove` kinds included); migrations 19–21.
+- **P1:**
+  - model-first planning with Seshat's model as the default, and a banner plus marked titles when planning without a model;
+  - malformed replies refused, retried once, then the heuristic;
+  - the criterion lint, criterion ids, the idempotency criterion, no clause-fragment titles, and mechanisms refused as single cards;
+  - `kind`, `change`, `split` and `splitDepth` stored and read everywhere;
+  - the interface from the staged test's imports;
+  - example tables; points;
+  - INVEST Small = Zone 3's cap at the resolved Worker's W, one computation with the board's `ready` check (3,792 tokens on the reference Worker).
+  - Every entry point (`plan`, `/plan`, Seshat's proposals, `start_project`) goes through one pipeline. A split gives each part its own behaviour and tests, and rejects the parent; the rung-3 replan carries the riskiest card.
+- **P13:**
+  - the brief's requirements stored on acceptance;
+  - the story map with unplanned must-haves;
+  - proven computed on the integration branch against the internal-tool profile's strength rule;
+  - a person accepts a proven slice, and the project is done only then;
+  - appetite stops scheduling;
+  - a revision holds traced cards, and suspect links stay until re-confirmed;
+  - release per slice, with notes in the brief's words and a Keep a Changelog grouping, tagged at the proven sha;
+  - Seshat's completion or release claims are guarded.
+- **NEW-planner-pm-1..9:**
+  - points;
+  - signals propose, never mutate;
+  - the capability fit (logistic, 80% horizon with a bootstrap interval) splits to the horizon, and Seshat's report reads the same fit;
+  - the goal loop on card close and hourly, with metric and human criteria and `environment_changed`;
+  - every signal response carried out;
+  - planning on existing code (`change`, characterize first, superseded tests, upgrade plans, Ochiai localisation, confined);
+  - approval by depth profile (the dashboard's Approve, bound to the hash shown);
+  - dependencies only when declared, named or imported;
+  - Seshat proposes, never assigns: suggestions on issues, the voice rules enforced on every path, neutral reminders, the weekly draft, per-person scope in the Team setup.
+- **Lead:**
+  - kind readers (PM-P1-10);
+  - `workerZone3Fit` and the plan window;
+  - `deriveRequirements` off after a brief;
+  - dot-segment access hardening (carried from B4.1);
+  - planning views scoped to what the person can see;
+  - the dependency sweep on upgraded ledgers;
+  - planned cards' criterion ids can never be cleared;
+  - staged files re-hashed from disk, a missing one voiding approval;
+  - `brownfield.ts` git hardened.
+  - **A test-run guard against real model loads** (`load_guard.ts`, `SEKHEMET_MODEL_LOADS=off` for every test run), added after one 1A test run reached Seshat's model through `sekhemet plan`. `ollama ps` stayed empty; memory was 69% free and swap 0.
+- **Reviews:**
+  - **Half A:** 1 blocker (model-supplied interface names pasted raw into generated tests that a `fix` card ran on the host at plan time) and 6 majors, all fixed. The blocker's fix was re-checked and holds. Three minors are left from that re-check: the confined localisation run passes the full environment (the network is off); a comment in `brownfield.ts` overstates the git hardening; and a fallback scope file from the repository's own filenames is not re-validated before its import line is written. They are fixed first in B4.4.
+  - **Half B:** 5 majors, all fixed: new routes skipped per-project access; a split silently dropped criteria; slash commands leaked across projects; the voice guard was bypassable through suggestions; the release tagged main's current head.
+- **Gate:** `pnpm gate` on the committed tree: `tsc -b` and `biome check .` clean; vitest 501 files, 3767 passed, 37 skipped, exit 0.
+- **Where the cards stop:**
+  - B4.3 is done.
+  - **Partial, marked so in the specs:**
+    - the depth profile defaults to *internal tool* until B4.4's P14;
+    - auto-apply of suggestions (PM-N9-2) is B4.8/B4.10's;
+    - localisation has not yet run on a real Vitest project;
+    - the property-test seed is on the ledger but not in the gates' evidence;
+    - the upgrade card's tool step runs from the CLI verb, not the card runner.
+  - **Waiting on model loads:** the paired A/Bs of B4's Worker-visible changes, the baseline's remaining 10 runs, Smart Swap calibration.
+  - **Next:** B4.4, run as a workflow sized to the owner's 5-hour budget.
 
 ### Entry 46 — 2026-09-26 (B4.1 done: the first run for all three audiences, take-over's trust, recon and inventory, and the Configuration page with Smart Swap's models and the combination benchmark)
 

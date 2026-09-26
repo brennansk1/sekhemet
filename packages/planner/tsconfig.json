@@ -8,7 +8,9 @@
     { "path": "../kernel" },
     { "path": "../board" },
     { "path": "../context" },
+    { "path": "../gates" },
     { "path": "../models" },
+    { "path": "../sandbox" },
     { "path": "../sync" }
   ],
   "include": ["src/**/*"],

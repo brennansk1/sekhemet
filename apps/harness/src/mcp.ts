@@ -22,7 +22,12 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import type { BoardService } from "@sekhemet/board";
 import { DeterministicGateRunner, loadGatesConfig } from "@sekhemet/gates";
-import type { CardStore, CardTier, EventLog } from "@sekhemet/kernel";
+import {
+  type CardStore,
+  type CardTier,
+  type EventLog,
+  nearestCardEstimate,
+} from "@sekhemet/kernel";
 import { defaultRegistryPath } from "@sekhemet/models";
 import { ProcessSandbox } from "@sekhemet/sandbox";
 import { ledgerBundle } from "./accept.js";
@@ -149,6 +154,11 @@ const MCP_TOOLS: McpTool[] = [
     },
     handler: async (a, ctx) => {
       const tier = TIERS.includes(String(a.tier)) ? (a.tier as CardTier) : "task";
+      // PM_CONTRACT §2: the kernel refuses any estimate outside {1,2,3,5,8};
+      // map to the nearest allowed value rather than refuse the create, and
+      // keep the number given in the dossier.
+      const mappedEstimate =
+        typeof a.estimate === "number" ? nearestCardEstimate(a.estimate) : undefined;
       const card = await ctx.cardStore.createCard(
         {
           title: String(a.title),
@@ -160,11 +170,19 @@ const MCP_TOOLS: McpTool[] = [
             ? { acceptanceCriteria: a.acceptanceCriteria as string[] }
             : {}),
           ...(typeof a.priority === "number" ? { priority: a.priority } : {}),
-          ...(typeof a.estimate === "number" ? { estimate: a.estimate } : {}),
+          ...(mappedEstimate !== undefined ? { estimate: mappedEstimate } : {}),
           ...(Array.isArray(a.labels) ? { labels: a.labels as string[] } : {}),
         },
         "mcp",
       );
+      if (mappedEstimate !== undefined && mappedEstimate !== a.estimate) {
+        await ctx.cardStore.recordDossierEntry({
+          cardId: card.id,
+          kind: "note",
+          actor: "mcp",
+          text: `Estimate ${a.estimate as number} is not one of {1,2,3,5,8}; mapped to the nearest allowed value, ${mappedEstimate}.`,
+        });
+      }
       return `Created ${card.id}: ${card.title} [${card.status}]`;
     },
   },

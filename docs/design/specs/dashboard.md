@@ -156,6 +156,7 @@ The dashboard is where all three audiences meet Sekhemet. For **developers** it 
 - **Thread** — the card's ledger timeline in sentences (`/api/events?card=`, newest first, paged): created, moved, returned (note as a quote), parked, decisions, delegated, accepted with sha and whether the accept was independent, or auto-accepted with the name of the person whose standing decision allowed it ([review-git §2.5.6](review-git.md)).
 - **Files** — path, role (*May edit* / *Protected test* / *Outside scope*), `+/−`, gate failures per file; a row jumps to the file in Evidence.
 - Tabs with no data say so (*No steps yet. The Worker hasn't started this card.*).
+- **Waiting on approval** (planner-pm PM-N7-5): a card in Planning whose criteria no person has approved shows, above the tabs, *Waiting on your approval of its criteria*: each waiting card's criteria with their ids, its example rows (given → expected) and, by the depth profile, its example tables or test files, and one **Approve** button. Approve sends back the SHA-256 of what it showed (`POST /api/cards/:id/approve`, [PM_CONTRACT](../PM_CONTRACT.md)); a plan that changed since is refused and shown again. A Member's `issue.edit`.
 
 ### 2.7 Seshat: the panel and the full view
 
@@ -356,6 +357,7 @@ The pages the Team setup adds, and the Inbox both setups share ([DEC-35](../DECI
 | Decision request component | built | `decision.js` | — |
 | Gates strip readable at many gates and on a phone; no stage+failure badge; no synthesised gate | not-built | 14 gates overlap; "✕ Planning" (domain17 §2) | NEW-dashboard-1 |
 | Card view tabs, peek, palette, toasts, cheat sheet | built | `card.js`, `peek.js`, `palette.js`, `cheatsheet.js` | NEW-dashboard-2 (no behaviour tests) |
+| Card view: a planned card's criteria approved by a person (Approve, bound to the SHA-256 shown) | built | `approval.js`, `approval_view.js`, `card.js`; `packages/ui/tests/approval.spec.ts`, `plan_approval_api.spec.ts`, the card route `#/card/card_a11y_3` in `a11y.spec.ts` | PM-N7-5 |
 | Live Steps from `card/step`; streamed model output | partial | `card/step` written (`execute.ts:541`) and read (`dashboard_api.ts:233-243`); the server streams `event: tokens` (`server.ts:1164`, `execute.ts:486, 683`) but the page has no listener (`app.js:188-246`) | NEW-dashboard-3 |
 | Nine machine columns; five professional columns; pipeline toggle | partial | `BOARD_COLUMN_ORDER` (`vocabulary.ts:73`); the professional mapping exists only in the Jira export (`integrations.ts:274-284`) | P3 |
 | Tile anatomy: key, type, owner, delegate, epic, blocker cause, age | partial | Priority, labels, points on the tile (`tile.js:168-170`); no key (`shortId` slug, `vocabulary.ts:359`), no owner, delegate or epic, `blockedReason` never rendered, "40-step budget" (`vocabulary.ts:615`), cause truncated (`tile.js:171`) | P3 |

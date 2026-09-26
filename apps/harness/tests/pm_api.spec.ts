@@ -102,6 +102,40 @@ describe("PM and board-practice API", () => {
     expect((await post(`/api/pm/proposals/${proposal?.id}/apply`, {})).status).toBe(409);
   });
 
+  it("PM-N9-1, PM-N9-7: suggestions on an issue, Apply and Dismiss; the weekly draft, posted by a person", async () => {
+    const card = await cards.createCard({ tier: "task", title: "Search", status: "ready" });
+    const id = await cards.suggestions.propose({
+      cardId: card.id,
+      kind: "priority",
+      value: 1,
+      why: "Two issues wait on it",
+    });
+    const listed = (await (await fetch(`${base}/api/cards/${card.id}/suggestions`)).json()) as {
+      suggestions: { id: string; suggested: string; why: string }[];
+    };
+    expect(listed.suggestions).toEqual([
+      expect.objectContaining({
+        id,
+        suggested: "Suggested: priority Urgent for Search.",
+        why: "Two issues wait on it",
+      }),
+    ]);
+    expect((await cards.getCard(card.id))?.priority).toBe(0);
+    expect((await post(`/api/suggestions/${id}/apply`, {})).status).toBe(200);
+    expect((await cards.getCard(card.id))?.priority).toBe(1);
+    expect((await post(`/api/suggestions/${id}/dismiss`, {})).status).toBe(409);
+
+    const draft = (await (await fetch(`${base}/api/pm/update-draft`)).json()) as {
+      draft: { text: string; parts: Record<string, string> };
+    };
+    expect(Object.keys(draft.draft.parts)).toEqual(["status", "done", "next", "risks", "asks"]);
+    const project = (await cards.ensureProject({ name: "Api", rootPath: repo })).id;
+    expect((await post(`/api/projects/${project}/update`, { text: "" })).status).toBe(400);
+    expect((await post(`/api/projects/${project}/update`, { text: draft.draft.text })).status).toBe(
+      200,
+    );
+  });
+
   it("refuses chat and edits that do not come from the dashboard", async () => {
     const res = await fetch(`${base}/api/pm/messages`, {
       method: "POST",
@@ -124,6 +158,15 @@ describe("PM and board-practice API", () => {
     expect(body.card.estimate).toBe(5);
     expect(body.card.dueDate).toBe("2026-10-01");
     expect(body.ignored).toEqual(["priority"]);
+  });
+
+  it("PM_CONTRACT §2: an out-of-scale estimate PATCH is mapped, not refused, and noted in the dossier", async () => {
+    const res = await post(`/api/cards/${ledgerId}`, { estimate: 13 }, "PATCH");
+    const body = (await res.json()) as { card: { estimate: number }; ignored?: string[] };
+    expect(body.ignored ?? []).toEqual([]);
+    expect(body.card.estimate).toBe(8);
+    const dossier = await cards.getDossier(ledgerId);
+    expect(dossier.notes.map((n) => n.text).join("\n")).toContain("Estimate 13");
   });
 
   it("creates cycles and reports them on the board", async () => {

@@ -1,4 +1,4 @@
-import type { CardRecord, ExternalRef } from "@sekhemet/kernel";
+import { type CardRecord, type ExternalRef, nearestCardEstimate } from "@sekhemet/kernel";
 import { DELEGATE_LABEL } from "@sekhemet/sync";
 import type { ProposalDraft } from "./pm/agent.js";
 
@@ -133,17 +133,29 @@ function csvRows(format: string, content: string): { rows: Row[]; system?: "jira
     if (!t) continue;
     const p = prio >= 0 ? pickPriority(r[prio] ?? "") : undefined;
     const e = est >= 0 ? Number(r[est]) : Number.NaN;
+    // PM_CONTRACT §2: the kernel refuses any estimate outside {1,2,3,5,8}.
+    // A Jira (or other) import's own scale is mapped to the nearest allowed
+    // value rather than failing the import; the imported number is kept in
+    // the card's description, since it is otherwise lost.
+    const mappedEstimate = Number.isFinite(e) && e > 0 ? nearestCardEstimate(e) : undefined;
     const l = labels >= 0 ? (r[labels] ?? "").split(/[,\s]+/).filter(Boolean) : [];
     const d = due >= 0 ? (r[due] ?? "").trim() : "";
     const sid = sekhemet >= 0 ? r[sekhemet]?.trim() : undefined;
     const k = (key >= 0 ? r[key]?.trim() : undefined) || sid;
     const u = url >= 0 ? r[url]?.trim() : undefined;
+    const spec = desc >= 0 ? r[desc]?.trim() : undefined;
+    const estimateNote =
+      mappedEstimate !== undefined && mappedEstimate !== e
+        ? `Imported story points: ${e} (mapped to the nearest allowed value, ${mappedEstimate}).`
+        : undefined;
     out.push({
       fields: {
         title: t.slice(0, 300),
-        ...(desc >= 0 && r[desc]?.trim() ? { spec: r[desc]?.trim() } : {}),
+        ...(spec || estimateNote
+          ? { spec: [spec, estimateNote].filter(Boolean).join("\n\n") }
+          : {}),
         ...(p !== undefined ? { priority: p } : {}),
-        ...(Number.isFinite(e) && e > 0 ? { estimate: e } : {}),
+        ...(mappedEstimate !== undefined ? { estimate: mappedEstimate } : {}),
         ...(l.length ? { labels: l } : {}),
         ...(/^\d{4}-\d{2}-\d{2}/.test(d) ? { dueDate: d.slice(0, 10) } : {}),
       },

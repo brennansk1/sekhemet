@@ -15,8 +15,16 @@ import {
   type ToolDefinition,
   stripReasoning,
 } from "@sekhemet/models";
+import { type StoryMap, guardCompletionClaim } from "@sekhemet/planner";
 import type { ResearchAnswer } from "../research/researcher.js";
 import { formatHits, searchLibraries } from "./libraries.js";
+import {
+  DUPLICATE_OF_DESCRIPTION,
+  PROPOSE_SPLIT_CARD_DESCRIPTION,
+  START_PROJECT_DESCRIPTION,
+  pmSystemPromptText,
+  splitSuggestedSummary,
+} from "./pm_copy.js";
 import type { Cycle, PmCite, PmMessage, PmProposal } from "./types.js";
 
 /** What the PM can see when it answers. Built by the caller from the live board. */
@@ -45,6 +53,17 @@ export interface PmSnapshot {
    * with the forms it could be restated in (gates rule 26, GT-N1-1).
    */
   unenforcedInvariants?: { line: string; restate: string[] }[];
+  /**
+   * The requirement graph as computed from the ledger (planner-pm §2.15):
+   * must-haves proven, unplanned, whether the project is done. A model's
+   * claim of "complete" or "ready" is checked against it (PM-P13-6, -14).
+   */
+  storyMap?: StoryMap;
+  /**
+   * The decisions waiting, each naming its person and, where one applies,
+   * the default and its deadline (PM-N9-5).
+   */
+  decisions?: string[];
   today: string;
 }
 
@@ -76,20 +95,11 @@ const STATUS_ORDER = [
 /**
  * The PM's standing brief. It is written as the role a good engineering
  * manager plays: outcome first, numbers over adjectives, risks named early,
- * and never a silent change to the board.
+ * and never a silent change to the board. The text itself lives in the PM's
+ * copy module (`pm_copy.ts`, CX-M1-13), out of the literal inventory's way.
  */
 export function pmSystemPrompt(s: PmSnapshot): string {
-  return `You are the project manager for "${s.project}", working with the human who leads it. You run on ${s.pmModel}. The code is written by the Worker, a local model (${s.worker?.model ?? "unknown"}); every card it finishes must pass executable gates (types, lint, tests, size) and then be accepted by the human.
-
-How you work:
-- Answer like a senior engineering manager: lead with the answer, then the reason, then the detail. Plain, exact, calm. Use numbers from the board, not adjectives. No filler, no exclamation marks.
-- Ground every claim in the board and run data below. If the data does not say, say you do not know and what would tell you.
-- You never change the board yourself. To change it, call a propose_* tool: the human sees a diff and applies or discards it. Explain each proposal in one sentence in your reply.
-- Plan for the Worker you have, using its measured record under WORKER CAPABILITY. Cards should touch at most 3 files and 200 lines. Propose a split when a card is larger than the Worker's 80% size horizon, or its kind has a low measured pass rate, or the Worker failed or looped on it: split or clarify, do not just retry. Treat small samples as ranges, not facts.
-- Priority uses Linear's scale: 1 Urgent, 2 High, 3 Medium, 4 Low, 0 none. Estimates are points: 1, 2, 3, 5, 8.
-- Refer to cards by title with their id in backticks, e.g. "Ledger (\`card_chron_ledger\`)".
-- Before proposing a card that builds something general (parsing, validation, HTTP, dates, retries, CLI args...), call find_library. Recommend only packages marked usable (permissive licence) and put the package in the card's spec, so the Worker uses it instead of reinventing it.
-- Keep replies short: a few sentences, or a short list for standups and plans.`;
+  return pmSystemPromptText(s);
 }
 
 function cardLine(c: CardRecord): string {
@@ -210,6 +220,7 @@ export const PM_TOOLS: ToolDefinition[] = [
         labels: { type: "array", items: str },
         cycle_id: str,
         assignee: str,
+        duplicate_of: { type: "string", description: DUPLICATE_OF_DESCRIPTION },
         due_date: { type: "string", description: "YYYY-MM-DD" },
         reason: str,
       },
@@ -238,8 +249,7 @@ export const PM_TOOLS: ToolDefinition[] = [
   },
   {
     name: "propose_split_card",
-    description:
-      "Propose splitting a card that is too large or that the Worker failed on into smaller cards. The original is parked.",
+    description: PROPOSE_SPLIT_CARD_DESCRIPTION,
     parameters: {
       type: "object",
       properties: {
@@ -252,6 +262,7 @@ export const PM_TOOLS: ToolDefinition[] = [
               title: str,
               spec: str,
               scope_files: { type: "array", items: str },
+              acceptance_criteria: { type: "array", items: str },
               estimate: num,
             },
             required: ["title", "spec"],
@@ -260,6 +271,15 @@ export const PM_TOOLS: ToolDefinition[] = [
         reason: str,
       },
       required: ["card_id", "parts", "reason"],
+    },
+  },
+  {
+    name: "start_project",
+    description: START_PROJECT_DESCRIPTION,
+    parameters: {
+      type: "object",
+      properties: { brief: str, reason: str },
+      required: ["brief", "reason"],
     },
   },
   {
@@ -319,8 +339,12 @@ const UPDATE_FIELDS: [string, string, (v: unknown) => unknown][] = [
   ["labels", "labels", asStrings],
   ["cycle_id", "cycleId", asString],
   ["assignee", "assignee", asString],
+  ["duplicate_of", "duplicateOf", asString],
   ["due_date", "dueDate", asString],
 ];
+
+/** The fields a change to which is a suggestion on the issue, one each (PM-N9-1). */
+const SUGGESTIBLE = ["priority", "labels", "assignee", "duplicateOf"];
 
 /**
  * Turn the model's tool calls into proposals, dropping anything invalid.
@@ -330,16 +354,33 @@ const UPDATE_FIELDS: [string, string, (v: unknown) => unknown][] = [
  * the human would have to reason about.
  */
 const shortTitle = (t: string) => t.replace(/\s*\(SPIDR:[^)]*\)\s*$/, "");
-/** "the API waits on it" -> ". The API waits on it." */
-const because = (reason: string) =>
-  reason ? `. ${reason.charAt(0).toUpperCase()}${reason.slice(1).replace(/[.\s]+$/, "")}.` : "";
+/** "the API waits on it" -> "The API waits on it" (PM-N9-4: every proposal carries it). */
+const whyOf = (reason: string) =>
+  `${reason.charAt(0).toUpperCase()}${reason.slice(1).replace(/[.\s]+$/, "")}`;
+const because = (why: string) => `. Why: ${why}.`;
+const PRIORITY_NAME = ["No priority", "Urgent", "High", "Medium", "Low"];
+
+/** The model's tool calls as proposals, and how many were left out for giving no reason. */
+export function proposalsFrom(
+  calls: ToolCall[],
+  cards: CardRecord[],
+): { proposals: ProposalDraft[]; unreasoned: number } {
+  const proposing = calls.filter(
+    (c) => c.name.startsWith("propose_") || c.name === "start_project",
+  );
+  const unreasoned = proposing.filter((c) => !asString(c.arguments?.reason)).length;
+  return { proposals: toProposals(calls, cards), unreasoned };
+}
 
 export function toProposals(calls: ToolCall[], cards: CardRecord[]): ProposalDraft[] {
   const byId = new Map(cards.map((c) => [c.id, c]));
   const out: ProposalDraft[] = [];
   for (const call of calls) {
     const a = call.arguments ?? {};
-    const reason = asString(a.reason) ?? "";
+    const reason = asString(a.reason);
+    // PM-N9-4: a proposal without a reason is not offered.
+    if (!reason) continue;
+    const why = whyOf(reason);
     if (call.name === "propose_update_card") {
       const card = byId.get(String(a.card_id));
       if (!card) continue;
@@ -354,12 +395,38 @@ export function toProposals(calls: ToolCall[], cards: CardRecord[]): ProposalDra
         before[field] = current ?? null;
       }
       if (Object.keys(patch).length === 0) continue;
+      const title = shortTitle(card.title);
+      // PM-N9-1: each triage property is its own suggestion on the issue.
+      for (const field of SUGGESTIBLE) {
+        if (!(field in patch)) continue;
+        const value = patch[field];
+        const what =
+          field === "priority"
+            ? `priority ${PRIORITY_NAME[value as number] ?? value} for ${title}`
+            : field === "labels"
+              ? `label ${title} ${(value as string[]).join(", ")}`
+              : field === "assignee"
+                ? `assign ${title} to ${String(value)}`
+                : `mark ${title} a duplicate of ${String(value)}`;
+        out.push({
+          kind: "update_card",
+          cardId: card.id,
+          patch: { [field]: value },
+          before: field === "duplicateOf" ? {} : { [field]: before[field] },
+          why,
+          summary: `Suggested: ${what}${because(why)}`,
+        });
+        delete patch[field];
+        delete before[field];
+      }
+      if (Object.keys(patch).length === 0) continue;
       out.push({
         kind: "update_card",
         cardId: card.id,
         patch,
         before,
-        summary: `Update ${shortTitle(card.title)}: ${Object.keys(patch).join(", ")}${because(reason)}`,
+        why,
+        summary: `Update ${title}: ${Object.keys(patch).join(", ")}${because(why)}`,
       });
     } else if (call.name === "propose_create_card") {
       const title = asString(a.title);
@@ -379,7 +446,8 @@ export function toProposals(calls: ToolCall[], cards: CardRecord[]): ProposalDra
       out.push({
         kind: "create_card",
         cards: [draft],
-        summary: `Create ${title}${because(reason)}`,
+        why,
+        summary: `Create ${title}${because(why)}`,
       });
     } else if (call.name === "propose_split_card") {
       const card = byId.get(String(a.card_id));
@@ -391,6 +459,7 @@ export function toProposals(calls: ToolCall[], cards: CardRecord[]): ProposalDra
                 title: asString(p.title),
                 spec: asString(p.spec),
                 scopeFiles: asStrings(p.scope_files),
+                acceptanceCriteria: asStrings(p.acceptance_criteria),
                 estimate: asNumber(p.estimate),
               })
             : undefined,
@@ -402,7 +471,13 @@ export function toProposals(calls: ToolCall[], cards: CardRecord[]): ProposalDra
         kind: "split_card",
         cardId: card.id,
         cards: drafts,
-        summary: `Split ${shortTitle(card.title)} into ${drafts.length} cards${points ? ` (${points} pts)` : ""}${because(reason)}`,
+        why,
+        summary: splitSuggestedSummary(
+          shortTitle(card.title),
+          drafts.length,
+          points ? ` (${points} pts)` : "",
+          because(why),
+        ),
       });
     } else if (call.name === "propose_move_card") {
       const card = byId.get(String(a.card_id));
@@ -414,7 +489,8 @@ export function toProposals(calls: ToolCall[], cards: CardRecord[]): ProposalDra
         cardId: card.id,
         patch: { status: to },
         before: { status: card.status },
-        summary: `Move ${shortTitle(card.title)} to ${to}${because(reason)}`,
+        why,
+        summary: `Move ${shortTitle(card.title)} to ${to}${because(why)}`,
       });
     } else if (call.name === "propose_create_cycle") {
       const name = asString(a.name);
@@ -426,7 +502,18 @@ export function toProposals(calls: ToolCall[], cards: CardRecord[]): ProposalDra
       out.push({
         kind: "create_cycle",
         patch: { name, startsOn, endsOn, ...(goal ? { goal } : {}), cardIds },
-        summary: `Plan cycle ${name} (${startsOn} to ${endsOn})${cardIds.length ? ` with ${cardIds.length} cards` : ""}${because(reason)}`,
+        why,
+        summary: `Plan cycle ${name} (${startsOn} to ${endsOn})${cardIds.length ? ` with ${cardIds.length} cards` : ""}${because(why)}`,
+      });
+    } else if (call.name === "start_project") {
+      const brief = asString(a.brief);
+      if (!brief) continue;
+      const short = brief.length > 80 ? `${brief.slice(0, 77)}…` : brief;
+      out.push({
+        kind: "start_project",
+        patch: { brief },
+        why,
+        summary: `Start a project: ${short}${because(why)}`,
       });
     }
   }
@@ -556,6 +643,14 @@ export function seshatSections(
       minTokens: 200,
     }),
     section("cycles", "notice", `CYCLES\n${cycles}`, 35),
+    section(
+      "decisions",
+      "notice",
+      s.decisions?.length
+        ? `DECISIONS WAITING\n${s.decisions.map((d) => `- ${d}`).join("\n")}`
+        : "",
+      62,
+    ),
     section(
       "runs",
       "history_old",
@@ -737,13 +832,20 @@ export async function answer(
   calls.push(
     ...res.toolCalls.filter((c) => c.name !== "find_library" && c.name !== "ask_researcher"),
   );
-  const proposals = toProposals(calls, snapshot.cards);
-  let text = stripThinking(res.text);
+  const { proposals, unreasoned } = proposalsFrom(calls, snapshot.cards);
+  // PM-P13-6, -14: a claim that the project, a slice or a release is
+  // complete or ready changes nothing; while a must-have is unproven the
+  // reply states the proven count instead.
+  let text = guardCompletionClaim(stripThinking(res.text), snapshot.storyMap).text;
   if (!text) {
     text =
       proposals.length > 0
         ? `I have ${proposals.length} proposed change${proposals.length > 1 ? "s" : ""} for you to review.`
         : "I could not produce an answer to that. Could you rephrase it or point me at a card?";
+  }
+  // PM-N9-4: said, not silently dropped.
+  if (unreasoned > 0) {
+    text = `${text}\n\n${unreasoned === 1 ? "One proposed change was left out because it gave no reason." : `${unreasoned} proposed changes were left out because they gave no reason.`}`;
   }
   const seen = new Set<string>();
   const sources = researchCites.filter((c) => {
@@ -828,6 +930,17 @@ export function ledgerStandup(s: PmSnapshot): string {
   const ready = [...by("ready")].sort((a, b) => (a.priority || 9) - (b.priority || 9));
   if (ready.length) lines.push(`Next up: ${ready.slice(0, 3).map(name).join(", ")}.`);
   lines.push(`Done: ${by("done").length} of ${s.cards.length} cards.`);
+  // PM-P13-3, -8: the must-haves proven and the unplanned ones, from the ledger.
+  const map = s.storyMap;
+  if (map && map.slices.length > 0) {
+    lines.push(
+      `${map.provenLine}.${map.unplanned.length ? ` Unplanned: ${map.unplanned.map((r) => r.id).join(", ")}.` : ""}${map.projectDone ? " The project is done: a person accepted its last slice." : ""}`,
+    );
+    const waiting = map.slices.filter((x) => x.state === "proven");
+    if (waiting.length) {
+      lines.push(`Proven, waiting for your acceptance: ${waiting.map((x) => x.id).join(", ")}.`);
+    }
+  }
   if (s.forecast) lines.push(`Forecast: ${s.forecast}`);
   if (s.worker) lines.push(`Worker record: ${s.worker.record}`);
   // GT-N1-1: an invariant no gate checks is said, never silently assumed to hold.

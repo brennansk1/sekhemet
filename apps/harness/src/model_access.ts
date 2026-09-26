@@ -33,6 +33,7 @@ import {
   tierSettingsOf,
   withMeasurementRun,
 } from "@sekhemet/models";
+import { type Zone3Card, workerPromptBudget, zone3Fit } from "@sekhemet/planner";
 import { defaultWorkerName } from "./config_apply.js";
 
 /**
@@ -219,6 +220,45 @@ export function resolveWorkerName(
   opts: { registry: ModelRegistry; host?: string },
 ): string {
   return roleModelName("worker", flag, opts) ?? configured ?? defaultWorkerName();
+}
+
+/**
+ * The board's `ready` entry check (PM-12..14, K-N5-7): the planner's own
+ * `zone3Fit` at the resolved Worker's W, so INVEST's Small and the board are
+ * one computation. The Worker is resolved once, on the first card measured.
+ */
+export function workerZone3Fit(
+  repoPath: string,
+  opts: { registry: ModelRegistry; configured?: string | undefined; host?: string },
+): (card: Zone3Card) => { tokens: number; cap: number } {
+  let promptBudgetTokens: number | undefined;
+  return (card) => {
+    promptBudgetTokens ??= workerPromptBudget(resolvedWorkerWindowTokens(opts));
+    return zone3Fit(card, { repoRoot: repoPath, promptBudgetTokens });
+  };
+}
+
+/**
+ * The resolved Worker's context window, as its adapter reads it from the
+ * registry (models NEW-models-4): the window INVEST's Small is computed at,
+ * for the planner and the board alike (PM-13).
+ */
+export function resolvedWorkerWindowTokens(opts: {
+  registry: ModelRegistry;
+  configured?: string | undefined;
+  host?: string;
+}): number {
+  const name = resolveWorkerName(undefined, opts.configured, {
+    registry: opts.registry,
+    ...(opts.host ? { host: opts.host } : {}),
+  });
+  const window = describeModel(name, "worker", { registry: opts.registry }).contextWindow;
+  // PM-13: no fixed default — a Worker with no known window cannot be measured against.
+  if (!window)
+    throw new Error(
+      `The Worker ${name} has no context window in the registry, so INVEST's Small cannot be checked; qualify it first.`,
+    );
+  return window.contextTokens;
 }
 
 function hostMemory(): { usableBytes: number; coResident: boolean } {

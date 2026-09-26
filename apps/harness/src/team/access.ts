@@ -1,4 +1,5 @@
 import type { ServerResponse } from "node:http";
+import { posix } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import type { EventLog } from "@sekhemet/kernel";
 import { CONFIG_ROUTES } from "../config_routes.js";
@@ -81,6 +82,10 @@ export const ACTIONS = {
   "queue.caps": { level: "admin", does: "set the queue's caps" },
   "audit.view": { level: "admin", does: "open the audit view" },
   "playbook.approve_all": { level: "admin", does: "approve a Playbook rule for all projects" },
+  // PM_CONTRACT: "In the Team setup only the project's lead or an Admin" (teams item 6).
+  "project.update": { level: "admin", lead: true, does: "post this project's update" },
+  // Teams item 6: brief acceptance is the project's Admin or lead, like its settings.
+  "brief.accept": { level: "admin", lead: true, does: "accept a brief" },
 } as const satisfies Record<string, ActionRule>;
 
 export type Permission = keyof typeof ACTIONS;
@@ -587,6 +592,10 @@ export interface RouteRule {
   cardId?: string | undefined;
   projectId?: string | undefined;
   decisionId?: string | undefined;
+  /** B4.3: the caller resolves these to a project (slice's, requirement's or suggestion's card's). */
+  sliceId?: string | undefined;
+  requirementId?: string | undefined;
+  suggestionId?: string | undefined;
   /** The permissions depend on the JSON body: read it, then ask again with it. */
   needsBody?: true;
 }
@@ -657,6 +666,8 @@ const ROUTES: [methods: string[], pattern: RegExp, resolve: Resolver][] = [
   [["POST"], new RegExp(`^/api/cards/(${CARD})/message$`), fixed("agent.guide", "card")],
   [["POST"], new RegExp(`^/api/cards/(${CARD})/(rewind|fork|run)$`), fixed("agent.start", "card")],
   [["POST"], new RegExp(`^/api/cards/(${CARD})/reroute$`), fixed("issue.edit", "card")],
+  // PM-N7-5: a person's approval of a plan's criteria is a Member's edit.
+  [["POST"], new RegExp(`^/api/cards/(${CARD})/approve$`), fixed("issue.edit", "card")],
   [["POST"], new RegExp(`^/api/cards/(${CARD})/reorder$`), fixed("priority.change", "card")],
   [
     ["POST", "PATCH"],
@@ -756,6 +767,51 @@ const ROUTES: [methods: string[], pattern: RegExp, resolve: Resolver][] = [
   [["POST"], /^\/api\/projects$/, fixed("project.create")],
   // Gates rule 31 (GT-N4-1): a new visual baseline is a person's approval.
   [["POST"], /^\/api\/visual\/baselines\/[\w.-]+\/approve$/, fixed("accept")],
+  // B4.3 (TEAM-4): a slice's acceptance is the project's Accept rule, like accepting a card.
+  [
+    ["POST"],
+    /^\/api\/slices\/([\w.-]+)\/accept$/,
+    (m) => ({ permissions: ["accept"], sliceId: m[1] }),
+  ],
+  [
+    ["POST"],
+    /^\/api\/slices\/([\w.-]+)\/extend$/,
+    (m) => ({ permissions: ["scope.change"], sliceId: m[1] }),
+  ],
+  [
+    ["POST"],
+    /^\/api\/requirements\/([\w.-]+)\/(?:cut|revise)$/,
+    (m) => ({ permissions: ["scope.change"], requirementId: m[1] }),
+  ],
+  [
+    ["POST"],
+    /^\/api\/requirements\/([\w.-]+)\/confirm$/,
+    (m) => ({ permissions: ["accept"], requirementId: m[1] }),
+  ],
+  [
+    ["POST"],
+    /^\/api\/suggestions\/([\w.-]+)\/(?:apply|dismiss)$/,
+    (m) => ({ permissions: ["proposal.apply"], suggestionId: m[1] }),
+  ],
+  // PM_CONTRACT: the weekly update is posted by the project's lead or an Admin.
+  [
+    ["POST"],
+    new RegExp(`^/api/projects/(${PROJ})/update$`),
+    (m) => ({ permissions: ["project.update"], projectId: m[1] }),
+  ],
+  // Teams item 6: brief acceptance is the project's Admin or lead; the body
+  // names the project (checked to exist before it grounds a decision, below).
+  [
+    ["POST"],
+    /^\/api\/brief\/accept$/,
+    (_m, body) =>
+      body === undefined
+        ? { permissions: [], needsBody: true }
+        : {
+            permissions: ["brief.accept"],
+            ...(typeof body.projectId === "string" ? { projectId: body.projectId } : {}),
+          },
+  ],
   // The Configuration page (B4.1, dashboard DB-N6-15): each change needs its
   // route's permission — `config.manage` (an Admin), review capacity `review.capacity`.
   ...CONFIG_ROUTES.filter((r) => r.method !== "GET").map((r): [string[], RegExp, Resolver] => [
@@ -795,7 +851,7 @@ export function routePermissions(
   return url.startsWith("/api/") ? { permissions: ["issue.edit"] } : undefined;
 }
 
-/** Whether a path is under `/api/config` once decoded, lower-cased and its slashes collapsed. */
+/** Whether a path is under `/api/config` once decoded, lower-cased, its slashes collapsed and its dot segments resolved. */
 function readsAsConfigPath(url: string): boolean {
   let path = url;
   try {
@@ -803,5 +859,7 @@ function readsAsConfigPath(url: string): boolean {
   } catch {
     // A malformed escape: read the raw path.
   }
-  return /^\/api\/config(?:\/|$)/.test(path.toLowerCase().replace(/\/+/g, "/"));
+  // Dot segments resolve as a URL's do (`/api/./config`, `/api/x/../config`).
+  const resolved = posix.normalize(path.toLowerCase().replace(/\/+/g, "/"));
+  return /^\/api\/config(?:\/|$)/.test(resolved);
 }

@@ -10,7 +10,8 @@ export function kindTags(kinds = [], extraClass = "kind") {
     .map((k) => {
       const meta = KIND_LABELS[k];
       if (!meta) return "";
-      return `<span class="${extraClass}" title="${esc(`${meta.label}: ${meta.tooltip.charAt(0).toLowerCase()}${meta.tooltip.slice(1)}`)}">${esc(meta.label)}</span>`;
+      // The explanation is reachable without hovering (DB-P12-6): `tip` sets it as the description too.
+      return `<span class="${extraClass}" ${tip(`${meta.label}: ${meta.tooltip.charAt(0).toLowerCase()}${meta.tooltip.slice(1)}`)}>${esc(meta.label)}</span>`;
     })
     .join("");
 }

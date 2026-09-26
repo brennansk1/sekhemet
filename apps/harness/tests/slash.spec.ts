@@ -5,8 +5,9 @@ import { DatabaseSync } from "node:sqlite";
 import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import type { InferenceRequest, LocalInferenceAdapter } from "@sekhemet/models";
 import { beforeEach, describe, expect, it } from "vitest";
+import type { Audience } from "../src/pm/audience.js";
 import { answerQueued } from "../src/pm/service.js";
-import { parseSlash } from "../src/pm/slash.js";
+import { parseSlash, runSlash } from "../src/pm/slash.js";
 import { PmStore } from "../src/pm/store.js";
 
 describe("slash commands in Seshat's chat (H16)", () => {
@@ -119,12 +120,91 @@ describe("slash commands in Seshat's chat (H16)", () => {
     expect((await lastReply())?.text).toMatch(/No Researcher is configured/);
   });
 
-  it("forwards /plan to Seshat as the request it stands for", async () => {
+  it("PM-P1-1: /plan runs the one planner, not a free-form request to Seshat", async () => {
     await pm.appendUserMessage("/plan an HTTP API for the ledger");
     await run();
-    expect(loads).toBe(1);
-    expect(prompts.join("\n")).toMatch(
-      /Plan this feature into cards, each at most 3 files .*an HTTP API for the ledger/,
-    );
+    // No Planner model given: the heuristic plans, loading nothing, and says so.
+    expect(loads).toBe(0);
+    expect(prompts).toEqual([]);
+    expect((await lastReply())?.text).toMatch(/^Planned without a model|Planned without a model/m);
+  });
+
+  describe("PM-N9-8: slash commands are scoped by the audience; a hidden card reads as missing", () => {
+    const ASKER = "p_asker";
+    let audience: Audience;
+
+    beforeEach(async () => {
+      // A second project's card, hidden from the asker (only "proj_visible" is theirs).
+      await cards.createCard({
+        id: "card_secret_widget",
+        tier: "task",
+        title: "Widget",
+        status: "backlog",
+        projectId: "proj_hidden",
+        acceptanceCriteria: ["builds a widget"],
+      });
+      await cards.updateCard("card_chron_hasher", { projectId: "proj_visible" }, "human");
+      audience = {
+        setup: "team",
+        nameOf: () => undefined,
+        levelOf: () => "member",
+        canSee: (_p, project) => project === "proj_visible",
+        leadOf: () => undefined,
+      };
+    });
+
+    it("/forecast and /capability count only the asker's visible cards", async () => {
+      const all = await runSlash(
+        { name: "forecast", args: "" },
+        { cardStore: cards, pmStore: pm, repoPath: repo },
+      );
+      expect(all).toMatchObject({ reply: expect.stringMatching(/^2 open/) });
+      const scoped = await runSlash(
+        { name: "forecast", args: "" },
+        { cardStore: cards, pmStore: pm, repoPath: repo, audience, asker: ASKER },
+      );
+      expect(scoped).toMatchObject({ reply: expect.stringMatching(/^1 open/) });
+    });
+
+    it("/ready, /park and /backlog cannot resolve a card the asker cannot see", async () => {
+      const hidden = await runSlash(
+        { name: "ready", args: "secret_widget" },
+        { cardStore: cards, pmStore: pm, repoPath: repo, audience, asker: ASKER },
+      );
+      expect(hidden).toEqual({ reply: 'No card matches "secret_widget".' });
+      expect((await cards.getCard("card_secret_widget"))?.status).toBe("backlog");
+      const visible = await runSlash(
+        { name: "ready", args: "hasher" },
+        { cardStore: cards, pmStore: pm, repoPath: repo, audience, asker: ASKER },
+      );
+      expect(visible).toEqual({ reply: "Moved card_chron_hasher to Ready." });
+    });
+
+    it("TEAM-40, TEAM-6: /ready is checked at the named card's own project level, not the workspace one", async () => {
+      // A Viewer workspace-wide, raised to Member on proj_visible only.
+      const perProject: Audience = {
+        setup: "team",
+        nameOf: () => undefined,
+        levelOf: (_p, project) => (project === "proj_visible" ? "member" : "viewer"),
+        canSee: () => true,
+        leadOf: () => undefined,
+      };
+      await EventLog.actingFor(ASKER, () => pm.appendUserMessage("/ready hasher"));
+      await run({ audience: perProject });
+      expect((await cards.getCard("card_chron_hasher"))?.status).toBe("ready");
+      // A card on a project where the override does not reach: refused.
+      await cards.createCard({
+        id: "card_other_widget",
+        tier: "task",
+        title: "Other widget",
+        status: "backlog",
+        projectId: "proj_hidden",
+        acceptanceCriteria: ["builds a widget"],
+      });
+      await EventLog.actingFor(ASKER, () => pm.appendUserMessage("/ready other_widget"));
+      await run({ audience: perProject });
+      expect((await lastReply())?.text).toMatch(/a Member can run \/ready/);
+      expect((await cards.getCard("card_other_widget"))?.status).toBe("backlog");
+    });
   });
 });

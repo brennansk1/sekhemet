@@ -107,7 +107,13 @@ describe("native multi-turn messages", () => {
 
   it("without messages the request is unchanged, and parallel_tool_calls needs tools", async () => {
     stubFetch({ choices: [{ message: { content: "ok" } }] });
-    const adapter = new HttpInferenceAdapter({ modelId: "m", apiFormat: "openai", maxRetries: 0 });
+    // A stubbed fetch at a port of its own: the default Ollama port is refused in tests (load_guard).
+    const adapter = new HttpInferenceAdapter({
+      baseUrl: "http://127.0.0.1:8101",
+      modelId: "m",
+      apiFormat: "openai",
+      maxRetries: 0,
+    });
     await adapter.generate({ systemPrompt: "S", prompt: "P", toolArm: "arm_a_flat" });
     const body = bodies[0] as Record<string, unknown>;
     expect(body.messages).toEqual([
@@ -120,6 +126,7 @@ describe("native multi-turn messages", () => {
   it("Ollama: tool turns keep role tool, named by the call they answer; arguments stay objects", async () => {
     stubFetch({ message: { content: "done" }, prompt_eval_count: 1, eval_count: 1 });
     const adapter = new HttpInferenceAdapter({
+      baseUrl: "http://127.0.0.1:8101",
       modelId: "r",
       apiFormat: "ollama",
       maxRetries: 0,

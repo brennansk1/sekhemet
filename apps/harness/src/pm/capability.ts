@@ -7,6 +7,7 @@ import {
   firstModelAttempts,
   readAttemptOutcomes,
 } from "@sekhemet/kernel";
+import { capabilityModel } from "@sekhemet/planner";
 
 /**
  * The Worker's measured competence, from this repo's own attempt records.
@@ -26,6 +27,10 @@ export interface CapabilityReport {
     rate: number;
     low: number;
     high: number;
+    /** Fewer first attempts than the fit needs (PM-N3-3): only the static bounds apply. */
+    rough: boolean;
+    /** The planner's fitted 80% horizon for the kind, in changed lines (PM-N3-1). */
+    horizon80Lines?: number;
   }[];
   sizeCurve: { maxLines: number; attempts: number; rate: number }[];
   /** Largest change size at which first attempts still pass 80% (>=3 samples). */
@@ -44,17 +49,21 @@ export function wilson(k: number, n: number, z = 1.96): { low: number; high: num
 }
 
 const KIND_LABEL: Record<string, string> = {
-  Interface: "Contract",
-  Data: "Storage",
-  Path: "Flow",
-  Rule: "Rules",
-  Spike: "Spike",
+  interface: "Contract",
+  data: "Storage",
+  implement: "Flow",
+  rule: "Rules",
+  spike: "Spike",
+  review: "Review",
+  research: "Research",
 };
 
-/** The card's kind, from its SPIDR suffix ("Rule & Path" counts as its first kind). */
-export function cardKind(card?: Pick<CardRecord, "title" | "labels">): string {
-  const m = card ? /\(SPIDR:\s*([A-Za-z]+)/.exec(card.title) : null;
-  return m?.[1] ?? "Other";
+/**
+ * The card's kind, from its stored `kind` field (PM-P1-10, DEC-26), never
+ * from its title; a card created before kinds were stored is "Other".
+ */
+export function cardKind(card?: Pick<CardRecord, "kind">): string {
+  return card?.kind ?? "Other";
 }
 
 interface FirstAttempt {
@@ -106,9 +115,12 @@ export function capabilityReport(
     const kind = cardKind(byId.get(a.cardId));
     groups.set(kind, [...(groups.get(kind) ?? []), a]);
   }
+  // NEW-planner-pm-3: the planner's own fit, so Seshat and the split rule agree.
+  const fitted = capabilityModel(outcomes, cards).kinds;
   const types = [...groups]
     .map(([type, list]) => {
       const passes = list.filter((a) => a.passed).length;
+      const fit = fitted[type];
       return {
         type,
         label: KIND_LABEL[type] ?? type,
@@ -116,6 +128,8 @@ export function capabilityReport(
         passes,
         rate: round(passes / list.length),
         ...wilson(passes, list.length),
+        rough: fit ? fit.rough : true,
+        ...(fit?.horizon80Lines !== undefined ? { horizon80Lines: fit.horizon80Lines } : {}),
       };
     })
     .sort((a, b) => b.attempts - a.attempts);
@@ -157,10 +171,16 @@ export function capabilityReport(
 export function capabilitySummary(report: CapabilityReport): string {
   if (report.sampleSize === 0) return "no measured attempts yet";
   const kinds = report.types
-    .map(
-      (t) =>
-        `${t.label} ${t.passes}/${t.attempts} (95% CI ${Math.round(t.low * 100)}-${Math.round(t.high * 100)}%)`,
-    )
+    .map((t) => {
+      const ci = `95% CI ${Math.round(t.low * 100)}-${Math.round(t.high * 100)}%`;
+      // PM-N3-3: under the minimum only the static bounds apply, and the rate is a rough range.
+      const limit = t.rough
+        ? ", rough"
+        : t.horizon80Lines !== undefined
+          ? `, 80% up to ~${t.horizon80Lines} lines`
+          : "";
+      return `${t.label} ${t.passes}/${t.attempts} (${ci}${limit})`;
+    })
     .join("; ");
   const horizon =
     report.horizon80Lines !== undefined

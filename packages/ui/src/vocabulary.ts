@@ -834,9 +834,26 @@ export function statusLine(
   }
 }
 
+/**
+ * The board's tag for a card's stored kind (PM-P1-10, DEC-26); `review` has
+ * no tag yet. NAMING's full map, with UI and Wiring, is NEW-dashboard-2's.
+ */
+const STORED_KINDS: Partial<Record<NonNullable<CardRecord["kind"]>, CardKind>> = {
+  interface: "contract",
+  data: "storage",
+  implement: "flow",
+  rule: "rules",
+  spike: "research",
+  research: "research",
+};
+
 /** Everything the board and the review queue show about a card, derived once. */
 export function describeCard(card: CardRecord, ctx: DisplayContext = {}): CardDisplay {
-  const { title, kinds } = parseTitle(card.title);
+  const parsed = parseTitle(card.title);
+  const title = parsed.title;
+  // The stored kind decides; an older card's title suffix is read only when none is stored.
+  const stored = card.kind ? STORED_KINDS[card.kind] : undefined;
+  const kinds = card.kind ? (stored ? [stored] : []) : parsed.kinds;
   const line = statusLine(card, ctx);
   const ev = ctx.evidence;
   const started = card.stepsUsed > 0 && card.status !== "done";

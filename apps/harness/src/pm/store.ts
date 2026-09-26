@@ -10,6 +10,7 @@ import {
   type PmProposalState,
   type PmStatus,
 } from "./types.js";
+import { voiceGuard } from "./voice.js";
 
 interface MessagePayload {
   id: string;
@@ -27,6 +28,8 @@ interface ReplyPayload {
   error?: boolean;
   createdAt: string;
   model?: string;
+  /** Who it answers (Team setup, PM-N9-8); a broadcast has none. */
+  to?: string;
 }
 
 interface ProposalStatePayload {
@@ -93,21 +96,28 @@ export class PmStore {
     cites?: PmCite[];
     error?: boolean;
     model?: string;
+    /** The person it answers (Team setup, PM-N9-8). */
+    to?: string;
   }): Promise<PmMessage> {
+    // PM-N9-4: Seshat's voice is enforced where every reply is written —
+    // every model string a person reads, not only the assembled summary.
     const proposals: PmProposal[] = (input.proposals ?? []).map((p) => ({
       ...p,
+      summary: voiceGuard(p.summary),
+      ...(p.why !== undefined ? { why: voiceGuard(p.why) } : {}),
       id: `pmp_${randomUUID().slice(0, 12)}`,
       state: "open",
     }));
     const payload: ReplyPayload = {
       id: `pmr_${randomUUID().slice(0, 12)}`,
       replyTo: input.replyTo,
-      text: input.text,
+      text: voiceGuard(input.text),
       createdAt: new Date().toISOString(),
       ...(proposals.length > 0 ? { proposals } : {}),
       ...(input.cites && input.cites.length > 0 ? { cites: input.cites } : {}),
       ...(input.error ? { error: true } : {}),
       ...(input.model ? { model: input.model } : {}),
+      ...(input.to ? { to: input.to } : {}),
     };
     const event = await this.log.append({ actor: "planner", type: PM_EVENTS.reply, payload });
     return this.replyToMessage(payload, event.seq, new Map());
@@ -162,6 +172,7 @@ export class PmStore {
           }
         : {}),
       ...(p.cites ? { cites: p.cites } : {}),
+      ...(p.to ? { principal: p.to } : {}),
     };
   }
 
@@ -200,6 +211,7 @@ export class PmStore {
           createdAt: p.createdAt,
           state,
           ...(p.context ? { context: p.context } : {}),
+          ...(e.principal ? { principal: e.principal } : {}),
         });
       } else if (e.type === PM_EVENTS.reply) {
         out.push(this.replyToMessage(e.payload as ReplyPayload, e.seq, states));
@@ -211,6 +223,15 @@ export class PmStore {
   /** User messages no reply has answered yet, oldest first. */
   public async queued(): Promise<PmMessage[]> {
     return (await this.thread()).filter((m) => m.role === "user" && m.state !== "done");
+  }
+
+  /** The open proposal that is a suggestion on an issue (PM-N9-1), if Seshat made one. */
+  public async proposalForSuggestion(suggestionId: string): Promise<PmProposal | undefined> {
+    for (const m of await this.thread()) {
+      const hit = m.proposals?.find((p) => p.suggestionId === suggestionId && p.state === "open");
+      if (hit) return hit;
+    }
+    return undefined;
   }
 
   public async proposal(id: string): Promise<PmProposal | undefined> {

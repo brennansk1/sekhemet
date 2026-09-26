@@ -31,6 +31,9 @@ export default defineConfig({
       SEKHEMET_CONFIG_DIR: join(tmpdir(), "sekhemet-test-user", ".sekhemet"),
       SEKHEMET_MODEL_REGISTRY: join(tmpdir(), "sekhemet-test-user", "models.json"),
       SEKHEMET_MACHINE_PROFILE: join(tmpdir(), "sekhemet-test-user", "machine.json"),
+      // Nor the owner's real model servers or a real llama.cpp binary: a test
+      // that would load a model fails instead (`load_guard.ts`, B4.3).
+      SEKHEMET_MODEL_LOADS: "off",
     },
     projects: [
       { extends: true, test: { name: "unit", include: split.unit } },

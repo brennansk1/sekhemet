@@ -213,6 +213,8 @@ export async function handleRestExtras(
           cardStore: s,
           boardService: ctx.boardService,
           pmStore,
+          // PM-P1-1, PM-P1-7: the split is planned through the one pipeline.
+          repoPath: ctx.repoPath,
           actor: "human",
           ...(ctx.principalOf ? { principal: ctx.principalOf(req) } : {}),
         },

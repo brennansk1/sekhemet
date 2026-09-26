@@ -1,5 +1,13 @@
 import type { BoardService } from "@sekhemet/board";
 import type { CardRecord, CardStatus, CardStore, CardUpdate } from "@sekhemet/kernel";
+import { type Audience, ownerRefusal } from "./audience.js";
+import {
+  type PipelineDeps,
+  PipelineRefusal,
+  createThroughPipeline,
+  planThroughPipeline,
+  splitThroughPipeline,
+} from "./pipeline.js";
 import type { PmStore } from "./store.js";
 import type { PmProposal } from "./types.js";
 
@@ -11,6 +19,14 @@ export interface ApplyContext {
   actor?: string;
   /** The person who applied it (kernel rule 19); the request's person when omitted. */
   principal?: string;
+  /**
+   * The repository the planner plans in (PM-P1-1): Seshat's cards, splits
+   * and projects go through the one pipeline there. Without it they cannot
+   * be applied.
+   */
+  repoPath?: string;
+  /** Who may apply a change to an owned issue (Team setup, PM-N9-9). */
+  audience?: Audience;
 }
 
 export class ProposalError extends Error {
@@ -36,6 +52,8 @@ const EDITABLE = new Set([
   "scopeFiles",
   "acceptanceCriteria",
   "dependsOn",
+  // A step-budget change the cycle-time signal proposes (planner-pm PM-N5-3).
+  "stepBudget",
   // An imported row's Jira or Linear key (INT-27); the PM's own tools never set it.
   "externalRef",
 ]);
@@ -76,6 +94,12 @@ export async function applyProposal(
     await ctx.pmStore.setProposalState(proposal.id, "stale");
     throw new ProposalError(`Card ${proposal.cardId} no longer exists.`, 409);
   }
+  // PM-N9-9: a change Seshat made for someone else's issue is its owner's to apply.
+  const refusal =
+    card && proposal.forOwner
+      ? ownerRefusal(card, ctx.principal, teamOf(ctx.audience), proposal.forOwner)
+      : undefined;
+  if (refusal) throw new ProposalError(refusal, 403);
 
   if (card && proposal.before) {
     for (const [field, was] of Object.entries(proposal.before)) {
@@ -104,56 +128,75 @@ export async function applyProposal(
     case "update_card":
     case "assign_cycle": {
       if (!card || !proposal.patch) throw new ProposalError("Nothing to update.", 400);
+      const duplicateOf = proposal.patch.duplicateOf;
+      if (typeof duplicateOf === "string") {
+        // A duplicate link (TEAM-18): the issue leaves the board as Won't do.
+        await markDuplicate(ctx, card, duplicateOf, actor);
+        touched.push((await ctx.cardStore.getCard(card.id)) ?? card);
+        break;
+      }
       touched.push(await ctx.cardStore.updateCard(card.id, toUpdate(proposal.patch), actor, who));
       break;
     }
     case "create_card": {
-      for (const fields of proposal.cards ?? []) {
-        touched.push(await ctx.cardStore.createCard(toCreate(fields), actor));
+      const drafts = proposal.cards ?? [];
+      // PM-P1-1: Seshat's cards go through the one planner. An import's
+      // rows (INT-27) and a revision's change cards, which name the link
+      // they resolve (PM-P13-11), keep their own recorded path.
+      const direct = proposal.origin === "import" || drafts.some((d) => Array.isArray(d.traces));
+      if (!direct) {
+        for (const outcome of await viaPipeline(ctx, (deps) =>
+          createThroughPipeline(deps, drafts),
+        )) {
+          touched.push(...outcome.cards);
+        }
+        break;
+      }
+      for (const fields of drafts) {
+        // PM-P13-11, -12: a change card for a suspect done card traces to the
+        // revised requirement and names the link it resolves once accepted.
+        const traces = Array.isArray(fields.traces)
+          ? (fields.traces as { requirementId?: unknown; changeFor?: unknown }[]).filter(
+              (t) => typeof t.requirementId === "string",
+            )
+          : [];
+        const was =
+          typeof traces[0]?.changeFor === "string"
+            ? await ctx.cardStore.getCard(traces[0].changeFor)
+            : undefined;
+        const created = await ctx.cardStore.createCard(
+          toCreate(fields, was?.projectId ? { projectId: was.projectId } : {}),
+          actor,
+        );
+        for (const t of traces) {
+          await ctx.cardStore.requirements.link({
+            requirementId: t.requirementId as string,
+            from: "card",
+            ref: created.id,
+            ...(typeof t.changeFor === "string" ? { changeFor: t.changeFor } : {}),
+          });
+        }
+        touched.push(created);
       }
       break;
     }
     case "split_card": {
+      // PM-P1-1, PM-P1-7: the parts through the one planner, each with only
+      // its own criteria and tests; the parent to Rejected, "Split into N cards".
       if (!card) throw new ProposalError("Nothing to split.", 400);
-      let previous: string | undefined;
-      for (const fields of proposal.cards ?? []) {
-        // Parts inherit the original's placement and run in order.
-        const created = await ctx.cardStore.createCard(
-          toCreate(fields, {
-            status: card.status === "backlog" ? "backlog" : "ready",
-            ...(card.cycleId ? { cycleId: card.cycleId } : {}),
-            ...(card.epicId ? { epicId: card.epicId } : {}),
-            ...(card.priority ? { priority: card.priority } : {}),
-            ...(card.acceptanceTests?.length ? { acceptanceTests: card.acceptanceTests } : {}),
-            dependsOn: [...(card.dependsOn ?? []), ...(previous ? [previous] : [])],
-          }),
-          actor,
-        );
-        previous = created.id;
-        touched.push(created);
-        // Gates rule 6a (lead ruling): the part carries the original's own
-        // tests, so the records that made them the card's carry over with
-        // the PM as the author — never a record the original did not have.
-        if (card.acceptanceTests?.length) {
-          const own = (await ctx.cardStore.cardEvents(card.id, ["test/staged"])).filter((e) =>
-            ["planner", "test-author", "pm"].includes(
-              String((e.payload as { author?: unknown }).author),
-            ),
-          );
-          for (const e of own) {
-            const p = e.payload as { path: string; sha256: string };
-            await ctx.cardStore.recordEvent({
-              type: "test/staged",
-              cardId: created.id,
-              actor,
-              payload: { cardId: created.id, path: p.path, sha256: p.sha256, author: "pm" },
-            });
-          }
-        }
-      }
-      if (card.status !== "parked" && card.status !== "done") {
-        await move(card, "parked", `split into ${touched.map((c) => c.id).join(", ")}`);
-      }
+      if ((proposal.cards ?? []).length < 2)
+        throw new ProposalError("A split needs two parts.", 400);
+      const outcome = await viaPipeline(ctx, (deps) =>
+        splitThroughPipeline(deps, card, proposal.cards ?? []),
+      );
+      touched.push(...outcome.cards);
+      break;
+    }
+    case "start_project": {
+      const brief = typeof proposal.patch?.brief === "string" ? proposal.patch.brief : "";
+      if (!brief.trim()) throw new ProposalError("A project needs its brief.", 400);
+      const r = await viaPipeline(ctx, (deps) => planThroughPipeline(deps, brief));
+      for (const c of await ctx.cardStore.listCards({ parentId: r.epicId })) touched.push(c);
       break;
     }
     case "move_card":
@@ -205,5 +248,78 @@ export async function applyProposal(
     "applied",
     touched.map((c) => c.id),
   );
+  // PM-N9-1: the suggestion on the issue this proposal is, applied by the same person.
+  if (proposal.suggestionId) {
+    const s = await ctx.cardStore.suggestions.get(proposal.suggestionId);
+    if (s?.state === "open") {
+      await ctx.cardStore.suggestions.apply(
+        proposal.suggestionId,
+        ctx.principal ?? ctx.cardStore.localPrincipal(),
+      );
+    }
+  }
   return { proposal: { ...proposal, state: "applied" }, cards: touched };
+}
+
+/** A proposal made for an owner was made in the Team setup, whatever audience applies it. */
+function teamOf(audience: Audience | undefined): Audience {
+  return {
+    setup: "team",
+    nameOf: (p) => audience?.nameOf(p),
+    levelOf: (p, project) => audience?.levelOf(p, project),
+    canSee: (p, project) => audience?.canSee(p, project) ?? true,
+    leadOf: (project) => audience?.leadOf(project),
+  };
+}
+
+/** Run a planning step, its refusals becoming the person's 409 with the reason. */
+async function viaPipeline<T>(
+  ctx: ApplyContext,
+  step: (deps: PipelineDeps) => Promise<T>,
+): Promise<T> {
+  if (!ctx.repoPath) {
+    throw new ProposalError(
+      "This server has no repository to plan in, so the planner cannot apply it.",
+      501,
+    );
+  }
+  try {
+    return await step({
+      repoPath: ctx.repoPath,
+      cardStore: ctx.cardStore,
+      log: ctx.pmStore.log,
+      boardService: ctx.boardService,
+      actor: ctx.actor ?? "human",
+      ...(ctx.principal ? { principal: ctx.principal } : {}),
+    });
+  } catch (err) {
+    if (err instanceof PipelineRefusal) throw new ProposalError(err.message, 409);
+    throw err;
+  }
+}
+
+/** Mark an issue a duplicate of another: Rejected, "Duplicate of <id>" (TEAM-18). */
+export async function markDuplicate(
+  ctx: Pick<ApplyContext, "cardStore" | "boardService" | "principal">,
+  card: CardRecord,
+  of: string,
+  actor = "human",
+): Promise<void> {
+  if (!(await ctx.cardStore.getCard(of))) throw new ProposalError(`No card ${of}.`, 409);
+  const reason = `Duplicate of ${of}`;
+  if (card.status !== "rejected") {
+    await ctx.boardService.transitionCard({
+      cardId: card.id,
+      fromStatus: card.status,
+      toStatus: "rejected",
+      actor,
+      reason,
+    });
+  }
+  await ctx.cardStore.updateCard(
+    card.id,
+    { blockedReason: reason },
+    actor,
+    ctx.principal ? { principal: ctx.principal } : {},
+  );
 }

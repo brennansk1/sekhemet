@@ -684,6 +684,10 @@ export const MIGRATIONS: readonly Migration[] = [
   cardColumnMigration(17, "supersedes"),
   // gates rules 29 and 6b: what a card declares to its gates.
   cardColumnMigration(18, "gate_checks"),
+  // planner-pm B4.3: split depth, interface and criterion ids.
+  cardColumnMigration(19, "split_depth"),
+  cardColumnMigration(20, "interface"),
+  cardColumnMigration(21, "criterion_ids"),
 ];
 
 /** The schema version this build writes. */

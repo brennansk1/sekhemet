@@ -1,6 +1,7 @@
 import type { CardStatus, DecisionRequestRecord } from "@sekhemet/kernel";
 import { resolveDecisionAtDeadline } from "./decision.js";
 import { type PlannerLedger, appendPlannerEvent, moveCard, plannerEvents } from "./ledger.js";
+import { applyOracleAnswer } from "./oracle.js";
 import type { DecisionRequest } from "./types.js";
 
 /**
@@ -168,6 +169,8 @@ export class DecisionStore {
     const d = await this.get(id);
     if (!d) throw new Error(`No planner decision ${id}`);
     await this.ledger.store.runs.answerDecision(d.id, optionIndex, by, principal);
+    // PM-N7-2: a disputed example row takes the value the person chose.
+    if (d.request.oracle) await applyOracleAnswer(this.ledger, d.request.oracle, optionIndex);
     const label = d.request.options[optionIndex]?.label ?? String(optionIndex);
     await this.resume(d, `Decision: ${d.request.question}\nAnswer: ${label}`);
     return (await this.get(d.id)) as PlannerDecision;
@@ -212,13 +215,24 @@ export class DecisionStore {
     const { store } = this.ledger;
     const waitingOn = waitingReason(d.id);
     for (const child of await store.listCards()) {
-      if (child.status !== "planning" || child.blockedReason !== waitingOn) continue;
+      if (child.status !== "planning" || !child.blockedReason?.includes(waitingOn)) continue;
       await store.recordDossierEntry({
         cardId: child.id,
         kind: "answer",
         text: note,
         actor: "planner",
       });
+      // The answer lifts only its own hold: a card the planner also held for
+      // a criterion, a missing test or its size stays in Planning with those
+      // reasons (planner-pm §2.4, PM-P1-18).
+      const rest = child.blockedReason
+        .replace(waitingOn, "")
+        .replace(/\s{2,}/g, " ")
+        .trim();
+      if (rest) {
+        await store.updateCard(child.id, { blockedReason: rest }, "planner");
+        continue;
+      }
       await moveCard(this.ledger, {
         cardId: child.id,
         from: child.status,

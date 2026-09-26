@@ -1,9 +1,5 @@
-import {
-  DEFAULT_TIER_BUDGET,
-  DIFFICULTY_SPLIT_THRESHOLD,
-  INVEST_CONTEXT_FRACTION,
-  INVEST_MAX_STEPS,
-} from "./constants.js";
+import { DEFAULT_TIER_BUDGET, DIFFICULTY_SPLIT_THRESHOLD, INVEST_MAX_STEPS } from "./constants.js";
+import { workerPromptBudget, zone3Cap } from "./small.js";
 import { tokenize } from "./text.js";
 import type {
   InvestCheckResult,
@@ -277,19 +273,21 @@ function estimableCheck(
 }
 
 /**
- * S — two conjunct conditions, not one.
+ * S — two conjunct conditions, not one (planner-pm §2.4, PM-12, PM-13).
  *
- * The pack must fit {@link INVEST_CONTEXT_FRACTION} of the tier window **and**
- * the step budget must be at most {@link INVEST_MAX_STEPS}. Either alone lets
- * through a real failure: a tiny pack with 90 steps thrashes, and an 8-step
- * card that needs the whole window has no room left to repair itself.
+ * The card's Zone 3 content must fit Zone 3's cap at the resolved Worker's
+ * prompt budget, 0.50 × (W − 2,400) (`small.ts`, the same computation as
+ * the `ready` entry condition) **and** the step budget must be at most
+ * {@link INVEST_MAX_STEPS}. Either alone lets through a real failure: a tiny
+ * pack with 90 steps thrashes, and an 8-step card that needs the whole
+ * window has no room left to repair itself.
  */
 function smallCheck(
   stories: readonly PlannedStory[],
   budget: TierBudget,
   mustResplit: Set<string>,
 ): InvestCheckResult {
-  const packCap = Math.floor(budget.workingContextTokens * INVEST_CONTEXT_FRACTION);
+  const packCap = zone3Cap(workerPromptBudget(budget.workerWindowTokens));
   const stepCap = Math.min(budget.maxSteps, INVEST_MAX_STEPS);
   const offenders: string[] = [];
   const details: string[] = [];
@@ -304,7 +302,7 @@ function smallCheck(
     mustResplit.add(story.card.id);
     const reasons: string[] = [];
     if (!packFits) {
-      reasons.push(`pack ${story.estimatedPackTokens} > ${packCap} tokens`);
+      reasons.push(`Zone 3 content ${story.estimatedPackTokens} > ${packCap} tokens`);
     }
     if (!stepsFit) {
       reasons.push(`steps ${story.card.stepBudget} > ${stepCap}`);
@@ -318,7 +316,7 @@ function smallCheck(
     offendingStoryIds: offenders,
     detail:
       offenders.length === 0
-        ? `Every story fits both conditions: pack ≤ ${packCap} tokens and steps ≤ ${stepCap}.`
+        ? `Every story fits both conditions: Zone 3 content ≤ ${packCap} tokens and steps ≤ ${stepCap}.`
         : `${details.join("; ")}. Both conditions must hold; SPIDR split required.`,
     action: offenders.length === 0 ? "none" : "resplit",
   };

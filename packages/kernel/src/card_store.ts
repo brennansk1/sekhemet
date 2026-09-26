@@ -24,7 +24,10 @@ import type { EventLog } from "./log.js";
 import { keyBetween } from "./order_key.js";
 import { RunLedger } from "./records.js";
 import { RequirementLedger } from "./requirements.js";
+import { SliceLedger } from "./slices.js";
+import { StagedTestLedger } from "./staged_tests.js";
 import { DEFAULT_STEP_BUDGET } from "./stop_reasons.js";
+import { SuggestionLedger } from "./suggestions.js";
 import {
   CARD_STATUSES,
   INITIAL_CARD_STATUSES,
@@ -35,19 +38,24 @@ import {
 import {
   type AppendEventParams,
   type BuiltBy,
+  CARD_ESTIMATES,
   CARD_STOP_REASONS,
   type CardConfigOverrides,
   type CardDelegate,
   type CardDossier,
   type CardGateChecks,
   type CardHold,
+  type CardInterfaceSymbol,
   type CardRecord,
   type CardStatus,
   type CardStopReason,
   type CardTier,
   type CheckpointRecord,
+  DEPENDENCY_SOURCES,
   DOSSIER_DEFAULT_ACTORS,
   DOSSIER_EVENT_TYPES,
+  type DependencyReason,
+  type DependencySource,
   type DossierEntry,
   type DossierEntryInput,
   type DossierEntryKind,
@@ -149,6 +157,12 @@ export interface CreateCardInput {
   supersedes?: string[];
   /** What the card declares to its gates (GT-N4-4, GT-N4-6, GT-TQ-8, GT-TQ-11). */
   gateChecks?: CardGateChecks;
+  /** Re-splits of its lineage, 1 for a split's child (PM-P1-13). */
+  splitDepth?: number;
+  /** The symbols its staged acceptance test imports (PM-P1-15). */
+  interface?: CardInterfaceSymbol[];
+  /** One stable id per acceptance criterion, in order (PM-P1-17). */
+  criterionIds?: string[];
 }
 
 /**
@@ -201,6 +215,59 @@ export interface CardUpdate {
   supersedes?: string[] | null;
   /** What the card declares to its gates; `null` clears it. */
   gateChecks?: CardGateChecks | null;
+  /** `null` clears each of these (PM-P1-13, PM-P1-15, PM-P1-17). */
+  splitDepth?: number | null;
+  interface?: CardInterfaceSymbol[] | null;
+  /** Must stay one per criterion: patched with `acceptanceCriteria` when their count changes. */
+  criterionIds?: string[] | null;
+}
+
+/** A criterion id: tag-safe, so a test title can carry it (PM-P1-17). */
+const CRITERION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+/** A card's acceptance criteria with their stable ids; none when it has no ids (PM-P1-17). */
+export function cardCriteria(
+  card: Pick<CardRecord, "acceptanceCriteria" | "criterionIds">,
+): { id: string; text: string }[] {
+  const ids = card.criterionIds ?? [];
+  return ids.map((id, i) => ({ id, text: card.acceptanceCriteria?.[i] ?? "" }));
+}
+
+/** What is wrong with a card's criteria and their ids together, or undefined (PM-P1-17). */
+function criterionIdsProblem(
+  criteria: readonly string[] | undefined,
+  ids: readonly string[] | null | undefined,
+): string | undefined {
+  if (ids === undefined || ids === null) return undefined;
+  if (!Array.isArray(ids) || !ids.every((x) => typeof x === "string" && CRITERION_ID.test(x))) {
+    return "must be a list of ids of letters, digits, '.', '_' or '-'";
+  }
+  if (new Set(ids).size !== ids.length) return "must not repeat an id";
+  const n = criteria?.length ?? 0;
+  if (ids.length !== n) {
+    return `must hold one id per acceptance criterion (${n} criteria, ${ids.length} ids)`;
+  }
+  return undefined;
+}
+
+/** What is wrong with an `interface` value, or undefined (PM-P1-15). */
+function interfaceProblem(v: unknown): string | undefined {
+  const str = (x: unknown) => typeof x === "string" && x.length > 0;
+  if (
+    !Array.isArray(v) ||
+    !v.every(
+      (e) =>
+        typeof e === "object" &&
+        e !== null &&
+        str((e as CardInterfaceSymbol).symbol) &&
+        str((e as CardInterfaceSymbol).file) &&
+        typeof (e as CardInterfaceSymbol).signature === "string" &&
+        Object.keys(e).every((k) => ["symbol", "file", "signature"].includes(k)),
+    )
+  ) {
+    return "must be a list of {symbol, file, signature}";
+  }
+  return undefined;
 }
 
 /**
@@ -268,8 +335,25 @@ function validateCardFields(
     delegate?: unknown;
     configOverrides?: unknown;
     gateChecks?: unknown;
+    estimate?: number | null | undefined;
+    splitDepth?: number | null | undefined;
+    interface?: unknown;
   },
 ): void {
+  const e = fields.estimate;
+  if (e !== undefined && e !== null && !CARD_ESTIMATES.includes(e)) {
+    throw new Error(
+      `Card ${id}: estimate must be one of ${CARD_ESTIMATES.join(", ")} points, got ${e}`,
+    );
+  }
+  const depth = fields.splitDepth;
+  if (depth !== undefined && depth !== null && !(Number.isInteger(depth) && depth >= 1)) {
+    throw new Error(`Card ${id}: splitDepth must be a whole number from 1, got ${depth}`);
+  }
+  if (fields.interface !== undefined && fields.interface !== null) {
+    const why = interfaceProblem(fields.interface);
+    if (why) throw new Error(`Card ${id}: interface ${why}`);
+  }
   if (fields.gateChecks !== undefined && fields.gateChecks !== null) {
     const why = gateChecksProblem(fields.gateChecks);
     if (why) throw new Error(`Card ${id}: gateChecks ${why}`);
@@ -374,6 +458,12 @@ export class CardStore {
   public readonly runs: RunLedger;
   /** Versioned requirements and their suspect links (NEW-kernel-8). */
   public readonly requirements: RequirementLedger;
+  /** Release slices, appetite, cuts and proposed releases (planner-pm P13). */
+  public readonly slices: SliceLedger;
+  /** Staged tests with their criterion ids, and approvals bound to content (PM-P1-17, PM-N7-3). */
+  public readonly stagedTests: StagedTestLedger;
+  /** Seshat's suggestions on an issue (TEAM-18, TEAM-19, PM-N9-1). */
+  public readonly suggestions: SuggestionLedger;
   /** Active projects allowed at once (B13). */
   public activeProjectCap = DEFAULT_ACTIVE_PROJECT_CAP;
 
@@ -383,6 +473,9 @@ export class CardStore {
   ) {
     this.runs = new RunLedger(db, eventLog);
     this.requirements = new RequirementLedger(db, eventLog);
+    this.slices = new SliceLedger(db, eventLog, this.requirements);
+    this.stagedTests = new StagedTestLedger(db, eventLog);
+    this.suggestions = new SuggestionLedger(db, eventLog);
   }
 
   /** The oldest active project, which cards created without one belong to. */
@@ -422,7 +515,7 @@ export class CardStore {
         | "seconds_used"
         | "priority"
         ? number
-        : K extends "difficulty" | "token_budget" | "seconds_budget" | "estimate"
+        : K extends "difficulty" | "token_budget" | "seconds_budget" | "estimate" | "split_depth"
           ? number | null
           : K extends
                 | "id"
@@ -505,6 +598,15 @@ export class CardStore {
       ...(row.gate_checks !== null && row.gate_checks !== undefined
         ? { gateChecks: parseJsonColumn<CardGateChecks>(row.gate_checks, {}) }
         : {}),
+      ...(row.split_depth !== null && row.split_depth !== undefined
+        ? { splitDepth: row.split_depth }
+        : {}),
+      ...(row.interface !== null && row.interface !== undefined
+        ? { interface: parseJsonColumn<CardInterfaceSymbol[]>(row.interface, []) }
+        : {}),
+      ...(row.criterion_ids !== null && row.criterion_ids !== undefined
+        ? { criterionIds: parseJsonColumn<string[]>(row.criterion_ids, []) }
+        : {}),
     };
   }
 
@@ -552,7 +654,12 @@ export class CardStore {
       delegate: input.delegate,
       configOverrides: input.configOverrides,
       gateChecks: input.gateChecks,
+      estimate: input.estimate,
+      splitDepth: input.splitDepth,
+      interface: input.interface,
     });
+    const idsProblem = criterionIdsProblem(input.acceptanceCriteria, input.criterionIds);
+    if (idsProblem) throw new Error(`Card ${id}: criterionIds ${idsProblem}`);
     // K-S4-9: a card starts where no entry condition has been skipped —
     // parked only with its recorded reason (rule 27).
     const parkedWithReason = status === "parked" && !!input.blockedReason?.trim();
@@ -641,6 +748,9 @@ export class CardStore {
       configOverrides: input.configOverrides ?? null,
       supersedes: input.supersedes ?? null,
       gateChecks: input.gateChecks ?? null,
+      splitDepth: input.splitDepth ?? null,
+      interface: input.interface ?? null,
+      criterionIds: input.criterionIds ?? null,
       createdAt: now,
       updatedAt: now,
     };
@@ -859,7 +969,23 @@ export class CardStore {
       change: patch.change,
       configOverrides: patch.configOverrides,
       gateChecks: patch.gateChecks,
+      estimate: patch.estimate,
+      splitDepth: patch.splitDepth,
+      interface: patch.interface,
     });
+    // PM-P1-17: the ids stay one per criterion, whichever of the two is patched.
+    if (patch.acceptanceCriteria !== undefined || patch.criterionIds !== undefined) {
+      const ids = patch.criterionIds === undefined ? existing.criterionIds : patch.criterionIds;
+      // PM-N7-5: a planned card's criterion ids are never cleared, so no card
+      // the planner wrote can leave Planning without a person's approval.
+      if ((existing.criterionIds?.length ?? 0) > 0 && (ids ?? []).length === 0) {
+        throw new Error(
+          `Card ${id}: its criterion ids cannot be cleared; a planned card keeps one id per criterion (PM-N7-5)`,
+        );
+      }
+      const why = criterionIdsProblem(patch.acceptanceCriteria ?? existing.acceptanceCriteria, ids);
+      if (why) throw new Error(`Card ${id}: criterionIds ${why}`);
+    }
     // K-N9-2: the stored kind and change are a person's decision, named, and
     // never changed under a running attempt or its verification.
     if (patch.kind !== undefined || patch.change !== undefined) {
@@ -1543,9 +1669,14 @@ export class CardStore {
   public async addDependency(
     cardId: string,
     dependsOnId: string,
-    source: "declared" | "inferred" | "planner" = "declared",
+    source: DependencySource = "declared",
     actor = "planner",
   ): Promise<void> {
+    if (!DEPENDENCY_SOURCES.includes(source)) {
+      throw new Error(
+        `A dependency's source is one of ${DEPENDENCY_SOURCES.join(", ")}, got ${String(source)} (PM-N8-2)`,
+      );
+    }
     for (const id of [cardId, dependsOnId]) {
       if (!(await this.getCard(id))) {
         throw new CardStructureError("unknown_card", `Card not found: ${id}`);
@@ -1591,6 +1722,17 @@ export class CardStore {
         )
         .all(cardId) as unknown as { d: string }[]
     ).map((r) => r.d);
+  }
+
+  /** Cards `cardId` waits on, each with why (PM-N8-2): declared, named, imported. */
+  public getDependencyReasons(cardId: string): DependencyReason[] {
+    return (
+      this.db
+        .prepare(
+          "SELECT depends_on_card_id AS d, source FROM card_dependencies WHERE card_id = ? ORDER BY d",
+        )
+        .all(cardId) as unknown as { d: string; source: DependencySource }[]
+    ).map((r) => ({ dependsOnId: r.d, source: r.source }));
   }
 
   /** Cards waiting on `cardId`. */
@@ -1776,6 +1918,9 @@ export class CardStore {
       throw new Error(
         `Only a person accepts a slice (the actor was ${actor}); nothing was recorded`,
       );
+    }
+    if (!options.principal) {
+      throw new Error("A slice is accepted by a person; no principal was given");
     }
     if (!this.getProject(input.projectId)) {
       throw new CardStructureError("unknown_card", `Project not found: ${input.projectId}`);

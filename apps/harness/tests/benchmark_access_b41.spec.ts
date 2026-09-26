@@ -8,6 +8,7 @@ import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { BenchmarkEnv } from "../src/benchmark_cmd.js";
 import { startDashboardServer } from "../src/server.js";
+import { routePermissions } from "../src/team/access.js";
 
 // B4.1 half-B review, the blocker: a benchmark route reached by a path its
 // permission rule does not match (a trailing slash, a doubled slash, an
@@ -152,5 +153,23 @@ describe("the benchmark's writes need config.manage on every spelling of their p
     expect((await send(ADMIN, "/api/config/%62enchmark", QUICK)).status).not.toBe(200);
     expect(await log.getEventsByTypes(["measure/benchmark_started"])).toEqual([]);
     expect((await send(ADMIN, "/api/config/benchmark", QUICK)).status).toBe(200);
+  });
+});
+
+describe("the access check reads a dot segment as the path it resolves to (the B4.1 re-check)", () => {
+  it("needs config.manage for a Configuration write spelled with ./ or ../, as a raw request may send it", () => {
+    for (const path of [
+      "/api/./config/benchmark",
+      "/api/x/../config/benchmark",
+      "/api/%2e/config/benchmark",
+      "/api/./config//models/folders",
+    ]) {
+      expect({ path, rule: routePermissions("POST", path, {}) }).toEqual({
+        path,
+        rule: { permissions: ["config.manage"] },
+      });
+    }
+    // A path that only resembles one stays a Member's write.
+    expect(routePermissions("POST", "/api/configx/y", {})).toEqual({ permissions: ["issue.edit"] });
   });
 });

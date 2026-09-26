@@ -2,7 +2,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { freemem, tmpdir, totalmem } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { BoardServiceImpl } from "@sekhemet/board";
@@ -10,6 +10,7 @@ import { type RunProfile, type SuiteRunResult, profileArgs, runScore } from "@se
 import {
   DeterministicGateRunner,
   type PipelineResult,
+  createSourceIndex,
   declaredStage,
   detectGateTemplate,
   gateStartProblems,
@@ -46,7 +47,7 @@ import {
   readSwapUsedBytes,
   resolveWorkerModelId,
 } from "@sekhemet/models";
-import { SpidrFeaturePlanner } from "@sekhemet/planner";
+import { SpidrFeaturePlanner, resolvePlannerModel } from "@sekhemet/planner";
 import {
   ProcessSandbox,
   confinedSandbox,
@@ -98,10 +99,10 @@ import {
   ensureRepoProject,
   executeCard,
   forkCard,
-  inferDependencies,
   nextAttemptNumber,
   plannerDifficulty,
   queueEntryOf,
+  recordDependencies,
   recordQueueProgress,
   recordQueueReport,
   recordReview,
@@ -149,6 +150,7 @@ import {
   resolveWorkerName,
   roleModelName,
   weightsKey,
+  workerZone3Fit,
 } from "./model_access.js";
 import { sendPush, startNotifier } from "./notify.js";
 import { nightModelServer, runOvernight } from "./overnight.js";
@@ -463,6 +465,22 @@ export function initLocalKernel(repoPath: string): {
       }),
     // K-N5-1: the Planner scores an unscored card as it enters Planning.
     planner: { scoreDifficulty: (card) => plannerDifficulty(card) },
+    // PM-N7-4: an approval holds only for the staged file as it is on disk now;
+    // a path outside the repository reads as missing, so its approval is void.
+    readStagedFile: (path) => {
+      const abs = resolve(repoPath, path);
+      if (isAbsolute(path) || !abs.startsWith(resolve(repoPath) + sep)) return undefined;
+      try {
+        return readFileSync(abs, "utf8");
+      } catch {
+        return undefined;
+      }
+    },
+    // PM-12..14: INVEST's Small at the resolved Worker's W, the planner's computation.
+    zone3Fit: workerZone3Fit(repoPath, {
+      registry: modelRegistry(),
+      configured: queueDefaults(effectiveConfig(repoPath).config, []).worker,
+    }),
     // Rule 24: the harness accepts a leaf card only where a measured run
     // prepared the repository (--auto-accept's bound); elsewhere a person does.
     ...measurementOption(repoPath),
@@ -1258,36 +1276,56 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
   }
 
   if (config.command === "plan") {
-    // `sekhemet plan "<spec>" [--sketcher <model>]`: SPIDR against the real
+    // `sekhemet plan "<spec>" [--planner <model>|none]`: SPIDR against the real
     // codebase map, persisted with the whole contract, INVEST enforced and
     // the batched decision parked (wave2.ts planCommand).
     const spec = config.targetArg || "New feature specification";
     console.log(`\nPlanning feature: "${spec}"`);
-    // The planning model: --planner (or the older --sketcher), else an
-    // explicit [models] planner. It is loaded before the Worker and unloaded
-    // after planning, so the two never share memory.
+    // Model first (planner-pm §2.1.2, PM-P1-2): --planner (or the older
+    // --sketcher), else an explicit [models] planner, else Seshat's model.
+    // It is loaded before the Worker and unloaded after planning, so the two
+    // never share memory.
     const flagged = (name: string) =>
       argv.includes(name) ? argv[argv.indexOf(name) + 1] : undefined;
+    // `--planner none` plans heuristically on purpose (and loads nothing);
+    // the plan's first line says it was planned without a model.
+    const registry = modelRegistry();
+    const named = flagged("--planner") ?? flagged("--sketcher");
     const configured = effectiveConfig(config.repoPath).config.models.planner;
-    const plannerName =
-      flagged("--planner") ??
-      flagged("--sketcher") ??
-      (configured !== "auto" ? configured : undefined);
+    const plannerName = resolvePlannerModel({
+      flag: named,
+      configured,
+      seshatModel: DEFAULT_PM_MODEL,
+      isRegistered: (m) => registry.get(m) !== undefined,
+    });
+    if (!plannerName && named !== "none" && configured !== "none") {
+      console.error(
+        `Planner: ${DEFAULT_PM_MODEL}, Seshat's model, is not in the model registry; planning without a model.`,
+      );
+    }
     // MD-N9-4: the Planner's model through the scheduler, loaded when first asked.
     const planAccess = plannerName
       ? ModelAccess.forQueues([{ queue: "plan", role: "planner", name: plannerName }], {
-          registry: modelRegistry(),
+          registry,
           ledger: log,
         })
       : undefined;
-    const sketcher = planAccess ? planAccess.adapterFor("plan") : undefined;
-    if (planAccess) {
-      await planAccess.measure();
-      // Kept synchronous (`acquire`): `plan` owns this scheduler, one queue only.
-      await planAccess.use("plan").catch((err: unknown) => {
-        console.error(`Planner: ${err instanceof Error ? err.message : String(err)}`);
-      });
-    }
+    // Kept synchronous (`acquire`): `plan` owns this scheduler, one queue only.
+    // PM-P1-3: a model that cannot be loaded plans nothing — the heuristic
+    // does, and the plan's first line says so.
+    const loaded = planAccess
+      ? await planAccess
+          .measure()
+          .then(() => planAccess.use("plan"))
+          .then(() => true)
+          .catch((err: unknown) => {
+            console.error(
+              `Planner: ${plannerName} could not be loaded (${err instanceof Error ? err.message : String(err)}); planning without a model.`,
+            );
+            return false;
+          })
+      : false;
+    const sketcher = loaded ? planAccess?.adapterFor("plan") : undefined;
     // design-stage S8: the reuse survey reads public registries, GitHub and
     // paper indexes with short keyword queries only when a person allowed
     // research — asked once, on a new project's first plan, before any
@@ -2722,15 +2760,12 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     };
 
     // Inferred prerequisites become checked edges in the dependency table
-    // (K15, B5): an edge that would close a cycle is refused and reported.
-    for (const [id, list] of inferDependencies(ready)) {
-      for (const dep of list) {
-        await cardStore.addDependency(id, dep, "inferred", "harness").catch((err) => {
-          console.log(
-            `   dependency ${id} -> ${dep} skipped: ${err instanceof Error ? err.message : err}`,
-          );
-        });
-      }
+    // with their reason — declared, named or imported per the source index
+    // (K15, B5, PM-N8-1, -2): an edge that would close a cycle is refused and reported.
+    for (const s of await recordDependencies(cardStore, ready, {
+      index: createSourceIndex(config.repoPath),
+    })) {
+      console.log(`   dependency ${s.cardId} -> ${s.dependsOnId} skipped: ${s.why}`);
     }
     /** Prerequisites not done yet, from the dependency table. */
     const blockedBy = async (card: CardRecord): Promise<string[]> => cardStore.waitingOn(card.id);

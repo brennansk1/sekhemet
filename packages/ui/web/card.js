@@ -1,3 +1,4 @@
+import { renderApproval } from "./approval.js";
 import { loadDetail } from "./data.js";
 // Card view (FRONTEND_DESIGN §2.4.3): header with triage, then five tabs.
 // Evidence reuses the Review composition; Plan, Steps, Thread and Files are
@@ -11,6 +12,7 @@ import { renderPlan } from "./plan.js";
 import { setTopbar } from "./shell.js";
 import { renderSteps } from "./steps.js";
 import { store } from "./store.js";
+import { renderSuggestions } from "./suggestions.js";
 import { renderThread } from "./thread.js";
 import {
   accept,
@@ -168,6 +170,22 @@ async function load(keepScroll = false) {
   if (!keepScroll) ui.detail = null;
   renderHead();
   if (!keepScroll) renderPanel({ keepScroll });
+  const sug = $("[data-suggestions]", ui.root);
+  if (sug && sug.dataset.card !== id) {
+    sug.dataset.card = "";
+    sug.hidden = true;
+    sug.innerHTML = "";
+  }
+  void renderSuggestions(sug, id);
+  // PM-N7-5: a card waiting on a person's approval of its criteria shows them, and Approve.
+  const apv = $("[data-approval]", ui.root);
+  if (apv && apv.dataset.card !== id) {
+    apv.dataset.card = "";
+    apv.hidden = true;
+    apv.innerHTML = "";
+  }
+  if (card?.status === "planning") void renderApproval(apv, id);
+  else if (apv) apv.hidden = true;
   const d = await loadDetail(id, ui.attempt);
   if (seq !== ui.loadSeq || ui.id !== id || !ui.root) return;
   ui.detail = d;
@@ -285,7 +303,7 @@ export function mount(view, route) {
   const root = document.createElement("div");
   root.className = "view-host";
   root.innerHTML =
-    '<section class="cv" aria-label="Card"><div class="cv-h"></div><div class="cv-body"></div></section>';
+    '<section class="cv" aria-label="Card"><div class="cv-h"></div><div class="cv-apv" data-approval hidden></div><div class="cv-sug" data-suggestions hidden></div><div class="cv-body"></div></section>';
   view.append(root);
   ui.root = root;
   ui.id = null;

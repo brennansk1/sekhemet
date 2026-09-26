@@ -1,6 +1,9 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { type CardRecord, CardStore, EventLog, initSchema } from "@sekhemet/kernel";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   GoalStore,
   type PlannerLedger,
@@ -20,8 +23,16 @@ import {
 } from "../src/index.js";
 import type { Goal } from "../src/index.js";
 
+/** An on-disk SQLite file per ledger (DEFINITION_OF_DONE §2A, PM-P1-14). */
+const dbDirs: string[] = [];
+afterEach(() => {
+  while (dbDirs.length) rmSync(dbDirs.pop() as string, { recursive: true, force: true });
+});
+
 function ledger(): PlannerLedger {
-  const db = new DatabaseSync(":memory:");
+  const dir = mkdtempSync(join(tmpdir(), "sek-planner-db-"));
+  dbDirs.push(dir);
+  const db = new DatabaseSync(join(dir, "events.db"));
   initSchema(db);
   const log = new EventLog(db);
   return { log, store: new CardStore(db, log) };

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
-import type { AttemptOutcome } from "@sekhemet/kernel";
+import type { AttemptOutcome, CardRecord } from "@sekhemet/kernel";
 import { afterEach, describe, expect, it } from "vitest";
 import { capabilityReport, capabilitySummary, wilson } from "../src/pm/capability.js";
 
@@ -41,6 +41,9 @@ describe("worker capability from evidence", () => {
     for (const [id, kind] of Object.entries(kinds)) {
       await store.createCard({ id, tier: "story", title: `T (SPIDR: ${kind})` });
     }
+    // PM-P1-10: a card the planner writes today has no title suffix; its
+    // stored kind is what the report reads.
+    await store.createCard({ id: "h", tier: "story", title: "Store the order", kind: "data" });
     const run = async (cardId: string, passed: boolean, linesAdded: number) => {
       const a = await store.runs.startAttempt({
         cardId,
@@ -63,6 +66,7 @@ describe("worker capability from evidence", () => {
     await run("e", false, 150);
     await run("f", false, 180);
     await run("e", true, 150); // retries do not count toward first-attempt rates
+    await run("h", true, 25);
     // A person's attempt says nothing about the Worker (MD-N6-2).
     await store.createCard({ id: "g", tier: "story", title: "T (SPIDR: Rule)" });
     const byPerson = await store.runs.startAttempt({
@@ -82,11 +86,13 @@ describe("worker capability from evidence", () => {
     db.close();
 
     const r = capabilityReport(repo, cards);
-    expect(r.sampleSize).toBe(6);
-    expect(r.types.find((t) => t.type === "Rule")).toMatchObject({ attempts: 4, passes: 2 });
+    expect(r.sampleSize).toBe(7);
+    expect(r.types.find((t) => t.type === "rule")).toMatchObject({ attempts: 4, passes: 2 });
+    expect(r.types.find((t) => t.type === "data")).toMatchObject({ attempts: 2, passes: 2 });
+    expect(r.types.map((t) => t.type)).not.toContain("Other");
     expect(r.horizon80Lines).toBe(50);
     expect(r.note).toMatch(/range/);
-    expect(capabilitySummary(r)).toContain("Rules 2/4 (95% CI 15-85%)");
+    expect(capabilitySummary(r)).toContain("Rules 2/4 (95% CI 15-85%, rough)");
   });
 
   it("reports no attempts for a repository with no ledger", () => {
@@ -148,5 +154,45 @@ describe("B4.0a review M1/M2: the capability report on existing ledgers", () => 
     );
     expect(r.sampleSize).toBe(1);
     expect(r.types[0]?.passes).toBe(1);
+  });
+});
+
+describe("NEW-planner-pm-3: Seshat's report reads the planner's fitted horizon", () => {
+  it("gives a kind with 10+ first attempts the fit's 80% horizon, and marks a smaller kind rough", () => {
+    const outcomes: AttemptOutcome[] = [];
+    const cards: CardRecord[] = [];
+    const add = (id: string, kind: "rule" | "data", passed: boolean, lines: number) => {
+      cards.push({ id, kind, difficulty: 4, title: id } as CardRecord);
+      outcomes.push({
+        seq: 0,
+        attemptId: `${id}-1`,
+        cardId: id,
+        attemptNumber: 1,
+        rung: 0,
+        toolArm: "full",
+        role: "worker",
+        modelId: "m",
+        status: passed ? "passed" : "failed",
+        passed,
+        stopReason: passed ? "gate_passed" : "budget_exhausted",
+        tokensUsed: 0,
+        secondsUsed: 0,
+        linesAdded: lines,
+        ruleIds: [],
+        withheldRuleIds: [],
+        exemplarIds: [],
+        builtBy: { kind: "worker" },
+        completedAt: "2026-09-25T00:00:00Z",
+      } as AttemptOutcome);
+    };
+    for (let i = 0; i < 12; i++) add(`r${i}`, "rule", i < 9, 20 + i * 15);
+    for (let i = 0; i < 3; i++) add(`d${i}`, "data", true, 30);
+    const r = capabilityReport("/nonexistent", cards, outcomes);
+    const rule = r.types.find((t) => t.type === "rule");
+    expect(rule?.rough).toBe(false);
+    expect(rule?.horizon80Lines).toBeGreaterThan(0);
+    expect(r.types.find((t) => t.type === "data")?.rough).toBe(true);
+    expect(capabilitySummary(r)).toMatch(/Rules 9\/12 .*80% up to ~\d+ lines/);
+    expect(capabilitySummary(r)).toMatch(/Storage 3\/3 .*rough/);
   });
 });

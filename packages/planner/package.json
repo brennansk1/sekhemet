@@ -12,7 +12,9 @@
     "@sekhemet/kernel": "workspace:*",
     "@sekhemet/board": "workspace:*",
     "@sekhemet/context": "workspace:*",
+    "@sekhemet/gates": "workspace:*",
     "@sekhemet/models": "workspace:*",
+    "@sekhemet/sandbox": "workspace:*",
     "@sekhemet/sync": "workspace:*"
   },
   "devDependencies": {

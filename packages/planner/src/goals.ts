@@ -4,7 +4,7 @@ import { type PlannerLedger, appendPlannerEvent, plannerEvents } from "./ledger.
 import { type PersistPlanResult, persistPlan } from "./persist.js";
 import type { SpidrFeaturePlanner } from "./planner.js";
 import { scoreWsjf } from "./prioritization.js";
-import { replanSession } from "./sessions.js";
+import { type PlanDiff, type ReplanTrigger, replanSession } from "./sessions.js";
 import { splitSentences } from "./text.js";
 import type { SpidrPlan } from "./types.js";
 
@@ -47,6 +47,12 @@ export interface Goal {
   diagnosis?: string;
   strategiesTried: number;
   createdAt: string;
+  /**
+   * The environment's fingerprint at the last evaluation — lockfiles and
+   * toolchain versions, hashed by the caller (PM-N4-4). A different one at
+   * the next evaluation fires `environment_changed`.
+   */
+  environment?: string;
 }
 
 export const GOAL_EVENTS = {
@@ -55,6 +61,8 @@ export const GOAL_EVENTS = {
   updated: "goal/updated",
   replanned: "goal/replanned",
   stopped: "goal/stopped",
+  /** A person marked a `human` criterion met or not (PM-N4-3). */
+  criterionMarked: "goal/criterion_marked",
 } as const;
 
 // ------------------------------------------------------------- criteria (P17)
@@ -123,16 +131,55 @@ export class GoalStore {
     return (await this.all()).find((g) => g.id === id);
   }
 
+  /**
+   * A person marks a `human` criterion met or not (PM-N4-3): recorded as
+   * `goal/criterion_marked` with their principal, read at the next evaluation.
+   */
+  public async markHuman(
+    goalId: string,
+    criterionId: string,
+    met: boolean,
+    principal: string,
+  ): Promise<void> {
+    if (!principal) throw new Error("A criterion is marked by a person; no principal was given");
+    const goal = await this.get(goalId);
+    if (!goal) throw new Error(`No goal ${goalId}`);
+    const criterion = goal.criteria.find((c) => c.id === criterionId);
+    if (!criterion || criterion.kind !== "human") {
+      throw new Error(
+        `Goal ${goalId} has no human criterion ${criterionId}; only a human criterion is marked by a person`,
+      );
+    }
+    await this.ledger.log.append({
+      actor: "human",
+      type: GOAL_EVENTS.criterionMarked,
+      payload: { goalId, criterionId, met },
+      principal,
+    });
+  }
+
+  /** The latest person's mark of each human criterion of a goal (`evaluateGoal`'s `humanMarks`). */
+  public async humanMarks(goalId: string): Promise<Record<string, boolean>> {
+    const marks: Record<string, boolean> = {};
+    for (const e of await plannerEvents(this.ledger, [GOAL_EVENTS.criterionMarked])) {
+      const p = e.payload as { goalId: string; criterionId: string; met: boolean };
+      if (p.goalId === goalId && e.actor === "human") marks[p.criterionId] = p.met;
+    }
+    return marks;
+  }
+
   public async create(goal: Goal): Promise<void> {
     await appendPlannerEvent(this.ledger, GOAL_EVENTS.created, { goal });
   }
 
+  /** `extra` is recorded beside the patch (a replan's triggers, reason and diff) and never folded into the goal. */
   public async patch(
     id: string,
     patch: Partial<Goal>,
     type: string = GOAL_EVENTS.updated,
+    extra: Record<string, unknown> = {},
   ): Promise<Goal> {
-    await appendPlannerEvent(this.ledger, type, { id, patch });
+    await appendPlannerEvent(this.ledger, type, { ...extra, id, patch });
     return (await this.get(id)) as Goal;
   }
 }
@@ -297,6 +344,8 @@ export function evaluateGoal(
     metrics?: Record<string, number>;
     humanMarks?: Record<string, boolean>;
     environmentChanged?: boolean;
+    /** What changed, for the trigger's detail (a lockfile, a toolchain version). */
+    environmentDetail?: string;
     estimator?: EstimationModel;
   },
 ): GoalEvaluation {
@@ -305,14 +354,19 @@ export function evaluateGoal(
   const lastGate = new Map<string, string>();
   for (const e of input.events) {
     if (e.type !== "gate/result") continue;
-    const p = e.payload as { gate?: string; status?: string };
-    if (p.gate) lastGate.set(p.gate, p.status ?? "unknown");
+    // The kernel's record says `passed` (`GateResultRecord`); `status` is an older writer's shape.
+    const p = e.payload as { gate?: string; status?: string; passed?: boolean };
+    if (!p.gate) continue;
+    lastGate.set(
+      p.gate,
+      typeof p.passed === "boolean" ? (p.passed ? "passed" : "failed") : (p.status ?? "unknown"),
+    );
   }
   const criteria = goal.criteria.map((c): GoalCriterion => {
     let met: boolean | undefined;
     if (c.kind === "gate" && c.check?.gateRef) {
       const s = lastGate.get(c.check.gateRef);
-      met = s === undefined ? undefined : s === "pass";
+      met = s === undefined ? undefined : s === "pass" || s === "passed";
     } else if (c.kind === "metric" && c.check?.metricQuery) {
       met = checkMetric(c.check.metricQuery, input.metrics ?? {});
     } else if (c.kind === "human") {
@@ -365,7 +419,7 @@ export function evaluateGoal(
   if (input.environmentChanged) {
     triggers.push({
       trigger: "environment_changed",
-      detail: "a dependency or the environment changed",
+      detail: input.environmentDetail ?? "a dependency or the environment changed",
     });
   }
   const unmetRefs = new Set(criteria.filter((c) => c.status !== "met").map((c) => c.id));
@@ -425,9 +479,66 @@ export function goalVerdict(
   };
 }
 
+/** A goal trigger as the Replan session names it. */
+const REPLAN_TRIGGER: Record<GoalReplanTrigger, ReplanTrigger> = {
+  rung3_failure: "rung3_failure",
+  criterion_regressed: "criterion_regressed",
+  budget_forecast_over_cap: "budget_forecast",
+  environment_changed: "scope_change",
+  card_advances_nothing: "no_criterion_advanced",
+};
+
+/** What a goal's re-plan asks for; the caller's replanner decides how it reaches the board. */
+export interface GoalReplanRequest {
+  goalId: string;
+  epicId: string;
+  spec: string;
+  reason: string;
+  trigger: ReplanTrigger;
+}
+
+/** A re-plan's outcome: the new plan version and its diff; `applied` false when it went to owners as suggestions. */
+export interface GoalReplanOutcome {
+  version: number;
+  diff: PlanDiff;
+  applied: boolean;
+  /** Cards whose change went to their owner as a suggestion (PM-N9-9). */
+  suggested?: string[];
+}
+
+export type GoalReplanner = (request: GoalReplanRequest) => Promise<GoalReplanOutcome>;
+
+/**
+ * The one-paragraph reason a goal was re-planned (PM-N4-5): the goal, what
+ * fired, and where its criteria stand. One line, no line breaks.
+ */
+export function goalReplanReason(
+  goal: Pick<Goal, "statement" | "criteria">,
+  triggers: readonly { trigger: GoalReplanTrigger; detail: string }[],
+  version: number,
+): string {
+  const met = goal.criteria.filter((c) => c.status === "met").map((c) => c.text);
+  const open = goal.criteria.filter((c) => c.status !== "met").map((c) => c.text);
+  const flat = (t: string) => t.replace(/\s+/g, " ").trim();
+  return flat(
+    `The goal "${goal.statement}" moved to strategy v${version} because ${triggers
+      .map((t) => t.detail)
+      .join("; ")}. Met so far: ${met.join("; ") || "none"}. Still open: ${
+      open.join("; ") || "none"
+    }. The new plan keeps what still advances an open criterion and replaces the rest.`,
+  );
+}
+
 /**
  * Evaluate, persist the criteria, apply the verdict, and replan on a
- * trigger (the goal loop, P19). Returns what happened.
+ * trigger (the goal loop, P19). Called on every card close, on every queue
+ * pass and hourly while the daemon runs (PM-N4-1). `metrics` are read from
+ * the log or the repository (PM-N4-2), `humanMarks` from the goal's events
+ * (PM-N4-3); `environment` is the lockfile and toolchain fingerprint, and a
+ * different one from the last evaluation's fires `environment_changed`
+ * (PM-N4-4). A replan goes through `replan` when given — the harness's
+ * route, which posts changes to an owned issue as suggestions in the Team
+ * setup (§2.18.6) — and returns its diff and one-paragraph reason (PM-N4-5).
  */
 export async function runGoalLoop(
   ledger: PlannerLedger,
@@ -437,50 +548,99 @@ export async function runGoalLoop(
     metrics?: Record<string, number>;
     humanMarks?: Record<string, boolean>;
     environmentChanged?: boolean;
+    /** The environment's fingerprint now (PM-N4-4). */
+    environment?: string;
+    /** What changed in the environment, named in the trigger's detail. */
+    environmentDetail?: string;
     maxStrategies?: number;
+    replan?: GoalReplanner;
   } = {},
-): Promise<{ evaluation: GoalEvaluation; verdict: GoalVerdict; replanned: boolean }> {
+): Promise<{
+  evaluation: GoalEvaluation;
+  verdict: GoalVerdict;
+  replanned: boolean;
+  replan?: GoalReplanOutcome & { reason: string };
+}> {
   const store = new GoalStore(ledger);
   const goal = await store.get(goalId);
   if (!goal) throw new Error(`No goal ${goalId}`);
   const cards = await ledger.store.listCards();
   const events = await ledger.log.getEventsByTypes(["gate/result"]);
-  const evaluation = evaluateGoal(goal, { cards, events, ...input });
+  const moved =
+    input.environment !== undefined &&
+    goal.environment !== undefined &&
+    input.environment !== goal.environment;
+  const evaluation = evaluateGoal(goal, {
+    cards,
+    events,
+    ...(input.metrics ? { metrics: input.metrics } : {}),
+    ...(input.humanMarks ? { humanMarks: input.humanMarks } : {}),
+    environmentChanged: input.environmentChanged === true || moved,
+    ...(input.environmentDetail ? { environmentDetail: input.environmentDetail } : {}),
+  });
   const verdict = goalVerdict(
     evaluation,
     input.maxStrategies ? { maxStrategies: input.maxStrategies } : {},
   );
+  const environment = input.environment !== undefined ? { environment: input.environment } : {};
   let replanned = false;
+  let replan: (GoalReplanOutcome & { reason: string }) | undefined;
   if (verdict.state === "met" || verdict.state === "blocked") {
     await store.patch(
       goalId,
       {
         criteria: evaluation.criteria,
         state: verdict.state,
+        ...environment,
         ...(verdict.diagnosis ? { diagnosis: verdict.diagnosis } : {}),
       },
       GOAL_EVENTS.stopped,
     );
   } else {
-    await store.patch(goalId, { criteria: evaluation.criteria });
+    await store.patch(goalId, { criteria: evaluation.criteria, ...environment });
     if (evaluation.triggers.length > 0 && goal.state === "active") {
       const epicId = goal.strategy.split("@")[0] as string;
-      const r = await replanSession(ledger, planner, {
+      const first = evaluation.triggers[0]?.trigger as GoalReplanTrigger;
+      const request: GoalReplanRequest = {
+        goalId,
         epicId,
         spec: goal.statement,
         reason: evaluation.triggers.map((t) => t.detail).join("; "),
-        trigger: "manual",
-        apply: true,
-      });
+        trigger: REPLAN_TRIGGER[first],
+      };
+      const outcome: GoalReplanOutcome = input.replan
+        ? await input.replan(request)
+        : await replanSession(ledger, planner, { ...request, apply: true }).then((r) => ({
+            version: r.version,
+            diff: r.diff,
+            applied: true,
+          }));
+      const reason = goalReplanReason(
+        { statement: goal.statement, criteria: evaluation.criteria },
+        evaluation.triggers,
+        outcome.version,
+      );
       await store.patch(
         goalId,
-        { strategy: `${epicId}@v${r.version}`, strategiesTried: goal.strategiesTried + 1 },
+        { strategy: `${epicId}@v${outcome.version}`, strategiesTried: goal.strategiesTried + 1 },
         GOAL_EVENTS.replanned,
+        {
+          triggers: evaluation.triggers.map((t) => t.trigger),
+          reason,
+          applied: outcome.applied,
+          diff: {
+            added: outcome.diff.added.map((s) => s.id),
+            removed: outcome.diff.removed.map((s) => s.id),
+            changed: outcome.diff.changed.map((c) => c.id),
+          },
+          ...(outcome.suggested?.length ? { suggested: outcome.suggested } : {}),
+        },
       );
       replanned = true;
+      replan = { ...outcome, reason };
     }
   }
-  return { evaluation, verdict, replanned };
+  return { evaluation, verdict, replanned, ...(replan ? { replan } : {}) };
 }
 
 // -------------------------------------------------------- many goals (P21)

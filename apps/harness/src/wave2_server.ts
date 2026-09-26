@@ -56,6 +56,8 @@ export interface Wave2RouteContext {
   readJsonBody: (req: IncomingMessage) => Promise<Record<string, unknown>>;
   /** The person a request is for (teams §2.3, kernel rule 19). */
   principalOf?: (req: IncomingMessage) => string;
+  /** Whether the request's person can see a project (PM-N9-8). */
+  canSee?: (req: IncomingMessage, projectId: string | undefined) => boolean;
   /** Injectable for tests. */
   webhookSecret?: string;
   /**
@@ -277,6 +279,23 @@ export async function handleWave2Route(
   }
   if (!cardStore) return false;
   const ledger = { store: cardStore, log: ctx.log };
+
+  // planner-pm P13: the story map (unplanned, proven, done) and a person's
+  // acceptance of a brief or a slice, cuts, extensions and revisions.
+  const { handleProjectDoneRoute } = await import("./project_done.js");
+  if (
+    await handleProjectDoneRoute(req, res, url, {
+      repoPath: ctx.repoPath,
+      kernel: { repoPath: ctx.repoPath, cardStore, log: ctx.log },
+      json,
+      isTrustedMutation: ctx.isTrustedMutation,
+      readJsonBody: ctx.readJsonBody,
+      principalOf: ctx.principalOf,
+      canSee: ctx.canSee,
+    })
+  ) {
+    return true;
+  }
 
   // U8: visual gate images (baselines, captures, candidates) for Review.
   const visual = /^\/api\/visual\/(baselines|actual|candidates)\/([\w.@-]+\.png)$/.exec(url);

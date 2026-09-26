@@ -118,6 +118,30 @@ describe("idempotent Jira and Linear import (NEW-integrations-1)", () => {
     });
   });
 
+  it("PM_CONTRACT §2: a Jira import of 13 story points creates a card, not a kernel refusal", async () => {
+    const csv = toCsv([
+      ["Issue key", "Summary", "Story Points"],
+      ["PROJ-99", "A big Jira story", "13"],
+    ]);
+    const [proposal] = importProposals("jira-csv", csv, await cards.listCards());
+    expect(proposal?.kind).toBe("create_card");
+    expect(proposal?.cards?.[0]).toMatchObject({ title: "A big Jira story", estimate: 8 });
+    expect(String((proposal?.cards?.[0] as { spec?: string })?.spec)).toContain(
+      "Imported story points: 13",
+    );
+    const pm = new PmStore(new EventLog(db));
+    const reply = await pm.appendReply({
+      replyTo: [],
+      text: "Import",
+      proposals: [proposal as never],
+    });
+    const ctx = { cardStore: cards, boardService: new BoardServiceImpl(cards), pmStore: pm };
+    // The regression: applying the proposal used to reach the kernel's
+    // `createCard` with `estimate: 13`, which it refuses outright.
+    const { cards: created } = await applyProposal(reply.proposals?.[0] as never, ctx);
+    expect(created[0]?.estimate).toBe(8);
+  });
+
   it("INT-27: through the API, export then import adds no card, and a second import changes nothing", async () => {
     const before = (await cards.listCards()).length;
     const exported = await (await fetch(`${base}/api/export?format=linear-csv`)).text();

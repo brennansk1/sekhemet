@@ -224,7 +224,7 @@ export interface CardRecord {
   // --- Board placement ---
   /** Team priority on Linear's scale: 0 none, 1 urgent, 2 high, 3 medium, 4 low. */
   priority?: number;
-  /** Points (1, 2, 3, 5, 8): Jira story points, Linear estimate. */
+  /** Points, one of `CARD_ESTIMATES` (1, 2, 3, 5, 8): Jira story points, Linear estimate (PM-N1-1). */
   estimate?: number;
   labels?: string[];
   /** The epic card this card belongs to. */
@@ -274,6 +274,70 @@ export interface CardRecord {
    * GT-TQ-8, GT-TQ-11).
    */
   gateChecks?: CardGateChecks;
+  /**
+   * Re-splits of one lineage that produced it: 1 for a split's child, 2 for
+   * a child of that child's split (planner-pm §2.5, PM-P1-13). Not nesting:
+   * split children are siblings.
+   */
+  splitDepth?: number;
+  /** The symbols its staged acceptance test imports, with file and signature (PM-P1-15). */
+  interface?: CardInterfaceSymbol[];
+  /**
+   * The stable id of each of `acceptanceCriteria`, in the same order (PM-P1-17):
+   * what a staged test case names and an approval is bound to.
+   */
+  criterionIds?: string[];
+}
+
+/** One symbol a card's staged acceptance test imports (planner-pm §2.1.6, PM-P1-15). */
+export interface CardInterfaceSymbol {
+  symbol: string;
+  /** Repository-relative path of the file that exports it. */
+  file: string;
+  /** Its expected signature, as the test uses it. */
+  signature: string;
+}
+
+/** The points a card's `estimate` may hold (planner-pm §2.6, PM-N1-1; PM_CONTRACT §2). */
+export const CARD_ESTIMATES: readonly number[] = [1, 2, 3, 5, 8];
+
+/**
+ * The closest `CARD_ESTIMATES` value to an imported or dictated number
+ * (PM_CONTRACT §2): a Jira card of 13 points, or any other estimate scale,
+ * still creates a card rather than failing the kernel's check. Ties round
+ * up (13 is nearer 8 than a bigger scale would suggest for most trackers,
+ * but a genuine tie — e.g. 6.5 between 5 and 8 — takes the larger, so a
+ * bigger import is never quietly shrunk past its nearer neighbour).
+ */
+export function nearestCardEstimate(n: number): number {
+  if (!Number.isFinite(n)) return CARD_ESTIMATES[0] as number;
+  return CARD_ESTIMATES.reduce((best, v) =>
+    Math.abs(v - n) < Math.abs(best - n) || (Math.abs(v - n) === Math.abs(best - n) && v > best)
+      ? v
+      : best,
+  ) as number;
+}
+
+/**
+ * Why a card waits on another (planner-pm NEW-planner-pm-8, PM-N8-2):
+ * `declared` in its `dependsOn`, `named` by its spec, criteria or tests,
+ * `imported` by its scope (the source index); `inferred` and `planner` are
+ * the reasons recorded before PM-N8-2.
+ */
+export type DependencySource = "declared" | "named" | "imported" | "inferred" | "planner";
+
+export const DEPENDENCY_SOURCES: readonly DependencySource[] = [
+  "declared",
+  "named",
+  "imported",
+  "inferred",
+  "planner",
+];
+
+/** A card's edge to a card it waits on, with why (PM-N8-2). */
+export interface DependencyReason {
+  dependsOnId: string;
+  source: DependencySource;
 }
 
 /** A DOM assertion a card declares for the visual gate (GT-N4-6). */

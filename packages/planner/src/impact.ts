@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
-import { type LspPool, outlineFile } from "@sekhemet/context";
+import { type LspPool, estimatePromptTokens, outlineFile } from "@sekhemet/context";
 
 /**
  * Impact analysis (P24): which files a change to a card's scope can break.
@@ -195,7 +195,9 @@ export function codebaseMapFromRepo(root: string): import("./types.js").Codebase
   const fileTokens: Record<string, number> = {};
   for (const f of files) {
     const text = readFileSync(join(abs, f), "utf8");
-    fileTokens[f] = Math.ceil(text.length / 4);
+    // The context package's one estimator, so the planner's Zone 3 and the
+    // `ready` check count a file alike (PM-14).
+    fileTokens[f] = estimatePromptTokens(text);
     const exp = outlineFile(f, text).exports;
     if (exp.length) symbols[f] = exp;
   }

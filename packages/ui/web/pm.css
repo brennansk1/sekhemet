@@ -917,3 +917,87 @@ body.pm-open .col {
   margin-left: 6px;
   color: var(--text-secondary);
 }
+
+/* A plan's criteria waiting on a person's approval (planner-pm PM-N7-5). */
+.cv-apv {
+  padding: 8px 16px 0;
+}
+.apv {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--bg-raised);
+  font-size: var(--text-sm);
+}
+.apv-h {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+.apv-note,
+.apv-sub {
+  margin: 0;
+  color: var(--text-secondary);
+}
+.apv-list,
+.apv-ex,
+.apv-files {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.apv-crit {
+  margin: 4px 0;
+  padding-left: 20px;
+}
+.apv-ex li {
+  overflow-wrap: anywhere;
+}
+.apv-acts {
+  display: flex;
+  gap: 6px;
+}
+
+/* Seshat's suggestions on an issue (PM-N9-1): Suggested, Why, Apply, Dismiss. */
+.cv-sug {
+  padding: 8px 16px 0;
+}
+.sug-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sug {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--bg-raised);
+  font-size: var(--text-sm);
+}
+.sug-t {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.sug-why {
+  color: var(--text-secondary);
+}
+.sug-acts {
+  display: flex;
+  gap: 6px;
+}

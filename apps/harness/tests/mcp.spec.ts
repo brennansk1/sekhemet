@@ -111,6 +111,26 @@ describe("@sekhemet/harness MCP Server", () => {
     const cards = await cardStore.listCards();
     expect(cards.length).toBe(2);
   });
+
+  it("PM_CONTRACT §2: a card created with an out-of-scale estimate is mapped, not refused", async () => {
+    const res = await handleMcpRequest(
+      {
+        jsonrpc: "2.0",
+        id: 5,
+        method: "tools/call",
+        params: {
+          name: "sekhemet_create_card",
+          arguments: { title: "Jira-sized story", tier: "task", estimate: 13 },
+        },
+      },
+      context,
+    );
+    expect(res.error).toBeUndefined();
+    const created = (await cardStore.listCards()).find((c) => c.title === "Jira-sized story");
+    expect(created?.estimate).toBe(8);
+    const dossier = await cardStore.getDossier(created?.id as string);
+    expect(dossier.notes.map((n) => n.text).join("\n")).toContain("Estimate 13");
+  });
 });
 
 describe("MCP tools beyond the basics (H10)", () => {

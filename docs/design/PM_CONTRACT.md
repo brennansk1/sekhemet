@@ -75,7 +75,14 @@ and are refused in read-only mode.
 - `POST /api/pm/messages` with `{ text, context?: { cardId?, view? } }`
   returns `{ message: PmMessage }` (role `user`, state `queued`).
 - Stream: the existing `/api/stream` SSE carries `pm` events:
-  `{ kind: "message", message }` and `{ kind: "status", status }`.
+  `{ kind: "message", message }` and `{ kind: "status", status }`. In the
+  Team setup the stream reaches everyone, so it carries no message: it sends
+  `{ kind: "refresh" }` and the client reloads `GET /api/pm/thread`.
+- In the Team setup (planner-pm PM-N9-8) `GET /api/pm/thread` returns the
+  person's own part of the thread: their messages and the replies to them,
+  and a reply to no one (a planner's post) only when they can see every
+  project. Each person's messages are answered apart, from the projects and
+  issues they can see; a Viewer's reply carries no proposal.
 
 ```ts
 type PmRole = "user" | "pm" | "system";
@@ -84,6 +91,7 @@ interface PmMessage {
   createdAt: string;
   state: "queued" | "thinking" | "done" | "error";
   context?: { cardId?: string; view?: string };
+  principal?: string;           // who wrote a user message; for a reply, who it answers (Team setup)
   proposals?: PmProposal[];     // changes the PM wants to make
   cites?: { cardId?: string; runId?: string; evidenceId?: string; url?: string; label?: string }[];   // url + label: a research source, rendered in the Sources list (http/https only)
 }
@@ -107,8 +115,13 @@ applies or discards, one by one or all together.
 interface PmProposal {
   id: string;
   kind: "create_card" | "update_card" | "split_card" | "reorder" | "move_card"
-      | "create_cycle" | "assign_cycle" | "park" | "unpark";
-  summary: string;              // "Split 'Ledger' into append + idempotency (2 cards, 3 + 2 pts)"
+      | "create_cycle" | "assign_cycle" | "park" | "unpark"
+      | "start_project";                // patch.brief: planned by the one planner when applied
+  summary: string;              // "Suggested: split Ledger into 2 cards (5 pts). Why: the Worker looped on it."
+  why?: string;                 // the reason; every Seshat proposal has one (PM-N9-4)
+  suggestionId?: string;        // the suggestion on the issue this is (PM-N9-1): applying either
+                                // applies both; discarding it dismisses the suggestion
+  forOwner?: string;            // Team setup: the issue's owner, who alone applies it (PM-N9-9)
   cardId?: string;
   patch?: Record<string, unknown>;      // field -> new value
   before?: Record<string, unknown>;     // field -> old value, for the diff
@@ -123,6 +136,72 @@ interface PmProposal {
   written to the ledger with actor `human` and type `pm/proposal_state`,
   payload `{ proposalId, state: "applied", cardIds? }` (a discard writes the same type with `state: "discarded"`).
 - `POST /api/pm/proposals/:id/discard`
+- A `create_card`, `split_card` or `start_project` proposal is applied
+  through the one planner (planner-pm PM-P1-1): INVEST, the criterion lint,
+  the scope bound and a staged test. A card the checks hold is created in
+  Planning with the reason; a refusal is a 409 naming it. A split gives each
+  part only its own criteria and tests and moves the original to Rejected,
+  "Split into N cards: <ids>" (PM-P1-7). An import's rows and a revision's
+  change cards (`traces`) keep their recorded path.
+- A proposal with `forOwner`, applied by anyone else, is a 403 naming the
+  owner.
+- Applying a proposal is not an approval of the planned cards' criteria: the
+  proposal shows each card's title, not the criteria the planner wrote, so
+  every card it plans keeps its approval hold until a person approves it
+  (below).
+
+### Approving a plan's criteria (planner-pm PM-N7-5)
+
+Every planned card waits in Planning until a person approves its criteria
+(and, by the depth profile, its example tables or staged test files). The
+dashboard does what `sekhemet approve <card|epic>` does.
+
+- `GET /api/cards/:id/approval` (a card or an epic) returns
+  `{ id, profile, sha256, cards: { id, title, status, approved, blockedReason?,
+  criteria: { id, text }[], examples: string[], tests: { path, what: "examples"
+  | "file", approved, sha256 }[] }[] }`: the card and its descendants that
+  have criteria and have not started, and one SHA-256 of everything shown.
+  404 for an unknown card.
+- `POST /api/cards/:id/approve` with `{ sha256 }`, the hash the person was
+  shown, returns `{ ok, profile, approved: string[], released: string[],
+  held: { id, reason }[] }`: `criteria/approved` (and `test/approved` where the
+  profile asks) with the person's principal, and each card with no other
+  hold moves out of Planning. 409 `{ reason: "stale", current }` when the
+  plan changed since, with nothing recorded; 400 without `sha256`; a
+  Member's `issue.edit` (a Viewer or Stakeholder gets 403) and the
+  dashboard's write header, like every write.
+
+### Suggestions on an issue and the weekly update (planner-pm NEW-planner-pm-9)
+
+A change Seshat would make to an issue's assignee, labels, priority or
+duplicate link, or a split, is a suggestion on the issue, and nothing
+changes until a person applies it (teams TEAM-18, TEAM-19).
+
+- `GET /api/cards/:id/suggestions` returns
+  `{ suggestions: { id, cardId, kind, value, why?, suggested }[] }`, the open
+  ones, with `suggested` the issue's text ("Suggested: priority Urgent for
+  Search."). `kind` is `assignee`, `label`, `priority`, `duplicate`, `split`,
+  or the planner's `hold` and `remove` on an issue someone else owns. 404 for
+  an issue the person cannot see.
+- `POST /api/suggestions/:id/apply` returns `{ suggestion, cards }`: the
+  change is made under the person's principal, then `suggestion/applied`.
+  `duplicate` moves the issue to Rejected ("Duplicate of X"); `split` plans
+  the parts through the planner; `hold` moves it to Planning with the reason
+  (waiting on a named decision); `remove` moves it to Rejected with the
+  re-plan's reason. 403 when, in the Team setup, the issue is someone else's
+  or its project's level is below Member; 409 when the suggestion is no
+  longer open. The project resolves from the suggestion's own card.
+- `POST /api/suggestions/:id/dismiss` returns `{ suggestion: { id, state:
+  "dismissed" } }`; the same change is not proposed again on that issue.
+  Checked the same way, at the suggestion's own card's project.
+- `GET /api/pm/update-draft?project=` returns `{ draft: { project?, parts:
+  { status, done, next, risks, asks }, text } }`: Seshat's weekly update,
+  with no health word. It writes nothing.
+- `POST /api/projects/:id/update` with `{ text }` posts the update a person
+  edited: `project/update_posted { project }`, the text private, the person
+  as principal. In the Team setup only the project's lead or an Admin
+  (`project.update`, checked centrally in `team/access.ts` before the route's
+  own inline check ever runs; 403 otherwise); 400 without text.
 
 ### Board practices
 
@@ -136,6 +215,68 @@ interface PmProposal {
   `{ throughput: {date, done}[], cycleTime: {cardId, hours, doneAt?}[],
      cfd: {date, backlog, ready, working, checking, review, done}[],
      wipAge: {cardId, hours}[] }`.
+
+### Story map and releases (planner-pm P13)
+
+When a project is done is computed from its requirements and closed by a
+person ([planner-pm §2.15](specs/planner-pm.md#215-when-a-project-is-done--computed-never-claimed)).
+Every `POST` is the dashboard's own (`x-sekhemet-action`), recorded under the
+request's principal; a refusal is `409 { error }` naming what is unproven.
+
+- `GET /api/story-map[/:projectId]` (the latest accepted brief's project when
+  omitted; `404` without one) returns
+  `{ projectId, baseline?, main?: { sha, branch, gatesPassed, at, stale },
+     slices: { id, projectId, title?, appetite: { cards?, hours? },
+       appetiteReached, extensions, accepted,
+       state: "unproven" | "proven" | "done",
+       mustHaves: { proven, total }, provenLine, unplanned: string[],
+       blockers: string[],
+       requirements: { id, version, title?, sliceId?, kano?, mustHave,
+         dependsOn: string[],
+         state: "cut" | "suspect" | "unplanned" | "planned" | "failing"
+              | "passing_strength_unmet" | "proven",
+         why, cards: { id, status?, suspect }[],
+         tests: { ref, suspect, result?, strength? }[] }[] }[],
+     unplanned: { id, title?, sliceId? }[], mustHaves: { proven, total },
+     provenLine, projectDone }`. `provenLine` reads "9 of 11 must-haves
+  proven"; `projectDone` is true only after a person accepted the last slice.
+- `GET /api/slices/:id/report` returns
+  `{ sliceId, baseline?, proven: {id, title?}[], cut: {id, title?}[],
+     remaining: {id, title?, state}[], text }` (the release report, compared
+  with the brief's baseline).
+- `POST /api/brief/accept` with
+  `{ projectId?, baseline, slices: { title, appetite: { cards?, hours? },
+     requirements: { key?, id?, title, kano?, mustHave?,
+       criteria?: {id, text}[], dependsOn?: string[] }[] }[] }`
+  returns `{ sliceIds, requirementIds }`. `dependsOn` names another
+  requirement of the brief by its `key`, or an accepted requirement's id.
+  In the Team setup, the project named by `projectId` (checked to exist)
+  needs its Admin or lead (`brief.accept`, teams item 6, like its settings);
+  404 for a `projectId` that names no project (`team/access.ts`,
+  `team_access.spec.ts`).
+- `POST /api/slices/:id/accept` (a proven slice only) returns
+  `{ completesProject, release?: { version, notes, changelog },
+     releaseRefused?, report }`. The slice's own project resolves from the
+  slice, and its Accept rule decides (`accept`, like accepting a card).
+- `POST /api/slices/:id/extend` with `{ cards?, hours? }` (each above the
+  current budget) returns `{ extended }`; refused (409) unless every
+  remaining card has a red test and no requirement of the slice is
+  unplanned — PM-P13-9's own condition for offering it, enforced again here
+  so the route is never looser than the ask that led to it. A Team
+  Member's `scope.change`, at the slice's own project's level.
+- `POST /api/requirements/:id/cut` with `{ reason? }` (a nice-to-have only)
+  returns `{ cut }`. A Team Member's `scope.change`, at the requirement's
+  own project's level.
+- `POST /api/requirements/:id/revise` with any of `{ title, criteria,
+  dependsOn, kano, mustHave, sliceId }` returns
+  `{ version, held: string[], running: string[], changeCards: { cardId,
+     requirementId, version, title, spec }[] }`; Seshat posts one
+  `create_card` proposal per change card, whose card carries
+  `traces: [{ requirementId, changeFor }]`. A Team Member's `scope.change`,
+  at the requirement's own project's level.
+- `POST /api/requirements/:id/confirm` with `{ from: "card" | "test", ref }`
+  re-confirms a suspect link against the current version. A Team project's
+  Accept rule (`accept`), at the requirement's own project.
 
 ### Integrations
 

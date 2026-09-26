@@ -1,5 +1,6 @@
 import type { CardRecord } from "@sekhemet/kernel";
 import { type LocalInferenceAdapter, plannerCopy } from "@sekhemet/models";
+import { guardCompletionClaim } from "@sekhemet/planner";
 import { type PmSnapshot, isStatusQuestion, ledgerStandup, stripThinking } from "./agent.js";
 import type { PmMessage } from "./types.js";
 
@@ -115,7 +116,8 @@ export async function quickAnswer(
     temperature: 0.2,
     maxTokens: 300,
   });
-  const text = stripThinking(res.text).trim();
+  // PM-P13-6: a quick answer's claim of "complete" counts for no more than a full one's.
+  const text = guardCompletionClaim(stripThinking(res.text).trim(), snapshot.storyMap).text;
   return `Quick answer (${modelName}), informational only; the full answer follows.\n\n${text}`;
 }
 

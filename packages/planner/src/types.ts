@@ -1,4 +1,13 @@
-import type { CardRecord, CardTier } from "@sekhemet/kernel";
+import type {
+  CardChange,
+  CardInterfaceSymbol,
+  CardRecord,
+  CardSplit,
+  CardTier,
+} from "@sekhemet/kernel";
+import type { CapabilityModel } from "./capability_fit.js";
+import type { ExampleRow } from "./criteria.js";
+import type { OracleDispute } from "./oracle.js";
 
 /* -------------------------------------------------------------------------- */
 /* SPIDR                                                                      */
@@ -43,13 +52,13 @@ export interface CodebaseRepo {
 /**
  * The budget a story has to fit inside.
  *
- * `workingContextTokens` is the *model's* window for the tier, not the pack
- * size: INVEST-S caps the pack at a fraction of it so repair turns still have
- * room to grow. A story that only fits when the window is full is a story that
- * fails on its second turn.
+ * `workerWindowTokens` is the resolved Worker's context window, read from
+ * the model registry (models rule 11): INVEST's *Small* is Zone 3's cap at
+ * that Worker's prompt budget, 0.50 × (W − 2,400) (DEC-27, `small.ts`) —
+ * there is no separate pack fraction.
  */
 export interface TierBudget {
-  workingContextTokens: number;
+  workerWindowTokens: number;
   maxSteps: number;
   maxFiles: number;
 }
@@ -64,6 +73,8 @@ export interface AcceptanceTestSpec {
    * blocked until this is confirmed `true` (design §2485, check T).
    */
   initiallyFailing: boolean;
+  /** The criterion's example rows, when it has concrete values (PM-P1-19). */
+  examples?: ExampleRow[];
 }
 
 /** What a story advances; a story that advances nothing is an orphan. */
@@ -125,13 +136,31 @@ export interface PlannedStory {
   routing: RoutingDecision;
   /** Sibling story ids that must complete first. */
   dependsOn: string[];
-  /** Projected context-pack size, checked against the INVEST-S fraction. */
+  /** Its Zone 3 content in tokens (`small.ts`), checked against Zone 3's cap (INVEST *Small*). */
   estimatedPackTokens: number;
   /** Set when this story came out of a split, naming the story it came from. */
   splitFrom?: string;
   /** Depth in the split tree; the recursion stops at `maxSplitDepth`. */
   splitDepth: number;
+  /** The SPIDR axis this split child was split along (DEC-26); none when not a split child. */
+  split?: CardSplit;
+  /** What the card does to existing code (DEC-26); `feature` when unset. */
+  change?: CardChange;
+  /** The spec capability it was sliced from: what it traces to (PM-P13-2). */
+  capability?: string;
+  /** The symbols its acceptance test imports, as the model named them (PM-P1-15). */
+  interface?: CardInterfaceSymbol[];
+  /** Requirement ids the model said it proves (PM-P13-2). */
+  requirementIds?: string[];
   editSketch?: EditSketch;
+}
+
+/** A mechanism of §2.1.10 refused as one card and re-split as an epic (PM-P1-20). */
+export interface MechanismEpic {
+  mechanism: string;
+  title: string;
+  /** The spec's words for it. */
+  capability: string;
 }
 
 /**
@@ -338,6 +367,8 @@ export interface DecisionRequest {
   /** The ambiguity that produced the question. */
   category: AmbiguityCategory;
   createdAt: string;
+  /** A disputed example row (PM-N7-2): the answer's value is staged. */
+  oracle?: OracleDispute;
 }
 
 export interface DecisionResolution {
@@ -454,6 +485,11 @@ export interface DecomposeSpecParams {
   maxSplitDepth?: number;
   /** The design stage's riskiest assumption: planned as a rule, proven right after the contract. */
   riskiest?: string;
+  /**
+   * The Worker's measured record (PM-N3-2): a story predicted under 0.6, or
+   * over its kind's 80% horizon, is split like an over-budget one.
+   */
+  capability?: CapabilityModel;
 }
 
 export interface SpidrPlan {
@@ -467,6 +503,12 @@ export interface SpidrPlan {
   rejectionReason?: string;
   /** How the slices were produced, so a plan can be reproduced. */
   source: "heuristic" | "model_assisted";
+  /** The spec as planned: the criterion lint's domain nouns, derived requirements. */
+  spec?: string;
+  /** Mechanisms refused as single cards and re-split as epics (PM-P1-20). */
+  epics: MechanismEpic[];
+  /** Why each refused model reply was refused (PM-P1-4). */
+  modelRefusals?: string[];
 }
 
 /** Legacy shape kept for existing callers of {@link PlannerService}. */

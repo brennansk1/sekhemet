@@ -3,9 +3,10 @@ import type { CardRecord, EventRecord } from "@sekhemet/kernel";
 /**
  * The seven live signals with thresholds and automatic responses (P20,
  * design "Live monitoring & telemetry signals"). Computed from the board
- * and the event log; each response is either automatic within preset
- * bounds or a decision request. The bounds are fields of `SIGNAL_BOUNDS`,
- * so the goal view can show them.
+ * and the event log; a response is automatic only when it changes no field
+ * a person owns, and otherwise a proposal or a decision request (§2.12,
+ * NEW-planner-pm-2, -5; the harness carries them out in `planner_live.ts`).
+ * The bounds are fields of `SIGNAL_BOUNDS`, so the goal view can show them.
  */
 export const SIGNAL_BOUNDS = {
   scopeDriftFraction: 0.2,
@@ -34,22 +35,43 @@ export type SignalAction =
   | "backpressure_verify"
   | "dispatch_verification_spike";
 
+/**
+ * How a response is carried out (§2.12, NEW-planner-pm-2, -5): `automatic`
+ * only when it changes no card field a person owns (a forecast, a
+ * back-pressure hold, the order of *Needs you*); otherwise a `proposal` a
+ * person applies, or a `decision` request that asks.
+ */
+export type SignalMode = "automatic" | "proposal" | "decision";
+
 export interface SignalReading {
   id: SignalId;
   value: number;
   threshold?: number;
   triggered: boolean;
   detail: string;
+  /** The planned epic a per-epic reading (scope drift) is about. */
+  epicId?: string;
   /** What the planner does when triggered; `decision` means it asks. */
-  response?: { action: SignalAction; mode: "automatic" | "decision"; targets: string[] };
+  response?: { action: SignalAction; mode: SignalMode; targets: string[] };
+}
+
+/** One planned epic, for scope drift: its first plan and every card any plan version made. */
+export interface PlannedEpic {
+  epicId: string;
+  /** The stories of the epic's first plan version (the denominator). */
+  originalCardIds: readonly string[];
+  /** Stories of every later plan version: planned, so never drift. */
+  plannedCardIds: readonly string[];
 }
 
 export interface SignalInput {
   now: Date;
   cards: readonly CardRecord[];
   events: readonly EventRecord[];
-  /** Cards in the goal's original plan (for scope drift). */
+  /** Cards in the goal's original plan (for scope drift over the whole board). */
   originalPlanCardIds?: readonly string[];
+  /** Planned epics: one scope-drift reading each, over the epic's own cards (PM-N5-1). */
+  plans?: readonly PlannedEpic[];
   /** Review capacity (ReviewWIP). */
   reviewWip: number;
   /** Whether a card is running now (tightens the blocked-time bound). */
@@ -109,6 +131,10 @@ export function computeSignals(input: SignalInput): SignalReading[] {
       },
     });
   }
+  for (const plan of input.plans ?? []) {
+    const reading = epicScopeDrift(work, plan);
+    if (reading) out.push(reading);
+  }
 
   // 3. Cycle time: Ready -> Review, p95 vs p50.
   const cycle: number[] = [];
@@ -132,7 +158,7 @@ export function computeSignals(input: SignalInput): SignalReading[] {
     threshold: SIGNAL_BOUNDS.cycleP95OverP50,
     triggered: cycle.length >= 4 && ratio > SIGNAL_BOUNDS.cycleP95OverP50,
     detail: `p50 ${hours(p50)}h, p95 ${hours(p95)}h over ${cycle.length} cards`,
-    response: { action: "adjust_step_budgets", mode: "automatic", targets: [] },
+    response: { action: "adjust_step_budgets", mode: "proposal", targets: [] },
   });
 
   // 4. Blocked time: parked (or awaiting a decision) longer than the bound.
@@ -152,16 +178,31 @@ export function computeSignals(input: SignalInput): SignalReading[] {
     threshold: bound,
     triggered: blocked.length > 0,
     detail: `${blocked.length} card(s) blocked over ${bound}h; oldest ${oldest}h`,
-    response: { action: "escalate_blockers", mode: "automatic", targets: blocked.map((c) => c.id) },
+    // The top of *Needs you* is automatic; raising priority is a person's
+    // field, so it is proposed, never set (PM-N2-1).
+    response: { action: "escalate_blockers", mode: "proposal", targets: blocked.map((c) => c.id) },
   });
 
   // 5. Failure concentration: gate failures per file (Pareto).
   const perFile = new Map<string, number>();
   for (const e of events) {
     if (e.type !== "gate/result") continue;
-    const p = e.payload as { status?: string; files?: string[]; file?: string; excerpt?: string };
-    if (p.status === "pass") continue;
-    const files = p.files ?? (p.file ? [p.file] : []);
+    // The kernel's record says `passed` and locates each failure in a file
+    // (`GateResultRecord`, gates rule 19); `status`, `files` and an excerpt
+    // are older writers' shapes.
+    const p = e.payload as {
+      passed?: boolean;
+      status?: string;
+      files?: string[];
+      file?: string;
+      excerpt?: string;
+      failures?: { location?: { file?: string } }[];
+    };
+    if (p.passed === true || p.status === "pass") continue;
+    const located = (p.failures ?? [])
+      .map((f) => f?.location?.file)
+      .filter((f): f is string => typeof f === "string" && f.length > 0);
+    const files = [...(p.files ?? (p.file ? [p.file] : [])), ...located];
     const fromText = [...(p.excerpt ?? "").matchAll(/([\w./-]+\.(?:ts|tsx|js|py|rs|go))[:(]/g)].map(
       (m) => m[1] as string,
     );
@@ -178,7 +219,8 @@ export function computeSignals(input: SignalInput): SignalReading[] {
     threshold: SIGNAL_BOUNDS.hotspotFailures,
     triggered: hotCount >= SIGNAL_BOUNDS.hotspotFailures,
     detail: hotFile ? `${hotCount} gate failures in ${hotFile}` : "no gate failures",
-    response: { action: "resplit_hotspot", mode: "automatic", targets: hotCards },
+    // A re-split is proposed; the card is never paused (PM-N5-2).
+    response: { action: "resplit_hotspot", mode: "proposal", targets: hotCards },
   });
 
   // 6. Review backlog vs ReviewWIP.
@@ -216,11 +258,98 @@ export function computeSignals(input: SignalInput): SignalReading[] {
     detail: `${stale.length} assumption(s) unverified for over ${SIGNAL_BOUNDS.riskAssumptionHours}h`,
     response: {
       action: "dispatch_verification_spike",
-      mode: "automatic",
+      mode: "proposal",
       targets: stale.map((e) => (e.payload as { id: string }).id),
     },
   });
   return out;
+}
+
+/**
+ * Scope drift of one planned epic (PM-N5-1): the epic's cards that no plan
+ * version made and no split produced, over its first plan's size.
+ */
+function epicScopeDrift(work: readonly CardRecord[], plan: PlannedEpic): SignalReading | undefined {
+  const original = new Set(plan.originalCardIds);
+  if (original.size === 0) return undefined;
+  const planned = new Set([...plan.originalCardIds, ...plan.plannedCardIds]);
+  // K-N9-4: whether a card came from a split is `splitDepth > 0` (nothing
+  // outside storage, display and export reads the stored `split` axis).
+  const added = work.filter(
+    (c) => c.parentId === plan.epicId && !planned.has(c.id) && !c.splitDepth,
+  );
+  const drift = added.length / original.size;
+  return {
+    id: "scope_drift",
+    epicId: plan.epicId,
+    value: Math.round(drift * 1000) / 1000,
+    threshold: SIGNAL_BOUNDS.scopeDriftFraction,
+    triggered: drift > SIGNAL_BOUNDS.scopeDriftFraction,
+    detail: `${added.length} cards added to ${plan.epicId}'s ${original.size}-card plan`,
+    response: {
+      action: "halt_aux_cards_and_ask",
+      mode: "decision",
+      targets: added.map((c) => c.id),
+    },
+  };
+}
+
+/** 95% Wilson score interval for k successes in n trials. */
+function wilson(k: number, n: number, z = 1.96): { low: number; high: number } {
+  if (n === 0) return { low: 0, high: 1 };
+  const p = k / n;
+  const denom = 1 + (z * z) / n;
+  const centre = (p + (z * z) / (2 * n)) / denom;
+  const half = (z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n))) / denom;
+  const r = (x: number) => Math.round(x * 1000) / 1000;
+  return { low: r(Math.max(0, centre - half)), high: r(Math.min(1, centre + half)) };
+}
+
+/** The recent window and the record it is compared with (PM-N5-3). */
+export const DEGRADATION_WINDOW = 10;
+
+export interface WorkerDegradation {
+  degraded: boolean;
+  /** Pass rate over the last `DEGRADATION_WINDOW` attempts. */
+  recentRate: number;
+  /** The Worker's 95% Wilson interval over its attempts before that window. */
+  low: number;
+  high: number;
+  /** Attempts the interval is taken over. */
+  baseline: number;
+  /** The *What's at risk* line, when degraded. */
+  text?: string;
+}
+
+/**
+ * Possible model degradation (§2.12 cycle time, PM-N5-3): the Worker's pass
+ * rate over its last 10 attempts against the 95% interval of its record
+ * before them. Undefined until there are 10 earlier attempts to compare
+ * with (the capability model's rough-range floor, §2.5). `passes` is the
+ * Worker's attempts in ledger order, person-built and halted ones excluded.
+ */
+export function workerDegradation(
+  passes: readonly boolean[],
+  window = DEGRADATION_WINDOW,
+): WorkerDegradation | undefined {
+  const earlier = passes.slice(0, Math.max(0, passes.length - window));
+  const recent = passes.slice(-window);
+  if (recent.length < window || earlier.length < window) return undefined;
+  const { low, high } = wilson(earlier.filter(Boolean).length, earlier.length);
+  const recentRate = recent.filter(Boolean).length / recent.length;
+  const degraded = recentRate < low;
+  return {
+    degraded,
+    recentRate,
+    low,
+    high,
+    baseline: earlier.length,
+    ...(degraded
+      ? {
+          text: `Possible model degradation: the Worker passed ${recent.filter(Boolean).length} of its last ${window} attempts (${Math.round(recentRate * 100)}%), below the ${Math.round(low * 100)}–${Math.round(high * 100)}% range of its ${earlier.length} attempts before them.`,
+        }
+      : {}),
+  };
 }
 
 /** The responses a scheduler pass should carry out now. */

@@ -118,6 +118,15 @@ const PERSON_FACING_REFUSALS: ReadonlySet<string> = new Set([
   // packages/models/src/model_download.ts: "The folder already has a file named …; it is
   // not replaced…", the dashboard's 409 and `sekhemet models fetch` (dashboard DB-NM14-2).
   "refuseExisting",
+  // apps/harness/src/pm/audience.ts: "<owner> owns <title>; only <owner> can apply this
+  // change.", a proposal's or suggestion's 403 to the person who tried (PM-N9-9).
+  "ownerRefusal",
+  // apps/harness/src/project_done.ts: why extend is refused on `POST
+  // /api/slices/:id/extend`'s 409, the same condition the queue prelude's ask names (PM-P13-9).
+  "extendRefusal",
+  // packages/models/src/load_guard.ts: "Model loads are off in this process…", thrown to a
+  // developer running tests with SEKHEMET_MODEL_LOADS=off; a model never sees it.
+  "modelLoadRefusal",
 ]);
 
 function nameOf(node: ts.Node | undefined): string | undefined {

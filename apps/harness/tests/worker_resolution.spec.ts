@@ -5,7 +5,7 @@ import { ModelRegistry, assignRole } from "@sekhemet/models";
 import { afterEach, describe, expect, it } from "vitest";
 import { defaultWorkerName, effectiveConfig, queueDefaults } from "../src/config_apply.js";
 import { recommendRoster } from "../src/init.js";
-import { resolveWorkerName } from "../src/model_access.js";
+import { resolveWorkerName, workerZone3Fit } from "../src/model_access.js";
 
 /**
  * SUR-11 (P10): with no Worker set anywhere, `run`, `queue` and the
@@ -53,5 +53,31 @@ describe("SUR-11: one Worker resolution for run, queue and the dashboard", () =>
     // MD-N10-3: the person's assignment outranks config.toml and the default.
     expect(resolveWorkerName(undefined, "nail", opts)).toBe("assigned-worker");
     expect(resolveWorkerName("x", "nail", opts)).toBe("x");
+  });
+});
+
+describe("PM-12..14: the board's Small check is the planner's, at the resolved Worker's W", () => {
+  it("caps Zone 3 at 3,792 tokens for the reference Worker, and refuses a card over it", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "worker-z3-"));
+    dirs.push(dir);
+    const registry = new ModelRegistry(join(dir, "models.json"));
+    const fit = workerZone3Fit(dir, { registry, configured: "cyber-tiel" });
+    const small = await fit({
+      id: "c",
+      title: "t",
+      spec: "s",
+      acceptanceCriteria: [],
+      scopeFiles: [],
+    } as never);
+    expect(small.cap).toBe(3_792);
+    expect(small.tokens).toBeLessThan(small.cap);
+    const big = await fit({
+      id: "c",
+      title: "t",
+      spec: "word ".repeat(20_000),
+      acceptanceCriteria: [],
+      scopeFiles: [],
+    } as never);
+    expect(big.tokens).toBeGreaterThan(big.cap);
   });
 });

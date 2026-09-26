@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   type CardRecord,
   type CardStatus,
@@ -142,6 +143,100 @@ export interface BoardServiceOptions {
    * run prepared the repository may the harness accept a card (`--auto-accept`).
    */
   measurementMarker?: { purpose: string };
+  /**
+   * The project's depth profile (design-stage P14), which sets the test
+   * approvals a card needs before it leaves Planning (planner-pm §2.17,
+   * PM-N7-3). Until P14 builds the profile, every project is `internal tool`.
+   */
+  depthProfile?: DepthProfile;
+  /**
+   * Read a staged test file's actual current content, for `planningExitFailure`
+   * to re-hash it against what was approved (a file edited directly on disk,
+   * without re-staging, must not still read as approved at its old hash).
+   */
+  readStagedFile?: (path: string) => string | undefined;
+}
+
+/** The depth profiles of design-stage §2.8 (gates' `DepthProfile`, typed here: the board sits below gates). */
+export type DepthProfile = "prototype" | "internal tool" | "production" | "regulated";
+export const DEFAULT_DEPTH_PROFILE: DepthProfile = "internal tool";
+
+/** Where a card leaving for Ready or In Progress has not yet run: its approvals are due. */
+const BEFORE_RUNNING = new Set<CardStatus>(["planning", "backlog", "parked", "rejected"]);
+/**
+ * Ready → In Progress is also re-checked (not only the moves into
+ * `BEFORE_RUNNING`): a staged file can be edited on disk, without
+ * re-staging, after a card is already Ready and before it starts running.
+ */
+const RECHECK_BEFORE_RUN = new Set<CardStatus>([...BEFORE_RUNNING, "ready"]);
+
+/**
+ * What a card still needs from a person before it leaves Planning
+ * (planner-pm §2.17; PM-N7-3, -4, -5), or undefined: its criteria approved
+ * as they are now (every profile); for `production`, the staged files of a
+ * card that traces to a must-have requirement approved (their example
+ * tables); for `regulated`, every staged acceptance-test file. An approval
+ * of content that has since changed is void (the kernel binds each to a
+ * SHA-256). A card without criterion ids predates the planner's contract.
+ *
+ * `readStagedFile`, when given, re-hashes each staged file from its actual
+ * content on disk rather than trusting the SHA-256 recorded at `stage()`
+ * time: a file a person or a process edited directly, without re-staging,
+ * would otherwise still read as approved at its old, no-longer-true hash.
+ */
+export async function planningExitFailure(
+  store: CardStore,
+  card: CardRecord,
+  profile: DepthProfile = DEFAULT_DEPTH_PROFILE,
+  readStagedFile?: (path: string) => string | undefined,
+): Promise<string | undefined> {
+  if ((card.criterionIds?.length ?? 0) === 0) return undefined;
+  const criteria = store.stagedTests.criteriaApproval(card.id);
+  if (!criteria.approved) {
+    const why = criteria.approvedSha256
+      ? "its criteria changed since they were approved"
+      : "no one has approved them yet";
+    return `${card.id} needs a person's approval of its criteria before it leaves Planning (${why}): sekhemet approve ${card.id}`;
+  }
+  if (profile !== "production" && profile !== "regulated") return undefined;
+  if (profile === "production") {
+    const links = store.requirements.linksFrom("card", card.id);
+    let mustHave = false;
+    for (const l of links) {
+      if ((await store.requirements.get(l.requirementId))?.mustHave) mustHave = true;
+    }
+    if (!mustHave) return undefined;
+  }
+  const currentSha256 = (a: { path: string; stagedSha256: string }): string => {
+    if (!readStagedFile) return a.stagedSha256;
+    // A file the board can read the disk for but cannot find has changed: never the recorded hash.
+    const disk = readStagedFile(a.path);
+    return disk === undefined ? "missing" : createHash("sha256").update(disk).digest("hex");
+  };
+  const approvals = store.stagedTests.testApprovals(card.id).map((a) => ({
+    ...a,
+    approved: a.approved && currentSha256(a) === a.approvedSha256,
+  }));
+  // Regulated approves the whole file; an approval of its examples alone is not that.
+  const missing = approvals.filter(
+    (a) => !a.approved || (profile === "regulated" && a.what !== "file"),
+  );
+  if (missing.length === 0) return undefined;
+  const voided = missing.filter((a) => a.approvedSha256 !== undefined && !a.approved);
+  const never = missing.filter((a) => !voided.includes(a));
+  const what =
+    profile === "production"
+      ? "the example tables of a must-have requirement (production profile)"
+      : "every staged acceptance-test file (regulated profile)";
+  const parts = [
+    ...(never.length > 0 ? [`not yet approved: ${never.map((a) => a.path).join(", ")}`] : []),
+    ...(voided.length > 0
+      ? [
+          `approval void, the content changed since it was approved: ${voided.map((a) => a.path).join(", ")}`,
+        ]
+      : []),
+  ];
+  return `${card.id} needs a person's approval of ${what} before it leaves Planning — ${parts.join("; ")}: sekhemet approve ${card.id}`;
 }
 
 /**
@@ -201,7 +296,9 @@ export class BoardServiceImpl implements BoardService {
       "evidenceFor" in optionsOrLimits ||
       "planner" in optionsOrLimits ||
       "zone3Fit" in optionsOrLimits ||
-      "measurementMarker" in optionsOrLimits
+      "measurementMarker" in optionsOrLimits ||
+      "depthProfile" in optionsOrLimits ||
+      "readStagedFile" in optionsOrLimits
         ? (optionsOrLimits as BoardServiceOptions)
         : { customLimits: optionsOrLimits as Partial<Record<CardStatus, number>> };
 
@@ -233,8 +330,37 @@ export class BoardServiceImpl implements BoardService {
       if (!criteria)
         return `${card.id} has no acceptance criteria or tests; write them before it is Ready`;
     }
+    // PM-P13-11: `holdSuspectCards` only pulls a ready, verifying or
+    // in-review card back to Planning when a requirement it traces to is
+    // revised — a Backlog or Parked card never ran, so it is never held.
+    // Without this check such a card reaches Ready with a suspect link
+    // untouched. A person re-plans or re-confirms it (clearing the link)
+    // before it may run again.
+    if (to === "ready") {
+      const suspect = this.cardStore.requirements
+        .linksFrom("card", card.id)
+        .filter((l) => l.suspect);
+      if (suspect.length > 0) {
+        return `${card.id} traces to ${suspect.map((l) => `${l.requirementId} (v${l.version})`).join(", ")}, revised since; it waits for a re-plan or a re-confirmation before it is Ready`;
+      }
+    }
     // A parent's scope is its children's; it never runs itself (B7 rollup).
     const isParent = (await this.cardStore.listCards({ parentId: card.id })).length > 0;
+    // PM-N7-3/4/5: a card leaves Planning (or starts from where it waited)
+    // only with a person's approvals, by the depth profile.
+    if (
+      (to === "ready" || to === "in_progress") &&
+      RECHECK_BEFORE_RUN.has(t.fromStatus) &&
+      !isParent
+    ) {
+      const approval = await planningExitFailure(
+        this.cardStore,
+        card,
+        this.options.depthProfile,
+        this.options.readStagedFile,
+      );
+      if (approval) return approval;
+    }
     // K-N5-7: INVEST's Small — the card's Zone 3 content fits Zone 3's cap.
     if (
       to === "ready" &&

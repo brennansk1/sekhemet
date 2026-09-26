@@ -128,6 +128,15 @@ async function sketchWithToolIndex(
   return text;
 }
 
+/** A code fence, a unified-diff header or hunk, or added/removed lines. */
+export function isLiteralPatch(text: string): boolean {
+  return (
+    /```/.test(text) ||
+    /^(?:diff --git|@@ |--- |\+\+\+ )/m.test(text) ||
+    text.split("\n").filter((l) => /^[+-](?![+-])\S/.test(l)).length >= 2
+  );
+}
+
 export async function sketchWithModel(
   adapter: LocalInferenceAdapter,
   story: PlannedStory,
@@ -249,13 +258,23 @@ export async function sketchWithModel(
     Array.isArray(v)
       ? v.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
       : dflt;
+  const outline = typeof raw.diffSketch === "string" ? raw.diffSketch : "";
+  const preconditions = strings(raw.preconditions, template.preconditions);
+  const invariants = strings(raw.invariants, template.invariants);
+  // PM-P1-16: a prose outline, never a literal patch — checked over every
+  // free-text field a model fills, not only `diffSketch` (a literal diff
+  // dumped into `preconditions` or `invariants` instead is still a patch).
+  const literalField = [outline, ...preconditions, ...invariants].find((t) => isLiteralPatch(t));
+  if (literalField !== undefined) {
+    return reject("the outline is a literal patch; the sketch describes the change in prose");
+  }
   return {
     source: "model",
     sketch: {
       cardId: story.card.id,
       targetSymbols: targets,
-      preconditions: strings(raw.preconditions, template.preconditions),
-      invariants: strings(raw.invariants, template.invariants),
+      preconditions,
+      invariants,
       diffSketch:
         typeof raw.diffSketch === "string" && raw.diffSketch.trim()
           ? raw.diffSketch.trim()

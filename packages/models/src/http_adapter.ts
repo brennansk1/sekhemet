@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { assertKvType } from "./kv_policy.js";
+import { assertModelLoadAllowed } from "./load_guard.js";
 import { type Engine, type LoadOptions, checkOllamaQuantisation } from "./load_mechanics.js";
 import { currentMemoryPressure } from "./memory.js";
 import { parseToolCallsFromText, stripReasoning } from "./parser.js";
@@ -890,6 +891,7 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
       let handedOff = false;
 
       try {
+        assertModelLoadAllowed({ url: `${this.baseUrl}${path}` });
         const res = await fetch(`${this.baseUrl}${path}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },

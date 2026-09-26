@@ -17,4 +17,7 @@ export * from "./ledger_backup.js";
 export * from "./transitions.js";
 export * from "./payload_registry.js";
 export * from "./requirements.js";
+export * from "./slices.js";
+export * from "./staged_tests.js";
+export * from "./suggestions.js";
 export * from "./assignee.js";

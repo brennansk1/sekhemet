@@ -90,6 +90,10 @@ const VALUED = new Set([
   "--out",
   "--planner",
   "--sketcher",
+  "--changelog",
+  // A slice's appetite (PM-P13-9): `sekhemet release extend <SLICE> --cards N --hours H`.
+  "--cards",
+  "--hours",
 ]);
 
 /**
@@ -123,6 +127,8 @@ export const KNOWN_FLAGS: ReadonlySet<string> = new Set([
   "--calibration-night",
   "--candidate",
   "--card",
+  "--cards",
+  "--changelog",
   "--check",
   "--combination",
   "--confirm",
@@ -150,6 +156,7 @@ export const KNOWN_FLAGS: ReadonlySet<string> = new Set([
   "--gate-rule",
   "--help",
   "--host",
+  "--hours",
   "--identity",
   "--idle-min",
   "--independent",
@@ -214,6 +221,7 @@ export const KNOWN_FLAGS: ReadonlySet<string> = new Set([
   "--set",
   "--settings",
   "--sha256",
+  "--show",
   "--sig",
   "--signers",
   "--since",
@@ -246,8 +254,8 @@ export const KNOWN_FLAGS: ReadonlySet<string> = new Set([
   "--workflow",
   "--write",
   "--yes",
-  "-v",
   "-h",
+  "-v",
 ]);
 
 /** The first flag not in {@link KNOWN_FLAGS}; `--name=value` is judged by its name. */

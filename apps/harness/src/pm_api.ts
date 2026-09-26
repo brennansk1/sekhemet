@@ -2,9 +2,10 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { join } from "node:path";
 import type { BoardService } from "@sekhemet/board";
-import { type CardStore, type CardUpdate, EventLog } from "@sekhemet/kernel";
+import { type CardStore, type CardUpdate, EventLog, nearestCardEstimate } from "@sekhemet/kernel";
 import type { LocalInferenceAdapter } from "@sekhemet/models";
 import { readKernelPressureLevel } from "@sekhemet/models";
+import { resolvePlannerModel } from "@sekhemet/planner";
 import { effectiveConfig } from "./config_apply.js";
 import { recommendRoster } from "./init.js";
 import { handleIntegrationsApi } from "./integrations.js";
@@ -13,11 +14,19 @@ import { learnFromProposalChoices } from "./learning/reflect.js";
 import { LearningStore } from "./learning/store.js";
 import { sharedModelAccess } from "./model_access.js";
 import { ProposalError, applyProposal } from "./pm/apply.js";
+import { type Audience, soloAudience } from "./pm/audience.js";
 import { capabilityReport } from "./pm/capability.js";
 import { flowMetrics, pmQuality } from "./pm/metrics.js";
 import { DEFAULT_PM_MODEL, answerQueued, pmModelFor, runnerLease } from "./pm/service.js";
 import { PmStore } from "./pm/store.js";
+import {
+  SuggestionError,
+  applySuggestion,
+  dismissSuggestion,
+  suggestionsOn,
+} from "./pm/suggest.js";
 import { PM_EVENTS, type PmMessage, type PmStatus } from "./pm/types.js";
+import { draftWeeklyUpdate, postWeeklyUpdate } from "./pm/weekly.js";
 import { seshatWait } from "./pm/while_worker.js";
 import { oneShotResearcher } from "./research/service.js";
 import { quickAnswererFor } from "./smart_swap.js";
@@ -39,6 +48,11 @@ export interface PmApiContext {
   isTrustedMutation: (req: IncomingMessage) => boolean;
   /** The person a request is for (teams §2.3, kernel rule 19); the server's one resolver. */
   principalOf?: (req: IncomingMessage) => string;
+  /**
+   * Who is asked and what each person can see (planner-pm §2.8.5, §2.18;
+   * teams items 6, 19a, 20). A Solo install's one person when omitted.
+   */
+  audience?: () => Audience;
 }
 
 const CARD_ID = "[A-Za-z0-9_-]+";
@@ -46,7 +60,11 @@ const CARD_ID = "[A-Za-z0-9_-]+";
 /** Card fields the dashboard may edit inline (PM_CONTRACT §2). */
 const PATCHABLE: Record<string, (v: unknown) => unknown> = {
   priority: (v) => (typeof v === "number" && v >= 0 && v <= 4 ? Math.round(v) : undefined),
-  estimate: (v) => (v === null ? null : typeof v === "number" && v >= 0 ? v : undefined),
+  // PM_CONTRACT §2: the kernel refuses any estimate outside {1,2,3,5,8}; the
+  // PATCH rule matches it by mapping to the nearest allowed value rather
+  // than passing an arbitrary number through to be refused.
+  estimate: (v) =>
+    v === null ? null : typeof v === "number" && v >= 0 ? nearestCardEstimate(v) : undefined,
   labels: (v) =>
     Array.isArray(v) ? v.filter((x) => typeof x === "string").map((x) => x.trim()) : undefined,
   epicId: (v) => (v === null || typeof v === "string" ? v : undefined),
@@ -79,6 +97,22 @@ export function createPmApi(ctx: PmApiContext) {
     await learnFromProposalChoices(learning, choices).catch(() => undefined);
   };
   const pmModel = ctx.pmModel ?? DEFAULT_PM_MODEL;
+  const audience = (): Audience => ctx.audience?.() ?? soloAudience();
+  const personOf = (req: IncomingMessage): string =>
+    ctx.principalOf?.(req) ?? ctx.log.localPrincipal();
+  /**
+   * PM-N9-8: in the Team setup a person reads their own part of Seshat's
+   * thread — their messages and the replies to them — and a reply to no one
+   * (a planner's post) only when they can see every project.
+   */
+  const threadFor = async (req: IncomingMessage, since: number): Promise<PmMessage[]> => {
+    const all = await pmStore.thread(since);
+    const a = audience();
+    if (a.setup !== "team") return all;
+    const me = personOf(req);
+    const seesAll = (ctx.cardStore?.listProjects() ?? []).every((p) => a.canSee(me, p.id));
+    return all.filter((m) => (m.principal ? m.principal === me : seesAll));
+  };
   // On a host that can hold both, the dashboard's Seshat can use the Researcher too.
   const researcherModel = process.env.SEKHEMET_RESEARCHER;
   let answering: Promise<void> | undefined;
@@ -118,6 +152,19 @@ export function createPmApi(ctx: PmApiContext) {
           sharedModelAccess(),
           effectiveConfig(ctx.repoPath).config.models.quickAnswerer,
         );
+    // PM-P1-2: /plan with the Planner role's model — `[models] planner`,
+    // else Seshat's — and without one when it is "none".
+    const plannerName = ctx.pmAdapter
+      ? undefined
+      : resolvePlannerModel({
+          configured: effectiveConfig(ctx.repoPath).config.models.planner,
+          seshatModel: pmModel,
+        });
+    const planner = plannerName
+      ? plannerName === pmModel
+        ? acquire
+        : pmModelFor(plannerName, modelRegistry(), ctx.log)
+      : undefined;
     // The loop answers everyone's queued messages: it is not the person's who
     // happened to start it (kernel K-N2-8).
     answering = EventLog.unscoped(async () => {
@@ -132,6 +179,8 @@ export function createPmApi(ctx: PmApiContext) {
           // Smart Swap (models rule 20f): the full answer's predicted wait, said in words.
           ...(ctx.pmAdapter ? {} : { predictWait: () => seshatWait(sharedModelAccess(), "chat") }),
           ...(quick ? { quick } : {}),
+          ...(planner ? { planner } : {}),
+          audience: audience(),
           ...(researcherModel
             ? {
                 researcher: (q: string, o?: { deep?: boolean }) =>
@@ -172,7 +221,7 @@ export function createPmApi(ctx: PmApiContext) {
       const since = Number(query.get("since") ?? 0) || 0;
       const lease = runnerLease(ctx.repoPath);
       ctx.json(res, 200, {
-        messages: await pmStore.thread(since),
+        messages: await threadFor(req, since),
         status: await pmStore.status(),
         model: lease?.pmModel ?? pmModel,
       });
@@ -224,6 +273,23 @@ export function createPmApi(ctx: PmApiContext) {
           ctx.json(res, 409, { error: `This proposal is already ${found.state}.` });
           return true;
         }
+        // TEAM-19: discarding a suggestion's proposal dismisses the suggestion.
+        if (found.suggestionId) {
+          try {
+            await dismissSuggestion(found.suggestionId, {
+              cardStore,
+              boardService: ctx.boardService,
+              pmStore,
+              repoPath: ctx.repoPath,
+              principal: personOf(req),
+              audience: audience(),
+            });
+          } catch (err) {
+            if (!(err instanceof SuggestionError)) throw err;
+            ctx.json(res, err.status, { error: err.message });
+            return true;
+          }
+        }
         await pmStore.setProposalState(id, "discarded");
         await learnChoices();
         ctx.json(res, 200, { proposal: { ...found, state: "discarded" } });
@@ -238,6 +304,8 @@ export function createPmApi(ctx: PmApiContext) {
             boardService: ctx.boardService,
             pmStore,
             actor: "human",
+            repoPath: ctx.repoPath,
+            audience: audience(),
             ...(ctx.principalOf ? { principal: ctx.principalOf(req) } : {}),
           }),
         );
@@ -247,6 +315,92 @@ export function createPmApi(ctx: PmApiContext) {
           error: err instanceof Error ? err.message : String(err),
         });
       }
+      return true;
+    }
+
+    // --- Suggestions on an issue (planner-pm PM-N9-1; teams TEAM-18, -19) ----
+    const cardSuggestions = new RegExp(`^/api/cards/(${CARD_ID})/suggestions$`).exec(url);
+    if (cardSuggestions && req.method === "GET") {
+      const id = cardSuggestions[1] as string;
+      const card = ctx.cardStore ? await ctx.cardStore.getCard(id) : null;
+      // PM-N9-8: an issue the person cannot see has none they can read.
+      if (!ctx.cardStore || !card || !audience().canSee(personOf(req), card.projectId)) {
+        ctx.json(res, 404, { error: `No card ${id}` });
+        return true;
+      }
+      ctx.json(res, 200, { suggestions: await suggestionsOn(ctx.cardStore, id, audience()) });
+      return true;
+    }
+    const suggestionAct = /^\/api\/suggestions\/(sug_[A-Za-z0-9_-]+)\/(apply|dismiss)$/.exec(url);
+    if (suggestionAct && req.method === "POST") {
+      const cardStore = mutationGuard(req, res);
+      if (!cardStore) return true;
+      const [, id, verb] = suggestionAct as unknown as [string, string, string];
+      const sctx = {
+        cardStore,
+        boardService: ctx.boardService,
+        pmStore,
+        repoPath: ctx.repoPath,
+        actor: "human",
+        principal: personOf(req),
+        audience: audience(),
+      };
+      try {
+        if (verb === "apply") {
+          const r = await applySuggestion(id, sctx);
+          ctx.json(res, 200, { suggestion: { ...r.suggestion, state: "applied" }, cards: r.cards });
+        } else {
+          await dismissSuggestion(id, sctx);
+          ctx.json(res, 200, { suggestion: { id, state: "dismissed" } });
+        }
+        await learnChoices();
+      } catch (err) {
+        ctx.json(res, err instanceof SuggestionError ? err.status : 409, {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+      return true;
+    }
+
+    // --- The weekly project update (planner-pm PM-N9-7; teams item 29) -------
+    if (url === "/api/pm/update-draft" && req.method === "GET") {
+      if (!ctx.cardStore) {
+        ctx.json(res, 501, { error: "This server was started read-only" });
+        return true;
+      }
+      const project = query.get("project") ?? undefined;
+      ctx.json(res, 200, {
+        draft: await draftWeeklyUpdate({
+          repoPath: ctx.repoPath,
+          cardStore: ctx.cardStore,
+          pmStore,
+          ...(project ? { project } : {}),
+          audience: audience(),
+          asker: personOf(req),
+        }),
+      });
+      return true;
+    }
+    const postUpdate = /^\/api\/projects\/(proj_[A-Za-z0-9_-]+)\/update$/.exec(url);
+    if (postUpdate && req.method === "POST") {
+      if (!mutationGuard(req, res)) return true;
+      const project = postUpdate[1] as string;
+      const b = await ctx.readJsonBody(req);
+      const text = typeof b.text === "string" ? b.text.trim().slice(0, 8000) : "";
+      if (!text) {
+        ctx.json(res, 400, { error: "An update needs its text" });
+        return true;
+      }
+      const a = audience();
+      const me = personOf(req);
+      const lead = a.leadOf(project);
+      // Teams item 6: a project's update is posted by its lead (or an Admin).
+      if (a.setup === "team" && lead !== me && a.levelOf(me, project) !== "admin") {
+        ctx.json(res, 403, { error: "The project lead posts its update." });
+        return true;
+      }
+      await postWeeklyUpdate(ctx.log, { project, text, principal: me });
+      ctx.json(res, 200, { posted: { project } });
       return true;
     }
 
@@ -327,6 +481,20 @@ export function createPmApi(ctx: PmApiContext) {
         "human",
         principal ? { principal } : {},
       );
+      // PM_CONTRACT §2: the estimate a person typed may have been mapped to
+      // the nearest allowed value; the original is kept in the dossier.
+      if (
+        typeof b.estimate === "number" &&
+        typeof patch.estimate === "number" &&
+        b.estimate !== patch.estimate
+      ) {
+        await cardStore.recordDossierEntry({
+          cardId: id,
+          kind: "note",
+          actor: "human",
+          text: `Estimate ${b.estimate} is not one of {1,2,3,5,8}; mapped to the nearest allowed value, ${patch.estimate}.`,
+        });
+      }
       ctx.json(res, 200, { card, ...(rejected.length ? { ignored: rejected } : {}) });
       return true;
     }
@@ -461,7 +629,11 @@ export function createPmApi(ctx: PmApiContext) {
     const frames: string[] = [];
     const pmEvents = events.filter((e) => e.type.startsWith("pm/"));
     if (pmEvents.length === 0) return frames;
-    if (pmEvents.some((e) => e.type !== PM_EVENTS.status)) {
+    if (pmEvents.some((e) => e.type !== PM_EVENTS.status) && audience().setup === "team") {
+      // PM-N9-8: one stream reaches everyone, so it carries no message; each
+      // person reloads their own part of the thread.
+      frames.push(`event: pm\ndata: ${JSON.stringify({ kind: "refresh" })}\n\n`);
+    } else if (pmEvents.some((e) => e.type !== PM_EVENTS.status)) {
       const first = Math.min(...pmEvents.map((e) => e.seq));
       // Re-send from the first changed message, plus any message whose state a
       // later event changed (a reply marks its question done).

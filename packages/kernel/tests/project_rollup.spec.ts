@@ -47,6 +47,10 @@ describe("the project rollup (K-N5-3, K-N5-5)", () => {
     await expect(
       store.recordSliceAccepted({ projectId, sliceId: "s1", completesProject: true }, "planner"),
     ).rejects.toThrow(/person/);
+    // K-N5-5: the human actor alone is not enough; a principal names who.
+    await expect(
+      store.recordSliceAccepted({ projectId, sliceId: "s1", completesProject: true }, "human"),
+    ).rejects.toThrow(/principal/);
     await store.recordSliceAccepted(
       { projectId, sliceId: "s0", completesProject: false },
       "human",

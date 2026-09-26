@@ -107,7 +107,7 @@ describe("REST API completeness (H12)", () => {
     expect(shown.card.configOverrides).toEqual({ loop: { default_step_budget: 12 } });
   });
 
-  it("splits a card into ordered parts and parks the original", async () => {
+  it("PM-P1-1, PM-P1-7: splits a card through the planner into ordered parts; the original is rejected", async () => {
     expect(
       (await post("/api/cards/card_big/split", { parts: [{ title: "only one" }] })).status,
     ).toBe(400);
@@ -116,11 +116,13 @@ describe("REST API completeness (H12)", () => {
     });
     expect(res.status).toBe(200);
     const { subtasks } = (await res.json()) as {
-      subtasks: { id: string; title: string; dependsOn?: string[] }[];
+      subtasks: { id: string; title: string; dependsOn?: string[]; criterionIds?: string[] }[];
     };
     expect(subtasks.map((s) => s.title)).toEqual(["Read routes", "Write route"]);
     expect(subtasks[1]?.dependsOn).toContain(subtasks[0]?.id);
-    expect((await cards.getCard("card_big"))?.status).toBe("parked");
+    const original = await cards.getCard("card_big");
+    expect(original?.status).toBe("rejected");
+    expect(original?.blockedReason).toMatch(/^Split into 2 cards/);
   });
 
   it("runs gates in the repository, serves evidence, and starts runs and calibration in the background", async () => {

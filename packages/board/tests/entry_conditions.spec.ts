@@ -267,3 +267,77 @@ describe("@sekhemet/board entry conditions, review time, overlap, projects (B1, 
     expect(legalPath("done", "done")).toEqual([]);
   });
 });
+
+describe("PM-P13-11: a suspect link holds a card out of Ready, from Backlog or Parked", () => {
+  let dir: string;
+  let db: DatabaseSync;
+  let log: EventLog;
+  let store: CardStore;
+  let board: BoardServiceImpl;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "board-suspect-"));
+    db = new DatabaseSync(join(dir, "events.db"));
+    initSchema(db);
+    log = new EventLog(db);
+    store = new CardStore(db, log);
+    board = new BoardServiceImpl(store, { entryConditions: true });
+  });
+  afterEach(() => {
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("refuses Backlog to Ready while its link is suspect; a re-confirmation lifts it", async () => {
+    const req = await store.requirements.create({ title: "Load data" }, "p_owner");
+    await store.createCard({
+      id: "a",
+      tier: "story",
+      title: "A",
+      status: "backlog",
+      acceptanceCriteria: ["returns 1"],
+    });
+    await store.requirements.link({ requirementId: req.id, from: "card", ref: "a" });
+    await store.requirements.revise(req.id, { title: "Load data from CSV" }, "p_owner");
+    expect(store.requirements.links(req.id).find((l) => l.ref === "a")?.suspect).toBe(true);
+    await expect(
+      board.transitionCard({
+        cardId: "a",
+        fromStatus: "backlog",
+        toStatus: "ready",
+        actor: "executor",
+      }),
+    ).rejects.toThrow(/revised since/);
+    await store.requirements.confirm({ requirementId: req.id, from: "card", ref: "a" }, "p_owner");
+    expect(store.requirements.links(req.id).find((l) => l.ref === "a")?.suspect).toBe(false);
+    await board.transitionCard({
+      cardId: "a",
+      fromStatus: "backlog",
+      toStatus: "ready",
+      actor: "executor",
+    });
+    expect((await store.getCard("a"))?.status).toBe("ready");
+  });
+
+  it("refuses Parked to Ready while its link is suspect", async () => {
+    const req = await store.requirements.create({ title: "Show results" }, "p_owner");
+    await store.createCard({
+      id: "b",
+      tier: "story",
+      title: "B",
+      status: "parked",
+      acceptanceCriteria: ["shows 3 rows"],
+      blockedReason: "waiting on a decision",
+    });
+    await store.requirements.link({ requirementId: req.id, from: "card", ref: "b" });
+    await store.requirements.revise(req.id, { title: "Show results, sorted" }, "p_owner");
+    await expect(
+      board.transitionCard({
+        cardId: "b",
+        fromStatus: "parked",
+        toStatus: "ready",
+        actor: "executor",
+      }),
+    ).rejects.toThrow(/revised since/);
+  });
+});

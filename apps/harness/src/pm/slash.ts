@@ -1,17 +1,22 @@
 import { type BoardService, BoardServiceImpl } from "@sekhemet/board";
-import type { CardStore } from "@sekhemet/kernel";
+import type { CardRecord, CardStore } from "@sekhemet/kernel";
+import type { LocalInferenceAdapter } from "@sekhemet/models";
 import type { ResearchAnswer } from "../research/researcher.js";
+import type { Audience } from "./audience.js";
 import { capabilityReport, capabilitySummary } from "./capability.js";
 import { pmQuality } from "./metrics.js";
+import { PipelineRefusal, planThroughPipeline } from "./pipeline.js";
 import type { PmStore } from "./store.js";
+import { draftWeeklyUpdate } from "./weekly.js";
 
 /**
  * Slash commands in Seshat's chat (H16).
  *
  * A command the human typed is an instruction, not a conversation, so it is
  * answered by code, from the ledger, without loading the manager model
- * (a 40-120 s swap on this hardware). Only /plan goes to Seshat, rewritten
- * into the request it stands for; /compact stays with the summariser.
+ * (a 40-120 s swap on this hardware). /plan runs the one planner (PM-P1-1),
+ * with the Planner's model when one is given; /compact stays with the
+ * summariser.
  * Status moves (/ready, /park, /backlog) are applied as the human's own
  * action and recorded as theirs on the ledger.
  */
@@ -34,7 +39,11 @@ export const SLASH_HELP: { cmd: string; does: string }[] = [
   },
   { cmd: "/research <question>", does: "Ask the Researcher; the answer comes with sources." },
   { cmd: "/deep <question>", does: "Deep research: a team of sub-researchers and a verifier." },
-  { cmd: "/plan <feature>", does: "Seshat splits a feature into cards (as proposals you apply)." },
+  {
+    cmd: "/plan <feature>",
+    does: "The planner splits a feature into cards, each checked by INVEST, the criterion lint and the scope bound.",
+  },
+  { cmd: "/update", does: "A draft of this week's project update, for you to edit and post." },
   { cmd: "/ready <card>", does: "Move a card to Ready." },
   { cmd: "/park <card> [reason]", does: "Park a card." },
   { cmd: "/backlog <card>", does: "Move a card back to Backlog." },
@@ -53,18 +62,45 @@ export interface SlashDeps {
   pmStore: PmStore;
   repoPath: string;
   researcher?: ((q: string, o?: { deep?: boolean }) => Promise<ResearchAnswer>) | undefined;
+  /** The Planner role's model for /plan (PM-P1-2); without it the heuristic plans and says so. */
+  planner?: LocalInferenceAdapter | undefined;
+  /** Who asked, and what they can see (PM-N9-8). */
+  audience?: Audience | undefined;
+  asker?: string | undefined;
 }
 
 /** What to do with a command: a reply now, or a rewritten message for Seshat. */
 export type SlashOutcome = { reply: string } | { forward: string } | { passthrough: true };
 
-async function resolveCard(cardStore: CardStore, ref: string): Promise<string | undefined> {
+/**
+ * PM-N9-8: only the cards the asker can see; a hidden card reads exactly as
+ * a missing one. Everything is visible with no audience or asker (the CLI,
+ * a Solo install).
+ */
+export function visibleCards(
+  cards: CardRecord[],
+  deps: Pick<SlashDeps, "audience" | "asker">,
+): CardRecord[] {
+  if (!deps.audience || !deps.asker) return cards;
+  const { audience, asker } = deps;
+  return cards.filter((c) => audience.canSee(asker, c.projectId));
+}
+
+export async function resolveCard(
+  cardStore: CardStore,
+  ref: string,
+  deps: Pick<SlashDeps, "audience" | "asker">,
+): Promise<string | undefined> {
   const id = ref.split(/\s+/)[0] ?? "";
   if (!id) return undefined;
-  if (await cardStore.getCard(id)) return id;
-  if (await cardStore.getCard(`card_${id}`)) return `card_${id}`;
+  const visible = async (candidateId: string) => {
+    const card = await cardStore.getCard(candidateId);
+    return card && visibleCards([card], deps).length > 0 ? candidateId : undefined;
+  };
+  if (await visible(id)) return id;
+  if (await visible(`card_${id}`)) return `card_${id}`;
   // A short suffix, as the board shows it ("hasher" for card_chron_hasher).
-  const all = await cardStore.listCards();
+  const all = visibleCards(await cardStore.listCards(), deps);
   const hits = all.filter((c) => c.id.endsWith(`_${id}`) || c.id.endsWith(id));
   return hits.length === 1 ? hits[0]?.id : undefined;
 }
@@ -77,13 +113,43 @@ export async function runSlash(cmd: SlashCommand, deps: SlashDeps): Promise<Slas
       };
     case "compact":
       return { passthrough: true };
-    case "plan":
+    case "plan": {
       if (!cmd.args) return { reply: "Say what to plan: `/plan <feature>`." };
+      // PM-P1-1: the one planner, as `sekhemet plan` runs it; a person's
+      // command, so the cards it makes are theirs (§2.8.7).
+      try {
+        const r = await planThroughPipeline(
+          {
+            repoPath: deps.repoPath,
+            cardStore: deps.cardStore,
+            log: deps.pmStore.log,
+            ...(deps.board ? { boardService: deps.board } : {}),
+            actor: "human",
+            ...(deps.asker ? { principal: deps.asker } : {}),
+          },
+          cmd.args,
+          deps.planner ? { adapter: deps.planner } : {},
+        );
+        return { reply: r.report || "The planner created no card." };
+      } catch (err) {
+        if (err instanceof PipelineRefusal) return { reply: err.message };
+        throw err;
+      }
+    }
+    case "update": {
+      const draft = await draftWeeklyUpdate({
+        repoPath: deps.repoPath,
+        cardStore: deps.cardStore,
+        pmStore: deps.pmStore,
+        ...(deps.audience ? { audience: deps.audience } : {}),
+        ...(deps.asker ? { asker: deps.asker } : {}),
+      });
       return {
-        forward: `Plan this feature into cards, each at most 3 files and 200 changed lines, ordered, with acceptance criteria; propose them as cards I can apply: ${cmd.args}`,
+        reply: `Draft of this week's update. Nothing is posted until a person posts it from the project's Status page.\n\n${draft.text}`,
       };
+    }
     case "forecast": {
-      const open = (await deps.cardStore.listCards()).filter(
+      const open = visibleCards(await deps.cardStore.listCards(), deps).filter(
         (c) => !["done", "rejected", "parked"].includes(c.status),
       );
       const q = await pmQuality(deps.pmStore.log, open.length, () => undefined);
@@ -95,7 +161,9 @@ export async function runSlash(cmd: SlashCommand, deps: SlashDeps): Promise<Slas
     }
     case "capability":
       return {
-        reply: capabilitySummary(capabilityReport(deps.repoPath, await deps.cardStore.listCards())),
+        reply: capabilitySummary(
+          capabilityReport(deps.repoPath, visibleCards(await deps.cardStore.listCards(), deps)),
+        ),
       };
     case "research":
     case "deep": {
@@ -116,7 +184,7 @@ export async function runSlash(cmd: SlashCommand, deps: SlashDeps): Promise<Slas
     case "ready":
     case "park":
     case "backlog": {
-      const id = await resolveCard(deps.cardStore, cmd.args);
+      const id = await resolveCard(deps.cardStore, cmd.args, deps);
       if (!id) return { reply: `No card matches "${cmd.args.split(/\s+/)[0] ?? ""}".` };
       const reason = cmd.args.split(/\s+/).slice(1).join(" ") || `/${cmd.name} from the chat`;
       const card = await deps.cardStore.getCard(id);

@@ -353,7 +353,10 @@ describe("the 403 on every write endpoint (TEAM-4, TEAM-5, TEAM-32, INT-24)", ()
     let proposalId: string | undefined;
     for (let i = 0; i < 100 && !proposalId; i++) {
       await new Promise((r) => setTimeout(r, 20));
-      const thread = (await (await fetch(url("/api/pm/thread"))).json()) as {
+      // PM-N9-8: a person reads their own part of Seshat's thread.
+      const thread = (await (
+        await fetch(url("/api/pm/thread"), { headers: { "X-Test-Principal": STAKE } })
+      ).json()) as {
         messages: { proposals?: { id: string; state: string }[] }[];
       };
       proposalId = thread.messages.flatMap((m) => m.proposals ?? [])[0]?.id;
@@ -449,6 +452,89 @@ describe("the 403 on every write endpoint (TEAM-4, TEAM-5, TEAM-32, INT-24)", ()
     expect((await send(MEMBER, `/api/decisions/${question.id}`, { option: 0 })).status).toBe(200);
     const answered = (await log.getEventsByTypes(["decision/answered"])).at(-1);
     expect(answered?.principal).toBe(MEMBER);
+  });
+
+  describe("B4.3's write routes resolve their project, so a per-project level applies (TEAM-4, TEAM-6)", () => {
+    let sliceId: string;
+    let reqId: string;
+    let suggestionId: string;
+    beforeEach(async () => {
+      sliceId = await store.slices.create(
+        { projectId: project, title: "Skeleton", appetite: { cards: 3 } },
+        ADMIN,
+      );
+      reqId = (await store.requirements.create({ title: "Search by word", sliceId }, ADMIN)).id;
+      suggestionId = (await store.suggestions.propose({
+        cardId,
+        kind: "priority",
+        value: 1,
+        why: "it blocks the API",
+      })) as string;
+      // The Member is named by the project's Accept rule, then lowered to Viewer there.
+      log.appendNow({
+        actor: "human",
+        type: "project/settings_changed",
+        principal: LEAD,
+        payload: { project, accept_rule: [MEMBER] },
+      });
+      log.appendNow({
+        actor: "human",
+        type: "member/level_changed",
+        principal: LEAD,
+        payload: { principal: MEMBER, level: "viewer", project },
+      });
+    });
+
+    it("refuses each route to a Member lowered to Viewer on the project, naming the project", async () => {
+      const attempts: [string, unknown, string][] = [
+        [`/api/slices/${sliceId}/accept`, {}, "accept"],
+        [`/api/slices/${sliceId}/extend`, { cards: 5 }, "scope.change"],
+        [`/api/requirements/${reqId}/cut`, { reason: "later" }, "scope.change"],
+        [`/api/requirements/${reqId}/revise`, { title: "Search" }, "scope.change"],
+        [`/api/requirements/${reqId}/confirm`, { from: "card", ref: cardId }, "accept"],
+        [`/api/suggestions/${suggestionId}/apply`, {}, "proposal.apply"],
+        [`/api/suggestions/${suggestionId}/dismiss`, {}, "proposal.apply"],
+        [`/api/projects/${project}/update`, { text: "Week 1" }, "project.update"],
+        ["/api/brief/accept", { projectId: project, requirements: [] }, "brief.accept"],
+      ];
+      for (const [path, body, permission] of attempts) {
+        const r = await send(MEMBER, path, body);
+        expect(r.status, path).toBe(403);
+        expect(r.data.permission, path).toBe(permission);
+        expect(r.data.level, path).toBe("viewer");
+      }
+      const recorded = await refusals();
+      expect(recorded).toHaveLength(attempts.length);
+      for (const r of recorded) expect(r.payload.project).toBe(project);
+      expect((await store.slices.get(sliceId))?.extensions ?? 0).toBe(0);
+      expect((await store.suggestions.get(suggestionId))?.state).toBe("open");
+    });
+
+    it("lets a Member on another project do what the level there allows", async () => {
+      // On Atlas the Member is still a Member: a suggestion there is theirs to apply.
+      const there = (await store.suggestions.propose({
+        cardId: otherCard,
+        kind: "priority",
+        value: 2,
+        why: "a customer asked",
+      })) as string;
+      expect((await send(MEMBER, `/api/suggestions/${there}/apply`)).status).toBe(200);
+    });
+
+    it("accepts a brief only from the project's Admin or lead (teams item 6)", async () => {
+      const brief = { projectId: other, requirements: [] };
+      const byMember = await send(MEMBER, "/api/brief/accept", brief);
+      expect(byMember.status).toBe(403);
+      expect(String(byMember.data.error)).toContain("An Admin or the project lead");
+      // The lead of Chronicle is not refused there; an unknown project is not a project.
+      const byLead = await send(LEAD, "/api/brief/accept", {
+        projectId: project,
+        requirements: [],
+      });
+      expect(byLead.status).not.toBe(403);
+      const unknown = await send(ADMIN, "/api/brief/accept", { projectId: "proj_nope" });
+      expect(unknown.status).toBe(404);
+    });
   });
 });
 

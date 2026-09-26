@@ -30,13 +30,77 @@ function has(bin: string): boolean {
 
 export type Bump = "major" | "minor" | "patch" | "none";
 
+export interface ReleaseCommit {
+  sha: string;
+  type: string;
+  scope?: string;
+  subject: string;
+  breaking: boolean;
+}
+
+/** Keep a Changelog's categories (planner-pm §2.15.8, PM-P13-13). */
+export type KeepAChangelogCategory =
+  | "Added"
+  | "Changed"
+  | "Deprecated"
+  | "Removed"
+  | "Fixed"
+  | "Security";
+
+export const KEEP_A_CHANGELOG: readonly KeepAChangelogCategory[] = [
+  "Added",
+  "Changed",
+  "Deprecated",
+  "Removed",
+  "Fixed",
+  "Security",
+];
+
 export interface ReleasePlan {
   previousTag?: string;
   nextVersion: string;
   bump: Bump;
-  commits: { sha: string; type: string; scope?: string; subject: string; breaking: boolean }[];
+  commits: ReleaseCommit[];
+  /** The commit the release is computed at and tagged on; the checkout's HEAD when absent. */
+  ref?: string;
+  /** The squashes grouped by Keep a Changelog's categories; empty ones left out. */
+  categories: Partial<Record<KeepAChangelogCategory, string[]>>;
   changelog: string;
   engine: "git-cliff" | "builtin";
+}
+
+const HOUSEKEEPING = new Set(["chore", "docs", "test", "tests", "ci", "build", "style"]);
+
+/**
+ * Group Conventional-Commit squashes into Keep a Changelog's categories
+ * (PM-P13-13): `feat` is Added; `fix` is Fixed, or Security when its scope
+ * or type says security; `deprecate` is Deprecated; `revert` and `remove`
+ * are Removed; `refactor`, `perf` and any breaking change are Changed.
+ * Housekeeping (chore, docs, test, ci, build, style) is left out.
+ */
+export function keepAChangelog(
+  commits: readonly ReleaseCommit[],
+): Partial<Record<KeepAChangelogCategory, string[]>> {
+  const out: Partial<Record<KeepAChangelogCategory, string[]>> = {};
+  const put = (cat: KeepAChangelogCategory, line: string) => {
+    out[cat] = [...(out[cat] ?? []), line];
+  };
+  for (const c of commits) {
+    const type = c.type.toLowerCase();
+    const scope = c.scope?.toLowerCase();
+    const sec = type === "security" || scope === "security" || scope === "sec";
+    const item = `${c.scope && !sec ? `**${c.scope}:** ` : ""}${c.subject} (${c.sha.slice(0, 7)})`;
+    if (c.breaking) put("Changed", `**Breaking:** ${item}`);
+    else if (sec) put("Security", item);
+    else if (type === "feat") put("Added", item);
+    else if (type === "fix") put("Fixed", item);
+    else if (type === "deprecate" || type === "deprecated") put("Deprecated", item);
+    else if (type === "revert" || type === "remove" || type === "removed") put("Removed", item);
+    else if (!HOUSEKEEPING.has(type) && type !== "other") put("Changed", item);
+  }
+  return Object.fromEntries(
+    KEEP_A_CHANGELOG.filter((k) => out[k]).map((k) => [k, out[k] as string[]]),
+  ) as Partial<Record<KeepAChangelogCategory, string[]>>;
 }
 
 const CC = /^(\w+)(?:\(([^)]*)\))?(!)?:\s*(.+)$/;
@@ -51,18 +115,24 @@ export function nextVersion(previous: string | undefined, bump: Bump): string {
 }
 
 /**
- * Aggregate the Conventional Commits since the last tag, propose the semver
- * bump (breaking -> major, feat -> minor, fix/perf -> patch) and write the
- * changelog with git-cliff when installed, else a built-in grouping.
+ * Aggregate the Conventional Commits since the last tag on `ref` (the
+ * checkout's HEAD when omitted; a slice's release passes the integration
+ * branch), propose the semver bump (breaking -> major, feat -> minor,
+ * fix/perf -> patch) and write the changelog with git-cliff when installed,
+ * else grouped by Keep a Changelog's categories (PM-P13-13).
  */
-export function planRelease(repoPath: string): ReleasePlan {
+export function planRelease(
+  repoPath: string,
+  options: { ref?: string; engine?: "auto" | "builtin" } = {},
+): ReleasePlan {
+  const ref = options.ref ?? "HEAD";
   let previousTag: string | undefined;
   try {
-    previousTag = git(["describe", "--tags", "--abbrev=0"], repoPath);
+    previousTag = git(["describe", "--tags", "--abbrev=0", ref], repoPath);
   } catch {
     previousTag = undefined;
   }
-  const range = previousTag ? `${previousTag}..HEAD` : "HEAD";
+  const range = previousTag ? `${previousTag}..${ref}` : ref;
   const raw = git(["log", "--no-merges", "--format=%H%x1f%B%x1e", range], repoPath);
   const commits = raw
     .split("\x1e")
@@ -89,7 +159,8 @@ export function planRelease(repoPath: string): ReleasePlan {
   const version = bump === "none" ? (previousTag ?? "v0.0.0") : nextVersion(previousTag, bump);
   let changelog: string | undefined;
   let engine: ReleasePlan["engine"] = "builtin";
-  if (has("git-cliff")) {
+  const categories = keepAChangelog(commits);
+  if (options.engine !== "builtin" && ref === "HEAD" && has("git-cliff")) {
     try {
       changelog = execFileSync("git-cliff", ["--unreleased", "--tag", version, "--strip", "all"], {
         cwd: repoPath,
@@ -101,36 +172,20 @@ export function planRelease(repoPath: string): ReleasePlan {
     }
   }
   if (!changelog) {
-    const titles: Record<string, string> = {
-      feat: "Features",
-      fix: "Bug fixes",
-      perf: "Performance",
-      refactor: "Refactoring",
-      docs: "Documentation",
-      test: "Tests",
-    };
-    const sections = Object.entries(titles)
-      .map(([type, title]) => {
-        const items = commits.filter((c) => c.type === type);
-        return items.length
-          ? `### ${title}\n${items.map((c) => `- ${c.scope ? `**${c.scope}:** ` : ""}${c.subject} (${c.sha.slice(0, 7)})`).join("\n")}`
-          : "";
-      })
-      .filter(Boolean);
-    const breaking = commits.filter((c) => c.breaking);
     changelog = [
       `## ${version}`,
-      ...(breaking.length
-        ? [`### Breaking changes\n${breaking.map((c) => `- ${c.subject}`).join("\n")}`]
-        : []),
-      ...sections,
+      ...Object.entries(categories).map(
+        ([title, items]) => `### ${title}\n${items.map((i) => `- ${i}`).join("\n")}`,
+      ),
     ].join("\n\n");
   }
   return {
     ...(previousTag ? { previousTag } : {}),
+    ...(options.ref ? { ref: options.ref } : {}),
     nextVersion: version,
     bump,
     commits,
+    categories,
     changelog: changelog.trim(),
     engine,
   };
@@ -144,7 +199,10 @@ export async function publishRelease(
 ): Promise<{ tag: string; url?: string }> {
   if (plan.bump === "none")
     throw new Error("Nothing to release: no feat, fix or breaking commits since the last tag");
-  git(["tag", "-a", plan.nextVersion, "-m", `Release ${plan.nextVersion}`], repoPath);
+  git(
+    ["tag", "-a", plan.nextVersion, "-m", `Release ${plan.nextVersion}`, plan.ref ?? "HEAD"],
+    repoPath,
+  );
   if (!github) return { tag: plan.nextVersion };
   const rel = await github.client.rest<{ html_url: string }>(
     "POST",

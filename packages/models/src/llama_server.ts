@@ -7,6 +7,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { hostFingerprintHash } from "./calibration.js";
 import { type HttpAdapterOptions, HttpInferenceAdapter } from "./http_adapter.js";
 import { assertKvPolicy } from "./kv_policy.js";
+import { assertModelLoadAllowed, modelLoadRefusal } from "./load_guard.js";
 import {
   DriveUnavailableError,
   type LoadOptions,
@@ -781,6 +782,7 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
       if (options.loadMode === "preread_mmap")
         await prereadSequential(this.profile.modelPath, signal ? { signal } : {});
       this.metalReported = false;
+      assertModelLoadAllowed({ binary: this.profile.binary });
       this.child = spawn(this.profile.binary ?? "llama-server", args, {
         stdio: ["ignore", "ignore", "pipe"],
       });
@@ -1401,6 +1403,8 @@ export function llamaBenchBinary(server = process.env.SEKHEMET_LLAMA_SERVER): st
 export function llamaBenchExec(): (bin: string, args: string[]) => Promise<string> {
   return (bin, args) =>
     new Promise((resolveRun, reject) => {
+      const refused = modelLoadRefusal({ binary: bin });
+      if (refused) return reject(new Error(refused));
       execFile(
         bin,
         args,

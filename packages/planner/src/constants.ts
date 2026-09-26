@@ -15,10 +15,10 @@ export const AMBIGUITY_THRESHOLD = 0.5;
  */
 export const MAX_QUESTIONS_PER_SPEC = 3;
 
-/** INVEST-S sizing: the pack may use at most this fraction of the tier window. */
-export const INVEST_CONTEXT_FRACTION = 0.25;
-
-/** INVEST-S sizing: and the step budget may be at most this. Both must hold. */
+/**
+ * INVEST-S sizing: the step budget may be at most this, and the card's Zone 3
+ * content must fit Zone 3's cap (`small.ts`). Both must hold.
+ */
 export const INVEST_MAX_STEPS = DEFAULT_STEP_BUDGET;
 
 /** Above this, a card is re-split. A hard gate, not a warning (design §2485). */
@@ -51,14 +51,17 @@ export const ASSUMED_TEST_TOKENS = 400;
 /** How long a decision may sit before its default (or Parked) applies. */
 export const DEFAULT_DECISION_DEADLINE_MS = 12 * 60 * 60 * 1_000;
 
+/** The reference Worker's window (16,384): W = 9,984, Zone 3's cap 3,792 (DEC-27). */
+export const REFERENCE_WORKER_WINDOW = 16_384;
+
 /**
- * Default budget for a story-tier card.
- *
- * The window is the model's, not the pack's: INVEST-S caps the pack at
- * {@link INVEST_CONTEXT_FRACTION} of it so repair turns have room.
+ * Default budget for a story-tier card: the reference Worker's window
+ * (16,384) until the caller passes the resolved Worker's from the registry
+ * (models rule 11). INVEST's *Small* is Zone 3's cap at that Worker's prompt
+ * budget (`small.ts`, DEC-27); there is no pack fraction.
  */
 export const DEFAULT_TIER_BUDGET: TierBudget = {
-  workingContextTokens: 32_768,
+  workerWindowTokens: REFERENCE_WORKER_WINDOW,
   maxSteps: INVEST_MAX_STEPS,
   maxFiles: MAX_SCOPE_FILES,
 };

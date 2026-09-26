@@ -214,12 +214,18 @@ importers:
       '@sekhemet/context':
         specifier: workspace:*
         version: link:../context
+      '@sekhemet/gates':
+        specifier: workspace:*
+        version: link:../gates
       '@sekhemet/kernel':
         specifier: workspace:*
         version: link:../kernel
       '@sekhemet/models':
         specifier: workspace:*
         version: link:../models
+      '@sekhemet/sandbox':
+        specifier: workspace:*
+        version: link:../sandbox
       '@sekhemet/sync':
         specifier: workspace:*
         version: link:../sync

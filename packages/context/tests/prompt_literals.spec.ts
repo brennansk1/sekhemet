@@ -31,9 +31,11 @@ import { unregisteredCopyModules } from "../src/prompt_tags.js";
  * the arm offers (the B2.5 arms review, item 3); 438 when B4.0a built
  * Seshat's prompt from allocator sections and moved the re-plan prompt into
  * its copy module; 437 when find_references' fallback moved into the Worker
- * copy module with the source index (gates T2).
+ * copy module with the source index (gates T2); 428 when B4.3 moved Seshat's
+ * prompt and tool descriptions into the new PM copy module and the planner's
+ * slice prompt and oracle into the planner copy module.
  */
-const RECORDED_LITERAL_TOTAL = 437;
+const RECORDED_LITERAL_TOTAL = 428;
 
 const texts = (file: string, source: string) =>
   extractModelFacingLiterals(file, source).map((l) => l.text);

@@ -25,6 +25,7 @@ import {
 import { LearningGuard, type RunProfile, harvestExemplars } from "@sekhemet/eval";
 import {
   DeterministicGateRunner,
+  type SourceIndex,
   compileEvidence,
   loadGatesConfig,
   npmRegistry,
@@ -33,6 +34,7 @@ import {
   type CardRecord,
   type CardStatus,
   type CardStore,
+  type DependencyReason,
   type EventLog,
   type RetentionReport,
   cardClassOf,
@@ -1956,34 +1958,170 @@ export function collectCardFiles(
   });
 }
 
+const SOURCE_EXT = /\.(?:[cm]?[jt]sx?)$/;
+const escapeRe = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** Whether `text` names `file`: its path, or its path without the extension (`src/db`, `src/db.js`). */
+function namesModule(text: string, file: string): boolean {
+  if (text.includes(file)) return true;
+  const stem = file.replace(SOURCE_EXT, "");
+  if (stem === file || !stem.includes("/")) return false;
+  // Not followed by another extension (`src/export.json` is not `src/export.ts`);
+  // a sentence's full stop still ends a name.
+  return new RegExp(`(?:^|[^\\w/.-])${escapeRe(stem)}(?:\\.[cm]?[jt]sx?)?(?!\\.?[\\w/-])`).test(
+    text,
+  );
+}
+
+/** Where a card's acceptance test lives in the repository (`tests/<name>` or as written). */
+function testPaths(card: CardRecord, index: SourceIndex | undefined): string[] {
+  const listed = new Set(index?.files() ?? []);
+  return (card.acceptanceTests ?? []).flatMap((t) =>
+    [t, `tests/${t}`].filter((p) => listed.has(p)).slice(0, 1),
+  );
+}
+
+/** The strongest reason first, when one card has several for the same prerequisite. */
+const REASON_RANK: Record<string, number> = { declared: 0, named: 1, imported: 2 };
+
 /**
- * Infer which cards each card builds on.
+ * Infer which cards each card builds on, and why (planner-pm NEW-planner-pm-8).
  *
- * A card depends on another when its spec or criteria name that card's scope
- * file ("use openDatabase from src/db.ts"), and every card depends on a
- * contract card that owns a shared types file. Explicit `dependsOn` is honoured
- * too. Running a card before its prerequisite has merged only spends its
- * budget against an empty file — a live run lost two cards that way.
+ * A card waits on another only when it declares `dependsOn` it (`declared`);
+ * when its spec, criteria or acceptance tests name — or the tests import — a
+ * module in the other card's scope (`named`); or when the source index (T2)
+ * shows its own scope importing such a module (`imported`) (PM-N8-1). Never
+ * because the other card owns a types file: running a card before a
+ * prerequisite it really uses has merged spends its budget against an empty
+ * file, but a blanket edge serialises cards that could run in either order
+ * (PM-N8-3). A file both cards own is an overlap, which the queue serialises
+ * on its own, not a dependency.
  */
-export function inferDependencies(cards: CardRecord[]): Map<string, string[]> {
-  const owner = new Map<string, string>();
-  for (const card of cards) for (const file of card.scopeFiles) owner.set(file, card.id);
+export function inferDependencyReasons(
+  cards: CardRecord[],
+  options: { index?: SourceIndex } = {},
+): Map<string, DependencyReason[]> {
+  const owners = new Map<string, string[]>();
+  for (const card of cards)
+    for (const file of card.scopeFiles) owners.set(file, [...(owners.get(file) ?? []), card.id]);
+  const ids = new Set(cards.map((c) => c.id));
+  const index = options.index;
+  const listed = new Set(index?.files() ?? []);
+  const imports = (files: string[]): Set<string> => {
+    const present = files.filter((f) => listed.has(f));
+    if (!index || present.length === 0) return new Set();
+    const graph = index.importGraph(present);
+    return new Set(present.flatMap((f) => [...(graph.get(f) ?? [])]));
+  };
 
-  const contractCards = cards.filter((c) => c.scopeFiles.some((f) => /(^|\/)types\.ts$/.test(f)));
-
-  const deps = new Map<string, string[]>();
+  const out = new Map<string, DependencyReason[]>();
   for (const card of cards) {
+    const found = new Map<string, DependencyReason["source"]>();
+    const add = (id: string, source: DependencyReason["source"]) => {
+      if (id === card.id) return;
+      const had = found.get(id);
+      if (had === undefined || (REASON_RANK[source] ?? 9) < (REASON_RANK[had] ?? 9))
+        found.set(id, source);
+    };
+    for (const d of card.dependsOn ?? []) add(d, "declared");
+    const own = new Set(card.scopeFiles);
     const text = `${card.spec ?? ""}\n${(card.acceptanceCriteria ?? []).join("\n")}`;
-    const found = new Set<string>(card.dependsOn ?? []);
-    for (const [file, id] of owner) {
-      if (id !== card.id && text.includes(file)) found.add(id);
+    const tests = testPaths(card, index);
+    const testText = tests
+      .map((t) => {
+        try {
+          return readFileSync(join(index?.root ?? "", t), "utf8");
+        } catch {
+          return "";
+        }
+      })
+      .join("\n");
+    const testImports = imports(tests);
+    const scopeImports = imports(card.scopeFiles);
+    for (const [file, owning] of owners) {
+      if (own.has(file)) continue;
+      for (const id of owning) {
+        if (!ids.has(id) || id === card.id) continue;
+        if (namesModule(text, file) || namesModule(testText, file) || testImports.has(file))
+          add(id, "named");
+        else if (scopeImports.has(file)) add(id, "imported");
+      }
     }
-    for (const contract of contractCards) {
-      if (contract.id !== card.id) found.add(contract.id);
-    }
-    deps.set(card.id, [...found]);
+    out.set(
+      card.id,
+      [...found]
+        .map(([dependsOnId, source]) => ({ dependsOnId, source }))
+        .sort((a, b) => a.dependsOnId.localeCompare(b.dependsOnId)),
+    );
   }
-  return deps;
+  return out;
+}
+
+/** Each card's prerequisites, without the reasons (`inferDependencyReasons`). */
+export function inferDependencies(
+  cards: CardRecord[],
+  options: { index?: SourceIndex } = {},
+): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const [id, list] of inferDependencyReasons(cards, options))
+    out.set(
+      id,
+      list.map((r) => r.dependsOnId),
+    );
+  return out;
+}
+
+/**
+ * Write the inferred prerequisites as checked edges with their reason
+ * (K15, B5, PM-N8-2): an edge that would close a cycle is refused and
+ * returned, never forced. The reason is read back by
+ * `CardStore.getDependencyReasons` and served on `GET /api/cards/<id>`.
+ */
+export async function recordDependencies(
+  store: Pick<CardStore, "addDependency" | "getDependencyReasons" | "removeDependency">,
+  cards: CardRecord[],
+  options: { index?: SourceIndex; actor?: string } = {},
+): Promise<{ cardId: string; dependsOnId: string; why: string }[]> {
+  const skipped: { cardId: string; dependsOnId: string; why: string }[] = [];
+  // A card's `dependsOn` holds every recorded edge; only a declared or planner
+  // edge is its own statement, the rest are re-derived here.
+  const stated = cards.map((c) => {
+    const derived = new Set(
+      store
+        .getDependencyReasons(c.id)
+        .filter((r) => r.source !== "declared" && r.source !== "planner")
+        .map((r) => r.dependsOnId),
+    );
+    return derived.size > 0
+      ? { ...c, dependsOn: (c.dependsOn ?? []).filter((d) => !derived.has(d)) }
+      : c;
+  });
+  const inferred = inferDependencyReasons(stated, options);
+  // PM-N8-3 on an upgraded ledger: an edge the retired types-file rule wrote
+  // (`inferred`) holds only while today's rules still infer it; a declared,
+  // named, imported or planner edge is never swept.
+  for (const card of cards) {
+    const now = new Set((inferred.get(card.id) ?? []).map((r) => r.dependsOnId));
+    for (const old of store.getDependencyReasons(card.id)) {
+      if (old.source === "inferred" && !now.has(old.dependsOnId)) {
+        await store.removeDependency(card.id, old.dependsOnId, options.actor ?? "harness");
+      }
+    }
+  }
+  for (const [id, list] of inferred) {
+    for (const r of list) {
+      await store
+        .addDependency(id, r.dependsOnId, r.source, options.actor ?? "harness")
+        .catch((err) => {
+          skipped.push({
+            cardId: id,
+            dependsOnId: r.dependsOnId,
+            why: err instanceof Error ? err.message : String(err),
+          });
+        });
+    }
+  }
+  return skipped;
 }
 
 /** Earlier attempts of the card that did not pass: what was tried and abandoned (RG-S5-18). */

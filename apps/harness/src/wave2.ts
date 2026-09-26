@@ -53,15 +53,18 @@ import {
   withMeasurementRun,
 } from "@sekhemet/models";
 import {
+  DEFAULT_TIER_BUDGET,
   DecisionStore,
   GoalStore,
   type PlannerLedger,
   type PlannerTools,
   SpidrFeaturePlanner,
   approveGoal,
+  briefBaseline,
   ceremoniesDue,
   codebaseMapFromRepo,
   computeSignals,
+  defaultRequirementProject,
   designStage,
   formatPlanReport,
   intakeGoal,
@@ -74,13 +77,24 @@ import {
   rankGoals,
   recordAssumptionOutcome,
   renderBrief,
-  runGoalLoop,
   triggeredResponses,
 } from "@sekhemet/planner";
 import { type ProcessSandbox, runConfined, runTrusted } from "@sekhemet/sandbox";
 import { gitEnvFor, planRelease, publishRelease, runActGate } from "@sekhemet/sync";
 import { airgapSkillApproval, approveVerifiedSkill } from "./airgap.js";
+import { effectiveConfig, queueDefaults } from "./config_apply.js";
 import { pendingM0, recordM0Pending } from "./m0_path.js";
+import { resolvedWorkerWindowTokens } from "./model_access.js";
+import { approveCommand, planningInputs, upgradeCommand } from "./plan_approval.js";
+import {
+  type Setup,
+  evaluateGoals,
+  gatedReplan,
+  plannedEpics,
+  postReplan,
+  respondToSignals,
+  setupFor,
+} from "./planner_live.js";
 import {
   type CombinationDeps,
   qualificationCombination,
@@ -228,6 +242,8 @@ export async function planCommand(
     print?: (line: string) => void;
     /** Where to look for what already exists; omitted, nothing is searched. */
     research?: ReuseDeps;
+    /** The resolved Worker's window; omitted, read from the registry (PM-13). */
+    workerWindowTokens?: number;
   } = {},
 ): Promise<{ epicId: string; created: number; decisionId?: string }> {
   const print = options.print ?? ((l: string) => console.log(l));
@@ -255,15 +271,37 @@ export async function planCommand(
     id: epicId,
     tier: "epic",
     title: design.buildSpec,
+    // The person's own words: a re-plan starts from them again (PM-P1-8).
+    spec,
     status: "in_progress",
   });
   // With a planning model, slices and their behaviours come from it; the
   // heuristics remain the fallback when it is absent or answers badly.
   const planner = await repoPlanner(k, options.sketcher);
+  // PM-12..14: INVEST's Small at the resolved Worker's window, as the board checks it.
+  const tierBudget = {
+    ...DEFAULT_TIER_BUDGET,
+    workerWindowTokens:
+      options.workerWindowTokens ??
+      resolvedWorkerWindowTokens({
+        registry: modelRegistry(),
+        configured: queueDefaults(effectiveConfig(k.repoPath).config, []).worker,
+      }),
+  };
+  // PM-P13-2: once a person accepted the brief, a story traces to its
+  // requirements or is offered as a proposed change — none is derived.
+  const requirementProject = await defaultRequirementProject(ledgerOf(k));
+  const briefAccepted =
+    requirementProject !== undefined &&
+    (await briefBaseline(ledgerOf(k), requirementProject)) !== undefined;
+  // PM-N3-2, PM-N7: the Worker's measured record and the depth profile.
+  const inputs = await planningInputs(k);
   const plan = await planner.decomposeSpec({
     parentId: epicId,
     parentTier: "epic",
     spec: design.buildSpec,
+    tierBudget,
+    capability: inputs.capability,
     // The riskiest assumption is proven right after the contract.
     ...(design.riskiest ? { riskiest: design.riskiest } : {}),
   });
@@ -289,10 +327,16 @@ export async function planCommand(
   const result = await persistPlan(ledgerOf(k), plan, {
     epicId,
     repoRoot: k.repoPath,
+    tierBudget,
+    deriveRequirements: !briefAccepted,
+    ...inputs,
     ...(options.sketcher ? { sketcher: options.sketcher } : {}),
     ...(options.plannerTools ? { plannerTools: options.plannerTools } : {}),
   });
   print(formatPlanReport(result));
+  if (result.created.length > 0) {
+    print(`Approve the criteria before any card leaves Planning: sekhemet approve ${epicId}`);
+  }
   // Each card is told what already exists for the part it builds.
   for (const story of findings ? result.created : []) {
     const finding = findings?.find((f) => coversNeed(story.title, f.need));
@@ -331,6 +375,8 @@ export async function queuePrelude(
     reviewWip?: number;
     print?: (line: string) => void;
     now?: Date;
+    /** Solo or Team (`[team] mode`); read from the config when absent (PM-N9-9). */
+    setup?: Setup;
   } = {},
 ): Promise<{ ordered: CardRecord[]; lines: string[] }> {
   const lines: string[] = [];
@@ -365,22 +411,24 @@ export async function queuePrelude(
     "assumption/logged",
     "assumption/outcome",
   ]);
+  const setup = options.setup ?? setupFor(k.repoPath);
   const signals = computeSignals({
     now,
     cards,
     events,
     reviewWip: options.reviewWip ?? 3,
+    plans: await plannedEpics(k),
   });
   const fired = triggeredResponses(signals);
   for (const s of fired) {
     say(`Signal ${s.id}: ${s.detail} -> ${s.response?.action} (${s.response?.mode})`);
-    // Automatic responses within bounds: escalate blockers to the top.
-    if (s.response?.action === "escalate_blockers") {
-      for (const id of s.response.targets) {
-        await k.cardStore.updateCard(id, { priority: 1 }, "planner").catch(() => undefined);
-      }
-    }
   }
+  // Every response is carried out, as a proposal where a person owns the
+  // field (NEW-planner-pm-2, -5); held cards sit out this pass.
+  const signalled = await respondToSignals(k, fired, { setup, now, say }).catch((err) => {
+    say(`Signal responses not carried out: ${err instanceof Error ? err.message : String(err)}`);
+    return { held: new Set<string>() };
+  });
 
   const cfg = readConfigToml(k.repoPath);
   const profile = processProfileFromConfig(cfg);
@@ -393,18 +441,9 @@ export async function queuePrelude(
     say(`Ceremony due (${profile.name}): ${c.kind}, ${c.reason}.`);
   }
 
-  // Goals: re-evaluate every active goal, then work the top-ranked one first.
-  const goals = await new GoalStore(ledger).all();
-  const planner = goals.some((g) => g.state === "active") ? await repoPlanner(k) : undefined;
-  for (const g of goals.filter((x) => x.state === "active")) {
-    const r = await runGoalLoop(ledger, planner as SpidrFeaturePlanner, g.id);
-    if (r.verdict.state !== "active")
-      say(
-        `Goal ${g.id} is ${r.verdict.state}.${r.verdict.diagnosis ? ` ${r.verdict.diagnosis}` : ""}`,
-      );
-    else if (r.replanned)
-      say(`Goal ${g.id} replanned: ${r.evaluation.triggers.map((t) => t.detail).join("; ")}`);
-  }
+  // Goals: re-evaluate every active goal with its metrics, marks and
+  // environment (NEW-planner-pm-4), then work the top-ranked one first.
+  await evaluateGoals(k, { planner: () => repoPlanner(k), setup, say });
   const ranking = rankGoals(await new GoalStore(ledger).all(), await k.cardStore.listCards());
   const top = ranking[0];
   if (top) say(`Working goal ${top.goalId} first: ${top.why}.`);
@@ -419,7 +458,20 @@ export async function queuePrelude(
     say(`PR #${p.number}: ${p.state}`);
   }
 
-  const ordering = orderReadyCards(ready, loadPrioritizationConfig(k.repoPath), now);
+  // planner-pm P13: main is checked when it moved, a card whose requirement
+  // was revised is held in Planning, and a slice at its appetite stops its
+  // cards until the person chooses (PM-P13-4, -9, -11).
+  const { projectDonePass } = await import("./project_done.js");
+  const doneness = await projectDonePass(k).catch((err) => {
+    say(`Requirements not checked: ${err instanceof Error ? err.message : String(err)}`);
+    return undefined;
+  });
+  for (const l of doneness?.lines ?? []) say(l);
+  const schedulable = ready.filter(
+    (c) => !signalled.held.has(c.id) && !(doneness?.held.has(c.id) ?? false),
+  );
+
+  const ordering = orderReadyCards(schedulable, loadPrioritizationConfig(k.repoPath), now);
   let ordered = batchBySwaps(ordering.cards, now);
   if (ordering.model !== "unconfigured") say(`Ready ordered by ${ordering.model.toUpperCase()}.`);
   if (top) {
@@ -481,7 +533,9 @@ export type Wave2Command =
   | "release"
   | "ci"
   | "measure"
-  | "models";
+  | "models"
+  | "approve"
+  | "upgrade";
 export const WAVE2_COMMANDS: readonly Wave2Command[] = [
   "airgap",
   "onboard",
@@ -502,6 +556,8 @@ export const WAVE2_COMMANDS: readonly Wave2Command[] = [
   "ci",
   "measure",
   "models",
+  "approve",
+  "upgrade",
 ];
 
 export interface CommandIO {
@@ -662,6 +718,24 @@ export async function runWave2Command(
         );
         return 0;
       }
+      if (sub === "mark") {
+        // `sekhemet goal mark <goal> <criterion> met|unmet` (PM-N4-3): a
+        // person's mark of a human criterion, used at the next evaluation.
+        const [id, criterion, verdict] = rest;
+        if (!id || !criterion || (verdict !== "met" && verdict !== "unmet"))
+          return done("Usage: sekhemet goal mark <goal-id> <criterion-id> met|unmet", 1);
+        try {
+          await new GoalStore(ledger).markHuman(
+            id,
+            criterion,
+            verdict === "met",
+            k.log.localPrincipal(),
+          );
+        } catch (err) {
+          return done(err instanceof Error ? err.message : String(err), 1);
+        }
+        return done(`Marked ${criterion} of ${id} ${verdict}; the next evaluation uses it.`, 0);
+      }
       if (sub === "status" || sub === undefined) {
         const goals = await new GoalStore(ledger).all();
         if (goals.length === 0) return done('No goals. Set one with: sekhemet goal "<outcome>"', 0);
@@ -686,6 +760,12 @@ export async function runWave2Command(
       );
       return 0;
     }
+    case "approve":
+      // PM-N7-3/4/5: a person approves a plan's criteria (and tests, by profile).
+      return approveCommand(k, args, print);
+    case "upgrade":
+      // PM-N6-4: an upgrade as a tool step, then fix cards from its failing gates.
+      return upgradeCommand(k, args, print);
     case "decide": {
       // `sekhemet decide` lists; `sekhemet decide <id> <option-number>` answers.
       const store = new DecisionStore(ledger);
@@ -1127,6 +1207,27 @@ export async function runWave2Command(
       return 0;
     }
     case "release": {
+      // planner-pm P13 (§2.15): a slice's status, acceptance, cut, extension,
+      // revision, re-confirmation and release report; its release is tagged
+      // on confirmation (`--confirm <SLICE>`).
+      const pd = await import("./project_done.js");
+      const sub = await pd.releaseSubcommand(k, args, print);
+      if (sub !== undefined) return sub;
+      const slices = await k.cardStore.slices.list();
+      if (slices.length > 0) {
+        const named = args.find((a) => /^SLICE-/.test(a) || slices.some((s) => s.id === a));
+        if (!args.includes("--confirm")) {
+          return (await pd.releaseSubcommand(k, ["status"], print)) ?? 0;
+        }
+        const pending = named ?? (await pd.latestUntaggedRelease(k));
+        if (!pending) return done("No slice release is waiting to be tagged.", 1);
+        try {
+          const t = await pd.confirmSliceRelease(k, pending);
+          return done(`Tagged ${t.tag} at ${t.sha.slice(0, 7)} for ${pending}.`, 0);
+        } catch (err) {
+          return done(err instanceof Error ? err.message : String(err), 1);
+        }
+      }
       // `sekhemet release [--confirm]` (Y17): propose, then tag on confirmation.
       const plan = planRelease(k.repoPath);
       print(
@@ -1426,26 +1527,42 @@ export async function plannerStandupSection(cardStore: CardStore, log: EventLog)
  * A card stopped at repair rung 3 asking for a re-plan: when it belongs to
  * a planned epic, run the Replan session. The epic gets a new plan version
  * with a diff against the previous one; new stories become cards and
- * removed ones that have not started are parked with the reason.
+ * removed ones that have not started return to Backlog with the reason.
+ * The plan is made again from the original spec — the person's words the
+ * epic keeps, through the design stage as `sekhemet plan` did — with its
+ * riskiest assumption, and the riskiest-assumption card is carried into the
+ * new plan, never removed (PM-P1-8). In the Team setup a removal from an
+ * issue someone else owns is a suggestion to them (PM-N9-9). The re-plan and
+ * its diff are posted in Seshat's thread.
  */
 export async function replanOnRung3(
   k: Kernel,
   card: CardRecord,
   reason: string,
+  options: { setup?: Setup } = {},
 ): Promise<string | undefined> {
   if (!card.parentId) return undefined;
-  const { latestPlan, replanSession, formatPlanDiff } = await import("@sekhemet/planner");
+  const { latestPlan } = await import("@sekhemet/planner");
   const ledger = ledgerOf(k);
   if (!(await latestPlan(ledger, card.parentId))) return undefined;
   const epic = await k.cardStore.getCard(card.parentId);
   if (!epic) return undefined;
-  const r = await replanSession(ledger, await repoPlanner(k), {
+  const original = epic.spec ?? epic.title;
+  const design = designStage(original, { greenfield: false });
+  const why = `${card.id} failed at rung 3: ${reason}`;
+  const r = await gatedReplan(k, await repoPlanner(k), {
     epicId: epic.id,
-    spec: epic.spec ?? epic.title,
-    reason: `${card.id} failed at rung 3: ${reason}`,
+    spec: epic.spec ? design.buildSpec : epic.title,
+    reason: why,
     trigger: "rung3_failure",
-    apply: true,
+    ...(design.riskiest ? { riskiest: design.riskiest } : {}),
+    setup: options.setup ?? setupFor(k.repoPath),
   });
+  const kept = r.carried.length
+    ? ` Carried into v${r.version} as it stood: ${r.carried.join(", ")}.`
+    : "";
+  await postReplan(k, `Replanned ${epic.id} to v${r.version}: ${why}.${kept}`, r.diff, r.suggested);
+  const { formatPlanDiff } = await import("@sekhemet/planner");
   return `Replanned ${epic.id} to v${r.version}:\n${formatPlanDiff(r.diff)}`;
 }
 

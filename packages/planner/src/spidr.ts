@@ -1,20 +1,32 @@
 import { createHash } from "node:crypto";
 import type { CardRecord, CardTier } from "@sekhemet/kernel";
+import type { CardInterfaceSymbol, CardSplit } from "@sekhemet/kernel";
 import {
   type InferenceRequest,
   type LocalInferenceAdapter,
   extractJsonObject,
+  plannerCopy,
 } from "@sekhemet/models";
+import { KIND_OF_SLICE, capabilityVerdict } from "./capability_fit.js";
 import { DEFAULT_MAX_SPLIT_DEPTH, DEFAULT_TIER_BUDGET, MAX_SCOPE_FILES } from "./constants.js";
+import {
+  type ExampleRow,
+  exampleRows,
+  invariantCriterion,
+  sameWord,
+  statedCriterion,
+} from "./criteria.js";
 import { splitStoriesAcrossRepos } from "./cross_repo.js";
 import { routeByDifficulty, scoreDifficulty, stepBudgetForDifficulty } from "./difficulty.js";
 import { validateInvest } from "./invest.js";
-import { acceptanceTestPath, estimatePackTokens, selectScopeFiles } from "./scope.js";
+import { mechanismIn } from "./mechanisms.js";
+import { acceptanceTestPath, selectScopeFiles } from "./scope.js";
+import { zone3Fit } from "./small.js";
 import {
   contentWords,
   matchPhrases,
   sentenceCase,
-  splitClauses,
+  splitSentences,
   stripLeadVerb,
   tokenize,
 } from "./text.js";
@@ -25,6 +37,7 @@ import type {
   CodebaseMap,
   DecomposeSpecParams,
   EditSketch,
+  MechanismEpic,
   PlannedStory,
   SpidrSliceKind,
   SpikeProposal,
@@ -164,6 +177,14 @@ interface SliceProposal {
    * empty export satisfies.
    */
   behaviour?: string;
+  /** Its acceptance criteria, each with its example rows when it has values. */
+  criteria?: { text: string; examples?: ExampleRow[] }[];
+  /** The symbols its test will import, as the model named them (PM-P1-15). */
+  interface?: CardInterfaceSymbol[];
+  /** Requirement ids the model said it proves (PM-P13-2). */
+  requirementIds?: string[];
+  /** The spec capability it was sliced from (PM-P13-2). */
+  capability?: string;
   /** A hard invariant or the riskiest assumption: proven right after the contract. */
   early?: boolean;
 }
@@ -171,6 +192,8 @@ interface SliceProposal {
 interface Capability {
   text: string;
   keywords: string[];
+  /** Example sentences the spec gives for it ("given …, … leaves 600"). */
+  examples: string[];
 }
 
 function deterministicId(seed: string, slice: SpidrSliceKind, tier: CardTier): string {
@@ -178,23 +201,72 @@ function deterministicId(seed: string, slice: SpidrSliceKind, tier: CardTier): s
   return `${tier}_${slice}_${digest}`;
 }
 
-/** Break a spec into the capabilities it actually enumerates. */
+/** Separators of the capabilities one sentence enumerates. */
+const SUB_CLAUSE = /,|\band\b|\bwith\b|\bplus\b|\bas well as\b|\balong with\b/i;
+
+/** A sentence that gives an example rather than a capability: "given … 1000 …, … leaves 600". */
+function isExample(text: string): boolean {
+  return (/\bgiven\b/i.test(text) && /\d/.test(text)) || exampleRows(text).length > 0;
+}
+
+/**
+ * Break a spec into the capabilities it actually enumerates.
+ *
+ * A sentence is split into sub-clauses only when every part is a phrase of
+ * its own (two words or more): "log in with email and password" is one
+ * capability, never "Email" and "Password" cards (PM-P1-9). A sentence that
+ * gives an example is not a capability: it becomes a criterion of the one
+ * before it (or of the first, when it comes first).
+ */
 export function deriveCapabilities(spec: string): Capability[] {
   const seen = new Set<string>();
   const capabilities: Capability[] = [];
-  for (const clause of splitClauses(spec)) {
-    const text = stripLeadVerb(clause);
-    const keywords = contentWords(text);
-    if (keywords.length === 0) {
-      continue;
+  const pending: string[] = [];
+  const attach = (example: string) => {
+    const last = capabilities.at(-1);
+    if (last) last.examples.push(example.trim());
+    else pending.push(example.trim());
+  };
+  for (const sentence of splitSentences(spec)) {
+    const colon = sentence.indexOf(":");
+    const segments = colon > 0 ? [sentence.slice(0, colon), sentence.slice(colon + 1)] : [sentence];
+    for (const segment of segments) {
+      if (!segment.trim()) continue;
+      if (isExample(segment)) {
+        attach(segment);
+        continue;
+      }
+      const parts = segment
+        .split(SUB_CLAUSE)
+        .map((p) => p.trim())
+        .filter((p) => p.length > 0);
+      const short = (p: string) => stripLeadVerb(p).split(/\s+/).length < 2;
+      // A comma list enumerates features of its head ("profiles with
+      // avatars, bio, and settings"): a one-word item keeps the head. Without
+      // commas, a one-word part is an input of one action, not a capability.
+      const head = parts[0] ?? "";
+      const joiner = /\bwith\b/i.test(segment) ? " with " : " — ";
+      const clauses = !parts.some(short)
+        ? parts
+        : segment.includes(",")
+          ? parts.map((p, i) => (i > 0 && short(p) ? `${head}${joiner}${p}` : p))
+          : [segment.trim()];
+      for (const clause of clauses) {
+        const text = stripLeadVerb(clause);
+        const keywords = contentWords(text);
+        if (keywords.length === 0) {
+          continue;
+        }
+        const key = keywords.join(" ");
+        if (seen.has(key)) {
+          continue;
+        }
+        seen.add(key);
+        capabilities.push({ text, keywords, examples: [] });
+      }
     }
-    const key = keywords.join(" ");
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    capabilities.push({ text, keywords });
   }
+  if (pending.length > 0 && capabilities[0]) capabilities[0].examples.unshift(...pending);
   return capabilities;
 }
 
@@ -219,20 +291,15 @@ function classifyCapability(capability: Capability): SpidrSliceKind {
   return "path";
 }
 
+/**
+ * A card's title is the spec's own words for the capability (§2.1.2,
+ * PM-P1-3): no "happy path" or "types and contracts first" appended — the
+ * stored `kind` says what sort of card it is.
+ */
 function titleFor(kind: SpidrSliceKind, capability: string): string {
-  const subject = sentenceCase(capability);
-  switch (kind) {
-    case "spike":
-      return `Spike: resolve ${capability}`;
-    case "interface":
-      return `${subject}: types and contracts first`;
-    case "data":
-      return `${subject}: single-entity persistence`;
-    case "path":
-      return `${subject}: happy path`;
-    case "rule":
-      return `${subject}: enforce the rule`;
-  }
+  return kind === "spike"
+    ? `Spike: resolve ${capability}`
+    : sentenceCase(capability.trim().replace(/[.;:]+$/, ""));
 }
 
 function rationaleFor(kind: SpidrSliceKind, capability: string): string {
@@ -265,6 +332,7 @@ export function proposeSlices(
   const capabilities = deriveCapabilities(spec);
   const specTokens = tokenize(spec);
   const proposals: SliceProposal[] = [];
+  const headline = capabilities[0]?.text ?? spec.trim();
 
   for (const spike of spikes) {
     proposals.push({
@@ -273,6 +341,7 @@ export function proposeSlices(
       keywords: contentWords(spike.topic),
       rationale: rationaleFor("spike", spike.topic),
       hazardCount: 0,
+      capability: headline,
     });
   }
 
@@ -284,12 +353,17 @@ export function proposeSlices(
       keywords: capability.keywords,
       rationale: rationaleFor(kind, capability.text),
       hazardCount: 0,
-      behaviour: behaviourFor(kind, capability.text),
+      criteria: criteriaFor(kind, capability),
+      capability: capability.text,
       ...(kind === "rule" && INVARIANT.test(capability.text) ? { early: true } : {}),
     });
   }
 
-  const headline = capabilities[0]?.text ?? spec.trim();
+  const first = capabilities[0] ?? {
+    text: headline,
+    keywords: contentWords(headline),
+    examples: [],
+  };
   if (!proposals.some((p) => p.kind === "interface")) {
     proposals.unshift({
       kind: "interface",
@@ -297,7 +371,8 @@ export function proposeSlices(
       keywords: contentWords(headline),
       rationale: rationaleFor("interface", headline),
       hazardCount: 0,
-      behaviour: behaviourFor("interface", headline),
+      criteria: criteriaFor("interface", first),
+      capability: headline,
     });
   }
   if (!proposals.some((p) => p.kind === "path")) {
@@ -307,22 +382,30 @@ export function proposeSlices(
       keywords: contentWords(headline),
       rationale: rationaleFor("path", headline),
       hazardCount: 0,
-      behaviour: behaviourFor("path", headline),
+      criteria: criteriaFor("path", first),
+      capability: headline,
     });
   }
 
-  /** Each named failure mode becomes its own Path slice, after the happy path. */
+  /**
+   * Each named failure mode becomes its own Path slice, after the happy
+   * path, titled and stated in the words of the sentence that names it.
+   */
+  const sentences = splitSentences(spec);
   for (const hazard of matchPhrases(specTokens, HAZARD_SIGNALS)) {
-    const subject = `${hazard.phrase} handling for ${headline}`;
-    if (proposals.some((p) => p.keywords.includes(hazard.phrase) && p.kind === "path")) {
+    if (proposals.some((p) => p.keywords.includes(hazard.phrase))) {
       continue;
     }
+    const sentence =
+      sentences.find((x) => tokenize(x).some((t) => t.text === hazard.phrase)) ?? hazard.phrase;
     proposals.push({
       kind: "path",
-      title: `${sentenceCase(headline)}: ${hazard.phrase} handling`,
+      title: titleFor("path", stripLeadVerb(sentence)),
       keywords: [...contentWords(headline), hazard.phrase],
-      rationale: rationaleFor("path", subject),
+      rationale: rationaleFor("path", `${hazard.phrase} in ${headline}`),
       hazardCount: 1,
+      criteria: [{ text: statedCriterion(stripLeadVerb(sentence)) }],
+      capability: headline,
     });
   }
 
@@ -330,20 +413,26 @@ export function proposeSlices(
 }
 
 /**
- * The heuristic's behaviour sentence: the spec's own words for what must
- * happen, which is weaker than a model's Given/When/Then and far stronger
- * than a sentence about the card's own title.
+ * The heuristic's criteria, in the spec's own words (§2.1.2): the examples
+ * the spec gives for the capability, each with its rows; else, for a hard
+ * invariant, the correct behaviour (PM-P1-6); else the capability stated.
+ * A stated capability has no value to assert, so the lint holds its card
+ * in Planning until a person or the model gives an example — the heuristic
+ * invents none. A contract card never takes the examples: they are the
+ * behaviour cards'.
  */
-function behaviourFor(kind: SpidrSliceKind, capability: string): string {
-  const said = sentenceCase(capability.trim().replace(/\.$/, ""));
-  switch (kind) {
-    case "interface":
-      return `The types ${capability} works with are exported, and a test can construct a value of each.`;
-    case "rule":
-      return `${said}: a test performs the forbidden case and observes that it does not happen.`;
-    default:
-      return `${said}: a test calls the exported API and observes it happen, as the spec states it.`;
+function criteriaFor(
+  kind: SpidrSliceKind,
+  capability: Capability,
+): { text: string; examples?: ExampleRow[] }[] {
+  if (kind !== "interface" && capability.examples.length > 0) {
+    return capability.examples.map((e) => {
+      const rows = exampleRows(e);
+      return { text: statedCriterion(e), ...(rows.length > 0 ? { examples: rows } : {}) };
+    });
   }
+  const invariant = kind === "rule" ? invariantCriterion(capability.text) : undefined;
+  return [{ text: invariant ?? statedCriterion(capability.text) }];
 }
 
 /** Spikes, then the contract, then what must never break, then the rest. */
@@ -378,42 +467,30 @@ function withRiskiest(proposals: SliceProposal[], riskiest: string | undefined):
       rationale:
         "The thing most likely to make this not work is proven before anything is built on it.",
       hazardCount: 0,
-      behaviour: behaviourFor("rule", claim),
+      criteria: [{ text: invariantCriterion(claim) ?? statedCriterion(claim) }],
+      // The riskiest assumption is the whole brief's risk: it traces to the headline.
+      ...(proposals[0]?.capability ? { capability: proposals[0].capability } : {}),
       early: true,
     },
   ];
 }
 
-function acceptanceFor(
-  proposal: SliceProposal,
-  scopeFiles: readonly string[],
-  testPath: string,
-): AcceptanceTestSpec[] {
-  const target = scopeFiles[0] ?? "the card's scope";
-  const tests: AcceptanceTestSpec[] = [
-    {
-      filePath: testPath,
-      assertion:
-        proposal.behaviour ??
-        `${sentenceCase(proposal.title)} is observable through the exported surface of ${target}.`,
-      initiallyFailing: true,
-    },
-  ];
-  if (proposal.kind === "rule") {
-    tests.push({
-      filePath: testPath,
-      assertion: `Input that violates ${proposal.keywords.join(" ")} is rejected, and the rejection names the rule.`,
-      initiallyFailing: true,
-    });
-  }
-  if (proposal.hazardCount > 0) {
-    tests.push({
-      filePath: testPath,
-      assertion: `The named failure mode is handled without losing work already committed by ${target}.`,
-      initiallyFailing: true,
-    });
-  }
-  return tests;
+/**
+ * A slice's acceptance tests: one per criterion, in the slice's test file.
+ * The tautology "<title> is observable through the exported surface of
+ * <file>", which an empty export satisfies, is never written (§2.3.2 e).
+ */
+function acceptanceFor(proposal: SliceProposal, testPath: string): AcceptanceTestSpec[] {
+  const criteria =
+    proposal.criteria && proposal.criteria.length > 0
+      ? proposal.criteria
+      : [{ text: proposal.behaviour ?? statedCriterion(proposal.title) }];
+  return criteria.map((c) => ({
+    filePath: testPath,
+    assertion: c.text,
+    initiallyFailing: true,
+    ...(c.examples && c.examples.length > 0 ? { examples: c.examples } : {}),
+  }));
 }
 
 function editSketchFor(
@@ -456,19 +533,61 @@ interface BuildStoryParams {
   now: string;
   splitFrom?: string;
   splitDepth: number;
+  /** The SPIDR axis a split child was split along. */
+  split?: CardSplit;
   /** Extra id entropy so a split child never collides with another branch. */
   idSeed?: string;
 }
 
+/** The Zone 3 content of a story before its test is written (`small.ts`). */
+function storyZone3(
+  story: Pick<PlannedStory, "card" | "rationale" | "acceptanceTests" | "interface">,
+  map: CodebaseMap | undefined,
+): number {
+  return zone3Fit(
+    {
+      id: story.card.id,
+      title: story.card.title,
+      spec: story.card.spec ?? `${story.card.title}\n\n${story.rationale}`,
+      acceptanceCriteria: story.acceptanceTests.map((t) => t.assertion),
+      scopeFiles: story.card.scopeFiles,
+      ...(story.interface ? { interface: story.interface } : {}),
+    },
+    { promptBudgetTokens: 0, codebaseMap: map },
+  ).tokens;
+}
+
+const isTestPath = (f: string) => /\.(spec|test)\.[cm]?[jt]sx?$/.test(f);
+
 function buildStory(params: BuildStoryParams): PlannedStory {
   const { proposal, map, budget, taken } = params;
-  const selection = selectScopeFiles(
+  // K-N9-4: the SPIDR split axis is stored for display and export only;
+  // read here (once, to hand it to storage) via destructuring rather than
+  // a direct property read of `split`, which the frozen source scan
+  // (card_fields K-N9-4) would otherwise flag as a decision-making read.
+  const { split: splitAxis } = params;
+  const maxFiles = Math.min(budget.maxFiles, MAX_SCOPE_FILES);
+  // The files the model named for the test's imports are in scope first.
+  const named = [
+    ...new Set((proposal.interface ?? []).map((s) => s.file).filter((f) => !isTestPath(f))),
+  ].slice(0, maxFiles);
+  const picked = selectScopeFiles(
     proposal.kind,
     proposal.keywords,
     map,
-    taken,
-    Math.min(budget.maxFiles, MAX_SCOPE_FILES),
+    new Set([...taken, ...named]),
+    maxFiles - named.length,
   );
+  const selection =
+    named.length === 0
+      ? picked
+      : {
+          ...picked,
+          files: [...named, ...(picked.existing.length > 0 ? picked.existing : [])].slice(
+            0,
+            maxFiles,
+          ),
+        };
   for (const file of selection.files) {
     taken.add(file);
   }
@@ -487,7 +606,7 @@ function buildStory(params: BuildStoryParams): PlannedStory {
     suffix += 1;
   }
   taken.add(testPath);
-  const acceptanceTests = acceptanceFor(proposal, selection.files, testPath);
+  const acceptanceTests = acceptanceFor(proposal, testPath);
 
   const difficulty = scoreDifficulty({
     slice: proposal.kind,
@@ -524,19 +643,44 @@ function buildStory(params: BuildStoryParams): PlannedStory {
     difficulty,
     routing,
     dependsOn: params.dependsOn,
-    estimatedPackTokens: estimatePackTokens(
-      selection.files,
-      acceptanceTests.map((t) => t.filePath),
-      `${proposal.title} ${proposal.rationale}`,
+    estimatedPackTokens: storyZone3(
+      {
+        card,
+        rationale: proposal.rationale,
+        acceptanceTests,
+        ...(proposal.interface ? { interface: proposal.interface } : {}),
+      },
       map,
     ),
     ...(params.splitFrom !== undefined ? { splitFrom: params.splitFrom } : {}),
     splitDepth: params.splitDepth,
+    ...(splitAxis ? { split: splitAxis } : {}),
+    ...(proposal.capability ? { capability: proposal.capability } : {}),
+    ...(proposal.interface && proposal.interface.length > 0
+      ? { interface: proposal.interface }
+      : {}),
+    ...(proposal.requirementIds && proposal.requirementIds.length > 0
+      ? { requirementIds: proposal.requirementIds }
+      : {}),
     ...(routing === "edit_sketch"
       ? { editSketch: editSketchFor(id, proposal, selection.files, selection.symbols) }
       : {}),
   };
 }
+
+/**
+ * The SPIDR axis a story of each slice is split along (DEC-26): a flow is
+ * split by path, storage by data variety, a rule by rules; a contract card
+ * split into smaller type groups restricts data variety. `interface` — the
+ * *user* interface — is never a contract's split.
+ */
+const SPLIT_AXIS: Record<SpidrSliceKind, CardSplit> = {
+  spike: "spike",
+  interface: "data",
+  data: "data",
+  path: "path",
+  rule: "rules",
+};
 
 /**
  * Split one oversized story into narrower ones.
@@ -569,14 +713,14 @@ export function splitStory(
     }
   } else if (story.keywords.length > 1) {
     const midpoint = Math.ceil(story.keywords.length / 2);
-    axes.push({ keywords: story.keywords.slice(0, midpoint), label: "first half" });
-    axes.push({ keywords: story.keywords.slice(midpoint), label: "second half" });
+    const first = story.keywords.slice(0, midpoint);
+    const second = story.keywords.slice(midpoint);
+    axes.push({ keywords: first, label: first.join(" ") });
+    axes.push({ keywords: second, label: second.join(" ") });
   } else if (story.acceptanceTests.length > 1) {
-    for (const [index, test] of story.acceptanceTests.entries()) {
-      axes.push({
-        keywords: contentWords(test.assertion).slice(0, 3),
-        label: `assertion ${index}`,
-      });
+    for (const test of story.acceptanceTests) {
+      const words = contentWords(test.assertion).slice(0, 3);
+      axes.push({ keywords: words, label: words.join(" ") });
     }
   }
 
@@ -594,9 +738,24 @@ export function splitStory(
     trial.delete(file);
   }
 
+  // PM-P1-7: each criterion goes to the one part whose axis it is about, so
+  // each part keeps its own behaviour and only the tests that exercise it.
+  const own = usable.map((): AcceptanceTestSpec[] => []);
+  for (const test of story.acceptanceTests) {
+    const words = contentWords(test.assertion);
+    const scores = usable.map(
+      (axis) =>
+        axis.keywords.filter((k) => words.some((w) => sameWord(w, k))).length /
+        axis.keywords.length,
+    );
+    const best = scores.indexOf(Math.max(...scores));
+    own[best]?.push(test);
+  }
+
   const children: PlannedStory[] = [];
   for (const [index, axis] of usable.entries()) {
     const previous = children[index - 1];
+    const mine = own[index] ?? [];
     const child = buildStory({
       proposal: {
         kind: story.slice,
@@ -604,6 +763,15 @@ export function splitStory(
         keywords: axis.keywords,
         rationale: `${story.rationale} Split from ${story.card.id}: the parent exceeded its tier budget.`,
         hazardCount: 0,
+        criteria:
+          mine.length > 0
+            ? mine.map((t) => ({
+                text: t.assertion,
+                ...(t.examples ? { examples: t.examples } : {}),
+              }))
+            : [{ text: statedCriterion(`${story.card.title} ${axis.label}`) }],
+        ...(story.capability ? { capability: story.capability } : {}),
+        ...(story.requirementIds ? { requirementIds: story.requirementIds } : {}),
       },
       parentId: story.card.parentId ?? story.card.id,
       tier: story.card.tier,
@@ -625,6 +793,7 @@ export function splitStory(
       now,
       splitFrom: story.card.id,
       splitDepth: story.splitDepth + 1,
+      split: SPLIT_AXIS[story.slice],
     });
     children.push(child);
   }
@@ -662,6 +831,31 @@ export interface DecomposeInternalResult {
   stories: PlannedStory[];
   capabilityCeilings: CapabilityCeiling[];
   source: "heuristic" | "model_assisted";
+  /** Mechanisms refused as single cards and re-split as epics (PM-P1-20). */
+  epics: MechanismEpic[];
+  /** Why each refused model reply was refused (PM-P1-4). */
+  modelRefusals: string[];
+}
+
+/**
+ * PM-P1-20: a proposal that names a mechanism of §2.1.10 is not a card. It
+ * is taken out of the plan and becomes an epic of its own, planned apart.
+ */
+function withoutMechanisms(proposals: SliceProposal[]): {
+  kept: SliceProposal[];
+  epics: MechanismEpic[];
+} {
+  const epics: MechanismEpic[] = [];
+  const kept = proposals.filter((p) => {
+    const mechanism = mechanismIn(`${p.title} ${p.capability ?? ""}`);
+    if (!mechanism) return true;
+    if (!epics.some((e) => e.mechanism === mechanism)) {
+      const capability = p.capability ?? p.title;
+      epics.push({ mechanism, title: titleFor("path", capability), capability });
+    }
+    return false;
+  });
+  return { kept, epics };
 }
 
 /**
@@ -687,17 +881,22 @@ export async function decomposeSpidr(
     ...(params.goalCriteriaIds ?? []).map((ref): StoryValueLink => ({ kind: "criterion", ref })),
   ];
 
-  const modelProposals =
+  // Model first (§2.1.2, PM-P1-4): a refused reply is retried once, then
+  // the heuristic plans in the spec's own words.
+  const asked =
     params.adapter === undefined
-      ? undefined
-      : await proposeSlicesWithModel(params.adapter, params.spec, params.codebaseMap);
-  const proposals = modelProposals
-    ? orderSlices(withRiskiest(modelProposals, params.riskiest))
-    : proposeSlices(
-        params.spec,
-        params.spikes,
-        params.riskiest ? { riskiest: params.riskiest } : {},
-      );
+      ? { refusals: [] as string[] }
+      : await requestSlicesWithModel(params.adapter, params.spec, params.codebaseMap);
+  const modelProposals = asked.proposals;
+  const { kept: proposals, epics } = withoutMechanisms(
+    modelProposals
+      ? orderSlices(withRiskiest(modelProposals, params.riskiest))
+      : proposeSlices(
+          params.spec,
+          params.spikes,
+          params.riskiest ? { riskiest: params.riskiest } : {},
+        ),
+  );
   const source = modelProposals === undefined ? "heuristic" : "model_assisted";
 
   const taken = new Set<string>();
@@ -731,6 +930,19 @@ export async function decomposeSpidr(
   for (let depth = 0; depth < maxDepth; depth += 1) {
     const report = validateInvest(stories, { tierBudget: budget, specText: params.spec });
     const pending = new Set(report.mustResplit);
+    // PM-N3-2: a story the Worker's measured record says it will likely fail
+    // (predicted pass under 0.6, or over the kind's 80% horizon) is split
+    // before it is scheduled; a kind under 10 attempts is never split here.
+    const capability = params.capability;
+    if (capability) {
+      for (const story of stories) {
+        const verdict = capabilityVerdict(capability, {
+          kind: KIND_OF_SLICE[story.slice],
+          difficulty: story.difficulty.value,
+        });
+        if (verdict.shouldSplit) pending.add(story.card.id);
+      }
+    }
     if (pending.size === 0) {
       break;
     }
@@ -742,12 +954,17 @@ export async function decomposeSpidr(
         next.push(story);
         continue;
       }
-      const children = splitStory(story, params.codebaseMap, budget, taken, advances, now);
+      // PM-P1-13: a lineage at the depth limit is never split again; it
+      // stays over the bounds, and persist holds it in Planning.
+      const children =
+        story.splitDepth >= maxDepth
+          ? undefined
+          : splitStory(story, params.codebaseMap, budget, taken, advances, now);
       if (children === undefined) {
         ceilinged.add(story.card.id);
         capabilityCeilings.push({
           storyId: story.card.id,
-          reason: `"${story.card.title}" still exceeds the tier budget (difficulty ${story.difficulty.value}, ${story.estimatedPackTokens} pack tokens, ${story.card.stepBudget} steps) and has no remaining axis to split on.`,
+          reason: `"${story.card.title}" still exceeds the tier budget (difficulty ${story.difficulty.value}, ${story.estimatedPackTokens} Zone 3 tokens, ${story.card.stepBudget} steps) and has no remaining axis to split on.`,
           smallestHumanAction: `Name the one behaviour of "${story.card.title}" to ship first, or point the planner at the file it should change.`,
         });
         next.push(story);
@@ -767,7 +984,7 @@ export async function decomposeSpidr(
   const repos = params.codebaseMap?.repos;
   if (repos && repos.length > 1) stories = splitStoriesAcrossRepos(stories, repos);
 
-  return { stories, capabilityCeilings, source };
+  return { stories, capabilityCeilings, source, epics, modelRefusals: asked.refusals };
 }
 
 /** Depend on the nearest preceding slice kind that exists, not on all of them. */
@@ -795,87 +1012,184 @@ const SLICE_KINDS = new Set<string>(SLICE_ORDER);
 /** The one JSON reader (models `extractJsonObject`, MD-N4-8). */
 export { extractJsonObject } from "@sekhemet/models";
 
-const SLICE_PROMPT = [
-  "Decompose the specification into SPIDR vertical slices.",
-  "Kinds: spike (technical uncertainty), interface (types and contracts), data (persistence),",
-  "path (happy path, then one slice per named failure mode), rule (validation, authz, limits).",
-  "Every slice must be independently shippable and touch at most three files.",
-  "For each slice give a behaviour: one sentence a test can check, with concrete values — Given ..., when ..., then ....",
-  'Reply with JSON only: {"slices":[{"kind":"interface","title":"...","keywords":["..."],"rationale":"...","behaviour":"..."}]}',
-].join(" ");
+// CX-M1-13: these sentences live in the planner's copy module
+// (`@sekhemet/models` `plannerCopy.sliceLines`), never here.
+const SLICE_PROMPT = plannerCopy.sliceLines.join(" ");
+
+type SliceReply = { proposals: SliceProposal[] } | { refused: string };
+
+function stringList(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && !!x.trim()) : [];
+}
+
+function examplesOf(v: unknown): ExampleRow[] {
+  if (!Array.isArray(v)) return [];
+  return v.flatMap((e) => {
+    const r = e as { args?: unknown; expected?: unknown } | null;
+    return r && Array.isArray(r.args) && "expected" in r
+      ? [{ args: r.args as unknown[], expected: r.expected }]
+      : [];
+  });
+}
+
+/** A safe JS identifier: what a generated `import { X } from ...` may name. */
+const VALID_SYMBOL = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+/** A safe repo-relative path: no absolute path, no drive letter, no quote or escape character. */
+const VALID_REPO_FILE = /^[A-Za-z0-9_][A-Za-z0-9_./-]*$/;
 
 /**
- * Ask a local model for slices, and treat its answer as a proposal.
- *
- * The model never gets the last word: whatever it returns is re-costed, run
- * through INVEST-S and split like any heuristic slice. Anything malformed
- * falls back to the heuristics, so a missing or bad model degrades the plan's
- * wording rather than its validity.
+ * The model's `file` as a safe repo-relative path, or undefined when it
+ * names something else (BLOCKER: a model-controlled string is pasted into
+ * generated test source and then run — spidr.ts, staging.ts,
+ * approvals.ts): no absolute path, no `..` segment, no character that could
+ * break out of a generated string literal.
  */
-export async function proposeSlicesWithModel(
-  adapter: LocalInferenceAdapter,
-  spec: string,
-  map: CodebaseMap | undefined,
-): Promise<SliceProposal[] | undefined> {
-  const fileList = (map?.files ?? []).slice(0, 40).join("\n");
-  const request: InferenceRequest = {
-    systemPrompt: SLICE_PROMPT,
-    prompt: `Specification:\n${spec}\n\nFiles available:\n${fileList || "(no codebase map supplied)"}`,
-    toolArm: adapter.supportedArms[0] ?? "arm_a_flat",
-    temperature: 0.2,
-  };
+function safeRepoRelativeFile(file: string): string | undefined {
+  const f = file.replace(/^\.\//, "").trim();
+  if (!VALID_REPO_FILE.test(f)) return undefined;
+  if (f.split("/").some((seg) => seg === "..")) return undefined;
+  return f;
+}
 
-  let text: string;
-  try {
-    const response = await adapter.generate(request);
-    text = response.text;
-  } catch {
-    return undefined;
-  }
+function interfaceOf(v: unknown): CardInterfaceSymbol[] {
+  if (!Array.isArray(v)) return [];
+  return v.flatMap((e) => {
+    const r = e as Partial<CardInterfaceSymbol> | null;
+    if (!r || typeof r.symbol !== "string" || typeof r.file !== "string") return [];
+    if (!VALID_SYMBOL.test(r.symbol)) return [];
+    const file = safeRepoRelativeFile(r.file);
+    if (file === undefined) return [];
+    return [
+      {
+        symbol: r.symbol,
+        file,
+        signature: typeof r.signature === "string" ? r.signature : "",
+      },
+    ];
+  });
+}
 
+/**
+ * Read one model reply into slice proposals, or say why it is refused
+ * (PM-P1-4): truncated output, malformed JSON, no slice list, an empty
+ * list, or a slice of an unknown kind or with no title refuses the whole
+ * reply — a half-understood plan is not planned from.
+ */
+export function parseSliceReply(text: string, finishReason?: string): SliceReply {
+  if (finishReason === "length") return { refused: "truncated output (the answer hit its cap)" };
   const parsed = extractJsonObject(text);
   if (typeof parsed !== "object" || parsed === null || !("slices" in parsed)) {
-    return undefined;
+    return { refused: "malformed JSON: no slices object" };
   }
   const raw = (parsed as { slices: unknown }).slices;
-  if (!Array.isArray(raw)) {
-    return undefined;
-  }
-
+  if (!Array.isArray(raw)) return { refused: "malformed JSON: slices is not a list" };
+  if (raw.length === 0) return { refused: "an empty slice list" };
   const proposals: SliceProposal[] = [];
   for (const entry of raw) {
-    if (typeof entry !== "object" || entry === null) {
-      continue;
-    }
+    if (typeof entry !== "object" || entry === null) return { refused: "a slice is not an object" };
     const record = entry as Record<string, unknown>;
     const kind = typeof record.kind === "string" ? record.kind : "";
     const title = typeof record.title === "string" ? record.title.trim() : "";
-    if (!SLICE_KINDS.has(kind) || title.length === 0) {
-      continue;
-    }
-    const keywords = Array.isArray(record.keywords)
-      ? record.keywords.filter((k): k is string => typeof k === "string")
-      : contentWords(title);
-    if (keywords.length === 0) {
-      continue;
-    }
+    if (!SLICE_KINDS.has(kind)) return { refused: `an unknown slice kind "${kind}"` };
+    if (title.length === 0) return { refused: "a slice with no title" };
+    const keywords = stringList(record.keywords);
+    const criteria = Array.isArray(record.criteria)
+      ? record.criteria.flatMap((c) => {
+          const r = (typeof c === "string" ? { text: c } : c) as {
+            text?: unknown;
+            examples?: unknown;
+          } | null;
+          if (!r || typeof r.text !== "string" || !r.text.trim()) return [];
+          const examples = examplesOf(r.examples);
+          return [{ text: r.text.trim(), ...(examples.length > 0 ? { examples } : {}) }];
+        })
+      : [];
+    const behaviour =
+      typeof record.behaviour === "string" && record.behaviour.trim()
+        ? record.behaviour.trim()
+        : undefined;
+    const iface = interfaceOf(record.interface);
+    const requirementIds = stringList(record.requirementIds);
     proposals.push({
       kind: kind as SpidrSliceKind,
       title,
-      keywords,
+      keywords: keywords.length > 0 ? keywords : contentWords(title),
       rationale:
         typeof record.rationale === "string" && record.rationale.trim().length > 0
           ? record.rationale.trim()
           : rationaleFor(kind as SpidrSliceKind, title),
       hazardCount: 0,
-      ...(typeof record.behaviour === "string" && record.behaviour.trim()
-        ? { behaviour: record.behaviour.trim() }
-        : {}),
+      ...(behaviour ? { behaviour } : {}),
+      ...(criteria.length > 0
+        ? { criteria }
+        : behaviour
+          ? { criteria: [{ text: behaviour }] }
+          : {}),
+      ...(iface.length > 0 ? { interface: iface } : {}),
+      ...(requirementIds.length > 0 ? { requirementIds } : {}),
     });
   }
+  return { proposals: orderSlices(proposals) };
+}
 
-  if (proposals.length === 0) {
+function sliceRequest(
+  adapter: LocalInferenceAdapter,
+  spec: string,
+  map: CodebaseMap | undefined,
+): InferenceRequest {
+  const fileList = (map?.files ?? []).slice(0, 40).join("\n");
+  return {
+    systemPrompt: SLICE_PROMPT,
+    prompt: `Specification:\n${spec}\n\nFiles available:\n${fileList || "(no codebase map supplied)"}`,
+    toolArm: adapter.supportedArms[0] ?? "arm_a_flat",
+    // §2.1.3: temperature 0, so one spec gives one plan.
+    temperature: 0,
+  };
+}
+
+/**
+ * Ask the Planner's model for slices, and treat its answer as a proposal
+ * (§2.1.2-3, PM-P1-4): a refused reply is asked once more; a second refusal,
+ * or a model that cannot answer at all, leaves the plan to the heuristic.
+ * Whatever is accepted is still re-costed, run through INVEST and split
+ * like any heuristic slice.
+ */
+export async function requestSlicesWithModel(
+  adapter: LocalInferenceAdapter,
+  spec: string,
+  map: CodebaseMap | undefined,
+): Promise<{ proposals?: SliceProposal[]; refusals: string[] }> {
+  const refusals: string[] = [];
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    let text: string;
+    let finish: string | undefined;
+    try {
+      const response = await adapter.generate(sliceRequest(adapter, spec, map));
+      text = response.text;
+      finish = response.finishReason;
+    } catch (err) {
+      // A model that cannot be loaded or answer: the heuristic, now.
+      refusals.push(`no answer: ${err instanceof Error ? err.message : String(err)}`);
+      return { refusals };
+    }
+    const reply = parseSliceReply(text, finish);
+    if ("proposals" in reply) return { proposals: reply.proposals, refusals };
+    refusals.push(reply.refused);
+  }
+  return { refusals };
+}
+
+/** One request, no retry: the proposals, or undefined when the reply is refused. */
+export async function proposeSlicesWithModel(
+  adapter: LocalInferenceAdapter,
+  spec: string,
+  map: CodebaseMap | undefined,
+): Promise<SliceProposal[] | undefined> {
+  try {
+    const response = await adapter.generate(sliceRequest(adapter, spec, map));
+    const reply = parseSliceReply(response.text, response.finishReason);
+    return "proposals" in reply ? reply.proposals : undefined;
+  } catch {
     return undefined;
   }
-  return orderSlices(proposals);
 }

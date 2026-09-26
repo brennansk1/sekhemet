@@ -1,11 +1,16 @@
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
-import { describe, expect, it } from "vitest";
+import { type InferenceResponse, MockInferenceAdapter } from "@sekhemet/models";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   DecisionStore,
   EstimationModel,
   type PlannerLedger,
   SpidrFeaturePlanner,
+  approvePlan,
   buildDecisionRequest,
   diagnoseEscalation,
   diffPlans,
@@ -21,8 +26,16 @@ import {
 } from "../src/index.js";
 import type { DecisionRequest } from "../src/types.js";
 
+/** An on-disk SQLite file per ledger (DEFINITION_OF_DONE §2A, PM-P1-14). */
+const dbDirs: string[] = [];
+afterEach(() => {
+  while (dbDirs.length) rmSync(dbDirs.pop() as string, { recursive: true, force: true });
+});
+
 function ledger(): PlannerLedger {
-  const db = new DatabaseSync(":memory:");
+  const dir = mkdtempSync(join(tmpdir(), "sek-planner-db-"));
+  dbDirs.push(dir);
+  const db = new DatabaseSync(join(dir, "events.db"));
   initSchema(db);
   const log = new EventLog(db);
   return { log, store: new CardStore(db, log) };
@@ -211,13 +224,31 @@ describe("P9/P10/P11/P25: durable decision requests", () => {
       sourceExcerpt: "Support cloud or local backends",
     });
     expect(plan.ambiguity.decision.policy).toBe("default_deny");
+    // One card whose criterion has an example: only the decision holds it.
+    const ready = plan.stories.find((s) => s.slice === "interface") as (typeof plan.stories)[0];
+    ready.acceptanceTests = [
+      {
+        filePath: "tests/notes_sync.spec.ts",
+        assertion: "Given 2 notes, syncing 1 of them leaves 1 notes to sync",
+        initiallyFailing: true,
+        examples: [{ args: [2, 1], expected: 1 }],
+      },
+    ];
     const result = await persistPlan(l, plan, { epicId: "epic_auth" });
     expect(result.decisionId).toBeDefined();
     expect((await l.store.getCard("epic_auth"))?.status).toBe("parked");
-    const first = result.created[0];
+    const first = result.created.find((c) => c.id === ready.card.id);
     expect(first?.status).toBe("planning");
+    const other = result.created.find((c) => c.id !== ready.card.id);
+    // PM-N7-5: a person approves the criteria; the decision's hold stays until it is answered.
+    await approvePlan(l, "epic_auth", l.store.localPrincipal());
+    expect((await l.store.getCard(first?.id as string))?.status).toBe("planning");
     await new DecisionStore(l).answer(result.decisionId as string, 0);
     expect((await l.store.getCard(first?.id as string))?.status).not.toBe("planning");
+    // A card also held for its own reasons keeps them, without the decision's.
+    const held = await l.store.getCard(other?.id as string);
+    expect(held?.status).toBe("planning");
+    expect(held?.blockedReason).not.toMatch(/Waiting on decision/);
     // Parked has no edge back into the middle of a state (kernel rule 25,
     // K-N5-6): an epic parked from In Progress is re-queued at Ready.
     expect((await l.store.getCard("epic_auth"))?.status).toBe("ready");
@@ -421,5 +452,91 @@ describe("P12/P13/P14: replan with diffs, review, standup, escalation", () => {
     const ceiling = diagnoseEscalation(card, []);
     expect(ceiling.category).toBe("capability_ceiling");
     expect(ceiling.smallestHumanAction).toMatch(/Split it/);
+  });
+});
+
+describe("BLOCKER, fixed: a model's interface symbol and file are validated before staging", () => {
+  function repo(): string {
+    const dir = mkdtempSync(join(tmpdir(), "sek-iface-safety-"));
+    dbDirs.push(dir);
+    return dir;
+  }
+
+  const reply = (text: string): InferenceResponse => ({
+    text,
+    toolCalls: [],
+    usage: { promptTokens: 1, completionTokens: 1, durationMs: 1 },
+  });
+
+  it("drops a symbol that is not a JS identifier and a file outside the repository", async () => {
+    const root = repo();
+    const adapter = new MockInferenceAdapter(
+      "planner",
+      [
+        reply(
+          JSON.stringify({
+            slices: [
+              {
+                kind: "path",
+                title: "Refund a paid invoice",
+                keywords: ["refund", "invoice"],
+                rationale: "the core behaviour",
+                criteria: [
+                  {
+                    text: "Given a paid invoice of 1000 cents, refunding 400 leaves 600",
+                    examples: [{ args: [1000, 400], expected: 600 }],
+                  },
+                ],
+                interface: [
+                  {
+                    // Not a valid identifier: were it pasted raw into
+                    // `import { X } from "..."` it would break out of the
+                    // import and run arbitrary code at plan time.
+                    symbol: 'x"); require("node:child_process").execSync("touch pwned"); //',
+                    file: "../../../etc/passwd",
+                    signature: "refundInvoice(paidCents: number, refundCents: number): number",
+                  },
+                ],
+              },
+            ],
+          }),
+        ),
+      ],
+      { exhaustion: "throw" },
+    );
+    const l = ledger();
+    await l.store.createCard({
+      id: "epic_p",
+      tier: "epic",
+      title: "Refunds",
+      status: "in_progress",
+    });
+    const plan = await new SpidrFeaturePlanner({ adapter }).decomposeSpec({
+      parentId: "epic_p",
+      parentTier: "epic",
+      spec: "Refund a paid invoice.",
+    });
+    const story = plan.stories[0];
+    // The malicious entry never reaches the story's interface at all.
+    expect(story?.interface ?? []).toEqual([]);
+
+    const result = await persistPlan(l, plan, { epicId: "epic_p", repoRoot: root });
+    const id = result.created[0]?.id as string;
+    const card = await l.store.getCard(id);
+    // A safe, heuristic symbol is used instead; nothing names "etc/passwd".
+    expect(card?.interface?.every((s) => /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(s.symbol))).toBe(true);
+    expect(JSON.stringify(card?.interface ?? [])).not.toContain("passwd");
+
+    // Nothing under the repo carries the payload: no file escaped it, and no
+    // generated source contains the injection attempt verbatim.
+    const walk = (d: string): string[] =>
+      readdirSync(d).flatMap((n) => {
+        const p = join(d, n);
+        return statSync(p).isDirectory() ? walk(p) : [p];
+      });
+    for (const f of walk(root)) {
+      expect(readFileSync(f, "utf8")).not.toContain("execSync");
+    }
+    expect(existsSync(join(root, "pwned"))).toBe(false);
   });
 });

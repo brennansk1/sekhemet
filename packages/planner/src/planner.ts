@@ -19,13 +19,45 @@ import type {
 
 export { ClarEvalAmbiguityClassifier, scoreFindings } from "./ambiguity.js";
 
+/**
+ * The plan's first line when no planning model answered (§2.1.2, PM-P1-3):
+ * the cards use only the spec's own words, and a criterion without an
+ * example keeps its card in Planning until a person or a model gives one.
+ */
+export const PLANNED_WITHOUT_MODEL =
+  "Planned without a model: every card uses only the spec's own words, and a criterion with no example keeps its card in Planning.";
+
+/**
+ * The Planner role's model (§2.1.2, PM-P1-2): the one named on the command
+ * line, else an explicit `[models] planner`, else the model Seshat runs on —
+ * never none just because nothing was configured. Seshat's model is taken
+ * by default only when the model registry lists it (models rule 11): an
+ * unregistered one cannot be loaded under the harness's rules, so the plan
+ * is made without a model and says so (PM-P1-3). A model a person named is
+ * theirs to name; `none`, named or configured, plans without a model.
+ */
+export function resolvePlannerModel(input: {
+  flag?: string | undefined;
+  configured?: string | undefined;
+  seshatModel: string;
+  /** Whether the model registry lists a model; omitted, every model counts. */
+  isRegistered?: (model: string) => boolean;
+}): string | undefined {
+  // "none" plans heuristically on purpose, loading nothing (PM-P1-3).
+  if (input.flag === "none") return undefined;
+  if (input.flag) return input.flag;
+  if (input.configured === "none") return undefined;
+  if (input.configured && input.configured !== "auto") return input.configured;
+  if (input.isRegistered && !input.isRegistered(input.seshatModel)) return undefined;
+  return input.seshatModel;
+}
+
 export interface PlannerOptions {
   /**
-   * Optional planner model.
-   *
-   * Optional on purpose: the heuristic path is the contract, and the model
-   * only ever refines slice wording and grouping. A harness with no model
-   * loaded still plans.
+   * The Planner role's model (model first, §2.1.2): it writes the slices,
+   * their criteria and examples. Without one — or when it cannot answer, or
+   * answers badly twice — the heuristic plans, in the spec's own words, and
+   * the plan says so (PM-P1-3).
    */
   adapter?: LocalInferenceAdapter;
   /** Shared across passes so override rates accumulate over a project. */
@@ -97,10 +129,12 @@ export class SpidrFeaturePlanner implements PlannerService {
           ? { rejectionReason: ambiguity.rejectionReason }
           : {}),
         source: "heuristic",
+        spec: params.spec,
+        epics: [],
       };
     }
 
-    const { stories, capabilityCeilings, source } = await decomposeSpidr({
+    const { stories, capabilityCeilings, source, epics, modelRefusals } = await decomposeSpidr({
       ...params,
       ...(map ? { codebaseMap: map } : {}),
       tierBudget: budget,
@@ -116,6 +150,9 @@ export class SpidrFeaturePlanner implements PlannerService {
       capabilityCeilings,
       rejected: false,
       source,
+      spec: params.spec,
+      epics,
+      ...(modelRefusals.length > 0 ? { modelRefusals } : {}),
     };
   }
 

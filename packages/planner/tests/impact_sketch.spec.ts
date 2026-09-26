@@ -147,8 +147,46 @@ describe("P7: model-written edit sketch, grounded in scope and outlines", () => 
     expect(invented.rejected).toMatch(/does not export/);
   });
 
+  it("PM-P1-16: rejects a literal patch hidden in preconditions or invariants, not only diffSketch", async () => {
+    const root = repo();
+    const inPreconditions = await sketchWithModel(
+      new MockInferenceAdapter("p", [
+        reply(
+          JSON.stringify({
+            targetSymbols: [{ filePath: "src/money.ts", symbol: "money", change: "modify" }],
+            preconditions: ["```diff\n-old\n+new\n```"],
+            invariants: ["ok"],
+            diffSketch: "Round to two decimals.",
+          }),
+        ),
+      ]),
+      story(["src/money.ts"]),
+      { repoRoot: root },
+    );
+    expect(inPreconditions.source).toBe("template");
+    expect(inPreconditions.rejected).toMatch(/literal patch/);
+
+    const inInvariants = await sketchWithModel(
+      new MockInferenceAdapter("p", [
+        reply(
+          JSON.stringify({
+            targetSymbols: [{ filePath: "src/money.ts", symbol: "money", change: "modify" }],
+            preconditions: ["ok"],
+            invariants: ["--- a/src/money.ts\n+++ b/src/money.ts"],
+            diffSketch: "Round to two decimals.",
+          }),
+        ),
+      ]),
+      story(["src/money.ts"]),
+      { repoRoot: root },
+    );
+    expect(inInvariants.source).toBe("template");
+    expect(inInvariants.rejected).toMatch(/literal patch/);
+  });
+
   it("persistPlan uses the sketcher for edit_sketch cards and notes the impact", async () => {
-    const db = new DatabaseSync(":memory:");
+    // On disk, like every persistence test (DEFINITION_OF_DONE §2A, PM-P1-14).
+    const db = new DatabaseSync(join(repo(), "events.db"));
     initSchema(db);
     const log = new EventLog(db);
     const store = new CardStore(db, log);

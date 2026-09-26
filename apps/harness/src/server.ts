@@ -82,6 +82,9 @@ import {
   sharedModelAccess,
 } from "./model_access.js";
 import { startNotifier } from "./notify.js";
+import { handlePlanApprovalRoute } from "./plan_approval.js";
+import { startGoalTicker } from "./planner_live.js";
+import { audienceFromAccess } from "./pm/audience.js";
 import { dailyStandup } from "./pm/service.js";
 import { PmStore } from "./pm/store.js";
 import { createPmApi } from "./pm_api.js";
@@ -370,6 +373,8 @@ export function startDashboardServer(
     readJsonBody,
     isTrustedMutation,
     principalOf: (req) => principalOf(req),
+    // planner-pm §2.8.5, §2.18 (B4.3): who Seshat answers, from the access module.
+    audience: () => audienceFromAccess(() => access, options.db),
   });
   const memoryProbe = options.memoryProbe ?? sampleMemory;
   // Configuration's progress (scan, hash, download, copy, benchmark) goes out as `config` frames.
@@ -704,6 +709,9 @@ export function startDashboardServer(
   /** The person behind a write the access check passed; the install's person otherwise (Solo). */
   const principalOf = (req: IncomingMessage): string =>
     askers.get(req) ?? requester(req) ?? log.localPrincipal();
+  // PM-N9-8: the planning views answer only for projects the person can see.
+  const planningCanSee = (req: IncomingMessage, project: string | undefined): boolean =>
+    audienceFromAccess(() => access, options.db).canSee(principalOf(req), project);
   const queueSettings = () => {
     try {
       const c = resolveConfig({ repoPath }).config;
@@ -817,8 +825,31 @@ export function startDashboardServer(
       if (d?.kind === "permission") permissions = ["permission.answer"];
       cardId = d?.cardId;
     }
+    if (rule.suggestionId && store) {
+      cardId = (await store.suggestions.get(rule.suggestionId))?.cardId;
+    }
     const card = (cardId && store ? await store.getCard(cardId) : undefined) ?? undefined;
-    const project = rule.projectId ?? projectOfCard(card);
+    let project = rule.projectId ?? projectOfCard(card);
+    // B4.3: a slice or requirement id resolves to its own project, checked to exist.
+    if (project === undefined && rule.sliceId && store) {
+      project = (await store.slices.get(rule.sliceId))?.projectId;
+    }
+    if (project === undefined && rule.requirementId && store) {
+      project = (await store.requirements.get(rule.requirementId))?.projectId;
+    }
+    // A project id read from the request body (never the URL's own resource
+    // path) is trusted only once it is checked to exist (B4.3): otherwise a
+    // fabricated id could pin a favorable per-project level instead of the
+    // workspace's own. A missing project still reaches the handler, which
+    // answers its own 404.
+    if (
+      project !== undefined &&
+      rule.projectId === project &&
+      store &&
+      !store.getProject(project)
+    ) {
+      project = undefined;
+    }
     const projectName = project ? store?.getProject(project)?.name : undefined;
     for (const permission of permissions) {
       const decision = access.decide(principal, permission, project, projectName, ceilingOf(req));
@@ -1001,6 +1032,24 @@ export function startDashboardServer(
         readJsonBody,
         trusted: isTrustedMutation,
         principalOf,
+      }))
+    ) {
+      return;
+    }
+
+    // PM-N7-5: a person's approval of a plan's criteria, as `sekhemet approve`.
+    if (
+      url.startsWith("/api/cards/") &&
+      (await handlePlanApprovalRoute(req, res, url, {
+        repoPath,
+        cardStore: options.cardStore,
+        log,
+        boardService,
+        json,
+        readJsonBody,
+        trusted: isTrustedMutation,
+        principalOf,
+        canSee: planningCanSee,
       }))
     ) {
       return;
@@ -1300,6 +1349,8 @@ export function startDashboardServer(
         card: withDisplay(card, state.cards, statusEntries(), Date.now()),
         attempts: attemptsFor(card.id).map((a) => a.summary),
         acceptance: acceptanceSources(card),
+        // PM-N8-2: what the card waits on and why (declared, named, imported).
+        dependencies: options.cardStore?.getDependencyReasons(card.id) ?? [],
       });
       return;
     }
@@ -1817,6 +1868,7 @@ export function startDashboardServer(
         isTrustedMutation,
         readJsonBody,
         principalOf,
+        canSee: planningCanSee,
       })
     ) {
       return;
@@ -1931,6 +1983,11 @@ export function startDashboardServer(
             ...(options.recurringEveryMs ? { everyMs: options.recurringEveryMs } : {}),
           })
         : () => undefined;
+      // PM-N4-1: every active goal is re-evaluated when a card closes, and
+      // hourly while the daemon runs without one.
+      const goalTicker = options.cardStore
+        ? startGoalTicker({ repoPath, cardStore: options.cardStore, log: options.log })
+        : undefined;
       // INT-11b, INT-20b: one catch-up pull at start when webhooks are the
       // route (never a timer on the tracker), and linked cards' moves shown
       // on their issues' Projects status.
@@ -1943,6 +2000,7 @@ export function startDashboardServer(
           new Promise<void>((done) => {
             void notifier.then((n) => n.stop());
             stopRecurring();
+            goalTicker?.stop();
             github?.stop();
             stopIdentity();
             configApi.close();

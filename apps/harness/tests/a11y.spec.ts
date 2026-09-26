@@ -99,6 +99,16 @@ describe("the accessibility check (dashboard DB-P12-6)", () => {
       status: "ready",
       scopeFiles: ["src/b.ts"],
     });
+    // PM-N7-5: a planned card waiting on a person's approval shows its criteria and Approve.
+    await cardStore.createCard({
+      id: "card_a11y_3",
+      tier: "task",
+      title: "A card waiting on approval",
+      status: "planning",
+      scopeFiles: ["src/c.ts"],
+      acceptanceCriteria: ["Saving a recipe keeps its title"],
+      criterionIds: ["card_a11y_3.c1"],
+    });
     server = await startDashboardServer({
       db,
       log,
@@ -155,6 +165,7 @@ describe("the accessibility check (dashboard DB-P12-6)", () => {
       const routes = [
         ...NAV_ITEMS.map((n) => n.route),
         "#/card/card_a11y_1",
+        "#/card/card_a11y_3",
         "#/account/profile",
         // Configuration's other sections (B4.1, DB-N6-1); Models is its default.
         "#/configuration/benchmark",
@@ -202,6 +213,10 @@ describe("the accessibility check (dashboard DB-P12-6)", () => {
             // Configuration › Benchmark renders after its reads too.
             if (url.startsWith(solo) && route === "#/configuration/benchmark") {
               await page.locator("#bench-h").waitFor({ timeout: 10_000 });
+            }
+            // The card waiting on approval shows its criteria and Approve (PM-N7-5).
+            if (url.startsWith(solo) && route === "#/card/card_a11y_3") {
+              await page.locator("[data-approve]").waitFor({ timeout: 10_000 });
             }
             const at = `${url.startsWith(solo) ? "" : "team "}${route} ${width}px ${theme}`;
             if ((await page.$('script[data-axe="1"]')) === null) {

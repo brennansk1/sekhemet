@@ -663,3 +663,21 @@ describe("the empty gate contract (gates GT-T1-10)", () => {
     expect(isEmptyGateContract(undefined)).toBe(false);
   });
 });
+
+describe("PM-P1-10: the board's kind tag comes from the card's stored kind", () => {
+  it("tags a planner card with no title suffix by its stored kind, and keeps the title whole", () => {
+    const d = describeCard(card({ title: "Store the order", kind: "data" }), {
+      now: new Date("2026-09-26T12:00:00Z"),
+    });
+    expect(d.kinds).toEqual(["storage"]);
+    expect(d.title).toBe("Store the order");
+  });
+
+  it("prefers the stored kind over an older card's title suffix", () => {
+    const d = describeCard(card({ title: "Check totals (SPIDR: Data)", kind: "rule" }), {
+      now: new Date("2026-09-26T12:00:00Z"),
+    });
+    expect(d.kinds).toEqual(["rules"]);
+    expect(d.title).toBe("Check totals");
+  });
+});

@@ -78,24 +78,36 @@ describe("project manager", () => {
     const reply = (await pm.thread()).at(-1);
     expect(reply?.role).toBe("pm");
     expect(reply?.cites).toEqual([{ cardId: ledger.id }]);
-    const proposal = reply?.proposals?.[0];
+    // PM-N9-1: the priority is a suggestion on the issue; the estimate a proposal.
+    const [suggested, proposal] = reply?.proposals ?? [];
+    expect(suggested).toMatchObject({
+      kind: "update_card",
+      cardId: ledger.id,
+      patch: { priority: 1 },
+      before: { priority: 0 },
+      state: "open",
+      why: "Api waits on it",
+    });
+    expect(suggested?.suggestionId).toMatch(/^sug_/);
     expect(proposal).toMatchObject({
       kind: "update_card",
       cardId: ledger.id,
-      patch: { priority: 1, estimate: 3 },
-      before: { priority: 0, estimate: null },
+      patch: { estimate: 3 },
+      before: { estimate: null },
       state: "open",
     });
     expect((await pm.status()).phase).toBe("idle");
 
     // Nothing changed until the human applies it.
     expect((await cards.getCard(ledger.id))?.priority).toBe(0);
+    await applyProposal(suggested as never, { cardStore: cards, boardService: board, pmStore: pm });
     const applied = await applyProposal(proposal as never, {
       cardStore: cards,
       boardService: board,
       pmStore: pm,
     });
     expect(applied.cards[0]).toMatchObject({ priority: 1, estimate: 3 });
+    expect(await cards.suggestions.open(ledger.id)).toEqual([]);
     expect((await pm.proposal(proposal?.id ?? ""))?.state).toBe("applied");
 
     // The ledger credits the human who approved it, not the PM.
@@ -106,7 +118,13 @@ describe("project manager", () => {
   it("refuses a proposal whose card changed since the PM wrote it", async () => {
     const card = await cards.createCard({ tier: "task", title: "Api", status: "ready" });
     const [draft] = toProposals(
-      [{ id: "1", name: "propose_update_card", arguments: { card_id: card.id, priority: 2 } }],
+      [
+        {
+          id: "1",
+          name: "propose_update_card",
+          arguments: { card_id: card.id, priority: 2, reason: "it blocks the release" },
+        },
+      ],
       [card],
     );
     const reply = await pm.appendReply({ replyTo: [], text: "x", proposals: draft ? [draft] : [] });
@@ -122,7 +140,7 @@ describe("project manager", () => {
     expect((await pm.proposal(reply.proposals?.[0]?.id ?? ""))?.state).toBe("stale");
   });
 
-  it("splits a card into ordered parts and parks the original", async () => {
+  it("PM-P1-7: splits a card into ordered parts and rejects the original", async () => {
     const card = await cards.createCard({ tier: "task", title: "Ledger", status: "ready" });
     const [draft] = toProposals(
       [
@@ -147,13 +165,14 @@ describe("project manager", () => {
       cardStore: cards,
       boardService: board,
       pmStore: pm,
+      repoPath: repo,
     });
     expect(parts.map((p) => p.title)).toEqual(["Append", "Idempotency"]);
-    expect(parts[1]?.dependsOn).toEqual([parts[0]?.id]);
-    expect((await cards.getCard(card.id))?.status).toBe("parked");
+    expect(parts[1]?.dependsOn).toContain(parts[0]?.id);
+    expect((await cards.getCard(card.id))?.status).toBe("rejected");
   });
 
-  it("gates rule 6a: a split carries the original's own test records to each part, as the PM's", async () => {
+  it("PM-P1-7: a split carries none of the original's test files or records to its parts", async () => {
     const card = await cards.createCard({
       tier: "task",
       title: "Ledger",
@@ -191,12 +210,15 @@ describe("project manager", () => {
       cardStore: cards,
       boardService: board,
       pmStore: pm,
+      repoPath: repo,
     });
     for (const part of parts) {
-      const records = (await cards.cardEvents(part.id, ["test/staged"])).map((e) => e.payload);
-      expect(records).toEqual([
-        { cardId: part.id, path: "tests/a.spec.ts", sha256: "a".repeat(64), author: "pm" },
-      ]);
+      expect(part.acceptanceTests ?? []).not.toContain("a.spec.ts");
+      const records = (await cards.cardEvents(part.id, ["test/staged"])).map(
+        (e) => (e.payload as { path: string }).path,
+      );
+      expect(records).not.toContain("tests/a.spec.ts");
+      expect(records).not.toContain("tests/b.spec.ts");
     }
   });
 

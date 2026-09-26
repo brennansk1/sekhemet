@@ -48,6 +48,8 @@ const NOTICE_KIND = v.picklist([
   "run_report",
   "slow_load",
   "requantised",
+  // planner-pm PM-N9-6: "Update due", "N issues waiting for review".
+  "reminder",
   "test",
 ]);
 const DAY = v.pipe(v.string(), v.regex(/^\d{4}-\d{2}-\d{2}$/, "a local day, YYYY-MM-DD"));
@@ -105,6 +107,50 @@ const COMMIT = v.pipe(v.string(), v.regex(/^(?:[0-9a-f]{7,40}|[0-9a-f]{64})$/, "
 /** A harness-defined code (a detector's kind, a reason): lower-case words joined by `_`. */
 const SLUG = v.pipe(v.string(), v.regex(/^[a-z][a-z0-9_]*$/, "a lower_snake_case code"));
 const LOAD_MODE = v.picklist(["mmap", "no_mmap", "preread_mmap"]);
+
+// planner-pm P13 (B4.3): the requirement graph's shared shapes.
+const CRITERION_ID = v.pipe(
+  v.string(),
+  v.regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/, "a criterion id: letters, digits, '.', '_' or '-'"),
+);
+const REQUIREMENT_FIELDS = {
+  projectId: s(ID, true),
+  sliceId: s(ID, true),
+  dependsOn: s(v.array(ID), true),
+  kano: s(v.picklist(["must-be", "performance", "attractive"]), true),
+  mustHave: s(v.boolean(), true),
+  criterionIds: s(v.array(CRITERION_ID), true),
+  title: priv("free_text", TEXT),
+  criteria: priv("free_text", v.record(ID, TEXT)),
+};
+const APPETITE = {
+  appetiteCards: s(v.pipe(v.number(), v.integer(), v.minValue(1)), true),
+  appetiteHours: s(v.pipe(v.number(), v.gtValue(0)), true),
+};
+/** Semantic Versioning 2.0.0, without a leading `v`. */
+const SEMVER = v.pipe(
+  v.string(),
+  v.regex(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/, "a semantic version, 1.2.3"),
+);
+/** Keep a Changelog's categories (planner-pm §2.15.8). */
+const CHANGELOG_CATEGORY = v.picklist([
+  "Added",
+  "Changed",
+  "Deprecated",
+  "Removed",
+  "Fixed",
+  "Security",
+]);
+/** teams TEAM-18: what a suggestion changes; never health. A planner's hold or removal (PM-N9-9). */
+const SUGGESTION_KIND = v.picklist([
+  "assignee",
+  "label",
+  "priority",
+  "duplicate",
+  "split",
+  "hold",
+  "remove",
+]);
 
 export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
   // models MD-N14-1: a load the residency scheduler ordered, timed, with its prediction.
@@ -492,6 +538,27 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     path: s(ID),
     sha256: s(SHA256),
     author: s(v.picklist(["planner", "test-author", "pm", "person", "repository", "suite"])),
+    // planner-pm PM-P1-17: each test case (its title in the file) and the
+    // card criterion it proves. Titles are repository content, like a test id.
+    cases: s(v.array(v.strictObject({ name: TEXT, criterionId: CRITERION_ID })), true),
+  },
+  // planner-pm PM-N7-5, PM-N7-4: a person approved the card's criteria as
+  // they are — the SHA-256 of their canonical {id, text} list; a change voids it.
+  "criteria/approved": { cardId: s(ID), sha256: s(SHA256) },
+  // planner-pm PM-N7-3, PM-N7-4: a person approved a staged test file (every
+  // file, regulated) or its example tables (production), at this SHA-256.
+  "test/approved": {
+    cardId: s(ID),
+    path: s(ID),
+    sha256: s(SHA256),
+    what: s(v.picklist(["file", "examples"])),
+  },
+  // planner-pm PM-N8-2: a card waits on another, and why.
+  "card/dependency_added": {
+    cardId: s(ID),
+    dependsOnId: s(ID),
+    source: s(v.picklist(["declared", "named", "imported", "inferred", "planner"])),
+    createdAt: s(TEXT),
   },
   // security item 39 (S9): a person trusted the repository's configuration
   // as it is now — who, and each file by its repository-relative path and SHA-256.
@@ -545,17 +612,77 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     acknowledgedFindings: s(v.array(TEXT)),
     project: s(ID, true),
   },
-  // NEW-kernel-8: requirement versions and suspect links.
+  // NEW-kernel-8: requirement versions and suspect links; planner-pm
+  // PM-P13-1: its project, slice, dependencies, Kano class, must-have mark
+  // and criterion ids (a revision states only what changed). The title and
+  // the criteria's text are private.
   "requirement/created": {
     id: s(ID),
     version: s(v.pipe(v.number(), v.integer(), v.minValue(1))),
-    title: priv("free_text", TEXT),
+    ...REQUIREMENT_FIELDS,
   },
   "requirement/revised": {
     id: s(ID),
     version: s(v.pipe(v.number(), v.integer(), v.minValue(2))),
+    ...REQUIREMENT_FIELDS,
+  },
+  // PM-P13-9: a person cut a nice-to-have from its slice; the reason is text.
+  "requirement/cut": {
+    id: s(ID),
+    sliceId: s(ID),
+    reason: priv("free_text", TEXT),
+  },
+  // PM-P13-9: a release slice and its appetite — cards and/or hours — set
+  // before planning; the machine records reaching it; a person extends it.
+  "slice/created": {
+    sliceId: s(ID),
+    projectId: s(ID),
+    ...APPETITE,
     title: priv("free_text", TEXT),
   },
+  "slice/appetite_reached": {
+    sliceId: s(ID),
+    projectId: s(ID),
+    cards: s(COUNT),
+    hours: s(MS),
+  },
+  "slice/extended": { sliceId: s(ID), projectId: s(ID), ...APPETITE },
+  // K-N5-5: a person accepted the slice (the principal on the event).
+  "slice/accepted": { projectId: s(ID), sliceId: s(ID), completesProject: s(v.boolean()) },
+  // PM-P13-13: a release proposed for an accepted slice — its version and the
+  // proven requirements; the changelog and the notes are text, private.
+  "release/proposed": {
+    sliceId: s(ID),
+    projectId: s(ID),
+    version: s(SEMVER),
+    requirementIds: s(v.array(ID)),
+    changelog: priv("free_text", v.record(CHANGELOG_CATEGORY, v.array(TEXT))),
+    notes: priv("free_text", TEXT),
+  },
+  // planner-pm PM-P13-13 (B4.3 review B): the integration branch's sha a
+  // slice's release was proven at; `release --confirm` tags exactly that sha.
+  "release/proven": {
+    sliceId: s(ID),
+    version: s(SEMVER),
+    sha: s(COMMIT),
+  },
+  // planner-pm PM-N4-3: a person marked a goal's `human` criterion met or not.
+  "goal/criterion_marked": { goalId: s(ID), criterionId: s(ID), met: s(v.boolean()) },
+  // teams TEAM-18, TEAM-19, planner-pm PM-N9-1: Seshat's suggestion on an
+  // issue — the property and value; why is text, private. Applied (by a
+  // person, or by an Admin's auto-apply rule) or dismissed by a person.
+  "suggestion/proposed": {
+    id: s(ID),
+    cardId: s(ID),
+    kind: s(SUGGESTION_KIND),
+    value: s(v.union([v.string(), v.number(), v.array(v.string())])),
+    why: priv("free_text", TEXT),
+  },
+  "suggestion/applied": { id: s(ID), auto: s(v.boolean()) },
+  "suggestion/dismissed": { id: s(ID) },
+  // teams item 29, planner-pm PM-N9-7: a person posted a project's update;
+  // Seshat only drafts it. The text is personal free text, private.
+  "project/update_posted": { project: s(ID), text: priv("free_text", TEXT) },
   // The one notifier (integrations items 20-23a): which channel, which kind,
   // whether it went, and for the budget the person, the notice and the day.
   // The notice's text and the channel's URL or token are never on the ledger.
@@ -617,6 +744,8 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     version: s(v.pipe(v.number(), v.integer(), v.minValue(1))),
     from: s(v.picklist(["card", "test"])),
     ref: s(ID),
+    // PM-P13-12: this card is the change card for that card's or test's suspect link.
+    changeFor: s(ID, true),
   },
   "trace/confirmed": {
     requirementId: s(ID),

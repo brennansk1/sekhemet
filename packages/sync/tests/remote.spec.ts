@@ -502,8 +502,8 @@ describe("Y17: release cards", () => {
     expect(plan).toMatchObject({ previousTag: "v1.2.3", bump: "minor", nextVersion: "v1.3.0" });
     expect(plan.commits).toHaveLength(2);
     if (plan.engine === "builtin") {
-      expect(plan.changelog).toContain("### Features\n- **ui:** dark mode");
-      expect(plan.changelog).toContain("### Bug fixes\n- **core:** rounding");
+      expect(plan.changelog).toContain("### Added\n- **ui:** dark mode");
+      expect(plan.changelog).toContain("### Fixed\n- **core:** rounding");
     }
     const srv = await fake(() => ({ status: 201, json: { html_url: "rel" } }));
     const res = await publishRelease(repo, plan, {

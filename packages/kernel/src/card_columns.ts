@@ -269,6 +269,26 @@ export const CARD_COLUMN_TABLE = [
     fromPayload: jsonOrNull("gateChecks"),
     patchKey: "gateChecks",
   },
+  // planner-pm B4.3 (PM-P1-13, PM-P1-15, PM-P1-17): the split lineage's
+  // depth, the interface the staged test imports, and the criteria's ids.
+  {
+    column: "split_depth",
+    ddl: "split_depth INTEGER CHECK(split_depth IS NULL OR split_depth >= 1)",
+    fromPayload: num("splitDepth"),
+    patchKey: "splitDepth",
+  },
+  {
+    column: "interface",
+    ddl: "interface JSON",
+    fromPayload: jsonOrNull("interface"),
+    patchKey: "interface",
+  },
+  {
+    column: "criterion_ids",
+    ddl: "criterion_ids JSON",
+    fromPayload: jsonOrNull("criterionIds"),
+    patchKey: "criterionIds",
+  },
   {
     column: "created_at",
     ddl: "created_at TEXT NOT NULL",

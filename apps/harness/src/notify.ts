@@ -8,6 +8,7 @@ import {
 } from "@sekhemet/models";
 import { egressRecorder, integrationFetch } from "./github_transport.js";
 import { readSettings, writeSettings } from "./integrations.js";
+import { setupFor } from "./planner_live.js";
 import { PM_EVENTS } from "./pm/types.js";
 import { readSlack, sendSlack } from "./slack.js";
 
@@ -40,6 +41,8 @@ export type NotifyEvent =
   | "run_report"
   | "slow_load"
   | "requantised"
+  /** A neutral reminder to an item's owner (planner-pm PM-N9-6). */
+  | "reminder"
   | "test";
 
 export const ALL_EVENTS: NotifyEvent[] = [
@@ -53,6 +56,7 @@ export const ALL_EVENTS: NotifyEvent[] = [
   "run_report",
   "slow_load",
   "requantised",
+  "reminder",
 ];
 
 /**
@@ -83,6 +87,7 @@ const UNSOLICITED = new Set<NotifyEvent>([
   "decision",
   "needs_you",
   "standup",
+  "reminder",
 ]);
 
 export interface PushSettings {
@@ -360,12 +365,116 @@ function minutesOf(at: string | undefined): number {
   return Math.min(23, Number(m[1])) * 60 + Math.min(59, Number(m[2]));
 }
 
+interface LedgerCard {
+  status?: string;
+  /** When it entered its status (ms). */
+  since?: number;
+  owner?: string | null;
+  projectId?: string | null;
+}
+
+/**
+ * Each card's status, owner and project, folded from the ledger (the
+ * notifier tails the ledger and holds no card store).
+ */
+async function cardsOnLedger(log: EventLog): Promise<Map<string, LedgerCard>> {
+  const out = new Map<string, LedgerCard>();
+  for (const e of await log.getEventsByTypes([
+    "card/created",
+    "card/status_changed",
+    "card/owner_changed",
+  ])) {
+    const p = (e.payload ?? {}) as Record<string, unknown>;
+    const id = String(p.id ?? e.cardId ?? "");
+    if (!id) continue;
+    const c = out.get(id) ?? {};
+    if (e.type === "card/created") {
+      c.status = String(p.status ?? "");
+      c.since = Date.parse(e.createdAt);
+      c.owner = (p.owner as string | null | undefined) ?? null;
+      c.projectId = (p.projectId as string | null | undefined) ?? null;
+    } else if (e.type === "card/status_changed") {
+      c.status = String(p.toStatus ?? c.status);
+      c.since = Date.parse(e.createdAt);
+    } else c.owner = (p.to as string | null | undefined) ?? null;
+    out.set(id, c);
+  }
+  return out;
+}
+
+/**
+ * The day's neutral reminders for one person (planner-pm §2.18.4, PM-N9-6):
+ * the issues that have waited a day or more for their review — theirs, or
+ * unowned in Solo; a fresh one had its own notice — and,
+ * in the Team setup, "Update due" for a project they lead with no update
+ * posted in 7 days. Product text, never Seshat's voice.
+ */
+export async function remindersFor(
+  log: EventLog,
+  person: string,
+  options: { day: string; now: Date; setup: "solo" | "team" },
+): Promise<(Notice & { key: string })[]> {
+  const cards = await cardsOnLedger(log);
+  // In the Team setup, a project's lead: read once, so an unowned issue's
+  // review reminder can go to them too, as an accept with no rule set does.
+  const lead = new Map<string, string>();
+  if (options.setup === "team") {
+    for (const e of await log.getEventsByTypes(["project/settings_changed"])) {
+      const p = (e.payload ?? {}) as Record<string, unknown>;
+      const project = String(p.project ?? "");
+      if (project && typeof p.lead === "string") lead.set(project, p.lead);
+    }
+  }
+  const waiting = [...cards]
+    .filter(
+      ([, c]) =>
+        c.status === "review" &&
+        options.now.getTime() - (c.since ?? 0) >= 24 * 3_600_000 &&
+        (c.owner === person ||
+          (!c.owner &&
+            (options.setup === "solo" || (c.projectId && lead.get(c.projectId) === person)))),
+    )
+    .map(([id]) => id);
+  const out: (Notice & { key: string })[] = [];
+  if (waiting.length) {
+    out.push({
+      event: "reminder",
+      key: `reminder-review-${options.day}`,
+      title: `${waiting.length} ${waiting.length === 1 ? "issue" : "issues"} waiting for review`,
+      message: waiting.join(", "),
+      priority: 3,
+    });
+  }
+  if (options.setup === "team") {
+    const since = new Map<string, number>();
+    for (const e of await log.getEventsByTypes(["project/created", "project/update_posted"])) {
+      const p = (e.payload ?? {}) as Record<string, unknown>;
+      const project = String(p.project ?? p.id ?? "");
+      if (project) since.set(project, Date.parse(e.createdAt));
+    }
+    for (const [project, who] of lead) {
+      const last = since.get(project);
+      if (who !== person || last === undefined) continue;
+      if (options.now.getTime() - last < 7 * 24 * 3_600_000) continue;
+      out.push({
+        event: "reminder",
+        key: `reminder-update-${project}-${options.day}`,
+        title: "Update due",
+        message: `${project}: no update posted in the last 7 days.`,
+        priority: 3,
+      });
+    }
+  }
+  return out;
+}
+
 const HELD_LABEL: Partial<Record<NotifyEvent, string>> = {
   review: "waits for review",
   parked: "was parked",
   budget: "reached its budget",
   question: "has a question from the Worker",
   decision: "has a decision waiting",
+  reminder: "has a reminder",
 };
 
 /** The standup's `needs_you` summary of the notices held for it (item 23a). */
@@ -393,6 +502,8 @@ export interface NotifierOptions {
   now?: () => Date;
   /** The person notices are addressed to; the install's own person by default. */
   recipient?: string;
+  /** Solo or Team (`[team] mode`); read from the configuration when absent. */
+  setup?: "solo" | "team";
 }
 
 /** A claim's event id, derived from what is claimed, so two notifiers derive the same one. */
@@ -500,10 +611,17 @@ export async function startNotifier(
     }
     const events = await log.getEvents(seq + 1, 500);
     let sent = 0;
+    let owners: Awaited<ReturnType<typeof cardsOnLedger>> | undefined;
     for (const e of events) {
       seq = Math.max(seq, e.seq);
       const n = noticeFor(e, opts.dashboard);
       if (!n) continue;
+      // PM-N9-6: an issue waiting for review is its owner's to hear about.
+      if (n.event === "review" && n.cardId) {
+        owners ??= await cardsOnLedger(log);
+        const owner = owners.get(n.cardId)?.owner;
+        if (owner && owner !== person) continue;
+      }
       const key = n.key ?? `${n.event}:${n.cardId ?? ""}`;
       const at = Date.now();
       if ((recent.get(key) ?? 0) > at - 600_000) continue;
@@ -534,6 +652,43 @@ export async function startNotifier(
       for (const c of open) if ((await c.send(n, record)).ok) sent++;
     }
     sent += await standupIfDue(channels);
+    sent += await remindersIfDue(channels);
+    return sent;
+  };
+
+  /**
+   * PM-N9-6: once a day, when the standup is due, the person's reminders —
+   * each claimed once, counted against the day's budget, and past it held
+   * for the next standup like any unsolicited notice.
+   */
+  const remindersIfDue = async (channels: Channel[]): Promise<number> => {
+    const accepting = channels.filter((c) => c.accepts("reminder"));
+    if (accepting.length === 0) return 0;
+    const clock = now();
+    const due = minutesOf(opts.standupAt ?? readSettings(repoPath).standupAt);
+    if (clock.getHours() * 60 + clock.getMinutes() < due) return 0;
+    const day = dayOf(clock);
+    let sent = 0;
+    for (const n of await remindersFor(log, person, {
+      day,
+      now: clock,
+      setup: opts.setup ?? setupFor(repoPath),
+    })) {
+      const record = { to: person, notice: n.key, day };
+      const claimed = await claim(`notify:${person}:${n.key}`, { kind: "reminder", ...record });
+      if (!claimed) continue;
+      const used = await budgetUsed(claimed.seq, n.key);
+      const open = accepting.filter((c) => used < c.limit);
+      if (open.length === 0) {
+        await log.append({
+          actor: "harness",
+          type: PM_EVENTS.noticeHeld,
+          payload: { kind: "reminder", ...record },
+        });
+        continue;
+      }
+      for (const c of open) if ((await c.send(n, record)).ok) sent++;
+    }
     return sent;
   };
 

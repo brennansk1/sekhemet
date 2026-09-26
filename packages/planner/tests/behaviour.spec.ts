@@ -47,7 +47,9 @@ describe("cards say what the code must do", () => {
     const second = plan.stories[1];
     expect(second?.slice).toBe("rule");
     expect(second?.card.title).toMatch(/^Riskiest assumption/);
-    expect(assertions([second as never]).join(" ")).toMatch(/never charge a customer twice/);
+    expect(second?.card.title).toMatch(/never charge a customer twice/);
+    // §2.2.3: its criterion states the correct behaviour, not a refusal (PM-P1-6).
+    expect(assertions([second as never]).join(" ")).toMatch(/returns the original result/);
   });
 
   it("asks the model for a checkable behaviour per slice, and uses it", async () => {

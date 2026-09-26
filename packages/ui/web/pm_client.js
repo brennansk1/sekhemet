@@ -89,6 +89,10 @@ export function onPmEvent(payload) {
     }
   } else if (payload.kind === "status") {
     applyStatus(payload.status);
+  } else if (payload.kind === "refresh") {
+    // Team setup (PM-N9-8): the stream carries no message; each person
+    // reloads their own part of the thread.
+    void loadThread();
   }
 }
 

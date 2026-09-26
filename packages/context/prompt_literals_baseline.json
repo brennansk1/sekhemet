@@ -128,11 +128,6 @@
     },
     {
       "file": "apps/harness/src/pm/agent.ts",
-      "hash": "a0fbfdf828361814",
-      "text": "Split ${} into ${} cards${}${}"
-    },
-    {
-      "file": "apps/harness/src/pm/agent.ts",
       "hash": "a55d65e6f8bc6f86",
       "text": "1 urgent, 2 high, 3 medium, 4 low, 0 none"
     },
@@ -140,16 +135,6 @@
       "file": "apps/harness/src/pm/agent.ts",
       "hash": "ae6d10b8ce984e8d",
       "text": "Summary so far: ${}\n\n"
-    },
-    {
-      "file": "apps/harness/src/pm/agent.ts",
-      "hash": "b627f38bbd1954fe",
-      "text": "You are the project manager for \"${}\", working with the human who leads it. You run on ${}. The code"
-    },
-    {
-      "file": "apps/harness/src/pm/agent.ts",
-      "hash": "b95a3e49390ab00c",
-      "text": "Propose splitting a card that is too large or that the Worker failed on into smaller cards. The orig"
     },
     {
       "file": "apps/harness/src/pm/agent.ts",
@@ -2138,43 +2123,13 @@
     },
     {
       "file": "packages/planner/src/spidr.ts",
-      "hash": "2d3fb835722f8eed",
-      "text": "Every slice must be independently shippable and touch at most three files."
-    },
-    {
-      "file": "packages/planner/src/spidr.ts",
       "hash": "4a3e693e720aa93c",
       "text": "(no codebase map supplied)"
     },
     {
       "file": "packages/planner/src/spidr.ts",
-      "hash": "4c06b5c5f98fe066",
-      "text": "For each slice give a behaviour: one sentence a test can check, with concrete values — Given ..., wh"
-    },
-    {
-      "file": "packages/planner/src/spidr.ts",
-      "hash": "4f912aa54b3cf8ba",
-      "text": "Reply with JSON only: {\"slices\":[{\"kind\":\"interface\",\"title\":\"...\",\"keywords\":[\"...\"],\"rationale\":\"."
-    },
-    {
-      "file": "packages/planner/src/spidr.ts",
-      "hash": "99dc01aef16ea044",
-      "text": "Decompose the specification into SPIDR vertical slices."
-    },
-    {
-      "file": "packages/planner/src/spidr.ts",
       "hash": "9ede6fc4f3a9ed96",
       "text": "Specification:\n${}\n\nFiles available:\n${}"
-    },
-    {
-      "file": "packages/planner/src/spidr.ts",
-      "hash": "eeea8fb13479aa71",
-      "text": "Kinds: spike (technical uncertainty), interface (types and contracts), data (persistence),"
-    },
-    {
-      "file": "packages/planner/src/spidr.ts",
-      "hash": "fe0800da5eff77b2",
-      "text": "path (happy path, then one slice per named failure mode), rule (validation, authz, limits)."
     },
     {
       "file": "packages/sandbox/src/egress.ts",

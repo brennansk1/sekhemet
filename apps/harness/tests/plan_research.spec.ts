@@ -101,7 +101,8 @@ describe("DS-S8-1: offline, or research not yes, means no request and says so", 
     vi.spyOn(console, "log").mockImplementation((...a: unknown[]) => {
       out.push(a.join(" "));
     });
-    await main(["plan", "export the reports page as csv", "--repo", repo]);
+    // Tests never load a model: the Planner defaults to Seshat's (PM-P1-2).
+    await main(["plan", "export the reports page as csv", "--repo", repo, "--planner", "none"]);
     expect(fetchSpy).not.toHaveBeenCalled();
     const check = new DatabaseSync(join(repo, ".sekhemet", "events.db"));
     const egress = check

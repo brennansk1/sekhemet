@@ -20,7 +20,9 @@ export type PmProposalKind =
   | "create_cycle"
   | "assign_cycle"
   | "park"
-  | "unpark";
+  | "unpark"
+  /** Plan a project through the one planner (PM-P1-1): `patch.brief` is the person's words. */
+  | "start_project";
 
 export type PmProposalState = "open" | "applied" | "discarded" | "stale";
 
@@ -33,6 +35,18 @@ export interface PmProposal {
   before?: Record<string, unknown>;
   cards?: Record<string, unknown>[];
   state: PmProposalState;
+  /** Why Seshat proposes it (PM-N9-4); the summary ends "Why: <why>." */
+  why?: string;
+  /**
+   * The suggestion on the issue this proposal is (PM-N9-1): applying either
+   * applies both, discarding it dismisses the suggestion (TEAM-19).
+   */
+  suggestionId?: string;
+  /**
+   * The issue's owner, when that is not the person Seshat answered (Team
+   * setup, PM-N9-9): only the owner applies it.
+   */
+  forOwner?: string;
   /**
    * Where the proposal's content came from: `import` for a file's rows.
    * Applied, each card it touches is recorded `card/imported` and its text
@@ -60,6 +74,8 @@ export interface PmMessage {
   context?: PmContext;
   proposals?: PmProposal[];
   cites?: PmCite[];
+  /** Who wrote a user message; for a reply, who it answers (Team setup, PM-N9-8). */
+  principal?: string;
 }
 
 export type PmPhase = "idle" | "waiting_for_step" | "loading_pm" | "thinking" | "resuming_worker";
