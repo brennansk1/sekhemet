@@ -19,6 +19,8 @@ export interface TriageContext {
   cardStore: CardStore;
   boardService: BoardServiceImpl;
   log: EventLog;
+  /** The person deciding (kernel rule 19); the install's person when omitted (Solo). */
+  principal?: string;
 }
 
 export {
@@ -37,7 +39,13 @@ async function decidedInReview(
   principal?: string,
 ): Promise<void> {
   if (card.status !== "review") return;
-  await recordDecision(ctx, card, principal ?? ctx.cardStore.localPrincipal(), decision, []);
+  await recordDecision(
+    ctx,
+    card,
+    principal ?? ctx.principal ?? ctx.cardStore.localPrincipal(),
+    decision,
+    [],
+  );
 }
 
 /** Cards in Review can move once one leaves it. */

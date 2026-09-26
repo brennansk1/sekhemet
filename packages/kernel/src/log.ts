@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -26,6 +27,15 @@ export const PRINCIPAL_PATTERN = /^p_[0-9a-z]+$/;
 
 /** Actors through which a person acts, so their events name that person (rule 19). */
 const PERSON_ACTORS = new Set(["human", "mcp"]);
+
+/**
+ * The person a request is served for (rule 19, K-N2-8): the identity layer
+ * resolves who asks and runs the request's work inside
+ * {@link EventLog.actingFor}, so every `human` or `mcp` event that work
+ * appends without a principal names that person — on any log over the
+ * ledger, however deep the call that appends it.
+ */
+const actingPrincipal = new AsyncLocalStorage<string>();
 
 export type ErasureReason = "erasure" | "secret" | "retention";
 
@@ -370,6 +380,28 @@ export class EventLog {
    * person, in that append's transaction. Cached only once the ledger holds
    * it, so two logs over one database agree.
    */
+  /**
+   * Run `fn` for `principal` (rule 19, K-N2-8): a `human` or `mcp` event
+   * appended inside it without a principal carries this one. An explicit
+   * principal still wins, a machine event stays unattributed (K-N2-6), and
+   * outside every scope a team log still refuses such an event (K-N2-1).
+   */
+  public static actingFor<T>(principal: string, fn: () => T): T {
+    if (!PRINCIPAL_PATTERN.test(principal)) {
+      throw new Error(`A principal is an opaque id (p_…), never "${principal}" (K-N2-7)`);
+    }
+    return actingPrincipal.run(principal, fn);
+  }
+
+  /**
+   * Run `fn` outside any person's scope: work that outlives the request that
+   * started it (a background loop serving several people) names each person
+   * itself, never the one who happened to start it.
+   */
+  public static unscoped<T>(fn: () => T): T {
+    return actingPrincipal.exit(fn);
+  }
+
   public localPrincipal(): string {
     if (this.localPrincipalCache) return this.localPrincipalCache;
     const recorded = this.recordedLocalPerson();
@@ -515,7 +547,9 @@ export class EventLog {
     const cardId = params.cardId ?? null;
     const attemptId = params.attemptId ?? null;
     const stepId = params.stepId ?? null;
-    let principal = params.principal ?? null;
+    let principal =
+      params.principal ??
+      (PERSON_ACTORS.has(params.actor) ? (actingPrincipal.getStore() ?? null) : null);
     if (principal === null && PERSON_ACTORS.has(params.actor)) {
       if ((this.options.setup ?? "solo") === "team") {
         throw new Error(
@@ -627,7 +661,9 @@ export class EventLog {
       if (filter.type !== undefined && event.type !== filter.type) continue;
       if (filter.actor !== undefined && event.actor !== filter.actor) continue;
       try {
-        subscription.callback(event);
+        // A subscriber serves everyone, not the person whose append woke it:
+        // it and any work it schedules run outside the appender's scope (K-N2-8).
+        EventLog.unscoped(() => subscription.callback(event));
       } catch {
         // A broken listener must not fail the append that already committed:
         // the log is the source of truth and its durability cannot depend on

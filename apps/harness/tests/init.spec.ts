@@ -1,4 +1,5 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadGatesConfig } from "@sekhemet/gates";
@@ -80,5 +81,33 @@ describe("sekhemet init (H25)", () => {
     expect(second.wrote).toEqual([]);
     expect(second.kept).toEqual(["gates.toml", "config.toml"]);
     expect(lines.at(-1)).toMatch(/Ready\. Next: `sekhemet calibrate`/);
+  });
+
+  it("RUN-35: the runner lease and the slot leases are ignored by git, so a running card never dirties the tree", () => {
+    const repo = mkdtempSync(join(tmpdir(), "init-leases-"));
+    try {
+      execFileSync("git", ["init", "-q"], { cwd: repo });
+      const run = (cmd: string) =>
+        cmd === "llama-server"
+          ? "version: 6500 (abc)"
+          : cmd === "git"
+            ? "git version 2"
+            : undefined;
+      runInit(repo, { run, totalBytes: 24 * GB, say: () => {} });
+      const ignore = readFileSync(join(repo, ".gitignore"), "utf8").split("\n");
+      expect(ignore).toContain(".sekhemet/slots/");
+      expect(ignore).toContain(".sekhemet/runner.lock");
+      mkdirSync(join(repo, ".sekhemet", "slots"), { recursive: true });
+      writeFileSync(join(repo, ".sekhemet", "slots", "0.lock"), "{}");
+      writeFileSync(join(repo, ".sekhemet", "slots", "admit.lock"), "");
+      writeFileSync(join(repo, ".sekhemet", "runner.lock"), "{}");
+      const status = execFileSync("git", ["status", "--porcelain", "--untracked-files=all"], {
+        cwd: repo,
+        encoding: "utf8",
+      });
+      expect(status).not.toMatch(/slots|runner\.lock/);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
   });
 });

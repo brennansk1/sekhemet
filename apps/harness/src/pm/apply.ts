@@ -9,6 +9,8 @@ export interface ApplyContext {
   pmStore: PmStore;
   /** Who approved it; the ledger records this, not the PM. */
   actor?: string;
+  /** The person who applied it (kernel rule 19); the request's person when omitted. */
+  principal?: string;
 }
 
 export class ProposalError extends Error {
@@ -63,6 +65,7 @@ export async function applyProposal(
   ctx: ApplyContext,
 ): Promise<{ proposal: PmProposal; cards: CardRecord[] }> {
   const actor = ctx.actor ?? "human";
+  const who = ctx.principal ? { principal: ctx.principal } : {};
   if (proposal.state !== "open") {
     throw new ProposalError(`This proposal is already ${proposal.state}.`, 409);
   }
@@ -101,7 +104,7 @@ export async function applyProposal(
     case "update_card":
     case "assign_cycle": {
       if (!card || !proposal.patch) throw new ProposalError("Nothing to update.", 400);
-      touched.push(await ctx.cardStore.updateCard(card.id, toUpdate(proposal.patch), actor));
+      touched.push(await ctx.cardStore.updateCard(card.id, toUpdate(proposal.patch), actor, who));
       break;
     }
     case "create_card": {
@@ -157,7 +160,7 @@ export async function applyProposal(
       );
       for (const id of (p.cardIds as string[] | undefined) ?? []) {
         const c = await ctx.cardStore.getCard(id);
-        if (c) touched.push(await ctx.cardStore.updateCard(id, { cycleId: cycle.id }, actor));
+        if (c) touched.push(await ctx.cardStore.updateCard(id, { cycleId: cycle.id }, actor, who));
       }
       break;
     }

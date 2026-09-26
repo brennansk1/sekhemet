@@ -149,8 +149,12 @@ import {
   leaseRefusal,
 } from "./runner_lease.js";
 import { DEFAULT_DASHBOARD_PORT, startDashboardServer } from "./server.js";
+import { qualifiedSlotCapacity } from "./slot_lease.js";
+import { SlotPool } from "./slot_pool.js";
 import { bakeOffOnSuitePath } from "./suite_path.js";
 import { describeSupervisorStart, removeWorktreesOnClose, supervisorStart } from "./supervisor.js";
+import { fairOrder } from "./team/fair_queue.js";
+import { newSetupTokenCommand, recordSwitchToSolo } from "./team/serve.js";
 import { terminalBoardLines } from "./terminal_board.js";
 import { tracesCommand } from "./tracing.js";
 import { trailerGate } from "./trailer_gate.js";
@@ -999,6 +1003,23 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
   }
 
   if (config.command === "serve") {
+    // teams TEAM-31: a new setup token, voiding the old, while no Admin
+    // exists; with an Admin, nothing is written and serve does not start.
+    if (argv.includes("--new-setup-token")) {
+      const code = newSetupTokenCommand(db, log, config.repoPath);
+      if (code !== 0) {
+        process.exitCode = code;
+        return;
+      }
+    }
+    // teams M6: a Team install starts in Solo only after the switch back is
+    // recorded, by the person at this machine.
+    if (argv.includes("--switch-to-solo")) {
+      recordSwitchToSolo(log);
+      console.log("Recorded the switch back to Solo: every request here is this machine's person.");
+    }
+    // runtime item 26: `--host` binds another address, which only the Team setup allows.
+    const host = argv.includes("--host") ? argv[argv.indexOf("--host") + 1] : undefined;
     const server = await startDashboardServer({
       db,
       log,
@@ -1006,6 +1027,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       cardStore,
       repoPath: config.repoPath,
       port: config.port,
+      ...(host ? { host } : {}),
     });
     // Started by `daemon start`: rotate its log by size while it runs (RUN-14).
     const daemonLog = process.env.SEKHEMET_DAEMON_LOG;
@@ -1728,6 +1750,8 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     let ready: CardRecord[];
     // Rule 27, MD-N4-4: the person's override the Worker runs under, if any.
     let workerOverride: WorkerOverride | undefined;
+    // RUN-35: the Worker's qualified parallel slots (`-np`) bound the cards that run at once.
+    let qualifiedSlots = 1;
     try {
       // MD-N8-1: the Worker's combination must have qualified on this host;
       // resolving it builds the adapter without starting a server.
@@ -1736,6 +1760,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       const workerProbe = new ModelRoster({ registry }).resolve(workerName, "worker");
       const gate = gateWorker(registry, workerProbe, workerName);
       workerOverride = gate.override;
+      if (!gate.refusal) qualifiedSlots = gate.combination.settings.parallelSlots;
       ({ ordered: ready } = await queuePrelude(
         { repoPath: config.repoPath, cardStore, log },
         readyRaw,
@@ -2035,6 +2060,9 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       runProfile: queueProfile,
       ...(measurement ? { measurement } : {}),
       afterTurn: async (_cardId: string, turn: { turnIndex: number }) => {
+        // RUN-35: swapping the Worker out would stop the other running cards
+        // mid-step; the message waits until one card runs or Seshat is resident.
+        if (slots.running > 1 && !router.isResident("manager")) return;
         await answerPm(turn.turnIndex).catch((err) =>
           console.log(`   PM: could not answer (${err instanceof Error ? err.message : err})`),
         );
@@ -2080,6 +2108,8 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       say: (line) => console.log(`   ${line}`),
     }).catch((err) => console.log(`   vision: ${err instanceof Error ? err.message : err}`));
     const started = Date.now();
+    // RUN-34, TEAM-30: tokens each person's cards spend from here on decide the next pick.
+    const queueSinceSeq = (await log.getLastEvent())?.seq ?? 0;
     // Ctrl+C stops the running card before its next turn and ends the queue
     // (L25); the card resumes from its checkpoint next time (H17).
     const queueStop = new AbortController();
@@ -2234,10 +2264,29 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     /** Prerequisites not done yet, from the dependency table. */
     const blockedBy = async (card: CardRecord): Promise<string[]> => cardStore.waitingOn(card.id);
     const deferred: CardRecord[] = [];
+    // RUN-35: at most N cards at once (N the qualified slots on a team server,
+    // one on a single-user install), each under its own slot lease.
+    const slots = new SlotPool(
+      config.repoPath,
+      qualifiedSlotCapacity({
+        mode: effectiveConfig(config.repoPath, argv).config.team.mode,
+        parallelSlots: qualifiedSlots,
+      }),
+    );
 
     /** Run every runnable card; defer those whose prerequisites have not merged. */
     const pass = async (cards: CardRecord[], n: number, plans?: Map<string, string>) => {
-      for (const queued of cards) {
+      // Fair share per person, the per-person cap and aging (RUN-34, TEAM-30),
+      // with the planner's order breaking ties.
+      const fair = effectiveConfig(config.repoPath, argv).config;
+      for await (const queued of fairOrder(cards, {
+        db,
+        cardStore,
+        cap: fair.queue.agentIssuesPerPerson,
+        maxWaitS: fair.scheduler.maxWaitS,
+        fairShare: fair.scheduler.fairShare,
+        sinceSeq: queueSinceSeq,
+      })) {
         if (halted) break;
         const card = (await cardStore.getCard(queued.id)) ?? queued;
         // RUN-18, RUN-48: no new card while the memory watchdog asks to stop
@@ -2275,6 +2324,8 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
             );
             continue;
           }
+          // It loads the Researcher's model: no Worker card may be mid-step.
+          await slots.drain();
           console.log(`\n=== ${card.id} (research): ${card.title} ===`);
           const { web } = await researchSources(config.repoPath, { log });
           const service = new ResearchService({
@@ -2300,11 +2351,25 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
             );
           continue;
         }
-        const result = await attempt(card, n, plans?.get(card.id));
-        // A parked card (repair rung 4, vacuous tests) waits for a person; it
-        // is not re-planned automatically.
-        if (!result.passed && !result.parked) failed.push({ card, result });
+        // RUN-35: an escalated card runs on another model, so it runs alone.
+        const alone = roleForCard(card, n, escalateRetries) !== "worker";
+        if (alone) await slots.drain();
+        // Its own slot lease; a card whose files a running card declared waits.
+        const claim = await slots.claim(card);
+        if ("waiting" in claim) {
+          console.log(`\n--- ${card.id} ${claim.waiting}: deferred ---`);
+          if (!deferred.some((d) => d.id === card.id)) deferred.push(card);
+          continue;
+        }
+        slots.start(card.id, claim, async () => {
+          const result = await attempt(card, n, plans?.get(card.id));
+          // A parked card (repair rung 4, vacuous tests) waits for a person; it
+          // is not re-planned automatically.
+          if (!result.passed && !result.parked) failed.push({ card, result });
+        });
+        await (alone ? slots.drain() : slots.whileFull());
       }
+      await slots.drain();
     };
 
     try {

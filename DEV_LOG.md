@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 38 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 39 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,54 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 39 — 2026-09-25 (B4.10 Team setup: identity, access, the fair queue, per-slot leases, the sign-in pages)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver. Five implementer helpers, in parallel on disjoint files: identity, authority and queue, the pages, RUN-35, and the fix round. One full independent review, and a narrow re-check of its blockers.
+
+- **Built:**
+  - **Identity (NEW-teams-1, -3, -4; INT-21, INT-26):**
+    - **Setups:** Solo and Team (`[team] mode`). Team starts from a single-use 24 h setup token in a 0600 file, and only its path is printed.
+    - **Credentials:** a store of 0600 files in `~/.sekhemet/identity/`, never in `events.db` or an export, included in `dev backup`. Passwords use scrypt with the NIST rules; the bundled common-password list awaits the owner's approval to download.
+    - **Sessions:** a new id at sign-in; idle and absolute limits; ended on removal, reset or a lowered level.
+    - **Sign-in limits,** resumed from the ledger after a restart.
+    - **Invites:** `GET` shows the invite and only `POST` accepts it.
+    - **Personal tokens,** whose scope is a ceiling.
+    - **The trusted proxy,** trusted only by socket address.
+    - **Passkeys** (SimpleWebAuthn 14.0.3) and **OIDC** (`openid-client` 6.8.8): PKCE, nonce, a `__Host-` state cookie, `email_verified` required, `iss`/`sub` bound, strict mode.
+  - **Authority (NEW-teams-2; INT-22–25):**
+    - The member projection and the action table; one 403 check on every write endpoint and on Accept, naming the permission and who has it.
+    - The project Accept rule. DEC-42: with no rule, the project lead may accept, else the Admins.
+    - Project settings record only the fields that changed; per-project level overrides; a Stakeholder is refused and offered a Member.
+  - **The shared queue (RUN-34, TEAM-30):** fair share per person in tokens, PM replies ahead of Worker steps, aging past `max_wait_s`, and the per-person Agent cap with place and estimate.
+  - **RUN-35:** N slot leases from the qualified capacity; overlapping scopes never run together; `run` and `overnight` are excluded by the runner lease (tested); the queue standing names why a card waits.
+  - **The pages:** first-Admin setup, Sign in (password, passkey, company), invites, the account menu, Profile (tokens, sessions), and CSRF on every write. Tested in Chromium against a real Team server and covered by the accessibility check.
+  - **Kernel K-N2-8:** `EventLog.actingFor` names the requester on every person event a request causes, however deep; an explicit principal wins, and machine events stay unattributed. Subscribers and work that outlives a request run `unscoped`, a lead fix after the re-check with a test first.
+- **Review:** 2 blockers and 7 majors, all fixed.
+  - **B1:** Team writes named the server's own user.
+  - **B2:** a token's scope was not a ceiling; a Viewer token could register a passkey and sign in at full level.
+  - **Majors:**
+    - SSO undid a removal;
+    - OIDC account linking by unverified email, and state not bound to the browser;
+    - a project invite granted its level workspace-wide;
+    - override took the principal from the body;
+    - no default Accept rule;
+    - a broken config silently became Solo;
+    - the tests missed the composition.
+  - The re-check confirmed B1, B2, M2 and M6, and judged K-N2-8 sound and within the spine.
+- **Gate:** a snapshot of `413fb12` plus B4.10's files: `tsc -b` and Biome clean, 326 files and 2,524 tests pass (exit codes checked).
+- **Recorded gaps (teams.md, runtime.md):**
+  - the common-password list (owner);
+  - open sign-up by email domain; emailed resets (no mail relay);
+  - chat slash commands under levels (TEAM-40, B4.11);
+  - MCP level checks;
+  - `config/changed_outside` (TEAM-44, B4.11);
+  - the Projects page and the Solo↔Team switch in Configuration (B4.7, B4.1);
+  - a live multi-slot run.
+- **Milestone "a team shares one server":** shown without a model by `team_composed.spec.ts` (people at their levels, the Accept rule, tokens and proxy) and `signin_ui.spec.ts`. Fair turns on a live model, and B4.10's Tier 3, wait for the owner's permission to load a model.
+- **Where the cards stop:**
+  - B4.10 is committed.
+  - B4.0a half 1 is being built (plan in `~/.sekhemet/plans/B4.0a_plan.md`); its measurements wait for the B2.5 baseline, which is paused while the owner needs the RAM.
 
 ### Entry 38 — 2026-09-25 (the Researcher's shallow clone under the one network policy; B4.10 in its fix round; baseline paused)
 

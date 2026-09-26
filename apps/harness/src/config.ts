@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULT_STEP_BUDGET, type TomlTable, parseToml } from "@sekhemet/kernel";
+import type { IdentitySource, Level, OidcSettings } from "./team/settings.js";
 import { userDir } from "./user_dir.js";
 
 export type MachineTier = "auto" | "S" | "M" | "L" | "XL";
@@ -43,7 +44,25 @@ export interface SekhemetConfig {
    * Solo or the Team setup ([teams](teams.md) §3): read from the user
    * config only — a repository cannot switch its reader into solo (INT-26).
    */
-  team: { mode: "solo" | "team" };
+  team: { mode: "solo" | "team"; workspace: string };
+  /** Who a request is in the Team setup (teams §3, B4.10); user config only (INT-26). */
+  identity: {
+    sources: IdentitySource[];
+    userHeader: string;
+    trustedProxies: string[];
+    openSignupDomains: string[];
+    inviteTtlDays: number;
+    publicUrl: string;
+    oidc?: OidcSettings;
+  };
+  /** Session limits (teams item 14); user config only. */
+  sessions: { idleMinutes: number; absoluteHours: number };
+  /** Personal access tokens (teams item 15); user config only. */
+  tokens: { defaultDays: number; maxDays: number };
+  /** The shared queue (teams §3, TEAM-30): user config only (INT-26). */
+  queue: { agentIssuesPerPerson: number };
+  /** Fair share and aging (runtime item 4a, RUN-34): user config only. */
+  scheduler: { fairShare: boolean; maxWaitS: number };
   network: { mode: NetworkMode; allow: string[] };
   sync: { github: boolean; forgejo: string };
   telemetry: { store: string };
@@ -70,7 +89,19 @@ export const DEFAULT_CONFIG: SekhemetConfig = {
     requireCodeOwnerAccept: false,
     autoMergeDependencies: false,
   },
-  team: { mode: "solo" },
+  team: { mode: "solo", workspace: "Sekhemet" },
+  identity: {
+    sources: ["accounts"],
+    userHeader: "x-forwarded-email",
+    trustedProxies: [],
+    openSignupDomains: [],
+    inviteTtlDays: 7,
+    publicUrl: "",
+  },
+  sessions: { idleMinutes: 60, absoluteHours: 24 },
+  tokens: { defaultDays: 90, maxDays: 365 },
+  queue: { agentIssuesPerPerson: 1 },
+  scheduler: { fairShare: true, maxWaitS: 600 },
   network: { mode: "offline", allow: [] },
   sync: { github: false, forgejo: "" },
   telemetry: { store: "local" },
@@ -225,13 +256,95 @@ function project(merged: TomlTable, problems: string[] = [], user?: TomlTable): 
       ),
       autoMergeDependencies: bool(review.auto_merge_dependencies, d.review.autoMergeDependencies),
     },
-    team: { mode: user?.team && table(user, "team").mode === "team" ? "team" : "solo" },
+    ...userOnly(user),
+    scheduler: {
+      fairShare: bool(table(user, "scheduler").fair_share, d.scheduler.fairShare),
+      maxWaitS: Math.max(1, num(table(user, "scheduler").max_wait_s, d.scheduler.maxWaitS)),
+    },
     network: { mode, allow: strArray(network.allow, d.network.allow) },
     sync: {
       github: bool(sync.github, d.sync.github),
       forgejo: str(sync.forgejo, d.sync.forgejo),
     },
     telemetry: { store: str(telemetry.store, d.telemetry.store) },
+  };
+}
+
+function positive(value: unknown, fallback: number, max = Number.POSITIVE_INFINITY): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 && value <= max
+    ? value
+    : fallback;
+}
+
+const SOURCES: readonly IdentitySource[] = ["accounts", "proxy", "oidc", "passkeys"];
+const LEVEL_NAMES: readonly Level[] = ["admin", "member", "stakeholder", "viewer"];
+
+function oidcOf(identity: TomlTable): OidcSettings | undefined {
+  const o = table(identity, "oidc");
+  if (typeof o.issuer !== "string" || typeof o.client_id !== "string") return undefined;
+  const levels: Record<string, Level> = {};
+  for (const [claim, level] of Object.entries(table(o, "levels"))) {
+    if (LEVEL_NAMES.includes(level as Level)) levels[claim] = level as Level;
+  }
+  return {
+    issuer: o.issuer,
+    clientId: o.client_id,
+    ...(typeof o.display_name === "string" ? { displayName: o.display_name } : {}),
+    ...(typeof o.client_secret_env === "string" ? { clientSecretEnv: o.client_secret_env } : {}),
+    ...(typeof o.redirect_uri === "string" ? { redirectUri: o.redirect_uri } : {}),
+    claim: str(o.claim, "groups"),
+    levels,
+    strict: bool(o.strict, true),
+    levelsManagedBy: o.levels_managed_by === "provider" ? "provider" : "sekhemet",
+  };
+}
+
+/**
+ * `[team]`, `[identity]`, `[sessions]`, `[tokens]` and `[queue]` (teams §3):
+ * read from the user config only. A repository's `.sekhemet/config.toml`
+ * cannot switch its reader's setup, trust a proxy, lengthen a session or
+ * raise a cap (integrations INT-26).
+ */
+function userOnly(
+  user: TomlTable | undefined,
+): Pick<SekhemetConfig, "team" | "identity" | "sessions" | "tokens" | "queue"> {
+  const d = DEFAULT_CONFIG;
+  const team = table(user, "team");
+  const identity = table(user, "identity");
+  const sessions = table(user, "sessions");
+  const tokens = table(user, "tokens");
+  const queue = table(user, "queue");
+  const sources = strArray(identity.sources, d.identity.sources).filter((s): s is IdentitySource =>
+    SOURCES.includes(s as IdentitySource),
+  );
+  const oidc = oidcOf(identity);
+  return {
+    team: {
+      mode: team.mode === "team" ? "team" : "solo",
+      workspace: str(team.workspace, d.team.workspace),
+    },
+    identity: {
+      sources: sources.length > 0 ? sources : d.identity.sources,
+      userHeader: str(identity.user_header, d.identity.userHeader).toLowerCase(),
+      trustedProxies: strArray(identity.trusted_proxies, d.identity.trustedProxies),
+      openSignupDomains: strArray(identity.open_signup_domains, d.identity.openSignupDomains),
+      inviteTtlDays: positive(identity.invite_ttl_days, d.identity.inviteTtlDays, 30),
+      publicUrl: str(identity.public_url, d.identity.publicUrl),
+      ...(oidc ? { oidc } : {}),
+    },
+    sessions: {
+      idleMinutes: positive(sessions.idle_minutes, d.sessions.idleMinutes),
+      absoluteHours: positive(sessions.absolute_hours, d.sessions.absoluteHours),
+    },
+    tokens: {
+      defaultDays: positive(tokens.default_days, d.tokens.defaultDays, 365),
+      maxDays: positive(tokens.max_days, d.tokens.maxDays, 365),
+    },
+    queue: {
+      agentIssuesPerPerson: Math.floor(
+        positive(queue.agent_issues_per_person, d.queue.agentIssuesPerPerson),
+      ),
+    },
   };
 }
 
@@ -260,11 +373,38 @@ export interface ResolvedConfig {
  * layer is the one most easily dropped, and it is the one that lets a single
  * difficult card raise its own step budget without changing the project's.
  */
+/** The user config: `SEKHEMET_USER_CONFIG`, else `<user dir>/config.toml`. */
+export function userConfigPath(): string {
+  return process.env.SEKHEMET_USER_CONFIG ?? join(userDir(), "config.toml");
+}
+
+/**
+ * Why the user config cannot be read, or undefined when it can or is absent
+ * (teams M6). `[team] mode` lives only there, so a file that exists but
+ * cannot be read or parsed is an error: guessing Solo would hand every
+ * request an Admin's access on a Team install.
+ */
+export function userConfigError(path = userConfigPath()): string | undefined {
+  if (!existsSync(path)) return undefined;
+  try {
+    parseToml(readFileSync(path, "utf8"));
+    return undefined;
+  } catch (err) {
+    return `The user config ${path} cannot be read (${err instanceof Error ? err.message : String(err)}). Fix it: Sekhemet will not guess Solo or Team.`;
+  }
+}
+
+/** The setup `[team] mode` names (teams §3); throws when the user config cannot be read (M6). */
+export function userSetup(): "solo" | "team" {
+  const problem = userConfigError();
+  if (problem) throw new Error(problem);
+  return resolveConfig({ repoPath: process.cwd() }).config.team.mode;
+}
+
 export function resolveConfig(options: ResolveConfigOptions): ResolvedConfig {
   const layers: ConfigLayer[] = [{ name: "defaults", values: {} }];
 
-  const userPath =
-    options.userConfigPath ?? process.env.SEKHEMET_USER_CONFIG ?? join(userDir(), "config.toml");
+  const userPath = options.userConfigPath ?? userConfigPath();
   const user = readLayer("user", userPath);
   if (user) layers.push(user);
 

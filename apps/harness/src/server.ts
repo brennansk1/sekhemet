@@ -17,11 +17,12 @@ import {
   CARD_STATUSES,
   type CardRecord,
   type CardStore,
-  type EventLog,
+  EventLog,
+  PRINCIPAL_PATTERN,
   STOP_REASONS,
   isCardStatus,
 } from "@sekhemet/kernel";
-import type { LocalInferenceAdapter } from "@sekhemet/models";
+import { type LocalInferenceAdapter, ModelRoster, NAIL_WORKER_PROFILE } from "@sekhemet/models";
 import { DecisionStore } from "@sekhemet/planner";
 import {
   BASALT,
@@ -47,6 +48,7 @@ import {
   takeOver,
 } from "./collaborate.js";
 import { resolveConfig } from "./config.js";
+import { effectiveConfig, queueDefaults } from "./config_apply.js";
 import {
   type MemorySample,
   latestByCard,
@@ -74,11 +76,36 @@ import { dailyStandup } from "./pm/service.js";
 import { PmStore } from "./pm/store.js";
 import { createPmApi } from "./pm_api.js";
 import { modelRoster } from "./pm_api.js";
+import { gateWorker } from "./qualify.js";
 import { handleRestExtras } from "./rest_extra.js";
+import { runnerLease } from "./runner_lease.js";
+import { qualifiedSlotCapacity, slotWaitReason } from "./slot_lease.js";
+import {
+  Access,
+  AccessRefusedError,
+  LastAdminError,
+  type Level,
+  parseSettingsPatch,
+  recordLevelChange,
+  recordSettingsChange,
+  refuse,
+  routePermissions,
+} from "./team/access.js";
+import { identityDir } from "./team/credential_store.js";
+import { personOf, queueStanding } from "./team/fair_queue.js";
+import { requester as requesterOf } from "./team/requester.js";
+import { handleIdentityRoute, identityGate } from "./team/routes.js";
+import {
+  type ServerIdentityOptions,
+  createServerIdentity,
+  soloStartBlocked,
+} from "./team/serve.js";
+import { bindHost } from "./team/settings.js";
 import { cardTrace } from "./tracing.js";
 import { park, recordReviewOpened, reject, revertAccept, sendBack } from "./triage.js";
 import { generateDashboardHtml } from "./ui_html.js";
 import { hookEngineFor } from "./user_hooks.js";
+import { modelRegistry } from "./wave2.js";
 import { handleWave2Route, startGithubSync, startRecurringTicker } from "./wave2_server.js";
 import { type StreamClient, acceptWebSocket } from "./ws.js";
 
@@ -107,7 +134,29 @@ export interface DashboardServerOptions {
   pmAdapter?: () => LocalInferenceAdapter;
   /** Injectable memory-pressure reader, for tests. */
   pressureLevel?: () => number | undefined;
+  /** Solo or Team (teams §2.1); the user config's `[team] mode` when omitted. */
+  setup?: "solo" | "team";
+  /**
+   * Who is asking (teams §2.3): a person's principal, or undefined when no
+   * one is signed in. The install's person when omitted (Solo).
+   */
+  requester?: (req: IncomingMessage) => string | undefined;
+  /**
+   * Who a request is (teams §2.3, B4.10): Solo or Team from the user config
+   * unless given, the credential store's directory, a clock.
+   */
+  identity?: ServerIdentityOptions;
+  /** The address to bind (runtime item 26): loopback unless the Team setup allows another. */
+  host?: string;
+  /**
+   * The Worker's qualified parallel slots (RUN-35), for the queue standing;
+   * read from the qualification of the configured Worker when omitted.
+   */
+  parallelSlots?: () => number;
 }
+
+/** A body the access check read already, so the route's handler reads the same one. */
+const parsedBodies = new WeakMap<IncomingMessage, Record<string, unknown>>();
 
 export { generateDashboardHtml };
 
@@ -116,14 +165,17 @@ async function readJsonBody(
   req: IncomingMessage,
   limit = 16_384,
 ): Promise<Record<string, unknown>> {
+  const cached = parsedBodies.get(req);
+  if (cached) return cached;
   let raw = "";
   for await (const chunk of req) {
     raw += chunk;
     if (raw.length > limit) throw new Error("request body too large");
   }
-  if (!raw.trim()) return {};
-  const parsed = JSON.parse(raw) as unknown;
-  return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+  const parsed = raw.trim() ? (JSON.parse(raw) as unknown) : {};
+  const body = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+  parsedBodies.set(req, body);
+  return body;
 }
 
 /**
@@ -136,8 +188,11 @@ function isTrustedMutation(req: IncomingMessage): boolean {
   const origin = req.headers.origin;
   if (!origin) return true;
   try {
-    const host = new URL(origin).hostname;
-    return host === "127.0.0.1" || host === "localhost";
+    const url = new URL(origin);
+    if (url.hostname === "127.0.0.1" || url.hostname === "localhost") return true;
+    // A signed-in Team request (teams item 13): its own origin, whatever the host.
+    const who = requesterOf(req);
+    return who.authenticated && who.via !== "solo" && url.host === req.headers.host;
   } catch {
     return false;
   }
@@ -260,6 +315,23 @@ export function startDashboardServer(
   };
 
   const repoPath = options.repoPath ?? process.cwd();
+  // Who each request is (teams §2.1, §2.3): Solo's one person, or the Team
+  // setup's sessions, tokens and trusted proxy.
+  let serverIdentity: ReturnType<typeof createServerIdentity>;
+  try {
+    serverIdentity = createServerIdentity(options.db, log, repoPath, options.identity);
+  } catch (err) {
+    return Promise.reject(err);
+  }
+  const { identity } = serverIdentity;
+  const setup: "solo" | "team" = options.setup ?? identity.mode;
+  // M6: a Team install never falls back to Solo, where every request is an Admin.
+  const refusal =
+    setup === "solo"
+      ? soloStartBlocked(options.db, options.identity?.dir ?? identityDir())
+      : undefined;
+  if (refusal) return Promise.reject(new Error(refusal));
+  const host = bindHost(identity.mode, options.host, identity.settings);
   // The PM conversation, proposals, cycles, inline edits, flow metrics and
   // integrations (docs/design/PM_CONTRACT.md) live in their own module.
   const pmApi = createPmApi({
@@ -273,6 +345,7 @@ export function startDashboardServer(
     json,
     readJsonBody,
     isTrustedMutation,
+    principalOf: (req) => principalOf(req),
   });
   const memoryProbe = options.memoryProbe ?? sampleMemory;
   const evidenceDir = join(repoPath, ".sekhemet", "evidence");
@@ -506,9 +579,302 @@ export function startDashboardServer(
     }
   };
 
+  // --- Access (teams §2.2, NEW-teams-2; integrations items 24–27) ----------
+  const access = new Access({ db: options.db, setup, localPrincipal: () => log.localPrincipal() });
+  // The one resolver (team/requester.ts): the install's person in Solo.
+  const requester =
+    options.requester ??
+    ((req: IncomingMessage) => {
+      const who = requesterOf(req);
+      return who.authenticated ? who.principal : undefined;
+    });
+  /** A personal token's scope: the ceiling of every check its request meets (B2, TEAM-37). */
+  const ceilingOf = (req: IncomingMessage): Level | undefined => {
+    if (options.requester) return undefined;
+    const who = requesterOf(req);
+    return who.authenticated && who.via === "token" ? who.scope : undefined;
+  };
+  const askers = new WeakMap<IncomingMessage, string>();
+  /** The person behind a write the access check passed; the install's person otherwise (Solo). */
+  const principalOf = (req: IncomingMessage): string =>
+    askers.get(req) ?? requester(req) ?? log.localPrincipal();
+  const queueSettings = () => {
+    try {
+      const c = resolveConfig({ repoPath }).config;
+      return {
+        cap: c.queue.agentIssuesPerPerson,
+        maxWaitS: c.scheduler.maxWaitS,
+        fairShare: c.scheduler.fairShare,
+      };
+    } catch {
+      return { cap: 1, maxWaitS: 600, fairShare: true };
+    }
+  };
+  /** A card's project: its own, or the workspace's only project. */
+  const projectOfCard = (card: CardRecord | undefined): string | undefined => {
+    if (card?.projectId) return card.projectId;
+    const projects = options.cardStore?.listProjects() ?? [];
+    return projects.length === 1 ? projects[0]?.id : undefined;
+  };
+  const atLeastMember = (p: string | undefined, project?: string): p is string => {
+    const level: Level | undefined = p ? access.level(p, project) : undefined;
+    return level === "member" || level === "admin";
+  };
+  /** The standing of every Ready card, counting tokens since the running queue began. */
+  const standing = async () => {
+    const store = options.cardStore;
+    if (!store) return [];
+    const q = queueSettings();
+    const lease = runnerLease(repoPath);
+    const since = lease
+      ? ((
+          options.db
+            .prepare("SELECT COALESCE(MAX(seq), 0) AS s FROM events WHERE created_at < ?")
+            .get(lease.startedAt) as { s: number }
+        ).s ?? 0)
+      : ((
+          options.db.prepare("SELECT COALESCE(MAX(seq), 0) AS s FROM events").get() as { s: number }
+        ).s ?? 0);
+    const ready = await store.listCards({ status: "ready" });
+    const entries = await queueStanding(ready, {
+      db: options.db,
+      cardStore: store,
+      cap: q.cap,
+      maxWaitS: q.maxWaitS,
+      fairShare: q.fairShare,
+      sinceSeq: since,
+    });
+    // RUN-35: why a card waits — every slot busy, or its files overlap a running card's.
+    const capacity = qualifiedSlotCapacity({
+      mode: setup,
+      parallelSlots: (options.parallelSlots ?? workerParallelSlots)(),
+    });
+    const scopes = new Map(ready.map((c) => [c.id, c.scopeFiles]));
+    return entries.map((e) => {
+      const waits = slotWaitReason(
+        repoPath,
+        { id: e.cardId, scopeFiles: scopes.get(e.cardId) ?? [] },
+        capacity,
+      );
+      return { ...e, ...(waits ? { waits } : {}) };
+    });
+  };
+  /** RUN-35: the configured Worker's qualified slots, as the queue reads them; one if unqualified. */
+  const workerParallelSlots = (): number => {
+    try {
+      const name =
+        queueDefaults(effectiveConfig(repoPath).config, []).worker ?? NAIL_WORKER_PROFILE.modelId;
+      const registry = modelRegistry();
+      const gate = gateWorker(
+        registry,
+        new ModelRoster({ registry }).resolve(name, "worker"),
+        name,
+      );
+      return gate.refusal ? 1 : gate.combination.settings.parallelSlots;
+    } catch {
+      return 1;
+    }
+  };
+
+  /**
+   * TEAM-4, TEAM-5, TEAM-30, INT-22: every write from the dashboard, the SDK
+   * or the CLI names who asks and needs the permission the action table
+   * gives it; a refusal answers 403 and is recorded. Returns true when it
+   * answered the request. Requests without the dashboard's header are left to
+   * their route's own refusal, which records nothing.
+   */
+  const authorize = async (req: IncomingMessage, res: ServerResponse, url: string) => {
+    if (!url.startsWith("/api/") || !isTrustedMutation(req)) return false;
+    const method = req.method ?? "GET";
+    let rule = routePermissions(method, url, undefined);
+    if (!rule) return false;
+    const principal = requester(req);
+    if (!principal) {
+      json(res, 401, { error: "Sign in to do this.", refused: "unauthenticated" });
+      return true;
+    }
+    askers.set(req, principal);
+    if (rule.needsBody) {
+      try {
+        rule = routePermissions(method, url, await readJsonBody(req)) ?? rule;
+      } catch (err) {
+        json(res, 400, { error: err instanceof Error ? err.message : String(err) });
+        return true;
+      }
+    }
+    const store = options.cardStore;
+    let permissions = rule.permissions;
+    let cardId = rule.cardId;
+    if (rule.decisionId && store) {
+      const d = store.runs.getDecision(rule.decisionId);
+      // Only a person the Accept rule names answers a permission request (security 25a).
+      if (d?.kind === "permission") permissions = ["permission.answer"];
+      cardId = d?.cardId;
+    }
+    const card = (cardId && store ? await store.getCard(cardId) : undefined) ?? undefined;
+    const project = rule.projectId ?? projectOfCard(card);
+    const projectName = project ? store?.getProject(project)?.name : undefined;
+    for (const permission of permissions) {
+      const decision = access.decide(principal, permission, project, projectName, ceilingOf(req));
+      if (decision.allowed) continue;
+      const lead = project ? access.settings(project).lead : undefined;
+      const askTo = atLeastMember(card?.owner, project)
+        ? card?.owner
+        : atLeastMember(lead, project)
+          ? lead
+          : undefined;
+      refuse(res, json, log, decision, {
+        principal,
+        ...(project ? { project } : {}),
+        ...(card ? { cardId: card.id } : {}),
+        ...(askTo ? { askTo } : {}),
+      });
+      return true;
+    }
+    // TEAM-30: at the per-person cap, the next Agent issue waits in the queue.
+    // The cap is the Team setup's; Solo's one runner is the lease (runtime item 3).
+    if (setup === "team" && card && store && method === "POST" && url.endsWith("/run")) {
+      const q = queueSettings();
+      if (store.delegatorOf(card.id) !== principal) {
+        await store.delegateCard(card.id, { kind: "worker" }, principal);
+      }
+      const running = (await store.listCards({ status: "in_progress" })).filter(
+        (c) => c.id !== card.id && personOf(store, c) === principal,
+      ).length;
+      if (running >= q.cap) {
+        await log.append({
+          actor: "human",
+          type: "queue/capped",
+          principal,
+          cardId: card.id,
+          payload: { id: card.id, cap: q.cap, running },
+        });
+        const mine = (await standing()).find((s) => s.cardId === card.id);
+        json(res, 202, {
+          queued: true,
+          cardId: card.id,
+          cap: q.cap,
+          running,
+          ...(mine
+            ? { place: mine.place, estimateSeconds: mine.estimateSeconds, message: mine.message }
+            : {
+                message: `You have ${running} Agent issue${running === 1 ? "" : "s"} running; this one starts when it is Ready and your turn comes`,
+              }),
+        });
+        return true;
+      }
+    }
+    return false;
+  };
+
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
+    const [url = "/"] = (req.url || "/").split("?");
+    // Resolve and bind the requester first; in the Team setup a protected
+    // endpoint answers 401 before any handler runs (TEAM-12).
+    if (identityGate(req, res, url, identity, json)) return;
+    // Kernel rule 19, K-N2-8: the request's work is the person's who asked, so
+    // every event a person causes names them, however deep it is appended.
+    const person = requester(req) ?? (setup === "solo" ? log.localPrincipal() : undefined);
+    if (person && PRINCIPAL_PATTERN.test(person)) {
+      await EventLog.actingFor(person, () => handleRequest(req, res));
+    } else {
+      await handleRequest(req, res);
+    }
+  });
+
+  const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const [url = "/", search = ""] = (req.url || "/").split("?");
     const query = new URLSearchParams(search);
+    if (
+      url.startsWith("/api/") &&
+      (await handleIdentityRoute(req, res, url, query, {
+        identity,
+        ...(serverIdentity.passkeys ? { passkeys: serverIdentity.passkeys } : {}),
+        ...(serverIdentity.sso ? { sso: serverIdentity.sso } : {}),
+        json,
+        readJsonBody,
+      }))
+    ) {
+      return;
+    }
+
+    if (await authorize(req, res, url)) return;
+
+    // teams TEAM-32: a project's Accept rule, required threads, lead and auto-apply.
+    const settingsMatch = /^\/api\/projects\/(proj_[A-Za-z0-9_-]+)\/settings$/.exec(url);
+    if (settingsMatch) {
+      const id = settingsMatch[1] as string;
+      if (req.method === "GET") {
+        json(res, 200, { project: id, settings: access.settings(id) });
+        return;
+      }
+      if (req.method === "PATCH") {
+        if (!isTrustedMutation(req)) {
+          json(res, 403, { error: "Settings must come from the dashboard itself" });
+          return;
+        }
+        if (options.cardStore && !options.cardStore.getProject(id)) {
+          json(res, 404, { error: `No project ${id}` });
+          return;
+        }
+        try {
+          const patch = parseSettingsPatch(await readJsonBody(req));
+          const changed = await recordSettingsChange(log, access, {
+            by: principalOf(req),
+            project: id,
+            patch,
+          });
+          json(res, 200, { changed, settings: access.settings(id) });
+        } catch (err) {
+          json(res, 400, { error: err instanceof Error ? err.message : String(err) });
+        }
+        return;
+      }
+    }
+
+    // teams TEAM-6: a person's level, for the workspace or one project.
+    const levelMatch = /^\/api\/members\/(p_[0-9a-z]+)\/level$/.exec(url);
+    if (levelMatch && req.method === "POST") {
+      if (!isTrustedMutation(req)) {
+        json(res, 403, { error: "Levels must come from the dashboard itself" });
+        return;
+      }
+      try {
+        const body = await readJsonBody(req);
+        const project = typeof body.project === "string" ? body.project : undefined;
+        const ceiling = ceilingOf(req);
+        const input = {
+          by: principalOf(req),
+          principal: levelMatch[1] as string,
+          level: body.level as Level,
+          ...(project ? { project } : {}),
+          ...(ceiling ? { ceiling } : {}),
+        };
+        await recordLevelChange(log, access, input);
+        json(res, 200, {
+          principal: input.principal,
+          level: input.level,
+          project: project ?? null,
+        });
+      } catch (err) {
+        if (err instanceof AccessRefusedError) {
+          refuse(res, json, log, err.decision, { principal: principalOf(req) });
+          return;
+        }
+        if (err instanceof LastAdminError) {
+          json(res, 409, { error: err.message, reason: "last_admin" });
+          return;
+        }
+        json(res, 400, { error: err instanceof Error ? err.message : String(err) });
+      }
+      return;
+    }
+
+    // teams TEAM-30, item 31: where each queued issue stands.
+    if (url === "/api/queue/standing" && req.method === "GET") {
+      json(res, 200, { entries: await standing() });
+      return;
+    }
 
     // H12: workspace, project board and cards, split, run, gate, evidence, calibrate.
     if (
@@ -521,12 +887,18 @@ export function startDashboardServer(
         json,
         readJsonBody,
         trusted: isTrustedMutation,
+        principalOf,
       }))
     ) {
       return;
     }
 
-    if (url === "/" || url === "/index.html") {
+    // The Sign in page's links (teams items 10, 11): the page, whose router shows them.
+    if (
+      url === "/" ||
+      url === "/index.html" ||
+      /^\/(invite|password-reset)\/[A-Za-z0-9_-]+$/.test(url)
+    ) {
       res.writeHead(200, {
         "Content-Type": "text/html; charset=utf-8",
         "Cache-Control": "no-cache",
@@ -884,13 +1256,18 @@ export function startDashboardServer(
           Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
         // review-git §2.4.3 (RG-S6-6): the files the dashboard showed, recorded.
         if (verb === "opened") {
-          await recordReviewOpened(ctx, card, strings(body.filesShown));
+          await recordReviewOpened(ctx, card, strings(body.filesShown), principalOf(req));
           json(res, 200, { ok: true });
           return;
         }
         if (verb === "accept") {
+          // INT-22, INT-23: the project's Accept rule decides, and the
+          // accepter's principal is recorded on `card/accepted`.
+          const holders = access.acceptHolders(projectOfCard(card));
           const sha = await acceptCard(ctx, card, "human", {
+            principal: principalOf(req),
             acknowledgedFindings: strings(body.acknowledgedFindings),
+            ...(holders ? { acceptHolders: holders } : {}),
           });
           // A checkout on the integration branch is told how to catch up (RG-S5-2).
           const notice = sha.startsWith("http")
@@ -909,6 +1286,8 @@ export function startDashboardServer(
             ctx,
             card,
             typeof body.reason === "string" ? body.reason : "",
+            principalOf(req),
+            access.acceptHolders(projectOfCard(card)),
           );
           json(res, 200, { ok: true, status: "ready", sha });
           return;
@@ -925,6 +1304,7 @@ export function startDashboardServer(
           cardStore: store,
           boardService: boardService as never,
           log,
+          principal: principalOf(req),
         };
         const to = verb === "return" ? "ready" : verb === "reject" ? "rejected" : "parked";
         if (verb === "return") {
@@ -1047,24 +1427,32 @@ export function startDashboardServer(
             json(res, 400, { error: "A message needs text" });
             return;
           }
-          await postCardMessage(store, cardId, text);
+          await postCardMessage(store, cardId, text, principalOf(req));
           json(res, 200, { ok: true });
           return;
         }
         if (verb === "pause") {
-          await requestPause(store, cardId);
+          await requestPause(store, cardId, principalOf(req));
           json(res, 200, { ok: true, requested: "pause" });
           return;
         }
         if (verb === "hand-back" || verb === "take-over" || verb === "submit-take-over") {
           try {
             if (verb === "hand-back") {
-              await handBack(ctx, cardId, typeof body.note === "string" ? body.note : "");
+              await handBack(
+                ctx,
+                cardId,
+                typeof body.note === "string" ? body.note : "",
+                principalOf(req),
+              );
               json(res, 200, { ok: true });
             } else if (verb === "take-over") {
-              json(res, 200, { ok: true, ...(await takeOver(ctx, cardId)) });
+              json(res, 200, { ok: true, ...(await takeOver(ctx, cardId, principalOf(req))) });
             } else {
-              json(res, 200, { ok: true, ...(await submitTakenOver(ctx, cardId)) });
+              json(res, 200, {
+                ok: true,
+                ...(await submitTakenOver(ctx, cardId, principalOf(req))),
+              });
             }
           } catch (err) {
             json(res, 409, { error: err instanceof Error ? err.message : String(err) });
@@ -1106,10 +1494,12 @@ export function startDashboardServer(
           }
           // Rule 28: an override names the person who takes responsibility —
           // the one given, or the install's own person on a solo setup (rule 19).
-          const principal =
+          // In the Team setup it is always the person who asked (M4).
+          const named =
             typeof body.principal === "string" && body.principal.trim()
               ? body.principal.trim()
-              : log.localPrincipal();
+              : undefined;
+          const principal = setup === "team" || !named ? principalOf(req) : named;
           try {
             await boardService.transitionCard({
               cardId,
@@ -1153,15 +1543,21 @@ export function startDashboardServer(
               },
             },
             "human",
+            { principal: principalOf(req) },
           );
           json(res, 200, { ok: true, modelRoute: updated.modelRoute });
           return;
         }
         // reorder (B11): place the card between two neighbours.
-        const updated = await store.reorderCard(cardId, {
-          ...(typeof body.afterCardId === "string" ? { afterCardId: body.afterCardId } : {}),
-          ...(typeof body.beforeCardId === "string" ? { beforeCardId: body.beforeCardId } : {}),
-        });
+        const updated = await store.reorderCard(
+          cardId,
+          {
+            ...(typeof body.afterCardId === "string" ? { afterCardId: body.afterCardId } : {}),
+            ...(typeof body.beforeCardId === "string" ? { beforeCardId: body.beforeCardId } : {}),
+          },
+          "human",
+          { principal: principalOf(req) },
+        );
         json(res, 200, { ok: true, orderKey: updated.orderKey });
       } catch (err) {
         json(res, 409, { error: err instanceof Error ? err.message : String(err) });
@@ -1232,6 +1628,7 @@ export function startDashboardServer(
             decisionMatch[1] as string,
             option,
             "human",
+            principalOf(req),
           );
           json(res, 200, { decision: d.record });
           return;
@@ -1241,6 +1638,7 @@ export function startDashboardServer(
             decisionMatch[1] as string,
             option,
             "human",
+            principalOf(req),
           ),
         });
       } catch (err) {
@@ -1259,6 +1657,7 @@ export function startDashboardServer(
         json,
         isTrustedMutation,
         readJsonBody,
+        principalOf,
       })
     ) {
       return;
@@ -1267,7 +1666,7 @@ export function startDashboardServer(
     if (url.startsWith("/api/") && (await pmApi.handle(req, res, url, query))) return;
 
     json(res, 404, { error: "Not Found", path: url });
-  });
+  };
 
   // M2: a running card's decoded tokens, from its live file, while the step
   // is still generating (the runner writes .sekhemet/live/<card>.txt).
@@ -1314,7 +1713,10 @@ export function startDashboardServer(
   });
 
   return new Promise((resolve, reject) => {
-    server.listen(port, "127.0.0.1", () => {
+    // TEAM-2: on a Team start with no Admin, the setup token's path is printed.
+    identity.ensureSetupToken();
+    const stopIdentity = serverIdentity.startTimers();
+    server.listen(port, host, () => {
       let ticks = 0;
       timer = setInterval(() => {
         void pump();
@@ -1383,6 +1785,7 @@ export function startDashboardServer(
             void notifier.then((n) => n.stop());
             stopRecurring();
             github?.stop();
+            stopIdentity();
             if (timer) clearInterval(timer);
             unsubscribe();
             for (const stream of streams) stream.end();
@@ -1398,7 +1801,19 @@ export function startDashboardServer(
         socket.end("HTTP/1.1 404 Not Found\r\n\r\n");
         return;
       }
-      const client = acceptWebSocket(req, socket, (c) => streams.delete(c));
+      // The live stream needs the same session as the page (runtime item 27).
+      if (!identity.resolveHeaders(req.headers, req.socket.remoteAddress).authenticated) {
+        socket.end("HTTP/1.1 401 Unauthorized\r\n\r\n");
+        return;
+      }
+      // Only this page's origin may open it (cross-site WebSocket hijacking):
+      // loopback in Solo, and in Team the host the page was served from.
+      const client = acceptWebSocket(
+        req,
+        socket,
+        (c) => streams.delete(c),
+        identity.mode === "team" ? req.headers.host : undefined,
+      );
       if (client) {
         streams.add(client);
         void pump();

@@ -1,9 +1,11 @@
 // Command palette (FRONTEND_DESIGN §2.5.10): grouped, fuzzy, with shortcuts.
 import { openCheatsheet } from "./cheatsheet.js";
 import { MOD, copyText, esc, icon, kbd } from "./dom.js";
+import { ACCOUNT_COPY } from "./lib/account.js";
 import { paletteGoTo } from "./lib/nav.js";
 import { KIND_LABELS, columnLabel } from "./lib/vocabulary.js";
 import { pushOverlay, trapFocus } from "./overlay.js";
+import { getSession, signOutAndLeave } from "./session.js";
 import { currentNav, toggleTheme } from "./shell.js";
 import { store } from "./store.js";
 import { toast } from "./toast.js";
@@ -118,6 +120,17 @@ function prefs() {
       run: toggleDensity,
     },
     { label: "Keyboard shortcuts", keys: ["?"], run: () => setTimeout(openCheatsheet, 0) },
+    // The account menu's pages are in the palette, with no chord (§2.2.1).
+    {
+      label: ACCOUNT_COPY.profile,
+      search: "profile account tokens sessions",
+      run: () => {
+        location.hash = "#/account/profile";
+      },
+    },
+    ...(getSession().mode === "team"
+      ? [{ label: ACCOUNT_COPY.signOut, search: "sign out log out", run: signOutAndLeave }]
+      : []),
   ];
 }
 

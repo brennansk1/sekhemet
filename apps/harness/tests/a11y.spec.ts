@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,14 +6,17 @@ import { DatabaseSync } from "node:sqlite";
 import { BoardServiceImpl } from "@sekhemet/board";
 import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import { NAV_ITEMS } from "@sekhemet/ui";
-import { type Browser, chromium } from "playwright-core";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { type Browser, type Page, chromium } from "playwright-core";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { startDashboardServer } from "../src/server.js";
+import { identitySettings } from "../src/team/settings.js";
 
 // DB-P12-6: every route at 400, 1100 and 1440 px in both themes, in a real
 // Chromium (the cached build pinned by playwright-core), checked by axe-core
 // for accessible names and target size, plus the three checks axe does not make:
 // 44 px targets at phone width, reflow at 200% zoom, and nothing only on hover.
+// The Team setup's pages are checked on Team servers: Set up Sekhemet (no Admin
+// yet), Sign in and an invite (signed out), and Profile (signed in).
 const AXE = createRequire(import.meta.url).resolve("axe-core/axe.min.js");
 const NAME_RULES = [
   "button-name",
@@ -30,13 +33,46 @@ const NAME_RULES = [
   "target-size",
 ];
 const WIDTHS = [400, 1100, 1440];
+const PASSWORD = "correct horse battery staple";
 const THEMES = ["basalt", "sand"];
+
+type Server = { port: number; close: () => Promise<void> };
+
+/** A Team server over its own ledger; `db` is closed by the caller. */
+async function teamServer(root: string): Promise<{ server: Server; db: DatabaseSync }> {
+  mkdirSync(root, { recursive: true });
+  const db = new DatabaseSync(join(root, "events.db"));
+  initSchema(db);
+  const log = new EventLog(db);
+  const cardStore = new CardStore(db, log);
+  writeFileSync(join(root, "common.txt"), "password\n");
+  vi.spyOn(console, "log").mockImplementation(() => {});
+  const server = await startDashboardServer({
+    db,
+    log,
+    boardService: new BoardServiceImpl(cardStore),
+    cardStore,
+    repoPath: root,
+    port: 0,
+    streamIntervalMs: 1000,
+    identity: {
+      dir: join(root, "identity"),
+      passwordList: join(root, "common.txt"),
+      settings: identitySettings({ mode: "team", workspace: "Northwind" }),
+    },
+  });
+  vi.mocked(console.log).mockRestore();
+  return { server, db };
+}
 
 describe("the accessibility check (dashboard DB-P12-6)", () => {
   let dir: string;
   let db: DatabaseSync;
-  let server: { port: number; close: () => Promise<void> };
+  let server: Server;
   let browser: Browser;
+  let firstRun: { server: Server; db: DatabaseSync };
+  let team: { server: Server; db: DatabaseSync };
+  let inviteId = "";
 
   beforeAll(async () => {
     dir = mkdtempSync(join(tmpdir(), "sekhemet-a11y-"));
@@ -67,13 +103,39 @@ describe("the accessibility check (dashboard DB-P12-6)", () => {
       port: 0,
       streamIntervalMs: 1000,
     });
+    firstRun = await teamServer(join(dir, "first-run"));
+    team = await teamServer(join(dir, "team"));
+    const base = `http://127.0.0.1:${team.server.port}`;
+    const headers = { "Content-Type": "application/json", "X-Sekhemet-Action": "1" };
+    const setup = await fetch(`${base}/api/setup`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        token: readFileSync(join(dir, "team", "identity", "setup-token"), "utf8").trim(),
+        name: "Ada Admin",
+        email: "ada@northwind.test",
+        password: PASSWORD,
+      }),
+    });
+    const cookie = (setup.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
+    const { csrf } = (await setup.json()) as { csrf: string };
+    const invite = await fetch(`${base}/api/invites`, {
+      method: "POST",
+      headers: { ...headers, Cookie: cookie, "X-Sekhemet-CSRF": csrf },
+      body: JSON.stringify({ level: "member" }),
+    });
+    inviteId = ((await invite.json()) as { id: string }).id;
     browser = await chromium.launch();
   });
 
   afterAll(async () => {
     await browser?.close();
     await server?.close();
+    await firstRun?.server.close();
+    await team?.server.close();
     db?.close();
+    firstRun?.db.close();
+    team?.db.close();
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -84,17 +146,41 @@ describe("the accessibility check (dashboard DB-P12-6)", () => {
     },
     async () => {
       const problems: string[] = [];
-      const routes = [...NAV_ITEMS.map((n) => n.route), "#/card/card_a11y_1"];
+      const routes = [...NAV_ITEMS.map((n) => n.route), "#/card/card_a11y_1", "#/account/profile"];
+      const solo = `http://127.0.0.1:${server.port}`;
+      const teamBase = `http://127.0.0.1:${team.server.port}`;
+      // Each page and the browser state it is seen in: signed out or signed in.
+      const targets: { url: string; as: "out" | "in" }[] = [
+        ...routes.map((r) => ({ url: `${solo}/${r}`, as: "out" as const })),
+        { url: `http://127.0.0.1:${firstRun.server.port}/#/signin`, as: "out" },
+        { url: `${teamBase}/#/signin`, as: "out" },
+        { url: `${teamBase}/#/invite/${inviteId}`, as: "out" },
+        { url: `${teamBase}/#/account/profile`, as: "in" },
+      ];
+      const open = async (width: number, height: number, signedIn: boolean): Promise<Page> => {
+        const page = await (await browser.newContext({ viewport: { width, height } })).newPage();
+        if (signedIn) {
+          // Signed in the way a person is: the Sign in page's form.
+          await page.goto(`${teamBase}/#/signin`);
+          await page.getByLabel("Email").fill("ada@northwind.test");
+          await page.getByLabel("Password").fill(PASSWORD);
+          await page.getByRole("button", { name: "Sign in", exact: true }).click();
+          await page.locator("[data-account]").waitFor({ state: "attached" });
+        }
+        return page;
+      };
       for (const width of WIDTHS) {
-        const page = await browser.newPage({ viewport: { width, height: 900 } });
+        const pages = { out: await open(width, 900, false), in: await open(width, 900, true) };
         for (const theme of THEMES) {
-          for (const route of routes) {
-            await page.goto(`http://127.0.0.1:${server.port}/${route}`);
+          for (const { url, as } of targets) {
+            const page = pages[as];
+            const route = url.slice(url.indexOf("#"));
+            await page.goto(url);
             await page.evaluate((t) => {
               document.documentElement.dataset.theme = t;
             }, theme);
             await page.waitForTimeout(250);
-            const at = `${route} ${width}px ${theme}`;
+            const at = `${url.startsWith(solo) ? "" : "team "}${route} ${width}px ${theme}`;
             if ((await page.$('script[data-axe="1"]')) === null) {
               await page.addScriptTag({ path: AXE });
               await page.evaluate(() =>
@@ -170,19 +256,21 @@ describe("the accessibility check (dashboard DB-P12-6)", () => {
             for (const h of new Set(hoverOnly)) problems.push(`${at}: hover-only ${h}`);
           }
         }
-        await page.close();
+        await pages.out.context().close();
+        await pages.in.context().close();
       }
       // Reflow at 200% zoom: 1280 px at 200% is a 640 px viewport (WCAG 1.4.10).
-      const zoomed = await browser.newPage({ viewport: { width: 640, height: 450 } });
-      for (const route of routes) {
-        await zoomed.goto(`http://127.0.0.1:${server.port}/${route}`);
-        await zoomed.waitForTimeout(250);
-        const over = await zoomed.evaluate(
+      const zoomed = { out: await open(640, 450, false), in: await open(640, 450, true) };
+      for (const { url, as } of targets) {
+        await zoomed[as].goto(url);
+        await zoomed[as].waitForTimeout(250);
+        const over = await zoomed[as].evaluate(
           () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
         );
-        if (over > 1) problems.push(`${route} 200% zoom: scrolls sideways by ${over}px`);
+        if (over > 1) problems.push(`${url} 200% zoom: scrolls sideways by ${over}px`);
       }
-      await zoomed.close();
+      await zoomed.out.context().close();
+      await zoomed.in.context().close();
       expect(problems).toEqual([]);
     },
   );

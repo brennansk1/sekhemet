@@ -29,10 +29,16 @@ export function acceptKey(key: string): string {
     .digest("base64");
 }
 
-export function originAllowed(origin: string | undefined): boolean {
+/**
+ * `ownHost` (the Team setup, teams item 13): the page's own origin is allowed
+ * too — the host the request was sent to — and every other still refused.
+ */
+export function originAllowed(origin: string | undefined, ownHost?: string): boolean {
   if (!origin) return true;
   try {
-    const host = new URL(origin).hostname;
+    const url = new URL(origin);
+    if (ownHost && url.host === ownHost) return true;
+    const host = url.hostname;
     return host === "127.0.0.1" || host === "localhost" || host === "[::1]" || host === "::1";
   } catch {
     return false;
@@ -119,13 +125,14 @@ export function acceptWebSocket(
   req: IncomingMessage,
   socket: Duplex,
   onClose: (client: StreamClient) => void,
+  ownHost?: string,
 ): StreamClient | undefined {
   const key = req.headers["sec-websocket-key"];
   if (typeof key !== "string" || req.headers.upgrade?.toLowerCase() !== "websocket") {
     socket.end("HTTP/1.1 400 Bad Request\r\n\r\n");
     return undefined;
   }
-  if (!originAllowed(req.headers.origin)) {
+  if (!originAllowed(req.headers.origin, ownHost)) {
     socket.end("HTTP/1.1 403 Forbidden\r\n\r\n");
     return undefined;
   }

@@ -35,6 +35,11 @@ export interface AcceptOptions {
   acknowledgedFindings?: readonly string[];
   /** Auto-accept: the run whose `review/auto_accept_enabled` names the person (§2.5.6). */
   autoRun?: string;
+  /**
+   * The people the card's project's Accept rule names (teams item 7), when a
+   * rule is recorded; without one, the ledger's Accept-holders (the Solo person).
+   */
+  acceptHolders?: readonly string[];
 }
 
 /** A refused accept: nothing moved. `code` says which precondition failed. */
@@ -165,9 +170,11 @@ export async function accepterCheck(
   store: CardStore,
   cardId: string,
   principal: string,
+  /** The project's Accept rule, when recorded (teams item 7). */
+  rule?: readonly string[],
 ): Promise<{ independent: boolean }> {
-  const holders = store.acceptHolders();
-  if (!store.mayAccept(principal)) {
+  const holders = rule ? [...new Set(rule)] : store.acceptHolders();
+  if (rule ? !holders.includes(principal) : !store.mayAccept(principal)) {
     throw new AcceptRefusedError(
       "not_permitted",
       `${principal} does not hold the Accept permission for this project. Who may accept: ${holders.join(", ") || "no one yet — name an Accept-holder"}`,
@@ -374,7 +381,8 @@ export async function acceptPreconditions(
     principal = await autoAcceptPrincipal(ctx.cardStore, options.autoRun);
   } else {
     principal = options.principal ?? ctx.cardStore.localPrincipal();
-    independent = (await accepterCheck(ctx.cardStore, cardId, principal)).independent;
+    independent = (await accepterCheck(ctx.cardStore, cardId, principal, options.acceptHolders))
+      .independent;
     codeOwnerCheck(ctx, card, ev, principal);
     const remaining = await acceptFriction(
       ctx.cardStore,
@@ -622,6 +630,8 @@ export async function revertAccept(
   card: CardRecord,
   reason = "",
   principal = ctx.cardStore.localPrincipal(),
+  /** The project's Accept rule, when recorded (teams item 7). */
+  rule?: readonly string[],
 ): Promise<string> {
   const stored = await ctx.cardStore.getCard(card.id);
   if (stored?.status !== "done") {
@@ -632,7 +642,7 @@ export async function revertAccept(
   const accepted = (await ctx.cardStore.cardEvents(card.id, ["card/accepted"])).at(-1);
   const p = accepted?.payload as { sha?: string; integration?: string } | undefined;
   if (!p?.sha) throw new Error(`${card.id} has no accepted squash on the ledger to revert`);
-  if (!ctx.cardStore.mayAccept(principal)) {
+  if (rule ? !rule.includes(principal) : !ctx.cardStore.mayAccept(principal)) {
     throw new AcceptRefusedError(
       "not_permitted",
       `${principal} does not hold the Accept permission; reverting an accept is an Accept-holder's decision`,

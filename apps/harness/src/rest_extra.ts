@@ -46,6 +46,8 @@ export interface RestExtraContext {
   json: (res: ServerResponse, status: number, body: unknown) => void;
   readJsonBody: (req: IncomingMessage) => Promise<Record<string, unknown>>;
   trusted: (req: IncomingMessage) => boolean;
+  /** The person a request is for (teams §2.3, kernel rule 19). */
+  principalOf?: (req: IncomingMessage) => string;
   /** Starts `sekhemet <args>` detached; returns its pid. Injectable for tests. */
   launch?: (args: string[]) => number;
 }
@@ -205,7 +207,13 @@ export async function handleRestExtras(
           cards: parts.map(cardFields),
           state: "open",
         },
-        { cardStore: s, boardService: ctx.boardService, pmStore, actor: "human" },
+        {
+          cardStore: s,
+          boardService: ctx.boardService,
+          pmStore,
+          actor: "human",
+          ...(ctx.principalOf ? { principal: ctx.principalOf(req) } : {}),
+        },
       );
       json(res, 200, { subtasks: r.cards.filter((c) => c.id !== cardId) });
       return true;

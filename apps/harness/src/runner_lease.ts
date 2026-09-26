@@ -71,18 +71,34 @@ export interface AcquireOptions {
 export const LEASE_HEARTBEAT_MS = 3_000;
 
 export const leasePath = (repoPath: string) => join(repoPath, ".sekhemet", "runner.lock");
-const takeoverPath = (repoPath: string) => `${leasePath(repoPath)}.takeover`;
 
-function readLease(repoPath: string): Lease | undefined {
+/** A lease file's contents, or undefined when absent or half-written. */
+export function readLeaseFile<T extends Lease = Lease>(path: string): T | undefined {
   try {
-    return JSON.parse(readFileSync(leasePath(repoPath), "utf8")) as Lease;
+    return JSON.parse(readFileSync(path, "utf8")) as T;
   } catch {
     return undefined;
   }
 }
 
-function isLive(lease: Lease): boolean {
+const readLease = (repoPath: string): Lease | undefined => readLeaseFile(leasePath(repoPath));
+
+/** A lease's holder is alive: its pid runs with the start time it recorded. */
+export function isLive(lease: Lease): boolean {
   return typeof lease.pid === "number" && sameProcess(lease.pid, lease.processStart);
+}
+
+/** A fresh lease body for this process. */
+export function newLease(): Lease {
+  const now = new Date().toISOString();
+  const processStart = processStartTime(process.pid);
+  return {
+    pid: process.pid,
+    ...(processStart ? { processStart } : {}),
+    token: randomBytes(16).toString("hex"),
+    startedAt: now,
+    heartbeatAt: now,
+  };
 }
 
 /** The live lease holder, or undefined when no runner holds it. */
@@ -107,14 +123,8 @@ export function acquireRunnerLease(
   options: AcquireOptions = {},
 ): { release: () => void; lease: Lease } | { holder: Lease } {
   mkdirSync(join(repoPath, ".sekhemet"), { recursive: true });
-  const now = new Date().toISOString();
-  const processStart = processStartTime(process.pid);
   const lease: Lease = {
-    pid: process.pid,
-    ...(processStart ? { processStart } : {}),
-    token: randomBytes(16).toString("hex"),
-    startedAt: now,
-    heartbeatAt: now,
+    ...newLease(),
     ...(options.kind ? { kind: options.kind } : {}),
     ...(options.cardId ? { cardId: options.cardId } : {}),
     ...(options.pmModel ? { pmModel: options.pmModel } : {}),
@@ -137,7 +147,15 @@ export function acquireRunnerLease(
       // Every process group this runner starts is recorded, so a start after
       // a SIGKILL reaps what it left (RUN-12).
       process.env.SEKHEMET_PROCESS_REGISTRY ??= join(repoPath, ".sekhemet", "processes");
-      return { lease, release: startHeartbeat(repoPath, lease, content, options.heartbeatMs) };
+      return {
+        lease,
+        release: startLeaseHeartbeat(
+          leasePath(repoPath),
+          lease.token,
+          content,
+          options.heartbeatMs,
+        ),
+      };
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
     }
@@ -156,7 +174,7 @@ export function acquireRunnerLease(
       }
       return { holder: current };
     }
-    removeStale(repoPath, current.token);
+    removeStaleLease(leasePath(repoPath), current.token);
   }
   const holder = readLease(repoPath);
   if (holder) return { holder };
@@ -241,23 +259,27 @@ export class RunnerLeaseHeld extends Error {
   }
 }
 
-function startHeartbeat(
-  repoPath: string,
-  lease: Lease,
+/**
+ * Refresh the lease file at `path` every `heartbeatMs` while it still carries
+ * `token`; the returned release removes it (only if still ours), and runs on
+ * exit too. The runner lease and each slot lease (RUN-35) beat this way.
+ */
+export function startLeaseHeartbeat(
+  path: string,
+  token: string,
   content: () => string,
   heartbeatMs = LEASE_HEARTBEAT_MS,
 ): () => void {
-  const path = leasePath(repoPath);
-  const ours = () => readLease(repoPath)?.token === lease.token;
+  const ours = () => readLeaseFile(path)?.token === token;
   const beat = setInterval(() => {
     try {
-      const current = readLease(repoPath);
-      if (current?.token !== lease.token) return;
+      const current = readLeaseFile(path);
+      if (current?.token !== token) return;
       // A child running under this lease publishes it meanwhile.
       if (current.borrower && sameProcess(current.borrower.pid, current.borrower.processStart)) {
         return;
       }
-      const tmp = `${path}.${lease.token}.tmp`;
+      const tmp = `${path}.${token}.tmp`;
       writeFileSync(tmp, content());
       renameSync(tmp, path);
     } catch {
@@ -298,34 +320,43 @@ function installShutdownSignals(): void {
   process.once("SIGHUP", () => process.exit(129));
 }
 
-/** Remove the lease file only if it is still the stale one read (by token). */
-function removeStale(repoPath: string, staleToken: string | undefined): void {
-  const lock = takeoverPath(repoPath);
+/**
+ * Run `fn` holding a short exclusive lock at `lock` (created with "wx"), or
+ * return undefined when another process holds it. A lock left by a process
+ * killed while holding it is itself stale after 10 s.
+ */
+export function tryWithLock<T>(lock: string, fn: () => T): { value: T } | undefined {
   let fd: number;
   try {
     fd = openSync(lock, "wx");
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-    // A takeover lock left by a process killed mid-takeover is itself stale after 10 s.
     try {
       if (Date.now() - statSync(lock).mtimeMs > 10_000) rmSync(lock, { force: true });
     } catch {
       // Removed by its holder meanwhile.
     }
     sleepSync(5);
-    return;
+    return undefined;
   }
   try {
-    const current = readLease(repoPath);
-    if (current && current.token === staleToken && !isLive(current)) {
-      rmSync(leasePath(repoPath), { force: true });
-    }
+    return { value: fn() };
   } finally {
     closeSync(fd);
     rmSync(lock, { force: true });
   }
 }
 
-function sleepSync(ms: number): void {
+/** Remove the lease file only if it is still the stale one read (by token). */
+export function removeStaleLease(path: string, staleToken: string | undefined): void {
+  tryWithLock(`${path}.takeover`, () => {
+    const current = readLeaseFile(path);
+    if (current && current.token === staleToken && !isLive(current)) {
+      rmSync(path, { force: true });
+    }
+  });
+}
+
+export function sleepSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }

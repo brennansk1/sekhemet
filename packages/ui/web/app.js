@@ -1,4 +1,7 @@
-// Entry point: hydrate, subscribe to the ledger stream, route, and mount views.
+// Entry point: who is signed in, then hydrate, subscribe to the ledger stream,
+// route, and mount views.
+import * as profileView from "./account.js";
+import { initAccount } from "./account.js";
 import * as boardView from "./board.js";
 import { initBulk } from "./bulk.js";
 import * as cardView from "./card.js";
@@ -10,6 +13,7 @@ import * as insightsView from "./insights.js";
 import * as integrationsView from "./integrations.js";
 import { initKeys } from "./keys.js";
 import * as ledgerView from "./ledger.js";
+import { authDecision, refusalMessage } from "./lib/account.js";
 import { navNameOf } from "./lib/nav.js";
 import * as machineView from "./machine.js";
 import * as playbookView from "./playbook.js";
@@ -19,8 +23,11 @@ import * as pmView from "./pm_view.js";
 import * as registryView from "./registry.js";
 import * as reviewView from "./review.js";
 import * as runsView from "./runs.js";
+import { getSession, loadSession } from "./session.js";
 import { initShell, setActiveNav, setNavViews } from "./shell.js";
+import { mountAuthPage } from "./signin.js";
 import { store } from "./store.js";
+import { toast } from "./toast.js";
 import * as workspaceView from "./workspace.js";
 
 const VIEWS = {
@@ -43,6 +50,8 @@ const VIEWS = {
   configuration: registryView,
   workspace: workspaceView,
   registry: registryView,
+  // The account menu's page (§2.2.6); in the palette, with no chord.
+  account: profileView,
 };
 
 let current = null;
@@ -60,6 +69,13 @@ function defaultRoute() {
 }
 
 function route() {
+  // An invite link opened on a signed-in page, or Sign in: the auth pages decide.
+  const decision = authDecision(getSession(), location.hash);
+  if (decision.kind === "page") {
+    location.reload();
+    return;
+  }
+  if (decision.kind === "redirect") history.replaceState(null, "", decision.to);
   const parsed = parseHash();
   if (!parsed.name) {
     if (!store.state.loaded) return;
@@ -266,12 +282,59 @@ async function retryConnection() {
   }
 }
 
+/* ---------- Signed out, and refused ---------- */
+
+let reloading = false;
+let lastRefusal = { text: "", at: 0 };
+
+/**
+ * A 401 on a signed-in Team page means the session ended: the page boots
+ * again and shows Sign in, remembering where it was. A 403 from the access
+ * rules shows the server's sentence, which names the missing permission and
+ * who can grant it (teams TEAM-4).
+ */
+function onAuth(e) {
+  if (getSession().mode !== "team") return;
+  const { status, data } = e.detail ?? {};
+  if (status === 401 && !reloading) {
+    reloading = true;
+    location.reload();
+    return;
+  }
+  const access = data?.refused === "permission" || data?.reason === "forbidden";
+  if (status !== 403 || !(access || data?.error === "csrf")) return;
+  const text = refusalMessage(403, data);
+  if (text === lastRefusal.text && Date.now() - lastRefusal.at < 2000) return;
+  lastRefusal = { text, at: Date.now() };
+  toast({ tone: "fail", text });
+}
+
 /* ---------- Boot ---------- */
 
 async function boot() {
+  // An invite link as a path (`/invite/<id>`) is the same page as its route.
+  const invite = /^\/invite\/([A-Za-z0-9_-]+)\/?$/.exec(location.pathname);
+  if (invite) history.replaceState(null, "", `/#/invite/${invite[1]}`);
+  const session = await loadSession();
+  const decision = authDecision(session, location.hash);
+  if (decision.kind === "page") {
+    // Nothing of the app loads before someone is signed in (DB-N9-13).
+    const view = document.getElementById("view");
+    mountAuthPage(view, decision);
+    // Another auth page (an invite, Sign in) mounts in place; the app needs a fresh boot.
+    window.addEventListener("hashchange", () => {
+      const d = authDecision(session, location.hash);
+      if (d.kind === "page") mountAuthPage(view, d);
+      else location.reload();
+    });
+    return;
+  }
+  if (decision.kind === "redirect") history.replaceState(null, "", decision.to);
+  window.addEventListener("sekhemet:auth", onAuth);
   setNavViews(Object.keys(VIEWS));
   initShell();
   initKeys();
+  initAccount();
   const note = setTimeout(() => {
     const el = document.getElementById("sk-note");
     if (el) {

@@ -1,7 +1,9 @@
 // Sidebar, topbar and the four shell bars (FRONTEND_DESIGN §2.2, §2.4).
 import { MOD, esc, icon, kbd, tip } from "./dom.js";
+import { ACCOUNT_COPY, accountHeader, initials, themeChoice, themeFor } from "./lib/account.js";
 import { bottomBar, navNameOf, visibleNav } from "./lib/nav.js";
 import { stopReasonLabel } from "./lib/vocabulary.js";
+import { getSession } from "./session.js";
 import { ledgerAltered, store } from "./store.js";
 
 // The views the page mounts, by nav name (app.js); a view not built is never linked.
@@ -17,7 +19,7 @@ export function currentNav() {
   const s = store.state;
   return visibleNav({
     views: mounted,
-    team: false,
+    team: getSession().mode === "team",
     completedRuns: s.queue?.entries?.length ?? 0,
     dependencyEdges: s.cards.filter((c) => c.dependsOn?.length).length,
     playbookEntries: (s.playbook?.rules?.length ?? 0) + (s.playbook?.candidates?.length ?? 0),
@@ -31,16 +33,42 @@ let lastTabs = "";
 let moreOpen = null;
 let lastBar = "";
 
-export function toggleTheme() {
-  const root = document.documentElement;
-  const next = root.dataset.theme === "sand" ? "basalt" : "sand";
-  root.dataset.theme = next;
+/* ---------- Theme: System, Light or Dark, kept per browser (§2.1.3) ---------- */
+
+const THEME_KEY = "sekhemet-theme";
+let themeThisPage = null;
+
+/** The person's choice; nothing saved follows the operating system. */
+export function currentThemeChoice() {
+  if (themeThisPage) return themeThisPage;
   try {
-    localStorage.setItem("sekhemet-theme", next);
+    return themeChoice(localStorage.getItem(THEME_KEY));
+  } catch {
+    return "system";
+  }
+}
+
+function applyTheme() {
+  const light = window.matchMedia?.("(prefers-color-scheme: light)").matches ?? false;
+  document.documentElement.dataset.theme = themeFor(currentThemeChoice(), light);
+  renderSide();
+}
+
+export function setTheme(choice) {
+  themeThisPage = null;
+  try {
+    if (choice === "system") localStorage.removeItem(THEME_KEY);
+    else localStorage.setItem(THEME_KEY, choice === "light" ? "sand" : "basalt");
   } catch {
     // Private mode: the choice lasts for this page only.
+    themeThisPage = choice;
   }
-  renderSide();
+  applyTheme();
+}
+
+/** The palette's Switch theme: from what shows now to the other one. */
+export function toggleTheme() {
+  setTheme(document.documentElement.dataset.theme === "sand" ? "dark" : "light");
 }
 
 export function setActiveNav(name) {
@@ -203,11 +231,11 @@ function renderSide() {
     ? `Worker ${worker.model}`
     : m.model || (m.inferenceUp === false ? "No model server" : "Model: checking…");
   const model = `<div class="row" title="${esc(modelName)}"><span class="dot ${working ? "run" : "idle"}"></span><span class="lbl${m.model || worker?.model ? " mono" : ""}">${esc(modelName)}${m.model || worker?.model ? ` · ${working ? "working" : "idle"}` : ""}</span></div>`;
-  const sand = document.documentElement.dataset.theme === "sand";
-  // Theme has no bare key (§2.3.2): it is here and in the palette.
-  const tools = `<div class="tools"><button class="icon-btn" type="button" data-theme-toggle title="Theme">${icon(sand ? "moon" : "sun", 14, "ic s14")}<span class="lbl">Theme</span></button><button class="icon-btn" type="button" data-cheats title="Keyboard shortcuts (?)" aria-description="Keyboard shortcuts" aria-keyshortcuts="?">${icon("keyboard", 14, "ic s14")}<span class="lbl">Keys</span></button></div>`;
+  // Theme and Keys live in the account menu (§2.2.6); the account closes the sidebar.
+  const head = accountHeader(getSession());
+  const account = `<button class="account-btn" type="button" data-account aria-haspopup="menu"><span class="avatar" aria-hidden="true">${esc(initials(head.name))}</span><span class="lbl">${esc(head.name)}</span><span class="sr-only">, ${esc(ACCOUNT_COPY.account)}</span></button>`;
 
-  const html = `<div class="brand">${icon("glyph", 18)}<b class="lbl">Sekhemet</b>${kbd(`${MOD}K`)}</div><div class="nav">${nav}</div><div class="foot">${live}${mem}${model}<div class="nav">${bottom}</div>${tools}</div>`;
+  const html = `<div class="brand">${icon("glyph", 18)}<b class="lbl">Sekhemet</b>${kbd(`${MOD}K`)}</div><div class="nav">${nav}</div><div class="foot">${live}${mem}${model}<div class="nav">${bottom}</div>${account}</div>`;
   if (html !== lastSide) {
     side.innerHTML = html;
     lastSide = html;
@@ -288,6 +316,10 @@ function renderBar() {
 
 export function initShell() {
   renderSide();
+  // System follows the operating system while the page is open.
+  window.matchMedia?.("(prefers-color-scheme: light)").addEventListener?.("change", () => {
+    if (currentThemeChoice() === "system") applyTheme();
+  });
   store.on(() => {
     renderSide();
     renderBar();
@@ -305,8 +337,7 @@ export function initShell() {
   document.addEventListener("click", (e) => {
     const t = e.target instanceof Element ? e.target : null;
     if (!t) return;
-    if (t.closest("[data-theme-toggle]")) toggleTheme();
-    else if (t.closest("[data-retry]") && !t.closest(".pm-thread"))
+    if (t.closest("[data-retry]") && !t.closest(".pm-thread"))
       window.dispatchEvent(new CustomEvent("sekhemet:retry"));
     else if (t.closest("[data-open-pm]")) window.dispatchEvent(new CustomEvent("sekhemet:open-pm"));
   });

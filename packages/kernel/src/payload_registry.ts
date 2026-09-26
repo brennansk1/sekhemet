@@ -49,6 +49,8 @@ const NOTICE_KIND = v.picklist([
   "test",
 ]);
 const DAY = v.pipe(v.string(), v.regex(/^\d{4}-\d{2}-\d{2}$/, "a local day, YYYY-MM-DD"));
+/** The access levels of the Team setup (teams item 6). */
+const LEVEL = v.picklist(["admin", "member", "stakeholder", "viewer"]);
 
 const s = (schema: v.GenericSchema, optional = false): PayloadField => ({
   dataClass: "structural",
@@ -68,6 +70,76 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     email: priv("personal", TEXT),
     name: priv("personal", TEXT),
   },
+  // teams §3 (B4.10, NEW-teams-1, -3, -4): members, sign-in and credentials.
+  // Principals and opaque references only; an invitee's email, a token's
+  // name and a refused address are private. No credential or hash, ever (TEAM-11).
+  "member/invited": {
+    invite: s(ID),
+    level: s(LEVEL),
+    expires: s(TEXT),
+    project: s(ID, true),
+    email: priv("personal", TEXT),
+  },
+  "member/joined": {
+    principal: s(PRINCIPAL),
+    level: s(LEVEL),
+    via: s(v.picklist(["setup", "invite", "signup", "proxy", "oidc"])),
+    pending: s(v.boolean()),
+    invite: s(ID, true),
+    project: s(ID, true),
+  },
+  "member/approved": { principal: s(PRINCIPAL), level: s(LEVEL, true) },
+  "member/level_changed": { principal: s(PRINCIPAL), level: s(LEVEL), project: s(ID, true) },
+  "member/removed": { principal: s(PRINCIPAL) },
+  "session/started": {
+    session: s(ID),
+    method: s(v.picklist(["password", "passkey", "oidc", "setup", "invite"])),
+  },
+  "session/ended": {
+    session: s(ID),
+    reason: s(
+      v.picklist([
+        "signed_out",
+        "idle",
+        "expired",
+        "removed",
+        "level_lowered",
+        "password_reset",
+        "password_changed",
+        "revoked",
+      ]),
+    ),
+  },
+  "session/refused": {
+    reason: s(
+      v.picklist([
+        "bad_credentials",
+        "unknown_account",
+        "bad_setup_token",
+        "bad_invite",
+        "bad_reset_link",
+      ]),
+    ),
+    count: s(v.pipe(v.number(), v.integer(), v.minValue(1))),
+    window: s(TEXT),
+    address: priv("personal", TEXT),
+  },
+  "account/locked": { principal: s(PRINCIPAL), until: s(TEXT, true) },
+  "account/unlocked": { principal: s(PRINCIPAL) },
+  "token/created": {
+    token: s(ID),
+    level: s(LEVEL),
+    expires: s(TEXT),
+    name: priv("free_text", TEXT),
+  },
+  "token/used": { token: s(ID) },
+  "token/revoked": { token: s(ID), reason: s(v.picklist(["member_removed"]), true) },
+  "password/reset_issued": { principal: s(PRINCIPAL), expires: s(TEXT) },
+  "password/changed": {
+    principal: s(PRINCIPAL),
+    via: s(v.picklist(["setup", "invite", "reset"])),
+  },
+  "passkey/registered": { principal: s(PRINCIPAL), passkey: s(ID) },
   "card/override": {
     id: s(ID),
     from: s(STATUS),
@@ -327,6 +399,34 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     day: s(DAY, true),
     channel: s(v.picklist(["ntfy", "gotify", "slack"]), true),
     attempt: s(v.pipe(v.number(), v.integer(), v.minValue(0)), true),
+  },
+  // teams M6: a recorded switch of setup; Solo starts on a Team ledger only after one.
+  "setup/switched": { to: s(v.picklist(["solo", "team"])) },
+  // teams NEW-teams-2 (TEAM-7): a profile label, which grants nothing.
+  "member/label_changed": { principal: s(PRINCIPAL), label: s(TEXT) },
+  // teams TEAM-32: only the fields that changed.
+  "project/settings_changed": {
+    project: s(ID),
+    accept_rule: s(v.array(PRINCIPAL), true),
+    require_resolved_threads: s(v.boolean(), true),
+    lead: s(PRINCIPAL, true),
+    auto_apply: s(
+      v.record(v.picklist(["label", "priority", "duplicate", "split"]), v.boolean()),
+      true,
+    ),
+  },
+  // teams TEAM-4, integrations INT-22: a refused request, by the person's principal.
+  "access/refused": {
+    permission: s(ID),
+    level: s(v.picklist(["viewer", "stakeholder", "member", "admin", "none"])),
+    needs: s(LEVEL),
+    project: s(ID, true),
+  },
+  // teams TEAM-30: an Agent issue queued because its person is at the cap.
+  "queue/capped": {
+    id: s(ID),
+    cap: s(v.pipe(v.number(), v.integer(), v.minValue(1))),
+    running: s(v.pipe(v.number(), v.integer(), v.minValue(0))),
   },
   "trace/linked": {
     requirementId: s(ID),

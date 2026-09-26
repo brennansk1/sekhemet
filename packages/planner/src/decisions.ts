@@ -158,10 +158,16 @@ export class DecisionStore {
   }
 
   /** A human's answer: recorded in K20, written to the dossier, and the card resumes. */
-  public async answer(id: string, optionIndex: number, by = "human"): Promise<PlannerDecision> {
+  public async answer(
+    id: string,
+    optionIndex: number,
+    by = "human",
+    /** The person answering (kernel rule 19, K-N2-2). */
+    principal?: string,
+  ): Promise<PlannerDecision> {
     const d = await this.get(id);
     if (!d) throw new Error(`No planner decision ${id}`);
-    await this.ledger.store.runs.answerDecision(d.id, optionIndex, by);
+    await this.ledger.store.runs.answerDecision(d.id, optionIndex, by, principal);
     const label = d.request.options[optionIndex]?.label ?? String(optionIndex);
     await this.resume(d, `Decision: ${d.request.question}\nAnswer: ${label}`);
     return (await this.get(d.id)) as PlannerDecision;

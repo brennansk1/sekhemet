@@ -1,7 +1,7 @@
 // What Sekhemet has learned (PM_CONTRACT §6): playbook rules, the user
 // profile and the stopping-policy tuner, from GET /api/learning. Everything
 // is local, on the ledger, and takes effect only when you approve it.
-import { getJSON, postJSON } from "./dom.js";
+import { getJSON, sendJSON } from "./dom.js";
 import { store } from "./store.js";
 import { toast } from "./toast.js";
 import { mutationsBlocked } from "./triage.js";
@@ -24,29 +24,14 @@ export function loadLearning() {
   return inflight;
 }
 
-async function send(method, path, body) {
-  if (method === "POST") return postJSON(path, body);
-  try {
-    const res = await fetch(path, {
-      method,
-      headers: { "Content-Type": "application/json", "X-Sekhemet-Action": "1" },
-      body: JSON.stringify(body ?? {}),
-    });
-    let data = null;
-    try {
-      data = await res.json();
-    } catch {
-      data = null;
-    }
-    return { ok: res.ok, status: res.status, data };
-  } catch (err) {
-    return { ok: false, status: 0, data: { error: String(err?.message ?? err) } };
-  }
+function send(method, path, body) {
+  return sendJSON(method, path, body ?? {});
 }
 
 function why(r) {
   if (r.status === 404 && !r.data?.error) return "This server can't change learned rules yet.";
-  if (r.status === 403) return "This action must come from the dashboard. Reload the page.";
+  if (r.status === 403 && !r.data?.refused)
+    return "This action must come from the dashboard. Reload the page.";
   return r.data?.error ?? `The server returned ${r.status || "no response"}.`;
 }
 

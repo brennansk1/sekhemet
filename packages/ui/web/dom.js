@@ -45,35 +45,70 @@ export function isTyping(e) {
   return t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName);
 }
 
+/* ---------- Requests: the action header, the session's CSRF token, refusals ---------- */
+
+// In the Team setup a signed-in session's writes carry its CSRF token
+// (teams item 13, `X-Sekhemet-CSRF`); Solo has none and sends only the
+// action header every write needs.
+let csrfToken = "";
+
+export function setCsrf(token) {
+  csrfToken = typeof token === "string" ? token : "";
+}
+
+/** The headers every write carries; `extra` adds to them. */
+export function actionHeaders(extra = {}) {
+  return {
+    "X-Sekhemet-Action": "1",
+    ...(csrfToken ? { "X-Sekhemet-CSRF": csrfToken } : {}),
+    ...extra,
+  };
+}
+
+/**
+ * A 401 or 403 is announced once, page-wide (`sekhemet:auth`): the app sends
+ * a signed-out Team page to Sign in and shows an access refusal's sentence,
+ * which names the missing permission and who can grant it (teams TEAM-4).
+ */
+export function noticeAuth(status, data) {
+  if (status !== 401 && status !== 403) return;
+  window.dispatchEvent(new CustomEvent("sekhemet:auth", { detail: { status, data } }));
+}
+
+async function readBody(res) {
+  try {
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
 export async function getJSON(path) {
   const res = await fetch(path, { headers: { Accept: "application/json" } });
-  let data = null;
-  try {
-    data = await res.json();
-  } catch {
-    data = null;
-  }
+  const data = await readBody(res);
+  noticeAuth(res.status, data);
   return { ok: res.ok, status: res.status, data };
 }
 
-/** Triage mutations carry the header the server requires (CSRF guard). */
-export async function postJSON(path, body) {
+/** A write with a JSON body: the action header and, signed in, the CSRF token. */
+export async function sendJSON(method, path, body) {
   try {
     const res = await fetch(path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Sekhemet-Action": "1" },
-      body: JSON.stringify(body ?? {}),
+      method,
+      headers: actionHeaders({ "Content-Type": "application/json" }),
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
-    let data = null;
-    try {
-      data = await res.json();
-    } catch {
-      data = null;
-    }
+    const data = await readBody(res);
+    noticeAuth(res.status, data);
     return { ok: res.ok, status: res.status, data };
   } catch (err) {
     return { ok: false, status: 0, data: { error: String(err?.message ?? err) } };
   }
+}
+
+/** Triage mutations carry the header the server requires (CSRF guard). */
+export function postJSON(path, body) {
+  return sendJSON("POST", path, body ?? {});
 }
 
 export async function copyText(text) {

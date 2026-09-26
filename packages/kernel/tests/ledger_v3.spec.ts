@@ -185,6 +185,56 @@ describe("NEW-kernel-2: a principal column on events", () => {
     expect(db.prepare("SELECT COUNT(*) AS n FROM events").get()).toEqual({ n: 0 });
   });
 
+  it("K-N2-8: a person's request scope names the principal of their events (team)", async () => {
+    const team = new EventLog(db, { setup: "team" });
+    const inside = await EventLog.actingFor("p_dana1", async () => {
+      await new Promise((r) => setTimeout(r, 1));
+      const own = await team.append({ actor: "human", type: "a", payload: {} });
+      const named = team.appendNow({ actor: "mcp", type: "b", payload: {}, principal: "p_eve1" });
+      const machine = team.appendNow({ actor: "system", type: "c", payload: {} });
+      return [own.principal, named.principal, machine.principal ?? null];
+    });
+    // Explicit wins; a machine event stays unattributed (K-N2-6).
+    expect(inside).toEqual(["p_dana1", "p_eve1", null]);
+    // Outside a scope, nothing is assumed (K-N2-1).
+    await expect(team.append({ actor: "human", type: "d", payload: {} })).rejects.toThrow(
+      /principal/,
+    );
+    expect(() => EventLog.actingFor("dana@example.com", () => undefined)).toThrow(/opaque/);
+    // Work that outlives the request is not the requester's.
+    await EventLog.actingFor("p_dana1", () =>
+      expect(
+        EventLog.unscoped(() => team.append({ actor: "human", type: "e", payload: {} })),
+      ).rejects.toThrow(/principal/),
+    );
+  });
+
+  it("K-N2-8: a subscriber never inherits the appender's scope, now or in work it schedules", async () => {
+    const team = new EventLog(db, { setup: "team" });
+    const attempts: Promise<unknown>[] = [];
+    const off = team.subscribe({ type: "machine" }, () => {
+      // Scheduled work a subscriber starts runs for no one in particular.
+      attempts.push(
+        new Promise((resolve) =>
+          setImmediate(() =>
+            resolve(
+              team.append({ actor: "human", type: "from_subscriber", payload: {} }).then(
+                (e) => e.principal,
+                (err: Error) => err.message,
+              ),
+            ),
+          ),
+        ),
+      );
+    });
+    await EventLog.actingFor("p_dana1", () =>
+      team.append({ actor: "system", type: "machine", payload: {} }),
+    );
+    off();
+    const [outcome] = await Promise.all(attempts);
+    expect(String(outcome)).toMatch(/principal/);
+  });
+
   it("K-N2-1 (solo): a human event carries the install's one principal", async () => {
     const e = await log.append({ actor: "human", type: "a", payload: {} });
     expect(e.principal).toMatch(/^p_[0-9a-z]+$/);

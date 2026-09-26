@@ -6,6 +6,7 @@ export * from "./vocabulary.js";
 export * from "./icons.js";
 export * from "./pm.js";
 export * from "./nav.js";
+export * from "./account.js";
 
 /**
  * The dashboard's static ES modules and stylesheets (`packages/ui/web`).
@@ -14,8 +15,14 @@ export * from "./nav.js";
 export const UI_WEB_DIR = fileURLToPath(new URL("../web/", import.meta.url));
 
 /**
- * Compiled pure modules the browser imports as-is (`vocabulary.js`, `icons.js`, `pm.js`, `nav.js`),
+ * Compiled pure modules the browser imports as-is (`vocabulary.js`, `icons.js`, `pm.js`, `nav.js`, `account.js`),
  * so a label is computed by the same code on the server and in the page.
  */
 export const UI_LIB_DIR = fileURLToPath(new URL("./", import.meta.url));
-export const UI_LIB_MODULES = ["vocabulary.js", "icons.js", "pm.js", "nav.js"] as const;
+export const UI_LIB_MODULES = [
+  "vocabulary.js",
+  "icons.js",
+  "pm.js",
+  "nav.js",
+  "account.js",
+] as const;

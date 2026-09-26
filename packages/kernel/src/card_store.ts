@@ -866,7 +866,13 @@ export class CardStore {
    * one event, so two concurrent reorders cannot interleave into a renumber
    * that loses one of the moves.
    */
-  public async reorderCard(id: string, position: CardPosition): Promise<CardRecord> {
+  /** Move a card between two neighbours; a person's move names them (rule 19). */
+  public async reorderCard(
+    id: string,
+    position: CardPosition,
+    actor = "planner",
+    options: { principal?: string } = {},
+  ): Promise<CardRecord> {
     const after = position.afterCardId ? await this.getCard(position.afterCardId) : null;
     const before = position.beforeCardId ? await this.getCard(position.beforeCardId) : null;
 
@@ -879,7 +885,7 @@ export class CardStore {
 
     const lower = after?.orderKey ?? null;
     const upper = before?.orderKey ?? null;
-    return this.updateCard(id, { orderKey: keyBetween(lower, upper) });
+    return this.updateCard(id, { orderKey: keyBetween(lower, upper) }, actor, options);
   }
 
   /**

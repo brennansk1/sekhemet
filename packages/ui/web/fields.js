@@ -1,7 +1,7 @@
 // Inline and bulk field edits (PM_DESIGN §3.3–3.4): one menu per field, an
 // optimistic change, then PATCH /api/cards/:id per card. On failure the value
 // reverts and the toast says why, verbatim.
-import { esc, icon } from "./dom.js";
+import { esc, icon, sendJSON } from "./dom.js";
 import {
   ESTIMATES,
   PRIORITY_LABELS,
@@ -36,23 +36,8 @@ export const EDITABLE = [
   { field: "dueDate", label: "Due date" },
 ];
 
-async function patchJSON(path, body) {
-  try {
-    const res = await fetch(path, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json", "X-Sekhemet-Action": "1" },
-      body: JSON.stringify(body),
-    });
-    let data = null;
-    try {
-      data = await res.json();
-    } catch {
-      data = null;
-    }
-    return { ok: res.ok, status: res.status, data };
-  } catch (err) {
-    return { ok: false, status: 0, data: { error: String(err?.message ?? err) } };
-  }
+function patchJSON(path, body) {
+  return sendJSON("PATCH", path, body);
 }
 
 function why(r) {

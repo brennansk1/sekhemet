@@ -54,6 +54,8 @@ export interface Wave2RouteContext {
   json: (res: ServerResponse, status: number, body: unknown) => void;
   isTrustedMutation: (req: IncomingMessage) => boolean;
   readJsonBody: (req: IncomingMessage) => Promise<Record<string, unknown>>;
+  /** The person a request is for (teams §2.3, kernel rule 19). */
+  principalOf?: (req: IncomingMessage) => string;
   /** Injectable for tests. */
   webhookSecret?: string;
   /**
@@ -374,6 +376,7 @@ export async function handleWave2Route(
         answer[1] as string,
         Number(body.option),
         "human",
+        ctx.principalOf?.(req),
       );
       json(res, 200, { decision: d });
     } catch (err) {

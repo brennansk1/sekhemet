@@ -23,7 +23,9 @@
     "@sekhemet/planner": "workspace:*",
     "@sekhemet/sandbox": "workspace:*",
     "@sekhemet/sync": "workspace:*",
-    "@sekhemet/ui": "workspace:*"
+    "@sekhemet/ui": "workspace:*",
+    "@simplewebauthn/server": "14.0.3",
+    "openid-client": "6.8.8"
   },
   "devDependencies": {
     "@types/node": "^22.13.4"

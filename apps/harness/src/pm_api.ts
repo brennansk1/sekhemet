@@ -2,7 +2,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { join } from "node:path";
 import type { BoardService } from "@sekhemet/board";
-import type { CardStore, CardUpdate, EventLog } from "@sekhemet/kernel";
+import { type CardStore, type CardUpdate, EventLog } from "@sekhemet/kernel";
 import type { LocalInferenceAdapter } from "@sekhemet/models";
 import { HttpInferenceAdapter, readKernelPressureLevel } from "@sekhemet/models";
 import { effectiveConfig } from "./config_apply.js";
@@ -34,6 +34,8 @@ export interface PmApiContext {
   json: (res: ServerResponse, status: number, body: unknown) => void;
   readJsonBody: (req: IncomingMessage, limit?: number) => Promise<Record<string, unknown>>;
   isTrustedMutation: (req: IncomingMessage) => boolean;
+  /** The person a request is for (teams §2.3, kernel rule 19); the server's one resolver. */
+  principalOf?: (req: IncomingMessage) => string;
 }
 
 const CARD_ID = "[A-Za-z0-9_-]+";
@@ -94,7 +96,9 @@ export function createPmApi(ctx: PmApiContext) {
     }
     const cardStore = ctx.cardStore;
     const adapter = (ctx.pmAdapter ?? (() => createPmAdapter(pmModel)))();
-    answering = (async () => {
+    // The loop answers everyone's queued messages: it is not the person's who
+    // happened to start it (kernel K-N2-8).
+    answering = EventLog.unscoped(async () => {
       // Messages that arrive while the PM is answering are picked up next.
       while (
         await answerQueued({
@@ -113,7 +117,7 @@ export function createPmApi(ctx: PmApiContext) {
       ) {
         // loop until the queue is empty
       }
-    })()
+    })
       .catch(() => undefined)
       .finally(() => {
         answering = undefined;
@@ -209,6 +213,7 @@ export function createPmApi(ctx: PmApiContext) {
             boardService: ctx.boardService,
             pmStore,
             actor: "human",
+            ...(ctx.principalOf ? { principal: ctx.principalOf(req) } : {}),
           }),
         );
         await learnChoices();
@@ -290,7 +295,13 @@ export function createPmApi(ctx: PmApiContext) {
         ctx.json(res, 400, { error: `Nothing editable in ${rejected.join(", ") || "the body"}` });
         return true;
       }
-      const card = await cardStore.updateCard(id, patch as CardUpdate, "human");
+      const principal = ctx.principalOf?.(req);
+      const card = await cardStore.updateCard(
+        id,
+        patch as CardUpdate,
+        "human",
+        principal ? { principal } : {},
+      );
       ctx.json(res, 200, { card, ...(rejected.length ? { ignored: rejected } : {}) });
       return true;
     }

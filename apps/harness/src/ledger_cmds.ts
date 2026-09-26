@@ -11,6 +11,8 @@ import {
   initSchema,
   restoreBackup,
 } from "@sekhemet/kernel";
+import { userSetup } from "./config.js";
+import { backupCredentials, identityDir, restoreCredentials } from "./team/credential_store.js";
 
 /**
  * The ledger's own commands (kernel NEW-kernel-1/2/7, security.md
@@ -66,7 +68,16 @@ export function openLocalLedger(repoPath: string): { db: DatabaseSync; log: Even
     db.close();
     throw err;
   }
-  const log = new EventLog(db, { erasureRegister: erasureRegisterPath(repoPath) });
+  // Kernel K-N2-1: a Team install's ledger refuses a person's event that
+  // names no one; an unreadable user config is an error, never Solo (M6).
+  let setup: "solo" | "team";
+  try {
+    setup = userSetup();
+  } catch (err) {
+    db.close();
+    throw err;
+  }
+  const log = new EventLog(db, { erasureRegister: erasureRegisterPath(repoPath), setup });
   log.ensureLocalPerson(person);
   log.retryBlobErasures(new BlobStore(repoPath));
   // RUN-57: likewise any run file (transcript, observation) an erasure named.
@@ -170,6 +181,9 @@ export async function ledgerCommand(
       }
       const { path, seq } = await log.backup(resolve(target), { principal: log.localPrincipal() });
       console.log(`Backed up the ledger through seq ${seq} to ${path} (verified).`);
+      // security item 35a: the Team setup's credential store goes with every backup, at 0600.
+      const credentials = backupCredentials(identityDir(), path);
+      if (credentials) console.log(`The credential store is backed up beside it (${credentials}).`);
       console.log(
         `The erasure register stays at ${erasureRegisterPath(repoPath)}; keep it with your backups.`,
       );
@@ -214,6 +228,8 @@ async function restoreCommand(argv: readonly string[], repoPath: string): Promis
     );
     if (report.previousKeptAt)
       console.log(`The ledger it replaced is kept at ${report.previousKeptAt}.`);
+    if (restoreCredentials(identityDir(), resolve(backup)))
+      console.log("The credential store was restored with it.");
     return 0;
   } catch (err) {
     if (err instanceof RestoreRefused) {

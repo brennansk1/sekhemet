@@ -352,6 +352,9 @@ export function runInit(
     ".sekhemet/*.db-*",
     ".sekhemet/daemon.*",
     ".sekhemet/observations/",
+    // The runner lease and each running card's slot lease (runtime item 3, RUN-35).
+    ".sekhemet/runner.lock",
+    ".sekhemet/slots/",
   ];
   const have = existsSync(gi) ? readFileSync(gi, "utf8") : "";
   const missing = need.filter((l) => !have.split("\n").includes(l));

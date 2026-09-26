@@ -1,7 +1,7 @@
 // Integrations (PM_DESIGN §3.5, PM_CONTRACT §5): Now / Next / Later. Every
 // entry says what leaves this machine when connected; nothing is on by default.
 // Import is a preview of proposals, never a silent write.
-import { esc, getJSON, icon, postJSON } from "./dom.js";
+import { esc, getJSON, icon, postJSON, sendJSON } from "./dom.js";
 import { formatWait } from "./lib/vocabulary.js";
 import { bindProposals, proposalGroupHtml } from "./proposals.js";
 import { setTopbar } from "./shell.js";
@@ -346,23 +346,8 @@ async function withBusy(key, fn) {
   }
 }
 
-async function send(method, path, body) {
-  try {
-    const res = await fetch(path, {
-      method,
-      headers: { "Content-Type": "application/json", "X-Sekhemet-Action": "1" },
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    let data = null;
-    try {
-      data = await res.json();
-    } catch {
-      data = null;
-    }
-    return { ok: res.ok, status: res.status, data };
-  } catch (err) {
-    return { ok: false, status: 0, data: { error: String(err?.message ?? err) } };
-  }
+function send(method, path, body) {
+  return sendJSON(method, path, body || undefined);
 }
 
 function err(r) {

@@ -602,6 +602,8 @@ export interface IntegrationsContext {
   json: (res: ServerResponse, status: number, body: unknown) => void;
   readJsonBody: (req: IncomingMessage, limit?: number) => Promise<Record<string, unknown>>;
   mutationGuard: (req: IncomingMessage, res: ServerResponse) => CardStore | undefined;
+  /** The person a request is for (teams §2.3, kernel rule 19). */
+  principalOf?: (req: IncomingMessage) => string;
 }
 
 export async function handleIntegrationsApi(
