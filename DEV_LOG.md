@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 37 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 38 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,26 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 38 — 2026-09-25 (the Researcher's shallow clone under the one network policy; B4.10 in its fix round; baseline paused)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver; one independent reviewer (Sonnet) for the fix.
+
+- **Fix (security item 33, NEW-security-8):**
+  - **The finding:** the B4.9 re-check found `shallowClone` (`research/repo.ts`) ran `git clone` or `git fetch` to github.com with no policy decision and no record.
+  - **Decision:** kept rather than removed, because design-stage item 10 gives the Researcher a shallow clone into the cache.
+  - **The fix:** it now takes the research gate (`researchGate`: the one network policy plus the person's research consent). The gate decides for github.com, purpose `research:git`, before any git runs, and a refusal is thrown before any git.
+  - **Tests:** written first, and seen failing, because the old code tried a real clone. They cover offline and outside `fetch_allow`, for both a new clone and a cached clone's refresh (`research_gate.spec.ts`).
+  - **Status:** not yet offered to the Researcher as a tool, as security.md says. The review passed with no findings.
+- **Gate:** a snapshot of `2e4168f` plus the three files: `tsc -b` and Biome clean, 318 files and 2,407 tests pass, exit codes checked.
+  - A first attempt ran in the main worktree, because the scratchpad snapshot had been cleaned between sessions and the `cd` failed. The gate script now refuses to run outside its snapshot.
+- **The owner paused model loads tonight** (they need the RAM). The B2.5 driver stays stopped. `thinking-all` r1 (exit 143) and `strict` r1 (interrupted) have no results and rerun when it resumes. `thinking-surgical` r1 is done and waits for its rescore.
+- **Where the cards stop:**
+  - B4.10 part 1 (the server side: identity, access, the fair queue) is built. Its review found 2 blockers (events named the server's user, not the requester; a personal token's scope was not a ceiling) and 7 majors, and the fix round is running.
+  - Lead decision (DEC-42): with no Accept rule set, the project lead, else the Admins, may accept.
+  - B4.10 part 2 (the Sign in page, account menu and sessions) is being built.
+  - Still to come: RUN-35 per-slot leases.
+  - The common-password list awaits the owner's approval to download.
 
 ### Entry 37 — 2026-09-25 (B4.9 done: part 2, the notifier, import and the GitHub sync criteria)
 

@@ -252,9 +252,19 @@ const cloneRoot = (): string =>
 /**
  * A shallow clone, for a question that needs more than a few files. After
  * this, reads are local: grep, tree-sitter, the whole toolchain.
+ *
+ * The clone and its refresh reach github.com, so the research network gate
+ * (`researchGate`: the one network policy plus the person's research yes)
+ * decides first and records the request; a refusal is thrown before any git
+ * runs (security item 33, NEW-security-8).
  */
-export function shallowClone(r: RepoRef, ref = "HEAD"): string | undefined {
+export async function shallowClone(
+  r: RepoRef,
+  gate: (url: string, via: string) => Promise<void>,
+  ref = "HEAD",
+): Promise<string | undefined> {
   const dir = join(cloneRoot(), `${r.owner}-${r.repo}`);
+  await gate(`https://github.com/${r.owner}/${r.repo}.git`, "git");
   try {
     if (existsSync(join(dir, ".git"))) {
       execFileSync("git", ["-C", dir, "fetch", "--depth", "1", "origin", ref], {

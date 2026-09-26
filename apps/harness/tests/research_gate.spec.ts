@@ -1,12 +1,14 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { EventLog, initSchema } from "@sekhemet/kernel";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PageCrawler } from "../src/research/crawl4ai.js";
+import { shallowClone } from "../src/research/repo.js";
 import { researchSources } from "../src/research/service.js";
 import { fetchPage, githubSearch } from "../src/research/web.js";
+import { researchGate } from "../src/research_consent.js";
 
 /**
  * NEW-security-8 (security item 29a, SEC-52a, SEC-52b): the requests research
@@ -133,6 +135,41 @@ describe("NEW-security-8: gh and Crawl4AI under the one network policy", () => {
         allowed: true,
         purpose: "research:crawl4ai",
       }),
+    );
+  });
+});
+
+describe("security item 33: the Researcher's shallow clone passes the one network policy", () => {
+  const cacheDir = () => {
+    const d = mkdtempSync(join(tmpdir(), "research-repo-cache-"));
+    dirs.push(d);
+    vi.stubEnv("SEKHEMET_REPO_CACHE", d);
+    return d;
+  };
+
+  it("offline, refuses a new clone before git runs, and records the refusal", async () => {
+    user('mode = "offline"');
+    const cache = cacheDir();
+    await expect(
+      shallowClone({ owner: "octo", repo: "hello" }, researchGate(repo, log)),
+    ).rejects.toThrow(/network policy refused github\.com/);
+    expect(readdirSync(cache)).toEqual([]);
+    expect(await egress()).toContainEqual(
+      expect.objectContaining({ host: "github.com", allowed: false, purpose: "research:git" }),
+    );
+  });
+
+  it("refuses the refresh of a cached clone the same way (research outside fetch_allow)", async () => {
+    user('research = "yes"\nfetch_allow = ["registry.npmjs.org"]');
+    const cache = cacheDir();
+    mkdirSync(join(cache, "octo-hello", ".git"), { recursive: true });
+    await expect(
+      shallowClone({ owner: "octo", repo: "hello" }, researchGate(repo, log)),
+    ).rejects.toThrow(/research outside fetch_allow/);
+    // git never ran: the placeholder .git is untouched and nothing was fetched.
+    expect(readdirSync(join(cache, "octo-hello", ".git"))).toEqual([]);
+    expect(await egress()).toContainEqual(
+      expect.objectContaining({ host: "github.com", allowed: false, purpose: "research:git" }),
     );
   });
 });
