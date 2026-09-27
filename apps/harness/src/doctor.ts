@@ -2,6 +2,8 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { freemem, platform, totalmem } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { EventLog } from "@sekhemet/kernel";
 import {
   type WeightsReport,
   classifyMemoryPressure,
@@ -16,6 +18,7 @@ import { configUpgradeCheck } from "./config_upgrade.js";
 import { toolProbeOptions } from "./init.js";
 import { pendingM0InRepo } from "./m0_path.js";
 import { checkRegisters } from "./registers.js";
+import { researchDoctorLines } from "./research_bakeoff.js";
 import { readMoveRecord, userDir } from "./user_dir.js";
 import { hookEngineFor } from "./user_hooks.js";
 import { playbookDoctorCheck } from "./wave2.js";
@@ -265,6 +268,7 @@ export async function runDoctor(repoPath: string = process.cwd()): Promise<Docto
     configUpgradeCheck([join(repoPath, ".sekhemet", "config.toml"), userConfigPath()]),
     hooksCheck(repoPath),
     researchConsentCheck(repoPath),
+    await researchPipelineCheck(repoPath),
   ];
 
   return { ok: checks.every((c) => c.status !== "fail"), checks };
@@ -342,6 +346,31 @@ export function researchConsentCheck(repoPath: string): DiagnosticCheck {
       ? "research may use the network, through the network policy"
       : "research stays offline",
   );
+}
+
+/**
+ * DS-N2-9: the research pipelines the latest golden-set run found worse for
+ * a model, "not recommended", with its numbers; research routes each model
+ * to the recommended one. Read-only; no ledger or no run passes.
+ */
+export async function researchPipelineCheck(repoPath: string): Promise<DiagnosticCheck> {
+  const path = join(repoPath, ".sekhemet", "events.db");
+  if (!existsSync(path)) return check("Research pipelines", "pass", "no golden-set run recorded");
+  const db = new DatabaseSync(path, { readOnly: true });
+  try {
+    const lines = await researchDoctorLines(new EventLog(db));
+    return lines.length
+      ? check("Research pipelines", "warn", lines.join("; "))
+      : check("Research pipelines", "pass", "no pipeline found worse on the research golden set");
+  } catch (err) {
+    // A ledger older than the events table has no run to read.
+    if (/no such table/i.test(String(err))) {
+      return check("Research pipelines", "pass", "no golden-set run recorded");
+    }
+    throw err;
+  } finally {
+    db.close();
+  }
 }
 
 /**

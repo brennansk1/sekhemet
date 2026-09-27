@@ -1,0 +1,384 @@
+[
+  {
+    "id": "rg-01",
+    "category": "api-signature",
+    "question": "What is the signature of itertools.batched in Python 3.12?",
+    "pinned": "python@3.12",
+    "parts": [
+      {
+        "kind": "text",
+        "value": "itertools.batched(iterable, n)",
+        "accept": ["batched(iterable, n)"]
+      }
+    ],
+    "source": "https://docs.python.org/3.12/library/itertools.html#itertools.batched",
+    "status": "draft"
+  },
+  {
+    "id": "rg-02",
+    "category": "licence",
+    "question": "Under which licence is lodash 4.17.21 published?",
+    "pinned": "lodash@4.17.21",
+    "parts": [
+      {
+        "kind": "licence",
+        "value": "MIT"
+      }
+    ],
+    "source": "https://github.com/lodash/lodash/blob/4.17.21/LICENSE",
+    "status": "draft"
+  },
+  {
+    "id": "rg-03",
+    "category": "release-date",
+    "question": "On what date was Python 3.12.0 released?",
+    "pinned": "python@3.12.0",
+    "parts": [
+      {
+        "kind": "date",
+        "value": "2023-10-02"
+      }
+    ],
+    "source": "https://www.python.org/downloads/release/python-3120/",
+    "status": "draft"
+  },
+  {
+    "id": "rg-04",
+    "category": "api-signature",
+    "question": "In which Python version was str.removeprefix added, and what is its signature in Python 3.12?",
+    "pinned": "python@3.12",
+    "parts": [
+      {
+        "kind": "text",
+        "value": "3.9",
+        "conflicts": ["3.8", "3.10"]
+      },
+      {
+        "kind": "text",
+        "value": "str.removeprefix(prefix, /)",
+        "accept": ["removeprefix(prefix, /)", "removeprefix(prefix)"]
+      }
+    ],
+    "source": "https://docs.python.org/3.12/library/stdtypes.html#str.removeprefix",
+    "status": "draft"
+  },
+  {
+    "id": "rg-05",
+    "category": "licence",
+    "question": "Under which licence is the SQLite 3.45 source code distributed?",
+    "pinned": "sqlite@3.45",
+    "parts": [
+      {
+        "kind": "licence",
+        "value": "public-domain"
+      }
+    ],
+    "source": "https://www.sqlite.org/copyright.html",
+    "status": "draft"
+  },
+  {
+    "id": "rg-06",
+    "category": "api-signature",
+    "question": "What is the signature of crypto.randomUUID in Node.js 20?",
+    "pinned": "node@20",
+    "parts": [
+      {
+        "kind": "text",
+        "value": "crypto.randomUUID([options])",
+        "accept": ["randomUUID([options])"]
+      }
+    ],
+    "source": "https://nodejs.org/docs/latest-v20.x/api/crypto.html#cryptorandomuuidoptions",
+    "status": "draft"
+  },
+  {
+    "id": "rg-07",
+    "category": "release-date",
+    "question": "On what date was Node.js 20.0.0 released?",
+    "pinned": "node@20.0.0",
+    "parts": [
+      {
+        "kind": "date",
+        "value": "2023-04-18"
+      }
+    ],
+    "source": "https://nodejs.org/en/blog/release/v20.0.0",
+    "status": "draft"
+  },
+  {
+    "id": "rg-08",
+    "category": "licence",
+    "question": "Under which licence is version 2.31.0 of the Python requests library published?",
+    "pinned": "requests@2.31.0",
+    "parts": [
+      {
+        "kind": "licence",
+        "value": "Apache-2.0",
+        "conflicts": ["MIT"]
+      }
+    ],
+    "source": "https://github.com/psf/requests/blob/v2.31.0/LICENSE",
+    "status": "draft"
+  },
+  {
+    "id": "rg-09",
+    "category": "api-signature",
+    "question": "In which Node.js version was the global structuredClone added, and what is its signature in Node.js 20?",
+    "pinned": "node@20",
+    "parts": [
+      {
+        "kind": "text",
+        "value": "17.0.0",
+        "conflicts": ["16.0.0", "18.0.0"]
+      },
+      {
+        "kind": "text",
+        "value": "structuredClone(value[, options])"
+      }
+    ],
+    "source": "https://nodejs.org/docs/latest-v20.x/api/globals.html#structuredclonevalue-options",
+    "status": "draft"
+  },
+  {
+    "id": "rg-10",
+    "category": "release-date",
+    "question": "On what date was TypeScript 5.0 released?",
+    "pinned": "typescript@5.0",
+    "parts": [
+      {
+        "kind": "date",
+        "value": "2023-03-16"
+      }
+    ],
+    "source": "https://devblogs.microsoft.com/typescript/announcing-typescript-5-0/",
+    "status": "draft"
+  },
+  {
+    "id": "rg-11",
+    "category": "api-signature",
+    "question": "What is the signature of _.debounce in lodash 4.17.21?",
+    "pinned": "lodash@4.17.21",
+    "parts": [
+      {
+        "kind": "text",
+        "value": "_.debounce(func, [wait=0], [options={}])",
+        "accept": ["debounce(func, [wait=0], [options={}])"]
+      }
+    ],
+    "source": "https://lodash.com/docs/4.17.15#debounce",
+    "status": "draft"
+  },
+  {
+    "id": "rg-12",
+    "category": "licence",
+    "question": "Under which licence is TypeScript 5.4 published?",
+    "pinned": "typescript@5.4",
+    "parts": [
+      {
+        "kind": "licence",
+        "value": "Apache-2.0",
+        "conflicts": ["MIT"]
+      }
+    ],
+    "source": "https://github.com/microsoft/TypeScript/blob/v5.4.2/LICENSE.txt",
+    "status": "draft"
+  },
+  {
+    "id": "rg-13",
+    "category": "release-date",
+    "question": "On what date was React 18.0.0 released?",
+    "pinned": "react@18.0.0",
+    "parts": [
+      {
+        "kind": "date",
+        "value": "2022-03-29"
+      }
+    ],
+    "source": "https://react.dev/blog/2022/03/29/react-v18",
+    "status": "draft"
+  },
+  {
+    "id": "rg-14",
+    "category": "api-signature",
+    "question": "What is the signature of pathlib.Path.walk in Python 3.12?",
+    "pinned": "python@3.12",
+    "parts": [
+      {
+        "kind": "text",
+        "value": "Path.walk(top_down=True, on_error=None, follow_symlinks=False)",
+        "accept": ["walk(top_down=True, on_error=None, follow_symlinks=False)"]
+      }
+    ],
+    "source": "https://docs.python.org/3.12/library/pathlib.html#pathlib.Path.walk",
+    "status": "draft"
+  },
+  {
+    "id": "rg-15",
+    "category": "licence",
+    "question": "Under which licence is Redis 7.2 released?",
+    "pinned": "redis@7.2",
+    "parts": [
+      {
+        "kind": "licence",
+        "value": "BSD-3-Clause"
+      }
+    ],
+    "source": "https://github.com/redis/redis/blob/7.2/COPYING",
+    "status": "draft"
+  },
+  {
+    "id": "rg-16",
+    "category": "release-date",
+    "question": "On what date was Rust 1.0 released?",
+    "pinned": "rust@1.0.0",
+    "parts": [
+      {
+        "kind": "date",
+        "value": "2015-05-15"
+      }
+    ],
+    "source": "https://blog.rust-lang.org/2015/05/15/Rust-1.0.html",
+    "status": "draft"
+  },
+  {
+    "id": "rg-17",
+    "category": "api-signature",
+    "question": "What is the signature of app.listen in Express 4?",
+    "pinned": "express@4",
+    "parts": [
+      {
+        "kind": "text",
+        "value": "app.listen([port[, host[, backlog]]][, callback])",
+        "accept": ["listen([port[, host[, backlog]]][, callback])"]
+      }
+    ],
+    "source": "https://expressjs.com/en/4x/api.html#app.listen",
+    "status": "draft"
+  },
+  {
+    "id": "rg-18",
+    "category": "licence",
+    "question": "Under which licence is Node.js 20 published?",
+    "pinned": "node@20",
+    "parts": [
+      {
+        "kind": "licence",
+        "value": "MIT"
+      }
+    ],
+    "source": "https://github.com/nodejs/node/blob/v20.x/LICENSE",
+    "status": "draft"
+  },
+  {
+    "id": "rg-19",
+    "category": "release-date",
+    "question": "On what date was Go 1.18 released?",
+    "pinned": "go@1.18",
+    "parts": [
+      {
+        "kind": "date",
+        "value": "2022-03-15"
+      }
+    ],
+    "source": "https://go.dev/doc/devel/release#go1.18",
+    "status": "draft"
+  },
+  {
+    "id": "rg-20",
+    "category": "api-signature",
+    "question": "In which Python version was math.isqrt added, and what is its signature in Python 3.12?",
+    "pinned": "python@3.12",
+    "parts": [
+      {
+        "kind": "text",
+        "value": "3.8",
+        "conflicts": ["3.7", "3.9"]
+      },
+      {
+        "kind": "text",
+        "value": "math.isqrt(n)",
+        "accept": ["isqrt(n)"]
+      }
+    ],
+    "source": "https://docs.python.org/3.12/library/math.html#math.isqrt",
+    "status": "draft"
+  },
+  {
+    "id": "rg-21",
+    "category": "licence",
+    "question": "Under which licence is PostgreSQL 16 released?",
+    "pinned": "postgresql@16",
+    "parts": [
+      {
+        "kind": "licence",
+        "value": "PostgreSQL"
+      }
+    ],
+    "source": "https://www.postgresql.org/about/licence/",
+    "status": "draft"
+  },
+  {
+    "id": "rg-22",
+    "category": "release-date",
+    "question": "On what date did JDK 21 reach general availability?",
+    "pinned": "openjdk@21",
+    "parts": [
+      {
+        "kind": "date",
+        "value": "2023-09-19"
+      }
+    ],
+    "source": "https://openjdk.org/projects/jdk/21/",
+    "status": "draft"
+  },
+  {
+    "id": "rg-23",
+    "category": "api-signature",
+    "question": "What is the signature of fs.readFile (the callback form) in Node.js 20?",
+    "pinned": "node@20",
+    "parts": [
+      {
+        "kind": "text",
+        "value": "fs.readFile(path[, options], callback)",
+        "accept": ["readFile(path[, options], callback)"]
+      }
+    ],
+    "source": "https://nodejs.org/docs/latest-v20.x/api/fs.html#fsreadfilepath-options-callback",
+    "status": "draft"
+  },
+  {
+    "id": "rg-24",
+    "category": "licence",
+    "question": "Under which licence is Django 5.0 released?",
+    "pinned": "django@5.0",
+    "parts": [
+      {
+        "kind": "licence",
+        "value": "BSD-3-Clause",
+        "conflicts": ["MIT"]
+      }
+    ],
+    "source": "https://github.com/django/django/blob/stable/5.0.x/LICENSE",
+    "status": "draft"
+  },
+  {
+    "id": "rg-25",
+    "category": "api-signature",
+    "question": "In which Python version was functools.cache added, and what is its signature in Python 3.12?",
+    "pinned": "python@3.12",
+    "parts": [
+      {
+        "kind": "text",
+        "value": "3.9",
+        "conflicts": ["3.8", "3.10"]
+      },
+      {
+        "kind": "text",
+        "value": "functools.cache(user_function)",
+        "accept": ["cache(user_function)"]
+      }
+    ],
+    "source": "https://docs.python.org/3.12/library/functools.html#functools.cache",
+    "status": "draft"
+  }
+]

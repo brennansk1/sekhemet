@@ -12,7 +12,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, extname, isAbsolute, join, normalize, relative, sep } from "node:path";
-import type { CardChange } from "@sekhemet/kernel";
+import type { DatabaseSync } from "node:sqlite";
+import { type CardChange, type DepthProfile, depthProfileOf } from "@sekhemet/kernel";
 import type { ProcessSandbox } from "@sekhemet/sandbox";
 import { gitEnvFor } from "@sekhemet/sync";
 import { scanHalfDone } from "./half_done.js";
@@ -36,8 +37,9 @@ import type { GateDefinition } from "./types.js";
  *   implementations of those exports; a set that one of them passes cannot
  *   tell a real implementation from a trivial one.
  * - **The test-smell lint and `requireAssertions`** (GT-TQ-6).
- * - **The depth profile** (GT-TQ-12): until the project's own profile exists
- *   (P14), every project is *internal tool*, and a test gap that is only
+ * - **The depth profile** (GT-TQ-12, design-stage DS-P14-3): the one a person
+ *   recorded for the card's project, read from the ledger by the kernel's
+ *   `depthProfileOf` — *internal tool* only when none is recorded — and a test gap that is only
  *   advisory goes to a person, never to the Worker.
  *
  * Until the source index exists (T2), the declared interface is read from
@@ -46,7 +48,7 @@ import type { GateDefinition } from "./types.js";
 
 // --- The depth profile (rule 32a) --------------------------------------------
 
-export type DepthProfile = "prototype" | "internal tool" | "production" | "regulated";
+export type { DepthProfile } from "@sekhemet/kernel";
 export type StrengthLevel = "blocking" | "advisory" | "off";
 
 /** Rule 32a's table, for the checks this module runs. */
@@ -62,8 +64,8 @@ export const STRENGTH_TABLE: Readonly<
   regulated: { smellLint: "blocking", redAtAssertion: "blocking", stubKill: "blocking" },
 };
 
-/** The profile before P14 exists (rule 32a; confirmation review N7d). */
-export const DEFAULT_DEPTH_PROFILE: DepthProfile = "internal tool";
+/** The profile read when no person has recorded one (rule 32a; the kernel's). */
+export { DEFAULT_DEPTH_PROFILE } from "@sekhemet/kernel";
 
 // --- Parsing ----------------------------------------------------------------
 
@@ -1087,7 +1089,7 @@ export interface TestStrengthRecord {
    */
   redForWrongReason: { test: string; phase: AcceptanceKind; message?: string }[];
   profile: DepthProfile;
-  /** "depth profile: internal tool (default)" until P14 exists (GT-TQ-12). */
+  /** "depth profile: internal tool (default)" when no person recorded one (GT-TQ-12, DS-P14-3). */
   profileNote: string;
   interface: { file: string; exists: boolean; missing: string[] }[];
   smells: TestSmell[];
@@ -1197,7 +1199,12 @@ export interface TestStrengthInput {
   change?: CardChange | undefined;
   /** `interface`: a types-only card, red on the typecheck (rule 6). */
   kind?: string | undefined;
+  /** A profile the caller already read; omitted, the one recorded on `ledger` is read. */
   profile?: DepthProfile | undefined;
+  /** The ledger the card's project's depth profile is recorded on (DS-P14-3). */
+  ledger?: DatabaseSync | undefined;
+  /** The card's project, whose recorded profile applies. */
+  projectId?: string | undefined;
 }
 
 function list(items: readonly string[], max = 4): string {
@@ -1345,9 +1352,13 @@ export function preserveTree(cwd: string): () => void {
 }
 
 async function judgeStrength(input: TestStrengthInput): Promise<TestStrengthRecord> {
-  const profile = input.profile ?? DEFAULT_DEPTH_PROFILE;
+  const depth =
+    input.profile !== undefined
+      ? { profile: input.profile, recorded: true }
+      : depthProfileOf(input.ledger, input.projectId);
+  const profile = depth.profile;
   const rules = STRENGTH_TABLE[profile];
-  const profileNote = `depth profile: ${profile}${input.profile ? "" : " (default)"}`;
+  const profileNote = `depth profile: ${profile}${depth.recorded ? "" : " (default)"}`;
   const tests = [...input.tests];
   const iface = declaredInterface(input.root, tests);
   const originOf = (file: string): TestOrigin =>

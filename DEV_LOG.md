@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 47 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 48 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,80 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 48 — 2026-09-26 (B4.4 done: start a project by conversation; depth profile, comparables and walkthrough; project documents in the repository; the rest of taking over a project; inherited issues; research that can be verified)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver. First workstream run as **workflows sized to the owner's 5-hour budget** (asked before each launch). Calibration: 1% of a window ≈ 83k tokens, so a window ≈ 8.3M.
+- **Scout:** one explorer.
+- **Window 1 (1.16M):** contracts, G1 design judgement + depth profile, G3 project documents, G5 take-over + inherited issues; then one integration agent (0.4M).
+- **Window 2 (2.58M):** G2 start by conversation, G6 research golden set + bake-off, G4 research quality, an integration agent, the pre-review sweep, two review halves each piped into its fixer.
+- **Then** one final fix round (0.45M).
+
+- **Contracts (kernel):**
+  - the project's recorded depth profile, read everywhere (board, gates, planner, runner) in place of the hard-coded *internal tool*;
+  - the quality checklist (security from *internal tool* up);
+  - requirement sources (person, model proposal, comparable, checklist, take-over) with candidates a person accepts;
+  - walkthroughs per role;
+  - take-over records (brief as found, the questions, the backlog, the plan's approval);
+  - inherited-issue reconciliation;
+  - project-document export and import records;
+  - `deliveredAt`;
+  - `release/tagged` and `decision/default_applied` registered.
+- **P2:**
+  - `start_project` returns one proposal group (epics, the first slice's cards with criteria and points, MoSCoW candidates with a release line, forecasts, at most two questions, card zero and card one); nothing exists before approval;
+  - applying it creates the project through the one pipeline, with the person as actor;
+  - card zero runs the ecosystem generator as a card, reaching only its package registry (a separate egress proxy, recorded, `fetch_deny` still wins), and its gates are derived on acceptance;
+  - card one is a test written by the Worker in the `test-author` role, and its gate passes only when it fails at an assertion for its stated reason;
+  - an empty folder offers a start by conversation;
+  - the Review plan view;
+  - specs are never refused (at most two questions open, the rest as assumptions with defaults);
+  - a question already answered by the ledger's accepted brief, a decision or a playbook rule is not asked.
+- **P14 and NEW-design-stage-1:**
+  - a proposed depth profile, the checklist, comparables under the research consent, one walkthrough per role, proposals labelled as such;
+  - design judgement: risk, stack, invariants, non-goals ("Not stated"), no banned words, at most two open questions.
+- **NEW-design-stage-3:** the brief, requirements, MADR decision records and the CHANGELOG exported with a generated header on a card's Accept.
+  - A merged edit to a generated document is diffed and proposed back.
+  - `--no-names`; an existing ADR folder honoured; README and CONTRIBUTING changes only offered.
+  - A release's documents commit may touch only the exported files, or the proven sha is tagged.
+- **NEW-design-stage-6:**
+  - the brief as found (proven, claimed, contradicted, with evidence);
+  - repository text only inside the untrusted wrapper;
+  - one batch of up to five safe-default questions;
+  - the evidenced backlog (stabilise, finish, defer);
+  - approval through the one pipeline (no title-only card);
+  - re-runs propose nothing already created;
+  - an empty board offers Start and Take over;
+  - take-over fixtures.
+- **NEW-integrations-4:** inherited issues reconciled as done, duplicate, stale or valid, with evidence, as proposals a person applies.
+- **NEW-design-stage-2, -4, -5:**
+  - one citation check against text actually fetched, and a refused fetch never counts as read;
+  - recall per repository and version;
+  - claim scripts confined;
+  - revisions, adjudication and disagreements in the pipeline;
+  - effort caps and a closing rule;
+  - the network refusal names its file (never an absolute home path) and rule;
+  - the Researcher asked before the repair plans, with the card in hand, redacted and local only, its answer stored whole.
+- **NEW-models-11 / DS-N2-9:** the 25-question research golden set and the Researcher bake-off runner (an errored contender is "not measured", adoption only for a qualified model), all with fake adapters.
+- **Reviews:**
+  - **Half A:** 0 blockers, 5 majors: an unranked question's default recorded as an answer; hard rules filed as non-goals; absolute paths in refusals; settling from any brief line; the Team setup's button.
+  - **Half B:** 0 blockers, 6 majors: `start_project` over an existing project; the Team button; errored bake-off contenders graded 0; unqualified adoption; the repair question's content; refused fetches counted as read.
+  - All fixed.
+- **Gate:** `pnpm gate` on the committed tree: `tsc -b` and `biome check .` clean; vitest 552 files, 4075 passed, 37 skipped, exit 0. The gate found two things before it passed, both fixed test first: `card_zero.ts`'s `git archive` now runs in the hardened git environment, with its allowlist entry; and a race in the visual layer (`visual.ts` read Chromium's DevToolsActivePort before both lines were written) now waits for a complete, stable file (`parseDevToolsPort`; `devtools_port.spec.ts`).
+- **Where the cards stop:**
+  - B4.4 is done.
+  - **Partial, marked so in the specs:**
+    - Seshat phrasing the design stage (rules decide today);
+    - TEAM-20's *Send for approval* (an Admin creates the project in the Team setup);
+    - DS-N3-9 user documentation;
+    - card one's stub must already exist;
+    - a first-time header-less document becomes a Seshat note.
+  - **Waiting on model loads (the B4.4 milestone, "a non-developer starting a project by conversation"):**
+    - the five greenfield specs to green gates after card one;
+    - the take-over fixtures to an accepted card;
+    - the golden-brief recall;
+    - the research golden set and the Researcher bake-off;
+    - Tier 3.
+  - **Next:** B4.6, the professional board (needs B4.3).
 
 ### Entry 47 — 2026-09-26 (B4.3 done: one planner, model first, with an acceptance-criterion contract; project done computed from a requirement graph, with slices and appetite)
 

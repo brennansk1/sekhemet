@@ -1,5 +1,5 @@
 // Board (FRONTEND_DESIGN §2.4.2): columns, rails, keyed tile patching, keyboard.
-import { $, $$, esc, icon, tip } from "./dom.js";
+import { $, $$, esc, icon, postJSON, tip } from "./dom.js";
 import { fieldKey, selectionOrFocused } from "./fields.js";
 import * as lanes from "./lanes.js";
 import { formatQuery, sortByPriority } from "./lib/pm.js";
@@ -14,6 +14,7 @@ import {
 import * as listView from "./list.js";
 import { openMenu } from "./overlay.js";
 import { openPeek, peekOpenFor } from "./peek.js";
+import { askMerit, togglePmPanel } from "./pm_panel.js";
 import { bindReorder } from "./reorder.js";
 import { setTopbar } from "./shell.js";
 import { store } from "./store.js";
@@ -352,7 +353,8 @@ function render() {
 
   if (s.loaded && s.cards.length === 0) {
     ui.layoutKey = "";
-    ui.root.innerHTML = `<div class="board-empty">${icon("glyph", 24, "ic s24")}<b>No cards yet.</b><span>Plan a feature into cards: <code>sekhemet plan "Build a tamper-evident ledger"</code></span><span>Or seed a fixture: <code>node scripts/seed_project.mjs chronicle</code></span></div>`;
+    // DS-TO-16 (dashboard item 10): start from a brief, or take over a repository someone left.
+    ui.root.innerHTML = `<div class="board-empty">${icon("glyph", 24, "ic s24")}<b>No cards yet.</b><span class="board-empty-acts"><button type="button" class="btn primary" data-empty-action="start">Start a project</button> <button type="button" class="btn" data-empty-action="takeover">Take over a project</button></span><span>Take over reads a repository someone else left, runs what it can once you trust it, and proposes a plan in Seshat.</span><span>From the terminal: <code>sekhemet plan "Build a tamper-evident ledger"</code></span></div>`;
     return;
   }
   $(".board-empty", ui.root)?.remove();
@@ -620,9 +622,36 @@ function hideTip() {
 
 /* ---------- Mount ---------- */
 
+/** The empty board's two ways in (DS-TO-16): both open Seshat. */
+async function emptyAction(action) {
+  if (action === "start") {
+    askMerit("Start a project: ");
+    return;
+  }
+  togglePmPanel(true);
+  toast({
+    tone: "info",
+    text: "Taking over this repository…",
+    detail: "Seshat posts what it found.",
+  });
+  const r = await postJSON("/api/takeover", {});
+  if (!r.ok) {
+    toast({
+      tone: "fail",
+      text: "The take-over did not run.",
+      detail: r.data?.error ?? `The server returned ${r.status || "no response"}.`,
+    });
+  }
+}
+
 function onClick(e) {
   const t = e.target instanceof Element ? e.target : null;
   if (!t) return;
+  const empty = t.closest("[data-empty-action]");
+  if (empty) {
+    emptyAction(empty.dataset.emptyAction);
+    return;
+  }
   const rail = t.closest("[data-rail]");
   if (rail) {
     ui.expanded.add(rail.dataset.rail);

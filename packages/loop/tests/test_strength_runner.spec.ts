@@ -407,3 +407,21 @@ it("adds a negative", () => { expect(add(2, -7)).toBe(-5); });
     expect(result.evidence.quarantined).toBeUndefined();
   }, 120_000);
 });
+
+// DS-P14-3 at the call site: the runner judges strength under the depth
+// profile a person recorded for the card's project, not the default.
+describe("the recorded depth profile in the card run (DS-P14-3)", () => {
+  it("judges a card's tests under its project's recorded profile", async () => {
+    const project = await store.ensureProject({ rootPath: repo, name: "Shop" });
+    await store.depthProfiles.choose({ profile: "prototype", projectId: project.id }, "p_owner");
+    const c = await card({ projectId: project.id });
+    const result = await runner(
+      c,
+      `import { expect, it } from "vitest";
+import { add } from "../src/math.js";
+it("adds", () => { expect(add(2, 3)).toBe(5); });
+`,
+    ).run();
+    expect(result.evidence.testStrength?.profileNote).toBe("depth profile: prototype");
+  });
+});

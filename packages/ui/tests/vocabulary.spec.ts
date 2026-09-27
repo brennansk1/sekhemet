@@ -622,6 +622,17 @@ describe("ledger sentences for Seshat, research, reproducibility and compute", (
       rest: "· grounded, confidence 0.60 · 2 source(s)",
       tone: "pass",
     });
+    // The question is private (it can carry a card's spec and a gate's
+    // output): quoted from the event's private part, its first line only.
+    expect(
+      eventSentence({
+        ...ev("research/asked", "researcher", { grounded: false, sources: [] }),
+        private: { question: "Why does the WAL test fail?\nSpec: the card's whole spec" },
+      }).quote,
+    ).toBe("Why does the WAL test fail?");
+    expect(
+      eventSentence(ev("research/asked", "researcher", { grounded: false })).quote,
+    ).toBeUndefined();
     expect(
       eventSentence(
         ev("card/repro", "harness", { model: { id: "apodex-1.1-mini", quant: "IQ3_M" } }),

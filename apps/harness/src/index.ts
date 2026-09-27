@@ -47,7 +47,7 @@ import {
   readSwapUsedBytes,
   resolveWorkerModelId,
 } from "@sekhemet/models";
-import { SpidrFeaturePlanner, resolvePlannerModel } from "@sekhemet/planner";
+import { DESIGN_COPY, SpidrFeaturePlanner, resolvePlannerModel } from "@sekhemet/planner";
 import {
   ProcessSandbox,
   confinedSandbox,
@@ -164,8 +164,10 @@ import { diffTrajectories, formatDiff, formatTrajectory, trajectories } from "./
 import { isResearchCard, runResearchCard } from "./research/cards.js";
 import { CRAWL4AI_CREDIT, runResearchCommand } from "./research/cli.js";
 import { planResearch } from "./research/plan_research.js";
+import { type FailingCard, type RepairResearch, researchBeforeRepair } from "./research/repair.js";
 import { ResearchService, researchSources } from "./research/service.js";
 import { oneShotResearcher } from "./research/service.js";
+import { runResearchBakeoffCommand } from "./research_bakeoff.js";
 import {
   mayStartCard,
   parseUntil,
@@ -269,6 +271,7 @@ export interface CliConfig {
     | "accept"
     | "tune"
     | "research"
+    | "research-bakeoff"
     | "overnight"
     | "calibrate"
     | "prompt-screen"
@@ -721,6 +724,23 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     process.exit(researchCode);
   }
 
+  if (config.command === "research-bakeoff") {
+    // `sekhemet research-bakeoff [--models …] [--pipelines …] [--adopt] |
+    // --adopt-from <run>`: the Researcher bake-off on the research golden set
+    // (DS-N2-9, MD-N11-1..3), recorded on this repository's ledger.
+    mkdirSync(join(config.repoPath, ".sekhemet"), { recursive: true });
+    const db = new DatabaseSync(join(config.repoPath, ".sekhemet", "events.db"));
+    initSchema(db);
+    const bakeoffLog = new EventLog(db);
+    const code = await runResearchBakeoffCommand(
+      argv.slice(argv.indexOf("research-bakeoff") + 1),
+      { repoPath: config.repoPath, log: bakeoffLog, cardStore: new CardStore(db, bakeoffLog) },
+      { print: (l) => console.log(l) },
+    );
+    // Exit explicitly: model servers and research sidecars must not keep the CLI alive.
+    process.exit(code);
+  }
+
   if (config.command === "explore") {
     // `sekhemet explore [--activate]`: learn the project's constraints from its
     // own configuration before any card runs (RSIAgent's exploration phase).
@@ -1057,6 +1077,35 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     return;
   }
 
+  if (config.command === "take-over" && argv.includes("--approve")) {
+    // `sekhemet dev take-over --approve TOP-n [--project <id>]` (DS-TO-14):
+    // the local person approves the plan; its cards go through the one
+    // planning pipeline (PM-P1-1).
+    const proposalId = argv[argv.indexOf("--approve") + 1];
+    const projectAt = argv.indexOf("--project");
+    const projectId = projectAt === -1 ? undefined : argv[projectAt + 1];
+    if (!proposalId || proposalId.startsWith("-")) {
+      console.error(DESIGN_COPY.takeover.usage);
+      process.exitCode = 1;
+      return;
+    }
+    const { approveTakeoverPlan } = await import("./takeover_backlog.js");
+    try {
+      const r = await approveTakeoverPlan(
+        { repoPath: config.repoPath, cardStore, log, boardService },
+        { proposalId, ...(projectId ? { projectId } : {}) },
+        cardStore.localPrincipal(),
+      );
+      console.log(
+        DESIGN_COPY.takeover.approved(proposalId, r.cards.length, r.defaultsApplied.length),
+      );
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exitCode = 1;
+    }
+    return;
+  }
+
   if (config.command === "take-over") {
     // `sekhemet dev take-over [--yes]` (design-stage §2.10 steps 1–3,
     // NEW-design-stage-6): trust first, recon without a model, and — once
@@ -1331,10 +1380,11 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     // research — asked once, on a new project's first plan, before any
     // request (DS-S8-2) — through the network policy, each query logged.
     // Otherwise, and under --offline, it makes no request and says so.
+    const offline = argv.includes("--offline") || process.env.SEKHEMET_OFFLINE === "1";
     const research = await planResearch({
       repoPath: config.repoPath,
       log,
-      offline: argv.includes("--offline") || process.env.SEKHEMET_OFFLINE === "1",
+      offline,
       newProject: isGreenfield(config.repoPath),
       print: (l) => console.log(l),
       ...(process.stdin.isTTY ? { ask: askYesNo } : {}),
@@ -1353,6 +1403,9 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         ...(sketcher ? { sketcher } : {}),
         ...(plannerTools ? { plannerTools } : {}),
         ...(research ? { research } : {}),
+        // DS-P14-1: the depth offer is answered only by a person at a terminal.
+        ...(process.stdin.isTTY ? { ask: askLine } : {}),
+        ...(offline ? { offline } : {}),
       });
     } finally {
       await hub?.close();
@@ -1793,6 +1846,8 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
           restrictedMode: config.restrictedMode,
           cardStore,
           boardService,
+          // DS-N3-1: the project documents follow the accept.
+          eventLog: log,
         },
         card,
       );
@@ -2716,7 +2771,13 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         if (reviewed?.status === "review") {
           // --auto-accept is the harness's verdict, not a person's: the ledger
           // must not credit a human with a merge nobody reviewed.
-          const sha = await acceptCard(ctx, reviewed, "harness", autoRun ? { autoRun } : {});
+          const sha = await acceptCard(
+            // DS-N3-1: the project documents follow the accept.
+            { ...ctx, eventLog: log },
+            reviewed,
+            "harness",
+            autoRun ? { autoRun } : {},
+          );
           accepted = true;
           console.log(`   accepted -> main ${sha.slice(0, 10)}`);
         }
@@ -2986,8 +3047,41 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
             .filter(({ card }) => !retried.has(card.id));
           if (halted || !managerModel || toRepair.length === 0) break;
 
-          // Researcher batch: one load, every unexplained struggle.
+          // Researcher batch, before any plan (NEW-design-stage-5): one load, up
+          // to four cards with an unexplained struggle, failing cards first. Each
+          // is asked with its spec, criteria, scope files, the failing gate's
+          // typed failure and the detected stack (DS-N5-1); the answer is stored
+          // whole on the card's dossier (DS-N5-3) and goes to the plan's author
+          // (DS-N5-2).
+          const researched = new Map<string, RepairResearch>();
           if (askResearcher && unexplained.length > 0) {
+            const struggles = unexplained.splice(0, unexplained.length);
+            const byCard = new Map<string, string[]>();
+            for (const u of struggles)
+              byCard.set(u.cardId, [...(byCard.get(u.cardId) ?? []), u.text]);
+            const failing = toRepair.flatMap(({ card, result }) =>
+              byCard.has(card.id)
+                ? [
+                    {
+                      card,
+                      failures: result.replan?.failures ?? result.evidence.failures,
+                      struggle: (byCard.get(card.id) ?? []).join("\n"),
+                    },
+                  ]
+                : [],
+            );
+            const passedStruggles: FailingCard[] = [];
+            for (const [cardId, texts] of byCard) {
+              if (failing.some((f) => f.card.id === cardId)) continue;
+              const struggled = await cardStore.getCard(cardId);
+              if (struggled)
+                passedStruggles.push({ card: struggled, failures: [], struggle: texts.join("\n") });
+            }
+            const chosen = [...failing, ...passedStruggles].slice(0, 4);
+            // Struggles not asked about this round wait for the next.
+            unexplained.push(
+              ...struggles.filter((u) => !chosen.some((c) => c.card.id === u.cardId)),
+            );
             const { web } = await researchSources(config.repoPath, { log });
             // Models rule 20e: the batch is one queued request, held until it ends.
             const researcher = router.queuedModel("researcher");
@@ -2999,35 +3093,40 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
               model: researcher.model,
             });
             try {
-              for (const u of unexplained.splice(0, 4)) {
-                const r = await service
-                  .ask(
-                    `A coding model working on this TypeScript project hit this error and needed several attempts to fix it: "${u.text}". What is the correct approach? Give one concrete rule.`,
-                    { cardId: u.cardId },
-                  )
-                  .catch(() => undefined);
-                if (!r?.grounded) continue;
-                const struggled = await cardStore.getCard(u.cardId);
+              // The question carries the card and the gate's output: asked
+              // only of a Researcher on this machine (DS-N5-1).
+              const answers = await researchBeforeRepair(config.repoPath, chosen, (q, cardId) =>
+                service.ask(q, { cardId, localOnly: true }),
+              );
+              for (const c of chosen) {
+                const r = answers.get(c.card.id);
+                if (!r) continue;
+                researched.set(c.card.id, r);
                 const rule = await ctx.learning.propose({
                   role: "worker",
                   text: r.answer.slice(0, 500),
                   // CX-N4-1: scoped to the struggle's error code and the card's kind.
-                  scope: researchRuleScope(struggled ?? { title: "", scopeFiles: [] }, u.text),
+                  scope: researchRuleScope(c.card, c.struggle ?? ""),
                   source: "research",
                   // The struggle is the executed signal; the Researcher's answer
                   // is a synthesis (MS-T8-9). The candidate waits for a person:
                   // probation is off (O15, MS-T8-15).
                   evidence: [
-                    { cardId: u.cardId, note: u.text, source: "gate", verified: "execution" },
                     {
-                      cardId: u.cardId,
+                      cardId: c.card.id,
+                      note: c.struggle ?? "",
+                      source: "gate",
+                      verified: "execution",
+                    },
+                    {
+                      cardId: c.card.id,
                       note: `Researcher, sources: ${r.sources.join("; ")}`,
                       source: "researcher",
                       verified: "none",
                     },
                   ],
                 });
-                if (rule) console.log(`   Researcher proposed a candidate rule for ${u.cardId}`);
+                if (rule) console.log(`   Researcher proposed a candidate rule for ${c.card.id}`);
               }
             } finally {
               await researcher.release();
@@ -3042,6 +3141,12 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
           try {
             for (const { card, result } of toRepair) {
               console.log(`\n--- manager reviewing ${card.id} ---`);
+              const research = researched.get(card.id);
+              if (research) {
+                console.log(
+                  `   researched first: ${research.sources.length} source(s), on the card's dossier`,
+                );
+              }
               // A rung-3 re-plan request carries the Worker's own account of the
               // standing failures; otherwise the evidence's failures.
               const plan = await planRepair(manager, {
@@ -3051,6 +3156,8 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
                   : result.stopReason,
                 failures: result.replan?.failures ?? result.evidence.failures,
                 files: collectCardFiles(result.worktreePath, card),
+                // DS-N5-2: what the Researcher found goes to the Planner whole.
+                ...(research ? { research } : {}),
               });
               plans.set(card.id, plan);
               reflections.push({ card, plan, firstStop: result.stopReason, retryPassed: false });
@@ -3207,10 +3314,18 @@ function printDevHelp(): void {
     ["board [--terminal]", "The board (the bare `sekhemet` opens it; --terminal for text)"],
     ["take-over", "Take over an unfinished project: trust, recon, then what runs"],
     [
+      "take-over --approve TOP-<n> [--project <id>]",
+      "Approve a take-over plan: its cards are planned",
+    ],
+    [
       "trust [--yes] | trust --approve <file>",
       "Trust this repository; approve another agent's config file",
     ],
     ["plan <spec>", "Decompose a spec into cards without running them"],
+    [
+      "depth [<profile>] [--project <id>]",
+      "Show the depth profile in force, or choose one (prototype, internal tool, production, regulated)",
+    ],
     ["queue [--worker m] [--manager m]", "Run Ready cards"],
     ["resume <card>", "Continue a card that stopped part-way"],
     ["gate [card]", "Run the verification gates"],
@@ -3223,6 +3338,10 @@ function printDevHelp(): void {
     ["export --ledger [--no-private]", "The ledger as NDJSON a verifier checks alone"],
     ["erase --secret --rotated", "Erase a secret found after the fact (stdin or --secret-file)"],
     ['research "<q>" [--deep]', "Ask the Researcher directly"],
+    [
+      "research-bakeoff [--models a,b] [--pipelines native,tool-loop] [--adopt] | --adopt-from <run>",
+      "Compare Researchers on the research golden set; adopt one only as MD-N11-2 allows",
+    ],
     ["overnight [--until 07:00]", "Queue rounds while the machine is free"],
     ["bake-off --workers a,b", "Compare workers on a release gate"],
     ["serve / ui", "The web dashboard server"],
@@ -3257,13 +3376,7 @@ async function openHome(flags: string[]): Promise<void> {
       findRoleWeights,
       yes,
       interactive,
-      ask: async (q) => {
-        const { createInterface } = await import("node:readline/promises");
-        const rl = createInterface({ input: process.stdin, output: process.stdout });
-        const answer = (await rl.question(q)).trim();
-        rl.close();
-        return answer === "" || /^y(es)?$/i.test(answer);
-      },
+      ...firstRunPrompts(),
     });
     if (out.code !== 0) {
       process.exitCode = out.code;
@@ -3417,6 +3530,34 @@ async function runCardVerb(
   } finally {
     db.close();
   }
+}
+
+/** One line's answer on the terminal. */
+async function askLine(question: string): Promise<string> {
+  const { createInterface } = await import("node:readline/promises");
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    return await rl.question(question);
+  } finally {
+    rl.close();
+  }
+}
+
+/**
+ * The first run's questions at a terminal: yes/no, where Enter is yes, and,
+ * in an empty directory, the sentence of what to build (DS-P2-4), raw.
+ */
+export function firstRunPrompts(): {
+  ask: (question: string) => Promise<boolean>;
+  askText: (question: string) => Promise<string>;
+} {
+  return {
+    ask: async (q) => {
+      const answer = (await askLine(q)).trim();
+      return answer === "" || /^y(es)?$/i.test(answer);
+    },
+    askText: askLine,
+  };
 }
 
 /** A yes/no question on the terminal; anything but y or yes is no. */

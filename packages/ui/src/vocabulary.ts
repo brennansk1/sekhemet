@@ -904,6 +904,8 @@ export interface EventLike {
   actor: string;
   cardId?: string;
   payload?: unknown;
+  /** The event's private part, when the reader was given it (kernel rule 33). */
+  private?: unknown;
 }
 
 /**
@@ -1033,15 +1035,21 @@ export function eventSentence(
         rest: `a ${String(p.kind ?? "").replace(/_/g, " ")} notice via ${String(p.channel ?? "")}`,
         tone: p.ok === false ? "fail" : "neutral",
       };
-    case "research/asked":
+    case "research/asked": {
+      const asked = ((event.private ?? {}) as { question?: unknown }).question;
       return {
         ...base,
         actor: "Researcher",
         verb: p.fromMemory ? "answered from memory" : p.deep ? "researched in depth" : "researched",
-        ...(typeof p.question === "string" ? { quote: p.question.slice(0, 160) } : {}),
+        // The question is private (it can carry a card's spec and a gate's
+        // output): quoted, first line only, from the private part when given.
+        ...(typeof asked === "string" && asked.trim()
+          ? { quote: (asked.trim().split("\n")[0] ?? "").slice(0, 160) }
+          : {}),
         rest: `· ${p.grounded ? `grounded, confidence ${Number(p.confidence ?? 0).toFixed(2)}` : "not grounded"} · ${(p.sources as unknown[] | undefined)?.length ?? 0} source(s)`,
         tone: p.grounded ? "pass" : "fail",
       };
+    }
     case "card/repro":
       return {
         ...base,

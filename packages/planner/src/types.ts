@@ -305,11 +305,42 @@ export interface AmbiguityClassificationResult {
   assumptions: LoggedAssumption[];
   spikes: SpikeProposal[];
   /**
-   * True when the spec raised more than `MAX_QUESTIONS_PER_SPEC` questions:
-   * the spec is refused as under-specified rather than planned around.
+   * Always false from the planner: a spec is never refused as
+   * under-specified (PM-P2-5). A classifier run on its own may still report it.
    */
   rejected: boolean;
   rejectionReason?: string;
+  /**
+   * The questions not asked because the playbook, the brief or an earlier
+   * decision already answers them (PM-P2-6); each is also an assumption.
+   */
+  settled?: SettledAnswer[];
+}
+
+/** Where a recorded answer lives (planner-pm §2.10.1, PM-P2-6). */
+export type SettledSourceKind = "playbook" | "brief" | "decision";
+
+/**
+ * A recorded answer a question may already have: an approved playbook rule,
+ * a line of the brief, or an earlier decision's question and answer.
+ */
+export interface SettledSource {
+  kind: SettledSourceKind;
+  /** The rule id, the brief's path, or the decision id. */
+  ref: string;
+  /** The rule's or the brief line's words; a decision's question. */
+  text: string;
+  /** A decision's question and its recorded answer. */
+  question?: string;
+  answer?: string;
+}
+
+/** A question the planner did not ask, and the recorded answer it planned on. */
+export interface SettledAnswer {
+  question: string;
+  answer: string;
+  source: SettledSourceKind;
+  ref: string;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -490,6 +521,11 @@ export interface DecomposeSpecParams {
    * over its kind's 80% horizon, is split like an over-budget one.
    */
   capability?: CapabilityModel;
+  /**
+   * Answers already recorded (PM-P2-6): a question one of them answers is not
+   * asked, and the answer is logged as the assumption with its source.
+   */
+  settled?: readonly SettledSource[];
 }
 
 export interface SpidrPlan {
@@ -498,7 +534,7 @@ export interface SpidrPlan {
   ambiguity: AmbiguityClassificationResult;
   /** Stories that could not be made to fit, with the human action that helps. */
   capabilityCeilings: CapabilityCeiling[];
-  /** True when the spec was refused as under-specified; `stories` is empty. */
+  /** Always false: a spec is planned, never refused as under-specified (PM-P2-5). */
   rejected: boolean;
   rejectionReason?: string;
   /** How the slices were produced, so a plan can be reproduced. */

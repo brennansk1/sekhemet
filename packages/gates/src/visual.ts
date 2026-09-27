@@ -238,24 +238,27 @@ export class CdpBrowser {
     b.child = child;
     const portFile = join(b.profile, "DevToolsActivePort");
     const deadline = Date.now() + 15_000;
-    // A browser that died (refused, crashed) is not waited for.
-    while (
-      !existsSync(portFile) &&
-      Date.now() < deadline &&
-      child.exitCode === null &&
-      child.signalCode === null
-    ) {
+    // Chromium writes the file in two steps: wait until it holds both lines
+    // and reads the same twice. A browser that died (refused, crashed) is not
+    // waited for.
+    const read = () => (existsSync(portFile) ? readFileSync(portFile, "utf8") : "");
+    let text = read();
+    let devtools: { port: number; path: string } | undefined;
+    while (Date.now() < deadline && child.exitCode === null && child.signalCode === null) {
       await sleep(50);
+      const again = read();
+      devtools = again === text ? parseDevToolsPort(again) : undefined;
+      if (devtools) break;
+      text = again;
     }
-    if (!existsSync(portFile)) {
+    if (!devtools) {
       const how =
         child.exitCode !== null || child.signalCode !== null
           ? `Chromium exited (${child.exitCode ?? child.signalCode}) before opening its DevTools port`
           : "Chromium did not open its DevTools port within 15 s";
       return failed(b, `${how}${stderr.trim() ? `: ${stderr.trim()}` : ""}`);
     }
-    const [port, path] = readFileSync(portFile, "utf8").trim().split("\n");
-    const ws = new WebSocket(`ws://127.0.0.1:${port}${path}`);
+    const ws = new WebSocket(`ws://127.0.0.1:${devtools.port}${devtools.path}`);
     await new Promise<void>((resolve, reject) => {
       ws.addEventListener("open", () => resolve());
       ws.addEventListener("error", () => reject(new Error("CDP connection failed")));
@@ -1460,4 +1463,12 @@ async function serveApp(
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+/** The DevTools port and path from Chromium's DevToolsActivePort, or undefined until both are written. */
+export function parseDevToolsPort(text: string): { port: number; path: string } | undefined {
+  const [port, path] = text.trim().split("\n");
+  if (!port || !/^\d{2,5}$/.test(port)) return undefined;
+  if (!path || !/^\/devtools\/browser\/[\w-]+$/.test(path)) return undefined;
+  return { port: Number(port), path };
 }

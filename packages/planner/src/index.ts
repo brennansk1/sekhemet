@@ -22,6 +22,8 @@ export * from "./goals.js";
 export * from "./impact.js";
 export * from "./edit_sketch.js";
 export * from "./design_stage.js";
+export * from "./depth_profile.js";
+export * from "./design_copy.js";
 export * from "./cross_repo.js";
 export * from "./criteria.js";
 export * from "./mechanisms.js";

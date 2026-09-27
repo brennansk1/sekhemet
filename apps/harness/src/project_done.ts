@@ -4,7 +4,6 @@ import { readFileSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { isAbsolute, join } from "node:path";
 import {
-  DEFAULT_DEPTH_PROFILE,
   type DepthProfile,
   DeterministicGateRunner,
   STRENGTH_TABLE,
@@ -37,12 +36,23 @@ import {
   storyMap,
 } from "@sekhemet/planner";
 import { type ProcessSandbox, confinedSandbox } from "@sekhemet/sandbox";
-import { NodeGitSyncAdapter, gitEnvFor, nextVersion, planRelease } from "@sekhemet/sync";
+import {
+  NodeGitSyncAdapter,
+  gitEnvFor,
+  keepAChangelogSection,
+  nextVersion,
+  planRelease,
+} from "@sekhemet/sync";
 import { integrationBranch } from "./accept.js";
 import { latestLedgerEvidence } from "./ledger_evidence.js";
 import { changeRoute, setupFor } from "./planner_live.js";
 import { changeCardSummary } from "./pm/pm_copy.js";
 import { PmStore } from "./pm/store.js";
+import {
+  applyDocumentProposal,
+  exportProjectDocuments,
+  renderedDocuments,
+} from "./project_docs.js";
 import type { Kernel } from "./wave2.js";
 
 /**
@@ -81,11 +91,12 @@ export function mainHead(repoPath: string): { branch: string; sha?: string } {
 /**
  * Whether a test-strength record meets the profile's rule (§2.15.5, gates
  * rule 32a): every check the profile makes blocking passed. A check that
- * could not judge leaves it unmeasured, never met.
+ * could not judge leaves it unmeasured, never met. The profile is the one
+ * recorded for the card's project (design-stage DS-P14-1), never assumed.
  */
 export function strengthVerdict(
   record: TestStrengthRecord | undefined,
-  profile: DepthProfile = DEFAULT_DEPTH_PROFILE,
+  profile: DepthProfile,
 ): MainTestResult["strength"] {
   if (!record) return "unmeasured";
   const rules = STRENGTH_TABLE[profile];
@@ -162,10 +173,15 @@ export async function checkMain(
   ];
   const fileOf = (ref: string) => ref.split(" > ")[0] as string;
   const files = [...new Set(refs.map(fileOf))];
-  const profile = DEFAULT_DEPTH_PROFILE;
+  // DS-P14-1: the depth profile recorded for the project (the one reader,
+  // `depthProfiles.of`); each card's strength is judged against its own
+  // project's profile, and the check records the brief's project's.
+  const profile = k.cardStore.depthProfiles.of(await defaultRequirementProject(ledger)).profile;
   const strengthByCard = new Map<string, MainTestResult["strength"]>();
   for (const id of new Set(fileCard.values())) {
-    strengthByCard.set(id, strengthVerdict(await cardStrength(k, id), profile));
+    const card = await k.cardStore.getCard(id);
+    const own = k.cardStore.depthProfiles.of(card?.projectId ?? undefined).profile;
+    strengthByCard.set(id, strengthVerdict(await cardStrength(k, id), own));
   }
 
   const gatesConfig = loadGatesConfig(k.repoPath);
@@ -233,7 +249,9 @@ export async function projectStoryMap(
  * (PM-P13-13): the version and Keep a Changelog grouping from the
  * integration branch's Conventional-Commit squashes, never below a version
  * already proposed in the project, and the notes from its proven
- * requirements in the brief's words.
+ * requirements in the brief's words. `changelog` is the section proposed for
+ * the top of CHANGELOG.md (design-stage DS-N3-8); it and the release notes
+ * are committed when the release is confirmed, before the tag.
  */
 export async function acceptSliceAndRelease(
   k: Kernel,
@@ -284,7 +302,15 @@ export async function acceptSliceAndRelease(
     }
     return {
       completesProject,
-      release: { version: r.version, notes: r.notes ?? "", changelog: plan.changelog },
+      release: {
+        version: r.version,
+        notes: r.notes ?? "",
+        changelog: keepAChangelogSection(
+          r.version,
+          new Date().toISOString().slice(0, 10),
+          plan.categories,
+        ),
+      },
       report: r.report,
     };
   } catch (err) {
@@ -445,7 +471,8 @@ function printMap(map: StoryMap, print: (l: string) => void): void {
  * `sekhemet release` when the project has slices: `status`, `check`,
  * `brief <file.json>`, `accept <SLICE>`, `cut <REQ> [--reason …]`,
  * `extend <SLICE> [--cards N] [--hours H]`, `revise <REQ> <file.json>`,
- * `confirm <REQ> <card|test> <ref>`, `report <SLICE>`. Undefined when the
+ * `confirm <REQ> <card|test> <ref>`, `report <SLICE>`, `docs …` (the
+ * project documents, DS-N3). Undefined when the
  * arguments are not one of these, so the caller keeps the commit-only path.
  */
 export async function releaseSubcommand(
@@ -490,6 +517,7 @@ export async function releaseSubcommand(
           (await k.cardStore.ensureProject({ rootPath: k.repoPath, name: k.repoPath })).id;
         const r = await acceptBrief(ledger, { ...body, projectId }, principal);
         print(`Accepted: ${r.sliceIds.join(", ")} with ${r.requirementIds.join(", ")}.`);
+        await exportAfter(k, principal, "brief", print);
         return 0;
       }
       case "accept": {
@@ -539,6 +567,7 @@ export async function releaseSubcommand(
         print(
           `${a} is now version ${r.version}.${r.held.length ? ` Held in Planning: ${r.held.join(", ")}.` : ""}${r.changeCards.length ? ` Seshat proposes change cards for ${r.changeCards.map((x) => x.cardId).join(", ")}.` : ""}`,
         );
+        await exportAfter(k, principal, a, print);
         return 0;
       }
       case "confirm": {
@@ -552,6 +581,8 @@ export async function releaseSubcommand(
         print(`${b} ${args.slice(3).join(" ")} re-confirmed against ${a}'s current version.`);
         return 0;
       }
+      case "docs":
+        return await docsSubcommand(k, args.slice(1), principal, print);
       case "report": {
         if (!a) return fail("Usage: sekhemet release report <SLICE>");
         const s = await sliceStatus(ledger, a, mainHead(k.repoPath).sha);
@@ -578,18 +609,49 @@ async function provenSha(k: Kernel, sliceId: string, version: string): Promise<s
 }
 
 /**
+ * Whether `docsSha` is a documents commit on `provenSha` (its first parent)
+ * that changed only paths the export recorded (DS-N3-8): the files it
+ * changed are compared with `exported`, and every other path is named.
+ */
+export function documentsOnlyCommit(
+  repoPath: string,
+  provenSha: string,
+  docsSha: string,
+  exported: readonly string[],
+): { ok: boolean; others: string[] } {
+  const git = (...a: string[]) =>
+    execFileSync("git", a, { cwd: repoPath, encoding: "utf8", env: gitEnvFor(repoPath) }).trim();
+  let parent: string;
+  let changed: string[];
+  try {
+    parent = git("rev-parse", `${docsSha}^1`);
+    // Plumbing: no rename detection, so a path moved away is named too.
+    changed = git("diff-tree", "-r", "--name-only", provenSha, docsSha).split("\n").filter(Boolean);
+  } catch {
+    return { ok: false, others: [] };
+  }
+  const allowed = new Set(exported);
+  const others = changed.filter((p) => !allowed.has(p));
+  return { ok: parent === provenSha && others.length === 0, others };
+}
+
+/**
  * `sekhemet release --confirm <SLICE>`: a person's confirmation tags the sha
  * that was proven when the release was proposed (finding 5, B4.3) — never
  * whatever main's head happens to be now, which may hold work the release
- * never covered. Records `release/tagged { sliceId, tag, sha }` with the
- * principal (§2.15.8). Refused when main moved since and the slice was not
+ * never covered. The release's CHANGELOG.md section and notes are committed
+ * on that sha first (design-stage DS-N3-8) and the tag names that commit —
+ * only when that commit changed nothing but the paths the export recorded
+ * (`documentsOnlyCommit`); otherwise the tag names the proven sha and why is said.
+ * Records `release/tagged { sliceId, tag, sha, proven }` — `sha` the tagged
+ * commit, `proven` the sha it was proven at — with the principal (§2.15.8). Refused when main moved since and the slice was not
  * re-proven at the new head (re-running `release accept` records a fresh
  * `release/proven` there). Sekhemet never deploys.
  */
 export async function confirmSliceRelease(
   k: Kernel,
   sliceId: string,
-): Promise<{ tag: string; sha: string }> {
+): Promise<{ tag: string; sha: string; notice?: string }> {
   const release = (await k.cardStore.slices.releases(sliceId)).at(-1);
   if (!release) throw new Error(`No release is proposed for ${sliceId}`);
   const { sha: headSha } = mainHead(k.repoPath);
@@ -604,7 +666,32 @@ export async function confirmSliceRelease(
     );
   }
   const tag = `v${release.version}`;
-  execFileSync("git", ["tag", "-a", tag, "-m", `Release ${tag}`, sha], {
+  const principal = k.cardStore.localPrincipal();
+  // DS-N3-8: the release's CHANGELOG.md section and notes (with the other
+  // project documents) are committed on the proven sha before the tag, which
+  // then names that commit: its only change from the proven sha is documents.
+  const docs = await exportProjectDocuments(k, {
+    principal,
+    card: sliceId,
+    release: { sliceId, version: release.version },
+    expectedHead: sha,
+  });
+  // The documents commit is tagged only when it changed nothing but the
+  // documents the export recorded; otherwise the proven sha is (DS-N3-8).
+  let tagged = sha;
+  let refused: string | undefined;
+  if (docs.sha) {
+    const recorded =
+      k.cardStore.documents
+        .exports()
+        .at(-1)
+        ?.files.map((f) => f.path) ?? [];
+    const check = documentsOnlyCommit(k.repoPath, sha, docs.sha, recorded);
+    if (check.ok) tagged = docs.sha;
+    else
+      refused = `The documents commit ${docs.sha.slice(0, 7)} changed ${check.others.length ? check.others.join(", ") : "more than"} the exported documents, so ${tag} names the proven ${sha.slice(0, 7)} instead.`;
+  }
+  execFileSync("git", ["tag", "-a", tag, "-m", `Release ${tag}`, tagged], {
     cwd: k.repoPath,
     env: gitEnvFor(k.repoPath),
     stdio: "ignore",
@@ -612,10 +699,108 @@ export async function confirmSliceRelease(
   await k.log.append({
     actor: "human",
     type: "release/tagged",
-    payload: { sliceId, projectId: release.projectId, tag, sha },
-    principal: k.cardStore.localPrincipal(),
+    payload: { sliceId, projectId: release.projectId, tag, sha: tagged, proven: sha },
+    principal,
   });
-  return { tag, sha };
+  const notice = [refused, docs.notice].filter(Boolean).join("\n");
+  return { tag, sha: tagged, ...(notice ? { notice } : {}) };
+}
+
+/**
+ * After a person's act on the brief or a requirement (DS-N3-1): the project
+ * documents are regenerated and committed. The act stands whatever happens
+ * here; a failure is said in Seshat's thread, never swallowed.
+ */
+async function exportAfter(
+  k: Kernel,
+  principal: string,
+  card: string,
+  print?: (line: string) => void,
+): Promise<void> {
+  try {
+    const r = await exportProjectDocuments(k, { principal, card });
+    // RG-S5-2: a checkout on the integration branch is told how to catch up.
+    if (r.notice) print?.(r.notice);
+  } catch (err) {
+    await new PmStore(k.log).appendReply({
+      replyTo: [],
+      text: `The project documents were not updated: ${err instanceof Error ? err.message : String(err)}`,
+      model: "ledger",
+      error: true,
+    });
+  }
+}
+
+/**
+ * `sekhemet release docs [--no-names]` exports the project documents now;
+ * `docs show` prints them as the ledger would write them; `docs proposals`
+ * lists the open proposals from merged edits; `docs apply|dismiss <DOCP-n>`
+ * is a person's decision on one (design-stage DS-N3-1, -2, -3).
+ */
+async function docsSubcommand(
+  k: Kernel,
+  args: string[],
+  principal: string,
+  print: (l: string) => void,
+): Promise<number> {
+  const [verb, id] = args;
+  const noNames = args.includes("--no-names");
+  if (verb === "show") {
+    for (const d of await renderedDocuments(k, { noNames })) print(`--- ${d.path}\n${d.text}`);
+    return 0;
+  }
+  if (verb === "proposals") {
+    const open = await k.cardStore.documents.openProposals();
+    if (open.length === 0) print("No open document proposals.");
+    for (const p of open) {
+      print(
+        `${p.id} ${p.kind} ${p.target}${p.targetId ? ` ${p.targetId}` : ""}${p.field ? ` ${p.field.replace(/_/g, " ")}` : ""} in ${p.path} (${p.commit.slice(0, 7)})${p.proposed !== undefined ? `: ${p.proposed}` : ""}`,
+      );
+    }
+    return 0;
+  }
+  if (verb === "apply" || verb === "dismiss") {
+    if (!id) {
+      print(`Usage: sekhemet release docs ${verb} <DOCP-n>`);
+      return 1;
+    }
+    if (verb === "dismiss") {
+      await k.cardStore.documents.dismissProposal(id, principal);
+      print(`${id} dismissed.`);
+      return 0;
+    }
+    const done = await applyDocumentProposal(k, id, principal, (requirementId, revision) =>
+      reviseAndPropose(k, requirementId, revision, principal),
+    );
+    print(`${id} applied: ${done}.`);
+    return 0;
+  }
+  if (verb !== undefined && verb !== "--no-names" && verb !== "export") {
+    print(
+      "Usage: sekhemet release docs [export] [--no-names] | show | proposals | apply <DOCP-n> | dismiss <DOCP-n>",
+    );
+    return 1;
+  }
+  const r = await exportProjectDocuments(k, { principal, noNames, card: "docs" });
+  if (r.skipped) {
+    print(`No documents exported: ${r.skipped}.`);
+    return 0;
+  }
+  print(
+    r.sha
+      ? `Committed ${r.written.join(", ")} onto ${r.branch} as ${r.sha.slice(0, 10)} (ledger seq ${r.seq}).`
+      : "The project documents on the integration branch are up to date.",
+  );
+  if (r.notice) print(r.notice);
+  if (r.proposals.length)
+    print(
+      `Edits merged since the last export: ${r.proposals.join(", ")} (see \`sekhemet release docs proposals\`).`,
+    );
+  if (r.held.length)
+    print(`Not overwritten while proposals on them are open: ${r.held.join(", ")}.`);
+  if (r.left.length) print(`Yours, left as they are (no generated header): ${r.left.join(", ")}.`);
+  if (r.offers.length) print(`Offered, never written: ${r.offers.join(", ")} (see Seshat).`);
+  return 0;
 }
 
 /** The slice of the latest proposed release no `release/tagged` has followed, or undefined. */
@@ -704,15 +889,13 @@ export async function handleProjectDoneRoute(
           typeof body.projectId === "string"
             ? body.projectId
             : (await k.cardStore.ensureProject({ rootPath: ctx.repoPath, name: ctx.repoPath })).id;
-        json(
-          res,
-          200,
-          await acceptBrief(
-            ledgerOf(k),
-            { ...(body as unknown as BriefInput), projectId },
-            principal,
-          ),
+        const accepted = await acceptBrief(
+          ledgerOf(k),
+          { ...(body as unknown as BriefInput), projectId },
+          principal,
         );
+        await exportAfter(k, principal, "brief");
+        json(res, 200, accepted);
         return true;
       }
       case "slices/accept":
@@ -747,9 +930,12 @@ export async function handleProjectDoneRoute(
         );
         json(res, 200, { cut: act.id });
         return true;
-      case "requirements/revise":
-        json(res, 200, await reviseAndPropose(k, act.id, body as RequirementRevision, principal));
+      case "requirements/revise": {
+        const revised = await reviseAndPropose(k, act.id, body as RequirementRevision, principal);
+        await exportAfter(k, principal, act.id);
+        json(res, 200, revised);
         return true;
+      }
       case "requirements/confirm":
         if ((body.from !== "card" && body.from !== "test") || typeof body.ref !== "string") {
           json(res, 400, { error: "confirm needs from (card or test) and ref" });

@@ -9,6 +9,7 @@ import {
   formatTokens,
   parseTitle,
 } from "./lib/vocabulary.js";
+import { startCardNote } from "./review_plan_view.js";
 import { store } from "./store.js";
 
 function meter(used, budget, format = (n) => String(n), unit = "") {
@@ -60,6 +61,8 @@ function html(ctx) {
   const secondsUsed = full.secondsUsed || (ev ? Math.round(ev.durationMs / 1000) : 0);
 
   const parts = [];
+  const start = startCardNote(full);
+  if (start) parts.push(`<section class="start-card"><p class="prose">${esc(start)}</p></section>`);
   parts.push(
     `<section><h3 class="sh">Spec</h3>${full.spec ? `<p class="prose">${esc(full.spec)}</p>` : '<p class="sec">No spec recorded. The Worker works from the title and the criteria.</p>'}${kinds.length ? `<p class="sec kind-why">${kinds.map((k) => `<b>${esc(KIND_LABELS[k].label)}</b>: ${esc(KIND_LABELS[k].tooltip)}`).join(" ")}</p>` : ""}</section>`,
   );

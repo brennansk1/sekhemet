@@ -435,6 +435,11 @@ function jsGates(
 
 function pythonGates(repo: string): DerivedGate[] {
   const gates: DerivedGate[] = [];
+  // A uv project (`uv init`, card zero's generator, DS-P2-2) runs its tools
+  // in its own environment: `uv run <tool>`.
+  const uv = existsSync(join(repo, "uv.lock"));
+  const tool = (name: string, args: string[]): { command: string; args: string[] } =>
+    uv ? { command: "uv", args: ["run", name, ...args] } : { command: name, args };
   const source = existsSync(join(repo, "pyproject.toml")) ? "pyproject.toml" : "requirements.txt";
   const py = existsSync(join(repo, "pyproject.toml"))
     ? readFileSync(join(repo, "pyproject.toml"), "utf8")
@@ -444,8 +449,7 @@ function pythonGates(repo: string): DerivedGate[] {
       id: "typecheck",
       rung: "typecheck",
       layer: "static",
-      command: "mypy",
-      args: ["."],
+      ...tool("mypy", ["."]),
       parser: "generic",
       timeout: 180,
       source,
@@ -455,8 +459,7 @@ function pythonGates(repo: string): DerivedGate[] {
       id: "lint",
       rung: "lint",
       layer: "static",
-      command: "ruff",
-      args: ["check", "."],
+      ...tool("ruff", ["check", "."]),
       parser: "generic",
       timeout: 120,
       source,
@@ -465,8 +468,7 @@ function pythonGates(repo: string): DerivedGate[] {
     id: "unit",
     rung: "test",
     layer: "functional",
-    command: "pytest",
-    args: ["-q"],
+    ...tool("pytest", ["-q"]),
     parser: "generic",
     timeout: 600,
     source,
@@ -729,10 +731,14 @@ function classifyCi(steps: readonly RawStep[], gates: DerivedGate[]): CiStep[] {
 
 const PROTECTED = ["**/*.spec.ts", "**/*.test.ts", "tests/acceptance/**", ".sekhemet/gates.toml"];
 
+/** The first line of every `gates.toml` the deriver writes. */
+export const DERIVED_GATES_HEADER =
+  "# Derived by Sekhemet's first run from this project's own scripts, tools and CI.";
+
 function renderToml(gates: readonly DerivedGate[]): string {
   const q = (v: string) => JSON.stringify(v);
   return [
-    "# Derived by Sekhemet's first run from this project's own scripts, tools and CI.",
+    DERIVED_GATES_HEADER,
     "# Edit freely; the hash of this file is pinned when a card starts.",
     "[project]",
     "max_files = 3",
@@ -915,6 +921,25 @@ export function installGates(
   return { state: "replaced", diff, backup: ".sekhemet/gates.toml.bak" };
 }
 
+/**
+ * What an empty directory is offered (design-stage §2.4 item 4, DS-P2-4):
+ * a start by conversation with Seshat, instead of only "No gates found".
+ */
+export const START_BY_CONVERSATION =
+  "Nothing here yet, so there are no gates to find. Start a project by conversation: tell Seshat on the board what you want built, in one sentence. It proposes the plan — card zero sets the project up with its ecosystem's own generator, and the gates come from what that makes — and nothing is created until you apply it.";
+
+/** Files a new, empty project may hold without being a project yet. */
+const NOT_A_PROJECT = new Set([".git", ".sekhemet", ".gitignore", ".DS_Store"]);
+
+/** A directory with nothing in it but git's and Sekhemet's own files (DS-P2-4). */
+export function isEmptyProject(repo: string): boolean {
+  try {
+    return readdirSync(repo).every((name) => NOT_A_PROJECT.has(name));
+  } catch {
+    return false;
+  }
+}
+
 export interface InitResult {
   checks: Check[];
   roster: Roster;
@@ -968,7 +993,9 @@ export function runInit(
   say(
     gates.length
       ? `Gates from this project: ${gates.join("; ")}.`
-      : "No gates found: add typecheck, lint and test scripts, then rerun with --force.",
+      : isEmptyProject(repo)
+        ? START_BY_CONVERSATION
+        : "No gates found: add typecheck, lint and test scripts, then rerun with --force.",
   );
   if (wrote.length) say(`Wrote ${wrote.join(", ")}.`);
   if (kept.length) say(`Kept existing ${kept.join(", ")} (use --force to regenerate).`);

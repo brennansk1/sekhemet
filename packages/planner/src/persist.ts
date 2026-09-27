@@ -11,7 +11,6 @@ import type {
 import type { LocalInferenceAdapter } from "@sekhemet/models";
 import { approvalHold } from "./approval_hold.js";
 import {
-  DEFAULT_DEPTH_PROFILE,
   type DepthProfile,
   hasDependency,
   needsPropertyTest,
@@ -47,6 +46,7 @@ import { type OracleDispute, crossCheckRows, recordExamples } from "./oracle.js"
 import { PLANNED_WITHOUT_MODEL } from "./planner.js";
 import { SPLIT_POINTS, estimatePoints } from "./points.js";
 import { workerPromptBudget, zone3Cap, zone3Fit } from "./small.js";
+import { safeRepoRelativeFile } from "./spidr.js";
 import {
   type StagedCriterion,
   type TestFramework,
@@ -126,8 +126,8 @@ export interface PersistPlanOptions {
    */
   capability?: CapabilityModel;
   /**
-   * The depth profile (PM-N7-1…3); `internal tool` until design-stage P14
-   * builds the profile.
+   * The depth profile (PM-N7-1…3); the one recorded for the project
+   * (DS-P14-3, `depthProfiles.of`) when absent.
    */
   depthProfile?: DepthProfile;
   /** The independent second sampler of example rows (PM-N7-2); the sketcher when absent. */
@@ -179,6 +179,11 @@ export interface PersistPlanResult {
   /** Example rows whose two samples disagreed, each a decision (PM-N7-2). */
   disputes: { id: string; decisionId: string }[];
   decisionId?: string;
+  /**
+   * Every question the pass posted (at most two, PM-P2-3), and whether it
+   * holds the new cards: only a default_deny one does (PM-P2-4).
+   */
+  decisions?: { id: string; policy: DecisionRequest["policy"]; holds: boolean }[];
   invest: InvestValidationReport;
   version: number;
 }
@@ -317,15 +322,25 @@ export async function persistPlan(
   const heuristic = plan.source === "heuristic";
 
   const ask = plan.ambiguity.askUser && plan.ambiguity.decision !== undefined;
-  // The batched decision is persisted first (it parks the epic), so the
-  // stories can name it while they wait in Planning.
-  const decisionId =
-    ask && plan.ambiguity.decision
-      ? await new DecisionStore(ledger).request({
-          ...plan.ambiguity.decision,
-          cardId: options.epicId,
-        })
-      : undefined;
+  // Every question of the pass's batch (at most two, PM-P2-3) is posted
+  // first, so the stories can name the one they wait on. Only a default_deny
+  // question holds them (PM-P2-4): a safe_default one is asked while
+  // planning proceeds on its default.
+  const posted: { id: string; policy: DecisionRequest["policy"] }[] = [];
+  if (ask && plan.ambiguity.decision) {
+    const decisions = new DecisionStore(ledger);
+    const first = plan.ambiguity.decision;
+    const batch = plan.ambiguity.batch?.requests ?? [];
+    // The first question leads; the batch's others follow it.
+    for (const request of [first, ...batch.filter((r) => r.id !== first.id)]) {
+      posted.push({
+        id: await decisions.request({ ...request, cardId: options.epicId }),
+        policy: request.policy,
+      });
+    }
+  }
+  const holdingId = posted.find((d) => d.policy === "default_deny")?.id;
+  const decisionId = holdingId ?? posted[0]?.id;
   const result: PersistPlanResult = {
     source: plan.source,
     created: [],
@@ -344,10 +359,13 @@ export async function persistPlan(
     invest,
     version: 1,
     ...(decisionId ? { decisionId } : {}),
+    ...(posted.length
+      ? { decisions: posted.map((d) => ({ ...d, holds: d.id === holdingId })) }
+      : {}),
   };
   const createdIds = new Set<string>();
   const known = new Set(all.map((c) => c.id));
-  const profile = options.depthProfile ?? DEFAULT_DEPTH_PROFILE;
+  const profile = options.depthProfile ?? store.depthProfiles.of(projectId).profile;
   const hasHistory = options.hasHistory ?? repoHasHistory(options.repoRoot);
   const oracle = options.oracle ?? options.sketcher;
   // PM-N3-1: the fitted horizons are recorded once per change in the record.
@@ -512,7 +530,14 @@ export async function persistPlan(
     // The staged test: example tables for the criteria with values, in the
     // project's own framework and test folder (PM-P1-19).
     const modelSymbol = story.interface?.[0];
-    const file = modelSymbol?.file ?? story.card.scopeFiles.find((f) => !/\.(spec|test)\./.test(f));
+    // A scope file from the repository's own names passes the same check as a
+    // model's before it reaches a generated import line (B4.3 re-check).
+    const file =
+      modelSymbol?.file ??
+      story.card.scopeFiles
+        .filter((f) => !/\.(spec|test)\./.test(f))
+        .map((f) => safeRepoRelativeFile(f))
+        .find((f): f is string => f !== undefined);
     const symbol: CardInterfaceSymbol | undefined = file
       ? { symbol: modelSymbol?.symbol ?? heuristicSymbol(story), file, signature: "" }
       : undefined;
@@ -723,7 +748,7 @@ export async function persistPlan(
       ? capabilityVerdict(options.capability, { kind: KIND_OF_SLICE[story.slice], difficulty })
       : undefined;
     if (capability?.shouldSplit && capability.reason) holds.push(capability.reason);
-    if (ask && decisionId) holds.unshift(waitingReason(decisionId));
+    if (holdingId) holds.unshift(waitingReason(holdingId));
     // PM-N7-5: every card waits for a person's approval of its criteria.
     holds.push(approvalHold(id));
 
@@ -1082,9 +1107,13 @@ export function formatPlanReport(result: PersistPlanResult): string {
   for (const check of result.invest.checks) {
     lines.push(`  ${check.passed ? "pass" : "FAIL"} ${check.check}: ${check.detail}`);
   }
-  if (result.decisionId) {
+  const decisions =
+    result.decisions ?? (result.decisionId ? [{ id: result.decisionId, holds: true }] : []);
+  for (const d of decisions) {
     lines.push(
-      `Decision ${result.decisionId} is waiting on you; the new cards stay in Planning until it is answered.`,
+      d.holds
+        ? `Decision ${d.id} is waiting on you; the new cards stay in Planning until it is answered.`
+        : `Decision ${d.id} is open; planning proceeds on its default until you answer it.`,
     );
   }
   return lines.join("\n");

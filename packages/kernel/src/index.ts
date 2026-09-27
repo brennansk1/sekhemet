@@ -21,3 +21,8 @@ export * from "./slices.js";
 export * from "./staged_tests.js";
 export * from "./suggestions.js";
 export * from "./assignee.js";
+export * from "./depth_profile.js";
+export * from "./candidates.js";
+export * from "./takeover.js";
+export * from "./reconciliation.js";
+export * from "./project_documents.js";

@@ -9,6 +9,8 @@ import {
 } from "node:fs";
 import { cpus, totalmem } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { EventLog, initSchema } from "@sekhemet/kernel";
 import {
   type ConfigRole,
   type FoundModel,
@@ -21,15 +23,18 @@ import {
   type DerivedGates,
   NODE_FLOOR,
   type Roster,
+  START_BY_CONVERSATION,
   configToml,
   deriveGates,
   gatesDiff,
   installGates,
+  isEmptyProject,
   nodeMeetsFloor,
   recommendRoster,
   toolchainChecks,
   writeGitignoreBlock,
 } from "./init.js";
+import { PmStore } from "./pm/store.js";
 
 /**
  * One first run for all three audiences (surface items 5–8, 5a, 5b; P10).
@@ -132,6 +137,8 @@ export interface FirstRunPlan {
   gatesDiff: string;
   /** A repository with history: onboarding (items 9–12) and take-over are offered. */
   history: boolean;
+  /** Nothing here yet: a start by conversation is offered (design-stage DS-P2-4). */
+  empty: boolean;
   opens: HomePage;
   paragraph: string[];
 }
@@ -213,6 +220,7 @@ export async function planFirstRun(repo: string, options: FirstRunOptions): Prom
     gates,
     gatesDiff: diff,
     history: hasHistory(repo),
+    empty: isEmptyProject(repo),
     opens,
     paragraph: [],
   };
@@ -249,7 +257,9 @@ function paragraph(plan: FirstRunPlan): string[] {
   lines.push(
     ids.length
       ? `Gates from ${plan.gates.sources.join(", ")}: ${ids.join(", ")}.`
-      : "No gates found yet: add typecheck, lint and test scripts, and run `sekhemet` again.",
+      : plan.empty
+        ? START_BY_CONVERSATION
+        : "No gates found yet: add typecheck, lint and test scripts, and run `sekhemet` again.",
   );
   if (plan.gates.teamTools.length) {
     lines.push(`  Your team's tools and settings: ${plan.gates.teamTools.join(", ")}.`);
@@ -290,7 +300,31 @@ export interface RunFirstRunOptions extends FirstRunOptions {
   /** A terminal on stdin and stdout. */
   interactive: boolean;
   ask?: (question: string) => Promise<boolean>;
+  /**
+   * A line of text from the person at the terminal: in an empty directory,
+   * what they want built (DS-P2-4). Enter skips.
+   */
+  askText?: (question: string) => Promise<string>;
   say?: (line: string) => void;
+}
+
+/** What the first run asks in an empty directory (DS-P2-4). */
+export const WHAT_TO_BUILD = "What would you like to build? One sentence, or Enter to skip: ";
+
+/**
+ * The person's sentence to Seshat, as their own message (planner-pm §2.9):
+ * queued on the ledger, answered when the board opens with a `start_project`
+ * proposal. Nothing is planned or created here.
+ */
+export async function queueStartProject(repo: string, sentence: string): Promise<void> {
+  mkdirSync(join(repo, ".sekhemet"), { recursive: true });
+  const db = new DatabaseSync(join(repo, ".sekhemet", "events.db"));
+  try {
+    initSchema(db);
+    await new PmStore(new EventLog(db)).appendUserMessage(`start a new project: ${sentence}`);
+  } finally {
+    db.close();
+  }
 }
 
 /** The first run (P10): plan, one confirmation, the writes, and where to open. */
@@ -339,6 +373,12 @@ export async function runFirstRun(
     );
   }
   if (writeGitignoreBlock(repo)) wrote.push(".gitignore");
+  // DS-P2-4: in an empty directory, the person may say what to build now;
+  // Seshat has it when the board opens.
+  if (plan.empty && options.interactive && options.askText) {
+    const sentence = (await options.askText(WHAT_TO_BUILD)).trim();
+    if (sentence) await queueStartProject(repo, sentence);
+  }
   say(
     plan.opens === "configuration"
       ? "Ready. Opening Configuration to find your models or download these."

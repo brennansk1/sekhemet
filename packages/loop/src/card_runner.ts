@@ -59,6 +59,7 @@ import {
   ProcessSandbox,
   allowlistWarnings,
   cardAllowlist,
+  generatorAllowlist,
   matchesGlob,
   mergeNetworkConfigs,
   tagUntrusted,
@@ -110,7 +111,7 @@ export type CardRunStore = Pick<
   | "recordDossierEntry"
   | "getDossier"
 > &
-  Partial<Pick<CardStore, "runs" | "cardEvents">>;
+  Partial<Pick<CardStore, "runs" | "cardEvents" | "depthProfiles">>;
 
 /**
  * Whether a card's text is untrusted by its origin, not its link (S9; B4.9
@@ -531,6 +532,9 @@ export class CardRunner {
   private packIds: string[] = [];
   private transcriptPath: string | undefined;
   private egress: EgressProxy | undefined;
+  /** Card zero's generator proxy (DS-P2-1, -2): its registry's hosts, for its declared steps only. */
+  private generatorEgress: EgressProxy | undefined;
+  private generatorPort: number | undefined;
   private rebaseFailure: string | undefined;
   /** WL-N10-1: messages that arrived before the session existed. */
   private pendingMessages: { text: string; from?: string }[] = [];
@@ -1304,11 +1308,17 @@ export class CardRunner {
     worktreePath: string,
     tests: string[],
   ): Promise<TestStrengthRecord | undefined> {
-    const { card } = this.options;
+    const { card, store } = this.options;
     const testGate = projectTestGate(this.config);
     if (!testGate) return undefined;
+    // DS-P14-3: the profile a person recorded for the card's project, read
+    // by the kernel's one reader; unrecorded, the gate reads the default
+    // and says so.
+    const depth = store?.depthProfiles?.of(card.projectId);
     try {
       return await checkTestStrength({
+        ...(depth?.recorded ? { profile: depth.profile } : {}),
+        projectId: card.projectId,
         sandbox: this.options.sandbox ?? new ProcessSandbox(),
         root: worktreePath,
         testGate,
@@ -1504,6 +1514,29 @@ export class CardRunner {
       });
       this.egressPort = await this.egress.start().catch(() => undefined);
     }
+    // DS-P2-1, -2: card zero's generator steps — a person's Create project
+    // approved that generator — reach its ecosystem's package registry and
+    // nothing else, through a proxy of their own; every request recorded as
+    // the card's egress. The card's other commands stay as the policy says.
+    const registry = this.options.declaredSteps?.registry;
+    const generatorHosts = registry ? generatorAllowlist(policy, registry) : [];
+    if (generatorHosts.length > 0 && !this.options.allowNetwork && !this.options.restricted) {
+      this.generatorEgress = new EgressProxy({
+        allow: generatorHosts,
+        deny: policy.fetchDeny,
+        onRequest: (r) => {
+          void store
+            ?.recordEvent({
+              type: "card/egress",
+              cardId: card.id,
+              actor: "system",
+              payload: { ...r, via: "generator" },
+            })
+            .catch(() => undefined);
+        },
+      });
+      this.generatorPort = await this.generatorEgress.start().catch(() => undefined);
+    }
 
     // Everything the team recorded about this card reaches this attempt.
     let dossierLines: string[] = [];
@@ -1610,6 +1643,10 @@ export class CardRunner {
                           ...(reply ? { reply } : {}),
                         };
                       },
+                      // PM-P2-7: when the answer reached the Worker, on the ledger.
+                      onAnswerDelivered: async (id: string) => {
+                        await store.runs?.recordDecisionDelivered(id);
+                      },
                     }
                   : {}),
                 recordAnswer: async (a: string, questionEntryId: string | undefined) => {
@@ -1644,6 +1681,15 @@ export class CardRunner {
           // K11: every prompt is stored by hash before it is sent.
           onPrompt: (record: PromptRecord) => this.logPrompt(record),
           ...this.options,
+          // DS-P2-1, -2: the declared steps' way out is the generator's proxy.
+          ...(this.options.declaredSteps && this.generatorPort
+            ? {
+                declaredSteps: {
+                  ...this.options.declaredSteps,
+                  egressProxyPort: this.generatorPort,
+                },
+              }
+            : {}),
           // Rule 34: the first verification closes quarantine behind it.
           gateRunner: this.closingQuarantine(worktreePath),
           // G25: each further sample draws at its own temperature.
@@ -2391,6 +2437,7 @@ export class CardRunner {
       ?.emit("card/end", { cardId: card.id, data: { stopReason, attempt: params.attempt } })
       .catch(() => undefined);
     await this.egress?.close().catch(() => undefined);
+    await this.generatorEgress?.close().catch(() => undefined);
     await lifecycle?.recordSteps?.(card.id, params.stepsUsed);
 
     // Bounds are checked against the real diff, which is why the git adapter

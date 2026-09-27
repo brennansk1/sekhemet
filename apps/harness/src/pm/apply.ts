@@ -4,8 +4,11 @@ import { type Audience, ownerRefusal } from "./audience.js";
 import {
   type PipelineDeps,
   PipelineRefusal,
+  type ProjectChoices,
+  applyProjectGroup,
   createThroughPipeline,
   planThroughPipeline,
+  projectGroupOf,
   splitThroughPipeline,
 } from "./pipeline.js";
 import type { PmStore } from "./store.js";
@@ -27,6 +30,11 @@ export interface ApplyContext {
   repoPath?: string;
   /** Who may apply a change to an owned issue (Team setup, PM-N9-9). */
   audience?: Audience;
+  /**
+   * A new project's Review plan choices (design-stage DS-P2-7): candidates
+   * accepted or removed, the release line, the Type, the questions' answers.
+   */
+  choices?: ProjectChoices;
 }
 
 export class ProposalError extends Error {
@@ -193,6 +201,16 @@ export async function applyProposal(
       break;
     }
     case "start_project": {
+      // PM-P2-2: the group Review plan showed, created with the person as
+      // actor; a bare brief (an older proposal) is planned as before.
+      const group = projectGroupOf(proposal.patch);
+      if (group) {
+        const r = await viaPipeline(ctx, (deps) =>
+          applyProjectGroup(deps, group, ctx.choices ?? {}),
+        );
+        touched.push(...r.cards);
+        break;
+      }
       const brief = typeof proposal.patch?.brief === "string" ? proposal.patch.brief : "";
       if (!brief.trim()) throw new ProposalError("A project needs its brief.", 400);
       const r = await viaPipeline(ctx, (deps) => planThroughPipeline(deps, brief));

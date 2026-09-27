@@ -12,6 +12,7 @@ import { unenforcedInvariants } from "../architecture_gate.js";
 import { LearningStore } from "../learning/store.js";
 import { type SwapLedger, sharedQueue } from "../model_access.js";
 import { projectStoryMap } from "../project_done.js";
+import { takeoverPromptContext } from "../takeover_brief.js";
 import {
   type PmSnapshot,
   answer,
@@ -23,6 +24,7 @@ import { type Audience, nameFor, soloAudience } from "./audience.js";
 import { capabilityReport, capabilitySummary } from "./capability.js";
 import { namedDecisions } from "./decisions.js";
 import { flowMetrics, monteCarloForecast } from "./metrics.js";
+import { draftProjectGroup } from "./pipeline.js";
 import { parseSlash, resolveCard, runSlash } from "./slash.js";
 import type { PmStore } from "./store.js";
 import { postSuggestions, suggestedText } from "./suggest.js";
@@ -158,9 +160,16 @@ export async function buildSnapshot(
     scope?.audience ?? soloAudience(),
     scope?.asker,
   ).catch(() => []);
+  // DS-TO-10: a take-over's brief as found reaches Seshat only wrapped as
+  // untrusted content, and only for an asker who sees the whole board.
+  const takeover =
+    !partial && (await cardStore.takeover.briefAsFound())
+      ? await takeoverPromptContext(cardStore).catch(() => undefined)
+      : undefined;
   return {
     project: basename(repoPath),
     ...(forecast ? { forecast } : {}),
+    ...(takeover?.blocks.length ? { takeover } : {}),
     cards,
     cycles: await pmStore.cycles(),
     recentRuns,
@@ -700,6 +709,14 @@ async function answerFor(
       undefined,
       deps.researcher,
       seshatThreadId(deps.repoPath),
+      // PM-P2-1: a new project's proposal group, planned by the held model
+      // (it is held in the Planner role) unless the Planner is "none".
+      (sentence) =>
+        draftProjectGroup(
+          { repoPath: deps.repoPath, cardStore: deps.cardStore, log: deps.pmStore.log },
+          sentence,
+          deps.planner ? { adapter: model } : {},
+        ),
     );
     // PM-N9-1, -9; TEAM-19, -40: triage changes become suggestions on the
     // issue, a change to someone else's issue is marked for its owner, a

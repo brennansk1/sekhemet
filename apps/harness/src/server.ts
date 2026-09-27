@@ -828,6 +828,13 @@ export function startDashboardServer(
     if (rule.suggestionId && store) {
       cardId = (await store.suggestions.get(rule.suggestionId))?.cardId;
     }
+    // A new project's group accepts its brief when applied (teams item 6,
+    // design-stage §2.9 item 7): `brief.accept` as well, never instead.
+    if (rule.proposalId) {
+      const p = await pmApi.pmStore.proposal(rule.proposalId);
+      if (p?.kind === "start_project")
+        permissions = [...permissions, "project.create", "brief.accept"];
+    }
     const card = (cardId && store ? await store.getCard(cardId) : undefined) ?? undefined;
     let project = rule.projectId ?? projectOfCard(card);
     // B4.3: a slice or requirement id resolves to its own project, checked to exist.
@@ -1461,6 +1468,8 @@ export function startDashboardServer(
           restrictedMode: false,
           cardStore: store,
           boardService: boardService as never,
+          // DS-N3-1: the project documents follow a person's accept.
+          eventLog: log,
         };
         const strings = (v: unknown): string[] =>
           Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];

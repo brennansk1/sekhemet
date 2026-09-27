@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { type NetworkRule, displayConfigPath, domainAllowed } from "@sekhemet/sandbox";
+import { researchCopy } from "./research_copy.js";
 
 /**
  * Polite, cached access to other people's public APIs and sites.
@@ -343,6 +345,11 @@ export interface PoliteOptions {
   allowHosts?: string[];
   /** config.toml [network] mode = "allowlist": only these hosts (and subdomains). */
   allowOnly?: string[];
+  /**
+   * `[network] fetch_deny`, each rule with its file: never fetched, not even
+   * from the cache, whatever else allows it (design-stage DS-N4-3).
+   */
+  deny?: NetworkRule[];
 }
 
 export interface PoliteStats {
@@ -372,6 +379,21 @@ export class PoliteFetcher {
     });
   }
 
+  /** The refusal for a URL whose host a `fetch_deny` rule covers (DS-N4-3), checked before any cache. */
+  denied(url: string): string | undefined {
+    try {
+      return this.deniedBy(new URL(url).hostname);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** The refusal for a host a `fetch_deny` rule covers, naming the file and the rule. */
+  private deniedBy(hostname: string): string | undefined {
+    const hit = this.opts.deny?.find((r) => domainAllowed(hostname, [r.rule]));
+    return hit ? researchCopy.denied(hostname, hit.rule, displayConfigPath(hit.file)) : undefined;
+  }
+
   private blockedByAllowlist(hostname: string): boolean {
     const list = this.opts.allowOnly;
     if (!list) return false;
@@ -395,11 +417,13 @@ export class PoliteFetcher {
       return "Invalid URL.";
     }
     if (!/^https?:$/.test(u.protocol)) return "Only http and https pages can be fetched.";
+    const deniedBy = this.deniedBy(u.hostname);
+    if (deniedBy) return deniedBy;
     const allowed = (this.opts.allowHosts ?? []).includes(u.host);
     if (!allowed && isPrivateHost(u.hostname))
       return "Refusing to fetch a private or loopback address.";
     if (!allowed && this.blockedByAllowlist(u.hostname)) {
-      return `${u.hostname} is not on the network allowlist (config.toml [network] allow).`;
+      return researchCopy.notAllowlisted(u.hostname);
     }
     let delayS = 0;
     if (this.opts.robots !== false && !allowed) {
@@ -428,14 +452,14 @@ export class PoliteFetcher {
   async fetch(url: string, init: RequestInit = {}, respectRobots = false): Promise<Response> {
     const u = new URL(url);
     if (!/^https?:$/.test(u.protocol)) throw new Error("Only http and https can be fetched.");
+    const deniedBy = this.deniedBy(u.hostname);
+    if (deniedBy) throw new Error(deniedBy);
     const allowed = (this.opts.allowHosts ?? []).includes(u.host);
     if (!allowed && isPrivateHost(u.hostname)) {
       throw new Error("Refusing to fetch a private or loopback address.");
     }
     if (!allowed && this.blockedByAllowlist(u.hostname)) {
-      throw new Error(
-        `${u.hostname} is not on the network allowlist (config.toml [network] allow).`,
-      );
+      throw new Error(researchCopy.notAllowlisted(u.hostname));
     }
     const isGet = (init.method ?? "GET").toUpperCase() === "GET";
     const key = isGet ? url : "";

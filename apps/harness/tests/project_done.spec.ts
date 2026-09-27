@@ -498,16 +498,34 @@ describe("P13 fixture: eight requirements, two slices, one revised after its sli
     // PM-P13-13: a release per slice.
     expect((await store.slices.releases("SLICE-2"))[0]?.requirementIds).toEqual(["REQ-6", "REQ-7"]);
     // Finding 5 (B4.3): main has not moved since SLICE-2's release was
-    // proposed, so `--confirm` tags the proven sha, which is main's head.
+    // proposed, so `--confirm` builds on the proven sha, which is main's head.
+    // DS-N3-8: the release's CHANGELOG.md section and notes are committed on
+    // it first, and the tag names that commit, whose parent is the proven sha.
     const head = mainHead(root).sha;
     const slice2Version = (await store.slices.releases("SLICE-2"))[0]?.version;
     const tagged = await confirmSliceRelease(k, "SLICE-2");
-    expect(tagged).toEqual({ tag: `v${slice2Version}`, sha: head });
+    expect(tagged.tag).toBe(`v${slice2Version}`);
+    expect(git("rev-parse", `${tagged.sha}^`)).toBe(head);
+    expect(git("rev-parse", `v${slice2Version}^{commit}`)).toBe(tagged.sha);
+    expect(
+      git("diff", "--name-only", head as string, tagged.sha)
+        .split("\n")
+        .sort(),
+    ).toEqual(
+      expect.arrayContaining(["CHANGELOG.md", `docs/product/releases/${slice2Version}.md`]),
+    );
+    // Its only change from the proven sha is documents.
+    expect(
+      git("diff", "--name-only", head as string, tagged.sha)
+        .split("\n")
+        .every((p) => p === "CHANGELOG.md" || p.startsWith("docs/")),
+    ).toBe(true);
     const [releaseTagged] = await log.getEventsByTypes(["release/tagged"]);
     expect(releaseTagged?.payload).toMatchObject({
       sliceId: "SLICE-2",
       tag: `v${slice2Version}`,
-      sha: head,
+      sha: tagged.sha,
+      proven: head,
     });
   }, 180_000);
 });

@@ -3,6 +3,7 @@ import {
   type CardRecord,
   type CardStatus,
   type CardStore,
+  type DepthProfile,
   LEGAL_TRANSITIONS,
   STOP_REASONS,
   StatusTransitionError,
@@ -144,9 +145,10 @@ export interface BoardServiceOptions {
    */
   measurementMarker?: { purpose: string };
   /**
-   * The project's depth profile (design-stage P14), which sets the test
-   * approvals a card needs before it leaves Planning (planner-pm §2.17,
-   * PM-N7-3). Until P14 builds the profile, every project is `internal tool`.
+   * A depth profile the caller already read (design-stage P14), which sets
+   * the test approvals a card needs before it leaves Planning (planner-pm
+   * §2.17, PM-N7-3). Omitted, the board reads the one a person recorded for
+   * the card's project (`depthProfileOf`, DS-P14-3).
    */
   depthProfile?: DepthProfile;
   /**
@@ -157,9 +159,9 @@ export interface BoardServiceOptions {
   readStagedFile?: (path: string) => string | undefined;
 }
 
-/** The depth profiles of design-stage §2.8 (gates' `DepthProfile`, typed here: the board sits below gates). */
-export type DepthProfile = "prototype" | "internal tool" | "production" | "regulated";
-export const DEFAULT_DEPTH_PROFILE: DepthProfile = "internal tool";
+/** The depth profiles of design-stage §2.8: the kernel's, which records and reads them (DS-P14-3). */
+export type { DepthProfile } from "@sekhemet/kernel";
+export { DEFAULT_DEPTH_PROFILE } from "@sekhemet/kernel";
 
 /** Where a card leaving for Ready or In Progress has not yet run: its approvals are due. */
 const BEFORE_RUNNING = new Set<CardStatus>(["planning", "backlog", "parked", "rejected"]);
@@ -183,13 +185,17 @@ const RECHECK_BEFORE_RUN = new Set<CardStatus>([...BEFORE_RUNNING, "ready"]);
  * content on disk rather than trusting the SHA-256 recorded at `stage()`
  * time: a file a person or a process edited directly, without re-staging,
  * would otherwise still read as approved at its old, no-longer-true hash.
+ *
+ * `given` is a profile the caller already read; omitted, the one a person
+ * recorded for the card's project is read from the ledger (DS-P14-3).
  */
 export async function planningExitFailure(
   store: CardStore,
   card: CardRecord,
-  profile: DepthProfile = DEFAULT_DEPTH_PROFILE,
+  given?: DepthProfile,
   readStagedFile?: (path: string) => string | undefined,
 ): Promise<string | undefined> {
+  const profile = given ?? store.depthProfiles.of(card.projectId).profile;
   if ((card.criterionIds?.length ?? 0) === 0) return undefined;
   const criteria = store.stagedTests.criteriaApproval(card.id);
   if (!criteria.approved) {

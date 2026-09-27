@@ -25,7 +25,8 @@ const TEST_FILE = /(^|\/)(tests?|__tests__)\/|\.(spec|test)\.[cm]?[jt]sx?$/;
 
 function git(root: string, ...args: string[]): string | undefined {
   try {
-    // The target repository's own config never runs anything here (the hardened environment).
+    // `gitEnvFor`: a card worktree's guarded environment, else the process's
+    // own; `ls-tree` and `show HEAD:<file>` run no hook, filter or textconv.
     return execFileSync("git", args, {
       cwd: root,
       env: gitEnvFor(root),

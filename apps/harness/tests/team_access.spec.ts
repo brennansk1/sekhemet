@@ -685,3 +685,27 @@ describe("Accept by the project's Accept rule (INT-22, INT-23)", () => {
     expect(await refusals()).toEqual([]);
   });
 });
+
+// PM_CONTRACT "Take over a project" (B4.4): each write route names its own
+// permission; approving the plan is approving a plan, with the person's principal.
+describe("the take-over routes' permissions", () => {
+  it("starting is creating a project, approving is approving a plan, a reconciliation is a proposal", () => {
+    expect(routePermissions("POST", "/api/takeover", {})).toEqual({
+      permissions: ["project.create"],
+    });
+    expect(routePermissions("POST", "/api/takeover/approve", { proposalId: "TOP-1" })).toEqual({
+      permissions: ["plan.approve"],
+    });
+    expect(
+      routePermissions("POST", "/api/takeover/approve", {
+        proposalId: "TOP-1",
+        projectId: "prj_a",
+      }),
+    ).toEqual({ permissions: ["plan.approve"], projectId: "prj_a" });
+    for (const verb of ["apply", "dismiss"]) {
+      expect(routePermissions("POST", `/api/takeover/reconciliation/${verb}`, {})).toEqual({
+        permissions: ["proposal.apply"],
+      });
+    }
+  });
+});

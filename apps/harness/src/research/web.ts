@@ -3,6 +3,7 @@ import { promisify } from "node:util";
 import { Crawl4AiSidecar, type PageCrawler, crawl4aiInstalled } from "./crawl4ai.js";
 import { focusChunks } from "./docs.js";
 import { PoliteFetcher, ResearchCache, USER_AGENT, isPrivateHost } from "./polite.js";
+import { researchCopy } from "./research_copy.js";
 import { rankHits } from "./sources.js";
 
 /**
@@ -53,6 +54,8 @@ export function webConfigFromEnv(
     gate?: (url: string, via: string) => Promise<void>;
     /** False: no browser reader, since the policy could not see its own requests. */
     browser?: boolean;
+    /** `[network] fetch_deny` with each rule's file (DS-N4-3): never fetched, not even cached. */
+    deny?: import("@sekhemet/sandbox").NetworkRule[];
   } = {},
 ): WebConfig {
   const env = process.env;
@@ -69,6 +72,7 @@ export function webConfigFromEnv(
       // Research through the one network policy, when the caller hands it (SEC-52a).
       ...(opts.fetch ? { fetch: opts.fetch } : {}),
       ...(opts.allowOnly ? { allowOnly: opts.allowOnly } : {}),
+      ...(opts.deny?.length ? { deny: opts.deny } : {}),
       cache: new ResearchCache(),
       ...(searxHost ? { allowHosts: [searxHost] } : {}),
     }),
@@ -259,6 +263,9 @@ export async function fetchPage(
   if (!/^https?:$/.test(u.protocol)) return "Only http and https pages can be fetched.";
   // No reaching into the user's network from a model-chosen URL.
   if (isPrivateHost(u.hostname)) return "Refusing to fetch a private or loopback address.";
+  // DS-N4-3: a denied host is refused before any cache is read.
+  const denied = cfg.polite?.denied(u.toString());
+  if (denied) return denied;
   const fit = (text: string) => {
     if (text.length <= maxChars) return text;
     if (query) return focusChunks(text, query, maxChars);
@@ -275,7 +282,7 @@ export async function fetchPage(
     try {
       await cfg.gate?.(u.toString(), "crawl4ai");
     } catch (err) {
-      return err instanceof Error ? err.message : String(err);
+      return asRefusal(u.hostname, err);
     }
     const r = await cfg.crawler.crawl(u.toString());
     if (r.ok && r.markdown && r.markdown.length > 200) {
@@ -287,14 +294,40 @@ export async function fetchPage(
   }
   const init: RequestInit = { headers: UA, signal: timeout(), redirect: "follow" };
   // Page reads honour robots.txt; API calls (search, registries) are not crawling.
-  const res = cfg.polite
-    ? await cfg.polite.fetch(u.toString(), init, true)
-    : await get(cfg)(u.toString(), init);
+  // A fetcher that throws (a refusal, a daily cap, a failed lookup) read
+  // nothing: its reason is returned as a refusal, never as the page.
+  let res: Response;
+  try {
+    res = cfg.polite
+      ? await cfg.polite.fetch(u.toString(), init, true)
+      : await get(cfg)(u.toString(), init);
+  } catch (err) {
+    return asRefusal(u.hostname, err);
+  }
   if (res.status === 451) return "The site's robots.txt disallows fetching this page.";
   if (!res.ok) return `The page answered ${res.status}.`;
   const type = res.headers.get("content-type") ?? "";
   const body = await res.text();
   return fit(/html/i.test(type) || /^\s*</.test(body) ? htmlToText(body) : body);
+}
+
+/**
+ * A failure to read `host` as a refusal `isFetchRefusal` recognises, whatever
+ * the thrown message said (a policy gate's own failure, a fetcher's error).
+ */
+function asRefusal(host: string, err: unknown): string {
+  const why = err instanceof Error ? err.message : String(err);
+  return isFetchRefusal(why) ? why : researchCopy.unreadable(host, why);
+}
+
+/**
+ * True when `fetchPage` returned a refusal or a failure rather than a page:
+ * such text was not read from the source and never counts as a read.
+ */
+export function isFetchRefusal(text: string): boolean {
+  return /^(Invalid URL|Only http|Refusing|The site's robots|The page answered|network policy refused)/.test(
+    text,
+  );
 }
 
 /** Headings of a text produced by htmlToText ("# Title", "## 3 Method"). */
@@ -319,8 +352,10 @@ export async function readPaper(
 ): Promise<string> {
   if (!/^\d{4}\.\d{4,5}$/.test(arxivId)) return "Give an arXiv id like 2605.03042.";
   let text = await fetchPage(`https://arxiv.org/html/${arxivId}`, cfg, 400_000);
-  if (/^The page answered 404|^The site's robots/.test(text) || text.length < 1500) {
+  if (isFetchRefusal(text) || text.length < 1500) {
     text = await fetchPage(`https://arxiv.org/abs/${arxivId}`, cfg, 20_000);
+    // A refused abstract is a refusal, never a paper read.
+    if (isFetchRefusal(text)) return text;
     return `(No HTML full text; abstract page.)\n${text.slice(0, 6000)}`;
   }
   if (!section) {

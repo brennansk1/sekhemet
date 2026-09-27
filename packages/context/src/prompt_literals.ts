@@ -127,6 +127,10 @@ const PERSON_FACING_REFUSALS: ReadonlySet<string> = new Set([
   // packages/models/src/load_guard.ts: "Model loads are off in this process…", thrown to a
   // developer running tests with SEKHEMET_MODEL_LOADS=off; a model never sees it.
   "modelLoadRefusal",
+  // packages/kernel/src/requirements.ts: "claim <id> is <label>, not proven…", thrown by the
+  // ledger when a take-over requirement is recorded, to the person applying the take-over
+  // plan on the CLI or the dashboard (design-stage DS-TO-14); no model's tool reaches it.
+  "takeoverClaimRefusal",
 ]);
 
 function nameOf(node: ts.Node | undefined): string | undefined {

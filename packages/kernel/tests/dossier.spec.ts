@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { CardStore, MAX_DOSSIER_TEXT } from "../src/card_store.js";
+import { CardStore, MAX_DOSSIER_TEXT, MAX_RESEARCH_DOSSIER_TEXT } from "../src/card_store.js";
 import { EventLog } from "../src/log.js";
 import { type DiskDb, openDiskDb } from "./support/disk_db.js";
 
@@ -155,7 +155,7 @@ describe("@sekhemet/kernel card dossier", () => {
 
   it("cuts oversized text with a visible marker and skips malformed ledger rows", async () => {
     const long = "x".repeat(MAX_DOSSIER_TEXT + 50);
-    await store.recordDossierEntry({ cardId: "c_a", kind: "research", text: long });
+    await store.recordDossierEntry({ cardId: "c_a", kind: "lesson", text: long });
     // A row written by an older or broken writer: right type, no text.
     await log.append({
       actor: "worker",
@@ -166,9 +166,20 @@ describe("@sekhemet/kernel card dossier", () => {
 
     const dossier = await store.getDossier("c_a");
     expect(dossier.notes).toEqual([]);
-    const text = dossier.research[0]?.text ?? "";
+    const text = dossier.lessons[0]?.text ?? "";
     expect(text.startsWith("x".repeat(MAX_DOSSIER_TEXT))).toBe(true);
     expect(text.endsWith("[50 chars cut]")).toBe(true);
+  });
+
+  it("DS-N5-3: keeps a long research answer whole, cutting only past its own far larger bound", async () => {
+    const answer = "y".repeat(MAX_DOSSIER_TEXT * 4);
+    await store.recordDossierEntry({ cardId: "c_a", kind: "research", text: answer });
+    const huge = "z".repeat(MAX_RESEARCH_DOSSIER_TEXT + 7);
+    await store.recordDossierEntry({ cardId: "c_a", kind: "research", text: huge });
+    const [whole, cut] = (await store.getDossier("c_a")).research;
+    expect(whole?.text).toBe(answer);
+    expect(cut?.text.startsWith("z".repeat(MAX_RESEARCH_DOSSIER_TEXT))).toBe(true);
+    expect(cut?.text.endsWith("[7 chars cut]")).toBe(true);
   });
 });
 

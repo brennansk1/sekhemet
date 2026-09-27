@@ -400,3 +400,19 @@ describe("M3/M18 in production: every adapter feeds the shared telemetry", () =>
     expect(alerts).toEqual([2]);
   });
 });
+
+describe("an adapter says whether its server is on this machine", () => {
+  it("is remote only for a base URL that is not a loopback address", async () => {
+    const { HttpInferenceAdapter } = await import("../src/http_adapter.js");
+    expect(new HttpInferenceAdapter({ modelId: "m" }).remote).toBe(false);
+    expect(
+      new HttpInferenceAdapter({ modelId: "m", baseUrl: "http://localhost:8098" }).remote,
+    ).toBe(false);
+    expect(new HttpInferenceAdapter({ modelId: "m", baseUrl: "http://[::1]:8098" }).remote).toBe(
+      false,
+    );
+    expect(
+      new HttpInferenceAdapter({ modelId: "m", baseUrl: "https://gpu.example.com/v1" }).remote,
+    ).toBe(true);
+  });
+});

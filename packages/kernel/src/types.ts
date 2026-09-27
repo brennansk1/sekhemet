@@ -800,6 +800,8 @@ export interface DecisionRequestRecord {
   answeredBy?: string;
   createdAt: string;
   answeredAt?: string;
+  /** When the answer reached the card that asked (planner-pm PM-P2-7), from `decision/delivered`. */
+  deliveredAt?: string;
 }
 
 export interface CreateDecisionInput {

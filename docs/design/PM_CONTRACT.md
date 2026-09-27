@@ -23,6 +23,8 @@ updated in the same commit.
 | Rule lifecycle (§6) | approval, then helpful/harmful counts on first attempts; proposed for retirement at 3 more harmful than helpful | [DECISIONS](DECISIONS.md) DEC-28: approval, then paired credit on this project's attempt records, with rotation; **retired automatically** only at the fixed looks after 20, 40 and 80 pairs, when a one-sided exact test on the discordant pairs shows harm at 0.05/3 (never below 20 pairs); a person may retire a rule at any time. `LearnedRule` gains the credit and the pairs counted | NEW-context-4 |
 | Lessons learned during a run (§6) | none | **Pending owner decision O15** ([OPEN_QUESTIONS](../reference/OPEN_QUESTIONS.md#owner-decisions)). Default until decided: none applies before a person approves it; each is a `candidate` at the run's end, with its evidence. If the owner allows probation: a `LearnedRule` status `probation`, production runs only, never a measurement run | T8 (MS-T8-15), NEW-context-4 |
 | Profile statements (§6) | used by Seshat as soon as they are derived; editable and dismissible | Pending the owner ([OPEN_QUESTIONS](../reference/OPEN_QUESTIONS.md#owner-decisions) O24). Default until decided: the code's behaviour. If the owner requires approval first: a `ProfileEntry` status `proposed`, and `POST /api/learning/profile/:id/approve` | — (decided by the owner) |
+| Decision `deliveredAt` (`GET /api/decisions`) | absent: a decision record says when it was answered, not when the answer reached the card that asked | `deliveredAt?: string` (ISO time) on an answered decision, from the kernel's `decision/delivered` ([planner-pm](specs/planner-pm.md) PM-P2-7); the record is built (B4.4), the delivery call sites are not yet | P2 |
+| Take over a project (§3, *Take over a project*) | none: the take-over ran only from `sekhemet dev take-over`, and stopped at the inventory | `POST /api/takeover`, `GET /api/takeover`, `POST /api/takeover/approve`, `POST /api/takeover/reconciliation/apply` and `/dismiss` — built (B4.4) | NEW-design-stage-6, NEW-integrations-4 |
 | Card `key` (§2, `GET /api/board`) | absent; cards carry only `card_<uuid8>` ids | `key: string` (`CHR-12`), the project's prefix and a per-project number, never reused ([kernel](specs/kernel.md) rule 5) | P3 |
 | Card `kind`, `change`, `split` (§2, `GET /api/board`) | `kind` re-derived from labels, title and keywords | three stored fields: `kind` (seven values), `change` (`feature`, `fix`, `characterize`, `refactor`, `upgrade`), `split` on a split child (`spike`, `path`, `interface`, `data`, `rules`) ([DEC-26](DECISIONS.md#dec-26--one-vocabulary-for-the-kind-of-card-and-the-run); labels in [NAMING](NAMING.md#card-kind-change-and-split)) | NEW-kernel-9 |
 | The `awaitingMerge` hold (`GET /api/board`) | none; a card moves to Done when its pull request opens | `hold?: { kind: "awaitingMerge", pr, since }` on a card in `review`, not counted toward ReviewWIP ([kernel](specs/kernel.md) rule 24) | NEW-kernel-3 |
@@ -116,7 +118,8 @@ interface PmProposal {
   id: string;
   kind: "create_card" | "update_card" | "split_card" | "reorder" | "move_card"
       | "create_cycle" | "assign_cycle" | "park" | "unpark"
-      | "start_project";                // patch.brief: planned by the one planner when applied
+      | "start_project";                // patch.brief: the person's sentence; patch.group: the new
+                                        // project's ProjectGroup (below), when Seshat drafted one
   summary: string;              // "Suggested: split Ledger into 2 cards (5 pts). Why: the Worker looped on it."
   why?: string;                 // the reason; every Seshat proposal has one (PM-N9-4)
   suggestionId?: string;        // the suggestion on the issue this is (PM-N9-1): applying either
@@ -136,6 +139,50 @@ interface PmProposal {
   written to the ledger with actor `human` and type `pm/proposal_state`,
   payload `{ proposalId, state: "applied", cardIds? }` (a discard writes the same type with `state: "discarded"`).
 - `POST /api/pm/proposals/:id/discard`
+- A `start_project` proposal with `patch.group` is a new project's whole plan
+  (planner-pm §2.9, PM-P2-1; design-stage §2.9, DS-P2-6, -7), drafted
+  without writing anything: `ProjectGroup { version: 1, sentence, buildSpec,
+  brief { problem, outcome, users, notInScope, constraints, priorArt,
+  riskiest, doneMeans }: string[] each, type { profile, reason }, stack
+  { language, name, stated }, generator, epics [{ title, mechanism? }],
+  cards [{ title, criteria, points }], requirements [{ key, title, mustHave }],
+  candidates [{ key, title, priority: "must" | "should" | "could", source:
+  "request" | "walkthrough", accepted }], releaseLine, releases [{ name,
+  candidates, cards, forecast?: { p50Days, p85Days, samples } }] (no forecast:
+  *Not enough history yet*), questions [{ question, default, answers }] (at
+  most two), assumptions, settled [{ question, answer, source, ref }],
+  cardZero, cardOne, creates { project, epics, issues, brief, cardZero } }`.
+  Its apply takes an optional body `{ choices: { accept?: string[], remove?:
+  string[], releaseLine?: number, type?: string, answers?: { [question
+  index]: answer index } } }` — Review plan's *Create project* — and creates,
+  with the person as actor, the project, the Type, the brief's releases as
+  slices with the kept candidates, the first release's cards through the
+  planner, card zero (`labels: ["card-zero"]`, Ready) and card one
+  (`["card-one"]`, after card zero), every planned card after card one; the
+  answered questions as decisions, the unanswered as assumptions (PM-P2-2).
+  `choices` of any other shape — an unknown key, `accept`/`remove` not an
+  array of strings, `releaseLine` not a whole number, `type` not one of the
+  depth profiles (never replaced silently by the proposed one), `answers`
+  keyed other than by a question index or valued other than by a whole
+  number — is refused with **400** and nothing is applied; absent, the
+  proposed plan is applied as drafted. The Type chosen is recorded even where
+  a profile was recorded before. A new project's group is applied only in a
+  folder that holds no project yet: a repository whose tracked files hold
+  code, or whose project already has an accepted brief or a card, is refused
+  with **409** and nothing is written (plan there with `/plan`, or take it
+  over). In the Team setup applying it also needs `project.create` and
+  `brief.accept` — an Admin, since a new project has no lead — so a Member's
+  apply is a **403** naming `brief.accept` (teams item 6). TEAM-20 is
+  partial: *Send for approval* is not built, and in the Team setup Review
+  plan's button says what it does — *Create project and accept its
+  brief* — and beforehand who may press it (*Create project* in Solo). A
+  ledger holding a card or an accepted brief that no project claims is
+  refused like a folder's project. Card one's test is the Worker's to
+  write, in its scope, never a staged acceptance test (design-stage
+  DS-P2-3). The dashboard opens Review plan for such a proposal in
+  place of Apply, and *Apply all* never applies it.
+  A `start_project` with only `patch.brief` is planned as `sekhemet plan`
+  plans it, with the person as actor and principal (PM-P2-2).
 - A `create_card`, `split_card` or `start_project` proposal is applied
   through the one planner (planner-pm PM-P1-1): INVEST, the criterion lint,
   the scope bound and a staged test. A card the checks hold is created in
@@ -258,6 +305,15 @@ request's principal; a refusal is `409 { error }` naming what is unproven.
   `{ completesProject, release?: { version, notes, changelog },
      releaseRefused?, report }`. The slice's own project resolves from the
   slice, and its Accept rule decides (`accept`, like accepting a card).
+  `changelog` is the Keep a Changelog section (`## [x.y.z] - date`, then
+  `### Added` …) proposed for the top of `CHANGELOG.md`; it and
+  `docs/product/releases/<version>.md` are committed when the release is
+  confirmed, before the tag (design-stage DS-N3-8).
+- `POST /api/brief/accept` and `POST /api/requirements/:id/revise` keep
+  their response shapes; after the act, the project documents are
+  regenerated from the ledger and committed onto the integration branch
+  (design-stage DS-N3-1), and a failure to do so is said in Seshat's thread,
+  never as the route's error.
 - `POST /api/slices/:id/extend` with `{ cards?, hours? }` (each above the
   current budget) returns `{ extended }`; refused (409) unless every
   remaining card has a red test and no requirement of the slice is
@@ -314,6 +370,63 @@ request's principal; a refusal is `409 { error }` naming what is unproven.
   - now: `github`, `github-pr`, `jira`, `linear`, `slack`, `research-web`
   - next: `jira-sync`, `linear-sync`, `github-actions`, `teams`, `slack-replies`
   - later: `sentry`, `datadog`, `pagerduty`, `notion`, `confluence`
+
+### Take over a project (design-stage §2.10, NEW-design-stage-6; integrations NEW-integrations-4)
+
+Served by `apps/harness/src/integrations.ts`; every write carries the mutation
+guard, and the acting person is the request's principal.
+
+- `POST /api/takeover` `{}` — the empty board's **Take over a project**
+  (DS-TO-16): takes over the server's repository (`runTakeover`): steps 1–3
+  always; once the repository is trusted, the brief as found, the inherited
+  issues' reconciliation, one batch of questions and the backlog proposal
+  (steps 4–6). Seshat posts a reply saying what was found, with counts and
+  ids only, never repository text. Returns `{ trusted, wouldRun: string[] }`
+  and the `GET` shape below. `409` while another take-over runs.
+- `GET /api/takeover` returns `{ inventory: { seq, baselineSeq, findings:
+  [{ id, kind, path?, line?, commit? }] } | null, brief: { seq, inventorySeq,
+  claims: [{ id, label: "proven" | "claimed_unproven" | "contradicted",
+  citations: string[], results?: [{ kind: "test" | "build", ref, baselineSeq }],
+  text?, linkState?: "proposed" }] } | null, questions: [{ decisionId, rank,
+  defaultCites, question, options, status, answer? }], backlog: { proposalId,
+  inventorySeq, approved: boolean, cards: [{ ref, bucket: "stabilise" |
+  "finish" | "defer", title, links: string[], change?, assignee: "worker" |
+  "person", forFinding?, redCheck?, secret?: { commit, path }, characterizes?,
+  needsCharacterize? }] } | null, reconciliations: [{ id, state, issues:
+  [{ issue: { system, id }, verdict: "done" | "duplicate" | "stale" | "valid",
+  evidence: [{ kind: "test" | "commit" | "file_line" | "issue", ref, run? }],
+  cardId?, newCard, why? }] }] }` — the person's view, repository text
+  included. Each question is also an ordinary pending decision (`GET
+  /api/decisions`), answered there. Only a person who can see every project
+  reads it (PM-N9-8, as Seshat's snapshot); anyone else gets **404**.
+- `POST /api/takeover/approve` `{ proposalId, projectId? }` — the person
+  approves the plan (DS-TO-11, DS-TO-14), a `plan.approve` (a Member; the
+  project's, when `projectId` is given) recorded with the request's
+  principal: each question still unanswered takes its default, the
+  requirement graph is seeded, and each card is planned through the one
+  planning pipeline, its evidence as its spec (criteria with ids; Planning
+  until the person approves them). `POST /api/takeover` is a
+  `project.create`, and a reconciliation's apply or dismiss a
+  `proposal.apply` (`team/access.ts`). The CLI's equivalent is
+  `sekhemet dev take-over --approve TOP-<n> [--project <id>]`.
+  Returns `{ defaultsApplied: string[], requirementIds: string[],
+  candidateIds: string[], cards: string[] }`. `409` with an `error` naming
+  the new proposal when an answer given since changed the plan (approve that
+  one), or when the proposal was superseded.
+- `POST /api/takeover/reconciliation/apply` `{ id }` — a person applies a
+  reconciliation (INT-43): written through the connected tracker's one
+  adapter (done and duplicate closed with a comment, stale labelled `stale`
+  with a comment, valid left as it is), then recorded with their principal.
+  Returns `{ id, state: "applied" | "open", applied: boolean, written:
+  string[], errors: string[] }`: a write that failed leaves it `open` for the
+  person to retry (an issue already closed is not written again); an issue
+  no longer open is named in `errors` and does not hold it open. `409` when
+  no tracker is connected, when the issues were read from another tracker
+  than the one connected (nothing is written), or it was already applied or
+  dismissed.
+- `POST /api/takeover/reconciliation/dismiss` `{ id }` — returns `{ id,
+  state: "dismissed" }`; nothing is written, and its issues may be proposed
+  again.
 
 ### Configuration (target: NEW-dashboard-6, NEW-models-12, NEW-measurement-5)
 

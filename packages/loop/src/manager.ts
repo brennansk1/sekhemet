@@ -15,6 +15,11 @@ export interface RepairPlanInput {
   failures: GateFailure[];
   /** Acceptance tests and current scope-file contents, as the worker left them. */
   files: { path: string; content: string }[];
+  /**
+   * What the Researcher found before this repair (design-stage DS-N5-2): the
+   * grounded answer and its sources, shown whole as a required section.
+   */
+  research?: { answer: string; sources: string[] };
 }
 
 const MANAGER_SYSTEM = replanCopy.system;
@@ -105,6 +110,19 @@ function replanPrompt(
       required: true,
       text: replanCopy.stopped(input.stopReason, failures),
     },
+    ...(input.research
+      ? [
+          {
+            id: "research",
+            kind: "dossier" as const,
+            placement: "static" as const,
+            order: 15,
+            priority: 100,
+            required: true,
+            text: replanCopy.research(input.research.answer, input.research.sources),
+          },
+        ]
+      : []),
     {
       id: "files_header",
       kind: "notice",

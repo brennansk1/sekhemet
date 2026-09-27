@@ -20,6 +20,8 @@ Rules:
   stopped: (stopReason: string, failures: string) =>
     `The worker stopped with: ${stopReason}\nGate failures:\n${failures}`,
   noGateRan: "(no gate ran; the worker stopped without verifying)",
+  research: (answer: string, sources: readonly string[]) =>
+    `Researched before this repair:\n${answer}\nSources:\n${sources.length ? sources.map((s) => `- ${s}`).join("\n") : "(none)"}`,
   filesHeader: "Files as the worker left them:",
   file: (path: string, content: string) => `--- ${path} ---\n${content || "(empty)"}`,
   close: "Write the repair plan now.",

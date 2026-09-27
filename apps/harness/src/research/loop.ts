@@ -42,10 +42,19 @@ export interface LoopResult {
 }
 
 export interface LoopOptions {
-  /** (outstanding items, findings so far) -> queries. The model's job; defaults to the items. */
+  /**
+   * (outstanding items, findings so far) -> queries. The model's job; defaults
+   * to the items. One query per outstanding item, in order, attributes each
+   * query's sources to its item; any other shape attributes them to all.
+   */
   proposeQueries?: (outstanding: string[], findings: LoopFinding[]) => Promise<string[]>;
   /** (item, all evidence text) -> covered. Deterministic by default. */
   isCovered?: (item: string, evidence: string) => boolean;
+  /**
+   * The closing rule (design-stage DS-N4-2): an item is covered only when
+   * the sources its own queries found also close it, measured in code.
+   */
+  closes?: (item: string, sources: Source[]) => boolean;
   maxRounds?: number;
   /** Queries in flight at once. The network is the wait, not the model. */
   concurrency?: number;
@@ -67,7 +76,7 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (t: T) => Promise<R
 
 export async function runResearchLoop(
   checklist: string[],
-  search: (query: string) => Promise<LoopFinding | undefined>,
+  search: (query: string, item: string | undefined) => Promise<LoopFinding | undefined>,
   opts: LoopOptions = {},
 ): Promise<LoopResult> {
   const items = [...new Set(checklist.map((c) => c.trim()).filter(Boolean))];
@@ -94,6 +103,8 @@ export async function runResearchLoop(
   const covered = new Set<string>();
   const findings: LoopFinding[] = [];
   const refs = new Set<string>();
+  /** Each item's own sources, from the queries dispatched for it. */
+  const itemSources = new Map<string, Source[]>();
   let rounds = 0;
   let dry = 0;
   let stopped: LoopResult["stoppedBecause"] = "budget";
@@ -107,20 +118,29 @@ export async function runResearchLoop(
     const proposed = opts.proposeQueries
       ? await opts.proposeQueries(outstanding, findings).catch(() => outstanding)
       : outstanding;
-    const queries = [...new Set(proposed.map((q) => q.trim()).filter(Boolean))].slice(0, 8);
-    if (queries.length === 0) {
+    const aligned = proposed.length === outstanding.length;
+    const seenQueries = new Set<string>();
+    const dispatches = proposed
+      .map((q, i) => ({ query: q.trim(), item: aligned ? outstanding[i] : undefined }))
+      .filter((d) => d.query && !seenQueries.has(d.query) && seenQueries.add(d.query))
+      .slice(0, 8);
+    if (dispatches.length === 0) {
       stopped = "no queries";
       break;
     }
     const before = refs.size;
-    const got = await mapLimit(queries, opts.concurrency ?? 3, (q) =>
-      search(q).catch(() => undefined),
+    const got = await mapLimit(dispatches, opts.concurrency ?? 3, (d) =>
+      search(d.query, d.item).catch(() => undefined),
     );
-    for (const f of got) {
-      if (!f) continue;
+    got.forEach((f, i) => {
+      if (!f) return;
       findings.push(f);
       for (const s of f.sources) refs.add(s.ref);
-    }
+      const item = dispatches[i]?.item;
+      for (const it of item ? [item] : outstanding) {
+        itemSources.set(it, [...(itemSources.get(it) ?? []), ...f.sources]);
+      }
+    });
     // No new source is a stopping condition, not a reason to try harder.
     if (refs.size === before) {
       dry++;
@@ -137,7 +157,11 @@ export async function runResearchLoop(
           `${f.text}\n${f.sources.map((s) => `${s.title ?? ""} ${s.excerpt ?? ""}`).join("\n")}`,
       )
       .join("\n");
-    for (const item of outstanding) if (covers(item, evidence)) covered.add(item);
+    for (const item of outstanding) {
+      if (!covers(item, evidence)) continue;
+      if (opts.closes && !opts.closes(item, itemSources.get(item) ?? [])) continue;
+      covered.add(item);
+    }
   }
   const outstanding = items.filter((i) => !covered.has(i));
   if (outstanding.length === 0) stopped = "covered";

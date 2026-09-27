@@ -287,6 +287,8 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
       lspPool: this.options.lspPool,
       // WL-N6-2: a refactor card's rename may reach outside its scope.
       mechanicalChange: this.card.change === "refactor",
+      // Rule 12: card zero's generator steps are the tool's lines, not the Worker's.
+      declaredSteps: options.declaredSteps,
       cardClass: cardClassFor(this.card),
       webDocs: options.webDocs,
       recallOffered: this.recallOffered(),
@@ -687,6 +689,8 @@ export class CardExecutionSessionImpl implements CardExecutionSession {
         workerCopy.askAnswered(w.question, answer, contradicts, w.assumption),
         workerCopy.askAnswerFrom,
       );
+      // PM-P2-7: the answer has reached the asker.
+      await this.options.onAnswerDelivered?.(w.decisionId).catch(() => undefined);
       await this.options.recordAnswer?.(answer, w.questionEntryId).catch(() => undefined);
       if (contradicts && !reply) still.push({ ...w, awaitingReply: true });
     }

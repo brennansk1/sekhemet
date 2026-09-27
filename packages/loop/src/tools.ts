@@ -180,6 +180,14 @@ export interface ToolExecutorOptions {
    */
   mechanicalChange?: boolean | undefined;
   /**
+   * Commands the card declares as one tool's steps — card zero's generator
+   * (design-stage DS-P2-1, -2). What such a step writes, run through
+   * run_cmd exactly as declared, is tool-applied (gates rule 12): counted
+   * against its own bound, never the Worker's lines. Files under `ignored`
+   * top-level directories (the generator's installed packages) are not read.
+   */
+  declaredSteps?: DeclaredSteps | undefined;
+  /**
    * The library's official web docs for `docs(query, library)` when the
    * installed copy has nothing (supplied by the harness's research service).
    */
@@ -187,6 +195,37 @@ export interface ToolExecutorOptions {
   /** The card's class (L18/L19): `browse` reaches outside localhost only on research cards. */
   cardClass?: string | undefined;
 }
+
+/** A tool's declared steps (card zero's generator), as `ToolExecutorOptions.declaredSteps`. */
+export interface DeclaredSteps {
+  /** The tool the steps are, as the bounds gate names it. */
+  tool: string;
+  steps: readonly { command: string; args: readonly string[] }[];
+  ignored?: readonly string[] | undefined;
+  /**
+   * The ecosystem whose package registry the steps may reach (card zero's
+   * generator, design-stage DS-P2-1, -2): the card runner starts a proxy that
+   * forwards only to its hosts.
+   */
+  registry?: import("@sekhemet/sandbox").GeneratorRegistry | undefined;
+  /** That proxy's port: a declared step's only way out; every other command stays as the card is. */
+  egressProxyPort?: number | undefined;
+}
+
+/** A step as a person types it: an argument with a space is quoted. */
+function stepLine(s: { command: string; args: readonly string[] }): string {
+  return [s.command, ...s.args.map((a) => (/\s/.test(a) ? JSON.stringify(a) : a))].join(" ");
+}
+
+/** A file's lines, without the empty one after a final newline. */
+function linesOf(text: string): string[] {
+  const lines = text.split("\n");
+  if (text.endsWith("\n")) lines.pop();
+  return lines;
+}
+
+/** Files larger than this are not read into a step's snapshot. */
+const STEP_SNAPSHOT_MAX_BYTES = 8 * 1024 * 1024;
 
 /**
  * What the Worker is told when a call is refused because the tool is not
@@ -292,6 +331,8 @@ export class ToolExecutor {
   private deniedByRule = new Map<string, number>();
   /** Lines a mechanical tool changed, per worktree-relative file (WL-N6-1, gates GT-BF-3). */
   private toolApplied = new Map<string, Set<number>>();
+  /** The tools whose lines are in `toolApplied`. */
+  private toolNames = new Set<string>();
 
   constructor(private options: ToolExecutorOptions) {
     this.root = canonicalizeRoot(options.worktreePath);
@@ -1503,13 +1544,90 @@ Promise.resolve(__result).then((v) => { process.stdout.write(typeof v === "strin
   }
 
   /** Lines a mechanical tool changed, per file, for the bounds gate (WL-N6-1). */
-  public toolAppliedLines(): { tool: "rename_symbol"; files: Record<string, number> } | undefined {
+  public toolAppliedLines(): { tool: string; files: Record<string, number> } | undefined {
     if (this.toolApplied.size === 0) return undefined;
     const files: Record<string, number> = {};
     for (const [f, lines] of [...this.toolApplied].sort(([a], [b]) => a.localeCompare(b))) {
       files[f] = lines.size;
     }
-    return { tool: "rename_symbol", files };
+    return { tool: [...this.toolNames].sort().join(", "), files };
+  }
+
+  /** The declared step a run_cmd call is, exactly as declared (a whole line or command and args). */
+  private declaredStep(command: string, args: readonly string[]): boolean {
+    const declared = this.options.declaredSteps;
+    if (!declared) return false;
+    return declared.steps.some((s) =>
+      args.length === 0
+        ? command.trim() === stepLine(s)
+        : s.command === command &&
+          s.args.length === args.length &&
+          s.args.every((a, i) => a === args[i]),
+    );
+  }
+
+  /** The worktree's text files, outside .git, .sekhemet and the declared ignored directories. */
+  private stepSnapshot(): Map<string, string> {
+    const skip = new Set([".git", ".sekhemet", ...(this.options.declaredSteps?.ignored ?? [])]);
+    const out = new Map<string, string>();
+    const walk = (dir: string, rel: string) => {
+      let entries: Dirent[];
+      try {
+        entries = readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const e of entries) {
+        const r = rel ? `${rel}/${e.name}` : e.name;
+        if (!rel && skip.has(e.name)) continue;
+        const abs = join(dir, e.name);
+        if (e.isDirectory()) walk(abs, r);
+        else if (e.isFile()) {
+          try {
+            if (statSync(abs).size > STEP_SNAPSHOT_MAX_BYTES) continue;
+            const buf = readFileSync(abs);
+            if (!isBinary(buf)) out.set(r, buf.toString("utf8"));
+          } catch {
+            // A file that vanished mid-walk is not the step's.
+          }
+        }
+      }
+    };
+    walk(this.root, "");
+    return out;
+  }
+
+  /** Record, as tool-applied, the lines a declared step wrote (gates rule 12). */
+  private recordStep(before: Map<string, string>, after: Map<string, string>): void {
+    const tool = this.options.declaredSteps?.tool ?? "generator";
+    const mark = (f: string, lines: Iterable<number>) => {
+      const touched = this.toolApplied.get(f) ?? new Set<number>();
+      for (const n of lines) touched.add(n);
+      if (touched.size === 0) return;
+      this.toolApplied.set(f, touched);
+      this.toolNames.add(tool);
+    };
+    for (const [f, text] of after) {
+      const was = before.get(f);
+      if (was === text) continue;
+      // A line the step wrote: one of the new text's lines the old did not hold.
+      const old = new Map<string, number>();
+      for (const l of linesOf(was ?? "")) old.set(l, (old.get(l) ?? 0) + 1);
+      const wrote: number[] = [];
+      linesOf(text).forEach((l, i) => {
+        const left = old.get(l) ?? 0;
+        if (left > 0) old.set(l, left - 1);
+        else wrote.push(i + 1);
+      });
+      mark(f, wrote);
+    }
+    for (const [f, text] of before) {
+      if (!after.has(f))
+        mark(
+          f,
+          linesOf(text).map((_, i) => i + 1),
+        );
+    }
   }
 
   /**
@@ -1569,6 +1687,7 @@ Promise.resolve(__result).then((v) => { process.stdout.write(typeof v === "strin
         }
         this.writeText(abs, next);
         this.toolApplied.set(f, touched);
+        this.toolNames.add("rename_symbol");
         this.seen.add(f);
       }
     } catch (err) {
@@ -1875,13 +1994,22 @@ Promise.resolve(__result).then((v) => { process.stdout.write(typeof v === "strin
     // sandbox, and the permission engine has already checked the full string.
     const shellLine = args.length === 0 && /[\s|&;<>()$`]/.test(command.trim());
     const [file, argv] = shellLine ? ["/bin/sh", ["-c", command]] : [command, args];
+    // Rule 12: a step the card declares (card zero's generator) is the tool's writing.
+    const declared = this.declaredStep(command, args);
+    const stepBefore = declared ? this.stepSnapshot() : undefined;
+    // DS-P2-1, -2: a declared step reaches its registry through the
+    // generator's proxy, and only a declared step does.
+    const proxyPort =
+      declared && this.options.declaredSteps?.egressProxyPort
+        ? this.options.declaredSteps.egressProxyPort
+        : this.options.egressProxyPort;
 
     const result = await this.sandbox.execute(file, argv, {
       allowedPaths: [this.root],
       allowNetwork: this.options.allowNetwork ?? false,
       timeoutMs: this.options.commandTimeoutMs ?? 120_000,
       cwd: this.root,
-      ...(this.options.egressProxyPort ? { egressProxyPort: this.options.egressProxyPort } : {}),
+      ...(proxyPort ? { egressProxyPort: proxyPort } : {}),
       // Commands may talk to this card's own background processes (L23).
       localPorts: this.processPorts(),
     });
@@ -1927,6 +2055,7 @@ Promise.resolve(__result).then((v) => { process.stdout.write(typeof v === "strin
         condensing,
       };
     }
+    if (stepBefore) this.recordStep(stepBefore, this.stepSnapshot());
     return {
       ...ok("run_cmd", `${label} exited 0`, `${heading}\nexit code 0\n${detail}`),
       condensing,

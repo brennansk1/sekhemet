@@ -222,3 +222,51 @@ export function isCovered(item: string, evidence: string): boolean {
   const hits = words.filter((w) => blob.includes(w)).length;
   return hits >= Math.max(1, Math.ceil(words.length / 2));
 }
+
+/** The tier of a source: 1 primary (canon, code, papers), 2 secondary, 3 other; undefined when blocked. */
+export function tierOfSource(s: Source): 1 | 2 | 3 | undefined {
+  const url = /^https?:\/\//.test(s.ref);
+  if (url && tierOf(s.ref) === undefined) return undefined;
+  // The kind recorded when it was read, unless that was only "web".
+  const k = (
+    url && (s.kind === "web" || !(s.kind in SOURCE_KIND_WEIGHTS)) ? kindOfUrl(s.ref) : s.kind
+  ) as SourceKind;
+  if (k === "documentation" || k === "api" || k === "specification" || k === "source") return 1;
+  if (k === "paper") return 1;
+  if (k === "registry" || k === "repository" || k === "forum") return 2;
+  return 3;
+}
+
+/**
+ * Where a source's text came from, for independence: a URL's host, or for a
+ * tool's own reference the service it read (`npm README of zod` is npm,
+ * `arXiv 2508.21433` is arXiv, an installed dependency or this repository is
+ * this machine). Two sources on one host are one voice.
+ */
+export function hostOfSource(s: Source): string {
+  if (/^https?:\/\//.test(s.ref)) return hostOf(s.ref).replace(/^www\./, "");
+  const r = s.ref;
+  if (/^pypi registry search/i.test(r)) return "pypi.org";
+  if (/^npm (README|registry)/i.test(r)) return "npmjs.com";
+  if (/^arXiv\b|^paper search/i.test(r)) return "arxiv.org";
+  if (/^(code search|issues|GitHub search)\b|\/.+ (tree|releases)\b/i.test(r)) return "github.com";
+  if (/^(type declarations of|git history)|@[\w.-]+( |$)/i.test(r)) return "local";
+  return `other:${s.kind}`;
+}
+
+/**
+ * The independent hosts of primary or secondary tier among `sources`, the
+ * closing rule's measure (design-stage DS-N4-2): a sub-question closes with
+ * two or more.
+ */
+export function independentHosts(sources: readonly Source[]): string[] {
+  const hosts = new Set<string>();
+  for (const s of sources) {
+    const tier = tierOfSource(s);
+    if (tier === 1 || tier === 2) hosts.add(hostOfSource(s));
+  }
+  return [...hosts].sort();
+}
+
+/** A sub-question closes when two independent hosts of primary or secondary tier support it. */
+export const SUB_QUESTION_MIN_HOSTS = 2;

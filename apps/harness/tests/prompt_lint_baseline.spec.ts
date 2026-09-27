@@ -84,7 +84,7 @@ const REMEASURE = process.env.SEKHEMET_PROMPT_BASELINE_REMEASURE;
  * that lowers a count lowers the total here in the same change.
  */
 const RECORDED_TOTALS = {
-  templates: 122,
+  templates: 124,
   capitalWords: 635,
   negations: 443,
   longToolDescriptions: 7,
@@ -118,8 +118,12 @@ const KNOWN_PLACEHOLDERS: string[] = [
   "researcher.investigate.r8.prompt: [n]",
   "researcher.apodex_team.r3.system: [what you were asked, and how you approached it]",
   "researcher.apodex_team.r3.system: [one line per piece of support]",
-  'researcher.apodex_team.r4.prompt: <report agent="docs">',
-  "researcher.apodex_team.r4.prompt: </report>",
+  // The sub-agent's second dispatch (an open sub-question sent again,
+  // DS-N4-2) carries the same system prompt as its first.
+  "researcher.apodex_team.r4.system: [what you were asked, and how you approached it]",
+  "researcher.apodex_team.r4.system: [one line per piece of support]",
+  'researcher.apodex_team.r5.prompt: <report agent="docs">',
+  "researcher.apodex_team.r5.prompt: </report>",
   "researcher.agent: <untrusted>",
   "researcher.agent: [context compacted]",
   "researcher.subagent: [what you were asked, and how you approached it]",

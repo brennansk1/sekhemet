@@ -65,6 +65,7 @@ import { NodeGitSyncAdapter } from "@sekhemet/sync";
 import { integrationBranch } from "./accept.js";
 import { isAirgapped, mirrorRegistry } from "./airgap.js";
 import { baselineInput, cardGateRunner, gateBaseBranch } from "./card_gates.js";
+import { cardOneTests, cardZeroSteps, withoutCardOneStaging } from "./card_zero.js";
 import {
   lastPauseSeq,
   messageLabel,
@@ -359,6 +360,9 @@ export async function executeCard(
   // Pulled through Planning (B2): difficulty scored (K25), budget set from
   // this repo's measured history (L21), then the runner moves it on.
   let card = await pullThroughPlanning(ctx, inputCard, model.modelId, log).catch(() => inputCard);
+  // DS-P2-3: card one's test is the Worker's to write, in its scope: never
+  // staged, protected or checked red-first, whatever an older plan said.
+  card = withoutCardOneStaging(card);
   if (options.maxSteps && options.maxSteps > 0 && card.stepBudget > options.maxSteps) {
     card = { ...card, stepBudget: options.maxSteps };
   }
@@ -403,7 +407,7 @@ export async function executeCard(
     repoPath: ctx.repoPath,
     gatesConfig,
     restricted: ctx.restrictedMode,
-    card: inputCard,
+    card: withoutCardOneStaging(inputCard),
     ...(baseline
       ? {
           ...baselineInput(baseline),
@@ -447,6 +451,11 @@ export async function executeCard(
 
   const worktreePath = join(ctx.repoPath, ".sekhemet", "worktrees", card.id);
   const webDocs = await workerWebDocs(ctx.repoPath).catch(() => undefined);
+  // DS-P2-1, -2: card zero's generator steps may reach their registry — never
+  // on an air-gapped install, where nothing leaves the machine.
+  const zeroSteps = cardZeroSteps(card);
+  const declaredSteps =
+    zeroSteps && isAirgapped(ctx.repoPath) ? { ...zeroSteps, registry: undefined } : zeroSteps;
   const hooks = hookEngineFor(ctx.repoPath);
   const hookEngine = hooks.engine;
   // S9: the repository's configuration that is not trusted does not run; say so.
@@ -513,7 +522,10 @@ export async function executeCard(
     projectGateIds: gateRunner.gateIds ?? [],
     syncAdapter: gitAdapter,
     scopeFiles: card.scopeFiles,
-    agentRole: "implementer",
+    // DS-P2-3: card one's deliverable is the test itself, so its Worker is
+    // the test's author — an implementer may never write a test file — and
+    // its scope (the test) bounds what it writes.
+    agentRole: cardOneTests(card).length > 0 ? "test-author" : "implementer",
     agentHarness: "sekhemet",
     attempt,
     // A checkpoint after every step that wrote something: rewind and fork
@@ -594,6 +606,8 @@ export async function executeCard(
     hooks: hookEngine,
     // L10 tier 3: the library's official web docs, when web access is on.
     ...(webDocs ? { webDocs } : {}),
+    // DS-P2-1, gates rule 12: card zero's generator steps are the tool's lines.
+    ...(declaredSteps ? { declaredSteps } : {}),
     // C13: passing runs of this card's class, as worked examples.
     exemplarStore: new ExemplarStore(join(ctx.repoPath, ".sekhemet", "exemplars")),
     // C2: one language-server pool for the whole run (servers are pooled

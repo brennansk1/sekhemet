@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { DEFAULT_STEP_BUDGET, type TomlTable, parseToml } from "@sekhemet/kernel";
 import { parseHours } from "./scheduler.js";
 import type { IdentitySource, Level, OidcSettings } from "./team/settings.js";
@@ -113,6 +113,13 @@ export interface SekhemetConfig {
   network: { mode: NetworkMode; allow: string[] };
   sync: { github: boolean; forgejo: string };
   telemetry: { store: string };
+  /**
+   * `[docs]` (design-stage DS-N3-3, -4, -6): the repository-relative folders
+   * the project documents go to — unset, `docs/product` and the existing ADR
+   * folder or `docs/decisions` — and whether they carry role labels in place
+   * of names by default.
+   */
+  docs: { product?: string; decisions?: string; noNames: boolean };
 }
 
 /**
@@ -165,6 +172,7 @@ export const DEFAULT_CONFIG: SekhemetConfig = {
   network: { mode: "offline", allow: [] },
   sync: { github: false, forgejo: "" },
   telemetry: { store: "local" },
+  docs: { noNames: false },
 };
 
 export interface ConfigLayer {
@@ -311,6 +319,49 @@ function overnightHours(value: unknown, problems: string[]): string | undefined 
   return undefined;
 }
 
+const DOCS_KEYS = ["product", "decisions", "no_names"];
+
+/**
+ * `[docs]` (DS-N3-3, -4, -6): each folder repository-relative, inside the
+ * repository; `no_names` true or false. Anything else — a folder outside the
+ * repository, another value, a key not listed — is refused and named in
+ * `problems`, and the default applies.
+ */
+function docsSettings(docs: TomlTable, problems: string[]): SekhemetConfig["docs"] {
+  for (const key of Object.keys(docs)) {
+    if (!DOCS_KEYS.includes(key)) {
+      problems.push(`docs.${key} is not a setting (${DOCS_KEYS.join(", ")}); it was refused`);
+    }
+  }
+  const folder = (key: "product" | "decisions"): string | undefined => {
+    const v = docs[key];
+    if (v === undefined) return undefined;
+    const path = typeof v === "string" ? v.trim().replace(/^\.\//, "").replace(/\/+$/, "") : "";
+    if (
+      path &&
+      !isAbsolute(path) &&
+      !/^[a-z]:/i.test(path) &&
+      !path.split(/[\\/]/).includes("..")
+    ) {
+      return path;
+    }
+    problems.push(
+      `docs.${key} must be a folder inside the repository (got ${JSON.stringify(v)}); it was refused and the default applies`,
+    );
+    return undefined;
+  };
+  const product = folder("product");
+  const decisions = folder("decisions");
+  let noNames = DEFAULT_CONFIG.docs.noNames;
+  if (typeof docs.no_names === "boolean") noNames = docs.no_names;
+  else if (docs.no_names !== undefined) {
+    problems.push(
+      `docs.no_names must be true or false (got ${JSON.stringify(docs.no_names)}); it was refused and false applies`,
+    );
+  }
+  return { ...(product ? { product } : {}), ...(decisions ? { decisions } : {}), noNames };
+}
+
 function project(merged: TomlTable, problems: string[] = [], user?: TomlTable): SekhemetConfig {
   const d = DEFAULT_CONFIG;
   const machine = table(merged, "machine");
@@ -389,6 +440,7 @@ function project(merged: TomlTable, problems: string[] = [], user?: TomlTable): 
       forgejo: str(sync.forgejo, d.sync.forgejo),
     },
     telemetry: { store: str(telemetry.store, d.telemetry.store) },
+    docs: docsSettings(table(merged, "docs"), problems),
   };
 }
 

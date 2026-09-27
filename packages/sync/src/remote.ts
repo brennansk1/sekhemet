@@ -61,6 +61,25 @@ export interface SyncAdapter {
    * (integrations item 16a, INT-20b), where the tracker has one; never the assignee.
    */
   setAgentStatus?(ref: ExternalRef, status: AgentStatus): Promise<AgentStatusResult>;
+  /**
+   * Comment on an item, where the tracker has comments: the one write a
+   * person's applied reconciliation of inherited issues adds (integrations
+   * INT-43), through this same adapter.
+   */
+  comment?(ref: ExternalRef, body: string): Promise<void>;
+}
+
+/** Since the beginning: a take-over reads every issue the repository inherits. */
+export const ALL_TIME = "1970-01-01T00:00:00Z";
+
+/**
+ * Every open issue of the connected tracker (design-stage DS-TO-13,
+ * integrations INT-42): the adapter's own pull since the beginning — GitHub's
+ * REST pull by default (`pullRest`), with pull requests left out — keeping
+ * only the open ones. Reading changes nothing on the tracker.
+ */
+export async function openIssues(adapter: Pick<SyncAdapter, "pull">): Promise<ExternalItem[]> {
+  return (await adapter.pull(ALL_TIME)).filter((i) => i.state === "open");
 }
 
 /** The four statuses GitHub shows for an agent session (integrations item 16a). */
@@ -434,6 +453,12 @@ export class GitHubIssuesAdapter implements SyncAdapter {
       ...(patch.status === "done" ? { state: "closed" } : {}),
     });
   }
+
+  public async comment(ref: ExternalRef, body: string): Promise<void> {
+    await this.client.rest("POST", `${this.base}/issues/${issueNumberOf(ref.id)}/comments`, {
+      body,
+    });
+  }
 }
 
 /** Forgejo / Gitea issues (Y11): the Gitea-compatible REST API, token auth. */
@@ -520,6 +545,14 @@ export class ForgejoIssuesAdapter implements SyncAdapter {
         : {}),
       ...(patch.status === "done" ? { state: "closed" } : {}),
     });
+  }
+
+  public async comment(ref: ExternalRef, body: string): Promise<void> {
+    await this.call(
+      "POST",
+      `/repos/${this.repo.owner}/${this.repo.repo}/issues/${ref.id}/comments`,
+      { body },
+    );
   }
 
   /** Forgejo has native issue dependencies: record a card's dependency edge. */

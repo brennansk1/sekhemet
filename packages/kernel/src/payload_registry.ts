@@ -98,6 +98,10 @@ const MUTATION_MEASURE = v.strictObject({
 const VOLUME = v.picklist(["internal", "external"]);
 const CACHE_STATE = v.picklist(["cold", "warm"]);
 const MS = v.pipe(v.number(), v.minValue(0));
+/** A probability, such as a paired test's p. */
+const PROBABILITY = v.pipe(v.number(), v.minValue(0), v.maxValue(1));
+/** A research pipeline (harness `ResearchPipeline`, DS-N2-9). */
+const RESEARCH_PIPELINE = v.picklist(["native", "tool-loop"]);
 const BYTES = v.pipe(v.number(), v.integer(), v.minValue(0));
 const QUEUES = v.array(ID);
 const SWAP_BASE = { model: s(ID), roles: s(QUEUES) };
@@ -122,7 +126,21 @@ const REQUIREMENT_FIELDS = {
   criterionIds: s(v.array(CRITERION_ID), true),
   title: priv("free_text", TEXT),
   criteria: priv("free_text", v.record(ID, TEXT)),
+  // design-stage DS-P14-2, -6, DS-TO-14: where it came from, the candidate a
+  // person accepted, the checklist row, the gate invariant, the take-over claim.
+  source: s(v.picklist(["person", "model-proposal", "comparable", "checklist", "takeover"]), true),
+  candidateId: s(ID, true),
+  checklistRow: s(SLUG, true),
+  invariant: s(ID, true),
+  claimId: s(ID, true),
 };
+const DEPTH_PROFILE = v.picklist(["prototype", "internal tool", "production", "regulated"]);
+const CARD_CHANGE = v.picklist(["feature", "fix", "characterize", "refactor", "upgrade"]);
+/** A tracker issue: its system and id, never its title or body (integrations INT-42). */
+const ISSUE = v.strictObject({
+  system: v.picklist(["github", "forgejo", "jira", "linear"]),
+  id: ID,
+});
 const APPETITE = {
   appetiteCards: s(v.pipe(v.number(), v.integer(), v.minValue(1)), true),
   appetiteHours: s(v.pipe(v.number(), v.gtValue(0)), true),
@@ -666,6 +684,15 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     version: s(SEMVER),
     sha: s(COMMIT),
   },
+  // PM-P13-13, DS-N3-8: a person tagged the release — the tag, the sha it
+  // names (the documents' commit on the proven sha) and the proven sha.
+  "release/tagged": {
+    sliceId: s(ID),
+    projectId: s(ID),
+    tag: s(ID),
+    sha: s(COMMIT),
+    proven: s(COMMIT),
+  },
   // planner-pm PM-N4-3: a person marked a goal's `human` criterion met or not.
   "goal/criterion_marked": { goalId: s(ID), criterionId: s(ID), met: s(v.boolean()) },
   // teams TEAM-18, TEAM-19, planner-pm PM-N9-1: Seshat's suggestion on an
@@ -746,6 +773,8 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     ref: s(ID),
     // PM-P13-12: this card is the change card for that card's or test's suspect link.
     changeFor: s(ID, true),
+    // design-stage DS-TO-9, DS-TO-14: a machine's proposed link, unconfirmed until `trace/confirmed`.
+    proposed: s(v.literal(true), true),
   },
   "trace/confirmed": {
     requirementId: s(ID),
@@ -792,12 +821,23 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
   // design-stage §3 (DS-TO-9): the brief as found — each claim's label and
   // citations (finding ids, test ids, path:line, commits); its text private.
   "takeover/brief_as_found": {
+    // B4.4: the inventory it was found from, and each proven claim's executed results.
+    inventorySeq: s(COUNT, true),
     claims: s(
       v.array(
         v.strictObject({
           id: ID,
           label: v.picklist(["proven", "claimed_unproven", "contradicted"]),
           citations: v.array(ID),
+          results: v.optional(
+            v.array(
+              v.strictObject({
+                kind: v.picklist(["test", "build"]),
+                ref: ID,
+                baselineSeq: COUNT,
+              }),
+            ),
+          ),
         }),
       ),
     ),
@@ -811,6 +851,164 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     sha256: s(SHA256),
     principal: s(PRINCIPAL),
     repo: priv("personal", TEXT),
+  },
+  // ── B4.4 ──────────────────────────────────────────────────────────────
+  // design-stage DS-P14-1, -3: a person's choice of depth profile, the one
+  // proposed, and the test-approval level and strength rule it selects; the
+  // proposal's reason is text.
+  "project/depth_profile_chosen": {
+    profile: s(DEPTH_PROFILE),
+    projectId: s(ID, true),
+    proposed: s(DEPTH_PROFILE, true),
+    approval: s(v.picklist(["criteria", "must_have_examples", "every_file"])),
+    strength: s(v.picklist(["advisory", "blocking"])),
+    reason: priv("free_text", TEXT),
+  },
+  // design-stage DS-P14-5, -6, -7, DS-TO-14: a candidate requirement — its
+  // source and structure; its title, criteria text and cited sources private.
+  "requirement/proposed": {
+    candidateId: s(ID),
+    source: s(v.picklist(["model-proposal", "comparable", "takeover"])),
+    projectId: s(ID, true),
+    sliceId: s(ID, true),
+    kano: s(v.picklist(["must-be", "performance", "attractive"]), true),
+    mustHave: s(v.boolean(), true),
+    criterionIds: s(v.array(CRITERION_ID), true),
+    foundIn: s(v.pipe(v.number(), v.integer(), v.minValue(1)), true),
+    comparableCount: s(v.pipe(v.number(), v.integer(), v.minValue(1)), true),
+    walkthroughId: s(ID, true),
+    stepId: s(ID, true),
+    claimId: s(ID, true),
+    title: priv("free_text", TEXT),
+    criteria: priv("free_text", v.record(ID, TEXT)),
+    sources: priv("free_text", v.array(v.strictObject({ label: TEXT, url: v.optional(TEXT) }))),
+  },
+  "requirement/candidate_rejected": {
+    candidateId: s(ID),
+    reason: priv("free_text", TEXT),
+  },
+  // DS-P14-7: one walk of the story map as a named user role; the role and
+  // the steps' text are private, each step's supporting requirements structural.
+  "walkthrough/recorded": {
+    walkthroughId: s(ID),
+    projectId: s(ID),
+    steps: s(v.array(v.strictObject({ id: ID, requirementIds: v.array(ID) }))),
+    role: priv("free_text", TEXT),
+    stepTexts: priv("free_text", v.record(ID, TEXT)),
+  },
+  // DS-TO-11: the take-over's one batch of questions, ranked, each a decision
+  // request under safe_default whose default cites a finding or claim id.
+  "takeover/questions_posted": {
+    inventorySeq: s(COUNT),
+    questions: s(
+      v.array(
+        v.strictObject({
+          decisionId: ID,
+          rank: v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(5)),
+          defaultCites: ID,
+          policy: v.literal("safe_default"),
+        }),
+      ),
+    ),
+  },
+  // DS-TO-12: the evidenced take-over backlog; the cards' titles and links are private.
+  "takeover/backlog_proposed": {
+    proposalId: s(ID),
+    inventorySeq: s(COUNT),
+    cards: s(
+      v.array(
+        v.strictObject({
+          ref: ID,
+          bucket: v.picklist(["stabilise", "finish", "defer"]),
+          change: v.optional(CARD_CHANGE),
+          assignee: v.picklist(["worker", "person"]),
+          forFinding: v.optional(ID),
+          redCheck: v.optional(v.literal("build_fails_on_base")),
+          secret: v.optional(v.strictObject({ commit: COMMIT, path: ID })),
+          characterizes: v.optional(v.array(ID)),
+          needsCharacterize: v.optional(v.boolean()),
+        }),
+      ),
+    ),
+    titles: priv("free_text", v.record(ID, TEXT)),
+    // Each card's links — a failing test's `file > rule`, an issue's URL, a
+    // file:line, a commit, a finding id — by card ref: the repository's text.
+    links: priv("free_text", v.record(ID, v.array(TEXT))),
+  },
+  // DS-TO-14: a person approved the take-over plan (the principal on the event).
+  "takeover/plan_approved": { proposalId: s(ID), inventorySeq: s(COUNT) },
+  // integrations INT-42, INT-43, DS-TO-13: one verdict per inherited issue
+  // with its evidence; the reasoning is private. Applied or dismissed by a person.
+  "reconcile/proposed": {
+    id: s(ID),
+    issues: s(
+      v.array(
+        v.strictObject({
+          issue: ISSUE,
+          verdict: v.picklist(["done", "duplicate", "stale", "valid"]),
+          evidence: v.array(
+            v.strictObject({
+              kind: v.picklist(["test", "commit", "file_line", "issue"]),
+              ref: ID,
+              run: v.optional(ID),
+            }),
+          ),
+          cardId: v.optional(ID),
+          newCard: v.boolean(),
+        }),
+      ),
+    ),
+    why: priv("free_text", v.record(ID, TEXT)),
+  },
+  "reconcile/applied": { id: s(ID) },
+  "reconcile/dismissed": { id: s(ID) },
+  // design-stage DS-N3-1, -3: one export — the seq the documents were
+  // generated from, whether names were replaced by roles, each file's
+  // repository-relative path, SHA-256 and kind.
+  "docs/exported": {
+    seq: s(v.pipe(v.number(), v.integer(), v.minValue(1))),
+    noNames: s(v.boolean()),
+    files: s(
+      v.array(
+        v.strictObject({
+          path: ID,
+          sha256: SHA256,
+          kind: v.picklist(["brief", "requirements", "decision", "changelog", "release"]),
+        }),
+      ),
+    ),
+  },
+  // DS-N3-2, -5: a merged change to an exported document, one proposal per
+  // difference; what the document now says is private. `headerSeq` is absent
+  // for a file without the generated header.
+  "docs/import_diffed": {
+    path: s(ID),
+    commit: s(COMMIT),
+    sha256: s(SHA256),
+    headerSeq: s(COUNT, true),
+    proposals: s(
+      v.array(
+        v.strictObject({
+          id: ID,
+          kind: v.picklist(["added", "removed", "changed"]),
+          target: v.picklist(["brief", "requirement", "decision"]),
+          targetId: v.optional(ID),
+          field: v.optional(SLUG),
+        }),
+      ),
+    ),
+    proposed: priv("free_text", v.record(ID, TEXT)),
+  },
+  "docs/proposal_applied": { id: s(ID) },
+  "docs/proposal_dismissed": { id: s(ID) },
+  // planner-pm PM-P2-7: the answer reached the card that asked.
+  "decision/delivered": { id: s(ID), deliveredAt: s(TEXT) },
+  // planner-pm §2.10.3 (P10), DS-TO-14: a safe_default decision took its
+  // default — at its deadline or on a take-over's approval; why is text, private.
+  "decision/default_applied": {
+    id: s(ID),
+    optionIndex: s(COUNT),
+    reason: priv("free_text", TEXT),
   },
   // security SEC-N10-4, models MD-N13-1: one record per scan — the depth and
   // file limits and the counts; the folders' paths are a person's, private.
@@ -980,6 +1178,71 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     score: s(SCORE),
     seconds: s(MS),
     seed: s(COUNT),
+  },
+  // models MD-N11-1..3, design-stage DS-N2-9: one research golden-set run —
+  // per model and pipeline its measures and grades, the pipeline verdicts and
+  // MD-N11-2's adoption verdicts. Each verdict's reason is free text: private.
+  "research/golden_run": {
+    setHash: s(SHA256),
+    setVersion: s(ID),
+    host: s(ID),
+    items: s(COUNT),
+    contenders: s(
+      v.array(
+        v.strictObject({
+          model: ID,
+          pipeline: RESEARCH_PIPELINE,
+          correct: COUNT,
+          n: COUNT,
+          accuracy: SCORE,
+          citationPrecision: SCORE,
+          verifiedCitations: COUNT,
+          unverifiedCitations: COUNT,
+          secondsPerQuestion: MS,
+          peakResidentBytes: v.optional(BYTES),
+          grades: v.array(v.strictObject({ id: ID, grade: v.picklist([0, 0.5, 1]) })),
+          // The questions its pipeline failed on: the contender is not measured.
+          errors: v.optional(COUNT),
+          benchmarkEvent: v.optional(ID),
+        }),
+      ),
+    ),
+    pipelines: s(
+      v.array(
+        v.strictObject({
+          model: ID,
+          recommended: v.optional(RESEARCH_PIPELINE),
+          notRecommended: v.array(RESEARCH_PIPELINE),
+          tests: v.array(
+            v.strictObject({
+              a: RESEARCH_PIPELINE,
+              b: RESEARCH_PIPELINE,
+              aRight: COUNT,
+              bRight: COUNT,
+              better: COUNT,
+              worse: COUNT,
+              p: PROBABILITY,
+            }),
+          ),
+        }),
+      ),
+    ),
+    adoption: s(
+      v.strictObject({
+        incumbent: ID,
+        adopt: v.optional(ID),
+        verdicts: v.array(
+          v.strictObject({
+            model: ID,
+            allowed: v.boolean(),
+            quality: v.picklist(["better", "not established", "worse", "not measured"]),
+            p: PROBABILITY,
+            pLoss: PROBABILITY,
+          }),
+        ),
+      }),
+    ),
+    reasons: priv("free_text", v.record(v.string(), TEXT)),
   },
 };
 

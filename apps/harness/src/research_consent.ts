@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { EventLog } from "@sekhemet/kernel";
 import {
+  type EffectiveNetworkPolicy,
   type NetworkRequestRecord,
   mergeNetworkConfigs,
   policyFetch,
@@ -82,6 +83,26 @@ export async function askResearchOnce(options: {
 }
 
 /**
+ * The effective network policy for research in this repository, each
+ * `fetch_deny` rule and each ignored widening naming the file it came from
+ * (design-stage DS-N4-3, DS-N4-4).
+ */
+export function researchPolicy(repoPath: string): {
+  policy: EffectiveNetworkPolicy;
+  project: import("@sekhemet/sandbox").NetworkConfig;
+} {
+  const user = userConfigPath();
+  const n = networkConfigs(repoPath, user);
+  return {
+    policy: mergeNetworkConfigs(n.user, n.project, {
+      user,
+      project: join(repoPath, ".sekhemet", "config.toml"),
+    }),
+    project: n.project,
+  };
+}
+
+/**
  * The Researcher's fetch (items 29a, 32; SEC-52a, SEC-52b): only when the
  * effective policy says research is allowed — the user's yes, not narrowed
  * by the project — then through `policyFetch` as research (the one exception
@@ -92,8 +113,8 @@ export function researchFetch(
   repoPath: string,
   log: EventLog,
 ): (input: string | URL, init?: RequestInit) => Promise<Response> {
-  const n = networkConfigs(repoPath);
-  const policy = mergeNetworkConfigs(n.user, n.project);
+  const { policy, project } = researchPolicy(repoPath);
+  const n = { project };
   // A request whose record fails fails too (security item 33).
   const record = (r: NetworkRequestRecord) => log.append({ actor: "harness", ...egressEvent(r) });
   const fetchVia = policyFetch(policy, { purpose: "research", research: true, record });
@@ -129,8 +150,8 @@ export function researchGate(
   repoPath: string,
   log: EventLog,
 ): (url: string, via: string) => Promise<void> {
-  const n = networkConfigs(repoPath);
-  const policy = mergeNetworkConfigs(n.user, n.project);
+  const { policy, project } = researchPolicy(repoPath);
+  const n = { project };
   return async (url, via) => {
     const u = new URL(url);
     const reason =

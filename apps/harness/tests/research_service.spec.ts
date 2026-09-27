@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { InferenceRequest, InferenceResponse, LocalInferenceAdapter } from "@sekhemet/models";
 import { describe, expect, it } from "vitest";
+import { EvidenceLedger, verifyReferences } from "../src/research/apodex_loop.js";
 import { docRoot, readDocs, sitemapUrls } from "../src/research/docs.js";
 import { runResearchLoop } from "../src/research/loop.js";
 import {
@@ -15,7 +16,6 @@ import {
 } from "../src/research/polite.js";
 import {
   apodexSystemPrompt,
-  checkCitations,
   investigate,
   maskOldEvidence,
   research,
@@ -432,35 +432,94 @@ describe("the Researcher, generic native-tool path", () => {
     expect(out[2]).toBe(rounds[2]);
   });
 
-  it("checks citation numbers against the sources", () => {
-    expect(checkCitations("x [1] y [2] z [3]", 2)).toEqual([3]);
+  it("checks citations with the one reference checker: against what was read, by URL or normalised title (DS-N2-4)", () => {
+    const ledger = new EvidenceLedger();
+    const read = [
+      { kind: "documentation", ref: "https://nodejs.org/api/sqlite.html" },
+      {
+        kind: "paper",
+        ref: "arXiv 2508.21433",
+        title: "The Complexity Trap: Simple Observation Masking",
+      },
+    ];
+    for (const s of read) ledger.noteRead(s);
+    // Numbered against the sources read, as the generic pipeline numbers them.
+    expect(verifyReferences("x [1] y [2] z [3]", ledger, read).badCitations).toEqual([3]);
+    // A References section is checked by URL, or by a title read under another ref.
+    const v = verifyReferences(
+      "a [1] b [2] c [3]\n\nReferences:\n[1] https://nodejs.org/api/sqlite.html\n[2] The Complexity Trap: Simple Observation Masking (2025)\n[3] https://made-up.example/x",
+      ledger,
+      read,
+    );
+    expect(v.references.map((r) => [r.n, r.read])).toEqual([
+      [1, true],
+      [2, true],
+      [3, false],
+    ]);
+    expect(v.badCitations).toEqual([3]);
+  });
+
+  it("flags a References line the generic pipeline never read, as the Apodex path does (DS-N2-4)", async () => {
+    const model = scripted([
+      () => ({ toolCalls: [{ id: "c1", name: "package_readme", arguments: { name: "zod" } }] }),
+      () => ({
+        text: "Use parse [1] and safeParse [2].\n\nReferences:\n[1] https://zod.example/never-read\n[2] npm README of zod",
+      }),
+    ]);
+    const r = await research(model, "zod?", deps);
+    // [1] is in range of the one source read, but names a page nobody read.
+    expect(r.badCitations).toEqual([1]);
   });
 
   it("investigates in the Agent Team shape: decompose, research parts, merge with renumbered citations", async () => {
+    const page = `<html><body><p>${"zod objects and its MIT licence. ".repeat(20)}</p></body></html>`;
+    const web = {
+      fetch: async () => new Response(page, { headers: { "content-type": "text/html" } }),
+    };
     const model = scripted([
       // Plan.
       () => ({ text: '["zod object parsing", "zod licence terms"]' }),
-      // Sub-run 1: one tool call, then an answer citing [1].
-      () => ({ toolCalls: [{ id: "a", name: "package_readme", arguments: { name: "zod" } }] }),
-      () => ({ text: "zod object parsing uses z.object().parse [1]." }),
-      // Sub-run 2: a different source.
-      () => ({ toolCalls: [{ id: "b", name: "find_library", arguments: { query: "zod" } }] }),
-      () => ({ text: "zod licence terms: MIT [1]." }),
+      // Sub-run 1: two independent hosts (npm and zod.dev), so it closes (DS-N4-2).
+      () => ({
+        toolCalls: [
+          { id: "a", name: "package_readme", arguments: { name: "zod" } },
+          { id: "a2", name: "fetch_page", arguments: { url: "https://zod.dev/docs/objects" } },
+        ],
+      }),
+      () => ({ text: "zod object parsing uses z.object().parse [1] [2]." }),
+      // Sub-run 2: different sources, again two hosts.
+      () => ({
+        toolCalls: [
+          { id: "b", name: "find_library", arguments: { query: "zod" } },
+          {
+            id: "b2",
+            name: "fetch_page",
+            arguments: { url: "https://github.com/colinhacks/zod/blob/main/LICENSE" },
+          },
+        ],
+      }),
+      () => ({ text: "zod licence terms: MIT [1] [2]." }),
       // Merge.
       (req) => ({
-        text: req.prompt.includes("[2] npm registry search")
-          ? "Parse with z.object [1]; MIT [2]."
+        text: req.prompt.includes('[3] npm registry search "zod"')
+          ? "Parse with z.object [1]; MIT [3]."
           : "wrong",
       }),
     ]);
     const r = await investigate(model, "Can we use zod for input validation?", {
       ...deps,
+      web,
       libraries: async () => [],
     });
     expect(r.coverage?.stoppedBecause).toBe("covered");
     expect(r.coverage?.coveragePct).toBe(100);
-    expect(r.answer).toBe("Parse with z.object [1]; MIT [2].");
-    expect(r.sources).toEqual(["npm README of zod", 'npm registry search "zod"']);
+    expect(r.answer).toBe("Parse with z.object [1]; MIT [3].");
+    expect(r.sources).toEqual([
+      "npm README of zod",
+      "https://zod.dev/docs/objects",
+      'npm registry search "zod"',
+      "https://github.com/colinhacks/zod/blob/main/LICENSE",
+    ]);
     expect(r.badCitations).toEqual([]);
     expect(r.grounded).toBe(true);
   });
@@ -657,11 +716,14 @@ describe("research knowledge and safety (X4, X5, X8, X9)", () => {
     const e = (await log.getEventsByTypes(["research/asked"]))[0];
     expect(e?.actor).toBe("researcher");
     expect(e?.payload).toMatchObject({
-      question: "How do I validate with zod?",
       grounded: true,
       sources: ["npm README of zod"],
       fromMemory: false,
     });
+    // The question carries the card's spec and gate output (B4.4 repair
+    // research): private and erasable (kernel rule 33), never in the hashed payload.
+    expect(e?.payload).not.toHaveProperty("question");
+    expect(e?.private).toMatchObject({ question: "How do I validate with zod?" });
   });
 });
 

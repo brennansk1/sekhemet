@@ -15,10 +15,16 @@ import {
   scanUnfinished,
   verificationRungs,
 } from "@sekhemet/gates";
-import type { EventLog } from "@sekhemet/kernel";
+import type { CardStore, EventLog } from "@sekhemet/kernel";
 import { runConfined } from "@sekhemet/sandbox";
 import { deriveGates, installGates, packageManagerOf } from "./init.js";
 import { recordOnboardingBaseline } from "./onboard.js";
+import {
+  type IssueTracker,
+  type TakeoverPlan,
+  planTakeover,
+  readInheritedIssues,
+} from "./takeover_backlog.js";
 import { type Recon, declaredSubmodules, repoFiles, runRecon } from "./takeover_recon.js";
 import { agentConfigFiles, isAgentConfigApproved, isWorkspaceTrusted } from "./workspace_trust.js";
 
@@ -43,8 +49,15 @@ import { agentConfigFiles, isAgentConfigApproved, isWorkspaceTrusted } from "./w
  * The as-built inventory is one `takeover/inventory` event: the findings'
  * ids, kinds, paths, lines and commits structural; the recon and each
  * finding's reason and command private (repository text is untrusted,
- * security item 42). The brief as found, the questions and the backlog
- * (steps 4–6, DS-TO-9 to DS-TO-16) are B4.4's.
+ * security item 42).
+ *
+ * 4–6. **Once trusted, and given the card store** (B4.4, DS-TO-9 to
+ *    DS-TO-14, `takeover_backlog.ts`): the connected tracker's open issues
+ *    are read before the inventory (recon's `issues` says what was read),
+ *    then the brief as found, the reconciliation of those issues, one batch
+ *    of questions and the evidenced backlog are recorded. Nothing is created
+ *    and no default applied until a person approves the plan
+ *    (`approveTakeoverPlan`).
  */
 export interface TakeoverFinding {
   id: string;
@@ -74,6 +87,8 @@ export interface TakeoverReport {
   wouldRun: string[];
   runs: TakeoverRun[];
   baselineSeq: number;
+  /** Steps 4–6, when they ran: trusted, with the card store. */
+  plan?: TakeoverPlan;
 }
 
 export interface TakeoverOptions {
@@ -98,6 +113,21 @@ export interface TakeoverOptions {
   restricted?: boolean;
   timeoutMs?: number;
   say?: (line: string) => void;
+  /**
+   * The tracker whose open issues the take-over reconciles (DS-TO-13);
+   * `false` reads none. Default: the repository's connected tracker
+   * (`connectedTracker`), read only once the repository is trusted.
+   */
+  tracker?: IssueTracker | false;
+}
+
+/** The card store itself, which steps 4–6 record through. */
+function cardStoreOf(store: TakeoverOptions["store"]): CardStore | undefined {
+  const s = store as Partial<CardStore>;
+  return typeof s.takeover?.recordBriefAsFound === "function" &&
+    typeof s.reconciliation?.propose === "function"
+    ? (store as CardStore)
+    : undefined;
 }
 
 const HALF_DONE_KIND: Record<HalfDoneKind, string> = {
@@ -381,6 +411,28 @@ export async function runTakeover(root: string, options: TakeoverOptions): Promi
     );
   }
 
+  // The connected tracker's open issues (DS-TO-13), read once trusted.
+  const cardStore = cardStoreOf(options.store);
+  let issues: Awaited<ReturnType<typeof readInheritedIssues>>["items"] = [];
+  if (trusted && cardStore) {
+    let tracker: IssueTracker | undefined;
+    let why = "no tracker connected";
+    if (options.tracker === undefined) {
+      const { connectedTracker } = await import("./integrations.js");
+      const found = await connectedTracker(root, options.log);
+      tracker = found.tracker;
+      why = found.reason;
+    } else if (options.tracker) {
+      tracker = options.tracker;
+    }
+    const read = await readInheritedIssues(tracker, why);
+    issues = read.items;
+    recon.issues = read.note;
+  } else if (!trusted) {
+    recon.issues = "not read: the take-over reads the tracker once the repository is trusted";
+  }
+  say(`2. Issues: ${recon.issues}.`);
+
   // The as-built inventory (DS-TO-5, DS-TO-7, DS-TO-8).
   await options.store.recordLedgerEvent({
     type: "takeover/inventory",
@@ -412,5 +464,47 @@ export async function runTakeover(root: string, options: TakeoverOptions): Promi
   say(
     `Inventory: ${[...counts].map(([k, n]) => `${n} ${k.replace(/_/g, " ")}`).join(", ") || "nothing found"}.`,
   );
-  return { trusted, secrets, recon, findings, wouldRun, runs, baselineSeq };
+
+  // 4–6. The brief as found, the issues, the questions and the backlog (B4.4).
+  let planned: TakeoverPlan | undefined;
+  if (trusted && cardStore) {
+    const plan = await planTakeover(root, {
+      store: cardStore,
+      findings,
+      runs,
+      baselineSeq,
+      docs: recon.docs,
+      files,
+      issues,
+    });
+    const labels = new Map<string, number>();
+    for (const c of plan.claims) labels.set(c.label, (labels.get(c.label) ?? 0) + 1);
+    say(
+      `4. Brief as found: ${plan.claims.length} claim(s): ${labels.get("proven") ?? 0} proven, ${labels.get("claimed_unproven") ?? 0} claimed but unproven, ${labels.get("contradicted") ?? 0} contradicted.`,
+    );
+    if (plan.reconciliation) {
+      say(
+        `   Inherited issues: ${plan.reconciliation.issues.length} proposed as done, duplicate, stale or valid (${plan.reconciliation.id}); nothing changes on the tracker until you apply it.`,
+      );
+    }
+    say(
+      `5. Questions: ${plan.questions.length}, each with a safe default, waiting in your decisions.`,
+    );
+    say(
+      plan.proposalId
+        ? `6. Backlog proposed as ${plan.proposalId}; nothing is created until you approve it.`
+        : "6. Nothing to propose.",
+    );
+    planned = plan;
+  }
+  return {
+    trusted,
+    secrets,
+    recon,
+    findings,
+    wouldRun,
+    runs,
+    baselineSeq,
+    ...(planned ? { plan: planned } : {}),
+  };
 }

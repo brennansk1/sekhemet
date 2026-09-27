@@ -1,8 +1,15 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join, posix } from "node:path";
-import { DEFAULT_DEPTH_PROFILE, type DepthProfile, planningExitFailure } from "@sekhemet/board";
-import { type CardInterfaceSymbol, type CardRecord, canonicalJson } from "@sekhemet/kernel";
+import { type DepthProfile, planningExitFailure } from "@sekhemet/board";
+import {
+  type CardInterfaceSymbol,
+  type CardRecord,
+  type CardStore,
+  canonicalJson,
+  depthProfileOf,
+  parseDepthProfile,
+} from "@sekhemet/kernel";
 import { approvalHold } from "./approval_hold.js";
 import type { ExampleRow } from "./criteria.js";
 import { type PlannerLedger, moveCard } from "./ledger.js";
@@ -11,9 +18,9 @@ import type { RenderedTest, TestFramework } from "./staging.js";
 
 /**
  * Who approves criteria and tests (planner-pm §2.17, NEW-planner-pm-7,
- * PM-N7-1…5). The depth profile is design-stage P14's; until it exists every
- * project is `internal tool` (`DEFAULT_DEPTH_PROFILE`), unless a caller
- * passes one. A person approves every card's criteria before it leaves
+ * PM-N7-1…5). The depth profile is the one a person recorded (design-stage
+ * P14), read by `resolveDepthProfile`; `internal tool` (`DEFAULT_DEPTH_PROFILE`)
+ * only when none is recorded. A person approves every card's criteria before it leaves
  * Planning; production approves the example tables of must-have
  * requirements, regulated every staged acceptance-test file; the board's
  * Planning exit condition (`planningExitFailure`) checks the records, each
@@ -24,18 +31,23 @@ import type { RenderedTest, TestFramework } from "./staging.js";
 export type { DepthProfile } from "@sekhemet/board";
 export { DEFAULT_DEPTH_PROFILE } from "@sekhemet/board";
 
-const PROFILES: Record<string, DepthProfile> = {
-  prototype: "prototype",
-  "internal tool": "internal tool",
-  "internal-tool": "internal tool",
-  internal_tool: "internal tool",
-  production: "production",
-  regulated: "regulated",
-};
-
-/** A configured profile's name, or the internal-tool default when none (or an unknown one) is set. */
-export function resolveDepthProfile(configured?: string): DepthProfile {
-  return (configured && PROFILES[configured.trim().toLowerCase()]) || DEFAULT_DEPTH_PROFILE;
+/**
+ * The depth profile a plan is made and approved under (design-stage
+ * DS-P14-3): from a ledger, the one a person recorded for the project, read
+ * by the kernel's one function (`depthProfileOf`) — internal tool only when
+ * none is recorded; from a configured name, that profile, and the unrecorded
+ * default for none or an unknown one.
+ */
+export function resolveDepthProfile(
+  source?: { store: CardStore } | string,
+  projectId?: string,
+): DepthProfile {
+  if (typeof source === "string") {
+    return parseDepthProfile(source) ?? depthProfileOf(undefined).profile;
+  }
+  return source
+    ? source.store.depthProfiles.of(projectId).profile
+    : depthProfileOf(undefined).profile;
 }
 
 /** The words that make a criterion an invariant (§2.17.4). */
@@ -258,10 +270,11 @@ async function testsToApprove(
 export async function approvalView(
   ledger: PlannerLedger,
   cardId: string,
-  profile: DepthProfile = DEFAULT_DEPTH_PROFILE,
+  depth?: DepthProfile,
 ): Promise<ApprovalView> {
   const card = await ledger.store.getCard(cardId);
   if (!card) throw new Error(`Card not found: ${cardId}`);
+  const profile = depth ?? resolveDepthProfile(ledger, card.projectId);
   const ids = card.criterionIds ?? [];
   const criteria = ids.map((id, i) => ({ id, text: card.acceptanceCriteria?.[i] ?? "" }));
   const examples: string[] = [];
@@ -300,9 +313,9 @@ export async function approvePlannedCard(
 ): Promise<{ approved: boolean; released: boolean; held?: string }> {
   if (!principal) throw new Error("Criteria are approved by a person; no principal was given");
   const { store } = ledger;
-  const profile = options.profile ?? DEFAULT_DEPTH_PROFILE;
   const card = await store.getCard(cardId);
   if (!card) throw new Error(`Card not found: ${cardId}`);
+  const profile = options.profile ?? resolveDepthProfile(ledger, card.projectId);
   if ((card.criterionIds?.length ?? 0) === 0) return { approved: false, released: false };
   if (!store.stagedTests.criteriaApproval(cardId).approved) {
     await store.stagedTests.approveCriteria(cardId, principal);
@@ -390,8 +403,9 @@ async function approvable(ledger: PlannerLedger, id: string): Promise<CardRecord
 export async function planApprovalView(
   ledger: PlannerLedger,
   id: string,
-  profile: DepthProfile = DEFAULT_DEPTH_PROFILE,
+  depth?: DepthProfile,
 ): Promise<PlanApproval> {
+  const profile = depth ?? resolveDepthProfile(ledger, (await ledger.store.getCard(id))?.projectId);
   const cards: PlanApprovalCard[] = [];
   for (const c of await approvable(ledger, id)) {
     const view = await approvalView(ledger, c.id, profile);
@@ -452,7 +466,7 @@ export async function approvePlan(
 ): Promise<{ approved: string[]; released: string[]; held: { id: string; reason: string }[] }> {
   if (!principal) throw new Error("Criteria are approved by a person; no principal was given");
   if (options.expectedSha256 !== undefined) {
-    const now = await planApprovalView(ledger, id, options.profile ?? DEFAULT_DEPTH_PROFILE);
+    const now = await planApprovalView(ledger, id, options.profile);
     if (now.sha256 !== options.expectedSha256) {
       throw new StaleApprovalError(options.expectedSha256, now);
     }

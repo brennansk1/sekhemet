@@ -1,0 +1,44 @@
+{
+  "commits": [
+    {
+      "message": "Round totals to cents (fixes #2)",
+      "write": {
+        "src/total.ts": "export function roundTotal(total: number): number {\n  return Math.round((total + Number.EPSILON) * 100) / 100;\n}\n"
+      }
+    },
+    { "message": "Drop the legacy totals", "remove": ["src/legacy.ts"] }
+  ],
+  "issues": [
+    {
+      "number": 1,
+      "title": "Export totals to CSV",
+      "body": "A CSV export of the day's totals, next to src/total.ts.",
+      "state": "open"
+    },
+    {
+      "number": 2,
+      "title": "Totals are not rounded",
+      "body": "1.005 shows as 1.005.",
+      "state": "open"
+    },
+    {
+      "number": 3,
+      "title": "Export totals to CSV!",
+      "body": "Same as the other one.",
+      "state": "open"
+    },
+    {
+      "number": 4,
+      "title": "Crash in legacy totals",
+      "body": "src/legacy.ts throws on negative totals.",
+      "state": "open"
+    },
+    {
+      "number": 5,
+      "title": "Show totals in euros",
+      "body": "This is done now, I think.",
+      "state": "open"
+    },
+    { "number": 6, "title": "Old closed issue", "body": "", "state": "closed" }
+  ]
+}

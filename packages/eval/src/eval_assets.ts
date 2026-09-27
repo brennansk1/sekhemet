@@ -147,7 +147,7 @@ function itemCount(dir: string): number {
 export function verifyAsset(
   root: string,
   name: string,
-): { hash: string; items: number; version: string } {
+): { hash: string; items: number; version: string; path: string } {
   const entry = loadAssetManifest(root).assets.find((a) => a.name === name);
   if (!entry) {
     const plan = EVAL_ASSET_PLAN.find((p) => p.name === name);
@@ -169,7 +169,8 @@ export function verifyAsset(
       `${name} holds ${items} items, the manifest declares ${entry.items}; it is not scored on a partial set`,
     );
   }
-  return { hash, items, version: entry.version };
+  // `path`: the directory the hash covers, the one a caller reads its items from.
+  return { hash, items, version: entry.version, path: entry.path };
 }
 
 /** Two results compare only when scored on the same asset hash (MS-T11-2). */

@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import { checklistRowsFor, depthProfileOf } from "./depth_profile.js";
 import type { EventLog } from "./log.js";
 import { ERASED_MARKER, type EventRecord } from "./types.js";
 
@@ -25,6 +26,8 @@ export interface TraceLink {
    * from a superseded (rejected) card is never suspect (PM-P13-11, -12).
    */
   suspect: boolean;
+  /** A machine's proposed link no person has confirmed yet (DS-TO-9, DS-TO-14); absent once confirmed. */
+  proposed?: true;
 }
 
 /** The Kano class of a requirement (planner-pm §2.15.1). */
@@ -55,7 +58,43 @@ export interface Requirement {
   title?: string;
   /** A person cut it from its slice (PM-P13-9). */
   cut: boolean;
+  /**
+   * Where it came from (design-stage DS-P14-6): a person, an accepted model
+   * proposal or comparable, the depth profile's quality checklist, or a
+   * take-over's proven claim. A requirement recorded before the label is a person's.
+   */
+  source: RequirementSource;
+  /** The candidate a person accepted (DS-P14-6, DS-P14-10). */
+  candidateId?: string;
+  /** The quality-checklist row it covers (DS-P14-2). */
+  checklistRow?: string;
+  /** The project-gate invariant that proves it, instead of a criterion (DS-P14-2). */
+  invariant?: string;
+  /** The take-over claim it was seeded from (DS-TO-14). */
+  claimId?: string;
 }
+
+/**
+ * Where a requirement came from (design-stage DS-P14-6). Only `person` and
+ * `checklist` (added when a person chose the depth profile, DS-P14-2) enter
+ * the graph directly; `model-proposal` and `comparable` enter only when a
+ * person accepts the candidate (`RequirementCandidateLedger.accept`), and
+ * `takeover` only when a person approves a take-over plan (DS-TO-14).
+ */
+export type RequirementSource =
+  | "person"
+  | "model-proposal"
+  | "comparable"
+  | "checklist"
+  | "takeover";
+
+export const REQUIREMENT_SOURCES: readonly RequirementSource[] = [
+  "person",
+  "model-proposal",
+  "comparable",
+  "checklist",
+  "takeover",
+];
 
 export interface RequirementInput {
   id?: string;
@@ -68,10 +107,22 @@ export interface RequirementInput {
   /** `true` when omitted. */
   mustHave?: boolean;
   criteria?: RequirementCriterion[];
+  /** `person` when omitted (DS-P14-6). */
+  source?: RequirementSource;
+  /** Required for `model-proposal` and `comparable`: the open candidate a person accepts. */
+  candidateId?: string;
+  /** Required for `checklist`: the quality-checklist row. */
+  checklistRow?: string;
+  /** A project-gate invariant that proves it (a gate id), in place of a criterion. */
+  invariant?: string;
+  /** Required for `takeover`: the proven claim of the brief as found. */
+  claimId?: string;
 }
 
-/** A revision restates only what changed; the rest carries forward. */
-export type RequirementRevision = Partial<Omit<RequirementInput, "id" | "projectId">>;
+/** A revision restates only what changed; the rest carries forward — never where it came from. */
+export type RequirementRevision = Partial<
+  Omit<RequirementInput, "id" | "projectId" | "source" | "candidateId" | "checklistRow" | "claimId">
+>;
 
 const CRITERION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
@@ -174,6 +225,7 @@ export class RequirementLedger {
         mustHave: true,
         criteria: [],
         cut: false,
+        source: "person",
       };
       applyRequirementEvent(r, e);
       byId.set(id, r);
@@ -193,6 +245,130 @@ export class RequirementLedger {
   /** The requirements of a slice, in creation order (PM-P13-1). */
   public async bySlice(sliceId: string): Promise<Requirement[]> {
     return this.list({ sliceId });
+  }
+
+  /**
+   * Where a candidate stands (DS-P14-6): its source, and whether a person
+   * accepted or rejected it. Read from the ledger; undefined when never proposed.
+   */
+  public candidateState(
+    candidateId: string,
+  ): { source: string; state: "open" | "accepted" | "rejected" } | undefined {
+    const rows = this.db
+      .prepare(
+        `SELECT type, payload FROM events
+           WHERE (type IN ('requirement/proposed', 'requirement/candidate_rejected')
+                  AND json_extract(payload, '$.candidateId') = ?)
+              OR (type = 'requirement/created' AND json_extract(payload, '$.candidateId') = ?)
+           ORDER BY seq`,
+      )
+      .all(candidateId, candidateId) as unknown as { type: string; payload: string }[];
+    let out: { source: string; state: "open" | "accepted" | "rejected" } | undefined;
+    for (const r of rows) {
+      const p = JSON.parse(r.payload) as Record<string, unknown>;
+      if (r.type === "requirement/proposed") out = { source: String(p.source), state: "open" };
+      else if (out && out.state === "open") {
+        out.state = r.type === "requirement/created" ? "accepted" : "rejected";
+      }
+    }
+    return out;
+  }
+
+  /** Where a new requirement came from, checked against the rules of DS-P14-6 and DS-TO-14. */
+  private checkSource(id: string, input: RequirementInput): void {
+    const source = input.source ?? "person";
+    if (!REQUIREMENT_SOURCES.includes(source)) {
+      throw new Error(
+        `Requirement ${id}: the source is one of ${REQUIREMENT_SOURCES.join(", ")}, got ${String(source)}`,
+      );
+    }
+    if (input.candidateId !== undefined) {
+      const c = this.candidateState(input.candidateId);
+      if (c === undefined) throw new Error(`Requirement ${id}: no candidate ${input.candidateId}`);
+      if (c.state !== "open") {
+        throw new Error(`Requirement ${id}: candidate ${input.candidateId} was already ${c.state}`);
+      }
+      if (c.source !== source) {
+        throw new Error(
+          `Requirement ${id}: candidate ${input.candidateId} is a ${c.source}, not a ${source}`,
+        );
+      }
+    } else if (source === "model-proposal" || source === "comparable") {
+      throw new Error(
+        `Requirement ${id}: a ${source} enters the requirement graph only as a candidate a person accepts (DS-P14-6)`,
+      );
+    }
+    if (source === "checklist") {
+      if (!input.checklistRow) {
+        throw new Error(
+          `Requirement ${id}: a checklist requirement names its checklist row (DS-P14-2)`,
+        );
+      }
+      // Only through a person's recorded depth-profile choice that marks the row must-have.
+      const chosen = depthProfileOf(this.db, input.projectId);
+      if (
+        !chosen.recorded ||
+        !(checklistRowsFor(chosen.profile) as string[]).includes(input.checklistRow)
+      ) {
+        throw new Error(
+          `Requirement ${id}: checklist row ${input.checklistRow} enters only through a recorded depth profile that marks it must-have (DS-P14-2)`,
+        );
+      }
+    }
+    if (source === "takeover" && input.candidateId === undefined) {
+      if (!input.claimId) {
+        throw new Error(`Requirement ${id}: a take-over requirement names its claim (DS-TO-14)`);
+      }
+      const why = this.takeoverClaimRefusal(input.claimId);
+      if (why) throw new Error(`Requirement ${id}: ${why} (DS-TO-14)`);
+    }
+  }
+
+  /**
+   * Why a claim cannot enter as a take-over requirement, or undefined: it
+   * must be a proven claim of the brief as found that an approved take-over
+   * plan was bound to (DS-TO-14). A claimed-unproven one enters only as a
+   * candidate a person accepts.
+   */
+  private takeoverClaimRefusal(claimId: string): string | undefined {
+    const rows = this.db
+      .prepare(
+        `SELECT b.payload FROM events b
+           WHERE b.type = 'takeover/brief_as_found'
+             AND json_extract(b.payload, '$.inventorySeq') IN (
+               SELECT json_extract(a.payload, '$.inventorySeq') FROM events a
+                 WHERE a.type = 'takeover/plan_approved')
+           ORDER BY b.seq DESC`,
+      )
+      .all() as unknown as { payload: string }[];
+    if (rows.length === 0) return `claim ${claimId} is of no approved take-over plan`;
+    for (const r of rows) {
+      const claims = (JSON.parse(r.payload) as { claims?: { id: string; label: string }[] }).claims;
+      const c = claims?.find((x) => x.id === claimId);
+      if (!c) continue;
+      return c.label === "proven"
+        ? undefined
+        : `claim ${claimId} is ${c.label}, not proven: it enters only as a candidate a person accepts`;
+    }
+    return `claim ${claimId} is of no approved take-over plan`;
+  }
+
+  /** The id a new requirement takes: the one given, refused when ever used, or one past the highest. */
+  private nextId(input: RequirementInput): string {
+    const used = this.events(["requirement/created"]).map((e) => String(e.id));
+    if (input.id !== undefined) {
+      if (used.includes(input.id)) {
+        throw new Error(
+          `Requirement id ${input.id} was used before; a requirement id is never reused`,
+        );
+      }
+      return input.id;
+    }
+    const highest = used.reduce((n, u) => {
+      const m = /^REQ-(\d+)$/.exec(u);
+      return m ? Math.max(n, Number(m[1])) : n;
+    }, 0);
+    return `REQ-${highest + 1}`;
   }
 
   /**
@@ -283,32 +459,56 @@ export class RequirementLedger {
     input: RequirementInput,
     principal: string,
   ): Promise<{ id: string; version: number }> {
-    const used = this.events(["requirement/created"]).map((e) => String(e.id));
-    let id = input.id;
-    if (id !== undefined && used.includes(id)) {
-      throw new Error(`Requirement id ${id} was used before; a requirement id is never reused`);
-    }
-    if (id === undefined) {
-      const highest = used.reduce((n, u) => {
-        const m = /^REQ-(\d+)$/.exec(u);
-        return m ? Math.max(n, Number(m[1])) : n;
-      }, 0);
-      id = `REQ-${highest + 1}`;
-    }
-    const { projectId } = await this.check(id, input);
-    await this.log.append({
-      actor: "human",
-      type: "requirement/created",
-      payload: {
-        id,
-        version: 1,
-        ...(projectId !== undefined ? { projectId } : {}),
-        ...structuralFields(input),
-        mustHave: input.mustHave ?? true,
+    this.checkSource(this.nextId(input), input);
+    const { projectId } = await this.check(this.nextId(input), input);
+    // From here to the append nothing awaits: the id and the source are
+    // decided again after the checks above yielded, so two creates at once —
+    // two accepts of one candidate — cannot both pass them, and the append
+    // re-checks inside its transaction against another process.
+    const id = this.nextId(input);
+    this.checkSource(id, input);
+    const source = input.source ?? "person";
+    const candidateId = input.candidateId;
+    this.log.appendNow(
+      {
+        actor: "human",
+        type: "requirement/created",
+        payload: {
+          id,
+          version: 1,
+          ...(projectId !== undefined ? { projectId } : {}),
+          ...structuralFields(input),
+          mustHave: input.mustHave ?? true,
+          // A person's own requirement carries no label: `person` is the default read back.
+          ...(source !== "person" ? { source } : {}),
+          ...(input.candidateId !== undefined ? { candidateId: input.candidateId } : {}),
+          ...(input.checklistRow !== undefined ? { checklistRow: input.checklistRow } : {}),
+          ...(input.claimId !== undefined ? { claimId: input.claimId } : {}),
+        },
+        principal,
+        private: privateFields(input),
       },
-      principal,
-      private: privateFields(input),
-    });
+      {
+        project: (e) => {
+          const earlier = this.db
+            .prepare(
+              `SELECT 1 AS x FROM events WHERE seq < ? AND (
+                 (type = 'requirement/created' AND json_extract(payload, '$.id') = ?)
+                 OR (? IS NOT NULL AND type IN ('requirement/created', 'requirement/candidate_rejected')
+                     AND json_extract(payload, '$.candidateId') = ?))
+               LIMIT 1`,
+            )
+            .get(e.seq, id, candidateId ?? null, candidateId ?? null);
+          if (earlier) {
+            throw new Error(
+              candidateId !== undefined
+                ? `Requirement ${id}: candidate ${candidateId} was settled meanwhile, or the id was taken`
+                : `Requirement id ${id} was used before; a requirement id is never reused`,
+            );
+          }
+        },
+      },
+    );
     return { id, version: 1 };
   }
 
@@ -348,7 +548,17 @@ export class RequirementLedger {
    * link is no longer suspect (PM-P13-12).
    */
   public async link(
-    input: { requirementId: string; from: TraceFrom; ref: string; changeFor?: string },
+    input: {
+      requirementId: string;
+      from: TraceFrom;
+      ref: string;
+      changeFor?: string;
+      /**
+       * A machine's proposed link (design-stage DS-TO-9, DS-TO-14): shown as
+       * proposed, never confirmed, until a person records `trace/confirmed`.
+       */
+      proposed?: boolean;
+    },
     actor = "planner",
   ): Promise<void> {
     const version = this.version(input.requirementId);
@@ -368,6 +578,7 @@ export class RequirementLedger {
         from: input.from,
         ref: input.ref,
         ...(input.changeFor !== undefined ? { changeFor: input.changeFor } : {}),
+        ...(input.proposed === true ? { proposed: true } : {}),
       },
     });
   }
@@ -393,6 +604,8 @@ export class RequirementLedger {
   public links(requirementId: string): TraceLink[] {
     const current = this.version(requirementId) ?? 0;
     const byKey = new Map<string, TraceLink>();
+    // Proposed links a person has not confirmed since (DS-TO-14).
+    const unconfirmed = new Set<string>();
     // Refs whose suspect link an accepted change card at the current version resolves.
     const changed = new Set<string>();
     for (const e of this.events(["trace/linked", "trace/confirmed"], requirementId)) {
@@ -405,6 +618,8 @@ export class RequirementLedger {
       const next =
         e.__type === "trace/confirmed" || !prior ? version : Math.min(prior.version, version);
       byKey.set(key, { requirementId, from, ref, version: next, suspect: false });
+      if (e.__type === "trace/confirmed") unconfirmed.delete(key);
+      else if (e.proposed === true) unconfirmed.add(key);
       // PM-P13-12: a change card resolves a suspect link only once it was
       // accepted (moved to `done`) after the revision it answers — a card
       // that happened to already be done before that revision, later named
@@ -425,8 +640,9 @@ export class RequirementLedger {
         changed.add(e.changeFor);
       }
     }
-    return [...byKey.values()].map((l) => ({
+    return [...byKey.entries()].map(([key, l]) => ({
       ...l,
+      ...(unconfirmed.has(key) ? { proposed: true as const } : {}),
       suspect:
         l.version < current &&
         !(l.from === "card" && this.cardStatus(l.ref) === "rejected") &&
@@ -457,6 +673,7 @@ function structuralFields(input: RequirementRevision): Record<string, unknown> {
     ...(input.kano !== undefined ? { kano: input.kano } : {}),
     ...(input.mustHave !== undefined ? { mustHave: input.mustHave } : {}),
     ...(input.criteria !== undefined ? { criterionIds: input.criteria.map((c) => c.id) } : {}),
+    ...(input.invariant !== undefined ? { invariant: input.invariant } : {}),
   };
 }
 
@@ -480,6 +697,11 @@ function applyRequirementEvent(r: Requirement, e: EventRecord): void {
   if (typeof p.kano === "string") r.kano = p.kano as KanoClass;
   if (typeof p.mustHave === "boolean") r.mustHave = p.mustHave;
   if (typeof priv.title === "string") r.title = priv.title;
+  if (typeof p.source === "string") r.source = p.source as RequirementSource;
+  if (typeof p.candidateId === "string") r.candidateId = p.candidateId;
+  if (typeof p.checklistRow === "string") r.checklistRow = p.checklistRow;
+  if (typeof p.invariant === "string") r.invariant = p.invariant;
+  if (typeof p.claimId === "string") r.claimId = p.claimId;
   if (Array.isArray(p.criterionIds)) {
     const texts = priv.criteria;
     r.criteria = p.criterionIds.map((id) => ({

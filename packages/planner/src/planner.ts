@@ -1,7 +1,13 @@
+import { createHash } from "node:crypto";
 import type { LocalInferenceAdapter } from "@sekhemet/models";
 import { ClarEvalAmbiguityClassifier } from "./ambiguity.js";
 import { AssumptionCalibrationLog } from "./calibration.js";
-import { AMBIGUITY_THRESHOLD, DEFAULT_TIER_BUDGET } from "./constants.js";
+import {
+  AMBIGUITY_THRESHOLD,
+  DEFAULT_TIER_BUDGET,
+  MAX_OPEN_QUESTIONS_PER_PASS,
+} from "./constants.js";
+import { settledAnswerFor, settledBasis } from "./decisions.js";
 import { validateInvest } from "./invest.js";
 import { decomposeSpidr } from "./spidr.js";
 import type {
@@ -9,9 +15,13 @@ import type {
   AssumptionOverrideRecord,
   ClassifyOptions,
   CodebaseMap,
+  DecisionRequest,
   DecomposeSpecParams,
+  LoggedAssumption,
   PlannerService,
   SPIDRDecomposition,
+  SettledAnswer,
+  SettledSource,
   SpidrPlan,
   TierBudget,
   TrustCalibrationSnapshot,
@@ -50,6 +60,118 @@ export function resolvePlannerModel(input: {
   if (input.configured && input.configured !== "auto") return input.configured;
   if (input.isRegistered && !input.isRegistered(input.seshatModel)) return undefined;
   return input.seshatModel;
+}
+
+/**
+ * How much a question's answer changes the backlog: the spread of its
+ * options' effort, in steps ("+6 steps / ~7k tokens"), plus one for each
+ * option with a consequence of its own. The planner asks the questions that
+ * score highest first (PM-P2-3).
+ */
+export function backlogImpact(req: Pick<DecisionRequest, "options">): number {
+  const steps = req.options.map((o) => {
+    const m = /([+-]?\d+)\s*steps?/i.exec(o.effortDelta);
+    return m ? Number(m[1]) : 0;
+  });
+  const spread = steps.length ? Math.max(...steps) - Math.min(...steps) : 0;
+  const consequences = new Set(req.options.map((o) => o.consequence)).size;
+  return spread + consequences;
+}
+
+/**
+ * One planning pass's questions (planner-pm §2.10.1): a question the
+ * playbook, the brief or an earlier decision already answers is not asked
+ * and its answer is the assumption, with its source (PM-P2-6); of the rest,
+ * the {@link MAX_OPEN_QUESTIONS_PER_PASS} whose answers most change the
+ * backlog are asked — a `default_deny` one first — and every other
+ * `safe_default` one takes its default, recorded as an assumption (PM-P2-3).
+ * A `default_deny` question has no default to proceed on: it is always asked,
+ * past the cap if need be, and is settled only from the ledger, never from a
+ * brief file's text (PM-P2-4, DS-N3-2). The spec is never refused (PM-P2-5).
+ */
+export function questionPolicy(
+  ambiguity: AmbiguityClassificationResult,
+  options: { settled?: readonly SettledSource[]; now?: Date; maxOpen?: number } = {},
+): AmbiguityClassificationResult {
+  const now = (options.now ?? new Date()).toISOString();
+  const requests = ambiguity.batch?.requests ?? (ambiguity.decision ? [ambiguity.decision] : []);
+  const assumptions: LoggedAssumption[] = [...ambiguity.assumptions];
+  const settled: SettledAnswer[] = [...(ambiguity.settled ?? [])];
+  const assume = (req: DecisionRequest, statement: string, basis: string) => {
+    assumptions.push({
+      id: `asm_${createHash("sha256").update(`${req.id}:${basis}`).digest("hex").slice(0, 10)}`,
+      cardId: req.cardId,
+      category: req.category,
+      statement,
+      basis,
+      excerpt: req.question.slice(0, 120),
+      createdAt: now,
+    });
+  };
+  const open: DecisionRequest[] = [];
+  for (const req of requests) {
+    // A `default_deny` question is settled only by what the ledger holds — a
+    // person's recorded decision or an approved playbook rule — never by a
+    // brief file's text, which reaches the ledger only as a proposal a person
+    // applies (design-stage DS-N3-2).
+    const from = (options.settled ?? []).filter(
+      (s) => req.policy !== "default_deny" || s.kind !== "brief",
+    );
+    const s = settledAnswerFor(
+      { question: req.question, options: req.options.map((o) => o.label) },
+      from,
+    );
+    if (!s) {
+      open.push(req);
+      continue;
+    }
+    settled.push(s);
+    assume(req, `${s.answer} (${req.question})`, settledBasis(s));
+  }
+  const ranked = open
+    .map((req, i) => ({ req, i }))
+    .sort(
+      (a, b) =>
+        Number(b.req.policy === "default_deny") - Number(a.req.policy === "default_deny") ||
+        backlogImpact(b.req) - backlogImpact(a.req) ||
+        a.i - b.i,
+    )
+    .map((x) => x.req);
+  const max = options.maxOpen ?? MAX_OPEN_QUESTIONS_PER_PASS;
+  // A `default_deny` question has no default to proceed on, so it is never
+  // assumed: each is asked, past the cap if it must be, and holds its cards
+  // (PM-P2-4). Only a `safe_default` one beyond the cap takes its default.
+  const asked = ranked.filter((req, i) => i < max || req.policy === "default_deny");
+  for (const req of ranked.filter((r) => !asked.includes(r))) {
+    const at = req.defaultIfNoAnswer.optionIndex ?? req.recommendation.optionIndex;
+    const label = req.options[at]?.label ?? "the recommended option";
+    assume(
+      req,
+      `Assumed ${label} for: ${req.question}`,
+      `Not asked: at most ${max} questions per planning pass; its default`,
+    );
+  }
+  const { decision: _d, batch: _b, rejectionReason: _r, ...rest } = ambiguity;
+  const first = asked[0];
+  return {
+    ...rest,
+    askUser: asked.length > 0,
+    ...(first ? { decision: first } : {}),
+    ...(first && ambiguity.batch ? { batch: { ...ambiguity.batch, requests: asked } } : {}),
+    ...(first && !ambiguity.batch
+      ? {
+          batch: {
+            id: `batch_${first.id}`,
+            cardId: first.cardId,
+            requests: asked,
+            createdAt: now,
+          },
+        }
+      : {}),
+    assumptions,
+    rejected: false,
+    ...(settled.length ? { settled } : {}),
+  };
 }
 
 export interface PlannerOptions {
@@ -105,34 +227,21 @@ export class SpidrFeaturePlanner implements PlannerService {
   /**
    * Full decomposition: clarify, slice, then split until every leaf fits.
    *
-   * An under-specified spec short-circuits here with no stories at all. A plan
-   * built on four unanswered questions looks like progress and is not, so the
-   * planner refuses to produce one.
+   * A spec is never refused for its open points (PM-P2-5): the settled ones
+   * take their recorded answers, at most two are asked, the rest take their
+   * defaults, and the plan proceeds on them (§2.10.1).
    */
   public async decomposeSpec(params: DecomposeSpecParams): Promise<SpidrPlan> {
     const budget = params.tierBudget ?? this.options.tierBudget ?? DEFAULT_TIER_BUDGET;
     const map = params.codebaseMap ?? this.options.codebaseMap;
 
-    const ambiguity = await this.classifyAmbiguity(params.spec, {
-      cardId: params.parentId,
-      ...(map ? { codebaseMap: map } : {}),
-    });
-
-    if (ambiguity.rejected) {
-      return {
-        stories: [],
-        invest: validateInvest([], { tierBudget: budget, specText: params.spec }),
-        ambiguity,
-        capabilityCeilings: [],
-        rejected: true,
-        ...(ambiguity.rejectionReason !== undefined
-          ? { rejectionReason: ambiguity.rejectionReason }
-          : {}),
-        source: "heuristic",
-        spec: params.spec,
-        epics: [],
-      };
-    }
+    const ambiguity = questionPolicy(
+      await this.classifyAmbiguity(params.spec, {
+        cardId: params.parentId,
+        ...(map ? { codebaseMap: map } : {}),
+      }),
+      params.settled ? { settled: params.settled } : {},
+    );
 
     const { stories, capabilityCeilings, source, epics, modelRefusals } = await decomposeSpidr({
       ...params,

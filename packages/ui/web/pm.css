@@ -1001,3 +1001,128 @@ body.pm-open .col {
   display: flex;
   gap: 6px;
 }
+
+/* Review plan (design-stage §2.9, DS-P2-6, -7): a new project's group before
+   anything exists, over a scrim; it scrolls inside rather than clipping. */
+.rp-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  background: var(--scrim);
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 6vh 16px 16px;
+}
+.rp {
+  width: 720px;
+  max-width: 100%;
+  max-height: 88vh;
+  overflow-y: auto;
+  padding: 16px 20px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-card);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+.rp h3 {
+  margin: 0 0 4px;
+  font-size: var(--text-md);
+}
+.rp-h2 {
+  margin: 16px 0 6px;
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+}
+.rp-h {
+  margin: 0 0 2px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.rp-sec {
+  margin: 0 0 8px;
+}
+.rp-sec ul,
+.rp-asm,
+.rp-rel {
+  margin: 0;
+  padding-left: 18px;
+}
+.rp-type {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.rp-pri {
+  margin: 8px 0;
+}
+.rp-cands {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.rp-cand {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--bg-surface);
+  cursor: grab;
+}
+.rp-cand .t {
+  flex: 1;
+  min-width: 0;
+}
+.rp-cand.kept {
+  border-color: var(--border-strong);
+  background: var(--tint-pass);
+}
+.rp-acts {
+  display: flex;
+  gap: 6px;
+}
+.rp-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  border-top: 2px dashed var(--state-running);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+.rp-qs fieldset {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+}
+.rp-count {
+  margin: 12px 0 0;
+  color: var(--text-secondary);
+}
+.rp-foot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+@media (max-width: 767px) {
+  .rp-dialog {
+    padding: 0;
+  }
+  .rp {
+    max-height: 100vh;
+    border-radius: 0;
+    padding: 12px 16px;
+  }
+}

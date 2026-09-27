@@ -50,6 +50,8 @@ export const COMMANDS = [
   "bake-off",
   "mcp",
   "research",
+  // The Researcher bake-off on the research golden set (DS-N2-9, MD-N11-1..3).
+  "research-bakeoff",
   "abort",
   "rewind",
   "fork",
@@ -91,9 +93,16 @@ const VALUED = new Set([
   "--planner",
   "--sketcher",
   "--changelog",
+  // `sekhemet depth <profile> --project <id>`, `take-over --approve TOP-n --project <id>`.
+  "--project",
   // A slice's appetite (PM-P13-9): `sekhemet release extend <SLICE> --cards N --hours H`.
   "--cards",
   "--hours",
+  // `research --effort <level>`; `research-bakeoff --adopt-from <run> --models a,b --pipelines p,q`.
+  "--effort",
+  "--adopt-from",
+  "--models",
+  "--pipelines",
 ]);
 
 /**
@@ -104,6 +113,9 @@ const VALUED = new Set([
 export const KNOWN_FLAGS: ReadonlySet<string> = new Set([
   "--ab-entry",
   "--activate",
+  // `research-bakeoff --adopt` / `--adopt-from <run>` (MD-N11-3).
+  "--adopt",
+  "--adopt-from",
   "--after",
   "--airgap",
   "--answer",
@@ -140,6 +152,8 @@ export const KNOWN_FLAGS: ReadonlySet<string> = new Set([
   "--depth",
   "--diff",
   "--dry-run",
+  // `research --effort quick|standard|exhaustive` (DS-N2-7).
+  "--effort",
   "--entry",
   "--escalate-retries",
   "--events",
@@ -182,6 +196,7 @@ export const KNOWN_FLAGS: ReadonlySet<string> = new Set([
   "--new-setup-token",
   "--no",
   "--no-baseline",
+  "--no-names",
   "--no-private",
   "--offline",
   "--on",
@@ -192,10 +207,13 @@ export const KNOWN_FLAGS: ReadonlySet<string> = new Set([
   "--pages",
   "--permit-loads",
   "--pinned",
+  // `research-bakeoff --pipelines native,tool-loop` (DS-N2-9).
+  "--pipelines",
   "--planner",
   "--port",
   "--preserve",
   "--profile",
+  "--project",
   "--prune",
   "--query",
   "--reason",

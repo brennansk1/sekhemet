@@ -1,8 +1,12 @@
 import type { CardStatus, DecisionRequestRecord } from "@sekhemet/kernel";
-import { resolveDecisionAtDeadline } from "./decision.js";
+import { sameWord } from "./criteria.js";
+import { buildDecisionRequest, resolveDecisionAtDeadline } from "./decision.js";
+import { DESIGN_COPY } from "./design_copy.js";
+import type { DesignQuestion } from "./design_stage.js";
 import { type PlannerLedger, appendPlannerEvent, moveCard, plannerEvents } from "./ledger.js";
 import { applyOracleAnswer } from "./oracle.js";
-import type { DecisionRequest } from "./types.js";
+import { contentWords } from "./text.js";
+import type { DecisionRequest, SettledAnswer, SettledSource, SettledSourceKind } from "./types.js";
 
 /**
  * The planner's decision-request pipeline (P9, P10, P11; design "Durable
@@ -176,6 +180,21 @@ export class DecisionStore {
     return (await this.get(d.id)) as PlannerDecision;
   }
 
+  /**
+   * Every earlier decision's recorded answer (PM-P2-6), a person's or a
+   * deadline's default: a later planning pass does not ask the same question.
+   */
+  public async settledSources(): Promise<SettledSource[]> {
+    const out: SettledSource[] = [];
+    for (const d of this.ledger.store.runs.listDecisions("answered")) {
+      const answer =
+        d.selectedOptionIndex !== undefined ? d.options[d.selectedOptionIndex] : undefined;
+      if (!answer) continue;
+      out.push({ kind: "decision", ref: d.id, text: d.question, question: d.question, answer });
+    }
+    return out;
+  }
+
   /** Apply deadlines (P10); the queue calls this each pass. */
   public async sweepDeadlines(now: Date = new Date()): Promise<PlannerDecision[]> {
     const changed: PlannerDecision[] = [];
@@ -187,8 +206,9 @@ export class DecisionStore {
         await appendPlannerEvent(
           this.ledger,
           DECISION_OUTCOME_EVENTS.defaultApplied,
-          { id: d.id, optionIndex: res.optionIndex, reason: res.reason },
-          { cardId: d.record.cardId },
+          { id: d.id, optionIndex: res.optionIndex },
+          // The reason is free text: the private part (kernel rule 33).
+          { cardId: d.record.cardId, private: { reason: res.reason } },
         );
         await this.ledger.store.runs.answerDecision(d.id, res.optionIndex, "safe_default");
         const label = d.request.options[res.optionIndex]?.label ?? "default";
@@ -214,6 +234,13 @@ export class DecisionStore {
   private async resume(d: PlannerDecision, note: string): Promise<void> {
     const { store } = this.ledger;
     const waitingOn = waitingReason(d.id);
+    // PM-P2-7: the answer is delivered once it is in an asking card's dossier.
+    let delivered = false;
+    const deliver = async () => {
+      if (delivered) return;
+      delivered = true;
+      await store.runs.recordDecisionDelivered(d.id);
+    };
     for (const child of await store.listCards()) {
       if (child.status !== "planning" || !child.blockedReason?.includes(waitingOn)) continue;
       await store.recordDossierEntry({
@@ -222,6 +249,7 @@ export class DecisionStore {
         text: note,
         actor: "planner",
       });
+      await deliver();
       // The answer lifts only its own hold: a card the planner also held for
       // a criterion, a missing test or its size stays in Planning with those
       // reasons (planner-pm §2.4, PM-P1-18).
@@ -249,6 +277,7 @@ export class DecisionStore {
       text: note,
       actor: "planner",
     });
+    await deliver();
     const others = (await this.waiting()).filter(
       (x) => x.record.cardId === card.id && x.id !== d.id,
     );
@@ -267,4 +296,131 @@ export class DecisionStore {
       await store.updateCard(card.id, { blockedReason: null }, "planner");
     }
   }
+}
+
+/**
+ * A further design question (design-stage DS-N1-4, §2.10.1): posted as its
+ * own open decision on the plan's epic under `safe_default`, its default the
+ * recommendation, so planning proceeds on the default while it is open and
+ * the person's answer, or the deadline, settles it. Returns the kernel id.
+ */
+export async function postDesignQuestion(
+  ledger: PlannerLedger,
+  input: { cardId: string; question: DesignQuestion; spec: string },
+): Promise<string> {
+  const { question } = input;
+  const labels = question.answers.map((a) => a.answer);
+  const at = Math.max(0, labels.indexOf(question.default));
+  const built = buildDecisionRequest({
+    cardId: input.cardId,
+    category: "vagueness",
+    question: question.question,
+    optionLabels: labels,
+    sourceExcerpt: input.spec.slice(0, 200),
+  });
+  const request: DecisionRequest = {
+    ...built,
+    recommendation: { optionIndex: at, rationale: DESIGN_COPY.question.rationale },
+    policy: "safe_default",
+    defaultIfNoAnswer: { optionIndex: at, deadline: built.defaultIfNoAnswer.deadline },
+  };
+  return new DecisionStore(ledger).request(request);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Answers already recorded (planner-pm §2.10.1, PM-P2-6)                     */
+/* -------------------------------------------------------------------------- */
+
+/** How much of `of` the words `in` cover, 0..1. */
+function covered(of: readonly string[], within: readonly string[]): number {
+  if (of.length === 0) return 0;
+  return of.filter((w) => within.some((x) => sameWord(w, x))).length / of.length;
+}
+
+/** A recorded question is the same question when each covers most of the other's words. */
+const SAME_QUESTION = 0.8;
+
+/**
+ * The answer a question already has, or undefined (PM-P2-6). A decision
+ * settles it when its question is the same question; a brief line or a
+ * playbook rule settles it when it states the question and then names
+ * exactly one of its answers — "Who takes the money? Invoices only." A line
+ * marked as an assumption ("*Assumed:*", "Not stated") records a default,
+ * not an answer, and settles nothing.
+ */
+export function settledAnswerFor(
+  q: { question: string; options: readonly string[] },
+  sources: readonly SettledSource[],
+): SettledAnswer | undefined {
+  const qWords = contentWords(q.question);
+  if (qWords.length === 0) return undefined;
+  for (const s of sources) {
+    if (s.kind === "decision") {
+      const recorded = contentWords(s.question ?? s.text);
+      if (
+        s.answer &&
+        covered(qWords, recorded) >= SAME_QUESTION &&
+        covered(recorded, qWords) >= SAME_QUESTION
+      ) {
+        return { question: q.question, answer: s.answer, source: s.kind, ref: s.ref };
+      }
+      continue;
+    }
+    for (const line of s.text.split(/\n/)) {
+      if (/\*assumed:?\*|\bnot stated\b|\bassumed\b/i.test(line)) continue;
+      const at = line.lastIndexOf("?");
+      if (at < 0) continue;
+      if (covered(qWords, contentWords(line.slice(0, at))) < SAME_QUESTION) continue;
+      const rest = contentWords(line.slice(at + 1));
+      const named = q.options
+        .map((label) => ({ label, words: contentWords(label) }))
+        .filter((o) => o.words.length > 0 && covered(o.words, rest) === 1)
+        .sort((a, b) => b.words.length - a.words.length);
+      const best = named[0];
+      if (!best || named[1]?.words.length === best.words.length) continue;
+      return { question: q.question, answer: best.label, source: s.kind, ref: s.ref };
+    }
+  }
+  return undefined;
+}
+
+/** The brief as a source of recorded answers (PM-P2-6). */
+export function briefSources(text: string, ref = ".sekhemet/brief.md"): SettledSource[] {
+  return text.trim() ? [{ kind: "brief", ref, text }] : [];
+}
+
+/** Approved playbook rules as sources of recorded answers (PM-P2-6). */
+export function playbookSources(rules: readonly { id: string; text: string }[]): SettledSource[] {
+  return rules.map((r) => ({ kind: "playbook" as const, ref: r.id, text: r.text }));
+}
+
+/** How a settled answer's source is named in the assumption it becomes. */
+export function settledBasis(s: Pick<SettledAnswer, "source" | "ref">): string {
+  const named: Record<SettledSourceKind, string> = {
+    decision: `decision ${s.ref}`,
+    brief: `the brief (${s.ref})`,
+    playbook: `playbook rule ${s.ref}`,
+  };
+  return `Settled by ${named[s.source]}`;
+}
+
+/**
+ * The design stage's questions less those already answered (PM-P2-6): the
+ * ones still to ask, and the settled ones with their answers and sources.
+ */
+export function settleDesignQuestions<T extends DesignQuestion>(
+  questions: readonly T[],
+  sources: readonly SettledSource[],
+): { ask: T[]; settled: SettledAnswer[] } {
+  const ask: T[] = [];
+  const settled: SettledAnswer[] = [];
+  for (const q of questions) {
+    const s = settledAnswerFor(
+      { question: q.question, options: q.answers.map((a) => a.answer) },
+      sources,
+    );
+    if (s) settled.push(s);
+    else ask.push(q);
+  }
+  return { ask, settled };
 }

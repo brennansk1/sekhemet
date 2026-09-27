@@ -14,6 +14,7 @@ import {
   buildDecisionRequest,
   diagnoseEscalation,
   diffPlans,
+  formatPlanReport,
   latestPlan,
   loadCalibrationLog,
   orderReadyCards,
@@ -176,7 +177,10 @@ describe("P9/P10/P11/P25: durable decision requests", () => {
     expect((await again.waiting()).map((d) => d.id)).toEqual([id]);
     const dossier = JSON.stringify(await l.store.getDossier("c1"));
     expect(dossier).toContain("Approach previews");
+    expect(l.store.runs.getDecision(id)?.deliveredAt).toBeUndefined();
     await again.answer(id, 1);
+    // PM-P2-7: the answer reached the asking card, and the ledger says when.
+    expect(l.store.runs.getDecision(id)?.deliveredAt).toMatch(/^\d{4}-/);
     expect((await l.store.getCard("c1"))?.status).toBe("ready");
     expect((await l.store.getCard("c1"))?.blockedReason).toBeUndefined();
     expect(JSON.stringify(await l.store.getDossier("c1"))).toContain("Answer: Postgres");
@@ -197,6 +201,10 @@ describe("P9/P10/P11/P25: durable decision requests", () => {
     ]);
     expect((await l.store.getCard("a"))?.status).toBe("ready");
     expect((await l.store.getCard("b"))?.status).toBe("parked");
+    // PM-P2-7: the default reached card a; b's request has no answer to deliver.
+    const byCard = (c: string) => changed.find((d) => d.record.cardId === c)?.id as string;
+    expect(l.store.runs.getDecision(byCard("a"))?.deliveredAt).toMatch(/^\d{4}-/);
+    expect(l.store.runs.getDecision(byCard("b"))?.deliveredAt).toBeUndefined();
     // default_deny is still answerable by a human.
     const b = (await ds.waiting()).find((d) => d.record.cardId === "b");
     await ds.answer(b?.id as string, 0);
@@ -224,6 +232,13 @@ describe("P9/P10/P11/P25: durable decision requests", () => {
       sourceExcerpt: "Support cloud or local backends",
     });
     expect(plan.ambiguity.decision.policy).toBe("default_deny");
+    // The pass's one question: every question of a batch is posted (PM-P2-4).
+    plan.ambiguity.batch = {
+      id: "batch_auth",
+      cardId: "epic_auth",
+      requests: [plan.ambiguity.decision],
+      createdAt: new Date().toISOString(),
+    };
     // One card whose criterion has an example: only the decision holds it.
     const ready = plan.stories.find((s) => s.slice === "interface") as (typeof plan.stories)[0];
     ready.acceptanceTests = [
@@ -252,6 +267,61 @@ describe("P9/P10/P11/P25: durable decision requests", () => {
     // Parked has no edge back into the middle of a state (kernel rule 25,
     // K-N5-6): an epic parked from In Progress is re-queued at Ready.
     expect((await l.store.getCard("epic_auth"))?.status).toBe("ready");
+  });
+});
+
+describe("PM-P2-4: only a default_deny question holds the plan's cards", () => {
+  const FIVE =
+    "A notes app that syncs to the cloud or to a local folder. Persist the notes in a backend. Maybe expose a public API. Admin roles can manage users. Make the sharing sensible.";
+  const planned = async (l: PlannerLedger, policies: DecisionRequest["policy"][]) => {
+    await l.store.createCard({ id: "epic_n", tier: "epic", title: FIVE, status: "in_progress" });
+    const plan = await new SpidrFeaturePlanner().decomposeSpec({
+      parentId: "epic_n",
+      parentTier: "epic",
+      spec: FIVE,
+    });
+    const asked = plan.ambiguity.batch?.requests ?? [];
+    expect(asked).toHaveLength(2);
+    asked.forEach((r, i) => {
+      r.policy = policies[i] ?? "safe_default";
+    });
+    plan.ambiguity.decision = asked[0];
+    plan.ambiguity.askUser = true;
+    return { plan, result: await persistPlan(l, plan, { epicId: "epic_n" }) };
+  };
+
+  it("safe_default questions are posted, both of them, and hold nothing: planning proceeds on defaults", async () => {
+    const l = ledger();
+    const { plan, result } = await planned(l, ["safe_default", "safe_default"]);
+    const pending = (await new DecisionStore(l).all()).filter((d) => d.state === "pending");
+    expect(pending.map((d) => d.request.question).sort()).toEqual(
+      (plan.ambiguity.batch?.requests ?? []).map((r) => r.question).sort(),
+    );
+    expect(result.decisionId).toBeDefined();
+    for (const c of result.created) {
+      expect((await l.store.getCard(c.id))?.blockedReason ?? "").not.toMatch(/Waiting on decision/);
+    }
+    expect((await l.store.getCard("epic_n"))?.status).toBe("in_progress");
+    const report = formatPlanReport(result);
+    expect(report).not.toMatch(/stay in Planning until it is answered/);
+    expect(report).toMatch(/proceeds on its default/);
+  });
+
+  it("a default_deny question holds every new card until it is answered", async () => {
+    const l = ledger();
+    const { result } = await planned(l, ["safe_default", "default_deny"]);
+    const deny = (await new DecisionStore(l).all()).find(
+      (d) => d.request.policy === "default_deny",
+    );
+    expect(deny).toBeDefined();
+    for (const c of result.created) {
+      expect((await l.store.getCard(c.id))?.blockedReason).toContain(
+        `Waiting on decision ${deny?.id}`,
+      );
+    }
+    expect(formatPlanReport(result)).toMatch(
+      new RegExp(`Decision ${deny?.id} is waiting on you; the new cards stay in Planning`),
+    );
   });
 });
 

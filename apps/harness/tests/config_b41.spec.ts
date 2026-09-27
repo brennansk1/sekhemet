@@ -89,3 +89,52 @@ describe("[models] folders and [machine] reserved_hours / overnight_hours", () =
     expect(problems.join("\n")).toMatch(/machine\.overnight_hours/);
   });
 });
+
+/**
+ * B4.4: the config module owns `[docs] product`, `decisions` and `no_names`
+ * (design-stage DS-N3-3, -4, -6); the project documents read them through it.
+ * A value it cannot use, or a key it does not know, is refused and named.
+ */
+describe("[docs] product, decisions and no_names", () => {
+  let repo: string;
+  const project = (text: string) => {
+    mkdirSync(join(repo, ".sekhemet"), { recursive: true });
+    writeFileSync(join(repo, ".sekhemet", "config.toml"), text);
+  };
+  const resolve = () => resolveConfig({ repoPath: repo, userConfigPath: join(repo, "u.toml") });
+  beforeEach(() => {
+    repo = mkdtempSync(join(tmpdir(), "sekhemet-config-docs-"));
+  });
+  afterEach(() => rmSync(repo, { recursive: true, force: true }));
+
+  it("defaults: no folder configured, names shown", () => {
+    const { config, problems } = resolve();
+    expect(config.docs).toEqual({ noNames: false });
+    expect(problems).toEqual([]);
+  });
+
+  it("reads the folders, repository-relative, and no_names", () => {
+    project(
+      '[docs]\nproduct = "./handbook/product/"\ndecisions = "handbook/adr"\nno_names = true\n',
+    );
+    const { config, problems } = resolve();
+    expect(config.docs).toEqual({
+      product: "handbook/product",
+      decisions: "handbook/adr",
+      noNames: true,
+    });
+    expect(problems).toEqual([]);
+  });
+
+  it("refuses a folder outside the repository, a no_names that is not true or false, and an unknown key", () => {
+    project(
+      '[docs]\nproduct = "/etc"\ndecisions = "../elsewhere"\nno_names = "yes"\nfolder = "x"\n',
+    );
+    const { config, problems } = resolve();
+    expect(config.docs).toEqual({ noNames: false });
+    expect(problems.join("\n")).toMatch(/docs\.product/);
+    expect(problems.join("\n")).toMatch(/docs\.decisions/);
+    expect(problems.join("\n")).toMatch(/docs\.no_names/);
+    expect(problems.join("\n")).toMatch(/docs\.folder/);
+  });
+});

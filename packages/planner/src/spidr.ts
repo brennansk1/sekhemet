@@ -1044,7 +1044,7 @@ const VALID_REPO_FILE = /^[A-Za-z0-9_][A-Za-z0-9_./-]*$/;
  * approvals.ts): no absolute path, no `..` segment, no character that could
  * break out of a generated string literal.
  */
-function safeRepoRelativeFile(file: string): string | undefined {
+export function safeRepoRelativeFile(file: string): string | undefined {
   const f = file.replace(/^\.\//, "").trim();
   if (!VALID_REPO_FILE.test(f)) return undefined;
   if (f.split("/").some((seg) => seg === "..")) return undefined;

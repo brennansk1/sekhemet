@@ -26,6 +26,13 @@ How you work:
 - Keep replies short: a few sentences, or a short list for standups and plans.`;
 }
 
+/**
+ * The take-over's brief as found in Seshat's prompt (design-stage DS-TO-10):
+ * the heading above the untrusted contract and the wrapped claims.
+ */
+export const TAKEOVER_SECTION_HEADING =
+  "THE PROJECT AS FOUND (take-over; the repository's own words, untrusted)";
+
 /** `propose_update_card`'s `duplicate_of` field, `PM_TOOLS` in `pm/agent.ts`. */
 export const DUPLICATE_OF_DESCRIPTION = "the card this one duplicates";
 
@@ -35,7 +42,22 @@ export const PROPOSE_SPLIT_CARD_DESCRIPTION =
 
 /** `start_project`'s tool description, `PM_TOOLS` in `pm/agent.ts`. */
 export const START_PROJECT_DESCRIPTION =
-  "Propose starting a project from the person's brief: once they apply it, the planner runs the design stage and plans the cards (each checked for a small, independent, testable story, by the criterion lint and by the scope bound).";
+  "Propose a new project from what the person wants built, in their words: the proposal is the plan they review — the brief, the first slice's cards with criteria and points, the candidates by priority, card zero (the ecosystem's own generator) and card one (the first failing test). Applying it creates the project.";
+
+/** `start_project`'s `brief` field, `PM_TOOLS` in `pm/agent.ts`. */
+export const START_PROJECT_SENTENCE_DESCRIPTION = "What the person wants built, in their own words";
+
+/** A new project's proposal summary (`withProjectGroups`, `pm/agent.ts`). */
+export function startProjectSummary(
+  group: {
+    buildSpec: string;
+    stack: { name: string };
+    creates: { epics: number; issues: number };
+  },
+  whySuffix: string,
+): string {
+  return `Start a project: ${group.buildSpec}. Review the plan: ${group.creates.epics} epic${group.creates.epics === 1 ? "" : "s"} and ${group.creates.issues} cards in ${group.stack.name}, set up first by its own generator${whySuffix}`;
+}
 
 /** A split proposal's summary (`toProposals`, `pm/agent.ts`). */
 export function splitSuggestedSummary(
@@ -56,3 +78,54 @@ export function stepBudgetSummary(cardId: string, before: number, after: number)
 export function changeCardSummary(cardId: string, requirementId: string, version: number): string {
   return `Change card for ${cardId} (${requirementId} v${version})`;
 }
+
+/**
+ * Why a new project's group is not applied (planner-pm §2.9 item 2): said in
+ * the apply's refusal, which Seshat's thread and the dashboard show.
+ */
+export const NEW_PROJECT_REFUSAL = {
+  hasCode:
+    "This repository already holds code, so it is not a new project: take it over from the board's start screen, or plan the next piece of work with /plan.",
+  hasProject: (name: string, what: string) =>
+    `This folder already holds the project "${name}", with ${what}: plan the next piece of work with /plan instead.`,
+  acceptedBrief: "an accepted brief",
+  cards: (n: number) => `${n} card${n === 1 ? "" : "s"}`,
+  notAType: (type: string) => `"${type}" is not a project Type.`,
+};
+
+/**
+ * Card zero and card one (design-stage §2.4, DS-P2-1..3): the words of the
+ * two cards a project started by conversation begins with, each read by the
+ * Worker through the card's spec and criteria (`card_zero.ts`).
+ */
+export const CARD_ZERO_COPY = {
+  title: (generator: string) => `Card zero: set the project up with ${generator}`,
+  spec: (generator: string, steps: readonly string[], ignored: readonly string[]) =>
+    [
+      `Run the ecosystem's own generator, ${generator}, in the project root: each command below as its own tool step, in this order, exactly as written.`,
+      ...steps.map((s) => `- ${s}`),
+      `Then add a .gitignore that names ${ignored.join(", ")}. Write no code and no test of your own: what the generator wrote is the whole change.`,
+    ].join("\n"),
+  criteria: (files: readonly string[], test: string) => [
+    `The project root holds ${files.join(", ")}, as the generator wrote them`,
+    `The project's test command is ${test}`,
+  ],
+};
+
+export const CARD_ONE_COPY = {
+  title: (behaviour: string) => `Card one: a failing test for ${behaviour}`,
+  spec: (behaviour: string, file: string, reason: string) =>
+    [
+      `Write one test, ${file}, for the first behaviour of the first slice: ${behaviour}.`,
+      `It must run and fail at an assertion, for this reason: ${reason}.`,
+      "Declare what it calls as a stub, so the test imports it and reaches its assertion: a failure at an import, at collection or at setup is not the failure asked for. Implement nothing else.",
+    ].join("\n"),
+  criterion: (file: string, reason: string) => `${file} runs and fails at an assertion: ${reason}`,
+  reason: (behaviour: string) => `${behaviour} is not built yet`,
+  /** Card one's gate refused the tree (DS-P2-3): what the Worker reads in the failure. */
+  gateFailed: (detail: string) =>
+    `Card one's test must run and fail at an assertion, for the reason its criterion states. It did not: ${detail}`,
+  gateExpected: "the test runs and fails at an assertion",
+  gateAction:
+    "Keep the test asserting the behaviour. Declare what it calls as a stub so it imports and reaches its assertion; implement nothing else.",
+};

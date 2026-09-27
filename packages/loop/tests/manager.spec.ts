@@ -104,4 +104,29 @@ describe("@sekhemet/loop manager repair planning", () => {
     expect(seen[0]?.prompt).toContain("failure number 3");
     expect(seen[0]?.prompt).not.toContain("failure number 4");
   });
+
+  it("DS-N5-2: gives the manager the research done first, its answer and its sources, as a required section", async () => {
+    const { adapter, seen } = recordingManager("plan");
+    await planRepair(adapter, {
+      card,
+      stopReason: "repair_exhausted",
+      failures: [],
+      // A file large enough to be cut: the research is still shown whole.
+      files: [{ path: "src/db.ts", content: "x = 1;\n".repeat(40_000) }],
+      research: {
+        answer: "node:sqlite enables WAL with PRAGMA journal_mode=WAL after opening.",
+        sources: ["https://nodejs.org/api/sqlite.html"],
+      },
+    });
+    const prompt = seen[0]?.prompt ?? "";
+    expect(prompt).toContain("PRAGMA journal_mode=WAL after opening");
+    expect(prompt).toContain("https://nodejs.org/api/sqlite.html");
+    expect(prompt.indexOf("PRAGMA journal_mode")).toBeLessThan(prompt.indexOf("--- src/db.ts ---"));
+  });
+
+  it("without research, says nothing of it", async () => {
+    const { adapter, seen } = recordingManager("plan");
+    await planRepair(adapter, { card, stopReason: "no_progress", failures: [], files: [] });
+    expect(seen[0]?.prompt).not.toMatch(/research/i);
+  });
 });

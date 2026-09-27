@@ -116,7 +116,7 @@ describe("Apodex's trained formats (FrontierAgent, Apache-2.0)", () => {
 });
 
 describe("the References contract", () => {
-  it("accepts only URLs a tool returned, flags orphans, and scores what was read", () => {
+  it("accepts only sources whose text was read, flags orphans and search-only hits, and scores what was read (DS-N2-4)", () => {
     const ledger = new EvidenceLedger();
     ledger.seen.set("https://stackoverflow.com/q/1", "SO");
     ledger.noteRead({ kind: "documentation", ref: "https://nodejs.org/api/sqlite.html" });
@@ -129,8 +129,9 @@ describe("the References contract", () => {
       [2, false, true],
       [3, false, false],
     ]);
-    expect(v.badCitations).toEqual([3, 4]);
-    expect(v.confidence).toBe(0.45); // documentation 0.35 + a web source only seen in search 0.1
+    // [2] was only a search hit: its page was never read, so it points at nothing read.
+    expect(v.badCitations).toEqual([2, 3, 4]);
+    expect(v.confidence).toBe(0.35); // documentation 0.35; a search-only hit counts for nothing
   });
 });
 
@@ -315,7 +316,8 @@ describe("Apodex solo research (its ReAct mode)", () => {
 
 describe("Apodex Agent Team (deep research)", () => {
   it("coordinator creates agents, assigns tasks, collects Scope/Findings reports, and merges with verified References", async () => {
-    const { web } = fakeWeb({ "https://nodejs.org/api/sqlite.html": PAGE });
+    const SOURCE = "https://github.com/nodejs/node/blob/main/doc/api/sqlite.md";
+    const { web } = fakeWeb({ "https://nodejs.org/api/sqlite.html": PAGE, [SOURCE]: PAGE });
     let subCalls = 0;
     const model = apodex([
       // Coordinator: create and assign.
@@ -376,6 +378,29 @@ describe("Apodex Agent Team (deep research)", () => {
           },
         ],
       }),
+      // One host (nodejs.org) leaves the sub-question open: it is dispatched
+      // once more, told which host it had, and reads a second one (DS-N4-2).
+      (req) => {
+        expect(req.messages?.[0]?.content).toMatch(
+          /still open: .*its sources so far come only from nodejs\.org/,
+        );
+        return {
+          toolCalls: [
+            { id: "r1", name: "web_fetch", arguments: { url: SOURCE, info_to_extract: "exec" } },
+          ],
+        };
+      },
+      () => ({
+        toolCalls: [
+          {
+            id: "r2",
+            name: "submit_report",
+            arguments: {
+              content: `Scope: API source\nFindings: exec in ${SOURCE}\nConfidence: high`,
+            },
+          },
+        ],
+      }),
       // Coordinator: final plain-text answer.
       (req) => {
         const last = req.messages?.at(-1);
@@ -402,6 +427,48 @@ describe("Apodex Agent Team (deep research)", () => {
     expect(r.grounded).toBe(true);
     expect(r.badCitations).toEqual([]);
     expect(r.coverage?.items).toBe(1);
+    expect(r.coverage?.covered).toEqual(["Find the node:sqlite transaction API."]);
+    expect(r.coverage?.outstanding).toEqual([]);
+  });
+
+  it("reports a sub-question uncovered when its re-dispatch still reads one host (DS-N4-2)", async () => {
+    const { web } = fakeWeb({ "https://nodejs.org/api/sqlite.html": PAGE });
+    const fetchDocs = () => ({
+      toolCalls: [
+        {
+          id: "f",
+          name: "web_fetch",
+          arguments: { url: "https://nodejs.org/api/sqlite.html", info_to_extract: "x" },
+        },
+      ],
+    });
+    const submit = () => ({
+      toolCalls: [{ id: "s", name: "submit_report", arguments: { content: "Findings: exec" } }],
+    });
+    const model = apodex([
+      () => ({
+        toolCalls: [
+          {
+            id: "1",
+            name: "assign_task",
+            arguments: { tasks: [{ agent: "docs", prompt: "Find the transaction API." }] },
+          },
+        ],
+      }),
+      () => ({ toolCalls: [{ id: "2", name: "collect_reports", arguments: {} }] }),
+      fetchDocs,
+      submit,
+      fetchDocs,
+      submit,
+      () => ({
+        text: "Use exec [1].\n\nReferences:\n[1] https://nodejs.org/api/sqlite.html",
+      }),
+    ]);
+    const r = await investigate(model, "Transactions?", { repoPath: process.cwd(), web });
+    expect(r.coverage?.outstanding).toEqual(["Find the transaction API."]);
+    expect(r.coverage?.covered).toEqual([]);
+    expect(r.coverage?.coveragePct).toBe(0);
+    expect(r.answer).toMatch(/^Use exec/);
   });
 
   it("will not answer while tasks are assigned but uncollected, and bounds the team", async () => {

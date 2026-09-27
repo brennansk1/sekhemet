@@ -16,9 +16,15 @@ import {
 } from "@sekhemet/gates";
 import type { CardChange, CardGateChecks } from "@sekhemet/kernel";
 import { isResearchLabelled, verificationSessionOptions, verifyCardTree } from "@sekhemet/loop";
-import { confinedSandbox } from "@sekhemet/sandbox";
+import { type ProcessSandbox, confinedSandbox } from "@sekhemet/sandbox";
 import { integrationBranch } from "./accept.js";
 import { withArchitectureGate } from "./architecture_gate.js";
+import {
+  CARD_ONE_LABEL,
+  cardOneTests,
+  withCardOneGate,
+  withoutCardOneStaging,
+} from "./card_zero.js";
 import { withLicenseGate } from "./license_gate.js";
 import { withReachabilityGate } from "./reachability_gate.js";
 import { withRegressionGate } from "./regression_gate.js";
@@ -110,8 +116,24 @@ function baselined(runner: GateRunner, input: CardGateInput): GateRunner {
   });
 }
 
+/**
+ * Card one's own functional gate in place of the unit gate (design-stage
+ * DS-P2-3): the test the Worker wrote in the card's scope must run and fail
+ * at an assertion. Any other card: the runner as it is.
+ */
+function cardOne(runner: GateRunner, input: CardGateInput, sandbox: ProcessSandbox): GateRunner {
+  if (!input.card.labels?.includes(CARD_ONE_LABEL)) return runner;
+  return withCardOneGate(runner, {
+    sandbox,
+    tests: cardOneTests(input.card),
+    gate: input.gatesConfig.gates.find((g) => g.layer === "functional" && g.rung === "test"),
+  });
+}
+
 export function cardGateRunner(input: CardGateInput): GateRunner {
-  const { repoPath, gatesConfig, card } = input;
+  const { repoPath, gatesConfig } = input;
+  // DS-P2-3: card one's test is the Worker's, never a staged acceptance test.
+  const card = withoutCardOneStaging(input.card);
   const base = gateBaseBranch(repoPath, gatesConfig);
   // Restricted mode refuses to execute where the OS cannot confine the
   // subprocess, rather than quietly running the gates unsandboxed.
@@ -129,35 +151,40 @@ export function cardGateRunner(input: CardGateInput): GateRunner {
           withLicenseGate(
             // G24: a separate, mutually authenticated gate host when gates.toml
             // names one; this machine's sandbox otherwise.
-            baselined(
-              gatesConfig.project.gateHost
-                ? new RemoteGateRunner(
-                    gatesConfig.project.gateHost.url,
-                    readTls(gatesConfig.project.gateHost),
-                    {
-                      expectedConfigSha256: gatesConfig.sha256,
+            cardOne(
+              baselined(
+                gatesConfig.project.gateHost
+                  ? new RemoteGateRunner(
+                      gatesConfig.project.gateHost.url,
+                      readTls(gatesConfig.project.gateHost),
+                      {
+                        expectedConfigSha256: gatesConfig.sha256,
+                        repoRoot: repoPath,
+                      },
+                    )
+                  : new DeterministicGateRunner(sandbox, {
                       repoRoot: repoPath,
-                    },
-                  )
-                : new DeterministicGateRunner(sandbox, {
-                    repoRoot: repoPath,
-                    expectedConfigSha256: gatesConfig.sha256,
-                    // The verification caps once, after every gate and wrapper
-                    // has reported (gates rule 20): the runner hands back
-                    // everything, and the regression wrapper reads the whole list.
-                    maxFailuresReported: Number.POSITIVE_INFINITY,
-                  }),
+                      expectedConfigSha256: gatesConfig.sha256,
+                      // The verification caps once, after every gate and wrapper
+                      // has reported (gates rule 20): the runner hands back
+                      // everything, and the regression wrapper reads the whole list.
+                      maxFailuresReported: Number.POSITIVE_INFINITY,
+                    }),
+                input,
+              ),
               input,
+              sandbox,
             ),
             repoPath,
             base,
           ),
           base,
         ),
-        // What asked for this card's work — its acceptance tests and its own
-        // spec — makes an export reachable before the code that calls it exists.
+        // What asked for this card's work — its acceptance tests, card one's
+        // own test (DS-P2-3) and its spec — makes an export reachable before
+        // the code that calls it exists.
         {
-          tests: card.acceptanceTests ?? [],
+          tests: [...(card.acceptanceTests ?? []), ...cardOneTests(card)],
           text: [card.spec ?? "", ...(card.acceptanceCriteria ?? [])].join("\n"),
         },
         base,
@@ -207,7 +234,7 @@ export async function verifyCardWorktree(
     base: input.base,
     rungs: session.gateRungs,
     runner: input.runner ?? cardGateRunner(input),
-    staged: input.card.acceptanceTests ?? [],
+    staged: withoutCardOneStaging(input.card).acceptanceTests ?? [],
     bounds: session.bounds,
     ...(input.toolApplied ? { toolApplied: input.toolApplied } : {}),
     builtin: {

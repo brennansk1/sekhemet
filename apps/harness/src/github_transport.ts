@@ -114,7 +114,8 @@ export function networkHint(reason: string, host: string): string {
   if (reason === "not in fetch_allow") {
     return `Add ${host} to [network] fetch_allow in your user config.toml, or set [network] mode = "open"`;
   }
-  if (reason === "in fetch_deny") {
+  // A denied host's reason names the rule and its file (DS-N4-3): `in fetch_deny [<file>: <rule>]`.
+  if (reason === "in fetch_deny" || reason.startsWith("in fetch_deny [")) {
     return `${host} is in [network] fetch_deny; remove it there to connect`;
   }
   return "See [network] mode in your user config.toml";

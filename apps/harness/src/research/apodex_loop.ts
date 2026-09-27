@@ -11,10 +11,17 @@ import {
   subagentPrompt,
   truncateMiddle,
 } from "./apodex.js";
+import { researchCopy } from "./research_copy.js";
 import type { ResearchDeps } from "./researcher.js";
 import { runResearchTool } from "./researcher.js";
-import { type Source, groundingConfidence, kindOfUrl } from "./sources.js";
-import { type Hit, fetchPage, webSearch } from "./web.js";
+import {
+  SUB_QUESTION_MIN_HOSTS,
+  type Source,
+  groundingConfidence,
+  independentHosts,
+  kindOfUrl,
+} from "./sources.js";
+import { type Hit, fetchPage, isFetchRefusal, webSearch } from "./web.js";
 
 /**
  * The Researcher's loop when Apodex drives it, built to Apodex's training
@@ -329,9 +336,15 @@ export class EvidenceLedger {
   /** Sources whose content reached the model (fetched pages, docs, papers). */
   readonly read = new Map<string, Source>();
   readonly queries = new Set<string>();
+  /** A source's date as its search result gave it, for recency in a disagreement (DS-N2-8). */
+  readonly dates = new Map<string, string>();
 
   noteHits(hits: Hit[]): void {
-    for (const h of hits) if (h.url && !this.seen.has(h.url)) this.seen.set(h.url, h.title);
+    for (const h of hits) {
+      if (h.url && !this.seen.has(h.url)) this.seen.set(h.url, h.title);
+      const date = /\b(19|20)\d{2}(-\d{2}(-\d{2})?)?\b(?!\.\d)/.exec(h.meta ?? "")?.[0];
+      if (h.url && date && !this.dates.has(h.url)) this.dates.set(h.url, date);
+    }
   }
 
   noteRead(s: Source): void {
@@ -343,26 +356,48 @@ export interface VerifiedAnswer {
   answer: string;
   /** Referenced sources, in the answer's own numbering. */
   references: { n: number; ref: string; read: boolean; known: boolean }[];
-  /** [n] markers with no References line, or References no tool returned. */
+  /** [n] markers with no reference, or references to nothing whose text was read. */
   badCitations: number[];
+  /** The sources read that the answer cites. */
   evidence: Source[];
   confidence: number;
 }
 
-/**
- * Check the References contract: every cited URL must be one a tool returned
- * (character-for-character, as the prompts require), and every [n] in the
- * text must have a References line. Confidence counts only what was read;
- * a URL only seen in search results counts as a web source.
- */
 const normTitle = (t: string) =>
   t
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
 
-export function verifyReferences(answer: string, ledger: EvidenceLedger): VerifiedAnswer {
+/** The source read that a reference names: by URL or ref, else by its normalised title. */
+function readSourceFor(raw: string, ledger: EvidenceLedger): Source | undefined {
+  const url = /(https?:\/\/[^\s>)\]]+)/.exec(raw)?.[1];
+  const ref = url ?? raw;
+  const direct = ledger.read.get(ref) ?? [...ledger.read.values()].find((s) => raw.includes(s.ref));
+  if (direct) return direct;
+  const nraw = normTitle(raw);
+  return [...ledger.read.values()].find(
+    (s) => s.title && normTitle(s.title).length >= 20 && nraw.includes(normTitle(s.title)),
+  );
+}
+
+/**
+ * The one reference checker (design-stage DS-N2-4), for every research
+ * pipeline: each citation is checked against text actually fetched and
+ * recorded in the ledger, matched by URL (or ref) or by normalised title.
+ * The answer's References section names its sources; without one, `[n]`
+ * is the n-th of the `numbered` sources the pipeline showed the model. A
+ * citation to nothing read — a made-up URL, a page only seen as a search
+ * hit, a number with no reference — is flagged in `badCitations`.
+ * Confidence counts only what was read and cited.
+ */
+export function verifyReferences(
+  answer: string,
+  ledger: EvidenceLedger,
+  numbered?: readonly Source[],
+): VerifiedAnswer {
   const refs: VerifiedAnswer["references"] = [];
+  const found = new Map<number, Source>();
   const at = answer.search(/\n#*\s*\**References:?\**\s*\n/i);
   const body = at === -1 ? answer : answer.slice(0, at);
   if (at !== -1) {
@@ -371,43 +406,38 @@ export function verifyReferences(answer: string, ledger: EvidenceLedger): Verifi
       if (!m) continue;
       const raw = (m[2] ?? "").replace(/^<|>$/g, "");
       const url = /(https?:\/\/[^\s>)\]]+)/.exec(raw)?.[1];
-      const ref = url ?? raw;
-      // By URL, or by a paper's title as the search result gave it.
+      const n = Number(m[1]);
+      const source = readSourceFor(raw, ledger);
+      if (source) found.set(n, source);
       const nraw = normTitle(raw);
-      const byTitle = [...ledger.read.values()].find(
-        (s) => s.title && normTitle(s.title).length >= 20 && nraw.includes(normTitle(s.title)),
-      );
-      const read =
-        ledger.read.has(ref) ||
-        [...ledger.read.values()].some((s) => raw.includes(s.ref)) ||
-        Boolean(byTitle);
-      const seenTitle = [...ledger.seen.values()].some(
-        (t) => normTitle(t).length >= 20 && nraw.includes(normTitle(t)),
-      );
-      const known = read || ledger.seen.has(ref) || seenTitle;
-      refs.push({ n: Number(m[1]), ref, read, known });
+      const known =
+        Boolean(source) ||
+        ledger.seen.has(url ?? raw) ||
+        [...ledger.seen.values()].some(
+          (t) => normTitle(t).length >= 20 && nraw.includes(normTitle(t)),
+        );
+      refs.push({ n, ref: url ?? raw, read: Boolean(source), known });
+    }
+  } else if (numbered) {
+    const cited = new Set([...body.matchAll(/\[(\d{1,3})\]/g)].map((m) => Number(m[1])));
+    for (const n of [...cited].sort((a, b) => a - b)) {
+      const s = numbered[n - 1];
+      if (!s) continue;
+      const source =
+        readSourceFor(s.ref, ledger) ?? (s.title ? readSourceFor(s.title, ledger) : undefined);
+      if (source) found.set(n, source);
+      refs.push({ n, ref: s.ref, read: Boolean(source), known: Boolean(source) });
     }
   }
   const bad = new Set<number>();
-  for (const r of refs) if (!r.known) bad.add(r.n);
+  for (const r of refs) if (!r.read) bad.add(r.n);
   for (const m of body.matchAll(/\[(\d{1,3})\]/g)) {
     const n = Number(m[1]);
     if (!refs.some((r) => r.n === n)) bad.add(n);
   }
-  const evidence: Source[] = refs
-    .filter((r) => r.known)
-    .map((r) => {
-      const s =
-        ledger.read.get(r.ref) ??
-        [...ledger.read.values()].find((x) => r.ref.includes(x.ref)) ??
-        [...ledger.read.values()].find(
-          (x) =>
-            x.title &&
-            normTitle(x.title).length >= 20 &&
-            normTitle(r.ref).includes(normTitle(x.title)),
-        );
-      return s ?? { kind: "web", ref: r.ref };
-    });
+  const evidence = [
+    ...new Set(refs.flatMap((r) => (found.has(r.n) ? [found.get(r.n) as Source] : []))),
+  ];
   return {
     answer,
     references: refs,
@@ -494,8 +524,15 @@ async function runApodexTool(
   }
   if (call.name === "web_fetch") {
     if (!web) return "[ERROR]: Web access is off for this project.";
-    const urls = asList(a.url).slice(0, 5);
+    let urls = asList(a.url).slice(0, 5);
     if (urls.length === 0) return "[ERROR]: url is required and cannot be empty.";
+    // DS-N4-1: the effort's page reads per sub-question.
+    const budget = deps.pageBudget;
+    if (budget) {
+      if (budget.used >= budget.max) return researchCopy.pagesSpent(budget.max);
+      urls = urls.slice(0, budget.max - budget.used);
+      budget.used += urls.length;
+    }
     const infosRaw = asList(a.info_to_extract);
     const infos =
       infosRaw.length === urls.length
@@ -506,7 +543,7 @@ async function runApodexTool(
     const results = await Promise.all(
       urls.map(async (u, i) => {
         const page = await fetchPage(u, web, 80_000);
-        if (/^(Invalid URL|Only http|Refusing|The site's robots|The page answered)/.test(page)) {
+        if (isFetchRefusal(page)) {
           return { url: u, info: `[ERROR]: Scraping failed: ${page}` };
         }
         const info = await extractInfo(opts.extractor, infos[i] ?? "", page);
@@ -736,6 +773,18 @@ export interface TeamResult {
   tasks: number;
   coordinatorTurns: number;
   reports: { agent: string; prompt: string; report: string; confidence?: number }[];
+  /**
+   * Each assigned task is a sub-question: the independent primary or
+   * secondary hosts its runs read, whether that closed it, and how many
+   * times it was dispatched (DS-N4-2: once more while open, then reported).
+   */
+  subQuestions: {
+    agent: string;
+    prompt: string;
+    hosts: string[];
+    closed: boolean;
+    dispatches: number;
+  }[];
 }
 
 /**
@@ -765,6 +814,7 @@ export async function apodexTeam(
   const agents = new Map<string, { brief: string; reports: string[] }>();
   const pending: { agent: string; prompt: string }[] = [];
   const reports: TeamResult["reports"] = [];
+  const subQuestions: TeamResult["subQuestions"] = [];
   let tasksRun = 0;
   const turns: ChatTurn[] = [{ role: "user", content: `${opts.brief}\n\nQUESTION\n${question}` }];
   const system = coordinatorPrompt(opts.today, maxAgents);
@@ -783,27 +833,66 @@ export async function apodexTeam(
       }
       tasksRun++;
       const a = agents.get(t.agent) ?? { brief: "", reports: [] };
-      const memory = a.reports.length
-        ? `\n\nYOUR EARLIER REPORTS (you remember these; do not redo that work)\n${a.reports.map((r) => truncateMiddle(r, 1500)).join("\n---\n")}`
-        : "";
-      const run = await apodexLoop(model, `${t.prompt}${memory}`, deps, {
-        role: "subagent",
-        system: `${subagentPrompt(opts.today, /verif/i.test(t.agent))}${a.brief ? `\n\n# Your role\n${a.brief}` : ""}`,
-        maxTurns: opts.subTurns ?? 8,
-        extractor: model,
-        budgetChars: opts.budgetChars,
-        ledger,
-      });
-      const report =
-        run.text ||
-        "Scope: the task\nFindings: none — the agent ended without a report.\nConfidence: low";
-      a.reports.push(report);
-      agents.set(t.agent, a);
-      reports.push({
+      const dispatch = async (prompt: string) => {
+        const memory = a.reports.length
+          ? `\n\nYour earlier reports (you remember these; build on them and spend this run on what they left open):\n${a.reports.map((r) => truncateMiddle(r, 1500)).join("\n---\n")}`
+          : "";
+        const readBefore = new Set(ledger.read.keys());
+        const queriesBefore = new Set(ledger.queries);
+        const run = await apodexLoop(
+          model,
+          `${prompt}${memory}`,
+          // One page budget per dispatch of a sub-question (DS-N4-1).
+          deps.maxPages ? { ...deps, pageBudget: { max: deps.maxPages, used: 0 } } : deps,
+          {
+            role: "subagent",
+            system: `${subagentPrompt(opts.today, /verif/i.test(t.agent))}${a.brief ? `\n\n# Your role\n${a.brief}` : ""}`,
+            maxTurns: opts.subTurns ?? 8,
+            extractor: model,
+            budgetChars: opts.budgetChars,
+            ledger,
+          },
+        );
+        const report =
+          run.text ||
+          "Scope: the task\nFindings: none — the agent ended without a report.\nConfidence: low";
+        a.reports.push(report);
+        agents.set(t.agent, a);
+        reports.push({
+          agent: t.agent,
+          prompt,
+          report,
+          ...(run.selfConfidence !== undefined ? { confidence: run.selfConfidence } : {}),
+        });
+        return {
+          report,
+          read: [...ledger.read.entries()].filter(([k]) => !readBefore.has(k)).map(([, v]) => v),
+          queries: [...ledger.queries].filter((q) => !queriesBefore.has(q)),
+        };
+      };
+      // The closing rule, in code (DS-N4-2): a sub-question closes on sources
+      // from two independent primary or secondary hosts; one still open is
+      // dispatched once more with different queries (the ledger refuses a
+      // search that already ran), then reported as it stands.
+      const first = await dispatch(t.prompt);
+      let read = first.read;
+      let hosts = independentHosts(read);
+      let dispatches = 1;
+      let report = first.report;
+      if (hosts.length < SUB_QUESTION_MIN_HOSTS) {
+        deps.onEvent?.(`  · ${t.agent}: open (${hosts.join(", ") || "no host"}), re-dispatched`);
+        const again = await dispatch(researchCopy.redispatch(t.prompt, first.queries, hosts));
+        dispatches = 2;
+        read = [...read, ...again.read];
+        hosts = independentHosts(read);
+        report = `${first.report}\n---\n${again.report}`;
+      }
+      subQuestions.push({
         agent: t.agent,
         prompt: t.prompt,
-        report,
-        ...(run.selfConfidence !== undefined ? { confidence: run.selfConfidence } : {}),
+        hosts,
+        closed: hosts.length >= SUB_QUESTION_MIN_HOSTS,
+        dispatches,
       });
       out.push(`<report agent="${t.agent}">\n${truncateMiddle(report, 4000)}\n</report>`);
     }
@@ -852,7 +941,14 @@ export async function apodexTeam(
         });
         continue;
       }
-      return { answer: text, ledger, tasks: tasksRun, coordinatorTurns: turn, reports };
+      return {
+        answer: text,
+        ledger,
+        tasks: tasksRun,
+        coordinatorTurns: turn,
+        reports,
+        subQuestions,
+      };
     }
     deps.onEvent?.(
       `coordinator ${turn}: ${res.toolCalls.map((c) => `${c.name}(${JSON.stringify(c.arguments).slice(0, 160)})`).join(", ")}`,
@@ -910,7 +1006,14 @@ export async function apodexTeam(
       turns.push({ role: "tool", toolCallId: c.id, content: out });
     }
   }
-  return { answer: "", ledger, tasks: tasksRun, coordinatorTurns: maxTurns, reports };
+  return {
+    answer: "",
+    ledger,
+    tasks: tasksRun,
+    coordinatorTurns: maxTurns,
+    reports,
+    subQuestions,
+  };
 }
 
 export function researchPromptFor(today: string, brief: string): string {

@@ -1,9 +1,9 @@
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { appendFileSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import type { CardStore, EventLog } from "@sekhemet/kernel";
 import type { LocalInferenceAdapter, ModelHold } from "@sekhemet/models";
-import { mergeNetworkConfigs, policyAllowsEveryHost } from "@sekhemet/sandbox";
-import { effectiveConfig, explicitNetworkMode, networkConfigs } from "../config_apply.js";
+import { type EffectiveNetworkPolicy, policyAllowsEveryHost } from "@sekhemet/sandbox";
+import { effectiveConfig, explicitNetworkMode } from "../config_apply.js";
 import { readSettings } from "../integrations.js";
 import { similarity } from "../learning/store.js";
 import {
@@ -12,9 +12,12 @@ import {
   sharedModelAccess,
   sharedQueue,
 } from "../model_access.js";
-import { researchFetch, researchGate } from "../research_consent.js";
+import { researchPipelineAdvice } from "../research_bakeoff.js";
+import { researchFetch, researchGate, researchPolicy } from "../research_consent.js";
 import { userPaths } from "../user_dir.js";
 import { crawl4aiInstalled } from "./crawl4ai.js";
+import { installed } from "./deps.js";
+import { EFFORT_CAPS, RESEARCH_EFFORTS, type ResearchEffort, effortOfLabels } from "./effort.js";
 import {
   type ResearchAnswer,
   type ResearchDeps,
@@ -49,7 +52,53 @@ export interface MemoryEntry {
   confidence: number;
   at: string;
   repo: string;
+  /** The installed version of each package the question named (DS-N2-5). */
+  packages?: Record<string, string>;
+  /** The effort the answer was researched at (DS-N4-1). */
+  effort?: ResearchEffort;
 }
+
+/** Where an answer may be reused: this repository, at these installed versions (DS-N2-5). */
+export interface MemoryScope {
+  repo: string;
+  packages: Record<string, string>;
+  /** Only an answer researched at least this hard is reused (DS-N4-1). */
+  effort?: ResearchEffort;
+}
+
+const effortRank = (e: ResearchEffort | undefined) => RESEARCH_EFFORTS.indexOf(e ?? "quick");
+
+const canonicalRepo = (path: string): string => {
+  try {
+    return realpathSync(resolve(path));
+  } catch {
+    return resolve(path);
+  }
+};
+
+/**
+ * The packages installed in this repository that a question names, with their
+ * installed versions: an answer about `zod` at 3.x is not an answer at 4.x.
+ */
+export function packagesInQuestion(repoPath: string, question: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  const tokens = new Set(
+    (question.match(/@?[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)?/gi) ?? [])
+      .map((t) => t.toLowerCase().replace(/[.]+$/, ""))
+      .filter((t) => t.length >= 2),
+  );
+  for (const name of [...tokens].sort()) {
+    const pkg = installed(repoPath, name);
+    if (pkg) out[name] = pkg.version;
+  }
+  return out;
+}
+
+const sameVersions = (a: Record<string, string> = {}, b: Record<string, string> = {}) => {
+  const ka = Object.keys(a).sort();
+  const kb = Object.keys(b).sort();
+  return ka.length === kb.length && ka.every((k, i) => k === kb[i] && a[k] === b[k]);
+};
 
 export class ResearchMemory {
   constructor(private readonly path = userPaths().researchMemory) {}
@@ -65,12 +114,24 @@ export class ResearchMemory {
     }
   }
 
-  /** A recent, confident answer to (nearly) the same question. */
-  recall(question: string, maxAgeDays = 30, minSimilarity = 0.6): MemoryEntry | undefined {
+  /**
+   * A recent, confident answer to (nearly) the same question, recorded for
+   * this repository at the same installed versions of the packages the
+   * question names (DS-N2-5); never one recorded for another.
+   */
+  recall(
+    question: string,
+    scope: MemoryScope,
+    maxAgeDays = 30,
+    minSimilarity = 0.6,
+  ): MemoryEntry | undefined {
     const cutoff = Date.now() - maxAgeDays * 86_400_000;
+    const repo = canonicalRepo(scope.repo);
     let best: { e: MemoryEntry; s: number } | undefined;
     for (const e of this.all()) {
       if (Date.parse(e.at) < cutoff || e.confidence < 0.35) continue;
+      if (canonicalRepo(e.repo) !== repo || !sameVersions(e.packages, scope.packages)) continue;
+      if (effortRank(e.effort) < effortRank(scope.effort)) continue;
       const s = similarity(e.question, question);
       if (s >= minSimilarity && (!best || s > best.s)) best = { e, s };
     }
@@ -126,6 +187,21 @@ export interface SourceStatus {
   web: boolean;
   search: string;
   pages: string;
+  /**
+   * What a project's config.toml tried to widen and was ignored, one line
+   * each with the file (DS-N4-4): research fetches nothing on its account.
+   */
+  ignored: string[];
+}
+
+/** One line per ignored widening, for a person (DS-N4-4). */
+function ignoredLines(policy: EffectiveNetworkPolicy): string[] {
+  return (policy.ignored ?? [])
+    .filter((w) => w.key !== "research")
+    .map(
+      (w) =>
+        `${w.file}: ${w.key === "mode" ? `mode = "${w.value}"` : `fetch_allow "${w.value}"`} ignored (a project's file may only narrow)`,
+    );
 }
 
 /** Sources for this project, starting the private SearXNG when web access is on. */
@@ -134,8 +210,11 @@ export async function researchSources(
   opts: { forceWeb?: boolean; ensure?: typeof ensureSearxng; log?: EventLog } = {},
 ): Promise<{ web: WebConfig | undefined; status: SourceStatus }> {
   // NEW-security-8 (security item 29a): `[network] research` in config.toml.
-  const nets = networkConfigs(repoPath);
-  const policy = mergeNetworkConfigs(nets.user, nets.project);
+  const { policy, project } = researchPolicy(repoPath);
+  const nets = { project };
+  const ignored = ignoredLines(policy);
+  // DS-N4-3: every reader below refuses a denied host, naming the file and rule.
+  const deny = policy.denyRules ?? [];
   // SEC-52b: a project's `research = "no"` means no research request for it.
   if (nets.project.research === "no" && opts.forceWeb !== true) {
     return {
@@ -144,6 +223,7 @@ export async function researchSources(
         web: false,
         search: 'off (this project\'s config.toml: research = "no")',
         pages: "off",
+        ignored,
       },
     };
   }
@@ -158,6 +238,7 @@ export async function researchSources(
       fetch: researchFetch(repoPath, opts.log),
       gate: researchGate(repoPath, opts.log),
       browser,
+      deny,
     });
     return {
       web,
@@ -169,6 +250,7 @@ export async function researchSources(
         pages: web.crawler
           ? 'Crawl4AI (rendered), each page through the network policy (config.toml: research = "yes")'
           : `plain HTML reader, through the network policy (config.toml: research = "yes")${browser ? "" : "; Crawl4AI off while fetch_allow or fetch_deny limits research"}`,
+        ignored,
       },
     };
   }
@@ -178,14 +260,19 @@ export async function researchSources(
   if (mode === "offline" && opts.forceWeb !== true) {
     return {
       web: undefined,
-      status: { web: false, search: "off (config.toml network.mode = offline)", pages: "off" },
+      status: {
+        web: false,
+        search: "off (config.toml network.mode = offline)",
+        pages: "off",
+        ignored,
+      },
     };
   }
   const on = opts.forceWeb ?? readSettings(repoPath).researchWeb === true;
   if (!on) {
     return {
       web: undefined,
-      status: { web: false, search: "off (project setting)", pages: "off" },
+      status: { web: false, search: "off (project setting)", pages: "off", ignored },
     };
   }
   const allowOnly =
@@ -198,7 +285,7 @@ export async function researchSources(
     const url = await (opts.ensure ?? ensureSearxng)().catch(() => undefined);
     if (url) process.env.SEKHEMET_SEARXNG_URL = url;
   }
-  const web = webConfigFromEnv(allowOnly ? { allowOnly } : {});
+  const web = webConfigFromEnv({ ...(allowOnly ? { allowOnly } : {}), deny });
   const env = process.env;
   return {
     web,
@@ -216,15 +303,25 @@ export async function researchSources(
         : crawl4aiInstalled()
           ? "Crawl4AI (off)"
           : "plain HTML reader",
+      ignored,
     },
   };
 }
 
 export interface AskOptions {
+  /** Deep research: `standard` effort unless `effort` says otherwise. */
   deep?: boolean;
+  /** How hard to look (DS-N4-1); else a research card's `effort:` label, else by `deep`. */
+  effort?: ResearchEffort;
   cardId?: string;
   /** Skip memory (always research afresh). */
   fresh?: boolean;
+  /**
+   * The question carries text that stays on this machine (the repair
+   * question: a card's spec, a gate's output, DS-N5-1): refused rather than
+   * sent to a Researcher whose server is remote.
+   */
+  localOnly?: boolean;
 }
 
 export interface AskResult extends ResearchAnswer {
@@ -256,10 +353,22 @@ export class ResearchService {
 
   async ask(question: string, opts: AskOptions = {}): Promise<AskResult> {
     const askedAt = Date.now();
-    const known = opts.fresh ? undefined : this.memory.recall(question);
+    const card = opts.cardId
+      ? await this.deps.cardStore?.getCard?.(opts.cardId).catch(() => undefined)
+      : undefined;
+    const effort: ResearchEffort =
+      opts.effort ?? effortOfLabels(card?.labels) ?? (opts.deep ? "standard" : "quick");
+    const caps = EFFORT_CAPS[effort];
+    const scope: MemoryScope = {
+      repo: this.deps.repoPath,
+      packages: packagesInQuestion(this.deps.repoPath, question),
+      effort,
+    };
+    const known = opts.fresh ? undefined : this.memory.recall(question, scope);
     let result: AskResult;
     if (known) {
       result = {
+        ...(known.effort ? { effort: known.effort } : {}),
         ...withClaims({
           answer: `${known.answer}\n\n(From research memory, ${known.at.slice(0, 10)}.)`,
           sources: known.sources,
@@ -272,7 +381,19 @@ export class ResearchService {
       };
     } else {
       const model = await this.deps.model();
+      if (opts.localOnly && model.remote === true) {
+        throw new Error(
+          `Refusing to research this question on ${model.modelId}: its server is not on this machine, and the question carries a card's spec and a gate's output, which stay here.`,
+        );
+      }
+      // DS-N2-9: the pipeline the latest golden-set run recommends for this model.
+      const pipeline = this.deps.log
+        ? (await researchPipelineAdvice(this.deps.log).catch(() => [])).find(
+            (v) => v.model === model.modelId,
+          )?.recommended
+        : undefined;
       const rdeps: ResearchDeps = {
+        ...(pipeline ? { pipeline } : {}),
         repoPath: this.deps.repoPath,
         web: this.deps.web,
         ...this.deps.tools,
@@ -281,10 +402,18 @@ export class ResearchService {
         ...(this.deps.today ? { today: this.deps.today } : {}),
         ...(this.deps.maxRounds ? { maxRounds: this.deps.maxRounds } : {}),
       };
-      const r = opts.deep
-        ? await investigate(model, question, rdeps)
-        : await research(model, question, rdeps);
-      result = { ...r, fromMemory: false };
+      // The effort's recorded caps (DS-N4-1): sub-questions, page reads per
+      // sub-question, and the critique pass's candidates.
+      const r =
+        effort === "quick"
+          ? await research(model, question, { ...rdeps, maxPages: caps.pagesPerSubQuestion })
+          : await investigate(model, question, rdeps, {
+              maxItems: caps.subQuestions,
+              subRounds: caps.turnsPerSubQuestion,
+              pagesPerSubQuestion: caps.pagesPerSubQuestion,
+              critiqueCandidates: caps.critiqueCandidates,
+            });
+      result = { ...r, effort, fromMemory: false };
       // Keep only what can be trusted later: grounded, cited, confident.
       if (r.grounded && r.badCitations.length === 0 && r.confidence >= 0.35) {
         this.memory.remember({
@@ -294,6 +423,8 @@ export class ResearchService {
           confidence: r.confidence,
           at: new Date().toISOString(),
           repo: this.deps.repoPath,
+          packages: scope.packages,
+          effort,
         });
       }
     }
@@ -302,9 +433,13 @@ export class ResearchService {
         actor: "researcher",
         type: "research/asked",
         ...(opts.cardId ? { cardId: opts.cardId } : {}),
+        // The question can carry a card's spec and a gate's output (the
+        // repair batch's): private and erasable (kernel rule 33), never in
+        // the hashed, exported payload.
+        private: { question: question.slice(0, 1000) },
         payload: {
-          question: question.slice(0, 1000),
-          deep: opts.deep === true,
+          deep: effort !== "quick",
+          effort,
           fromMemory: result.fromMemory,
           grounded: result.grounded,
           confidence: result.confidence,
@@ -314,12 +449,15 @@ export class ResearchService {
         },
       })
       .catch(() => undefined);
+    // DS-N5-3: the answer is stored whole on the card's dossier (`card/research`),
+    // scoped to that card, with every source it read.
     if (opts.cardId && this.deps.cardStore && result.grounded) {
       await this.deps.cardStore
         .recordDossierEntry({
           cardId: opts.cardId,
           kind: "research",
-          text: `Q: ${question.slice(0, 300)}\nA: ${result.answer.slice(0, 1500)}\nSources: ${result.sources.slice(0, 8).join("; ")}`,
+          text: `Q: ${question.split("\n")[0]?.slice(0, 300) ?? ""}\nA: ${result.answer}\nSources: ${result.sources.join("; ")}`,
+          ...(result.sources.length ? { sources: result.sources } : {}),
         })
         .catch(() => undefined);
     }

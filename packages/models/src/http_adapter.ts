@@ -688,6 +688,12 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
 
   private keepAliveOverride: string | undefined;
 
+  /** Whether the server is on another machine: its base URL is not a loopback address. */
+  public get remote(): boolean {
+    const host = new URL(this.baseUrl).hostname.replace(/^\[|\]$/g, "");
+    return !(host === "localhost" || host === "::1" || /^127\./.test(host));
+  }
+
   /**
    * The memory watchdog's shortened keep-alive (MD-N2-4), in force until it
    * is cleared with `undefined`.

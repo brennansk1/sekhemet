@@ -2,7 +2,10 @@ import { readFileSync } from "node:fs";
 import type { CardStore } from "@sekhemet/kernel";
 import { McpHub, loadMcpConfig } from "../mcp_client.js";
 import { sharedModelAccess } from "../model_access.js";
+import { runnerLease } from "../runner_lease.js";
+import { renderDisagreements } from "./claims.js";
 import { crawl4aiInstalled } from "./crawl4ai.js";
+import { RESEARCH_EFFORTS, parseEffort } from "./effort.js";
 import { ResearchService, researchSources, researcherModel } from "./service.js";
 
 export const CRAWL4AI_CREDIT =
@@ -14,7 +17,9 @@ Ask the Researcher. It gathers evidence with its tools (papers, docs, the web,
 GitHub, package registries, this repository) and answers with sources.
 
 Options
-  --deep            Decompose, research each part, merge (slower, broader)
+  --deep            Decompose, research each part, merge (the same as --effort standard)
+  --effort <level>  quick, standard or exhaustive: sub-questions, pages read per
+                    sub-question and critique depth; exhaustive runs overnight
   --model <name>    Researcher model: apodex (default) or an Ollama tag
   --web / --offline Override the project's research web setting
   --card <id>       Record the answer on the card's dossier
@@ -42,12 +47,30 @@ export async function runResearchCommand(
     argv.find(
       (a, i) =>
         !a.startsWith("--") &&
-        !["--model", "--card", "--rounds", "--batch"].includes(argv[i - 1] ?? ""),
+        !["--model", "--card", "--rounds", "--batch", "--effort"].includes(argv[i - 1] ?? ""),
     ) ?? (argv.includes("--batch") ? "(batch)" : undefined);
   const forceWeb = argv.includes("--web") ? true : argv.includes("--offline") ? false : undefined;
   if (argv.includes("--help") || (!question && !argv.includes("--status"))) {
     console.log(RESEARCH_USAGE);
     return question || argv.includes("--help") ? 0 : 1;
+  }
+  const effortFlag = flag(argv, "--effort");
+  const effort = effortFlag === undefined ? undefined : parseEffort(effortFlag);
+  if (effortFlag !== undefined && !effort) {
+    console.log(`--effort takes ${RESEARCH_EFFORTS.join(", ")}; got "${effortFlag}".`);
+    return 1;
+  }
+  // DS-N4-1: exhaustive research is refused while a card is running, and
+  // offered for the overnight window instead.
+  const holder = effort === "exhaustive" ? runnerLease(repoPath) : undefined;
+  if (holder) {
+    const what = holder.cardId
+      ? `card ${holder.cardId} is running`
+      : `a ${holder.kind ?? "run"} holds the machine`;
+    console.log(
+      `Exhaustive research is refused while ${what} (pid ${holder.pid}): it would hold the Researcher for hours.\nRun it in the overnight window instead: add a card labelled "research" and "effort:exhaustive" with this question, and sekhemet overnight runs it when the machine is free; or ask again when the run ends.`,
+    );
+    return 1;
   }
   const { web, status } = await researchSources(
     repoPath,
@@ -58,6 +81,8 @@ export async function runResearchCommand(
       !crawl4aiInstalled() ? " (install Crawl4AI for rendered pages)" : ""
     }`,
   );
+  // DS-N4-4: what a project's config.toml tried to widen, and was ignored.
+  for (const line of status.ignored) console.log(`Network: ${line}`);
   if (!question) return 0;
 
   // H11: tools from the user's MCP servers, when any are configured.
@@ -101,6 +126,7 @@ export async function runResearchCommand(
       const started = Date.now();
       const r = await service.ask(q, {
         deep,
+        ...(effort ? { effort } : {}),
         fresh: argv.includes("--fresh"),
         ...(cardId ? { cardId } : {}),
       });
@@ -122,8 +148,12 @@ export async function runResearchCommand(
             r.coverage
               ? `; covered ${r.coverage.covered.length}/${r.coverage.items} (${r.coverage.stoppedBecause})`
               : ""
-          }${r.fromMemory ? "; from memory" : ""}; ${secs}s`,
+          }${r.effort ? `; effort ${r.effort}` : ""}${r.fromMemory ? "; from memory" : ""}; ${secs}s`,
         );
+        if (r.coverage?.outstanding.length) {
+          console.log(`Not covered: ${r.coverage.outstanding.join("; ")}`);
+        }
+        if (r.disagreements?.length) console.log(`\n${renderDisagreements(r.disagreements)}`);
       }
       if (!r.grounded) worst = 2;
     }

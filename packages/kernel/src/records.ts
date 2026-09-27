@@ -44,6 +44,12 @@ export const RUN_EVENTS = {
   competenceRecorded: "competence/recorded",
 } as const;
 
+/**
+ * A decision's delivery to the card that asked (planner-pm PM-P2-7). Not a
+ * projected table: `deliveredAt` is read from this event.
+ */
+export const DECISION_DELIVERED_EVENT = "decision/delivered";
+
 const RUNGS = new Set<RepairRung>([1, 2, 3, 4]);
 const TOOL_ARMS = new Set<ToolArm>(["A", "B", "C"]);
 
@@ -779,6 +785,38 @@ export class RunLedger {
     return this.getDecision(id) as DecisionRequestRecord;
   }
 
+  /**
+   * The answer reached the card that asked (planner-pm PM-P2-7): record
+   * `deliveredAt` once — a later delivery keeps the first. Refused for a
+   * decision that has no answer yet.
+   */
+  public async recordDecisionDelivered(id: string): Promise<DecisionRequestRecord> {
+    const d = this.getDecision(id);
+    if (!d) throw new Error(`Decision not found: ${id}`);
+    if (d.status !== "answered") {
+      throw new Error(`Decision ${id} is ${d.status}: only an answered decision is delivered`);
+    }
+    if (d.deliveredAt) return d;
+    await this.log.append({
+      actor: "system",
+      type: DECISION_DELIVERED_EVENT,
+      ...(d.cardId ? { cardId: d.cardId } : {}),
+      payload: { id, deliveredAt: new Date().toISOString() },
+    });
+    return this.getDecision(id) as DecisionRequestRecord;
+  }
+
+  /** When the answer reached the asker, read from the ledger (PM-P2-7). */
+  private deliveredAt(id: string): string | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT json_extract(payload, '$.deliveredAt') AS at FROM events
+           WHERE type = ? AND json_extract(payload, '$.id') = ? ORDER BY seq LIMIT 1`,
+      )
+      .get(DECISION_DELIVERED_EVENT, id) as { at: string | null } | undefined;
+    return row?.at ?? undefined;
+  }
+
   public async expireDecision(id: string): Promise<void> {
     const d = this.getDecision(id);
     if (!d || d.status !== "pending") return;
@@ -835,6 +873,7 @@ export class RunLedger {
   }
 
   private mapDecision(r: Record<string, unknown>): DecisionRequestRecord {
+    const deliveredAt = r.status === "answered" ? this.deliveredAt(String(r.id)) : undefined;
     return {
       id: String(r.id),
       ...(r.card_id ? { cardId: String(r.card_id) } : {}),
@@ -850,6 +889,7 @@ export class RunLedger {
       ...(r.answered_by ? { answeredBy: String(r.answered_by) } : {}),
       createdAt: String(r.created_at),
       ...(r.answered_at ? { answeredAt: String(r.answered_at) } : {}),
+      ...(deliveredAt ? { deliveredAt } : {}),
     };
   }
 

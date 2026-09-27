@@ -54,6 +54,7 @@ import {
 } from "@sekhemet/models";
 import {
   DEFAULT_TIER_BUDGET,
+  DESIGN_COPY,
   DecisionStore,
   GoalStore,
   type PlannerLedger,
@@ -73,19 +74,30 @@ import {
   loggedAssumptions,
   orderReadyCards,
   persistPlan,
+  postDesignQuestion,
   processProfileFromConfig,
   rankGoals,
   recordAssumptionOutcome,
   renderBrief,
+  settleDesignQuestions,
+  settledBasis,
   triggeredResponses,
 } from "@sekhemet/planner";
 import { type ProcessSandbox, runConfined, runTrusted } from "@sekhemet/sandbox";
 import { gitEnvFor, planRelease, publishRelease, runActGate } from "@sekhemet/sync";
 import { airgapSkillApproval, approveVerifiedSkill } from "./airgap.js";
+import { afterDoneCardZero } from "./card_zero.js";
 import { effectiveConfig, queueDefaults } from "./config_apply.js";
 import { pendingM0, recordM0Pending } from "./m0_path.js";
 import { resolvedWorkerWindowTokens } from "./model_access.js";
-import { approveCommand, planningInputs, upgradeCommand } from "./plan_approval.js";
+import {
+  approveCommand,
+  depthCommand,
+  designCoverage,
+  offerDepthProfile,
+  planningInputs,
+  upgradeCommand,
+} from "./plan_approval.js";
 import {
   type Setup,
   evaluateGoals,
@@ -95,6 +107,7 @@ import {
   respondToSignals,
   setupFor,
 } from "./planner_live.js";
+import { settledSourcesFor } from "./pm/pipeline.js";
 import {
   type CombinationDeps,
   qualificationCombination,
@@ -109,6 +122,7 @@ import {
   reuseSurvey,
   withPriorArt,
 } from "./research/reuse.js";
+import { RESEARCH_GOLDEN_RUN } from "./research_bakeoff.js";
 import { workerFloorRefusal } from "./watchdog_actions.js";
 import { loadRepoSkills, skillsLockPath } from "./workspace_trust.js";
 
@@ -152,6 +166,27 @@ export async function repoPlanner(
     calibration: await loadCalibrationLog(ledgerOf(k)),
     ...(adapter ? { adapter } : {}),
   });
+}
+
+/**
+ * What the design stage says, with its first question replaced by the first
+ * one still open (PM-P2-6): a settled question is not asked again.
+ */
+function saidWithoutSettled(
+  design: ReturnType<typeof designStage>,
+  ask: readonly (typeof design.questions)[number][],
+): string[] {
+  const first = design.questions[0];
+  if (!first || ask[0] === first) return design.say;
+  const asked = DESIGN_COPY.say.firstQuestion(first.question, first.default);
+  const next = ask[0];
+  return design.say.flatMap((line) =>
+    line !== asked
+      ? [line]
+      : next
+        ? [DESIGN_COPY.say.firstQuestion(next.question, next.default)]
+        : [],
+  );
 }
 
 /** No tracked source yet: a project that does not exist. */
@@ -244,6 +279,20 @@ export async function planCommand(
     research?: ReuseDeps;
     /** The resolved Worker's window; omitted, read from the registry (PM-13). */
     workerWindowTokens?: number;
+    /**
+     * A person at a terminal to answer the depth-profile offer (DS-P14-1);
+     * omitted, the proposal is said and nothing is recorded.
+     */
+    ask?: (question: string) => Promise<string>;
+    /** `--offline` / SEKHEMET_OFFLINE: comparables are not searched (DS-P14-9). */
+    offline?: boolean;
+    /**
+     * Who acts (PM-P2-2): "human" when a person asked (`/plan`, a bare-brief
+     * start_project); "planner", the default, for `sekhemet plan`.
+     */
+    actor?: string;
+    /** The person the planned work is for (PM-P13-2). */
+    principal?: string;
   } = {},
 ): Promise<{ epicId: string; created: number; decisionId?: string }> {
   const print = options.print ?? ((l: string) => console.log(l));
@@ -251,7 +300,11 @@ export async function planCommand(
   // it, and proceeds: quality words become constraints with defaults, not
   // cards, and a spec with money or identity at stake gets a written brief.
   const design = designStage(spec, { greenfield: isGreenfield(k.repoPath) });
-  for (const line of design.say) print(line);
+  // PM-P2-6: a question an earlier decision, the brief or the playbook already
+  // answers is not asked again; read before this plan writes any brief.
+  const settled = await settledSourcesFor(k);
+  const designQs = settleDesignQuestions(design.questions, settled);
+  for (const line of saidWithoutSettled(design, designQs.ask)) print(line);
   const briefPath = join(k.repoPath, ".sekhemet", "brief.md");
   // Reuse before rebuild: look for what already exists before any card is
   // written, whenever the design stage has anything to say at all.
@@ -267,14 +320,17 @@ export async function planCommand(
     writeFileSync(briefPath, findings ? withPriorArt(brief, priorArtLines(findings)) : brief);
   }
   const epicId = `epic_${Date.now().toString(16)}`;
-  await k.cardStore.createCard({
-    id: epicId,
-    tier: "epic",
-    title: design.buildSpec,
-    // The person's own words: a re-plan starts from them again (PM-P1-8).
-    spec,
-    status: "in_progress",
-  });
+  await k.cardStore.createCard(
+    {
+      id: epicId,
+      tier: "epic",
+      title: design.buildSpec,
+      // The person's own words: a re-plan starts from them again (PM-P1-8).
+      spec,
+      status: "in_progress",
+    },
+    options.actor,
+  );
   // With a planning model, slices and their behaviours come from it; the
   // heuristics remain the fallback when it is absent or answers badly.
   const planner = await repoPlanner(k, options.sketcher);
@@ -294,38 +350,56 @@ export async function planCommand(
   const briefAccepted =
     requirementProject !== undefined &&
     (await briefBaseline(ledgerOf(k), requirementProject)) !== undefined;
+  const projectId = requirementProject;
+  // DS-P14-1: the design stage's proposed profile is offered before any card
+  // is planned; a person's answer is recorded and the plan follows it.
+  await offerDepthProfile(k, design, {
+    ...(projectId !== undefined ? { projectId } : {}),
+    print,
+    ...(options.ask ? { ask: options.ask } : {}),
+  });
   // PM-N3-2, PM-N7: the Worker's measured record and the depth profile.
-  const inputs = await planningInputs(k);
+  const inputs = await planningInputs(k, projectId);
   const plan = await planner.decomposeSpec({
     parentId: epicId,
     parentTier: "epic",
     spec: design.buildSpec,
     tierBudget,
     capability: inputs.capability,
+    settled,
     // The riskiest assumption is proven right after the contract.
     ...(design.riskiest ? { riskiest: design.riskiest } : {}),
   });
   const now = new Date().toISOString();
   plan.ambiguity.assumptions.push(
-    ...design.assumptions.map((statement, i) => ({
-      id: `asm_design_${epicId}_${i}`,
+    // A settled question's default is not assumed: its answer is (below).
+    ...design.assumptions
+      .filter((a) => !designQs.settled.some((x) => a.startsWith(`${x.question} `)))
+      .map((statement, i) => ({
+        id: `asm_design_${epicId}_${i}`,
+        cardId: epicId,
+        category: "vagueness" as const,
+        statement,
+        basis: "design stage default",
+        excerpt: spec.slice(0, 120),
+        createdAt: now,
+      })),
+    // PM-P2-6: a settled design question's answer, with where it was settled.
+    ...designQs.settled.map((a, i) => ({
+      id: `asm_settled_${epicId}_${i}`,
       cardId: epicId,
       category: "vagueness" as const,
-      statement,
-      basis: "design stage default",
+      statement: `${a.question} ${a.answer}`,
+      basis: settledBasis(a),
       excerpt: spec.slice(0, 120),
       createdAt: now,
     })),
   );
-  if (plan.rejected) {
-    print(`The spec is under-specified: ${plan.rejectionReason ?? "too many open questions"}.`);
-    for (const f of plan.ambiguity.findings.filter((x) => x.disposition === "ask")) {
-      print(`  ? ${f.excerpt}`);
-    }
-    return { epicId, created: 0 };
-  }
   const result = await persistPlan(ledgerOf(k), plan, {
     epicId,
+    // PM-P2-2: a person's plan is the person's act; the planner's otherwise.
+    ...(options.actor ? { actor: options.actor } : {}),
+    ...(options.principal ? { principal: options.principal } : {}),
     repoRoot: k.repoPath,
     tierBudget,
     deriveRequirements: !briefAccepted,
@@ -337,6 +411,19 @@ export async function planCommand(
   if (result.created.length > 0) {
     print(`Approve the criteria before any card leaves Planning: sekhemet approve ${epicId}`);
   }
+  // DS-N1-4: the first question was asked in what the design stage said; a
+  // second waits as its own open decision, planning on its default.
+  const second = designQs.ask[1];
+  if (second) {
+    const id = await postDesignQuestion(ledgerOf(k), { cardId: epicId, question: second, spec });
+    print(DESIGN_COPY.question.posted(id, second.question, second.default));
+  }
+  // DS-P14-5, -7, -9: comparables (when research is allowed) and the story-map walk.
+  await designCoverage(k, design, {
+    ...(projectId !== undefined ? { projectId } : {}),
+    ...(options.offline ? { offline: true } : {}),
+    print,
+  });
   // Each card is told what already exists for the part it builds.
   for (const story of findings ? result.created : []) {
     const finding = findings?.find((f) => coversNeed(story.title, f.need));
@@ -405,6 +492,14 @@ export async function queuePrelude(
   }
 
   const cards = await k.cardStore.listCards();
+  // DS-P2-1, -2: once card zero is Done, the project's gates are derived from
+  // what its generator left on this tree, before card one runs.
+  const zero = afterDoneCardZero(k.repoPath, cards);
+  if (zero?.state === "derived") {
+    say(
+      `Card zero is done: the project's gates are now ${zero.gates.join(", ")}, derived from what ${zero.generator ?? "the generator"} left.`,
+    );
+  }
   const events = await k.log.getEventsByTypes([
     "card/status_changed",
     "gate/result",
@@ -535,6 +630,7 @@ export type Wave2Command =
   | "measure"
   | "models"
   | "approve"
+  | "depth"
   | "upgrade";
 export const WAVE2_COMMANDS: readonly Wave2Command[] = [
   "airgap",
@@ -557,6 +653,7 @@ export const WAVE2_COMMANDS: readonly Wave2Command[] = [
   "measure",
   "models",
   "approve",
+  "depth",
   "upgrade",
 ];
 
@@ -763,6 +860,9 @@ export async function runWave2Command(
     case "approve":
       // PM-N7-3/4/5: a person approves a plan's criteria (and tests, by profile).
       return approveCommand(k, args, print);
+    case "depth":
+      // DS-P14-1, -2, -4: the profile in force, or a person's choice recorded.
+      return depthCommand(k, args, print);
     case "upgrade":
       // PM-N6-4: an upgrade as a tool step, then fix cards from its failing gates.
       return upgradeCommand(k, args, print);
@@ -917,6 +1017,22 @@ export async function runWave2Command(
         return done(
           "Usage: sekhemet models assign <worker|planner|reviewer|researcher> <model> [--baseline | --default --bake-off <event id>] | models restore <role> | models list",
           2,
+        );
+      }
+      // MD-N11-2: the Researcher's shipped default changes only as a research
+      // golden-set run's adoption verdict allows; a benchmark alone does not carry it.
+      if (role === "researcher" && scope === "default") {
+        const bench = flag(args, "--bake-off");
+        const run = bench
+          ? (await k.log.getEventsByTypes([RESEARCH_GOLDEN_RUN])).find((e) =>
+              ((e.payload as { contenders?: { benchmarkEvent?: string }[] }).contenders ?? []).some(
+                (c) => c.benchmarkEvent === bench,
+              ),
+            )
+          : undefined;
+        return done(
+          `The Researcher's default changes only as a research golden-set run's adoption verdict allows (MD-N11-2): sekhemet research-bakeoff --adopt-from ${run?.id ?? "<run event id>"}`,
+          1,
         );
       }
       const adapter = (io.model as (n: string) => LocalInferenceAdapter)(modelArg);
@@ -1223,6 +1339,7 @@ export async function runWave2Command(
         if (!pending) return done("No slice release is waiting to be tagged.", 1);
         try {
           const t = await pd.confirmSliceRelease(k, pending);
+          if (t.notice) print(t.notice);
           return done(`Tagged ${t.tag} at ${t.sha.slice(0, 7)} for ${pending}.`, 0);
         } catch (err) {
           return done(err instanceof Error ? err.message : String(err), 1);

@@ -209,6 +209,12 @@ export interface LocalInferenceAdapter {
    * qualification record. Callers use it instead of a hard-coded arm.
    */
   readonly preferredToolArm?: ToolArm | undefined;
+  /**
+   * True when the adapter's server is not on this machine (a base URL that
+   * is not a loopback address): text that must stay local — a card's spec,
+   * a gate's output — is never sent to it.
+   */
+  readonly remote?: boolean;
   generate(req: InferenceRequest): Promise<InferenceResponse>;
   /** Health contract (M4); every adapter in this package implements it. */
   healthCheck?(): Promise<AdapterHealth>;

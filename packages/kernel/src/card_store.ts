@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
 import { assigneeTarget } from "./assignee.js";
+import { RequirementCandidateLedger } from "./candidates.js";
 import {
   CARD_CHANGES,
   CARD_SPLITS,
@@ -20,14 +21,18 @@ import {
   cardInsertValues,
   cardPatchAssignments,
 } from "./card_columns.js";
+import { DepthProfileLedger } from "./depth_profile.js";
 import type { EventLog } from "./log.js";
 import { keyBetween } from "./order_key.js";
+import { ProjectDocumentLedger } from "./project_documents.js";
+import { IssueReconciliationLedger } from "./reconciliation.js";
 import { RunLedger } from "./records.js";
 import { RequirementLedger } from "./requirements.js";
 import { SliceLedger } from "./slices.js";
 import { StagedTestLedger } from "./staged_tests.js";
 import { DEFAULT_STEP_BUDGET } from "./stop_reasons.js";
 import { SuggestionLedger } from "./suggestions.js";
+import { TakeoverLedger } from "./takeover.js";
 import {
   CARD_STATUSES,
   INITIAL_CARD_STATUSES,
@@ -92,6 +97,13 @@ export class CardStructureError extends Error {
 
 /** Longest dossier text kept; longer text is cut with a marker, never silently. */
 export const MAX_DOSSIER_TEXT = 8000;
+
+/**
+ * A research answer is kept whole (design-stage DS-N5-3): the Planner reads
+ * it before a repair. This bound only guards the ledger against a runaway
+ * writer; no answer a model writes comes near it.
+ */
+export const MAX_RESEARCH_DOSSIER_TEXT = 200_000;
 
 const KIND_BY_EVENT_TYPE = new Map<string, DossierEntryKind>(
   (Object.entries(DOSSIER_EVENT_TYPES) as [DossierEntryKind, string][]).map(([k, t]) => [t, k]),
@@ -464,6 +476,16 @@ export class CardStore {
   public readonly stagedTests: StagedTestLedger;
   /** Seshat's suggestions on an issue (TEAM-18, TEAM-19, PM-N9-1). */
   public readonly suggestions: SuggestionLedger;
+  /** The project's depth profile, chosen by a person (design-stage DS-P14-1, -2, -3). */
+  public readonly depthProfiles: DepthProfileLedger;
+  /** Candidate requirements and the story map's walkthroughs (DS-P14-5, -6, -7). */
+  public readonly candidates: RequirementCandidateLedger;
+  /** A take-over's brief as found, questions, backlog and approval (DS-TO-9, -11, -12, -14). */
+  public readonly takeover: TakeoverLedger;
+  /** Inherited issues reconciled against the code (integrations INT-42, -43, -44). */
+  public readonly reconciliation: IssueReconciliationLedger;
+  /** Project documents' exports and import proposals (design-stage NEW-design-stage-3). */
+  public readonly documents: ProjectDocumentLedger;
   /** Active projects allowed at once (B13). */
   public activeProjectCap = DEFAULT_ACTIVE_PROJECT_CAP;
 
@@ -476,6 +498,11 @@ export class CardStore {
     this.slices = new SliceLedger(db, eventLog, this.requirements);
     this.stagedTests = new StagedTestLedger(db, eventLog);
     this.suggestions = new SuggestionLedger(db, eventLog);
+    this.depthProfiles = new DepthProfileLedger(db, eventLog, this.requirements);
+    this.candidates = new RequirementCandidateLedger(db, eventLog, this.requirements);
+    this.takeover = new TakeoverLedger(db, eventLog, this.runs, this.requirements, this.candidates);
+    this.reconciliation = new IssueReconciliationLedger(db, eventLog);
+    this.documents = new ProjectDocumentLedger(db, eventLog);
   }
 
   /** The oldest active project, which cards created without one belong to. */
@@ -1537,10 +1564,9 @@ export class CardStore {
       throw new Error(`Card not found: ${input.cardId}`);
     }
 
+    const max = input.kind === "research" ? MAX_RESEARCH_DOSSIER_TEXT : MAX_DOSSIER_TEXT;
     const stored =
-      text.length > MAX_DOSSIER_TEXT
-        ? `${text.slice(0, MAX_DOSSIER_TEXT)}\n… [${text.length - MAX_DOSSIER_TEXT} chars cut]`
-        : text;
+      text.length > max ? `${text.slice(0, max)}\n… [${text.length - max} chars cut]` : text;
     const payload: DossierPayload = {
       kind: input.kind,
       text: stored,

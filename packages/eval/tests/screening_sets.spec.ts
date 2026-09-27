@@ -56,12 +56,13 @@ describe("the screening sets (measurement rule 31)", () => {
     expect(p.hash).toBeUndefined();
   });
 
-  it("reads the Reviewer's and Researcher's sets as not_built, naming the workstream that builds them", () => {
+  it("reads the Reviewer's set as not_built naming B4.8, and the Researcher's until a person registers the research golden set", () => {
     const sets = loadScreeningSets(ROOT);
     expect(sets.roles.reviewer).toMatchObject({ state: "not_built" });
     expect(sets.roles.reviewer.reason).toMatch(/B4\.8/);
+    // B4.4 built the set (research_golden.spec.ts); its answers wait on a person's labels.
     expect(sets.roles.researcher).toMatchObject({ state: "not_built" });
-    expect(sets.roles.researcher.reason).toMatch(/B4\.4/);
+    expect(sets.roles.researcher.reason).toMatch(/research golden set is a draft/);
   });
 
   it("never offers a partial set: a Worker set short of six cards is not_built", () => {

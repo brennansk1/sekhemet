@@ -1,7 +1,10 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { parseToml } from "@sekhemet/kernel";
+import { missingTrailers } from "./git_adapter.js";
+import { gitEnvFor } from "./git_preflight.js";
 import type { GitHubClient } from "./github_app.js";
 
 /**
@@ -214,6 +217,204 @@ export async function publishRelease(
     },
   );
   return { tag: plan.nextVersion, url: rel.html_url };
+}
+
+// ------------------------------------------- project documents (DS-N3-1, -8)
+
+/** Left to the person: never written by an export (design-stage DS-N3-7). */
+const PERSON_FILES = new Set(["readme.md", "contributing.md"]);
+
+function checkDocumentPath(path: string): void {
+  const parts = path.split("/");
+  if (
+    !path ||
+    path.startsWith("/") ||
+    /^[A-Za-z]:/.test(path) ||
+    path.includes("\\") ||
+    parts.some((p) => p === ".." || p === "." || p === "")
+  ) {
+    throw new Error(
+      `A project document's path is repository-relative and inside the repository: ${path}`,
+    );
+  }
+  if (parts.length === 1 && PERSON_FILES.has(path.toLowerCase())) {
+    throw new Error(
+      `${path} is the person's: Sekhemet offers a change to it as a proposal and never writes it (DS-N3-7)`,
+    );
+  }
+}
+
+/** A file's text on a branch (or any commit), or undefined when it has none there. Read only. */
+export function readBranchFile(repoPath: string, ref: string, path: string): string | undefined {
+  try {
+    return execFileSync("git", ["cat-file", "blob", `${ref}:${path}`], {
+      cwd: repoPath,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      env: gitEnvFor(repoPath),
+      maxBuffer: 64 * 1024 * 1024,
+    });
+  } catch {
+    return undefined;
+  }
+}
+
+/** Every file path on a branch, sorted; empty when the branch has no commit. Read only. */
+export function listBranchFiles(repoPath: string, ref: string): string[] {
+  try {
+    return execFileSync("git", ["ls-tree", "-r", "-z", "--name-only", ref], {
+      cwd: repoPath,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      env: gitEnvFor(repoPath),
+      maxBuffer: 64 * 1024 * 1024,
+    })
+      .split("\0")
+      .filter(Boolean)
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+/** The last commit on `ref` that changed `path`, or undefined. Read only. */
+export function lastCommitTouching(
+  repoPath: string,
+  ref: string,
+  path: string,
+): string | undefined {
+  try {
+    const sha = execFileSync("git", ["log", "-1", "--format=%H", ref, "--", path], {
+      cwd: repoPath,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      env: gitEnvFor(repoPath),
+    }).trim();
+    return sha || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Commit project documents onto a branch by plumbing (design-stage DS-N3-1,
+ * review-git RG-S5-1, -2): the branch's tree plus these files is written
+ * through a private index, committed on the branch's head with the
+ * attribution trailers, and the ref moved by compare-and-set from
+ * `expectedOld` — never the person's checkout or index. Refused before
+ * anything moves for a path outside the repository, `README.md` or
+ * `CONTRIBUTING.md` (DS-N3-7), a missing trailer, or a branch that moved.
+ */
+export function commitFilesOnBranch(
+  repoPath: string,
+  input: {
+    branch: string;
+    expectedOld: string;
+    files: readonly { path: string; text: string }[];
+    subject: string;
+    body?: string;
+    trailers: Record<string, string>;
+  },
+): string {
+  for (const f of input.files) checkDocumentPath(f.path);
+  const lines = Object.entries(input.trailers).map(([k, v]) => `${k}: ${v}`);
+  const message = `${input.subject}${input.body?.trim() ? `\n\n${input.body.trim()}` : ""}\n\n${lines.join("\n")}\n`;
+  const missing = missingTrailers(message);
+  if (missing.length > 0) {
+    throw new Error(`Project documents' commit refused: missing trailer(s): ${missing.join(", ")}`);
+  }
+  const env = gitEnvFor(repoPath);
+  const run = (args: string[], extra: NodeJS.ProcessEnv = {}, stdin?: string) =>
+    execFileSync("git", args, {
+      cwd: repoPath,
+      encoding: "utf8",
+      stdio: [stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+      env: { ...env, ...extra },
+      ...(stdin === undefined ? {} : { input: stdin }),
+    }).trim();
+  const old = run(["rev-parse", "--verify", `refs/heads/${input.branch}^{commit}`]);
+  if (old !== input.expectedOld) {
+    throw new Error(
+      `${input.branch} moved (${input.expectedOld.slice(0, 10)} → ${old.slice(0, 10)}); the project documents were not written`,
+    );
+  }
+  const dir = mkdtempSync(join(tmpdir(), "sekhemet-docs-index-"));
+  try {
+    const index = { GIT_INDEX_FILE: join(dir, "index") };
+    run(["read-tree", old], index);
+    for (const f of input.files) {
+      const blob = run(["hash-object", "-w", "--stdin"], {}, f.text);
+      run(["update-index", "--add", "--cacheinfo", `100644,${blob},${f.path}`], index);
+    }
+    const tree = run(["write-tree"], index);
+    const sha = run(["commit-tree", tree, "-p", old, "-F", "-"], {}, message);
+    try {
+      run([
+        "update-ref",
+        "-m",
+        "sekhemet project documents",
+        `refs/heads/${input.branch}`,
+        sha,
+        old,
+      ]);
+    } catch {
+      throw new Error(
+        `${input.branch} moved while the project documents were written; nothing was written`,
+      );
+    }
+    return sha;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+const NEW_CHANGELOG_TOP = `# Changelog
+
+All notable changes to this project are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+`;
+
+/** One version's section of CHANGELOG.md in the Keep a Changelog format (DS-N3-8). */
+export function keepAChangelogSection(
+  version: string,
+  date: string,
+  categories: Partial<Record<KeepAChangelogCategory, string[]>>,
+): string {
+  const parts = KEEP_A_CHANGELOG.filter((k) => categories[k]?.length).map(
+    (k) => `### ${k}\n\n${(categories[k] as string[]).map((i) => `- ${i}`).join("\n")}\n`,
+  );
+  const v = version.replace(/^v/, "");
+  return `## [${v}] - ${date}\n\n${parts.length ? parts.join("\n") : "No user-facing change.\n"}`;
+}
+
+const RELEASE_HEADING = /^## \[?v?(\d+\.\d+\.\d+[^\]\s]*)\]?/;
+
+/**
+ * Put a release's section on top of CHANGELOG.md (DS-N3-8): above the
+ * earlier releases and below an `Unreleased` section, every other byte kept
+ * as it was. A version already there is never added again; a missing file
+ * starts with the Keep a Changelog preamble.
+ */
+export function prependChangelogSection(
+  existing: string | undefined,
+  section: string,
+  version: string,
+): string {
+  if (existing === undefined) return `${NEW_CHANGELOG_TOP}\n${section}`;
+  const v = version.replace(/^v/, "");
+  const lines = existing.split("\n");
+  if (lines.some((l) => RELEASE_HEADING.exec(l)?.[1] === v)) return existing;
+  let offset = 0;
+  for (const line of lines) {
+    if (RELEASE_HEADING.test(line)) {
+      return `${existing.slice(0, offset)}${section}\n${existing.slice(offset)}`;
+    }
+    offset += line.length + 1;
+  }
+  const base = existing.endsWith("\n") ? existing : `${existing}\n`;
+  return `${base}\n${section}`;
 }
 
 // ------------------------------------------------------------------- Y18

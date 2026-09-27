@@ -17,13 +17,18 @@ import {
 } from "@sekhemet/models";
 import { type StoryMap, guardCompletionClaim } from "@sekhemet/planner";
 import type { ResearchAnswer } from "../research/researcher.js";
+import type { TakeoverPromptContext } from "../takeover_brief.js";
 import { formatHits, searchLibraries } from "./libraries.js";
+import type { ProjectGroup } from "./pipeline.js";
 import {
   DUPLICATE_OF_DESCRIPTION,
   PROPOSE_SPLIT_CARD_DESCRIPTION,
   START_PROJECT_DESCRIPTION,
+  START_PROJECT_SENTENCE_DESCRIPTION,
+  TAKEOVER_SECTION_HEADING,
   pmSystemPromptText,
   splitSuggestedSummary,
+  startProjectSummary,
 } from "./pm_copy.js";
 import type { Cycle, PmCite, PmMessage, PmProposal } from "./types.js";
 
@@ -64,6 +69,12 @@ export interface PmSnapshot {
    * the default and its deadline (PM-N9-5).
    */
   decisions?: string[];
+  /**
+   * A take-over's brief as found (design-stage DS-TO-10): repository text,
+   * only ever as `takeoverPromptContext` wraps it — the contract once, each
+   * claim inside the untrusted tags.
+   */
+  takeover?: TakeoverPromptContext;
   today: string;
 }
 
@@ -278,7 +289,10 @@ export const PM_TOOLS: ToolDefinition[] = [
     description: START_PROJECT_DESCRIPTION,
     parameters: {
       type: "object",
-      properties: { brief: str, reason: str },
+      properties: {
+        brief: { type: "string", description: START_PROJECT_SENTENCE_DESCRIPTION },
+        reason: str,
+      },
       required: ["brief", "reason"],
     },
   },
@@ -520,6 +534,38 @@ export function toProposals(calls: ToolCall[], cards: CardRecord[]): ProposalDra
   return out;
 }
 
+/**
+ * Each `start_project` proposal with its group (PM-P2-1): the epics, the
+ * first slice's cards with criteria and points, the proposed requirements,
+ * card zero, the candidates and the count of what applying creates, for
+ * Review plan. A group that cannot be drafted leaves the bare proposal,
+ * which the one planner plans when applied.
+ */
+export async function withProjectGroups(
+  proposals: ProposalDraft[],
+  draft: (sentence: string) => Promise<ProjectGroup>,
+): Promise<ProposalDraft[]> {
+  const out: ProposalDraft[] = [];
+  for (const p of proposals) {
+    const sentence = typeof p.patch?.brief === "string" ? p.patch.brief : "";
+    if (p.kind !== "start_project" || !sentence) {
+      out.push(p);
+      continue;
+    }
+    const group = await draft(sentence).catch(() => undefined);
+    out.push(
+      group
+        ? {
+            ...p,
+            patch: { brief: sentence, group },
+            summary: startProjectSummary(group, because(p.why ?? "")),
+          }
+        : p,
+    );
+  }
+  return out;
+}
+
 function cleanCard(fields: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(
     Object.entries(fields).filter(
@@ -652,6 +698,15 @@ export function seshatSections(
       62,
     ),
     section(
+      "takeover",
+      "notice",
+      s.takeover?.blocks.length
+        ? `${TAKEOVER_SECTION_HEADING}\n${s.takeover.contract}\n${s.takeover.blocks.join("\n")}`
+        : "",
+      55,
+      { shrink: (t, max) => shrinkHead(t, max), minTokens: 120 },
+    ),
+    section(
       "runs",
       "history_old",
       `RECENT WORKER ATTEMPTS\n${s.recentRuns.length ? s.recentRuns.slice(-12).join("\n") : "none"}`,
@@ -749,6 +804,12 @@ export async function answer(
   researcher?: (question: string, opts?: { deep?: boolean }) => Promise<ResearchAnswer>,
   /** The thread's live session (models rule 20i): its slot is saved and restored across swaps. */
   threadId?: string,
+  /**
+   * A new project's proposal group (planner-pm §2.9, PM-P2-1): computed for
+   * each `start_project` call, creating nothing; the caller passes
+   * `draftProjectGroup` over its repository and ledger.
+   */
+  draftProject?: (sentence: string) => Promise<ProjectGroup>,
 ): Promise<PmAnswer> {
   const session = threadId ? { session: { owner: threadId, kind: "thread" as const } } : {};
   const tools = researcher ? [...PM_TOOLS, ASK_RESEARCHER_TOOL] : PM_TOOLS;
@@ -832,7 +893,8 @@ export async function answer(
   calls.push(
     ...res.toolCalls.filter((c) => c.name !== "find_library" && c.name !== "ask_researcher"),
   );
-  const { proposals, unreasoned } = proposalsFrom(calls, snapshot.cards);
+  const { proposals: drafted, unreasoned } = proposalsFrom(calls, snapshot.cards);
+  const proposals = draftProject ? await withProjectGroups(drafted, draftProject) : drafted;
   // PM-P13-6, -14: a claim that the project, a slice or a release is
   // complete or ready changes nothing; while a must-have is unproven the
   // reply states the proven count instead.

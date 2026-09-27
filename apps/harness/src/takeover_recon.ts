@@ -132,7 +132,12 @@ export function ownRepoGitEnv(root: string): NodeJS.ProcessEnv {
   return { ...hardenedGitEnv(process.env), GIT_CEILING_DIRECTORIES: dirname(real) };
 }
 
-function git(root: string, args: string[]): string {
+/**
+ * The harness's own read-only git on a taken-over repository, hardened
+ * (item 19) and stopped at `root`; "" when git cannot answer. Recon and the
+ * reconciliation of inherited issues (DS-TO-13) read commits through it.
+ */
+export function reconGit(root: string, args: string[]): string {
   try {
     return execFileSync("git", args, {
       cwd: root,
@@ -243,14 +248,14 @@ export async function runRecon(root: string, options: ReconOptions = {}): Promis
     scripts = {};
   }
   const map = buildRankedRepoMap(root, { budgetTokens: 2000 });
-  const commits = git(root, ["log", "--all", "-n", "20", "--format=%H%x09%cI%x09%s"])
+  const commits = reconGit(root, ["log", "--all", "-n", "20", "--format=%H%x09%cI%x09%s"])
     .split("\n")
     .filter(Boolean)
     .map((l) => {
       const [commit = "", date = "", ...subject] = l.split("\t");
       return { commit, date, subject: subject.join("\t") };
     });
-  const branches = git(root, [
+  const branches = reconGit(root, [
     "for-each-ref",
     "--no-merged=HEAD",
     "--format=%(refname:short)%09%(objectname)%09%(committerdate:iso-strict)",
@@ -263,7 +268,7 @@ export async function runRecon(root: string, options: ReconOptions = {}): Promis
       return { name, commit, date };
     });
   const churn = new Map<string, number>();
-  for (const f of git(root, ["log", "--all", "-n", "1000", "--name-only", "--format="]).split(
+  for (const f of reconGit(root, ["log", "--all", "-n", "1000", "--name-only", "--format="]).split(
     "\n",
   )) {
     if (f.trim()) churn.set(f.trim(), (churn.get(f.trim()) ?? 0) + 1);

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { BoardServiceImpl } from "@sekhemet/board";
-import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
+import { CardStore, EventLog, checklistRowsFor, initSchema } from "@sekhemet/kernel";
 import { type InferenceResponse, MockInferenceAdapter } from "@sekhemet/models";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -98,9 +98,22 @@ async function planned(
     criteria?: { text: string; examples?: unknown[] }[];
     profile?: string;
     oracle?: MockInferenceAdapter;
+    /** DS-P14-3: a person recorded this profile; the plan is given none. */
+    recorded?: "production";
   } = {},
 ) {
   const l = diskLedger();
+  if (opts.recorded) {
+    await l.store.depthProfiles.choose(
+      {
+        profile: opts.recorded,
+        checklist: Object.fromEntries(
+          checklistRowsFor(opts.recorded).map((row) => [row, { title: row, invariant: row }]),
+        ),
+      },
+      l.store.localPrincipal(),
+    );
+  }
   const spec = "Refund a paid invoice.";
   await l.store.createCard({ id: "epic_r", tier: "epic", title: spec, status: "in_progress" });
   const criteria = opts.criteria ?? [
@@ -122,7 +135,7 @@ async function planned(
   const result = await persistPlan(l, plan, {
     epicId: "epic_r",
     repoRoot: root,
-    depthProfile: resolveDepthProfile(opts.profile),
+    ...(opts.recorded ? {} : { depthProfile: resolveDepthProfile(opts.profile) }),
     ...(opts.oracle ? { oracle: opts.oracle } : {}),
   });
   const id = result.created[0]?.id as string;
@@ -432,5 +445,22 @@ describe("PM-N7-2: must-have example rows are sampled twice at production", () =
     });
     expect(checked.kept).toEqual([]);
     expect(checked.disputed).toEqual([]);
+  });
+});
+
+describe("DS-P14-3: plan and approval read the recorded profile when given none", () => {
+  it("stages, shows and approves under the profile a person recorded", async () => {
+    const invariant = [{ text: INVARIANT, examples: [{ args: [1000, 400], expected: 600 }] }];
+    const { l, id } = await planned(repo(), { criteria: invariant, recorded: "production" });
+    // persistPlan: an invariant criterion gets a property test at production.
+    expect(l.store.stagedTests.staged(id).some((t) => /property/.test(t.path))).toBe(true);
+    expect((await approvalView(l, id)).tests.map((t) => t.what)).toContain("examples");
+    const shown = await planApprovalView(l, "epic_r");
+    expect(shown.profile).toBe("production");
+    await approvePlan(l, "epic_r", l.store.localPrincipal(), { expectedSha256: shown.sha256 });
+    expect(l.store.stagedTests.testApprovals(id)[0]).toMatchObject({
+      approved: true,
+      what: "examples",
+    });
   });
 });

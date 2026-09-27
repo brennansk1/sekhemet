@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import type { BoardServiceImpl } from "@sekhemet/board";
-import { type CardRecord, type CardStore, ERASED_MARKER } from "@sekhemet/kernel";
+import { type CardRecord, type CardStore, ERASED_MARKER, type EventLog } from "@sekhemet/kernel";
 import { MergeConflictError, NodeGitSyncAdapter, groupByIntent } from "@sekhemet/sync";
 import { ownersOf } from "./codeowners.js";
 import { effectiveConfig } from "./config_apply.js";
@@ -26,6 +26,11 @@ export interface AcceptContext {
   boardService: BoardServiceImpl;
   /** Where a failure after the accept is reported; `console.error` without one. */
   report?: (line: string) => void;
+  /**
+   * The ledger's event log: with it, an accept is followed by the project
+   * documents' export (design-stage DS-N3-1); without it, nothing is exported.
+   */
+  eventLog?: EventLog;
 }
 
 export interface AcceptOptions {
@@ -553,6 +558,18 @@ export async function acceptCard(
     await recordDecision(ctx, stored, principal, "accept", options.acknowledgedFindings ?? []);
   }
   await adapter.removeWorktree(stored.id);
+  // DS-P2-1, -2: card zero Done — the project's gates are derived from what
+  // its generator left on the accepted commit, and replace card zero's gate.
+  // The accept stands; a failed derivation is said, and the queue's next
+  // pass tries again.
+  try {
+    const { afterAcceptedCardZero } = await import("./card_zero.js");
+    afterAcceptedCardZero(ctx.repoPath, stored, sha);
+  } catch (err) {
+    (ctx.report ?? console.error)(
+      `The project's gates were not derived after card zero was accepted: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
   // §2.5.5: stacked children rebase onto the integration branch and re-run
   // their gates (NEW-review-git-2); a child that conflicts is reported.
   // The accept stands; a restack that fails is said, not swallowed.
@@ -563,6 +580,19 @@ export async function acceptCard(
   });
   await execute.releaseHeldCards(execCtx).catch(() => []);
   if (stored.parentId) await execute.rollupParent(execCtx, stored.parentId).catch(() => undefined);
+  // DS-N3-1: the project documents follow the person's accept onto the
+  // integration branch. The accept stands; a failed export is said.
+  if (ctx.eventLog) {
+    const { exportProjectDocuments } = await import("./project_docs.js");
+    await exportProjectDocuments(
+      { repoPath: ctx.repoPath, cardStore: ctx.cardStore, log: ctx.eventLog },
+      { principal, card: stored.id },
+    ).catch((err: unknown) => {
+      (ctx.report ?? console.error)(
+        `The project documents were not updated after ${stored.id} was accepted: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
+  }
   return sha;
 }
 

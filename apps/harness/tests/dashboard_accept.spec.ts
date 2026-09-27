@@ -5,7 +5,8 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { BoardServiceImpl } from "@sekhemet/board";
 import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
-import { NodeGitSyncAdapter } from "@sekhemet/sync";
+import { acceptBrief } from "@sekhemet/planner";
+import { NodeGitSyncAdapter, readBranchFile } from "@sekhemet/sync";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 // The dashboard's own browser modules, as the page runs them.
 import { shownFiles } from "../../../packages/ui/web/diff_parse.js";
@@ -21,6 +22,7 @@ import { startDashboardServer } from "../src/server.js";
 let repo: string;
 let db: DatabaseSync;
 let store: CardStore;
+let log: EventLog;
 let server: { port: number; close: () => Promise<void> };
 const git = (...args: string[]) =>
   execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
@@ -51,7 +53,7 @@ beforeEach(async () => {
   mkdirSync(join(repo, ".sekhemet", "evidence"), { recursive: true });
   db = new DatabaseSync(join(repo, ".sekhemet", "events.db"));
   initSchema(db);
-  const log = new EventLog(db);
+  log = new EventLog(db);
   store = new CardStore(db, log);
   const board = new BoardServiceImpl(store, { entryConditions: true });
 
@@ -144,6 +146,30 @@ describe("RG-N5-5: Accept from the dashboard once the page has recorded what it 
     expect((await store.getCard("d1"))?.status).toBe("done");
     // The person's checkout is on main, which moved: the toast says how to catch up.
     expect(String(accepted.data.notice)).toMatch(/is on main, which moved.*read-tree -m -u/);
+  });
+
+  it("DS-N3-1: a person's Accept from the dashboard exports the project documents after the squash", async () => {
+    const projectId = (await store.ensureProject({ rootPath: repo, name: "Recipes" })).id;
+    await acceptBrief(
+      { store, log },
+      {
+        projectId,
+        baseline: "Recipes live in a shared spreadsheet",
+        slices: [
+          {
+            title: "Walking skeleton",
+            appetite: { cards: 6 },
+            requirements: [{ key: "save", title: "Save a recipe" }],
+          },
+        ],
+      },
+      store.localPrincipal(),
+    );
+    expect((await post("/api/cards/d1/opened", { filesShown: ["src/b.ts"] })).ok).toBe(true);
+    const accepted = await post("/api/cards/d1/accept");
+    expect(accepted.status).toBe(200);
+    expect(git("rev-parse", "main^")).toBe(accepted.data.sha);
+    expect(readBranchFile(repo, "main", "docs/product/requirements.md")).toContain("Save a recipe");
   });
 
   it("refuses the /opened record from a page that is not the dashboard", async () => {

@@ -19,6 +19,7 @@ import {
   GitHubIssuesAdapter,
   type RateBudget,
   type SyncAdapter,
+  openIssues,
 } from "@sekhemet/sync";
 import {
   egressRecorder,
@@ -31,6 +32,7 @@ import {
 import { importProposals } from "./import_board.js";
 import { keychainStore } from "./keychain.js";
 import type { ProposalDraft } from "./pm/agent.js";
+import { type Audience, soloAudience } from "./pm/audience.js";
 import type { PmStore } from "./pm/store.js";
 import { PM_EVENTS } from "./pm/types.js";
 import { userDir } from "./user_dir.js";
@@ -592,6 +594,178 @@ export async function syncGithub(
   };
 }
 
+// --- Inherited issues (take-over) ------------------------------------------------
+
+/**
+ * The tracker this repository is connected to, through the one adapter and
+ * the network policy (integrations items 7–9): Forgejo when configured, else
+ * GitHub when the repository has a GitHub remote and the policy reaches it.
+ * GitHub's issues are read through the REST pull. Without one, the reason.
+ */
+export async function connectedTracker(
+  repoPath: string,
+  log?: EventLog,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<{ tracker?: SyncAdapter; reason: string }> {
+  const record = log ? egressRecorder(log) : undefined;
+  const forgejo = forgejoFromEnv(
+    (url) => integrationFetch(repoPath, record, url, "integration:forgejo"),
+    env,
+  );
+  if (forgejo) return { tracker: forgejo, reason: "forgejo" };
+  const found = await githubRepoOf(repoPath, env);
+  if (!found.repo) return { reason: "no tracker connected" };
+  const refused = integrationRefusal(repoPath, githubEndpoints(env).apiUrl);
+  if (refused) return { reason: `blocked by network mode (${refused.reason}): ${refused.hint}` };
+  try {
+    const t = await githubTransport(repoPath, record, env);
+    return { tracker: new GitHubIssuesAdapter(t.repo, t.client), reason: "github" };
+  } catch (err) {
+    return { reason: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** What a verdict's evidence says, for the tracker's comment. */
+function evidenceText(e: { kind: string; ref: string; run?: string }): string {
+  if (e.kind === "commit") return `commit ${e.ref.slice(0, 12)}`;
+  if (e.kind === "issue") return `issue ${e.ref}`;
+  if (e.kind === "test") return `test ${e.ref}${e.run ? ` (run ${e.run})` : ""}`;
+  return e.ref;
+}
+
+/**
+ * A person applies a reconciliation of inherited issues (design-stage
+ * DS-TO-13; integrations INT-43): each verdict is written through the one
+ * adapter — *done* and *duplicate* closed with a comment citing the
+ * evidence, *stale* labelled `stale` with a comment; a *valid* issue is left
+ * as it is (its card carries its `externalRef`) — only to the tracker the
+ * issues were read from; then the kernel records who applied it. A failed
+ * write leaves it open, so the person retries it. Nothing is written before
+ * the person's apply.
+ */
+export async function applyIssueReconciliation(
+  store: CardStore,
+  tracker: Pick<SyncAdapter, "system" | "pull" | "update"> & Partial<Pick<SyncAdapter, "comment">>,
+  id: string,
+  principal: string,
+): Promise<{ applied: boolean; written: string[]; errors: string[] }> {
+  const proposal = await store.reconciliation.get(id);
+  if (!proposal) throw new Error(`No reconciliation ${id}`);
+  if (proposal.state !== "open")
+    throw new Error(`Reconciliation ${id} was already ${proposal.state}`);
+  // The issues were read from one tracker: written only to that one.
+  const other = proposal.issues.find((i) => i.issue.system !== tracker.system);
+  if (other) {
+    throw new Error(
+      `Nothing applied: ${other.issue.id} was read from ${other.issue.system}, and the connected tracker is ${tracker.system}.`,
+    );
+  }
+  const open = new Map((await openIssues(tracker)).map((i) => [i.ref.id, i]));
+  const out = { written: [] as string[], errors: [] as string[] };
+  // A write that failed (a network error, an expired token) leaves the
+  // proposal open so the person can retry it; an issue already closed is not
+  // open any more, so a retry never closes or comments on it twice.
+  let failed = false;
+  for (const i of proposal.issues) {
+    if (i.verdict === "valid") continue;
+    const item = open.get(i.issue.id);
+    if (!item) {
+      out.errors.push(`${i.issue.id}: no longer open on the tracker; left as it is`);
+      continue;
+    }
+    const cites = i.evidence.map(evidenceText).join(", ");
+    const body =
+      i.verdict === "done"
+        ? `Sekhemet's take-over found this already done: ${cites}. Closed on ${principal}'s approval.`
+        : i.verdict === "duplicate"
+          ? `Sekhemet's take-over found this a duplicate of ${cites}. Closed on ${principal}'s approval.`
+          : `Sekhemet's take-over found this stale: ${cites}. Labelled on ${principal}'s approval.`;
+    try {
+      await tracker.update(
+        item.ref,
+        i.verdict === "stale"
+          ? {
+              labels: [...item.labels.filter((l) => l !== "stale"), "stale"],
+              ...(item.delegatedToWorker ? { delegate: "worker" as const } : {}),
+            }
+          : { status: "done" },
+      );
+      await tracker.comment?.(item.ref, body);
+      out.written.push(i.issue.id);
+    } catch (err) {
+      failed = true;
+      out.errors.push(`${i.issue.id}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  if (!failed) await store.reconciliation.apply(id, principal);
+  return { applied: !failed, ...out };
+}
+
+// --- Take over a project (routes) ---------------------------------------------
+
+/** What the dashboard shows of a take-over: the records, with their private text (the person's view). */
+async function takeoverState(store: CardStore): Promise<Record<string, unknown>> {
+  const inv = store.takeover.inventory();
+  const batch = inv
+    ? (await store.eventsOfType(["takeover/questions_posted"])).find(
+        (e) => (e.payload as { inventorySeq?: number }).inventorySeq === inv.seq,
+      )
+    : undefined;
+  const questions = (
+    (batch?.payload as { questions?: { decisionId: string; rank: number; defaultCites: string }[] })
+      ?.questions ?? []
+  ).map((q) => {
+    const d = store.runs.getDecision(q.decisionId);
+    return {
+      ...q,
+      question: d?.question,
+      options: d?.options,
+      status: d?.status,
+      ...(d?.selectedOptionIndex !== undefined ? { answer: d.selectedOptionIndex } : {}),
+    };
+  });
+  const latest = (await store.eventsOfType(["takeover/backlog_proposed"])).at(-1);
+  const proposalId = (latest?.payload as { proposalId?: string } | undefined)?.proposalId;
+  const backlog = proposalId ? await store.takeover.backlog(proposalId) : undefined;
+  return {
+    inventory: inv ?? null,
+    brief: (await store.takeover.briefAsFound()) ?? null,
+    questions,
+    backlog: backlog
+      ? { ...backlog, approved: store.takeover.isPlanApproved(backlog.proposalId) }
+      : null,
+    reconciliations: await store.reconciliation.open(),
+  };
+}
+
+/** Seshat's words on a take-over just run: counts and ids only, never repository text (DS-TO-10). */
+function takeoverSummary(r: import("./takeover.js").TakeoverReport): string {
+  const n = r.findings.length;
+  if (!r.trusted) {
+    return `I read the repository as it is: ${n} finding${n === 1 ? "" : "s"} from its files and history, nothing of it run. Trust the repository to let me install, build and run its tests, confined, then take it over again.`;
+  }
+  const plan = r.plan;
+  if (!plan) return `Take-over: ${n} finding${n === 1 ? "" : "s"} in the inventory.`;
+  const count = (label: string) => plan.claims.filter((c) => c.label === label).length;
+  return [
+    `Take-over: ${n} finding${n === 1 ? "" : "s"} in the inventory.`,
+    `The brief as found has ${count("proven")} proven, ${count("claimed_unproven")} claimed but unproven and ${count("contradicted")} contradicted claim${plan.claims.length === 1 ? "" : "s"}.`,
+    plan.questions.length > 0
+      ? `${plan.questions.length} question${plan.questions.length === 1 ? " waits" : "s wait"} in your decisions, each with a safe default.`
+      : "",
+    plan.reconciliation
+      ? `${plan.reconciliation.issues.length} inherited issue${plan.reconciliation.issues.length === 1 ? " is" : "s are"} proposed as done, duplicate, stale or valid (${plan.reconciliation.id}); the tracker changes only when you apply it.`
+      : "",
+    plan.proposalId
+      ? `The plan is ${plan.proposalId}: nothing is created until you approve it.`
+      : "There was nothing to plan.",
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+let takeoverRunning = false;
+
 // --- Routes ---------------------------------------------------------------------
 
 export interface IntegrationsContext {
@@ -604,6 +778,8 @@ export interface IntegrationsContext {
   mutationGuard: (req: IncomingMessage, res: ServerResponse) => CardStore | undefined;
   /** The person a request is for (teams §2.3, kernel rule 19). */
   principalOf?: (req: IncomingMessage) => string;
+  /** Who can see which project (PM-N9-8); Solo sees everything. */
+  audience?: () => Audience;
 }
 
 export async function handleIntegrationsApi(
@@ -740,6 +916,107 @@ export async function handleIntegrationsApi(
     const b = await ctx.readJsonBody(req);
     const direction = b.direction === "pull" || b.direction === "push" ? b.direction : "both";
     ctx.json(res, 200, await syncGithub(ctx.repoPath, cardStore, direction, ctx.log));
+    return true;
+  }
+
+  if (url === "/api/takeover" && req.method === "GET") {
+    if (!ctx.cardStore) {
+      ctx.json(res, 501, { error: "This server was started read-only" });
+      return true;
+    }
+    // PM-N9-8: the records hold the repository's private text (the recon,
+    // the brief as found, the backlog), so, as in Seshat's snapshot, only a
+    // person who sees every project reads them.
+    const audience = ctx.audience?.() ?? soloAudience();
+    const asker = ctx.principalOf?.(req) ?? ctx.log.localPrincipal();
+    if (!ctx.cardStore.listProjects().every((p) => audience.canSee(asker, p.id))) {
+      ctx.json(res, 404, { error: "No take-over you can see" });
+      return true;
+    }
+    ctx.json(res, 200, await takeoverState(ctx.cardStore));
+    return true;
+  }
+
+  if (url === "/api/takeover" && req.method === "POST") {
+    // DS-TO-16: the empty board's Take over a project. Steps 1–3 always;
+    // 4–6 once the repository is trusted (design-stage §2.10).
+    const cardStore = ctx.mutationGuard(req, res);
+    if (!cardStore) return true;
+    if (takeoverRunning) {
+      ctx.json(res, 409, { error: "A take-over is already running" });
+      return true;
+    }
+    takeoverRunning = true;
+    try {
+      const { runTakeover } = await import("./takeover.js");
+      const principal = ctx.principalOf?.(req) ?? cardStore.localPrincipal();
+      const report = await runTakeover(ctx.repoPath, {
+        store: cardStore,
+        log: ctx.log,
+        principal,
+        say: () => undefined,
+      });
+      await ctx.pmStore.appendReply({ replyTo: [], text: takeoverSummary(report) });
+      ctx.json(res, 200, {
+        trusted: report.trusted,
+        wouldRun: report.wouldRun,
+        ...(await takeoverState(cardStore)),
+      });
+    } catch (err) {
+      ctx.json(res, 500, { error: err instanceof Error ? err.message : String(err) });
+    } finally {
+      takeoverRunning = false;
+    }
+    return true;
+  }
+
+  if (url === "/api/takeover/approve" && req.method === "POST") {
+    // DS-TO-14: the person approves the plan; its cards are created.
+    const cardStore = ctx.mutationGuard(req, res);
+    if (!cardStore) return true;
+    const b = await ctx.readJsonBody(req);
+    const proposalId = typeof b.proposalId === "string" ? b.proposalId : "";
+    const { approveTakeoverPlan } = await import("./takeover_backlog.js");
+    try {
+      const r = await approveTakeoverPlan(
+        { repoPath: ctx.repoPath, cardStore, log: ctx.log },
+        { proposalId, ...(typeof b.projectId === "string" ? { projectId: b.projectId } : {}) },
+        ctx.principalOf?.(req) ?? cardStore.localPrincipal(),
+      );
+      ctx.json(res, 200, { ...r, cards: r.cards.map((c) => c.id) });
+    } catch (err) {
+      ctx.json(res, 409, { error: err instanceof Error ? err.message : String(err) });
+    }
+    return true;
+  }
+
+  if (
+    (url === "/api/takeover/reconciliation/apply" ||
+      url === "/api/takeover/reconciliation/dismiss") &&
+    req.method === "POST"
+  ) {
+    // DS-TO-13, INT-43: only a person changes the tracker, through the one adapter.
+    const cardStore = ctx.mutationGuard(req, res);
+    if (!cardStore) return true;
+    const b = await ctx.readJsonBody(req);
+    const id = typeof b.id === "string" ? b.id : "";
+    const principal = ctx.principalOf?.(req) ?? cardStore.localPrincipal();
+    try {
+      if (url.endsWith("/dismiss")) {
+        await cardStore.reconciliation.dismiss(id, principal);
+        ctx.json(res, 200, { id, state: "dismissed" });
+        return true;
+      }
+      const found = await connectedTracker(ctx.repoPath, ctx.log);
+      if (!found.tracker) {
+        ctx.json(res, 409, { error: `Nothing applied: ${found.reason}` });
+        return true;
+      }
+      const r = await applyIssueReconciliation(cardStore, found.tracker, id, principal);
+      ctx.json(res, 200, { id, state: r.applied ? "applied" : "open", ...r });
+    } catch (err) {
+      ctx.json(res, 409, { error: err instanceof Error ? err.message : String(err) });
+    }
     return true;
   }
 

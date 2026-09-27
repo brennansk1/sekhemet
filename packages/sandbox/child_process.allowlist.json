@@ -5,6 +5,7 @@
     "apps/harness/src/airgap.ts": "Air-gap bundles: tar and ssh-keygen over harness-built archives; the airgap probe itself runs through the sandbox.",
     "apps/harness/src/benchmark_cmd.ts": "The harness's own `git rev-parse HEAD` on its own checkout, for the benchmark run's build fingerprint (MS-N5-12).",
     "apps/harness/src/benchmark_runner.ts": "The benchmark's card repository, prepared as run_suite.mjs prepares one: git init/add/commit on a fresh fixture copy and the harness's own seeder script; the card's diff read with the guarded git environment and --no-ext-diff --no-textconv. The Worker's tests run through runConfined().",
+    "apps/harness/src/card_zero.ts": "Card zero's acceptance (DS-P2-1): the harness's own `git archive` of the accepted commit, in the hardened git environment (`gitEnvFor`), and `tar -xf` of that archive into a fresh temporary folder, to derive the project's gates from what was accepted; it runs none of the repository's programs.",
     "apps/harness/src/codeowners.ts": "The harness's own read-only git: `git show <integration branch>:CODEOWNERS` to name suggested accepters (review-git RG-N5-3/-4).",
     "apps/harness/src/daemon.ts": "Starts the harness's own CLI as a background daemon.",
     "apps/harness/src/doctor.ts": "Doctor probes: git worktree list and the installed tools' --version.",

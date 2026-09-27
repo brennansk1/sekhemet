@@ -102,6 +102,7 @@ describe("the gate on revision", () => {
     badCitations: 2,
     uncovered: 1,
     failedClaims: 1,
+    unreproduced: 1,
     confidence: 0.6,
   };
 

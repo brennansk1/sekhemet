@@ -11,7 +11,7 @@ import {
 } from "@sekhemet/gates";
 import type { CardRecord, CardStatus, CardStore } from "@sekhemet/kernel";
 import { recordLedgerRun } from "../ledger_evidence.js";
-import { type Claim, reviewEligible } from "./claims.js";
+import { type Claim, renderDisagreements, reviewEligible } from "./claims.js";
 import type { ResearchAnswer } from "./researcher.js";
 
 /**
@@ -92,6 +92,17 @@ export function researchNote(card: CardRecord, r: ResearchAnswer, at = new Date(
     r.answer.trim(),
     "",
     ...claimSummary(r.claims),
+    ...(r.coverage?.outstanding.length
+      ? [
+          "## Not covered",
+          "",
+          "Open after one re-dispatch: fewer than two independent primary or secondary sources.",
+          "",
+          ...r.coverage.outstanding.map((o) => `- ${o}`),
+          "",
+        ]
+      : []),
+    ...(r.disagreements?.length ? [renderDisagreements(r.disagreements), ""] : []),
     ...(r.sources.length
       ? ["## Sources read", "", ...r.sources.map((s, i) => `${i + 1}. ${s}`), ""]
       : []),
@@ -99,17 +110,40 @@ export function researchNote(card: CardRecord, r: ResearchAnswer, at = new Date(
 }
 
 /**
+ * Why an executable claim was not run, when a source that was read states it
+ * (DS-N2-1): "documented, not reproduced", naming the citation. Undefined
+ * when no citation points at a source read — such a claim has neither a
+ * reproduction nor a reason, and the claim gate fails it (DS-N2-2).
+ */
+export function documentedReason(claim: Claim, answer: ResearchAnswer): string | undefined {
+  const bad = new Set(answer.badCitations);
+  const read = claim.citations.flatMap((n) => {
+    const r = answer.references?.find((x) => x.n === n && x.read);
+    return r && !bad.has(n) ? [`[${n}] ${r.ref}`] : [];
+  });
+  return read.length > 0
+    ? `documented, not reproduced: the research pipeline wrote no reproduction script; stated by ${read.join(", ")}`
+    : undefined;
+}
+
+/**
  * The claims report the claim gate reads (gates rule 27a, GT-N5-3): every
  * claim of the answer, typed. The research pipeline writes no reproduction
- * script and no reason yet, so an executable claim reaches the gate with
- * neither, and the gate holds the note back naming it.
+ * script, so an executable claim a source read states is recorded as
+ * documented, not reproduced, with the reason (DS-N2-1); one no read source
+ * states reaches the gate with neither, and the gate holds the note back
+ * naming it (DS-N2-2).
  */
 export function claimsReport(card: CardRecord, answer: ResearchAnswer): string {
-  const claims: ReportedClaim[] = (answer.claims ?? []).map((c) => ({
-    id: String(c.id),
-    kind: c.kind,
-    text: c.text,
-  }));
+  const claims: ReportedClaim[] = (answer.claims ?? []).map((c) => {
+    const reason = c.kind === "executable" ? documentedReason(c, answer) : undefined;
+    return {
+      id: String(c.id),
+      kind: c.kind,
+      text: c.text,
+      ...(reason ? { unreproducible: reason } : {}),
+    };
+  });
   return `${JSON.stringify({ card: card.id, claims }, null, 2)}\n`;
 }
 
@@ -190,7 +224,12 @@ export async function runResearchCard(
             : claimGate.failures.map((f) => f.errorExcerpt).join("; "),
       }
     : (() => {
-        const e = reviewEligible(answer.claims ?? [], new Map());
+        const documented = new Map(
+          (answer.claims ?? [])
+            .filter((c) => c.kind === "executable" && documentedReason(c, answer))
+            .map((c) => [c.id, "documented" as const]),
+        );
+        const e = reviewEligible(answer.claims ?? [], documented);
         return { ...e, reason: `${e.reason} (no claim gate declared in gates.toml)` };
       })();
   const passed = answer.grounded && answer.badCitations.length === 0 && eligible.eligible;
@@ -206,6 +245,11 @@ export async function runResearchCard(
     sources: answer.sources,
     confidence: answer.confidence,
     badCitations: answer.badCitations,
+    ...(answer.effort ? { effort: answer.effort } : {}),
+    ...(answer.coverage ? { uncovered: answer.coverage.outstanding } : {}),
+    // DS-N2-6, DS-N2-7: each candidate revision's measured verdict; the note
+    // is the last accepted draft, and no separate citation-repair pass runs.
+    ...(answer.critique ? { critique: answer.critique } : {}),
     rungResults: [
       { gate: "grounded", rung: "research", passed: answer.grounded },
       { gate: "citations", rung: "research", passed: answer.badCitations.length === 0 },

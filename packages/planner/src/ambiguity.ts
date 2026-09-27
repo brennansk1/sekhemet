@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { AssumptionCalibrationLog } from "./calibration.js";
-import { AMBIGUITY_THRESHOLD, MAX_QUESTIONS_PER_SPEC } from "./constants.js";
+import { AMBIGUITY_THRESHOLD } from "./constants.js";
 import { buildDecisionRequest, questionFor } from "./decision.js";
 import {
   contentWords,
@@ -480,19 +480,6 @@ export class ClarEvalAmbiguityClassifier {
       if (!askCategories.has(finding.category)) {
         askCategories.set(finding.category, finding);
       }
-    }
-
-    if (askCategories.size > MAX_QUESTIONS_PER_SPEC) {
-      const listed = [...askCategories.keys()].join(", ");
-      return {
-        askUser: false,
-        score,
-        findings,
-        assumptions,
-        spikes,
-        rejected: true,
-        rejectionReason: `Spec raises ${askCategories.size} independent questions (${listed}); the limit is ${MAX_QUESTIONS_PER_SPEC}. Planning around this many unknowns produces a plan that is ${askCategories.size} guesses deep. Rewrite the spec to answer them before planning.`,
-      };
     }
 
     const requests: DecisionRequest[] = [];

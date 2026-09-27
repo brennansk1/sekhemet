@@ -12,6 +12,9 @@ import {
 import { KIND_LABELS } from "./lib/vocabulary.js";
 import { cardChip, diffContext, prioMark } from "./marks.js";
 import { applyAll, decide, discardAll } from "./pm_client.js";
+import { hasReviewPlan, openReviewPlan } from "./review_plan.js";
+import { reviewPlanButtonHtml } from "./review_plan_view.js";
+import { getSession } from "./session.js";
 import { store } from "./store.js";
 
 const busy = new Set();
@@ -120,7 +123,12 @@ export function proposalHtml(p, ctx = diffContext()) {
     : "";
   const acts = stale
     ? `<div class="pacts"><button class="btn ghost sm" type="button" data-discard>Discard ${kbd("n")}</button><button class="btn sm" type="button" disabled aria-disabled="true">Apply</button><span class="why">Out of date</span></div>`
-    : `<div class="pacts"><button class="btn ghost sm" type="button" data-discard ${isBusy ? "disabled" : ""}>Discard ${kbd("n")}</button><button class="btn sm" type="button" data-apply ${isBusy ? "disabled" : ""}>${isBusy ? "Applying…" : `Apply ${kbd("y")}`}</button></div>`;
+    : `<div class="pacts"><button class="btn ghost sm" type="button" data-discard ${isBusy ? "disabled" : ""}>Discard ${kbd("n")}</button>${
+        // DS-P2-6: a new project is reviewed, with the person's choices, before it is created.
+        hasReviewPlan(p)
+          ? reviewPlanButtonHtml(isBusy)
+          : `<button class="btn sm" type="button" data-apply ${isBusy ? "disabled" : ""}>${isBusy ? "Applying…" : `Apply ${kbd("y")}`}</button>`
+      }</div>`;
   return `<li class="prop open${stale ? " stale" : ""}" tabindex="-1" data-prop="${esc(p.id)}" role="group" aria-label="${esc(`${k.label}: ${p.summary}`)}"><div class="ph">${icon(k.icon, 14, "ic s14")}<span class="pk">${esc(k.label)}</span>${chip}</div><p class="sum">${esc(p.summary)}</p>${body(p, ctx)}${staleNote}${acts}</li>`;
 }
 
@@ -132,10 +140,17 @@ export function proposalGroupHtml(proposals, { title = "Proposed changes", group
   if (!proposals?.length) return "";
   const ctx = diffContext();
   const open = proposals.filter((p) => p.state === "open");
+  // A new project is never applied in bulk: it goes through Review plan.
+  const bulk = withoutReviewPlan(open).length > 0;
   const head = open.length
-    ? `<span class="sec tnum">${open.length} open</span><div class="gacts">${open.length > 1 ? `<button class="btn ghost sm" type="button" data-discard-all>Discard all</button>` : ""}<button class="btn primary sm" type="button" data-apply-all>${esc(applyAllLabel(proposals))} ${kbd("⇧Y")}</button></div>`
+    ? `<span class="sec tnum">${open.length} open</span><div class="gacts">${open.length > 1 ? `<button class="btn ghost sm" type="button" data-discard-all>Discard all</button>` : ""}${bulk ? `<button class="btn primary sm" type="button" data-apply-all>${esc(applyAllLabel(withoutReviewPlan(proposals)))} ${kbd("⇧Y")}</button>` : ""}</div>`
     : `<span class="sec">All decided</span>`;
   return `<section class="pgroup" data-group="${esc(groupId)}" aria-label="${esc(title)}"><header><b>${esc(title)}</b>${head}</header><ul class="plist" role="list">${proposals.map((p) => proposalHtml(p, ctx)).join("")}</ul></section>`;
+}
+
+/** The proposals Apply all may apply: every one but a new project's (DS-P2-6). */
+function withoutReviewPlan(list) {
+  return list.filter((p) => !hasReviewPlan(p));
 }
 
 /** Proposals by id across the thread (and any extra source, e.g. an import preview). */
@@ -171,6 +186,14 @@ export function bindProposals(root, { sources = threadSources, onChange = () => 
     const next = root.querySelector(".prop.open:not(.stale)");
     if (next && root.contains(document.activeElement)) next.focus();
   };
+  // DS-P2-6: Review plan applies the proposal itself, with the person's choices.
+  const review = async (p) => {
+    if (busy.has(p.id)) return;
+    const result = await openReviewPlan(p, { setup: getSession().mode });
+    if (result?.proposal) Object.assign(p, result.proposal);
+    onChange();
+    store.set({});
+  };
   const groupOf = (el) => {
     const li = el.closest(".pgroup")?.querySelector("[data-prop]");
     return li ? findIn(sources, li.dataset.prop)?.list : null;
@@ -179,7 +202,10 @@ export function bindProposals(root, { sources = threadSources, onChange = () => 
     const t = e.target instanceof Element ? e.target : null;
     if (!t) return;
     const li = t.closest("[data-prop]");
-    if (t.closest("[data-apply]") && li) {
+    if (t.closest("[data-review-plan]") && li) {
+      const hit = findIn(sources, li.dataset.prop);
+      if (hit) review(hit.p);
+    } else if (t.closest("[data-apply]") && li) {
       const hit = findIn(sources, li.dataset.prop);
       if (hit) run(hit.p, "apply");
     } else if (t.closest("[data-discard]") && li) {
@@ -187,7 +213,7 @@ export function bindProposals(root, { sources = threadSources, onChange = () => 
       if (hit) run(hit.p, "discard");
     } else if (t.closest("[data-apply-all]")) {
       const list = groupOf(t);
-      if (list) applyAll(list).then(() => onChange());
+      if (list) applyAll(withoutReviewPlan(list)).then(() => onChange());
     } else if (t.closest("[data-discard-all]")) {
       const list = groupOf(t);
       if (list) discardAll(list).then(() => onChange());
@@ -203,10 +229,13 @@ export function bindProposals(root, { sources = threadSources, onChange = () => 
     let handled = true;
     if (e.key === "Y") {
       const list = groupOf(t);
-      if (list) applyAll(list).then(() => onChange());
+      if (list) applyAll(withoutReviewPlan(list)).then(() => onChange());
     } else if (li && e.key === "y" && !li.classList.contains("stale")) {
       const hit = findIn(sources, li.dataset.prop);
-      if (hit) run(hit.p, "apply");
+      if (hit) {
+        if (hasReviewPlan(hit.p)) review(hit.p);
+        else run(hit.p, "apply");
+      }
     } else if (li && e.key === "n") {
       const hit = findIn(sources, li.dataset.prop);
       if (hit) run(hit.p, "discard");

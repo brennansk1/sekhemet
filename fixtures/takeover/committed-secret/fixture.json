@@ -1,0 +1,6 @@
+{
+  "commits": [
+    { "message": "wire the GitHub export", "secret": "src/config.ts" },
+    { "message": "move the token out", "remove": ["src/config.ts"] }
+  ]
+}

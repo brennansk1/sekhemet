@@ -2,7 +2,14 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { join } from "node:path";
 import type { BoardService } from "@sekhemet/board";
-import { type CardStore, type CardUpdate, EventLog, nearestCardEstimate } from "@sekhemet/kernel";
+import {
+  type CardStore,
+  type CardUpdate,
+  DEPTH_PROFILES,
+  EventLog,
+  nearestCardEstimate,
+  parseDepthProfile,
+} from "@sekhemet/kernel";
 import type { LocalInferenceAdapter } from "@sekhemet/models";
 import { readKernelPressureLevel } from "@sekhemet/models";
 import { resolvePlannerModel } from "@sekhemet/planner";
@@ -17,6 +24,7 @@ import { ProposalError, applyProposal } from "./pm/apply.js";
 import { type Audience, soloAudience } from "./pm/audience.js";
 import { capabilityReport } from "./pm/capability.js";
 import { flowMetrics, pmQuality } from "./pm/metrics.js";
+import type { ProjectChoices } from "./pm/pipeline.js";
 import { DEFAULT_PM_MODEL, answerQueued, pmModelFor, runnerLease } from "./pm/service.js";
 import { PmStore } from "./pm/store.js";
 import {
@@ -295,6 +303,14 @@ export function createPmApi(ctx: PmApiContext) {
         ctx.json(res, 200, { proposal: { ...found, state: "discarded" } });
         return true;
       }
+      // DS-P2-7 (PM_CONTRACT §3): Review plan's choices travel with Apply.
+      const choices = projectChoicesOf((await ctx.readJsonBody(req)).choices);
+      if (choices === null) {
+        ctx.json(res, 400, {
+          error: `choices must be {accept?: string[], remove?: string[], releaseLine?: number, type?: ${DEPTH_PROFILES.map((p) => `"${p}"`).join(" | ")}, answers?: {index: number}}`,
+        });
+        return true;
+      }
       try {
         ctx.json(
           res,
@@ -307,6 +323,7 @@ export function createPmApi(ctx: PmApiContext) {
             repoPath: ctx.repoPath,
             audience: audience(),
             ...(ctx.principalOf ? { principal: ctx.principalOf(req) } : {}),
+            ...(choices ? { choices } : {}),
           }),
         );
         await learnChoices();
@@ -702,4 +719,42 @@ export function modelRoster(
     };
   });
   return { roles, coResident: lease?.coResident === true };
+}
+
+/**
+ * Review plan's choices from a request body (PM_CONTRACT §3): undefined when
+ * none were sent, null when they are not the documented shape.
+ */
+export function projectChoicesOf(raw: unknown): ProjectChoices | undefined | null {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "object" || Array.isArray(raw)) return null;
+  const r = raw as Record<string, unknown>;
+  const strings = (v: unknown): v is string[] =>
+    Array.isArray(v) && v.every((x) => typeof x === "string");
+  const out: ProjectChoices = {};
+  for (const key of Object.keys(r)) {
+    const v = r[key];
+    if (key === "accept" || key === "remove") {
+      if (!strings(v)) return null;
+      out[key] = v;
+    } else if (key === "releaseLine") {
+      if (typeof v !== "number" || !Number.isInteger(v) || v < 0) return null;
+      out.releaseLine = v;
+    } else if (key === "type") {
+      // One of the depth profiles, never replaced silently by the proposed one.
+      if (typeof v !== "string" || !parseDepthProfile(v)) return null;
+      out.type = v;
+    } else if (key === "answers") {
+      if (typeof v !== "object" || v === null || Array.isArray(v)) return null;
+      const answers: Record<string, number> = {};
+      for (const [q, a] of Object.entries(v)) {
+        if (!/^\d+$/.test(q) || typeof a !== "number" || !Number.isInteger(a) || a < 0) return null;
+        answers[q] = a;
+      }
+      out.answers = answers;
+    } else {
+      return null;
+    }
+  }
+  return out;
 }

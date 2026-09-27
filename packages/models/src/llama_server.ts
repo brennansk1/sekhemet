@@ -1273,6 +1273,117 @@ export function createApodexResearcher(
   });
 }
 
+/**
+ * The Researcher bake-off's two candidates (models NEW-models-11, MD-N11-1):
+ * 4B research models small enough to stay loaded beside the Worker, set
+ * against the incumbent Apodex-1.1-mini on the research golden set. The file
+ * names are the ones a person saves them under in the models directory;
+ * their download sources are unverified, so no source is recorded in
+ * `MODEL_SOURCES` and the harness never fetches them (models rule 4). Neither
+ * is a managed default until a bake-off adopts it (MD-N11-2), and Apodex's
+ * profile stays until that adoption is recorded (MD-N11-3).
+ */
+export const RESEARCHER_CANDIDATE_FILES = {
+  spark: "Spark-X2.5-4B-GGUF/Spark-X2.5-4B-Q8_0.gguf",
+  neohorse: "NeoHorse-1-4B-GGUF/NeoHorse-1-4B-Q8_0.gguf",
+} as const;
+
+/** The llama.cpp build Spark-X2.5-4B's `spark2_5` architecture needs (PR #27868). */
+export const SPARK_MIN_LLAMA_BUILD = 10828;
+
+/**
+ * Sampling for the two 4B candidates: the Qwen3.5 family's non-thinking
+ * values, since both model cards were read only through a review and name
+ * none for tool loops. It is part of each qualified combination (suite q1.2),
+ * so the bake-off measures it rather than assuming it.
+ */
+const SMALL_RESEARCHER_SAMPLING = { temperature: 0.7, topP: 0.8, topK: 20, minP: 0 } as const;
+
+/**
+ * A 4B Researcher candidate's profile: its own port, two slots (the
+ * conversation, and one-off page extractions) of 32k each — a 4B model's KV
+ * cache affords the window research needs — and thinking off at the server,
+ * since both think by default and a tool loop pays for it on every turn.
+ */
+function smallResearcherProfile(
+  modelId: string,
+  modelPath: string,
+  port: number,
+  binary: string | undefined,
+): ManagedLlamaServerAdapter {
+  return new ManagedLlamaServerAdapter({
+    modelId,
+    modelPath,
+    slotCacheDir: defaultSlotCacheDir(),
+    ...(binary ? { binary } : {}),
+    port,
+    contextTokens: 32768,
+    parallelSlots: 2,
+    reasoning: "off",
+    maxTokens: 2048,
+    sampling: { ...SMALL_RESEARCHER_SAMPLING },
+  });
+}
+
+/**
+ * Spark-X2.5-4B (Apache-2.0; Q8_0, 4.4 GB; hybrid attention, one full layer
+ * per three sliding-window layers) as a Researcher candidate. It needs
+ * llama.cpp b10828 or later (`SPARK_MIN_LLAMA_BUILD`); its vendor tool
+ * parser is unverified, so its tool arm is measured by qualification.
+ */
+export function createSparkResearcher(
+  modelPath = resolveModelPath(RESEARCHER_CANDIDATE_FILES.spark),
+  binary = process.env.SEKHEMET_LLAMA_SERVER,
+): ManagedLlamaServerAdapter {
+  return smallResearcherProfile("spark-x2.5-4b", modelPath, 8102, binary);
+}
+
+/**
+ * NeoHorse-1-4B (Apache-2.0, initialised from Qwen3.5-4B, 262k native
+ * context) as a Researcher candidate, Spark's peer in the bake-off.
+ */
+export function createNeoHorseResearcher(
+  modelPath = resolveModelPath(RESEARCHER_CANDIDATE_FILES.neohorse),
+  binary = process.env.SEKHEMET_LLAMA_SERVER,
+): ManagedLlamaServerAdapter {
+  return smallResearcherProfile("neohorse-1-4b", modelPath, 8103, binary);
+}
+
+/** One model the Researcher bake-off runs (MD-N11-1): the incumbent first. */
+export interface ResearcherCandidate {
+  modelId: string;
+  /** The GGUF inside the models directory. */
+  file: string;
+  /** The oldest llama.cpp build that runs it, when it needs a recent one. */
+  minLlamaBuild?: number;
+  create(modelPath?: string, binary?: string): ManagedLlamaServerAdapter;
+}
+
+export const RESEARCHER_CANDIDATES: readonly ResearcherCandidate[] = [
+  {
+    modelId: "apodex-1.1-mini",
+    file: MANAGED_MODEL_FILES.researcher,
+    create: (path, binary) => createApodexResearcher(path, binary),
+  },
+  {
+    modelId: "spark-x2.5-4b",
+    file: RESEARCHER_CANDIDATE_FILES.spark,
+    minLlamaBuild: SPARK_MIN_LLAMA_BUILD,
+    create: (path, binary) => createSparkResearcher(path, binary),
+  },
+  {
+    modelId: "neohorse-1-4b",
+    file: RESEARCHER_CANDIDATE_FILES.neohorse,
+    create: (path, binary) => createNeoHorseResearcher(path, binary),
+  },
+];
+
+/** llama.cpp's build number from a build_info (`b10828-abc`), an engine string or a version line. */
+export function llamaBuildNumber(text: string): number | undefined {
+  const m = /\bb(\d{3,})\b/.exec(text) ?? /\b(?:version:|build)\s*(\d{3,})\b/i.exec(text);
+  return m ? Number(m[1]) : undefined;
+}
+
 /** CHRONICLE §2 sampling for code and structured output. */
 export const QWEN38_CODE_SAMPLING = {
   temperature: 0.2,

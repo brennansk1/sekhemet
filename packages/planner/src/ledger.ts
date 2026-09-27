@@ -41,13 +41,19 @@ export async function appendPlannerEvent<T>(
   ledger: PlannerLedger,
   type: string,
   payload: T,
-  options: { cardId?: string | undefined; actor?: string } = {},
+  options: {
+    cardId?: string | undefined;
+    actor?: string;
+    /** Free text, in the event's erasable private part (kernel rule 33). */
+    private?: Record<string, unknown>;
+  } = {},
 ): Promise<EventRecord> {
   return ledger.log.append({
     actor: options.actor ?? "planner",
     type,
     payload,
     ...(options.cardId ? { cardId: options.cardId } : {}),
+    ...(options.private ? { private: options.private } : {}),
   });
 }
 

@@ -596,6 +596,8 @@ export interface RouteRule {
   sliceId?: string | undefined;
   requirementId?: string | undefined;
   suggestionId?: string | undefined;
+  /** A proposal applied: the caller adds what its kind needs besides `proposal.apply`. */
+  proposalId?: string | undefined;
   /** The permissions depend on the JSON body: read it, then ask again with it. */
   needsBody?: true;
 }
@@ -742,7 +744,16 @@ const ROUTES: [methods: string[], pattern: RegExp, resolve: Resolver][] = [
   [["POST"], /^\/api\/planner\/decisions\/(dec_[A-Za-z0-9_-]+)$/, fixed("plan.approve")],
   [["POST"], /^\/api\/recurring\/trigger\/[\w.-]+$/, fixed("run.start")],
   [["POST"], /^\/api\/pm\/messages$/, fixed("seshat.ask")],
-  [["POST"], /^\/api\/pm\/proposals\/[A-Za-z0-9_-]+\/(apply|discard)$/, fixed("proposal.apply")],
+  // Applying a proposal names it, so the server can add what its kind needs
+  // (a new project's group accepts a brief: teams item 6, design-stage §2.9 item 7).
+  [
+    ["POST"],
+    /^\/api\/pm\/proposals\/([A-Za-z0-9_-]+)\/(apply|discard)$/,
+    (m) => ({
+      permissions: ["proposal.apply"],
+      ...(m[2] === "apply" ? { proposalId: m[1] } : {}),
+    }),
+  ],
   [["POST"], /^\/api\/cycles$/, fixed("issue.edit")],
   [["PATCH"], /^\/api\/cycles\/[A-Za-z0-9_-]+$/, fixed("issue.edit")],
   [
@@ -765,6 +776,22 @@ const ROUTES: [methods: string[], pattern: RegExp, resolve: Resolver][] = [
     fixed("members.manage"),
   ],
   [["POST"], /^\/api\/projects$/, fixed("project.create")],
+  // PM_CONTRACT "Take over a project" (B4.4): starting one creates a project;
+  // approving its plan is a plan's approval, recorded with the person's
+  // principal; a reconciliation applied or dismissed is a proposal.
+  [["POST"], /^\/api\/takeover$/, fixed("project.create")],
+  [
+    ["POST"],
+    /^\/api\/takeover\/approve$/,
+    (_m, body) =>
+      body === undefined
+        ? { permissions: [], needsBody: true }
+        : {
+            permissions: ["plan.approve"],
+            ...(typeof body.projectId === "string" ? { projectId: body.projectId } : {}),
+          },
+  ],
+  [["POST"], /^\/api\/takeover\/reconciliation\/(apply|dismiss)$/, fixed("proposal.apply")],
   // Gates rule 31 (GT-N4-1): a new visual baseline is a person's approval.
   [["POST"], /^\/api\/visual\/baselines\/[\w.-]+\/approve$/, fixed("accept")],
   // B4.3 (TEAM-4): a slice's acceptance is the project's Accept rule, like accepting a card.

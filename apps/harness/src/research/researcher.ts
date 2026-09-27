@@ -7,21 +7,32 @@ import { researchAgentPrompt, stripThinking } from "./apodex.js";
 import {
   APODEX_LOCAL_TOOLS,
   EvidenceLedger,
+  type VerifiedAnswer,
   apodexLoop,
   apodexTeam,
   verifyReferences,
 } from "./apodex_loop.js";
-import { type Claim, type RiskVector, extractClaims } from "./claims.js";
+import { type Claim, type Disagreement, type RiskVector, extractClaims } from "./claims.js";
+import { critiquePass } from "./critique.js";
 import { depsFile, depsGrep, depsOutline, installed } from "./deps.js";
 import { readDocs } from "./docs.js";
+import type { ResearchEffort } from "./effort.js";
 import { type LoopFinding, type LoopResult, runResearchLoop } from "./loop.js";
 import { codeSearch, issueSearch, parseSlug, releasesBetween, repoFile, repoTree } from "./repo.js";
-import { type Source, groundingConfidence, kindOfUrl } from "./sources.js";
+import { researchCopy } from "./research_copy.js";
+import {
+  SUB_QUESTION_MIN_HOSTS,
+  type Source,
+  groundingConfidence,
+  independentHosts,
+  kindOfUrl,
+} from "./sources.js";
 import {
   type WebConfig,
   fetchPage,
   formatWebHits,
   githubSearch,
+  isFetchRefusal,
   paperCitations,
   readPaper,
   searchPapers,
@@ -70,6 +81,14 @@ export interface ResearchAnswer {
    * and one improves, which is what keeps the model from grading itself.
    */
   risk: RiskVector;
+  /** Each citation as the one reference checker resolved it (DS-N2-4). */
+  references?: VerifiedAnswer["references"];
+  /** The effort it was researched at (DS-N4-1). */
+  effort?: ResearchEffort;
+  /** Where sources disagree: both positions, tiers, dates and the better-supported one (DS-N2-8). */
+  disagreements?: Disagreement[];
+  /** The critique pass's verdict on each candidate revision (DS-N2-6). */
+  critique?: { accepted: boolean; reason: string }[];
 }
 
 export interface ResearchDeps {
@@ -87,6 +106,76 @@ export interface ResearchDeps {
   onEvent?: (line: string) => void;
   /** Tools from the user's MCP servers (H11), namespaced mcp__<server>__<tool>. */
   mcp?: import("../mcp_client.js").McpHub | undefined;
+  /** Page reads one researched question may make: the effort's cap (DS-N4-1). */
+  maxPages?: number;
+  /** The running count against `maxPages`, one per researched (sub-)question. */
+  pageBudget?: { max: number; used: number };
+  /**
+   * Searches this (sub-)question already ran, lower-cased: a repeat is
+   * refused, so a re-dispatch runs different queries (DS-N4-2).
+   */
+  queries?: Set<string>;
+  /**
+   * The pipeline the latest research golden-set run recommends for this
+   * model (DS-N2-9): `native`, the Apodex loop on the model's trained tools;
+   * `tool-loop`, research's own loop. Absent, an Apodex model with native
+   * tools runs its native loop and every other model the tool loop.
+   */
+  pipeline?: "native" | "tool-loop";
+}
+
+/** Whether a model runs the native (Apodex) loop: the recorded verdict first (DS-N2-9). */
+function runsNative(model: LocalInferenceAdapter, deps: Pick<ResearchDeps, "pipeline">): boolean {
+  if (!model.nativeTools) return false;
+  return deps.pipeline ? deps.pipeline === "native" : isApodex(model);
+}
+
+/** Tools that read a page, and how many reads each call may make. */
+const PAGE_READS: Readonly<Record<string, number>> = {
+  web_fetch: 1,
+  fetch_page: 1,
+  read_docs: 1,
+  read_paper: 1,
+  search_and_read: 3,
+};
+
+/** Tools whose query is a search the same sub-question should not repeat. */
+const SEARCHES = new Set([
+  "web_search",
+  "search_and_read",
+  "scholar_search",
+  "search_papers",
+  "github_search",
+]);
+
+/**
+ * The effort's caps on one call (DS-N4-1, DS-N4-2): a page read past the
+ * sub-question's budget, or a search it already ran, is refused before any
+ * request. Undefined when the call may run.
+ */
+export function budgetRefusal(call: ToolCall, deps: ResearchDeps): string | undefined {
+  const a = call.arguments ?? {};
+  if (deps.queries && SEARCHES.has(call.name)) {
+    const q = String(a.query ?? a.q ?? "")
+      .trim()
+      .toLowerCase();
+    if (q && deps.queries.has(q)) return researchCopy.searchRepeated(q);
+    if (q) deps.queries.add(q);
+  }
+  const reads = PAGE_READS[call.name];
+  const budget = deps.pageBudget;
+  if (reads && budget) {
+    if (budget.used >= budget.max) return researchCopy.pagesSpent(budget.max);
+    budget.used += reads;
+  }
+  return undefined;
+}
+
+/** One budget per researched (sub-)question, from the effort's page cap. */
+export function withPageBudget(deps: ResearchDeps): ResearchDeps {
+  return deps.maxPages && !deps.pageBudget
+    ? { ...deps, pageBudget: { max: deps.maxPages, used: 0 } }
+    : deps;
 }
 
 const str = { type: "string" } as const;
@@ -225,6 +314,8 @@ export async function runResearchTool(call: ToolCall, deps: ResearchDeps): Promi
       : { text, source: src("web", `${call.name}(${JSON.stringify(a).slice(0, 120)})`, text) };
   }
   const s = (k: string, max = 200) => String(a[k] ?? "").slice(0, max);
+  const refused = budgetRefusal(call, deps);
+  if (refused) return { text: refused };
   try {
     if (call.name === "find_library") {
       const q = s("query", 120);
@@ -343,7 +434,9 @@ export async function runResearchTool(call: ToolCall, deps: ResearchDeps): Promi
     if (call.name === "read_paper") {
       const id = s("arxiv_id", 20);
       const text = await readPaper(id, typeof a.section === "string" ? a.section : undefined, web);
-      return text.length > 300 ? { text, source: src("paper", `arXiv ${id}`, text) } : { text };
+      return text.length > 300 && !isFetchRefusal(text)
+        ? { text, source: src("paper", `arXiv ${id}`, text) }
+        : { text };
     }
     if (call.name === "paper_citations") {
       const id = s("id", 80);
@@ -388,8 +481,7 @@ export async function runResearchTool(call: ToolCall, deps: ResearchDeps): Promi
       const parts: string[] = [];
       top.forEach((h, i) => {
         const body = pages[i] ?? "";
-        const read =
-          body.length > 200 && !/^(The page answered|Refusing|The site's robots)/.test(body);
+        const read = body.length > 200 && !isFetchRefusal(body);
         if (read) sources.push(src(kindOfUrl(h.url), h.url, body, h.title));
         parts.push(
           `${read ? `{{${sources.length}}} ` : ""}${h.title}\n${h.url}\n${read ? body : `(not read: ${body.slice(0, 80) || "empty"}) ${h.snippet}`}`,
@@ -405,7 +497,9 @@ export async function runResearchTool(call: ToolCall, deps: ResearchDeps): Promi
       const url = s("url", 2000);
       const focus = typeof a.focus === "string" ? a.focus.slice(0, 200) : undefined;
       const text = await fetchPage(url, web, 12_000, focus);
-      return text.length > 200 ? { text, source: src(kindOfUrl(url), url, text) } : { text };
+      return text.length > 200 && !isFetchRefusal(text)
+        ? { text, source: src(kindOfUrl(url), url, text) }
+        : { text };
     }
     if (call.name === "read_docs") {
       const fetchText = async (u: string) => {
@@ -495,14 +589,20 @@ const isApodex = (m: LocalInferenceAdapter) => /apodex/i.test(m.modelId);
 
 const strip = stripThinking;
 
-/** Citation markers that point outside the numbered source list. */
-export function checkCitations(answer: string, sourceCount: number): number[] {
-  const bad = new Set<number>();
-  for (const m of answer.matchAll(/\[(\d{1,3})\]/g)) {
-    const n = Number(m[1]);
-    if (n < 1 || n > sourceCount) bad.add(n);
-  }
-  return [...bad];
+/**
+ * Citations that point at nothing read, by the one reference checker
+ * (DS-N2-4): `[n]` against the numbered sources, each of which a tool
+ * fetched and the ledger recorded, or a References section by URL or title.
+ */
+function checkAgainstRead(answer: string, evidence: Source[]): VerifiedAnswer {
+  return verifyReferences(answer, ledgerOf(evidence), evidence);
+}
+
+/** A ledger of the sources a numbered pipeline read (each one fetched and recorded). */
+function ledgerOf(evidence: readonly Source[]): EvidenceLedger {
+  const ledger = new EvidenceLedger();
+  for (const s of evidence) ledger.noteRead(s);
+  return ledger;
 }
 
 /**
@@ -559,10 +659,11 @@ function sourceList(evidence: Source[]): string {
 export async function research(
   model: LocalInferenceAdapter,
   question: string,
-  deps: ResearchDeps,
+  rawDeps: ResearchDeps,
 ): Promise<ResearchAnswer> {
+  const deps = withPageBudget(rawDeps);
   const apodex = isApodex(model);
-  if (apodex && model.nativeTools) return apodexResearch(model, question, deps);
+  if (runsNative(model, deps)) return apodexResearch(model, question, deps);
   const system = `${
     apodex
       ? apodexSystemPrompt(deps.today ?? new Date().toISOString().slice(0, 10))
@@ -586,13 +687,15 @@ export async function research(
   const finish = (text: string): ResearchAnswer => {
     const answer = strip(text) || "No answer.";
     const unsettled = /^not settled/i.test(answer) || answer === "No answer.";
+    const checked = checkAgainstRead(answer, evidence);
     return withClaims({
       answer,
       sources: evidence.map((e) => e.ref),
       evidence,
       grounded: evidence.length > 0 && !unsettled,
       confidence: unsettled ? 0 : groundingConfidence(evidence),
-      badCitations: checkCitations(answer, evidence.length),
+      badCitations: checked.badCitations,
+      references: checked.references,
     });
   };
 
@@ -743,7 +846,15 @@ export interface InvestigateOptions {
   subRounds?: number;
   /** Sub-questions researched at once. 1 unless the server has parallel slots. */
   concurrency?: number;
+  /** Page reads per sub-question: the effort's cap (DS-N4-1). */
+  pagesPerSubQuestion?: number;
+  /** Candidate revisions the critique pass may judge: the effort's verification depth (DS-N2-6). */
+  critiqueCandidates?: number;
 }
+
+/** The closing rule (DS-N4-2): sources from two independent primary or secondary hosts. */
+const closesSubQuestion = (_item: string, sources: Source[]) =>
+  independentHosts(sources).length >= SUB_QUESTION_MIN_HOSTS;
 
 /**
  * Deep research, in the model card's Agent Team shape, governed by Helga's loop:
@@ -760,7 +871,7 @@ export async function investigate(
   deps: ResearchDeps,
   opts: InvestigateOptions = {},
 ): Promise<ResearchAnswer> {
-  if (isApodex(model) && model.nativeTools) return apodexInvestigate(model, question, deps, opts);
+  if (runsNative(model, deps)) return apodexInvestigate(model, question, deps, opts);
   const system = GENERIC_SYSTEM;
   const maxItems = opts.maxItems ?? 5;
   const plan = await model.generate({
@@ -773,16 +884,30 @@ export async function investigate(
   const checklist = parseList(plan.text).slice(0, maxItems);
   if (checklist.length === 0) checklist.push(question);
 
-  const sub = (q: string) =>
-    research(model, `${q}\n\n(Part of: ${question})`, { ...deps, maxRounds: opts.subRounds ?? 5 });
+  // Each sub-question keeps the searches it ran across its dispatches, so a
+  // re-dispatch runs different queries (DS-N4-2), and gets its own page budget.
+  const triedFor = new Map<string, Set<string>>();
+  const sub = (q: string, item: string | undefined) => {
+    const key = item ?? q;
+    const queries = triedFor.get(key) ?? new Set<string>();
+    triedFor.set(key, queries);
+    return research(model, `${q}\n\n(Part of: ${question})`, {
+      ...deps,
+      maxRounds: opts.subRounds ?? 5,
+      queries,
+      ...(opts.pagesPerSubQuestion ? { maxPages: opts.pagesPerSubQuestion } : {}),
+    });
+  };
   const loop = await runResearchLoop(
     checklist,
-    async (q): Promise<LoopFinding | undefined> => {
-      const r = await sub(q);
+    async (q, item): Promise<LoopFinding | undefined> => {
+      const r = await sub(q, item);
       return { query: q, text: r.grounded ? r.answer : "", sources: r.grounded ? r.evidence : [] };
     },
     {
-      maxRounds: opts.maxRounds ?? 3,
+      // A sub-question is dispatched, and re-dispatched once while open (DS-N4-2).
+      maxRounds: opts.maxRounds ?? 2,
+      closes: closesSubQuestion,
       concurrency: opts.concurrency ?? 1,
       proposeQueries: async (outstanding, findings) => {
         if (findings.length === 0) return outstanding;
@@ -837,7 +962,8 @@ export async function investigate(
     purpose: "planning",
   });
   const answer = strip(merged.text) || parts.join("\n\n");
-  return withClaims({
+  const checked = checkAgainstRead(answer, evidence);
+  const draft = withClaims({
     answer,
     sources: evidence.map((e) => e.ref),
     evidence,
@@ -845,9 +971,20 @@ export async function investigate(
     // Confidence is scaled by coverage: sources for half the question is half an answer.
     confidence:
       Math.round(groundingConfidence(evidence) * (coverage.coveragePct / 100) * 100) / 100,
-    badCitations: checkCitations(answer, evidence.length),
+    badCitations: checked.badCitations,
+    references: checked.references,
     coverage,
   });
+  if (!opts.critiqueCandidates) return draft;
+  const critiqued = await critiquePass(model, question, draft, ledgerOf(evidence), {
+    candidates: opts.critiqueCandidates,
+    numbered: evidence,
+  });
+  // Coverage scales the confidence here as in the draft.
+  return {
+    ...critiqued.answer,
+    confidence: Math.min(critiqued.answer.confidence, draft.confidence),
+  };
 }
 
 /** What the team is and how the answer is used; the user turn, so the system prompt stays static. */
@@ -874,10 +1011,10 @@ const budgetFor = (model: LocalInferenceAdapter) =>
  * answer it describes.
  */
 export function withClaims(a: Omit<ResearchAnswer, "claims" | "risk">): ResearchAnswer {
-  const unsettled = /^not settled/i.test(a.answer) || a.answer === "No answer.";
+  const claims = extractClaims(a.answer);
   return {
     ...a,
-    claims: extractClaims(a.answer),
+    claims,
     risk: {
       badCitations: a.badCitations.length,
       // Open sub-questions when the deep loop tracked them; a solo answer has
@@ -885,6 +1022,8 @@ export function withClaims(a: Omit<ResearchAnswer, "claims" | "risk">): Research
       uncovered: a.coverage?.outstanding.length ?? (a.grounded ? 0 : 1),
       // Execution is a gate on the card, so an answer alone reports none.
       failedClaims: 0,
+      // No executable claim has been run yet: each is documented at best (DS-N2-6).
+      unreproduced: claims.filter((c) => c.kind === "executable").length,
       confidence: a.confidence,
     },
   };
@@ -908,6 +1047,7 @@ function toAnswer(
     grounded: !unsettled && readRefs > 0,
     confidence,
     badCitations: v.badCitations,
+    references: v.references,
     ...extra,
   });
 }
@@ -937,25 +1077,43 @@ export async function apodexInvestigate(
   deps: ResearchDeps,
   opts: InvestigateOptions = {},
 ): Promise<ResearchAnswer> {
-  const team = await apodexTeam(model, question, deps, {
-    today: todayOf(deps),
-    maxAgents: Math.min(4, opts.maxItems ?? 4),
-    maxTasks: (opts.maxItems ?? 4) * 2,
-    subTurns: opts.subRounds ?? 8,
-    budgetChars: budgetFor(model),
-    brief: APODEX_TEAM_BRIEF,
-  });
-  return toAnswer(team.answer, team.ledger, {
+  const team = await apodexTeam(
+    model,
+    question,
+    {
+      ...deps,
+      ...(opts.pagesPerSubQuestion ? { maxPages: opts.pagesPerSubQuestion } : {}),
+    },
+    {
+      today: todayOf(deps),
+      maxAgents: Math.min(4, opts.maxItems ?? 4),
+      maxTasks: (opts.maxItems ?? 4) * 2,
+      subTurns: opts.subRounds ?? 8,
+      budgetChars: budgetFor(model),
+      brief: APODEX_TEAM_BRIEF,
+    },
+  );
+  // Coverage is the closing rule's, measured per sub-question (DS-N4-2).
+  const items = team.subQuestions.length;
+  const covered = team.subQuestions.filter((q) => q.closed).map((q) => q.prompt);
+  const outstanding = team.subQuestions.filter((q) => !q.closed).map((q) => q.prompt);
+  const draft = toAnswer(team.answer, team.ledger, {
     coverage: {
       ran: true,
       rounds: team.coordinatorTurns,
-      items: team.tasks,
-      covered: team.reports.map((r) => r.agent),
-      outstanding: [],
-      coveragePct: team.tasks > 0 ? 100 : 0,
+      items,
+      covered,
+      outstanding,
+      coveragePct: items > 0 ? Math.round((covered.length / items) * 100) : 0,
       sources: team.ledger.read.size,
-      stoppedBecause: team.answer ? "covered" : "budget",
+      stoppedBecause: !team.answer ? "budget" : outstanding.length > 0 ? "budget" : "covered",
       exitRule: "measured coverage of the checklist (no model judgement)",
     },
   });
+  if (!opts.critiqueCandidates) return draft;
+  return (
+    await critiquePass(model, question, draft, team.ledger, {
+      candidates: opts.critiqueCandidates,
+    })
+  ).answer;
 }

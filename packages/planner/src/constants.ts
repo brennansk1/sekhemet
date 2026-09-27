@@ -8,12 +8,12 @@ import type { TierBudget } from "./types.js";
 export const AMBIGUITY_THRESHOLD = 0.5;
 
 /**
- * More than three questions means the spec, not the planner, is the problem.
- *
- * Planning around four unknowns produces a plan that is four guesses deep, so
- * the spec is refused as under-specified instead (design §754-760).
+ * Questions open per planning pass (planner-pm §2.10.1, PM-P2-3): the two
+ * whose answers most change the backlog are asked; every other open point is
+ * recorded as an assumption with its default. A take-over's opening batch is
+ * the one exception (up to five, DEC-43, design-stage DS-TO-11).
  */
-export const MAX_QUESTIONS_PER_SPEC = 3;
+export const MAX_OPEN_QUESTIONS_PER_PASS = 2;
 
 /**
  * INVEST-S sizing: the step budget may be at most this, and the card's Zone 3

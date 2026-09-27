@@ -1,4 +1,4 @@
-import { SOURCE_KIND_WEIGHTS, type Source, type SourceKind } from "./sources.js";
+import { SOURCE_KIND_WEIGHTS, type Source, type SourceKind, tierOfSource } from "./sources.js";
 
 /**
  * Claims, disagreement, and the gate on revision.
@@ -146,7 +146,9 @@ export function adjudicate(topic: string, positions: Position[]): Disagreement |
   return { topic, positions, betterSupported: win.stance, why };
 }
 
-/** The ledger as it appears in the report: both positions, and the verdict. */
+const TIER_NAMES = { 1: "primary", 2: "secondary", 3: "other" } as const;
+
+/** The ledger as it appears in the report: both positions with tier and date, and the verdict (DS-N2-8). */
 export function renderDisagreements(ds: Disagreement[]): string {
   if (!ds.length) return "";
   return [
@@ -154,9 +156,10 @@ export function renderDisagreements(ds: Disagreement[]): string {
     "",
     ...ds.flatMap((d) => [
       `**${d.topic}**`,
-      ...d.positions.map(
-        (p) => `- ${p.stance} — ${p.source.kind}, ${p.source.ref}${p.at ? ` (${p.at})` : ""}`,
-      ),
+      ...d.positions.map((p) => {
+        const tier = tierOfSource(p.source);
+        return `- ${p.stance} — ${p.source.kind}${tier ? ` (${TIER_NAMES[tier]})` : ""}, ${p.source.ref}${p.at ? ` (${p.at})` : ""}`;
+      }),
       `Better supported: ${d.betterSupported}, because ${d.why}.`,
       "",
     ]),
@@ -180,6 +183,8 @@ export interface RiskVector {
   uncovered: number;
   /** Executable claims that did not reproduce. Lower is better. */
   failedClaims: number;
+  /** Executable claims no run has checked: documented at best (DS-N2-6). Lower is better. */
+  unreproduced: number;
   /** Grounding confidence in [0, 1]. Higher is better. */
   confidence: number;
 }
@@ -207,6 +212,7 @@ export function acceptRevision(prev: RiskVector, next: RiskVector): RevisionVerd
   if (next.badCitations > prev.badCitations) worse.push("more unverified citations");
   if (next.uncovered > prev.uncovered) worse.push("fewer sub-questions answered");
   if (next.failedClaims > prev.failedClaims) worse.push("more claims that do not reproduce");
+  if (next.unreproduced > prev.unreproduced) worse.push("more unreproduced executable claims");
   if (next.confidence < prev.confidence - EPS) worse.push("lower grounding confidence");
   if (worse.length) return { accept: false, reason: `rejected: ${worse.join(", ")}` };
 
@@ -214,6 +220,7 @@ export function acceptRevision(prev: RiskVector, next: RiskVector): RevisionVerd
   if (next.badCitations < prev.badCitations) better.push("fewer unverified citations");
   if (next.uncovered < prev.uncovered) better.push("more sub-questions answered");
   if (next.failedClaims < prev.failedClaims) better.push("fewer failing claims");
+  if (next.unreproduced < prev.unreproduced) better.push("fewer unreproduced executable claims");
   if (next.confidence > prev.confidence + EPS) better.push("higher grounding confidence");
   return better.length
     ? { accept: true, reason: `accepted: ${better.join(", ")}` }

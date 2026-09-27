@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
+import { homedir } from "node:os";
+import { relative, sep } from "node:path";
 import { Readable } from "node:stream";
 import { useAgent } from "request-filtering-agent";
 import { sandboxCopy } from "./copy.js";
@@ -32,6 +34,57 @@ export interface EffectiveNetworkPolicy {
   fetchAllow: string[];
   fetchDeny: string[];
   research: "yes" | "no";
+  /** Each `fetch_deny` rule with the file that wrote it, so a refusal names both (DS-N4-3). */
+  denyRules?: NetworkRule[];
+  /** What a project's file tried to widen and was ignored (DS-N4-4). */
+  ignored?: IgnoredWidening[];
+}
+
+/** One rule of a `[network]` list and the file it came from. */
+export interface NetworkRule {
+  rule: string;
+  /** The file's path, or its label: shown to the person, never recorded. */
+  file: string;
+  /**
+   * Which file it is. A refusal's reason names the file by this role, never
+   * by its path: the reason goes onto the ledger (`harness/egress`), where a
+   * home directory's path would put the person's name in a field that
+   * cannot be erased.
+   */
+  role?: "user" | "project";
+}
+
+/** A project's attempt to widen the user's policy: ignored, and reported. */
+export interface IgnoredWidening {
+  file: string;
+  key: "mode" | "fetch_allow" | "research";
+  value: string;
+}
+
+/** Where each `[network]` table was read from; labels when no path is known. */
+export interface NetworkConfigFiles {
+  user?: string;
+  project?: string;
+}
+
+const DEFAULT_FILES: Required<NetworkConfigFiles> = {
+  user: "the user's config.toml",
+  project: "the project's .sekhemet/config.toml",
+};
+
+/**
+ * A config file's path as a refusal names it: relative to the project's
+ * root when it is under `root`, from `~` when it is under the home
+ * directory, never an absolute home path (a refusal reaches a model and a
+ * log). Any other path is given as it is.
+ */
+export function displayConfigPath(path: string, root?: string): string {
+  if (!path) return path;
+  const under = (dir: string) => dir !== "" && (path === dir || path.startsWith(`${dir}${sep}`));
+  if (root && under(root)) return relative(root, path) || ".";
+  const home = homedir();
+  if (under(home)) return `~${path.slice(home.length)}`;
+  return path;
 }
 
 const STRICTNESS: Record<NetworkMode, number> = { offline: 0, allowlist: 1, open: 2 };
@@ -40,23 +93,69 @@ const STRICTNESS: Record<NetworkMode, number> = { offline: 0, allowlist: 1, open
 export function mergeNetworkConfigs(
   user: NetworkConfig,
   project: NetworkConfig,
+  files: NetworkConfigFiles = {},
 ): EffectiveNetworkPolicy {
+  const userFile = files.user ?? DEFAULT_FILES.user;
+  const projectFile = files.project ?? DEFAULT_FILES.project;
   const userMode = user.mode ?? "offline";
   const mode =
     project.mode && STRICTNESS[project.mode] < STRICTNESS[userMode] ? project.mode : userMode;
   const userAllow = (user.fetchAllow ?? []).map((h) => h.toLowerCase());
-  const fetchAllow = project.fetchAllow
-    ? userAllow.filter((h) => project.fetchAllow?.map((p) => p.toLowerCase()).includes(h))
-    : userAllow;
-  const fetchDeny = [...new Set([...(user.fetchDeny ?? []), ...(project.fetchDeny ?? [])])].map(
-    (h) => h.toLowerCase(),
-  );
+  const projectAllow = project.fetchAllow?.map((p) => p.toLowerCase());
+  const fetchAllow = projectAllow ? userAllow.filter((h) => projectAllow.includes(h)) : userAllow;
+  const denyRules: NetworkRule[] = [
+    ...(user.fetchDeny ?? []).map((rule) => ({
+      rule: rule.toLowerCase(),
+      file: userFile,
+      role: "user" as const,
+    })),
+    ...(project.fetchDeny ?? []).map((rule) => ({
+      rule: rule.toLowerCase(),
+      file: projectFile,
+      role: "project" as const,
+    })),
+  ];
+  const fetchDeny = [...new Set(denyRules.map((r) => r.rule))];
   const research = user.research === "yes" && project.research !== "no" ? "yes" : "no";
-  return { mode, fetchAllow, fetchDeny, research };
+  // DS-N4-4: a project's file may only narrow; each widening is ignored and named.
+  const ignored: IgnoredWidening[] = [
+    ...(project.mode && STRICTNESS[project.mode] > STRICTNESS[userMode]
+      ? [{ file: projectFile, key: "mode" as const, value: project.mode }]
+      : []),
+    ...(projectAllow ?? [])
+      .filter((h) => !userAllow.includes(h))
+      .map((h) => ({ file: projectFile, key: "fetch_allow" as const, value: h })),
+    ...(project.research === "yes" && user.research !== "yes"
+      ? [{ file: projectFile, key: "research" as const, value: "yes" }]
+      : []),
+  ];
+  return { mode, fetchAllow, fetchDeny, research, denyRules, ignored };
 }
 
 const denied = (host: string, policy: EffectiveNetworkPolicy) =>
   policy.fetchDeny.length > 0 && domainAllowed(host, policy.fetchDeny);
+
+/** The `fetch_deny` rule that covers `host`, with its file when the policy kept it. */
+function denyHit(host: string, policy: EffectiveNetworkPolicy): NetworkRule {
+  return (
+    policy.denyRules?.find((r) => domainAllowed(host, [r.rule])) ?? {
+      rule: policy.fetchDeny.find((r) => domainAllowed(host, [r])) ?? host,
+      file: "",
+    }
+  );
+}
+
+/**
+ * Why a denied host is refused, with the file and the rule that refused it
+ * (DS-N4-3). The file is named by its role ("the user's config.toml"), never
+ * by its path: this reason is recorded on the ledger. A policy built without
+ * provenance names the rule alone.
+ */
+function deniedReason(host: string, policy: EffectiveNetworkPolicy): string {
+  const hit = denyHit(host, policy);
+  const where = hit.role ? `${DEFAULT_FILES[hit.role]}: ${hit.rule}` : hit.rule;
+  return `${sandboxCopy.policyReason.denied} [${where}]`;
+}
 
 /**
  * The hosts a card's sandboxed commands may reach: the effective allowlist,
@@ -73,6 +172,30 @@ export function cardAllowlist(
     .filter(
       (h) => (policy.mode === "open" || domainAllowed(h, policy.fetchAllow)) && !denied(h, policy),
     );
+}
+
+/** An ecosystem whose generator card zero runs (design-stage DS-P2-1, -2). */
+export type GeneratorRegistry = "npm" | "python" | "rust" | "go";
+
+/** Each ecosystem's package registry hosts: all card zero's generator steps may reach. */
+export const GENERATOR_REGISTRY_HOSTS: Readonly<Record<GeneratorRegistry, readonly string[]>> = {
+  npm: ["registry.npmjs.org"],
+  python: ["pypi.org", "files.pythonhosted.org"],
+  rust: ["crates.io", "static.crates.io", "index.crates.io"],
+  go: ["proxy.golang.org", "sum.golang.org"],
+};
+
+/**
+ * The hosts card zero's generator steps may reach (DS-P2-1, -2): a person's
+ * Create project approved the named generator, so its steps — and only
+ * they, on that card only — reach that ecosystem's package registry, whatever
+ * `mode` says; `fetch_deny` still wins. Nothing else is widened.
+ */
+export function generatorAllowlist(
+  policy: EffectiveNetworkPolicy,
+  registry: GeneratorRegistry,
+): string[] {
+  return GENERATOR_REGISTRY_HOSTS[registry].filter((h) => !denied(h, policy));
 }
 
 /** Upload-capable hosts: an allowlist entry for one is an exfiltration route (item 31a). */
@@ -145,7 +268,7 @@ export function policyRefusal(
 ): string | undefined {
   if (isLoopback(host)) return undefined;
   const researchOk = options.research === true && policy.research === "yes";
-  if (denied(host, policy)) return sandboxCopy.policyReason.denied;
+  if (denied(host, policy)) return deniedReason(host, policy);
   if (policy.mode === "offline" && !researchOk) return sandboxCopy.policyReason.offline;
   if (policy.mode === "allowlist" && !researchOk && !domainAllowed(host, policy.fetchAllow)) {
     return sandboxCopy.policyReason.notAllowed;
@@ -201,12 +324,15 @@ export function policyFetch(
     };
     // Each decision is recorded before the caller sees it, and a record that
     // cannot be written fails the request (security item 33).
-    const refuse = async (reason: string): Promise<never> => {
+    const refuse = async (reason: string, where?: string): Promise<never> => {
       await options.record?.({ ...base, allowed: false, reason });
-      throw new Error(`network policy refused ${host}: ${reason}`);
+      throw new Error(`network policy refused ${host}: ${reason}${where ? ` (${where})` : ""}`);
     };
     const refusal = policyRefusal(policy, host, options);
-    if (refusal) return refuse(refusal);
+    // The person is told the file's path; only its role is recorded (DS-N4-3).
+    const file = denied(host, policy) ? denyHit(host, policy).file : "";
+    const where = file ? displayConfigPath(file) : "";
+    if (refusal) return refuse(refusal, where && !refusal.includes(where) ? where : undefined);
     let res: Response;
     try {
       res = await send(

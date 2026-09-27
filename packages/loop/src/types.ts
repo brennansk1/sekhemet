@@ -13,7 +13,7 @@ import type { ProcessSandbox } from "@sekhemet/sandbox";
 import type { GitSyncAdapter } from "@sekhemet/sync";
 import type { ToolObservation } from "./observation.js";
 import type { StepPhase } from "./phase.js";
-import type { ApprovalHandler } from "./tools.js";
+import type { ApprovalHandler, DeclaredSteps } from "./tools.js";
 
 /**
  * Why a card's execution stopped (L14). The kernel owns the union so the card
@@ -215,6 +215,11 @@ export interface SessionOptions {
         questionEntryId?: string,
       ) => DecisionReading | undefined | Promise<DecisionReading | undefined>)
     | undefined;
+  /**
+   * PM-P2-7: a decision's answer reached the Worker (handed over at a step
+   * boundary); the ledger records when, once (`recordDecisionDelivered`).
+   */
+  onAnswerDelivered?: ((decisionId: string) => Promise<void>) | undefined;
   /** Record the team's in-run answer to a question in the card's dossier. */
   recordAnswer?:
     | ((answer: string, questionEntryId: string | undefined) => Promise<void>)
@@ -324,6 +329,11 @@ export interface SessionOptions {
   hooks?: import("@sekhemet/kernel").LifecycleHookEngine | undefined;
   /** Official web docs for the `docs` tool when the installed copy has nothing (L10). */
   webDocs?: ((library: string, query: string) => Promise<string>) | undefined;
+  /**
+   * The card's declared tool steps — card zero's generator (design-stage
+   * DS-P2-1, -2): what each writes through run_cmd is tool-applied (gates rule 12).
+   */
+  declaredSteps?: DeclaredSteps | undefined;
   /** Language servers for the symbol tools on non-TypeScript files (C2). */
   lspPool?: import("@sekhemet/context").LspPool | undefined;
   /** Called with every note the Worker writes, as it writes it (L11). */

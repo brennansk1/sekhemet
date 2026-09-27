@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CardStore } from "../src/card_store.js";
 import { EventLog } from "../src/log.js";
-import { DATA_CLASSES, PAYLOAD_SCHEMAS } from "../src/payload_registry.js";
+import { DATA_CLASSES, PAYLOAD_SCHEMAS, checkEventPayload } from "../src/payload_registry.js";
 import { type DiskDb, openDiskDb } from "./support/disk_db.js";
 
 // kernel.md S7: the payload schema registry — one Valibot schema per event
@@ -208,5 +208,41 @@ describe("the payload schema registry (K-S7-4, K-S7-9, K-S7-10)", () => {
         expect(field.schema, `${type}.${name}`).toHaveProperty("kind", "schema");
       }
     }
+  });
+});
+
+// B4.4: `release/tagged` (its proven sha, planner-pm PM-P13-13) and
+// `decision/default_applied` (the deadline's reason, free text, private).
+describe("release/tagged and decision/default_applied are registered", () => {
+  const COMMIT_SHA = "c".repeat(40);
+  it("checks release/tagged, with the proven sha", () => {
+    expect(PAYLOAD_SCHEMAS["release/tagged"]).toBeDefined();
+    const tagged = { sliceId: "SLICE-1", projectId: "prj_a", tag: "v0.1.0", sha: COMMIT_SHA };
+    expect(() =>
+      checkEventPayload("release/tagged", { ...tagged, proven: COMMIT_SHA }, undefined),
+    ).not.toThrow();
+    expect(() =>
+      checkEventPayload("release/tagged", { ...tagged, proven: "not a sha" }, undefined),
+    ).toThrow(/proven/);
+  });
+
+  it("keeps decision/default_applied's reason out of the payload", () => {
+    expect(PAYLOAD_SCHEMAS["decision/default_applied"]).toBeDefined();
+    expect(() =>
+      checkEventPayload(
+        "decision/default_applied",
+        { id: "dec_1", optionIndex: 0 },
+        {
+          reason: "no answer by the deadline",
+        },
+      ),
+    ).not.toThrow();
+    expect(() =>
+      checkEventPayload(
+        "decision/default_applied",
+        { id: "dec_1", optionIndex: 0, reason: "no answer by the deadline" },
+        undefined,
+      ),
+    ).toThrow(/reason/);
   });
 });

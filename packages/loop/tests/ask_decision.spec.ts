@@ -114,6 +114,9 @@ describe("NEW-worker-loop-4: ask can wait for a person without stopping the Work
     expect(prompts[1]).not.toContain("contradicts");
     // WL-N4-2: at the next step boundary, as an observation, saying it contradicts the assumption.
     expect(prompts[2]).toContain("contradicts your assumption");
+    // PM-P2-7: the answer reached the Worker, and the ledger says when, once.
+    expect(store.runs?.getDecision(decision?.id as string)?.deliveredAt).toMatch(/^\d{4}-/);
+    expect(await store.eventsOfType(["decision/delivered"])).toHaveLength(1);
     // Filed under the question in the dossier.
     const dossier = await store.getDossier("card_ask");
     const thread = dossier.questions.find(
