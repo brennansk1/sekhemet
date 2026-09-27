@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { allocationBudget, charsForTokens, estimatePromptTokens } from "@sekhemet/context";
 import { moduleApiSummary } from "@sekhemet/loop";
 import type { ChatTurn, LocalInferenceAdapter, ToolCall, ToolDefinition } from "@sekhemet/models";
-import { formatHits, searchLibraries } from "../pm/libraries.js";
+import { type Fetcher, type LibrarySearch, formatHits, searchLibraries } from "../pm/libraries.js";
 import { researchAgentPrompt, stripThinking } from "./apodex.js";
 import {
   APODEX_LOCAL_TOOLS,
@@ -93,9 +93,19 @@ export interface ResearchAnswer {
 
 export interface ResearchDeps {
   repoPath: string;
-  /** Injectable for tests. */
+  /**
+   * JSON from a registry, through the caller's network policy. Absent, the
+   * registry tools fetch through `web.fetch` and are off without web access.
+   */
   fetchJson?: (url: string) => Promise<unknown>;
-  libraries?: typeof searchLibraries;
+  /** The registry search, through the caller's network policy; absent, as `fetchJson`. */
+  libraries?: LibrarySearch;
+  /**
+   * False: the tools that read this repository (its git history, installed
+   * packages, type declarations) are neither offered nor run — the brief's
+   * deep question, whose queries must carry nothing of it (design-stage S8).
+   */
+  repository?: boolean;
   /** Web, papers and GitHub access; undefined keeps the Researcher offline. */
   web?: WebConfig | undefined;
   /** Model turns before it must answer. Defaults: 3, or 12 for Apodex. */
@@ -285,11 +295,27 @@ export function researchTools(web: boolean): ToolDefinition[] {
   return [...(web ? [...localTools(), ...WEB_TOOLS] : localTools()), FINALIZE_TOOL];
 }
 
-const defaultFetch = async (url: string): Promise<unknown> => {
-  const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-  if (!res.ok) throw new Error(`${res.status} from ${new URL(url).host}`);
-  return res.json();
-};
+/** The tools that read this repository, off when `ResearchDeps.repository` is false. */
+const REPOSITORY_TOOLS = new Set(["module_api", "git_history", "deps_source", "deps_grep"]);
+
+/**
+ * JSON through the web access's fetch: with `[network] research = "yes"` that
+ * is `researchFetch` (fetch_allow, fetch_deny, each request a `harness/egress`
+ * event). Undefined without web access, so a registry tool sends nothing.
+ */
+function registryJson(deps: ResearchDeps): Fetcher | undefined {
+  if (deps.fetchJson) return deps.fetchJson;
+  const web = deps.web;
+  if (!web) return undefined;
+  return async (url) => {
+    const res = await (web.fetch ?? fetch)(url, {
+      headers: { "User-Agent": "sekhemet", Accept: "application/json" },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) throw new Error(`${res.status} from ${new URL(url).host}`);
+    return res.json();
+  };
+}
 
 interface ToolResult {
   text: string;
@@ -316,17 +342,28 @@ export async function runResearchTool(call: ToolCall, deps: ResearchDeps): Promi
   const s = (k: string, max = 200) => String(a[k] ?? "").slice(0, max);
   const refused = budgetRefusal(call, deps);
   if (refused) return { text: refused };
+  if (deps.repository === false && REPOSITORY_TOOLS.has(call.name))
+    return { text: researchCopy.repositoryOff(call.name) };
   try {
     if (call.name === "find_library") {
       const q = s("query", 120);
       const eco = a.ecosystem === "pypi" ? "pypi" : "npm";
-      const text = formatHits(await (deps.libraries ?? searchLibraries)(q, eco));
+      const json = registryJson(deps);
+      const search =
+        deps.libraries ??
+        (json
+          ? (query: string, e?: "npm" | "pypi") => searchLibraries(query, e ?? "npm", json)
+          : undefined);
+      if (!search) return { text: researchCopy.webOff(call.name) };
+      const text = formatHits(q, await search(q, eco));
       return { text, source: src("registry", `${eco} registry search "${q}"`, text) };
     }
     if (call.name === "package_readme") {
       const name = s("name");
       if (!/^(@[\w.-]+\/)?[\w.-]+$/.test(name)) return { text: "Invalid package name." };
-      const body = (await (deps.fetchJson ?? defaultFetch)(
+      const json = registryJson(deps);
+      if (!json) return { text: researchCopy.webOff(call.name) };
+      const body = (await json(
         `https://registry.npmjs.org/${encodeURIComponent(name).replace("%40", "@")}`,
       )) as { readme?: string; license?: string };
       const text = `${name} (licence ${body.license ?? "unknown"}):\n${(body.readme ?? "(no README)").slice(0, 3500)}`;
@@ -371,7 +408,7 @@ export async function runResearchTool(call: ToolCall, deps: ResearchDeps): Promi
     }
 
     const web = deps.web;
-    if (!web) return { text: `Tool ${call.name} needs web access, which is off for this project.` };
+    if (!web) return { text: researchCopy.webOff(call.name) };
     // Repository intelligence: git and gh, cached by commit SHA. These
     // reach GitHub, so they sit behind the same network gate as the rest
     // of the web tools: `[network] mode = "offline"` turns them off too.
@@ -669,7 +706,10 @@ export async function research(
       ? apodexSystemPrompt(deps.today ?? new Date().toISOString().slice(0, 10))
       : GENERIC_SYSTEM
   }\n\n${RESEARCH_METHOD}`;
-  const tools = [...researchTools(Boolean(deps.web)), ...(deps.mcp?.toolDefinitions() ?? [])];
+  const tools = [
+    ...researchTools(Boolean(deps.web)),
+    ...(deps.mcp?.toolDefinitions() ?? []),
+  ].filter((t) => deps.repository !== false || !REPOSITORY_TOOLS.has(t.name));
   const maxRounds = deps.maxRounds ?? (apodex ? 12 : 3);
   const evidence: Source[] = [];
   const head = `${ROLE_BRIEF}\n\nQUESTION\n${question}`;

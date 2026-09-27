@@ -12,13 +12,14 @@ import {
   type RungOutcome,
   gateCopy,
 } from "@sekhemet/gates";
-import { licenseVerdict } from "./pm/libraries.js";
+import { judgeLicence } from "./pm/libraries.js";
 import { readProvenance } from "./registers.js";
 
 /**
  * The licence register as a gate (X20). A card that adds a dependency whose
- * licence is not permissive (the same classification Seshat's library search
- * uses, pm/libraries.ts) fails verification unless the component is listed
+ * licence is not permissive (the one classifier, `classifyLicence`, that
+ * Seshat's library search and the reuse survey also use; design-stage P7)
+ * fails verification unless the component is listed
  * with that licence in docs/reference/PROVENANCE.md. A licence that cannot
  * be read locally fails too: install the package, or register it.
  *
@@ -169,7 +170,8 @@ export interface LicenseFinding {
 
 function judge(root: string, m: Manifest, dep: string): LicenseFinding {
   const license = localLicense(root, m.file, m.ecosystem, dep);
-  if (license && licenseVerdict(license).usable)
+  const verdict = judgeLicence(license);
+  if (license && verdict.usable)
     return { manifest: m.file, dep, license, ok: true, why: "permissive" };
   if (registered(root, dep, license))
     return {
@@ -185,7 +187,7 @@ function judge(root: string, m: Manifest, dep: string): LicenseFinding {
     ...(license ? { license } : {}),
     ok: false,
     why: license
-      ? (licenseVerdict(license).note ?? `${license} is not permissive`)
+      ? (verdict.note ?? `${license} is not permissive`)
       : "no licence could be read locally",
   };
 }

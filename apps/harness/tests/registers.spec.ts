@@ -42,7 +42,7 @@ function fixtureRepo(): string {
     readFileSync(join(ROOT, "docs/research/RESEARCH_REGISTER.md"), "utf8"),
   );
   write(root, "package.json", JSON.stringify({ name: "x", dependencies: { "left-pad": "1" } }));
-  write(root, "node_modules/left-pad/package.json", JSON.stringify({ license: "WTFPL" }));
+  write(root, "node_modules/left-pad/package.json", JSON.stringify({ license: "SSPL-1.0" }));
   write(root, ".gitignore", "node_modules/\n");
   const git = (...a: string[]) => execFileSync("git", a, { cwd: root, encoding: "utf8" });
   git("init", "-q", "-b", "main");
@@ -134,7 +134,7 @@ describe("X18: lifecycle rules", () => {
 describe("X20: the licence register is enforced as a gate", () => {
   it("fails a card that adds a copyleft dependency, passes a registered or permissive one", async () => {
     const root = fixtureRepo();
-    // left-pad (WTFPL, unregistered) was already there: only additions are judged.
+    // left-pad (SSPL-1.0, unregistered) was already there: only additions are judged.
     expect(licenseGate(root, "main")).toEqual({ failures: [], advisories: [] });
     write(
       root,
@@ -190,9 +190,10 @@ describe("X17/X18/X20: production paths", () => {
       ),
     ).toBe(0);
     expect(readResearchRegister(root).find((e) => e.id === "R6")?.state).toBe("shortlisted");
-    // left-pad is WTFPL and unregistered: the audit names it.
+    // left-pad is SSPL-1.0 (source-available) and unregistered: the audit names it.
+    // (WTFPL, the fixture before B4.5, is Public Domain in ScanCode: permissive.)
     expect(await runWave2Command("register", ["licenses"], k, io)).toBe(1);
-    expect(lines.some((l) => /FAIL left-pad \(WTFPL\)/.test(l))).toBe(true);
+    expect(lines.some((l) => /FAIL left-pad \(SSPL-1.0\)/.test(l))).toBe(true);
     const report = await runDoctor(root);
     expect(report.checks.find((c) => c.name === "Registers")?.status).toBe("pass");
   }, 30_000);

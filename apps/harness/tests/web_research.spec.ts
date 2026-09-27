@@ -98,7 +98,12 @@ describe("the Researcher's web tools", () => {
         ]),
     });
     expect(hits).toEqual([
-      { title: "a/b", url: "https://github.com/a/b", snippet: "d", meta: "5 stars, licence mit" },
+      {
+        title: "a/b",
+        url: "https://github.com/a/b",
+        snippet: "d",
+        meta: "5 stars, licence mit (permissive, usable)",
+      },
     ]);
   });
 });

@@ -8,110 +8,252 @@
  * Seshat decides to search; the Worker stays offline in its sandbox.
  */
 
-export interface LibraryHit {
+import {
+  type LicenceAction,
+  type LicenceClassification,
+  type LicenceVerdict,
+  classifyLicence,
+  licenceFromTroveClassifiers,
+} from "@sekhemet/gates";
+import { relevant } from "../research/keywords.js";
+
+/** A registry result as found, before its licence is judged. */
+export interface LibraryCandidate {
   name: string;
   ecosystem: "npm" | "pypi";
   version: string;
+  /** The licence as the registry states it. */
   license: string;
-  /** Permissive licences are safe to depend on in any project. */
-  usable: boolean;
-  note?: string;
   description: string;
   weeklyDownloads?: number;
+  /** Stars of the project's repository, when the search knows them (DS-P7-4). */
+  stars?: number;
+  /** When its latest release was published (ISO), for the maintenance filter. */
+  publishedAt?: string;
+  /** Its repository is archived: nobody maintains it. */
+  archived?: boolean;
   url: string;
 }
 
-const PERMISSIVE = new Set([
-  "MIT",
-  "ISC",
-  "0BSD",
-  "BSD-2-Clause",
-  "BSD-3-Clause",
-  "Apache-2.0",
-  "Unlicense",
-  "CC0-1.0",
-  "Python-2.0",
-  "PSF-2.0",
-]);
-/** Usable with care: file-level copyleft. Flagged, never silently recommended. */
-const WEAK_COPYLEFT = new Set([
-  "MPL-2.0",
-  "LGPL-2.1",
-  "LGPL-3.0",
-  "LGPL-2.1-only",
-  "LGPL-3.0-only",
-]);
-
-export function licenseVerdict(license: string): { usable: boolean; note?: string } {
-  const ids = license
-    .replace(/[()]/g, " ")
-    .split(/\s+(?:OR|or)\s+|\s*\/\s*/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-  if (ids.some((id) => PERMISSIVE.has(id))) return { usable: true };
-  if (ids.some((id) => WEAK_COPYLEFT.has(id))) {
-    return {
-      usable: false,
-      note: `${license}: weak copyleft, check with the team before depending on it`,
-    };
-  }
-  if (!license || /unknown|UNLICENSED|SEE LICENSE/i.test(license)) {
-    return { usable: false, note: "no clear licence: do not use without legal review" };
-  }
-  return { usable: false, note: `${license}: not a permissive licence` };
+/**
+ * A licence judged by the one classifier (`classifyLicence`, design-stage
+ * P7): never set by hand, never read from a search result.
+ */
+export interface LicenceJudgement {
+  /** Only a permissive licence is safe to depend on in any project. */
+  usable: boolean;
+  verdict: LicenceVerdict;
+  /** DS-P7-2: recommend, flag (weak copyleft), exclude and name, or drop silently. */
+  action: LicenceAction;
+  /** Why it is not usable, for a person and the model. */
+  note?: string;
 }
 
-type Fetcher = (url: string) => Promise<unknown>;
-const defaultFetch: Fetcher = async (url) => {
-  const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-  if (!res.ok) throw new Error(`${res.status} from ${new URL(url).host}`);
-  return res.json();
+export type LibraryHit = LibraryCandidate & LicenceJudgement;
+
+/** A registry search; injectable for tests. Its results are judged by the caller. */
+export type LibrarySearch = (
+  query: string,
+  ecosystem?: "npm" | "pypi",
+) => Promise<LibraryCandidate[]>;
+
+const NOT_USABLE: Readonly<Record<Exclude<LicenceVerdict, "permissive">, string>> = {
+  weak_copyleft: "weak copyleft, check with the team before depending on it",
+  strong_copyleft: "strong copyleft, not usable without the team's agreement",
+  proprietary: "proprietary or restricted, not usable",
+  unknown: "no clear licence, do not use without legal review",
+  absent: "no licence, so all rights are reserved",
 };
 
-export async function searchLibraries(
+/** The verdict in words: "permissive, usable", or why it is not usable. */
+export function licenceVerdictWords(verdict: LicenceVerdict): string {
+  return verdict === "permissive" ? "permissive, usable" : NOT_USABLE[verdict];
+}
+
+function noteFor(license: string, c: LicenceClassification): string | undefined {
+  if (c.verdict === "permissive") return undefined;
+  const why = NOT_USABLE[c.verdict];
+  return license.trim() ? `${license}: ${why}` : why;
+}
+
+/** A licence string judged by the one classifier. */
+export function judgeLicence(license: string | null | undefined): LicenceJudgement {
+  const c = classifyLicence(license);
+  const note = noteFor(license ?? "", c);
+  return { usable: c.usable, verdict: c.verdict, action: c.action, ...(note ? { note } : {}) };
+}
+
+/**
+ * A candidate with its licence judged now, by the classifier: whatever
+ * `usable` or verdict a search result carried is replaced (DS-P7-3).
+ */
+export function judged<T extends { license: string }>(
+  candidate: T,
+): Omit<T, keyof LicenceJudgement> & LicenceJudgement {
+  const {
+    usable: _u,
+    verdict: _v,
+    action: _a,
+    note: _n,
+    ...rest
+  } = candidate as T & Partial<LicenceJudgement>;
+  return { ...(rest as Omit<T, keyof LicenceJudgement>), ...judgeLicence(candidate.license) };
+}
+
+/**
+ * JSON for a URL. There is no default: every caller hands in a fetch that
+ * goes through the research network policy (`researchFetch`, logged as
+ * `harness/egress`), so no registry request leaves unguarded.
+ */
+export type Fetcher = (url: string) => Promise<unknown>;
+
+/** A GitHub repository as found, before its licence is judged. */
+export interface RepoCandidate {
+  fullName: string;
+  /** GitHub's SPDX id, `NOASSERTION` for a licence it could not name, or `unknown` for none. */
+  license: string;
+  stars: number;
+  archived: boolean;
+  pushedAt: string;
+  description: string;
+  url: string;
+}
+
+export type RepoHit = RepoCandidate & LicenceJudgement;
+
+/**
+ * GitHub's repository search for a keyword query, in one language when the
+ * project has one (DS-P7-5). One URL per query and language, so a plan that
+ * searches both packages and repositories for a need sends it once.
+ */
+export function githubSearchUrl(query: string, language?: string): string {
+  const q = language ? `${query} language:${language}` : query;
+  return `https://api.github.com/search/repositories?q=${encodeURIComponent(q)}&sort=stars&order=desc&per_page=6`;
+}
+
+/** GitHub repositories for a query, each with a licence verdict. */
+export async function searchRepos(
   query: string,
-  ecosystem: "npm" | "pypi" = "npm",
-  fetcher: Fetcher = defaultFetch,
-): Promise<LibraryHit[]> {
-  if (ecosystem === "pypi") {
-    // PyPI has no search API; look the name up directly.
-    const name = query.trim().split(/\s+/)[0] ?? "";
-    try {
-      const body = (await fetcher(`https://pypi.org/pypi/${encodeURIComponent(name)}/json`)) as {
+  fetcher: Fetcher,
+  language?: string,
+): Promise<RepoHit[]> {
+  const body = (await fetcher(githubSearchUrl(query, language))) as {
+    items?: {
+      full_name: string;
+      license: { spdx_id?: string | null } | null;
+      stargazers_count: number;
+      archived: boolean;
+      pushed_at: string;
+      description: string | null;
+      html_url: string;
+    }[];
+  };
+  return (body.items ?? []).map((r) =>
+    judged({
+      fullName: r.full_name,
+      license: r.license?.spdx_id || "unknown",
+      stars: r.stargazers_count,
+      archived: r.archived,
+      pushedAt: r.pushed_at,
+      description: r.description ?? "",
+      url: r.html_url,
+    }),
+  );
+}
+
+/** A registry answered "no such project" (404): not found, unlike an outage. */
+const notFound = (err: unknown) => err instanceof Error && /^404\b/.test(err.message);
+
+/** The names a repository is published under on PyPI, most likely first. */
+const pypiNames = (repo: string) => {
+  const name = repo.toLowerCase();
+  return [...new Set([name, `python-${name}`, name.replace(/^python-|^py-/, "")])];
+};
+
+const normalisedUrl = (u: string) =>
+  u
+    .toLowerCase()
+    .replace(/^https?:\/\/(www\.)?/, "")
+    .replace(/\.git$|\/+$/g, "");
+
+/**
+ * PyPI by verified name (DS-P7-5). PyPI has no search API, so the keyword
+ * query goes to GitHub, in Python; each relevant, popular repository's name
+ * is looked up on PyPI, and a project counts only when its own links name
+ * that repository — a same-named project someone else published is not it.
+ * Only names GitHub returned for the keywords are looked up. Its stars and
+ * archived state are the repository's; its release date is PyPI's.
+ */
+export async function searchPyPI(query: string, fetcher: Fetcher): Promise<LibraryHit[]> {
+  const repos = (await searchRepos(query, fetcher, "python"))
+    .filter((r) => relevant(query, `${r.fullName} ${r.description}`) && r.stars >= MIN_STARS)
+    .slice(0, 3);
+  const found: LibraryHit[] = [];
+  for (const r of repos) {
+    const repoUrl = normalisedUrl(`github.com/${r.fullName}`);
+    for (const name of pypiNames(r.fullName.split("/")[1] ?? "")) {
+      let body: {
         info: {
           name: string;
           version: string;
-          license?: string;
-          summary?: string;
-          license_expression?: string;
+          license?: string | null;
+          summary?: string | null;
+          license_expression?: string | null;
           classifiers?: string[];
+          home_page?: string | null;
+          project_urls?: Record<string, string> | null;
         };
+        urls?: { upload_time_iso_8601?: string }[];
       };
-      const fromClassifier = body.info.classifiers
-        ?.find((c) => c.startsWith("License :: OSI Approved ::"))
-        ?.split("::")
-        .at(-1)
-        ?.trim()
-        .replace(" License", "")
-        .replace("Apache Software", "Apache-2.0")
-        .replace(/^BSD$/, "BSD-3-Clause");
-      const license =
-        body.info.license_expression || fromClassifier || body.info.license || "unknown";
-      return [
-        {
-          name: body.info.name,
-          ecosystem,
-          version: body.info.version,
-          license,
-          ...licenseVerdict(license),
-          description: body.info.summary ?? "",
-          url: `https://pypi.org/project/${body.info.name}/`,
-        },
-      ];
-    } catch {
-      return [];
+      try {
+        body = (await fetcher(`https://pypi.org/pypi/${encodeURIComponent(name)}/json`)) as never;
+      } catch (err) {
+        if (notFound(err)) continue;
+        throw err;
+      }
+      const links = [body.info.home_page ?? "", ...Object.values(body.info.project_urls ?? {})];
+      // The repository itself or a page under it, never `<repo>-extra`.
+      const linksBack = (l: string) => {
+        const u = normalisedUrl(l);
+        return u === repoUrl || (/^[/#?]/.test(u.slice(repoUrl.length)) && u.startsWith(repoUrl));
+      };
+      if (!links.some(linksBack)) continue;
+      // PEP 639's expression first; then every licence trove classifier,
+      // mapped to SPDX by the classifier's table and joined with AND (PyPI
+      // sorts them, so the first is not the one that governs); then the free
+      // `license` field, unless it holds a licence's whole text.
+      const text = body.info.license?.trim() ?? "";
+      const stated =
+        body.info.license_expression?.trim() ||
+        licenceFromTroveClassifiers(body.info.classifiers) ||
+        (text.length <= 80 ? text : "");
+      // Verified as the same project: the repository's licence when PyPI states none.
+      const license = stated || r.license;
+      const publishedAt = body.urls?.[0]?.upload_time_iso_8601;
+      found.push({
+        name: body.info.name,
+        ecosystem: "pypi",
+        version: body.info.version,
+        license,
+        ...judgeLicence(license),
+        description: body.info.summary || r.description,
+        stars: r.stars,
+        archived: r.archived,
+        ...(publishedAt ? { publishedAt } : {}),
+        url: `https://pypi.org/project/${body.info.name}/`,
+      });
+      break;
     }
   }
+  return found;
+}
+
+export async function searchLibraries(
+  query: string,
+  ecosystem: "npm" | "pypi",
+  fetcher: Fetcher,
+): Promise<LibraryHit[]> {
+  if (ecosystem === "pypi") return searchPyPI(query, fetcher);
   const search = (await fetcher(
     `https://registry.npmjs.org/-/v1/search?text=${encodeURIComponent(query)}&size=6`,
   )) as {
@@ -121,6 +263,7 @@ export async function searchLibraries(
         version: string;
         description?: string;
         license?: string;
+        date?: string;
         links?: { npm?: string };
       };
       downloads?: { weekly?: number };
@@ -133,15 +276,117 @@ export async function searchLibraries(
       ecosystem,
       version: p.version,
       license,
-      ...licenseVerdict(license),
+      ...judgeLicence(license),
       description: p.description ?? "",
       ...(downloads?.weekly ? { weeklyDownloads: downloads.weekly } : {}),
+      ...(p.date ? { publishedAt: p.date } : {}),
       url: p.links?.npm ?? `https://www.npmjs.com/package/${p.name}`,
     };
   });
 }
 
-export function formatHits(hits: LibraryHit[]): string {
+/**
+ * The survey's filters, one set for the survey and both `find_library`
+ * tools (DS-P7-4, DS-P7-9). Below these a candidate is someone's
+ * experiment, not a dependency: live searches recommended a test fork at 187
+ * downloads a week.
+ */
+export const MIN_WEEKLY_DOWNLOADS = 1000;
+export const MIN_STARS = 20;
+const TWO_YEARS_MS = 2 * 365 * 24 * 3600 * 1000;
+
+/**
+ * Popular enough to depend on: a known weekly download count at the floor;
+ * with none (or zero), at least 20 stars on its repository (DS-P7-4).
+ */
+export function popularEnough(c: { weeklyDownloads?: number; stars?: number }): boolean {
+  if (c.weeklyDownloads) return c.weeklyDownloads >= MIN_WEEKLY_DOWNLOADS;
+  return (c.stars ?? 0) >= MIN_STARS;
+}
+
+/** Maintained: not archived, and active (a release or a push) within two years. */
+export function maintained(
+  archived: boolean | undefined,
+  lastActive: string | undefined,
+  now: Date,
+): boolean {
+  if (archived) return false;
+  if (!lastActive) return true;
+  const at = Date.parse(lastActive);
+  return Number.isNaN(at) || now.getTime() - at < TWO_YEARS_MS;
+}
+
+/** What the filters left: recommended, flagged (weak copyleft), excluded and named. */
+export interface Screened<T> {
+  /** Candidates, in the search's order: relevant, popular, licence not absent. */
+  candidates: T[];
+  recommended: T[];
+  flagged: T[];
+  excluded: T[];
+}
+
+function screen<T extends LicenceJudgement>(
+  kept: readonly T[],
+  isMaintained: (c: T) => boolean,
+): Screened<T> {
+  // DS-P7-2: an absent licence is dropped silently: code nobody may use.
+  const candidates = kept.filter((c) => c.action !== "drop");
+  return {
+    candidates,
+    recommended: candidates.filter((c) => c.usable && isMaintained(c)),
+    flagged: candidates.filter((c) => c.action === "flag"),
+    excluded: candidates.filter((c) => c.action === "exclude"),
+  };
+}
+
+/**
+ * Registry results through the survey's filters: relevance to the need
+ * first (an unrelated result is not a candidate, so it is neither
+ * recommended nor "excluded for its licence"), then popularity, then each
+ * licence judged here by the classifier, then maintenance.
+ */
+export function screenLibraries(
+  need: string,
+  found: readonly LibraryCandidate[],
+  now: Date = new Date(),
+): Screened<LibraryHit> {
+  return screen(
+    found
+      .filter((l) => relevant(need, `${l.name} ${l.description}`) && popularEnough(l))
+      .map(judged),
+    (l) => maintained(l.archived, l.publishedAt, now),
+  );
+}
+
+/** GitHub results through the same filters. */
+export function screenRepos(
+  need: string,
+  found: readonly RepoCandidate[],
+  now: Date = new Date(),
+): Screened<RepoHit> {
+  return screen(
+    found
+      .filter((r) => relevant(need, `${r.fullName} ${r.description}`) && popularEnough(r))
+      .map(judged),
+    (r) => maintained(r.archived, r.pushedAt, now),
+  );
+}
+
+/**
+ * The results `find_library` shows, for Seshat and the Researcher alike:
+ * the survey's relevance, popularity, maintenance and licence filters
+ * applied to the query (DS-P7-9), each licence judged here by the
+ * classifier; weak and strong copyleft are shown as not usable, a candidate
+ * with no licence is dropped silently (DS-P7-2).
+ */
+export function formatHits(
+  query: string,
+  found: readonly LibraryCandidate[],
+  now: Date = new Date(),
+): string {
+  const s = screenLibraries(query, found, now);
+  const shown = new Set([...s.recommended, ...s.flagged, ...s.excluded]);
+  const hits = s.candidates.filter((h) => shown.has(h));
   if (hits.length === 0) return "No packages found.";
   return hits
     .map(

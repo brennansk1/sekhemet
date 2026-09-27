@@ -1,5 +1,23 @@
-import { type LibraryHit, licenseVerdict } from "../pm/libraries.js";
+import { detectGateTemplate } from "@sekhemet/gates";
+import {
+  type LibraryCandidate,
+  type LibraryHit,
+  type LicenceJudgement,
+  type RepoCandidate,
+  type RepoHit,
+  screenLibraries,
+  screenRepos,
+} from "../pm/libraries.js";
+import { builtInNeed, queryFor, relevant } from "./keywords.js";
 import type { Hit } from "./web.js";
+
+export { builtInNeed, queryFor } from "./keywords.js";
+export {
+  type RepoCandidate,
+  type RepoHit,
+  githubSearchUrl,
+  searchRepos,
+} from "../pm/libraries.js";
 
 /**
  * Reuse before rebuild: what already exists for each thing a spec asks for.
@@ -8,24 +26,14 @@ import type { Hit } from "./web.js";
  * they rewrite what a maintained, legally usable package or repository already
  * does. So before a spec becomes cards, the planner looks: the package
  * registries, GitHub, and, when the work is an algorithm rather than plumbing,
- * the literature. Only what the licence allows is recommended; what was
- * excluded is said, with the licence that excluded it; and a search that could
+ * the literature. Only what the licence allows is recommended, every licence
+ * judged by the one classifier (`classifyLicence`, P7); weak copyleft is
+ * flagged, anything else excluded is said with the licence that excluded it,
+ * and a candidate with no licence is dropped silently; a search that could
  * not run is reported as not searched, never as "nothing found".
  *
  * Only short keyword queries leave the machine, never the spec or the code.
  */
-
-export interface RepoHit {
-  fullName: string;
-  license: string;
-  usable: boolean;
-  note?: string;
-  stars: number;
-  archived: boolean;
-  pushedAt: string;
-  description: string;
-  url: string;
-}
 
 export interface ReuseFinding {
   need: string;
@@ -34,13 +42,22 @@ export interface ReuseFinding {
   papers: Hit[];
   /** Candidates dropped for their licence, as "name (licence)". */
   excluded: string[];
+  /** Weak-copyleft candidates, not recommended, named for a person to decide (DS-P7-2). */
+  flagged: string[];
   /** Sources that could not be searched (offline, rate-limited). */
   unsearched: string[];
+  /** The language itself covers this need: no package is needed, none was searched (DS-P7-6). */
+  noneNeeded?: boolean;
 }
 
+/** A project's language, as the survey searches for it (DS-P7-5). */
+export type ReuseStack = "typescript" | "python" | "rust" | "go";
+
 export interface ReuseDeps {
-  libraries: (query: string) => Promise<LibraryHit[]>;
-  repos: (query: string) => Promise<RepoHit[]>;
+  /** Registry results; the survey judges each licence itself (DS-P7-3). */
+  libraries: (query: string, ecosystem: "npm" | "pypi") => Promise<LibraryCandidate[]>;
+  /** GitHub results, in the project's language when it has one (DS-P7-5). */
+  repos: (query: string, language?: string) => Promise<RepoCandidate[]>;
   papers?: (query: string) => Promise<Hit[]>;
   /** Each query sent, for the ledger's `research/query` (design-stage DS-S8-3). */
   record?: (q: ResearchQuery) => void | Promise<void>;
@@ -49,62 +66,12 @@ export interface ReuseDeps {
 /** One query the survey sent: its source, the keywords, the names it found. */
 export interface ResearchQuery {
   source: string;
+  /** The need's keywords, nothing else (DS-S8-3). */
   query: string;
+  /** The search's language qualifier, when the project has one (DS-P7-5). */
+  language?: string;
   results: string[];
   ok: boolean;
-}
-
-type Fetcher = (url: string) => Promise<unknown>;
-
-const STOP = new Set(
-  "a an the that this it its and or of to for in on with by from my our your their which who is are be should must can will".split(
-    " ",
-  ),
-);
-/**
- * Words that say what kind of thing is built, not what it is about. Live
- * searches on "handles refunds" and "a CLI that deduplicates photos" returned
- * a streams library and a GraphQL tool, matched on exactly these.
- */
-const GENERIC = new Set(
-  "cli tool tools app apps application service services library lib program script system handles handle manages manage folder directory file files simple basic small new node typescript javascript".split(
-    " ",
-  ),
-);
-
-const stem = (w: string): string => w.slice(0, 5);
-
-/** Stems of a text's words, with hyphenated words also read joined. */
-function stems(text: string): Set<string> {
-  const lower = text.toLowerCase();
-  const words = [...lower.split(/[^a-z]+/), ...lower.replace(/-/g, "").split(/[^a-z]+/)].filter(
-    (w) => w.length > 2,
-  );
-  return new Set(words.map(stem));
-}
-
-/**
- * Does a candidate share what the need is about? At least two of the need's
- * content words (one, when it has only one), by stem, in its name or
- * description. A candidate that matched only a popular keyword is not one.
- */
-function relevant(need: string, text: string, minimum = 2): boolean {
-  const wanted = [...new Set(queryFor(need).split(" ").filter(Boolean).map(stem))];
-  if (!wanted.length) return false;
-  const have = stems(text);
-  const overlap = wanted.filter((w) => have.has(w)).length;
-  return overlap >= Math.min(minimum, wanted.length);
-}
-
-/** A short keyword query: what leaves the machine is this, not the spec. */
-export function queryFor(need: string): string {
-  return need
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, " ")
-    .split(/\s+/)
-    .filter((w) => w.length > 2 && !STOP.has(w) && !GENERIC.has(w))
-    .slice(0, 4)
-    .join(" ");
 }
 
 /** Work that is an algorithm, where the literature knows more than a registry. */
@@ -114,56 +81,66 @@ export function needsLiterature(need: string): boolean {
   );
 }
 
-/** GitHub repositories for a query, each with a licence verdict. */
-export async function searchRepos(query: string, fetcher: Fetcher): Promise<RepoHit[]> {
-  const body = (await fetcher(
-    `https://api.github.com/search/repositories?q=${encodeURIComponent(query)}&sort=stars&order=desc&per_page=6`,
-  )) as {
-    items?: {
-      full_name: string;
-      license: { spdx_id?: string | null } | null;
-      stargazers_count: number;
-      archived: boolean;
-      pushed_at: string;
-      description: string | null;
-      html_url: string;
-    }[];
-  };
-  return (body.items ?? []).map((r) => {
-    const spdx = r.license?.spdx_id;
-    const license = spdx && spdx !== "NOASSERTION" ? spdx : "unknown";
-    return {
-      fullName: r.full_name,
-      license,
-      ...licenseVerdict(license),
-      stars: r.stargazers_count,
-      archived: r.archived,
-      pushedAt: r.pushed_at,
-      description: r.description ?? "",
-      url: r.html_url,
-    };
-  });
+/** Registry and GitHub language per stack: npm for TypeScript, PyPI for Python, none for Rust and Go. */
+const SEARCH: Record<ReuseStack, { ecosystem?: "npm" | "pypi"; language?: string }> = {
+  typescript: { ecosystem: "npm" },
+  python: { ecosystem: "pypi", language: "python" },
+  rust: { language: "rust" },
+  go: { language: "go" },
+};
+
+/**
+ * The project's language for the survey: its manifests first, read by the
+ * one detector the gate templates use (`detectGateTemplate`), then the
+ * language the request named or the design stage assumed (DS-P7-5).
+ */
+export function reuseStack(repoPath: string, stated: ReuseStack): ReuseStack {
+  switch (detectGateTemplate(repoPath)) {
+    case "pnpm":
+    case "npm":
+    case "yarn":
+      return "typescript";
+    case "python":
+      return "python";
+    case "rust":
+      return "rust";
+    case "go":
+      return "go";
+    default:
+      return stated;
+  }
 }
 
-const TWO_YEARS_MS = 2 * 365 * 24 * 3600 * 1000;
 /**
- * Below these, a candidate is someone's experiment, not a dependency: live
- * searches recommended a test fork at 187 downloads a week.
+ * Look for what already exists for each need, in the project's own
+ * ecosystem (DS-P7-5), and keep what passes the one set of filters the
+ * `find_library` tools also apply (DS-P7-9): relevance, popularity, licence
+ * and maintenance. A need the language itself covers is not searched: no
+ * package is needed, and the finding says so (DS-P7-6).
  */
-const MIN_WEEKLY_DOWNLOADS = 1000;
-const MIN_STARS = 20;
-/** No licence means all rights reserved: unusable, and not worth naming. */
-const unlicensed = (license: string) => /^(?:unknown|none|unlicensed|)$/i.test(license.trim());
-
 export async function reuseSurvey(
   needs: readonly string[],
   deps: ReuseDeps,
-  options: { now?: Date; perNeed?: number } = {},
+  options: { now?: Date; perNeed?: number; stack?: ReuseStack } = {},
 ): Promise<ReuseFinding[]> {
   const now = options.now ?? new Date();
   const keep = options.perNeed ?? 3;
+  const { ecosystem, language } = SEARCH[options.stack ?? "typescript"];
   const findings: ReuseFinding[] = [];
   for (const need of needs) {
+    if (builtInNeed(need)) {
+      findings.push({
+        need,
+        libraries: [],
+        repos: [],
+        papers: [],
+        excluded: [],
+        flagged: [],
+        unsearched: [],
+        noneNeeded: true,
+      });
+      continue;
+    }
     // DS-S8-4: only the need's keywords leave the machine; a need with none
     // left sends no query at all.
     const q = queryFor(need);
@@ -174,24 +151,28 @@ export async function reuseSurvey(
       run: () => Promise<T[]>,
       name: (hit: T) => string,
     ): Promise<T[]> => {
+      const sent = { source: label, query: q, ...(language ? { language } : {}) };
       try {
         const hits = await run();
-        await deps.record?.({ source: label, query: q, results: hits.map(name), ok: true });
+        await deps.record?.({ ...sent, results: hits.map(name), ok: true });
         return hits;
       } catch {
         unsearched.push(label);
-        await deps.record?.({ source: label, query: q, results: [], ok: false });
+        await deps.record?.({ ...sent, results: [], ok: false });
         return [];
       }
     };
-    const libs = await attempt(
-      "registries",
-      () => deps.libraries(q),
-      (l) => l.name,
-    );
+    // Rust and Go have no registry search here: GitHub, in the language, only.
+    const libs = ecosystem
+      ? await attempt(
+          "registries",
+          () => deps.libraries(q, ecosystem),
+          (l) => l.name,
+        )
+      : [];
     const repos = await attempt(
       "GitHub",
-      () => deps.repos(q),
+      () => deps.repos(q, language),
       (r) => r.fullName,
     );
     const searchPapers = deps.papers;
@@ -204,34 +185,26 @@ export async function reuseSurvey(
           )
         : [];
 
-    // Relevance first: an unrelated result is not a candidate, so it is
-    // neither recommended nor "excluded for its licence".
-    const libsOn = libs.filter(
-      (l) =>
-        relevant(need, `${l.name} ${l.description}`) &&
-        (l.weeklyDownloads === undefined || l.weeklyDownloads >= MIN_WEEKLY_DOWNLOADS),
-    );
-    const reposOn = repos.filter(
-      (r) => relevant(need, `${r.fullName} ${r.description}`) && r.stars >= MIN_STARS,
-    );
+    // Every licence is judged there, by the classifier, whatever the search said.
+    const libsOn = screenLibraries(need, libs, now);
+    const reposOn = screenRepos(need, repos, now);
     const papersOn = papers.filter((p) => relevant(need, `${p.title} ${p.snippet}`, 1));
-    const excluded = [
-      ...libsOn
-        .filter((l) => !l.usable && !unlicensed(l.license))
+    // DS-P7-2: weak copyleft flagged, the rest excluded and named, absent dropped.
+    const named = (action: LicenceJudgement["action"]) => [
+      ...libsOn.candidates
+        .filter((l) => l.action === action)
         .map((l) => `${l.name} (${l.license})`),
-      ...reposOn
-        .filter((r) => !r.usable && !unlicensed(r.license))
+      ...reposOn.candidates
+        .filter((r) => r.action === action)
         .map((r) => `${r.fullName} (${r.license})`),
     ];
-    // A repository nobody maintains is a liability, not a head start.
-    const maintained = (r: RepoHit) =>
-      !r.archived && now.getTime() - Date.parse(r.pushedAt) < TWO_YEARS_MS;
     findings.push({
       need,
-      libraries: libsOn.filter((l) => l.usable).slice(0, keep),
-      repos: reposOn.filter((r) => r.usable && maintained(r)).slice(0, keep),
+      libraries: libsOn.recommended.slice(0, keep),
+      repos: reposOn.recommended.slice(0, keep),
       papers: papersOn.slice(0, keep),
-      excluded,
+      excluded: named("exclude"),
+      flagged: named("flag"),
       unsearched,
     });
   }
@@ -242,15 +215,27 @@ const libLine = (l: LibraryHit) =>
   `${l.name} (${l.license}${l.weeklyDownloads ? `, ${l.weeklyDownloads.toLocaleString("en-US")}/week` : ""}) ${l.url}`;
 const repoLine = (r: RepoHit) => `${r.fullName} (${r.license}, ${r.stars}★) ${r.url}`;
 
+/** DS-P7-6, said to a person: the language covers it. */
+export const NONE_NEEDED =
+  "no package is needed: the language's standard library covers this, so nothing was searched.";
+
 /** The brief's Prior art section, one entry per need. */
 export function priorArtLines(findings: readonly ReuseFinding[]): string[] {
   const lines: string[] = [];
   for (const f of findings) {
     lines.push(`- **${f.need}**`);
+    if (f.noneNeeded) {
+      lines.push(`  - ${NONE_NEEDED}`);
+      continue;
+    }
     if (f.libraries.length) lines.push(`  - packages: ${f.libraries.map(libLine).join("; ")}`);
     if (f.repos.length) lines.push(`  - repositories: ${f.repos.map(repoLine).join("; ")}`);
     if (f.papers.length)
       lines.push(`  - literature: ${f.papers.map((p) => `${p.title} ${p.url}`).join("; ")}`);
+    if (f.flagged.length)
+      lines.push(
+        `  - weak copyleft, check with the team before depending on it: ${f.flagged.join(", ")}`,
+      );
     if (f.excluded.length) lines.push(`  - excluded for their licence: ${f.excluded.join(", ")}`);
     for (const s of f.unsearched) lines.push(`  - ${s}: not searched (unreachable)`);
     if (!f.libraries.length && !f.repos.length && !f.papers.length && !f.unsearched.length) {
@@ -277,4 +262,51 @@ export function dossierNote(f: ReuseFinding): string | undefined {
 /** Put what was found into the brief's Prior art section. */
 export function withPriorArt(brief: string, lines: readonly string[]): string {
   return brief.replace(/## Prior art\n[\s\S]*?(?=\n## |$)/, `## Prior art\n${lines.join("\n")}\n`);
+}
+
+/** Add lines at the end of the brief's Prior art section, keeping what is there. */
+export function appendPriorArt(brief: string, lines: readonly string[]): string {
+  return brief.replace(
+    /## Prior art\n([\s\S]*?)\n*(?=\n## |$)/,
+    (_m, body: string) =>
+      `## Prior art\n${[body.replace(/\n+$/, ""), ...lines].filter(Boolean).join("\n")}\n`,
+  );
+}
+
+/** The Researcher's answer to the brief's deep question (DS-P7-10). */
+export interface DeepAnswer {
+  answer: string;
+  sources: string[];
+  grounded: boolean;
+}
+
+/**
+ * The brief's deep question: the Researcher's to run when it may (it is
+ * configured, research is allowed and no card is running), or why it may not.
+ */
+export type DeepPriorArt = { run: (question: string) => Promise<DeepAnswer> } | { skipped: string };
+
+/**
+ * Thrown by a deep question's `run` that finds, when it is about to load
+ * the Researcher, that it may not run after all (a card started while the
+ * plan ran): the brief says it did not run and why, not that it failed.
+ */
+export class DeepQuestionSkipped extends Error {}
+
+/**
+ * The Prior art lines for the deep question (DS-P7-10): one cited answer, or
+ * that it did not run and why. An answer that cites nothing is not written
+ * as one.
+ */
+export function deepPriorArtLines(outcome: { answer: DeepAnswer } | { skipped: string }): string[] {
+  if ("skipped" in outcome) return [`- The deep question did not run: ${outcome.skipped}.`];
+  const a = outcome.answer;
+  if (!a.grounded || a.sources.length === 0) {
+    return ["- The deep question ran but its answer cited no source, so it is not written here."];
+  }
+  const text = a.answer.replace(/\s+/g, " ").trim().slice(0, 1500);
+  return [
+    `- **The Researcher's deep answer**: ${text}`,
+    `  - sources: ${a.sources.map((s, i) => `[${i + 1}] ${s}`).join("; ")}`,
+  ];
 }

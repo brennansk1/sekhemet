@@ -161,3 +161,13 @@ describe("NEW-security-8: the one-time research question", () => {
     expect(check.detail).toMatch(/research = "yes" is ignored/);
   });
 });
+
+describe("DS-S8-8: a yes covers exactly the hosts it named", () => {
+  it("a first yes records the hosts the question named; doctor names a host an older yes did not", () => {
+    recordResearchAnswer("yes");
+    expect(networkConfigs(repo).user.researchHosts).toContain("pypi.org");
+    expect(researchConsentCheck(repo).detail).not.toMatch(/await/);
+    writeFileSync(userConfig, '[network]\nresearch = "yes"\n');
+    expect(researchConsentCheck(repo).detail).toMatch(/pypi\.org awaits a yes/);
+  });
+});

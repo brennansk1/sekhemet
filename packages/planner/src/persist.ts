@@ -152,6 +152,8 @@ export interface PersistedStory {
   points: number;
   /** Its Zone 3 content as measured at persist: INVEST *Small*'s number (PM-14). */
   zone3Tokens: number;
+  /** The spec capability it was built for (`resolveTraces`), whatever its title says (DS-P7-8). */
+  capability?: string;
 }
 
 export interface PersistPlanResult {
@@ -920,6 +922,7 @@ export async function persistPlan(
       }
     }
     const cardEstimate = estimate(estimator, story);
+    const builtFor = traces.capabilityByStory.get(id);
     result.created.push({
       id,
       title: story.card.title,
@@ -929,6 +932,7 @@ export async function persistPlan(
       estimate: cardEstimate,
       points: points.points,
       zone3Tokens,
+      ...(builtFor ? { capability: builtFor } : {}),
     });
     if (points.points >= SPLIT_POINTS) {
       result.proposedSplits.push({ id, title: story.card.title, points: points.points });

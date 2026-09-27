@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 51 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 52 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,48 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 52 — 2026-09-27 (B4.5 done: the reuse survey by capability, with one SPDX licence classifier)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver. One budget-sized workflow (setup, two builders one at a time, sweep, one independent review, fixer; 1.13M tokens), then one small agent for two lead rulings. It ran beside live model runs, with single-worker tests.
+
+- **Approved downloads (the owner's yes, 2026-09-27):**
+  - `spdx-correct` 3.2.0, `spdx-expression-parse` 5.0.0 and `spdx-satisfies` 6.0.0, exact-pinned in `@sekhemet/gates`.
+  - Transitive: `spdx-license-ids`, `spdx-exceptions` (CC-BY-3.0), `spdx-compare`, `spdx-ranges` and `array-find-index`, all in PROVENANCE and NOTICE.
+  - A vendored ScanCode LicenseDB category snapshot (CC-BY-4.0, nexB/AboutCode attributed, hash-recorded, rebuilt offline by `vendor.mjs`).
+- **One classifier** (`classifyLicence`, packages/gates/src/licence.ts, 49 tests):
+  - It gives permissive / weak copyleft / strong copyleft / proprietary / unknown / absent, with an action (recommend, flag, exclude, drop) and reasons.
+  - It handles AND, OR and WITH; linking exceptions only; PyPI trove classifiers; and "Apache 2.0" corrected, with the correction stated.
+  - It is the only licence judgment left in the product: the licence gate, the reuse survey, Seshat's and the Researcher's `find_library`, both GitHub search paths, and the model page. A search test finds no other licence table.
+- **The survey by capability:**
+  - needs derived by capability, and Python means PyPI by verified name plus GitHub, never npm;
+  - popularity and maintenance floors;
+  - "a calculator" means none needed;
+  - findings attach to the card built for the need, even after a model rephrases titles;
+  - the brief's deep Prior art uses a narrowed Researcher tool set (keywords only);
+  - the research-consent rules DS-S8-1..7 checked and completed;
+  - a labelled set of 40 needs and the precision@1 and correct-silence runner.
+- **Review:** 7 majors, all fixed:
+  - two SPDX parser versions disagreed on lowercase operators;
+  - any exception softened strong copyleft;
+  - PyPI trove parsing;
+  - correct silence was 100% by construction;
+  - the baseline path;
+  - the keywords-only claim for the deep question;
+  - `find_library` could reach the network unguarded.
+
+  Minors: attribution, PyPI name lookups recorded, and a runner-lease re-check.
+- **Lead rulings:**
+  - A research yes covers exactly the hosts it named (`[network] research_hosts`, DS-S8-8). An older yes does not cover pypi.org; the next new project's `plan` asks once for the uncovered hosts, and a no is remembered.
+  - The SPDX `JSON` licence ("Good, not Evil"; not OSI-approved) is excluded and named. Beerware, CC-BY-4.0 and WTFPL stay permissive.
+  - The DS-S8-3 amendment is accepted: a language qualifier is allowed, and name lookups are recorded.
+  - Seshat's `find_library` is wired to the policy-guarded registry search.
+- **Gate:** `pnpm gate` on the committed tree: `tsc -b` and `biome check .` clean; vitest 568 files, 4269 passed, 37 skipped, exit 0 (one worker, beside the live Nail-MTP suite). The gate found two host-refusal messages that Seshat reads; they moved into the research copy module.
+- **Where the cards stop:**
+  - B4.5 is done.
+  - **Partial, marked so:** DS-P7-7's live measurement and its pre-change baseline, which wait on the owner's research consent (the baseline is to be recorded from a d377b9d snapshot); and a failure-mode card getting the first capability's reuse note (spidr.ts, minor).
+  - **Live testing (Entries 49–51):** `thinking-all` round 1 of the baseline scored 21/30 (`ref` 20, `thinking-surgical` 22; single trials). The Nail-MTP full suite on the current code is running.
+  - **Next:** B4.6, the professional board.
 
 ### Entry 51 — 2026-09-27 (the current code's first live cards; a scoring fix)
 

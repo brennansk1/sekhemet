@@ -127,16 +127,28 @@ export function reviewLimit(cfg: ResolvedConfig["config"]): number | undefined {
 }
 
 /**
+ * A `[network]` table as read: the policy's keys, and the hosts a research
+ * yes covers (design-stage DS-S8-8): `research_hosts`, the hosts the question
+ * the person answered yes to named, and `research_hosts_declined`, the hosts
+ * a later question named and the person said no to. Only the user's file's
+ * are read (a project may not widen research).
+ */
+export type NetworkTable = NetworkConfig & {
+  researchHosts?: string[];
+  researchHostsDeclined?: string[];
+};
+
+/**
  * The user's and the project's `[network]` tables, kept apart so the policy
  * can let the project only narrow (security item 28). Keys: `mode`,
  * `fetch_allow` (`allow`, the older name, is read as the same key),
- * `fetch_deny`, `research`.
+ * `fetch_deny`, `research`, `research_hosts`, `research_hosts_declined`.
  */
 export function networkConfigs(
   repoPath: string,
   userConfigPath = process.env.SEKHEMET_USER_CONFIG ?? join(userDir(), "config.toml"),
-): { user: NetworkConfig; project: NetworkConfig } {
-  const read = (path: string): NetworkConfig => {
+): { user: NetworkTable; project: NetworkTable } {
+  const read = (path: string): NetworkTable => {
     if (!existsSync(path)) return {};
     try {
       const t = (parseToml(readFileSync(path, "utf8")).network ?? {}) as TomlTable;
@@ -145,11 +157,15 @@ export function networkConfigs(
       const mode = t.mode;
       const allow = list(t.fetch_allow) ?? list(t.allow);
       const deny = list(t.fetch_deny);
+      const hosts = list(t.research_hosts)?.map((h) => h.toLowerCase());
+      const declined = list(t.research_hosts_declined)?.map((h) => h.toLowerCase());
       return {
         ...(mode === "offline" || mode === "allowlist" || mode === "open" ? { mode } : {}),
         ...(allow ? { fetchAllow: allow } : {}),
         ...(deny ? { fetchDeny: deny } : {}),
         ...(t.research === "yes" || t.research === "no" ? { research: t.research } : {}),
+        ...(hosts ? { researchHosts: hosts } : {}),
+        ...(declined ? { researchHostsDeclined: declined } : {}),
       };
     } catch {
       // An unreadable file widens nothing.

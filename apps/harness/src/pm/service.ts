@@ -12,6 +12,7 @@ import { unenforcedInvariants } from "../architecture_gate.js";
 import { LearningStore } from "../learning/store.js";
 import { type SwapLedger, sharedQueue } from "../model_access.js";
 import { projectStoryMap } from "../project_done.js";
+import { registrySearch } from "../research/plan_research.js";
 import { takeoverPromptContext } from "../takeover_brief.js";
 import {
   type PmSnapshot,
@@ -706,7 +707,9 @@ async function answerFor(
       history,
       queued,
       summary,
-      undefined,
+      // DS-P7-9: Seshat's find_library searches through the research policy,
+      // or nothing when research is not allowed (B4.5).
+      registrySearch(deps.repoPath, deps.pmStore.log),
       deps.researcher,
       seshatThreadId(deps.repoPath),
       // PM-P2-1: a new project's proposal group, planned by the held model

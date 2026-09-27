@@ -11,6 +11,7 @@ import {
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { homedir, totalmem } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import { classifyLicence } from "@sekhemet/gates";
 import { type CardStore, type EventLog, escapeTomlString, parseToml } from "@sekhemet/kernel";
 import {
   AssignmentRefusal,
@@ -308,6 +309,18 @@ interface ActiveTask {
 }
 
 /** The Configuration API's model section; `handle` answers a request or returns false. */
+/**
+ * The model page's licence warning: a model whose licence is not permissive,
+ * judged by the one licence classifier (design-stage P7), asks the person to
+ * check it allows their use. A model file that names no licence gets none.
+ */
+export function modelLicenceWarning(license: string | undefined): string | undefined {
+  if (!license) return undefined;
+  return classifyLicence(license).usable
+    ? undefined
+    : `Its licence is ${license}: check it allows your use.`;
+}
+
 export function createConfigApi(deps: ConfigApiDeps) {
   const env = deps.env ?? process.env;
   const cfgPath = deps.userConfigPath ?? userConfigPath();
@@ -840,9 +853,8 @@ export function createConfigApi(deps: ConfigApiDeps) {
         warnings.push(`Not qualified for the ${r} on this machine yet.`);
       }
     }
-    if (m.metadata.license && !/apache|mit|bsd/i.test(m.metadata.license)) {
-      warnings.push(`Its licence is ${m.metadata.license}: check it allows your use.`);
-    }
+    const licence = modelLicenceWarning(m.metadata.license);
+    if (licence) warnings.push(licence);
     const entry = registryEntryFor(m);
     return {
       model: {

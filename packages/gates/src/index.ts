@@ -28,3 +28,4 @@ export * from "./index/source_index.js";
 export * from "./index/typescript.js";
 export * from "./baseline.js";
 export * from "./workspace.js";
+export * from "./licence.js";

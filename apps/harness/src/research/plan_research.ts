@@ -1,9 +1,32 @@
 import type { EventLog } from "@sekhemet/kernel";
+import type { CardStore } from "@sekhemet/kernel";
 import { mergeNetworkConfigs } from "@sekhemet/sandbox";
 import { networkConfigs } from "../config_apply.js";
-import { searchLibraries } from "../pm/libraries.js";
-import { askResearchOnce, researchFetch } from "../research_consent.js";
-import { type ReuseDeps, searchRepos } from "./reuse.js";
+import type { NetworkTable } from "../config_apply.js";
+import { sharedModelAccess } from "../model_access.js";
+import { type Fetcher, type LibrarySearch, searchLibraries } from "../pm/libraries.js";
+import {
+  RESEARCH_HOSTS,
+  ResearchHostAwaitsYes,
+  askResearchOnce,
+  awaitingResearchHosts,
+  recordResearchHostsAnswer,
+  researchFetch,
+  researchHostRefusal,
+  researchPolicy,
+  unaskedResearchHosts,
+} from "../research_consent.js";
+import { runnerLease } from "../runner_lease.js";
+import type { ResearchDeps } from "./researcher.js";
+import {
+  type DeepAnswer,
+  type DeepPriorArt,
+  DeepQuestionSkipped,
+  type ResearchQuery,
+  type ReuseDeps,
+  searchRepos,
+} from "./reuse.js";
+import { ResearchService, researchSources, researcherModel } from "./service.js";
 import { searchPapers } from "./web.js";
 
 /**
@@ -14,13 +37,7 @@ import { searchPapers } from "./web.js";
  */
 
 /** Every host the plan's survey may reach; the question names each one (DS-S8-2). */
-export const RESEARCH_HOSTS = [
-  "registry.npmjs.org",
-  "api.github.com",
-  "huggingface.co",
-  "export.arxiv.org",
-  "api.openalex.org",
-] as const;
+export { RESEARCH_HOSTS };
 
 type Fetch = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
@@ -41,6 +58,42 @@ export interface PlanResearchOptions {
 const NOT_LOOKED = "Did not look for existing packages, repositories or papers";
 
 /**
+ * JSON over a fetch, one request per URL: a Python need's GitHub search
+ * serves both its PyPI lookup and its repositories (DS-P7-5). A failure is
+ * not kept, so a later need may try again.
+ */
+function jsonOnce(
+  f: Fetch,
+  /** Told of each request actually sent, once, with its status and body. */
+  sentOne?: (url: string, status: number | undefined, body: unknown) => Promise<void>,
+): Fetcher {
+  const sent = new Map<string, Promise<unknown>>();
+  return (url) => {
+    const known = sent.get(url);
+    if (known) return known;
+    const request = (async () => {
+      let res: Response;
+      try {
+        res = await f(url, {
+          headers: { "User-Agent": "sekhemet", Accept: "application/json" },
+          signal: AbortSignal.timeout(8000),
+        });
+      } catch (err) {
+        await sentOne?.(url, undefined, undefined);
+        throw err;
+      }
+      const body = res.ok ? await res.json() : undefined;
+      await sentOne?.(url, res.status, body);
+      if (!res.ok) throw new Error(`${res.status} from ${new URL(url).host}`);
+      return body;
+    })();
+    sent.set(url, request);
+    request.catch(() => sent.delete(url));
+    return request;
+  };
+}
+
+/**
  * The survey's sources for this plan, or undefined — with the reason printed —
  * when it must not look (DS-S8-1, -2, -6). No request is made here.
  */
@@ -58,6 +111,7 @@ export async function planResearch(o: PlanResearchOptions): Promise<ReuseDeps | 
   if (!allowed && n.user.research === undefined && o.newProject && o.ask) {
     const ask = o.ask;
     const answer = await askResearchOnce({
+      hosts: RESEARCH_HOSTS,
       ask: () =>
         ask(
           `Look for existing packages, repositories and papers before planning? A yes lets Sekhemet's own research reach ${RESEARCH_HOSTS.join(", ")} (short keyword queries only, each logged); card commands still get no network. [y/N] `,
@@ -71,29 +125,213 @@ export async function planResearch(o: PlanResearchOptions): Promise<ReuseDeps | 
     );
     return undefined;
   }
-  const f: Fetch = o.fetchImpl ?? researchFetch(o.repoPath, o.log);
-  const json = async (url: string): Promise<unknown> => {
-    const res = await f(url, {
-      headers: { "User-Agent": "sekhemet", Accept: "application/json" },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!res.ok) throw new Error(`${res.status} from ${new URL(url).host}`);
-    return res.json();
+  // DS-S8-8: a yes covers exactly the hosts its question named. A host added
+  // since is asked about once, on a new project's plan with a terminal, and
+  // is not reached until a yes names it.
+  const unasked = unaskedResearchHosts(networkConfigs(o.repoPath).user);
+  if (unasked.length && o.newProject && o.ask) {
+    const yes = await o.ask(
+      `Research may also reach ${unasked.join(", ")}, which your earlier yes to research did not name (short keyword queries only, each logged; card commands still get no network). Allow ${unasked.length === 1 ? "it" : "them"} too? [y/N] `,
+    );
+    recordResearchHostsAnswer(yes, unasked);
+  }
+  const user = networkConfigs(o.repoPath).user;
+  const awaiting = awaitingResearchHosts(user);
+  if (awaiting.length) {
+    const declined = awaiting.filter((h) => user.researchHostsDeclined?.includes(h));
+    const waiting = awaiting.filter((h) => !declined.includes(h));
+    if (waiting.length)
+      o.print(
+        `Research does not reach ${waiting.join(", ")}: ${waiting.length === 1 ? "it awaits" : "they await"} a yes (the research question you answered did not name ${waiting.length === 1 ? "it" : "them"}; a new project's plan in a terminal asks, or add ${waiting.length === 1 ? "it" : "them"} to [network] research_hosts).`,
+      );
+    if (declined.length)
+      o.print(
+        `Research does not reach ${declined.join(", ")}: you said no to ${declined.length === 1 ? "it" : "them"} ([network] research_hosts_declined).`,
+      );
+  }
+  const f: Fetch = o.fetchImpl ? coveredOnly(o.fetchImpl, user) : researchFetch(o.repoPath, o.log);
+  // DS-S8-3: the keywords and the names found are free text: the private part.
+  const record = async (q: ResearchQuery) => {
+    await o.log
+      .append({
+        actor: "harness",
+        type: "research/query",
+        payload: { source: q.source, ok: q.ok, count: q.results.length },
+        private: {
+          query: q.query,
+          ...(q.language ? { language: q.language } : {}),
+          results: q.results,
+        },
+      })
+      .catch(() => undefined);
   };
+  // DS-S8-3: a PyPI project looked up by a name GitHub returned is a query
+  // sent too: recorded with the name, and the project found (none on a 404).
+  const json = jsonOnce(f, async (url, status, body) => {
+    const name = PYPI_PROJECT.exec(url)?.[1];
+    if (!name) return;
+    const found = (body as { info?: { name?: string } } | undefined)?.info?.name;
+    await record({
+      source: "pypi-name",
+      query: decodeURIComponent(name),
+      results: found ? [found] : [],
+      ok: status !== undefined && (status < 400 || status === 404),
+    });
+  });
   return {
-    libraries: (q) => searchLibraries(q, "npm", json),
-    repos: (q) => searchRepos(q, json),
+    // DS-P7-5: the project's registry — npm, or PyPI by verified name — never the other.
+    libraries: registryCovered(
+      (q, ecosystem) => searchLibraries(q, ecosystem ?? "npm", json),
+      user,
+    ),
+    repos: (q, language) => searchRepos(q, json, language),
     papers: (q) => searchPapers(q, { fetch: (u, i) => f(u, i) }),
-    // DS-S8-3: the keywords and the names found are free text: the private part.
-    record: async (q) => {
-      await o.log
-        .append({
-          actor: "harness",
-          type: "research/query",
-          payload: { source: q.source, ok: q.ok, count: q.results.length },
-          private: { query: q.query, results: q.results },
-        })
-        .catch(() => undefined);
+    record,
+  };
+}
+
+/**
+ * The registry search for Seshat's `find_library`: through the research
+ * policy like the survey's (fetch_allow, fetch_deny, each request a
+ * `harness/egress` event), or undefined — nothing is searched and the tool
+ * says so — when the person has not allowed research or the project turned
+ * it off (DS-S8-1, DS-S8-6).
+ */
+export function registrySearch(repoPath: string, log: EventLog): LibrarySearch | undefined {
+  const { policy, project, user } = researchPolicy(repoPath);
+  if (policy.research !== "yes" || project.research === "no") return undefined;
+  const json = jsonOnce(researchFetch(repoPath, log));
+  return registryCovered((q, ecosystem) => searchLibraries(q, ecosystem ?? "npm", json), user);
+}
+
+/**
+ * A fetch that refuses, before sending, a research host the person's yes did
+ * not name (DS-S8-8): the check `researchFetch` makes, for a fetch handed in.
+ */
+function coveredOnly(f: Fetch, user: NetworkTable): Fetch {
+  return async (input, init) => {
+    const host = new URL(String(input)).hostname;
+    const reason = researchHostRefusal(host, user);
+    if (reason) throw new ResearchHostAwaitsYes(host, reason);
+    return f(input, init);
+  };
+}
+
+/**
+ * A registry search refused, before any request, when the yes did not name
+ * its registry (DS-S8-8): a PyPI search's GitHub query serves only its PyPI
+ * lookup, so nothing is sent for it.
+ */
+function registryCovered(search: LibrarySearch, user: NetworkTable): LibrarySearch {
+  return (q, ecosystem) => {
+    const host = (ecosystem ?? "npm") === "pypi" ? "pypi.org" : "registry.npmjs.org";
+    const reason = researchHostRefusal(host, user);
+    return reason ? Promise.reject(new ResearchHostAwaitsYes(host, reason)) : search(q, ecosystem);
+  };
+}
+
+const PYPI_PROJECT = /^https:\/\/pypi\.org\/pypi\/([^/]+)\/json$/;
+
+/**
+ * Whether the brief's deep question may run (DS-P7-10), and why not when it
+ * may not: `plan` is offline, research is not allowed, no Researcher is
+ * configured, or a card is running — the Researcher is a second large model
+ * and would compete with the Worker for this machine's memory. Checked when
+ * `plan` starts, and again just before the Researcher loads; nothing is
+ * loaded here.
+ */
+export function deepPriorArtFor(o: {
+  repoPath: string;
+  /** The survey may look (`planResearch` returned its sources). */
+  allowed: boolean;
+  offline: boolean;
+  /** The Researcher's model (`--researcher`, the assignment, or SEKHEMET_RESEARCHER). */
+  researcher: string | undefined;
+  /** Asks the Researcher; the product loads it once, asks, and unloads it. */
+  ask: (question: string) => Promise<DeepAnswer>;
+}): DeepPriorArt {
+  if (o.offline) return { skipped: "plan ran offline (--offline or SEKHEMET_OFFLINE)" };
+  if (!o.allowed) return { skipped: "research is off for this plan, so nothing was looked up" };
+  if (!o.researcher)
+    return {
+      skipped:
+        "no Researcher is configured (name one with --researcher or SEKHEMET_RESEARCHER, or assign one with sekhemet models assign researcher <model>)",
+    };
+  const busy = () => {
+    const holder = runnerLease(o.repoPath);
+    if (!holder) return undefined;
+    const what = holder.cardId
+      ? `card ${holder.cardId} is running`
+      : `a ${holder.kind ?? "run"} holds the machine`;
+    return `${what} (pid ${holder.pid}), and the Researcher would compete with it for memory; plan again when it ends`;
+  };
+  const now = busy();
+  if (now) return { skipped: now };
+  // Planning can take minutes: a card started meanwhile is caught here,
+  // just before the Researcher would load beside it.
+  return {
+    run: async (question) => {
+      const later = busy();
+      if (later) throw new DeepQuestionSkipped(later);
+      return o.ask(question);
     },
+  };
+}
+
+/**
+ * The Researcher's tools for the brief's deep question: the registries
+ * through the research policy, and nothing that reads this repository. The
+ * question is built from the needs' keywords only, and without the
+ * repository tools the model has nothing of the repository to put in a
+ * query (design-stage S8).
+ */
+export function deepQuestionDeps(o: {
+  repoPath: string;
+  fetchJson: Fetcher;
+}): Pick<ResearchDeps, "repoPath" | "fetchJson" | "libraries" | "repository"> {
+  return {
+    repoPath: o.repoPath,
+    fetchJson: o.fetchJson,
+    libraries: registryCovered(
+      (q, ecosystem) => searchLibraries(q, ecosystem ?? "npm", o.fetchJson),
+      networkConfigs(o.repoPath).user,
+    ),
+    repository: false,
+  };
+}
+
+/**
+ * The Researcher for the brief's deep question (DS-P7-10): loaded once,
+ * asked once at the deep effort, unloaded. Its registry tools fetch through
+ * the research policy like the survey's (fetch_allow, fetch_deny, each
+ * request logged as `harness/egress`); its web is the project's research
+ * web access. The caller releases the Planner's model first.
+ */
+export function planResearcher(o: {
+  repoPath: string;
+  log: EventLog;
+  cardStore?: CardStore;
+  model: string;
+}): (question: string) => Promise<DeepAnswer> {
+  return async (question) => {
+    const { web } = await researchSources(o.repoPath, { log: o.log });
+    const model = researcherModel(o.model, sharedModelAccess(), o.log);
+    const service = new ResearchService({
+      repoPath: o.repoPath,
+      web,
+      log: o.log,
+      ...(o.cardStore ? { cardStore: o.cardStore } : {}),
+      model: model.acquire,
+      tools: deepQuestionDeps({
+        repoPath: o.repoPath,
+        fetchJson: jsonOnce(researchFetch(o.repoPath, o.log)),
+      }),
+    });
+    try {
+      const r = await service.ask(question, { deep: true });
+      return { answer: r.answer, sources: r.sources, grounded: r.grounded };
+    } finally {
+      await model.release().catch(() => undefined);
+    }
   };
 }

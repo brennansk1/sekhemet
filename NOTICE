@@ -19,3 +19,13 @@ adapted from FrontierAgent (https://github.com/ApodexAI/FrontierAgent,
 Apache License 2.0, Copyright Apodex AI): apodex/prompts_base.py,
 workflows/agent_team/prompts.py and plugins/tools/*_aligned.py. See
 apps/harness/src/research/apodex.ts.
+
+The licence classifier (packages/gates/src/licence.ts) bundles licence
+categories from the ScanCode LicenseDB, Copyright (c) nexB Inc. and others
+(AboutCode), https://scancode-licensedb.aboutcode.org/, licensed under the
+Creative Commons Attribution 4.0 International licence (CC-BY-4.0,
+https://creativecommons.org/licenses/by/4.0/). Only some fields were kept
+and entries were filtered; see packages/gates/data/scancode-licensedb/README.md.
+It depends on spdx-exceptions (CC-BY-3.0) and spdx-ranges (MIT AND
+CC-BY-3.0), data from the SPDX License List, Copyright The Linux
+Foundation, https://spdx.org/licenses/, packaged by Kyle E. Mitchell.

@@ -222,6 +222,7 @@ export const KNOWN_FLAGS: ReadonlySet<string> = new Set([
   "--researcher",
   "--restart",
   "--restricted",
+  "--reuse-eval",
   "--review",
   "--reviewer",
   "--root",

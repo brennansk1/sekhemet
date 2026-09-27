@@ -155,10 +155,12 @@ review_minutes_per_day = 60   # human review capacity; derives the Review WIP li
 blocking_checks = []          # external CI checks that count at Review, at the card branch's head; the rest are advisory (kernel rule 37, K-N8-4)
 
 [network]
-mode = "offline"           # "offline" | "allowlist" | "open" — card commands and harness requests other than research
-research = "ask"           # "ask" | "yes" | "no" — the Researcher's own requests; set by the first-project question (O16); a yes stays inside fetch_allow when it is non-empty (item 24)
-fetch_allow = []           # hosts an outbound request may reach (item 24)
-fetch_deny = []            # hosts never reached, whatever fetch_allow or mode says
+mode = "offline"             # "offline" | "allowlist" | "open" — card commands and harness requests other than research
+research = "ask"             # "ask" | "yes" | "no" — the Researcher's own requests; set by the first-project question (O16); a yes stays inside fetch_allow when it is non-empty (item 24)
+research_hosts = []          # the research hosts the question a yes answered named; written with the yes (design-stage DS-S8-8)
+research_hosts_declined = [] # research hosts a later question named and the person refused; not asked again
+fetch_allow = []             # hosts an outbound request may reach (item 24)
+fetch_deny = []              # hosts never reached, whatever fetch_allow or mode says
 
 [machine]
 reserved_hours = "08:00-18:00 Mon-Fri"   # the person's hours; unattended runs go outside them

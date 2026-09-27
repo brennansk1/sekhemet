@@ -93,8 +93,10 @@ describe("planning looks for what already exists (reuse before rebuild)", () => 
                     ecosystem: "npm",
                     version: "6.0.0",
                     license: "MIT-0",
-                    usable: true,
                     description: "Send emails with invoices attached",
+                    // DS-P7-4: a package with no download count and no stars is
+                    // not recommended; nodemailer's registry entry has both.
+                    weeklyDownloads: 5_000_000,
                     url: "https://www.npmjs.com/package/nodemailer",
                   },
                 ]

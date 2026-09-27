@@ -168,7 +168,7 @@ import { QueuedReviews } from "./queued_reviews.js";
 import { diffTrajectories, formatDiff, formatTrajectory, trajectories } from "./replay.js";
 import { isResearchCard, runResearchCard } from "./research/cards.js";
 import { CRAWL4AI_CREDIT, runResearchCommand } from "./research/cli.js";
-import { planResearch } from "./research/plan_research.js";
+import { deepPriorArtFor, planResearch, planResearcher } from "./research/plan_research.js";
 import { type FailingCard, type RepairResearch, researchBeforeRepair } from "./research/repair.js";
 import { ResearchService, researchSources } from "./research/service.js";
 import { oneShotResearcher } from "./research/service.js";
@@ -1357,7 +1357,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
   }
 
   if (config.command === "plan") {
-    // `sekhemet plan "<spec>" [--planner <model>|none]`: SPIDR against the real
+    // `sekhemet plan "<spec>" [--planner <model>|none] [--researcher <model>]`: SPIDR against the real
     // codebase map, persisted with the whole contract, INVEST enforced and
     // the batched decision parked (wave2.ts planCommand).
     const spec = config.targetArg || "New feature specification";
@@ -1421,6 +1421,28 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
       print: (l) => console.log(l),
       ...(process.stdin.isTTY ? { ask: askYesNo } : {}),
     });
+    // DS-P7-10: at the brief level, one deep question to the Researcher —
+    // when research is allowed, a Researcher is configured and no card is
+    // running — asked after the plan, with the Planner's model released
+    // first, so the two never share memory; otherwise the brief says why not.
+    const researcherName =
+      roleModelName("researcher", flagged("--researcher"), { registry }) ??
+      process.env.SEKHEMET_RESEARCHER;
+    const deep = deepPriorArtFor({
+      repoPath: config.repoPath,
+      allowed: research !== undefined,
+      offline,
+      researcher: researcherName,
+      ask: async (question) => {
+        await planAccess?.release("plan").catch(() => undefined);
+        return planResearcher({
+          repoPath: config.repoPath,
+          log,
+          cardStore,
+          model: researcherName as string,
+        })(question);
+      },
+    });
     // EXT-20: the servers the person approved offer their tools to the
     // Planner while it sketches, within the prompt budget.
     const mcpConfig = sketcher ? loadMcpConfig(config.repoPath) : {};
@@ -1435,6 +1457,7 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
         ...(sketcher ? { sketcher } : {}),
         ...(plannerTools ? { plannerTools } : {}),
         ...(research ? { research } : {}),
+        deep,
         // DS-P14-1: the depth offer is answered only by a person at a terminal.
         ...(process.stdin.isTTY ? { ask: askLine } : {}),
         ...(offline ? { offline } : {}),

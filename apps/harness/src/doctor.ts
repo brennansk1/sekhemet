@@ -20,6 +20,7 @@ import { toolProbeOptions } from "./init.js";
 import { pendingM0InRepo } from "./m0_path.js";
 import { checkRegisters } from "./registers.js";
 import { researchDoctorLines } from "./research_bakeoff.js";
+import { awaitingResearchHosts } from "./research_consent.js";
 import { readMoveRecord, userDir } from "./user_dir.js";
 import { hookEngineFor } from "./user_hooks.js";
 import { playbookDoctorCheck } from "./wave2.js";
@@ -349,11 +350,13 @@ export function researchConsentCheck(repoPath: string): DiagnosticCheck {
     );
   }
   const effective = n.user.research === "yes" && n.project.research !== "no" ? "yes" : "no";
+  // DS-S8-8: a yes covers exactly the hosts its question named.
+  const awaiting = awaitingResearchHosts(n.user);
   return check(
     "Research",
     "pass",
     effective === "yes"
-      ? "research may use the network, through the network policy"
+      ? `research may use the network, through the network policy${awaiting.length ? `; ${awaiting.join(", ")} ${awaiting.length === 1 ? "awaits" : "await"} a yes (not named by the question you answered; not reached)` : ""}`
       : "research stays offline",
   );
 }

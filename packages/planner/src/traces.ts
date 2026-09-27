@@ -51,6 +51,12 @@ export interface TraceResolution {
   byStory: Map<string, string[]>;
   /** Requirements derived from the spec in this plan. */
   derived: string[];
+  /**
+   * The spec capability each story was built for — sliced from, or placed
+   * on — whatever its title says: the need the design stage's reuse
+   * findings follow to the card (design-stage DS-P7-8).
+   */
+  capabilityByStory: Map<string, string>;
 }
 
 /**
@@ -99,13 +105,8 @@ export async function resolveTraces(
   };
 
   const byStory = new Map<string, string[]>();
+  const capabilityByStory = new Map<string, string>();
   for (const story of input.stories) {
-    // A model may name the requirement ids it proves: those that exist count.
-    const named = (story.requirementIds ?? []).filter((id) => pool.some((r) => r.id === id));
-    if (named.length > 0) {
-      byStory.set(story.card.id, named);
-      continue;
-    }
     const words = contentWords(`${story.card.title} ${story.keywords.join(" ")}`);
     // The capability it was sliced from; a model's slice is placed on the
     // spec capability it shares most words with.
@@ -115,8 +116,15 @@ export async function resolveTraces(
         .map((c) => ({ c, score: overlap(words, contentWords(c)) }))
         .filter((x) => x.score >= 0.5)
         .sort((a, b) => b.score - a.score)[0]?.c;
+    if (capability) capabilityByStory.set(story.card.id, capability);
+    // A model may name the requirement ids it proves: those that exist count.
+    const named = (story.requirementIds ?? []).filter((id) => pool.some((r) => r.id === id));
+    if (named.length > 0) {
+      byStory.set(story.card.id, named);
+      continue;
+    }
     const id = capability ? await requirementFor(capability) : bestRequirement(words, pool)?.id;
     if (id) byStory.set(story.card.id, [id]);
   }
-  return { byStory, derived };
+  return { byStory, derived, capabilityByStory };
 }

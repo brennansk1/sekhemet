@@ -66,6 +66,7 @@ import {
   codebaseMapFromRepo,
   computeSignals,
   defaultRequirementProject,
+  deriveCapabilities,
   designStage,
   formatPlanReport,
   intakeGoal,
@@ -114,11 +115,21 @@ import {
   qualificationRefusal,
   speculativeProbe,
 } from "./qualify.js";
+import { researchCopy } from "./research/research_copy.js";
 import {
+  type DeepAnswer,
+  type DeepPriorArt,
+  DeepQuestionSkipped,
+  NONE_NEEDED,
   type ReuseDeps,
   type ReuseFinding,
+  type ReuseStack,
+  appendPriorArt,
+  deepPriorArtLines,
   dossierNote,
   priorArtLines,
+  queryFor,
+  reuseStack,
   reuseSurvey,
   withPriorArt,
 } from "./research/reuse.js";
@@ -189,20 +200,16 @@ function saidWithoutSettled(
   );
 }
 
-/** No tracked source yet: a project that does not exist. */
-/** The separate things a spec asks for, as the design stage split them. */
+/**
+ * The separate things a spec asks for: the capabilities the planner slices
+ * it into, so each finding's need is the capability its card is built for
+ * (DS-P7-8), whatever title a planning model gives the card.
+ */
 function needsOf(buildSpec: string): string[] {
-  return buildSpec
-    .split(/,\s*/)
-    .map((n) => n.trim())
+  return deriveCapabilities(buildSpec)
+    .map((c) => c.text.trim())
     .filter(Boolean)
     .slice(0, 4);
-}
-
-/** A card built from a need carries the need's opening words in its title. */
-function coversNeed(title: string, need: string): boolean {
-  const head = need.toLowerCase().split(/\s+/).slice(0, 4).join(" ");
-  return title.toLowerCase().includes(head);
 }
 
 /** What a PM would say having looked: the best candidate per need, briefly. */
@@ -221,17 +228,20 @@ function reuseSummary(findings: readonly ReuseFinding[]): string[] {
     if (f.papers[0])
       lines.push(`  ${f.need}: the literature has ${f.papers[0].title} — ${f.papers[0].url}`);
   }
-  const out = lines.length
-    ? [
-        "Before planning, I looked for what already exists. Worth checking before writing it:",
-        ...lines,
-        "Each card is told about the options for its part; licences are checked.",
-      ]
-    : unreachable.length === 0
-      ? [
-          "I looked for existing packages and repositories and found nothing that fits better than writing it.",
-        ]
-      : [];
+  // DS-P7-6: a need the language covers is said, not searched.
+  const out = findings.filter((f) => f.noneNeeded).map((f) => `${f.need}: ${NONE_NEEDED}`);
+  const searched = findings.some((f) => !f.noneNeeded);
+  if (lines.length) {
+    out.push(
+      "Before planning, I looked for what already exists. Worth checking before writing it:",
+      ...lines,
+      "Each card is told about the options for its part; licences are checked.",
+    );
+  } else if (searched && unreachable.length === 0) {
+    out.push(
+      "I looked for existing packages and repositories and found nothing that fits better than writing it.",
+    );
+  }
   if (unreachable.length) {
     out.push(
       `I could not reach ${unreachable.join(" or ")}, so I have not checked whether this already exists there.`,
@@ -277,6 +287,11 @@ export async function planCommand(
     print?: (line: string) => void;
     /** Where to look for what already exists; omitted, nothing is searched. */
     research?: ReuseDeps;
+    /**
+     * The brief's deep question (DS-P7-10): the Researcher's to answer, or
+     * why it may not; omitted, Prior art says no Researcher is configured.
+     */
+    deep?: DeepPriorArt;
     /** The resolved Worker's window; omitted, read from the registry (PM-13). */
     workerWindowTokens?: number;
     /**
@@ -308,13 +323,18 @@ export async function planCommand(
   const briefPath = join(k.repoPath, ".sekhemet", "brief.md");
   // Reuse before rebuild: look for what already exists before any card is
   // written, whenever the design stage has anything to say at all.
+  // DS-P7-5: in the project's own ecosystem — its files first, then the
+  // language the request named or the design stage assumed.
+  const stack = reuseStack(k.repoPath, design.stack.language);
+  const needs = needsOf(design.buildSpec);
   const findings =
     options.research && design.proportion !== "none"
-      ? await reuseSurvey(needsOf(design.buildSpec), options.research)
+      ? await reuseSurvey(needs, options.research, { stack })
       : undefined;
   if (findings) for (const line of reuseSummary(findings)) print(line);
-  if (design.proportion === "brief" && !existsSync(briefPath)) {
-    // Never over a brief a person has written or edited.
+  // Never over a brief a person has written or edited.
+  const writesBrief = design.proportion === "brief" && !existsSync(briefPath);
+  if (writesBrief) {
     mkdirSync(dirname(briefPath), { recursive: true });
     const brief = renderBrief(design, { gates: tryGateIds(k.repoPath) });
     writeFileSync(briefPath, findings ? withPriorArt(brief, priorArtLines(findings)) : brief);
@@ -424,9 +444,12 @@ export async function planCommand(
     ...(options.offline ? { offline: true } : {}),
     print,
   });
-  // Each card is told what already exists for the part it builds.
+  // Each card is told what already exists for the part it builds: the
+  // finding for the capability the planner built it for (DS-P7-8).
   for (const story of findings ? result.created : []) {
-    const finding = findings?.find((f) => coversNeed(story.title, f.need));
+    const finding = findings?.find(
+      (f) => story.capability !== undefined && f.need === story.capability,
+    );
     const note = finding ? dossierNote(finding) : undefined;
     if (note) {
       await k.cardStore
@@ -434,11 +457,50 @@ export async function planCommand(
         .catch(() => undefined);
     }
   }
+  // DS-P7-10: the brief's one deep question, asked after the plan so the
+  // Planner's model is done with; its answer, cited, or why it did not run.
+  if (writesBrief) {
+    const outcome = await deepQuestion(options.deep, needs, stack);
+    writeFileSync(
+      briefPath,
+      appendPriorArt(readFileSync(briefPath, "utf8"), deepPriorArtLines(outcome)),
+    );
+  }
   return {
     epicId,
     created: result.created.length,
     ...(result.decisionId ? { decisionId: result.decisionId } : {}),
   };
+}
+
+const LANGUAGE: Record<ReuseStack, string> = {
+  typescript: "TypeScript",
+  python: "Python",
+  rust: "Rust",
+  go: "Go",
+};
+
+const NO_RESEARCHER =
+  "no Researcher is configured (name one with --researcher or SEKHEMET_RESEARCHER)";
+
+/** Ask the brief's deep question from the needs' keywords only, or say why not (DS-P7-10). */
+async function deepQuestion(
+  deep: DeepPriorArt | undefined,
+  needs: readonly string[],
+  stack: ReuseStack,
+): Promise<{ answer: DeepAnswer } | { skipped: string }> {
+  if (!deep) return { skipped: NO_RESEARCHER };
+  if ("skipped" in deep) return deep;
+  const keywords = needs.map(queryFor).filter(Boolean);
+  if (keywords.length === 0) return { skipped: "the request has no keyword to ask about" };
+  try {
+    return { answer: await deep.run(researchCopy.priorArtQuestion(keywords, LANGUAGE[stack])) };
+  } catch (err) {
+    if (err instanceof DeepQuestionSkipped) return { skipped: err.message };
+    return {
+      skipped: `the Researcher failed (${err instanceof Error ? err.message : String(err)})`,
+    };
+  }
 }
 
 /**

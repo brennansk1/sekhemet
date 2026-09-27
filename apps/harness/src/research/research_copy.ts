@@ -1,6 +1,6 @@
 /**
  * The Researcher's model-facing text added by design-stage NEW-design-stage-2,
- * -4 and -5 (PROMPT_STANDARD rule 13, CX-M1-13): the refusals its tools
+ * -4, -5 and P7 (PROMPT_STANDARD rule 13, CX-M1-13): the refusals its tools
  * return, the re-dispatch of an open sub-question, the critique pass and the
  * question the repair batch asks about a failing card. Registered as
  * `research` in `COPY_MODULES` (packages/context/src/prompt_tags.ts).
@@ -117,4 +117,42 @@ export const researchCopy = {
       ...(input.struggle ? [`WHAT IT STRUGGLED WITH\n${input.struggle}`] : []),
       "What is the correct approach for this card, as it applies to this stack and these files? Cite the sources that settle it.",
     ].join("\n\n"),
+
+  /**
+   * A tool that reaches the network, called while research web access is off
+   * (`[network] research`, `--offline`): nothing is sent.
+   */
+  webOff: (tool: string) => `Tool ${tool} needs web access, which is off for this project.`,
+
+  /**
+   * Seshat's `find_library` where no registry search was handed in: registries
+   * are searched only through the research the person allowed (DS-S8-1).
+   */
+  registrySearchOff:
+    'No registry was searched: package registries are searched only through research the person allowed ([network] research = "yes"). Plan without a package, or suggest the person ask the Researcher.',
+
+  /**
+   * A repository tool refused while answering the brief's deep question: that
+   * question is built from keywords only, so its queries may carry nothing of
+   * the repository (design-stage S8, DS-P7-10).
+   */
+  repositoryOff: (tool: string) =>
+    `Tool ${tool} is off for this question: it does not read this repository. Search the web, papers, GitHub and the package registries instead.`,
+
+  /**
+   * The brief's deep question (design-stage DS-P7-10): what teams already use
+   * for the product, asked from each need's keywords only — the words the
+   * reuse survey may send (DS-S8-3), never the person's spec — and the
+   * project's language.
+   */
+  priorArtQuestion: (keywords: readonly string[], language: string) =>
+    [
+      `A team is about to build a ${language} product whose parts are: ${keywords.map((k) => `"${k}"`).join(", ")}.`,
+      "What do professional teams already use for these parts — maintained open-source libraries, hosted services or reference designs — and what should they know before choosing one? Name each option with its licence, and cite the sources that settle it.",
+    ].join("\n\n"),
+  /** A research host the person's yes does not cover (DS-S8-8), as a tool result or a plan line. */
+  hostDeclined: (host: string) =>
+    `${host} is not covered by your yes to research: you said no to it ([network] research_hosts_declined)`,
+  hostAwaitsYes: (host: string) =>
+    `${host} awaits a yes: the research question you answered did not name it (a new project's plan in a terminal asks; or add it to [network] research_hosts)`,
 } as const;

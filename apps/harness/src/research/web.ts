@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { judgeLicence, licenceVerdictWords } from "../pm/libraries.js";
 import { Crawl4AiSidecar, type PageCrawler, crawl4aiInstalled } from "./crawl4ai.js";
 import { focusChunks } from "./docs.js";
 import { PoliteFetcher, ResearchCache, USER_AGENT, isPrivateHost } from "./polite.js";
@@ -633,19 +634,26 @@ export async function githubSearch(
       "fullName,description,stargazersCount,license,url",
     ]);
     return (
-      JSON.parse(out) as {
-        fullName: string;
-        description?: string;
-        stargazersCount: number;
-        license?: { key?: string };
-        url: string;
-      }[]
-    ).map((r) => ({
-      title: r.fullName,
-      url: r.url,
-      snippet: r.description ?? "",
-      meta: `${r.stargazersCount} stars, licence ${r.license?.key ?? "none"}`,
-    }));
+      (
+        JSON.parse(out) as {
+          fullName: string;
+          description?: string;
+          stargazersCount: number;
+          license?: { key?: string };
+          url: string;
+        }[]
+      )
+        .map((r) => ({ r, judgement: judgeLicence(r.license?.key) }))
+        // DS-P7-2: a repository with no licence is dropped silently, as the survey does.
+        .filter(({ judgement }) => judgement.action !== "drop")
+        .map(({ r, judgement }) => ({
+          title: r.fullName,
+          url: r.url,
+          snippet: r.description ?? "",
+          // DS-P7-9: judged by the same classifier as the survey's REST search.
+          meta: `${r.stargazersCount} stars, licence ${r.license?.key} (${licenceVerdictWords(judgement.verdict)})`,
+        }))
+    );
   } catch (err) {
     return `GitHub search failed: ${err instanceof Error ? err.message.split("\n")[0] : String(err)}`;
   }

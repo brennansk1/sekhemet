@@ -16,9 +16,11 @@ import {
   stripReasoning,
 } from "@sekhemet/models";
 import { type StoryMap, guardCompletionClaim } from "@sekhemet/planner";
+import { researchCopy } from "../research/research_copy.js";
 import type { ResearchAnswer } from "../research/researcher.js";
+import { ResearchHostAwaitsYes } from "../research_consent.js";
 import type { TakeoverPromptContext } from "../takeover_brief.js";
-import { formatHits, searchLibraries } from "./libraries.js";
+import { type LibrarySearch, formatHits } from "./libraries.js";
 import type { ProjectGroup } from "./pipeline.js";
 import {
   DUPLICATE_OF_DESCRIPTION,
@@ -798,8 +800,11 @@ export async function answer(
   history: PmMessage[],
   queued: PmMessage[],
   summary?: { upToSeq: number; text: string },
-  /** Injectable registry search, for tests; production searches npm and PyPI. */
-  libraries?: typeof searchLibraries,
+  /**
+   * The registry search, through the research network policy (`researchFetch`);
+   * absent — research not allowed — `find_library` searches nothing and says so.
+   */
+  libraries?: LibrarySearch,
   /** The Researcher, when one is configured (the fourth model). */
   researcher?: (question: string, opts?: { deep?: boolean }) => Promise<ResearchAnswer>,
   /** The thread's live session (models rule 20i): its slot is saved and restored across swaps. */
@@ -869,8 +874,17 @@ export async function answer(
       }
       const q = String(c.arguments?.query ?? "").slice(0, 120);
       const eco = c.arguments?.ecosystem === "pypi" ? "pypi" : "npm";
-      const hits = await (libraries ?? searchLibraries)(q, eco).catch(() => []);
-      found.push(`find_library("${q}", ${eco}):\n${formatHits(hits)}`);
+      if (!libraries) {
+        found.push(`find_library("${q}", ${eco}):\n${researchCopy.registrySearchOff}`);
+        continue;
+      }
+      // DS-S8-8: a registry the person's yes did not name is said plainly.
+      const hits = await libraries(q, eco).catch((err: unknown) =>
+        err instanceof ResearchHostAwaitsYes ? err.message : [],
+      );
+      found.push(
+        `find_library("${q}", ${eco}):\n${typeof hits === "string" ? hits : formatHits(q, hits)}`,
+      );
     }
     lookupsSoFar.push(...found);
     fitted = fitSeshatPrompt(

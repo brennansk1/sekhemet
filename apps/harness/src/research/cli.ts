@@ -6,6 +6,7 @@ import { runnerLease } from "../runner_lease.js";
 import { renderDisagreements } from "./claims.js";
 import { crawl4aiInstalled } from "./crawl4ai.js";
 import { RESEARCH_EFFORTS, parseEffort } from "./effort.js";
+import { runReuseEval } from "./reuse_eval.js";
 import { ResearchService, researchSources, researcherModel } from "./service.js";
 
 export const CRAWL4AI_CREDIT =
@@ -28,6 +29,9 @@ Options
   --json            Print the full result as JSON
   --batch <file>    Answer one question per line (prefix "deep:" for deep) with one model load
   --status          Show which sources are available, then exit
+  --reuse-eval      Measure the reuse survey on its labelled set (precision@1 and
+                    correct silence) against the real registries; needs research
+                    consent. Add --baseline to record the run as the baseline
 
 Web pages are read with Crawl4AI when installed.
 ${CRAWL4AI_CREDIT}`;
@@ -49,6 +53,21 @@ export async function runResearchCommand(
         !a.startsWith("--") &&
         !["--model", "--card", "--rounds", "--batch", "--effort"].includes(argv[i - 1] ?? ""),
     ) ?? (argv.includes("--batch") ? "(batch)" : undefined);
+  if (argv.includes("--reuse-eval")) {
+    // DS-P7-7: refused, with nothing sent, without the person's research consent.
+    if (!log) {
+      console.log("No ledger here to record the measurement: run sekhemet init first.");
+      return 1;
+    }
+    const r = await runReuseEval({
+      repoPath,
+      log,
+      print: (l) => console.log(l),
+      offline: argv.includes("--offline") || process.env.SEKHEMET_OFFLINE === "1",
+      baseline: argv.includes("--baseline"),
+    });
+    return "refused" in r ? 1 : r.belowBaseline ? 2 : 0;
+  }
   const forceWeb = argv.includes("--web") ? true : argv.includes("--offline") ? false : undefined;
   if (argv.includes("--help") || (!question && !argv.includes("--status"))) {
     console.log(RESEARCH_USAGE);

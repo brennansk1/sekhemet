@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { LibraryHit } from "../src/pm/libraries.js";
+import type { LibraryCandidate } from "../src/pm/libraries.js";
 import {
-  type RepoHit,
+  type RepoCandidate,
   dossierNote,
   needsLiterature,
   priorArtLines,
@@ -22,21 +22,24 @@ import type { Hit } from "../src/research/web.js";
 
 // Realistic candidates describe what they do; the survey only keeps one
 // whose name or description shares what the need is about.
-const lib = (name: string, license: string, usable: boolean): LibraryHit => ({
+// No fixture carries a verdict: the survey judges each licence itself (DS-P7-3).
+const lib = (name: string, license: string): LibraryCandidate => ({
   name,
   ecosystem: "npm",
   version: "1.0.0",
   license,
-  usable,
   description: "Send emails with invoices attached",
   weeklyDownloads: 50000,
   url: `https://www.npmjs.com/package/${name}`,
 });
 
-const repo = (name: string, license: string, extra: Partial<RepoHit> = {}): RepoHit => ({
+const repo = (
+  name: string,
+  license: string,
+  extra: Partial<RepoCandidate> = {},
+): RepoCandidate => ({
   fullName: `org/${name}`,
   license,
-  usable: license === "MIT",
   stars: 1200,
   archived: false,
   pushedAt: "2026-06-01T00:00:00Z",
@@ -48,10 +51,7 @@ const repo = (name: string, license: string, extra: Partial<RepoHit> = {}): Repo
 describe("the reuse survey", () => {
   it("looks for each need in the registries and on GitHub, and keeps only what the licence allows", async () => {
     const findings = await reuseSurvey(["emails invoices"], {
-      libraries: async () => [
-        lib("nodemailer", "MIT-0", true),
-        lib("gpl-mailer", "GPL-3.0", false),
-      ],
+      libraries: async () => [lib("nodemailer", "MIT-0"), lib("gpl-mailer", "GPL-3.0")],
       repos: async () => [repo("invoice-kit", "MIT"), repo("copyleft-inv", "AGPL-3.0")],
     });
     const [f] = findings;
@@ -68,12 +68,12 @@ describe("the reuse survey", () => {
     // this". A candidate must share what the need is about, not its verbs.
     const [refunds] = await reuseSurvey(["handles refunds"], {
       libraries: async () => [
-        { ...lib("streamx", "MIT", true), description: "An iteration of the Node.js core streams" },
+        { ...lib("streamx", "MIT"), description: "An iteration of the Node.js core streams" },
         {
-          ...lib("eslint-plugin-simple-import-sort", "MIT", true),
+          ...lib("eslint-plugin-simple-import-sort", "MIT"),
           description: "Easy sorting of imports",
         },
-        { ...lib("refund-calc", "MIT", true), description: "Compute partial refunds for orders" },
+        { ...lib("refund-calc", "MIT"), description: "Compute partial refunds for orders" },
       ],
       repos: async () => [repo("spring5webapp", "unknown")],
     });
@@ -82,8 +82,8 @@ describe("the reuse survey", () => {
     expect(refunds?.excluded).toEqual([]);
     const [photos] = await reuseSurvey(["a CLI that deduplicates similar photos in a folder"], {
       libraries: async () => [
-        { ...lib("@graphql-inspector/cli", "MIT", true), description: "Tooling for GraphQL" },
-        { ...lib("image-dedupe", "MIT", true), description: "Find duplicate and similar photos" },
+        { ...lib("@graphql-inspector/cli", "MIT"), description: "Tooling for GraphQL" },
+        { ...lib("image-dedupe", "MIT"), description: "Find duplicate and similar photos" },
       ],
       repos: async () => [],
     });
@@ -97,12 +97,12 @@ describe("the reuse survey", () => {
     const [f] = await reuseSurvey(["handles refunds"], {
       libraries: async () => [
         {
-          ...lib("@someone_test/refunds", "MIT", true),
+          ...lib("@someone_test/refunds", "MIT"),
           description: "refunds",
           weeklyDownloads: 187,
         },
-        { ...lib("refund-kit", "MIT", true), description: "refunds", weeklyDownloads: 20000 },
-        { ...lib("gpl-refunds", "GPL-3.0", false), description: "refunds", weeklyDownloads: 9000 },
+        { ...lib("refund-kit", "MIT"), description: "refunds", weeklyDownloads: 20000 },
+        { ...lib("gpl-refunds", "GPL-3.0"), description: "refunds", weeklyDownloads: 9000 },
       ],
       repos: async () => [
         repo("tiny-refunds", "MIT", { stars: 3, description: "refunds" }),
@@ -180,7 +180,7 @@ describe("the reuse survey", () => {
 
   it("tells the Worker what to use instead of writing it, with the licence", async () => {
     const [f] = await reuseSurvey(["emails invoices"], {
-      libraries: async () => [lib("nodemailer", "MIT-0", true)],
+      libraries: async () => [lib("nodemailer", "MIT-0")],
       repos: async () => [],
     });
     expect(f && dossierNote(f)).toMatch(/Before writing this yourself.*nodemailer \(MIT-0/);
