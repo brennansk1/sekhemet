@@ -1,13 +1,13 @@
-// The board's view bar and cycle header (PM_DESIGN §3.2): Board | List,
+// The board's view bar and cycle header (PM_DESIGN §3.2): Board | List | Story map,
 // saved views, filter chips over a GitHub-style query, grouping, and the
 // active cycle's progress. One filter object, shared by board and list.
-import { esc, icon, kbd } from "./dom.js";
+import { esc, icon, kbd, tip } from "./dom.js";
+import { cycleHeaderShown } from "./lib/burnup.js";
 import {
   PRIORITY_LABELS,
   PRIORITY_NAMES,
   PRIORITY_ORDER,
   activeCycle,
-  assigneeLabel,
   cycleProgress,
   formatQuery,
   formatShortDate,
@@ -23,6 +23,7 @@ import { prioMark } from "./marks.js";
 import { openMenu } from "./overlay.js";
 import { openPicker, openPrompt } from "./picker.js";
 import { askMerit } from "./pm_panel.js";
+import { getSession } from "./session.js";
 import { store } from "./store.js";
 import { toast } from "./toast.js";
 
@@ -50,7 +51,8 @@ const FIELD_NAMES = {
   label: "Label",
   epic: "Epic",
   cycle: "Cycle",
-  assignee: "Assignee",
+  owner: "Owner",
+  delegate: "Delegate",
   kind: "Kind",
   state: "State",
   is: "Is",
@@ -116,7 +118,14 @@ export function effectiveFilter() {
 }
 
 export function matchContext() {
-  return { cycles: store.state.cycles, epics: store.state.epics, statusLabel: columnLabel };
+  // DB-N5-5: `owner:@me` is the signed-in person (the install's person on Solo).
+  const me = getSession().principal;
+  return {
+    ...(me ? { me } : {}),
+    cycles: store.state.cycles,
+    epics: store.state.epics,
+    statusLabel: columnLabel,
+  };
 }
 
 export function filterCards(cards) {
@@ -180,8 +189,9 @@ function valueLabel(field, v) {
       if (v === "next") return "Next";
       if (v === "none") return "No cycle";
       return s.cycles.find((c) => c.id.toLowerCase() === v || slug(c.name) === slug(v))?.name ?? v;
-    case "assignee":
-      return v === "none" ? "Unassigned" : assigneeLabel(v === "me" ? "human" : v);
+    case "owner":
+    case "delegate":
+      return personValueLabel(field, v);
     case "kind":
       return KIND_LABELS[v]?.label ?? v;
     case "state":
@@ -201,6 +211,32 @@ function valueLabel(field, v) {
     default:
       return v;
   }
+}
+
+/** An owner or delegate value in words: You, Worker, a person's name, or none. */
+function personValueLabel(field, v) {
+  if (v === "none") return field === "owner" ? "No owner" : "No delegate";
+  if (v === "@me" || v === "me" || v === "you") return "You";
+  if (v === "worker") return "Worker";
+  for (const c of store.state.cards) {
+    if (field === "owner" && c.owner?.toLowerCase() === v && c.display?.ownerName)
+      return c.display.ownerName;
+    if (field === "delegate" && c.delegate?.id?.toLowerCase() === v && c.display?.delegateName)
+      return c.display.delegateName;
+  }
+  return v;
+}
+
+/** The people on the board's cards, as filter options (principal, name). */
+function peopleOptions(field, opt) {
+  const seen = new Map();
+  const me = getSession().principal;
+  for (const c of store.state.cards) {
+    const id = field === "owner" ? c.owner : c.delegate?.kind === "person" ? c.delegate.id : "";
+    const name = field === "owner" ? c.display?.ownerName : c.display?.delegateName;
+    if (id && id !== me && !seen.has(id.toLowerCase())) seen.set(id.toLowerCase(), name || id);
+  }
+  return [...seen].map(([id, name]) => opt(id, name));
 }
 
 function optionsFor(field) {
@@ -236,8 +272,15 @@ function optionsFor(field) {
       list.push(opt("none", "No cycle"));
       return list;
     }
-    case "assignee":
-      return [opt("worker", "Worker"), opt("human", "You"), opt("none", "Unassigned")];
+    case "owner":
+      return [opt("@me", "You"), ...peopleOptions("owner", opt), opt("none", "No owner")];
+    case "delegate":
+      return [
+        opt("worker", "Worker"),
+        opt("@me", "You"),
+        ...peopleOptions("delegate", opt),
+        opt("none", "No delegate"),
+      ];
     case "kind":
       return Object.entries(KIND_LABELS).map(([k, v]) => opt(k, v.label));
     case "state":
@@ -283,10 +326,10 @@ export function viewBarHtml(layout) {
       ? `<button class="btn sm ghost" type="button" data-save-view>Save view</button>`
       : "";
   return `<div class="vbar" role="toolbar" aria-label="View and filters">
-<div class="lseg" role="tablist" aria-label="Layout"><a role="tab" href="#/board" aria-selected="${layout === "board"}" title="Board (v)">${icon("board", 14, "ic s14")}<span>Board</span></a><a role="tab" href="#/board/list" aria-selected="${layout === "list"}" title="List (v)">${icon("list", 14, "ic s14")}<span>List</span></a></div>
+<div class="lseg" role="tablist" aria-label="Layout"><a role="tab" href="#/board" aria-selected="${layout === "board"}" title="Board (v)">${icon("board", 14, "ic s14")}<span>Board</span></a><a role="tab" href="#/board/list" aria-selected="${layout === "list"}" title="List (v)">${icon("list", 14, "ic s14")}<span>List</span></a><a role="tab" href="#/board/map" aria-selected="${layout === "map"}" ${tip("Story map: epics across, release slices beneath")}>${icon("layers", 14, "ic s14")}<span>Story map</span></a></div>
 <button class="vsel" type="button" data-view-menu aria-haspopup="dialog"><span class="sec">View:</span> <b>${esc(v.name)}</b>${icon("chevron-down", 12, "ic s12")}</button>
 <div class="chips">${chips}<button class="filter" type="button" data-add-filter aria-haspopup="menu">${icon("filter", 12, "ic s12")}Filter</button></div>
-<label class="q">${icon("search", 12, "ic s12")}<input type="text" data-q value="${esc([vb.filter.text, vb.draft].filter(Boolean).join(" "))}" placeholder="Filter by title, or type label:api" aria-label="Filter cards. Accepts priority:, label:, epic:, cycle:, assignee:, kind:, is:" spellcheck="false">${kbd("/")}</label>
+<label class="q">${icon("search", 12, "ic s12")}<input type="text" data-q value="${esc([vb.filter.text, vb.draft].filter(Boolean).join(" "))}" placeholder="Filter by title, or type label:api" aria-label="Filter cards. Accepts priority:, label:, epic:, cycle:, owner:, delegate:, kind:, is:" spellcheck="false">${kbd("/")}</label>
 <div class="vr"><button class="vsel" type="button" data-group-menu title="Group into swimlanes (⇧S)" aria-description="Group into swimlanes" aria-keyshortcuts="Shift+S">${icon("layers", 12, "ic s12")}<span class="sec">Group:</span> <b>${esc(group.label)}</b></button>${save}</div>
 </div>`;
 }
@@ -295,16 +338,8 @@ export function viewBarHtml(layout) {
 
 export function showsCycle() {
   // Shown whenever a cycle is in force, unless the filter points elsewhere
-  // (another cycle, or cycle:none).
-  const cycle = activeCycle(store.state.cycles);
-  if (!cycle) return false;
-  const vals = termValues(vb.filter, "cycle");
-  return (
-    vals.length === 0 ||
-    vals.includes("current") ||
-    vals.includes(slug(cycle.name)) ||
-    vals.includes(cycle.id.toLowerCase())
-  );
+  // (another cycle, or cycle:none): the pure rule, DB-P3-14.
+  return cycleHeaderShown(store.state.cycles, vb.filter, Date.now());
 }
 
 export function cycleHeaderHtml() {

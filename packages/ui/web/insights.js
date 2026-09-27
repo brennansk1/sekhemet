@@ -2,8 +2,10 @@
 // cycle time, throughput and cumulative flow, each answering one question.
 // SVG coloured only through token classes; every chart has a text summary
 // and a data table.
+import { burnupHtml, loadBurnup } from "./burnup.js";
 import { copyText, esc, getJSON, icon } from "./dom.js";
 import { loadLearning } from "./learning.js";
+import { burnupTarget } from "./lib/burnup.js";
 import {
   CFD_KEYS,
   MIN_TRUSTED_ATTEMPTS,
@@ -23,7 +25,16 @@ import { setTopbar } from "./shell.js";
 import { store } from "./store.js";
 import { toast } from "./toast.js";
 
-const ui = { root: null, days: 30, data: null, status: 0, cap: null, capStatus: 0 };
+const ui = {
+  root: null,
+  days: 30,
+  data: null,
+  status: 0,
+  cap: null,
+  capStatus: 0,
+  /** The burn-up of the cycle in force, else the project (DB-P3-14). */
+  burn: null,
+};
 const AGING_COLS = ["ready", "planning", "in_progress", "verify", "review", "parked"];
 const CFD_LABEL = {
   backlog: "Backlog",
@@ -468,7 +479,7 @@ function render() {
     })
     .filter((w) => w && w.status !== "done" && w.status !== "backlog");
   paint(
-    `${numbers(stats, d.throughput ?? [], wip)}<div class="charts${perRow === 1 ? " one" : ""}">${agingChart(wip, stats)}${cycleChart(cycle, stats)}${throughputChart(d.throughput ?? [])}${cfdChart(d.cfd ?? [])}</div>`,
+    `${numbers(stats, d.throughput ?? [], wip)}<div class="charts${perRow === 1 ? " one" : ""}">${agingChart(wip, stats)}${cycleChart(cycle, stats)}${throughputChart(d.throughput ?? [])}${cfdChart(d.cfd ?? [])}${burnupHtml(ui.burn, W)}</div>`,
   );
 }
 
@@ -483,9 +494,21 @@ async function loadCapability() {
   render();
 }
 
+async function loadBurn() {
+  const target = burnupTarget(
+    store.state.cycles,
+    { terms: [], text: "" },
+    Date.now(),
+    store.state.project?.id,
+  );
+  ui.burn = await loadBurnup(target.url);
+  render();
+}
+
 async function load() {
   ui.data = null;
   ui.status = 0;
+  loadBurn();
   render();
   try {
     const r = await getJSON(`/api/metrics/flow?days=${ui.days}`);

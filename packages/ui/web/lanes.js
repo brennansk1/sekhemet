@@ -1,9 +1,8 @@
 // Swimlanes (PM_DESIGN §3.2): the board grouped by epic, assignee, priority or
 // cycle. Each lane is a row of the same columns. Lanes are not windowed; the
 // ungrouped board keeps its virtualization.
-import { esc, icon } from "./dom.js";
+import { esc, icon, tip } from "./dom.js";
 import { groupCards } from "./lib/pm.js";
-import { BOARD_COLUMN_ORDER, COLUMN_EMPTY, columnLabel } from "./lib/vocabulary.js";
 import { openPeek, peekOpenFor } from "./peek.js";
 import { store } from "./store.js";
 import { tileHtml } from "./tile.js";
@@ -13,9 +12,15 @@ const collapsed = new Set();
 let last = "";
 let bound = null;
 
-function columnsFor(cards) {
+/** The board's columns in force (dashboard §2.4.1) that hold cards, plus the Worker's and the review queue. */
+function columnsFor(cards, defs) {
   const present = new Set(cards.map((c) => c.status));
-  return BOARD_COLUMN_ORDER.filter((s) => present.has(s) || s === "in_progress" || s === "review");
+  return defs.filter(
+    (d) =>
+      d.states.some((s) => present.has(s)) ||
+      d.states.includes("in_progress") ||
+      d.states.includes("review"),
+  );
 }
 
 function progressHtml(g) {
@@ -27,14 +32,14 @@ function progressHtml(g) {
   return `<span class="eprog" title="${esc(`${p.done} of ${p.total} cards done${pts}`)}"><span class="ebar"><i style="width:${pct}%"></i></span><span class="tnum">${p.done} of ${p.total} done${esc(pts)}</span></span>`;
 }
 
-export function render(root, cards, { group, sortCards, tileOpts }) {
+export function render(root, cards, { group, sortCards, tileOpts, columns }) {
   const groups = groupCards(cards, group, matchContext());
-  const cols = columnsFor(cards);
-  const totals = new Map(cols.map((s) => [s, cards.filter((c) => c.status === s).length]));
+  const cols = columnsFor(cards, columns);
+  const inCol = (d, list) => list.filter((c) => d.states.includes(c.status));
   const head = `<div class="lane-cols" style="--cols:${cols.length}">${cols
     .map(
-      (s) =>
-        `<div class="lc-h"><h2>${esc(columnLabel(s))}</h2><span class="c tnum">${totals.get(s)}</span></div>`,
+      (d) =>
+        `<div class="lc-h"><h2>${esc(d.label)}</h2><span class="c tnum">${inCol(d, cards).length}</span></div>`,
     )
     .join("")}</div>`;
   const body = groups
@@ -44,14 +49,11 @@ export function render(root, cards, { group, sortCards, tileOpts }) {
       const h = `<header class="lane-h"><button class="chev" type="button" data-lane-toggle="${esc(key)}" aria-expanded="${!shut}" aria-label="${esc(`${shut ? "Expand" : "Collapse"} ${g.label}`)}">${icon(shut ? "chevron-right" : "chevron-down", 14, "ic s14")}</button><b>${esc(g.label)}</b><span class="sec tnum">${g.cards.length} ${g.cards.length === 1 ? "card" : "cards"}${g.points ? ` · ${g.points} pts` : ""}</span>${progressHtml(g)}</header>`;
       if (shut) return `<section class="lane shut" data-lane="${esc(key)}">${h}</section>`;
       const cells = cols
-        .map((s) => {
-          const list = sortCards(
-            s,
-            g.cards.filter((c) => c.status === s),
-          );
+        .map((d) => {
+          const list = sortCards(d.id, inCol(d, g.cards));
           const tiles = list.map((c) => tileHtml(c, tileOpts(c))).join("");
-          const aria = `${g.label}, ${columnLabel(s)}`;
-          return `<ul class="list cell" role="listbox" aria-label="${esc(aria)}" data-cell="${s}">${tiles || `<li class="empty" title="${esc(COLUMN_EMPTY[s])}">–</li>`}</ul>`;
+          const aria = `${g.label}, ${d.label}`;
+          return `<ul class="list cell" role="listbox" aria-label="${esc(aria)}" data-cell="${esc(d.id)}">${tiles || `<li class="empty" ${tip(d.empty)}>–</li>`}</ul>`;
         })
         .join("");
       return `<section class="lane" data-lane="${esc(key)}" aria-label="${esc(g.label)}">${h}<div class="lane-row" style="--cols:${cols.length}">${cells}</div></section>`;

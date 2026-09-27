@@ -744,6 +744,25 @@ const ROUTES: [methods: string[], pattern: RegExp, resolve: Resolver][] = [
   [["POST"], /^\/api\/planner\/decisions\/(dec_[A-Za-z0-9_-]+)$/, fixed("plan.approve")],
   [["POST"], /^\/api\/recurring\/trigger\/[\w.-]+$/, fixed("run.start")],
   [["POST"], /^\/api\/pm\/messages$/, fixed("seshat.ask")],
+  // Quick create from the board (dashboard DB-P3-12): a create proposal in
+  // Seshat's thread; applying it is proposal.apply's, below. It is checked on
+  // the project the card would land in: the epic's when it names one, else
+  // the project the board is scoped to, else the workspace.
+  [
+    ["POST"],
+    /^\/api\/pm\/create-card$/,
+    (_m, body) =>
+      body === undefined
+        ? { permissions: [], needsBody: true }
+        : {
+            permissions: ["issue.create"],
+            ...(typeof body.epicId === "string" && body.epicId
+              ? { cardId: body.epicId }
+              : typeof body.projectId === "string" && body.projectId
+                ? { projectId: body.projectId }
+                : {}),
+          },
+  ],
   // Applying a proposal names it, so the server can add what its kind needs
   // (a new project's group accepts a brief: teams item 6, design-stage §2.9 item 7).
   [

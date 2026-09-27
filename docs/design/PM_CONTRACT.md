@@ -76,6 +76,18 @@ and are refused in read-only mode.
   `{ messages: PmMessage[], status: PmStatus }`.
 - `POST /api/pm/messages` with `{ text, context?: { cardId?, view? } }`
   returns `{ message: PmMessage }` (role `user`, state `queued`).
+- `POST /api/pm/create-card` with `{ title, description?, epicId?,
+  projectId? }` (quick create from the board, dashboard DB-P3-12; `projectId`
+  the project the board is scoped to) appends a reply to the person carrying
+  one `create_card` proposal (`cards: [{ title, spec?, epicId? | projectId? }]`;
+  `epicId` only when it names an epic, and then the card is in the epic's
+  project; else `projectId` when given) and returns
+  `{ messageId, proposal: PmProposal }`. Nothing is created until the
+  proposal is applied, which goes through the planner pipeline (PM-P1-1).
+  `400 { error }` for an empty or multi-line title, or one over 300
+  characters (the dashboard's own `quickCreateRequest`). In the Team setup it
+  needs `issue.create` on the project the card would land in: the epic's
+  when `epicId` is given, else `projectId`'s, else the workspace's.
 - Stream: the existing `/api/stream` SSE carries `pm` events:
   `{ kind: "message", message }` and `{ kind: "status", status }`. In the
   Team setup the stream reaches everyone, so it carries no message: it sends
@@ -218,6 +230,40 @@ dashboard does what `sekhemet approve <card|epic>` does.
   Member's `issue.edit` (a Viewer or Stakeholder gets 403) and the
   dashboard's write header, like every write.
 
+### What Accept will ask, before it is pressed (dashboard NEW-dashboard-5)
+
+Review writes beside Accept what Accept itself would refuse (review-git
+§2.4.1–3), from the same functions Accept runs (`accept.ts`
+`accepterVerdict`, `implementationFiles`, `filesShownSinceEvidence`).
+
+- `GET /api/cards/:id/review` returns `{ findings: { id, verdict?, text,
+  filesRead? }[], implementationFiles: string[], filesShown: string[], accept,
+  builtBy?, testApprovals, review, escalation?, suggestedAccepters }`
+  (`review`, `escalation` and `suggestedAccepters` are the route's earlier
+  fields, kept: the review brief P12, a stopped card's diagnosis P14 and
+  the CODEOWNERS suggestion RG-N5-3, `wave2_server.ts` `reviewBrief`): every Reviewer entry of the card's dossier
+  (`card/review`; `id` is what Accept's `acknowledgedFindings` names,
+  `filesRead` the entry's `sources`); the files Accept requires shown (what
+  the latest evidence changed, less tests) and those a `review/opened`
+  recorded since that evidence; `accept` for the viewer — `{ may: true }`,
+  `{ may: false, code: "not_permitted", who }`, `{ may: false, code:
+  "not_independent", because: "built" | "delegated", who }` or, where
+  `[review] require_code_owner_accept` is on and the viewer owns none of the
+  files, `{ may: false, code: "not_code_owner", who }` (review-git RG-N5-4,
+  `codeOwnerVerdict`, the check Accept runs), `who` being
+  `{ principal, name? }[]`, the people who may accept instead; `builtBy`
+  `{ kind: "person", id, name? }` when a person built the work under review
+  (the latest attempt's builder; a person delegate only while no attempt is
+  recorded — a Worker-built attempt delegated later stays the Worker's); and
+  `testApprovals` `{ path, approved, approvedSha256?, what?, by? }[]`, the
+  staged tests the depth profile requires a person to approve,
+  `approvedSha256` without `approved` being an approval voided by a change.
+  Read-only; 404 for an unknown card, and in the Team setup for a card whose
+  project the person cannot see (PM-N9-8).
+- `POST /api/cards/:id/accept` with `{ acknowledgedFindings: string[] }`: the
+  findings the person acknowledged (`x` in Review), recorded on
+  `review/decided`.
+
 ### Suggestions on an issue and the weekly update (planner-pm NEW-planner-pm-9)
 
 A change Seshat would make to an issue's assignee, labels, priority or
@@ -262,6 +308,17 @@ changes until a person applies it (teams TEAM-18, TEAM-19).
   `{ throughput: {date, done}[], cycleTime: {cardId, hours, doneAt?}[],
      cfd: {date, backlog, ready, working, checking, review, done}[],
      wipAge: {cardId, hours}[] }`.
+- `GET /api/metrics/burnup?cycle=<id>` (a cycle's) or `?scope=project` (the
+  project's; also with no query), with `&project=<id>` to count only that
+  project's cards (the board scoped to it) — in the Team setup only the
+  cards of projects the person can see are counted (PM-N9-8) — returns
+  `{ scope: "cycle" | "project", cycleId?, name?, startsOn?, endsOn?,
+     days: { date, done, scope }[], unestimated }` (dashboard DB-P3-14): done
+  points and total scope at the end of each day, replayed from the card
+  events — a cycle's from its start to today (none before it starts), the
+  project's from the first card's day. Epics and initiatives are not
+  counted, a rejected card leaves the scope, and an unestimated card counts
+  as 1 point (`unestimated` says how many). `404 { error }` for no such cycle.
 
 ### Story map and releases (planner-pm P13)
 

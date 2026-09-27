@@ -10,6 +10,7 @@ import {
 } from "./diff_parse.js";
 import { esc, icon, kbd } from "./dom.js";
 import { gateLabel, plural } from "./lib/vocabulary.js";
+import { SEEN_LABEL, acceptanceExtrasHtml } from "./review_desk.js";
 import { structuralSummary } from "./structure.js";
 
 const MAX_LINES = 400;
@@ -97,13 +98,13 @@ function splitHtml(file, anns, limit) {
   return `<div class="split">${out}</div>`;
 }
 
-function header({ path, role, added, removed, collapsed, extra = "" }) {
+function header({ path, role, added, removed, collapsed, extra = "", seen = false }) {
   const meta = ROLE[role];
   const lead =
     role === "acceptance"
       ? icon("lock", 14, "ic s14")
       : icon(collapsed ? "chevron-right" : "chevron-down", 14, "ic s14");
-  return `<div class="g-h"><button class="tog" type="button" data-toggle="${esc(path)}" aria-expanded="${!collapsed}">${lead}<span class="grp">${esc(meta.group)}</span><span class="sec">·</span><span class="path">${esc(path)}</span></button><span class="role">${esc(meta.tag)}</span><span class="num">${extra}${added === null ? "" : `<span class="add-n">+${added}</span><span class="${removed ? "del-n" : ""}">−${removed}</span>`}</span><button class="copy" type="button" data-copy="${esc(path)}" aria-label="Copy path ${esc(path)}" title="Copy path">${icon("copy", 14, "ic s14")}</button></div>`;
+  return `<div class="g-h"><button class="tog" type="button" data-toggle="${esc(path)}" aria-expanded="${!collapsed}">${lead}<span class="grp">${esc(meta.group)}</span><span class="sec">·</span><span class="path">${esc(path)}</span></button><span class="role">${esc(meta.tag)}</span>${seen ? `<span class="seen">${icon("check", 12, "ic s12")}${esc(SEEN_LABEL)}</span>` : ""}<span class="num">${extra}${added === null ? "" : `<span class="add-n">+${added}</span><span class="${removed ? "del-n" : ""}">−${removed}</span>`}</span><button class="copy" type="button" data-copy="${esc(path)}" aria-label="Copy path ${esc(path)}" title="Copy path">${icon("copy", 14, "ic s14")}</button></div>`;
 }
 
 /** The new side of a file, rebuilt from its hunks. */
@@ -148,10 +149,23 @@ function excerptHtml(path, content, fails, lead = "Unchanged by the Worker") {
  * @param opts.acceptance [{ name, path, content }] staged test sources
  * @param opts.mode "unified" | "split"
  * @param opts.open Map<path, boolean> user toggles; opts.full Set<path> expanded past 400 lines
+ * @param opts.order paths in risk order (DB-N5-1); opts.seen Set<path> already shown;
+ *   opts.supersessions and opts.approvals: the Acceptance tests group's rows (DB-N5-7, -8)
  */
 export function changesHtml(
   evidence,
-  { card, gatesConfig, acceptance = [], mode = "unified", open = new Map(), full = new Set() } = {},
+  {
+    card,
+    gatesConfig,
+    acceptance = [],
+    mode = "unified",
+    open = new Map(),
+    full = new Set(),
+    order = [],
+    seen = new Set(),
+    supersessions = [],
+    approvals = [],
+  } = {},
 ) {
   const files = parseUnifiedDiff(evidence.diff);
   // U16: the structural reading (intent groups, declarations changed).
@@ -171,8 +185,16 @@ export function changesHtml(
   const anns = annotationsByLine(evidence.failures ?? []);
   const groups = [];
   const inDiff = new Set(files.map((f) => f.path));
+  // DB-N5-1: Implementation files by risk (failures, then unmet or unclear
+  // findings, then changed lines), never alphabetically; other groups keep the diff's order.
+  const risk = (f) => {
+    const i = order.indexOf(f.path);
+    return fileRole(f.path, ctx) === "implementation" && i !== -1 ? i : 0;
+  };
   const sorted = [...files].sort(
-    (a, b) => ORDER.indexOf(fileRole(a.path, ctx)) - ORDER.indexOf(fileRole(b.path, ctx)),
+    (a, b) =>
+      ORDER.indexOf(fileRole(a.path, ctx)) - ORDER.indexOf(fileRole(b.path, ctx)) ||
+      risk(a) - risk(b),
   );
   for (const f of sorted) {
     const role = fileRole(f.path, ctx);
@@ -198,7 +220,7 @@ export function changesHtml(
         ? '<div class="note-row">The Worker edited a file this card may not touch.</div>'
         : "";
     groups.push(
-      `<div class="group ${role}${collapsed ? " collapsed" : ""}" data-file="${esc(f.path)}">${header({ path: f.path, role, added: f.added, removed: f.removed, collapsed, extra: fileFails.length ? `<span class="sec">${plural(fileFails.length, "annotation")} ·</span>` : "" })}${note}${body}</div>`,
+      `<div class="group ${role}${collapsed ? " collapsed" : ""}" data-file="${esc(f.path)}">${header({ path: f.path, role, added: f.added, removed: f.removed, collapsed, seen: seen.has(f.path), extra: fileFails.length ? `<span class="sec">${plural(fileFails.length, "annotation")} ·</span>` : "" })}${note}${body}</div>`,
     );
   }
 
@@ -222,6 +244,9 @@ export function changesHtml(
       `<div class="group acceptance${collapsed ? " collapsed" : ""}" data-file="${esc(src.path)}">${header({ path: src.path, role: "acceptance", added: null, removed: null, collapsed, extra })}${body}</div>`,
     );
   }
+  // DB-N5-7, DB-N5-8: superseded base tests beside their new versions, and approvals.
+  const extras = acceptanceExtrasHtml({ supersessions, approvals });
+  if (extras) groups.push(extras);
   if (ctx.acceptanceTests.length === 0) {
     const globs = ctx.protectedGlobs.length ? ctx.protectedGlobs : ["**/*.spec.ts"];
     groups.push(

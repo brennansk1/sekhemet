@@ -504,16 +504,49 @@ export class BoardServiceImpl implements BoardService {
         `review_minutes_per_day must be greater than 0 (got ${budget}); ReviewWIP is derived from it, never from a static limit`,
       );
     }
-    const durations = (await this.measuredReviewMinutes(projectId)).sort((a, b) => a - b);
-    let median = REVIEW_MINUTES_PRIOR;
-    if (durations.length > 0) {
-      const mid = Math.floor(durations.length / 2);
-      median =
-        durations.length % 2 === 0
-          ? ((durations[mid - 1] as number) + (durations[mid] as number)) / 2
-          : (durations[mid] as number);
-    }
+    const { median } = await this.medianReviewMinutes(projectId);
     return Math.max(1, Math.floor(budget / Math.max(median, 1 / 60)));
+  }
+
+  /** The median minutes of a person's reviews, the prior before the first (S6). */
+  private async medianReviewMinutes(
+    projectId?: string,
+  ): Promise<{ median: number; reviews: number }> {
+    const durations = (await this.measuredReviewMinutes(projectId)).sort((a, b) => a - b);
+    if (durations.length === 0) return { median: REVIEW_MINUTES_PRIOR, reviews: 0 };
+    const mid = Math.floor(durations.length / 2);
+    const median =
+      durations.length % 2 === 0
+        ? ((durations[mid - 1] as number) + (durations[mid] as number)) / 2
+        : (durations[mid] as number);
+    return { median, reviews: durations.length };
+  }
+
+  /**
+   * How the Review limit was reached, for the board's header (dashboard
+   * DB-P3-9): the review minutes a day, the median minutes per review and over
+   * how many reviews — or that a person fixed it with `[review] wip`.
+   */
+  public async reviewLimitFacts(projectId?: string): Promise<
+    | { limit: number; fixed: true }
+    | {
+        limit: number;
+        fixed: false;
+        minutesPerDay: number;
+        minutesPerCard: number;
+        reviews: number;
+      }
+  > {
+    if (this.reviewWipFixed) return { limit: this.wipLimits.review, fixed: true };
+    const minutesPerDay = this.reviewMinutesFor(projectId);
+    const { median, reviews } = await this.medianReviewMinutes(projectId);
+    return {
+      limit: await this.computeReviewWip(minutesPerDay, projectId),
+      fixed: false,
+      minutesPerDay,
+      minutesPerCard: median,
+      reviews,
+    };
   }
 
   /** The review minutes a day for a project: its own setting, else the board's, else 60. */

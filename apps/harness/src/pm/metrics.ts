@@ -114,6 +114,163 @@ export async function flowMetrics(
   };
 }
 
+/** A cycle's dates, for its burn-up. */
+export interface BurnupCycle {
+  id: string;
+  name: string;
+  startsOn: string;
+  endsOn: string;
+}
+
+/**
+ * The burn-up series (dashboard DB-P3-14, PM_CONTRACT §3): done points and
+ * total scope at the end of each day, replayed from the card events, so scope
+ * growth shows apart from progress. A cycle's runs from its start to today
+ * (none before it starts), counting its cards; the project's from the first
+ * card's day, counting every card. Epics and initiatives hold cards and are
+ * not counted; a rejected card leaves the scope; an unestimated card counts
+ * as 1 point, as the cycle header counts it. `project` keeps one project's
+ * cards; `canSee` keeps the cards of the projects a person may see (Team,
+ * PM-N9-8), so no one reads the counts of a project hidden from them.
+ */
+export function burnupFromEvents(
+  events: readonly { type: string; cardId?: string | null; payload: unknown; createdAt: string }[],
+  opts: {
+    cycle?: BurnupCycle;
+    now: Date;
+    project?: string;
+    canSee?: (project: string | undefined) => boolean;
+  },
+): {
+  scope: "cycle" | "project";
+  cycleId?: string;
+  name?: string;
+  startsOn?: string;
+  endsOn?: string;
+  days: { date: string; done: number; scope: number }[];
+  unestimated: number;
+} {
+  interface Row {
+    tier: string;
+    status: string;
+    cycleId: string | null;
+    estimate: number | null;
+    projectId: string | undefined;
+  }
+  const cards = new Map<string, Row>();
+  const byDay = new Map<string, { done: number; scope: number }>();
+  const seen = new Map<string | undefined, boolean>();
+  const visible = (project: string | undefined): boolean => {
+    if (!opts.canSee) return true;
+    let v = seen.get(project);
+    if (v === undefined) {
+      v = opts.canSee(project);
+      seen.set(project, v);
+    }
+    return v;
+  };
+  const inScope = (r: Row) =>
+    (!opts.project || r.projectId === opts.project) && visible(r.projectId);
+  const counted = (r: Row) =>
+    r.tier !== "epic" &&
+    r.tier !== "initiative" &&
+    r.status !== "rejected" &&
+    (!opts.cycle || r.cycleId === opts.cycle.id) &&
+    inScope(r);
+  const points = (r: Row) => (typeof r.estimate === "number" && r.estimate > 0 ? r.estimate : 1);
+  const totals = () => {
+    let done = 0;
+    let scope = 0;
+    for (const r of cards.values()) {
+      if (!counted(r)) continue;
+      scope += points(r);
+      if (r.status === "done") done += points(r);
+    }
+    return { done, scope };
+  };
+  let first: string | undefined;
+  for (const e of events) {
+    const p = (e.payload ?? {}) as Record<string, unknown>;
+    const id = typeof p.id === "string" ? p.id : (e.cardId ?? undefined);
+    if (!id) continue;
+    if (e.type === "card/created") {
+      cards.set(id, {
+        tier: typeof p.tier === "string" ? p.tier : "story",
+        status: typeof p.status === "string" ? p.status : "backlog",
+        cycleId: typeof p.cycleId === "string" ? p.cycleId : null,
+        estimate: typeof p.estimate === "number" ? p.estimate : null,
+        projectId: typeof p.projectId === "string" ? p.projectId : undefined,
+      });
+      if (inScope(cards.get(id) as Row)) first ??= day(e.createdAt);
+    } else {
+      const row = cards.get(id);
+      if (!row) continue;
+      if (e.type === "card/status_changed" && typeof p.toStatus === "string") {
+        row.status = p.toStatus;
+      } else if (e.type === "card/updated") {
+        const patch = (p.patch ?? {}) as Record<string, unknown>;
+        if ("cycleId" in patch)
+          row.cycleId = typeof patch.cycleId === "string" ? patch.cycleId : null;
+        if ("estimate" in patch)
+          row.estimate = typeof patch.estimate === "number" ? patch.estimate : null;
+        if (typeof patch.tier === "string") row.tier = patch.tier;
+        if ("projectId" in patch)
+          row.projectId = typeof patch.projectId === "string" ? patch.projectId : undefined;
+      } else continue;
+    }
+    byDay.set(day(e.createdAt), totals());
+  }
+  const today = day(opts.now.toISOString());
+  const start = opts.cycle ? opts.cycle.startsOn.slice(0, 10) : first;
+  const end = opts.cycle && opts.cycle.endsOn.slice(0, 10) < today ? opts.cycle.endsOn : today;
+  const days: { date: string; done: number; scope: number }[] = [];
+  if (start) {
+    let carry = { done: 0, scope: 0 };
+    for (const [d, t] of [...byDay].sort(([a], [b]) => a.localeCompare(b)))
+      if (d < start) carry = t;
+    for (let t = Date.parse(start); t <= Date.parse(end.slice(0, 10)); t += 86_400_000) {
+      const d = new Date(t).toISOString().slice(0, 10);
+      carry = byDay.get(d) ?? carry;
+      days.push({ date: d, ...carry });
+    }
+  }
+  const unestimated = [...cards.values()].filter(
+    (r) => counted(r) && !(typeof r.estimate === "number" && r.estimate > 0),
+  ).length;
+  return {
+    scope: opts.cycle ? "cycle" : "project",
+    ...(opts.cycle
+      ? {
+          cycleId: opts.cycle.id,
+          name: opts.cycle.name,
+          startsOn: opts.cycle.startsOn,
+          endsOn: opts.cycle.endsOn,
+        }
+      : {}),
+    days,
+    unestimated,
+  };
+}
+
+/** The burn-up series from the ledger now (`GET /api/metrics/burnup`). */
+export async function burnupMetrics(
+  log: EventLog,
+  cycle: BurnupCycle | undefined,
+  now = new Date(),
+  scope: { project?: string; canSee?: (project: string | undefined) => boolean } = {},
+): Promise<ReturnType<typeof burnupFromEvents>> {
+  const types = ["card/created", "card/status_changed", "card/updated"];
+  // Every card event, page by page: a long ledger is never cut short.
+  const events: Awaited<ReturnType<EventLog["getEventsByTypes"]>> = [];
+  for (let from = 1; ; ) {
+    const page = await log.getEventsByTypes(types, from, 10_000);
+    events.push(...page);
+    if (page.length < 10_000) break;
+    from = (page[page.length - 1]?.seq ?? from) + 1;
+  }
+  return burnupFromEvents(events, { ...(cycle ? { cycle } : {}), now, ...scope });
+}
+
 function snapshotBefore(
   byDay: Map<string, Record<Bucket, number>>,
   first: string,

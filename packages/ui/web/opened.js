@@ -23,3 +23,8 @@ export async function reportOpened(cardId, evidenceId, files, post) {
   if (!res?.ok) for (const f of fresh) had.delete(f);
   return Boolean(res?.ok);
 }
+
+/** The files this page has recorded as shown for one evidence bundle (DB-N5-3). */
+export function reportedFiles(cardId, evidenceId) {
+  return [...(reported.get(`${cardId}|${evidenceId ?? ""}`) ?? [])];
+}

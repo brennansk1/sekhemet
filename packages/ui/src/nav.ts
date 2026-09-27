@@ -284,6 +284,7 @@ export const KEY_GROUPS: readonly KeyGroup[] = [
       ["Any field", ["."]],
       ["Board or list", ["v"]],
       ["Group into swimlanes", ["⇧", "S"]],
+      ["Pipeline stages", ["⇧", "V"]],
       ["Filter", ["/"]],
       ["New card", ["c"]],
     ]),
@@ -295,6 +296,7 @@ export const KEY_GROUPS: readonly KeyGroup[] = [
       ["Accept", ["a"]],
       ["Send back", ["r"]],
       ["Park", ["p"]],
+      ["Acknowledge the focused finding", ["x"]],
       ["Undo accept", ["z"]],
       ["Next or previous card", ["j", "k"]],
       ["Open card", ["o"]],
@@ -310,7 +312,8 @@ export const KEY_GROUPS: readonly KeyGroup[] = [
     name: "Card and lists",
     views: ["card", "ledger", "runs", "machine"],
     rows: rows([
-      ["Evidence, Plan, Steps, Thread, Files", ["1", "5"]],
+      // The issue page's tabs (dashboard DB-N8-1), in `issue.ts` ISSUE_TABS order.
+      ["Activity, Checks, Changes, AI review, Steps, Plan", ["1", "6"]],
       ["Next or previous tab", ["←", "→"]],
       ["Next or previous row", ["j", "k"]],
       ["Open ledger entry", ["↵"]],

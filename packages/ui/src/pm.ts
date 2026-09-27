@@ -112,7 +112,12 @@ export interface PmCardLike {
   labels?: string[];
   epicId?: string;
   cycleId?: string;
+  /** The legacy assignee string, on a record from before K-N6-6. */
   assignee?: string;
+  /** The accountable person's principal (NEW-kernel-6). */
+  owner?: string;
+  /** Who builds it: the Worker, or a person by principal. */
+  delegate?: { kind: string; id?: string };
   dueDate?: string;
   kind?: string;
   dependsOn?: string[];
@@ -125,6 +130,8 @@ export interface PmCardLike {
     needsYou?: boolean;
     mark?: string;
     tone?: string;
+    ownerName?: string;
+    delegateName?: string;
   };
 }
 
@@ -438,7 +445,8 @@ export const FILTER_FIELDS = [
   "label",
   "epic",
   "cycle",
-  "assignee",
+  "owner",
+  "delegate",
   "kind",
   "state",
   "is",
@@ -465,7 +473,10 @@ const FIELD_ALIASES: Record<string, FilterField> = {
   cycle: "cycle",
   sprint: "cycle",
   iteration: "cycle",
-  assignee: "assignee",
+  // DB-N5-5: `assignee:` means the owner.
+  assignee: "owner",
+  owner: "owner",
+  delegate: "delegate",
   kind: "kind",
   state: "state",
   status: "state",
@@ -535,6 +546,8 @@ export function termValues(f: CardFilter, field: FilterField): string[] {
 }
 
 export interface MatchContext {
+  /** The viewer's principal, for `@me` (DB-N5-5). */
+  me?: string;
   cycles?: CycleLike[];
   epics?: EpicLike[];
   statusLabel?: (s: string) => string;
@@ -600,14 +613,10 @@ function termMatches(card: PmCardLike, t: FilterTerm, ctx: MatchContext): boolea
           (cycle && slug(cycle.name) === slug(v)),
       );
     }
-    case "assignee": {
-      const a = (card.assignee ?? "").toLowerCase();
-      return vals.some((v) =>
-        v === "none"
-          ? !a
-          : v === a || (v === "me" && a === "human") || (v === "you" && a === "human"),
-      );
-    }
+    case "owner":
+      return vals.some((v) => ownerMatches(card, v, ctx));
+    case "delegate":
+      return vals.some((v) => delegateMatches(card, v, ctx));
     case "kind":
       return vals.some((v) => (card.display?.kinds ?? []).includes(v));
     case "state": {
@@ -640,6 +649,43 @@ function termMatches(card: PmCardLike, t: FilterTerm, ctx: MatchContext): boolea
     default:
       return true;
   }
+}
+
+const ME = new Set(["@me", "me", "you"]);
+
+/** A person named by principal or by name (the words or their slug). */
+function personIs(v: string, principal: string | undefined, name: string | undefined): boolean {
+  if (!principal) return false;
+  const n = (name ?? "").toLowerCase();
+  return v === principal.toLowerCase() || (n !== "" && (v === n || slug(v) === slug(n)));
+}
+
+/**
+ * DB-N5-5: `owner:` — the accountable person; `@me` is the viewer. A record
+ * from before K-N6-6 with the legacy `human` assignee is the project's one
+ * person; its other legacy names are matched as written.
+ */
+function ownerMatches(card: PmCardLike, v: string, ctx: MatchContext): boolean {
+  const legacy = card.owner ? "" : (card.assignee ?? "").toLowerCase();
+  const legacyOwner = legacy && legacy !== "worker" ? legacy : "";
+  if (v === "none") return !card.owner && !legacyOwner;
+  if (ME.has(v)) {
+    return (ctx.me !== undefined && card.owner === ctx.me) || legacyOwner === "human";
+  }
+  return (
+    personIs(v, card.owner, card.display?.ownerName) || (legacyOwner !== "" && v === legacyOwner)
+  );
+}
+
+/** DB-N5-5: `delegate:` — `worker`, a person (`@me` the viewer), or `none`. */
+function delegateMatches(card: PmCardLike, v: string, ctx: MatchContext): boolean {
+  const d = card.delegate;
+  const legacyWorker = !d && (card.assignee ?? "").toLowerCase() === "worker";
+  if (v === "none") return !d && !legacyWorker;
+  if (v === "worker") return d?.kind === "worker" || legacyWorker;
+  if (d?.kind !== "person") return false;
+  if (ME.has(v)) return ctx.me !== undefined && d.id === ctx.me;
+  return personIs(v, d.id, card.display?.delegateName);
 }
 
 /** Every term must hold (AND); values within a term are alternatives (OR). */

@@ -157,11 +157,13 @@ export function groupCollapsed(
 /**
  * The changed files whose diff the page is showing (RG-N5-5, RG-S6-6): each
  * expanded file in the unified or split reading. The structural reading shows
- * declarations, not the diff, so it shows no file.
+ * declarations, not the diff, so it shows no file. The page passes `seen`, the
+ * files whose diff has been on screen (`diffOnScreen`): expanded is not enough
+ * for Accept, the diff has to have been in view (DB-N5-3).
  */
 export function shownFiles(
   evidence,
-  { card, gatesConfig, mode = "unified", open = new Map(), full = new Set() } = {},
+  { card, gatesConfig, mode = "unified", open = new Map(), full = new Set(), seen } = {},
 ) {
   if (!evidence?.diff || mode === "structural") return [];
   const ctx = {
@@ -172,7 +174,19 @@ export function shownFiles(
   const failures = evidence.failures ?? [];
   return parseUnifiedDiff(evidence.diff)
     .map((f) => f.path)
-    .filter((path) => !groupCollapsed(path, fileRole(path, ctx), { failures, open, full }));
+    .filter((path) => !groupCollapsed(path, fileRole(path, ctx), { failures, open, full }))
+    .filter((path) => !seen || seen.has(path));
+}
+
+/**
+ * Whether one file's diff has been looked at (DB-N5-3), from an
+ * IntersectionObserver entry: half of it in view, or, for a diff too long to
+ * ever be half in view, enough of it to fill 40% of the visible height. A
+ * header peeking at the screen's edge is not a look.
+ */
+export function diffOnScreen({ isIntersecting, ratio, height }, view) {
+  if (!isIntersecting) return false;
+  return ratio >= 0.5 || height >= (view?.height ?? Number.POSITIVE_INFINITY) * 0.4;
 }
 
 /** Failures keyed by the file and line they point at, for inline annotations. */

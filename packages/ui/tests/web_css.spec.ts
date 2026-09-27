@@ -1,6 +1,8 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { BOARD_GEOMETRY } from "../src/reach.js";
+import { LAYOUT } from "../src/tokens.js";
 
 // The served stylesheets, read as the page loads them, and checked rule by
 // rule for the colour roles and layout of dashboard P11 and P12.
@@ -243,9 +245,106 @@ describe("the web modules (dashboard P11, P12)", () => {
     expect(keys).not.toMatch(/#\/(review|board|runs|workspace|registry)"/);
   });
 
+  it("DB-N3-1: the live output scrolls, so a keyboard can reach it, and names itself as a region", () => {
+    const pre = source("steps.js").match(/<pre class="live-out"[^>]*>/)?.[0] ?? "";
+    expect(pre).toContain('role="region"');
+    expect(pre).toContain('tabindex="0"');
+    expect(pre).toContain("aria-label=");
+  });
+
   it("DB-P11-6: the cheat sheet and the palette read the one keymap", () => {
     expect(source("cheatsheet.js")).toContain("cheatSheet(currentNav())");
     expect(source("cheatsheet.js")).not.toContain("const SECTIONS");
     expect(source("palette.js")).toContain("paletteGoTo(currentNav())");
+  });
+});
+
+describe("the professional board in the served stylesheets (dashboard P3)", () => {
+  it("DB-P3-7: the status line wraps and never cuts off its cause", () => {
+    const status = RULES.filter(
+      (r) =>
+        r.file === "board.css" && selectors(r).some((s) => /^\.st(\b|\.)|\s\.st(\b|\.)/.test(s)),
+    );
+    expect(status.length).toBeGreaterThan(0);
+    for (const r of status) {
+      expect(r.decls.get("white-space") ?? "normal", where(r)).not.toBe("nowrap");
+      expect(r.decls.get("text-overflow") ?? "clip", where(r)).not.toBe("ellipsis");
+      expect(r.decls.get("-webkit-line-clamp") ?? "none", where(r)).toBe("none");
+    }
+    expect(cascaded("board.css", ".r4s .st", "white-space", 1440)).toBe("normal");
+  });
+
+  it("DB-P3-6: the blocker flag is in the fail tone, its words readable on a raised tile", () => {
+    // State colours are marks on --bg-raised (3:1), never text (tokens.spec).
+    expect(cascaded("board.css", ".blk .ic", "color", 1440)).toBe("var(--state-fail)");
+    expect(cascaded("board.css", ".blk", "border-left", 1440)).toBe("2px solid var(--state-fail)");
+    expect(cascaded("board.css", ".blk", "color", 1440)).toBe("var(--text-primary)");
+  });
+
+  it("DB-P3-10: empty columns are chips above the board, never rotated rails", () => {
+    expect(cascaded("board.css", ".col-chips", "display", 1440)).toBe("flex");
+    for (const r of RULES.filter((x) => x.file === "board.css"))
+      expect(r.decls.has("writing-mode"), where(r)).toBe(false);
+  });
+
+  it("DB-P3-18: On hold's count is in the parked tone", () => {
+    expect(cascaded("board.css", ".col-h .c.held", "color", 1440)).toBe("var(--state-parked)");
+  });
+
+  it("DB-P3-5: the delegate is a text chip, the owner a 20 px monogram", () => {
+    expect(cascaded("board.css", ".av", "width", 1440)).toBe("20px");
+    expect(cascaded("board.css", ".dlg", "border", 1440)).toBe("1px solid var(--border-subtle)");
+  });
+
+  it("DB-P3-5: the focused or tapped tile writes its owner's name beside the monogram", () => {
+    // Not hover-only: the focused tile (keyboard focus, or the tap that
+    // focuses it) shows the name in words; the others keep the monogram.
+    expect(cascaded("board.css", ".av-name", "display", 1440)).toBe("none");
+    const shown = RULES.find(
+      (r) =>
+        r.file === "board.css" &&
+        r.selector === ".tile:focus-visible .av-name, .tile.focus .av-name",
+    );
+    expect(shown?.decls.get("display")).toBe("inline");
+    const tile = readFileSync(join(WEB, "tile.js"), "utf8");
+    expect(tile).toMatch(
+      /<span class="av-name" aria-hidden="true">\$\{esc\(t\.owner\.name\)\}<\/span>/,
+    );
+  });
+});
+
+describe("the board geometry the reach check lays out is the served one (DB-P3-17)", () => {
+  const G = BOARD_GEOMETRY;
+  const px = (n: number) => `${n}px`;
+
+  it("columns: 200 to 300 px wide, 220 below 1280, 184 beside the dock", () => {
+    expect(cascaded("board.css", ".col", "min-width", 1440)).toBe(px(G.colMin.wide));
+    expect(cascaded("board.css", ".col", "min-width", 1100)).toBe(px(G.colMin.narrow));
+    expect(cascaded("board.css", ".col", "max-width", 1440)).toBe(px(G.colMax));
+    expect(cascaded("pm.css", "body.pm-open .col", "min-width", 1440)).toBe(px(G.colMin.beside));
+    expect(cascaded("pm.css", "body.pm-open .col", "min-width", 1100)).toBe(px(G.colMin.narrow));
+  });
+
+  it("the board's padding and gaps, the column header, the list and the chips row", () => {
+    expect(cascaded("board.css", ".board", "gap", 1440)).toBe(px(G.gap));
+    expect(cascaded("board.css", ".board", "padding", 1440)).toBe(px(G.pad));
+    expect(cascaded("board.css", ".col-h", "height", 1440)).toBe(px(G.colHeader));
+    expect(cascaded("board.css", ".list", "padding", 1440)).toBe(px(G.listPad));
+    expect(cascaded("board.css", ".col-chip", "height", 1440)).toBe(px(G.chip));
+    expect(cascaded("board.css", ".col-chips", "padding", 1440)).toBe(`${px(G.chipsTop)} 16px 0`);
+    expect(cascaded("board2.css", ".vbar", "min-height", 1440)).toBe(px(G.viewBar));
+  });
+
+  it("the dock narrows the board from 1280 px and overlays it below", () => {
+    expect(cascaded("pm.css", ".pm-dock", "width", 1440)).toBe(px(G.dock.wide));
+    expect(cascaded("pm.css", ".pm-dock", "width", 1100)).toBe(px(G.dock.narrow));
+    expect(cascaded("pm.css", ".pm-dock", "position", 1100)).toBe("fixed");
+    expect(cascaded("pm.css", ".pm-dock", "position", 1440)).toBeUndefined();
+  });
+
+  it("the sidebar and topbar come from the layout tokens", () => {
+    expect(LAYOUT.sidebarW).toBe(px(G.sidebar.wide));
+    expect(LAYOUT.sidebarWNarrow).toBe(px(G.sidebar.narrow));
+    expect(LAYOUT.topbarH).toBe(px(G.topbar));
   });
 });

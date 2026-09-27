@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 52 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 53 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,24 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 53 — 2026-09-27 (B4.6 done: the professional board, story map and burn-up, live Steps output, team review, the agent issue page)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver. One workflow sized to the owner's 15% of the 5-hour window: four builders one at a time (G1 board and tiles, G2 map/burn-up/create, G3 live steps and issue page, G4 team review), a sweep after the Nail-MTP suite freed memory, one independent review, a fixer and a blocker re-check (8 agents, 1.94M tokens). It ran beside live model runs with single-worker tests.
+
+- **Board (DB-P3-1..11, 15, 16, 18):** Backlog, To do, In progress, In review, Done, and On hold only while it holds cards (right-most); Won't do only when the filter asks for rejected cards; Pipeline stages (`Shift+V`) shows the nine stored states and is kept per browser. Tiles: type icon and word, key (short id until the kernel's card key, CHR-12), points, owner monogram with the name on focus, a *Worker* delegate chip, priority, epic, labels, status, gate pips, work-item age; the blocker flag names what it waits on. Column headers carry point sums; In review shows count / limit from `BoardServiceImpl.reviewLimitFacts`, the computation the board enforces. Empty and folded columns become chips; sort, folds and chips are kept per browser. The board is a pure function of the payload (the stream's replay frame equals `GET /api/board`).
+- **Quick create (DB-P3-12):** `c` or a column's `+` opens a form that proposes a card through Seshat's pipeline (`POST /api/pm/create-card`, permission on the epic's or the board's project). The criteria-approval hold reads on the tile as *open the card to approve them*, never the CLI command.
+- **Story map and burn-up (DB-P3-13, 14, 17):** `#/board/map` with epics across and slices as bands; a burn-up of done against scope per project (and only the projects a person can see, in the Team setup).
+- **Live Steps output (NEW-dashboard-3):** the running step's last 2,000 characters stream as `event: tokens`; in the Team setup only to people who can see the card's project.
+- **The agent issue page (NEW-dashboard-8):** issue block, tabs, Activity (replaces the Thread view), the agent bar with pause, take-over and messages; it reads the newest 1,000 events so a reload agrees with a live page.
+- **Team review (NEW-dashboard-5, partial):** risk-ordered files with *Seen* marks counted only once a diff has been on screen; Acknowledge and Accept's reason; *Built by* from the latest attempt; test approvals and supersessions; who may accept, including the code-owner rule. `GET /api/cards/:id/review` keeps its earlier fields (brief, escalation, suggested accepters: the sweep found the new route hid them, `wave2_server.spec` P12/P14) and answers 404 to a person who cannot see the project.
+- **Review:** 1 blocker (the tile told people to use the CLI) and 5 majors (swimlanes lost rejected cards; Review passed without looking; create-card permission at workspace level only; the burn-up counted every project; live tokens and review data reached people outside the project), all fixed with failing-first tests; the blocker re-checked by mutation. 9 minors fixed.
+- **Gate:** `pnpm gate` on the committed tree: `tsc -b` clean, `biome check .` clean (1,346 files), vitest 581 files, 4,426 passed, 37 skipped (single worker, beside a live baseline run).
+- **Where the cards stop:**
+  - B4.6 is done. **Partial, marked so:** NEW-dashboard-5's acknowledgement and coverage wait on the Reviewer recording verdicts and files read (review-git P8, B4.8); hand back after a take-over without a pause (a worker-loop decision); epic chip hues; subtasks and the amber age threshold on tiles; a cycle's burn-up is not narrowed by project.
+  - **Open, recorded:** in the Team setup `/api/stream`'s `append` frames and board still reach every signed-in person (pre-existing; only token frames are filtered); Seshat's context still carries the raw `sekhemet approve` hold text (pm/agent.ts); a card's `stopReason` is not cleared when a new attempt starts; planner cards filed by `parentId` show no epic chip; NAMING lacks the `failing` requirement state; in Pipeline stages Rejected follows Parked.
+  - **Live testing:** the Nail-MTP full frozen suite on the current code passed 18 of the 21 cards it ran (Cyber-Tiel on the same 21, baseline build: 17 / 19 / 18 by arm); 9 cards went unmeasured when the memory watchdog stopped new worktrees (F21 wording, F22 measurement, minors). The baseline driver is on the strict arm, round 1.
+  - **Next:** B4.7.
 
 ### Entry 52 — 2026-09-27 (B4.5 done: the reuse survey by capability, with one SPDX licence classifier)
 

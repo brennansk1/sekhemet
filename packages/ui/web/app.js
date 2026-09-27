@@ -159,6 +159,8 @@ function applyBoard(board) {
   store.set({
     cards: board.cards ?? [],
     wipLimits: board.wipLimits ?? {},
+    // How the In review limit was reached (dashboard DB-P3-9).
+    reviewLimit: board.reviewLimit ?? null,
     backpressureActive: Boolean(board.backpressureActive),
     epics: board.epics ?? [],
     cycles: board.cycles ?? [],
@@ -302,6 +304,15 @@ export function connect() {
       window.dispatchEvent(new CustomEvent("sekhemet:config", { detail: JSON.parse(ev.data) }));
     } catch {
       // A malformed frame is dropped; the page re-reads on its next action.
+    }
+  });
+  // NEW-dashboard-3: a running step's output as it decodes. Passed on, never
+  // stored: only the Steps tab of that running card listens (DB-N3-2).
+  source.addEventListener("tokens", (ev) => {
+    try {
+      window.dispatchEvent(new CustomEvent("sekhemet:tokens", { detail: JSON.parse(ev.data) }));
+    } catch {
+      // A malformed frame is dropped; the next one carries the whole tail.
     }
   });
   source.addEventListener("machine", (ev) => {

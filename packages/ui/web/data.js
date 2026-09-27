@@ -13,7 +13,7 @@ function key(id, attempt) {
 }
 
 /**
- * @returns {Promise<{ card, attempts, acceptance, evidence, error? }>}
+ * @returns {Promise<{ card, attempts, acceptance, evidence, review, attachments, desk, error? }>}
  * `evidence` is null when the card has not run; `error` is set on 5xx/network.
  */
 export function loadDetail(id, attempt) {
@@ -38,8 +38,14 @@ export function loadDetail(id, attempt) {
       status: 0,
       data: null,
     })),
+    // NEW-dashboard-5: the Reviewer's findings, the files Accept counts, who may accept.
+    getJSON(`/api/cards/${encodeURIComponent(id)}/review`).catch(() => ({
+      ok: false,
+      status: 0,
+      data: null,
+    })),
   ])
-    .then(([c, e, rv, at]) => {
+    .then(([c, e, rv, at, dk]) => {
       const out = {
         card: c.ok ? c.data.card : store.card(id),
         attempts: c.ok ? c.data.attempts : [],
@@ -47,6 +53,7 @@ export function loadDetail(id, attempt) {
         evidence: e.ok ? e.data : null,
         review: rv.ok ? latestReview(rv.data?.events) : null,
         attachments: at.ok ? (at.data?.attachments ?? []) : [],
+        desk: dk.ok ? dk.data : null,
       };
       if (!e.ok && e.status !== 404) out.error = { status: e.status, message: e.data?.error ?? "" };
       if (!c.ok && c.status !== 404) out.error = { status: c.status, message: c.data?.error ?? "" };

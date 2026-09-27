@@ -1,17 +1,27 @@
-// Board (FRONTEND_DESIGN §2.4.2): columns, rails, keyed tile patching, keyboard.
+// Board (dashboard §2.4): the professional columns or pipeline stages, chips
+// for empty columns, keyed tile patching and the keyboard. What the board shows
+// is the pure model's (`lib/columns.js`, `lib/tiles.js`, dashboard P3).
+import { openCreate } from "./create.js";
 import { $, $$, esc, icon, postJSON, tip } from "./dom.js";
 import { fieldKey, selectionOrFocused } from "./fields.js";
 import * as lanes from "./lanes.js";
-import { formatQuery, sortByPriority } from "./lib/pm.js";
 import {
-  BOARD_COLUMN_ORDER,
-  COLUMN_EMPTY,
-  GATE_STATE_LABELS,
-  KIND_LABELS,
-  columnLabel,
-  formatDuration,
-} from "./lib/vocabulary.js";
+  boardColumnDefs,
+  boardModel,
+  defaultSort,
+  focusAfterFrame,
+  onColumns,
+  readColumnChoices,
+  readPipeline,
+  sortColumn,
+  writeColumnChoices,
+  writePipeline,
+} from "./lib/columns.js";
+import { QUICK_CREATE_COPY, epicFromFilter } from "./lib/create.js";
+import { formatQuery } from "./lib/pm.js";
+import { GATE_STATE_LABELS, formatDuration } from "./lib/vocabulary.js";
 import * as listView from "./list.js";
+import * as mapView from "./map.js";
 import { openMenu } from "./overlay.js";
 import { openPeek, peekOpenFor } from "./peek.js";
 import { askMerit, togglePmPanel } from "./pm_panel.js";
@@ -32,10 +42,9 @@ import {
 } from "./viewbar.js";
 import { columnsInWindow, windowRange } from "./virtual.js";
 
-/** Columns that collapse into a 36px rail when empty. Working and Review never do. */
-const RAILABLE = new Set(["backlog", "ready", "planning", "verify", "done", "parked"]);
-/** Columns whose limit is a real constraint worth showing as `n / limit`. */
-const LIMIT_SHOWN = 20;
+/** Columns whose header has the create `+` (DB-P3-12): where a new card can start. */
+const CREATE_COLUMNS = new Set(["backlog", "todo", "ready"]);
+
 /** Above this many cards a column windows its tiles instead of rendering all. */
 const VIRTUAL_THRESHOLD = 60;
 const ROW = 88;
@@ -64,7 +73,38 @@ const ui = {
   justNowTimer: 0,
   tipEl: null,
   hFrame: 0,
+  /** Pipeline stages (`⇧V`), kept per browser (DB-P3-3). */
+  pipeline: false,
+  /** Full columns in order, from the last render. */
+  layout: [],
+  /** Card id → its column id, from the last render (DB-P3-15). */
+  colOf: new Map(),
+  columns: new Map(),
 };
+
+function storage() {
+  try {
+    return window.localStorage;
+  } catch {
+    return undefined;
+  }
+}
+
+/** A person's column choices for the layout in force, from this browser (DB-P3-16). */
+function loadChoices() {
+  const c = readColumnChoices(storage(), ui.pipeline);
+  ui.sort = c.sort;
+  ui.collapsed = c.collapsed;
+  ui.expanded = c.expanded;
+}
+
+function saveChoices() {
+  writeColumnChoices(storage(), ui.pipeline, {
+    sort: ui.sort,
+    collapsed: ui.collapsed,
+    expanded: ui.expanded,
+  });
+}
 
 /* ---------- Data shaping ---------- */
 
@@ -72,69 +112,74 @@ function visibleCards() {
   return filterCards(store.state.cards);
 }
 
-function waitMs(c) {
-  const at = c.display?.enteredColumnAt ? Date.parse(c.display.enteredColumnAt) : Date.now();
-  return store.state.now - at;
+/**
+ * The column definitions in force: the professional five (with Won't do when
+ * the filter asks for rejected cards), or the nine stages. The board and its
+ * swimlanes read the same list (DB-P3-1).
+ */
+function columnDefs() {
+  return boardColumnDefs({ pipeline: ui.pipeline, wontDo: wantsWontDo() });
 }
 
-function sortCards(status, cards) {
-  const mode =
-    ui.sort[status] ?? (status === "review" || status === "parked" ? "wait" : "priority");
-  if (mode === "wait") return [...cards].sort((a, b) => waitMs(b) - waitMs(a));
-  if (mode === "recent") return [...cards].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  // Priority 1 (urgent) first and 0 (none) last; the stored order breaks ties.
-  return sortByPriority(cards);
+/** A column's sort, for swimlanes: the same default and choice as the board. */
+function sortCards(colId, cards) {
+  const def = columnDefs().find((c) => c.id === colId) ?? { queue: false };
+  return sortColumn(cards, ui.sort[colId] ?? defaultSort(def), store.state.now);
 }
 
-function byColumn(cards) {
-  const map = new Map(BOARD_COLUMN_ORDER.map((s) => [s, []]));
-  for (const c of cards) map.get(c.status)?.push(c);
-  for (const [s, list] of map) map.set(s, sortCards(s, list));
-  return map;
+/** The filter asks for rejected cards: the Won't do column shows (§2.4.1). */
+function wantsWontDo() {
+  return effectiveFilter().terms.some(
+    (t) => t.field === "state" && !t.negate && t.values.includes("rejected"),
+  );
 }
 
-function columnMode(status, count) {
-  if (ui.collapsed.has(status)) return "rail";
-  if (ui.expanded.has(status)) return "full";
-  if (status === "rejected") return count > 0 ? "full" : "hidden";
-  if (status === "done" && window.innerWidth < 1600) return "rail";
-  if (RAILABLE.has(status) && count === 0) return "rail";
-  return "full";
+function model() {
+  const s = store.state;
+  return boardModel({
+    cards: s.cards,
+    visible: new Set(visibleCards().map((c) => c.id)),
+    now: s.now,
+    pipeline: ui.pipeline,
+    wipLimits: s.wipLimits,
+    reviewLimit: s.reviewLimit ?? null,
+    expanded: ui.expanded,
+    collapsed: ui.collapsed,
+    sort: ui.sort,
+    wontDo: wantsWontDo(),
+  });
 }
 
 /* ---------- Rendering ---------- */
 
-function limitInfo(status, count) {
-  const limit = store.state.wipLimits?.[status];
-  if (typeof limit !== "number" || limit > LIMIT_SHOWN) return null;
-  const state = count > limit ? "over" : count >= limit ? "full" : "";
-  let title = `Limit ${limit}`;
-  if (status === "review") {
-    const minutes = store.state.meta?.reviewMinutesPerDay ?? 60;
-    title = `Review limit ${limit}, from ${minutes} review minutes a day at ~${Math.round(minutes / limit)} min per card.`;
-    if (state === "full") title += " Full. The Worker holds finished cards until you clear one.";
-  } else if (state === "full") {
-    title = `${columnLabel(status)} limit ${limit}. Full.`;
-  }
-  return { limit, state, title };
-}
-
-function headerHtml(status, count) {
-  const lim = limitInfo(status, count);
-  const parkedWarn = status === "parked" && count > 0 ? " full" : "";
+function headerHtml(col) {
+  const lim = col.limit;
+  // On hold's count is in the parked tone whenever it holds cards (DB-P3-18).
+  const tone = lim?.state ? ` ${lim.state}` : col.countTone === "parked" ? " held" : "";
   const c = lim
-    ? `<span class="c tnum${lim.state ? ` ${lim.state}` : ""}" ${tip(lim.title)}>${count} / ${lim.limit}</span>`
-    : `<span class="c tnum${parkedWarn}">${count}</span>`;
+    ? `<span class="c tnum${tone}" ${tip(lim.derivation)}>${esc(lim.text)}</span>`
+    : `<span class="c tnum${tone}">${col.count}</span>`;
+  const pts = `<span class="pts tnum">${esc(col.pointsText)}</span>`;
   const cap = lim
-    ? `<div class="cap${lim.state ? ` ${lim.state}` : ""}"><i style="width:${Math.min(100, Math.round((count / lim.limit) * 100))}%"></i></div>`
+    ? `<div class="cap${lim.state ? ` ${lim.state}` : ""}"><i style="width:${Math.min(100, Math.round((lim.count / Math.max(1, lim.limit)) * 100))}%"></i></div>`
     : "";
-  return `<div class="col-h"><h2 id="h-${status}">${esc(columnLabel(status))}</h2>${c}<button class="more" type="button" data-colmenu="${status}" aria-label="${esc(columnLabel(status))} column options"${lim ? ` aria-description="${esc(lim.title)}"` : ""}>${icon("more")}</button></div>${cap}`;
+  // DB-P3-12: the columns a new card can start in carry the create `+`.
+  const add = CREATE_COLUMNS.has(col.id)
+    ? `<button class="more add" type="button" data-create aria-label="${esc(QUICK_CREATE_COPY.plus)}" ${tip(QUICK_CREATE_COPY.plusTip)}>${icon("plus")}</button>`
+    : "";
+  return `<div class="col-h"><h2 id="h-${esc(col.id)}">${esc(col.label)}</h2>${c}${pts}${add}<button class="more" type="button" data-colmenu="${esc(col.id)}" aria-label="${esc(col.label)} column options"${lim ? ` aria-description="${esc(lim.derivation)}"` : ""}>${icon("more")}</button></div>${cap}`;
 }
 
-function railHtml(status, count) {
-  const hint = `${columnLabel(status)}: ${COLUMN_EMPTY[status].replace(/\.$/, "").toLowerCase()}`;
-  const warn = status === "parked" && count > 0 ? " warn" : "";
-  return `<button class="rail" type="button" data-rail="${status}" ${tip(`${hint}. Press Enter to expand.`)} aria-label="${esc(columnLabel(status))}, ${count} ${count === 1 ? "card" : "cards"}, collapsed"><span class="c tnum${warn}">${count}</span><span>${esc(columnLabel(status))}</span></button>`;
+/** Empty and folded columns as chips above the board, and the stages toggle (DB-P3-10). */
+function chipsHtml(chips) {
+  const items = chips
+    .map(
+      (c) =>
+        `<button class="col-chip" type="button" data-chip-col="${esc(c.id)}" ${tip(`${c.label}: ${c.empty} Opens the column.`)}><span>${esc(c.label)}</span><span class="c tnum">${c.count}</span>${icon("chevron-right", 12, "ic s12")}</button>`,
+    )
+    .join("");
+  const toggle = `<button class="col-chip pipe-toggle" type="button" data-pipeline aria-pressed="${ui.pipeline ? "true" : "false"}" ${tip("Show each stored state as its own column (Shift+V).")}>Pipeline stages</button>`;
+  return `<div class="col-chips" role="group" aria-label="Columns">${items}${toggle}</div>`;
 }
 
 function renderTopbar() {
@@ -148,7 +193,7 @@ function renderTopbar() {
 }
 
 function ensureLayout(columns) {
-  const key = columns.map(([s, mode]) => `${s}:${mode}`).join("|");
+  const key = columns.map((c) => c.id).join("|");
   if (key === ui.layoutKey && $(".board", ui.root)) return false;
   ui.layoutKey = key;
   const board = document.createElement("div");
@@ -159,14 +204,10 @@ function ensureLayout(columns) {
   const scroll = old ? old.scrollLeft : 0;
   const listScroll = new Map($$(".list", ui.root).map((l) => [l.dataset.list, l.scrollTop]));
   const parts = [];
-  for (const [status, mode] of columns) {
-    if (mode === "hidden") continue;
-    if (mode === "rail") {
-      parts.push(railHtml(status, 0));
-      continue;
-    }
+  for (const col of columns) {
+    const id = esc(col.id);
     parts.push(
-      `<section class="col" role="group" aria-labelledby="h-${status}" data-col="${status}"><div class="col-head" data-head="${status}"></div><ul class="list" role="listbox" aria-orientation="vertical" aria-labelledby="h-${status}" data-list="${status}"></ul></section>`,
+      `<section class="col${col.queue ? " queue" : ""}" role="group" aria-labelledby="h-${id}" data-col="${id}"><div class="col-head" data-head="${id}"></div><ul class="list" role="listbox" aria-orientation="vertical" aria-labelledby="h-${id}" data-list="${id}"></ul></section>`,
     );
   }
   board.innerHTML = parts.join("");
@@ -207,6 +248,7 @@ function tileOpts(card) {
       store.state.focusedId !== card.id,
     pmPaused: Boolean(store.state.pm?.status?.workerPaused),
     hidePriority: vb.group === "priority",
+    epics: store.state.epics,
   };
 }
 
@@ -241,8 +283,7 @@ function patchList(list, cards, { virtual, from = 0 } = {}) {
 }
 
 function paintVirtual(list) {
-  const status = list.dataset.list;
-  const cards = ui.columns?.get(status) ?? [];
+  const cards = ui.columns.get(list.dataset.list) ?? [];
   if (cards.length <= VIRTUAL_THRESHOLD) return;
   if (list.dataset.culled) return;
   const stride = rowHeight() + GAP;
@@ -260,7 +301,7 @@ function paintVirtual(list) {
 /** The columns inside the board's horizontal window (U6). */
 function horizontalWindow() {
   const board = $(".board", ui.root);
-  if (!board) return new Set(BOARD_COLUMN_ORDER);
+  if (!board) return new Set(ui.layout.map((c) => c.id));
   const spans = $$(".col[data-col]", board).map((c) => ({
     id: c.dataset.col,
     left: c.offsetLeft,
@@ -293,7 +334,7 @@ function restoreScroll(list) {
   list.scrollTop = want;
 }
 
-function fillList(list, status, cards) {
+function fillList(list, col, cards) {
   const virtual = cards.length > VIRTUAL_THRESHOLD;
   list.classList.toggle("virtual", virtual);
   let sizer = $(":scope > .sizer", list);
@@ -310,7 +351,7 @@ function fillList(list, status, cards) {
   if (cards.length === 0) {
     patchList(list, []);
     const label = formatQuery(effectiveFilter());
-    const text = label ? `No cards match “${label}”.` : COLUMN_EMPTY[status];
+    const text = label ? `No cards match “${label}”.` : col.empty;
     if (!empty) {
       const li = document.createElement("li");
       li.className = "empty";
@@ -348,8 +389,7 @@ function render() {
   renderTopbar();
   const s = store.state;
   const activeId = document.activeElement?.closest?.(".tile")?.dataset.id;
-  const activeCol = activeId ? store.card(activeId)?.status : null;
-  const prevCol = document.activeElement?.closest?.(".list")?.dataset.list;
+  const before = ui.colOf;
 
   if (s.loaded && s.cards.length === 0) {
     ui.layoutKey = "";
@@ -366,7 +406,14 @@ function render() {
       ui.layoutKey = "";
       ui.mode = "lanes";
     }
-    lanes.render(ui.root, visibleCards(), { group: vb.group, sortCards, tileOpts });
+    // A lane holds, and counts, only the cards some column shows.
+    const defs = columnDefs();
+    lanes.render(ui.root, onColumns(visibleCards(), defs), {
+      group: vb.group,
+      sortCards,
+      tileOpts,
+      columns: defs,
+    });
     return;
   }
   if (ui.mode === "lanes") {
@@ -375,65 +422,66 @@ function render() {
     ui.mode = "columns";
   }
 
-  const all = byColumn(s.cards);
-  const cols = byColumn(visibleCards());
-  ui.columns = cols;
-  const layout = BOARD_COLUMN_ORDER.map((status) => [
-    status,
-    columnMode(status, all.get(status).length),
-  ]);
-  ensureLayout(layout);
+  const m = model();
+  ui.layout = m.columns;
+  ui.columns = new Map(m.columns.map((c) => [c.id, c.cards]));
+  ui.colOf = new Map(m.columns.flatMap((c) => c.cards.map((x) => [x.id, c.id])));
+  paintChips(m.chips);
+  ensureLayout(m.columns);
   const inView = horizontalWindow();
 
-  for (const [status, mode] of layout) {
-    if (mode === "rail") {
-      const rail = $(`[data-rail="${status}"]`, ui.root);
-      const html = railHtml(status, all.get(status).length);
-      if (rail && rail.outerHTML !== html) rail.outerHTML = html;
-      continue;
-    }
-    if (mode !== "full") continue;
-    const head = $(`[data-head="${status}"]`, ui.root);
-    const hh = headerHtml(status, all.get(status).length);
+  for (const col of m.columns) {
+    const head = $(`[data-head="${col.id}"]`, ui.root);
+    const hh = headerHtml(col);
     if (head && head.dataset.html !== hh) {
       head.innerHTML = hh;
       head.dataset.html = hh;
     }
-    const list = $(`[data-list="${status}"]`, ui.root);
-    const cards = cols.get(status);
-    if (!inView.has(status) && cards.length > CULL_MIN) cullList(list, cards);
+    const list = $(`[data-list="${col.id}"]`, ui.root);
+    if (!inView.has(col.id) && col.cards.length > CULL_MIN) cullList(list, col.cards);
     else {
       delete list.dataset.culled;
-      fillList(list, status, cards);
+      fillList(list, col, col.cards);
     }
   }
 
   syncFocusAttrs();
-  // Keep focus on the card it was on, even when an SSE frame replaced its node.
-  if (activeId && !document.activeElement?.closest?.(".tile")) {
-    const node = document.getElementById(`tile-${activeId}`);
+  // DB-P3-15: the focused card keeps focus when a frame replaced its node, and
+  // is scrolled into view only when it changed column; no other card scrolls.
+  const keep = focusAfterFrame(activeId, before, ui.colOf);
+  if (keep && !document.activeElement?.closest?.(".tile")) {
+    const node = document.getElementById(`tile-${keep.id}`);
     if (node) {
-      node.focus({ preventScroll: activeCol === prevCol });
-      if (activeCol !== prevCol) node.scrollIntoView({ block: "nearest", inline: "nearest" });
+      node.focus({ preventScroll: true });
+      if (keep.scroll) node.scrollIntoView({ block: "nearest", inline: "nearest" });
     }
   }
   pinQueueColumns();
   scheduleJustNow();
 }
 
+/** The chips bar above the board, patched only when it changed. */
+function paintChips(chips) {
+  const html = chipsHtml(chips);
+  const host = $(":scope > .col-chips", ui.root);
+  if (host && host.outerHTML === html) return;
+  const t = document.createElement("template");
+  t.innerHTML = html;
+  const fresh = t.content.firstElementChild;
+  if (host) host.replaceWith(fresh);
+  else ui.root.prepend(fresh);
+}
+
 /**
- * When the board scrolls sideways, Review and Parked stay pinned to the right
- * edge: the human's queue is never the part that gets scrolled away (§2.4.2).
+ * When the board scrolls sideways, In review and On hold stay pinned to the
+ * right edge: the person's queue is never the part that gets scrolled away (§2.4.2).
  */
 function pinQueueColumns() {
   const board = $(".board", ui.root);
   if (!board) return;
-  const review = $('[data-col="review"]', board);
-  const parked = $('[data-col="parked"]', board);
   const overflow = board.scrollWidth > board.clientWidth + 1;
   let right = 0;
-  for (const col of [parked, review]) {
-    if (!col) continue;
+  for (const col of $$(".col.queue", board).reverse()) {
     col.classList.toggle("pinned", overflow);
     col.style.right = overflow ? `${right}px` : "";
     if (overflow) right += col.offsetWidth + GAP;
@@ -465,21 +513,21 @@ function focusTile(id, { scroll = true } = {}) {
   if (!id) return;
   store.state.focusedId = id;
   let node = document.getElementById(`tile-${id}`);
-  if (!node) {
+  const colId = ui.colOf.get(id);
+  if (!node && colId) {
     // Culled out sideways: give the column its tiles first (U6).
-    const culled =
-      store.card(id) && $(`[data-list="${store.card(id).status}"][data-culled]`, ui.root);
-    if (culled) {
+    const culled = $(`[data-list="${colId}"][data-culled]`, ui.root);
+    const col = ui.layout.find((c) => c.id === colId);
+    if (culled && col) {
       delete culled.dataset.culled;
-      fillList(culled, culled.dataset.list, ui.columns.get(culled.dataset.list) ?? []);
+      fillList(culled, col, col.cards);
       node = document.getElementById(`tile-${id}`);
     }
   }
-  if (!node) {
+  if (!node && colId) {
     // Windowed out: scroll its column so it materialises, then focus.
-    const card = store.card(id);
-    const list = card && $(`[data-list="${card.status}"]`, ui.root);
-    const idx = list ? (ui.columns.get(card.status) ?? []).findIndex((c) => c.id === id) : -1;
+    const list = $(`[data-list="${colId}"]`, ui.root);
+    const idx = list ? (ui.columns.get(colId) ?? []).findIndex((c) => c.id === id) : -1;
     if (list && idx >= 0) {
       list.scrollTop = Math.max(0, idx * (rowHeight() + GAP) - list.clientHeight / 2);
       paintVirtual(list);
@@ -496,16 +544,16 @@ function focusTile(id, { scroll = true } = {}) {
 }
 
 function navColumns() {
-  return BOARD_COLUMN_ORDER.filter(
-    (s) => (ui.columns?.get(s) ?? []).length > 0 && $(`[data-list="${s}"]`, ui.root),
-  );
+  return ui.layout
+    .map((c) => c.id)
+    .filter((id) => (ui.columns.get(id) ?? []).length > 0 && $(`[data-list="${id}"]`, ui.root));
 }
 
 function move(dx, dy, edge) {
   const cols = navColumns();
   if (cols.length === 0) return;
   const cur = store.card(store.state.focusedId);
-  let ci = cur ? cols.indexOf(cur.status) : -1;
+  let ci = cur ? cols.indexOf(ui.colOf.get(cur.id)) : -1;
   if (ci < 0) {
     focusTile(ui.columns.get(cols[0])[0].id);
     return;
@@ -538,6 +586,14 @@ export function onKey(e) {
   }
   if (k === "S" && e.shiftKey) {
     cycleGroup();
+    return true;
+  }
+  if (k === "V" && e.shiftKey) {
+    togglePipeline();
+    return true;
+  }
+  if (k === "c") {
+    createCard();
     return true;
   }
   const anchor = document.getElementById(`tile-${focused}`) ?? ui.root;
@@ -579,11 +635,12 @@ export function onKey(e) {
     toggleSelect(focused);
     return true;
   }
-  if (k === "c") {
-    toast({ text: "Create cards from the CLI for now", detail: 'sekhemet plan "<spec>"' });
-    return true;
-  }
   return false;
+}
+
+/** Quick create (DB-P3-12): the card lands under the epic the board is filtered to. */
+function createCard() {
+  openCreate({ epicId: epicFromFilter(effectiveFilter(), store.state.epics) });
 }
 
 /* ---------- Gate pip hover ---------- */
@@ -622,6 +679,19 @@ function hideTip() {
 
 /* ---------- Mount ---------- */
 
+/** Pipeline stages on or off, kept per browser (DB-P3-3). */
+function togglePipeline() {
+  ui.pipeline = !ui.pipeline;
+  writePipeline(storage(), ui.pipeline);
+  // Each layout keeps its own column choices.
+  loadChoices();
+  toast({
+    tone: "info",
+    text: ui.pipeline ? "Pipeline stages: one column per stored state." : "The five board columns.",
+  });
+  render();
+}
+
 /** The empty board's two ways in (DS-TO-16): both open Seshat. */
 async function emptyAction(action) {
   if (action === "start") {
@@ -652,12 +722,22 @@ function onClick(e) {
     emptyAction(empty.dataset.emptyAction);
     return;
   }
-  const rail = t.closest("[data-rail]");
-  if (rail) {
-    ui.expanded.add(rail.dataset.rail);
-    ui.collapsed.delete(rail.dataset.rail);
+  if (t.closest("[data-create]")) {
+    createCard();
+    return;
+  }
+  if (t.closest("[data-pipeline]")) {
+    togglePipeline();
+    return;
+  }
+  const chip = t.closest("[data-chip-col]");
+  if (chip) {
+    const id = chip.dataset.chipCol;
+    ui.expanded.add(id);
+    ui.collapsed.delete(id);
+    saveChoices();
     render();
-    $(`[data-list="${rail.dataset.rail}"]`, ui.root)
+    $(`[data-list="${id}"]`, ui.root)
       ?.closest(".col")
       ?.querySelector("h2")
       ?.scrollIntoView({ inline: "nearest" });
@@ -666,10 +746,11 @@ function onClick(e) {
   const menuBtn = t.closest("[data-colmenu]");
   if (menuBtn) {
     const status = menuBtn.dataset.colmenu;
-    const cur =
-      ui.sort[status] ?? (status === "review" || status === "parked" ? "wait" : "priority");
+    const col = ui.layout.find((c) => c.id === status);
+    const cur = ui.sort[status] ?? defaultSort(col ?? { queue: false });
     const set = (mode) => () => {
       ui.sort[status] = mode;
+      saveChoices();
       render();
     };
     const items = [
@@ -677,20 +758,19 @@ function onClick(e) {
       { label: "Sort by wait time", checked: cur === "wait", run: set("wait") },
       { label: "Sort by recently changed", checked: cur === "recent", run: set("recent") },
     ];
-    if (RAILABLE.has(status)) {
-      items.push("-", {
-        label: "Collapse column",
-        run: () => {
-          ui.expanded.delete(status);
-          ui.collapsed.add(status);
-          render();
-        },
-      });
-    }
+    items.push("-", {
+      label: "Collapse column",
+      run: () => {
+        ui.expanded.delete(status);
+        ui.collapsed.add(status);
+        saveChoices();
+        render();
+      },
+    });
     // The WIP reason, which the header shows only as a count, is the menu's
     // first line: reachable by keyboard and by touch (dashboard §2.14.2).
     openMenu(menuBtn, items, {
-      heading: columnLabel(status),
+      heading: col?.label ?? status,
       note: menuBtn.getAttribute("aria-description") ?? "",
     });
     return;
@@ -706,6 +786,7 @@ function onClick(e) {
 
 export function mount(view, route) {
   if (route?.params?.[0] === "list") return listView.mount(view, route);
+  if (route?.params?.[0] === "map") return mapView.mount(view, route);
   const outer = document.createElement("div");
   outer.className = "view-host";
   outer.innerHTML =
@@ -717,6 +798,8 @@ export function mount(view, route) {
   bindViewBar(ui.cycHost);
   const container = outer.querySelector(".board-host");
   ui.root = container;
+  ui.pipeline = readPipeline(storage());
+  loadChoices();
   ui.mode = "columns";
   ui.layoutKey = "";
   ui.html.clear();

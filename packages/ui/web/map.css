@@ -1,0 +1,241 @@
+/* Story map, burn-up and quick create (dashboard §2.4.7, §2.4.17; DB-P3-12, 13, 14). */
+
+/* Quick create: a 480 px dialog, one-line title and an optional description. */
+.qc {
+  width: 480px;
+  padding: 0 16px 16px;
+  gap: 4px;
+  overflow: auto;
+}
+.qc > header {
+  display: flex;
+  align-items: center;
+  margin: 0 -16px 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.qc h2 {
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+.qc > header .icon-btn {
+  margin-left: auto;
+}
+.qc-f {
+  margin-top: 8px;
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+.qc input,
+.qc textarea {
+  width: 100%;
+  padding: 6px 8px;
+  background: var(--bg-surface);
+  border-radius: var(--radius-control);
+}
+.qc input {
+  height: 32px;
+}
+.qc textarea {
+  resize: vertical;
+  min-height: 80px;
+}
+.qc-hint,
+.qc-note {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.qc-note {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  margin-top: 8px;
+}
+.qc-err {
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+}
+.qc-err:not(:empty) {
+  border-left: 2px solid var(--state-fail);
+  padding-left: 8px;
+}
+.qc > footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* The create `+` in a column header sits beside its menu. */
+.col-h .more.add {
+  margin-left: 0;
+}
+
+/* Story map (`#/board/map`). */
+.map-host {
+  overflow: auto;
+}
+.smap-host {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+}
+.smap-note {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+.smap-scroll {
+  overflow-x: auto;
+}
+.smap {
+  border-collapse: separate;
+  border-spacing: 8px;
+  margin: -8px;
+  table-layout: fixed;
+  min-width: calc(var(--cols) * 248px);
+}
+.smap-epic {
+  text-align: left;
+  vertical-align: middle;
+  height: 36px;
+  padding: 0 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+.smap-epic > .ic {
+  margin-right: 6px;
+  vertical-align: -2px;
+  color: var(--text-secondary);
+}
+.smap-epic[data-none] {
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+.smap-band-h {
+  text-align: left;
+  padding: 12px 0 0;
+  border-top: 1px solid var(--border-subtle);
+  font-weight: 400;
+}
+.smap-band-t {
+  font-weight: 600;
+  margin-right: 8px;
+}
+.smap-band-h .sec {
+  font-size: var(--text-xs);
+}
+.smap-band.skeleton .smap-band-h {
+  border-top: 2px solid var(--accent);
+}
+.skel {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 8px;
+  padding: 0 6px;
+  height: 20px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  font-size: var(--text-xs);
+}
+.smap td {
+  vertical-align: top;
+  padding: 0;
+}
+.smap-none {
+  color: var(--text-secondary);
+  padding: 8px 12px;
+  display: block;
+}
+.sreqs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sreq {
+  padding: 8px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.sreq-h {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-xs);
+}
+.rst {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-primary);
+}
+.rst.i-pass .ic {
+  color: var(--state-pass);
+}
+.rst.i-fail .ic {
+  color: var(--state-fail);
+}
+.rst.i-park .ic {
+  color: var(--state-parked);
+}
+.rst.i-pass,
+.rst.i-fail,
+.rst.i-park {
+  color: var(--text-primary);
+}
+.sreq-id {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
+.sreq-t {
+  font-weight: 500;
+}
+.sreq-why {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.smap-cards {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: visible;
+}
+
+/* Burn-up: scope and done as two lines, told apart by dash as well as colour. */
+.smap-burn {
+  max-width: 948px;
+}
+.chart .bu-scope {
+  fill: none;
+  stroke: var(--text-secondary);
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+  stroke-linejoin: round;
+}
+.chart .bu-done {
+  fill: none;
+  stroke: var(--state-pass);
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+.bu-sw-scope {
+  background: var(--text-secondary);
+}
+.bu-sw-done {
+  background: var(--state-pass);
+}

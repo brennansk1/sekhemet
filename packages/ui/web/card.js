@@ -1,19 +1,24 @@
+import { renderActivity } from "./activity.js";
 import { renderApproval } from "./approval.js";
+import { renderChanges } from "./changes.js";
 import { loadDetail } from "./data.js";
-// Card view (FRONTEND_DESIGN §2.4.3): header with triage, then five tabs.
-// Evidence reuses the Review composition; Plan, Steps, Thread and Files are
-// their own modules. Route: #/card/:id/:tab, tabs on keys 1–5.
+// The issue page (dashboard §2.6, NEW-dashboard-8, DEC-34): the header with
+// triage; the description, the acceptance criteria with their check state and
+// the agent's controls; then six tabs — Activity, Checks, Changes, AI review,
+// Steps and Plan — on keys 1–6. Route: #/card/:id/:tab; the old tab names
+// (evidence, thread, files) land on the tab that holds their content.
 import { nextDiffMode } from "./diff.js";
 import { $, esc, getJSON, icon } from "./dom.js";
-import { EvidencePane } from "./evidence.js";
-import { filesCount, renderFiles } from "./files.js";
+import { EvidencePane, reviewHtml } from "./evidence.js";
+import { mountIssue } from "./issue_view.js";
+import { ISSUE_COPY, ISSUE_TABS, issueEventsUrl, issueTab, oldestFirst } from "./lib/issue.js";
 import { columnLabel } from "./lib/vocabulary.js";
 import { renderPlan } from "./plan.js";
+import { acknowledgeFocused, focusNextFinding, reviewerHtml } from "./review_desk.js";
 import { setTopbar } from "./shell.js";
 import { renderSteps } from "./steps.js";
 import { store } from "./store.js";
 import { renderSuggestions } from "./suggestions.js";
-import { renderThread } from "./thread.js";
 import {
   accept,
   composerHtml,
@@ -23,18 +28,10 @@ import {
   wireComposer,
 } from "./triage.js";
 
-const TABS = [
-  { id: "evidence", label: "Evidence" },
-  { id: "plan", label: "Plan" },
-  { id: "steps", label: "Steps" },
-  { id: "thread", label: "Thread" },
-  { id: "files", label: "Files" },
-];
-
 const ui = {
   root: null,
   id: null,
-  tab: "evidence",
+  tab: "activity",
   detail: null,
   events: null,
   pane: null,
@@ -43,7 +40,10 @@ const ui = {
   sig: "",
   closeComposer: null,
   tabCtl: null,
+  issue: null,
   loadSeq: 0,
+  /** DB-N8-4: this card's comments on diff lines, carried by Send back. */
+  comments: [],
 };
 
 const PILL_ICON = {
@@ -55,39 +55,63 @@ const PILL_ICON = {
   neutral: "",
 };
 
-function tabsHtml(card) {
-  const counts = {
+/** What each tab's count says, beside its name. */
+function tabCounts(card) {
+  const ev = ui.detail?.evidence;
+  const failedGates = ev && !ev.passed ? new Set((ev.failures ?? []).map((f) => f.gate)).size : 0;
+  return {
+    checks: failedGates || "",
+    changes: ev ? `+${ev.linesAdded ?? 0} −${ev.linesRemoved ?? 0}` : "",
+    ai_review: ui.detail?.review?.findings?.length || "",
     steps:
       card.status === "in_progress"
         ? Number.parseInt(card.display?.budgetText ?? "", 10) || ""
         : card.display?.evidence
-          ? ui.detail?.evidence?.turnsUsed
+          ? ev?.turnsUsed
           : card.stepsUsed || "",
-    thread: ui.events ? ui.events.length : "",
-    files: ui.detail ? filesCount(card, ui.detail) : "",
   };
-  return `<div class="tabs" role="tablist" aria-label="Card sections">${TABS.map((t, i) => {
+}
+
+function tabsHtml(card) {
+  const counts = tabCounts(card);
+  return `<div class="tabs" role="tablist" aria-label="Issue sections">${ISSUE_TABS.map((t) => {
     const sel = t.id === ui.tab;
     const c = counts[t.id];
-    return `<button class="tab" type="button" role="tab" id="tab-${t.id}" data-tab="${t.id}" aria-selected="${sel}" aria-controls="panel" tabindex="${sel ? "0" : "-1"}" title="${esc(t.label)} (${i + 1})">${esc(t.label)}${c !== "" && c !== undefined && c !== 0 ? ` <span class="c tnum">${esc(c)}</span>` : ""}</button>`;
+    return `<button class="tab" type="button" role="tab" id="tab-${t.id}" data-tab="${t.id}" aria-selected="${sel}" aria-controls="panel" tabindex="${sel ? "0" : "-1"}" aria-keyshortcuts="${t.key}">${esc(t.label)}${c !== "" && c !== undefined && c !== 0 ? ` <span class="c tnum">${esc(c)}</span>` : ""}</button>`;
   }).join("")}</div>`;
+}
+
+function renderTabs() {
+  const host = $(".cv-tabs", ui.root);
+  const card = store.card(ui.id);
+  if (!host) return;
+  const next = card ? tabsHtml(card) : "";
+  if (host.dataset.html === next) return;
+  const focusedTab = host.contains(document.activeElement)
+    ? document.activeElement?.dataset?.tab
+    : undefined;
+  host.innerHTML = next;
+  host.dataset.html = next;
+  if (focusedTab) host.querySelector(`[data-tab="${focusedTab}"]`)?.focus();
 }
 
 function renderHead() {
   const card = store.card(ui.id);
   const head = $(".cv-h", ui.root);
   if (!card) {
-    setTopbar({ title: "Card", crumb: store.state.meta?.project ?? "" });
+    setTopbar({ title: "Issue", crumb: store.state.meta?.project ?? "" });
     head.innerHTML = "";
+    renderTabs();
+    ui.issue?.draw();
     return;
   }
   const project = store.state.meta?.project ?? "";
   setTopbar({
-    title: "Card",
+    title: "Issue",
     crumb: `${project ? `${project} › ` : ""}${columnLabel(card.status)}`,
   });
   const d = ui.detail;
-  const triage = triageBarHtml(card, d?.evidence, { hint: false }).replace(
+  const triage = triageBarHtml(card, d?.evidence, { hint: false, detail: d }).replace(
     /^<div class="triage[^"]*"[^>]*>|<\/div>$/g,
     "",
   );
@@ -101,18 +125,26 @@ function renderHead() {
     .replace(
       '<div class="outcome">',
       `<div class="outcome">${pill}`,
-    )}</div><div class="acts">${triage}</div></div>${tabsHtml(card)}`;
+    )}</div><div class="acts">${triage}</div></div>`;
   if (head.dataset.html !== next) {
     const active = document.activeElement;
-    const which = ["data-accept", "data-back", "data-park", "data-tab"].find(
+    const which = ["data-accept", "data-back", "data-park"].find(
       (a) => active?.hasAttribute?.(a) && head.contains(active),
     );
-    const tabVal = active?.dataset?.tab;
     head.innerHTML = next;
     head.dataset.html = next;
-    if (which === "data-tab") head.querySelector(`[data-tab="${tabVal}"]`)?.focus();
-    else if (which) head.querySelector(`[${which}]`)?.focus();
+    if (which) head.querySelector(`[${which}]`)?.focus();
   }
+  renderTabs();
+  ui.issue?.draw();
+}
+
+function aiReviewHtml(detail) {
+  if (!detail) return ui.pane.loadingHtml();
+  // NEW-dashboard-5: the Reviewer's findings, acknowledgeable, then Seshat's notes.
+  const reviewer = reviewerHtml(store.card(ui.id), detail);
+  if (reviewer || detail.review) return reviewer + (detail.review ? reviewHtml(detail.review) : "");
+  return `<div class="ev-empty">${icon("chat", 24, "ic s24")}<b>AI review</b><span>${esc(ISSUE_COPY.aiReviewEmpty)}</span></div>`;
 }
 
 function renderPanel({ keepScroll = true } = {}) {
@@ -125,11 +157,15 @@ function renderPanel({ keepScroll = true } = {}) {
     return;
   }
   const d = ui.detail;
-  if (ui.tab === "evidence") {
+  if (ui.tab === "checks") {
     const old = $(".ev-scroll", body);
     const top = old?.scrollTop ?? 0;
-    body.innerHTML = `<div class="ev-scroll" id="panel" role="tabpanel" aria-labelledby="tab-evidence" tabindex="-1">${d ? ui.pane.bodyHtml(card, d) : ui.pane.loadingHtml()}</div><div data-facts style="display:contents">${d ? ui.pane.factsHtml(card, d) : ""}</div>`;
+    body.innerHTML = `<div class="ev-scroll" id="panel" role="tabpanel" aria-labelledby="tab-checks" tabindex="-1">${d ? ui.pane.checksHtml(card, d) : ui.pane.loadingHtml()}</div><div data-facts style="display:contents">${d ? ui.pane.factsHtml(card, d) : ""}</div>`;
     if (keepScroll) $(".ev-scroll", body).scrollTop = top;
+    return;
+  }
+  if (ui.tab === "ai_review") {
+    body.innerHTML = `<div class="ev-scroll panel" id="panel" role="tabpanel" aria-labelledby="tab-ai_review" tabindex="-1">${aiReviewHtml(d)}</div>`;
     return;
   }
   body.innerHTML = `<div class="ev-scroll panel" id="panel" role="tabpanel" aria-labelledby="tab-${ui.tab}" tabindex="-1"></div>`;
@@ -139,24 +175,36 @@ function renderPanel({ keepScroll = true } = {}) {
     card: () => store.card(ui.id),
     detail: () => ui.detail,
     events: () => ui.events,
+    pane: ui.pane,
+    comments: () => ui.comments,
+    setComments: (c) => {
+      ui.comments = c;
+    },
+    refresh: () => {
+      void loadEvents();
+    },
+    // Files shown on the Changes tab change what Accept's reason says (DB-N5-3).
+    shown: () => renderHead(),
     goTab: (t, hash) => {
-      location.hash = `#/card/${encodeURIComponent(ui.id)}/${t}${hash ?? ""}`;
+      location.hash = `#/card/${encodeURIComponent(ui.id)}/${issueTab(t)}${hash ?? ""}`;
     },
   };
   const renderers = {
-    plan: renderPlan,
+    activity: renderActivity,
+    changes: renderChanges,
     steps: renderSteps,
-    thread: renderThread,
-    files: renderFiles,
+    plan: renderPlan,
   };
   ui.tabCtl = renderers[ui.tab]?.(host, ctx) ?? null;
 }
 
 async function loadEvents() {
   const id = ui.id;
-  const res = await getJSON(`/api/events?card=${encodeURIComponent(id)}&order=asc&limit=1000`);
+  // The newest entries, so a reload shows the agent's state a page that
+  // stayed open shows, however long the run (DB-P3-16).
+  const res = await getJSON(issueEventsUrl(id));
   if (ui.id !== id || !ui.root) return;
-  ui.events = res.ok ? res.data.events : [];
+  ui.events = res.ok ? oldestFirst(res.data.events) : [];
   renderHead();
   ui.tabCtl?.onEvents?.();
 }
@@ -190,7 +238,7 @@ async function load(keepScroll = false) {
   if (seq !== ui.loadSeq || ui.id !== id || !ui.root) return;
   ui.detail = d;
   renderHead();
-  if (ui.tab === "evidence" || !ui.tabCtl) renderPanel({ keepScroll });
+  if (ui.tab === "checks" || ui.tab === "ai_review" || !ui.tabCtl) renderPanel({ keepScroll });
   else ui.tabCtl.onDetail?.();
 }
 
@@ -199,18 +247,26 @@ function runAction(key) {
   if (!card) return false;
   const ev = ui.detail?.evidence;
   if (key === "a") {
-    accept(card, ev, { onChange: () => renderHead(), onMerged: () => renderHead() });
+    accept(card, ev, {
+      detail: ui.detail,
+      onChange: () => renderHead(),
+      onMerged: () => renderHead(),
+    });
     return true;
   }
   if (key === "r" && ev) {
     if ($("[data-composer]", ui.root)) return true;
     $(".cv-body", ui.root).insertAdjacentHTML(
       "beforebegin",
-      composerHtml(quickNotes(card, ev, store.state.gates)),
+      composerHtml(quickNotes(card, ev, store.state.gates), { comments: ui.comments }),
     );
     ui.closeComposer = wireComposer($("[data-composer]", ui.root), card, {
+      // DB-N8-4: Send back carries the comments made on diff lines.
+      comments: () => ui.comments,
       onSent: () => {
         ui.closeComposer = null;
+        ui.comments = [];
+        ui.tabCtl?.rerender?.();
       },
       onClose: () => {
         ui.closeComposer = null;
@@ -226,33 +282,62 @@ function runAction(key) {
 }
 
 function selectTab(tab, { focus = false } = {}) {
-  if (!TABS.some((t) => t.id === tab)) return;
+  if (!ISSUE_TABS.some((t) => t.id === tab)) return;
   history.replaceState(null, "", `#/card/${encodeURIComponent(ui.id)}/${tab}`);
   ui.tab = tab;
-  renderHead();
+  renderTabs();
   renderPanel({ keepScroll: false });
   if (focus) $(`[data-tab="${tab}"]`, ui.root)?.focus();
 }
 
 function onKey(e) {
   const k = e.key;
-  if (/^[1-5]$/.test(k)) {
-    selectTab(TABS[Number(k) - 1].id, { focus: false });
+  const byKey = ISSUE_TABS.find((t) => t.key === k);
+  if (byKey) {
+    selectTab(byKey.id, { focus: false });
     return true;
   }
   // WAI-ARIA tabs: arrows move between tabs when a tab has focus.
   if ((k === "ArrowRight" || k === "ArrowLeft") && e.target.closest?.("[role=tab]")) {
-    const i = TABS.findIndex((t) => t.id === ui.tab);
-    const next = TABS[(i + (k === "ArrowRight" ? 1 : -1) + TABS.length) % TABS.length];
+    const i = ISSUE_TABS.findIndex((t) => t.id === ui.tab);
+    const next =
+      ISSUE_TABS[(i + (k === "ArrowRight" ? 1 : -1) + ISSUE_TABS.length) % ISSUE_TABS.length];
     selectTab(next.id, { focus: true });
     return true;
   }
   if (k === "a" || k === "r" || k === "p") return runAction(k);
+  // DB-N5-3: `x` acknowledges the focused Reviewer finding (or the first open one).
+  if (k === "x") {
+    const card = store.card(ui.id);
+    if (card && ui.detail && acknowledgeFocused(ui.root, card, ui.detail)) {
+      renderHead();
+      renderPanel();
+      focusNextFinding(ui.root, card, ui.detail);
+    }
+    return true;
+  }
   if (ui.tabCtl?.onKey?.(e)) return true;
-  if (ui.tab !== "evidence") return false;
+  if (k === "[" || k === "]") {
+    if (ui.tab !== "checks" && ui.tab !== "changes") return false;
+    const n = ui.detail?.attempts?.length ?? 0;
+    const cur = ui.attempt ?? n;
+    const next = Math.max(1, Math.min(n, cur + (k === "]" ? 1 : -1)));
+    if (n > 1 && next !== cur) {
+      ui.attempt = next === n ? undefined : next;
+      load();
+    }
+    return true;
+  }
+  if (ui.tab === "checks" && k === "f") {
+    ui.pane.factsHidden = !ui.pane.factsHidden;
+    const f = $(".facts", ui.root);
+    if (f) f.hidden = ui.pane.factsHidden;
+    return true;
+  }
+  if (ui.tab !== "changes") return false;
   if (k === "u") {
     ui.pane.mode = nextDiffMode(ui.pane.mode);
-    renderPanel();
+    ui.tabCtl?.rerender?.();
     return true;
   }
   if (k === "n" || k === "N") {
@@ -263,28 +348,12 @@ function onKey(e) {
     ui.pane.toggleFile(ui.root);
     return true;
   }
-  if (k === "f") {
-    ui.pane.factsHidden = !ui.pane.factsHidden;
-    const f = $(".facts", ui.root);
-    if (f) f.hidden = ui.pane.factsHidden;
-    return true;
-  }
-  if (k === "[" || k === "]") {
-    const n = ui.detail?.attempts?.length ?? 0;
-    const cur = ui.attempt ?? n;
-    const next = Math.max(1, Math.min(n, cur + (k === "]" ? 1 : -1)));
-    if (n > 1 && next !== cur) {
-      ui.attempt = next === n ? undefined : next;
-      load();
-    }
-    return true;
-  }
   return false;
 }
 
 function setParams(params) {
   const id = params?.[0];
-  const tab = TABS.some((t) => t.id === params?.[1]) ? params[1] : "evidence";
+  const tab = issueTab(params?.[1]);
   if (id === ui.id) {
     if (tab !== ui.tab) selectTab(tab);
     return;
@@ -294,7 +363,12 @@ function setParams(params) {
   ui.tab = tab;
   ui.attempt = undefined;
   ui.events = null;
+  ui.comments = [];
   store.state.focusedId = id;
+  // An old tab name in the address becomes the tab it now lives in.
+  if (params?.[1] && params[1] !== tab) {
+    history.replaceState(null, "", `#/card/${encodeURIComponent(id)}/${tab}`);
+  }
   load();
   loadEvents();
 }
@@ -303,7 +377,7 @@ export function mount(view, route) {
   const root = document.createElement("div");
   root.className = "view-host";
   root.innerHTML =
-    '<section class="cv" aria-label="Card"><div class="cv-h"></div><div class="cv-apv" data-approval hidden></div><div class="cv-sug" data-suggestions hidden></div><div class="cv-body"></div></section>';
+    '<section class="cv" aria-label="Issue"><div class="cv-h"></div><div class="cv-apv" data-approval hidden></div><div class="cv-sug" data-suggestions hidden></div><div class="cv-issue" data-issue></div><div class="cv-tabs"></div><div class="cv-body"></div></section>';
   view.append(root);
   ui.root = root;
   ui.id = null;
@@ -314,7 +388,25 @@ export function mount(view, route) {
       load();
     },
   });
-  ui.pane.bind(root, { rerender: () => renderPanel(), reload: () => load(true) });
+  ui.pane.bind(root, {
+    rerender: () => {
+      renderHead();
+      return ui.tabCtl?.rerender ? ui.tabCtl.rerender() : renderPanel();
+    },
+    reload: () => load(true),
+    current: () => ({ card: store.card(ui.id), detail: ui.detail }),
+  });
+  ui.issue = mountIssue($("[data-issue]", root), {
+    get id() {
+      return ui.id;
+    },
+    card: () => store.card(ui.id),
+    detail: () => ui.detail,
+    events: () => ui.events,
+    refresh: () => {
+      void loadEvents();
+    },
+  });
   root.addEventListener("click", (e) => {
     const t = e.target instanceof Element ? e.target : null;
     if (!t) return;
@@ -326,6 +418,7 @@ export function mount(view, route) {
   });
   ui.unsub = store.on((_s, patch) => {
     if (!ui.root) return;
+    if ("decisions" in patch) ui.tabCtl?.onStore?.(patch);
     if (!("cards" in patch || "connection" in patch || "verification" in patch)) return;
     const mine = (store.state.feed ?? []).filter((e) => e.cardId === ui.id);
     if ("cards" in patch && mine.length && ui.events) {
@@ -354,6 +447,7 @@ export function mount(view, route) {
       ui.closeComposer?.();
       ui.tabCtl?.destroy?.();
       ui.tabCtl = null;
+      ui.issue = null;
       ui.unsub?.();
       root.remove();
       ui.root = null;

@@ -47,6 +47,15 @@
   color: var(--state-fail);
   font-weight: 600;
 }
+.col-h .c.held {
+  color: var(--state-parked);
+  font-weight: 600;
+}
+.col-h .pts {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
 .col-h .more {
   margin-left: auto;
   color: var(--text-secondary);
@@ -115,33 +124,39 @@
   text-decoration: underline;
   text-underline-offset: 2px;
 }
-.rail {
-  width: 36px;
-  flex: none;
+/* Empty and folded columns, as chips above the board (§2.4.2, DB-P3-10). */
+.col-chips {
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  padding: 12px 0;
+  padding: 12px 16px 0;
+  flex: none;
+}
+.col-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-card);
-  color: var(--text-secondary);
+  border-radius: var(--radius-control);
+  color: var(--text-primary);
   font-size: var(--text-xs);
 }
-.rail:hover {
+.col-chip:hover {
   background: var(--bg-raised);
-  color: var(--text-primary);
 }
-.rail span:not(.c) {
-  writing-mode: vertical-rl;
-  font-size: var(--text-sm);
-  font-weight: 600;
-  color: var(--text-primary);
+.col-chip .c {
+  color: var(--text-secondary);
 }
-.rail .c.warn {
-  color: var(--state-parked);
-  font-weight: 600;
+.col-chip .why {
+  color: var(--text-secondary);
+}
+.pipe-toggle[aria-pressed="true"] {
+  border-color: var(--border-strong);
+  background: var(--bg-overlay);
 }
 .board-empty {
   margin: auto;
@@ -227,14 +242,6 @@
   color: var(--text-secondary);
   min-width: 0;
 }
-.r1 .id {
-  margin-left: auto;
-  font-family: var(--font-mono);
-  display: inline-flex;
-  gap: 6px;
-  align-items: center;
-  white-space: nowrap;
-}
 .r1 .just {
   color: var(--text-secondary);
 }
@@ -246,11 +253,6 @@
   display: grid;
   place-items: center;
   color: var(--text-primary);
-}
-.dep {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
 }
 .tile .title {
   margin: 0;
@@ -279,21 +281,123 @@
   min-height: 16px;
   min-width: 0;
 }
-.r3 .st {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.r3 .lbls {
   display: inline-flex;
-  align-items: center;
   gap: 4px;
   min-width: 0;
+  overflow: hidden;
 }
-.r3 .st > span:last-child {
+/* Row 4: the status badge, gate pips and work item age. The status wraps
+   and never cuts off its cause (DB-P3-7). */
+.r4s {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  min-width: 0;
+}
+.r4s .st {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+.r4s .st > .ic,
+.r4s .st > .dot {
+  flex: none;
+  margin-top: 2px;
+}
+.r4s .st.old {
+  color: var(--state-parked);
+}
+.r4s .age {
+  margin-left: auto;
+  flex: none;
+  white-space: nowrap;
+}
+/* The blocker flag: the link icon in the fail tone, *Blocked* and its cause
+   (DB-P3-6). State colours are marks on a raised tile, never its text (§2.13):
+   the words stay primary, the icon and a 2 px edge carry the tone. */
+.blk {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  font-size: var(--text-xs);
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+  border-left: 2px solid var(--state-fail);
+  padding-left: 4px;
+}
+.blk .ic {
+  flex: none;
+  margin-top: 2px;
+  color: var(--state-fail);
+}
+/* Row 1: type icon, key, points, owner monogram, delegate chip. */
+.r1 .ttype {
+  display: inline-flex;
+  color: var(--text-secondary);
+}
+.r1 .key {
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+.r1 .r1-end {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.av {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  background: var(--bg-overlay);
+  color: var(--text-primary);
+  font-size: 10px;
+  font-weight: 600;
+}
+/* DB-P3-5: the owner's name in words on the focused (or tapped) tile. */
+.av-name {
+  display: none;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  max-width: 96px;
+  color: var(--text-primary);
 }
-.r3 .st.old {
-  color: var(--state-parked);
+.tile:focus-visible .av-name,
+.tile.focus .av-name {
+  display: inline;
+}
+.dlg {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  padding: 0 5px;
+  line-height: 16px;
+  white-space: nowrap;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 96px;
+}
+.epic-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+  color: var(--text-primary);
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .pips {
   display: flex;

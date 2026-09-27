@@ -2,8 +2,10 @@
 // with a note, Park with a reason. Every mutation carries the CSRF header.
 import { errorCode, isAcceptanceTest, matchesAny } from "./diff_parse.js";
 import { MOD, copyText, esc, icon, kbd, postJSON } from "./dom.js";
+import { ISSUE_COPY, lineCommentLabel, sendBackBody } from "./lib/issue.js";
 import { gateLabel } from "./lib/vocabulary.js";
 import { placeUnder, pushOverlay } from "./overlay.js";
+import { acknowledgedIds, deskBlocker } from "./review_desk.js";
 import { ledgerAltered, store } from "./store.js";
 import { toast } from "./toast.js";
 
@@ -14,8 +16,13 @@ export const READ_ONLY_TEXT = "Read-only.";
 export const READ_ONLY_DETAIL =
   "This server was started without triage. Restart with sekhemet serve to accept or send back.";
 
-/** Whether Accept is allowed, and the plain reason when it is not. */
-export function acceptState(card, evidence) {
+/**
+ * Whether Accept is allowed, and the plain reason when it is not. `detail`
+ * (the card's loaded detail) adds what Accept itself refuses beyond the
+ * gates: who may accept, unacknowledged findings, files not yet shown
+ * (dashboard DB-N5-3, DB-N5-9).
+ */
+export function acceptState(card, evidence, detail) {
   const s = store.state;
   if (s.meta && s.meta.triage === false) return { ok: false, reason: "Read-only." };
   if (s.connection === "offline") return { ok: false, reason: "Offline." };
@@ -29,6 +36,8 @@ export function acceptState(card, evidence) {
   if (!evidence.passed) return { ok: false, reason: "Accept needs every gate passing." };
   if (!card || card.status !== "review")
     return { ok: false, reason: "Only cards in Review can be accepted." };
+  const desk = deskBlocker(card, detail);
+  if (desk) return { ok: false, reason: desk };
   return { ok: true, reason: "" };
 }
 
@@ -49,7 +58,8 @@ function explainFailure(verb, res) {
   return { text: `Couldn't ${verb}.`, detail: msg || `The server returned ${res.status}.` };
 }
 
-function blockedToast() {
+/** Say why a mutation is not possible now (read-only or offline); true when blocked. */
+export function blockedToast() {
   const b = mutationsBlocked();
   if (b === "readonly")
     toast({ text: READ_ONLY_TEXT, detail: READ_ONLY_DETAIL, tone: "parked", iconName: "lock" });
@@ -72,9 +82,9 @@ export function acceptPending(cardId) {
   return pending && (!cardId || pending.cardId === cardId);
 }
 
-export function accept(card, evidence, { onMerged, onChange } = {}) {
+export function accept(card, evidence, { onMerged, onChange, detail } = {}) {
   if (pending || blockedToast()) return;
-  const st = acceptState(card, evidence);
+  const st = acceptState(card, evidence, detail);
   if (!st.ok) {
     toast({ text: "Couldn't accept.", detail: st.reason, tone: "fail" });
     return;
@@ -94,7 +104,10 @@ export function accept(card, evidence, { onMerged, onChange } = {}) {
     timer: setTimeout(async () => {
       const p = pending;
       pending = null;
-      const res = await postJSON(`/api/cards/${encodeURIComponent(card.id)}/accept`);
+      // review-git §2.4.3: the findings this person acknowledged go with the accept.
+      const res = await postJSON(`/api/cards/${encodeURIComponent(card.id)}/accept`, {
+        acknowledgedFindings: acknowledgedIds(card, detail),
+      });
       if (res.ok) {
         const sha = String(res.data?.sha ?? "");
         t.update({
@@ -169,18 +182,24 @@ export function quickNotes(card, evidence, gatesConfig) {
   return notes.slice(0, 4);
 }
 
-export function composerHtml(notes) {
+/** DB-N8-4: the line comments this send-back carries, listed above its buttons. */
+function carriedHtml(comments) {
+  if (!comments?.length) return "";
+  return `<div class="carried" data-carried><span class="sec">${esc(ISSUE_COPY.lineComment.carried(comments.length))}</span><ul class="plain">${comments.map((c) => `<li><span class="mono">${esc(lineCommentLabel(c))}</span> ${esc(c.text)}</li>`).join("")}</ul></div>`;
+}
+
+export function composerHtml(notes, { comments = [] } = {}) {
   const chips = notes
     .map((n) => `<button type="button" class="chip" data-chip title="${esc(n)}">${esc(n)}</button>`)
     .join("");
-  return `<form class="composer" data-composer aria-label="Send back"><label class="lbl" for="sb-note">What should the Worker do differently?</label><textarea id="sb-note" name="note" placeholder="Your note is the first thing the Worker reads on its next attempt." aria-describedby="sb-err"></textarea><div class="err" id="sb-err" role="alert" hidden>Add a note for the Worker. It's what they'll read next.</div>${chips ? `<div class="chips"><span class="sec" style="font-size:var(--text-xs)">Quick notes</span>${chips}</div>` : ""}<div class="row"><label class="cbx"><input type="checkbox" checked disabled> Suggest as a playbook rule <small>· your note becomes a candidate rule in Playbook</small></label><span class="acts"><button type="button" class="btn ghost" data-cancel>Cancel ${kbd("Esc")}</button><button type="submit" class="btn">${icon("send-back")}Send back ${kbd(`${MOD}↵`)}</button></span></div></form>`;
+  return `<form class="composer" data-composer aria-label="Send back"><label class="lbl" for="sb-note">What should the Worker do differently?</label><textarea id="sb-note" name="note" placeholder="Your note is the first thing the Worker reads on its next attempt." aria-describedby="sb-err"></textarea><div class="err" id="sb-err" role="alert" hidden>Add a note for the Worker. It's what they'll read next.</div>${chips ? `<div class="chips"><span class="sec" style="font-size:var(--text-xs)">Quick notes</span>${chips}</div>` : ""}${carriedHtml(comments)}<div class="row"><label class="cbx"><input type="checkbox" checked disabled> Suggest as a playbook rule <small>· your note becomes a candidate rule in Playbook</small></label><span class="acts"><button type="button" class="btn ghost" data-cancel>Cancel ${kbd("Esc")}</button><button type="submit" class="btn">${icon("send-back")}Send back ${kbd(`${MOD}↵`)}</button></span></div></form>`;
 }
 
 /**
  * Wire a rendered composer. Returns a close function. `onSent` runs after the
  * server accepted the note, `onClose` whenever the composer goes away.
  */
-export function wireComposer(form, card, { onSent, onClose }) {
+export function wireComposer(form, card, { onSent, onClose, comments }) {
   const area = form.querySelector("textarea");
   const err = form.querySelector(".err");
   let removeOverlay = () => {};
@@ -228,9 +247,11 @@ export function wireComposer(form, card, { onSent, onClose }) {
       return;
     }
     if (blockedToast()) return;
-    const res = await postJSON(`/api/cards/${encodeURIComponent(card.id)}/return`, {
-      reason: note,
-    });
+    // DB-N8-4: the line comments go with the reason, each an instruction to the next attempt.
+    const res = await postJSON(
+      `/api/cards/${encodeURIComponent(card.id)}/return`,
+      sendBackBody(note, comments?.() ?? []),
+    );
     if (res.ok) {
       removeOverlay();
       form.remove();
@@ -311,7 +332,7 @@ export function openPark(anchor, card, { onDone } = {}) {
  * The triage toolbar. `opts.hint` adds the j/k hint; `opts.failing` swaps
  * Accept out for failing cards (Retry with planner arrives with POST /run).
  */
-export function triageBarHtml(card, evidence, { hint = true } = {}) {
+export function triageBarHtml(card, evidence, { hint = true, detail } = {}) {
   const s = store.state;
   if (s.meta && s.meta.triage === false) {
     return `<div class="triage readonly" role="note">${icon("lock", 14, "ic s14")}<span><b>Read-only.</b> This server was started without triage. Restart with <span class="mono">sekhemet serve</span> to accept or send back.</span></div>`;
@@ -326,7 +347,7 @@ export function triageBarHtml(card, evidence, { hint = true } = {}) {
   const offline = s.connection === "offline";
   // A disabled button's reason is adjacent text, never a hover title (DB-P12-3).
   const dis = offline ? ' disabled aria-describedby="accept-why"' : "";
-  const st = acceptState(card, evidence);
+  const st = acceptState(card, evidence, detail);
   const merging = acceptPending(card?.id);
   const acceptBtn = !evidence
     ? ""

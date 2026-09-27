@@ -91,6 +91,7 @@ import { createPmApi } from "./pm_api.js";
 import { modelRoster } from "./pm_api.js";
 import { gateWorker } from "./qualify.js";
 import { handleRestExtras } from "./rest_extra.js";
+import { reviewDesk } from "./review_desk.js";
 import { runnerLease } from "./runner_lease.js";
 import { qualifiedSlotCapacity, slotWaitReason } from "./slot_lease.js";
 import { PresenceRecorder } from "./smart_swap.js";
@@ -107,6 +108,7 @@ import {
 } from "./team/access.js";
 import { identityDir } from "./team/credential_store.js";
 import { personOf, queueStanding } from "./team/fair_queue.js";
+import { personName } from "./team/members.js";
 import { requester as requesterOf } from "./team/requester.js";
 import { handleIdentityRoute, identityGate } from "./team/routes.js";
 import {
@@ -121,7 +123,12 @@ import { generateDashboardHtml } from "./ui_html.js";
 import { hookEngineFor } from "./user_hooks.js";
 import { approveBaseline, visualCandidates } from "./visual_baseline.js";
 import { modelRegistry } from "./wave2.js";
-import { handleWave2Route, startGithubSync, startRecurringTicker } from "./wave2_server.js";
+import {
+  handleWave2Route,
+  reviewBrief,
+  startGithubSync,
+  startRecurringTicker,
+} from "./wave2_server.js";
 import { type StreamClient, acceptWebSocket } from "./ws.js";
 
 /** The loopback port the design fixes for the dashboard. */
@@ -324,6 +331,8 @@ export function startDashboardServer(
 
   // SSE responses and WebSocket clients (ws.ts) share one broadcaster.
   const streams = new Set<StreamClient>();
+  /** Who each stream is (Team): live output goes only to those who can see its project. */
+  const streamPrincipal = new WeakMap<StreamClient, string>();
   let lastSeq = 0;
   let timer: NodeJS.Timeout | undefined;
 
@@ -565,6 +574,67 @@ export function startDashboardServer(
     return map;
   };
 
+  /**
+   * When each card first entered In progress: the start of its work item age
+   * (dashboard §2.4.4), which a retry that re-enters the column does not reset.
+   */
+  // Each card's first start into In progress (the tile's age): a card's
+  // first start never changes on an append-only ledger, so each board build
+  // reads only the entries since the last one — every stream frame builds a
+  // board, and the whole ledger is never scanned again.
+  const starts = new Map<string, string>();
+  let startsThrough = 0;
+  const firstStarts = (): ReadonlyMap<string, string> => {
+    const top =
+      (options.db.prepare("SELECT MAX(seq) AS seq FROM events").get() as { seq: number | null })
+        .seq ?? 0;
+    if (top < startsThrough) {
+      starts.clear();
+      startsThrough = 0;
+    }
+    if (top === startsThrough) return starts;
+    const rows = options.db
+      .prepare(
+        `SELECT card_id AS cardId, payload, created_at AS at FROM events
+         WHERE seq > ? AND seq <= ? AND type = 'card/status_changed'
+           AND json_extract(payload, '$.toStatus') = 'in_progress'
+         ORDER BY seq`,
+      )
+      .all(startsThrough, top) as { cardId: string; payload: string; at: string }[];
+    for (const row of rows) {
+      if (!row.cardId || starts.has(row.cardId)) continue;
+      try {
+        starts.set(
+          row.cardId,
+          (JSON.parse(row.payload) as { updatedAt?: string }).updatedAt ?? row.at,
+        );
+      } catch {
+        starts.set(row.cardId, row.at);
+      }
+    }
+    startsThrough = top;
+    return starts;
+  };
+
+  /**
+   * A person's name for the tile's owner monogram and delegate chip (dashboard
+   * §2.4.4), from the ledger's `person/created`; the install's own person
+   * without a recorded name reads as the repository's git user.
+   */
+  const namesOf = () => {
+    const cache = new Map<string, string | undefined>();
+    const local = log.localPrincipal();
+    return (principal: string | undefined): string | undefined => {
+      if (!principal) return undefined;
+      if (!cache.has(principal)) {
+        const name =
+          personName(options.db, principal) ?? (principal === local ? gitUser : undefined);
+        cache.set(principal, name);
+      }
+      return cache.get(principal);
+    };
+  };
+
   /** A card with its presentation (`display`) derived by the shared vocabulary. */
   const withDisplay = (
     card: CardRecord,
@@ -572,6 +642,8 @@ export function startDashboardServer(
     entries: ReturnType<typeof statusEntries>,
     now: number,
     facts: ReturnType<typeof latestByCard> = latestByCard(options.db, FACT_TYPES),
+    starts: ReadonlyMap<string, string> = firstStarts(),
+    nameOf: (principal: string | undefined) => string | undefined = namesOf(),
   ) => {
     const config = gatesConfig();
     const entry = entries.get(card.id);
@@ -589,6 +661,9 @@ export function startDashboardServer(
       .filter((c): c is CardRecord => c !== undefined && c.status !== "done")
       .map((c) => ({ id: c.id, title: parseTitle(c.title).title }));
     const evidence = latestEvidence(card.id);
+    const startedAt = starts.get(card.id);
+    const ownerName = nameOf(card.owner);
+    const delegateName = card.delegate?.kind === "person" ? nameOf(card.delegate.id) : undefined;
     const display = describeCard(card, {
       now,
       ...(evidence ? { evidence } : {}),
@@ -598,6 +673,9 @@ export function startDashboardServer(
       waitsOn,
       ...(lastStep ? { lastStep } : {}),
       ...(card.status === "done" && accepted?.sha ? { acceptedSha: accepted.sha } : {}),
+      ...(startedAt ? { startedAt } : {}),
+      ...(ownerName ? { ownerName } : {}),
+      ...(delegateName ? { delegateName } : {}),
       configuredGates: config.gates.map((g) => ({ id: g.id, rung: g.rung })),
       limits: { maxFiles: config.project.maxFiles, maxDiffLines: config.project.maxDiffLines },
     });
@@ -628,11 +706,24 @@ export function startDashboardServer(
           },
         };
       });
+    const starts = firstStarts();
+    const nameOf = namesOf();
+    // How the In review limit was reached, shown with it (dashboard DB-P3-9).
+    const reviewLimit = await (
+      boardService as {
+        reviewLimitFacts?: (projectId?: string) => Promise<Record<string, unknown>>;
+      }
+    )
+      .reviewLimitFacts?.(projectId)
+      .catch(() => undefined);
     return {
       ...state,
-      cards: state.cards.map((card) => withDisplay(card, state.cards, entries, now, facts)),
+      cards: state.cards.map((card) =>
+        withDisplay(card, state.cards, entries, now, facts, starts, nameOf),
+      ),
       epics,
       cycles,
+      ...(reviewLimit ? { reviewLimit } : {}),
     };
   };
 
@@ -1081,7 +1172,7 @@ export function startDashboardServer(
     // browser runs the same vocabulary the server used to build `display`.
     if (url.startsWith("/app/")) {
       const rel = url.slice("/app/".length);
-      const lib = /^lib\/([a-z]+\.js)$/.exec(rel)?.[1];
+      const lib = /^lib\/([a-z_]+\.js)$/.exec(rel)?.[1];
       const path =
         lib && (UI_LIB_MODULES as readonly string[]).includes(lib)
           ? resolveStaticPath(UI_LIB_DIR, lib)
@@ -1153,6 +1244,7 @@ export function startDashboardServer(
         }
       }
       streams.add(res);
+      streamPrincipal.set(res, principalOf(req));
       lastSeq = Math.max(lastSeq, latest?.seq ?? 0);
 
       req.on("close", () => {
@@ -1340,6 +1432,30 @@ export function startDashboardServer(
         return;
       }
       json(res, 200, JSON.parse(readFileSync(path, "utf8")));
+      return;
+    }
+
+    // NEW-dashboard-5: what Accept will ask of this viewer, before it is pressed.
+    const deskMatch = new RegExp(`^/api/cards/(${CARD_ID})/review$`).exec(url);
+    if (deskMatch && req.method === "GET") {
+      const store = options.cardStore;
+      const card = store ? await store.getCard(deskMatch[1] as string) : undefined;
+      // PM-N9-8: a card whose project the person cannot see is no card to them.
+      if (!store || !card || !planningCanSee(req, projectOfCard(card))) {
+        json(res, 404, { error: `No card ${deskMatch[1]}` });
+        return;
+      }
+      const holders = access.acceptHolders(projectOfCard(card));
+      json(res, 200, {
+        // P12, P14, RG-N5-3: the route's earlier fields stay in its contract.
+        ...(await reviewBrief(repoPath, store, log, card)),
+        ...(await reviewDesk(
+          { repoPath, cardStore: store, boardService: boardService as never, eventLog: log },
+          card,
+          principalOf(req),
+          { acceptHolders: holders, nameOf: namesOf() },
+        )),
+      });
       return;
     }
 
@@ -1580,8 +1696,13 @@ export function startDashboardServer(
     // WL-N10-1: a card's messages and hand-back notes, each with the step it reached.
     const messagesMatch = new RegExp(`^/api/cards/(${CARD_ID})/messages$`).exec(url);
     if (messagesMatch && req.method === "GET" && options.cardStore) {
+      // The issue page's Activity names who wrote each one (DB-N8-1).
+      const nameOf = namesOf();
       json(res, 200, {
-        messages: await cardMessages(options.cardStore, messagesMatch[1] as string),
+        messages: (await cardMessages(options.cardStore, messagesMatch[1] as string)).map((m) => {
+          const principalName = nameOf(m.principal);
+          return principalName ? { ...m, principalName } : m;
+        }),
       });
       return;
     }
@@ -1891,7 +2012,24 @@ export function startDashboardServer(
   // M2: a running card's decoded tokens, from its live file, while the step
   // is still generating (the runner writes .sekhemet/live/<card>.txt).
   const liveSeen = new Map<string, number>();
-  const pushLiveTokens = (): void => {
+  /**
+   * NEW-dashboard-3 (Team, PM-N9-8): the model's output can hold the files
+   * the Worker writes, so a frame goes only to the streams whose person can
+   * see the card's project — never filtered in the browser after it arrived.
+   */
+  const liveAudience = async (
+    cardId: string,
+  ): Promise<((client: StreamClient) => boolean) | undefined> => {
+    if (setup !== "team") return undefined;
+    const card = options.cardStore ? await options.cardStore.getCard(cardId) : undefined;
+    const project = projectOfCard(card ?? undefined);
+    const audience = audienceFromAccess(() => access, options.db);
+    return (client) => {
+      const who = streamPrincipal.get(client);
+      return who !== undefined && audience.canSee(who, project);
+    };
+  };
+  const pushLiveTokens = async (): Promise<void> => {
     if (streams.size === 0) return;
     const dir = join(repoPath, ".sekhemet", "live");
     if (!existsSync(dir)) return;
@@ -1907,8 +2045,11 @@ export function startDashboardServer(
       if (liveSeen.get(name) === mtime) continue;
       liveSeen.set(name, mtime);
       const text = readFileSync(path, "utf8").slice(-2000);
-      const frame = `event: tokens\ndata: ${JSON.stringify({ cardId: name.slice(0, -4), text })}\n\n`;
+      const cardId = name.slice(0, -4);
+      const frame = `event: tokens\ndata: ${JSON.stringify({ cardId, text })}\n\n`;
+      const sees = await liveAudience(cardId);
       for (const res of streams) {
+        if (sees && !sees(res)) continue;
         try {
           res.write(frame);
         } catch {
@@ -1940,7 +2081,7 @@ export function startDashboardServer(
       let ticks = 0;
       timer = setInterval(() => {
         void pump();
-        pushLiveTokens();
+        void pushLiveTokens();
         // Memory is pushed on its own cadence: cheap to read, and the sidebar
         // and Machine view should move without a ledger event to carry them.
         ticks++;
@@ -2043,6 +2184,8 @@ export function startDashboardServer(
       );
       if (client) {
         streams.add(client);
+        const who = requester(req);
+        if (who) streamPrincipal.set(client, who);
         void pump();
       }
     });

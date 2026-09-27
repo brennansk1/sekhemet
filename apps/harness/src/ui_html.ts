@@ -13,6 +13,7 @@ const STYLES = [
   "wave2.css",
   "account.css",
   "config.css",
+  "map.css",
 ];
 
 /**

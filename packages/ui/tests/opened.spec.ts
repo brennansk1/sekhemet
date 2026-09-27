@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 // The browser modules are imported as-is: the same code the page runs.
-import { shownFiles } from "../web/diff_parse.js";
+import { diffOnScreen, shownFiles } from "../web/diff_parse.js";
 import { reportOpened } from "../web/opened.js";
 
 /**
@@ -33,6 +33,27 @@ describe("RG-N5-5: the dashboard records the files it showed", () => {
       shownFiles(evidence, { card, open: new Map([["pnpm-lock.yaml", true]]) }).sort(),
     ).toEqual(["pnpm-lock.yaml", "src/b.ts"]);
     expect(shownFiles(evidence, { card, mode: "structural" })).toEqual([]);
+  });
+
+  it("DB-N5-3: on the page, an expanded diff counts only once it has been on screen", () => {
+    // Nothing scrolled into view yet: nothing is shown, however many are expanded.
+    expect(shownFiles(evidence, { card, seen: new Set() })).toEqual([]);
+    expect(shownFiles(evidence, { card, seen: new Set(["src/b.ts"]) })).toEqual(["src/b.ts"]);
+    // A collapsed file on screen shows only its header, so it is still not shown.
+    expect(shownFiles(evidence, { card, seen: new Set(["pnpm-lock.yaml", "src/b.ts"]) })).toEqual([
+      "src/b.ts",
+    ]);
+  });
+
+  it("DB-N5-3: a diff is on screen when half of it, or a screenful of it, is in view", () => {
+    const view = { height: 800 };
+    expect(diffOnScreen({ isIntersecting: false, ratio: 0, height: 0 }, view)).toBe(false);
+    // The header peeking at the bottom edge is not a look.
+    expect(diffOnScreen({ isIntersecting: true, ratio: 0.05, height: 30 }, view)).toBe(false);
+    expect(diffOnScreen({ isIntersecting: true, ratio: 0.5, height: 60 }, view)).toBe(true);
+    // A long diff never gets to half, but filling most of the screen is a look.
+    expect(diffOnScreen({ isIntersecting: true, ratio: 0.1, height: 400 }, view)).toBe(true);
+    expect(diffOnScreen({ isIntersecting: true, ratio: 0.1, height: 150 }, view)).toBe(false);
   });
 
   it("posts the shown files once per evidence, and again only when more are shown", async () => {

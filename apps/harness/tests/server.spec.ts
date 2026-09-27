@@ -212,7 +212,7 @@ describe("@sekhemet/harness Dashboard Server", () => {
 
   it("publishes the vocabulary and a favicon", async () => {
     const vocab = await (await fetch(`http://127.0.0.1:${serverInstance.port}/vocab.json`)).json();
-    expect(vocab.columns.in_progress.label).toBe("In Progress");
+    expect(vocab.columns.in_progress.label).toBe("In progress");
     expect(vocab.stopReasons.oscillation_detected.short).toBe("Looping");
     const icon = await fetch(`http://127.0.0.1:${serverInstance.port}/favicon.svg`);
     expect(icon.headers.get("content-type")).toContain("image/svg+xml");

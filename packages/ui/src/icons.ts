@@ -82,6 +82,10 @@ export const ICONS = {
   user: '<circle cx="12" cy="8.5" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/>',
   download: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
   upload: '<path d="M12 15V4M7 9l5-5 5 5M5 20h14"/>',
+  // The tile's type icon (dashboard §2.4.4): the card's tier, beside its words.
+  "type-feature": '<path d="M12 3.5 20.5 12 12 20.5 3.5 12z"/>',
+  "type-story": '<path d="M7 4h10v16l-5-3.5L7 20z"/>',
+  "type-task": '<rect x="5" y="5" width="14" height="14" rx="2"/><path d="m9 12 2 2 4-4"/>',
 } as const;
 
 export type IconName = keyof typeof ICONS;

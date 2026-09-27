@@ -13,6 +13,7 @@ import {
 import type { LocalInferenceAdapter } from "@sekhemet/models";
 import { readKernelPressureLevel } from "@sekhemet/models";
 import { resolvePlannerModel } from "@sekhemet/planner";
+import { quickCreateRequest } from "@sekhemet/ui";
 import { effectiveConfig } from "./config_apply.js";
 import { recommendRoster } from "./init.js";
 import { handleIntegrationsApi } from "./integrations.js";
@@ -23,7 +24,7 @@ import { sharedModelAccess } from "./model_access.js";
 import { ProposalError, applyProposal } from "./pm/apply.js";
 import { type Audience, soloAudience } from "./pm/audience.js";
 import { capabilityReport } from "./pm/capability.js";
-import { flowMetrics, pmQuality } from "./pm/metrics.js";
+import { burnupMetrics, flowMetrics, pmQuality } from "./pm/metrics.js";
 import type { ProjectChoices } from "./pm/pipeline.js";
 import { DEFAULT_PM_MODEL, answerQueued, pmModelFor, runnerLease } from "./pm/service.js";
 import { PmStore } from "./pm/store.js";
@@ -263,6 +264,49 @@ export function createPmApi(ctx: PmApiContext) {
         kick();
       }
       ctx.json(res, 200, { message });
+      return true;
+    }
+
+    // --- Quick create from the board (dashboard DB-P3-12) ---------------------
+    // A create proposal in Seshat's thread: applied, it goes through the one
+    // planner pipeline (PM-P1-1) like any card Seshat drafts.
+    if (url === "/api/pm/create-card" && req.method === "POST") {
+      if (!mutationGuard(req, res)) return true;
+      const b = await ctx.readJsonBody(req);
+      const asked = quickCreateRequest({
+        title: typeof b.title === "string" ? b.title : "",
+        ...(typeof b.description === "string" ? { description: b.description } : {}),
+        ...(typeof b.epicId === "string" ? { epicId: b.epicId } : {}),
+        ...(typeof b.projectId === "string" ? { projectId: b.projectId } : {}),
+      });
+      if (!asked.ok) {
+        ctx.json(res, 400, { error: asked.error });
+        return true;
+      }
+      const { title, description, epicId, projectId } = asked.body;
+      const epic = epicId && ctx.cardStore ? await ctx.cardStore.getCard(epicId) : null;
+      const underEpic = epic && epic.tier === "epic" ? epic : null;
+      const reply = await pmStore.appendReply({
+        replyTo: [],
+        text: `A new card from the board: “${title}”. Apply it and the planner sizes it, writes its acceptance criteria and bounds its scope.`,
+        proposals: [
+          {
+            kind: "create_card",
+            cards: [
+              {
+                title,
+                ...(description ? { spec: description } : {}),
+                // Under the epic, the card is in the epic's project; else in
+                // the project the board is scoped to (the one checked).
+                ...(underEpic ? { epicId: underEpic.id } : projectId ? { projectId } : {}),
+              },
+            ],
+            summary: `Create ${title}`,
+          },
+        ],
+        to: personOf(req),
+      });
+      ctx.json(res, 200, { messageId: reply.id, proposal: reply.proposals?.[0] });
       return true;
     }
 
@@ -621,6 +665,30 @@ export function createPmApi(ctx: PmApiContext) {
         }
       }
       ctx.json(res, 200, await pmQuality(ctx.log, remaining, (id) => firstTry.get(id)));
+      return true;
+    }
+
+    // --- Burn-up (dashboard DB-P3-14) -----------------------------------------
+    if (url === "/api/metrics/burnup" && req.method === "GET") {
+      const id = query.get("cycle");
+      const cycle = id ? (await pmStore.cycles()).find((c) => c.id === id) : undefined;
+      if (id && !cycle) {
+        ctx.json(res, 404, { error: `No cycle ${id}` });
+        return true;
+      }
+      // One project's cards when the board is scoped to one; in the Team
+      // setup only the projects the person can see (PM-N9-8).
+      const project = query.get("project") ?? undefined;
+      const a = audience();
+      const me = personOf(req);
+      ctx.json(
+        res,
+        200,
+        await burnupMetrics(ctx.log, cycle, new Date(), {
+          ...(project ? { project } : {}),
+          ...(a.setup === "team" ? { canSee: (p: string | undefined) => a.canSee(me, p) } : {}),
+        }),
+      );
       return true;
     }
 

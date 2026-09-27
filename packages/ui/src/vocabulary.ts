@@ -94,7 +94,7 @@ const COLUMN_LABELS: Record<CardStatus, string> = {
   backlog: "Backlog",
   ready: "Ready",
   planning: "Planning",
-  in_progress: "In Progress",
+  in_progress: "In progress",
   verify: "Verify",
   review: "Review",
   done: "Done",
@@ -117,6 +117,105 @@ export const COLUMN_EMPTY: Record<CardStatus, string> = {
 
 export function columnLabel(status: string): string {
   return COLUMN_LABELS[status as CardStatus] ?? humanize(status);
+}
+
+/**
+ * The default board's columns (dashboard §2.4.1, NAMING): five professional
+ * columns over the nine stored states, the same mapping the Jira export uses,
+ * plus On hold only while a card is parked. Rejected is not a column: it is
+ * the *Won't do* filter. Pipeline stages shows the nine stored states instead.
+ */
+export type BoardColumnId = "backlog" | "todo" | "in_progress" | "in_review" | "done" | "on_hold";
+
+export interface BoardColumnDef {
+  id: string;
+  label: string;
+  states: CardStatus[];
+  /** What the column is for, shown when it is empty. */
+  empty: string;
+  /** A person's queue: sorted by wait, longest first, and pinned in view. */
+  queue: boolean;
+  /** Shown only while it holds cards (On hold). */
+  onlyWithCards: boolean;
+}
+
+export const BOARD_COLUMNS: readonly BoardColumnDef[] = [
+  {
+    id: "backlog",
+    label: "Backlog",
+    states: ["backlog"],
+    empty: "Ideas and split-off work.",
+    queue: false,
+    onlyWithCards: false,
+  },
+  {
+    id: "todo",
+    label: "To do",
+    states: ["ready", "planning"],
+    empty: "Cards whose dependencies are done, and cards being planned.",
+    queue: false,
+    onlyWithCards: false,
+  },
+  {
+    id: "in_progress",
+    label: "In progress",
+    states: ["in_progress", "verify"],
+    empty: "No Worker running.",
+    queue: false,
+    onlyWithCards: false,
+  },
+  {
+    id: "in_review",
+    label: "In review",
+    states: ["review"],
+    empty: "Nothing waiting for you.",
+    queue: true,
+    onlyWithCards: false,
+  },
+  {
+    id: "done",
+    label: "Done",
+    states: ["done"],
+    empty: "Accepted cards appear here.",
+    queue: false,
+    onlyWithCards: false,
+  },
+  {
+    id: "on_hold",
+    label: "On hold",
+    states: ["parked"],
+    empty: "Nothing parked.",
+    queue: true,
+    onlyWithCards: true,
+  },
+];
+
+/** *Won't do*: the rejected cards, a filter rather than a column. */
+export const WONT_DO_COLUMN: BoardColumnDef = {
+  id: "wont_do",
+  label: "Won't do",
+  states: ["rejected"],
+  empty: "Nothing rejected.",
+  queue: false,
+  onlyWithCards: true,
+};
+
+/** Pipeline stages (`⇧V`): one column per stored state, named as stored. */
+export const PIPELINE_COLUMNS: readonly BoardColumnDef[] = BOARD_COLUMN_ORDER.map((s) => ({
+  id: s,
+  label: COLUMN_LABELS[s],
+  states: [s],
+  empty: COLUMN_EMPTY[s],
+  queue: s === "review" || s === "parked",
+  onlyWithCards: false,
+}));
+
+/** The default board's column for a stored state; `wont_do` for Rejected. */
+export function boardColumnOf(status: string): BoardColumnId | "wont_do" | undefined {
+  if (status === "rejected") return "wont_do";
+  return BOARD_COLUMNS.find((c) => c.states.includes(status as CardStatus))?.id as
+    | BoardColumnId
+    | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -663,6 +762,16 @@ export interface CardDisplay {
   acceptedSha?: string;
   /** `8 of 32 steps`, only once the card has started. */
   budgetText?: string;
+  /**
+   * The status line only restates the column and the budget (a plain Backlog
+   * or Ready card): the board face shows no badge for it (DB-P3-8).
+   */
+  quiet?: true;
+  /** When the card first entered In progress: the start of its work item age. */
+  startedAt?: string;
+  /** The owner's and a person delegate's names, as the ledger records them. */
+  ownerName?: string;
+  delegateName?: string;
   budgetRatio?: number;
   evidence?: {
     id?: string;
@@ -692,6 +801,11 @@ export interface DisplayContext {
   lastStep?: StepLike;
   /** The sha an accept merged as, from the `card/accepted` ledger event. */
   acceptedSha?: string;
+  /** When the card first entered In progress (work item age, §2.4.4). */
+  startedAt?: string;
+  /** The owner's name, and a person delegate's, resolved from their principals. */
+  ownerName?: string;
+  delegateName?: string;
 }
 
 /** A tool call as the ledger and transcript record it. */
@@ -746,7 +860,7 @@ export function stepPhrase(step: StepLike): string {
 export function statusLine(
   card: Pick<CardRecord, "status" | "stepsUsed" | "stepBudget">,
   ctx: DisplayContext = {},
-): { text: string; tone: Tone; mark: StatusMark } {
+): { text: string; tone: Tone; mark: StatusMark; quiet?: true } {
   const now = ctx.now ?? Date.now();
   const ev = ctx.evidence;
   const budget = `${card.stepBudget}-step budget`;
@@ -768,13 +882,13 @@ export function statusLine(
 
   switch (card.status) {
     case "backlog":
-      return { text: `Backlog · ${budget}`, tone: "neutral", mark: "none" };
+      return { text: `Backlog · ${budget}`, tone: "neutral", mark: "none", quiet: true };
     case "ready":
       if (/^returned:/.test(ctx.statusReason ?? "")) {
         return { text: "Sent back with your note", tone: "neutral", mark: "none" };
       }
       if (ev && !ev.passed) return { text: `${failText} · will retry`, tone: "fail", mark: "fail" };
-      return { text: `Ready · ${budget}`, tone: "neutral", mark: "none" };
+      return { text: `Ready · ${budget}`, tone: "neutral", mark: "none", quiet: true };
     case "planning":
       // A card whose attempt failed comes back to Planning; nothing is
       // working on it until it is re-planned, so say what failed.
@@ -868,7 +982,11 @@ export function describeCard(card: CardRecord, ctx: DisplayContext = {}): CardDi
     needsYou:
       card.status === "parked" || (card.status === "verify" && ev !== undefined && !ev.passed),
   };
+  if (line.quiet) display.quiet = true;
   if (ev?.stopReason) display.stopLabel = stopReasonLabel(ev.stopReason).short;
+  if (ctx.startedAt) display.startedAt = ctx.startedAt;
+  if (ctx.ownerName) display.ownerName = ctx.ownerName;
+  if (ctx.delegateName) display.delegateName = ctx.delegateName;
   if (ctx.enteredColumnAt) display.enteredColumnAt = ctx.enteredColumnAt;
   if (ctx.acceptedSha) display.acceptedSha = ctx.acceptedSha;
   if (ctx.waitsOn && ctx.waitsOn.length > 0) display.waitsOn = ctx.waitsOn;

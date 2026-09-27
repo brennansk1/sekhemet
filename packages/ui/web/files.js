@@ -1,5 +1,6 @@
-// Files tab (FRONTEND_DESIGN §2.4.3): every file relevant to the card, its role,
-// its change, and the gate failures that point at it.
+// The files relevant to a card (FRONTEND_DESIGN §2.4.3): its role, its change,
+// and the gate failures that point at it. Shown at the top of the issue page's
+// Changes tab (dashboard DB-N8-1).
 import { fileRole, parseUnifiedDiff } from "./diff_parse.js";
 import { esc, icon } from "./dom.js";
 
@@ -70,62 +71,28 @@ export function fileRows(card, detail) {
   return [...rows.values()];
 }
 
-export function filesCount(card, detail) {
-  return fileRows(card, detail).length;
-}
-
-export function renderFiles(host, ctx) {
-  const draw = () => {
-    const card = ctx.card();
-    const detail = ctx.detail();
-    if (!card) return;
-    const rows = fileRows(card, detail);
-    if (!rows.length) {
-      host.innerHTML = `<div class="ev-empty">${icon("file", 24, "ic s24")}<b>No files yet.</b><span>This card declares no scope files and has not run.</span></div>`;
-      return;
-    }
-    const body = rows
-      .map((r) => {
-        const change = r.changed
-          ? `<span class="add-n">+${r.added}</span> <span class="${r.removed ? "del-n" : "sec"}">−${r.removed}</span>`
-          : '<span class="sec">unchanged</span>';
-        const fails = r.failures
-          ? `<a href="#" data-file="${esc(r.path)}">${icon("x", 12, "ic s12 i-fail")}${r.failures} ${r.failures === 1 ? "failure" : "failures"}</a>`
-          : '<span class="sec">—</span>';
-        const lead =
-          r.role === "acceptance"
-            ? icon("lock", 14, "ic s14")
-            : icon(r.changed ? "file-diff" : "file", 14, "ic s14");
-        return `<tr tabindex="0" data-file="${esc(r.path)}"><td><span class="fpath">${lead}<span class="mono">${esc(r.path)}</span></span></td><td>${esc(ROLE_LABEL[r.role])}</td><td class="r mono">${change}</td><td class="r">${fails}</td></tr>`;
-      })
-      .join("");
-    host.innerHTML = `<h3 class="sh" style="margin:0">Files <span class="sec">${rows.length} relevant to this card · select one to see it in Evidence</span></h3><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Path</th><th>Role</th><th class="r">Change</th><th class="r">Gate failures</th></tr></thead><tbody>${body}</tbody></table></div>`;
-  };
-  const open = (path) => {
-    ctx.goTab("evidence");
-    // After the Evidence tab renders, bring the file (or its first annotation) into view.
-    setTimeout(() => {
-      const target =
-        document.querySelector(`[data-ann][id^="ann-${CSS.escape(path)}:"]`) ??
-        document.querySelector(`.group[data-file="${CSS.escape(path)}"]`);
-      target?.scrollIntoView({ block: "start" });
-      if (target?.matches("[data-ann]")) target.focus({ preventScroll: true });
-    }, 150);
-  };
-  host.addEventListener("click", (e) => {
-    const row = e.target instanceof Element ? e.target.closest("[data-file]") : null;
-    if (!row) return;
-    e.preventDefault();
-    open(row.dataset.file);
-  });
-  host.addEventListener("keydown", (e) => {
-    const row = e.target instanceof Element ? e.target.closest("tr[data-file]") : null;
-    if (row && e.key === "Enter") {
-      e.preventDefault();
-      e.stopPropagation();
-      open(row.dataset.file);
-    }
-  });
-  draw();
-  return { onDetail: draw };
+/**
+ * The files table, at the top of the issue page's Changes tab: every file
+ * relevant to the card with its role, its change and the gate failures that
+ * point at it. A row (`data-file`) brings that file's diff into view.
+ */
+export function filesTableHtml(card, detail) {
+  const rows = fileRows(card, detail);
+  if (!rows.length) return "";
+  const body = rows
+    .map((r) => {
+      const change = r.changed
+        ? `<span class="add-n">+${r.added}</span> <span class="${r.removed ? "del-n" : "sec"}">−${r.removed}</span>`
+        : '<span class="sec">unchanged</span>';
+      const fails = r.failures
+        ? `${icon("x", 12, "ic s12 i-fail")}${r.failures} ${r.failures === 1 ? "failure" : "failures"}`
+        : '<span class="sec">—</span>';
+      const lead =
+        r.role === "acceptance"
+          ? icon("lock", 14, "ic s14")
+          : icon(r.changed ? "file-diff" : "file", 14, "ic s14");
+      return `<tr tabindex="0" data-file="${esc(r.path)}"><td><span class="fpath">${lead}<span class="mono">${esc(r.path)}</span></span></td><td>${esc(ROLE_LABEL[r.role])}</td><td class="r mono">${change}</td><td class="r">${fails}</td></tr>`;
+    })
+    .join("");
+  return `<details class="files-rel"><summary>Files <span class="sec">${rows.length} relevant to this card · select one to see its diff</span></summary><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Path</th><th>Role</th><th class="r">Change</th><th class="r">Gate failures</th></tr></thead><tbody>${body}</tbody></table></div></details>`;
 }

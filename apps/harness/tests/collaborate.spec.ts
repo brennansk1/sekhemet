@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { BoardServiceImpl } from "@sekhemet/board";
 import { CardStore, EventLog, initSchema } from "@sekhemet/kernel";
 import type { InferenceRequest, LocalInferenceAdapter, ToolCall } from "@sekhemet/models";
+import { agentPanel } from "@sekhemet/ui";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   cardMessages,
@@ -149,6 +150,18 @@ describe("NEW-worker-loop-10: collaborating on a running issue", () => {
     const stored = await cardStore.getCard("card_pause");
     expect(stored?.status).toBe("in_progress");
     expect(stored?.stopReason).toBe("paused");
+    // The issue page reads the same ledger (dashboard DB-N8-2): paused, with Hand back.
+    const ledger = () =>
+      cardStore.cardEvents("card_pause", [
+        "card/status_changed",
+        "card/updated",
+        "card/pause_requested",
+        "card/taken_over",
+      ]);
+    expect(agentPanel(stored ?? card, await ledger())).toMatchObject({
+      state: "paused",
+      controls: ["hand_back", "take_over"],
+    });
     const checkpoints = await cardStore.getCheckpoints("card_pause");
     expect(checkpoints.length).toBeGreaterThan(0);
     expect(
@@ -195,6 +208,32 @@ describe("NEW-worker-loop-10: collaborating on a running issue", () => {
       text: "Try again.",
     });
     expect((await cardStore.getCard("card_hb"))?.status).toBe("ready");
+  });
+
+  it("dashboard DB-N8-2: a card started again after a hand-back reads as working, though its stored stop reason still says paused", async () => {
+    await newCard("card_again");
+    await cardStore.updateCardStatus("card_again", "in_progress", "setup", "harness", {
+      override: true,
+    });
+    await cardStore.updateCard("card_again", { stopReason: "paused" }, "harness");
+    const ledger = () =>
+      cardStore.cardEvents("card_again", [
+        "card/status_changed",
+        "card/updated",
+        "card/pause_requested",
+        "card/taken_over",
+      ]);
+    const paused = await cardStore.getCard("card_again");
+    expect(agentPanel(paused ?? { status: "in_progress" }, await ledger()).state).toBe("paused");
+    await handBack(ctx(), "card_again", "Carry on.", person);
+    await cardStore.updateCardStatus("card_again", "in_progress", "started again", "harness");
+    const again = await cardStore.getCard("card_again");
+    expect(again?.stopReason).toBe("paused");
+    expect(agentPanel(again ?? { status: "in_progress" }, await ledger())).toMatchObject({
+      state: "working",
+      controls: ["pause", "take_over"],
+      messageBox: true,
+    });
   });
 
   it("WL-N10-3: a take-over records the person as the builder, runs the same checks, and adds nothing to the agent's competence", async () => {
@@ -287,6 +326,9 @@ describe("NEW-worker-loop-10: collaborating on a running issue", () => {
         await fetch(`http://127.0.0.1:${server.port}/api/cards/card_srv/messages`)
       ).json();
       expect(listed.messages).toMatchObject([{ kind: "message", text: "Use named exports." }]);
+      // The issue page's Activity names who wrote it (DB-N8-1): the install's
+      // own person with no recorded name reads as the repository's git user.
+      expect(listed.messages[0].principalName).toBe("T");
     } finally {
       await server.close();
     }

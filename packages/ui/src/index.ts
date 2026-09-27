@@ -7,6 +7,15 @@ export * from "./icons.js";
 export * from "./pm.js";
 export * from "./nav.js";
 export * from "./account.js";
+export * from "./columns.js";
+export * from "./tiles.js";
+export * from "./storymap.js";
+export * from "./burnup.js";
+export * from "./create.js";
+export * from "./reach.js";
+export * from "./live.js";
+export * from "./issue.js";
+export * from "./review_desk.js";
 
 /**
  * The dashboard's static ES modules and stylesheets (`packages/ui/web`).
@@ -15,7 +24,7 @@ export * from "./account.js";
 export const UI_WEB_DIR = fileURLToPath(new URL("../web/", import.meta.url));
 
 /**
- * Compiled pure modules the browser imports as-is (`vocabulary.js`, `icons.js`, `pm.js`, `nav.js`, `account.js`),
+ * Compiled pure modules the browser imports as-is (`vocabulary.js`, `icons.js`, `pm.js`, `nav.js`, `account.js`, `columns.js`, `tiles.js`, `storymap.js`, `burnup.js`, `create.js`, `reach.js`, `live.js`, `issue.js`, `review_desk.js`),
  * so a label is computed by the same code on the server and in the page.
  */
 export const UI_LIB_DIR = fileURLToPath(new URL("./", import.meta.url));
@@ -25,4 +34,13 @@ export const UI_LIB_MODULES = [
   "pm.js",
   "nav.js",
   "account.js",
+  "columns.js",
+  "tiles.js",
+  "storymap.js",
+  "burnup.js",
+  "create.js",
+  "reach.js",
+  "live.js",
+  "issue.js",
+  "review_desk.js",
 ] as const;

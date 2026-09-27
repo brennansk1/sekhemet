@@ -1,7 +1,8 @@
-// Card tile (FRONTEND_DESIGN §2.5.1). Returns markup; every model string is escaped.
+// Card tile (dashboard §2.4.4). Returns markup; every model string is escaped.
 import { esc, icon, tip } from "./dom.js";
-import { GATE_STATE_LABELS, KIND_LABELS, formatDuration, formatWait } from "./lib/vocabulary.js";
-import { labelChips, pointsText, prioMark } from "./marks.js";
+import { tileModel } from "./lib/tiles.js";
+import { GATE_STATE_LABELS, KIND_LABELS, formatDuration } from "./lib/vocabulary.js";
+import { prioMark } from "./marks.js";
 
 const PIP_ICON = { pass: "check", fail: "x", skipped: "minus", running: "ring" };
 
@@ -53,19 +54,6 @@ const MARK = {
   fail: () => icon("x", 12, "ic s12 i-fail"),
 };
 
-/** The tile's live wait text, recomputed from enteredColumnAt so it counts up. */
-function statusText(card, now, opts = {}) {
-  const d = card.display;
-  // PM_DESIGN §2.5: the Worker waits at a step boundary while Seshat replies.
-  if (opts.pmPaused && card.status === "in_progress") {
-    return `Paused for Seshat${card.stepsUsed ? ` · step ${card.stepsUsed} of ${card.stepBudget}` : ""}`;
-  }
-  if (card.status === "review" && d.enteredColumnAt) {
-    return `Waiting ${formatWait(now - Date.parse(d.enteredColumnAt))}`;
-  }
-  return d.statusLine;
-}
-
 function kilo(n) {
   return n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k` : String(Math.round(n));
 }
@@ -112,62 +100,78 @@ export function difficultyMark(card) {
 }
 
 /**
- * Markup for one tile. `opts.focused` sets the roving tab stop, `opts.selected`
- * the `x` selection, `opts.justNow` the 10-second `just now` meta.
+ * Markup for one tile (dashboard §2.4.4), from the pure tile model
+ * (`lib/tiles.js`, DB-P3-4…8). `opts.focused` sets the roving tab stop,
+ * `opts.selected` the `x` selection, `opts.justNow` the 10-second `just now`.
  */
 export function tileHtml(card, opts = {}) {
-  const d = card.display ?? {
-    title: card.title,
-    kinds: [],
-    shortId: card.id,
-    statusLine: "",
-    tone: "neutral",
-    mark: "none",
-  };
   const now = opts.now ?? Date.now();
+  const t = tileModel(card, { now, epics: opts.epics ?? [], pmPaused: Boolean(opts.pmPaused) });
+  const d = card.display ?? {};
+  const st = t.status;
   const tone =
-    d.tone === "running" || d.tone === "fail" || d.tone === "parked" ? ` t-${d.tone}` : "";
+    st && (st.tone === "running" || st.tone === "fail" || st.tone === "parked")
+      ? ` t-${st.tone}`
+      : "";
   const cls = `tile${tone}${d.mark === "blocked" ? " blocked" : ""}${card.status === "done" ? " done" : ""}`;
-  const waits = d.waitsOn ?? [];
-  const dep = waits.length
-    ? `<span class="dep" title="${esc(`Waits on ${waits.map((w) => w.title).join(", ")}`)}">${icon("link", 12, "ic s12")}${waits.length}</span>`
-    : "";
   const sel = opts.selected
     ? `<span class="sel" aria-hidden="true">${icon("check", 10)}</span>`
     : "";
   const just = opts.justNow ? '<span class="just">just now</span>' : "";
-  const gates = d.evidence?.gates ?? [];
-  const showPips = (d.mark === "pips" || d.mark === "wait") && gates.length > 0;
-  const mark = showPips ? pips(gates) : (MARK[d.mark]?.() ?? "");
-  const text = statusText(card, now, opts);
-  const old =
-    card.status === "review" &&
-    d.enteredColumnAt &&
-    now - Date.parse(d.enteredColumnAt) > 2 * 3600_000;
-  const waitIcon = showPips && d.mark === "wait" ? MARK.wait() : "";
-  const stId = `st-${card.id}`;
 
-  let r4 = "";
+  // Row 1: type icon · issue key · points · owner · delegate chip.
+  const type = `<span class="ttype" role="img" aria-label="${esc(t.type.label)}" ${tip(t.type.label)}>${icon(t.type.icon, 12, "ic s12")}</span>`;
+  const key = `<span class="key" ${tip(card.id)}>${esc(t.key)}</span>`;
+  const pts = t.points ? `<span class="pts tnum">${esc(t.points)}</span>` : "";
+  const owner = t.owner
+    ? `<span class="av" role="img" aria-label="${esc(`Owner: ${t.owner.name}`)}" ${tip(`Owner: ${t.owner.name}`)}>${esc(t.owner.initials)}</span><span class="av-name" aria-hidden="true">${esc(t.owner.name)}</span>`
+    : "";
+  // The delegate is a text chip; the Worker never has an avatar (DB-P3-5).
+  const delegate = t.delegate
+    ? `<span class="dlg" ${tip(`Delegate: ${t.delegate.text}`)}>${esc(t.delegate.text)}</span>`
+    : "";
+  const r1 = `<div class="r1">${sel}${type}${key}${just}<span class="r1-end">${pts}${owner}${delegate}</span></div>`;
+
+  // Row 3: priority glyph (none for No priority) · epic chip · up to two labels.
+  const prio = t.priority !== 0 && !opts.hidePriority ? prioMark(t.priority) : "";
+  const epic = t.epic
+    ? `<span class="epic-chip" ${tip(`Epic: ${t.epic.title}`)}>${icon("layers", 12, "ic s12")}<span>${esc(t.epic.title)}</span></span>`
+    : "";
+  const labels = t.labels.length
+    ? `<span class="lbls">${t.labels.map((l) => `<span class="lbl-chip">${esc(l)}</span>`).join("")}${t.moreLabels.length ? `<span class="lbl-more" ${tip(t.moreLabels.join(", "))}>+${t.moreLabels.length}</span>` : ""}</span>`
+    : "";
+  const r3 = prio || epic || labels ? `<div class="r3">${prio}${epic}${labels}</div>` : "";
+
+  const blkId = `blk-${card.id}`;
+  const blocker = t.blocker
+    ? `<div class="blk" id="${esc(blkId)}">${icon("link", 12, "ic s12")}<span>${esc(t.blocker.text)}</span></div>`
+    : "";
+
+  // Row 4: status badge (icon, colour and words) · gate pips · work item age.
+  const stId = `st-${card.id}`;
+  const gates = d.evidence?.gates ?? [];
+  let r4s = "";
+  if (st || t.age) {
+    const mark = st ? (t.pips ? pips(gates) : (MARK[st.mark]?.() ?? "")) : "";
+    const waitIcon = t.pips && st?.mark === "wait" ? MARK.wait() : "";
+    const status = st
+      ? `<span class="st${st.old ? " old" : ""}" id="${esc(stId)}">${waitIcon}<span>${esc(st.text)}</span></span>`
+      : "";
+    const age = t.age
+      ? `<span class="age tnum" ${tip(`Work item age ${t.age}`)}>${esc(t.age)}</span>`
+      : "";
+    r4s = `<div class="r4s">${mark}${status}${age}</div>`;
+  }
+
+  let budget = "";
+  if (t.budget) {
+    const b = t.budget;
+    budget = `<div class="r4"><span class="budget${b.level ? ` ${b.level}` : ""}"><i style="width:${Math.round(b.ratio * 100)}%"></i></span><span class="tnum">${esc(b.text)}</span></div>`;
+  }
   const usage = card.status !== "done" ? usageBars(card) : "";
   const excerpt = card.spec
     ? `<p class="spec comfy">${esc(String(card.spec).split("\n")[0].slice(0, 160))}</p>`
     : "";
-  if (d.budgetText && card.status !== "done" && card.status !== "review") {
-    const ratio = d.budgetRatio ?? 0;
-    const bcls =
-      ratio >= 1
-        ? " over"
-        : card.status === "in_progress"
-          ? " run"
-          : ratio >= 0.75 || card.status === "parked"
-            ? " warn"
-            : "";
-    r4 = `<div class="r4"><span class="budget${bcls}"><i style="width:${Math.round(ratio * 100)}%"></i></span><span class="tnum">${esc(d.budgetText)}</span></div>`;
-  }
-
-  // PM_DESIGN §3.1: priority in a fixed slot, then kind, labels, points, id.
-  const prio = opts.hidePriority ? "" : prioMark(card.priority);
-  const pts = pointsText(card.estimate);
-  const labels = labelChips(card.labels, d.kinds?.length > 1 ? 1 : 2);
-  return `<li class="${cls}" role="option" id="tile-${esc(card.id)}" data-id="${esc(card.id)}" aria-selected="${opts.selected ? "true" : "false"}" aria-describedby="${esc(stId)}"><div class="r1">${sel}${prio}${kindTags(d.kinds)}${labels ? `<span class="lbls">${labels}</span>` : ""}<span class="id" ${tip(card.id)}>${just}${difficultyMark(card)}${dep}${pts ? `<span class="pts tnum">${esc(pts)}</span>` : ""}${esc(d.shortId)}</span></div><p class="title">${esc(d.title)}</p><div class="r3">${mark}<span class="st${old ? " old" : ""}" id="${esc(stId)}" title="${esc(text)}">${waitIcon}<span>${esc(text)}</span></span></div>${r4}${usage}${excerpt}</li>`;
+  const described = [t.blocker ? blkId : "", st ? stId : ""].filter(Boolean).join(" ");
+  return `<li class="${cls}" role="option" id="tile-${esc(card.id)}" data-id="${esc(card.id)}" aria-selected="${opts.selected ? "true" : "false"}"${described ? ` aria-describedby="${esc(described)}"` : ""}>${r1}<p class="title">${esc(t.title)}</p>${r3}${blocker}${r4s}${budget}${usage}${excerpt}</li>`;
 }

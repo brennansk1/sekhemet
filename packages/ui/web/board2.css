@@ -2,7 +2,7 @@
    bulk bar, pickers, insights and integrations. Tokens only. */
 
 /* ---------- Tile additions (§3.1) ---------- */
-.r1 .prio {
+.r3 .prio {
   margin-right: 2px;
 }
 .lbl-chip {
@@ -26,34 +26,10 @@
   font-family: var(--font-sans);
   color: var(--text-secondary);
 }
-.r1 .kind {
-  flex: none;
-}
-.r1 .id {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.r1 .lbls {
-  display: flex;
-  gap: 4px;
-  min-width: 0;
-  overflow: hidden;
-  flex: 0 1 auto;
-}
-.r1 .lbls .lbl-chip {
+/* Up to two labels, shrinking before the priority glyph and the epic chip. */
+.r3 .lbls .lbl-chip {
   flex: 0 1 auto;
   min-width: 32px;
-}
-/* Labels give way first on narrow tiles; priority, kind, points and id stay. */
-.tile {
-  container-type: inline-size;
-}
-@container (max-width: 250px) {
-  .r1 .lbls {
-    display: none;
-  }
 }
 
 /* ---------- View bar (§3.2) ---------- */

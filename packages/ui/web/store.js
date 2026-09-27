@@ -12,6 +12,8 @@ export const store = {
     loaded: false,
     cards: [],
     wipLimits: {},
+    /** `/api/board`'s `reviewLimit`: how the In review limit was reached. */
+    reviewLimit: null,
     backpressureActive: false,
     verification: null,
     meta: null,

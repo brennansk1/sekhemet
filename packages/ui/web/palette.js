@@ -89,6 +89,11 @@ function views() {
       run: goTo("#/board/list"),
     },
     {
+      label: "Go to Story map",
+      search: "Board story map slices walking skeleton requirements burn-up",
+      run: goTo("#/board/map"),
+    },
+    {
       label: "Talk to Seshat, the project manager",
       search: "Seshat PM project manager chat ask",
       keys: [`${MOD}J`],

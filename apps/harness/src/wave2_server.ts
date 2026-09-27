@@ -1,7 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { BoardServiceImpl } from "@sekhemet/board";
-import type { CardStore, EventLog } from "@sekhemet/kernel";
+import type { CardRecord, CardStore, EventLog } from "@sekhemet/kernel";
 import {
   DecisionStore,
   GoalStore,
@@ -496,23 +496,36 @@ export async function handleWave2Route(
       json(res, 404, { error: `Card not found: ${id}` });
       return true;
     }
-    const brief = await reviewSession(ledger, id);
-    const escalation =
-      card.status === "parked" || card.stopReason
-        ? diagnoseEscalation(
-            card,
-            await cardStore.cardEvents(id, ["gate/result", "card/step", "attempt/started"]),
-          )
-        : undefined;
-    json(res, 200, {
-      review: brief,
-      ...(escalation ? { escalation } : {}),
-      // RG-N5-3: who should look, from CODEOWNERS.
-      suggestedAccepters: suggestedAccepters(ctx.repoPath, cardStore, card),
-    });
+    json(res, 200, await reviewBrief(ctx.repoPath, cardStore, ctx.log, card));
     return true;
   }
   return false;
+}
+
+/**
+ * The review route's brief (P12), escalation diagnosis for a stopped card (P14)
+ * and who should look (RG-N5-3). The dashboard's review desk serves the same
+ * path and carries these fields beside its own (NEW-dashboard-5).
+ */
+export async function reviewBrief(
+  repoPath: string,
+  cardStore: CardStore,
+  log: EventLog,
+  card: CardRecord,
+): Promise<Record<string, unknown>> {
+  const brief = await reviewSession({ store: cardStore, log }, card.id);
+  const escalation =
+    card.status === "parked" || card.stopReason
+      ? diagnoseEscalation(
+          card,
+          await cardStore.cardEvents(card.id, ["gate/result", "card/step", "attempt/started"]),
+        )
+      : undefined;
+  return {
+    review: brief,
+    ...(escalation ? { escalation } : {}),
+    suggestedAccepters: suggestedAccepters(repoPath, cardStore, card),
+  };
 }
 
 // ------------------------------------------------ INT-11b: webhooks first

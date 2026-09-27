@@ -2,6 +2,8 @@
 // annotated where it fired, the stop stated last. A running card streams new
 // steps at the bottom with no animation; auto-follow pauses on scroll-up.
 import { esc, getJSON, icon, kbd } from "./dom.js";
+import { agentPanel } from "./lib/issue.js";
+import { liveRow, onStepEvent, onTokensFrame, tokensFrame } from "./lib/live.js";
 import {
   formatDuration,
   formatTokens,
@@ -67,10 +69,25 @@ function stepHtml(s, loop, open) {
   return `<li class="step${inLoop ? " loop" : ""}" id="step-${s.turn}"><span class="no">Step ${s.turn}</span><div><div class="call">${calls}</div>${obs ? `<div class="obs">${esc(obs)}</div>` : ""}${gateLine(s.gate)}${bracket}${contents}</div><span class="use">${usageHtml(s.usage)}</span></li>`;
 }
 
-function stopHtml(steps, card, live) {
-  if (live) {
-    return `<li class="step live"><span class="no"></span><div><div class="call"><span class="dot run" aria-hidden="true"></span> Working</div><div class="obs">The Worker is on step ${esc(steps.at(-1)?.turn ?? 1)} of ${esc(card?.stepBudget ?? "?")}. New steps appear here as they finish.</div></div><span class="use"></span></li>`;
+/** The running step's row: the model's output so far, streamed (DB-N3-1). */
+function liveHtml(steps, card, tokens) {
+  const r = liveRow(tokens, {
+    step: (steps.at(-1)?.turn ?? 0) + 1,
+    stepBudget: card?.stepBudget,
+  });
+  return `<li class="step live"><span class="no"></span><div><div class="call"><span class="dot run" aria-hidden="true"></span> ${esc(r.heading)}</div><pre class="live-out" data-live-out role="region" tabindex="0" aria-label="${esc(r.label)}"${r.text ? "" : " hidden"}>${esc(r.text)}</pre><div class="obs" data-live-wait${r.waiting ? "" : " hidden"}>${esc(r.waiting)}</div></div><span class="use"></span></li>`;
+}
+
+/** A card In progress whose agent is paused or taken over is not writing (DB-N8-2). */
+function stoppedHtml(sentence) {
+  return `<li class="step live"><span class="no"></span><div><div class="call">${icon("pause", 12, "ic s12 i-park")} ${esc(sentence)}</div></div><span class="use"></span></li>`;
+}
+
+function stopHtml(steps, card, live, tokens = null, agent = null) {
+  if (live && (agent?.state === "paused" || agent?.state === "taken_over")) {
+    return stoppedHtml(agent.sentence);
   }
+  if (live) return liveHtml(steps, card, tokens);
   const last = steps.at(-1);
   const reason = last?.stopReason;
   if (!reason) return "";
@@ -97,6 +114,8 @@ export function renderSteps(host, ctx) {
     follow: true,
     unseen: 0,
     seq: 0,
+    /** The running step's streamed output; only while this tab is open (DB-N3-2). */
+    live: null,
   };
   host.innerHTML = '<div class="sk sk-line" style="width:40%"></div>';
 
@@ -111,6 +130,7 @@ export function renderSteps(host, ctx) {
   };
   scroller.addEventListener("scroll", onScroll, { passive: true });
 
+  const agentOf = (card) => (card ? agentPanel(card, ctx.events() ?? []) : null);
   const draw = ({ appendOnly = false } = {}) => {
     const d = state.data;
     const card = ctx.card();
@@ -128,7 +148,10 @@ export function renderSteps(host, ctx) {
         if (!have.has(`step-${s.turn}`))
           list.insertAdjacentHTML("beforeend", stepHtml(s, loop, state.open));
       }
-      list.insertAdjacentHTML("beforeend", stopHtml(d.steps, card, d.live));
+      list.insertAdjacentHTML(
+        "beforeend",
+        stopHtml(d.steps, card, d.live, state.live, agentOf(card)),
+      );
       return;
     }
     const attempts =
@@ -141,7 +164,7 @@ export function renderSteps(host, ctx) {
         ? `transcript <span class="mono">${esc(d.file)}</span>`
         : "";
     const top = scroller.scrollTop;
-    host.innerHTML = `<h3 class="sh" style="margin:0">Steps <span class="sec">${attempts}</span><span class="sec">${source}</span><span class="diff-mode">${kbd("[")}${kbd("]")} attempt</span></h3><ol class="steps" aria-live="off">${d.steps.map((s) => stepHtml(s, loop, state.open)).join("")}${stopHtml(d.steps, card, d.live)}</ol>`;
+    host.innerHTML = `<h3 class="sh" style="margin:0">Steps <span class="sec">${attempts}</span><span class="sec">${source}</span><span class="diff-mode">${kbd("[")}${kbd("]")} attempt</span></h3><ol class="steps" aria-live="off">${d.steps.map((s) => stepHtml(s, loop, state.open)).join("")}${stopHtml(d.steps, card, d.live, state.live, agentOf(card))}</ol>`;
     scroller.scrollTop = top;
   };
 
@@ -202,10 +225,47 @@ export function renderSteps(host, ctx) {
     }
   });
 
+  // DB-N3-1: the model's output while the running step decodes, in its row,
+  // with no animation. Only this open tab listens, so nothing is kept once
+  // it closes (DB-N3-2).
+  const paintLive = () => {
+    const out = host.querySelector("[data-live-out]");
+    const wait = host.querySelector("[data-live-wait]");
+    if (!out || !wait) return;
+    const text = state.live?.text ?? "";
+    const wasBottom = atBottom();
+    out.textContent = text;
+    out.hidden = !text;
+    wait.hidden = Boolean(text);
+    out.scrollTop = out.scrollHeight;
+    if (wasBottom && state.follow) scroller.scrollTop = scroller.scrollHeight;
+  };
+  const onTokens = (ev) => {
+    const frame = tokensFrame(ev.detail);
+    if (!frame) return;
+    const card = ctx.card();
+    const before = state.live;
+    state.live = onTokensFrame(before, frame, {
+      cardId: ctx.id,
+      tab: "steps",
+      running:
+        card?.status === "in_progress" &&
+        !state.attempt &&
+        Boolean(state.data?.live) &&
+        !["paused", "taken_over"].includes(agentOf(card)?.state ?? ""),
+    });
+    if (state.live !== before) paintLive();
+  };
+  window.addEventListener("sekhemet:tokens", onTokens);
+
   fetchSteps();
   return {
     onEvents(fresh) {
-      if ((fresh ?? []).some((e) => e.type === "card/step" || e.type === "card/status_changed")) {
+      for (const e of fresh ?? []) state.live = onStepEvent(state.live, e);
+      if (ctx.card()?.status !== "in_progress") state.live = null;
+      // A step, a move, or the agent paused or taken over: the last row changes.
+      const redraw = ["card/step", "card/status_changed", "card/updated", "card/taken_over"];
+      if ((fresh ?? []).some((e) => redraw.includes(e.type))) {
         if (!state.attempt) fetchSteps({ appendOnly: true });
       }
     },
@@ -222,6 +282,8 @@ export function renderSteps(host, ctx) {
     },
     destroy() {
       state.seq++;
+      state.live = null;
+      window.removeEventListener("sekhemet:tokens", onTokens);
       scroller.removeEventListener("scroll", onScroll);
     },
   };

@@ -454,6 +454,51 @@ describe("the 403 on every write endpoint (TEAM-4, TEAM-5, TEAM-32, INT-24)", ()
     expect(answered?.principal).toBe(MEMBER);
   });
 
+  it("DB-P3-12: quick create is checked on the board's project, or the epic's, not the workspace", async () => {
+    const epicHere = (
+      await store.createCard({ tier: "epic", title: "Find", status: "ready", projectId: project })
+    ).id;
+    const epicThere = (
+      await store.createCard({ tier: "epic", title: "Route", status: "ready", projectId: other })
+    ).id;
+    // A project invite: a workspace Viewer who is a Member on Chronicle.
+    log.appendNow({
+      actor: "human",
+      type: "member/level_changed",
+      principal: LEAD,
+      payload: { principal: VIEWER, level: "member", project },
+    });
+    const onBoard = await send(VIEWER, "/api/pm/create-card", {
+      title: "Tag rows",
+      projectId: project,
+    });
+    expect(onBoard.status).toBe(200);
+    expect(
+      (await send(VIEWER, "/api/pm/create-card", { title: "Tag rows", epicId: epicHere })).status,
+    ).toBe(200);
+    // Atlas is not theirs to add to, by the board or by its epic.
+    expect(
+      (await send(VIEWER, "/api/pm/create-card", { title: "Tag rows", projectId: other })).status,
+    ).toBe(403);
+    // A workspace Member lowered to Viewer on Chronicle cannot reach it through an epic there.
+    log.appendNow({
+      actor: "human",
+      type: "member/level_changed",
+      principal: LEAD,
+      payload: { principal: MEMBER, level: "viewer", project },
+    });
+    const viaEpic = await send(MEMBER, "/api/pm/create-card", {
+      title: "Tag rows",
+      epicId: epicHere,
+      projectId: other,
+    });
+    expect(viaEpic.status).toBe(403);
+    expect(viaEpic.data.permission).toBe("issue.create");
+    expect(
+      (await send(MEMBER, "/api/pm/create-card", { title: "Tag rows", epicId: epicThere })).status,
+    ).toBe(200);
+  });
+
   describe("B4.3's write routes resolve their project, so a per-project level applies (TEAM-4, TEAM-6)", () => {
     let sliceId: string;
     let reqId: string;

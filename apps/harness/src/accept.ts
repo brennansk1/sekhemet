@@ -177,11 +177,47 @@ export function implementationFiles(ev: AcceptedEvidence): string[] {
 }
 
 /**
+ * Who may accept, as a verdict rather than a refusal (§2.4.1, O11; dashboard
+ * DB-N5-9): the Review page asks it for the viewer before Accept is
+ * pressed, and `accepterCheck` refuses on it. One Accept-holder is solo —
+ * they may accept what they built or delegated; two or more is a team,
+ * where neither the builder nor the delegator (the principal of the latest
+ * `card/delegated` to the Worker, whoever owns the card now) may accept.
+ * Counted now. `who` is the principals who may accept instead.
+ */
+export async function accepterVerdict(
+  store: CardStore,
+  cardId: string,
+  principal: string,
+  /** The project's Accept rule, when recorded (teams item 7). */
+  rule?: readonly string[],
+): Promise<
+  | { may: true; independent: boolean }
+  | { may: false; code: "not_permitted"; who: string[] }
+  | { may: false; code: "not_independent"; because: "built" | "delegated"; who: string[] }
+> {
+  const holders = rule ? [...new Set(rule)] : store.acceptHolders();
+  if (rule ? !holders.includes(principal) : !store.mayAccept(principal)) {
+    return { may: false, code: "not_permitted", who: holders };
+  }
+  if (holders.length < 2) return { may: true, independent: false };
+  const builders = await store.buildersOf(cardId);
+  const delegator = store.delegatorOf(cardId);
+  const excluded = new Set([...builders, ...(delegator ? [delegator] : [])]);
+  if (excluded.has(principal)) {
+    return {
+      may: false,
+      code: "not_independent",
+      because: builders.includes(principal) ? "built" : "delegated",
+      who: holders.filter((h) => !excluded.has(h)),
+    };
+  }
+  return { may: true, independent: true };
+}
+
+/**
  * Who may accept, and whether this accept is independent (§2.4.1, O11):
- * one Accept-holder is solo — they may accept what they built or delegated;
- * two or more is a team, where neither the builder nor the delegator (the
- * principal of the latest `card/delegated` to the Worker, whoever owns the
- * card now) may accept. Counted now, at the attempt.
+ * `accepterVerdict`, refused with the people who may accept named.
  */
 export async function accepterCheck(
   store: CardStore,
@@ -190,25 +226,36 @@ export async function accepterCheck(
   /** The project's Accept rule, when recorded (teams item 7). */
   rule?: readonly string[],
 ): Promise<{ independent: boolean }> {
-  const holders = rule ? [...new Set(rule)] : store.acceptHolders();
-  if (rule ? !holders.includes(principal) : !store.mayAccept(principal)) {
+  const v = await accepterVerdict(store, cardId, principal, rule);
+  if (v.may) return { independent: v.independent };
+  if (v.code === "not_permitted") {
     throw new AcceptRefusedError(
       "not_permitted",
-      `${principal} does not hold the Accept permission for this project. Who may accept: ${holders.join(", ") || "no one yet — name an Accept-holder"}`,
+      `${principal} does not hold the Accept permission for this project. Who may accept: ${v.who.join(", ") || "no one yet — name an Accept-holder"}`,
     );
   }
-  if (holders.length < 2) return { independent: false };
-  const builders = await store.buildersOf(cardId);
-  const delegator = store.delegatorOf(cardId);
-  const excluded = new Set([...builders, ...(delegator ? [delegator] : [])]);
-  if (excluded.has(principal)) {
-    const may = holders.filter((h) => !excluded.has(h));
-    throw new AcceptRefusedError(
-      "not_independent",
-      `${principal} ${builders.includes(principal) ? "built" : "delegated"} ${cardId}; on a team another Accept-holder accepts it. Who may accept: ${may.join(", ") || "no other Accept-holder yet"}`,
-    );
-  }
-  return { independent: true };
+  throw new AcceptRefusedError(
+    "not_independent",
+    `${principal} ${v.because} ${cardId}; on a team another Accept-holder accepts it. Who may accept: ${v.who.join(", ") || "no other Accept-holder yet"}`,
+  );
+}
+
+/**
+ * RG-N5-4 without throwing: whether this principal satisfies the code-owner
+ * rule, and who does — what Accept refuses on and what the review desk shows
+ * before Accept is pressed (NEW-dashboard-5), from one function.
+ */
+export function codeOwnerVerdict(
+  ctx: Pick<AcceptContext, "repoPath" | "cardStore">,
+  card: Pick<CardRecord, "scopeFiles">,
+  ev: Pick<AcceptedEvidence, "filesTouched">,
+  principal: string,
+): { ok: true } | { ok: false; owners: string[]; unmapped: string[] } {
+  if (!effectiveConfig(ctx.repoPath).config.review.requireCodeOwnerAccept) return { ok: true };
+  const files = ev.filesTouched?.length ? ev.filesTouched : (card.scopeFiles ?? []);
+  const owners = ownersOf(ctx.repoPath, ctx.cardStore, files);
+  if (owners.principals.includes(principal)) return { ok: true };
+  return { ok: false, owners: owners.principals, unmapped: owners.unmapped };
 }
 
 /**
@@ -223,11 +270,9 @@ function codeOwnerCheck(
   ev: AcceptedEvidence,
   principal: string,
 ): void {
-  if (!effectiveConfig(ctx.repoPath).config.review.requireCodeOwnerAccept) return;
-  const files = ev.filesTouched?.length ? ev.filesTouched : (card.scopeFiles ?? []);
-  const owners = ownersOf(ctx.repoPath, ctx.cardStore, files);
-  if (owners.principals.includes(principal)) return;
-  const who = [...owners.principals, ...owners.unmapped];
+  const v = codeOwnerVerdict(ctx, card, ev, principal);
+  if (v.ok) return;
+  const who = [...v.owners, ...v.unmapped];
   throw new AcceptRefusedError(
     "not_code_owner",
     `${principal} owns none of ${card.id}'s files, and this project requires a code owner's accept. Who may accept: ${who.join(", ") || "no code owner is named in CODEOWNERS for these files"}`,
@@ -252,14 +297,23 @@ export async function acceptFriction(
   );
   const ack = new Set(acknowledged);
   const findings = open.filter((e) => !ack.has(e.entryId)).map((e) => e.entryId);
+  const shown = new Set(await filesShownSinceEvidence(store, cardId));
+  const files = implementationFiles(ev).filter((f) => !shown.has(f));
+  return { findings, files };
+}
+
+/**
+ * The files a `review/opened` of this card recorded as shown since its latest
+ * evidence (RG-S6-6), sorted: what Accept's friction counts as seen.
+ */
+export async function filesShownSinceEvidence(store: CardStore, cardId: string): Promise<string[]> {
   const since = (await store.cardEvents(cardId, ["evidence/recorded"])).at(-1)?.seq ?? 0;
   const shown = new Set<string>();
   for (const e of await store.cardEvents(cardId, ["review/opened"])) {
     if (e.seq < since) continue;
     for (const f of (e.payload as { filesShown?: string[] }).filesShown ?? []) shown.add(f);
   }
-  const files = implementationFiles(ev).filter((f) => !shown.has(f));
-  return { findings, files };
+  return [...shown].sort();
 }
 
 /**

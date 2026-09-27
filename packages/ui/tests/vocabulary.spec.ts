@@ -199,7 +199,7 @@ describe("labels and numbers", () => {
   it("renames columns and gates", () => {
     expect(BOARD_COLUMN_ORDER).toContain("planning");
     expect(BOARD_COLUMN_ORDER).toContain("parked");
-    expect(columnLabel("in_progress")).toBe("In Progress");
+    expect(columnLabel("in_progress")).toBe("In progress");
     expect(columnLabel("verify")).toBe("Verify");
     expect(columnLabel("rejected")).toBe("Rejected");
     expect(gateLabel("typecheck")).toBe("Types");
@@ -416,7 +416,7 @@ describe("Phase 3 and 4 language", () => {
       actor: "Worker",
       verb: "moved",
       title: "Implement canonical JSON",
-      rest: "from In Progress to Verify",
+      rest: "from In progress to Verify",
     });
     const back = eventSentence(
       {

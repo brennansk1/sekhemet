@@ -1,7 +1,9 @@
+import { openCreate } from "./create.js";
 // List / table view (PM_DESIGN §3.3): the board's cards as rows, with the
 // same filter, grouping and selection, sortable columns and inline edits.
 import { $, $$, esc, icon } from "./dom.js";
 import { editField, fieldKey, selectionOrFocused } from "./fields.js";
+import { epicFromFilter } from "./lib/create.js";
 import {
   PRIORITY_LABELS,
   assigneeLabel,
@@ -18,6 +20,7 @@ import { store } from "./store.js";
 import {
   bindViewBar,
   cycleGroup,
+  effectiveFilter,
   filterCards,
   focusFilter,
   matchContext,
@@ -262,6 +265,11 @@ export function onKey(e) {
   }
   if (k === "S" && e.shiftKey) {
     cycleGroup();
+    return true;
+  }
+  if (k === "c") {
+    // DB-P3-12: the same create form as the board.
+    openCreate({ epicId: epicFromFilter(effectiveFilter(), store.state.epics) });
     return true;
   }
   const anchor = document.getElementById(`row-${id}`)?.querySelector(".c-title") ?? ui.root;

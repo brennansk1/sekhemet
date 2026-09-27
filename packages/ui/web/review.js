@@ -2,11 +2,14 @@ import { loadDetail } from "./data.js";
 // Review (FRONTEND_DESIGN §2.4.1): the queue on the left, the evidence in the
 // middle, the facts on the right, and the triage bar under the evidence.
 import { nextDiffMode } from "./diff.js";
-import { shownFiles } from "./diff_parse.js";
-import { $, announce, esc, icon, postJSON } from "./dom.js";
+import { $, announce, esc, icon } from "./dom.js";
 import { EvidencePane } from "./evidence.js";
 import { KIND_LABELS, formatWait } from "./lib/vocabulary.js";
-import { reportOpened } from "./opened.js";
+import {
+  acknowledgeFocused,
+  focusNextFinding,
+  recordShown as recordShownFor,
+} from "./review_desk.js";
 import { setTopbar } from "./shell.js";
 import { store } from "./store.js";
 import { toast } from "./toast.js";
@@ -109,7 +112,7 @@ function renderTriage() {
   const card = selectedCard();
   const slot = $("[data-triage]", ui.root);
   if (!slot) return;
-  const html = card ? triageBarHtml(card, ui.detail?.evidence) : "";
+  const html = card ? triageBarHtml(card, ui.detail?.evidence, { detail: ui.detail }) : "";
   if (html !== ui.triageHtml) {
     const btn = slot.contains(document.activeElement) ? document.activeElement : null;
     const which = ["data-accept", "data-back", "data-park"].find((a) => btn?.hasAttribute(a));
@@ -141,23 +144,19 @@ function renderEvidence({ keepScroll = false } = {}) {
   $("[data-facts]", ui.root).innerHTML = d ? ui.pane.factsHtml(card, d) : "";
   if (keepScroll) scroll.scrollTop = top;
   else scroll.scrollTop = 0;
-  renderTriage();
+  // What is on screen is recorded first, so Accept's reason counts it (DB-N5-3).
   recordShown();
+  renderTriage();
 }
 
-/** RG-S6-6, RG-N5-5: record the diffs on screen, so Accept knows what was shown. */
+/**
+ * RG-S6-6, RG-N5-5, DB-N5-3: record the diffs on screen, so Accept knows what
+ * was shown; a diff scrolled into view later redraws Accept's reason.
+ */
 function recordShown() {
-  const card = selectedCard();
-  const ev = ui.detail?.evidence;
-  if (!card || !ev || card.status !== "review" || mutationsBlocked()) return;
-  const files = shownFiles(ev, {
-    card: ui.detail.card ?? card,
-    gatesConfig: store.state.gates,
-    mode: ui.pane.mode,
-    open: ui.pane.open,
-    full: ui.pane.full,
-  });
-  reportOpened(card.id, ev.id, files, postJSON);
+  if (!ui.detail) return;
+  const scroll = $(".ev-scroll", ui.root);
+  recordShownFor(selectedCard(), ui.detail, ui.pane, scroll, renderTriage);
 }
 
 async function load(id, { keepScroll = false } = {}) {
@@ -243,6 +242,7 @@ function runAction(key, card = selectedCard()) {
   }
   if (key === "a") {
     accept(card, ev, {
+      detail: card.id === ui.selected ? ui.detail : undefined,
       onChange: () => {
         ui.triageHtml = "";
         renderTriage();
@@ -301,6 +301,15 @@ export function onKey(e) {
     return true;
   }
   if (k === "a" || k === "r" || k === "p") return runAction(k);
+  // DB-N5-3: `x` acknowledges the focused Reviewer finding (or the first open one).
+  if (k === "x") {
+    const card = selectedCard();
+    if (card && ui.detail && acknowledgeFocused(ui.root, card, ui.detail)) {
+      renderEvidence({ keepScroll: true });
+      focusNextFinding(ui.root, card, ui.detail);
+    }
+    return true;
+  }
   const onControl = e.target.closest?.("button:not(.q-row), a, summary, select");
   if ((k === "o" || (k === "Enter" && !onControl)) && ui.selected) {
     location.hash = `#/card/${encodeURIComponent(ui.selected)}`;
@@ -364,6 +373,7 @@ export function mount(view, route) {
       ui.openedStatus = selectedCard()?.status ?? null;
       load(ui.selected);
     },
+    current: () => ({ card: selectedCard(), detail: ui.detail }),
   });
 
   root.addEventListener("click", (e) => {
@@ -371,8 +381,10 @@ export function mount(view, route) {
     if (!t) return;
     const row = t.closest(".q-row");
     if (row) return select(row.dataset.id);
-    if (t.closest("[data-toggle]")) recordShown();
-    else if (t.closest("[data-accept]")) runAction("a");
+    if (t.closest("[data-toggle]")) {
+      recordShown();
+      renderTriage();
+    } else if (t.closest("[data-accept]")) runAction("a");
     else if (t.closest("[data-back]")) runAction("r");
     else if (t.closest("[data-park]")) runAction("p");
   });
