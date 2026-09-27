@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { EventLog } from "@sekhemet/kernel";
 import {
+  ModelRegistry,
   type WeightsReport,
   classifyMemoryPressure,
   managedModelWeights,
@@ -199,6 +200,15 @@ export function memoryCheck(
   );
 }
 
+/** This host's model registry, or none when it cannot be read (doctor still reports). */
+function hostRegistry(): ModelRegistry | undefined {
+  try {
+    return new ModelRegistry();
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Are the weights the resolved profiles name actually on this disk?
  *
@@ -208,7 +218,7 @@ export function memoryCheck(
  * a legitimate setup; a directory with some of the weights missing is not.
  */
 export function weightsCheck(
-  report: WeightsReport = probeModelWeights(managedModelWeights()),
+  report: WeightsReport = probeModelWeights(managedModelWeights({ registry: hostRegistry() })),
 ): DiagnosticCheck {
   if (!report.modelsDirExists) {
     return check(

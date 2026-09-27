@@ -381,7 +381,8 @@ describe("M3/M18 in production: every adapter feeds the shared telemetry", () =>
       apiFormat: "openai",
       onCacheAlert: (r) => alerts.push(r.step),
     });
-    await adapter.generate({ prompt: "p", toolArm: "arm_a_flat" });
+    // Step 2 is step 1's conversation plus a call and its result (M18, F5).
+    await adapter.generate({ prompt: "go", toolArm: "arm_a_flat" });
     await adapter.generate({
       prompt: "",
       toolArm: "arm_a_flat",

@@ -151,6 +151,18 @@ export interface ModelEntry {
   copies?: WeightsCopy[];
   quant?: string;
   sizeBytes?: number;
+  /**
+   * What the weights' GGUF header says (MD-N12-9), recorded when a file is
+   * registered: a model with no managed builder gets its generic launch
+   * profile from it (MD-N12-10) without reading the file again.
+   */
+  header?: {
+    architecture?: string;
+    /** The trained maximum context, which caps the role's window. */
+    contextLength?: number;
+    /** The file carries a multi-token-prediction head (`*.nextn_predict_layers` > 0). */
+    mtpHead?: boolean;
+  };
   contextWindow?: number;
   engine?: string;
   template?: { path?: string; checksum: string; pinnedAt: string };
@@ -416,10 +428,16 @@ export class ModelRegistry {
     });
   }
 
-  /** The weights this host should load (MD-N14-41): an internal copy with the same hash first. */
-  public preferredWeights(id: string): string | undefined {
+  /**
+   * The weights this host should load (MD-N14-41): an internal copy with the
+   * same hash first. `usable` narrows the copies to those that can be read
+   * now (a launch passes `existsSync`, so an unplugged drive's copy is skipped).
+   */
+  public preferredWeights(id: string, usable?: (path: string) => boolean): string | undefined {
     const entry = this.entries.get(id);
-    const same = (entry?.copies ?? []).filter((c) => !entry?.sha256 || c.sha256 === entry.sha256);
+    const same = (entry?.copies ?? []).filter(
+      (c) => (!entry?.sha256 || c.sha256 === entry.sha256) && (!usable || usable(c.path)),
+    );
     return (same.find((c) => c.volume === "internal") ?? same[0])?.path;
   }
 

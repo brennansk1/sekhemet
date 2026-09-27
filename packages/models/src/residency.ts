@@ -98,6 +98,15 @@ import type { WatchdogLevel } from "./watchdog.js";
  */
 
 /** A role's need: which weights serve it and the context it needs. */
+
+/**
+ * How long an unload waits for its adapter to confirm the weights left
+ * (MD-N14-2a). A managed server exits within it; an unload not yet confirmed
+ * still counts as resident until a later re-check confirms it, so nothing
+ * loads beside it and no swap waits on an adapter's longer default.
+ */
+export const UNLOAD_CONFIRM_MS = 3000;
+
 export interface RoleNeed {
   /** A queue name: worker, planner, seshat, reviewer, researcher, ... */
   role: string;
@@ -304,6 +313,11 @@ export class ResidencyScheduler {
   private readonly pinned: Set<string>;
   private readonly refused = new Map<string, FootprintRefusal>();
   private readonly footprints = new Map<string, number>();
+  /**
+   * Weights unloaded without the unload being confirmed (MD-N14-2a): their
+   * footprints still count as resident memory until a re-check confirms them.
+   */
+  private readonly unconfirmed = new Set<string>();
   private readonly checked = new Set<string>();
   private pumping = false;
   private again = false;
@@ -516,12 +530,20 @@ export class ResidencyScheduler {
     });
   }
 
-  /** Unload `key` and record it (MD-N14-2); `confirm` proves the weights left. */
-  private async unloadRecorded(key: string, confirm: boolean): Promise<boolean> {
+  /**
+   * Unload `key`, prove the weights left (MD-N14-2a: the adapter polls,
+   * within its bound) and record it (MD-N14-2). An unload not confirmed
+   * keeps counting as resident memory until a re-check confirms it.
+   */
+  private async unloadRecorded(key: string): Promise<boolean> {
     const adapter = this.adapters.get(key);
     const start = this.now();
     await adapter?.unload?.();
-    const confirmed = confirm ? ((await adapter?.confirmUnloaded?.()) ?? true) : false;
+    // A short bound here; a server still listing the weights is re-checked,
+    // without waiting, at every later admission (`stillUnconfirmed`).
+    const confirmed = (await adapter?.confirmUnloaded?.(UNLOAD_CONFIRM_MS)) ?? true;
+    if (confirmed) this.unconfirmed.delete(key);
+    else this.unconfirmed.add(key);
     const unloadMs = this.now() - start;
     this.firstReplyDue.delete(key);
     this.prefetched.delete(key);
@@ -642,7 +664,7 @@ export class ResidencyScheduler {
     return this.exclusive(async () => {
       const key = this.need(role).weights;
       if (!this.resident.has(key) || this.isPinned(key) || this.isHeld(key)) return;
-      await this.unloadRecorded(key, false);
+      await this.unloadRecorded(key);
       this.markGone(key);
       if (this.active && this.need(this.active).weights === key) this.active = undefined;
     });
@@ -1172,6 +1194,39 @@ export class ResidencyScheduler {
   }
 
   /**
+   * The weights whose unload is still unconfirmed after one more look
+   * (MD-N14-2a): each is asked again, without waiting, and those now gone
+   * are forgotten.
+   */
+  private async stillUnconfirmed(): Promise<string[]> {
+    for (const key of [...this.unconfirmed]) {
+      if (this.resident.has(key) || this.loading.has(key)) {
+        this.unconfirmed.delete(key);
+        continue;
+      }
+      const gone = (await this.adapters.get(key)?.confirmUnloaded?.(0)) ?? true;
+      if (gone) this.unconfirmed.delete(key);
+    }
+    return [...this.unconfirmed];
+  }
+
+  /** The memory with every unconfirmed unload still counted as resident and never evicted. */
+  private async withUnconfirmed(memory: SwapMemory): Promise<SwapMemory> {
+    const lingering = await this.stillUnconfirmed();
+    if (lingering.length === 0) return memory;
+    const also = (resident: readonly string[], load?: string) => [
+      ...resident,
+      ...lingering.filter((k) => k !== load && !resident.includes(k)),
+    ];
+    const tour = memory.tour?.bind(memory);
+    return {
+      ...memory,
+      admit: (step) => memory.admit({ ...step, resident: also(step.resident, step.load) }),
+      ...(tour ? { tour: (steps, resident) => tour(steps, also(resident)) } : {}),
+    };
+  }
+
+  /**
    * Everything `decide()` reads, taken now (rule 20e): the reads happen here
    * (the ledger's history, each weights' file, the memory), never in it.
    */
@@ -1232,7 +1287,7 @@ export class ResidencyScheduler {
         requests: q.map((j) => ({ ...j.meta })),
       }));
     const source = this.options.policyMemory ?? this.headroomMemory;
-    const memory = source
+    const read = source
       ? await source.read({
           resident: [...this.resident],
           loading: [...this.loading.keys()],
@@ -1241,6 +1296,7 @@ export class ResidencyScheduler {
           ),
         })
       : this.footprintMemory();
+    const memory = await this.withUnconfirmed(read);
     return {
       params: this.policy,
       ...(home !== undefined ? { home, homeBacklog: this.homeBacklog(home) } : {}),
@@ -1271,7 +1327,7 @@ export class ResidencyScheduler {
         // A person's hold and a step mid-step stay; an escalated attempt's
         // hold (a pin only the policy respects) yields between its steps.
         if (!this.watchdogMayUnload(key)) continue;
-        await this.unloadRecorded(key, false);
+        await this.unloadRecorded(key);
         this.markGone(key);
       }
       this.active = undefined;
@@ -1434,7 +1490,7 @@ export class ResidencyScheduler {
           if (!this.resident.has(w)) continue;
           // Only the watchdog's emergency passes an escalated attempt's hold.
           if (action.rule === "watchdog" ? !this.watchdogMayUnload(w) : this.isHeld(w)) continue;
-          await this.unloadRecorded(w, false);
+          await this.unloadRecorded(w);
           this.markGone(w);
           this.options.log?.(`residency: unloaded ${w} (${action.rule}: ${action.reason})`);
         }
@@ -1578,7 +1634,13 @@ export class ResidencyScheduler {
       const verdict = admitLoad({
         reading: await this.options.headroom.read(),
         candidate: { weights: key, footprintBytes: need },
-        resident: [...this.resident, ...this.loading.keys()]
+        resident: [
+          ...new Set([
+            ...this.resident,
+            ...this.loading.keys(),
+            ...(await this.stillUnconfirmed()),
+          ]),
+        ]
           .filter((k) => k !== key)
           .map((k) => ({ weights: k, footprintBytes: this.footprints.get(k) ?? 0 })),
         now: this.now(),
@@ -1679,7 +1741,7 @@ export class ResidencyScheduler {
    * Called only under the one lock, from `startLoad`.
    */
   private async evict(victim: string, next: string): Promise<void> {
-    const confirmed = await this.unloadRecorded(victim, true);
+    const confirmed = await this.unloadRecorded(victim);
     this.checked.delete(victim);
     const pressure = this.options.pressureLevel ?? readKernelPressureLevel;
     const deadline = Date.now() + (this.options.headroomWaitMs ?? 30_000);

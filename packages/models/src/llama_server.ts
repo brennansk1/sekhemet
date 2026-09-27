@@ -2,10 +2,16 @@ import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, realpathSync, statSync } from "node:fs";
 import { open } from "node:fs/promises";
+import { connect } from "node:net";
 import { totalmem } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { hostFingerprintHash } from "./calibration.js";
-import { type HttpAdapterOptions, HttpInferenceAdapter } from "./http_adapter.js";
+import { recordedGguf } from "./generic_managed.js";
+import {
+  type HttpAdapterOptions,
+  HttpInferenceAdapter,
+  type SamplingOptions,
+} from "./http_adapter.js";
 import { assertKvPolicy } from "./kv_policy.js";
 import { assertModelLoadAllowed, modelLoadRefusal } from "./load_guard.js";
 import {
@@ -20,10 +26,15 @@ import {
 import { type ModelsDirOptions, resolveModelPath } from "./models_dir.js";
 import type { SpeculativeSetting } from "./qualification_key.js";
 import { readQuantisation } from "./quantisation.js";
-import { type ModelRegistry, type ThinkingPolicy, thinkingPolicyFromEnv } from "./registry.js";
+import {
+  type ModelEntry,
+  type ModelRegistry,
+  type ThinkingPolicy,
+  thinkingPolicyFromEnv,
+} from "./registry.js";
 import { type ErasureView, type SlotKey, SlotStore, defaultSlotCacheDir } from "./slot_state.js";
 import { DEFAULT_READ_BYTES_PER_SECOND } from "./swap_cost.js";
-import type { AdapterHealth, InferenceRequest, TokenUsage, ToolArm } from "./types.js";
+import type { AdapterHealth, InferenceRequest, ModelRole, TokenUsage, ToolArm } from "./types.js";
 
 /**
  * The GGUF each managed profile expects, as a name inside the user's models
@@ -1173,6 +1184,7 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
       return;
     }
     await this.saveLiveSlots();
+    this.stopping = child;
     child.kill("SIGTERM");
     await new Promise<void>((resolve) => {
       const timer = setTimeout(() => {
@@ -1186,6 +1198,47 @@ export class ManagedLlamaServerAdapter extends HttpInferenceAdapter {
     });
     this.child = undefined;
   }
+
+  /** The process `unload()` last stopped, until its exit and closed port are seen. */
+  private stopping: ChildProcess | undefined;
+
+  /**
+   * Whether the server has really gone (MD-N14-2a): the process this adapter
+   * stopped has exited and nothing listens on its port any more, polled
+   * until `timeoutMs` (default 5 s; 0 checks once). A SIGKILL after the
+   * SIGTERM grace resolves `unload()` before the exit is seen, and the
+   * memory returns only then; a server this adapter adopted and could not
+   * stop is never confirmed.
+   */
+  public override async confirmUnloaded(timeoutMs = 5000): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    const port = this.profile.port ?? 8098;
+    for (;;) {
+      const child = this.stopping;
+      const exited = !child || child.exitCode !== null || child.signalCode !== null;
+      if (exited && !(await portListening(port))) {
+        this.stopping = undefined;
+        return true;
+      }
+      const left = deadline - Date.now();
+      if (left <= 0) return false;
+      await new Promise((r) => setTimeout(r, Math.min(200, left)));
+    }
+  }
+}
+
+/** Whether something accepts a TCP connection on this loopback port (a timeout counts as yes). */
+function portListening(port: number, timeoutMs = 1000): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = connect({ host: "127.0.0.1", port });
+    const done = (listening: boolean) => {
+      socket.destroy();
+      resolve(listening);
+    };
+    socket.setTimeout(timeoutMs, () => done(true));
+    socket.once("connect", () => done(true));
+    socket.once("error", () => done(false));
+  });
 }
 
 /**
@@ -1349,6 +1402,91 @@ export function createNeoHorseResearcher(
   return smallResearcherProfile("neohorse-1-4b", modelPath, 8103, binary);
 }
 
+/**
+ * Each role's window and answer length for a model with no managed builder:
+ * the Worker's is the managed Worker's (16k; 8k overflowed a ledger card),
+ * the others the roles' Ollama windows (`ollamaProfileForRole`).
+ */
+export const GENERIC_ROLE_WINDOWS: Readonly<
+  Record<ModelRole, { contextTokens: number; maxTokens: number }>
+> = {
+  worker: { contextTokens: 16384, maxTokens: 4096 },
+  planner: { contextTokens: 8192, maxTokens: 2048 },
+  researcher: { contextTokens: 16384, maxTokens: 1200 },
+  reviewer: { contextTokens: 12288, maxTokens: 900 },
+};
+
+/**
+ * A family's published defaults, used when the registry records no sampling
+ * for the model: Qwen's non-thinking values (as the Researcher candidates'),
+ * Gemma's model-card values. Any other family gets the roles' code sampling.
+ */
+export const FAMILY_SAMPLING: Readonly<Record<string, SamplingOptions>> = {
+  qwen: { temperature: 0.7, topP: 0.8, topK: 20, minP: 0 },
+  gemma: { temperature: 1.0, topP: 0.95, topK: 64, minP: 0 },
+};
+
+/** The roles' code sampling (`ollamaProfileForRole`), for an unknown family. */
+const FALLBACK_SAMPLING: SamplingOptions = { temperature: 0.2, topP: 0.9, topK: 20, minP: 0 };
+
+/**
+ * A generic model's own port, from its id: 8110–8189, clear of the Worker
+ * (8098), the Planner (8099), the Researchers (8101–8103) and the owner's
+ * own servers, so a registered model never adopts another model's server
+ * (a collision is refused by the `/props` check, MD-M4-1, never adopted).
+ */
+export function genericManagedPort(modelId: string): number {
+  return 8110 + (createHash("sha256").update(modelId).digest().readUInt32BE(0) % 80);
+}
+
+function samplingOf(entry: ModelEntry | undefined): SamplingOptions {
+  const s = entry?.sampling;
+  if (s && Object.values(s).some((v) => typeof v === "number")) {
+    const out: SamplingOptions = {};
+    if (s.temperature !== undefined) out.temperature = s.temperature;
+    if (s.topP !== undefined) out.topP = s.topP;
+    if (s.topK !== undefined) out.topK = s.topK;
+    if (s.minP !== undefined) out.minP = s.minP;
+    return out;
+  }
+  return { ...(FAMILY_SAMPLING[entry?.family ?? ""] ?? FALLBACK_SAMPLING) };
+}
+
+/**
+ * A managed llama-server for a registered GGUF with no managed builder
+ * (MD-N12-10): the role's window (or the one a queue asks for) capped at the
+ * header's trained context; q8_0 KV as the Worker's; the registry's
+ * sampling, else the family's; speculative decoding measurable when the
+ * header carries an MTP head, and used only once measured and qualified
+ * (MD-N8-2). Its model id is the registry id, so its qualifications are its own.
+ */
+export function createGenericManaged(opts: {
+  modelId: string;
+  modelPath: string;
+  role: ModelRole;
+  entry?: ModelEntry;
+  want?: { contextTokens?: number; maxTokens?: number };
+  binary?: string;
+}): ManagedLlamaServerAdapter {
+  const win = GENERIC_ROLE_WINDOWS[opts.role];
+  const wanted = opts.want?.contextTokens ?? win.contextTokens;
+  const trained = opts.entry?.header?.contextLength;
+  const binary = opts.binary ?? process.env.SEKHEMET_LLAMA_SERVER;
+  return new ManagedLlamaServerAdapter({
+    modelId: opts.modelId,
+    modelPath: opts.modelPath,
+    slotCacheDir: defaultSlotCacheDir(),
+    ...(binary ? { binary } : {}),
+    port: genericManagedPort(opts.modelId),
+    contextTokens: trained ? Math.min(wanted, trained) : wanted,
+    kvType: "q8_0",
+    maxTokens: opts.want?.maxTokens ?? win.maxTokens,
+    sampling: samplingOf(opts.entry),
+    mtp: opts.entry?.header?.mtpHead === true,
+    ...(opts.entry?.sha256 ? { weightsSha256: opts.entry.sha256 } : {}),
+  });
+}
+
 /** One model the Researcher bake-off runs (MD-N11-1): the incumbent first. */
 export interface ResearcherCandidate {
   modelId: string;
@@ -1412,16 +1550,19 @@ export function defaultQwen38Gguf(options: ModelsDirOptions = {}): string {
  * check. Building an adapter starts no server, so this is safe in `doctor`.
  */
 export function managedModelWeights(
-  options: ModelsDirOptions = {},
+  options: ModelsDirOptions & { registry?: ModelRegistry | undefined } = {},
 ): { modelId: string; path: string }[] {
   const adapters = [
     createCyberTielWorker(resolveModelPath(MANAGED_MODEL_FILES.worker, options)),
     createApodexResearcher(resolveModelPath(MANAGED_MODEL_FILES.researcher, options)),
     createQwen38Managed({ modelPath: resolveModelPath(MANAGED_MODEL_FILES.planner, options) }),
   ];
+  // MD-N14-41a: the registry's readable recorded copy, as the roster launches it.
   return adapters.map((a) => ({
     modelId: a.launchProfile.modelId,
-    path: a.launchProfile.modelPath,
+    path:
+      recordedGguf(options.registry, a.launchProfile.modelId, existsSync) ??
+      a.launchProfile.modelPath,
   }));
 }
 

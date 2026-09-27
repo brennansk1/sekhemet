@@ -813,7 +813,8 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
   public async confirmUnloaded(timeoutMs = 20_000): Promise<boolean> {
     if (this.apiFormat !== "ollama") return true;
     const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
+    // At least one look, so a re-check with no wait (`0`) still reads the server.
+    for (;;) {
       try {
         const res = await fetch(`${this.baseUrl}/api/ps`, { signal: AbortSignal.timeout(3000) });
         if (res.ok) {
@@ -827,9 +828,9 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
         // Server unreachable: nothing of ours can be resident on it.
         return true;
       }
+      if (Date.now() >= deadline) return false;
       await new Promise((r) => setTimeout(r, 500));
     }
-    return false;
   }
 
   private messages(req: InferenceRequest): ChatMessage[] {
@@ -1053,12 +1054,37 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
     }
   }
 
-  /** What kind of step a request is, for the cache monitor. */
+  /**
+   * What kind of step a request is, for the cache monitor (M18): a
+   * tool-result step is the previous request's conversation plus new turns
+   * ending in a tool result — the step the server can serve almost wholly
+   * from its prefix cache, so a low hit rate there means something upstream
+   * of the tail changed. A conversation of its own that merely ends in a
+   * tool result (a qualification case after a different case, live-test F5)
+   * shares only the system prompt and tools with the request before it and
+   * is not held to the floor.
+   */
   private stepKind(req: InferenceRequest): CacheStepKind {
+    // A request without `messages` is sent as one user turn (`messages()`).
+    const sent: ChatTurn[] = req.messages ?? [{ role: "user", content: req.prompt }];
+    const turns = sent.map((m) => JSON.stringify(m));
+    // Per server slot: a side call on another slot (an extraction) does not
+    // interrupt the conversation on its own.
+    const slot = req.slot ?? -1;
+    const previous = this.previousTurns.get(slot);
+    this.previousTurns.set(slot, turns);
     const last = req.messages?.[req.messages.length - 1];
-    if (last?.role === "tool") return "tool_result";
+    const extends_ =
+      previous !== undefined &&
+      previous.length > 0 &&
+      turns.length > previous.length &&
+      previous.every((t, i) => t === turns[i]);
+    if (last?.role === "tool" && extends_) return "tool_result";
     return this.requests === 0 ? "first" : "other";
   }
+
+  /** Each slot's previous request's turns, serialised, for `stepKind`. */
+  private readonly previousTurns = new Map<number, string[]>();
 
   private requests = 0;
   private constrainedUnsupported = false;

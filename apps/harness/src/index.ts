@@ -857,6 +857,25 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
     return;
   }
 
+  if (config.command === "models" && argv[argv.indexOf("models") + 1] === "add") {
+    // `sekhemet models add <path> [--id <id>]` (MD-N12-9): register a GGUF a
+    // person already has, so it can run as a role.
+    const { modelsAdd } = await import("./models_cmd.js");
+    const path = argv[argv.indexOf("add") + 1];
+    if (!path || path.startsWith("-")) {
+      console.log("Usage: sekhemet models add <path-to.gguf> [--id <id>]");
+      process.exitCode = 2;
+      return;
+    }
+    const idAt = argv.indexOf("--id");
+    const id = idAt === -1 ? undefined : argv[idAt + 1];
+    process.exitCode = await modelsAdd(path, {
+      registry: modelRegistry(),
+      ...(id ? { id } : {}),
+    });
+    return;
+  }
+
   if (config.command === "models" && argv[argv.indexOf("models") + 1] === "fetch") {
     // `sekhemet dev models fetch <model> [--folder <path>]` (MD-N12-6): the
     // page's Download… in the terminal, the same verified implementation.

@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import type { EventLog } from "@sekhemet/kernel";
 import {
   DownloadHashMismatch,
@@ -6,6 +7,7 @@ import {
   type ModelSource,
   downloadModel,
   lookupPublishedFile,
+  registerModelFile,
   resolveWorkerModelId,
   tableSource,
   volumeOf,
@@ -120,6 +122,37 @@ export async function modelsFetch(
       });
     }
     print(err instanceof Error ? err.message : String(err));
+    return 1;
+  }
+}
+
+/**
+ * `sekhemet models add <path> [--id <id>]` (MD-N12-9, live-test F1/F7): register
+ * a GGUF a person already has. Its header is read — the model is never
+ * loaded — and its weights, SHA-256, size and header are recorded under the
+ * id (default: a slug of the header's name). A managed name's id (the
+ * Planner's `qwen3.8-27b`, say) makes that file the managed model's weights
+ * (MD-N14-41a); any other id runs under a managed llama-server with the
+ * generic profile (MD-N12-10) and is qualified under that id.
+ */
+export async function modelsAdd(
+  path: string,
+  opts: { id?: string; registry?: ModelRegistry; print?: (line: string) => void },
+): Promise<number> {
+  const print = opts.print ?? ((l: string) => console.log(l));
+  const registry = opts.registry ?? new ModelRegistry();
+  try {
+    // A managed name (`cyber-tiel`, `dirk`) is the registry id its server runs as.
+    const id = opts.id ? resolveWorkerModelId(opts.id) : undefined;
+    const r = await registerModelFile(registry, resolve(path), id ? { id } : {});
+    const ctx = r.header.contextLength ? `, trained context ${r.header.contextLength}` : "";
+    print(
+      `Registered ${r.id}: ${r.path} (${(r.sizeBytes / 1e9).toFixed(1)} GB, sha256 ${r.sha256.slice(0, 12)}…${ctx}).`,
+    );
+    print(`Qualify it before it runs as the Worker: sekhemet qualify --models ${r.id}`);
+    return 0;
+  } catch (err) {
+    print(`Not registered: ${err instanceof Error ? err.message : String(err)}`);
     return 1;
   }
 }

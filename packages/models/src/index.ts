@@ -42,5 +42,6 @@ export * from "./model_download.js";
 export * from "./placement.js";
 export * from "./recommend.js";
 export * from "./role_weights.js";
+export * from "./generic_managed.js";
 export { SPEED_TTFT_PROMPT } from "./qualification_copy.js";
 export { assertModelLoadAllowed, modelLoadRefusal } from "./load_guard.js";

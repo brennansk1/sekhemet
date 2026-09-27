@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 48 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 49 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,41 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 49 — 2026-09-27 (live testing, rungs 0–3; the first live-test fixes)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver. One fixes implementer; the lead ran the ladder and found the unload regression in the gate.
+
+- **Permission and approach.** The owner permitted live model testing, with DEC-42's checks before each load, and asked for a ladder: short runs first, the longest last, stopping early on harness faults, with Smart Swap tested explicitly (memory: `live-testing-ladder`). The Planner and Researcher weights were copied to the internal SSD, hash-verified, with the USB originals kept.
+- **Rung 0 (preflight):** doctor green; every role resolved to the SSD.
+- **Rung 1 (Worker smoke, Smart Swap's load record):**
+  - Loads: SSD cold 13.1 s (11.8 s predicted), SSD warm 2.1 s, USB cold 258 s (345 s predicted).
+  - The slow-load flag fired on USB, naming the external volume and cold cache with the fixes "copy to internal" and "prewarm overnight"; it stayed quiet on the SSD.
+  - `/props` matched the profile. First token 0.98 s, decode about 27.7 tok/s, measured footprint 16.4 GB.
+- **Rung 2:**
+  - The Worker's qualification is **invalidated on the current code**: the context version changed with B3 and B4, by design.
+  - Requalification: 96.0%, with multi_step 50% (5/10, against 40% under the old override; within noise) and recall 90%.
+  - The owner chose not to override again yet: try other candidates, and give the Worker the harness's best chance.
+  - A comparison of Nail-35B-A3B through Ollama came out biased (8k context under Ollama; multi_step 100%, recall 0%) and was stopped.
+- **Rung 3 (every remaining arm on `chronicle`, on the baseline's frozen build, which is still runnable):** no harness faults.
+  - `thinking-all` 4/5 (46 min), `strict` 4/5 (23 min), `fixed-tools` 4/5 (21 min), `evidence-gate` 4/5 (16 min, the fewest tokens).
+  - The same card (`card_chron_ledger`) exhausted its budget in every arm. A slice is not a finding.
+  - The earlier `thinking-all` exit 143 was the night the owner paused model use, not a fault.
+- **Fixed (tests first):**
+  - F1 and F7: any recorded GGUF runs as a role under a managed llama-server with a generic profile; managed models load the registry's copy; `sekhemet models add <path>`.
+  - F3: an unload is confirmed by polling, and an unconfirmed one counts as resident. The gate then caught a regression in that fix: every release waited out the Ollama adapter's 20 s default (`cli_exit.spec` went from 11 s to 70 s, and vitest's worker timed out). The unload's own wait is now bounded at 3 s (`UNLOAD_CONFIRM_MS`), with later non-blocking re-checks.
+  - F5: the alerts came from qualification's canned cases. A tool-result step is now a continuation on the same slot; the floor is unchanged.
+  - F9: the scheduler tests no longer read the host's real memory pressure.
+  - The front door's `--id` flag.
+- **Open:**
+  - F2: doctor's free-memory figure against macOS's.
+  - F4: warm loads labelled cold, to verify with a persistent ledger.
+  - F8: non-managed models get the generic 8k context. Resolved for GGUF files by F7; the Ollama path remains as it is.
+  - The Worker's own prefix reuse (median 0.29) belongs to M8.
+- **Gate:** `tsc -b` and `biome check .` clean; vitest 557 files, 4105 passed, 37 skipped, exit 0.
+- **Where the cards stop:**
+  - **Next on the ladder:** rung 4 (Smart Swap across Worker, Planner and Researcher; the load-mode A/B), then candidates rerun fairly under the managed llama-server at 16k (Nail, GLM-4.7-Flash, Tiel-Coder, Occult-Nail).
+  - **Then:** calibration, the medium suite run once a Worker is qualified or the owner overrides, and the long baseline runs.
 
 ### Entry 48 — 2026-09-26 (B4.4 done: start a project by conversation; depth profile, comparables and walkthrough; project documents in the repository; the rest of taking over a project; inherited issues; research that can be verified)
 

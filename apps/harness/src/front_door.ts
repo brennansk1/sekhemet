@@ -113,7 +113,6 @@ const VALUED = new Set([
 export const KNOWN_FLAGS: ReadonlySet<string> = new Set([
   "--ab-entry",
   "--activate",
-  // `research-bakeoff --adopt` / `--adopt-from <run>` (MD-N11-3).
   "--adopt",
   "--adopt-from",
   "--after",
@@ -152,7 +151,6 @@ export const KNOWN_FLAGS: ReadonlySet<string> = new Set([
   "--depth",
   "--diff",
   "--dry-run",
-  // `research --effort quick|standard|exhaustive` (DS-N2-7).
   "--effort",
   "--entry",
   "--escalate-retries",
@@ -171,6 +169,7 @@ export const KNOWN_FLAGS: ReadonlySet<string> = new Set([
   "--help",
   "--host",
   "--hours",
+  "--id",
   "--identity",
   "--idle-min",
   "--independent",
@@ -207,7 +206,6 @@ export const KNOWN_FLAGS: ReadonlySet<string> = new Set([
   "--pages",
   "--permit-loads",
   "--pinned",
-  // `research-bakeoff --pipelines native,tool-loop` (DS-N2-9).
   "--pipelines",
   "--planner",
   "--port",
@@ -274,6 +272,9 @@ export const KNOWN_FLAGS: ReadonlySet<string> = new Set([
   "--yes",
   "-h",
   "-v",
+  // `research --effort quick|standard|exhaustive` (DS-N2-7).
+  // `research-bakeoff --adopt` / `--adopt-from <run>` (MD-N11-3).
+  // `research-bakeoff --pipelines native,tool-loop` (DS-N2-9).
 ]);
 
 /** The first flag not in {@link KNOWN_FLAGS}; `--name=value` is judged by its name. */

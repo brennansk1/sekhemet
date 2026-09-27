@@ -39,6 +39,8 @@ describe("NEW-models-9: one scheduler owns residency", () => {
     const events: string[] = [];
     const { built, build } = fakeWeights(events);
     const s = new ResidencyScheduler({
+      // Scheduling, not this machine's memory: normal pressure (B4.4 live-test F9).
+      pressureLevel: () => 1,
       roles: [
         { role: "planner", weights: "qwen", contextTokens: 8192 },
         { role: "seshat", weights: "qwen", contextTokens: 12_288 },
@@ -63,6 +65,8 @@ describe("NEW-models-9: one scheduler owns residency", () => {
     const events: string[] = [];
     const { build } = fakeWeights(events);
     const s = new ResidencyScheduler({
+      // Scheduling, not this machine's memory: normal pressure (B4.4 live-test F9).
+      pressureLevel: () => 1,
       roles: [
         { role: "researcher", weights: "apodex", contextTokens: 16_384 },
         { role: "planner", weights: "qwen", contextTokens: 8192 },
@@ -98,6 +102,8 @@ describe("NEW-models-9: one scheduler owns residency", () => {
     const events: string[] = [];
     const { build } = fakeWeights(events);
     const s = new ResidencyScheduler({
+      // Scheduling, not this machine's memory: normal pressure (B4.4 live-test F9).
+      pressureLevel: () => 1,
       roles: [
         { role: "worker", weights: "cyber", contextTokens: 16_384 },
         { role: "reviewer", weights: "big", contextTokens: 12_288 },
@@ -139,6 +145,8 @@ describe("NEW-models-9: one scheduler owns residency", () => {
     const events: string[] = [];
     const { build } = fakeWeights(events);
     const s = new ResidencyScheduler({
+      // Scheduling, not this machine's memory: normal pressure (B4.4 live-test F9).
+      pressureLevel: () => 1,
       roles: [
         { role: "worker", weights: "cyber", contextTokens: 16_384 },
         { role: "planner", weights: "qwen", contextTokens: 8192 },
@@ -168,6 +176,8 @@ describe("NEW-models-9: one scheduler owns residency", () => {
     const events: string[] = [];
     const { build } = fakeWeights(events);
     const s = new ResidencyScheduler({
+      // Scheduling, not this machine's memory: normal pressure (B4.4 live-test F9).
+      pressureLevel: () => 1,
       roles: [
         { role: "worker", weights: "cyber", contextTokens: 16_384 },
         { role: "planner", weights: "qwen", contextTokens: 8192 },

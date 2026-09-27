@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { totalmem } from "node:os";
 import {
   type MachineProfile,
@@ -6,12 +7,14 @@ import {
   loadMachineProfile,
   tierSettingsOf,
 } from "./calibration.js";
+import { recordedGguf } from "./generic_managed.js";
 import { HttpInferenceAdapter, NAIL_WORKER_PROFILE } from "./http_adapter.js";
 import {
   type ChronicleProfileOptions,
   ManagedLlamaServerAdapter,
   createApodexResearcher,
   createCyberTielWorker,
+  createGenericManaged,
   createQwen38Managed,
 } from "./llama_server.js";
 import type { ModelRegistry } from "./registry.js";
@@ -212,6 +215,8 @@ export class ModelRoster {
 
   public resolve(name: string, role: ModelRole, want: ResolveOptions = {}): UnloadableAdapter {
     if (!isManagedModelName(name)) {
+      const generic = this.resolveGeneric(name, role, want);
+      if (generic) return generic;
       const profile = { ...ollamaProfileForRole(role, name), ...want };
       // The engine decision is the whole point of measuring one: where the
       // OpenAI-compatible path won, the same weights are served over it
@@ -241,13 +246,19 @@ export class ModelRoster {
     const build =
       this.options.managed?.[name] ??
       (() => {
+        // MD-N14-41a: the registry's preferred recorded copy of these
+        // weights when one is readable here, else the shipped file name.
+        const path = recordedGguf(this.options.registry, resolveWorkerModelId(key), existsSync);
         switch (key) {
           case "cyber-tiel":
-            return createCyberTielWorker();
+            return createCyberTielWorker(path);
           case "apodex":
-            return createApodexResearcher();
+            return createApodexResearcher(path);
           default:
-            return createQwen38Managed(this.options.qwen38 ?? {});
+            return createQwen38Managed({
+              ...(path ? { modelPath: path } : {}),
+              ...(this.options.qwen38 ?? {}),
+            });
         }
       });
     const adapter = this.withRegistry(this.tuned(build()));
@@ -256,6 +267,41 @@ export class ModelRoster {
       engine: engineOf(adapter),
       ...(family ? { family } : {}),
     });
+    this.shared.set(key, adapter);
+    return adapter;
+  }
+
+  /**
+   * A registry model with recorded GGUF weights and no managed builder
+   * (MD-N12-10): a managed llama-server with the generic profile, one
+   * adapter per model. Undefined when the registry records no GGUF for it
+   * (an Ollama tag).
+   */
+  private resolveGeneric(
+    name: string,
+    role: ModelRole,
+    want: ResolveOptions,
+  ): UnloadableAdapter | undefined {
+    const registry = this.options.registry;
+    // A readable copy first; else the recorded one, whose launch then names the missing file.
+    const path = recordedGguf(registry, name, existsSync) ?? recordedGguf(registry, name);
+    if (!registry || !path) return undefined;
+    const key = `registry:${name}`;
+    const existing = this.shared.get(key);
+    if (existing) return existing;
+    const entry = registry.get(name);
+    const adapter = this.withRegistry(
+      this.tuned(
+        createGenericManaged({
+          modelId: name,
+          modelPath: path,
+          role,
+          ...(entry ? { entry } : {}),
+          want,
+        }),
+      ),
+    );
+    registry.upsert(adapter.modelId, { engine: engineOf(adapter) });
     this.shared.set(key, adapter);
     return adapter;
   }

@@ -23,6 +23,8 @@ code:
   - packages/models/src/llama_server.ts
 tests:
   - packages/context/tests/worker_prompt.spec.ts
+  - packages/context/tests/worker_prefix_steps.spec.ts
+  - packages/models/tests/cache_step_kind.spec.ts
   - packages/context/tests/worker_prompt_wave2.spec.ts
   - packages/context/tests/compaction.spec.ts
   - packages/context/tests/allocator.spec.ts
@@ -181,7 +183,8 @@ Every model-facing string this spec renders is written to [PROMPT_STANDARD.md](.
 | Append-only prompt; batch masking; native history messages | not-built | masking every step (`worker_prompt.ts:821-822`); history rendered as `Turn N: tool -> …` text | M8 |
 | Server reuse settings (`--checkpoint-min-step`, no `--cache-reuse`, `preserve_thinking`) | partial | `--cache-ram`/`--ctx-checkpoints` sized per host (`llama_server.ts:46`); no min-step; thinking stripped | M8 |
 | Cache hit measured | built | `http_adapter.ts:338-354` | — |
-| Cache hit alert (< 0.85) | partial | `PrefixCacheMonitor` alerts in the queue report (`telemetry.ts:215-225`, `index.ts:1261`) per step, not on the per-attempt median after the first step; not on `run` | M8 |
+| Cache hit alert (< 0.85) | partial | `PrefixCacheMonitor` alerts in the queue report (`telemetry.ts:215-225`, `index.ts:1261`) per step, not on the per-attempt median after the first step; not on `run`. A tool-result step is now a request that extends the previous request on the same server slot with turns ending in a tool result (CX-M8-11, live-test fixes; `cache_step_kind.spec.ts`): the live qualification run's alerts (43–46%) came from the suite's canned tool-result cases, each preceded by a different case, which share only the system prompt and tools with it — about 80–92% of the characters (`multi-step-fix` 80%), and on the hybrid-attention Worker only what a context checkpoint inside that span restores — so 0.85 is out of reach for them by design; the floor is unchanged. The Worker's own step is sent as one user message (`session.ts`), so it is never a tool-result step: its measure is the per-attempt median (CX-M8-7, CX-M8-10), not built | M8 |
+| System prompt and static blocks byte-stable across consecutive steps | built | two consecutive Worker steps (one more step of history, the step counter, a scope-file write, new working memory) share the system prompt and every static block byte for byte, and nothing per step precedes the volatile tail (`worker_prefix_steps.spec.ts`); thirty steps at budgets of 6,000–12,000 tokens keep one static prefix hash. What still varies early in the request is the native tools array under progressive tool loading (a `tool_search` adds a schema, CX-M8-2) | M8 |
 | Cache hit at ≥ 0.85 | not-built | median 0.29 over 100 real steps, all below 0.85 (context review §1) | M8 |
 | Four-zone layout | partial | spec and criteria re-sent in the uncached tail every step (13% of the prompt) | M8 |
 | Zone budgets asserted on the live path | partial | skipped below W = 12,288 (`zones.ts:149`, `:165`); the only system-zone assert was in `buildFullPromptPack`, cut in B0, so the live path has none | NEW-context-2 |
@@ -272,6 +275,7 @@ Every model-facing string this spec renders is written to [PROMPT_STANDARD.md](.
 - **CX-M8-8** WHEN a masking point masks a step THE SYSTEM SHALL replace its tool call and observation with one line of at most 30 tokens, rendered by code from the call and its result (tool, main argument, outcome, `recall` reference), and `recall` on that reference SHALL return the step's full observation; WHEN one of the five most recent observations exceeds 300 tokens THE SYSTEM SHALL hold it to 300, keeping its error lines, paths, test names and exit code first, and say how much `recall` holds.
 - **CX-M8-9** WHEN a step thinks THE SYSTEM SHALL send its reasoning back on the next step clipped to 300 tokens at the moment it is appended, and SHALL strip the reasoning of every earlier step at the next masking point, never between two ordinary steps.
 - **CX-M8-10** WHEN an attempt's median server-reported cache-hit rate on the steps after its first is below 0.85 THE SYSTEM SHALL name the card and the median in the queue report and on the Machine view, for `run` as well as `queue`.
+- **CX-M8-11** WHEN a request on a server slot extends that slot's previous request with new turns ending in a tool result THE SYSTEM SHALL record it as a tool-result step and alert when its hit rate is under 0.85; WHEN a request ending in a tool result does not extend the previous one (a qualification case of its own) THE SYSTEM SHALL record it as another step, without the alert (live-test F5; `cache_step_kind.spec.ts`).
 
 ### P1 — bounded scope declaration (carried by the planner workstream, [planner-pm.md](planner-pm.md))
 

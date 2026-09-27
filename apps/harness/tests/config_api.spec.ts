@@ -312,6 +312,15 @@ describe("roles (DB-N6-4, DB-N6-5, MD-N12-4, MD-N12-5)", () => {
     expect(f.hubRequests).toEqual([]);
   });
 
+  it("MD-N12-9: assigning a scanned GGUF registers it as the header says, so the role can run it", async () => {
+    await call("POST", "/api/config/models/folders", { path: f.models });
+    await waitFor(() => f.frames.some((x) => x.kind === "hash" && x.file === "tiny-Q4_K_M.gguf"));
+    await call("PUT", "/api/config/roles/worker", { model: "tiny-llama" });
+    const e = f.registry.get("tiny-llama");
+    expect(e?.header).toMatchObject({ architecture: "llama", contextLength: 32768 });
+    expect(f.registry.preferredWeights("tiny-llama")).toBe(join(f.models, "tiny-Q4_K_M.gguf"));
+  });
+
   it("refuses an unqualified model naming the qualification, assigns a qualified one, and restores the previous", async () => {
     await call("POST", "/api/config/models/folders", { path: f.models });
     const refused = await call("PUT", "/api/config/roles/worker", { model: "tiny-llama" });

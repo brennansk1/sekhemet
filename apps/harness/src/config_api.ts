@@ -64,6 +64,7 @@ import {
   predictDecode,
   rankCombinations,
   recommendRole,
+  registerModelFile,
   restoreRole,
   scanModelFolders,
   sekhemetConfigDir,
@@ -2041,11 +2042,21 @@ export function createConfigApi(deps: ConfigApiDeps) {
               registry.upsert(id, { ...(family ? { family } : {}), sizeBytes: m.sizeBytes });
             if (m.sha256) {
               try {
-                registry.recordWeights(id, {
-                  path: m.path,
-                  volume: volume(m.path),
-                  sha256: m.sha256,
-                });
+                // MD-N12-9: a GGUF is registered as `sekhemet models add` does
+                // — weights, hash, size and header — so the role can run it
+                // under a managed llama-server (MD-N12-10).
+                if (m.format === "gguf")
+                  await registerModelFile(registry, m.path, {
+                    id,
+                    sha256: m.sha256,
+                    volume,
+                  });
+                else
+                  registry.recordWeights(id, {
+                    path: m.path,
+                    volume: volume(m.path),
+                    sha256: m.sha256,
+                  });
               } catch {
                 // A file whose hash differs from the registry's is not recorded as its weights.
               }
