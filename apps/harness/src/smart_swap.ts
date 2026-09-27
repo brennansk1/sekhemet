@@ -6,11 +6,17 @@ import {
   type CalibrationProbe,
   DEFAULT_SWAP_POLICY,
   type HeadroomProbe,
+  LOAD_PROBE_PROMPT,
+  type LoadModeAbPayload,
   type ModelHold,
+  type ResidencyScheduler,
   type RunnerHolder,
   type SwapPresence,
+  UNLOAD_CONFIRM_MS,
   createDarwinHeadroomProbe,
+  dec42HostCheck,
   runCalibrationNight,
+  runLoadModeAb,
 } from "@sekhemet/models";
 import type { ModelAccess } from "./model_access.js";
 import { isResearchCard } from "./research/cards.js";
@@ -367,6 +373,106 @@ export function calibrationHostReading(r: {
 }
 
 /**
+ * A calibration night's load-mode A/B (models rule 20h, MD-N14-34; live-test
+ * F13): for each llama.cpp model, with nothing resident, the modes alternate
+ * on its weights, `perMode` loads each (at least three), every load checked
+ * against DEC-42's host limits first. Each load, its first token (streamed),
+ * its unload (timed alone) and the adapter's own unload check are recorded
+ * through the scheduler's swap-cost tracker, then the A/B with the cache
+ * state it compared (`runLoadModeAb`). A refusal or failure ends that
+ * model's A/B, unloads it, and is returned; the night goes on.
+ */
+export async function calibrationLoadModeAbs(
+  scheduler: Pick<ResidencyScheduler, "releaseAll" | "calibrationAdapter" | "swapCost">,
+  deps: {
+    models: string[];
+    host: () =>
+      | { swapUsedBytes: number; freeRatio: number }
+      | Promise<{ swapUsedBytes: number; freeRatio: number }>;
+    record: (event: { type: string; payload: object }) => void | Promise<void>;
+    now?: () => number;
+    perMode?: number;
+  },
+): Promise<{ abs: LoadModeAbPayload[]; skipped: { model: string; reason: string }[] }> {
+  const now = deps.now ?? Date.now;
+  const abs: LoadModeAbPayload[] = [];
+  const skipped: { model: string; reason: string }[] = [];
+  const tracker = scheduler.swapCost;
+  await tracker.ready();
+  await scheduler.releaseAll();
+  for (const model of deps.models) {
+    const cal = scheduler.calibrationAdapter(model);
+    const adapter = cal?.adapter;
+    if (!cal || !adapter?.load || !adapter.unload || adapter.engine !== "llama.cpp") {
+      skipped.push({ model, reason: "not a llama.cpp model the harness loads" });
+      continue;
+    }
+    const source = await adapter.weightsSource?.().catch(() => undefined);
+    if (!source) {
+      skipped.push({ model, reason: "its weights file is unknown" });
+      continue;
+    }
+    const volume = tracker.volumeOf(source.path);
+    // Only a server this A/B started is ever stopped here.
+    let ours = false;
+    try {
+      abs.push(
+        await runLoadModeAb({
+          model,
+          roles: [cal.role],
+          volume,
+          engine: "llama.cpp",
+          bytes: source.bytes,
+          coldBytesPerSecond: tracker.book.readRate(volume).bytesPerSecond,
+          tracker,
+          now,
+          ...(deps.perMode !== undefined ? { perMode: deps.perMode } : {}),
+          load: async (mode) => {
+            const verdict = dec42HostCheck(await deps.host());
+            if (!verdict.ok) throw new Error(`DEC-42: not loading ${model}: ${verdict.reason}`);
+            const outcome = await adapter.load?.(undefined, { loadMode: mode });
+            ours = outcome === "loaded";
+            // A server already running is adopted, not loaded: nothing to time.
+            if (outcome === "adopted")
+              throw new Error(
+                `${model}'s server was already running; the A/B times only its own loads`,
+              );
+          },
+          firstToken: async () => {
+            const asked = now();
+            let first: number | undefined;
+            await cal.generate({
+              prompt: LOAD_PROBE_PROMPT,
+              toolArm: "arm_a_flat",
+              reasoning: "off",
+              maxTokens: 1,
+              onToken: () => {
+                first ??= now() - asked;
+              },
+            });
+            return first;
+          },
+          unload: async () => {
+            await adapter.unload?.();
+            ours = false;
+          },
+          confirmUnloaded: async () =>
+            (await adapter.confirmUnloaded?.(UNLOAD_CONFIRM_MS)) ?? false,
+          record: deps.record,
+        }),
+      );
+    } catch (err) {
+      skipped.push({ model, reason: err instanceof Error ? err.message : String(err) });
+      if (ours) {
+        await adapter.unload().catch(() => undefined);
+        await adapter.confirmUnloaded?.(UNLOAD_CONFIRM_MS).catch(() => false);
+      }
+    }
+  }
+  return { abs, skipped };
+}
+
+/**
  * Start a calibration night on the queue's scheduler (measurement rule 16d,
  * MS-NM14-3), through `runCalibrationNight`: it refuses while a suite or
  * measurement run holds the runner, records the protocol as
@@ -412,6 +518,15 @@ export async function beginCalibrationNight(
     host: deps.host,
     scheduler: access.residency,
     night: async () => {
+      // Live-test F13: the load-mode A/B first, with nothing else resident.
+      const ab = await calibrationLoadModeAbs(access.residency, {
+        models: deps.models,
+        host: deps.host,
+        record: deps.record,
+      });
+      for (const s of ab.skipped)
+        if (!/^not a llama\.cpp|file is unknown/.test(s.reason))
+          process.stderr.write(`[calibration] load-mode A/B of ${s.model} stopped: ${s.reason}\n`);
       began();
       await finished;
     },

@@ -34,6 +34,7 @@ const {
   loadFrozenSuite,
   queueInvocation,
   resolveRunProfile,
+  runChild,
   runFrozenSuite,
   runProfileHash,
   prepareIndependentCard,
@@ -285,25 +286,27 @@ const driver = {
     if (!fixture) return undefined;
     return cardsFor(fixture, perFixture.get(fixture)).find((c) => c.id === cardId)?.info;
   },
-  runQueue: (repo, timeoutMs) => {
+  runQueue: async (repo, timeoutMs) => {
     // Resolve the card ids before the queue moves the board.
     const fixture = [...repos].find(([, dir]) => dir === repo)?.[0];
     if (fixture) cardsFor(fixture, perFixture.get(fixture));
     // The one invocation every measured path uses (MS-M9-1).
     const { args, env } = queueInvocation(runProfile, repo);
-    try {
-      execFileSync("node", [join(ROOT, "apps/harness/dist/index.js"), ...args], {
+    // Live-test F19: an asynchronous child, so stopping this script (SIGTERM,
+    // SIGINT) stops the queue and the managed llama-server it started. A
+    // non-zero exit is a run with failures, not a failed run: the report decides.
+    const { timedOut } = await runChild(
+      process.execPath,
+      [join(ROOT, "apps/harness/dist/index.js"), ...args],
+      {
         stdio: "inherit",
-        timeout: timeoutMs,
+        timeoutMs,
         // Gates rule 6a (lead ruling): the suite's staged acceptance tests are
         // external, named explicitly so the frozen measurement never changes.
         env: { ...process.env, ...env, SEKHEMET_ACCEPTANCE_ORIGIN: "external" },
-      });
-    } catch (err) {
-      // A non-zero exit is a run with failures, not a failed run: the report decides.
-      if (err?.code === "ETIMEDOUT" || err?.signal === "SIGTERM") return { timedOut: true };
-    }
-    return { timedOut: false };
+      },
+    );
+    return { timedOut };
   },
   waitingOn: (repo, cardId) => {
     const db = new DatabaseSync(join(repo, ".sekhemet", "events.db"), { readOnly: true });

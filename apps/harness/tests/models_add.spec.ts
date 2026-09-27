@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ManagedLlamaServerAdapter, ModelRegistry } from "@sekhemet/models";
+import { ManagedLlamaServerAdapter, ModelRegistry, samplingSettingsOf } from "@sekhemet/models";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { writeGguf } from "../../../packages/models/tests/support/gguf_fixture.js";
 import { describeModel, weightsKey } from "../src/model_access.js";
@@ -19,11 +19,12 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-const run = async (path: string, id?: string) => {
+const run = async (path: string, id?: string, sampling?: string) => {
   const lines: string[] = [];
   const code = await modelsAdd(path, {
     registry,
     ...(id ? { id } : {}),
+    ...(sampling !== undefined ? { sampling } : {}),
     print: (l) => lines.push(l),
   });
   return { code, lines };
@@ -81,5 +82,51 @@ describe("sekhemet models add (MD-N12-9)", () => {
     expect(code).toBe(1);
     expect(lines.join("\n")).toMatch(/differs/);
     expect(registry.get("qwen3.8-27b")?.copies).toBeUndefined();
+  });
+});
+
+// Live-test F16: a generic model ran at its family's default sampling (Qwen's
+// 0.7 / 0.8 / 20), not its model card's; `--sampling` records the card's
+// values, and the output always says which sampling the model will run at.
+describe("sekhemet models add --sampling (live-test F16)", () => {
+  const qwen = () =>
+    writeGguf(join(dir, "Tiel-Coder.gguf"), { architecture: "qwen3moe", name: "Tiel Coder" });
+
+  it("records the model card's sampling, runs at it, and says so", async () => {
+    const { code, lines } = await run(
+      qwen(),
+      "tiel-coder",
+      "temperature=0.6,top_p=0.95,top_k=20,min_p=0",
+    );
+    expect(code).toBe(0);
+    expect(registry.get("tiel-coder")?.sampling).toEqual({
+      temperature: 0.6,
+      topP: 0.95,
+      topK: 20,
+      minP: 0,
+    });
+    const a = describeModel("tiel-coder", "worker", { registry });
+    expect(samplingSettingsOf(a)).toEqual({ temperature: 0.6, topP: 0.95, topK: 20, minP: 0 });
+    expect(lines.join("\n")).toMatch(
+      /runs at temperature 0\.6, top_p 0\.95, top_k 20, min_p 0 \(the values given with --sampling\)/,
+    );
+  });
+
+  it("without --sampling, states the family defaults it will run at and how to record the card's", async () => {
+    const { code, lines } = await run(qwen(), "tiel-coder");
+    expect(code).toBe(0);
+    expect(registry.get("tiel-coder")?.sampling).toBeUndefined();
+    expect(lines.join("\n")).toMatch(
+      /runs at temperature 0\.7, top_p 0\.8, top_k 20, min_p 0 \(the qwen family's defaults, not this model's card\).*--sampling temperature=,top_p=,top_k=,min_p=/s,
+    );
+  });
+
+  it("refuses an unknown key or a value out of range, and records nothing", async () => {
+    for (const bad of ["temp=0.6", "temperature=hot", "top_p=1.5", "top_k=2.5", "min_p=-1", ""]) {
+      const { code, lines } = await run(qwen(), "tiel-coder", bad);
+      expect(code, bad).toBe(1);
+      expect(lines.join("\n")).toMatch(/--sampling/);
+      expect(registry.get("tiel-coder")).toBeUndefined();
+    }
   });
 });

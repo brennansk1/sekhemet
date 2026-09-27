@@ -542,12 +542,16 @@ export class HttpInferenceAdapter implements LocalInferenceAdapter {
   /**
    * Pin the server's chat template in the registry (M12). Runs once per
    * adapter (on the first request); a server that does not expose its
-   * template is skipped. Returns the pin result, or undefined.
+   * template is skipped. Returns the pin result, or undefined. `into` pins
+   * it in another registry: qualification's, so the template the run
+   * measured is the one its combination names (live-test F17).
    */
-  public async verifyTemplate(): Promise<TemplatePinResult | undefined> {
-    const registry = this.options.registry;
+  public async verifyTemplate(
+    into: ModelRegistry | undefined = this.options.registry,
+  ): Promise<TemplatePinResult | undefined> {
+    const registry = into;
     if (!registry) return undefined;
-    this.templateChecked = true;
+    if (registry === this.options.registry) this.templateChecked = true;
     const template = await fetchChatTemplate(this.baseUrl, this.apiFormat, this.modelId);
     if (template === undefined) return undefined;
     const result = registry.pinTemplate(this.modelId, template);

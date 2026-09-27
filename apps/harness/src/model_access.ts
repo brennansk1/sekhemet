@@ -761,7 +761,10 @@ export class ModelAccess {
   }
 
   /** The scheduler, for a calibration night (`runCalibrationNight`) and a measurement run. */
-  public get residency(): Pick<ResidencyScheduler, "setLoadGuard" | "releaseAll"> {
+  public get residency(): Pick<
+    ResidencyScheduler,
+    "setLoadGuard" | "releaseAll" | "calibrationAdapter" | "swapCost"
+  > {
     return this.scheduler;
   }
 

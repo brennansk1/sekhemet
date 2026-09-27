@@ -255,6 +255,50 @@ describe("MD-N14-12: θ is recorded with the policy's parameters after each swap
   });
 });
 
+describe("predicted waits price every load and the Worker's backlog (live-test F10, F11)", () => {
+  it("F10: prices the load of the probe's own weights, not resident, loading, home, planned or queued", async () => {
+    const events: string[] = [];
+    const t = clock();
+    const s = scheduler(events, { now: t.now }, fakes(events, { bytes: 12 * GB }));
+    (await s.acquire("worker")).release();
+    const load = await s.predictLoad("researcher");
+    expect(load?.medianMs).toBeGreaterThan(1000);
+    const wait = await s.predictWait("researcher", { cls: "interactive" });
+    expect(wait.waitMs).toBeGreaterThanOrEqual(load?.medianMs as number);
+  });
+
+  it("F11: a non-interactive request under a Worker backlog waits for the backlog's end, at most its cap", async () => {
+    const events: string[] = [];
+    const t = clock();
+    const s = scheduler(events, { now: t.now }, fakes(events, { bytes: 12 * GB }));
+    (await s.acquire("worker")).release();
+    const load = (await s.predictLoad("researcher"))?.medianMs as number;
+    // The Worker's remaining cards × its measured step time: 8 minutes.
+    const known = await s.predictWait("researcher", {
+      homeBacklog: true,
+      homeRemainingMs: 8 * MIN,
+    });
+    expect(known.waitMs).toBeGreaterThanOrEqual(8 * MIN + load);
+    expect(known.atMost).toBeUndefined();
+    // Not known: a bound, the aging cap, never a small number.
+    const cap = DEFAULT_SWAP_POLICY.capsMs.researcher;
+    const bound = await s.predictWait("researcher", { homeBacklog: true });
+    expect(bound.atMost).toBe(true);
+    expect(bound.waitMs).toBeGreaterThanOrEqual(cap);
+    // A backlog longer than the cap: the cap decides (C4), a forecast, not a bound.
+    const long = await s.predictWait("researcher", {
+      homeBacklog: true,
+      homeRemainingMs: 10 * cap,
+    });
+    expect(long.waitMs).toBeGreaterThanOrEqual(cap);
+    expect(long.waitMs).toBeLessThan(2 * cap);
+    // An interactive request is served at the next step boundary (C2), not after the backlog.
+    const chat = await s.predictWait("chat", { cls: "interactive", homeBacklog: true });
+    expect(chat.waitMs).toBeLessThan(5 * MIN);
+    expect(chat.atMost).toBeUndefined();
+  });
+});
+
 describe("predicted waits (the median) for a queued request", () => {
   it("says when a request on another model would start, and whether it takes the quick path", async () => {
     const events: string[] = [];

@@ -64,7 +64,7 @@ import {
   mergeNetworkConfigs,
   tagUntrusted,
 } from "@sekhemet/sandbox";
-import type { GitSyncAdapter, RebaseResult } from "@sekhemet/sync";
+import { type GitSyncAdapter, type RebaseResult, resolvedPath } from "@sekhemet/sync";
 import { CardExecutionSessionImpl } from "./session.js";
 import type {
   ExecutionStopReason,
@@ -1394,8 +1394,10 @@ export class CardRunner {
     const checkpointShas: string[] = [];
 
     const resumeFrom = await this.resumePoint();
+    // One spelling for a worktree, fresh or resumed (live-test F18): the
+    // adapter hands back the resolved path, so a given path is resolved too.
     const worktreePath = this.options.useExistingWorktree
-      ? this.options.worktreePath
+      ? resolvedPath(this.options.worktreePath)
       : // Y1: a subtask's worktree branches from its parent's branch.
         await syncAdapter.createWorktree(
           card.id,

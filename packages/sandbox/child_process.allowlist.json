@@ -45,6 +45,7 @@
     "apps/harness/src/trailer_gate.ts": "The harness's own git log for the trailer contract.",
     "apps/harness/src/user_hooks.ts": "User hooks from .sekhemet/hooks.toml: trusted configuration like git hooks, outside the sandbox by design (K12); none start under --restricted (SEC-19).",
     "apps/harness/src/wave2.ts": "The harness's own git and `act` for the CI gate; package gates and --validate-tools run confined.",
+    "packages/eval/src/child_run.ts": "The suite script's child runner (live-test F19): spawns the harness's own CLI (`node apps/harness/dist/index.js …`) in its own process group and passes a stop on to it, killing the group only after a grace period; it runs no repository code itself (the harness child confines what it runs).",
     "packages/eval/src/fixture_repo.ts": "The harness's own git to build evaluation fixtures.",
     "packages/eval/src/git.ts": "The harness's own git for evaluation.",
     "packages/eval/src/suite_runner.ts": "The harness's own git to commit earlier cards' registered reference solutions in independent mode (MS-T7-3).",

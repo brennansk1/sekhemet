@@ -102,6 +102,41 @@ describe("MD-N14-38: a seeded replay is reproducible", () => {
   });
 });
 
+describe("live-test F15: the replay has a researcher queue", () => {
+  it("queues each recorded research request on the Researcher's weights, served and waited for as its class", () => {
+    const cfg = config({
+      queues: {
+        worker: "cyber",
+        chat: "qwen",
+        planner: "qwen",
+        reviewer: "gemma",
+        researcher: "apodex",
+      },
+      weights: {
+        ...config().weights,
+        apodex: { loadMs: [12 * S, 13 * S], unloadMs: [2 * S] },
+      },
+    });
+    const run = simulateDay(
+      day({
+        research: [
+          { at: T0 + 30 * MIN, serviceMs: 40 * S },
+          { at: T0 + 2 * HOUR, serviceMs: 25 * S },
+        ],
+      }),
+      cfg,
+    );
+    const served = run.trace.filter((e) => e.kind === "served" && e.queue === "researcher");
+    expect(served).toHaveLength(2);
+    expect(run.trace.some((e) => e.kind === "swap" && e.to === "apodex")).toBe(true);
+    expect(run.metrics.waits.researcher?.n).toBe(2);
+    // Research on weights the replay does not know is refused, never dropped.
+    expect(() => simulateDay(day({ research: [{ at: T0, serviceMs: S }] }), config())).toThrow(
+      /researcher/,
+    );
+  });
+});
+
 describe("MD-N14-39: the replay is closed-loop", () => {
   it("a card the policy delays by an hour has its review demand delayed by the same hour", () => {
     const fixed = config({

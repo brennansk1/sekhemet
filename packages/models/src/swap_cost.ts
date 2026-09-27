@@ -110,7 +110,13 @@ export interface ModelUnloadedPayload {
 export interface ModelFirstTokenPayload {
   model: string;
   roles: string[];
-  firstTokenMs: number;
+  /** The true first token: present only when the reply streamed (live-test F14). */
+  firstTokenMs?: number;
+  /**
+   * The whole reply's time, when it did not stream: not a first token, so it
+   * never enters C_pair's first-token excess (live-test F14).
+   */
+  replyMs?: number;
 }
 
 export interface ModelSlowLoadPayload {
@@ -448,7 +454,7 @@ export class SwapCostTracker {
       if (p.confirmed) this.book.addUnload(p.model, p.unloadMs);
     } else if (e.type === SWAP_EVENTS.firstToken) {
       const p = e.payload as ModelFirstTokenPayload;
-      this.book.addFirstToken(p.model, p.firstTokenMs, true);
+      if (p.firstTokenMs !== undefined) this.book.addFirstToken(p.model, p.firstTokenMs, true);
     }
   }
 
@@ -554,7 +560,7 @@ export class SwapCostTracker {
   /** Record the first reply after a load (MD-N14-2). */
   public async firstToken(f: ModelFirstTokenPayload): Promise<void> {
     await this.write(SWAP_EVENTS.firstToken, f);
-    this.book.addFirstToken(f.model, f.firstTokenMs, true);
+    if (f.firstTokenMs !== undefined) this.book.addFirstToken(f.model, f.firstTokenMs, true);
   }
 
   /** A warm reply's first token: steady state, kept in memory only (rule 20d). */

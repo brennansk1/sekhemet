@@ -43,7 +43,13 @@ import {
   flattenSwapPolicy,
   theta,
 } from "./swap_policy.js";
-import type { AdapterHealth, InferenceRequest, ModelSignal, UnloadableAdapter } from "./types.js";
+import type {
+  AdapterHealth,
+  InferenceRequest,
+  LocalInferenceAdapter,
+  ModelSignal,
+  UnloadableAdapter,
+} from "./types.js";
 import type { WatchdogLevel } from "./watchdog.js";
 
 /**
@@ -280,6 +286,12 @@ export interface PredictedWait {
   quickPath: boolean;
   /** The rule that decided. */
   rule: SwapAction["rule"];
+  /**
+   * The wait is a bound, not a forecast (live-test F11): behind a Worker
+   * backlog of unknown length, the request starts at the latest at its
+   * aging cap. Say "at most …", never the number as a prediction.
+   */
+  atMost?: true;
 }
 
 interface Job {
@@ -347,6 +359,8 @@ export class ResidencyScheduler {
   >();
   /** Weights whose first reply after a recorded load is still to be timed. */
   private readonly firstReplyDue = new Set<string>();
+  /** Each weights' `generate` before `timeFirstReply` wrapped it (a calibration A/B's requests). */
+  private readonly untimed = new Map<string, LocalInferenceAdapter["generate"]>();
   /** Weights this scheduler loaded and recorded: only their unloads are real and recorded. */
   private readonly loadedHere = new Set<string>();
   /** `--cache-ram` per weights, sized from the headroom at its admission (rule 20h). */
@@ -460,13 +474,16 @@ export class ResidencyScheduler {
 
   /**
    * Time the first reply after a recorded load (MD-N14-2): from the
-   * request's start to its first streamed token, or to the reply when it
-   * does not stream. Later replies' first tokens are kept in memory as the
-   * steady state C_pair's first-token excess is measured against (rule 20d).
-   * The adapter keeps its identity; only `generate` is wrapped.
+   * request's start to its first streamed token. A reply that does not
+   * stream has no first token of its own: its whole time is recorded as
+   * `replyMs`, never as a first token (live-test F14). Later streamed
+   * replies' first tokens are kept in memory as the steady state C_pair's
+   * first-token excess is measured against (rule 20d). The adapter keeps
+   * its identity; only `generate` is wrapped.
    */
   private timeFirstReply(key: string, adapter: UnloadableAdapter): void {
     const original = adapter.generate.bind(adapter);
+    this.untimed.set(key, original);
     adapter.generate = async (req: InferenceRequest) => {
       const afterLoad = this.firstReplyDue.delete(key);
       const start = this.now();
@@ -483,10 +500,13 @@ export class ResidencyScheduler {
             }
           : req,
       );
-      const firstTokenMs = first ?? this.now() - start;
       if (afterLoad)
-        await this.cost.firstToken({ model: key, roles: this.rolesOf(key), firstTokenMs });
-      else this.cost.warmFirstToken(key, firstTokenMs);
+        await this.cost.firstToken({
+          model: key,
+          roles: this.rolesOf(key),
+          ...(first !== undefined ? { firstTokenMs: first } : { replyMs: this.now() - start }),
+        });
+      else if (first !== undefined) this.cost.warmFirstToken(key, first);
       return response;
     };
   }
@@ -1104,13 +1124,17 @@ export class ResidencyScheduler {
     opts: SubmitOptions & {
       /** The Worker is mid-card although its queue here is empty (the runner's step boundary). */
       homeBacklog?: boolean;
+      /** How long the Worker's backlog still runs: its remaining cards × its measured step time (F11). */
+      homeRemainingMs?: number;
     } = {},
   ): Promise<PredictedWait> {
     const need = this.need(queue);
     const probe = { ...this.requestMeta(queue, need, opts), id: `${queue}#predict` };
-    const snapshot = await this.snapshot();
+    // Live-test F10: the probe's own weights are priced too, whatever their state.
+    const snapshot = await this.snapshot([need.weights]);
     if (opts.homeBacklog !== undefined && snapshot.home !== undefined)
       snapshot.homeBacklog = opts.homeBacklog;
+    if (opts.homeRemainingMs !== undefined) snapshot.homeRemainingMs = opts.homeRemainingMs;
     const existing = snapshot.queues.find((q) => q.queue === queue);
     if (existing) existing.requests.push(probe);
     else snapshot.queues.push({ queue, weights: need.weights, requests: [probe] });
@@ -1123,7 +1147,34 @@ export class ResidencyScheduler {
       waitMs: Math.max(0, startsAt - now),
       quickPath: action.quickPath.includes(probe.id),
       rule: action.rule,
+      ...(action.bounded?.includes(probe.id) ? { atMost: true as const } : {}),
     };
+  }
+
+  /**
+   * The adapter serving these weights and its role, for a calibration
+   * night's load-mode A/B (live-test F13), with `generate` as it was before
+   * the first-reply timing wrapped it: the A/B records its own loads, first
+   * tokens and unloads through `swapCost`. Undefined when no role uses them.
+   */
+  public calibrationAdapter(
+    weights: string,
+  ):
+    | { role: string; adapter: UnloadableAdapter; generate: LocalInferenceAdapter["generate"] }
+    | undefined {
+    const role = this.rolesOf(weights)[0];
+    if (role === undefined) return undefined;
+    const adapter = this.adapterFor(role);
+    return {
+      role,
+      adapter,
+      generate: this.untimed.get(weights) ?? adapter.generate.bind(adapter),
+    };
+  }
+
+  /** The swap-cost tracker: the ledger's load history, and where loads are recorded. */
+  public get swapCost(): SwapCostTracker {
+    return this.cost;
   }
 
   /** The GPU ceilings in force: the configured ones and those recorded on the ledger (rule 20g). */
@@ -1230,11 +1281,12 @@ export class ResidencyScheduler {
    * Everything `decide()` reads, taken now (rule 20e): the reads happen here
    * (the ledger's history, each weights' file, the memory), never in it.
    */
-  private async snapshot(): Promise<SwapSnapshot> {
+  private async snapshot(also: readonly string[] = []): Promise<SwapSnapshot> {
     await this.cost.ready();
     this.trackAbsence();
     const home = this.homeWeights();
     const relevant = new Set<string>([
+      ...also,
       ...this.resident,
       ...this.loading.keys(),
       ...(home !== undefined ? [home] : []),

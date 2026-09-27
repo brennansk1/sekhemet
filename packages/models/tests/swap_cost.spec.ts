@@ -13,6 +13,7 @@ import {
   ResidencyScheduler,
   SWAP_EVENTS,
   SwapCostBook,
+  SwapCostTracker,
   type SwapEvent,
   type UnloadableAdapter,
   volumeOf,
@@ -79,6 +80,8 @@ function scripted(
     loads: number[];
     unloadMs?: number;
     firstTokenMs?: number;
+    /** A streamed reply's time after its first token. */
+    restMs?: number;
     /** Already served by a running server: adopted, not loaded. */
     adopted?: boolean;
     failLoad?: string;
@@ -93,9 +96,14 @@ function scripted(
       modelId: spec.path,
       supportedArms: ["arm_a_flat"],
       contextWindow: { contextTokens, maxTokens: 64 },
-      generate: async () => {
+      generate: async (req) => {
         calls.push("generate");
         clock.advance(spec.firstTokenMs ?? 0);
+        // Streamed: the first token now, the rest of the reply after it.
+        if (req.onToken) {
+          req.onToken("o");
+          clock.advance(spec.restMs ?? 0);
+        }
         return {
           text: "ok",
           toolCalls: [],
@@ -261,7 +269,10 @@ describe("NEW-models-14: Smart Swap — the record, the prediction and the slow-
       causes: ["external_volume", "cold_cache"],
       fixes: ["copy_to_internal", "prewarm_overnight"],
     });
-    expect(all[2]).toMatchObject({ model: "cyber", firstTokenMs: 2500 });
+    // Live-test F14: a reply that did not stream has no first token of its own;
+    // its whole time is recorded as the reply time, never as a first token.
+    expect(all[2]).toMatchObject({ model: "cyber", replyMs: 2500 });
+    expect(all[2]).not.toHaveProperty("firstTokenMs");
     expect(all[3]).toMatchObject({
       model: "cyber",
       unloadMs: 4000,
@@ -285,6 +296,39 @@ describe("NEW-models-14: Smart Swap — the record, the prediction and the slow-
     });
     // No flag: under the 120 s bound.
     expect(all.filter((e) => e.type === "model/slow_load")).toHaveLength(1);
+  });
+
+  it("F14: a streamed first reply records its true first token; a non-streamed one only its reply time, which never enters C_pair's first-token excess", async () => {
+    const clock = fakeClock();
+    const log = ledger();
+    const worker = scripted(clock, {
+      path: "/Users/o/w.gguf",
+      bytes: 4 * GB,
+      loads: [30_000],
+      firstTokenMs: 800,
+      restMs: 9200,
+    });
+    const s = new ResidencyScheduler({
+      roles: [{ role: "worker", weights: "w", contextTokens: 8192 }],
+      weights: { w: { build: worker.build, footprintBytes: 5 * GB } },
+      usableBytes: 16 * GB,
+      pressureLevel: () => 1,
+      now: clock.now,
+      swapCost: { ...wire(log), volumeOf: volumes, swapUsedBytes: () => 0 },
+    });
+    await s.submit("worker", (a) =>
+      a.generate({ prompt: "p", toolArm: "arm_a_flat", onToken: () => undefined }),
+    );
+    const [first] = await events(log, "model/first_token");
+    expect(first).toMatchObject({ model: "w", firstTokenMs: 800 });
+    expect(first).not.toHaveProperty("replyMs");
+
+    // Non-streamed after a load: the 10 s reply is not a first token.
+    const book = new SwapCostTracker({ now: clock.now, cacheBytes: 16 * GB });
+    await book.firstToken({ model: "x", roles: ["worker"], replyMs: 10_000 });
+    expect(book.book.firstTokenExcess("x")).toBeUndefined();
+    await book.firstToken({ model: "x", roles: ["worker"], firstTokenMs: 900 });
+    expect(book.book.firstTokenExcess("x")).toBe(900);
   });
 
   it("MD-N14-3: a reload within 15 minutes with nothing big in between is warm; after 15 minutes it is cold", async () => {

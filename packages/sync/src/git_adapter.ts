@@ -16,13 +16,14 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { matchesScope } from "@sekhemet/kernel";
 import { hardenGitForProcess } from "./git_hardening.js";
 import {
   GitMetadataError,
   gitEnvFor,
   guardedGitEnv,
+  resolvedPath,
   stagedGitlinks,
   writeConfigBaseline,
 } from "./git_preflight.js";
@@ -189,19 +190,38 @@ const LINKED_DOT_ENTRIES = [
 /** Caches a toolchain writes under `node_modules`, created in each worktree (item 24). */
 export const WORKTREE_CACHES = [".vite", ".vite-temp", ".cache", ".tmp"] as const;
 
+/** Each repository's name as the person gave it (`--repo`), by its resolved path. */
+const GIVEN_NAMES = new Map<string, string>();
+
+/**
+ * Remember the name a person gave a repository before its path is resolved
+ * (live-test F18 resolves `--repo` to its real path; a symlink's own name
+ * stays the project's name, so its card branches keep their names).
+ */
+export function rememberRepoAsGiven(given: string): void {
+  const name = basename(resolve(given));
+  if (name) GIVEN_NAMES.set(resolvedPath(given), name);
+}
+
 export class NodeGitSyncAdapter implements GitSyncAdapter {
   private projectName: string;
 
-  constructor(
-    private repoRoot: string,
-    projectName?: string,
-  ) {
+  private readonly repoRoot: string;
+
+  constructor(repoRoot: string, projectName?: string) {
+    // Live-test F18: one spelling of the repository, absolute and real, so a
+    // worktree git creates (resolving against the repository) and the one the
+    // preflight checks (resolving against the process) are the same path.
+    this.repoRoot = resolvedPath(repoRoot);
     // S1 defence in depth: never honour repository config that runs programs.
     hardenGitForProcess();
     // Default to the repository's own directory name. A fixed "sekhemet"
     // produced branches like sekhemet/sekhemet/<card>, which says nothing about
     // which project the work belongs to.
-    this.projectName = projectName ?? (basename(repoRoot) || "sekhemet");
+    // The name as given (a symlink's own name), so branch names do not move:
+    // the command line remembers it before resolving `--repo` (F18 review, minor 2).
+    this.projectName =
+      projectName ?? GIVEN_NAMES.get(this.repoRoot) ?? (basename(resolve(repoRoot)) || "sekhemet");
   }
 
   private getWorktreePath(cardId: string): string {

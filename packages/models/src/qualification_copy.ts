@@ -191,3 +191,9 @@ export const SPEED_TTFT_PROMPT: string = Array.from(
   (_, i) =>
     `Line ${i + 1}: the board lists each card with its gates, its evidence and the person who accepts it.`,
 ).join("\n");
+
+/**
+ * The request a calibration night's load-mode A/B times a first token on
+ * (models MD-N14-34a): one short line, so the load, not prefill, dominates.
+ */
+export const LOAD_PROBE_PROMPT = "Reply with OK.";

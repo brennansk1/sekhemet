@@ -29,3 +29,4 @@ export * from "./combination_types.js";
 export * from "./screening_sets.js";
 export * from "./combination_bench.js";
 export * from "./overnight_bench.js";
+export * from "./child_run.js";

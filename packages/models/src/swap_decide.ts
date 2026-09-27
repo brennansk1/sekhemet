@@ -140,6 +140,12 @@ export interface SwapSnapshot {
   home?: string;
   /** The Worker has work (queued steps, a card in progress); default: its queues are non-empty. */
   homeBacklog?: boolean;
+  /**
+   * How long the Worker's backlog still runs when known (its remaining cards
+   * × its measured step time; live-test F11). Unknown, a wait behind the
+   * backlog is reported as a bound, the aging cap.
+   */
+  homeRemainingMs?: number;
   weights: Record<string, SwapWeightsState>;
   queues: SwapQueueState[];
   watchdog: WatchdogLevel;
@@ -183,6 +189,12 @@ interface SwapActionBase {
   reason: string;
   /** The predicted start (the median) of every queued request, by id. */
   starts: Record<string, number>;
+  /**
+   * Requests whose start is only a bound, not a forecast (live-test F11):
+   * waiting behind a Worker backlog of unknown length, they start at the
+   * latest at their aging cap (C4).
+   */
+  bounded?: string[];
   /** Interactive requests whose full answer would break C5: answer by rule 20f. */
   quickPath: string[];
   /** Loads refused for memory, each with why; their work stays queued. */
@@ -677,13 +689,42 @@ type Body = SwapAction extends infer A
     : never
   : never;
 
+/**
+ * The Worker at home with cards still to run, its steps not queued here
+ * (live-test F11): a waiting non-interactive request under C1's threshold is
+ * served when the backlog ends (C1) or at its aging cap (C4), whichever
+ * comes first — never at the next boundary. With the backlog's length
+ * unknown, its start is at most the cap: those requests are returned, as
+ * bounds. Interactive requests are served at a step boundary (C2) and are
+ * not held here.
+ */
+function holdBehindBacklog(c: Ctx, n: Notes, body: Body, targets: readonly string[]): string[] {
+  const home = c.home;
+  if (home === undefined || !isResident(c, home) || !c.homeBacklog || hasWork(c, home)) return [];
+  const visiting = body.kind === "swap" ? body.tour : [];
+  const over = overThreshold(c, targets);
+  const end = c.s.homeRemainingMs !== undefined ? c.now + c.s.homeRemainingMs : undefined;
+  const bounded: string[] = [];
+  for (const t of targets) {
+    const rs = reqs(c, t);
+    if (visiting.includes(t) || over.includes(t) || rs.some((r) => r.cls === "interactive"))
+      continue;
+    const cap = Math.min(...rs.map((r) => r.queuedAt + capOf(c, r)));
+    const at = end === undefined ? cap : Math.min(end, cap);
+    if (at > c.now) blockUntil(n, t, at);
+    if (end === undefined && cap > c.now) bounded.push(...rs.map((r) => r.id));
+  }
+  return bounded;
+}
+
 /** Predicted starts (the median) of every queued request, under the action. */
 function forecast(
   c: Ctx,
   n: Notes,
   body: Body,
   targets: readonly string[],
-): Record<string, number> {
+): { starts: Record<string, number>; bounded: string[] } {
+  const bounded = holdBehindBacklog(c, n, body, targets);
   const visits: string[] = [];
   const add = (w: string) => {
     if (!visits.includes(w)) visits.push(w);
@@ -703,7 +744,7 @@ function forecast(
   for (const w of byKey(targets, (x) => targetKey(c, x))) add(w);
   for (const w of c.names) if (hasWork(c, w)) add(w);
   const l = layout(c, visits, "median", { blocked: n.blocked, ignoreHolds: true });
-  return Object.fromEntries(l.starts);
+  return { starts: Object.fromEntries(l.starts), bounded };
 }
 
 function overThreshold(c: Ctx, targets: readonly string[]): string[] {
@@ -730,16 +771,19 @@ export function decide(s: SwapSnapshot, now: number): SwapAction {
     (w) => hasWork(c, w) && !isResident(c, w) && !c.loading.includes(w),
   );
   const over = overThreshold(c, targets);
-  const finish = (body: Body, rule: SwapRule, reason: string): SwapAction =>
-    ({
+  const finish = (body: Body, rule: SwapRule, reason: string): SwapAction => {
+    const { starts, bounded } = forecast(c, n, body, targets);
+    return {
       ...body,
       rule,
       reason,
-      starts: forecast(c, n, body, targets),
+      starts,
+      ...(bounded.length > 0 ? { bounded } : {}),
       quickPath: n.quickPath,
       refused: n.refused,
       memo: { overThreshold: over },
-    }) as SwapAction;
+    } as SwapAction;
+  };
 
   const level = LEVEL[s.watchdog];
   // 1. The watchdog, at every level.

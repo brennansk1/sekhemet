@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 49 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 50 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,47 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 50 — 2026-09-27 (live testing: rung 4, Smart Swap across models; Worker candidates; the second live-test fixes)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver. A rung-4 agent (live), one fixes implementer and one narrow reviewer; the lead ran the candidates and fixed the review's findings.
+
+- **Rung 4 (Smart Swap live, 30 loads, the Worker, the Planner and the Researcher; persistent ledger):**
+  - Never two of our models at once, no swap storm, no crash; swap stayed at 210 MB.
+  - All 15 unloads confirmed in 0.1–0.4 s (the F3 fix, verified live).
+  - Loads about 9 s (Researcher 11–17 s); predictions switched to measured after 3 samples.
+  - Round-trip cost p90 20–21 s.
+  - Chat arriving mid-step was served at the step boundary in 13.7 s, against a 120 s cap.
+  - 6 alternating requests gave 3 swaps.
+  - Warm load modes: mmap 2.0 s, pre-read 5.3 s, no-mmap 6.1 s.
+- **Worker candidates** (same raw qualification, managed llama-server, 16k):
+
+  | Model | Result | Notes |
+  | --- | --- | --- |
+  | **Nail-MTP** (Qwen3.6-35B-A3B MTP) | **100%, qualified** | every check at 100%, 16.9 tok/s |
+  | GLM-4.7-Flash | 97.3%, qualified | 11.6 tok/s |
+  | Occult-Nail | 96.7%, qualified | refusal 50% (not a gating check, by design) |
+  | Tiel-Coder | 97.3%, not qualified | multi_step 70% at its card's sampling |
+  | Cyber-Tiel | 96.0%, not qualified | multi_step 50% |
+  | Qwen3-Coder-30B | 94.7%, not qualified | multi_step 20% |
+
+  The owner was notified of Nail-MTP's result.
+- **Rung 2 on the current code with Nail-MTP** found F17, F18 and F19 and was stopped early.
+- **Fixed (tests first; a narrow independent review found 2 majors and 3 minors, fixed by the lead except one `..` edge case):**
+  - **F17:** a generic model was invalidated by its first real run. There were two registry instances; the registry now re-reads a changed file, qualification pins the template it measured, and a pin that finds the template changed keeps the arm measurements the same run made.
+  - **F18:** worktree and gitdir paths resolve to one real spelling everywhere, including a resumed or forked worktree in the runner (the gate caught `control.spec` H18). A symlinked `--repo` keeps its given name for branch names.
+  - **F19:** the suite script's children stop with it (`runChild`, own process group, group kill after grace).
+  - **F10/F11:** a wait forecast prices the model being loaded, and behind a Worker backlog it reports the backlog's end or the cap as a bound.
+  - **F13:** the load-mode A/B runs in calibration nights, with at least 3 loads per mode and cold/warm recorded.
+  - **F14:** a non-streamed reply is not a first token.
+  - **F15:** the replay includes chat, research and presence, with a researcher queue.
+  - **F16:** `models add --sampling`.
+- **Lead's mistake:** a wait for "done thinking-all round 1" matched a two-day-old log line and stopped the live `thinking-all` round-1 baseline run 1 h 50 min in. It will be rerun. The lesson is in memory: watch only new lines.
+- **Gate:** `tsc -b` and `biome check .` clean; vitest 563 files, 4129 passed, 37 skipped, exit 0.
+- **Where the cards stop:**
+  - **Next:** the current code on `chronicle` with `--worker nail-mtp`, then the full frozen suite with Nail-MTP.
+  - **Then:** restart the baseline driver (it resumes at `thinking-all` round 1).
+  - **Owner items:** F12, the `com.local.llama-server` (Hermes) launchd service crash-looping beside our models; choosing the default Worker, which needs a bake-off.
 
 ### Entry 49 — 2026-09-27 (live testing, rungs 0–3; the first live-test fixes)
 

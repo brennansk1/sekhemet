@@ -40,7 +40,6 @@ import {
   type RoleAssignment,
   type RoleEvidence,
   type ScanResult,
-  type SimCard,
   SwapCostBook,
   type SwapEvent,
   type Volume,
@@ -89,6 +88,7 @@ import { egressEvent } from "./egress_event.js";
 import { networkHint } from "./github_transport.js";
 import { swapHistory } from "./model_access.js";
 import { headroomProbeFor } from "./smart_swap.js";
+import { REPLAY_EVENT_TYPES, replayDemand } from "./swap_replay.js";
 
 /**
  * The Configuration page's model section, served (B4.1 part b; routes in
@@ -1046,48 +1046,15 @@ export function createConfigApi(deps: ConfigApiDeps) {
   };
 
   // ── combinations, residency and placement ─────────────────────────────
-  const demandCards = async (limit = 20): Promise<SimCard[]> => {
-    const steps = await deps.log.getEventsByTypes(["card/step"]);
-    const statuses = await deps.log.getEventsByTypes(["card/status_changed"]);
-    const byCard = new Map<string, { steps: number; attempts: number; passed: boolean }>();
-    for (const e of statuses) {
-      const id = e.cardId;
-      if (!id) continue;
-      const p = e.payload as { toStatus?: string };
-      const c = byCard.get(id) ?? { steps: 0, attempts: 0, passed: false };
-      if (p.toStatus === "in_progress") c.attempts += 1;
-      if (p.toStatus === "review" || p.toStatus === "done") c.passed = true;
-      byCard.set(id, c);
-    }
-    for (const e of steps) {
-      if (!e.cardId) continue;
-      const c = byCard.get(e.cardId) ?? { steps: 0, attempts: 1, passed: false };
-      c.steps += 1;
-      byCard.set(e.cardId, c);
-    }
-    const STEP_MS = 30_000;
-    return [...byCard.entries()]
-      .filter(([, c]) => c.attempts > 0)
-      .slice(-limit)
-      .map(([id, c], i) => {
-        const attempts = Math.max(1, c.attempts);
-        const per = Math.max(1, Math.round(c.steps / attempts) || 10);
-        return {
-          id,
-          arrivesAt: i,
-          attempts: Array.from({ length: attempts }, (_, k) => ({
-            steps: Array.from({ length: per }, () => STEP_MS),
-            passed: c.passed && k === attempts - 1,
-          })),
-          reviewMs: 120_000,
-        };
-      });
-  };
+  // Live-test F15: the replay's demand is the whole ledger's — the cards,
+  // a person's chat with Seshat, research requests and presence.
+  const demand = async () => replayDemand(await deps.log.getEventsByTypes([...REPLAY_EVENT_TYPES]));
 
   const combinationsBody = async () => {
     if (!state.scan) await scan();
     const { book } = await swapBook();
-    const cards = await demandCards();
+    const replay = await demand();
+    const cards = replay.cards;
     const candidates: Partial<
       Record<
         ModelRole,
@@ -1167,15 +1134,7 @@ export function createConfigApi(deps: ConfigApiDeps) {
             const l = loadCost(id);
             weights[id] = { loadMs: [l.median, l.p90], unloadMs: [2000] };
           }
-          const day = {
-            day: "replay",
-            start: 0,
-            end: 7 * 24 * 3_600_000,
-            cards,
-            seshat: [],
-            presence: [],
-            reserved: [],
-          };
+          const day = { day: "replay", reserved: [], ...replay };
           try {
             const sim = simulateDay(day, {
               params: DEFAULT_SWAP_POLICY,
@@ -1185,6 +1144,7 @@ export function createConfigApi(deps: ConfigApiDeps) {
                 chat: c.planner ?? worker,
                 planner: c.planner ?? worker,
                 reviewer: reviewer ?? worker,
+                researcher: c.researcher ?? c.planner ?? worker,
               },
               home: worker,
               weights,

@@ -45,26 +45,37 @@ const REFUSED_KEYS: readonly RegExp[] = [
 /** Top-level directories never scanned: dependency trees are linked in, not the Worker's. */
 const SKIP = new Set(["node_modules", ".venv", ".sekhemet"]);
 
-const real = (p: string): string => {
+/**
+ * A path as one spelling: absolute and real (live-test F18). A relative path
+ * or a symlinked one (`/tmp` is `/private/tmp` on macOS) otherwise records
+ * and compares as another path. A path that does not exist yet keeps its
+ * nearest existing ancestor's real spelling.
+ */
+export function resolvedPath(p: string): string {
+  const abs = resolve(p);
   try {
-    return realpathSync(p);
+    return realpathSync(abs);
   } catch {
-    return resolve(p);
+    const parent = dirname(abs);
+    return parent === abs ? abs : join(resolvedPath(parent), basename(abs));
   }
-};
+}
+const real = resolvedPath;
 
 /**
  * The harness's own record of a worktree's gitdir (item 18): the entry under
  * `<main>/.git/worktrees/` whose `gitdir` file points back at this worktree.
  */
 export function recordedGitDir(repoRoot: string, worktree: string): string | undefined {
-  const base = join(repoRoot, ".git", "worktrees");
+  const base = join(real(repoRoot), ".git", "worktrees");
   if (!existsSync(base)) return undefined;
   const want = real(join(worktree, ".git"));
   for (const name of readdirSync(base)) {
     const pointer = join(base, name, "gitdir");
     if (!existsSync(pointer)) continue;
-    if (real(readFileSync(pointer, "utf8").trim()) === want) return join(base, name);
+    // A relative record (worktree.useRelativePaths) is relative to its own directory.
+    if (real(resolve(join(base, name), readFileSync(pointer, "utf8").trim())) === want)
+      return join(base, name);
   }
   return undefined;
 }
@@ -237,8 +248,8 @@ export function guardedGitEnv(repoRoot: string, worktree: string): NodeJS.Proces
     {
       ...process.env,
       GIT_DIR: recordedGitDir(repoRoot, worktree) as string,
-      GIT_WORK_TREE: worktree,
-      GIT_CEILING_DIRECTORIES: dirname(repoRoot),
+      GIT_WORK_TREE: real(worktree),
+      GIT_CEILING_DIRECTORIES: dirname(real(repoRoot)),
     },
     WORKTREE_GIT_CONFIG,
   );

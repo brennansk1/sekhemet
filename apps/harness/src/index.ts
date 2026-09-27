@@ -54,7 +54,12 @@ import {
   mergeNetworkConfigs,
   policyFetch,
 } from "@sekhemet/sandbox";
-import { NodeGitSyncAdapter, hardenGitForProcess } from "@sekhemet/sync";
+import {
+  NodeGitSyncAdapter,
+  hardenGitForProcess,
+  rememberRepoAsGiven,
+  resolvedPath,
+} from "@sekhemet/sync";
 import {
   checkoutNotice,
   enableAutoAccept,
@@ -378,7 +383,9 @@ export function parseCliArgs(argv: string[] = process.argv.slice(2)): CliConfig 
   const repoIdx = argv.indexOf("--repo");
   const nextRepo = repoIdx !== -1 ? argv[repoIdx + 1] : undefined;
   if (nextRepo) {
-    repoPath = nextRepo;
+    // Live-test F18: one spelling (absolute, real) for every path recorded or compared.
+    rememberRepoAsGiven(nextRepo);
+    repoPath = resolvedPath(nextRepo);
   }
 
   let port = DEFAULT_DASHBOARD_PORT;
@@ -858,20 +865,26 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
   }
 
   if (config.command === "models" && argv[argv.indexOf("models") + 1] === "add") {
-    // `sekhemet models add <path> [--id <id>]` (MD-N12-9): register a GGUF a
+    // `sekhemet models add <path> [--id <id>] [--sampling …]` (MD-N12-9, F16): register a GGUF a
     // person already has, so it can run as a role.
     const { modelsAdd } = await import("./models_cmd.js");
     const path = argv[argv.indexOf("add") + 1];
     if (!path || path.startsWith("-")) {
-      console.log("Usage: sekhemet models add <path-to.gguf> [--id <id>]");
+      console.log(
+        "Usage: sekhemet models add <path-to.gguf> [--id <id>] [--sampling temperature=,top_p=,top_k=,min_p=]",
+      );
       process.exitCode = 2;
       return;
     }
     const idAt = argv.indexOf("--id");
     const id = idAt === -1 ? undefined : argv[idAt + 1];
+    // Live-test F16: the model card's sampling, recorded in the registry.
+    const samplingAt = argv.indexOf("--sampling");
+    const sampling = samplingAt === -1 ? undefined : (argv[samplingAt + 1] ?? "");
     process.exitCode = await modelsAdd(path, {
       registry: modelRegistry(),
       ...(id ? { id } : {}),
+      ...(sampling !== undefined ? { sampling } : {}),
     });
     return;
   }

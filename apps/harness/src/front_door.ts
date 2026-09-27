@@ -230,6 +230,7 @@ export const KNOWN_FLAGS: ReadonlySet<string> = new Set([
   "--rounds",
   "--run-gates",
   "--runs",
+  "--sampling",
   "--schema",
   "--secret",
   "--secret-file",

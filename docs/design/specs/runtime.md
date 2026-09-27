@@ -23,6 +23,7 @@ code:
   - packages/kernel/src/retention.ts
   - packages/sandbox/src/executor.ts
   - packages/sandbox/src/process_registry.ts
+  - packages/eval/src/child_run.ts
 tests:
   - apps/harness/tests/daemon_ws.spec.ts
   - apps/harness/tests/ledger_cmds.spec.ts
@@ -41,6 +42,7 @@ tests:
   - apps/harness/tests/night.spec.ts
   - apps/harness/tests/run_reports.spec.ts
   - packages/sandbox/tests/process_tree.spec.ts
+  - packages/eval/tests/child_run.spec.ts
 changes: [T5, P9, S3c, NEW-runtime-1, NEW-runtime-2, NEW-runtime-3, NEW-runtime-4, NEW-runtime-5, NEW-runtime-6, NEW-runtime-7, NEW-runtime-8, NEW-runtime-9, NEW-runtime-10]
 ---
 
@@ -71,6 +73,7 @@ Sekhemet runs cards unattended for hours on a machine people also use. The runti
 8. A command's memory is the resident size of its whole tree, sampled every 250 ms; past its cap (default 4096 MB, `SEKHEMET_MAX_COMMAND_MEMORY_MB`) the tree is killed and the result says so, rather than inferring an out-of-memory kill from an unexplained SIGKILL.
 8a. A command's stdout and stderr are each captured up to 10 MB (`maxBufferBytes`); beyond that the capture stops and the result ends with `[output truncated at <n> bytes]`, so a runaway command cannot exhaust the harness's memory. What the model then sees is condensed and clamped by [context](context.md).
 9. The harness's own signal handling releases the lease and kills its children before it exits; no handler calls `process.exit` before cleanup has run.
+9a. A script that runs the harness as a child (the frozen suite's `run_suite.mjs`, the injection fixtures) passes its own stop on: SIGTERM or SIGINT reaches the child as SIGTERM, the child stops the managed llama-server it started (`bindToParentLifetime`), and the script exits with the signal's code, running nothing after (live-test F19). A synchronous child (`execFileSync`) cannot: the script dies and its child and server run on.
 
 ### Crash recovery (resume)
 
@@ -192,6 +195,7 @@ The design's 2026-09-17 route table (`/workspace`, `/projects/:id/board`, `PATCH
 | Timeout SIGTERM → 500 ms → SIGKILL | built | `executor.ts:248-266`; `containment.spec.ts:204` | — |
 | Kills reach the whole tree | built (B3.3) | every command and background process leads its own process group (`detached`), tracked while it lives; timeouts and memory kills signal the group, then every descendant the process table shows; `stop_process` and card end kill the group (`process_tree.spec.ts` RUN-6: an orphaned grandchild is gone 1 s after the kill). RUN-7's card-end kill is the group kill `ToolExecutor.dispose` already made in B1 (`tools_wave2b.spec.ts`) | NEW-runtime-2 |
 | Signal handlers exit before cleanup | built (B3.3) | a lease holder handles SIGTERM and SIGHUP with `process.exit`, so the synchronous exit handlers run first: the lease is released and every tracked process group killed (`night.spec.ts` RUN-8, a real process). The model server's own handler (`llama_server.ts` `bindToParentLifetime`) also exits through `process.exit`, so the same handlers run | NEW-runtime-2 |
+| A script's stop reaches the harness it runs and the server that started (rule 9a, RUN-8a) | built (live-test fixes 2); not yet run live | `runChild` (`packages/eval/src/child_run.ts`) runs a child asynchronously and passes SIGTERM or SIGINT on as SIGTERM, killing it after a 10 s grace, then exits with 143 or 130; `run_suite.mjs` runs every queue through it (its runner's `runQueue` may be asynchronous), and `injection_fixtures.mjs` signals its card's process group. `child_run.spec.ts`: a stand-in suite script runs a real `ManagedLlamaServerAdapter` over a fake server binary; after SIGTERM or SIGINT to the script, the server, the harness child and the script are gone and nothing after ran (the old `execFileSync` form left the server alive) | NEW-runtime-2 |
 | Crash sweep at start-up | built (B3.3) | `queue`, `run` and `overnight` take the lease, then `supervisorStart` (`cli_exit.spec.ts` RUN-9 for `run`): reaps the process groups a killed runner left (`.sekhemet/processes/`) — including a group whose leader has exited while its members live (`process_tree.spec.ts`) — finishes a running attempt of an In Progress card with `crashed`, resets its worktree to the last checkpoint (guarded git) and returns it to Ready through the board; the next run resumes from that step (`supervisor.spec.ts` RUN-9, RUN-10, RUN-12: a runner killed with SIGKILL mid-command) | NEW-runtime-3 |
 | Overnight round time limit | built (B3.3) | each round is a `queue` child in its own group with a wall-clock limit (3 h, `--round-limit-min`): SIGTERM to the group, SIGKILL after 5 s, one failure counted, the night goes on (`night.spec.ts` RUN-11) | NEW-runtime-3 |
 | Rewind, fork, resume from checkpoint | built | `control.spec.ts:203, 228` | — |
@@ -242,6 +246,7 @@ The review's runtime items had no programme ID; they are proposed here.
 - **RUN-6** WHEN a command that started a grandchild exceeds its timeout THE SYSTEM SHALL leave no process of that tree running 1 s after the SIGKILL.
 - **RUN-7** WHEN a card ends with a background process that forked a child THE SYSTEM SHALL leave no process of that tree running.
 - **RUN-8** WHEN the harness receives SIGTERM while holding the lease THE SYSTEM SHALL release the lease and kill its children before exiting.
+- **RUN-8a** WHEN a script that runs the harness as a child (the frozen suite, the injection fixtures) receives SIGTERM or SIGINT THE SYSTEM SHALL pass SIGTERM to that child, so no managed llama-server the child started is left running, and SHALL then exit with the signal's code without starting further work (live-test F19).
 
 ### NEW-runtime-3 — crash recovery and bounded rounds
 *Justification: a crashed card stays In Progress for ever, and a hung queue child blocks the whole night (review of domain 14, senior judgement 3).*

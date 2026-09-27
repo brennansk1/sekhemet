@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { sekhemetConfigDir } from "./models_dir.js";
 import {
@@ -282,12 +282,42 @@ export class ModelRegistry {
   private dirty = new Set<string>();
   private dirtyRoot = new Set<keyof RegistryRoot>();
 
+  /** The file as this instance last read or wrote it (inode, mtime, size). */
+  private seen: string | undefined;
+
   constructor(
     public readonly path: string = defaultRegistryPath(),
     private now: () => Date = () => new Date(),
   ) {
+    this.seen = this.stamp();
     const raw = this.readFile();
     for (const e of raw.models ?? []) this.entries.set(e.id, e);
+    this.root = rootOf(raw);
+  }
+
+  private stamp(path: string = this.path): string | undefined {
+    try {
+      const s = statSync(path, { bigint: true });
+      return `${s.ino}:${s.mtimeNs}:${s.size}`;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Bring this instance up to the file as it is now, before every read and
+   * every change (live-test F17): two instances in one process — a command's
+   * and its adapter's — otherwise each wrote its stale copy of an entry over
+   * the other's change, and `qualify` recorded an unpinned chat template the
+   * adapter had just pinned. Every change is saved at once, so nothing this
+   * instance holds is unsaved here.
+   */
+  private refresh(): void {
+    const now = this.stamp();
+    if (now === undefined || now === this.seen) return;
+    this.seen = now;
+    const raw = this.readFile();
+    this.entries = new Map((raw.models ?? []).map((e) => [e.id, e]));
     this.root = rootOf(raw);
   }
 
@@ -307,6 +337,7 @@ export class ModelRegistry {
    * model is scheduled for re-qualification. Returns what was invalidated.
    */
   public observeContextVersion(version: string): PendingRequalification[] {
+    this.refresh();
     const previous = this.root.contextVersion;
     if (previous === version) return [];
     this.root.contextVersion = version;
@@ -354,16 +385,19 @@ export class ModelRegistry {
 
   /** Models waiting to be qualified again after a change invalidated them (CX-N6-1). */
   public pendingRequalifications(): PendingRequalification[] {
+    this.refresh();
     return [...(this.root.requalify ?? [])];
   }
 
   /** Every role assignment recorded for a host, oldest first (NEW-models-10). */
   public roleAssignments(host: string): RoleAssignmentRecord[] {
+    this.refresh();
     return [...(this.root.assignments?.[host] ?? [])];
   }
 
   /** Append a role assignment for a host and save. */
   public recordRoleAssignment(host: string, record: RoleAssignmentRecord): void {
+    this.refresh();
     this.root.assignments = {
       ...(this.root.assignments ?? {}),
       [host]: [...(this.root.assignments?.[host] ?? []), record],
@@ -374,10 +408,12 @@ export class ModelRegistry {
 
   /** The context version the qualifications were last checked against. */
   public get contextVersion(): string | undefined {
+    this.refresh();
     return this.root.contextVersion;
   }
 
   public get(id: string): ModelEntry | undefined {
+    this.refresh();
     return this.entries.get(id);
   }
 
@@ -389,11 +425,13 @@ export class ModelRegistry {
   }
 
   public list(): ModelEntry[] {
+    this.refresh();
     return [...this.entries.values()].sort((a, b) => a.id.localeCompare(b.id));
   }
 
   /** Merge fields into an entry (creating it) and save. */
   public upsert(id: string, fields: Partial<Omit<ModelEntry, "id">>): ModelEntry {
+    this.refresh();
     const entry: ModelEntry = { ...(this.entries.get(id) ?? { id }), ...fields, id };
     this.entries.set(id, entry);
     this.touch(id);
@@ -415,6 +453,7 @@ export class ModelRegistry {
     id: string,
     at: { path: string; volume: "internal" | "external"; sha256: string },
   ): ModelEntry {
+    this.refresh();
     const entry = this.entries.get(id) ?? { id };
     if (entry.sha256 && entry.sha256 !== at.sha256) {
       throw new Error(
@@ -434,6 +473,7 @@ export class ModelRegistry {
    * now (a launch passes `existsSync`, so an unplugged drive's copy is skipped).
    */
   public preferredWeights(id: string, usable?: (path: string) => boolean): string | undefined {
+    this.refresh();
     const entry = this.entries.get(id);
     const same = (entry?.copies ?? []).filter(
       (c) => (!entry?.sha256 || c.sha256 === entry.sha256) && (!usable || usable(c.path)),
@@ -454,6 +494,7 @@ export class ModelRegistry {
    * because up to 40% of small-model tool-call failures trace to templates.
    */
   public pinTemplate(id: string, template: string, path?: string): TemplatePinResult {
+    this.refresh();
     const checksum = templateChecksum(template);
     const entry = this.entries.get(id) ?? { id };
     const previous = entry.template?.checksum;
@@ -494,6 +535,7 @@ export class ModelRegistry {
     trials: number,
     validCalls?: number,
   ): void {
+    this.refresh();
     const entry = this.entries.get(id) ?? { id };
     entry.armMeasurements = {
       ...(entry.armMeasurements ?? {}),
@@ -516,10 +558,12 @@ export class ModelRegistry {
 
   /** The measured arm for a model, undefined until measured (M9). */
   public armFor(id: string): ToolArm | undefined {
+    this.refresh();
     return this.entries.get(id)?.toolArm;
   }
 
   public recordQualification(id: string, record: Omit<QualificationRecord, "date">): void {
+    this.refresh();
     const entry = this.entries.get(id) ?? { id };
     if (entry.qualification) {
       entry.qualificationHistory = [...(entry.qualificationHistory ?? []), entry.qualification];
@@ -532,6 +576,7 @@ export class ModelRegistry {
 
   /** Qualified now: a current, non-invalidated record at or above the bar. */
   public isQualified(id: string, bar: number): boolean {
+    this.refresh();
     const q = this.entries.get(id)?.qualification;
     return q !== undefined && q.status === "qualified" && q.passRate >= bar;
   }
@@ -546,6 +591,7 @@ export class ModelRegistry {
     combination: QualificationCombination,
     record: Omit<CombinationQualification, "date" | "key" | "combination">,
   ): CombinationQualification {
+    this.refresh();
     const entry = this.entries.get(id) ?? { id };
     const date = this.now().toISOString();
     const full: CombinationQualification = {
@@ -595,6 +641,7 @@ export class ModelRegistry {
     decision: { by: string; reason: string },
     bar: number,
   ): WorkerOverride {
+    this.refresh();
     const entry = this.entries.get(id);
     const key = combinationKey(combination);
     const exact = [...(entry?.qualifications ?? [])].reverse().find((q) => q.key === key);
@@ -640,6 +687,7 @@ export class ModelRegistry {
     id: string,
     combination: QualificationCombination,
   ): QualificationLookup {
+    this.refresh();
     const entry = this.entries.get(id);
     const all = entry?.qualifications ?? [];
     const key = combinationKey(combination);
@@ -726,6 +774,7 @@ export class ModelRegistry {
       parallelSlots?: number;
     },
   ): CombinationQualification | undefined {
+    this.refresh();
     const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
     return [...(this.entries.get(id)?.qualifications ?? [])].reverse().find((q) => {
       const s = q.combination.settings;
@@ -741,6 +790,7 @@ export class ModelRegistry {
   }
 
   public recordThroughput(id: string, bucket: string, prefill: number, decode: number): void {
+    this.refresh();
     const entry = this.entries.get(id) ?? { id };
     entry.throughput = { ...(entry.throughput ?? {}), [bucket]: { prefill, decode } };
     this.entries.set(id, entry);
@@ -749,6 +799,7 @@ export class ModelRegistry {
   }
 
   public recordSpeculative(id: string, decision: SpeculativeDecision): void {
+    this.refresh();
     const entry = this.entries.get(id) ?? { id };
     entry.speculative = decision;
     if (decision.thinking && decision.draft) {
@@ -789,11 +840,16 @@ export class ModelRegistry {
     }
     this.root = root;
     const tmp = `${this.path}.${process.pid}.tmp`;
-    writeFileSync(
-      tmp,
-      `${JSON.stringify({ version: 1, ...root, models: this.list() }, null, 2)}\n`,
-    );
+    const models = [...this.entries.values()].sort((a, b) => a.id.localeCompare(b.id));
+    writeFileSync(tmp, `${JSON.stringify({ version: 1, ...root, models }, null, 2)}\n`);
+    // Stamped before the rename (which keeps inode and mtime), so another
+    // process's write landing just after it is never taken as already read.
+    const written = this.stamp(tmp);
     renameSync(tmp, this.path);
+    // Saved: this instance now holds the file as written, and nothing unsaved.
+    this.dirty.clear();
+    this.dirtyRoot.clear();
+    this.seen = written;
   }
 }
 

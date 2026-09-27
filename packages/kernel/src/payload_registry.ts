@@ -203,6 +203,8 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     ),
     decided: s(v.boolean()),
     chosen: s(LOAD_MODE),
+    // live-test F13: the cache state the modes were compared in.
+    cache: s(v.picklist(["cold", "warm", "mixed"]), true),
   },
   // models MD-N14-33, MD-N14-40a: a GPU ceiling recorded (a Metal timeout, a calibration night).
   "model/gpu_ceiling": {
@@ -246,8 +248,9 @@ export const PAYLOAD_SCHEMAS: Readonly<Record<string, PayloadSchema>> = {
     unloadMs: s(MS),
     confirmed: s(v.boolean()),
   },
-  // models MD-N14-2: the first reply after a recorded load.
-  "model/first_token": { ...SWAP_BASE, firstTokenMs: s(MS) },
+  // models MD-N14-2: the first reply after a recorded load; its true first
+  // token when it streamed, else only the reply's time (live-test F14).
+  "model/first_token": { ...SWAP_BASE, firstTokenMs: s(MS, true), replyMs: s(MS, true) },
   // models MD-N14-5: a load past its bound, with its likely causes and fixes.
   "model/slow_load": {
     ...SWAP_BASE,

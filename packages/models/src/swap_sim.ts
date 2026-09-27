@@ -68,6 +68,11 @@ export interface SimDay {
   end: number;
   cards: SimCard[];
   seshat: SimSession[];
+  /**
+   * Research requests as recorded (live-test F15): each queued at its time
+   * on the `researcher` queue, served for its recorded time.
+   */
+  research?: { at: number; serviceMs: number }[];
   /** When a person was present (a dashboard session, a reserve-now). */
   presence: { from: number; to: number }[];
   /** The reserved hours. */
@@ -79,7 +84,10 @@ export interface SimDay {
 export interface SimConfig {
   params: SwapPolicyParams;
   seed: number;
-  /** Queue → weights: `worker`, `chat` (Seshat), `planner` (escalations), `reviewer`. */
+  /**
+   * Queue → weights: `worker`, `chat` (Seshat), `planner` (escalations),
+   * `reviewer`, and `researcher` when the day has research requests.
+   */
   queues: Record<string, string>;
   /** The Worker's weights. */
   home?: string;
@@ -266,6 +274,12 @@ export function simulateDay(
     const first = s.turns[0];
     if (first) later(s.startAt + first.thinkMs, (at) => ask(s, 0, at));
   }
+  // Research requests (live-test F15): refused, never dropped, without weights to serve them.
+  const research = day.research ?? [];
+  if (research.length > 0 && config.queues.researcher === undefined)
+    throw new Error("the day has research requests and the replay names no researcher weights");
+  for (const r of research)
+    later(r.at, (at) => enqueue(at, "researcher", "researcher", r.serviceMs, {}, () => undefined));
   // Wake at every block and presence boundary.
   for (const b of day.blocks ?? []) {
     later(b.from, () => undefined);

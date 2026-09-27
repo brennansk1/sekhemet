@@ -107,10 +107,103 @@ describe("MD-N14-34: the load-mode A/B", () => {
       modes: [],
       decided: true,
       chosen: "no_mmap" as const,
+      cache: "cold" as const,
     };
     expect(loadModeFor([rec], "external", "llama.cpp")).toBe("no_mmap");
     expect(loadModeFor([rec], "internal", "llama.cpp")).toBe("mmap");
     expect(loadModeFor([{ ...rec, decided: false }], "external", "llama.cpp")).toBe("mmap");
+    // Live-test F13: a comparison of warm (or mixed) loads decides nothing for cold ones.
+    expect(loadModeFor([{ ...rec, cache: "warm" }], "external", "llama.cpp")).toBe("mmap");
+    expect(loadModeFor([{ ...rec, cache: "mixed" }], "external", "llama.cpp")).toBe("mmap");
+  });
+
+  it("F13: times only the unload, records confirmed from the check, a true first token or the reply time, and the cache state compared", async () => {
+    const log = ledger();
+    let t = Date.now();
+    const tracker = new SwapCostTracker({
+      now: () => t,
+      cacheBytes: 8 * GiB,
+      record: (e) => {
+        log.appendNow({ actor: "harness", type: e.type, payload: e.payload });
+      },
+    });
+    let n = 0;
+    const result = await runLoadModeAb({
+      model: "worker",
+      roles: ["worker"],
+      volume: "internal",
+      engine: "llama.cpp",
+      bytes: 13.6e9,
+      coldBytesPerSecond: 1.5e9,
+      tracker,
+      now: () => t,
+      // The first load cold (10 s), every later one from the page cache (2 s).
+      load: async () => {
+        t += n++ === 0 ? 10_000 : 2000;
+      },
+      // Streamed on odd loads: a true first token of 300 ms in a 1 s reply.
+      firstToken: async () => {
+        t += 1000;
+        return n % 2 === 1 ? 300 : undefined;
+      },
+      unload: async () => {
+        t += 150;
+      },
+      // The check takes 5 s and proves the unload only on some loads.
+      confirmUnloaded: async () => {
+        t += 5000;
+        return n % 3 !== 0;
+      },
+      record: (e) => {
+        log.appendNow({ actor: "harness", type: e.type, payload: e.payload });
+      },
+    });
+    const unloaded = (await log.getEventsByTypes([SWAP_EVENTS.unloaded])).map(
+      (e) => e.payload as { unloadMs: number; confirmed: boolean },
+    );
+    expect(unloaded).toHaveLength(9);
+    expect(unloaded.every((u) => u.unloadMs === 150)).toBe(true);
+    expect(unloaded.map((u) => u.confirmed)).toEqual(
+      [1, 2, 3, 4, 5, 6, 7, 8, 9].map((i) => i % 3 !== 0),
+    );
+    const first = (await log.getEventsByTypes([SWAP_EVENTS.firstToken])).map(
+      (e) => e.payload as { firstTokenMs?: number; replyMs?: number },
+    );
+    expect(first[0]).toEqual(expect.objectContaining({ firstTokenMs: 300 }));
+    expect(first[0]).not.toHaveProperty("replyMs");
+    expect(first[1]).toEqual(expect.objectContaining({ replyMs: 1000 }));
+    expect(first[1]).not.toHaveProperty("firstTokenMs");
+    expect(result.cache).toBe("mixed");
+    expect(loadModeFor([result], "internal", "llama.cpp")).toBe("mmap");
+  });
+
+  it("F13: compares cold loads when it can empty the page cache before each load", async () => {
+    let t = Date.now();
+    const tracker = new SwapCostTracker({ now: () => t, cacheBytes: 8 * GiB });
+    let cached = false;
+    const result = await runLoadModeAb({
+      model: "worker",
+      roles: ["worker"],
+      volume: "internal",
+      engine: "llama.cpp",
+      bytes: 13.6e9,
+      coldBytesPerSecond: 1.5e9,
+      tracker,
+      now: () => t,
+      evictCache: async () => {
+        cached = false;
+      },
+      load: async () => {
+        t += cached ? 2000 : 10_000;
+        cached = true;
+      },
+      firstToken: async () => 300,
+      unload: async () => undefined,
+      confirmUnloaded: async () => true,
+      record: () => undefined,
+    });
+    expect(result.cache).toBe("cold");
+    expect(result.decided).toBe(true);
   });
 
   it("runs the A/B on a fake adapter and records every load with its mode, then the A/B", async () => {

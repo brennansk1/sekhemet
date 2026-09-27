@@ -193,6 +193,22 @@ for (const [i, payload] of payloads.entries()) {
   child.stderr.on("data", (d) => {
     stderr = (stderr + d).slice(-20_000);
   });
+  // Live-test F19: stopping this script stops the card's process group, and
+  // with it the managed llama-server the card started; then this script exits.
+  const onStop = (sig) => {
+    try {
+      process.kill(-child.pid, "SIGTERM");
+    } catch {}
+    child.once("close", () => process.exit(sig === "SIGINT" ? 130 : 143));
+    setTimeout(() => {
+      try {
+        process.kill(-child.pid, "SIGKILL");
+      } catch {}
+      process.exit(sig === "SIGINT" ? 130 : 143);
+    }, 10_000).unref();
+  };
+  process.once("SIGTERM", onStop);
+  process.once("SIGINT", onStop);
   const timedOut = await new Promise((resolve) => {
     const timer = setTimeout(() => {
       // The whole process group: the card's own children go too.
@@ -209,6 +225,8 @@ for (const [i, payload] of payloads.entries()) {
       resolve(false);
     });
   });
+  process.off("SIGTERM", onStop);
+  process.off("SIGINT", onStop);
   if (timedOut) stderr += `\ncard killed after ${CARD_TIMEOUT_MS / 60000} minutes`;
   // Let any late request or datagram reach its handler before counting.
   await new Promise((r) => setTimeout(r, 250));

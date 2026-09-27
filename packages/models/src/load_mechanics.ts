@@ -129,16 +129,27 @@ export interface LoadModeAbPayload {
   modes: AbModeResult[];
   decided: boolean;
   chosen: LoadMode;
+  /**
+   * The cache state the modes were compared in, measured per load by its
+   * read rate (live-test F13): alternating modes on one file reload it from
+   * the page cache, so an A/B that could not empty the cache compares warm
+   * loads, and says so.
+   */
+  cache?: CacheState | "mixed";
 }
 
-/** The mode for a volume and engine: the latest decided A/B's, else mmap (MD-N14-34). */
+/**
+ * The mode for a volume and engine: the latest decided A/B's that compared
+ * cold loads, else mmap (MD-N14-34). A warm or mixed comparison says nothing
+ * about the slow cold load the mode exists for (live-test F13).
+ */
 export function loadModeFor(
   records: readonly LoadModeAbPayload[],
   volume: Volume,
   engine: Engine,
 ): LoadMode {
   const last = records
-    .filter((r) => r.decided && r.volume === volume && r.engine === engine)
+    .filter((r) => r.decided && r.cache === "cold" && r.volume === volume && r.engine === engine)
     .at(-1);
   return last?.chosen ?? "mmap";
 }
@@ -161,7 +172,18 @@ export function classifyCacheByReadRate(l: {
  * Run a load-mode A/B (MD-N14-34): the modes alternate on the same weights,
  * each load recorded through the tracker with its engine, mode and measured
  * cache state, its first token and its unload; then the A/B itself.
- * Loads nothing by itself: `load`, `firstToken` and `unload` are the caller's.
+ * Loads nothing by itself: `load`, `firstToken`, `unload` and
+ * `confirmUnloaded` are the caller's (a calibration night's, F13).
+ *
+ * - `firstToken` returns the true first token when the request streamed;
+ *   otherwise the request's whole time is recorded as the reply time, not a
+ *   first token (F14), and stands in for it only in the mode comparison.
+ * - Only `unload` is timed; `confirmUnloaded` runs after the timer, and its
+ *   answer is what `confirmed` records (MD-N14-2a).
+ * - `evictCache`, when given, empties the page cache of the file before each
+ *   load so the modes compare cold loads; either way the cache state each
+ *   load was measured in is recorded, and the A/B's `cache` says whether it
+ *   compared cold, warm or mixed loads.
  */
 export async function runLoadModeAb(input: {
   model: string;
@@ -174,13 +196,17 @@ export async function runLoadModeAb(input: {
   tracker: SwapCostTracker;
   now: () => number;
   load: (mode: LoadMode) => Promise<void>;
-  firstToken: () => Promise<void>;
+  /** The true first token when the request streamed; anything else is none. */
+  firstToken: () => Promise<unknown>;
   unload: () => Promise<void>;
+  confirmUnloaded?: () => Promise<boolean>;
+  evictCache?: () => Promise<void>;
   record: (event: { type: string; payload: LoadModeAbPayload }) => void | Promise<void>;
   modes?: readonly LoadMode[];
   perMode?: number;
 }): Promise<LoadModeAbPayload> {
   const loads: AbLoad[] = [];
+  const caches = new Set<CacheState>();
   for (const mode of abOrder(input.modes, input.perMode)) {
     const prediction = input.tracker.book.predict({
       model: input.model,
@@ -188,6 +214,7 @@ export async function runLoadModeAb(input: {
       cache: "cold",
       bytes: input.bytes,
     });
+    await input.evictCache?.();
     const start = input.now();
     await input.load(mode);
     const loadMs = input.now() - start;
@@ -196,6 +223,7 @@ export async function runLoadModeAb(input: {
       loadMs,
       coldBytesPerSecond: input.coldBytesPerSecond,
     });
+    caches.add(cache);
     await input.tracker.loaded({
       prediction,
       roles: input.roles,
@@ -206,20 +234,27 @@ export async function runLoadModeAb(input: {
       cache,
     });
     const asked = input.now();
-    await input.firstToken();
-    const firstTokenMs = input.now() - asked;
-    await input.tracker.firstToken({ model: input.model, roles: input.roles, firstTokenMs });
+    const measured = await input.firstToken();
+    const replyMs = input.now() - asked;
+    const firstTokenMs = typeof measured === "number" ? measured : undefined;
+    await input.tracker.firstToken({
+      model: input.model,
+      roles: input.roles,
+      ...(firstTokenMs !== undefined ? { firstTokenMs } : { replyMs }),
+    });
     const unloadStart = input.now();
     await input.unload();
+    const unloadMs = input.now() - unloadStart;
+    const confirmed = (await input.confirmUnloaded?.()) ?? false;
     await input.tracker.unloaded({
       model: input.model,
       roles: input.roles,
       volume: input.volume,
       bytes: input.bytes,
-      unloadMs: input.now() - unloadStart,
-      confirmed: true,
+      unloadMs,
+      confirmed,
     });
-    loads.push({ mode, loadMs, firstTokenMs });
+    loads.push({ mode, loadMs, firstTokenMs: firstTokenMs ?? replyMs });
   }
   const chosen = chooseLoadMode(loads);
   const payload: LoadModeAbPayload = {
@@ -229,6 +264,7 @@ export async function runLoadModeAb(input: {
     modes: chosen.modes,
     decided: chosen.decided,
     chosen: chosen.mode,
+    cache: caches.size === 1 ? ([...caches][0] as CacheState) : "mixed",
   };
   await input.record({ type: LOAD_MODE_AB_EVENT, payload });
   return payload;

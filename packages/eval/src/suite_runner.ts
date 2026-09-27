@@ -369,7 +369,7 @@ export interface QueueRunDriver {
   resolveCardId(task: SuiteTask, repo: string): string;
   cardInfo(repo: string, cardId: string): CardInfo | undefined;
   /** Runs the product's queue over the repository's Ready cards; true when the timeout killed it. */
-  runQueue(repo: string, timeoutMs: number): { timedOut: boolean };
+  runQueue(repo: string, timeoutMs: number): { timedOut: boolean } | Promise<{ timedOut: boolean }>;
   /** The prerequisites the board says a card is still waiting on. */
   waitingOn(repo: string, cardId: string): string[];
   /**
@@ -522,7 +522,7 @@ export function suiteQueueRunner(
       const cards = opts.independent ? 1 : opts.tasks.filter((t) => t.suite === task.suite).length;
       const timeoutMs = cards * opts.cardTimeoutMs;
       log(`  ${task.suite}: sekhemet queue over ${cards} card(s) ...`);
-      const { timedOut } = driver.runQueue(repo, timeoutMs);
+      const { timedOut } = await driver.runQueue(repo, timeoutMs);
       // A timed-out queue leaves the partial report it wrote after its last entry.
       const report = readQueueReport(repo);
       for (const l of report?.modelLoads ?? []) loads.push({ fixture: task.suite, ...l });

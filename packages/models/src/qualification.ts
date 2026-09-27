@@ -582,6 +582,28 @@ export async function qualifyModel(
   }
   const best = [...results].sort((a, b) => b.passRate - a.passRate)[0] as QualificationResult;
   if (options.combination) {
+    // Live-test F17: the template this run measured is pinned in the registry
+    // its combination is read from, whatever registry the adapter carries.
+    const pin = (
+      adapter as {
+        verifyTemplate?: (into?: ModelRegistry) => Promise<{ changed?: boolean } | undefined>;
+      }
+    ).verifyTemplate;
+    const pinned = options.registry && pin ? await pin.call(adapter, options.registry) : undefined;
+    // A change found now clears the arm measurements (registry `pinTemplate`),
+    // but this run measured them under the template just pinned: keep them
+    // (F17 review, major 2).
+    if (pinned?.changed) {
+      for (const r of results) {
+        options.registry?.recordArmMeasurement(
+          adapter.modelId,
+          r.arm,
+          r.passRate,
+          r.cases.length,
+          r.cases.filter((c) => c.schemaValid).length,
+        );
+      }
+    }
     const given =
       typeof options.combination === "function" ? options.combination() : options.combination;
     // The sampling the run used is part of what qualified (q1.2, MD-N8-1).
