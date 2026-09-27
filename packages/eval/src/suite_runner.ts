@@ -90,10 +90,31 @@ export function unmetDependencies(repo: string, info: CardInfo): string[] {
     const mod = posix.join(home, m[1] ?? "");
     if (m[1] && !own.has(mod)) needed.add(mod);
   }
+  // Live-test F20: built means `main` holds it. Safe Accept moves `main` by
+  // plumbing and leaves the checkout as seeded, so the working tree is read
+  // only where the repository is not a git repository.
   return [...needed].filter((mod) => {
+    for (const e of [".ts", ".tsx", "/index.ts"]) {
+      const committed = committedText(repo, `${mod}${e}`);
+      if (committed !== undefined) return committed.trim() === "";
+    }
     const file = [".ts", ".tsx", "/index.ts"].map((e) => join(repo, `${mod}${e}`)).find(existsSync);
     return !file || readFileSync(file, "utf8").trim() === "";
   });
+}
+
+/** A file's text at the repository's HEAD commit, or undefined when git has none (not a repo, no such file). */
+function committedText(repo: string, path: string): string | undefined {
+  try {
+    // A blob's raw bytes: `show` runs no filter, and textconv is refused.
+    return execFileSync("git", ["show", "--no-textconv", `HEAD:${path}`], {
+      cwd: repo,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch {
+    return undefined;
+  }
 }
 
 interface Bundle {

@@ -8,7 +8,7 @@
 
 ## Executive Status Summary for Claude (Zero-Loss Handoff)
 
-*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 50 first.*
+*Refreshed 2026-09-25. Branch `claude/harness-definition-done-4d9161` (worktree `.claude/worktrees/harness-definition-done-4d9161`); `main` tracks it (DEC-10). Read Entry 51 first.*
 
 1. **Where we are:** Phase B — B0 done; **B1 milestone passed on macOS** (injection 14/14; Linux via CI, DEC-42); B2.1–B2.4 done (B2.4 awaits a person's confirmation of the golden briefs and held-out drafts); the Worker runs under the owner's recorded override (multi_step 40% at q1.2); **B2.5's baseline is the next model run**; B3.1 in progress (Entry 32). Loads are allowed under DEC-42's memory conditions; stop the owner's own Hermes server (port 8080) first if it runs.
 2. **The design:** start at `docs/design/SPINE.md`; one spec per subsystem in `docs/design/specs/` (each with status, State table with evidence, EARS acceptance criteria per change ID); every decision in `docs/design/DECISIONS.md`; change IDs and their workstreams in `docs/reference/COVERAGE.md`; nothing-lost proof in `docs/reference/DESIGN_TRACE.md`. `docs.spec.ts` fails the build if a spec's status and the SPINE table disagree.
@@ -20,6 +20,22 @@
 ---
 
 ## Detailed Session Log
+
+### Entry 51 — 2026-09-27 (the current code's first live cards; a scoring fix)
+
+**Agent:** Claude Opus 5.5 (`claude-opus-5-5`), lead driver.
+
+- **Nail-MTP requalified at 100%** on the fixed build (best arm `arm_b_json`; the combination now names the pinned template, F17).
+- **The current code on `chronicle`, Worker Nail-MTP** (the first live cards through B3 and B4's code paths):
+  - iface, hasher, db and verifier passed in 25–91 s each;
+  - the ledger card exhausted its 40-step budget (a type error in `src/ledger.ts`), as in every Cyber-Tiel arm, and the api card was blocked behind it;
+  - 23 min, 346k tokens, no harness faults. The server stopped with the suite (F19, verified live).
+- **F20, a scoring bug that inflated pass rates, fixed test first.** `unmetDependencies` judged a dependency "never built" from the fixture's working tree, which safe Accept (B3.2) never updates. The ledger card's genuine failure was relabelled "blocked" and left the denominator: 4/4 was reported for an honest 4/5. Its worktree held the dependencies, identical to `main`. A dependency is now built when `main`'s committed tree holds it (`git show --no-textconv HEAD:<path>`). The frozen suite's tasks and hash are unchanged; the baseline's older build never had the bug.
+- **The baseline driver was restarted** at `thinking-all` round 1 (07:26), on its frozen build.
+- **Gate:** `tsc -b` and `biome check .` clean; vitest 564 files, 4130 passed, 37 skipped, exit 0 (one worker, beside the baseline run).
+- **Where the cards stop:**
+  - **Next:** the full frozen suite on the current code with `--worker nail-mtp` once the baseline arm now running ends. Honest scoring is now in place, so it can be compared.
+  - The default-Worker decision needs a bake-off (the owner's call).
 
 ### Entry 50 — 2026-09-27 (live testing: rung 4, Smart Swap across models; Worker candidates; the second live-test fixes)
 
